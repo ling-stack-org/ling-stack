@@ -1,0 +1,52 @@
+@media (max-width: 1320px) {
+  .provider-toolbar-controls {
+    grid-template-columns: minmax(180px, 1fr) minmax(132px, auto) auto auto auto;
+  }
+
+  .provider-search-field {
+    max-width: 320px;
+  }
+
+  .provider-actions {
+    gap: var(--ling-space-2);
+  }
+}
+
+@media (max-width: 980px) {
+  .provider-toolbar-controls {
+    grid-template-columns: minmax(0, 1fr) minmax(132px, 0.55fr) auto auto auto;
+  }
+
+  .provider-main-action {
+    max-width: 112px;
+  }
+
+  .provider-editor-core,
+  .provider-advanced-route-row,
+  .provider-advanced-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .provider-editor-core-custom .provider-api-protocol-field {
+    grid-column: auto;
+  }
+}
+
+@media (max-height: 720px) {
+  .provider-form-panel.provider-sheet {
+    max-height: calc(100vh - 16px);
+    max-height: calc(100dvh - 16px);
+  }
+
+  .provider-model-grid {
+    max-height: 220px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .provider-workbench-surface,
+  .provider-table-shell,
+  .provider-model-grid {
+    scroll-behavior: auto;
+  }
+}

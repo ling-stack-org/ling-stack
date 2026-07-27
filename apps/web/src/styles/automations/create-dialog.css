@@ -1,0 +1,218 @@
+.automation-ui2-create-modes {
+  width: 100%;
+  margin-bottom: var(--ling-space-6);
+}
+
+.automation-ui2-template-step {
+  display: grid;
+  min-width: 0;
+  min-height: 360px;
+  grid-template-columns: minmax(0, 1.15fr) minmax(220px, 0.85fr);
+  gap: var(--ling-space-7);
+}
+
+.automation-ui2-template-list {
+  min-width: 0;
+  max-height: 430px;
+  overflow-y: auto;
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+}
+
+.automation-ui2-template-identity {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
+.automation-ui2-template-identity strong,
+.automation-ui2-template-identity span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.automation-ui2-template-identity span {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+}
+
+.automation-ui2-template-review {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: var(--ling-space-5);
+  padding-left: var(--ling-space-7);
+  border-left: 1px solid var(--ling-border-default);
+}
+
+.automation-ui2-template-review > strong {
+  color: var(--ling-text-strong);
+  font-size: 16px;
+}
+
+.automation-ui2-template-review p,
+.automation-ui2-template-review dl {
+  margin: 0;
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-sm);
+  line-height: var(--ling-line-sm);
+}
+
+.automation-ui2-template-review dl {
+  display: grid;
+  width: 100%;
+  gap: var(--ling-space-5);
+}
+
+.automation-ui2-template-review dl div,
+.automation-ui2-review-grid div,
+.automation-ui2-inspector-grid div {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
+.automation-ui2-template-review dt,
+.automation-ui2-review-grid dt,
+.automation-ui2-inspector-grid dt {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+}
+
+.automation-ui2-template-review dd,
+.automation-ui2-review-grid dd,
+.automation-ui2-inspector-grid dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--ling-text-strong);
+}
+
+.automation-ui2-template-icon {
+  display: inline-grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: var(--ling-radius-md);
+  color: var(--ling-text-muted);
+  background: var(--ling-bg-subtle);
+}
+
+.automation-ui2-manual-form,
+.automation-ui2-chat-form,
+.automation-ui2-chat-review {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-6);
+}
+
+.automation-ui2-form-grid {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ling-space-6);
+}
+
+.automation-ui2-form-grid > :nth-child(1),
+.automation-ui2-form-grid > :nth-child(2),
+.automation-ui2-form-span {
+  grid-column: 1 / -1;
+}
+
+.automation-ui2-schedule-fields {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--ling-space-5);
+}
+
+.automation-ui2-advanced {
+  border-top: 1px solid var(--ling-border-default);
+  padding-top: var(--ling-space-4);
+}
+
+.automation-ui2-advanced-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: end;
+  gap: var(--ling-space-5);
+  padding: var(--ling-space-5) 0;
+}
+
+.automation-ui2-chat-review-header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ling-space-5);
+}
+
+.automation-ui2-chat-review-header > strong {
+  overflow: hidden;
+  color: var(--ling-text-strong);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.automation-ui2-review-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ling-space-6);
+  margin: 0;
+}
+
+.automation-ui2-context-preview {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-3);
+}
+
+.automation-ui2-context-preview pre {
+  max-height: 150px;
+  margin: 0;
+  overflow: auto;
+  padding: var(--ling-space-5);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  color: var(--ling-text-muted);
+  background: var(--ling-bg-subtle);
+  font-size: var(--ling-font-xs);
+  white-space: pre-wrap;
+}
+
+.automation-ui2-confirm-dialog p {
+  margin: 0;
+  color: var(--ling-text-strong);
+}
+
+.automation-ui2-schedule-dialog .automation-ui2-schedule-fields {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (max-width: 720px) {
+  .automation-ui2-template-step,
+  .automation-ui2-form-grid,
+  .automation-ui2-review-grid,
+  .automation-ui2-advanced-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .automation-ui2-template-review {
+    padding-top: var(--ling-space-6);
+    padding-left: 0;
+    border-top: 1px solid var(--ling-border-default);
+    border-left: 0;
+  }
+
+  .automation-ui2-form-grid > :nth-child(1),
+  .automation-ui2-form-grid > :nth-child(2),
+  .automation-ui2-form-span {
+    grid-column: auto;
+  }
+
+  .automation-ui2-schedule-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

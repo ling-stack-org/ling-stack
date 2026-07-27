@@ -1,0 +1,51 @@
+.work-board-panel.channel-work-board {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  gap: var(--ling-space-5);
+  padding: var(--ling-space-5);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  background: var(--ling-bg-panel);
+}
+
+.channel-work-board-header,
+.channel-work-board-header > span:first-child {
+  display: flex;
+  align-items: center;
+}
+
+.channel-work-board-header {
+  justify-content: space-between;
+  gap: var(--ling-space-5);
+}
+
+.channel-work-board-header > span:first-child {
+  min-width: 0;
+  gap: var(--ling-space-4);
+}
+
+.channel-work-board-header h3 {
+  margin: 0;
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+  letter-spacing: 0;
+}
+
+.channel-work-board-header > span:last-child {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  white-space: nowrap;
+}
+
+.channel-work-board-groups,
+.channel-work-board-skeleton {
+  max-height: 420px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.channel-work-board-skeleton {
+  display: grid;
+  gap: var(--ling-space-3);
+}

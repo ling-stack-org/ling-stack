@@ -2,8 +2,14 @@ import { Activity, CircleAlert, FileCheck2, FileText, Loader2, RefreshCw, Shield
 import { useI18n } from "../../i18n.js";
 import { truncatePreview } from "../../lib/data.js";
 import { formatDateTime } from "../../lib/formatting.js";
-import { MetaRow, StatusBadge } from "../../shared/components/index.js";
+import { MetaRow } from "../../shared/components/index.js";
+import { StatusIndicator } from "../../shared/ui/index.js";
 import type { ResourceLease, RuntimeDiagnosticsResponse, WorkUnit } from "../../types.js";
+import {
+  resourceLeaseStatusPresentation,
+  runtimeSemaphoreStatusPresentation,
+  workUnitStatusPresentation,
+} from "./runtime-status-view-models.js";
 
 export function RuntimeDiagnosticsPanel({
   diagnostics,
@@ -44,7 +50,7 @@ export function RuntimeDiagnosticsPanel({
       </div>
 
       {diagnostics ? (
-        <div className="run-evidence-grid runtime-supervisor-meta">
+        <div className="runtime-supervisor-meta">
           <MetaRow label={t("Runtime")} value={diagnostics.runtime.runtimeInstanceId} compact />
           <MetaRow label={t("PID")} value={String(diagnostics.runtime.pid)} compact />
           <MetaRow label={t("Status")} value={diagnostics.runtime.status} compact />
@@ -113,12 +119,12 @@ export function RuntimeDiagnosticsPanel({
         emptyLabel={t("No semaphore slots")}
         items={semaphoreSlots.slice(0, 6)}
         renderItem={(slot) => (
-          <div className="protocol-row compact runtime-resource-row" key={slot.id}>
-            <span>
+          <div className="runtime-diagnostics-row runtime-resource-row" key={slot.id}>
+            <span className="runtime-diagnostics-copy">
               <strong>{slot.resourceType}: {truncatePreview(slot.resourceKey, 42)}</strong>
               <small>{slot.workUnitId} · {t("renewed")} {formatAge(slot.lastRenewedAt)}</small>
             </span>
-            <StatusBadge status={slot.status} />
+            <RuntimeStatus status={runtimeSemaphoreStatusPresentation(slot.status)} />
           </div>
         )}
       />
@@ -143,9 +149,10 @@ function WorkUnitDiagnosticsRow({
   const canCancel = ["queued", "claimed", "running", "waiting_for_approval"].includes(workUnit.status);
   const canRetry = workUnit.status === "failed" || workUnit.status === "stale";
   const canReconcile = ["claimed", "running", "waiting_for_approval", "cancelling", "stale"].includes(workUnit.status);
+  const status = workUnitStatusPresentation(workUnit.status);
   return (
-    <div className="protocol-row runtime-work-unit-row">
-      <span>
+    <div className="runtime-diagnostics-row runtime-work-unit-row" aria-busy={busy || undefined}>
+      <span className="runtime-diagnostics-copy">
         <strong>{workUnit.kind} · {workUnit.id}</strong>
         <small>
           {workUnit.ownerType}:{workUnit.ownerId}
@@ -158,8 +165,8 @@ function WorkUnitDiagnosticsRow({
         </small>
         {workUnit.errorMessage ? <small className="error-text">{workUnit.errorMessage}</small> : null}
       </span>
-      <StatusBadge status={workUnit.status} />
-      <div className="activity-action-row">
+      <RuntimeStatus status={status} />
+      <div className="runtime-diagnostics-actions">
         {canCancel ? (
           <button className="secondary-button compact-button" type="button" onClick={() => onCancel(workUnit.id)} disabled={busy}>
             {busy ? <Loader2 className="spin" size={13} /> : <X size={13} />}
@@ -185,14 +192,30 @@ function WorkUnitDiagnosticsRow({
 
 function RuntimeResourceLeaseRow({ lease }: { readonly lease: ResourceLease }): JSX.Element {
   const { t } = useI18n();
+  const status = resourceLeaseStatusPresentation(lease.status);
   return (
-    <div className="protocol-row compact runtime-resource-row">
-      <span>
+    <div className="runtime-diagnostics-row runtime-resource-row">
+      <span className="runtime-diagnostics-copy">
         <strong>{lease.resourceType}: {truncatePreview(lease.resourceKey, 42)}</strong>
         <small>{lease.workUnitId ?? lease.ownerId} · {t("renewed")} {formatAge(lease.lastRenewedAt ?? lease.acquiredAt)}</small>
       </span>
-      <StatusBadge status={lease.status} />
+      <RuntimeStatus status={status} />
     </div>
+  );
+}
+
+function RuntimeStatus({
+  status,
+}: {
+  readonly status: ReturnType<typeof workUnitStatusPresentation>;
+}): JSX.Element {
+  const { t } = useI18n();
+  return (
+    <StatusIndicator
+      className="runtime-diagnostics-status"
+      label={t(status.labelKey)}
+      tone={status.tone}
+    />
   );
 }
 
@@ -213,7 +236,7 @@ function RuntimeProtocolList<T>({
       </div>
     );
   }
-  return <div className="protocol-list">{items.map(renderItem)}</div>;
+  return <div className="runtime-diagnostics-list">{items.map(renderItem)}</div>;
 }
 
 function isActiveWorkUnit(workUnit: WorkUnit): boolean {

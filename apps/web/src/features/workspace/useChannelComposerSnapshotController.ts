@@ -37,6 +37,22 @@ interface ChannelComposerSnapshot {
   readonly threadReply: ChannelThreadReplySnapshot;
 }
 
+export interface DetachedChannelSendSnapshot {
+  readonly messageDraft: string;
+  readonly pendingAttachments: readonly PendingAttachmentItem<ChannelAttachment>[];
+  readonly pendingLinkPreviews: readonly PendingLinkPreviewItem[];
+  readonly messageMentions: readonly ChannelMention[];
+}
+
+export interface ChannelComposerSnapshotController {
+  readonly rememberDetachedSendFailure: (
+    channelId: string,
+    snapshot: DetachedChannelSendSnapshot,
+    errorMessage: string,
+  ) => void;
+  readonly rememberDetachedSendSuccess: (channelId: string) => void;
+}
+
 export function useChannelComposerSnapshotController({
   autoPreviewUrlsRef,
   messageDraft,
@@ -57,7 +73,7 @@ export function useChannelComposerSnapshotController({
   setSendError,
   setSendState,
   threadReplySnapshot,
-}: ChannelComposerSnapshotControllerInput): void {
+}: ChannelComposerSnapshotControllerInput): ChannelComposerSnapshotController {
   const previousChannelIdRef = useRef(selectedChannelId);
   const composerSnapshotsRef = useRef<Record<string, ChannelComposerSnapshot>>({});
   const onChannelSwitchRef = useRef(onChannelSwitch);
@@ -98,6 +114,30 @@ export function useChannelComposerSnapshotController({
       error: "",
     },
   }), []);
+
+  const rememberDetachedSendFailure = useCallback((
+    channelId: string,
+    snapshot: DetachedChannelSendSnapshot,
+    errorMessage: string,
+  ): void => {
+    const current = composerSnapshotsRef.current[channelId] ?? emptyComposerSnapshot();
+    composerSnapshotsRef.current[channelId] = {
+      ...current,
+      ...snapshot,
+      sendState: "failed",
+      sendError: errorMessage,
+    };
+  }, [emptyComposerSnapshot]);
+
+  const rememberDetachedSendSuccess = useCallback((channelId: string): void => {
+    const current = composerSnapshotsRef.current[channelId];
+    if (!current) return;
+    composerSnapshotsRef.current[channelId] = {
+      ...current,
+      sendState: "idle",
+      sendError: "",
+    };
+  }, []);
 
   const applyComposerSnapshot = useCallback((snapshot: ChannelComposerSnapshot): void => {
     setMessageDraft(snapshot.messageDraft);
@@ -141,4 +181,9 @@ export function useChannelComposerSnapshotController({
     );
     onChannelSwitchRef.current();
   }, [applyComposerSnapshot, emptyComposerSnapshot, readCurrentComposerSnapshot, selectedChannelId]);
+
+  return {
+    rememberDetachedSendFailure,
+    rememberDetachedSendSuccess,
+  };
 }

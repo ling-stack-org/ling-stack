@@ -1,0 +1,31 @@
+{
+  "filename": "1440x960-ling-dark-canvas-far-fit.png",
+  "capturedAt": "2026-07-23T02:00:58.921Z",
+  "viewport": {
+    "width": 1440,
+    "height": 960
+  },
+  "theme": "ling-dark",
+  "locale": "zh-CN",
+  "fixture": "production_canvas_far",
+  "state": "canvas-far-fit",
+  "functionIds": [
+    "PROD-CANVAS-001"
+  ],
+  "sourceCommitOrWorktree": "0a0b80502715+worktree",
+  "consoleErrors": [],
+  "expectedConsoleErrors": [],
+  "pageErrors": [],
+  "documentOverflow": 0,
+  "ownerOverflow": 0,
+  "canvasPixel": {
+    "width": 1159,
+    "height": 920,
+    "decodedPixelHash": "b8e1e5ee0285bbdc4b4bafa657a36f66d1fa8adb6765eacf950e042103465ca0",
+    "uniqueColors": 2363,
+    "opaqueRatio": 1,
+    "nonDominantRatio": 0.5627161721123908
+  },
+  "mediaPixelHash": null,
+  "sha256": "5cdf517dbef432a5c9e4732371f1709ce005d1af876982bcb1534ebc500b5203"
+}

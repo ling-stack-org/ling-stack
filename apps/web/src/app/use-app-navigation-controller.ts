@@ -6,7 +6,7 @@ import {
   type SidebarTarget,
   type ViewId,
 } from "./view-types.js";
-import type { RunSession, Task } from "../types.js";
+import type { RunSession, Task, WorkItemView } from "../types.js";
 import { readRunProviderPresetId } from "../lib/run-evidence.js";
 
 export interface AppNavigationController {
@@ -15,7 +15,7 @@ export interface AppNavigationController {
   readonly selectWorkspaceChannel: (channelId: string) => void;
   readonly selectWorkspaceChannelBranch: (channelId: string, branchId: string) => void;
   readonly selectAiTeammate: (teammateId: string) => void;
-  readonly openTaskFromWorkBoard: (taskId: string) => void;
+  readonly openTaskFromWorkBoard: (taskId: string) => Promise<void>;
   readonly openApprovalsFromWorkspace: (runId?: string) => void;
   readonly openProvidersFromRun: (runToRepair?: RunSession) => void;
   readonly openTaskFromRun: (runToRepair: RunSession) => Promise<void>;
@@ -26,6 +26,7 @@ export function useAppNavigationController(input: {
   readonly formCwd: string;
   readonly selectedChannelId: string;
   readonly tasks: readonly Task[];
+  readonly durableWorkItems: readonly WorkItemView[];
   readonly setActiveView: Dispatch<SetStateAction<ViewId>>;
   readonly setActiveSidebarTarget: Dispatch<SetStateAction<SidebarTarget>>;
   readonly setApprovalRepairRunId: Dispatch<SetStateAction<string>>;
@@ -88,14 +89,19 @@ export function useAppNavigationController(input: {
     input.setActiveSidebarTarget(teammateSidebarTarget(teammateId));
   }
 
-  function openTaskFromWorkBoard(taskId: string): void {
+  async function openTaskFromWorkBoard(taskId: string): Promise<void> {
     const task = input.tasks.find((item) => item.id === taskId);
-    if (task?.channelId) {
-      input.setSelectedChannelId(task.channelId);
-      input.setActiveSidebarTarget(channelSidebarTarget(task.channelId));
+    const channelId = task?.channelId ?? input.durableWorkItems.find((item) => item.taskId === taskId)?.channelId;
+    if (channelId) {
+      input.setSelectedChannelId(channelId);
+      input.setActiveSidebarTarget(channelSidebarTarget(channelId));
     }
     input.setSelectedTaskId(taskId);
     input.setActiveView("workspace");
+    if (channelId && !task) {
+      await input.refreshTasks(channelId);
+      input.setSelectedTaskId(taskId);
+    }
   }
 
   function openApprovalsFromWorkspace(runId?: string): void {

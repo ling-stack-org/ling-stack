@@ -1,213 +1,93 @@
-import { CircleAlert, Database, Image as ImageIcon, Loader2, Play } from "lucide-react";
+import { Image as ImageIcon } from "lucide-react";
+import { Button, EmptyState, Skeleton } from "../../shared/ui/index.js";
 import { useI18n } from "../../i18n.js";
-import { formatDateTime } from "../../lib/formatting.js";
-import { StatusActionRow } from "../../shared/components/index.js";
-import type { MediaJob, MediaJobStatus, ProviderPreset, RunArtifact } from "../../types.js";
-import {
-  mediaArtifactsForJob,
-  deriveMediaJobDisplayState,
-  mediaJobMatchesProductFilter,
-  mediaJobDisplayStateLabel,
-  mediaJobRunDisabledReason,
-  mediaJobPrimaryActionView,
-  mediaJobStatusBadgeClass,
-  mediaJobStatusFilters,
-  mediaOperationLabel,
-  type MediaJobStatusFilter,
-} from "./media-job-view-models.js";
-import { MediaArtifactPreview } from "./MediaArtifactPreview.js";
-import type { MediaJobDisplayContextMap } from "./media-job-display-context.js";
+import type { MediaJobActionId, MediaJobProjectionInput, MediaJobRowView, MediaJobStatusFilter } from "./media-job-types.js";
+import { MediaJobRow } from "./MediaJobRow.js";
 
 export function MediaJobList({
   cwd,
-  jobs,
-  providers,
-  artifactsByJob,
+  projections,
+  rows,
   selectedJobId,
-  runningJobId,
-  startingJobId,
-  isLoading,
   statusFilter,
-  jobContext,
-  onStatusFilterChange,
-  onSelectJob,
-  onRun,
+  initialLoading,
+  loadFailed,
+  hasRunnableModel,
+  onAction,
+  onCreate,
+  onSelect,
+  onShowAll,
 }: {
   readonly cwd: string;
-  readonly jobs: readonly MediaJob[];
-  readonly providers: readonly ProviderPreset[];
-  readonly artifactsByJob: Record<string, readonly RunArtifact[]>;
+  readonly projections: readonly MediaJobProjectionInput[];
+  readonly rows: readonly MediaJobRowView[];
   readonly selectedJobId: string;
-  readonly runningJobId: string;
-  readonly startingJobId: string;
-  readonly isLoading: boolean;
   readonly statusFilter: MediaJobStatusFilter;
-  readonly jobContext: MediaJobDisplayContextMap;
-  readonly onStatusFilterChange: (filter: MediaJobStatusFilter) => void;
-  readonly onSelectJob: (jobId: string) => void;
-  readonly onRun: (jobId: string) => void;
+  readonly initialLoading: boolean;
+  readonly loadFailed: boolean;
+  readonly hasRunnableModel: boolean;
+  readonly onAction: (action: MediaJobActionId, projection: MediaJobProjectionInput) => void;
+  readonly onCreate: () => void;
+  readonly onSelect: (jobId: string) => void;
+  readonly onShowAll: () => void;
 }): JSX.Element {
   const { t } = useI18n();
-  const filteredJobs = jobs.filter((job) =>
-    mediaJobMatchesProductFilter({
-      job,
-      artifacts: artifactsByJob[job.id] ?? [],
-      runningJobId,
-      startingJobId,
-      filter: statusFilter,
-    })
-  );
-
-  return (
-    <section className="media-job-list-panel" aria-labelledby="media-jobs-title">
-      <div className="media-job-filter-bar" aria-label={t("Generation task status")}>
-        {mediaJobStatusFilters.map((filter) => (
-          <button
-            key={filter}
-            className={statusFilter === filter ? "active" : ""}
-            type="button"
-            onClick={() => onStatusFilterChange(filter)}
-          >
-            {t(mediaJobFilterLabel(filter))}
-          </button>
-        ))}
-      </div>
-
-      <div className="media-job-list">
-        {filteredJobs.length === 0 ? (
-          <div className="empty-state compact-empty">
-            {isLoading ? <Loader2 className="spin" /> : <Database />}
-            <span>{isLoading ? t("Loading generation tasks...") : t("No generation tasks recorded for this workspace")}</span>
-          </div>
-        ) : (
-          filteredJobs.map((job) => {
-            const provider = providers.find((item) => item.id === job.providerPresetId);
-            const jobArtifacts = artifactsByJob[job.id] ?? [];
-            const mediaArtifacts = mediaArtifactsForJob(jobArtifacts);
-            const isRunningJob = runningJobId === job.id;
-            const isStartingJob = startingJobId === job.id;
-            const displayState = deriveMediaJobDisplayState({
-              job,
-              artifacts: jobArtifacts,
-              runningJobId,
-              startingJobId,
-            });
-            const actionView = mediaJobPrimaryActionView({
-              job,
-              artifacts: jobArtifacts,
-              isLoading,
-              isRunning: isRunningJob,
-              isStarting: isStartingJob,
-            });
-            const operationLabel = t(mediaOperationLabel(job.operation));
-            const context = jobContext[job.id];
-            const promptSummary = summarizeMediaJobPrompt(job.prompt);
-            const rowTitle = context ? `${context.projectName} · ${context.sceneName}` : promptSummary || operationLabel;
-            const rowDescription = context ? promptSummary || operationLabel : `${operationLabel} · ${provider?.displayName ?? t("Unknown provider")}`;
-            const statusLabel = t(mediaJobDisplayStateLabel(displayState));
-            const disabledReason = mediaJobRunDisabledReason({
-              job,
-              artifacts: jobArtifacts,
-              isLoading,
-              isRunning: isRunningJob,
-              isStarting: isStartingJob,
-            });
-            const disabledTitle = disabledReason ? t(disabledReason) : t(actionView.label);
-            return (
-              <article
-                key={job.id}
-                className={`media-job-row ${job.status} ${displayState}${displayState === "needs_attention" ? " needs-recovery" : ""}${selectedJobId === job.id ? " selected" : ""}`}
-                onClick={() => onSelectJob(job.id)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    onSelectJob(job.id);
-                  }
-                }}
-                role="button"
-                tabIndex={0}
-              >
-                <StatusActionRow
-                  className="media-job-row-content"
-                  leading={<MediaJobResultPreview artifact={mediaArtifacts[0]} cwd={cwd} status={job.status} displayState={displayState} />}
-                  title={<strong>{rowTitle}</strong>}
-                  description={rowDescription}
-                  meta={(
-                    <>
-                      {context ? <span>{provider?.displayName ?? t("Unknown provider")}</span> : null}
-                      <span>{t("{count} generated results", { count: mediaArtifacts.length })}</span>
-                      <time>{formatDateTime(job.updatedAt)}</time>
-                    </>
-                  )}
-                  status={<span className={`status-badge ${mediaJobStatusBadgeClass(displayState)}`}>{statusLabel}</span>}
-                  actions={actionView.visible ? (
-                    <button
-                      className={actionView.emphasis === "primary" ? "primary-button compact-button" : "secondary-button compact-button"}
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onSelectJob(job.id);
-                        onRun(job.id);
-                      }}
-                      disabled={actionView.disabled}
-                      title={disabledTitle}
-                      aria-label={disabledReason ? `${t(actionView.label)}. ${disabledTitle}` : t(actionView.label)}
-                    >
-                      {isRunningJob || isStartingJob ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
-                      {t(actionView.label)}
-                    </button>
-                  ) : undefined}
-                />
-              </article>
-            );
-          })
-        )}
-      </div>
-    </section>
-  );
-}
-
-function summarizeMediaJobPrompt(prompt: string): string {
-  const normalized = prompt.replace(/\s+/g, " ").trim();
-  return normalized.length > 48 ? `${normalized.slice(0, 48)}…` : normalized;
-}
-
-function MediaJobResultPreview({
-  artifact,
-  cwd,
-  status,
-  displayState,
-}: {
-  readonly artifact?: RunArtifact;
-  readonly cwd: string;
-  readonly status: MediaJobStatus;
-  readonly displayState: ReturnType<typeof deriveMediaJobDisplayState>;
-}): JSX.Element {
-  const { t } = useI18n();
-  if (artifact) {
+  if (initialLoading) return <MediaJobListSkeleton />;
+  if (loadFailed) return <div className="media-job-list-state" data-media-jobs-list-state="load-error" />;
+  if (projections.length === 0 && statusFilter === "all") {
     return (
-      <MediaArtifactPreview artifact={artifact} cwd={cwd} variant="tile" className="media-job-result-preview" />
+      <EmptyState
+        className="media-job-list-state"
+        data-media-jobs-list-state="empty"
+        icon={<ImageIcon size={24} />}
+        title={t("No generation tasks yet")}
+        description={t("Create a task to generate an image or video for this workspace.")}
+        action={<Button variant="primary" onClick={onCreate}>{hasRunnableModel ? t("New generation task") : t("Configure generation model")}</Button>}
+      />
     );
   }
+  if (rows.length === 0) {
+    return (
+      <EmptyState
+        className="media-job-list-state"
+        compact
+        data-media-jobs-list-state="no-result"
+        title={t("No tasks match this status")}
+        action={<Button size="sm" onClick={onShowAll}>{t("Show all")}</Button>}
+      />
+    );
+  }
+  const projectionById = new Map(projections.map((item) => [item.job.id, item]));
   return (
-    <span className={`media-job-result-preview empty ${status} ${displayState}`} aria-label={t(mediaJobDisplayStateLabel(displayState))}>
-      {displayState === "generating" || displayState === "starting" ? <Loader2 className="spin" size={20} /> : <CircleAlert size={20} />}
-    </span>
+    <div className="media-job-list" role="listbox" aria-label={t("Generation tasks")}>
+      {rows.map((row) => {
+        const projection = projectionById.get(row.jobId);
+        return projection ? (
+          <MediaJobRow
+            key={row.jobId}
+            cwd={cwd}
+            projection={projection}
+            row={row}
+            selected={row.jobId === selectedJobId}
+            onAction={onAction}
+            onSelect={onSelect}
+          />
+        ) : null;
+      })}
+    </div>
   );
 }
 
-function mediaJobFilterLabel(filter: MediaJobStatusFilter): string {
-  if (filter === "all") {
-    return "All";
-  }
-  if (filter === "ready_to_start") {
-    return "Ready to start";
-  }
-  if (filter === "generating") {
-    return "Generating";
-  }
-  if (filter === "needs_attention") {
-    return "Needs attention";
-  }
-  return "Completed";
+function MediaJobListSkeleton(): JSX.Element {
+  return (
+    <div className="media-job-list media-job-list-skeleton" aria-busy="true" data-media-jobs-list-state="loading">
+      {Array.from({ length: 6 }, (_, index) => (
+        <div className="media-job-row-skeleton" key={index}>
+          <Skeleton shape="block" width={72} height={48} />
+          <span><Skeleton width="72%" /><Skeleton width="92%" /></span>
+          <Skeleton width={88} />
+        </div>
+      ))}
+    </div>
+  );
 }

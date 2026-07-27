@@ -18,11 +18,18 @@ import {
   ToolPlaceholderPage,
 } from "../../../shared/conversation/index.js";
 import {
+  Button,
+  Field,
+  IconButton,
+  SegmentedControl,
+  SegmentedControlItem,
+  Select,
+  StatusIndicator,
+} from "../../../shared/ui/index.js";
+import {
   buildPlanLineageGroups,
   visiblePlanLineageVersions,
 } from "./plan-lineage.js";
-
-import { SelectControl } from "../../../shared/components/SelectControl.js";
 
 export type PlanStatusFilter = "current" | "all" | ProposedPlanArtifact["status"];
 
@@ -34,6 +41,7 @@ export interface PlanHistoryPageProps {
   readonly scope: "thread" | "channel";
   readonly statusFilter: PlanStatusFilter;
   readonly busyPlanId: string;
+  readonly allowChannelScope?: boolean;
   readonly onScopeChange: (scope: "thread" | "channel") => void;
   readonly onStatusFilterChange: (filter: PlanStatusFilter) => void;
   readonly onOpenPlan: (plan: ProposedPlanArtifact) => void;
@@ -48,6 +56,7 @@ export function PlanHistoryPage({
   scope,
   statusFilter,
   busyPlanId,
+  allowChannelScope = true,
   onScopeChange,
   onStatusFilterChange,
   onOpenPlan,
@@ -110,46 +119,53 @@ export function PlanHistoryPage({
             <strong>{t("Plan history")}</strong>
             <small>{scope === "thread" ? t("This thread") : t("This channel")}</small>
           </span>
-          <span className="right-dock-row-state tone-info">{scopedPlans.length}</span>
+          <StatusIndicator compact label={String(scopedPlans.length)} tone="info" />
         </div>
         <div className="right-dock-page-filters">
-          <div className="right-dock-filter-row" aria-label={t("Plan scope")}>
-            <button className={scope === "thread" ? "right-dock-filter active" : "right-dock-filter"} type="button" onClick={() => onScopeChange("thread")}>
-              {t("This thread")}
-            </button>
-            <button className={scope === "channel" ? "right-dock-filter active" : "right-dock-filter"} type="button" onClick={() => onScopeChange("channel")}>
-              {t("This channel")}
-            </button>
-          </div>
+          {allowChannelScope ? (
+            <SegmentedControl
+              className="right-dock-filter-row"
+              aria-label={t("Plan scope")}
+              value={scope}
+              onValueChange={(value) => onScopeChange(value as "thread" | "channel")}
+              size="sm"
+            >
+              <SegmentedControlItem className="right-dock-filter" value="thread">
+                {t("This thread")}
+              </SegmentedControlItem>
+              <SegmentedControlItem className="right-dock-filter" value="channel">
+                {t("This channel")}
+              </SegmentedControlItem>
+            </SegmentedControl>
+          ) : null}
           <div className="right-dock-plan-select-row">
-            <label>
-              <span>{t("Status")}</span>
-              <SelectControl
-              variant="compact" value={statusFilter} onChange={(event) => onStatusFilterChange(event.target.value as PlanStatusFilter)} aria-label={t("Plan status")}>
+            <Field label={t("Status")}>
+              <Select
+                size="sm"
+                value={statusFilter}
+                onChange={(event) => onStatusFilterChange(event.target.value as PlanStatusFilter)}
+                aria-label={t("Plan status")}
+              >
                 <option value="current">{t("Current")}</option>
                 <option value="all">{t("All")}</option>
                 <option value="draft">{t("Draft")}</option>
                 <option value="accepted">{t("Accepted")}</option>
                 <option value="superseded">{t("Superseded")}</option>
                 <option value="archived">{t("Archived")}</option>
-              </SelectControl>
-            </label>
-            <label>
-              <span>{t("Agent")}</span>
-              <SelectControl
-              variant="compact" value={agentFilter} onChange={(event) => setAgentFilter(event.target.value)} aria-label={t("Plan agent")}>
+              </Select>
+            </Field>
+            <Field label={t("Agent")}>
+              <Select size="sm" value={agentFilter} onChange={(event) => setAgentFilter(event.target.value)} aria-label={t("Plan agent")}>
                 <option value="all">{t("All")}</option>
                 {agentOptions.map((agentId) => <option key={agentId} value={agentId}>{agentId}</option>)}
-              </SelectControl>
-            </label>
-            <label>
-              <span>{t("Goal")}</span>
-              <SelectControl
-              variant="compact" value={goalFilter} onChange={(event) => setGoalFilter(event.target.value)} aria-label={t("Plan goal")}>
+              </Select>
+            </Field>
+            <Field label={t("Goal")}>
+              <Select size="sm" value={goalFilter} onChange={(event) => setGoalFilter(event.target.value)} aria-label={t("Plan goal")}>
                 <option value="all">{t("All")}</option>
                 {goalOptions.map((goalId) => <option key={goalId} value={goalId}>{goalId}</option>)}
-              </SelectControl>
-            </label>
+              </Select>
+            </Field>
           </div>
         </div>
       </div>
@@ -166,6 +182,7 @@ export function PlanHistoryPage({
             const visibleVersions = visiblePlanLineageVersions(group, expanded);
             const visibleIds = new Set(visibleVersions.map((plan) => plan.id));
             const foldedSupersededCount = group.versions.filter((plan) => plan.status === "superseded" && !visibleIds.has(plan.id)).length;
+            const LineageToggleIcon = expanded ? ChevronDown : ChevronRight;
             return (
               <section key={group.id} className="right-dock-plan-lineage-group" aria-label={t("Plan lineage group")}>
                 <header className="right-dock-plan-lineage-head">
@@ -174,9 +191,13 @@ export function PlanHistoryPage({
                     <small>{group.goalId ? t("Goal: {goal}", { goal: group.goalId }) : t("No goal")} · {group.planGroupId} · {t("{count} versions", { count: group.versionCount })}</small>
                   </span>
                   {foldedSupersededCount > 0 ? (
-                    <button className="right-dock-icon-button" type="button" onClick={() => toggleLineageGroup(group.id)} aria-label={expanded ? t("Collapse versions") : t("Expand versions")} title={expanded ? t("Collapse versions") : t("Expand versions")}>
-                      {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                    </button>
+                    <IconButton
+                      className="right-dock-icon-button"
+                      icon={LineageToggleIcon}
+                      label={expanded ? t("Collapse versions") : t("Expand versions")}
+                      onClick={() => toggleLineageGroup(group.id)}
+                      size="sm"
+                    />
                   ) : null}
                 </header>
                 <div className="right-dock-plan-list">
@@ -185,14 +206,15 @@ export function PlanHistoryPage({
                     const sourceStateLabel = planSourceMessageStateLabel(plan, t);
                     return (
                       <div key={plan.id} className={busyPlanId === plan.id ? "right-dock-plan-row busy" : "right-dock-plan-row"}>
-                        <button
+                        <Button
                           className="right-dock-row right-dock-plan-main"
-                          type="button"
+                          leadingIcon={<span className={`right-dock-row-dot ${planStatusTone(plan.status)}`} />}
+                          size="md"
+                          variant="ghost"
                           onClick={() => onOpenPlan(plan)}
                           aria-label={`${t("Open plan detail")} ${plan.title}`}
                           title={t("Open plan detail")}
                         >
-                          <span className={`right-dock-row-dot ${planStatusTone(plan.status)}`} />
                           <span className="right-dock-row-copy">
                             <strong>{plan.title}</strong>
                             <small>{proposedPlanSubtitle(plan, t)}</small>
@@ -201,25 +223,23 @@ export function PlanHistoryPage({
                             ) : null}
                           </span>
                           <span className={`right-dock-row-state ${planStatusTone(plan.status)}`}>{proposedPlanStatusLabel(plan.status, t)}</span>
-                        </button>
-                        <button
+                        </Button>
+                        <IconButton
                           className="right-dock-icon-button right-dock-plan-source-button"
-                          type="button"
+                          icon={LocateFixed}
+                          label={sourceAvailable ? t("Open source") : sourceStateLabel}
                           onClick={() => onOpenSource?.(plan)}
-                          aria-label={sourceAvailable ? t("Open source") : sourceStateLabel}
-                          title={sourceAvailable ? t("Open source") : sourceStateLabel}
                           disabled={!sourceAvailable || !onOpenSource}
-                        >
-                          <LocateFixed size={14} />
-                        </button>
+                          size="sm"
+                        />
                       </div>
                     );
                   })}
                 </div>
                 {foldedSupersededCount > 0 ? (
-                  <button className="right-dock-plan-lineage-fold" type="button" onClick={() => toggleLineageGroup(group.id)}>
+                  <Button className="right-dock-plan-lineage-fold" variant="ghost" size="sm" onClick={() => toggleLineageGroup(group.id)}>
                     {expanded ? t("Hide superseded versions") : t("{count} superseded versions hidden", { count: foldedSupersededCount })}
-                  </button>
+                  </Button>
                 ) : null}
               </section>
             );
@@ -271,30 +291,24 @@ export function PlanDetailPanel({
         </div>
       </header>
       <div className="right-dock-plan-action-row">
-        <button className="secondary-button compact-button" type="button" onClick={() => onOpenSource?.(plan)} disabled={!sourceAvailable || busy}>
-          <LocateFixed size={14} />
+        <Button size="sm" leadingIcon={<LocateFixed size={14} />} onClick={() => onOpenSource?.(plan)} disabled={!sourceAvailable || busy}>
           {sourceAvailable ? t("Open source") : sourceStateLabel}
-        </button>
-        <button className="secondary-button compact-button" type="button" onClick={() => onSave?.(plan)} disabled={archived || busy}>
-          <Save size={14} />
+        </Button>
+        <Button size="sm" leadingIcon={<Save size={14} />} onClick={() => onSave?.(plan)} disabled={archived || busy}>
           {t("Save")}
-        </button>
-        <button className="secondary-button compact-button" type="button" onClick={() => onRefine?.(plan)} disabled={archived || busy}>
-          <RefreshCw size={14} />
+        </Button>
+        <Button size="sm" leadingIcon={<RefreshCw size={14} />} onClick={() => onRefine?.(plan)} disabled={archived || busy}>
           {t("Refine")}
-        </button>
-        <button className="secondary-button compact-button" type="button" onClick={() => onConvert?.(plan)} disabled={archived || busy}>
-          <Workflow size={14} />
+        </Button>
+        <Button size="sm" leadingIcon={<Workflow size={14} />} onClick={() => onConvert?.(plan)} disabled={archived || busy}>
           {t("Convert")}
-        </button>
-        <button className="primary-button compact-button" type="button" onClick={() => onAccept?.(plan)} disabled={archived || accepted || busy}>
-          <Play size={14} />
+        </Button>
+        <Button variant="primary" size="sm" leadingIcon={<Play size={14} />} onClick={() => onAccept?.(plan)} disabled={archived || accepted || busy}>
           {t("Implement")}
-        </button>
-        <button className="secondary-button compact-button danger" type="button" onClick={() => onArchive?.(plan)} disabled={archived || busy}>
-          <Archive size={14} />
+        </Button>
+        <Button variant="danger" size="sm" leadingIcon={<Archive size={14} />} onClick={() => onArchive?.(plan)} disabled={archived || busy}>
           {t("Archive")}
-        </button>
+        </Button>
       </div>
       <dl className="right-dock-detail-list">
         <div>

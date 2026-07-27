@@ -1,18 +1,23 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import {
   Archive,
-  Command,
   FileCheck2,
   FolderOpen,
   GitBranch,
   ListChecks,
-  Loader2,
   Search,
   SquareTerminal,
-  X,
 } from "lucide-react";
 import { selectWorkspaceDirectory } from "../../api/workspace-directory.js";
 import { useI18n, type Translate } from "../../i18n.js";
+import {
+  Button,
+  DataRow,
+  InlineFeedback,
+  InspectorSection,
+  StatusIndicator,
+  type StatusTone,
+} from "../../shared/ui/index.js";
 import type {
   ChannelWorkspaceBinding,
   ChannelWorkspaceMode,
@@ -89,9 +94,7 @@ export interface ChannelEnvironmentSummary {
   readonly browser?: ChannelEnvironmentEvidenceSummary;
   readonly sources?: ChannelEnvironmentEvidenceSummary;
   readonly output?: ChannelEnvironmentOutputSummary;
-  readonly commitAction?: {
-    readonly disabledReason: string;
-  };
+  readonly commitAction?: { readonly disabledReason: string };
   readonly popoverRows: readonly ChannelEnvironmentPopoverRow[];
 }
 
@@ -113,11 +116,14 @@ export function ChannelEnvironmentPage({
   const { t } = useI18n();
   const [selectingDirectory, setSelectingDirectory] = useState(false);
   const [directoryError, setDirectoryError] = useState("");
+  const surfaceState = deriveEnvironmentSurfaceState(summary);
+  const gitState = deriveGitRowState(summary, t);
+  const workspaceReady = summary.workspace?.status === "ready";
+  const commitDisabledReason = summary.commitAction?.disabledReason
+    ?? t("Commit and push require a daemon Git action and approval policy. This first version is read-only.");
 
   async function changeWorkspaceDirectory(): Promise<void> {
-    if (selectingDirectory) {
-      return;
-    }
+    if (selectingDirectory) return;
     const pickerCwd = summary.workspace?.path.trim() || workspacePickerCwd.trim();
     if (!pickerCwd) {
       setDirectoryError(t("Workspace folder unavailable"));
@@ -127,10 +133,7 @@ export function ChannelEnvironmentPage({
     setDirectoryError("");
     try {
       const result = await selectWorkspaceDirectory(pickerCwd);
-      if (result.cancelled) {
-        return;
-      }
-      await onChangeWorkspacePath(result.path);
+      if (!result.cancelled) await onChangeWorkspacePath(result.path);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setDirectoryError(message || t("Folder picker unavailable."));
@@ -140,254 +143,148 @@ export function ChannelEnvironmentPage({
   }
 
   return (
-    <section className="channel-environment-page" aria-label={t("Environment")}>
-      <div className="channel-environment-stack">
-        <section className="channel-environment-section local" aria-label={t("Local environment")}>
-          <header>
-            <span>
-              <Command size={15} />
-              <strong>{t("Local environment")}</strong>
-            </span>
-            <small>{channelName ? `#${channelName}` : t("Current channel")}</small>
-          </header>
-          {summary.workspace ? (
-            <div className="channel-environment-row interactive">
-              <span className={`channel-environment-row-icon ${summary.workspace.status}`}>
-                <FolderOpen size={16} />
-              </span>
-              <span className="channel-environment-row-copy">
-                <strong>{summary.workspace.modeLabel}</strong>
-                <small title={summary.workspace.path}>{summary.workspace.path || t("No workspace path")}</small>
-                {summary.workspace.errorMessage ? <small className="danger-text">{summary.workspace.errorMessage}</small> : null}
-              </span>
-              <button className="secondary-button compact-button" type="button" onClick={() => void changeWorkspaceDirectory()} disabled={selectingDirectory}>
-                {selectingDirectory ? <Loader2 className="spin" size={14} /> : <FolderOpen size={14} />}
-                {selectingDirectory ? t("Selecting project...") : t("Change directory")}
-              </button>
-            </div>
-          ) : (
-            <div className="channel-environment-empty">{t("No local workspace is bound to this channel.")}</div>
-          )}
-          {directoryError ? <small className="channel-environment-directory-error danger-text" role="alert">{directoryError}</small> : null}
-        </section>
+    <section
+      className="channel-environment-page"
+      aria-label={t("Environment")}
+      data-ui2-channel-environment="true"
+      data-environment-state={surfaceState.id}
+    >
+      <header className="channel-environment-page-header">
+        <div>
+          <h2>{t("Environment")}</h2>
+          <span>{channelName ? `#${channelName}` : t("Current channel")}</span>
+        </div>
+        <StatusIndicator label={t(surfaceState.label)} tone={surfaceState.tone} />
+      </header>
 
-        <section className="channel-environment-section changes" aria-label={t("Changes")}>
-          <header>
-            <span>
-              <ListChecks size={15} />
-              <strong>{t("Changes")}</strong>
-            </span>
-            {summary.changes
-              ? environmentChangesHaveDiffStats(summary.changes)
+      {summary.gitStatusLoadState.status === "error" ? (
+        <InlineFeedback tone="danger" title={t("Git status unavailable")}>
+          {summary.gitStatusLoadState.errorMessage}
+        </InlineFeedback>
+      ) : null}
+      {directoryError ? <InlineFeedback tone="danger">{directoryError}</InlineFeedback> : null}
+      {summary.workspace?.errorMessage ? (
+        <InlineFeedback tone="danger" title={t("Workspace folder unavailable")}>
+          {summary.workspace.errorMessage}
+        </InlineFeedback>
+      ) : null}
+
+      <div className="channel-environment-list" role="list">
+        <DataRow
+          compact
+          role="listitem"
+          data-environment-row="workspace"
+          identity={<EnvironmentIdentity icon={<FolderOpen />} label={t("Local environment")} />}
+          summary={summary.workspace?.path || t("No local workspace is bound to this channel.")}
+          status={<StatusIndicator label={summary.workspace?.modeLabel ?? t("Unavailable")} tone={workspaceReady ? "success" : "danger"} />}
+          actions={(
+            <Button
+              size="sm"
+              variant="secondary"
+              leadingIcon={<FolderOpen size={14} />}
+              loading={selectingDirectory}
+              loadingLabel={t("Selecting project...")}
+              onClick={() => void changeWorkspaceDirectory()}
+              disabled={!summary.workspace && !workspacePickerCwd.trim()}
+            >
+              {t("Change directory")}
+            </Button>
+          )}
+        />
+        <DataRow
+          compact
+          role="listitem"
+          data-environment-row="changes"
+          identity={<EnvironmentIdentity icon={<ListChecks />} label={t("Changes")} />}
+          summary={summary.changes ? environmentChangesDetail(summary.changes, t) : environmentGitStatusEmptyMessage(summary.gitStatusLoadState, t)}
+          status={(
+            <span className="channel-environment-change-status">
+              {summary.changes && environmentChangesHaveDiffStats(summary.changes)
                 ? <ChannelEnvironmentDiffStat additions={summary.changes.additions ?? 0} deletions={summary.changes.deletions ?? 0} />
-                : <small>{summary.changes.label}</small>
-              : <small>{environmentGitStatusLabel(summary.gitStatusLoadState, t)}</small>}
-          </header>
-          {summary.changes ? (
-            <div className="channel-environment-row">
-              <span className="channel-environment-row-icon waiting">
-                <ListChecks size={16} />
-              </span>
-              <span className="channel-environment-row-copy">
-                <strong>{summary.changes.label}</strong>
-                <small>{environmentChangesDetail(summary.changes, t)}</small>
-              </span>
-            </div>
-          ) : (
-            <div className="channel-environment-empty">{environmentGitStatusEmptyMessage(summary.gitStatusLoadState, t)}</div>
+                : null}
+              <StatusIndicator label={gitState.label} tone={gitState.tone} />
+            </span>
           )}
-        </section>
-
-        <section className="channel-environment-section review" aria-label={t("Review")}>
-          <header>
-            <span>
-              <ListChecks size={15} />
-              <strong>{t("Review")}</strong>
-            </span>
-            <small>{summary.review?.label ?? t("No review items")}</small>
-          </header>
-          {summary.review ? (
-            <div className="channel-environment-row interactive">
-              <span className="channel-environment-row-icon waiting">
-                <ListChecks size={16} />
-              </span>
-              <span className="channel-environment-row-copy">
-                <strong>{summary.review.label}</strong>
-                <small>{t("Open the Review page to inspect runtime issues, evidence gaps, and approval gates.")}</small>
-              </span>
-              <button className="secondary-button compact-button" type="button" onClick={onOpenReview}>
-                <ListChecks size={14} />
-                {t("View review")}
-              </button>
-            </div>
-          ) : (
-            <div className="channel-environment-empty">{t("No review items")}</div>
-          )}
-        </section>
-
-        <section className="channel-environment-section git" aria-label={t("Working branch")}>
-          <header>
-            <span>
-              <GitBranch size={15} />
-              <strong>{t("Working branch")}</strong>
-            </span>
-            <small>{summary.git?.branchName ?? t("Unavailable")}</small>
-          </header>
-          {summary.git ? (
-            <div className="channel-environment-row">
-              <span className="channel-environment-row-icon info">
-                <GitBranch size={16} />
-              </span>
-              <span className="channel-environment-row-copy">
-                <strong>{summary.git.branchName}</strong>
-                <small>{summary.git.baseBranch ? t("Base branch: {branch}", { branch: summary.git.baseBranch }) : t("Git branch from channel workspace binding.")}</small>
-              </span>
-            </div>
-          ) : (
-            <div className="channel-environment-empty">{t("Working branch unavailable")}</div>
-          )}
-        </section>
-
-        <section className="channel-environment-section commit" aria-label={t("Commit or push")}>
-          <header>
-            <span>
-              <SquareTerminal size={15} />
-              <strong>{t("Commit or push")}</strong>
-            </span>
-            <small>{t("Read-only shell")}</small>
-          </header>
-          <div className="channel-environment-row interactive">
-            <span className="channel-environment-row-icon neutral">
-              <SquareTerminal size={16} />
-            </span>
-            <span className="channel-environment-row-copy">
-              <strong>{t("Commit shell is disabled")}</strong>
-              <small>{summary.commitAction?.disabledReason ?? t("Commit and push require a daemon Git action and approval policy. This first version is read-only.")}</small>
-            </span>
-            <button className="secondary-button compact-button" type="button" onClick={onOpenCommit}>
-              {t("Open")}
-            </button>
-          </div>
-        </section>
-
-        <section className="channel-environment-section browser" aria-label={t("Browser")}>
-          <header>
-            <span>
-              <Search size={15} />
-              <strong>{t("Browser")}</strong>
-            </span>
-            <small>{summary.browser?.label ?? t("No browser evidence")}</small>
-          </header>
-          <div className="channel-environment-empty">{summary.browser?.label ?? t("No browser evidence")}</div>
-        </section>
-
-        <section className="channel-environment-section sources" aria-label={t("Sources")}>
-          <header>
-            <span>
-              <FileCheck2 size={15} />
-              <strong>{t("Sources")}</strong>
-            </span>
-            <small>{summary.sources?.label ?? t("No sources")}</small>
-          </header>
-          <div className="channel-environment-empty">{summary.sources?.label ?? t("No sources")}</div>
-        </section>
-
-        <section className="channel-environment-section output" aria-label={t("Output")}>
-          <header>
-            <span>
-              <Archive size={15} />
-              <strong>{t("Output")}</strong>
-            </span>
-            <small>{summary.output?.label ?? t("No artifacts")}</small>
-          </header>
-          <div className="channel-environment-empty">{summary.output?.label ?? t("No artifacts")}</div>
-        </section>
+        />
+        <DataRow
+          compact
+          role="listitem"
+          data-environment-row="review"
+          identity={<EnvironmentIdentity icon={<ListChecks />} label={t("Review")} />}
+          summary={summary.review?.label ?? t("No review items")}
+          status={<StatusIndicator label={summary.review ? t("Needs attention") : t("Ready")} tone={summary.review ? "warning" : "neutral"} />}
+          actions={summary.review ? (
+            <Button size="sm" variant="secondary" onClick={onOpenReview}>{t("View review")}</Button>
+          ) : undefined}
+        />
+        <DataRow
+          compact
+          role="listitem"
+          data-environment-row="branch"
+          identity={<EnvironmentIdentity icon={<GitBranch />} label={t("Working branch")} />}
+          summary={summary.git?.baseBranch ? t("Base branch: {branch}", { branch: summary.git.baseBranch }) : t("Git branch from channel workspace binding.")}
+          status={<StatusIndicator label={summary.git?.branchName ?? t("Unavailable")} tone={summary.git ? "info" : "neutral"} />}
+        />
+        <DataRow
+          compact
+          role="listitem"
+          data-environment-row="commit"
+          identity={<EnvironmentIdentity icon={<SquareTerminal />} label={t("Commit or push")} />}
+          summary={t("Read-only shell")}
+          status={<StatusIndicator label={t("Unavailable")} tone="neutral" />}
+          actions={<Button size="sm" variant="secondary" onClick={onOpenCommit}>{t("Open")}</Button>}
+        />
       </div>
+
+      <InspectorSection
+        className="channel-environment-evidence"
+        title={t("Evidence and output")}
+        summary={environmentEvidenceSummary(summary, t)}
+      >
+        <div className="channel-environment-evidence-grid">
+          <EnvironmentMetric icon={<Search />} label={t("Browser")} value={summary.browser?.label ?? t("No browser evidence")} />
+          <EnvironmentMetric icon={<FileCheck2 />} label={t("Sources")} value={summary.sources?.label ?? t("No sources")} />
+          <EnvironmentMetric icon={<Archive />} label={t("Output")} value={summary.output?.label ?? t("No artifacts")} />
+        </div>
+        <InlineFeedback tone="neutral" title={t("Commit shell is disabled")}>{commitDisabledReason}</InlineFeedback>
+      </InspectorSection>
     </section>
   );
 }
 
-export function ChannelEnvironmentCommitDialog({
-  message,
-  includeUnstaged,
-  disabledReason,
-  onMessageChange,
-  onIncludeUnstagedChange,
-  onClose,
-}: {
-  readonly message: string;
-  readonly includeUnstaged: boolean;
-  readonly disabledReason: string;
-  readonly onMessageChange: (message: string) => void;
-  readonly onIncludeUnstagedChange: (include: boolean) => void;
-  readonly onClose: () => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  useEffect(() => {
-    function onKeyDown(event: KeyboardEvent): void {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    }
-    globalThis.addEventListener("keydown", onKeyDown);
-    return () => globalThis.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
-  return (
-    <div
-      className="environment-commit-dialog-backdrop"
-      role="presentation"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) {
-          onClose();
-        }
-      }}
-    >
-      <section className="environment-commit-dialog" role="dialog" aria-modal="true" aria-label={t("Commit or push")}>
-        <header className="environment-commit-dialog-head">
-          <span>
-            <SquareTerminal size={16} />
-            <strong>{t("Commit or push")}</strong>
-          </span>
-          <button className="icon-button" type="button" onClick={onClose} aria-label={t("Close")} title={t("Close")}>
-            <X size={14} />
-          </button>
-        </header>
-        <label className="field">
-          <span>{t("Commit message")}</span>
-          <textarea
-            className="environment-commit-message"
-            value={message}
-            onChange={(event) => onMessageChange(event.target.value)}
-            placeholder={t("Describe the change")}
-          />
-        </label>
-        <label className="checkbox-row environment-include-unstaged">
-          <input
-            type="checkbox"
-            checked={includeUnstaged}
-            onChange={(event) => onIncludeUnstagedChange(event.target.checked)}
-          />
-          <span>{t("Include unstaged changes")}</span>
-        </label>
-        <p>{disabledReason}</p>
-        <div className="environment-commit-actions">
-          <button className="secondary-button compact-button" type="button" disabled title={disabledReason}>{t("Commit")}</button>
-          <button className="secondary-button compact-button" type="button" disabled title={disabledReason}>{t("Commit and push")}</button>
-          <button className="secondary-button compact-button" type="button" disabled title={disabledReason}>{t("Push")}</button>
-          <button className="secondary-button compact-button" type="button" onClick={onClose}>{t("Cancel")}</button>
-        </div>
-      </section>
-    </div>
-  );
+function EnvironmentIdentity({ icon, label }: { readonly icon: ReactNode; readonly label: string }): JSX.Element {
+  return <span className="channel-environment-identity"><span aria-hidden="true">{icon}</span><strong>{label}</strong></span>;
 }
 
-export function ChannelEnvironmentDiffStat({
-  additions,
-  deletions,
-}: {
-  readonly additions: number;
-  readonly deletions: number;
-}): JSX.Element {
+function EnvironmentMetric({ icon, label, value }: { readonly icon: ReactNode; readonly label: string; readonly value: string }): JSX.Element {
+  return <span className="channel-environment-metric"><span aria-hidden="true">{icon}</span><span><strong>{label}</strong><small>{value}</small></span></span>;
+}
+
+function deriveEnvironmentSurfaceState(summary: ChannelEnvironmentSummary): { readonly id: string; readonly label: string; readonly tone: StatusTone } {
+  if (summary.gitStatusLoadState.status === "error" || summary.workspace?.status === "blocked" || summary.workspace?.status === "missing") {
+    return { id: "blocked", label: "Needs attention", tone: "danger" };
+  }
+  if (summary.changes?.conflictedFileCount) return { id: "conflict", label: "Needs attention", tone: "danger" };
+  if (summary.gitStatusLoadState.status === "loading") return { id: "loading", label: "Loading", tone: "info" };
+  if (summary.changes || summary.review) return { id: "attention", label: "Needs attention", tone: "warning" };
+  return { id: "ready", label: "Ready", tone: "success" };
+}
+
+function deriveGitRowState(summary: ChannelEnvironmentSummary, t: Translate): { readonly label: string; readonly tone: StatusTone } {
+  if (summary.gitStatusLoadState.status === "error") return { label: t("Unavailable"), tone: "danger" };
+  if (summary.gitStatusLoadState.status === "loading") return { label: t("Loading"), tone: "info" };
+  if (summary.changes?.conflictedFileCount) return { label: t("Needs attention"), tone: "danger" };
+  if (summary.changes) return { label: summary.changes.label, tone: "warning" };
+  const status = environmentGitStatusLabel(summary.gitStatusLoadState, t);
+  return { label: status, tone: status === t("No code changes") ? "success" : "neutral" };
+}
+
+function environmentEvidenceSummary(summary: ChannelEnvironmentSummary, t: Translate): string {
+  const count = (summary.browser?.count ?? 0) + (summary.sources?.count ?? 0) + (summary.output?.count ?? 0);
+  return count === 0 ? t("No linked resources") : t("{count} linked items", { count });
+}
+
+export function ChannelEnvironmentDiffStat({ additions, deletions }: { readonly additions: number; readonly deletions: number }): JSX.Element {
   return (
     <span className="channel-environment-diff-stat" aria-label={`+${additions} -${deletions}`}>
       <span className="add">+{additions}</span>
@@ -401,10 +298,7 @@ export function environmentChangesHaveDiffStats(changes: ChannelEnvironmentGitCh
 }
 
 export function environmentChangesLabel(changedFileCount: number, t: Translate): string {
-  if (changedFileCount === 1) {
-    return t("1 changed file");
-  }
-  return t("{count} changed files", { count: changedFileCount });
+  return changedFileCount === 1 ? t("1 changed file") : t("{count} changed files", { count: changedFileCount });
 }
 
 function environmentChangesDetail(changes: ChannelEnvironmentGitChanges, t: Translate): string {
@@ -414,64 +308,36 @@ function environmentChangesDetail(changes: ChannelEnvironmentGitChanges, t: Tran
     changes.untrackedFileCount > 0 ? t("{count} untracked", { count: changes.untrackedFileCount }) : "",
     changes.conflictedFileCount > 0 ? t("{count} conflicted", { count: changes.conflictedFileCount }) : "",
   ].filter(Boolean);
-  return parts.length > 0 ? parts.join(" · ") : t("Git working tree has local changes.");
+  const total = environmentChangesLabel(changes.changedFileCount, t);
+  return parts.length > 0 ? `${total} · ${parts.join(" · ")}` : total;
 }
 
 export function environmentReviewLabel(reviewItemCount: number, t: Translate): string {
-  if (reviewItemCount === 1) {
-    return t("1 review item");
-  }
-  return t("{count} review items", { count: reviewItemCount });
+  return reviewItemCount === 1 ? t("1 review item") : t("{count} review items", { count: reviewItemCount });
 }
 
 function environmentGitStatusLabel(state: ChannelGitStatusLoadState, t: Translate): string {
-  if (state.status === "loading") {
-    return t("Loading Git status");
-  }
-  if (state.status === "error") {
-    return t("Git status unavailable");
-  }
-  if (state.status !== "loaded") {
-    return t("Git status unavailable");
-  }
+  if (state.status === "loading") return t("Loading Git status");
+  if (state.status === "error" || state.status !== "loaded") return t("Git status unavailable");
   switch (state.statusValue.state) {
-    case "clean":
-      return t("No code changes");
-    case "not_git_repo":
-      return t("Not a Git repository");
-    case "unavailable":
-      return state.statusValue.unavailableReason ?? t("Git status unavailable");
-    case "error":
-      return state.statusValue.errorMessage ?? t("Git status failed");
-    case "dirty":
-      return environmentChangesLabel(state.statusValue.changedFileCount, t);
-    default:
-      return t("Git status unavailable");
+    case "clean": return t("No code changes");
+    case "not_git_repo": return t("Not a Git repository");
+    case "unavailable": return state.statusValue.unavailableReason ?? t("Git status unavailable");
+    case "error": return state.statusValue.errorMessage ?? t("Git status failed");
+    case "dirty": return environmentChangesLabel(state.statusValue.changedFileCount, t);
+    default: return t("Git status unavailable");
   }
 }
 
 function environmentGitStatusEmptyMessage(state: ChannelGitStatusLoadState, t: Translate): string {
-  if (state.status === "loading") {
-    return t("Loading Git status");
-  }
-  if (state.status === "error") {
-    return t("Git status unavailable");
-  }
-  if (state.status !== "loaded") {
-    return t("Git status unavailable");
-  }
+  if (state.status === "loading") return t("Loading Git status");
+  if (state.status === "error" || state.status !== "loaded") return t("Git status unavailable");
   switch (state.statusValue.state) {
-    case "clean":
-      return t("No code changes");
-    case "not_git_repo":
-      return t("Not a Git repository");
-    case "unavailable":
-      return t("Git status unavailable");
-    case "error":
-      return t("Git status failed");
-    case "dirty":
-      return environmentChangesLabel(state.statusValue.changedFileCount, t);
-    default:
-      return t("Git status unavailable");
+    case "clean": return t("No code changes");
+    case "not_git_repo": return t("Not a Git repository");
+    case "unavailable": return t("Git status unavailable");
+    case "error": return t("Git status failed");
+    case "dirty": return environmentChangesLabel(state.statusValue.changedFileCount, t);
+    default: return t("Git status unavailable");
   }
 }

@@ -3,7 +3,8 @@ import { Bot, Camera, Check, Pencil, RefreshCw, ShieldCheck, Sparkles } from "lu
 import { getUserProfile, updateUserProfile } from "../../api/profile.js";
 import { listRuns } from "../../api/runs.js";
 import { listSkills } from "../../api/skills.js";
-import { useI18n } from "../../i18n.js";
+import { useI18n, type Locale } from "../../i18n.js";
+import { Field, Input, useLingToast } from "../../shared/ui/index.js";
 import type { RunSession, SkillRegistryEntry, UserProfile } from "../../types.js";
 import { AvatarCropDialog } from "./AvatarCropDialog.js";
 import { ProfileSettingsSurface, type ActivityMode, type ProfileMetrics } from "./ProfileSettingsSurface.js";
@@ -17,13 +18,14 @@ export function ProfilePage({
   readonly onProfileChange?: (profile: UserProfile) => void;
   readonly variant?: "standalone" | "settings";
 }): JSX.Element {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
+  const { showToast } = useLingToast();
+  const avatarTriggerRef = useRef<HTMLButtonElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [profile, setProfile] = useState<UserProfile | undefined>();
   const [runs, setRuns] = useState<readonly RunSession[]>([]);
   const [skills, setSkills] = useState<readonly SkillRegistryEntry[]>([]);
   const [displayName, setDisplayName] = useState("");
-  const [handle, setHandle] = useState("");
   const [avatarDataUrl, setAvatarDataUrl] = useState<string | undefined>();
   const [avatarCropSource, setAvatarCropSource] = useState<string | undefined>();
   const [activityMode, setActivityMode] = useState<ActivityMode>("day");
@@ -31,13 +33,14 @@ export function ProfilePage({
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
 
-  const metrics = useMemo(() => buildProfileMetrics(runs, skills), [runs, skills]);
-  const activity = useMemo(() => buildActivityCalendar(metrics.activityDays, activityMode), [activityMode, metrics.activityDays]);
+  const metrics = useMemo(() => buildProfileMetrics(runs, skills, t("Not recorded")), [runs, skills, t]);
+  const activity = useMemo(
+    () => buildActivityCalendar(metrics.activityDays, activityMode, locale),
+    [activityMode, locale, metrics.activityDays],
+  );
   const hasProfileChanges =
     profile !== undefined &&
-    (displayName.trim() !== profile.displayName ||
-      normalizeHandle(handle) !== (profile.handle ?? "") ||
-      avatarDataUrl !== profile.avatarDataUrl);
+    (displayName.trim() !== profile.displayName || avatarDataUrl !== profile.avatarDataUrl);
 
   useEffect(() => {
     void refresh();
@@ -58,12 +61,11 @@ export function ProfilePage({
       setProfile(profileResponse.profile);
       onProfileChange?.(profileResponse.profile);
       setDisplayName(profileResponse.profile.displayName);
-      setHandle(profileResponse.profile.handle ?? "");
       setAvatarDataUrl(profileResponse.profile.avatarDataUrl);
       setRuns(runsResponse.runs);
       setSkills(skillsResponse.skills);
-    } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : String(caught));
+    } catch {
+      setMessage(t("Profile could not be loaded. Try reopening this page."));
     } finally {
       setLoading(false);
     }
@@ -71,11 +73,9 @@ export function ProfilePage({
 
   async function saveProfilePatch({
     displayName: nextDisplayName = displayName,
-    handle: nextHandle = normalizeHandle(handle) || null,
     avatarDataUrl: nextAvatarDataUrl = avatarDataUrl ?? null,
   }: {
     readonly displayName?: string;
-    readonly handle?: string | null;
     readonly avatarDataUrl?: string | null;
   }): Promise<UserProfile | undefined> {
     if (!cwd.trim() || saving) {
@@ -86,18 +86,18 @@ export function ProfilePage({
     try {
       const response = await updateUserProfile(cwd, {
         displayName: nextDisplayName,
-        handle: nextHandle,
+        handle: profile?.handle ?? null,
         avatarDataUrl: nextAvatarDataUrl,
       });
       setProfile(response.profile);
       onProfileChange?.(response.profile);
       setDisplayName(response.profile.displayName);
-      setHandle(response.profile.handle ?? "");
       setAvatarDataUrl(response.profile.avatarDataUrl);
-      setMessage(t("Profile saved"));
+      setMessage("");
+      showToast({ message: t("Profile saved"), scope: "profile:save", tone: "success" });
       return response.profile;
-    } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : String(caught));
+    } catch {
+      setMessage(t("Profile changes were not saved. Try again."));
       return undefined;
     } finally {
       setSaving(false);
@@ -108,7 +108,6 @@ export function ProfilePage({
     event?.preventDefault();
     await saveProfilePatch({
       displayName,
-      handle: normalizeHandle(handle) || null,
       avatarDataUrl: avatarDataUrl ?? null,
     });
   }
@@ -120,11 +119,9 @@ export function ProfilePage({
       setDisplayName(previousDisplayName);
       return;
     }
-    const currentHandle = profile?.handle ?? normalizeHandle(handle);
     setDisplayName(nextDisplayName);
     const savedProfile = await saveProfilePatch({
       displayName: nextDisplayName,
-      handle: currentHandle || null,
       avatarDataUrl: avatarDataUrl ?? null,
     });
     if (!savedProfile) {
@@ -134,17 +131,21 @@ export function ProfilePage({
 
   async function commitSettingsAvatar(avatarDataUrlPatch: string): Promise<void> {
     const previousAvatarDataUrl = avatarDataUrl;
-    const currentHandle = profile?.handle ?? normalizeHandle(handle);
     setAvatarCropSource(undefined);
     setAvatarDataUrl(avatarDataUrlPatch);
     const savedProfile = await saveProfilePatch({
       displayName: displayName || profile?.displayName || "Ling User",
-      handle: currentHandle || null,
       avatarDataUrl: avatarDataUrlPatch,
     });
     if (!savedProfile) {
       setAvatarDataUrl(previousAvatarDataUrl);
     }
+    window.requestAnimationFrame(() => avatarTriggerRef.current?.focus());
+  }
+
+  function closeSettingsAvatarCrop(): void {
+    setAvatarCropSource(undefined);
+    window.requestAnimationFrame(() => avatarTriggerRef.current?.focus());
   }
 
   async function handleAvatarChange(event: ChangeEvent<HTMLInputElement>): Promise<void> {
@@ -160,15 +161,15 @@ export function ProfilePage({
     try {
       setAvatarCropSource(await fileToDataUrl(file));
       setMessage("");
-    } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : String(caught));
+    } catch {
+      setMessage(t("The image could not be opened. Choose another file."));
     } finally {
       event.target.value = "";
     }
   }
 
   const initials = initialsFromName(displayName || profile?.displayName || "Ling User");
-  const visibleHandle = normalizeHandle(handle) || profile?.handle || "local-user";
+  const visibleHandle = profile?.handle || "local-user";
 
   if (variant === "settings") {
     return (
@@ -181,19 +182,22 @@ export function ProfilePage({
           metrics={metrics}
           activity={activity}
           activityMode={activityMode}
+          loaded={profile !== undefined}
+          loading={loading}
           saving={saving}
-          message={message}
+          errorMessage={message}
+          avatarButtonRef={avatarTriggerRef}
           fileInputRef={fileInputRef}
           onAvatarChange={(event) => void handleAvatarChange(event)}
-          onCommitDisplayName={(value) => void commitSettingsDisplayName(value)}
+          onCommitDisplayName={commitSettingsDisplayName}
           onActivityModeChange={setActivityMode}
-          formatCompactNumber={formatCompactNumber}
-          formatDuration={formatDuration}
+          formatCompactNumber={(value) => formatCompactNumber(value, locale)}
+          formatDuration={(value) => formatDuration(value, locale)}
         />
         {avatarCropSource ? (
           <AvatarCropDialog
             sourceDataUrl={avatarCropSource}
-            onCancel={() => setAvatarCropSource(undefined)}
+            onCancel={closeSettingsAvatarCrop}
             onConfirm={(croppedAvatarDataUrl) => void commitSettingsAvatar(croppedAvatarDataUrl)}
           />
         ) : null}
@@ -231,24 +235,29 @@ export function ProfilePage({
           {avatarDataUrl ? <img src={avatarDataUrl} alt="" /> : <span>{initials}</span>}
           <span className="profile-avatar-edit"><Camera size={15} /></span>
         </button>
-        <input ref={fileInputRef} type="file" accept="image/*" hidden onChange={(event) => void handleAvatarChange(event)} />
+        <input ref={fileInputRef} data-ling-control-native="true" type="file" accept="image/*" hidden onChange={(event) => void handleAvatarChange(event)} />
         <form className="profile-identity-form" onSubmit={(event) => void saveProfile(event)}>
-          <label>
-            <span>昵称</span>
-            <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} maxLength={80} />
-          </label>
-          <label>
+          <Field className="profile-identity-field" controlId="standalone-profile-display-name" label="昵称">
+            <Input
+              value={displayName}
+              maxLength={80}
+              autoComplete="name"
+              disabled={saving}
+              onChange={(event) => setDisplayName(event.target.value)}
+            />
+          </Field>
+          <div className="profile-identity-readonly" data-profile-handle-readonly="true">
             <span>用户名</span>
-            <input value={handle} onChange={(event) => setHandle(event.target.value)} maxLength={48} placeholder="local-user" />
-          </label>
-          <p>@{visibleHandle} · 本地个人资料</p>
+            <strong>@{visibleHandle}</strong>
+          </div>
+          <p>本地个人资料</p>
         </form>
       </section>
 
       <section className="profile-stat-strip" aria-label="Token 和连续使用统计">
-        <ProfileStat value={formatCompactNumber(metrics.totalEstimatedTokens)} label="累计估算 Token" />
-        <ProfileStat value={formatCompactNumber(metrics.peakEstimatedTokens)} label="峰值估算 Token" />
-        <ProfileStat value={formatDuration(metrics.longestDurationMs)} label="最长任务时长" />
+        <ProfileStat value={formatCompactNumber(metrics.totalEstimatedTokens, locale)} label="累计估算 Token" />
+        <ProfileStat value={formatCompactNumber(metrics.peakEstimatedTokens, locale)} label="峰值估算 Token" />
+        <ProfileStat value={formatDuration(metrics.longestDurationMs, locale)} label="最长任务时长" />
         <ProfileStat value={`${metrics.currentStreakDays} 天`} label="当前连续天数" />
         <ProfileStat value={`${metrics.longestStreakDays} 天`} label="最长连续天数" />
       </section>
@@ -272,7 +281,7 @@ export function ProfilePage({
           <div className="profile-heatmap" role="img" aria-label="过去一年 Token 活动热力图">
             <div className="profile-heatmap-grid">
               {activity.cells.map((cell) => (
-                <span key={cell.date} className={`profile-heatmap-cell level-${cell.level}`} title={`${cell.date}: ${formatCompactNumber(cell.value)} 估算 Token`} />
+                <span key={cell.date} className={`profile-heatmap-cell level-${cell.level}`} title={`${cell.date}: ${formatCompactNumber(cell.value, locale)} 估算 Token`} />
               ))}
             </div>
             <div className="profile-heatmap-months" aria-hidden="true">
@@ -334,7 +343,11 @@ function ProfileInsight({ icon, label, value }: { readonly icon: JSX.Element; re
   return <div className="profile-insight-row"><span className="profile-insight-icon">{icon}</span><span>{label}</span><strong>{value}</strong></div>;
 }
 
-function buildProfileMetrics(runs: readonly RunSession[], skills: readonly SkillRegistryEntry[]): ProfileMetrics {
+function buildProfileMetrics(
+  runs: readonly RunSession[],
+  skills: readonly SkillRegistryEntry[],
+  notRecordedLabel: string,
+): ProfileMetrics {
   const skillLabels = new Map(skills.map((entry) => [entry.id, entry.definition.name || entry.id]));
   const skillCounts = new Map<string, number>();
   const modelCounts = new Map<string, number>();
@@ -368,7 +381,7 @@ function buildProfileMetrics(runs: readonly RunSession[], skills: readonly Skill
     .slice(0, 5)
     .map(([id, count]) => ({ id, label: skillLabels.get(id) ?? id, count }));
   const topModel = [...modelCounts.entries()]
-    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))[0]?.[0] ?? "未记录";
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))[0]?.[0] ?? notRecordedLabel;
 
   return {
     totalEstimatedTokens,
@@ -386,7 +399,7 @@ function buildProfileMetrics(runs: readonly RunSession[], skills: readonly Skill
   };
 }
 
-function buildActivityCalendar(activityDays: ReadonlyMap<string, number>, mode: ActivityMode): {
+function buildActivityCalendar(activityDays: ReadonlyMap<string, number>, mode: ActivityMode, locale: Locale): {
   readonly cells: readonly { readonly date: string; readonly value: number; readonly level: number }[];
   readonly monthLabels: readonly { readonly month: string; readonly column: number }[];
 } {
@@ -414,7 +427,10 @@ function buildActivityCalendar(activityDays: ReadonlyMap<string, number>, mode: 
   dates.forEach((date, index) => {
     const month = date.getMonth();
     if (month !== previousMonth && index % 7 === 0) {
-      monthLabels.push({ month: `${month + 1}月`, column: Math.floor(index / 7) + 1 });
+      monthLabels.push({
+        month: new Intl.DateTimeFormat(locale, { month: "short" }).format(date),
+        column: Math.floor(index / 7) + 1,
+      });
       previousMonth = month;
     }
   });
@@ -537,41 +553,33 @@ function localDateKey(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
-function formatCompactNumber(value: number): string {
-  if (value >= 100_000_000) {
-    return `${trimNumber(value / 100_000_000)}亿`;
-  }
-  if (value >= 10_000) {
-    return `${trimNumber(value / 10_000)}万`;
-  }
-  return String(value);
+function formatCompactNumber(value: number, locale: Locale): string {
+  return new Intl.NumberFormat(locale, {
+    maximumFractionDigits: 1,
+    notation: value >= 10_000 ? "compact" : "standard",
+  }).format(value);
 }
 
-function trimNumber(value: number): string {
-  return value >= 10 ? value.toFixed(0) : value.toFixed(1).replace(/\.0$/, "");
-}
-
-function formatDuration(value: number): string {
+function formatDuration(value: number, locale: Locale): string {
   if (value <= 0) {
-    return "0 分";
+    return locale === "zh-CN" ? "0 分" : "0 min";
   }
   const minutes = Math.round(value / 60_000);
   if (minutes < 60) {
-    return `${minutes} 分`;
+    return locale === "zh-CN" ? `${minutes} 分` : `${minutes} min`;
   }
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
-  return rest ? `${hours} 小时 ${rest} 分` : `${hours} 小时`;
+  if (locale === "zh-CN") {
+    return rest ? `${hours} 小时 ${rest} 分` : `${hours} 小时`;
+  }
+  return rest ? `${hours} hr ${rest} min` : `${hours} hr`;
 }
 
 function initialsFromName(value: string): string {
   const parts = value.trim().split(/\s+/).filter(Boolean);
   const initials = parts.length >= 2 ? `${parts[0]?.[0] ?? ""}${parts[1]?.[0] ?? ""}` : value.trim().slice(0, 2);
   return initials.toUpperCase() || "LU";
-}
-
-function normalizeHandle(value: string): string {
-  return value.trim().replace(/^@+/, "");
 }
 
 function fileToDataUrl(file: File): Promise<string> {

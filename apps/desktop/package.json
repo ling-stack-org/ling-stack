@@ -13,8 +13,9 @@
     "dev": "corepack pnpm build && electron .",
     "start": "electron .",
     "lint": "echo \"lint not configured yet\"",
-    "test": "corepack pnpm build && node --test tests/*.test.mjs && playwright test --config tests/playwright.renderer.config.mjs",
-    "test:renderer": "vite build --config vite.config.ts && playwright test --config tests/playwright.renderer.config.mjs",
+    "test": "corepack pnpm build && node --test tests/*.test.mjs && playwright test --config tests/playwright.renderer.config.mjs && playwright test tests/computer-use-preview-a11y.spec.mjs --workers=1 --reporter=line --output=test-results/computer-use-preview-a11y",
+    "test:renderer": "vite build --config vite.config.ts && playwright test --config tests/playwright.renderer.config.mjs && playwright test tests/computer-use-preview-a11y.spec.mjs --workers=1 --reporter=line --output=test-results/computer-use-preview-a11y",
+    "test:renderer:a11y": "vite build --config vite.config.ts && playwright test tests/computer-use-preview-a11y.spec.mjs --workers=1 --reporter=line --output=test-results/computer-use-preview-a11y",
     "performance:computer-use": "corepack pnpm build && node --expose-gc tests/computer-use-performance-harness.mjs",
     "performance:computer-use:real": "corepack pnpm build && node --expose-gc tests/computer-use-performance-harness.mjs --real",
     "smoke:computer-use": "corepack pnpm build && node tests/run-computer-use-smoke.mjs",
@@ -30,13 +31,19 @@
   "dependencies": {
     "@ling-stack/api-client": "workspace:*",
     "@ling-stack/contracts": "workspace:*",
+    "@ling-stack/ui-react": "workspace:*",
+    "lucide-react": "^0.468.0",
     "mammoth": "1.12.0",
-    "pdf-parse": "1.1.1"
+    "pdf-parse": "1.1.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@electron/asar": "3.4.1",
     "@fontsource-variable/inter": "5.2.8",
     "@playwright/test": "^1.55.0",
+    "@types/react": "^18.3.1",
+    "@types/react-dom": "^18.3.1",
     "ajv": "8.20.0",
     "ajv-formats": "3.0.1",
     "electron": "^43.1.1",

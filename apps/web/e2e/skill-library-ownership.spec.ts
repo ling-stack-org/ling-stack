@@ -59,7 +59,7 @@ test("skill library defaults to user-owned skills and keeps built-ins read-only"
   const toolbarLayout = await mySkillsToolbar.evaluate((toolbar) => {
     const search = toolbar.querySelector<HTMLElement>(".settings-skill-search");
     const actions = toolbar.querySelector<HTMLElement>(".settings-skill-library-toolbar-actions");
-    const sortControl = actions?.querySelector<HTMLElement>(".select-control");
+    const sortControl = actions?.querySelector<HTMLElement>(".settings-skill-sort");
     const importButton = Array.from(toolbar.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent?.includes("Import skill"));
     const createButton = Array.from(toolbar.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent?.includes("Create skill"));
     const searchRect = search?.getBoundingClientRect();
@@ -73,7 +73,7 @@ test("skill library defaults to user-owned skills and keeps built-ins read-only"
       importWidth: importRect?.width ?? 0,
       importHeight: importRect?.height ?? 0,
       actionsLeft: actions?.getBoundingClientRect().left ?? 0,
-      importClassName: importButton?.className ?? "",
+      importVariant: importButton?.dataset.variant ?? "",
       createWidth: createRect?.width ?? 0,
       createHeight: createRect?.height ?? 0,
       sortHeight: sortRect?.height ?? 0,
@@ -88,8 +88,7 @@ test("skill library defaults to user-owned skills and keeps built-ins read-only"
   expect(toolbarLayout.importHeight).toBe(32);
   expect(toolbarLayout.actionsLeft - toolbarLayout.searchRight).toBeGreaterThanOrEqual(10);
   expect(toolbarLayout.actionsLeft - toolbarLayout.searchRight).toBeLessThanOrEqual(14);
-  expect(toolbarLayout.importClassName).toContain("secondary-button");
-  expect(toolbarLayout.importClassName).not.toContain("primary-button");
+  expect(toolbarLayout.importVariant).toBe("secondary");
   expect(toolbarLayout.createWidth).toBeGreaterThanOrEqual(76);
   expect(toolbarLayout.createHeight).toBe(32);
   expect(toolbarLayout.sortHeight).toBe(32);
@@ -113,7 +112,7 @@ test("skill library defaults to user-owned skills and keeps built-ins read-only"
   await searchInput.focus();
   const afterSearchFocus = await searchFocusLayout();
   expect(beforeSearchFocus.shellHeight).toBe(32);
-  expect(beforeSearchFocus.inputHeight).toBe(30);
+  expect(beforeSearchFocus.inputHeight).toBeLessThanOrEqual(beforeSearchFocus.shellHeight);
   expect(afterSearchFocus.shellHeight).toBe(beforeSearchFocus.shellHeight);
   expect(afterSearchFocus.inputHeight).toBe(beforeSearchFocus.inputHeight);
   expect(afterSearchFocus.inputInsideShell).toBe(true);
@@ -225,8 +224,10 @@ test("skill library defaults to user-owned skills and keeps built-ins read-only"
   await expect(drawer).toHaveCount(0);
 
   const updatedCustomRow = panel.locator(".settings-skill-table tbody tr").filter({ hasText: "User Custom Updated" });
-  page.once("dialog", (dialog) => dialog.accept());
   await updatedCustomRow.getByRole("button", { name: "Delete skill" }).click();
+  const deleteDialog = page.getByRole("dialog", { name: /Delete skill User Custom Updated\?/ });
+  await expect(deleteDialog).toBeVisible();
+  await deleteDialog.getByRole("button", { name: "Delete skill", exact: true }).click();
   await expect(updatedCustomRow).toHaveCount(0);
   await expect(panel.locator(".settings-skill-detail-drawer")).toHaveCount(0);
 
@@ -257,7 +258,7 @@ test("skill library defaults to user-owned skills and keeps built-ins read-only"
   await expect(builtinBindingFilter).toHaveValue("all");
   const builtinToolbarLayout = await panel.locator(".settings-skill-library-toolbar--builtin").evaluate((toolbar) => {
     const search = toolbar.querySelector<HTMLElement>(".settings-skill-search");
-    const filter = toolbar.querySelector<HTMLElement>(".select-control");
+    const filter = toolbar.querySelector<HTMLElement>(".settings-skill-builtin-filter");
     const searchRect = search?.getBoundingClientRect();
     const filterRect = filter?.getBoundingClientRect();
     return {

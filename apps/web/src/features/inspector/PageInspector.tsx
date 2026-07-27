@@ -8,7 +8,7 @@ import {
 import { useI18n } from "../../i18n.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
 import { formatDateTime } from "../../lib/formatting.js";
-import { ArtifactRow, MetaRow, StatusBadge } from "../../shared/components/index.js";
+import { ArtifactRow, MetaRow } from "../../shared/components/index.js";
 import type {
   ApprovalPolicy,
   ApprovalPolicyFormState,

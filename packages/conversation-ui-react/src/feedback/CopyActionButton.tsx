@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
+import { Tooltip } from "@ling-stack/ui-react";
 
 export interface CopyActionButtonProps {
   readonly text: string;
@@ -39,16 +40,16 @@ export function CopyActionButton({
     }
   }
 
-  return (
+  const button = (
     <button
       className={className ?? "message-code-copy"}
       type="button"
-      title={currentLabel}
       aria-label={currentLabel}
-      data-tooltip={currentLabel}
       onClick={() => void copyText()}
     >
       {copied ? copiedContent ?? <Check size={iconSize} /> : idleContent ?? <Copy size={iconSize} />}
     </button>
   );
+
+  return <Tooltip content={currentLabel}>{button}</Tooltip>;
 }

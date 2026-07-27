@@ -9,8 +9,20 @@ import type {
 } from "../shared/desktop-capabilities.js";
 import { COMPUTER_USE_PREVIEW_RELEASE_MEDIA_STATUSES } from "../shared/desktop-capabilities.js";
 import { DESKTOP_IPC_CHANNELS } from "../shared/ipc-channels.js";
+import {
+  builtInDesktopRendererThemeInput,
+  parseDesktopRendererThemeSnapshot,
+  type DesktopRendererThemeSnapshot,
+} from "../shared/renderer-theme.js";
 
 const capabilities: LingComputerUsePreviewCapabilities = {
+  getThemeSnapshot: async () => {
+    const value: unknown = await ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.desktopThemeSnapshotGet);
+    return parseDesktopRendererThemeSnapshot(value) ?? {
+      ...builtInDesktopRendererThemeInput("light"),
+      revision: 1,
+    };
+  },
   getSnapshot: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.computerUsePreviewSnapshotGet),
   retryCapture: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.computerUsePreviewRetry),
   resetPosition: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.computerUsePreviewResetPosition),
@@ -18,9 +30,7 @@ const capabilities: LingComputerUsePreviewCapabilities = {
   hide: async () => {
     await ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.computerUsePreviewHide);
   },
-  openOwnerConversation: async () => {
-    await ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.computerUseOpenOwnerConversation);
-  },
+  openOwnerConversation: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.computerUseOpenOwnerConversation),
   requestStop: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.computerUseStop),
   openScreenPermissionSettings: async () => {
     await ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.computerUseOpenPermissionSettings);
@@ -95,6 +105,16 @@ const capabilities: LingComputerUsePreviewCapabilities = {
     const wrapped = (_event: Electron.IpcRendererEvent, snapshot: ComputerUsePipRendererSnapshot | undefined): void => listener(snapshot);
     ipcRenderer.on(DESKTOP_IPC_CHANNELS.computerUsePreviewSnapshotChanged, wrapped);
     return () => ipcRenderer.off(DESKTOP_IPC_CHANNELS.computerUsePreviewSnapshotChanged, wrapped);
+  },
+  onThemeSnapshotChanged: (listener: (snapshot: DesktopRendererThemeSnapshot) => void) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, value: unknown): void => {
+      const snapshot = parseDesktopRendererThemeSnapshot(value);
+      if (snapshot) {
+        listener(snapshot);
+      }
+    };
+    ipcRenderer.on(DESKTOP_IPC_CHANNELS.desktopThemeSnapshotChanged, wrapped);
+    return () => ipcRenderer.off(DESKTOP_IPC_CHANNELS.desktopThemeSnapshotChanged, wrapped);
   },
 };
 

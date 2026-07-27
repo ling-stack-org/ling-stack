@@ -1,19 +1,21 @@
-import { Upload, UserCircle } from "lucide-react";
+import { UserCircle } from "lucide-react";
 import { useI18n } from "../../i18n.js";
-import { MetaRow } from "../../shared/components/index.js";
-import type { AiTeammate, ProviderPreset } from "../../types.js";
+import { DataRow } from "../../shared/ui/index.js";
+import type { AiTeammate } from "../../types.js";
 import { approvalProfileText } from "./helpers.js";
 
 export function TeammateSettingsSummaryPanel({
   teammate,
-  settingsProvider,
+  modelLabel,
+  modelProviderLabel,
   channelCount,
   executableSkillCount,
   memoryReady,
   mcpBindingCount,
 }: {
   readonly teammate: AiTeammate;
-  readonly settingsProvider: ProviderPreset | undefined;
+  readonly modelLabel: string;
+  readonly modelProviderLabel: string;
   readonly channelCount: number;
   readonly executableSkillCount: number;
   readonly memoryReady: boolean;
@@ -23,31 +25,31 @@ export function TeammateSettingsSummaryPanel({
   return (
     <aside className="teammate-settings-summary-panel" aria-label={t("Configuration summary")}>
       <section>
-        <div className="panel-title split">
-          <span>
-            <UserCircle size={15} />
-            <h3>{t("Configuration summary")}</h3>
-          </span>
+        <div className="teammate-settings-summary-heading">
+          <UserCircle size={15} />
+          <h3>{t("Configuration summary")}</h3>
         </div>
         <div className="teammate-summary-list">
-          <MetaRow label={t("Provider")} value={settingsProvider ? settingsProvider.displayName : t("None")} compact />
-          <MetaRow label={t("Model")} value={settingsProvider?.model ?? "-"} compact />
-          <MetaRow label={t("Approval")} value={approvalProfileText(teammate.approvalProfile, t)} compact />
-          <MetaRow label={t("Channels")} value={String(channelCount)} compact />
-          <MetaRow label={t("Skills")} value={t("{count} executable", { count: executableSkillCount })} compact />
-          <MetaRow label={t("Memory")} value={memoryReady ? t("Memory on") : t("Memory preparing")} compact />
-          <MetaRow label={t("MCP")} value={t("{count} authorized", { count: mcpBindingCount })} compact />
+          <SummaryRow label={t("Provider")} value={modelProviderLabel} />
+          <SummaryRow label={t("Model")} value={modelLabel} />
+          <SummaryRow label={t("Approval")} value={approvalProfileText(teammate.approvalProfile, t)} />
+          <SummaryRow label={t("Channels")} value={String(channelCount)} />
+          <SummaryRow label={t("Skills")} value={t("{count} executable", { count: executableSkillCount })} />
+          <SummaryRow label={t("Memory")} value={memoryReady ? t("Memory on") : t("Memory preparing")} />
+          <SummaryRow label={t("MCP")} value={t("{count} authorized", { count: mcpBindingCount })} />
         </div>
-      </section>
-      <section>
-        <div className="panel-title split">
-          <span>
-            <Upload size={15} />
-            <h3>{t("Import guidance")}</h3>
-          </span>
-        </div>
-        <p>{t("AGENTS.md and persona.md imports create drafts first. They cannot grant tools, approvals, secrets, or external-send permissions.")}</p>
       </section>
     </aside>
+  );
+}
+
+function SummaryRow({ label, value }: { readonly label: string; readonly value: string }): JSX.Element {
+  return (
+    <DataRow
+      compact
+      className="teammate-summary-row"
+      identity={<span className="teammate-summary-label">{label}</span>}
+      status={<span className="teammate-summary-value" title={value}>{value}</span>}
+    />
   );
 }

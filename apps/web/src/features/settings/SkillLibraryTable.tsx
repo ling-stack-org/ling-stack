@@ -1,8 +1,19 @@
 import { type KeyboardEvent, type MouseEvent } from "react";
 import { Archive, Trash2 } from "lucide-react";
 import { formatDateTime } from "../../lib/formatting.js";
+import {
+  EmptyState,
+  IconButton,
+  StatusIndicator,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableHeaderCell,
+  TableRow,
+} from "../../shared/ui/index.js";
 import type { SkillRegistryEntry } from "../../types.js";
-import { SkillStatePill } from "./SkillLibraryWidgets.js";
 import {
   boundTeammateNames,
   skillRegistryState,
@@ -14,7 +25,7 @@ export function SkillLibraryTable({
   variant,
   entries,
   loading,
-  saving,
+  busyAction,
   selectedSkillId,
   bindingSummaries,
   onSelectSkill,
@@ -25,22 +36,18 @@ export function SkillLibraryTable({
   readonly variant: "user" | "evolved" | "builtin";
   readonly entries: readonly SkillRegistryEntry[];
   readonly loading: boolean;
-  readonly saving: boolean;
+  readonly busyAction: string;
   readonly selectedSkillId: string | undefined;
   readonly bindingSummaries: readonly TeammateSkillBindingSummary[];
   readonly onSelectSkill: (skillId: string) => void;
   readonly onArchiveSkill: (skillId: string) => void;
-  readonly onDeleteSkill: (skill: SkillRegistryEntry) => void;
+  readonly onDeleteSkill: (skill: SkillRegistryEntry, trigger: HTMLButtonElement) => void;
   readonly t: SettingsTranslator;
 }): JSX.Element {
-  function selectRow(skillId: string): void {
-    onSelectSkill(skillId);
-  }
-
   function handleRowKeyDown(event: KeyboardEvent<HTMLTableRowElement>, skillId: string): void {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-      selectRow(skillId);
+      onSelectSkill(skillId);
     }
   }
 
@@ -48,29 +55,25 @@ export function SkillLibraryTable({
     event.stopPropagation();
   }
 
-  function stopRowKeyboardSelection(event: KeyboardEvent<HTMLElement>): void {
-    event.stopPropagation();
-  }
-
   return (
-    <div className="settings-skill-table-wrap settings-skill-table-wrap--compact">
-      <table className={`settings-skill-table settings-skill-table--compact settings-skill-table--${variant}`}>
-        <thead>
-          <tr>
-            <th>{t("Skill")}</th>
-            <th>{t("Description")}</th>
-            <th>{t("Bound teammates")}</th>
-            <th>{t("Updated")}</th>
-            {variant !== "builtin" ? <th aria-label={t("Skill actions")}>{t("Skill actions")}</th> : null}
-          </tr>
-        </thead>
-        <tbody>
+    <TableContainer className="settings-skill-table-wrap settings-skill-table-wrap--compact">
+      <Table className={`settings-skill-table settings-skill-table--compact settings-skill-table--${variant}`}>
+        <TableHead>
+          <TableRow>
+            <TableHeaderCell>{t("Skill")}</TableHeaderCell>
+            <TableHeaderCell>{t("Description")}</TableHeaderCell>
+            <TableHeaderCell>{t("Bound teammates")}</TableHeaderCell>
+            <TableHeaderCell>{t("Updated")}</TableHeaderCell>
+            {variant !== "builtin" ? <TableHeaderCell aria-label={t("Skill actions")}>{t("Skill actions")}</TableHeaderCell> : null}
+          </TableRow>
+        </TableHead>
+        <TableBody>
           {entries.length === 0 ? (
-            <tr>
-              <td colSpan={variant !== "builtin" ? 5 : 4}>
-                <div className="compact-empty">{loading ? t("Loading skills...") : t("No skills match these filters")}</div>
-              </td>
-            </tr>
+            <TableRow>
+              <TableCell colSpan={variant !== "builtin" ? 5 : 4}>
+                <EmptyState compact title={loading ? t("Loading skills...") : t("No skills match these filters")} />
+              </TableCell>
+            </TableRow>
           ) : entries.map((entry) => {
             const boundTeammates = boundTeammateNames(entry.id, bindingSummaries);
             const state = skillRegistryState(entry, t);
@@ -78,70 +81,63 @@ export function SkillLibraryTable({
             const showState = entry.reviewStatus === "draft" || entry.reviewStatus === "disabled";
             const canArchive = variant !== "builtin" && entry.source !== "builtin" && entry.reviewStatus !== "archived";
             const canDelete = canArchive && isManuallyImportedSkill(entry);
+            const archiveBusy = busyAction === `archive:${entry.id}`;
             return (
-              <tr
+              <TableRow
                 key={entry.id}
                 className={selected ? "selected settings-skill-clickable-row" : "settings-skill-clickable-row"}
+                data-skill-id={entry.id}
                 tabIndex={0}
                 aria-selected={selected}
-                onClick={() => selectRow(entry.id)}
+                onClick={() => onSelectSkill(entry.id)}
                 onKeyDown={(event) => handleRowKeyDown(event, entry.id)}
               >
-                <td>
+                <TableCell>
                   <span className="settings-skill-name-cell">
                     <strong>{entry.definition.name}</strong>
-                    {showState ? <SkillStatePill label={state.label} tone={state.tone} /> : null}
+                    {showState ? (
+                      <StatusIndicator compact label={state.label} tone={state.tone === "blocked" ? "danger" : "warning"} />
+                    ) : null}
                   </span>
-                </td>
-                <td className="settings-skill-summary-cell" title={entry.definition.summary || undefined}>
+                </TableCell>
+                <TableCell className="settings-skill-summary-cell" title={entry.definition.summary || undefined}>
                   {entry.definition.summary || "-"}
-                </td>
-                <td className="settings-skill-bound-cell">{boundTeammates.length > 0 ? boundTeammates.join(", ") : t("Unbound")}</td>
-                <td className="settings-skill-updated-cell">{formatDateTime(entry.updatedAt)}</td>
+                </TableCell>
+                <TableCell className="settings-skill-bound-cell">{boundTeammates.length > 0 ? boundTeammates.join(", ") : t("Unbound")}</TableCell>
+                <TableCell className="settings-skill-updated-cell">{formatDateTime(entry.updatedAt)}</TableCell>
                 {variant !== "builtin" ? (
-                  <td className="settings-skill-action-cell">
+                  <TableCell className="settings-skill-action-cell">
                     {canArchive ? (
-                      <span className="settings-skill-row-actions">
-                        <button
-                          className="settings-skill-row-action"
-                          type="button"
-                          aria-label={t("Archive")}
-                          title={t("Archive")}
-                          disabled={saving}
-                          onClick={(event) => {
-                            stopRowSelection(event);
-                            onArchiveSkill(entry.id);
-                          }}
-                          onKeyDown={stopRowKeyboardSelection}
-                        >
-                          <Archive size={15} />
-                        </button>
+                      <span className="settings-skill-row-actions" onClick={stopRowSelection}>
+                        <IconButton
+                          icon={Archive}
+                          label={t("Archive")}
+                          size="sm"
+                          loading={archiveBusy}
+                          loadingLabel={t("Archiving...")}
+                          disabled={Boolean(busyAction) && !archiveBusy}
+                          onClick={() => onArchiveSkill(entry.id)}
+                        />
                         {canDelete ? (
-                          <button
-                            className="settings-skill-row-action danger"
-                            type="button"
-                            aria-label={t("Delete skill")}
-                            title={t("Delete skill")}
-                            disabled={saving}
-                            onClick={(event) => {
-                              stopRowSelection(event);
-                              onDeleteSkill(entry);
-                            }}
-                            onKeyDown={stopRowKeyboardSelection}
-                          >
-                            <Trash2 size={15} />
-                          </button>
+                          <IconButton
+                            icon={Trash2}
+                            label={t("Delete skill")}
+                            size="sm"
+                            variant="danger"
+                            disabled={Boolean(busyAction)}
+                            onClick={(event) => onDeleteSkill(entry, event.currentTarget)}
+                          />
                         ) : null}
                       </span>
                     ) : null}
-                  </td>
+                  </TableCell>
                 ) : null}
-              </tr>
+              </TableRow>
             );
           })}
-        </tbody>
-      </table>
-    </div>
+        </TableBody>
+      </Table>
+    </TableContainer>
   );
 }
 

@@ -1,0 +1,31 @@
+{
+  "filename": "1280x800-ling-light-canvas-exclusive-dock.png",
+  "capturedAt": "2026-07-23T02:00:56.792Z",
+  "viewport": {
+    "width": 1280,
+    "height": 800
+  },
+  "theme": "ling-light",
+  "locale": "en-US",
+  "fixture": "production_canvas_exclusive",
+  "state": "canvas-exclusive-dock",
+  "functionIds": [
+    "PROD-CANVAS-001"
+  ],
+  "sourceCommitOrWorktree": "0a0b80502715+worktree",
+  "consoleErrors": [],
+  "expectedConsoleErrors": [],
+  "pageErrors": [],
+  "documentOverflow": 0,
+  "ownerOverflow": 0,
+  "canvasPixel": {
+    "width": 999,
+    "height": 760,
+    "decodedPixelHash": "b5df1915ca0ab064312c046c0bf49b505bc45ccfba04c89faab8e8725df969a3",
+    "uniqueColors": 1724,
+    "opaqueRatio": 1,
+    "nonDominantRatio": 0.5060613244823771
+  },
+  "mediaPixelHash": null,
+  "sha256": "3a8b64b1cb315472eca165b8e088f40aeb00a402fbd41cfbb3d191eb09c34c6e"
+}

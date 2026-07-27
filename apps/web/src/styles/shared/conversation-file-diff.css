@@ -1,0 +1,256 @@
+.file-change-evidence {
+  display: grid;
+  min-width: 0;
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-lg);
+  background: var(--ling-bg-panel);
+  overflow: hidden;
+}
+
+.file-change-evidence summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ling-space-4);
+  min-width: 0;
+  padding: var(--ling-space-4) var(--ling-space-5);
+  cursor: pointer;
+}
+
+.file-change-evidence summary span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ling-space-3);
+  min-width: 0;
+}
+
+.file-change-evidence summary strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-xs);
+}
+
+.file-change-evidence summary small {
+  color: var(--ling-text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.file-change-loading,
+.file-change-error {
+  display: flex;
+  align-items: center;
+  gap: var(--ling-space-4);
+  padding: var(--ling-space-4) var(--ling-space-5);
+  border-top: 1px solid var(--ling-border-default);
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  font-weight: 700;
+}
+
+.file-change-error {
+  color: var(--ling-status-danger);
+}
+
+.file-change-body {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) minmax(0, 1fr);
+  min-width: 0;
+  border-top: 1px solid var(--ling-border-default);
+}
+
+.diff-file-list {
+  display: grid;
+  align-content: start;
+  gap: 1px;
+  min-width: 0;
+  padding: var(--ling-space-3);
+  border-right: 1px solid var(--ling-border-default);
+  background: var(--ling-bg-subtle);
+}
+
+.diff-file-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ling-space-4);
+  min-width: 0;
+  padding: 7px;
+  border: 1px solid transparent;
+  border-radius: var(--ling-radius-md);
+  background: transparent;
+  color: var(--ling-text-default);
+  text-align: left;
+}
+
+.diff-file-summary:hover,
+.diff-file-summary:focus-visible,
+.diff-file-summary.selected {
+  border-color: var(--ling-border-focus);
+  background: var(--ling-bg-pressed);
+}
+
+.diff-file-summary span:first-child {
+  display: grid;
+  gap: var(--ling-space-1);
+  min-width: 0;
+}
+
+.diff-file-summary strong {
+  overflow: hidden;
+  color: var(--ling-text-strong);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-file-summary small {
+  color: var(--ling-text-muted);
+  font-size: 10px;
+}
+
+.diff-stat {
+  display: inline-flex;
+  gap: var(--ling-space-2);
+  flex: 0 0 auto;
+}
+
+.diff-stat .add {
+  color: var(--ling-status-success);
+}
+
+.diff-stat .delete {
+  color: var(--ling-status-danger);
+}
+
+.message-diff-file-stack {
+  display: grid;
+  gap: 0;
+  min-width: 0;
+}
+
+.message-diff-file {
+  display: grid;
+  min-width: 0;
+}
+
+.message-diff-file + .message-diff-file {
+  border-top: 1px solid var(--conversation-code-border);
+}
+
+.message-diff-file-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ling-space-4);
+  min-width: 0;
+  padding: var(--ling-space-3) var(--ling-space-4);
+  border-bottom: 1px solid var(--conversation-code-border);
+  background: var(--conversation-bg-muted);
+  color: var(--conversation-text-muted);
+  font-size: 11px;
+}
+
+.message-diff-file-head code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--conversation-code-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-diff-file-head span {
+  flex: 0 0 auto;
+  color: var(--conversation-code-muted);
+  font-family: "SFMono-Regular", Consolas, monospace;
+}
+
+.diff-viewer {
+  display: grid;
+  align-content: start;
+  min-width: 0;
+  max-height: 420px;
+  margin: 0;
+  overflow: auto;
+  background: var(--conversation-code-bg);
+  color: var(--conversation-code-text);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.diff-line {
+  display: grid;
+  grid-template-columns: 46px 22px minmax(0, 1fr);
+  min-width: 0;
+}
+
+.diff-line-number {
+  padding: 0 7px;
+  border-right: 1px solid color-mix(in srgb, var(--conversation-code-border) 72%, transparent);
+  color: var(--conversation-code-muted);
+  text-align: right;
+  user-select: none;
+}
+
+.diff-gutter {
+  padding: 0 var(--ling-space-2);
+  border-right: 1px solid var(--conversation-code-border);
+  color: var(--conversation-code-muted);
+  text-align: center;
+  user-select: none;
+}
+
+.diff-line code {
+  min-width: 0;
+  padding: 0 var(--ling-space-4);
+  color: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.diff-line.add {
+  background: color-mix(in srgb, var(--conversation-diff-add-bg) 54%, transparent);
+}
+
+.diff-line.add .diff-line-number,
+.diff-line.add .diff-gutter {
+  color: var(--ling-status-success);
+}
+
+.diff-line.delete {
+  background: color-mix(in srgb, var(--conversation-diff-remove-bg) 54%, transparent);
+}
+
+.diff-line.delete .diff-line-number,
+.diff-line.delete .diff-gutter {
+  color: var(--ling-status-danger);
+}
+
+.diff-line.hunk,
+.diff-line.meta {
+  background: var(--conversation-bg-muted);
+  color: var(--conversation-text-muted);
+}
+
+.diff-fold {
+  display: grid;
+  grid-template-columns: minmax(16px, 1fr) auto minmax(16px, 1fr);
+  gap: var(--ling-space-4);
+  align-items: center;
+  min-width: 0;
+  padding: 7px var(--ling-space-5);
+  border-block: 1px solid var(--conversation-code-border);
+  background: color-mix(in srgb, var(--conversation-bg-muted) 78%, transparent);
+  color: var(--conversation-text-soft);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 10.5px;
+  font-weight: 720;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.diff-fold-rule {
+  height: 1px;
+  min-width: 0;
+  background: var(--conversation-code-border);
+}

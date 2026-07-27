@@ -1,0 +1,22 @@
+{
+  "file": "1440x960-ling-light-create-provider-blocked.png",
+  "functionIds": [
+    "MEDIA-JOB-CREATE-001",
+    "MEDIA-JOB-REPAIR-001"
+  ],
+  "fixtureId": "media_provider_blocked",
+  "url": "/",
+  "servedArtifact": "Vite source",
+  "locale": "en-US",
+  "themeId": "ling-light",
+  "viewport": {
+    "width": 1440,
+    "height": 960
+  },
+  "stateTrigger": "media_provider_blocked",
+  "expectedAction": "Choose runnable model",
+  "consoleErrors": 0,
+  "rootOverflow": 0,
+  "sha256": "76692da9ac64e98d4f8acf8c8808df4f0e277973b878f24173a4346ae3bd068b",
+  "packagedDesktop": "pending"
+}

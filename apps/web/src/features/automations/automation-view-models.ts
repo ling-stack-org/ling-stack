@@ -1,6 +1,29 @@
-import type { AutomationDefinition, AutomationDraft, AutomationRun, AutomationSchedulerState } from "../../types.js";
+import type { StatusTone } from "../../shared/ui/index.js";
+import type {
+  AutomationDefinition,
+  AutomationDraft,
+  AutomationRun,
+  AutomationSchedulerState,
+  AutomationTarget,
+  AutomationTrigger,
+  Channel,
+} from "../../types.js";
 
-export type AutomationTab = "enabled" | "paused" | "failed" | "succeeded" | "history";
+export type AutomationTab = "attention" | "enabled" | "history" | "paused";
+export type AutomationPrimaryState =
+  | "definition-error"
+  | "paused"
+  | "ready"
+  | "recent-failure"
+  | "running"
+  | "scheduled"
+  | "target-unavailable";
+export type AutomationPrimaryAction = "fix-target" | "inspect-failure" | "resume" | "run" | "select";
+
+export type AutomationTranslate = (
+  value: string,
+  values?: Readonly<Record<string, string | number>>,
+) => string;
 
 export interface AutomationTabItem {
   readonly id: AutomationTab;
@@ -8,204 +31,367 @@ export interface AutomationTabItem {
   readonly count: number;
 }
 
-export interface AutomationPageSummary {
-  readonly totalDefinitions: number;
-  readonly enabledDefinitions: number;
-  readonly manualEnabledDefinitions: number;
-  readonly scheduledEnabledDefinitions: number;
-  readonly pausedDefinitions: number;
-  readonly schedulerRunning: boolean;
-  readonly scheduledWatchCount: number;
-  readonly runningRunCount: number;
-  readonly failedRecentRunCount: number;
-  readonly readyDraftCount: number;
-  readonly errorDefinitionCount: number;
-  readonly schedulerStoppedWithScheduledWatches: boolean;
-  readonly attentionCount: number;
-}
-
-export type AutomationTranslate = (
-  value: string,
-  values?: Readonly<Record<string, string | number>>,
-) => string;
-
-export interface AutomationSchedulerCopy {
+export interface AutomationDefinitionViewModel {
+  readonly automation: AutomationDefinition;
+  readonly latestRun?: AutomationRun;
+  readonly primaryAction: AutomationPrimaryAction;
+  readonly primaryActionLabel: string;
+  readonly primaryState: AutomationPrimaryState;
+  readonly scheduleLabel: string;
+  readonly searchableText: string;
   readonly statusLabel: string;
+  readonly statusTone: StatusTone;
+  readonly targetLabel: string;
+  readonly targetUnavailable: boolean;
+}
+
+export interface AutomationDraftViewModel {
+  readonly draft: AutomationDraft;
+  readonly ready: boolean;
+  readonly scheduleLabel: string;
+  readonly searchableText: string;
+  readonly statusLabel: string;
+  readonly statusTone: StatusTone;
+  readonly targetLabel: string;
+}
+
+export interface AutomationRunViewModel {
+  readonly run: AutomationRun;
+  readonly automationTitle: string;
+  readonly statusLabel: string;
+  readonly statusTone: StatusTone;
+  readonly triggerLabel: string;
+}
+
+export interface AutomationPageSummary {
+  readonly attentionCount: number;
+  readonly enabledCount: number;
+  readonly pausedCount: number;
+  readonly recentRunCount: number;
+  readonly scheduledCount: number;
+  readonly totalCount: number;
+}
+
+export interface AutomationSchedulerViewModel {
+  readonly action: "start" | "stop" | "";
+  readonly actionLabel: string;
+  readonly hasScheduledDefinitions: boolean;
+  readonly nextRunAt?: string;
+  readonly statusLabel: string;
+  readonly statusTone: StatusTone;
   readonly summary: string;
-}
-
-export function activeAutomations(automations: readonly AutomationDefinition[]): readonly AutomationDefinition[] {
-  return automations.filter((automation) => automation.status === "enabled");
-}
-
-export function pausedAutomations(automations: readonly AutomationDefinition[]): readonly AutomationDefinition[] {
-  return automations.filter((automation) => automation.status === "paused");
 }
 
 export function latestRunByAutomationId(runs: readonly AutomationRun[]): ReadonlyMap<string, AutomationRun> {
   const map = new Map<string, AutomationRun>();
-  for (const run of runs) {
-    if (!map.has(run.automationId)) {
-      map.set(run.automationId, run);
-    }
+  for (const run of [...runs].sort((left, right) => right.firedAt.localeCompare(left.firedAt))) {
+    if (!map.has(run.automationId)) map.set(run.automationId, run);
   }
   return map;
 }
 
-export function failedAutomations(
-  automations: readonly AutomationDefinition[],
-  latestRunById: ReadonlyMap<string, AutomationRun>,
-): readonly AutomationDefinition[] {
-  return automations.filter((automation) => automation.status === "error" || latestRunById.get(automation.id)?.status === "failed");
-}
-
-export function succeededAutomations(
-  automations: readonly AutomationDefinition[],
-  latestRunById: ReadonlyMap<string, AutomationRun>,
-): readonly AutomationDefinition[] {
-  return automations.filter((automation) => latestRunById.get(automation.id)?.status === "succeeded");
-}
-
-export function visibleAutomationsForTab(input: {
-  readonly tab: AutomationTab;
-  readonly enabled: readonly AutomationDefinition[];
-  readonly paused: readonly AutomationDefinition[];
-  readonly failed: readonly AutomationDefinition[];
-  readonly succeeded: readonly AutomationDefinition[];
-}): readonly AutomationDefinition[] {
-  if (input.tab === "paused") {
-    return input.paused;
-  }
-  if (input.tab === "failed") {
-    return input.failed;
-  }
-  if (input.tab === "succeeded") {
-    return input.succeeded;
-  }
-  return input.enabled;
-}
-
-export function isSchedulerRunning(status: string | undefined): boolean {
-  return status === "running";
-}
-
-export function summarizeAutomationsPage({
-  automations,
-  automationRuns,
-  automationDrafts,
-  scheduler,
-}: {
-  readonly automations: readonly AutomationDefinition[];
-  readonly automationRuns: readonly AutomationRun[];
-  readonly automationDrafts: readonly AutomationDraft[];
-  readonly scheduler?: AutomationSchedulerState;
-}): AutomationPageSummary {
-  const recentRuns = automationRuns.slice(0, 8);
-  const enabledAutomations = automations.filter((automation) => automation.status === "enabled");
-  const enabledDefinitions = enabledAutomations.length;
-  const scheduledEnabledDefinitions = enabledAutomations.filter(isScheduledAutomationDefinition).length;
-  const manualEnabledDefinitions = enabledDefinitions - scheduledEnabledDefinitions;
-  const pausedDefinitions = automations.filter((automation) => automation.status === "paused").length;
-  const errorDefinitionCount = automations.filter((automation) => automation.status === "error").length;
-  const runningRunCount = recentRuns.filter(isAutomationRunInProgress).length;
-  const failedRecentRunCount = recentRuns.filter((run) => run.status === "failed").length;
-  const readyDraftCount = automationDrafts.filter((draft) => draft.status === "ready_for_confirmation").length;
-  const schedulerRunning = isSchedulerRunning(scheduler?.status);
-  const scheduledWatchCount = scheduler?.automationCount ?? scheduledEnabledDefinitions;
-  const schedulerStoppedWithScheduledWatches = !schedulerRunning && scheduledWatchCount > 0;
+export function buildAutomationDefinitionViewModel(input: {
+  readonly automation: AutomationDefinition;
+  readonly channels: readonly Channel[];
+  readonly latestRun?: AutomationRun;
+  readonly threadTitleById: ReadonlyMap<string, string>;
+  readonly t: AutomationTranslate;
+}): AutomationDefinitionViewModel {
+  const { automation, channels, latestRun, t, threadTitleById } = input;
+  const target = automationTargetView(automation.target, automation, channels, threadTitleById, t);
+  const primaryState = derivePrimaryState(automation, latestRun, target.unavailable);
+  const primaryAction = derivePrimaryAction(primaryState, latestRun);
+  const scheduleLabel = automationScheduleLabel(automation.trigger, t, automation.rrule);
+  const stateCopy = primaryStateCopy(primaryState, t);
   return {
-    totalDefinitions: automations.filter((automation) => automation.status !== "archived").length,
-    enabledDefinitions,
-    manualEnabledDefinitions,
-    scheduledEnabledDefinitions,
-    pausedDefinitions,
-    schedulerRunning,
-    scheduledWatchCount,
-    runningRunCount,
-    failedRecentRunCount,
-    readyDraftCount,
-    errorDefinitionCount,
-    schedulerStoppedWithScheduledWatches,
-    attentionCount: readyDraftCount + failedRecentRunCount + errorDefinitionCount + (schedulerStoppedWithScheduledWatches ? 1 : 0),
+    automation,
+    latestRun,
+    primaryAction,
+    primaryActionLabel: primaryActionCopy(primaryAction, t),
+    primaryState,
+    scheduleLabel,
+    searchableText: normalizeSearchText([
+      automation.title,
+      automation.description,
+      target.label,
+      scheduleLabel,
+      automation.model,
+    ]),
+    statusLabel: stateCopy.label,
+    statusTone: stateCopy.tone,
+    targetLabel: target.label,
+    targetUnavailable: target.unavailable,
   };
 }
 
-export function buildAutomationTabs({
-  enabled,
-  paused,
-  needsAttention,
-  succeeded,
-  recentRuns,
-  attentionCount,
-  t,
-}: {
-  readonly enabled: readonly AutomationDefinition[];
-  readonly paused: readonly AutomationDefinition[];
-  readonly needsAttention: readonly AutomationDefinition[];
-  readonly succeeded: readonly AutomationDefinition[];
+export function buildAutomationDraftViewModel(input: {
+  readonly draft: AutomationDraft;
+  readonly channels: readonly Channel[];
+  readonly threadTitleById: ReadonlyMap<string, string>;
+  readonly t: AutomationTranslate;
+}): AutomationDraftViewModel {
+  const { channels, draft, t, threadTitleById } = input;
+  const target = draft.target
+    ? automationTargetView(draft.target, undefined, channels, threadTitleById, t)
+    : { label: t("Missing"), unavailable: true };
+  const ready = draft.status === "ready_for_confirmation";
+  const invalid = draft.status === "needs_user_input" || draft.missingFields.length > 0;
+  const statusLabel = ready ? t("Draft ready") : invalid ? t("Setup needs attention") : t("Manual draft");
+  const scheduleLabel = automationScheduleLabel(draft.trigger, t);
+  return {
+    draft,
+    ready,
+    scheduleLabel,
+    searchableText: normalizeSearchText([draft.title, draft.description, target.label, scheduleLabel]),
+    statusLabel,
+    statusTone: ready ? "success" : invalid ? "warning" : "neutral",
+    targetLabel: target.label,
+  };
+}
+
+export function buildAutomationRunViewModel(input: {
+  readonly run: AutomationRun;
+  readonly automationById: ReadonlyMap<string, AutomationDefinition>;
+  readonly t: AutomationTranslate;
+}): AutomationRunViewModel {
+  const { automationById, run, t } = input;
+  return {
+    run,
+    automationTitle: automationById.get(run.automationId)?.title ?? run.automationId,
+    statusLabel: t(run.status),
+    statusTone: runTone(run.status),
+    triggerLabel: automationRunTriggerLabel(run, t),
+  };
+}
+
+export function buildAutomationTabs(input: {
+  readonly definitions: readonly AutomationDefinitionViewModel[];
+  readonly drafts: readonly AutomationDraftViewModel[];
   readonly recentRuns: readonly AutomationRun[];
-  readonly attentionCount: number;
   readonly t: AutomationTranslate;
 }): readonly AutomationTabItem[] {
+  const attentionDefinitions = input.definitions.filter(isAttentionDefinition);
+  const attentionDrafts = input.drafts.filter((draft) => draft.draft.status !== "confirmed" && draft.draft.status !== "discarded");
   return [
-    { id: "enabled", label: t("Enabled automations"), count: enabled.length },
-    { id: "paused", label: t("Paused"), count: paused.length },
-    { id: "failed", label: t("Needs attention"), count: attentionCount },
-    { id: "succeeded", label: t("Succeeded"), count: succeeded.length },
-    { id: "history", label: t("Recent history"), count: recentRuns.length },
+    { id: "enabled", label: input.t("Enabled automations"), count: input.definitions.filter((item) => item.automation.status === "enabled").length },
+    { id: "paused", label: input.t("Paused"), count: input.definitions.filter((item) => item.automation.status === "paused" || item.automation.status === "disabled").length },
+    { id: "attention", label: input.t("Needs attention"), count: attentionDefinitions.length + attentionDrafts.length },
+    { id: "history", label: input.t("Recent history"), count: input.recentRuns.length },
   ];
 }
 
-export function automationSchedulerCopy({
-  scheduler,
-  manualEnabledCount = 0,
-  t,
-}: {
+export function definitionsForTab(
+  definitions: readonly AutomationDefinitionViewModel[],
+  tab: AutomationTab,
+): readonly AutomationDefinitionViewModel[] {
+  if (tab === "paused") return definitions.filter((item) => item.automation.status === "paused" || item.automation.status === "disabled");
+  if (tab === "attention") return definitions.filter(isAttentionDefinition);
+  if (tab === "history") return [];
+  return definitions.filter((item) => item.automation.status === "enabled");
+}
+
+export function matchesAutomationSearch(searchableText: string, query: string): boolean {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  return !normalizedQuery || searchableText.includes(normalizedQuery);
+}
+
+export function summarizeAutomationsPage(input: {
+  readonly definitions: readonly AutomationDefinitionViewModel[];
+  readonly drafts: readonly AutomationDraftViewModel[];
+  readonly recentRuns: readonly AutomationRun[];
+}): AutomationPageSummary {
+  const active = input.definitions.filter((item) => item.automation.status !== "archived");
+  return {
+    attentionCount: active.filter(isAttentionDefinition).length + input.drafts.filter((draft) => draft.draft.status !== "confirmed" && draft.draft.status !== "discarded").length,
+    enabledCount: active.filter((item) => item.automation.status === "enabled").length,
+    pausedCount: active.filter((item) => item.automation.status === "paused" || item.automation.status === "disabled").length,
+    recentRunCount: input.recentRuns.length,
+    scheduledCount: active.filter((item) => item.automation.status === "enabled" && isScheduledTrigger(item.automation.trigger, item.automation.rrule)).length,
+    totalCount: active.length,
+  };
+}
+
+export function buildSchedulerViewModel(input: {
   readonly scheduler?: AutomationSchedulerState;
-  readonly manualEnabledCount?: number;
+  readonly scheduledCount: number;
   readonly t: AutomationTranslate;
-}): AutomationSchedulerCopy {
-  const isRunning = scheduler?.status === "running";
-  const isError = scheduler?.status === "error";
-  const scheduleCount = scheduler?.automationCount ?? 0;
-  if (isError) {
+}): AutomationSchedulerViewModel {
+  const { scheduler, scheduledCount, t } = input;
+  const hasScheduledDefinitions = scheduledCount > 0;
+  if (scheduler?.status === "error") {
     return {
+      action: hasScheduledDefinitions ? "start" : "",
+      actionLabel: t("Start scheduler"),
+      hasScheduledDefinitions,
+      nextRunAt: scheduler.nextRunAt,
       statusLabel: t("Scheduler needs attention"),
-      summary: t("Scheduler needs attention: {message}", { message: scheduler?.lastErrorMessage || t("Unknown error") }),
+      statusTone: "danger",
+      summary: t("Scheduler needs attention: {message}", { message: scheduler.lastErrorMessage || t("Unknown error") }),
     };
   }
-  if (isRunning && scheduleCount > 0) {
+  if (scheduler?.status === "running") {
     return {
+      action: hasScheduledDefinitions ? "stop" : "",
+      actionLabel: t("Stop scheduler"),
+      hasScheduledDefinitions,
+      nextRunAt: scheduler.nextRunAt,
       statusLabel: t("Scheduler started"),
-      summary: t("Watching {count} scheduled automations.", { count: scheduleCount }),
-    };
-  }
-  if (isRunning) {
-    return {
-      statusLabel: t("Scheduler started"),
-      summary: manualEnabledCount > 0
-        ? t("No scheduled automations are enabled. Manual automations can still run now.")
+      statusTone: "success",
+      summary: hasScheduledDefinitions
+        ? t("Watching {count} scheduled automations.", { count: scheduledCount })
         : t("No enabled scheduled automations yet."),
     };
   }
-  if (scheduleCount > 0) {
-    return {
-      statusLabel: t("Scheduler stopped"),
-      summary: t("{count} scheduled automations are ready. Start scheduler to run them automatically.", { count: scheduleCount }),
-    };
-  }
   return {
+    action: hasScheduledDefinitions ? "start" : "",
+    actionLabel: t("Start scheduler"),
+    hasScheduledDefinitions,
+    nextRunAt: scheduler?.nextRunAt,
     statusLabel: t("Scheduler stopped"),
-    summary: manualEnabledCount > 0
-      ? t("Manual automations can still run now. Add a schedule to run automatically.")
+    statusTone: hasScheduledDefinitions ? "warning" : "neutral",
+    summary: hasScheduledDefinitions
+      ? t("{count} scheduled automations are ready. Start scheduler to run them automatically.", { count: scheduledCount })
       : t("No enabled scheduled automations yet. Create or edit one with a schedule."),
   };
 }
 
-function isScheduledAutomationDefinition(automation: AutomationDefinition): boolean {
-  return automation.trigger.type === "schedule" || Boolean(automation.rrule);
+export function automationScheduleLabel(trigger: AutomationTrigger | undefined, t: AutomationTranslate, rrule?: string): string {
+  const parsedRrule = rrule ? rruleScheduleLabel(rrule, t) : undefined;
+  if (parsedRrule) return parsedRrule;
+  if (!trigger) return t("Missing");
+  if (trigger.type === "manual") return t("Manual");
+  if (trigger.type === "monitor") return t("Monitor run");
+  if (trigger.schedule.cadence === "daily") return `${t("Daily")} ${trigger.schedule.timeOfDay}`;
+  if (trigger.schedule.cadence === "weekly") return `${weekdayLabel(trigger.schedule.weekday, t)} ${trigger.schedule.timeOfDay}`;
+  return `${t("Every")} ${Math.max(1, Math.round(trigger.schedule.everyMs / 60_000))} ${t("minutes")}`;
 }
 
-function isAutomationRunInProgress(run: AutomationRun): boolean {
-  return run.status === "running" || run.status === "queued" || run.status === "waiting_for_approval";
+export function automationTargetLabel(input: {
+  readonly automation?: AutomationDefinition;
+  readonly channels: readonly Channel[];
+  readonly target?: AutomationTarget;
+  readonly threadTitleById: ReadonlyMap<string, string>;
+  readonly t: AutomationTranslate;
+}): string {
+  return input.target
+    ? automationTargetView(input.target, input.automation, input.channels, input.threadTitleById, input.t).label
+    : input.t("Missing");
+}
+
+function derivePrimaryState(automation: AutomationDefinition, latestRun: AutomationRun | undefined, targetUnavailable: boolean): AutomationPrimaryState {
+  if (targetUnavailable) return "target-unavailable";
+  if (latestRun?.status === "failed") return "recent-failure";
+  if (automation.status === "error" || automation.lastErrorMessage) return "definition-error";
+  if (automation.status === "paused" || automation.status === "disabled") return "paused";
+  if (latestRun && isRunInProgress(latestRun)) return "running";
+  if (isScheduledTrigger(automation.trigger, automation.rrule)) return "scheduled";
+  return "ready";
+}
+
+function derivePrimaryAction(state: AutomationPrimaryState, latestRun?: AutomationRun): AutomationPrimaryAction {
+  if (state === "target-unavailable") return "fix-target";
+  if (state === "recent-failure" && latestRun?.runId) return "inspect-failure";
+  if (state === "paused") return "resume";
+  if (state === "running") return "select";
+  if (state === "definition-error") return "select";
+  return "run";
+}
+
+function primaryStateCopy(state: AutomationPrimaryState, t: AutomationTranslate): { readonly label: string; readonly tone: StatusTone } {
+  if (state === "target-unavailable") return { label: t("Unavailable"), tone: "warning" };
+  if (state === "recent-failure") return { label: t("Recent run failed"), tone: "danger" };
+  if (state === "definition-error") return { label: t("Setup needs attention"), tone: "danger" };
+  if (state === "paused") return { label: t("Paused"), tone: "neutral" };
+  if (state === "running") return { label: t("Running"), tone: "info" };
+  if (state === "scheduled") return { label: t("Schedule"), tone: "success" };
+  return { label: t("Ready"), tone: "success" };
+}
+
+function primaryActionCopy(action: AutomationPrimaryAction, t: AutomationTranslate): string {
+  if (action === "fix-target") return t("Target");
+  if (action === "inspect-failure") return t("Inspect failure");
+  if (action === "resume") return t("Resume");
+  if (action === "run") return t("Run now");
+  return t("Execution details");
+}
+
+function automationTargetView(
+  target: AutomationTarget,
+  automation: AutomationDefinition | undefined,
+  channels: readonly Channel[],
+  threadTitleById: ReadonlyMap<string, string>,
+  t: AutomationTranslate,
+): { readonly label: string; readonly unavailable: boolean } {
+  if (target.scope === "channel") {
+    const channelId = target.channelId ?? automation?.channelId;
+    const channel = channelId ? channels.find((item) => item.id === channelId) : undefined;
+    return channel && channel.status !== "archived"
+      ? { label: `#${channel.name}`, unavailable: false }
+      : { label: t("Unavailable"), unavailable: true };
+  }
+  if (target.scope === "thread") {
+    const threadId = target.threadId ?? automation?.targetThreadId;
+    if (!threadId) return { label: t("Unavailable"), unavailable: true };
+    return { label: threadTitleById.get(threadId) ?? t("Conversation"), unavailable: false };
+  }
+  if (target.scope === "workspace") return { label: t("Current workspace"), unavailable: false };
+  return { label: t("Target"), unavailable: false };
+}
+
+function isAttentionDefinition(item: AutomationDefinitionViewModel): boolean {
+  return item.primaryState === "target-unavailable" || item.primaryState === "recent-failure" || item.primaryState === "definition-error";
+}
+
+function isScheduledTrigger(trigger: AutomationTrigger, rrule?: string): boolean {
+  return trigger.type === "schedule" || Boolean(rrule);
+}
+
+function isRunInProgress(run: AutomationRun): boolean {
+  return run.status === "queued" || run.status === "running" || run.status === "waiting_for_approval";
+}
+
+function runTone(status: AutomationRun["status"]): StatusTone {
+  if (status === "failed") return "danger";
+  if (status === "succeeded") return "success";
+  if (status === "queued" || status === "running" || status === "waiting_for_approval") return "info";
+  if (status === "skipped") return "warning";
+  return "neutral";
+}
+
+function automationRunTriggerLabel(run: AutomationRun, t: AutomationTranslate): string {
+  if (run.triggerType === "schedule") return t("Scheduled run");
+  if (run.triggerType === "manual") return t("Manual run");
+  if (run.triggerType === "monitor") return t("Monitor run");
+  return t("Automation run");
+}
+
+function rruleScheduleLabel(rrule: string, t: AutomationTranslate): string | undefined {
+  const fields = new Map<string, string>();
+  for (const part of rrule.split(";")) {
+    const [key, ...value] = part.split("=");
+    if (key && value.length) fields.set(key.trim().toUpperCase(), value.join("=").trim().toUpperCase());
+  }
+  const frequency = fields.get("FREQ");
+  const interval = fields.get("INTERVAL") ?? "1";
+  const hour = fields.get("BYHOUR")?.split(",")[0];
+  const minute = fields.get("BYMINUTE")?.split(",")[0];
+  const time = hour && minute ? `${hour.padStart(2, "0")}:${minute.padStart(2, "0")}` : "";
+  const day = fields.get("BYDAY") ?? "";
+  if (frequency === "WEEKLY" && day === "MO,TU,WE,TH,FR") return `${t("Workdays")}${time ? ` ${time}` : ""}`;
+  if (frequency === "WEEKLY" && day) return `${weekdayLabel(rruleWeekdayIndex(day), t)}${time ? ` ${time}` : ""}`;
+  if (frequency === "DAILY") return `${t("Daily")}${time ? ` ${time}` : ""}`;
+  if (frequency === "MINUTELY") return `${t("Every")} ${interval} ${t("minutes")}`;
+  return undefined;
+}
+
+function rruleWeekdayIndex(day: string): number {
+  return ["SU", "MO", "TU", "WE", "TH", "FR", "SA"].indexOf(day.split(",")[0]?.slice(-2).toUpperCase() ?? "MO");
+}
+
+function weekdayLabel(weekday: number, t: AutomationTranslate): string {
+  return [t("Sunday"), t("Monday"), t("Tuesday"), t("Wednesday"), t("Thursday"), t("Friday"), t("Saturday")][weekday] ?? t("Monday");
+}
+
+function normalizeSearchText(values: readonly (string | undefined)[]): string {
+  return values.filter(Boolean).join(" ").toLocaleLowerCase();
 }

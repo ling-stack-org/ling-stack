@@ -3,11 +3,16 @@
 ## Related Docs
 
 - [Ling Design System](ling-design-system.md)
+- [UI 2.0 Toast 与 InlineFeedback](ui2.0升级/components/07-Toast与InlineFeedback.md)
+- [UI 2.0 全局反馈消息迁移矩阵](ui2.0升级/migration/10-全局反馈消息迁移矩阵.md)
 - [Settings Profile Identity Redesign](settings-profile-identity-redesign.md)
 - [Settings Visual Density Follow-up](settings-visual-density-followup.md)
 - [Settings Full-Surface Productization P10](settings-full-surface-productization-p10.md)
 
 ## Summary
+
+> UI 2.0 note: 本文档保留最初产品方向和视觉决策。共享包架构、逐文件迁移和
+> 最终验收以上方 UI 2.0 文档为准。
 
 Ling needs one global transient feedback pattern. Several surfaces currently render
 small success or action messages directly inside the page, so the layout shifts, the

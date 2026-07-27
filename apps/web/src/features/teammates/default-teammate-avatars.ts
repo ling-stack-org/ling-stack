@@ -1,6 +1,7 @@
 import type { AiTeammate } from "../../types.js";
+import { publicAssetUrl } from "../../shared/ui/public-asset-url.js";
 
-const AVATAR_BASE_PATH = "/avatars/teammates";
+const AVATAR_BASE_PATH = "avatars/teammates";
 
 const templateAvatarById: Readonly<Record<string, string>> = {
   ling_agent: "ling-agent.png",
@@ -50,5 +51,5 @@ export function defaultTeammateAvatarSrc(teammate: DefaultTeammateAvatarLike): s
 }
 
 function avatarPath(fileName: string): string {
-  return `${AVATAR_BASE_PATH}/${fileName}`;
+  return publicAssetUrl(`${AVATAR_BASE_PATH}/${fileName}`);
 }

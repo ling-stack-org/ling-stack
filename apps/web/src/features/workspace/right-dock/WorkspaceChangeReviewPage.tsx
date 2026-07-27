@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   FolderTree,
-  Loader2,
   RefreshCw,
   Search,
   X,
@@ -18,6 +17,14 @@ import {
   terminalReportFileName,
 } from "../../../shared/conversation/blocks/TerminalReportBlock.js";
 import { WorkspaceFileOpenMenu } from "../../../shared/conversation/blocks/WorkspaceFileOpenMenu.js";
+import {
+  Button,
+  EmptyState,
+  IconButton,
+  InlineFeedback,
+  Input,
+  Spinner,
+} from "../../../shared/ui/index.js";
 
 export function WorkspaceChangeReviewPage({
   cwd,
@@ -75,32 +82,39 @@ export function WorkspaceChangeReviewPage({
           ) : null}
         </span>
         <span className="workspace-change-review-tools">
-          <button type="button" title={t("Refresh")} aria-label={t("Refresh")} onClick={onRefresh} disabled={loading}>
-            <RefreshCw className={loading ? "spin" : ""} size={14} />
-          </button>
-          <button
-            type="button"
+          <IconButton
+            icon={RefreshCw}
+            label={t("Refresh")}
+            loading={loading}
+            loadingLabel={t("Refresh")}
+            onClick={onRefresh}
+            disabled={loading}
+            size="sm"
+          />
+          <IconButton
             className={navigatorOpen ? "active" : ""}
-            title={t("Changed file navigator")}
-            aria-label={t("Changed file navigator")}
+            icon={FolderTree}
+            label={t("Changed file navigator")}
             aria-expanded={navigatorOpen}
+            pressed={navigatorOpen}
             onClick={() => setNavigatorOpen((current) => !current)}
-          >
-            <FolderTree size={15} />
-          </button>
+            size="sm"
+          />
         </span>
       </header>
 
       <div className="workspace-change-review-body">
         {loading && !changes ? (
-          <div className="workspace-change-review-state"><Loader2 className="spin" size={16} /><span>{t("Loading")}</span></div>
+          <div className="workspace-change-review-state"><Spinner label={t("Loading")} size="sm" /></div>
         ) : error ? (
-          <div className="workspace-change-review-state error"><span>{error}</span></div>
+          <InlineFeedback className="workspace-change-review-state error" tone="danger">{error}</InlineFeedback>
         ) : changes?.state !== "dirty" || files.length === 0 ? (
-          <div className="workspace-change-review-state">
-            <strong>{t("No code changes")}</strong>
-            {changes?.unavailableReason || changes?.errorMessage ? <small>{changes.unavailableReason ?? changes.errorMessage}</small> : null}
-          </div>
+          <EmptyState
+            className="workspace-change-review-state"
+            compact
+            title={t("No code changes")}
+            description={changes?.unavailableReason ?? changes?.errorMessage}
+          />
         ) : (
           <div className="workspace-change-review-diffs">
             {files.map((file) => (
@@ -125,12 +139,17 @@ export function WorkspaceChangeReviewPage({
           <aside className="workspace-change-file-navigator" aria-label={t("Changed file navigator")}>
             <div className="workspace-change-file-navigator-head">
               <strong>{t("Changed files")}</strong>
-              <button type="button" aria-label={t("Close")} title={t("Close")} onClick={() => setNavigatorOpen(false)}><X size={14} /></button>
+              <IconButton icon={X} label={t("Close")} onClick={() => setNavigatorOpen(false)} size="sm" />
             </div>
-            <label className="workspace-change-file-search">
-              <Search size={13} />
-              <input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder={t("Filter files")} />
-            </label>
+            <Input
+              containerClassName="workspace-change-file-search"
+              prefix={<Search size={13} />}
+              aria-label={t("Filter files")}
+              value={filter}
+              onChange={(event) => setFilter(event.target.value)}
+              placeholder={t("Filter files")}
+              size="sm"
+            />
             <div className="workspace-change-file-tree">
               {directoryGroups.map((group) => (
                 <section key={group.directory}>
@@ -138,9 +157,10 @@ export function WorkspaceChangeReviewPage({
                   {group.files.map((file) => {
                     const fileIcon = terminalReportFileIcon(file.path);
                     return (
-                      <button
-                        type="button"
+                      <Button
                         className={selectedPath === file.path ? "selected" : ""}
+                        variant="ghost"
+                        size="sm"
                         key={file.path}
                         title={file.path}
                         onClick={() => scrollToFile(file.path)}
@@ -148,7 +168,7 @@ export function WorkspaceChangeReviewPage({
                         <span className="terminal-report-file-type-icon" data-file-kind={fileIcon.kind} aria-hidden="true"><fileIcon.Icon size={12} /></span>
                         <span>{terminalReportFileName(file.path)}</span>
                         <ChangeStats additions={file.additions} deletions={file.deletions} />
-                      </button>
+                      </Button>
                     );
                   })}
                 </section>
@@ -195,9 +215,10 @@ function WorkspaceChangeFileSection({
       data-workspace-change-path={file.path}
     >
       <header>
-        <button
+        <Button
           className="workspace-change-file-toggle"
-          type="button"
+          variant="ghost"
+          size="md"
           aria-expanded={!collapsed}
           aria-label={`${collapsed ? t("Expand code preview") : t("Collapse code preview")}: ${fileName}`}
           onClick={() => setCollapsed((current) => !current)}
@@ -212,7 +233,7 @@ function WorkspaceChangeFileSection({
             {file.untracked ? <small>{t("Untracked")}</small> : null}
             <ChangeStats additions={file.additions} deletions={file.deletions} />
           </span>
-        </button>
+        </Button>
         {file.kind !== "deleted" ? <WorkspaceFileOpenMenu cwd={cwd} path={file.path} compact /> : null}
       </header>
       {!collapsed ? (

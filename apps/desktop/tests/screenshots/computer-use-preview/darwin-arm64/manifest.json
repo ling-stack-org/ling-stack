@@ -7,80 +7,252 @@
       "theme": "light",
       "width": 320,
       "height": 200,
+      "visualState": "live",
       "reducedMotion": false,
-      "sha256": "d1d910083f3a9ecad8a70a4e1acab040b6e7c78fb9e70bc64b00d3ed6cf12fe3"
+      "sha256": "5517865ca071a2f1f525c06602bc5bf47b73da741d2f97f4c0a4f5179311581a"
     },
     {
       "filename": "default-light.png",
       "theme": "light",
       "width": 420,
       "height": 263,
+      "visualState": "live",
       "reducedMotion": false,
-      "sha256": "e4e85a7129234704253b5915f05c003f2508439be11c04a07956ccce73438d10"
+      "sha256": "0bdc3fcadbe4762c2e5e2c4f1a3f7319376c4fb1c616f656c3061e3bf443f988"
     },
     {
       "filename": "maximum-light.png",
       "theme": "light",
       "width": 480,
       "height": 300,
+      "visualState": "live",
       "reducedMotion": false,
-      "sha256": "cbb46323088df624e7217b29784cb3064226265e4ffe352f44e4b9c47754ff79"
+      "sha256": "d6b88c311490f062d16ee3c54df70459e6e780152b5a2babb20f945d6d522d8f"
+    },
+    {
+      "filename": "connecting-light.png",
+      "theme": "light",
+      "width": 420,
+      "height": 263,
+      "visualState": "connecting",
+      "reducedMotion": false,
+      "sha256": "f1e955c0edcff8ff4e6cd13387885ab695a51ab176c99bb7854895f5b58320e8"
+    },
+    {
+      "filename": "reconnecting-light.png",
+      "theme": "light",
+      "width": 420,
+      "height": 263,
+      "visualState": "reconnecting",
+      "reducedMotion": false,
+      "sha256": "f4b550fe49bda1b7cd43fdbc4a630c2b1668972cb9243038d94f19ed6074df68"
+    },
+    {
+      "filename": "paused-light.png",
+      "theme": "light",
+      "width": 420,
+      "height": 263,
+      "visualState": "paused",
+      "reducedMotion": false,
+      "sha256": "fe61a625935248b7240ef37d7fc4e5dd3264b03f8656c38953b0bf34c362a972"
+    },
+    {
+      "filename": "approval-required-light.png",
+      "theme": "light",
+      "width": 420,
+      "height": 263,
+      "visualState": "approval_required",
+      "reducedMotion": false,
+      "sha256": "ea77d6502123b0b32bb87a799a5439c3a4196920a76d0400bf4ea4291f6939c1"
+    },
+    {
+      "filename": "permission-required-light.png",
+      "theme": "light",
+      "width": 420,
+      "height": 263,
+      "visualState": "permission_required",
+      "reducedMotion": false,
+      "sha256": "57e1ae8e81c25a170abf42231c6f7d66945c6b525bbf8d12cc472e577cc8448d"
+    },
+    {
+      "filename": "stopping-light.png",
+      "theme": "light",
+      "width": 420,
+      "height": 263,
+      "visualState": "stopping",
+      "reducedMotion": false,
+      "sha256": "312dd35d851cefa75118dbf2f826443c769482edb32da9f9e594444691ce779c"
+    },
+    {
+      "filename": "completed-light.png",
+      "theme": "light",
+      "width": 420,
+      "height": 263,
+      "visualState": "completed",
+      "reducedMotion": false,
+      "sha256": "48043b087b645cae867871881250f4abb38c0a0a442740e8759f68ab2e5165d3"
+    },
+    {
+      "filename": "stopped-light.png",
+      "theme": "light",
+      "width": 420,
+      "height": 263,
+      "visualState": "stopped",
+      "reducedMotion": false,
+      "sha256": "4ec10eb6e0397117baf0f885387a98567d4ddec276513d02868e7035c75a2981"
+    },
+    {
+      "filename": "failed-light.png",
+      "theme": "light",
+      "width": 420,
+      "height": 263,
+      "visualState": "failed",
+      "reducedMotion": false,
+      "sha256": "3581791e34fcb6e599bca20a6479a0537124289fc605a66636ed0108eacb37ca"
     },
     {
       "filename": "stop-failed-light.png",
       "theme": "light",
       "width": 420,
       "height": 263,
+      "visualState": "stop_failed",
       "reducedMotion": false,
-      "sha256": "86336a71f5599a4985b593a20cdc179b5b0e680ea7733ef3320cc4682431811d"
+      "sha256": "fa90485c3fa8386f594218c9aeb1444deca55540da71a3f0df71f03b8cde0a17"
     },
     {
       "filename": "reduced-motion-light.png",
       "theme": "light",
       "width": 420,
       "height": 263,
+      "visualState": "live",
       "reducedMotion": true,
-      "sha256": "e4e85a7129234704253b5915f05c003f2508439be11c04a07956ccce73438d10"
+      "sha256": "0bdc3fcadbe4762c2e5e2c4f1a3f7319376c4fb1c616f656c3061e3bf443f988"
     },
     {
       "filename": "minimum-dark.png",
       "theme": "dark",
       "width": 320,
       "height": 200,
+      "visualState": "live",
       "reducedMotion": false,
-      "sha256": "7ebbe2c16ab2beb99ee98dda08a137a92df32343fb7e92ca80d3f7e60db472f7"
+      "sha256": "9aa54eac802ff7bee85fbc4143a7db700c4fb41ae27912c30c676a4b94414736"
     },
     {
       "filename": "default-dark.png",
       "theme": "dark",
       "width": 420,
       "height": 263,
+      "visualState": "live",
       "reducedMotion": false,
-      "sha256": "b302478b2a07119408fc89aad45aaec59cb07d78d9cdcbf9d462e3081398ae39"
+      "sha256": "9e9f0dbb9b0e0d5409a6b6b358139dce153b503e2e47f9b3968fe1435fe7162d"
     },
     {
       "filename": "maximum-dark.png",
       "theme": "dark",
       "width": 480,
       "height": 300,
+      "visualState": "live",
       "reducedMotion": false,
-      "sha256": "0a9bb03103dc9550c36649c998e0278d4741d8a22902c13d8a877cee9a2a3154"
+      "sha256": "fb4d5681c5fd083789eb8c3607961391f28849b23f44116bf5e729925a9effae"
+    },
+    {
+      "filename": "connecting-dark.png",
+      "theme": "dark",
+      "width": 420,
+      "height": 263,
+      "visualState": "connecting",
+      "reducedMotion": false,
+      "sha256": "2ce17d422893606bf0ec56805be028d74ba00d84cfe7fac7847ed9cea92d9a06"
+    },
+    {
+      "filename": "reconnecting-dark.png",
+      "theme": "dark",
+      "width": 420,
+      "height": 263,
+      "visualState": "reconnecting",
+      "reducedMotion": false,
+      "sha256": "8f12cbeee3835e3a8cfe0c01a9a3ac90c31f316af67595a3a0f6a3716eaa55a4"
+    },
+    {
+      "filename": "paused-dark.png",
+      "theme": "dark",
+      "width": 420,
+      "height": 263,
+      "visualState": "paused",
+      "reducedMotion": false,
+      "sha256": "2c7c56a64ca64719f4a28b75d58add1bdb6631f8ddaa960d56bb029603846c5c"
+    },
+    {
+      "filename": "approval-required-dark.png",
+      "theme": "dark",
+      "width": 420,
+      "height": 263,
+      "visualState": "approval_required",
+      "reducedMotion": false,
+      "sha256": "cb1e97e63ee3e1f4730f49349a1953ead52e1095bf17d1e7f0ad267d95b3db1d"
+    },
+    {
+      "filename": "permission-required-dark.png",
+      "theme": "dark",
+      "width": 420,
+      "height": 263,
+      "visualState": "permission_required",
+      "reducedMotion": false,
+      "sha256": "67792e968b61d5504c46e657771ec1f017dd9505eea50e89459875c2f64beb73"
+    },
+    {
+      "filename": "stopping-dark.png",
+      "theme": "dark",
+      "width": 420,
+      "height": 263,
+      "visualState": "stopping",
+      "reducedMotion": false,
+      "sha256": "fd4553189e2586abd719dfb258e1b48627c4e68535e68be262ac81338c457196"
+    },
+    {
+      "filename": "completed-dark.png",
+      "theme": "dark",
+      "width": 420,
+      "height": 263,
+      "visualState": "completed",
+      "reducedMotion": false,
+      "sha256": "5771abd259c426d4cd514c6612155091e4c3b079ac317a1781c6b15f88374137"
+    },
+    {
+      "filename": "stopped-dark.png",
+      "theme": "dark",
+      "width": 420,
+      "height": 263,
+      "visualState": "stopped",
+      "reducedMotion": false,
+      "sha256": "e325906b7a47c596e8ad7c72c6b141cc626162313d65d7f63e40f3680ce2a074"
+    },
+    {
+      "filename": "failed-dark.png",
+      "theme": "dark",
+      "width": 420,
+      "height": 263,
+      "visualState": "failed",
+      "reducedMotion": false,
+      "sha256": "a4603f044fafcfa62db88ac05da4b4222c53eba3d095800c5ef7b87a3c6bdf20"
     },
     {
       "filename": "stop-failed-dark.png",
       "theme": "dark",
       "width": 420,
       "height": 263,
+      "visualState": "stop_failed",
       "reducedMotion": false,
-      "sha256": "bc57a2f58d5a07f0a49995613e5ce2f3e25eda5826754ee6cc485511238dfbea"
+      "sha256": "745e5bed411c250ae0acc23039c8f73c74ec256de4e3dd4fe121c5d3d155ff5e"
     },
     {
       "filename": "reduced-motion-dark.png",
       "theme": "dark",
       "width": 420,
       "height": 263,
+      "visualState": "live",
       "reducedMotion": true,
-      "sha256": "b302478b2a07119408fc89aad45aaec59cb07d78d9cdcbf9d462e3081398ae39"
+      "sha256": "9e9f0dbb9b0e0d5409a6b6b358139dce153b503e2e47f9b3968fe1435fe7162d"
     }
   ]
 }

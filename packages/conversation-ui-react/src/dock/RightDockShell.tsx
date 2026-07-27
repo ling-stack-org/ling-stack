@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import type { DockPageKind, DockPageStackEntry, DockSurfaceKind } from "@ling-stack/conversation-ui-core";
 import { activeDockPage, createDockPageEntry } from "@ling-stack/conversation-ui-core";
 import { ChevronLeft, PanelRightClose, PanelRightOpen, X } from "lucide-react";
+import { IconButton } from "@ling-stack/ui-react";
 import { DockLauncher, type DockLauncherPageItem } from "./DockLauncher.js";
 
 export interface RightDockPageManifest {
@@ -63,6 +64,7 @@ export function RightDockShell({
   const activeEntry = activeDockPage(stack);
   const activeManifest = activeEntry ? pages.find((page) => page.id === activeEntry.page) : undefined;
   const launcherPages = pages.filter((page) => page.launcherItem && !page.hiddenFromLauncher);
+  const CollapseIcon = collapsed ? PanelRightOpen : PanelRightClose;
   const rootClassName = [
     "right-dock",
     `right-dock-${surface}`,
@@ -72,14 +74,18 @@ export function RightDockShell({
   ].filter(Boolean).join(" ");
 
   return (
-    <aside className={rootClassName} aria-label={ariaLabel}>
+    <aside className={rootClassName} aria-label={ariaLabel} data-ui2-right-dock="true">
       <div className="right-dock-head">
         {activeEntry && activeManifest ? (
           <span className="right-dock-head-page">
             {stack.length > 0 ? (
-              <button className="right-dock-back-button" type="button" onClick={onBack} aria-label={backLabel} title={backLabel}>
-                <ChevronLeft size={16} />
-              </button>
+              <IconButton
+                className="right-dock-back-button"
+                icon={ChevronLeft}
+                label={backLabel}
+                onClick={onBack}
+                size="sm"
+              />
             ) : null}
             <span className="right-dock-page-title">
               <strong>{activeEntry.title}</strong>
@@ -96,26 +102,28 @@ export function RightDockShell({
           {activeEntry && activeManifest ? activeManifest.headerActions : null}
           {!activeEntry || activeEntry.page !== "detail" ? actions : null}
           {onCollapsedChange ? (
-            <button
+            <IconButton
               className="right-dock-icon-button"
-              type="button"
+              icon={CollapseIcon}
+              label={collapsed ? expandLabel : collapseLabel}
               onClick={() => onCollapsedChange(!collapsed)}
-              aria-label={collapsed ? expandLabel : collapseLabel}
-              title={collapsed ? expandLabel : collapseLabel}
-            >
-              {collapsed ? <PanelRightOpen size={15} /> : <PanelRightClose size={15} />}
-            </button>
+              size="sm"
+            />
           ) : null}
           {onClose ? (
-            <button className="right-dock-icon-button" type="button" onClick={onClose} aria-label={closeLabel} title={closeLabel}>
-              <X size={15} />
-            </button>
+            <IconButton
+              className="right-dock-icon-button"
+              icon={X}
+              label={closeLabel}
+              onClick={onClose}
+              size="sm"
+            />
           ) : null}
         </span>
       </div>
       {!collapsed ? (
         activeEntry && activeManifest ? (
-          <div className="right-dock-body right-dock-page-body">
+          <div className="right-dock-body right-dock-page-body" data-ui2-dock-page={activeEntry.page}>
             {activeManifest.headerFilters ? <div className="right-dock-page-filters">{activeManifest.headerFilters}</div> : null}
             {activeManifest.render(activeEntry)}
           </div>

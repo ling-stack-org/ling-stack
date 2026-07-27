@@ -1,61 +1,128 @@
-import { CircleAlert, Play } from "lucide-react";
-import { CreateDialogShell } from "../../shared/components/CreateDialogShell.js";
+import { useRef, useState } from "react";
+import { Play } from "lucide-react";
+import { useI18n } from "../../i18n.js";
+import {
+  Button,
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  InlineFeedback,
+  StatusIndicator,
+} from "../../shared/ui/index.js";
+import type { MediaProductionFailure } from "./media-production-types.js";
 import type { ProjectRunReview } from "./media-production-view-models.js";
 
 export function ProjectRunReviewDialog({
+  failure,
   review,
   onClose,
   onConfirm,
   isSubmitting,
 }: {
+  readonly failure?: MediaProductionFailure;
   readonly review: ProjectRunReview;
   readonly onClose: () => void;
-  readonly onConfirm: () => void;
+  readonly onConfirm: () => Promise<void>;
   readonly isSubmitting: boolean;
 }): JSX.Element {
+  const { t } = useI18n();
+  const confirmInFlight = useRef(false);
+  const [confirmPending, setConfirmPending] = useState(false);
+  const busy = isSubmitting || confirmPending;
   const hasReadyScenes = review.ready.length > 0;
+  const title = `${t(hasReadyScenes ? "Run" : "Check")} · ${t("{count} scenes", { count: review.ready.length })}`;
+
+  async function confirm(): Promise<void> {
+    if (!hasReadyScenes || confirmInFlight.current) return;
+    confirmInFlight.current = true;
+    setConfirmPending(true);
+    try {
+      await onConfirm();
+    } finally {
+      confirmInFlight.current = false;
+      setConfirmPending(false);
+    }
+  }
+
   return (
-    <CreateDialogShell
-      ariaLabel={hasReadyScenes ? "确认生成场景" : "检查场景"}
-      title={hasReadyScenes ? `生成 ${review.ready.length} 个场景` : "检查场景"}
-      description={hasReadyScenes ? "每个场景会生成独立视频片段，不会自动合成为最终视频。" : "查看哪些场景已经完成，以及哪些内容还需要完善。"}
-      closeLabel="关闭"
-      onClose={onClose}
-      overlayClassName="project-run-review-overlay"
-      className="project-run-review-dialog"
-      bodyClassName="project-run-review-body"
-      footer={(
-        <>
-          <button className="secondary-button" type="button" onClick={onClose} disabled={isSubmitting}>{hasReadyScenes ? "取消" : "关闭"}</button>
-          {hasReadyScenes ? (
-            <button className="primary-button" type="button" onClick={onConfirm} disabled={isSubmitting}>
-              <Play size={16} /> {isSubmitting ? "提交中" : `生成 ${review.ready.length} 个场景`}
-            </button>
+    <Dialog open busy={busy} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent
+        className="project-run-review-dialog"
+        overlayClassName="project-run-review-overlay"
+        size="md"
+        data-media-production-dialog="project-run-review"
+      >
+        <DialogHeader
+          closeLabel={t("Close")}
+          title={title}
+          description={t("Create independent video clips from ordered scenes. Generation tasks and results stay available in the task view.")}
+        />
+        <DialogBody className="project-run-review-body">
+          {failure ? (
+            <InlineFeedback tone="danger" title={t(failure.productMessageKey)} />
           ) : null}
-        </>
-      )}
-    >
-      <section className="project-run-review-section">
-        <div className="project-run-review-section-head">
-          <strong>{hasReadyScenes ? `本次将提交 ${review.ready.length} 个场景` : "当前没有可生成场景"}</strong>
-          <span>{hasReadyScenes ? "按场景编号依次创建任务" : "完善后可再次检查"}</span>
-        </div>
-        {review.ready.length ? (
-          <ol className="project-run-review-list ready">
-            {review.ready.map((item) => <li key={item.sceneId}><span>{String(item.sortOrder + 1).padStart(2, "0")}</span><strong>{item.sceneTitle}</strong><small>{item.workflow?.definition.name ?? item.provider?.displayName ?? "视频模型"}</small></li>)}
-          </ol>
-        ) : (
-          <div className="project-run-review-empty"><CircleAlert size={16} /> 还没有可以提交的场景，请先完善场景输入以及视频模型或生产流程。</div>
-        )}
-      </section>
-      {review.skipped.length ? (
-        <section className="project-run-review-section skipped">
-          <div className="project-run-review-section-head"><strong>本次不提交 {review.skipped.length} 个场景</strong></div>
-          <ul className="project-run-review-list">
-            {review.skipped.map((item) => <li key={item.sceneId}><span>{item.label}</span><strong>{item.sceneTitle}</strong><small>{item.reason}</small></li>)}
-          </ul>
-        </section>
-      ) : null}
-    </CreateDialogShell>
+          <section className="project-run-review-section" data-project-run-ready-count={review.ready.length}>
+            <div className="project-run-review-section-head">
+              <StatusIndicator
+                label={`${t("Ready")} · ${t("{count} scenes", { count: review.ready.length })}`}
+                tone={hasReadyScenes ? "success" : "neutral"}
+              />
+            </div>
+            {review.ready.length ? (
+              <ol className="project-run-review-list ready">
+                {review.ready.map((item) => (
+                  <li key={item.sceneId}>
+                    <span>{String(item.sortOrder + 1).padStart(2, "0")}</span>
+                    <strong title={item.sceneTitle}>{item.sceneTitle}</strong>
+                    <small>{item.workflow?.definition.name ?? item.provider?.displayName ?? t("Default video model")}</small>
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <InlineFeedback tone="warning" title={t("Needs attention")}>
+                {t("Add a scene, then define its visual and generation source.")}
+              </InlineFeedback>
+            )}
+          </section>
+          {review.skipped.length ? (
+            <section className="project-run-review-section skipped" data-project-run-skipped-count={review.skipped.length}>
+              <div className="project-run-review-section-head">
+                <StatusIndicator
+                  label={`${t("Skipped")} · ${t("{count} scenes", { count: review.skipped.length })}`}
+                  tone="warning"
+                />
+              </div>
+              <ul className="project-run-review-list">
+                {review.skipped.map((item) => (
+                  <li key={item.sceneId}>
+                    <span>{String(item.sortOrder + 1).padStart(2, "0")}</span>
+                    <strong title={item.sceneTitle}>{item.sceneTitle}</strong>
+                    <small>{t(item.reasonKey, item.reasonValues)}</small>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+        </DialogBody>
+        <DialogFooter>
+          <Button disabled={busy} variant="secondary" onClick={onClose}>
+            {t(hasReadyScenes ? "Cancel" : "Close")}
+          </Button>
+          {hasReadyScenes ? (
+            <Button
+              leadingIcon={<Play size={16} />}
+              loading={busy}
+              loadingLabel={t("Loading")}
+              variant="primary"
+              onClick={() => void confirm()}
+            >
+              {t("Run")} · {t("{count} scenes", { count: review.ready.length })}
+            </Button>
+          ) : null}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

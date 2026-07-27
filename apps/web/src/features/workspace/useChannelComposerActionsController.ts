@@ -30,6 +30,7 @@ import type {
 import type { ChannelComposerSendState } from "./ChannelComposer.js";
 import type { PendingChannelSendPreview } from "./ChannelMessageFeed.js";
 import type { PendingLinkPreviewItem } from "./useChannelComposerDraftController.js";
+import type { DetachedChannelSendSnapshot } from "./useChannelComposerSnapshotController.js";
 import { findMentionsInText, mergeMentions } from "./channelMentionText.js";
 
 interface ChannelComposerActionsInput {
@@ -95,7 +96,14 @@ interface ChannelComposerActionsInput {
     readonly linkPreviewIds: readonly string[];
     readonly fileRefs: readonly ChannelMessageFileRef[];
     readonly requestAiReply: boolean;
-  }) => Promise<void>;
+  }) => Promise<{ readonly errorMessage?: string }>;
+  readonly isChannelCurrent: (channelId: string) => boolean;
+  readonly rememberDetachedSendFailure: (
+    channelId: string,
+    snapshot: DetachedChannelSendSnapshot,
+    errorMessage: string,
+  ) => void;
+  readonly rememberDetachedSendSuccess: (channelId: string) => void;
   readonly onCancelActiveRun: (run?: RunSession) => void;
   readonly onRefreshChannelActivity: () => void;
   readonly onRefreshTasks: () => void;
@@ -151,9 +159,12 @@ export function useChannelComposerActionsController({
   onRefreshRuntime,
   onRefreshTasks,
   onSendMessage,
+  isChannelCurrent,
   pendingAttachments,
   pendingLinkPreviews,
   readyLinkPreviewIds,
+  rememberDetachedSendFailure,
+  rememberDetachedSendSuccess,
   selectedChannel,
   selectedChannelBranchRootThreadId,
   selectedChannelId,
@@ -491,6 +502,7 @@ export function useChannelComposerActionsController({
     }
     const retryingFailedSend = sendState === "failed";
     const draftSnapshot = messageDraft;
+    const sendChannelId = selectedChannelId;
     const messageMentionsSnapshot = messageMentions;
     const pendingAttachmentsSnapshot = pendingAttachments;
     const pendingLinkPreviewsSnapshot = pendingLinkPreviews;
@@ -635,7 +647,7 @@ export function useChannelComposerActionsController({
       setPendingAttachments([]);
       setPendingLinkPreviews([]);
       autoPreviewUrlsRef.current.clear();
-      await onSendMessage({
+      const sendResult = await onSendMessage({
         threadId: selectedChannelBranchRootThreadId,
         body,
         mentions,
@@ -644,8 +656,26 @@ export function useChannelComposerActionsController({
         fileRefs,
         requestAiReply: shouldRequestAi,
       });
+      if (!isChannelCurrent(sendChannelId)) {
+        if (sendResult.errorMessage) {
+          rememberDetachedSendFailure(sendChannelId, {
+            messageDraft: draftSnapshot,
+            messageMentions: messageMentionsSnapshot,
+            pendingAttachments: pendingAttachmentsSnapshot,
+            pendingLinkPreviews: pendingLinkPreviewsSnapshot,
+          }, sendResult.errorMessage);
+        } else {
+          rememberDetachedSendSuccess(sendChannelId);
+        }
+        return;
+      }
       revokePendingAttachmentPreviews(pendingAttachmentsSnapshot, (previewUrl) => attachmentPreviewUrlsRef.current.delete(previewUrl));
       setPendingChannelSendPreview((current) => current?.id === pendingSendPreviewId ? undefined : current);
+      if (sendResult.errorMessage) {
+        setSendState("failed");
+        setSendError(sendResult.errorMessage);
+        return;
+      }
       setSendState("idle");
       setSendError("");
       if (retryingFailedSend) {
@@ -653,6 +683,15 @@ export function useChannelComposerActionsController({
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (!isChannelCurrent(sendChannelId)) {
+        rememberDetachedSendFailure(sendChannelId, {
+          messageDraft: draftSnapshot,
+          messageMentions: messageMentionsSnapshot,
+          pendingAttachments: pendingAttachmentsSnapshot,
+          pendingLinkPreviews: pendingLinkPreviewsSnapshot,
+        }, message);
+        return;
+      }
       if (pendingSendPreviewId) {
         setPendingChannelSendPreview((current) => current?.id === pendingSendPreviewId ? undefined : current);
         setMessageDraft(draftSnapshot);
@@ -686,8 +725,11 @@ export function useChannelComposerActionsController({
     onSetGoalObjective,
     onSetPlanMode,
     onSendMessage,
+    isChannelCurrent,
     pendingAttachments,
     pendingLinkPreviews,
+    rememberDetachedSendFailure,
+    rememberDetachedSendSuccess,
     selectedChannel?.autoReplyMode,
     selectedChannelBranchRootThreadId,
     selectedChannelId,

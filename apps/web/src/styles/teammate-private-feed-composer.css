@@ -1,0 +1,234 @@
+.workspace.workspace-teammate-private-surface {
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+  background: var(--ling-bg-app);
+}
+
+.teammate-workspace.chat-mode {
+  --teammate-conversation-width: var(--channel-conversation-width, 800px);
+  display: grid;
+  height: 100%;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: var(--ling-bg-panel);
+}
+
+.teammate-workspace.chat-mode > .inline-error,
+.teammate-workspace.chat-mode > .client-empty-state {
+  grid-column: 1 / -1;
+}
+
+.teammate-workspace.chat-mode > .teammate-private-chat {
+  --channel-progress-popover-width: min(280px, calc(100vw - 420px));
+  --channel-progress-popover-right: 18px;
+  --channel-right-dock-motion-duration: var(--ling-motion-slow);
+  --channel-right-dock-motion-ease: var(--ling-ease-standard);
+  grid-column: 1;
+  grid-row: 2;
+  display: grid;
+  height: 100%;
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr) auto;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  color: var(--ling-text-default);
+  background: var(--ling-bg-panel);
+  box-shadow: none;
+}
+
+.teammate-private-chat.with-right-dock {
+  grid-template-columns:
+    minmax(0, 1fr)
+    var(--workspace-right-dock-layout-handle-width, 0px)
+    var(--workspace-right-dock-layout-width, 0px);
+}
+
+.teammate-private-chat.with-bottom-terminal {
+  grid-template-rows: minmax(0, 1fr) auto auto;
+}
+
+.teammate-private-feed-owner {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  grid-column: 1;
+  grid-row: 1;
+  overflow: hidden;
+}
+
+.teammate-private-feed-owner > .message-feed-wrap {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  justify-content: center;
+}
+
+.teammate-private-composer-owner {
+  display: grid;
+  width: min(var(--channel-conversation-width, 800px), calc(100% - 48px));
+  min-width: 0;
+  grid-column: 1;
+  grid-row: 2;
+  justify-self: center;
+}
+
+.teammate-private-chat.with-right-dock > .workspace-right-dock-resize-handle {
+  grid-column: 2;
+  grid-row: 1 / 3;
+}
+
+.teammate-private-chat.with-right-dock > .workspace-right-dock-frame {
+  grid-column: 3;
+  grid-row: 1 / 3;
+  align-self: stretch;
+}
+
+.teammate-private-chat.with-bottom-terminal > .workspace-bottom-terminal {
+  grid-column: 1 / -1;
+  grid-row: 3;
+}
+
+.teammate-workspace.chat-mode .teammate-message-list {
+  width: min(var(--channel-conversation-width, 800px), calc(100% - 48px));
+  height: 100%;
+  min-height: 0;
+  flex: 0 1 auto;
+  padding: 16px 18px 14px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  color: var(--ling-text-default);
+  background: var(--ling-bg-panel);
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.teammate-message-list::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.teammate-message-list.message-feed-empty {
+  padding-block: 0;
+}
+
+.teammate-workspace.chat-mode .teammate-message-row .avatar-initial,
+.teammate-workspace.chat-mode .teammate-message-row .teammate-avatar-image.compact,
+.teammate-workspace.chat-mode .teammate-message-row .user-profile-avatar {
+  width: 30px;
+  height: 30px;
+  font-size: var(--ling-font-xs);
+}
+
+.teammate-message-error.ling-ui-inline-feedback {
+  width: fit-content;
+  max-width: 100%;
+  margin-top: var(--ling-space-2);
+  padding: var(--ling-space-2) var(--ling-space-3);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+.teammate-message-actions {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.teammate-message-attachments {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--ling-space-3);
+}
+
+.teammate-attachment-chip {
+  display: inline-flex;
+  max-width: 260px;
+  min-height: 28px;
+  align-items: center;
+  gap: var(--ling-space-3);
+  padding: 0 var(--ling-space-3);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  color: var(--ling-text-default);
+  background: var(--ling-bg-elevated);
+  font-size: var(--ling-font-xs);
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.teammate-attachment-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teammate-workspace.chat-mode [data-conversation-composer][data-surface="teammate_direct"] {
+  --conversation-composer-preview-remove-size: 28px;
+
+  width: 100%;
+  margin: 10px 0 14px;
+  padding: 8px;
+  border-color: var(--ling-border-default);
+  border-radius: var(--ling-radius-lg);
+  color: var(--ling-text-default);
+  background: var(--ling-bg-composer);
+  box-shadow: var(--ling-shadow-medium);
+}
+
+.teammate-workspace.chat-mode [data-conversation-composer][data-surface="teammate_direct"]:focus-within {
+  border-color: var(--ling-border-focus);
+  box-shadow:
+    inset 0 0 0 1px var(--ling-border-focus),
+    var(--ling-shadow-medium);
+}
+
+.teammate-workspace.chat-mode [data-conversation-composer][data-surface="teammate_direct"] .conversation-composer-input-zone,
+.teammate-workspace.chat-mode [data-conversation-composer][data-surface="teammate_direct"] .tokenized-composer-input {
+  min-height: 76px;
+}
+
+.teammate-workspace.chat-mode [data-conversation-composer][data-surface="teammate_direct"] .tokenized-composer-input {
+  padding: 7px 8px 2px;
+  color: var(--ling-text-default);
+  font-size: var(--ling-font-sm);
+}
+
+.teammate-workspace.chat-mode [data-conversation-composer][data-surface="teammate_direct"] .conversation-composer-input-zone.active .tokenized-composer-input {
+  background: var(--ling-bg-subtle);
+}
+
+.teammate-workspace.chat-mode [data-conversation-composer][data-surface="teammate_direct"] .conversation-composer-toolbar {
+  min-height: var(--ling-control-sm);
+}
+
+.teammate-workspace.chat-mode [data-conversation-composer][data-surface="teammate_direct"] .composer-send-button {
+  width: var(--ling-control-sm);
+  min-width: var(--ling-control-sm);
+  height: var(--ling-control-sm);
+  min-height: var(--ling-control-sm);
+  border-radius: var(--ling-radius-md);
+}
+
+@media (max-width: 900px) {
+  .teammate-private-chat.with-right-dock {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .teammate-private-chat.with-right-dock > .workspace-right-dock-resize-handle,
+  .teammate-private-chat.with-right-dock > .workspace-right-dock-frame {
+    display: none;
+  }
+}

@@ -45,6 +45,7 @@ export function MessageBubble({
   evidenceNode,
   errorNode,
 }: MessageBubbleProps): JSX.Element {
+  const hasAvatar = avatar !== null && avatar !== undefined && avatar !== false;
   const inlineAuthor = tone === "chat" || tone === "chat-blocked";
   const sideClass = inlineAuthor ? side === "end" ? "message-bubble-own" : "message-bubble-peer" : "";
   const ownMessage = inlineAuthor && side === "end";
@@ -63,7 +64,11 @@ export function MessageBubble({
   const resolvedBodyNode = bodyNode ?? (body ? <MessageBodyRenderer text={body} cwd={bodyCwd} compact={bodyCompact} streaming={pending} /> : null);
 
   return (
-    <article className={rootClassName}>
+    <article
+      className={rootClassName}
+      data-conversation-message-row="true"
+      data-has-avatar={hasAvatar ? "true" : "false"}
+    >
       {!inlineAuthor || peerMessage ? avatar : null}
       <div className={metaAction ? "message-content has-floating-action" : "message-content"}>
         {ownMessage ? (

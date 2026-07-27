@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   approveApproval,
   cancelExternalWorkAction,
@@ -16,13 +16,17 @@ import type {
   ExternalWorkActionMutationResponse,
   ExternalWorkActionView,
 } from "../../types.js";
-import type { ApprovalResolution } from "../../features/approvals/types.js";
-import type { ExternalActionBusyState } from "../../features/approvals/ApprovalCard.js";
+import type {
+  ApprovalResolution,
+  ExternalActionBusyState,
+  ExternalActionOperation,
+} from "./approval-domain-types.js";
 
 export interface ApprovalsState {
   readonly approvals: readonly ApprovalRequest[];
   readonly selectedApprovalId: string;
   readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
+  readonly approvalErrors: Readonly<Record<string, string>>;
   readonly externalActionDetails: Readonly<Record<string, ExternalWorkActionView>>;
   readonly externalActionBusy: Readonly<Record<string, ExternalActionBusyState>>;
   readonly isLoading: boolean;
@@ -45,36 +49,64 @@ export type ApprovalsController = DomainController<ApprovalsState, ApprovalsActi
 export function useApprovalsDomain(input: {
   readonly cwd: string;
   readonly emitEvent: (event: DomainEvent) => Promise<void>;
-  readonly setErrorMessage: (message: string) => void;
 }): ApprovalsController {
   const [approvals, setApprovals] = useState<readonly ApprovalRequest[]>([]);
   const [selectedApprovalId, setSelectedApprovalId] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [resolvingApprovals, setResolvingApprovals] = useState<Record<string, ApprovalResolution>>({});
+  const [approvalErrors, setApprovalErrors] = useState<Record<string, string>>({});
   const [externalActionDetails, setExternalActionDetails] = useState<Readonly<Record<string, ExternalWorkActionView>>>({});
   const [externalActionBusy, setExternalActionBusy] = useState<Record<string, ExternalActionBusyState>>({});
   const [error, setError] = useState<DomainError | undefined>();
   const resolvingApprovalsRef = useRef<Set<string>>(new Set());
+  const cwdRef = useRef(input.cwd.trim());
+  const previousCwdRef = useRef(input.cwd.trim());
+  const listRequestSequenceRef = useRef(0);
+  const externalDetailRequestRef = useRef(new Map<string, number>());
+  const externalMutationRequestRef = useRef(new Map<string, number>());
+  const externalActionBusyRef = useRef(new Map<string, ExternalActionOperation>());
+
+  cwdRef.current = input.cwd.trim();
+
+  useEffect(() => {
+    const cwd = input.cwd.trim();
+    if (previousCwdRef.current === cwd) return;
+    previousCwdRef.current = cwd;
+    resolvingApprovalsRef.current.clear();
+    externalActionBusyRef.current.clear();
+    externalDetailRequestRef.current.clear();
+    externalMutationRequestRef.current.clear();
+    setApprovals([]);
+    setSelectedApprovalId("");
+    setResolvingApprovals({});
+    setApprovalErrors({});
+    setExternalActionDetails({});
+    setExternalActionBusy({});
+    setIsLoading(false);
+    setError(undefined);
+  }, [input.cwd]);
 
   async function refreshApprovals(cwd = input.cwd, runId?: string): Promise<void> {
-    if (!cwd.trim()) {
+    const workspaceCwd = cwd.trim();
+    const requestId = ++listRequestSequenceRef.current;
+    if (!workspaceCwd) {
       setApprovals([]);
       return;
     }
 
     setIsLoading(true);
     try {
-      input.setErrorMessage("");
       setError(undefined);
-      const response = await listApprovals(cwd.trim(), { runId });
+      const response = await listApprovals(workspaceCwd, { runId });
+      if (!isCurrentListRequest(workspaceCwd, requestId) || response.cwd !== workspaceCwd) return;
       setApprovals((current) => (runId ? mergeApprovalsForRun(current, response.approvals, runId) : response.approvals));
-      await refreshExternalActionDetails(cwd.trim(), response.approvals);
+      await refreshExternalActionDetails(workspaceCwd, response.approvals);
     } catch (caught) {
+      if (!isCurrentListRequest(workspaceCwd, requestId)) return;
       const message = caught instanceof Error ? caught.message : String(caught);
       setError({ scope: "load", message });
-      input.setErrorMessage(message);
     } finally {
-      setIsLoading(false);
+      if (isCurrentListRequest(workspaceCwd, requestId)) setIsLoading(false);
     }
   }
 
@@ -84,28 +116,24 @@ export function useApprovalsDomain(input: {
   }
 
   async function refreshExternalActionDetailsByIds(cwd: string, actionIds: readonly string[]): Promise<void> {
-    if (actionIds.length === 0) {
-      return;
-    }
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || actionIds.length === 0) return;
 
-    const loaded = await Promise.all(
-      actionIds.map(async (actionId) => {
+    await Promise.all(
+      [...new Set(actionIds)].map(async (actionId) => {
+        const requestId = (externalDetailRequestRef.current.get(actionId) ?? 0) + 1;
+        externalDetailRequestRef.current.set(actionId, requestId);
         try {
-          const response = await getExternalWorkAction(cwd, actionId);
-          return response.action;
-        } catch {
-          return undefined;
+          const response = await getExternalWorkAction(workspaceCwd, actionId);
+          if (!isCurrentExternalRequest(actionId, requestId, workspaceCwd, externalDetailRequestRef.current)) return;
+          setExternalActionDetails((current) => ({ ...current, [actionId]: response.action }));
+          clearExternalActionFailure(actionId, "detail");
+        } catch (caught) {
+          if (!isCurrentExternalRequest(actionId, requestId, workspaceCwd, externalDetailRequestRef.current)) return;
+          setExternalActionFailure(actionId, "detail", caught);
         }
       }),
     );
-    const nextEntries = loaded.filter((item): item is ExternalWorkActionView => Boolean(item));
-    if (nextEntries.length === 0) {
-      return;
-    }
-    setExternalActionDetails((current) => ({
-      ...current,
-      ...Object.fromEntries(nextEntries.map((item) => [item.action.id, item])),
-    }));
   }
 
   function applyExternalActionMutation(response: ExternalWorkActionMutationResponse): void {
@@ -128,46 +156,40 @@ export function useApprovalsDomain(input: {
   }
 
   async function executeExternalAction(actionId: string): Promise<void> {
-    const cwd = input.cwd.trim();
-    if (!cwd || externalActionBusy[actionId]) {
-      return;
-    }
+    const cwd = cwdRef.current;
+    if (!cwd || externalActionBusyRef.current.has(actionId)) return;
 
-    setExternalActionBusy((current) => ({ ...current, [actionId]: "execute" }));
+    const requestId = beginExternalAction(actionId, "execute");
     try {
-      input.setErrorMessage("");
-      setError(undefined);
       const response = await executeExternalWorkAction(cwd, actionId);
+      if (!isCurrentExternalRequest(actionId, requestId, cwd, externalMutationRequestRef.current)) return;
       applyExternalActionMutation(response);
+      clearExternalActionFailure(actionId, "execute");
       await refreshApprovals(cwd);
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "mutation", message });
-      input.setErrorMessage(message);
+      if (!isCurrentExternalRequest(actionId, requestId, cwd, externalMutationRequestRef.current)) return;
+      setExternalActionFailure(actionId, "execute", caught);
     } finally {
-      setExternalActionBusy((current) => removeRecordKey(current, actionId));
+      finishExternalAction(actionId, requestId, cwd);
     }
   }
 
   async function cancelExternalAction(actionId: string, reason?: string): Promise<void> {
-    const cwd = input.cwd.trim();
-    if (!cwd || externalActionBusy[actionId]) {
-      return;
-    }
+    const cwd = cwdRef.current;
+    if (!cwd || externalActionBusyRef.current.has(actionId)) return;
 
-    setExternalActionBusy((current) => ({ ...current, [actionId]: "cancel" }));
+    const requestId = beginExternalAction(actionId, "cancel");
     try {
-      input.setErrorMessage("");
-      setError(undefined);
       const response = await cancelExternalWorkAction(cwd, actionId, { reason });
+      if (!isCurrentExternalRequest(actionId, requestId, cwd, externalMutationRequestRef.current)) return;
       applyExternalActionMutation(response);
+      clearExternalActionFailure(actionId, "cancel");
       await refreshApprovals(cwd);
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "mutation", message });
-      input.setErrorMessage(message);
+      if (!isCurrentExternalRequest(actionId, requestId, cwd, externalMutationRequestRef.current)) return;
+      setExternalActionFailure(actionId, "cancel", caught);
     } finally {
-      setExternalActionBusy((current) => removeRecordKey(current, actionId));
+      finishExternalAction(actionId, requestId, cwd);
     }
   }
 
@@ -176,18 +198,25 @@ export function useApprovalsDomain(input: {
       return;
     }
 
+    const cwd = cwdRef.current;
+    const requestId = (externalMutationRequestRef.current.get(`approval:${approvalId}`) ?? 0) + 1;
+    externalMutationRequestRef.current.set(`approval:${approvalId}`, requestId);
     resolvingApprovalsRef.current.add(approvalId);
     setResolvingApprovals((current) => ({ ...current, [approvalId]: decision }));
+    setApprovalErrors((current) => removeRecordKey(current, approvalId));
     try {
-      input.setErrorMessage("");
-      setError(undefined);
       const approvalBeforeResolution = approvals.find((approval) => approval.id === approvalId);
       const response =
         decision === "approve"
-          ? await approveApproval(input.cwd.trim(), approvalId, reason)
-          : await denyApproval(input.cwd.trim(), approvalId, reason);
+          ? await approveApproval(cwd, approvalId, reason)
+          : await denyApproval(cwd, approvalId, reason);
+      if (!isCurrentExternalRequest(`approval:${approvalId}`, requestId, cwd, externalMutationRequestRef.current)) return;
       setSelectedApprovalId(response.approval.id);
       setApprovals((current) => upsertApproval(current, response.approval));
+      setApprovalErrors((current) => removeRecordKey(current, approvalId));
+      if (response.approval.externalWorkActionId) {
+        await refreshExternalActionDetailsByIds(cwd, [response.approval.externalWorkActionId]);
+      }
 
       await input.emitEvent({
         type: "approval.resolved",
@@ -197,12 +226,17 @@ export function useApprovalsDomain(input: {
         externalWorkActionId: response.approval.externalWorkActionId || approvalBeforeResolution?.externalWorkActionId,
       });
     } catch (caught) {
+      if (!isCurrentExternalRequest(`approval:${approvalId}`, requestId, cwd, externalMutationRequestRef.current)) return;
       const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "mutation", message });
-      input.setErrorMessage(message);
+      await refreshApprovals(cwd);
+      if (isCurrentExternalRequest(`approval:${approvalId}`, requestId, cwd, externalMutationRequestRef.current)) {
+        setApprovalErrors((current) => ({ ...current, [approvalId]: message }));
+      }
     } finally {
       resolvingApprovalsRef.current.delete(approvalId);
-      setResolvingApprovals((current) => removeRecordKey(current, approvalId));
+      if (cwdRef.current === cwd && externalMutationRequestRef.current.get(`approval:${approvalId}`) === requestId) {
+        setResolvingApprovals((current) => removeRecordKey(current, approvalId));
+      }
     }
   }
 
@@ -212,14 +246,75 @@ export function useApprovalsDomain(input: {
   }
 
   function resetForCwd(): void {
+    listRequestSequenceRef.current += 1;
     resolvingApprovalsRef.current.clear();
+    externalActionBusyRef.current.clear();
+    externalDetailRequestRef.current.clear();
+    externalMutationRequestRef.current.clear();
     setApprovals([]);
     setSelectedApprovalId("");
     setResolvingApprovals({});
+    setApprovalErrors({});
     setExternalActionDetails({});
     setExternalActionBusy({});
     setIsLoading(false);
     setError(undefined);
+  }
+
+  function isCurrentListRequest(cwd: string, requestId: number): boolean {
+    return cwdRef.current === cwd && listRequestSequenceRef.current === requestId;
+  }
+
+  function isCurrentExternalRequest(
+    id: string,
+    requestId: number,
+    cwd: string,
+    requests: ReadonlyMap<string, number>,
+  ): boolean {
+    return cwdRef.current === cwd && requests.get(id) === requestId;
+  }
+
+  function beginExternalAction(actionId: string, operation: ExternalActionOperation): number {
+    const requestId = (externalMutationRequestRef.current.get(actionId) ?? 0) + 1;
+    externalMutationRequestRef.current.set(actionId, requestId);
+    externalActionBusyRef.current.set(actionId, operation);
+    setExternalActionBusy((current) => ({ ...current, [actionId]: { busy: operation } }));
+    return requestId;
+  }
+
+  function finishExternalAction(actionId: string, requestId: number, cwd: string): void {
+    if (externalMutationRequestRef.current.get(actionId) !== requestId) return;
+    externalActionBusyRef.current.delete(actionId);
+    if (cwdRef.current !== cwd) return;
+    setExternalActionBusy((current) => {
+      const operation = current[actionId];
+      if (operation?.error) return { ...current, [actionId]: { error: operation.error, failedOperation: operation.failedOperation } };
+      return removeRecordKey(current, actionId);
+    });
+  }
+
+  function setExternalActionFailure(
+    actionId: string,
+    failedOperation: ExternalActionBusyState["failedOperation"],
+    caught: unknown,
+  ): void {
+    const message = caught instanceof Error ? caught.message : String(caught);
+    setExternalActionBusy((current) => ({
+      ...current,
+      [actionId]: { ...current[actionId], error: message, failedOperation },
+    }));
+  }
+
+  function clearExternalActionFailure(
+    actionId: string,
+    failedOperation: ExternalActionBusyState["failedOperation"],
+  ): void {
+    setExternalActionBusy((current) => {
+      const operation = current[actionId];
+      if (!operation || operation.failedOperation !== failedOperation) return current;
+      if (operation.busy) return { ...current, [actionId]: { busy: operation.busy } };
+      return removeRecordKey(current, actionId);
+    });
   }
 
   return {
@@ -227,6 +322,7 @@ export function useApprovalsDomain(input: {
       approvals,
       selectedApprovalId,
       resolvingApprovals,
+      approvalErrors,
       externalActionDetails,
       externalActionBusy,
       isLoading,

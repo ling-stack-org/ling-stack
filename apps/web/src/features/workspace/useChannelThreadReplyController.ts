@@ -19,7 +19,7 @@ interface ChannelThreadReplyControllerInput {
     readonly linkPreviewIds: readonly string[];
     readonly fileRefs: readonly ChannelMessageFileRef[];
     readonly requestAiReply: boolean;
-  }) => Promise<void>;
+  }) => Promise<{ readonly errorMessage?: string }>;
 }
 
 export interface ChannelThreadReplyController {
@@ -87,7 +87,7 @@ export function useChannelThreadReplyController({
     setPending(true);
     setError("");
     try {
-      await onSendMessage({
+      const result = await onSendMessage({
         threadId: activeThreadId,
         body,
         mentions,
@@ -96,6 +96,10 @@ export function useChannelThreadReplyController({
         fileRefs: [],
         requestAiReply: shouldRequestAi,
       });
+      if (result.errorMessage) {
+        setError(result.errorMessage);
+        return;
+      }
       setDraft("");
     } catch (sendError) {
       setError(sendError instanceof Error ? sendError.message : String(sendError));

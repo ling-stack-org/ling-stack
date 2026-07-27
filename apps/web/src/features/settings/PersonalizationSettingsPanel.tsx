@@ -1,40 +1,41 @@
-import { Loader2, MessageCircle, RefreshCw } from "lucide-react";
+import { MessageCircle, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { getEffectiveConfig } from "../../api.js";
 import { updateWorkspaceSettings } from "../../api/workspace-settings.js";
 import { useI18n, type Translate } from "../../i18n.js";
+import {
+  IconButton,
+  InlineFeedback,
+  SegmentedControl,
+  SegmentedControlItem,
+  Skeleton,
+  useLingToast,
+} from "../../shared/ui/index.js";
 import type { EffectiveConfigResponse, LingConversationTone } from "../../types.js";
 import { SkillGovernanceSettingsSection } from "./SkillGovernanceSettingsSection.js";
 
 const visibleLingConversationTones: readonly LingConversationTone[] = ["friendly", "pragmatic"];
 const defaultLingConversationTone: LingConversationTone = "pragmatic";
-const feedbackMessageDurationMs = 2000;
 
 export function PersonalizationSettingsPanel({ cwd }: { readonly cwd: string }): JSX.Element {
   const { t } = useI18n();
+  const { showToast } = useLingToast();
   const [effectiveConfig, setEffectiveConfig] = useState<EffectiveConfigResponse | undefined>();
   const [toneDraft, setToneDraft] = useState<LingConversationTone>(defaultLingConversationTone);
   const [loading, setLoading] = useState(false);
+  const [loadAttempted, setLoadAttempted] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
     void refresh(false);
   }, [cwd]);
 
-  useEffect(() => {
-    if (!message) {
-      return;
-    }
-    const timeoutId = globalThis.setTimeout(() => setMessage(""), feedbackMessageDurationMs);
-    return () => globalThis.clearTimeout(timeoutId);
-  }, [message]);
-
   async function refresh(showMessage = true): Promise<void> {
     const workspaceCwd = cwd.trim();
     if (!workspaceCwd) {
       setError(t("Workspace path is required."));
+      setLoadAttempted(true);
       return;
     }
     setLoading(true);
@@ -43,11 +44,18 @@ export function PersonalizationSettingsPanel({ cwd }: { readonly cwd: string }):
       const nextConfig = await getEffectiveConfig(workspaceCwd);
       setEffectiveConfig(nextConfig);
       setToneDraft(nextConfig.values.lingConversationTone?.value ?? defaultLingConversationTone);
-      setMessage(showMessage ? t("Ling conversation tone refreshed") : "");
+      if (showMessage) {
+        showToast({
+          message: t("Ling conversation tone refreshed"),
+          scope: "settings:personalization:tone:refresh",
+          tone: "success",
+        });
+      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
       setLoading(false);
+      setLoadAttempted(true);
     }
   }
 
@@ -61,7 +69,6 @@ export function PersonalizationSettingsPanel({ cwd }: { readonly cwd: string }):
     setSaving(true);
     try {
       setError("");
-      setMessage("");
       const response = await updateWorkspaceSettings(workspaceCwd, { lingConversationTone: tone });
       const nextConfig = await getEffectiveConfig(workspaceCwd);
       const appliedTone = nextConfig.values.lingConversationTone?.value ?? response.settings.lingConversationTone;
@@ -70,7 +77,11 @@ export function PersonalizationSettingsPanel({ cwd }: { readonly cwd: string }):
       }
       setEffectiveConfig(nextConfig);
       setToneDraft(appliedTone);
-      setMessage(t("Ling conversation tone applied"));
+      showToast({
+        message: t("Ling conversation tone applied"),
+        scope: "settings:personalization:tone:save",
+        tone: "success",
+      });
     } catch (caught) {
       setToneDraft(previousTone);
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -79,50 +90,61 @@ export function PersonalizationSettingsPanel({ cwd }: { readonly cwd: string }):
     }
   }
 
+  const initialLoading = !loadAttempted || (loading && !effectiveConfig);
+  const state = initialLoading ? "loading" : error ? "error" : "loaded";
+  const toneSource = effectiveConfig?.values.lingConversationTone?.source;
+
   return (
-    <div className="settings-section-stack">
-      <section className="panel settings-panel personalization-settings-panel" aria-labelledby="personalization-settings-title">
-        <div className="panel-title split">
+    <div
+      className="settings-personalization"
+      data-ui2-personalization="true"
+      data-personalization-state={state}
+    >
+      <section
+        className="personalization-settings-panel settings-personalization-section"
+        data-personalization-tone="true"
+        aria-labelledby="personalization-settings-title"
+      >
+        <div className="settings-personalization-section-head">
           <span>
             <MessageCircle size={18} />
             <h2 id="personalization-settings-title">{t("Ling conversation tone")}</h2>
           </span>
-          <button className="secondary-button compact-button" type="button" onClick={() => void refresh(true)} disabled={loading}>
-            {loading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
-            {t("Refresh")}
-          </button>
+          <IconButton
+            icon={RefreshCw}
+            label={t("Refresh")}
+            loading={loading}
+            loadingLabel={t("Loading")}
+            onClick={() => void refresh(true)}
+          />
         </div>
 
-        {error ? <div className="inline-error">{error}</div> : null}
-        {message ? <div className="settings-inline-tip" role="status" aria-live="polite">{message}</div> : null}
-
-        <div className="interface-preference-grid">
-          <div className="interface-preference-row">
-            <span>
-              <MessageCircle size={16} />
-              <strong>{t("Ling conversation tone")}</strong>
-              {effectiveConfig?.values.lingConversationTone?.source ? (
-                <small>{configSourceLabel(effectiveConfig.values.lingConversationTone.source, t)}</small>
-              ) : null}
-            </span>
-            <div className="ling-tone-options" role="radiogroup" aria-label={t("Ling conversation tone")}>
-              {visibleLingConversationTones.map((tone) => (
-                <button
-                  key={tone}
-                  className={toneDraft === tone ? "ling-tone-option active" : "ling-tone-option"}
-                  type="button"
-                  role="radio"
-                  aria-checked={toneDraft === tone}
-                  onClick={() => void applyTone(tone)}
-                  disabled={saving || loading}
-                >
-                  <strong>{lingToneLabel(tone, t)}</strong>
-                  <small>{lingToneDescription(tone, t)}</small>
-                </button>
-              ))}
-            </div>
+        {error ? <InlineFeedback className="settings-personalization-feedback" tone="danger">{error}</InlineFeedback> : null}
+        {initialLoading ? (
+          <div className="settings-personalization-loading" aria-label={t("Loading")} aria-busy="true">
+            <Skeleton width="42%" />
+            <Skeleton height={38} shape="block" />
           </div>
-        </div>
+        ) : effectiveConfig ? (
+          <div className="settings-personalization-tone-row">
+            <div className="settings-personalization-tone-meta">
+              <span>{toneSource ? configSourceLabel(toneSource, t) : t("Loading")}</span>
+              <p>{lingToneDescription(toneDraft, t)}</p>
+            </div>
+            <SegmentedControl
+              className="settings-personalization-tone-control"
+              aria-label={t("Ling conversation tone")}
+              value={toneDraft}
+              onValueChange={(value) => void applyTone(value as LingConversationTone)}
+            >
+              {visibleLingConversationTones.map((tone) => (
+                <SegmentedControlItem key={tone} value={tone} disabled={saving || loading}>
+                  {lingToneLabel(tone, t)}
+                </SegmentedControlItem>
+              ))}
+            </SegmentedControl>
+          </div>
+        ) : null}
       </section>
 
       <SkillGovernanceSettingsSection cwd={cwd} />

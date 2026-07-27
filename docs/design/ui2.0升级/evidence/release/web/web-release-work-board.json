@@ -1,0 +1,51 @@
+{
+  "status": "captured",
+  "stableId": "web-release-work-board",
+  "label": "Work Board",
+  "functionIds": [
+    "BOARD-LIST-001"
+  ],
+  "fixture": "release-work-item-ready",
+  "trigger": {
+    "summary": "Open Work Board",
+    "steps": [
+      "Navigate to /",
+      "Activate Work Board",
+      "Focus the release work item"
+    ]
+  },
+  "url": "http://127.0.0.1:4260/",
+  "viewport": {
+    "width": 1280,
+    "height": 800
+  },
+  "theme": "ling-dark",
+  "locale": "en-US",
+  "keyboard": {
+    "exercised": true,
+    "checks": [
+      "Work item row accepts keyboard focus"
+    ]
+  },
+  "reducedMotion": "reduce",
+  "consoleErrors": [],
+  "pageErrors": [],
+  "overflow": [],
+  "png": {
+    "file": "web-release-work-board.png",
+    "width": 1280,
+    "height": 800,
+    "sha256": "cd0fe611a6161e78125645c64ae8a35f8aab6a2445504b13fe338310509e35ac"
+  },
+  "sidecarFile": "web-release-work-board.json",
+  "servedArtifact": "Vite source via Playwright webServer",
+  "captureCommand": "LING_CAPTURE_UI2_EVIDENCE=1 LING_PLAYWRIGHT_PORT=4260 corepack pnpm --filter @ling-stack/web exec playwright test e2e/ui2-web-release-gate.spec.ts --workers=1",
+  "source": {
+    "commit": "0a0b80502715d0333342422e6dc8cedd2cd77b14",
+    "branch": "codex/ui2-desktop-coverage-foundation",
+    "dirty": true,
+    "worktreeStatusSha256": "ea578861633515fe8705adeff34c7f1585811bec85681965b69f7f2386d2ba8b",
+    "identifier": "0a0b80502715+worktree-ea5788616335"
+  },
+  "capturedAt": "2026-07-23T04:08:09.181Z"
+}

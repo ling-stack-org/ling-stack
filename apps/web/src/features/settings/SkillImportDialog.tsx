@@ -1,11 +1,22 @@
-import { useEffect } from "react";
-import { FileText, Loader2, Upload, X } from "lucide-react";
+import { useRef } from "react";
+import { FileText, Upload } from "lucide-react";
+import {
+  Button,
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  InlineFeedback,
+  Spinner,
+} from "../../shared/ui/index.js";
 import type { SkillImportWarningCode } from "../../types.js";
-import type { SettingsTranslator } from "./skill-library-utils.js";
 import { skillImportProblemLabel, type SkillImportForm } from "./skill-import-utils.js";
+import type { SettingsTranslator } from "./skill-library-utils.js";
 import type { SkillImportBusyState } from "./useSkillImportController.js";
 
 export function SkillImportDialog({
+  open,
   form,
   blockingIssues,
   busy,
@@ -15,6 +26,7 @@ export function SkillImportDialog({
   onImport,
   t,
 }: {
+  readonly open: boolean;
   readonly form: SkillImportForm;
   readonly blockingIssues: readonly SkillImportWarningCode[];
   readonly busy: SkillImportBusyState;
@@ -24,82 +36,87 @@ export function SkillImportDialog({
   readonly onImport: () => void;
   readonly t: SettingsTranslator;
 }): JSX.Element {
-  useEffect(() => {
-    function handleEscape(event: KeyboardEvent): void {
-      if (event.key !== "Escape" || busy) return;
-      event.preventDefault();
-      event.stopPropagation();
-      onClose();
-    }
-    document.addEventListener("keydown", handleEscape, true);
-    return () => document.removeEventListener("keydown", handleEscape, true);
-  }, [busy, onClose]);
-
+  const fileInputRef = useRef<HTMLInputElement>(null);
   return (
-    <div
-      className="settings-skill-import-overlay"
-      role="presentation"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget && !busy) onClose();
+    <Dialog
+      open={open}
+      busy={Boolean(busy)}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) onClose();
       }}
     >
-      <section className="settings-skill-import-panel settings-skill-import-panel--file settings-interaction-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-skill-import-title">
-        <header className="settings-skill-import-head">
-          <span>
-            <Upload size={16} />
-            <h3 id="settings-skill-import-title">{t("Import skill")}</h3>
-          </span>
-          <button className="icon-button" type="button" onClick={onClose} disabled={Boolean(busy)} aria-label={t("Close import dialog")} title={t("Close")}>
-            <X size={16} />
-          </button>
-        </header>
+      <DialogContent
+        className="settings-skill-import-dialog"
+        data-ui2-skill-import-dialog=""
+        size="sm"
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          fileInputRef.current?.focus();
+        }}
+      >
+        <DialogHeader title={t("Import skill")} closeLabel={t("Close import dialog")} />
+        <DialogBody className="settings-skill-import-body">
+          {error ? <InlineFeedback tone="danger">{error}</InlineFeedback> : null}
 
-        {error ? <div className="inline-error">{error}</div> : null}
-
-        <label className={`settings-skill-file-picker${form.fileName ? " has-file" : ""}${busy ? " is-busy" : ""}`}>
-          {form.fileName ? (
-            <div className="settings-skill-selected-file">
-              <FileText size={18} />
-              <span>
-                <strong>{form.fileName}</strong>
-                <small>{t("Choose another file")}</small>
+          <label className={`settings-skill-file-picker${form.fileName ? " has-file" : ""}${busy ? " is-busy" : ""}`}>
+            {form.fileName ? (
+              <span className="settings-skill-selected-file">
+                <FileText size={18} />
+                <span>
+                  <strong>{form.fileName}</strong>
+                  <small>{t("Choose another file")}</small>
+                </span>
               </span>
-            </div>
-          ) : (
-            <span className="settings-skill-file-empty">
-              <Upload size={20} />
-              <strong>{t("Select a skill file")}</strong>
-              <small>{t("Supports Markdown, JSON, and text files")}</small>
-            </span>
-          )}
-          {busy === "reading" ? <Loader2 className="settings-skill-file-picker-loading spin" size={16} aria-label={t("Reading file...")} /> : null}
-          <input
-            type="file"
-            accept=".md,.markdown,.json,.txt,text/markdown,text/plain,application/json"
-            onChange={(event) => {
-              const file = event.currentTarget.files?.[0];
-              event.currentTarget.value = "";
-              onLoadFile(file);
-            }}
-            disabled={Boolean(busy)}
-          />
-        </label>
+            ) : (
+              <span className="settings-skill-file-empty">
+                <Upload size={20} />
+                <strong>{t("Select a skill file")}</strong>
+                <small>{t("Supports Markdown, JSON, and text files")}</small>
+              </span>
+            )}
+            {busy === "reading" ? (
+              <Spinner className="settings-skill-file-picker-loading" label={t("Reading file...")} size="sm" />
+            ) : null}
+            <input
+              data-ling-control-native="true"
+              ref={fileInputRef}
+              type="file"
+              accept=".md,.markdown,.json,.txt,text/markdown,text/plain,application/json"
+              aria-label={t("Select a skill file")}
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0];
+                event.currentTarget.value = "";
+                onLoadFile(file);
+              }}
+              disabled={Boolean(busy)}
+            />
+          </label>
 
-        {blockingIssues.length > 0 ? (
-          <div className="settings-skill-import-problems" role="alert">
-            <strong>{t("This skill cannot be imported yet")}</strong>
-            <ul>{blockingIssues.map((code) => <li key={code}>{t(skillImportProblemLabel(code))}</li>)}</ul>
-          </div>
-        ) : null}
-
-        <footer className="settings-skill-import-actions">
-          <button className="secondary-button compact-button" type="button" onClick={onClose} disabled={Boolean(busy)}>{t("Cancel")}</button>
-          <button className="primary-button compact-button" type="button" onClick={onImport} disabled={!form.fileName || Boolean(busy)} aria-busy={busy === "publishing"}>
-            {busy === "publishing" ? <Loader2 className="spin" size={15} /> : <Upload size={15} />}
-            {t(busy === "publishing" ? "Importing..." : "Import")}
-          </button>
-        </footer>
-      </section>
-    </div>
+          {blockingIssues.length > 0 ? (
+            <InlineFeedback tone="warning" title={t("This skill cannot be imported yet")}>
+              <ul className="settings-skill-import-problems">
+                {blockingIssues.map((code) => <li key={code}>{t(skillImportProblemLabel(code))}</li>)}
+              </ul>
+            </InlineFeedback>
+          ) : null}
+        </DialogBody>
+        <DialogFooter>
+          <Button size="sm" variant="secondary" disabled={Boolean(busy)} onClick={onClose}>
+            {t("Cancel")}
+          </Button>
+          <Button
+            size="sm"
+            variant="primary"
+            leadingIcon={<Upload size={15} />}
+            loading={busy === "publishing"}
+            loadingLabel={t("Importing...")}
+            disabled={!form.fileName || busy === "reading"}
+            onClick={onImport}
+          >
+            {t("Import")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

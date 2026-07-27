@@ -4,16 +4,16 @@ import { ChevronDown, Code2, FilePenLine, FileText, Image as ImageIcon, Loader2,
 import {
   getRunWorkspaceChanges,
   getWorkflowWorkspaceChanges,
-  reapplyRunWorkspaceChanges,
-  reapplyWorkflowWorkspaceChanges,
-  undoRunWorkspaceChanges,
-  undoWorkflowWorkspaceChanges,
 } from "../../../api.js";
 import { useI18n, type Translate } from "../../../i18n.js";
 import { parseUnifiedDiff, summarizeFileChanges, type ConversationFileChange } from "../../../lib/diff-summary.js";
 import type { ConversationArtifactStripChangeArtifact, ConversationArtifactStripItem, ConversationWorkspaceRecoveryTarget } from "../../../lib/conversation-work-cell.js";
 import type { PreviewContentResponse, RunWorkspaceChangesResponse, WorkflowWorkspaceChangesResponse } from "../../../types.js";
 import type { ArtifactPreviewLoader } from "../preview/ArtifactPreviewDrawer.js";
+import {
+  ConversationArtifactRecoveryDialog,
+  type ConversationArtifactRecoveryAction,
+} from "./ConversationArtifactRecoveryDialog.js";
 import { DiffViewer } from "./DiffViewer.js";
 import { WorkspaceFileOpenMenu } from "./WorkspaceFileOpenMenu.js";
 
@@ -165,8 +165,8 @@ function ChangedFilesGroup({
   const [loadedChanges, setLoadedChanges] = useState<readonly LoadedChangeFile[]>(() => fallbackChangeFiles(item.changeArtifacts ?? []));
   const [recovery, setRecovery] = useState<WorkspaceRecoveryResponse>();
   const [recoveryStatus, setRecoveryStatus] = useState<"idle" | "loading" | "loaded" | "unavailable">("idle");
-  const [recoveryBusy, setRecoveryBusy] = useState<"undo" | "reapply" | "">("");
-  const [recoveryError, setRecoveryError] = useState("");
+  const [recoveryAction, setRecoveryAction] = useState<ConversationArtifactRecoveryAction>();
+  const recoveryActionRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     const artifacts = item.changeArtifacts ?? [];
@@ -221,29 +221,6 @@ function ChangedFilesGroup({
   const hiddenCount = Math.max(0, loadedChanges.length - visibleChanges.length);
   const undoUnavailableReason = recovery?.unavailableReason ?? t("Undo is unavailable for this work");
 
-  async function mutateRecovery(action: "undo" | "reapply"): Promise<void> {
-    if (!cwd || !recoveryTarget || recoveryBusy) {
-      return;
-    }
-    const fileCount = recovery?.summary.fileCount ?? fileCountFromChanges(loadedChanges);
-    const confirmed = globalThis.confirm(action === "undo"
-      ? t("Undo changes to {count} files?", { count: fileCount })
-      : t("Reapply changes to {count} files?", { count: fileCount }));
-    if (!confirmed) {
-      return;
-    }
-    setRecoveryBusy(action);
-    setRecoveryError("");
-    try {
-      setRecovery(await mutateWorkspaceRecovery(cwd, recoveryTarget, action));
-      setRecoveryStatus("loaded");
-    } catch (error) {
-      setRecoveryError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setRecoveryBusy("");
-    }
-  }
-
   function openReview(path?: string): void {
     if (cwd) {
       onOpenWorkspaceReview?.({
@@ -266,18 +243,19 @@ function ChangedFilesGroup({
         </span>
         <span className="conversation-work-cell-change-actions">
           {recovery?.canReapply ? (
-            <button type="button" onClick={() => void mutateRecovery("reapply")} disabled={Boolean(recoveryBusy)}>
-              {recoveryBusy === "reapply" ? <Loader2 className="spin" size={13} /> : <Redo2 size={13} />}
+            <button ref={recoveryActionRef} type="button" onClick={() => setRecoveryAction("reapply")}>
+              <Redo2 size={13} />
               {t("Reapply")}
             </button>
           ) : recoveryTarget ? (
             <button
+              ref={recoveryActionRef}
               type="button"
-              onClick={() => void mutateRecovery("undo")}
-              disabled={Boolean(recoveryBusy) || recoveryStatus !== "loaded" || !recovery?.canUndo}
+              onClick={() => setRecoveryAction("undo")}
+              disabled={recoveryStatus !== "loaded" || !recovery?.canUndo}
               title={recovery?.canUndo ? undefined : undoUnavailableReason}
             >
-              {recoveryBusy === "undo" || recoveryStatus === "loading" ? <Loader2 className="spin" size={13} /> : <Undo2 size={13} />}
+              {recoveryStatus === "loading" ? <Loader2 className="spin" size={13} /> : <Undo2 size={13} />}
               {t("Undo")}
             </button>
           ) : null}
@@ -289,7 +267,6 @@ function ChangedFilesGroup({
           ) : null}
         </span>
       </div>
-      {recoveryError ? <small className="conversation-work-cell-change-error" title={recoveryError}>{recoveryError}</small> : null}
       <div className="conversation-work-cell-change-files">
         {visibleChanges.map((entry) => {
           const previewable = Boolean(entry.change);
@@ -337,6 +314,18 @@ function ChangedFilesGroup({
           </button>
         ) : null}
       </div>
+      <ConversationArtifactRecoveryDialog
+        action={recoveryAction}
+        cwd={cwd}
+        fileCount={recovery?.summary.fileCount ?? fileCountFromChanges(loadedChanges)}
+        returnFocusRef={recoveryActionRef}
+        target={recoveryTarget}
+        onClose={() => setRecoveryAction(undefined)}
+        onRecovered={(response) => {
+          setRecovery(response);
+          setRecoveryStatus("loaded");
+        }}
+      />
     </section>
   );
 }
@@ -348,21 +337,6 @@ function getWorkspaceRecovery(
   return target.kind === "workflow"
     ? getWorkflowWorkspaceChanges(cwd, target.id)
     : getRunWorkspaceChanges(cwd, target.id);
-}
-
-function mutateWorkspaceRecovery(
-  cwd: string,
-  target: ConversationWorkspaceRecoveryTarget,
-  action: "undo" | "reapply",
-): Promise<WorkspaceRecoveryResponse> {
-  if (target.kind === "workflow") {
-    return action === "undo"
-      ? undoWorkflowWorkspaceChanges(cwd, target.id)
-      : reapplyWorkflowWorkspaceChanges(cwd, target.id);
-  }
-  return action === "undo"
-    ? undoRunWorkspaceChanges(cwd, target.id)
-    : reapplyRunWorkspaceChanges(cwd, target.id);
 }
 
 function fileCountFromChanges(changes: readonly LoadedChangeFile[]): number {

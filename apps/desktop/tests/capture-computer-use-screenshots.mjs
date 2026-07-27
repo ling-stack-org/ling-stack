@@ -6,7 +6,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   computerUseScreenshotCases,
+  computerUseScreenshotSnapshot,
   computerUseScreenshotThemes,
+  computerUseScreenshotVisualState,
 } from "./computer-use-screenshot-cases.mjs";
 
 const update = process.argv.includes("--update");
@@ -96,6 +98,7 @@ async function run() {
           theme,
           width: screenshotCase.width,
           height: screenshotCase.height,
+          visualState: computerUseScreenshotVisualState(screenshotCase.scenario),
           reducedMotion: screenshotCase.scenario === "reduced-motion",
           sha256: createHash("sha256").update(png).digest("hex"),
         });
@@ -141,6 +144,8 @@ async function writeMismatchDiagnostics({ actualPng, baselinePng, comparison, fi
 
 async function captureScreenshot({ width, height, scenario = "live", theme }) {
   const reducedMotion = scenario === "reduced-motion";
+  const snapshot = computerUseScreenshotSnapshot(scenario);
+  const expectedVisualState = computerUseScreenshotVisualState(scenario);
   const window = new BrowserWindow({
     width,
     height,
@@ -161,7 +166,7 @@ async function captureScreenshot({ width, height, scenario = "live", theme }) {
         useSharedTexture: false,
       },
       sandbox: true,
-      ...(scenario === "stop-failed" ? { preload: rendererHarnessPreloadPath } : {}),
+      preload: rendererHarnessPreloadPath,
     },
   });
   let debuggerAttached = false;
@@ -180,25 +185,79 @@ async function captureScreenshot({ width, height, scenario = "live", theme }) {
     });
     await window.webContents.debugger.sendCommand("Emulation.setEmulatedMedia", {
       features: [
-        { name: "prefers-color-scheme", value: theme },
         { name: "prefers-reduced-motion", value: reducedMotion ? "reduce" : "no-preference" },
       ],
     });
+    await window.webContents.executeJavaScript(`
+      window.lingPreviewTestHarness.pushThemeSnapshot({
+        revision: 2,
+        themeId: ${JSON.stringify(theme === "dark" ? "ling-dark" : "ling-light")},
+        colorScheme: ${JSON.stringify(theme)},
+        presentationProfileId: "ling-standard",
+        variables: {},
+      });
+      new Promise((resolve, reject) => {
+        const startedAt = performance.now();
+        const poll = () => {
+          if (document.documentElement.dataset.themeRevision === "2") {
+            resolve(true);
+          } else if (performance.now() - startedAt > 2_000) {
+            reject(new Error("theme_snapshot_screenshot_state_timeout"));
+          } else {
+            setTimeout(poll, 10);
+          }
+        };
+        poll();
+      });
+    `);
+    await window.webContents.executeJavaScript(`
+      window.lingPreviewTestHarness.pushSnapshot(${JSON.stringify(snapshot)});
+      true;
+    `);
     if (scenario === "stop-failed") {
       await window.webContents.executeJavaScript(`
         window.lingPreviewTestHarness.setCommandResult("requestStop", {
           accepted: false,
           reason: "private reason must not be rendered",
         });
-        document.querySelector(".more-button")?.click();
-        document.querySelector('[data-action-id="stop"]')?.click();
+        const moreButton = document.querySelector(".more-button");
+        moreButton?.dispatchEvent(new PointerEvent("pointerdown", {
+          bubbles: true,
+          button: 0,
+          isPrimary: true,
+          pointerId: 1,
+          pointerType: "mouse",
+        }));
         new Promise((resolve, reject) => {
           const startedAt = performance.now();
+          let stopInvoked = false;
+          let closeRequested = false;
           const poll = () => {
+            const stopAction = document.querySelector('[data-action-id="stop"]');
+            if (!stopInvoked && stopAction instanceof HTMLElement) {
+              stopInvoked = true;
+              stopAction.focus();
+              stopAction.click();
+            }
             if (document.querySelector('.preview-shell')?.getAttribute('data-stop-command') === 'failed') {
-              resolve(true);
+              if (document.querySelector('[role="menu"]')) {
+                if (!closeRequested) {
+                  closeRequested = true;
+                  document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", {
+                    bubbles: true,
+                    key: "Escape",
+                  }));
+                }
+                setTimeout(poll, 10);
+              } else {
+                resolve(true);
+              }
             } else if (performance.now() - startedAt > 2_000) {
-              reject(new Error('stop_failed_screenshot_state_timeout'));
+              reject(new Error('stop_failed_screenshot_state_timeout:' + JSON.stringify({
+                menuOpen: document.querySelector('.preview-shell')?.getAttribute('data-menu-open'),
+                stopActionCount: document.querySelectorAll('[data-action-id="stop"]').length,
+                stopCommand: document.querySelector('.preview-shell')?.getAttribute('data-stop-command'),
+              })));
             } else {
               setTimeout(poll, 10);
             }
@@ -207,15 +266,37 @@ async function captureScreenshot({ width, height, scenario = "live", theme }) {
         });
       `);
     }
-    const mediaMatches = await window.webContents.executeJavaScript(`({
-      dark: window.matchMedia('(prefers-color-scheme: dark)').matches,
+    await window.webContents.executeJavaScript(`
+      new Promise((resolve, reject) => {
+        const startedAt = performance.now();
+        const poll = () => {
+          const visualState = document.querySelector('.preview-shell')?.getAttribute('data-state');
+          if (visualState === ${JSON.stringify(expectedVisualState)}) {
+            resolve(true);
+          } else if (performance.now() - startedAt > 2_000) {
+            reject(new Error('visual_state_screenshot_timeout:' + JSON.stringify({
+              expected: ${JSON.stringify(expectedVisualState)},
+              actual: visualState,
+            })));
+          } else {
+            setTimeout(poll, 10);
+          }
+        };
+        poll();
+      });
+    `);
+    const rendererThemeState = await window.webContents.executeJavaScript(`({
+      themeId: document.documentElement.dataset.uiTheme,
+      colorScheme: document.documentElement.dataset.theme,
       reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
     })`);
-    const expectedDark = theme === "dark";
-    if (mediaMatches.dark !== expectedDark) {
-      throw new Error(`color_scheme_media_query_mismatch:${theme}:${String(mediaMatches.dark)}`);
+    const expectedThemeId = theme === "dark" ? "ling-dark" : "ling-light";
+    if (rendererThemeState.themeId !== expectedThemeId || rendererThemeState.colorScheme !== theme) {
+      throw new Error(
+        `theme_snapshot_mismatch:${theme}:${rendererThemeState.themeId}:${rendererThemeState.colorScheme}`,
+      );
     }
-    const reducedMotionMatches = mediaMatches.reducedMotion;
+    const reducedMotionMatches = rendererThemeState.reducedMotion;
     if (reducedMotion !== reducedMotionMatches) {
       throw new Error(`reduced_motion_media_query_mismatch:${String(reducedMotionMatches)}`);
     }

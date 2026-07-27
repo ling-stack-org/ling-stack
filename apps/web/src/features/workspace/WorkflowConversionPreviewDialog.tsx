@@ -1,9 +1,21 @@
-import { useMemo, useState } from "react";
-import { CircleAlert, Save, Workflow, X } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import { CircleAlert, Save } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import {
   MessageBodyRenderer,
 } from "../../shared/conversation/index.js";
+import {
+  Button,
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  Field,
+  Input,
+  Select,
+  Textarea,
+} from "../../shared/ui/index.js";
 import type { ProposedPlanArtifact } from "../../types.js";
 import {
   inferWorkflowOwnerPreviews,
@@ -11,8 +23,6 @@ import {
   type WorkflowOwnerInferenceHistoryStep,
   type WorkflowOwnerInferenceTeammate,
 } from "./workflow-owner-inference.js";
-
-import { SelectControl } from "../../shared/components/SelectControl.js";
 
 export interface WorkflowConversionStepPreviewDraft {
   readonly title: string;
@@ -63,6 +73,17 @@ export function WorkflowConversionPreviewDrawer({
     [effectiveSteps, historicalWorkflowSteps, plan, teammates],
   );
   const ownerOptions = useMemo(() => uniqueOwnerOptions(teammates), [teammates]);
+  const returnFocusRef = useRef<HTMLElement | null>(
+    typeof document !== "undefined" && document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null,
+  );
+
+  function closeAndRestoreFocus(): void {
+    const returnFocusTarget = returnFocusRef.current;
+    onClose();
+    globalThis.requestAnimationFrame(() => returnFocusTarget?.focus({ preventScroll: true }));
+  }
 
   function selectedOwnerIdFor(index: number): string {
     const selected = ownerSelections[index];
@@ -100,101 +121,100 @@ export function WorkflowConversionPreviewDrawer({
   }
 
   return (
-    <div className="environment-commit-dialog-backdrop workflow-conversion-preview-backdrop">
-      <section className="environment-commit-dialog workflow-conversion-preview-dialog" role="dialog" aria-modal="true" aria-label={t("Workflow conversion preview")}>
-        <header className="environment-commit-dialog-head">
-          <span>
-            <Workflow size={17} />
-            <strong>{t("Workflow conversion preview")}</strong>
-          </span>
-          <button className="icon-button" type="button" onClick={onClose} disabled={busy} aria-label={t("Close")} title={t("Close")}>
-            <X size={15} />
-          </button>
-        </header>
-        {editing ? (
-          <label className="workflow-preview-field">
-            <span>{t("Draft title")}</span>
-            <input value={draftTitle} onChange={(event) => setDraftTitle(event.target.value)} disabled={busy} aria-label={t("Draft title")} />
-          </label>
-        ) : (
-          <div className="workflow-preview-summary">
-            <strong>{plan.title}</strong>
-            <small>{t("Draft workflow")} · {plan.sourceMessageId ? t("Source message") : t("Source unavailable")}</small>
-          </div>
-        )}
-        <section className="workflow-preview-section" aria-label={t("Proposed steps")}>
-          <h3>{t("Proposed steps")}</h3>
+    <Dialog open busy={busy} onOpenChange={(open) => !open && closeAndRestoreFocus()}>
+      <DialogContent className="workflow-conversion-preview-dialog" size="md">
+        <DialogHeader title={t("Workflow conversion preview")} closeLabel={t("Close")} />
+        <DialogBody className="workflow-conversion-preview-body">
           {editing ? (
-            <textarea
-              className="workflow-preview-steps-input"
-              value={draftStepsText}
-              onChange={(event) => {
-                setDraftStepsText(event.target.value);
-                setOwnerSelections({});
-              }}
-              disabled={busy}
-              aria-label={t("Draft workflow steps")}
-              rows={7}
-            />
+            <Field className="workflow-preview-field" label={t("Draft title")}>
+              <Input
+                containerClassName="workflow-preview-title-control"
+                value={draftTitle}
+                onChange={(event) => setDraftTitle(event.target.value)}
+                disabled={busy}
+              />
+            </Field>
           ) : (
-            <p className="workflow-preview-owner-note">{t("Owner suggestions are preview-only until you save this draft.")}</p>
+            <div className="workflow-preview-summary">
+              <strong>{plan.title}</strong>
+              <small>{t("Draft workflow")} · {plan.sourceMessageId ? t("Source message") : t("Source unavailable")}</small>
+            </div>
           )}
-          <ol className="workflow-preview-owner-list">
-            {ownerPreviews.map((preview, index) => (
-              <li key={`${index}:${preview.title}`} className="workflow-preview-owner-row">
-                <span className="workflow-preview-owner-title">{preview.title}</span>
-                <label className="workflow-preview-owner-select">
-                  <span>{t("Owner")}</span>
-                  <SelectControl
-              variant="compact"
-                    value={selectedOwnerIdFor(index)}
-                    onChange={(event) => updateOwnerSelection(index, event.target.value)}
-                    disabled={busy}
-                    aria-label={t("Owner for step {index}", { index: index + 1 })}
-                  >
-                    <option value="">{t("Unassigned")}</option>
-                    {ownerOptions.map((owner) => (
-                      <option key={owner.id} value={owner.id}>{owner.displayName}</option>
-                    ))}
-                  </SelectControl>
-                </label>
-                <span className={`workflow-preview-confidence confidence-${preview.ownerConfidence}`}>
-                  {ownerConfidenceLabel(preview.ownerConfidence, t)}
-                </span>
-                {preview.ownerReason ? <small>{preview.ownerReason}</small> : null}
-              </li>
-            ))}
-          </ol>
-        </section>
-        <section className="workflow-preview-section" aria-label={t("Source plan")}>
-          <h3>{t("Source plan")}</h3>
-          <div className="workflow-preview-plan-body">
-            <MessageBodyRenderer text={plan.bodyMarkdown} cwd={cwd} compact />
-          </div>
-        </section>
-        <p className="workflow-preview-risk">
-          <CircleAlert size={14} />
-          <span>{t("Saving creates a draft workflow only. It does not start execution.")}</span>
-        </p>
-        <footer className="environment-commit-actions">
-          <button className="secondary-button" type="button" onClick={() => setEditing((value) => !value)} disabled={busy}>
+          <section className="workflow-preview-section" aria-label={t("Proposed steps")}>
+            <h3>{t("Proposed steps")}</h3>
+            {editing ? (
+              <Textarea
+                className="workflow-preview-steps-input"
+                value={draftStepsText}
+                onChange={(event) => {
+                  setDraftStepsText(event.target.value);
+                  setOwnerSelections({});
+                }}
+                disabled={busy}
+                aria-label={t("Draft workflow steps")}
+                rows={7}
+              />
+            ) : (
+              <p className="workflow-preview-owner-note">{t("Owner suggestions are preview-only until you save this draft.")}</p>
+            )}
+            <ol className="workflow-preview-owner-list">
+              {ownerPreviews.map((preview, index) => (
+                <li key={`${index}:${preview.title}`} className="workflow-preview-owner-row">
+                  <span className="workflow-preview-owner-title">{preview.title}</span>
+                  <label className="workflow-preview-owner-select">
+                    <span>{t("Owner")}</span>
+                    <Select
+                      size="sm"
+                      value={selectedOwnerIdFor(index)}
+                      onChange={(event) => updateOwnerSelection(index, event.target.value)}
+                      disabled={busy}
+                      aria-label={t("Owner for step {index}", { index: index + 1 })}
+                    >
+                      <option value="">{t("Unassigned")}</option>
+                      {ownerOptions.map((owner) => (
+                        <option key={owner.id} value={owner.id}>{owner.displayName}</option>
+                      ))}
+                    </Select>
+                  </label>
+                  <span className={`workflow-preview-confidence confidence-${preview.ownerConfidence}`}>
+                    {ownerConfidenceLabel(preview.ownerConfidence, t)}
+                  </span>
+                  {preview.ownerReason ? <small>{preview.ownerReason}</small> : null}
+                </li>
+              ))}
+            </ol>
+          </section>
+          <section className="workflow-preview-section" aria-label={t("Source plan")}>
+            <h3>{t("Source plan")}</h3>
+            <div className="workflow-preview-plan-body">
+              <MessageBodyRenderer text={plan.bodyMarkdown} cwd={cwd} compact />
+            </div>
+          </section>
+          <p className="workflow-preview-risk">
+            <CircleAlert size={14} />
+            <span>{t("Saving creates a draft workflow only. It does not start execution.")}</span>
+          </p>
+        </DialogBody>
+        <DialogFooter>
+          <Button size="sm" variant="secondary" onClick={() => setEditing((value) => !value)} disabled={busy}>
             {editing ? t("Preview") : t("Edit draft")}
-          </button>
-          <button className="secondary-button" type="button" onClick={onClose} disabled={busy}>
+          </Button>
+          <Button autoFocus size="sm" variant="secondary" onClick={closeAndRestoreFocus} disabled={busy}>
             {t("Cancel")}
-          </button>
-          <button
-            className="primary-button"
-            type="button"
+          </Button>
+          <Button
+            size="sm"
+            variant="primary"
+            leadingIcon={<Save size={15} />}
+            loading={busy}
+            loadingLabel={t("Saving...")}
             onClick={() => onConfirm(plan, buildDraft())}
-            disabled={busy}
           >
-            <Save size={15} />
             {busy ? t("Saving...") : t("Save draft workflow")}
-          </button>
-        </footer>
-      </section>
-    </div>
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

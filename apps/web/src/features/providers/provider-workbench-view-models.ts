@@ -10,11 +10,18 @@ import {
 } from "../../lib/providers.js";
 import type {
   ProviderCheckResult,
-  ProviderModelOption,
   ProviderPreset,
   ProviderTemplate,
-  ProviderThinkingMode,
 } from "../../types.js";
+
+export {
+  modelThinkingModes,
+  providerModelCapabilitySourceLabel,
+  providerModelSourceLabel,
+  providerModelThinkingLabel,
+  providerOrderedThinkingModes,
+  providerThinkingModeLabel,
+} from "./provider-discovery-view-models.js";
 
 export type ProviderStatusFilter = "all" | "ready" | "needsAttention" | "missingKey" | "disabled";
 export type ProviderSetupIntent = "chat" | "generation" | "video_generation";
@@ -300,13 +307,6 @@ function providerDisplaySourceLabel(displayName: string, model: string): string 
     : normalizedDisplayName;
 }
 
-export function providerModelSourceLabel(source: string, t: ProviderWorkbenchTranslate): string {
-  if (source === "builtin:generation-models" || source === "builtin:media-models") {
-    return t("Built-in generation model candidates");
-  }
-  return source;
-}
-
 export function providerInitial(displayName: string): string {
   const normalizedName = displayName.trim();
   if (!normalizedName) {
@@ -317,69 +317,6 @@ export function providerInitial(displayName: string): string {
 
 export function normalizeProviderEndpoint(value: string): string {
   return value.trim().replace(/\/+$/, "").toLowerCase();
-}
-
-export function providerModelThinkingLabel(
-  model: ProviderModelOption,
-  t: ProviderWorkbenchTranslate,
-): string {
-  const modes = modelThinkingModes(model);
-  if (modes.length === 0) {
-    return t("No thinking");
-  }
-  return t("Thinking: {modes}", { modes: modes.map((mode) => providerThinkingModeLabel(mode, t)).join(" / ") });
-}
-
-export function providerModelCapabilitySourceLabel(
-  model: ProviderModelOption,
-  t: (key: string) => string,
-): string {
-  if (model.capabilitySource === "upstream") {
-    return t("Capability: provider");
-  }
-  if (model.capabilitySource === "model_catalog") {
-    return t("Capability: Ling catalog");
-  }
-  if (model.capabilitySource === "provider_template") {
-    return t("Capability: template");
-  }
-  if (model.capabilitySource === "user_override") {
-    return t("Capability: custom");
-  }
-  return t("Capability: unknown");
-}
-
-export function modelThinkingModes(model: ProviderModelOption): readonly ProviderThinkingMode[] {
-  const modes = model.thinkingModes ?? [];
-  return providerOrderedThinkingModes(modes).filter((mode) => mode !== "off");
-}
-
-export function providerOrderedThinkingModes(modes: readonly ProviderThinkingMode[]): readonly ProviderThinkingMode[] {
-  const selectedModes = new Set(modes);
-  const order: readonly ProviderThinkingMode[] = ["off", "auto", "minimal", "low", "medium", "high", "xhigh"];
-  return order.filter((mode) => selectedModes.has(mode));
-}
-
-export function providerThinkingModeLabel(
-  mode: ProviderThinkingMode,
-  t: (key: string) => string,
-): string {
-  switch (mode) {
-    case "off":
-      return t("Off");
-    case "auto":
-      return t("Auto");
-    case "minimal":
-      return t("Minimal");
-    case "low":
-      return t("Low");
-    case "medium":
-      return t("Medium");
-    case "high":
-      return t("High");
-    case "xhigh":
-      return t("XHigh");
-  }
 }
 
 export function readProviderCheckFeedback(

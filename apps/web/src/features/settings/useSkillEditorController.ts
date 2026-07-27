@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { LingDaemonError } from "@ling-stack/api-client";
 import {
   createSkillCandidateDraft,
@@ -28,8 +28,6 @@ import {
 } from "./skill-editor-utils.js";
 import { skillImportBlockingWarningCodes, skillImportHasBlockingWarnings } from "./skill-import-utils.js";
 
-const feedbackDurationMs = 2000;
-
 export type SkillEditorBusyState = "" | "checking" | "saving";
 
 export interface SkillEditorCompletedResult {
@@ -41,10 +39,12 @@ export interface SkillEditorCompletedResult {
 export function useSkillEditorController({
   cwd,
   onCompleted,
+  onSuccess,
   t,
 }: {
   readonly cwd: string;
   readonly onCompleted: (result: SkillEditorCompletedResult) => Promise<void>;
+  readonly onSuccess: (message: string) => void;
   readonly t: SettingsTranslator;
 }) {
   const emptySeed = useMemo(emptySkillEditorSeed, []);
@@ -61,15 +61,7 @@ export function useSkillEditorController({
   const [preview, setPreview] = useState<SkillRevisionPreview | undefined>();
   const [authorityConfirmation, setAuthorityConfirmation] = useState(false);
   const [discardConfirmation, setDiscardConfirmation] = useState(false);
-  const [notice, setNotice] = useState("");
-
   const dirty = skillEditorFingerprint(form) !== initialFingerprint;
-
-  useEffect(() => {
-    if (!notice) return undefined;
-    const timeoutId = globalThis.setTimeout(() => setNotice(""), feedbackDurationMs);
-    return () => globalThis.clearTimeout(timeoutId);
-  }, [notice]);
 
   function resetTransientState(): void {
     setBusy("");
@@ -190,7 +182,7 @@ export function useSkillEditorController({
       });
       closeImmediately();
       await onCompleted({ skills: [response.skill], mode: "revision" });
-      setNotice(t("Skill updated"));
+      onSuccess(t("Skill updated"));
     } catch (caught) {
       if (caught instanceof LingDaemonError && caught.code === "skill_revision_conflict") {
         setConflict(true);
@@ -241,7 +233,7 @@ export function useSkillEditorController({
         mode: completedMode,
         ...(completedCandidateId ? { candidateId: completedCandidateId } : {}),
       });
-      setNotice(t(completedMode === "create" ? "Skill created" : "AI skill created"));
+      onSuccess(t(completedMode === "create" ? "Skill created" : "AI skill created"));
     } catch (caught) {
       setError(skillEditorErrorMessage(caught, t));
     } finally {
@@ -265,7 +257,6 @@ export function useSkillEditorController({
     dirty,
     authorityConfirmation,
     discardConfirmation,
-    notice,
     sourceKind: mode === "candidate" || (skill && isEvolvedSkillEntry(skill)) ? "evolved" as const : "user" as const,
     openCreate,
     openCandidate,

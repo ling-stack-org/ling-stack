@@ -22,18 +22,21 @@ import {
 } from "../../lib/channel-activity-views.js";
 import type {
   ApprovalRequest,
+  ChannelAttachment,
   ChannelContextSummary,
   ChannelDecision,
   ChannelHandoff,
   ChannelMessage,
   ChannelWorkflow,
   ChannelWorkflowStep,
+  ErrorPresentationOptions,
   RunSession,
   StateTransitionEvent,
   Task,
   UpdateWorkspaceSettingsRequest,
   WorkspaceSettings,
 } from "../../types.js";
+import { useLingToast } from "../../shared/ui/index.js";
 
 type ActivityCategoryFilter = ChannelActivityViewCategoryFilter;
 type ActivityAttentionFilter = ChannelActivityViewAttentionFilter;
@@ -44,6 +47,7 @@ interface ChannelActivityControllerInput {
   readonly cwd: string;
   readonly selectedChannelId: string;
   readonly channelMessages: readonly ChannelMessage[];
+  readonly channelAttachments: readonly ChannelAttachment[];
   readonly tasks: readonly Task[];
   readonly runs: readonly RunSession[];
   readonly approvals: readonly ApprovalRequest[];
@@ -55,7 +59,10 @@ interface ChannelActivityControllerInput {
   readonly channelWorkflowSteps: readonly ChannelWorkflowStep[];
   readonly latestRun?: RunSession;
   readonly workspaceSettings: WorkspaceSettings | undefined;
-  readonly onWorkspaceSettingsPatch: (patch: UpdateWorkspaceSettingsRequest) => void;
+  readonly onWorkspaceSettingsPatch: (
+    patch: UpdateWorkspaceSettingsRequest,
+    options?: ErrorPresentationOptions,
+  ) => void | Promise<WorkspaceSettings | undefined>;
   readonly t: Translate;
 }
 
@@ -88,9 +95,9 @@ export interface ChannelActivityController {
   readonly activityDrilldown: ChannelActivityDrilldownItem | undefined;
   readonly customViewLimitReached: boolean;
   readonly applyActivityView: (view: ChannelActivitySavedView) => void;
-  readonly saveActivityView: () => void;
-  readonly renameActivityView: () => void;
-  readonly deleteActivityView: () => void;
+  readonly saveActivityView: (name: string) => Promise<boolean>;
+  readonly renameActivityView: (viewId: string, name: string) => Promise<boolean>;
+  readonly deleteActivityView: (viewId: string) => Promise<boolean>;
   readonly clearActivityFilters: () => void;
   readonly resetActivityForChannelSwitch: () => void;
 }
@@ -99,6 +106,7 @@ export function useChannelActivityController({
   cwd,
   selectedChannelId,
   channelMessages,
+  channelAttachments,
   tasks,
   runs,
   approvals,
@@ -113,6 +121,7 @@ export function useChannelActivityController({
   onWorkspaceSettingsPatch,
   t,
 }: ChannelActivityControllerInput): ChannelActivityController {
+  const { showToast } = useLingToast();
   const [activityToolsOpen, setActivityToolsOpen] = useState(false);
   const [activitySearch, setActivitySearch] = useState("");
   const [activityCategoryFilter, setActivityCategoryFilter] = useState<ActivityCategoryFilter>("all");
@@ -122,6 +131,7 @@ export function useChannelActivityController({
   const [activityFiltersExpanded, setActivityFiltersExpanded] = useState(false);
   const [activityDrilldownItemId, setActivityDrilldownItemId] = useState("");
   const lastActivityDrilldownRef = useRef<ChannelActivityDrilldownItem | undefined>();
+  const savedViewMutationSyncPendingRef = useRef(false);
   const workspaceChannelActivityViewsRef = useRef<WorkspaceSettings["channelActivityViews"] | undefined>(workspaceSettings?.channelActivityViews);
   const onWorkspaceSettingsPatchRef = useRef(onWorkspaceSettingsPatch);
 
@@ -155,6 +165,7 @@ export function useChannelActivityController({
     () => buildChannelActivityItems({
       channelId: selectedChannelId,
       messages: channelMessages,
+      attachments: channelAttachments,
       tasks,
       runs,
       approvals,
@@ -169,6 +180,7 @@ export function useChannelActivityController({
     [
       approvals,
       channelContextSummaries,
+      channelAttachments,
       channelDecisions,
       channelHandoffs,
       channelMessages,
@@ -271,59 +283,76 @@ export function useChannelActivityController({
   }, [activityDrilldownItemId, activityItems, channelContextSummaries, channelWorkflowSteps, channelWorkflows, tasks]);
   const customViewLimitReached = activitySavedViews.length >= maxCustomChannelActivitySavedViews;
 
-  const persistActivitySavedViews = useCallback((nextViews: readonly ChannelActivitySavedView[]): void => {
+  const persistActivitySavedViews = useCallback(async (nextViews: readonly ChannelActivitySavedView[]): Promise<void> => {
     const cappedViews = nextViews.slice(0, maxCustomChannelActivitySavedViews);
+    const mutation = onWorkspaceSettingsPatch(
+      {
+        channelActivityViews: {
+          ...(workspaceSettings?.channelActivityViews ?? {}),
+          [selectedChannelId]: serializeCustomActivitySavedViews(cappedViews),
+        },
+      },
+      { errorOwner: "caller" },
+    );
+    if (mutation) {
+      savedViewMutationSyncPendingRef.current = true;
+      try {
+        const savedSettings = await mutation;
+        if (!savedSettings) {
+          savedViewMutationSyncPendingRef.current = false;
+          throw new Error(t("Saved view changes could not be saved. Try again."));
+        }
+      } catch (caught) {
+        savedViewMutationSyncPendingRef.current = false;
+        throw new Error(t("Saved view changes could not be saved. Try again."), { cause: caught });
+      }
+    }
     setActivitySavedViews(cappedViews);
     clearCustomChannelActivitySavedViews(cwd, selectedChannelId);
-    onWorkspaceSettingsPatch({
-      channelActivityViews: {
-        ...(workspaceSettings?.channelActivityViews ?? {}),
-        [selectedChannelId]: serializeCustomActivitySavedViews(cappedViews),
-      },
-    });
-  }, [cwd, onWorkspaceSettingsPatch, selectedChannelId, workspaceSettings?.channelActivityViews]);
+  }, [cwd, onWorkspaceSettingsPatch, selectedChannelId, t, workspaceSettings?.channelActivityViews]);
 
-  const saveActivityView = useCallback((): void => {
+  const saveActivityView = useCallback(async (name: string): Promise<boolean> => {
     if (activitySavedViews.length >= maxCustomChannelActivitySavedViews) {
-      globalThis.alert?.(t("Custom saved views are limited to 8."));
-      return;
-    }
-    const name = globalThis.prompt?.(t("Saved view name"), t("Custom view"));
-    if (name === undefined || name === null) {
-      return;
+      showToast({
+        durationMs: 5_000,
+        message: t("Custom saved views are limited to 8."),
+        scope: `channel:${selectedChannelId}:saved-view-limit`,
+        tone: "warning",
+      });
+      return false;
     }
     const view = createCustomChannelActivitySavedView(name, currentActivityViewFilter);
-    persistActivitySavedViews([...activitySavedViews, view]);
+    await persistActivitySavedViews([...activitySavedViews, view]);
     applyActivityView(view);
-  }, [activitySavedViews, applyActivityView, currentActivityViewFilter, persistActivitySavedViews, t]);
+    return true;
+  }, [activitySavedViews, applyActivityView, currentActivityViewFilter, persistActivitySavedViews, selectedChannelId, showToast, t]);
 
-  const renameActivityView = useCallback((): void => {
-    if (!selectedActivitySavedView || selectedActivitySavedView.builtin) {
-      return;
-    }
-    const name = globalThis.prompt?.(t("Rename saved view"), selectedActivitySavedView.name);
-    if (name === undefined || name === null) {
-      return;
+  const renameActivityView = useCallback(async (viewId: string, name: string): Promise<boolean> => {
+    const target = activitySavedViews.find((view) => view.id === viewId);
+    if (!target || target.builtin) {
+      return false;
     }
     const nextViews = activitySavedViews.map((view) =>
-      view.id === selectedActivitySavedView.id
+      view.id === target.id
         ? { ...view, name: sanitizeSavedViewName(name), updatedAt: new Date().toISOString() }
         : view,
     );
-    persistActivitySavedViews(nextViews);
-  }, [activitySavedViews, persistActivitySavedViews, selectedActivitySavedView, t]);
+    await persistActivitySavedViews(nextViews);
+    const renamedView = nextViews.find((view) => view.id === target.id);
+    if (renamedView) applyActivityView(renamedView);
+    return true;
+  }, [activitySavedViews, applyActivityView, persistActivitySavedViews]);
 
-  const deleteActivityView = useCallback((): void => {
-    if (!selectedActivitySavedView || selectedActivitySavedView.builtin) {
-      return;
+  const deleteActivityView = useCallback(async (viewId: string): Promise<boolean> => {
+    const target = activitySavedViews.find((view) => view.id === viewId);
+    if (!target || target.builtin) {
+      return false;
     }
-    if (!globalThis.confirm?.(t("Delete saved view?"))) {
-      return;
-    }
-    const nextViews = activitySavedViews.filter((view) => view.id !== selectedActivitySavedView.id);
-    persistActivitySavedViews(nextViews);
+    const nextViews = activitySavedViews.filter((view) => view.id !== target.id);
+    await persistActivitySavedViews(nextViews);
     applyActivityView(builtinChannelActivitySavedViews[0]);
-  }, [activitySavedViews, applyActivityView, persistActivitySavedViews, selectedActivitySavedView, t]);
+    return true;
+  }, [activitySavedViews, applyActivityView, persistActivitySavedViews]);
 
   const selectedChannelActivityViews = workspaceSettings?.channelActivityViews?.[selectedChannelId];
   const workspaceSettingsLoaded = workspaceSettings !== undefined;
@@ -338,8 +367,10 @@ export function useChannelActivityController({
       selectedChannelActivityViews === undefined &&
       legacyViews.length > 0;
 
+    const ownMutationSync = savedViewMutationSyncPendingRef.current;
+    savedViewMutationSyncPendingRef.current = false;
     setActivitySavedViews(settingsViews.length > 0 ? settingsViews : (shouldMigrateViews || !workspaceSettingsLoaded ? legacyViews : []));
-    applyActivityView(builtinChannelActivitySavedViews[0]);
+    if (!ownMutationSync) applyActivityView(builtinChannelActivitySavedViews[0]);
     setActivityFiltersExpanded(false);
     setActivityDrilldownItemId("");
     if (shouldMigrateViews) {

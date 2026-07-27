@@ -26,50 +26,17 @@ async function openSettingsRunDiagnostics(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Open Run Diagnostics" }).click();
   await expect(page.getByLabel("Settings sections")).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
-  await expect(page.locator(".settings-run-diagnostics-panel")).toBeVisible();
-  await expect(page.locator(".settings-run-diagnostics-panel").getByRole("heading", { name: "Run Diagnostics" })).toBeVisible();
-}
-
-async function expectLightweightSettingsMetaRows(scope: Locator): Promise<void> {
-  const rows = await scope.locator(".meta-row").evaluateAll((elements) =>
-    elements.filter((element) => element.getClientRects().length > 0).map((element) => {
-      const style = getComputedStyle(element);
-      return {
-        backgroundColor: style.backgroundColor,
-        borderBottomWidth: style.borderBottomWidth,
-        borderLeftWidth: style.borderLeftWidth,
-        borderRightWidth: style.borderRightWidth,
-        borderTopWidth: style.borderTopWidth,
-        clientWidth: element.clientWidth,
-        labelBackgroundColor: getComputedStyle(element.querySelector("span") ?? element).backgroundColor,
-        scrollWidth: element.scrollWidth,
-        valueBackgroundColor: getComputedStyle(element.querySelector("strong") ?? element).backgroundColor,
-      };
-    }),
-  );
-
-  expect(rows.length).toBeGreaterThan(0);
-  for (const row of rows) {
-    expect(row.backgroundColor).toBe("rgba(0, 0, 0, 0)");
-    expect(row.labelBackgroundColor).toBe("rgba(0, 0, 0, 0)");
-    expect(row.valueBackgroundColor).toBe("rgba(0, 0, 0, 0)");
-    expect(row.borderTopWidth).toBe("0px");
-    expect(row.borderRightWidth).toBe("0px");
-    expect(row.borderBottomWidth).toBe("0px");
-    expect(row.borderLeftWidth).toBe("0px");
-    expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth + 1);
-  }
+  await expect(page.getByRole("region", { name: "Run Diagnostics" })).toBeVisible();
 }
 
 async function openMainRunHistory(page: Page, taskTitle = "Inspect workspace"): Promise<void> {
   await openSettingsRunDiagnostics(page);
-  const selectedRun = page.locator(".settings-run-diagnostics-panel").getByRole("button", { name: new RegExp(taskTitle) }).first();
+  const diagnosticsPanel = page.locator(".settings-run-diagnostics-panel");
+  const selectedRun = diagnosticsPanel.locator(".settings-run-row").filter({ hasText: taskTitle }).first();
   if (await selectedRun.count() > 0 && await selectedRun.isVisible().catch(() => false)) {
     await selectedRun.click();
   }
-  const rawDetails = page.locator(".settings-run-diagnostics-panel details").filter({ hasText: "Raw run details" });
-  await rawDetails.getByText("Raw run details").click();
-  await rawDetails.getByRole("button", { name: "Open full diagnostics in app" }).click();
+  await diagnosticsPanel.getByRole("button", { name: "Open full diagnostics in app" }).click();
   await expect(page.locator(".run-history-layout")).toBeVisible();
 }
 
@@ -237,8 +204,8 @@ test("runtime diagnostics surface supervisor state and work unit controls", asyn
   await expect(diagnostics.locator(".runtime-kpi-grid")).toContainText("Queued");
   await expect(diagnostics.locator(".runtime-kpi-grid")).toContainText("Stuck");
   await expect(diagnostics.locator(".runtime-kpi-grid")).toContainText("Stale");
-  await expect(diagnostics.locator(".runtime-work-unit-row").filter({ hasText: "wu_running" })).toContainText("running");
-  await expect(diagnostics.locator(".runtime-work-unit-row").filter({ hasText: "wu_queue" })).toContainText("queued");
+  await expect(diagnostics.locator(".runtime-work-unit-row").filter({ hasText: "wu_running" })).toContainText("Running");
+  await expect(diagnostics.locator(".runtime-work-unit-row").filter({ hasText: "wu_queue" })).toContainText("Queued");
   await expect(diagnostics.locator(".runtime-work-unit-row").filter({ hasText: "wu_stale" })).toContainText("runtime lost heartbeat");
   await expect(diagnostics.locator(".runtime-resource-row").filter({ hasText: "bound_path" })).toBeVisible();
   await expect(diagnostics.locator(".runtime-resource-row").filter({ hasText: "provider_local" })).toBeVisible();
@@ -253,9 +220,11 @@ test("settings run diagnostics stays inside the Settings shell", async ({ page }
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Startup and diagnostics/ }).click();
-  await expect(page.locator(".startup-readiness-card")).toBeVisible();
-  await expect(page.locator(".startup-readiness-card > .meta-row")).toHaveCount(0);
-  await expect(page.getByText("No startup diagnostics")).toBeVisible();
+  const startupPanel = page.locator("[data-ui2-settings-startup-diagnostics]");
+  await expect(startupPanel).toBeVisible();
+  await expect(startupPanel.locator(".settings-startup-primary-state").getByText("Ready", { exact: true })).toBeVisible();
+  await expect(startupPanel.locator(".startup-readiness-card, .meta-row")).toHaveCount(0);
+  await expect(startupPanel.getByText("No startup diagnostics")).toHaveCount(0);
 
   await page.getByRole("button", { name: "Open Run Diagnostics" }).click();
 
@@ -264,13 +233,14 @@ test("settings run diagnostics stays inside the Settings shell", async ({ page }
   await expect(page.locator(".run-history-layout")).toHaveCount(0);
   const diagnosticsPanel = page.locator(".settings-run-diagnostics-panel");
   await expect(diagnosticsPanel).toContainText("Inspect workspace");
-  await expectLightweightSettingsMetaRows(diagnosticsPanel.locator(".settings-run-diagnostics-summary"));
-  await expectLightweightSettingsMetaRows(diagnosticsPanel.locator(".settings-run-diagnostics-detail"));
+  await expect(diagnosticsPanel.locator(".settings-run-row")).toHaveClass(/ling-ui-data-row/);
+  await expect(diagnosticsPanel.locator(".meta-row, .settings-run-diagnostics-summary")).toHaveCount(0);
+  await expect(diagnosticsPanel.locator(".settings-run-diagnostics-detail")).toBeVisible();
   await expect.poll(() => readHorizontalOverflow(page, ".settings-run-diagnostics-panel")).toEqual([]);
 
   const rawDetails = diagnosticsPanel.locator("details").filter({ hasText: "Raw run details" });
   await rawDetails.getByText("Raw run details").click();
-  await expectLightweightSettingsMetaRows(diagnosticsPanel.locator(".settings-run-diagnostics-detail"));
+  await expect(rawDetails.getByText("run_failed", { exact: true })).toBeVisible();
 });
 
 test("run detail renders state transitions from daemon timeline API", async ({ page }) => {
@@ -1463,8 +1433,11 @@ test("run detail can stop an active run and keeps the permission snapshot visibl
   await page.getByRole("button", { name: /Inspect workspace/ }).click();
 
   const detail = page.getByLabel("Run detail");
-  await expect(detail).toContainText("Workspace collaboration");
-  await expect(detail).toContainText("Workspace write");
+  const runSummary = detail.locator(".run-detail-summary");
+  const permissionPresetRow = runSummary.getByText("Permission preset", { exact: true }).locator("..");
+  const permissionModeRow = runSummary.getByText("Permission mode", { exact: true }).locator("..");
+  await expect(permissionPresetRow.locator("strong")).toHaveText("Workspace write");
+  await expect(permissionModeRow.locator("strong")).toHaveText("Workspace write");
   await detail.getByRole("button", { name: "Stop" }).click();
   await expect(detail.getByRole("button", { name: "Stopping" })).toBeVisible();
   await expect.poll(() => state.workUnits.find((unit) => unit.id === "wu_running")?.status).toBe("cancelled");

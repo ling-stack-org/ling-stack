@@ -47,7 +47,7 @@ test("skill import chooses one file and imports it with one action", async ({ pa
   const draftCountBeforeImport = state.skillImportDrafts.length;
   await dialog.getByRole("button", { name: "Import", exact: true }).click();
   await expect(dialog).toHaveCount(0);
-  await expect(page.locator(".settings-inline-tip")).toContainText("Imported 1 skills");
+  await expect(page.locator('[data-ling-overlay="toast"][data-scope="skill:import"]')).toContainText("Imported 1 skills");
   expect(state.skillImportDrafts.length).toBe(draftCountBeforeImport + 1);
   await expect.poll(() => state.skillRegistryEntries.some((entry) =>
     typeof entry === "object" && entry !== null && "id" in entry && entry.id === "productized-import"

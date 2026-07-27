@@ -68,6 +68,66 @@ test("Desktop daemon escalates to SIGKILL when startup cleanup cannot stop the c
   assert.ok(diagnostics.includes("daemon.force_killed"));
 });
 
+test("missing daemon resources produce a typed recoverable startup failure", async () => {
+  const lifecycle = new DesktopDaemonLifecycle({
+    baseUrl: "http://127.0.0.1:17990",
+    daemonEntryPath: "/definitely/missing/ling-daemon.mjs",
+    defaultWorkspaceCwd: "/tmp/ling-desktop-missing-resource-workspace",
+    fetch: async () => Promise.reject(new TypeError("fetch failed")),
+    probePort: async () => "free",
+  });
+
+  await assert.rejects(
+    lifecycle.ensureStarted(),
+    (error) => error?.code === "resource_missing",
+  );
+  assert.equal(lifecycle.status.reason, "resource_missing");
+});
+
+test("a synchronous daemon spawn failure is mapped to the startup recovery contract", async () => {
+  const lifecycle = new DesktopDaemonLifecycle({
+    baseUrl: "http://127.0.0.1:17989",
+    daemonEntryPath: existingEntryPath,
+    defaultWorkspaceCwd: "/tmp/ling-desktop-sync-spawn-workspace",
+    fetch: async () => Promise.reject(new TypeError("fetch failed")),
+    probePort: async () => "free",
+    spawnDaemon: () => {
+      throw new Error("spawn EACCES private executable");
+    },
+  });
+
+  await assert.rejects(
+    lifecycle.ensureStarted(),
+    (error) => error?.code === "spawn_failed",
+  );
+  assert.equal(lifecycle.status.reason, "spawn_failed");
+  assert.doesNotMatch(lifecycle.status.message, /EACCES/u);
+});
+
+test("an asynchronous child-process error aborts daemon startup immediately", async () => {
+  const child = createFakeChild({ exitOnTerm: false });
+  const lifecycle = new DesktopDaemonLifecycle({
+    baseUrl: "http://127.0.0.1:17988",
+    daemonEntryPath: existingEntryPath,
+    defaultWorkspaceCwd: "/tmp/ling-desktop-async-spawn-workspace",
+    startupTimeoutMs: 1_000,
+    fetch: async () => Promise.reject(new TypeError("fetch failed")),
+    probePort: async () => "free",
+    spawnDaemon: () => {
+      queueMicrotask(() => child.emit("error", new Error("spawn ENOENT private executable")));
+      return child;
+    },
+  });
+  const startedAt = performance.now();
+
+  await assert.rejects(
+    lifecycle.ensureStarted(),
+    (error) => error?.code === "spawn_failed",
+  );
+  assert.ok(performance.now() - startedAt < 250, "spawn error must beat the startup deadline");
+  assert.equal(lifecycle.status.reason, "spawn_failed");
+});
+
 test("Desktop reuses a healthy daemon only after the authenticated preview handshake", async () => {
   const requests = [];
   const lifecycle = new DesktopDaemonLifecycle({

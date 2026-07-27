@@ -1,0 +1,22 @@
+{
+  "file": "1440x960-ling-light-mixed-list-result.png",
+  "functionIds": [
+    "MEDIA-JOB-LIST-001",
+    "MEDIA-JOB-RESULT-001"
+  ],
+  "fixtureId": "media_mixed_100",
+  "url": "/",
+  "servedArtifact": "Vite source",
+  "locale": "en-US",
+  "themeId": "ling-light",
+  "viewport": {
+    "width": 1440,
+    "height": 960
+  },
+  "stateTrigger": "media_mixed_100",
+  "expectedAction": "Select and inspect result",
+  "consoleErrors": 0,
+  "rootOverflow": 0,
+  "sha256": "191a71a72870df5ac4d8e45e900b6170996069d0f02a302e62b419decf6e745c",
+  "packagedDesktop": "pending"
+}

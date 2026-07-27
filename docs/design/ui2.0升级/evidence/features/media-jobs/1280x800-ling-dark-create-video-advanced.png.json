@@ -1,0 +1,21 @@
+{
+  "file": "1280x800-ling-dark-create-video-advanced.png",
+  "functionIds": [
+    "MEDIA-JOB-CREATE-001"
+  ],
+  "fixtureId": "media_long_create",
+  "url": "/",
+  "servedArtifact": "Vite source",
+  "locale": "en-US",
+  "themeId": "ling-dark",
+  "viewport": {
+    "width": 1280,
+    "height": 800
+  },
+  "stateTrigger": "media_long_create",
+  "expectedAction": "Create video task",
+  "consoleErrors": 0,
+  "rootOverflow": 0,
+  "sha256": "de8e0fe9a92d72eb25e713116e9aaa0e9d601a92ffdfa42c4c634d19b83b7663",
+  "packagedDesktop": "pending"
+}

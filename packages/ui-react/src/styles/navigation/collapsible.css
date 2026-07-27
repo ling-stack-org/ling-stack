@@ -1,0 +1,45 @@
+.ling-ui-collapsible-content {
+  min-height: 0;
+  overflow: hidden;
+  transform-origin: top;
+}
+
+.ling-ui-collapsible-content[data-state="open"] {
+  animation-name: ling-ui-collapsible-open;
+  animation-duration: var(--ling-motion-standard);
+  animation-timing-function: var(--ling-ease-standard);
+}
+
+.ling-ui-collapsible-content[data-state="closed"] {
+  animation-name: ling-ui-collapsible-close;
+  animation-duration: var(--ling-motion-standard);
+  animation-timing-function: var(--ling-ease-standard);
+}
+
+@keyframes ling-ui-collapsible-open {
+  from {
+    height: 0;
+    opacity: 0;
+  }
+  to {
+    height: var(--radix-collapsible-content-height);
+    opacity: 1;
+  }
+}
+
+@keyframes ling-ui-collapsible-close {
+  from {
+    height: var(--radix-collapsible-content-height);
+    opacity: 1;
+  }
+  to {
+    height: 0;
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ling-ui-collapsible-content[data-state] {
+    animation-duration: var(--ling-motion-instant);
+  }
+}

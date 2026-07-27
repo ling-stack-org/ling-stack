@@ -1,4 +1,5 @@
 import { ListChecks, PanelBottom, PanelBottomClose, PanelRightClose, PanelRightOpen, RefreshCw, Search } from "lucide-react";
+import type { Ref } from "react";
 import { CurrentSessionHeaderCapabilitySlot } from "../../../shared/current-session/CurrentSessionHeaderCapability.js";
 import {
   WorkspaceToolbarIconButton,
@@ -8,6 +9,7 @@ import {
 export interface ConversationTopToolbarProps {
   readonly ariaLabel: string;
   readonly searchActive: boolean;
+  readonly searchButtonRef?: Ref<HTMLButtonElement>;
   readonly searchLabel: string;
   readonly refreshDisabled?: boolean;
   readonly refreshLabel: string;
@@ -30,6 +32,7 @@ export interface ConversationTopToolbarProps {
 export function ConversationTopToolbar({
   ariaLabel,
   searchActive,
+  searchButtonRef,
   searchLabel,
   refreshDisabled = false,
   refreshLabel,
@@ -48,44 +51,55 @@ export function ConversationTopToolbar({
   onToggleTerminal,
   onToggleDetails,
 }: ConversationTopToolbarProps): JSX.Element {
+  const TerminalIcon = terminalActive ? PanelBottomClose : PanelBottom;
+  const DetailsIcon = detailsActive ? PanelRightClose : PanelRightOpen;
+
   return (
     <WorkspaceTopRightToolbar className="conversation-top-toolbar" ariaLabel={ariaLabel}>
       <CurrentSessionHeaderCapabilitySlot />
       <WorkspaceToolbarIconButton
+        ref={searchButtonRef}
+        actionId="search"
         active={searchActive}
-        className="icon-button conversation-toolbar-search"
-        icon={<Search size={15} />}
+        className="conversation-toolbar-search"
+        icon={Search}
         label={searchLabel}
         onClick={onToggleSearch}
       />
       <WorkspaceToolbarIconButton
-        className="icon-button conversation-toolbar-refresh"
-        disabled={refreshDisabled || refreshLoading}
-        icon={<RefreshCw size={15} className={refreshLoading ? "spin" : undefined} />}
+        actionId="refresh"
+        className="conversation-toolbar-refresh"
+        disabled={refreshDisabled}
+        icon={RefreshCw}
         label={refreshLabel}
+        loading={refreshLoading}
+        loadingLabel={refreshLabel}
         onClick={onRefresh}
       />
       <WorkspaceToolbarIconButton
+        actionId="summary"
         active={summaryActive}
-        className="icon-button conversation-toolbar-summary task-toolbar-progress"
+        className="conversation-toolbar-summary task-toolbar-progress"
         disabled={summaryDisabled}
-        icon={<ListChecks size={15} />}
+        icon={ListChecks}
         label={summaryLabel}
         onClick={onToggleSummary}
       />
       <WorkspaceToolbarIconButton
+        actionId="terminal"
         active={terminalActive}
-        className="icon-button conversation-toolbar-terminal task-toolbar-bottom-panel"
+        className="conversation-toolbar-terminal task-toolbar-bottom-panel"
         disabled={terminalDisabled}
-        icon={terminalActive ? <PanelBottomClose size={15} /> : <PanelBottom size={15} />}
+        icon={TerminalIcon}
         label={terminalLabel}
         onClick={onToggleTerminal}
       />
       <WorkspaceToolbarIconButton
+        actionId="details"
         active={detailsActive}
-        className="icon-button conversation-toolbar-details task-toolbar-panel"
+        className="conversation-toolbar-details task-toolbar-panel"
         aria-expanded={detailsActive}
-        icon={detailsActive ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
+        icon={DetailsIcon}
         label={detailsLabel}
         onClick={onToggleDetails}
       />

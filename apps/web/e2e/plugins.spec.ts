@@ -50,7 +50,7 @@ test("Cua Driver uses one table row, global toasts, and a separate detail drawer
   await expect(page.locator(".workspace-plugins-surface > .workspace-head")).toHaveCount(0);
   await expect(table.getByRole("columnheader")).toHaveText(["Plugin", "Status", "Actions"]);
   await expect(table.locator(".plugin-table-row")).toHaveCount(1);
-  await expect(cuaRow).toContainText("Controls macOS apps through the local Cua Driver.");
+  await expect(cuaRow).toContainText("Controls desktop apps through the local Cua Driver.");
   await expect(cuaRow.locator(".plugin-table-status")).toHaveText("Not installed");
   await expect(pluginsPanel).not.toContainText("Bundled");
   await expect(pluginsPanel.getByRole("button", { name: "MCP settings" })).toHaveCount(0);
@@ -63,7 +63,11 @@ test("Cua Driver uses one table row, global toasts, and a separate detail drawer
   await expect(installDrawer.getByRole("link", { name: "Open official guide" })).toHaveAttribute("href", "https://cua.ai/docs/cua-driver");
   await expect(installDrawer.locator("code")).toContainText("https://cua.ai/driver/install.sh");
   await installDrawer.getByRole("button", { name: "Copy install command" }).click();
-  await expect(installDrawer.getByRole("status")).toContainText("Command copied");
+  const copyToast = page.locator(
+    '[data-ling-overlay="toast"][data-scope="plugin:cua:trusted-local:cua-driver:copy"]',
+  );
+  await expect(copyToast).toContainText("Command copied");
+  await expect(installDrawer.getByText("Command copied", { exact: true })).toHaveCount(0);
 
   await installDrawer.getByText("Use a custom executable path").click();
   const commandInput = installDrawer.getByLabel("Executable path");
@@ -87,11 +91,13 @@ test("Cua Driver uses one table row, global toasts, and a separate detail drawer
   await expect(cuaRow).not.toContainText("Enabled and ready");
   for (const actionName of ["Check", "Disable", "Details"]) {
     const action = cuaRow.getByRole("button", { name: actionName });
-    await expect(action).toHaveCSS("width", "30px");
-    await expect(action.locator("span")).toHaveCount(0);
+    const bounds = await action.boundingBox();
+    expect(bounds?.width ?? 0).toBeGreaterThanOrEqual(32);
+    expect(bounds?.height ?? 0).toBeGreaterThanOrEqual(32);
+    await expect(action).toHaveClass(/ling-ui-button/u);
     await expect(action).toHaveAttribute("title", actionName);
   }
-  await expect(page.locator(".ling-toast").filter({ hasText: "Plugin enabled." })).toBeVisible();
+  await expect(page.locator(".ling-ui-toast").filter({ hasText: "Plugin enabled." })).toBeVisible();
   await expect(pluginsPanel.locator(".settings-plugin-action-notice")).toHaveCount(0);
   expect(state.mcpServers[0].enabled).toBe(true);
   expect(state.mcpTools.filter((tool) => tool.serverId === "mcp_cua_driver").map((tool) => [tool.name, tool.defaultApproval])).toEqual([
@@ -116,7 +122,7 @@ test("Cua Driver uses one table row, global toasts, and a separate detail drawer
 
   await cuaRow.getByRole("button", { name: "Disable" }).click();
   await expect(cuaRow.locator(".plugin-table-status")).toHaveText("Awaiting enable");
-  await expect(page.locator(".ling-toast").filter({ hasText: "Plugin disabled." })).toBeVisible();
+  await expect(page.locator(".ling-ui-toast").filter({ hasText: "Plugin disabled." })).toBeVisible();
   expect(state.mcpServers[0].enabled).toBe(false);
 
   await cuaRow.getByRole("button", { name: "Details" }).click();
@@ -124,6 +130,57 @@ test("Cua Driver uses one table row, global toasts, and a separate detail drawer
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
   await expect(page.getByLabel("Settings sections").getByRole("button", { name: /MCP tool servers/ })).toHaveClass(/active/);
   await expect(page.locator(".mcp-server-row").filter({ hasText: "Cua Driver" })).toBeVisible();
+});
+
+test("Windows Cua Driver health uses one product status and keeps raw checks in details", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const index = state.managedPlugins.findIndex((plugin) => plugin.id === "trusted-local:cua-driver");
+  state.managedPlugins[index] = createMockCuaPlugin({
+    status: "enabled",
+    setup: {
+      kind: "local_binary",
+      state: "ready",
+      checkedAt: "2026-07-18T02:00:00.000Z",
+      detectedCommand: "C:\\Program Files\\Cua Driver\\cua-driver.exe",
+    },
+    health: {
+      pluginId: "trusted-local:cua-driver",
+      checkedAt: "2026-07-18T02:00:00.000Z",
+      expiresAt: "2026-07-18T02:05:00.000Z",
+      status: "failed",
+      message: "Cua Driver health_report schema or platform version is incompatible with Windows preview capture.",
+      details: {
+        errorCode: "plugin_provider_incompatible",
+        platform: "win32",
+        driverVersion: "0.9.0",
+        supportedDriverVersions: ["0.8.3"],
+      },
+    },
+  });
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openPluginManager(page);
+
+  const row = pluginRow(page, "trusted-local:cua-driver");
+  await expect(row.locator(".plugin-table-status")).toHaveText("Update required");
+  await expect(row.getByRole("button", { name: "View repair steps" })).toBeVisible();
+  await expect(row.getByRole("button", { name: "Check" })).toBeVisible();
+  await expect(row).not.toContainText("health_report");
+
+  await row.getByRole("button", { name: "View repair steps" }).click();
+  const drawer = page.getByRole("dialog", { name: "Cua Driver" });
+  await expect(drawer).toContainText("This Cua Driver version is not compatible.");
+  await expect(drawer).toContainText("Update Cua Driver to a supported version, then check again.");
+  await expect(drawer).not.toContainText("health_report schema or platform version");
+  const technicalDetails = drawer.locator(".plugin-detail-technical");
+  await expect(technicalDetails).not.toHaveAttribute("open", "");
+  await technicalDetails.getByText("Technical details").click();
+  await expect(technicalDetails).toContainText("plugin_provider_incompatible");
+  await expect(technicalDetails).toContainText("0.9.0");
+  await expect(technicalDetails).toContainText("0.8.3");
 });
 
 test("adds disabled local command and HTTP plugins with descriptions", async ({ page }) => {
@@ -145,7 +202,7 @@ test("adds disabled local command and HTTP plugins with descriptions", async ({ 
   await drawer.getByLabel("Arguments (one per line)").fill("-y\n@modelcontextprotocol/server-filesystem\n/tmp/workspace");
   await drawer.getByRole("button", { name: "Add plugin" }).click();
   await expect(drawer).toHaveCount(0);
-  await expect(page.locator(".ling-toast").filter({ hasText: "Plugin added." })).toBeVisible();
+  await expect(page.locator(".ling-ui-toast").filter({ hasText: "Plugin added." })).toBeVisible();
 
   const commandPlugin = state.managedPlugins.find((plugin) => plugin.displayName === "Filesystem helper");
   expect(commandPlugin).toBeTruthy();

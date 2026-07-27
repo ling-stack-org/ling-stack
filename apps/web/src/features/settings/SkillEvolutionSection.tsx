@@ -10,9 +10,9 @@ import type {
   SkillSourceArtifact,
   SkillSourceSnapshot,
 } from "../../types.js";
-import { SelectControl } from "../../shared/components/SelectControl.js";
+import { Select } from "../../shared/ui/index.js";
 import { SkillLibraryRegistrySection } from "./SkillLibraryRegistrySection.js";
-import { SkillReviewQueuePanel } from "./SkillReviewQueuePanels.js";
+import { SkillReviewQueuePanel } from "./SkillReviewQueuePanel.js";
 import type { SettingsTranslator, TeammateSkillBindingSummary } from "./skill-library-utils.js";
 import { isOpenSkillCandidateStatus, isTerminalSkillCandidateStatus } from "./skill-library-utils.js";
 import { partitionSkillRegistry, type SkillEvolutionViewId } from "./skill-library-view-models.js";
@@ -25,14 +25,16 @@ export function SkillEvolutionSection({
   playbookCandidates,
   channels,
   loading,
-  saving,
+  busyAction,
   selectedSkillId,
   bindingSummaries,
   sourceSnapshotBySkillId,
   sourceHistoryBySkillId,
   artifacts,
+  sourceArtifactsLoading,
+  sourceError,
   optimizationPreview,
-  optimizationPreviewLoading,
+  reviewError,
   cwd,
   onViewChange,
   onSelectSkill,
@@ -56,19 +58,21 @@ export function SkillEvolutionSection({
   readonly playbookCandidates: readonly ChannelPlaybookCandidate[];
   readonly channels: readonly Channel[];
   readonly loading: boolean;
-  readonly saving: boolean;
+  readonly busyAction: string;
   readonly selectedSkillId: string | undefined;
   readonly bindingSummaries: readonly TeammateSkillBindingSummary[];
   readonly sourceSnapshotBySkillId: ReadonlyMap<string, SkillSourceSnapshot>;
   readonly sourceHistoryBySkillId: ReadonlyMap<string, readonly SkillSourceSnapshot[]>;
   readonly artifacts: readonly SkillSourceArtifact[];
+  readonly sourceArtifactsLoading: boolean;
+  readonly sourceError: string;
   readonly optimizationPreview: SkillOptimizationPreview | undefined;
-  readonly optimizationPreviewLoading: boolean;
+  readonly reviewError: string;
   readonly cwd: string;
   readonly onViewChange: (view: SkillEvolutionViewId) => void;
   readonly onSelectSkill: (skillId: string) => void;
   readonly onArchiveSkill: (skillId: string) => void;
-  readonly onDeleteSkill: (skill: SkillRegistryEntry) => void;
+  readonly onDeleteSkill: (skill: SkillRegistryEntry, trigger: HTMLButtonElement) => void;
   readonly onEditSkill: (skill: SkillRegistryEntry) => void;
   readonly onPreviewOptimization: () => void;
   readonly onArchiveSource: (skillId: string) => void;
@@ -91,12 +95,12 @@ export function SkillEvolutionSection({
     playbookCandidates.filter((candidate) => candidate.status === "cancelled" || candidate.status === "stale").length;
   const activePlaybooks = playbookCandidates.filter((candidate) => candidate.status === "active");
   const viewControl = (
-    <SelectControl
-      variant="compact"
+    <Select
+      size="sm"
       containerClassName="settings-skill-evolution-view-select"
       value={view}
       onChange={(event) => {
-        const nextView = event.target.value;
+        const nextView = event.currentTarget.value;
         onViewChange(nextView === "generated" || nextView === "ignored" ? nextView : "pending");
       }}
       aria-label={t("AI evolution views")}
@@ -104,7 +108,7 @@ export function SkillEvolutionSection({
       <option value="pending">{t("Needs review")} ({pendingCount})</option>
       <option value="generated">{t("Generated")} ({generatedCount})</option>
       <option value="ignored">{t("Ignored")} ({ignoredCount})</option>
-    </SelectControl>
+    </Select>
   );
 
   return (
@@ -115,14 +119,15 @@ export function SkillEvolutionSection({
             mode="evolved"
             skills={skills}
             loading={loading}
-            saving={saving}
+            busyAction={busyAction}
             selectedSkillId={selectedSkillId}
             bindingSummaries={bindingSummaries}
             sourceSnapshotBySkillId={sourceSnapshotBySkillId}
             sourceHistoryBySkillId={sourceHistoryBySkillId}
             artifacts={artifacts}
+            sourceArtifactsLoading={sourceArtifactsLoading}
+            sourceError={sourceError}
             optimizationPreview={optimizationPreview}
-            optimizationPreviewLoading={optimizationPreviewLoading}
             cwd={cwd}
             onSelectSkill={onSelectSkill}
             onArchiveSkill={onArchiveSkill}
@@ -144,7 +149,8 @@ export function SkillEvolutionSection({
               playbookCandidates={playbookCandidates}
               channels={channels}
               loading={loading}
-              saving={saving}
+              busyAction={busyAction}
+              error={reviewError}
               onAdoptSkillCandidate={onAdoptSkillCandidate}
               onReviewSkillCandidate={onReviewSkillCandidate}
               onCreateProtocolCandidate={onCreateProtocolCandidate}
@@ -163,7 +169,8 @@ export function SkillEvolutionSection({
             playbookCandidates={playbookCandidates}
             channels={channels}
             loading={loading}
-            saving={saving}
+            busyAction={busyAction}
+            error={reviewError}
             onAdoptSkillCandidate={onAdoptSkillCandidate}
             onReviewSkillCandidate={onReviewSkillCandidate}
             onCreateProtocolCandidate={onCreateProtocolCandidate}

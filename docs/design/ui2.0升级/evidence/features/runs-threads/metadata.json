@@ -1,0 +1,175 @@
+{
+  "schemaVersion": 2,
+  "feature": "P11.2 Runs/Threads",
+  "generatedAt": "2026-07-23T02:49:55+08:00",
+  "reconciledAt": "2026-07-23T11:32:43+08:00",
+  "status": "historical-web-verified-artifacts-integrity-verified-final-release-recapture-pending",
+  "verification": {
+    "historicalFunctionalVerification": {
+      "status": "verified",
+      "evidence": "The focused Web suite was recorded as 7/7 passed, with the supporting runtime and selected App/Dark regressions recorded below."
+    },
+    "currentArtifactIntegrity": {
+      "status": "verified",
+      "checkedAt": "2026-07-23T11:32:43+08:00",
+      "imageCount": 8,
+      "existingFiles": 8,
+      "matchingSha256": 8,
+      "matchingPixelDimensions": 8,
+      "screenshotRegenerated": false,
+      "method": "Read-only SHA-256, PNG dimension, filename and sidecar consistency audit against the current workspace bytes."
+    },
+    "finalP13ReleaseRecapture": {
+      "status": "pending",
+      "pendingReason": "Final P13 release evidence must be recaptured after aggregate cleanup stabilizes; T13-K-D did not run the screenshot-producing suite."
+    }
+  },
+  "git": {
+    "branch": "codex/ui2-desktop-coverage-foundation",
+    "head": "0a0b80502715d0333342422e6dc8cedd2cd77b14",
+    "dirtyWorktree": true
+  },
+  "servedArtifact": "Vite source via Playwright webServer",
+  "tests": {
+    "focused": {
+      "command": "LING_PLAYWRIGHT_PORT=42919 corepack pnpm --dir apps/web exec playwright test e2e/ui2-runs-threads.spec.ts --workers=1",
+      "result": "7/7 passed"
+    },
+    "runtime": {
+      "command": "LING_PLAYWRIGHT_PORT=42920 corepack pnpm --dir apps/web exec playwright test e2e/runtime.spec.ts --workers=1",
+      "result": "19/19 passed"
+    },
+    "selectedAppDark": {
+      "command": "LING_PLAYWRIGHT_PORT=42921 corepack pnpm --dir apps/web exec playwright test e2e/app.spec.ts e2e/dark-mode.spec.ts --grep \"theme bootstrap prefers|main pages and workspace tools|settings keeps configuration tools\" --workers=1",
+      "result": "3/3 passed"
+    },
+    "supplementalAppDark": "21/21 passed on port 42917 before the final focused CSS-only toolbar adjustment",
+    "lint": "passed",
+    "i18n": "passed",
+    "typecheck": "blocked outside P11.2: apps/web/src/features/work-board/WorkBoardInspector.tsx:78 assigns string | undefined to string"
+  },
+  "u13SelectorCloseout": {
+    "date": "2026-07-23",
+    "owners": [
+      "styles/runs/timeline.css",
+      "styles/runs/event-log.css",
+      "styles/runs/run-detail.css",
+      "styles/shared/artifact-row.css",
+      "styles/channel-task-environment.css"
+    ],
+    "aggregateTargetMatches": 0,
+    "focusedForbiddenMatches": 0,
+    "verification": {
+      "runtimeAndRuns": "26/26 passed",
+      "focusedAfterImportSplit": "7/7 passed",
+      "artifactConsumers": "19/19 passed"
+    }
+  },
+  "expectedFailures": [
+    {
+      "fixtureId": "history_retained_stale",
+      "status": 503,
+      "purpose": "retained stale list state"
+    },
+    {
+      "fixtureId": "recording_validation_reduced_motion",
+      "status": 503,
+      "purpose": "guidance failure retains the draft before recording validation"
+    }
+  ],
+  "images": [
+    {
+      "file": "1440x960-ling-light-history-thread-groups.png",
+      "fixtureId": "history_100_groups",
+      "functionIds": "RUN-HISTORY-001",
+      "locale": "en-US",
+      "theme": "ling-light",
+      "width": 1440,
+      "height": 960,
+      "sha256": "0a9204a05958226012876f0b5202edb091592971d290ad10b2b9b7d9030ed4da"
+    },
+    {
+      "file": "1280x800-ling-dark-history-stale.png",
+      "fixtureId": "history_retained_stale",
+      "functionIds": "RUN-HISTORY-001",
+      "locale": "en-US",
+      "theme": "ling-dark",
+      "width": 1280,
+      "height": 800,
+      "sha256": "410dc53563951279385aa11d7899e1d3d38127200e39ffff98dc55e85d227b4d"
+    },
+    {
+      "file": "1440x960-ling-light-run-running-approval.png",
+      "fixtureId": "run_running_pending_approval",
+      "functionIds": "RUN-DETAIL-001",
+      "locale": "zh-CN",
+      "theme": "ling-light",
+      "width": 1440,
+      "height": 960,
+      "sha256": "5db0956ef47fbf1ad0f20509f8f9d77a96cef4cf4d1e0e0a0b17f5dc719d04d3"
+    },
+    {
+      "file": "1280x800-ling-dark-run-failure-repair.png",
+      "fixtureId": "run_failed_provider_repair",
+      "functionIds": "RUN-DETAIL-001",
+      "locale": "en-US",
+      "theme": "ling-dark",
+      "width": 1280,
+      "height": 800,
+      "sha256": "52d1e54049956b7f7a10e09c750fd5f47cf61f6bee18d8accc7b3e065d8c666b"
+    },
+    {
+      "file": "1440x960-ling-light-thread-lineage-resume.png",
+      "fixtureId": "thread_lineage_resume_preview",
+      "functionIds": "THREAD-LIST-001",
+      "locale": "en-US",
+      "theme": "ling-light",
+      "width": 1440,
+      "height": 960,
+      "sha256": "4c8887cec3dbb863847d4ac4727ccfb5ed50f9034298df98d44fef27c5ec6d87"
+    },
+    {
+      "file": "1280x800-ling-dark-thread-active-run-disabled.png",
+      "fixtureId": "thread_active_run_guard",
+      "functionIds": "THREAD-LIST-001",
+      "locale": "en-US",
+      "theme": "ling-dark",
+      "width": 1280,
+      "height": 800,
+      "sha256": "1977c847b092ce5930266bbda7b15d6283384a14bb2e04eb316e320731d9500c"
+    },
+    {
+      "file": "1440x960-ling-light-recording-validation.png",
+      "fixtureId": "recording_validation_reduced_motion",
+      "functionIds": "RUN-DETAIL-001",
+      "locale": "en-US",
+      "theme": "ling-light",
+      "width": 1440,
+      "height": 960,
+      "sha256": "bf023f629d6ce742c80d9a69a697e28a3b5f23b479d1b7b2a459f2536b0bfea3"
+    },
+    {
+      "file": "1280x800-ling-dark-technical-details-long.png",
+      "fixtureId": "run_long_raw_technical",
+      "functionIds": "RUN-DETAIL-001",
+      "locale": "en-US",
+      "theme": "ling-dark",
+      "width": 1280,
+      "height": 800,
+      "sha256": "a63510e184724ee8a977f01e80d528d730e6b37378b5f6f08909add6482e35b0"
+    }
+  ],
+  "audit": {
+    "originalPixelDimensionsVerified": true,
+    "sha256VerifiedAgainstPngBytes": true,
+    "visualInspection": "Historical 8/8 visual inspection retained from the original Web verification; T13-K-D performed ledger integrity reconciliation only.",
+    "screenshotsRecapturedDuringT13KD": false,
+    "documentHorizontalOverflow": 0,
+    "unexpectedConsoleErrors": 0
+  },
+  "limitations": [
+    "Final P13 release recapture remains pending after aggregate cleanup stabilizes; the current artifacts were not regenerated during T13-K-D.",
+    "Packaged macOS Retina, Windows 125%/150%, and forced-colors acceptance remain in P13.",
+    "The original capture-time shared typecheck was blocked by an unrelated Work Board error; U13 records selector and browser gates separately."
+  ]
+}

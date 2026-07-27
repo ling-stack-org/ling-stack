@@ -1,9 +1,9 @@
+import { Tabs, TabsList, TabsTrigger } from "../../shared/ui/index.js";
 import { useI18n } from "../../i18n.js";
 
 export interface SettingsSubnavOption {
   readonly id: string;
   readonly label: string;
-  readonly description?: string;
   readonly badge?: string;
 }
 
@@ -11,37 +11,31 @@ export function SettingsSubnav({
   label,
   options,
   activeId,
-  showDescription = false,
   onChange,
 }: {
   readonly label: string;
   readonly options: readonly SettingsSubnavOption[];
   readonly activeId: string;
-  readonly showDescription?: boolean;
   readonly onChange: (id: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
   const activeOption = options.find((option) => option.id === activeId) ?? options[0];
 
   return (
-    <div className="settings-subnav-shell">
-      <div className="settings-subnav" role="tablist" aria-label={t(label)}>
+    <Tabs className="settings-subnav-shell" value={activeOption?.id ?? activeId} onValueChange={onChange}>
+      <TabsList className="settings-subnav" appearance="contained" size="sm" aria-label={t(label)}>
         {options.map((option) => (
-          <button
+          <TabsTrigger
             key={option.id}
             className={option.id === activeId ? "settings-subnav-item active" : "settings-subnav-item"}
-            type="button"
-            role="tab"
-            aria-selected={option.id === activeId}
-            onClick={() => onChange(option.id)}
+            value={option.id}
           >
             <span>{t(option.label)}</span>
-            {option.badge ? <small>{t(option.badge)}</small> : null}
-          </button>
+            {option.badge ? <small className="ling-ui-tabs-trigger-badge">{t(option.badge)}</small> : null}
+          </TabsTrigger>
         ))}
-      </div>
-      {showDescription && activeOption?.description ? <p className="settings-subnav-description">{t(activeOption.description)}</p> : null}
-    </div>
+      </TabsList>
+    </Tabs>
   );
 }
 

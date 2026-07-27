@@ -1,0 +1,24 @@
+{
+  "filename": "1440x960-ling-dark-preview-video.png",
+  "capturedAt": "2026-07-23T02:01:31.103Z",
+  "viewport": {
+    "width": 1440,
+    "height": 960
+  },
+  "theme": "ling-dark",
+  "locale": "zh-CN",
+  "fixture": "production_preview_video",
+  "state": "preview-video",
+  "functionIds": [
+    "PROD-PREVIEW-001"
+  ],
+  "sourceCommitOrWorktree": "0a0b80502715+worktree",
+  "consoleErrors": [],
+  "expectedConsoleErrors": [],
+  "pageErrors": [],
+  "documentOverflow": 0,
+  "ownerOverflow": 0,
+  "canvasPixel": null,
+  "mediaPixelHash": null,
+  "sha256": "51f82060f063b33187f18924b1c5d63d881ee4c17a1a28c2a8d5b897876776e4"
+}

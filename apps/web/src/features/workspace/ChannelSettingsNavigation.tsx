@@ -1,6 +1,6 @@
 import { Command, HeartPulse, SlidersHorizontal, Users, UsersRound } from "lucide-react";
-import { useRef, type KeyboardEvent } from "react";
 import { useI18n } from "../../i18n.js";
+import { TabsList, TabsTrigger } from "../../shared/ui/index.js";
 
 export type ChannelSettingsSection = "general" | "workspace" | "members" | "councils" | "health";
 
@@ -16,73 +16,33 @@ const channelSettingsSections: readonly {
   { id: "health", label: "Channel health", icon: HeartPulse },
 ];
 
-export function ChannelSettingsNavigation({
-  activeSection,
-  onChange,
-}: {
-  readonly activeSection: ChannelSettingsSection;
-  readonly onChange: (section: ChannelSettingsSection) => void;
-}): JSX.Element {
+export function ChannelSettingsNavigation(): JSX.Element {
   const { t } = useI18n();
-  const buttonRefs = useRef(new Map<ChannelSettingsSection, HTMLButtonElement>());
-
-  function focusSection(section: ChannelSettingsSection): void {
-    onChange(section);
-    requestAnimationFrame(() => buttonRefs.current.get(section)?.focus());
-  }
-
-  function onTabKeyDown(event: KeyboardEvent<HTMLButtonElement>, currentIndex: number): void {
-    let nextIndex = currentIndex;
-    if (event.key === "ArrowRight") {
-      nextIndex = (currentIndex + 1) % channelSettingsSections.length;
-    } else if (event.key === "ArrowLeft") {
-      nextIndex = (currentIndex - 1 + channelSettingsSections.length) % channelSettingsSections.length;
-    } else if (event.key === "Home") {
-      nextIndex = 0;
-    } else if (event.key === "End") {
-      nextIndex = channelSettingsSections.length - 1;
-    } else {
-      return;
-    }
-    event.preventDefault();
-    const nextSection = channelSettingsSections[nextIndex]?.id;
-    if (nextSection) {
-      focusSection(nextSection);
-    }
-  }
 
   return (
     <div className="channel-settings-tabs-scroll">
-      <div className="channel-settings-tabs" role="tablist" aria-label={t("Channel settings navigation")}>
-        {channelSettingsSections.map((section, index) => {
+      <TabsList
+        className="channel-settings-tabs"
+        aria-label={t("Channel settings navigation")}
+        appearance="line"
+        size="sm"
+      >
+        {channelSettingsSections.map((section) => {
           const Icon = section.icon;
-          const active = section.id === activeSection;
           return (
-            <button
+            <TabsTrigger
               key={section.id}
-              ref={(element) => {
-                if (element) {
-                  buttonRefs.current.set(section.id, element);
-                } else {
-                  buttonRefs.current.delete(section.id);
-                }
-              }}
               id={`channel-settings-tab-${section.id}`}
-              className={active ? "channel-settings-tab active" : "channel-settings-tab"}
-              type="button"
-              role="tab"
+              className="channel-settings-tab"
               aria-controls={`channel-settings-panel-${section.id}`}
-              aria-selected={active}
-              tabIndex={active ? 0 : -1}
-              onClick={() => onChange(section.id)}
-              onKeyDown={(event) => onTabKeyDown(event, index)}
+              value={section.id}
             >
               <Icon size={16} aria-hidden="true" />
               <span>{t(section.label)}</span>
-            </button>
+            </TabsTrigger>
           );
         })}
-      </div>
+      </TabsList>
     </div>
   );
 }

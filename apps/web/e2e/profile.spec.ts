@@ -15,7 +15,7 @@ test("profile avatar crop exports a transparent circular image", async ({ page }
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /^User profile$/ }).click();
   await expect(page.getByRole("heading", { name: "User profile", level: 1 })).toHaveCount(0);
-  await expect(page.locator(".profile-settings-identity-block")).toBeVisible();
+  await expect(page.locator('[data-profile-section="identity"]')).toBeVisible();
   await expect(page.getByRole("button", { name: "Refresh" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Save profile" })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Identity information" })).toHaveCount(0);
@@ -26,20 +26,20 @@ test("profile avatar crop exports a transparent circular image", async ({ page }
   await expect(page.getByLabel("Profile display preview")).toHaveCount(0);
   await expect(page.locator(".profile-preview-card")).toHaveCount(0);
   await expect(page.locator(".profile-usage-details summary")).toHaveCount(0);
-  await expect(page.locator(".profile-usage-details .profile-heatmap")).toBeVisible();
+  await expect(page.locator(".profile-usage-details .profile-settings-heatmap")).toBeVisible();
   await expect(page.locator(".profile-usage-streak-grid .profile-usage-metric")).toHaveCount(3);
 
   await page.getByRole("button", { name: "Edit display name" }).click();
   const displayNameInput = page.getByLabel("Display name", { exact: true });
   await expect(displayNameInput).toBeVisible();
   await displayNameInput.fill("Tian Xiao");
-  await page.locator(".profile-usage-card").click();
+  await page.locator('[data-profile-section="usage"]').click();
   await expect.poll(() => state.userProfile.displayName).toBe("Tian Xiao");
   await expect(page.getByLabel("Display name", { exact: true })).toHaveCount(0);
-  await expect(page.locator(".profile-settings-name-row", { hasText: "Tian Xiao" })).toBeVisible();
-  const profileSavedTip = page.locator(".profile-settings-tip.ok", { hasText: "Profile saved" });
+  await expect(page.locator('[data-profile-name-row="true"]', { hasText: "Tian Xiao" })).toBeVisible();
+  const profileSavedTip = page.locator('.ling-ui-toast[data-scope="profile:save"]', { hasText: "Profile saved" });
   await expect(profileSavedTip).toBeVisible();
-  await expect(page.locator(".profile-settings-identity-block .profile-settings-tip")).toHaveCount(0);
+  await expect(page.locator('[data-profile-section="identity"] .ling-ui-toast')).toHaveCount(0);
   await expect(profileSavedTip).toHaveCount(0, { timeout: 5000 });
 
   await page.locator('input[type="file"][accept="image/*"]').setInputFiles({
@@ -48,14 +48,14 @@ test("profile avatar crop exports a transparent circular image", async ({ page }
     buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120"><rect width="120" height="120" fill="#d71920"/></svg>'),
   });
 
-  await expect(page.getByRole("dialog", { name: "调整头像" })).toBeVisible();
-  await page.getByRole("button", { name: "使用头像" }).click();
+  await expect(page.getByRole("dialog", { name: "Adjust avatar" })).toHaveClass(/ling-ui-dialog-content/u);
+  await page.getByRole("button", { name: "Use avatar" }).click();
 
-  const avatarImage = page.locator(".profile-avatar-button img");
+  const avatarImage = page.locator(".profile-settings-avatar img");
   await expect(avatarImage).toBeVisible();
-  const avatarChrome = await page.locator(".profile-avatar-button").evaluate((element) => {
+  const avatarChrome = await page.locator(".profile-settings-avatar").evaluate((element) => {
     const buttonRect = element.getBoundingClientRect();
-    const editElement = element.querySelector(".profile-avatar-edit");
+    const editElement = element.querySelector(".profile-settings-avatar-edit");
     if (!(editElement instanceof HTMLElement)) {
       throw new Error("profile avatar edit badge did not render");
     }

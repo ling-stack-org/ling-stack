@@ -12,27 +12,28 @@ test.beforeEach(async ({ page }) => {
 test("media production creates an ordered storyboard and keeps canvas layout separate", async ({ page }) => {
   const state = createBaseState({});
   await mockDaemon(page, state, { templates: createDefaultProviderTemplates() });
+  await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Media Production" }).click();
   await expect(page.getByRole("heading", { name: "Media Production", level: 1 })).toHaveCount(0);
   await expect(page.locator(".media-production-canvas-toolbar")).toContainText("Production studio");
-  await page.locator(".media-production-empty-state").getByRole("button", { name: "新建项目" }).click();
+  await page.locator(".media-production-empty-state").getByRole("button", { name: "New project" }).click();
   await expect(page.locator(".media-production-canvas-stage")).toBeVisible();
   await expect(page.locator(".project-scene-outline")).toBeVisible();
   const leftDock = page.locator(".media-production-dock-panel.left");
   await expect(leftDock).toHaveClass(/is-open/);
-  await page.getByRole("button", { name: "关闭项目与分镜" }).click();
+  await page.locator(".media-production-dock-rail.left").getByRole("button", { name: "Close projects and scenes" }).click();
   await expect(leftDock).not.toHaveClass(/is-open/);
   await expect(page.locator(".project-scene-outline")).toBeHidden();
-  await page.getByRole("button", { name: "展开项目与分镜" }).click();
+  await page.locator(".media-production-dock-rail.left").getByRole("button", { name: "Projects and scenes" }).click();
   await expect(page.locator(".project-scene-outline")).toBeVisible();
   const projectSettings = page.locator("details.project-outline-settings");
   await expect(projectSettings).not.toHaveAttribute("open", "");
   await projectSettings.locator("summary").click();
-  await expect(page.getByLabel("项目名称")).toBeVisible();
+  await expect(page.getByLabel("Project name")).toBeVisible();
   await projectSettings.locator("summary").click();
-  await page.getByRole("button", { name: "添加第一个场景" }).click();
+  await page.getByRole("button", { name: "Add scene" }).click();
   await expect(page.locator(".storyboard-scene-node")).toHaveCount(1);
   await expect(page.locator(".scene-inspector")).toBeVisible();
   const rightDock = page.locator(".media-production-dock-panel.right");
@@ -40,10 +41,10 @@ test("media production creates an ordered storyboard and keeps canvas layout sep
   await expect(page.locator(".media-production-canvas-stage")).toHaveAttribute("data-exclusive-docks", "true");
   await expect(leftDock).not.toHaveClass(/is-open/);
   const canvasDimensions = await page.locator(".storyboard-canvas").evaluate((element) => ({ width: element.clientWidth, height: element.clientHeight }));
-  await page.getByRole("button", { name: "关闭场景检查器" }).click();
+  await page.locator(".scene-inspector").getByRole("button", { name: "Close" }).click();
   await expect(rightDock).not.toHaveClass(/is-open/);
   await expect(page.locator(".scene-inspector")).toBeHidden();
-  await page.getByRole("button", { name: "展开项目与分镜" }).click();
+  await page.locator(".media-production-dock-rail.left").getByRole("button", { name: "Projects and scenes" }).click();
   await expect(leftDock).toHaveClass(/is-open/);
   await expect(page.locator(".storyboard-canvas")).toHaveJSProperty("clientWidth", canvasDimensions.width);
   await expect(page.locator(".storyboard-canvas")).toHaveJSProperty("clientHeight", canvasDimensions.height);
@@ -53,7 +54,7 @@ test("media production creates an ordered storyboard and keeps canvas layout sep
   await page.keyboard.press("Escape");
   await expect(rightDock).not.toHaveClass(/is-open/);
   await expect(page.locator(".scene-inspector")).toBeHidden();
-  await page.getByRole("button", { name: "展开场景检查器" }).click();
+  await page.locator(".media-production-dock-rail.right").getByRole("button", { name: "Expand" }).click();
   await expect(page.locator(".scene-inspector")).toBeVisible();
   const controls = page.locator(".react-flow__controls");
   await expect(controls).toHaveCount(1);
@@ -74,22 +75,23 @@ test("media production creates an ordered storyboard and keeps canvas layout sep
   await page.getByRole("button", { name: "Fit View" }).click();
   await expect.poll(() => storyboardZoom(page)).toBeLessThanOrEqual(1);
 
-  await page.getByLabel("画面提示").fill("A quiet product reveal in a bright studio.");
-  await page.getByLabel("画面提示").blur();
+  await page.getByLabel("Prompt").fill("A quiet product reveal in a bright studio.");
+  await page.getByLabel("Prompt").blur();
   await expect.poll(() => state.mediaScenes[0]?.prompt).toBe("A quiet product reveal in a bright studio.");
-  await expect(page.locator(".ling-toast")).toContainText("Saved");
+  const sceneSavedToast = page.locator('.ling-ui-toast[data-scope^="media-production:scene:"][data-scope$=":saved"]');
+  await expect(sceneSavedToast).toContainText("Scene saved");
   await expect(page.locator(".media-production-canvas-toolbar")).not.toContainText("Saved");
-  await expect(page.locator(".ling-toast")).toHaveCount(0, { timeout: 2_500 });
+  await expect(page.locator(".ling-ui-toast")).toHaveCount(0, { timeout: 4_500 });
 
-  await page.getByRole("button", { name: "复制场景" }).click();
+  await page.getByRole("button", { name: "Duplicate" }).click();
   await expect(page.locator(".storyboard-scene-node")).toHaveCount(2);
   await expect(page.locator(".storyboard-sequence-edge .react-flow__edge-path")).toHaveCount(1);
   await expect(page.locator(".react-flow__controls")).toHaveCount(1);
   const miniMap = page.locator(".react-flow__minimap");
   await expect(miniMap).toHaveCount(0);
-  await page.getByRole("button", { name: "复制场景" }).click();
-  await page.getByRole("button", { name: "复制场景" }).click();
-  await page.getByRole("button", { name: "复制场景" }).click();
+  await page.getByRole("button", { name: "Duplicate" }).click();
+  await page.getByRole("button", { name: "Duplicate" }).click();
+  await page.getByRole("button", { name: "Duplicate" }).click();
   await expect(page.locator(".storyboard-scene-node")).toHaveCount(5);
   await expect(miniMap).toHaveCount(1);
   await expect(miniMap).toHaveCSS("border-top-width", "1px");
@@ -126,32 +128,32 @@ test("media production creates an ordered storyboard and keeps canvas layout sep
   expect(state.mediaScenes.map((scene) => scene.sortOrder)).toEqual([0, 1, 2, 3, 4]);
   expect(state.mediaScenes[0]?.canvasPosition).not.toEqual(state.mediaScenes[1]?.canvasPosition);
 
-  await page.getByRole("button", { name: "关闭场景检查器" }).click();
+  await page.locator(".scene-inspector").getByRole("button", { name: "Close" }).click();
   await panStoryboardAway(page);
   const repeatedSelectionTransform = await storyboardTransform(page);
-  await page.getByRole("button", { name: "展开项目与分镜" }).click();
+  await page.locator(".media-production-dock-rail.left").getByRole("button", { name: "Projects and scenes" }).click();
   await page.locator(".project-outline-scene-main").nth(1).click();
   await expect.poll(() => storyboardTransform(page)).not.toBe(repeatedSelectionTransform);
   await expect.poll(() => selectedSceneIsVisible(page)).toBe(true);
 
-  await page.getByRole("button", { name: "关闭场景检查器" }).click();
+  await page.locator(".scene-inspector").getByRole("button", { name: "Close" }).click();
   await panStoryboardAway(page);
   const changedSelectionTransform = await storyboardTransform(page);
-  await page.getByRole("button", { name: "展开项目与分镜" }).click();
+  await page.locator(".media-production-dock-rail.left").getByRole("button", { name: "Projects and scenes" }).click();
   await page.locator(".project-outline-scene-main").first().click();
   await expect.poll(() => storyboardTransform(page)).not.toBe(changedSelectionTransform);
   await expect.poll(() => selectedSceneIsVisible(page)).toBe(true);
 
-  await page.getByRole("button", { name: "展开项目与分镜" }).click();
-  await page.getByRole("button", { name: "下移场景" }).first().click();
+  await page.locator(".media-production-dock-rail.left").getByRole("button", { name: "Projects and scenes" }).click();
+  await page.getByRole("button", { name: "Move scene down" }).first().click();
   await expect.poll(() => state.mediaScenes.map((scene) => scene.sortOrder)).toEqual([1, 0, 2, 3, 4]);
   const selectedOutlineScene = page.locator(".project-outline-scene.selected");
-  await selectedOutlineScene.getByRole("button", { name: "删除场景" }).click();
-  const deleteDialog = page.getByRole("dialog", { name: "删除场景" });
-  await expect(page.locator(".scene-delete-overlay")).toHaveCSS("position", "fixed");
+  await selectedOutlineScene.getByRole("button", { name: "Delete scene" }).click();
+  const deleteDialog = page.locator('[role="dialog"][data-media-production-dialog="delete-scene"]');
+  await expect(deleteDialog).toHaveCSS("position", "fixed");
   await expect(deleteDialog).toBeVisible();
-  await expect(deleteDialog).toContainText("删除这个场景？");
-  await deleteDialog.getByRole("button", { name: "删除场景" }).click();
+  await expect(deleteDialog).toContainText("Permanent action");
+  await deleteDialog.getByRole("button", { name: "Delete scene" }).click();
   await expect(page.locator(".project-outline-scene")).toHaveCount(4);
 });
 
@@ -188,7 +190,7 @@ test("media production fits a distant storyboard after switching projects", asyn
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Media Production" }).click();
   await expect(page.locator(".storyboard-scene-node")).toHaveCount(1);
   await expect.poll(() => selectedSceneIsVisible(page)).toBe(true);
-  await page.getByLabel("媒体项目").selectOption("media_project_far");
+  await page.getByLabel("Media project").selectOption("media_project_far");
   await expect(page.locator(".storyboard-scene-node")).toContainText("media_scene_far");
   await expect.poll(() => selectedSceneIsVisible(page)).toBe(true);
 });
@@ -199,14 +201,13 @@ test("media production directs missing video setup to model workbench", async ({
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Media Production" }).click();
-  await page.locator(".media-production-empty-state").getByRole("button", { name: "新建项目" }).click();
-  await page.getByRole("button", { name: "添加第一个场景" }).click();
-  await expect(page.getByRole("button", { name: "检查场景", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "配置视频模型" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "生成此场景" })).toBeDisabled();
+  await page.locator(".media-production-empty-state").getByRole("button", { name: "New project" }).click();
+  await page.getByRole("button", { name: "Add scene" }).click();
+  await expect(page.getByRole("button", { name: "Check", exact: true })).toHaveCount(0);
+  await expect(page.locator(".media-production-primary-action")).toHaveAccessibleName("Configure video model");
+  await expect(page.getByRole("button", { name: "Run", exact: true })).toBeDisabled();
 
-  await page.getByRole("button", { name: "配置视频模型" }).click();
-  await expect(page.getByLabel(/^(Settings sections|设置分组)$/).getByRole("button", { name: /^(Model Workbench|模型工作台)$/ })).toHaveClass(/active/);
+  await page.locator(".media-production-primary-action").click();
   const editor = page.getByRole("dialog", { name: "New video generation model" });
   await expect(editor).toBeVisible();
   await expect(editor.getByLabel("Model supplier")).toHaveValue("seedance-video");
@@ -218,12 +219,12 @@ test("media production configures Seedance from the workbench before generating 
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Media Production" }).click();
-  await page.locator(".media-production-empty-state").getByRole("button", { name: "新建项目" }).click();
-  await page.getByRole("button", { name: "添加第一个场景" }).click();
-  await page.getByLabel("画面提示").fill("A controlled studio reveal of a compact camera.");
-  await page.getByLabel("画面提示").blur();
+  await page.locator(".media-production-empty-state").getByRole("button", { name: "New project" }).click();
+  await page.getByRole("button", { name: "Add scene" }).click();
+  await page.getByLabel("Prompt").fill("A controlled studio reveal of a compact camera.");
+  await page.getByLabel("Prompt").blur();
 
-  await page.getByRole("button", { name: "配置视频模型" }).click();
+  await page.locator(".media-production-primary-action").click();
   const editor = page.getByRole("dialog", { name: "New video generation model" });
   await expect(editor.getByLabel("Model supplier")).toHaveValue("seedance-video");
   await editor.getByLabel("API key", { exact: true }).fill("ark-media-key");
@@ -261,17 +262,17 @@ test("media production configures Seedance from the workbench before generating 
   await page.getByRole("button", { name: "Back to app" }).click();
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Media Production" }).click();
   await page.locator(".storyboard-scene-node.selected").click();
-  await page.locator(".scene-inspector .scene-execution-settings .select-control-native").nth(1).selectOption(providerId);
-  await expect(page.getByRole("button", { name: "生成此场景" })).toBeEnabled();
-  await page.getByRole("button", { name: "生成此场景" }).click();
+  await page.locator(".scene-inspector").getByLabel("Default video model").selectOption(providerId);
+  await expect(page.getByRole("button", { name: "Run", exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect.poll(() => state.mediaJobs[0]?.status).toBe("succeeded");
   expect(state.approvals.some((approval) => approval.actionType === "media_cost" && approval.status === "pending")).toBe(false);
   await expect.poll(() => state.mediaScenes[0]?.selectedMediaSceneRunId).toBeTruthy();
-  await page.getByRole("button", { name: /^历史/ }).click();
-  await expect(page.getByRole("button", { name: "当前结果", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "重新生成", exact: true })).toBeEnabled();
-  await expect(page.locator(".storyboard-node-status")).toHaveText("已生成");
-  await expect(page.getByRole("button", { name: /预览当前视频/ })).toBeVisible();
+  await page.getByRole("tab", { name: /^History/ }).click();
+  await expect(page.locator(".scene-run-row.selected")).toContainText("Current");
+  await expect(page.getByRole("button", { name: "Run", exact: true })).toBeEnabled();
+  await expect(page.locator(".storyboard-node-status")).toHaveText("Generated result");
+  await expect(page.getByRole("button", { name: /^Preview:/ })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("07-video-scene-generated.png"), fullPage: true });
 });
 
@@ -303,22 +304,22 @@ test("media production completes a configured Seedance storyboard flow", async (
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "媒体生产" }).click();
   await page.locator(".media-production-empty-state").getByRole("button", { name: "新建项目" }).click();
-  await page.getByRole("button", { name: "添加第一个场景" }).click();
+  await page.getByRole("button", { name: "添加场景" }).click();
   await expect(page.locator(".storyboard-scene-node")).toHaveCount(1);
   await page.screenshot({ path: testInfo.outputPath("01-storyboard-canvas.png"), fullPage: true });
 
-  await page.getByLabel("场景名称").fill("开场产品展示");
-  await page.getByLabel("场景名称").blur();
-  await page.getByLabel("画面提示").fill("晨光从产品表面掠过，镜头缓慢推进，干净的工业设计棚拍。 ");
-  await page.getByLabel("画面提示").blur();
+  await page.getByRole("textbox", { name: "场景 1", exact: true }).fill("开场产品展示");
+  await page.getByRole("textbox", { name: "场景 1", exact: true }).blur();
+  await page.getByLabel("提示词").fill("晨光从产品表面掠过，镜头缓慢推进，干净的工业设计棚拍。 ");
+  await page.getByLabel("提示词").blur();
   const inspector = page.locator(".scene-inspector");
-  await inspector.getByLabel("视频模型").selectOption("provider_seedance");
-  await expect(inspector.getByLabel("比例")).toHaveValue("16:9");
-  await expect(inspector.getByLabel("时长")).toHaveValue("5");
-  await expect(page.getByRole("button", { name: "生成此场景" })).toBeEnabled();
+  await inspector.getByLabel("默认视频模型").selectOption("provider_seedance");
+  await expect(inspector.getByLabel("画面比例")).toHaveValue("16:9");
+  await expect(inspector.getByLabel("视频时长")).toHaveValue("5");
+  await expect(page.getByRole("button", { name: "运行", exact: true })).toBeEnabled();
   await page.screenshot({ path: testInfo.outputPath("02-scene-configured.png"), fullPage: true });
 
-  await page.getByRole("button", { name: "生成此场景" }).click();
+  await page.getByRole("button", { name: "运行", exact: true }).click();
   await expect.poll(() => state.mediaJobs[0]?.status).toBe("succeeded");
   await expect.poll(() => state.mediaScenes[0]?.selectedMediaSceneRunId).toBeTruthy();
   const firstSelectedRunId = state.mediaScenes[0]?.selectedMediaSceneRunId;
@@ -326,22 +327,21 @@ test("media production completes a configured Seedance storyboard flow", async (
   expect(firstSelectedRun).toBeTruthy();
   const firstArtifactId = state.artifactsByMediaJob[firstSelectedRun?.mediaJobId ?? ""]?.[0]?.id;
   expect(firstArtifactId).toBeTruthy();
-  await page.getByRole("button", { name: /^历史/ }).click();
-  await expect(page.getByRole("button", { name: "当前结果", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "重新生成", exact: true })).toBeEnabled();
-  await expect(page.locator(".storyboard-node-status")).toHaveText("已生成");
+  await page.getByRole("tab", { name: /^历史/ }).click();
+  await expect(page.locator(".scene-run-row.selected")).toContainText("当前");
+  await expect(page.getByRole("button", { name: "运行", exact: true })).toBeEnabled();
+  await expect(page.locator(".storyboard-node-status")).toHaveText("生成结果");
   await page.screenshot({ path: testInfo.outputPath("03-generation-complete.png"), fullPage: true });
 
-  const previewButton = page.getByRole("button", { name: /预览当前视频/ });
+  const previewButton = page.getByRole("button", { name: /^预览:/ });
   const runCountBeforePreview = state.mediaSceneRuns.length;
   await previewButton.click();
-  const previewDialog = page.getByRole("dialog", { name: "预览当前视频" });
-  const previewVideo = previewDialog.locator("video");
+  const previewDialog = page.locator('[role="dialog"][data-media-production-dialog="scene-result-preview"]');
   await expect(previewDialog).toBeVisible();
-  await expect(previewVideo).toHaveJSProperty("controls", true);
-  await expect(previewVideo).toHaveAttribute("autoplay", "");
-  await expect(previewVideo).toHaveJSProperty("muted", true);
-  await expect(previewDialog.locator("video source")).toHaveAttribute("src", new RegExp(firstArtifactId ?? "missing"));
+  await expect(previewDialog.locator(`[data-media-preview-artifact="${firstArtifactId}"]`)).toHaveAttribute("data-media-preview-state", "error");
+  await expect(previewDialog.getByText("预览不可用")).toBeVisible();
+  await expect(previewDialog.getByRole("button", { name: "重试预览" })).toBeVisible();
+  await expect(previewDialog.locator("video")).toHaveCount(0);
   expect(state.mediaSceneRuns).toHaveLength(runCountBeforePreview);
   expect(state.mediaScenes[0]?.selectedMediaSceneRunId).toBe(firstSelectedRunId);
   await page.keyboard.press("Escape");
@@ -355,57 +355,57 @@ test("media production completes a configured Seedance storyboard flow", async (
   await previewDialog.getByRole("button", { name: "关闭预览" }).click();
   await expect(previewDialog).toHaveCount(0);
 
-  await page.getByRole("button", { name: "检查场景", exact: true }).click();
-  const generatedReview = page.getByRole("dialog", { name: "检查场景" });
-  await expect(generatedReview).toContainText("当前没有可生成场景");
-  await expect(generatedReview).toContainText("已生成");
-  await expect(generatedReview).toContainText("按顺序生成会跳过");
-  await generatedReview.locator(".create-dialog-actions .secondary-button").click();
+  await page.getByRole("button", { name: "检查", exact: true }).click();
+  const generatedReview = page.locator('[role="dialog"][data-media-production-dialog="project-run-review"]');
+  await expect(generatedReview.locator('[data-project-run-ready-count="0"]')).toBeVisible();
+  await expect(generatedReview.locator('[data-project-run-skipped-count="1"]')).toBeVisible();
+  await generatedReview.getByRole("button", { name: "关闭" }).last().click();
 
   state.mediaJobRunDelayMs = -1;
-  await page.getByRole("button", { name: "重新生成", exact: true }).click();
-  await expect(page.locator(".storyboard-node-status")).toHaveText("重新生成中");
-  await expect(page.getByRole("button", { name: "重新生成中", exact: true })).toBeDisabled();
+  await page.getByRole("button", { name: "运行", exact: true }).click();
+  await expect(page.locator(".storyboard-node-status")).toHaveText("已生成 · 正在更新");
+  await expect(page.locator(".scene-inspector-footer").getByRole("button")).toBeDisabled();
   await expect(previewButton).toBeVisible();
   await previewButton.click();
-  await expect(previewDialog.locator("video source")).toHaveAttribute("src", new RegExp(firstArtifactId ?? "missing"));
+  await expect(previewDialog.locator(`[data-media-preview-artifact="${firstArtifactId}"]`)).toHaveAttribute("data-media-preview-state", "error");
   await previewDialog.getByRole("button", { name: "关闭预览" }).click();
 
-  const runningRow = page.locator(".scene-run-row").filter({ hasText: "生成中" }).first();
-  await runningRow.getByRole("button", { name: "取消" }).click();
-  await expect(page.locator(".scene-run-row strong").filter({ hasText: "已取消" })).toHaveCount(1);
-  await expect(page.getByRole("button", { name: "重新生成", exact: true })).toBeEnabled();
+  const runningEntry = page.locator('.scene-run-entry[data-run-state="running"]').first();
+  await runningEntry.getByRole("button", { name: "取消" }).click();
+  await expect(page.locator('.scene-run-entry[data-run-state="cancelled"]')).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "重试", exact: true })).toBeEnabled();
 
   state.mediaJobRunDelayMs = 80;
-  await page.getByRole("button", { name: "重新生成", exact: true }).click();
-  await expect(page.locator(".scene-run-row strong").filter({ hasText: "生成中" })).toHaveCount(1);
-  await expect(page.locator(".scene-run-row strong").filter({ hasText: "已取消" })).toHaveCount(1);
+  await page.getByRole("button", { name: "重试", exact: true }).click();
+  await expect(page.locator('.scene-run-entry[data-run-state="running"]')).toHaveCount(1);
+  await expect(page.locator('.scene-run-entry[data-run-state="cancelled"]')).toHaveCount(1);
   await expect.poll(() => state.mediaJobs[0]?.status).toBe("succeeded");
 
-  await expect(page.getByRole("button", { name: "设为当前" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "重新生成", exact: true })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "设为默认" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "运行", exact: true })).toBeEnabled();
   expect(state.mediaScenes[0]?.selectedMediaSceneRunId).toBe(firstSelectedRunId);
   await previewButton.click();
-  await expect(previewDialog.locator("video source")).toHaveAttribute("src", new RegExp(firstArtifactId ?? "missing"));
+  await expect(previewDialog.locator(`[data-media-preview-artifact="${firstArtifactId}"]`)).toHaveAttribute("data-media-preview-state", "error");
   await previewDialog.getByRole("button", { name: "关闭预览" }).click();
 
   const latestSceneRunId = state.mediaSceneRuns[0]?.id;
   expect(latestSceneRunId).toBeTruthy();
-  await page.getByRole("button", { name: "设为当前" }).click();
+  await page.getByRole("button", { name: "设为默认" }).click();
   await expect.poll(() => state.mediaScenes[0]?.selectedMediaSceneRunId).toBe(latestSceneRunId);
   const latestArtifactId = state.artifactsByMediaJob[state.mediaSceneRuns[0]?.mediaJobId ?? ""]?.[0]?.id;
   expect(latestArtifactId).toBeTruthy();
   await previewButton.click();
-  await expect(previewDialog.locator("video source")).toHaveAttribute("src", new RegExp(latestArtifactId ?? "missing"));
+  await expect(previewDialog.locator(`[data-media-preview-artifact="${latestArtifactId}"]`)).toHaveAttribute("data-media-preview-state", "error");
   await previewDialog.getByRole("button", { name: "关闭预览" }).click();
   await page.screenshot({ path: testInfo.outputPath("04-selected-result.png"), fullPage: true });
 
-  await page.getByRole("tab", { name: "生成任务" }).click();
-  await expect(page.locator(".media-jobs-embedded-toolbar")).toBeVisible();
-  await expect(page.locator(".media-job-row.succeeded")).toHaveCount(2);
-  await expect(page.locator(".media-job-row.succeeded").first()).toContainText(`${state.mediaProjects[0]?.name} · 开场产品展示`);
-  await expect(page.locator(".media-job-detail-panel")).toContainText("晨光从产品表面掠过");
-  await expect(page.locator(".media-job-detail-panel video")).toBeVisible();
+  await page.getByRole("radio", { name: "生成任务" }).click();
+  await expect(page.locator("[data-media-jobs-header]")).toBeVisible();
+  await expect(page.locator('[data-media-job-row][data-product-state="completed"]')).toHaveCount(2);
+  await expect(page.locator('[data-media-job-row][data-product-state="completed"]').first()).toContainText(state.mediaProjects[0]?.name ?? "");
+  await expect(page.locator('[data-media-job-row][data-product-state="completed"]').first()).toContainText("开场产品展示");
+  await expect(page.locator("[data-media-job-inspector]")).toContainText("晨光从产品表面掠过");
+  await expect(page.locator(`[data-media-job-inspector] [data-media-preview-artifact="${firstArtifactId}"][data-media-preview-mode="hero"]`)).toHaveAttribute("data-media-preview-state", "error");
   await page.screenshot({ path: testInfo.outputPath("05-generation-task-history.png"), fullPage: true });
 });
 
@@ -435,51 +435,48 @@ test("media production reviews only ready scenes before ordered generation", asy
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "媒体生产" }).click();
   await page.getByRole("button", { name: "新建项目" }).click();
-  await page.getByRole("button", { name: "添加第一个场景" }).click();
-  await page.getByRole("button", { name: "检查场景", exact: true }).click();
-  const review = page.getByRole("dialog", { name: "检查场景" });
-  await expect(review).toContainText("当前没有可生成场景");
-  await expect(review).toContainText("本次不提交 1 个场景");
-  await expect(review.getByRole("button", { name: "生成 0 个场景" })).toHaveCount(0);
-  const reviewLayout = await review.evaluate((dialog) => {
-    const title = dialog.querySelector<HTMLElement>(".create-dialog-title-block");
-    const section = dialog.querySelector<HTMLElement>(".project-run-review-section");
-    const closeAction = dialog.querySelector<HTMLElement>(".create-dialog-actions .secondary-button");
-    const dialogRect = dialog.getBoundingClientRect();
-    return {
-      titleLeft: title?.getBoundingClientRect().left ?? 0,
-      sectionLeft: section?.getBoundingClientRect().left ?? 0,
-      actionRightInset: dialogRect.right - (closeAction?.getBoundingClientRect().right ?? dialogRect.right),
-    };
-  });
-  expect(Math.abs(reviewLayout.titleLeft - reviewLayout.sectionLeft)).toBeLessThanOrEqual(2);
-  expect(reviewLayout.actionRightInset).toBeGreaterThanOrEqual(18);
-  await review.locator(".create-dialog-actions .secondary-button").click();
-  await page.getByLabel("画面提示").fill("一束晨光掠过产品表面。 ");
-  await page.getByLabel("画面提示").blur();
-  await page.locator(".scene-inspector .scene-execution-settings .select-control-native").nth(1).selectOption("provider_seedance");
-  await page.getByRole("button", { name: "复制场景" }).click();
-  await page.getByLabel("画面提示").fill("");
-  await page.getByLabel("画面提示").blur();
+  await page.getByRole("button", { name: "添加场景" }).click();
+  await page.getByRole("button", { name: "检查", exact: true }).click();
+  const review = page.locator('[role="dialog"][data-media-production-dialog="project-run-review"]');
+  await expect(review.locator('[data-project-run-ready-count="0"]')).toBeVisible();
+  await expect(review.locator('[data-project-run-skipped-count="1"]')).toBeVisible();
+  await expect(review.getByRole("button", { name: /^运行/ })).toHaveCount(0);
+  const [dialogBox, titleBox, sectionBox, closeActionBox] = await Promise.all([
+    review.boundingBox(),
+    review.getByRole("heading", { name: /检查/ }).boundingBox(),
+    review.locator("[data-project-run-ready-count]").boundingBox(),
+    review.getByRole("button", { name: "关闭" }).last().boundingBox(),
+  ]);
+  expect(Math.abs((titleBox?.x ?? 0) - (sectionBox?.x ?? 0))).toBeLessThanOrEqual(2);
+  expect((dialogBox?.x ?? 0) + (dialogBox?.width ?? 0) - ((closeActionBox?.x ?? 0) + (closeActionBox?.width ?? 0))).toBeGreaterThanOrEqual(18);
+  await review.getByRole("button", { name: "关闭" }).last().click();
+  await page.getByLabel("提示词").fill("一束晨光掠过产品表面。 ");
+  await page.getByLabel("提示词").blur();
+  await page.locator(".scene-inspector").getByLabel("默认视频模型").selectOption("provider_seedance");
+  await page.getByRole("button", { name: "重复" }).click();
+  await page.locator(".project-outline-scene-main").nth(1).click();
+  await page.getByLabel("提示词").fill("");
+  await page.getByLabel("提示词").blur();
+  await expect.poll(() => state.mediaScenes[1]?.prompt).toBe("");
   await expect(page.locator(".project-outline-scene")).toHaveCount(2);
 
-  await page.getByRole("button", { name: "生成 1 个场景", exact: true }).click();
-  const readyReview = page.getByRole("dialog", { name: "确认生成场景" });
-  await expect(readyReview).toContainText("本次将提交 1 个场景");
-  await expect(readyReview).toContainText("本次不提交 1 个场景");
+  await page.getByRole("button", { name: "运行 · 1 个场景", exact: true }).click();
+  const readyReview = page.locator('[role="dialog"][data-media-production-dialog="project-run-review"]');
+  await expect(readyReview.locator('[data-project-run-ready-count="1"]')).toBeVisible();
+  await expect(readyReview.locator('[data-project-run-skipped-count="1"]')).toBeVisible();
   await readyReview.getByRole("button", { name: "关闭" }).click();
   await expect(readyReview).toHaveCount(0);
   await expect.poll(() => state.mediaJobs).toHaveLength(0);
 
-  await page.getByRole("button", { name: "生成 1 个场景", exact: true }).click();
+  await page.getByRole("button", { name: "运行 · 1 个场景", exact: true }).click();
   const projectRunRequest = page.waitForRequest((request) => request.method() === "POST"
     && /\/media-projects\/[^/]+\/run$/.test(new URL(request.url()).pathname));
-  await page.getByRole("dialog", { name: "确认生成场景" }).getByRole("button", { name: "生成 1 个场景" }).click();
+  await page.locator('[role="dialog"][data-media-production-dialog="project-run-review"]').getByRole("button", { name: "运行 · 1 个场景" }).click();
   const request = await projectRunRequest;
   const submittedSceneIds = (JSON.parse(request.postData() ?? "{}") as { readonly sceneIds?: unknown }).sceneIds;
   expect(submittedSceneIds).toHaveLength(1);
   expect(submittedSceneIds).toEqual(expect.arrayContaining([expect.stringMatching(/^media_scene_/)]));
-  await expect(page.getByRole("dialog", { name: "确认生成场景" })).toHaveCount(0);
+  await expect(page.locator('[role="dialog"][data-media-production-dialog="project-run-review"]')).toHaveCount(0);
 });
 
 test("media production keeps the current video when regeneration fails and preview does not change selection", async ({ page }, testInfo) => {
@@ -556,19 +553,22 @@ test("media production keeps the current video when regeneration fails and previ
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "媒体生产" }).click();
   await expect(page.locator(".storyboard-scene-node.selected")).toContainText("保留旧结果");
-  await expect(page.locator(".storyboard-node-status").first()).toHaveText("已生成");
+  await expect(page.locator(".storyboard-node-status").first()).toContainText("生成结果");
   await expect(page.locator(".media-production-dock-panel.right")).not.toHaveClass(/is-open/);
   await page.locator(".storyboard-scene-node.selected").click();
-  await page.getByRole("button", { name: "结果", exact: true }).click();
-  await expect(page.locator(".scene-latest-run-issue")).toContainText("生成失败");
-  await expect(page.locator(".scene-latest-run-issue details p")).toBeHidden();
-  await page.getByText("技术信息", { exact: true }).click();
-  await expect(page.locator(".scene-latest-run-issue")).toContainText("视频服务暂时不可用");
-  await expect(page.getByRole("button", { name: "重新生成", exact: true })).toBeEnabled();
+  await page.getByRole("tab", { name: "生成结果", exact: true }).click();
+  const latestRunIssue = page.locator(".scene-latest-run-issue");
+  const technicalDetails = latestRunIssue.locator(".ling-ui-inspector-section");
+  const technicalDetailsBody = technicalDetails.locator(".ling-ui-inspector-section-body");
+  await expect(latestRunIssue).toBeVisible();
+  await expect(technicalDetailsBody).toBeHidden();
+  await technicalDetails.locator(".ling-ui-inspector-section-trigger").click();
+  await expect(technicalDetailsBody).toContainText("视频服务暂时不可用");
+  await expect(page.getByRole("button", { name: "重试", exact: true })).toBeEnabled();
 
-  await page.getByRole("button", { name: "预览当前视频：第二场景" }).click();
-  const previewDialog = page.getByRole("dialog", { name: "预览当前视频" });
-  await expect(previewDialog.locator("video source")).toHaveAttribute("src", /artifact_second/);
+  await page.getByRole("button", { name: "预览: 第二场景" }).click();
+  const previewDialog = page.locator('[role="dialog"][data-media-production-dialog="scene-result-preview"]');
+  await expect(previewDialog.locator('[data-media-preview-artifact="artifact_second"]')).toBeVisible();
   await expect(page.locator(".storyboard-scene-node.selected")).toContainText("保留旧结果");
   await page.screenshot({ path: testInfo.outputPath("scene-preview-light-1440x960.png"), fullPage: true });
   await previewDialog.getByRole("button", { name: "关闭预览" }).click();
@@ -581,8 +581,8 @@ test("media production keeps the current video when regeneration fails and previ
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "媒体生产" }).click();
-  await page.getByRole("button", { name: "预览当前视频：第二场景" }).click();
-  await expect(page.getByRole("dialog", { name: "预览当前视频" })).toBeVisible();
+  await page.getByRole("button", { name: "预览: 第二场景" }).click();
+  await expect(page.locator('[role="dialog"][data-media-production-dialog="scene-result-preview"]')).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("scene-preview-dark-1280x800.png"), fullPage: true });
   expect(consoleErrors).toEqual([]);
 });
@@ -613,8 +613,8 @@ test("media production imports a ComfyUI workflow and runs one scene without rep
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "媒体生产" }).click();
   await page.getByRole("button", { name: "新建项目" }).click();
-  await page.getByRole("button", { name: "添加第一个场景" }).click();
-  await page.getByRole("button", { name: "展开项目与分镜" }).click();
+  await page.getByRole("button", { name: "添加场景" }).click();
+  await page.locator(".media-production-project-trigger").click();
   await page.locator(".project-outline-workflow-entry").click();
   const workflowDialog = page.getByRole("dialog", { name: "生产流程库" });
   await expect(workflowDialog).toBeVisible();
@@ -624,23 +624,21 @@ test("media production imports a ComfyUI workflow and runs one scene without rep
   const emptyWorkflowDialogSize = await workflowDialog.evaluate((element) => ({ width: element.clientWidth, height: element.clientHeight }));
   expect(emptyWorkflowDialogSize.width).toBeLessThanOrEqual(720);
   expect(emptyWorkflowDialogSize.height).toBeLessThanOrEqual(460);
-  await workflowDialog.getByRole("button", { name: "连接" }).click();
+  await workflowDialog.getByRole("tab", { name: "连接" }).click();
   await expect(workflowDialog).toHaveClass(/connections-view/);
-  const trustCheckbox = workflowDialog.getByRole("checkbox", { name: /信任本机或局域网地址/ });
-  const connectionLayout = await workflowDialog.evaluate((dialog) => {
-    const checkbox = dialog.querySelector<HTMLInputElement>('.media-workflow-trust-row input[type="checkbox"]');
-    const actions = dialog.querySelector<HTMLElement>(".media-workflow-detail-actions");
-    const dialogBox = dialog.getBoundingClientRect();
-    const checkboxBox = checkbox?.getBoundingClientRect();
-    const actionsBox = actions?.getBoundingClientRect();
-    return {
-      dialogWidth: dialogBox.width,
-      dialogHeight: dialogBox.height,
-      checkboxWidth: checkboxBox?.width ?? 0,
-      checkboxHeight: checkboxBox?.height ?? 0,
-      footerGap: actionsBox ? dialogBox.bottom - actionsBox.bottom : 999,
-    };
-  });
+  const trustCheckbox = workflowDialog.getByRole("checkbox", { name: /信任本机或私有网络地址/ });
+  const [workflowBox, trustTargetBox, actionsBox] = await Promise.all([
+    workflowDialog.boundingBox(),
+    trustCheckbox.locator("xpath=following-sibling::*[1]").boundingBox(),
+    workflowDialog.locator(".media-workflow-detail-actions").boundingBox(),
+  ]);
+  const connectionLayout = {
+    dialogWidth: workflowBox?.width ?? 0,
+    dialogHeight: workflowBox?.height ?? 0,
+    checkboxWidth: trustTargetBox?.width ?? 0,
+    checkboxHeight: trustTargetBox?.height ?? 0,
+    footerGap: workflowBox && actionsBox ? workflowBox.y + workflowBox.height - actionsBox.y - actionsBox.height : 999,
+  };
   expect(connectionLayout.dialogWidth).toBeLessThanOrEqual(922);
   expect(connectionLayout.dialogHeight).toBeLessThanOrEqual(622);
   expect(connectionLayout.checkboxWidth).toBe(18);
@@ -651,9 +649,9 @@ test("media production imports a ComfyUI workflow and runs one scene without rep
   await workflowDialog.getByLabel("ComfyUI 地址").fill("http://127.0.0.1:8188");
   await workflowDialog.getByRole("button", { name: "保存连接" }).click();
   await workflowDialog.getByRole("button", { name: "检查连接" }).click();
-  await expect(workflowDialog).toContainText("连接可用");
+  await expect(workflowDialog).toContainText("连接已就绪");
 
-  await workflowDialog.getByRole("button", { name: "流程", exact: true }).click();
+  await workflowDialog.getByRole("tab", { name: "工作流", exact: true }).click();
   const fileChooserPromise = page.waitForEvent("filechooser");
   await workflowDialog.getByRole("button", { name: "导入流程" }).first().click();
   const fileChooser = await fileChooserPromise;
@@ -665,36 +663,41 @@ test("media production imports a ComfyUI workflow and runs one scene without rep
       "9": { class_type: "SaveVideo", inputs: { filename_prefix: "Ling" } },
     })),
   });
-  await expect(workflowDialog).toContainText("节点检查通过");
+  await expect(workflowDialog).toContainText("流程映射已就绪");
   await workflowDialog.getByLabel("流程名称").fill("产品分镜流程");
   await workflowDialog.getByRole("button", { name: "导入流程" }).last().click();
   await expect(workflowDialog).toContainText("产品分镜流程");
-  await workflowDialog.getByRole("button", { name: "试运行", exact: true }).click();
-  await expect(workflowDialog).toContainText("试运行中");
-  await expect(workflowDialog).toContainText("试运行成功，可以启用");
-  await workflowDialog.getByRole("button", { name: "启用此版本" }).click();
-  await expect(workflowDialog).toContainText("可用于场景");
+  await workflowDialog.getByRole("button", { name: "运行测试", exact: true }).click();
+  await expect(workflowDialog).toContainText(/测试已提交|测试中/);
+  await expect(workflowDialog).toContainText("测试通过");
+  await workflowDialog.getByRole("button", { name: "启用版本" }).click();
+  await expect(workflowDialog).toContainText("当前版本");
   await workflowDialog.getByRole("button", { name: "关闭生产流程" }).click();
 
   await page.locator(".storyboard-scene-node.selected").click();
   const inspector = page.locator(".scene-inspector");
-  await inspector.getByLabel("生产方式").selectOption("workflow");
-  const workflowSelect = inspector.locator(".scene-execution-settings .select-control-native").nth(1);
+  await inspector.getByLabel("默认生产方式").selectOption("workflow");
+  const workflowSelect = inspector.getByLabel("默认生产流程");
   await expect(workflowSelect).toBeEnabled();
   await workflowSelect.selectOption({ label: "产品分镜流程" });
-  await inspector.getByLabel("画面提示").fill("镜头缓慢推进，产品在柔和灯光下旋转。");
-  await inspector.getByLabel("画面提示").blur();
-  await expect(inspector.getByLabel("视频模型")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "生成此场景" })).toBeEnabled();
-  await page.getByRole("button", { name: "生成此场景" }).click();
+  const selectedWorkflowId = await workflowSelect.inputValue();
+  expect(selectedWorkflowId).not.toBe("");
+  await inspector.getByLabel("提示词").fill("镜头缓慢推进，产品在柔和灯光下旋转。");
+  await inspector.getByLabel("提示词").blur();
+  await expect.poll(() => state.mediaScenes[0]?.executionMode).toBe("workflow");
+  await expect.poll(() => state.mediaScenes[0]?.workflowDefinitionId).toBe(selectedWorkflowId);
+  await expect.poll(() => state.mediaScenes[0]?.prompt).toBe("镜头缓慢推进，产品在柔和灯光下旋转。");
+  await expect(inspector.getByLabel("默认视频模型")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "运行", exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "运行", exact: true }).click();
   await expect.poll(() => state.mediaJobs[0]?.status).toBe("succeeded");
 
   await expect.poll(() => state.mediaScenes[0]?.executionMode).toBe("workflow");
   await expect.poll(() => state.mediaJobs.some((job) => Boolean(job.workflowVersionId))).toBe(true);
   await expect.poll(() => state.mediaScenes[0]?.selectedMediaSceneRunId).toBeTruthy();
-  await page.getByRole("button", { name: /^历史/ }).click();
-  await expect(page.getByRole("button", { name: "当前结果", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "重新生成", exact: true })).toBeEnabled();
+  await page.getByRole("tab", { name: /^历史/ }).click();
+  await expect(page.locator(".scene-run-row.selected")).toContainText("当前");
+  await expect(page.getByRole("button", { name: "运行", exact: true })).toBeEnabled();
   expect(state.providers.some((provider) => typeof provider === "object" && provider !== null && "id" in provider && provider.id === "provider_seedance")).toBe(true);
 });
 

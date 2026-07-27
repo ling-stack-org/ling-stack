@@ -14,6 +14,7 @@ import { DESKTOP_IPC_CHANNELS } from "../shared/ipc-channels.js";
 import type { ComputerUsePreviewCoordinator } from "./computer-use/coordinator.js";
 import type { DesktopDaemonLifecycle } from "./daemon-lifecycle.js";
 import { DesktopNavigationIntentStore } from "./navigation-intent.js";
+import { DesktopRendererThemeStore } from "./renderer-theme-store.js";
 import { sendToLiveDesktopWindow } from "./safe-window-send.js";
 
 const MAX_HOST_OBSTACLES = 128;
@@ -27,11 +28,13 @@ export function registerDesktopIpc(input: {
   readonly computerUse: ComputerUsePreviewCoordinator;
   readonly getMainWindow: () => BrowserWindow | undefined;
   readonly navigationIntents?: DesktopNavigationIntentStore;
+  readonly themeStore?: DesktopRendererThemeStore;
   readonly fixedComputerUseConversationId?: string;
   readonly ipcMainImpl?: Pick<IpcMain, "handle" | "on" | "removeHandler" | "removeAllListeners">;
 }): () => void {
   const desktopIpcMain = input.ipcMainImpl ?? resolveIpcMain();
   const navigationIntents = input.navigationIntents ?? new DesktopNavigationIntentStore();
+  const themeStore = input.themeStore ?? new DesktopRendererThemeStore();
   let pendingRendererSelectionObserved = false;
   let pendingRendererSelection: string | undefined;
   let pendingRendererSelectionApplied = false;
@@ -69,6 +72,18 @@ export function registerDesktopIpc(input: {
       pendingRendererSelectionAppliedValue = undefined;
     }
     return result;
+  });
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.desktopThemeSnapshotGet, async (event) => {
+    if (!isPreviewSender(event)) {
+      return undefined;
+    }
+    themeStore.trackRenderer(event.sender);
+    return themeStore.getSnapshot();
+  });
+  desktopIpcMain.on(DESKTOP_IPC_CHANNELS.desktopThemeReport, (event, value: unknown) => {
+    if (isMainWindowSender(event)) {
+      themeStore.report(value);
+    }
   });
   desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.computerUseSummaryGet, async (event) =>
     isMainWindowSender(event) ? input.computerUse.getSummary() : undefined);
@@ -157,8 +172,7 @@ export function registerDesktopIpc(input: {
     if (!isMainWindowSender(event) && !isPreviewSender(event)) {
       return { accepted: false, reason: "unauthorized_sender" };
     }
-    await input.computerUse.openOwnerConversation();
-    return { accepted: true };
+    return input.computerUse.openOwnerConversation();
   });
   desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.computerUseOpenPermissionSettings, async (event) => {
     if (!isMainWindowSender(event) && !isPreviewSender(event)) {
@@ -280,6 +294,7 @@ export function registerDesktopIpc(input: {
   return () => {
     unsubscribeStatus();
     unsubscribeNavigationIntents();
+    themeStore.dispose();
     for (const channel of Object.values(DESKTOP_IPC_CHANNELS)) {
       desktopIpcMain.removeHandler(channel);
       desktopIpcMain.removeAllListeners(channel);

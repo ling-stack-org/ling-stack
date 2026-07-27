@@ -1,0 +1,52 @@
+{
+  "status": "captured",
+  "stableId": "web-release-runs",
+  "label": "Runs history and detail",
+  "functionIds": [
+    "RUN-HISTORY-001"
+  ],
+  "fixture": "runs-threads-release",
+  "trigger": {
+    "summary": "Open full Run Diagnostics",
+    "steps": [
+      "Open Startup and diagnostics",
+      "Open Run Diagnostics",
+      "Open full diagnostics in app",
+      "Focus a history row"
+    ]
+  },
+  "url": "http://127.0.0.1:4260/",
+  "viewport": {
+    "width": 1440,
+    "height": 960
+  },
+  "theme": "ling-light",
+  "locale": "en-US",
+  "keyboard": {
+    "exercised": true,
+    "checks": [
+      "Run history row accepts keyboard focus"
+    ]
+  },
+  "reducedMotion": "no-preference",
+  "consoleErrors": [],
+  "pageErrors": [],
+  "overflow": [],
+  "png": {
+    "file": "web-release-runs.png",
+    "width": 1440,
+    "height": 960,
+    "sha256": "a5e434824e3a863b614626332b6ecbe0305cbeaabec5a4c0f7dd31a2156f3803"
+  },
+  "sidecarFile": "web-release-runs.json",
+  "servedArtifact": "Vite source via Playwright webServer",
+  "captureCommand": "LING_CAPTURE_UI2_EVIDENCE=1 LING_PLAYWRIGHT_PORT=4260 corepack pnpm --filter @ling-stack/web exec playwright test e2e/ui2-web-release-gate.spec.ts --workers=1",
+  "source": {
+    "commit": "0a0b80502715d0333342422e6dc8cedd2cd77b14",
+    "branch": "codex/ui2-desktop-coverage-foundation",
+    "dirty": true,
+    "worktreeStatusSha256": "ea578861633515fe8705adeff34c7f1585811bec85681965b69f7f2386d2ba8b",
+    "identifier": "0a0b80502715+worktree-ea5788616335"
+  },
+  "capturedAt": "2026-07-23T04:08:10.819Z"
+}

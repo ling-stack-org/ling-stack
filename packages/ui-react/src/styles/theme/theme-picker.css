@@ -1,0 +1,343 @@
+.ling-ui-theme-picker {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ling-space-5);
+}
+
+.ling-ui-theme-option-frame {
+  position: relative;
+  display: block;
+  min-width: 0;
+}
+
+.ling-ui-theme-option {
+  appearance: none;
+  box-sizing: border-box;
+  display: grid;
+  min-width: 0;
+  min-height: 104px;
+  grid-template-rows: 44px auto;
+  gap: var(--ling-space-4);
+  padding: var(--ling-space-5);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-lg);
+  outline: none;
+  color: var(--ling-text-default);
+  background: var(--ling-bg-panel);
+  box-shadow: none;
+  font: inherit;
+  letter-spacing: 0;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color var(--ling-motion-fast) var(--ling-ease-standard),
+    border-color var(--ling-motion-fast) var(--ling-ease-standard),
+    box-shadow var(--ling-motion-fast) var(--ling-ease-standard),
+    opacity var(--ling-motion-fast) var(--ling-ease-standard);
+}
+
+.ling-ui-theme-option-frame > .ling-ui-theme-option {
+  width: 100%;
+  height: 100%;
+}
+
+.ling-ui-theme-option-actions {
+  position: absolute;
+  top: var(--ling-space-3);
+  right: var(--ling-space-3);
+  z-index: 1;
+  display: inline-flex;
+  opacity: 0.62;
+  transition: opacity var(--ling-motion-fast) var(--ling-ease-standard);
+}
+
+.ling-ui-theme-option-frame:hover .ling-ui-theme-option-actions,
+.ling-ui-theme-option-frame:focus-within .ling-ui-theme-option-actions {
+  opacity: 1;
+}
+
+.ling-ui-theme-option-frame[data-has-actions="true"] .ling-ui-theme-option-swatch {
+  padding-right: 34px;
+}
+
+.ling-ui-theme-option:hover:not(:disabled) {
+  border-color: var(--ling-border-strong);
+  background: var(--ling-bg-subtle);
+}
+
+.ling-ui-theme-option:focus-visible {
+  border-color: var(--ling-border-focus);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ling-border-focus) 22%, transparent);
+}
+
+.ling-ui-theme-option[data-active="true"] {
+  border-color: var(--ling-border-strong);
+}
+
+.ling-ui-theme-option[data-state="on"] {
+  border-color: var(--ling-action-accent);
+  background: var(--ling-bg-pressed);
+}
+
+.ling-ui-theme-option[data-applying="true"] {
+  cursor: progress;
+}
+
+.ling-ui-theme-option:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
+.ling-ui-theme-option-swatch {
+  box-sizing: border-box;
+  display: grid;
+  min-width: 0;
+  height: 44px;
+  grid-template-columns: minmax(0, 1.8fr) minmax(32px, 0.7fr);
+  overflow: hidden;
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  background: var(--ling-theme-option-app);
+}
+
+.ling-ui-theme-option-swatch-app,
+.ling-ui-theme-option-swatch-panel {
+  position: relative;
+  display: block;
+  min-width: 0;
+}
+
+.ling-ui-theme-option-swatch-app {
+  background: var(--ling-theme-option-app);
+}
+
+.ling-ui-theme-option-swatch-panel {
+  display: grid;
+  grid-template-columns: repeat(2, 6px);
+  align-content: end;
+  justify-content: end;
+  gap: 3px;
+  padding: 7px;
+  background: var(--ling-theme-option-panel);
+}
+
+.ling-ui-theme-option-swatch-text,
+.ling-ui-theme-option-swatch-accent {
+  position: absolute;
+  left: 8px;
+  display: block;
+  border-radius: var(--ling-radius-pill);
+}
+
+.ling-ui-theme-option-swatch-text {
+  top: 10px;
+  width: 42%;
+  height: 4px;
+  background: var(--ling-theme-option-text);
+}
+
+.ling-ui-theme-option-swatch-accent {
+  bottom: 9px;
+  width: 25%;
+  height: 7px;
+  background: var(--ling-theme-option-accent);
+}
+
+.ling-ui-theme-option-swatch-status {
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.ling-ui-theme-option-swatch-status[data-tone="success"] { background: var(--ling-theme-option-success); }
+.ling-ui-theme-option-swatch-status[data-tone="warning"] { background: var(--ling-theme-option-warning); }
+.ling-ui-theme-option-swatch-status[data-tone="danger"] { background: var(--ling-theme-option-danger); }
+.ling-ui-theme-option-swatch-status[data-tone="info"] { background: var(--ling-theme-option-info); }
+
+.ling-ui-theme-option-body {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: var(--ling-space-4);
+}
+
+.ling-ui-theme-option-copy {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
+.ling-ui-theme-option-copy > strong {
+  overflow: hidden;
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+  font-weight: 650;
+  line-height: var(--ling-line-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ling-ui-theme-option-copy > span {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--ling-space-3);
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  font-style: normal;
+  line-height: var(--ling-line-xs);
+}
+
+.ling-ui-theme-option-copy em {
+  overflow: hidden;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ling-ui-theme-option-state {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  color: var(--ling-text-strong);
+}
+
+.ling-ui-theme-option-state > svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 2;
+}
+
+.ling-ui-theme-option-active-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ling-action-accent);
+}
+
+.ling-ui-theme-option-reason {
+  min-width: 0;
+  color: var(--ling-status-warning);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+  overflow-wrap: anywhere;
+}
+
+.ling-ui-theme-preview-fixture {
+  position: relative;
+  box-sizing: border-box;
+  min-height: 320px;
+  overflow: hidden;
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-lg);
+  color: var(--ling-text-default);
+  background: var(--ling-bg-app);
+}
+
+.ling-ui-theme-preview-artwork {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.2;
+  pointer-events: none;
+}
+
+.ling-ui-theme-preview-surface {
+  position: relative;
+  display: grid;
+  width: min(100% - 32px, 520px);
+  margin: 32px auto;
+  gap: var(--ling-space-5);
+  padding: var(--ling-space-7);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-lg);
+  background: var(--ling-bg-panel);
+  box-shadow: var(--ling-shadow-medium);
+}
+
+.ling-ui-theme-preview-header {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--ling-space-5);
+}
+
+.ling-ui-theme-preview-header > span {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
+.ling-ui-theme-preview-header small,
+.ling-ui-theme-preview-surface > p {
+  margin: 0;
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+.ling-ui-theme-preview-header strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-md);
+  line-height: var(--ling-line-md);
+}
+
+.ling-ui-theme-preview-surface > .ling-ui-button {
+  justify-self: start;
+}
+
+.ling-ui-theme-preview-surface .ling-ui-data-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--ling-space-2) var(--ling-space-5);
+  padding-inline: 0;
+}
+
+.ling-ui-theme-preview-surface .ling-ui-data-row-identity {
+  grid-row: 1;
+  grid-column: 1;
+}
+
+.ling-ui-theme-preview-surface .ling-ui-data-row-status {
+  grid-row: 1;
+  grid-column: 2;
+}
+
+.ling-ui-theme-preview-surface .ling-ui-data-row-summary {
+  grid-row: 2;
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 720px) {
+  .ling-ui-theme-picker {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ling-ui-theme-option,
+  .ling-ui-theme-option-actions {
+    transition-duration: var(--ling-motion-instant);
+  }
+}
+
+@media (forced-colors: active) {
+  .ling-ui-theme-option {
+    border-color: ButtonText;
+    background: ButtonFace;
+    color: ButtonText;
+    forced-color-adjust: none;
+  }
+
+  .ling-ui-theme-option[data-state="on"] {
+    border-color: Highlight;
+    outline: 2px solid Highlight;
+  }
+}

@@ -1,0 +1,434 @@
+.workspace.workspace-councils-surface {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  height: calc(100vh - 52px);
+  min-height: 0;
+  overflow: hidden;
+  padding: 20px;
+  background: var(--app-bg);
+}
+
+.council-workspace-page {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 14px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.council-workspace-page.settings-return-mode {
+  grid-template-rows: minmax(0, 1fr);
+  height: 100%;
+}
+
+.council-workspace-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.council-workspace-summary span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface-panel-strong);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.council-workspace-summary.compact {
+  gap: 5px;
+}
+
+.council-workspace-summary.compact span {
+  min-height: 21px;
+  padding-inline: 7px;
+}
+
+.council-workspace-grid {
+  display: grid;
+  grid-template-columns: 286px minmax(0, 1fr);
+  gap: 14px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.council-workspace-list,
+.council-workspace-detail {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-panel);
+  overflow: hidden;
+}
+
+.council-workspace-detail {
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+}
+
+.council-workspace-empty-selection {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.council-list-health-panel {
+  display: flex;
+  flex-direction: column;
+  align-content: initial;
+}
+
+.council-panel-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.council-panel-title strong {
+  color: var(--text-strong);
+  font-size: 14px;
+  font-weight: 720;
+  line-height: 20px;
+}
+
+.council-panel-title small,
+.council-list-health-title-actions {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.council-panel-title-actions,
+.council-list-health-title-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
+.council-panel-title-actions .compact-icon-button {
+  width: 26px;
+  height: 26px;
+}
+
+.council-panel-title-actions .compact-button {
+  min-height: 28px;
+  padding-inline: 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.council-list-health-toolbar {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.council-list-health-search,
+.council-list-health-filter {
+  width: 100%;
+}
+
+.council-list-health-toolbar-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  min-width: 0;
+}
+
+.council-list-health-feedback-body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.council-list-health-feedback-body > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.council-list-health-feedback-action {
+  flex: 0 0 auto;
+}
+
+.council-list-health-scroll {
+  display: grid;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.council-list-health-empty {
+  grid-template-columns: minmax(0, 1fr);
+  align-content: center;
+}
+
+.council-list-health-empty-actions {
+  justify-self: start;
+}
+
+.council-list-health-rows,
+.council-member-list,
+.council-channel-list {
+  display: grid;
+  align-content: start;
+  gap: 0;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.council-list-health-row {
+  position: relative;
+  grid-template-columns: minmax(0, 1fr) minmax(74px, 112px);
+  gap: 8px;
+}
+
+.council-list-health-row[data-selected="true"]::before {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 0;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--text-strong);
+  content: "";
+}
+
+.council-list-health-identity {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.council-list-health-identity strong,
+.council-list-health-identity small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.council-list-health-identity strong {
+  color: var(--text-strong);
+  font-size: 13px;
+  font-weight: 720;
+  line-height: 18px;
+}
+
+.council-list-health-identity small {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.council-list-health-skeleton {
+  display: grid;
+  align-content: start;
+}
+
+.council-list-health-skeleton-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.council-list-health-skeleton-row > span:first-child {
+  display: grid;
+  gap: 6px;
+}
+
+.council-detail-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "copy status"
+    "chips chips";
+  gap: 7px 12px;
+  min-width: 0;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.council-detail-head > div:first-child {
+  grid-area: copy;
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.council-detail-head strong {
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: 16px;
+  font-weight: 740;
+  line-height: 22px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.council-detail-status {
+  grid-area: status;
+  align-self: start;
+}
+
+.council-chip-row {
+  grid-area: chips;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+}
+
+.council-chip-row span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-soft);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.council-list-health-summary {
+  display: grid;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-panel-strong);
+}
+
+.council-list-health-summary[data-health-state="partial"],
+.council-list-health-summary[data-health-state="attention"] {
+  border-color: var(--warning-border);
+}
+
+.council-list-health-summary-primary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.council-list-health-summary-primary > span,
+.council-list-health-summary-primary > time {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.council-list-health-summary-primary > time {
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.council-list-health-findings {
+  margin-top: 4px;
+}
+
+.council-list-health-findings ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-inline-start: 18px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+@media (max-width: 1320px) {
+  .council-workspace-grid {
+    grid-template-columns: 300px minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .council-list-health-row {
+    grid-template-columns: minmax(0, 1fr) minmax(70px, 104px);
+  }
+
+  .council-list-health-summary-primary {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .council-list-health-summary-primary > time {
+    grid-column: 2;
+  }
+}
+
+@media (max-width: 1120px) {
+  .council-workspace-empty-selection {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+  }
+}
+
+.council-detail-tabs-root {
+  display: contents;
+}
+
+.council-detail-tabs-list {
+  justify-self: start;
+}
+
+.council-detail-body,
+.council-detail-grid {
+  display: grid;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.council-detail-section {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-panel);
+  overflow: hidden;
+}
+
+.council-detail-section > .council-panel-title {
+  padding: 11px 11px 0;
+}
+
+.council-detail-section > .client-empty-state {
+  margin: 11px;
+}

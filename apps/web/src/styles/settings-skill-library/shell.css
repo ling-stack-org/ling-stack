@@ -1,0 +1,145 @@
+.settings-skill-library {
+  --skill-library-content-max-height: min(80vh, calc(100vh - 140px));
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-5);
+}
+
+@supports (height: 100dvh) {
+  .settings-skill-library {
+    --skill-library-content-max-height: min(80dvh, calc(100dvh - 140px));
+  }
+}
+
+.settings-skill-evolution-section,
+.settings-skill-evolution-content,
+.settings-skill-registry-loading {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-5);
+}
+
+.settings-skill-registry-loading {
+  align-content: start;
+}
+
+.settings-skill-library-toolbar {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(240px, 420px) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--ling-space-5);
+}
+
+.settings-skill-library-toolbar--user,
+.settings-skill-library-toolbar--evolved {
+  grid-template-columns: minmax(240px, 420px) max-content;
+  justify-content: start;
+}
+
+.settings-skill-library-toolbar--evolved.has-view-select {
+  grid-template-columns: minmax(240px, 420px) 132px max-content;
+}
+
+.settings-skill-library-toolbar--evolution-queue {
+  grid-template-columns: minmax(240px, 420px) 132px 126px;
+  justify-content: start;
+}
+
+.settings-skill-search {
+  width: 100%;
+}
+
+.settings-skill-search > .ling-ui-input-native {
+  height: 100%;
+  min-height: 0;
+  padding-block: 0;
+  box-shadow: none;
+}
+
+.settings-skill-evolution-view-select {
+  width: 132px;
+}
+
+.settings-skill-evolution-sort-select,
+.settings-skill-sort {
+  width: 126px;
+}
+
+.settings-skill-builtin-filter {
+  width: 112px;
+}
+
+.settings-skill-library-toolbar-actions {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--ling-space-3);
+  white-space: nowrap;
+}
+
+.settings-skill-library-toolbar-actions > * {
+  flex: 0 0 auto;
+}
+
+.settings-skill-ownership-meta {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--ling-space-4) var(--ling-space-7);
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+.settings-skill-ownership-meta span {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--ling-space-3);
+}
+
+.settings-skill-ownership-meta strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-md);
+}
+
+.settings-skill-ownership-empty {
+  min-height: 148px;
+  align-content: center;
+}
+
+@media (max-width: 1080px) {
+  .settings-skill-library-toolbar--user,
+  .settings-skill-library-toolbar--evolved,
+  .settings-skill-library-toolbar--evolved.has-view-select,
+  .settings-skill-library-toolbar--evolution-queue {
+    grid-template-columns: minmax(220px, 1fr) max-content;
+  }
+
+  .settings-skill-library-toolbar--evolution-queue .settings-skill-evolution-sort-select,
+  .settings-skill-library-toolbar--evolved.has-view-select .settings-skill-library-toolbar-actions {
+    grid-column: 2;
+  }
+}
+
+@media (max-width: 760px) {
+  .settings-skill-library-toolbar,
+  .settings-skill-library-toolbar--user,
+  .settings-skill-library-toolbar--evolved,
+  .settings-skill-library-toolbar--evolved.has-view-select,
+  .settings-skill-library-toolbar--evolution-queue {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-skill-library-toolbar-actions {
+    flex-wrap: wrap;
+    white-space: normal;
+  }
+
+  .settings-skill-library-toolbar--evolution-queue .settings-skill-evolution-sort-select,
+  .settings-skill-library-toolbar--evolved.has-view-select .settings-skill-library-toolbar-actions {
+    grid-column: auto;
+  }
+}

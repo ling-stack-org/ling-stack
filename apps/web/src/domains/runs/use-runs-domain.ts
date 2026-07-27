@@ -52,7 +52,6 @@ export function useRunsDomain(input: {
   readonly cwd: string;
   readonly confirmFullAccessRunIfNeeded: (requestBody: unknown) => Promise<unknown | undefined>;
   readonly setSelectedWorkUnitDetail: (detail: WorkUnitDetailResponse | undefined) => void;
-  readonly setErrorMessage: (message: string) => void;
   readonly refreshApprovals: (cwd: string, runId?: string) => Promise<void>;
   readonly refreshRuntimeState: (cwd: string, run?: RunSession) => Promise<void>;
   readonly refreshHealth: () => Promise<void>;
@@ -84,13 +83,12 @@ export function useRunsDomain(input: {
   async function loadRun(runId = lookupRunId, cwd = input.cwd): Promise<void> {
     const trimmedRunId = runId.trim();
     if (!trimmedRunId) {
-      input.setErrorMessage("请输入 runId");
+      setError({ scope: "load", message: "请输入 runId" });
       return;
     }
 
     const requestToken = runLoadGuard.next(trimmedRunId);
     try {
-      input.setErrorMessage("");
       setError(undefined);
       const [runResult, eventResult, artifactResult] = await Promise.all([
         getRun(trimmedRunId, cwd),
@@ -118,7 +116,6 @@ export function useRunsDomain(input: {
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
       setError({ scope: "load", message });
-      input.setErrorMessage(message);
       throw caught;
     }
   }
@@ -131,7 +128,6 @@ export function useRunsDomain(input: {
 
     setRunsLoading(true);
     try {
-      input.setErrorMessage("");
       setError(undefined);
       const response = await listRuns(cwd);
       setRuns(response.runs);
@@ -139,7 +135,6 @@ export function useRunsDomain(input: {
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
       setError({ scope: "load", message });
-      input.setErrorMessage(message);
     } finally {
       setRunsLoading(false);
     }
@@ -166,7 +161,6 @@ export function useRunsDomain(input: {
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
-    input.setErrorMessage("");
     setError(undefined);
     setEvents([]);
     setArtifacts([]);
@@ -206,7 +200,6 @@ export function useRunsDomain(input: {
       if ((caught as Error).name !== "AbortError") {
         const message = caught instanceof Error ? caught.message : String(caught);
         setError({ scope: "stream", message });
-        input.setErrorMessage(message);
       }
     } finally {
       setIsRunning(false);
@@ -223,7 +216,8 @@ export function useRunsDomain(input: {
     setRun,
     setEvents,
     setIsRunning,
-    setErrorMessage: input.setErrorMessage,
+    clearError: () => setError(undefined),
+    reportError: (message) => setError({ scope: "mutation", message }),
     refreshRuns: refreshRunList,
     refreshApprovals: input.refreshApprovals,
     refreshRuntimeState: input.refreshRuntimeState,

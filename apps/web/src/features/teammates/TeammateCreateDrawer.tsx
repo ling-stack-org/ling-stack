@@ -1,30 +1,22 @@
-import { useEffect, useMemo, useState } from "react";
-import {
-  ArrowLeft,
-  Brain,
-  Check,
-  CheckCircle2,
-  CircleAlert,
-  Code2,
-  FileText,
-  Loader2,
-  Palette,
-  PlugZap,
-  Plus,
-  Rocket,
-  Settings,
-  ShieldCheck,
-  Sparkles,
-  Upload,
-  Workflow,
-  X,
-} from "lucide-react";
 import type { AiTeammateTemplate } from "@ling-stack/core/skill-types";
+import { ArrowLeft, Check, Plus, Settings } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../../i18n.js";
-import { canUseConversationProvider, providerModelRouteLabel, providerPreflightReady } from "../../lib/providers.js";
-import { AvatarInitial, CreateDialogShell, DialogSection, type AvatarTone } from "../../shared/components/index.js";
+import { canUseConversationProvider, providerPreflightReady } from "../../lib/providers.js";
+import type { AvatarTone } from "../../shared/components/index.js";
+import {
+  Button,
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  InlineFeedback,
+} from "../../shared/ui/index.js";
 import type { Channel, ProviderPreset } from "../../types.js";
-import { roleLabel } from "./helpers.js";
+import { TeammateCreateProgress, teammateCreateSetupStepIds, type TeammateCreateStepViewState } from "./TeammateCreateProgress.js";
+import { TeammateCreateRoleStep } from "./TeammateCreateRoleStep.js";
+import { TeammateCustomSetupStep } from "./TeammateCustomSetupStep.js";
 import { selectDefaultTeammateProvider, selectDefaultTeammateTemplate } from "./teammate-create-defaults.js";
 import type {
   LocalTeammateCreateInput,
@@ -32,18 +24,7 @@ import type {
   TeammateCreateProgressEvent,
   TeammateCreateResult,
   TeammateCreateSetupStep,
-  TeammateCreateStepState,
 } from "./types.js";
-
-import { SelectControl } from "../../shared/components/SelectControl.js";
-
-interface StepViewState {
-  readonly state: TeammateCreateStepState;
-  readonly message: string;
-}
-
-const setupStepIds: readonly TeammateCreateSetupStep[] = ["workspace", "model", "record", "avatar", "channels", "memory", "refresh"];
-const avatarTones: readonly AvatarTone[] = ["violet", "blue", "teal", "orange", "rose", "gray"];
 
 export function TeammateCreateDrawer({
   open,
@@ -76,6 +57,7 @@ export function TeammateCreateDrawer({
     () => providers.filter((provider) => canUseConversationProvider(provider) && providerPreflightReady(provider)),
     [providers],
   );
+  const [dialogOpen, setDialogOpen] = useState(open);
   const [mode, setMode] = useState<TeammateCreateMode>("role_select");
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [draftName, setDraftName] = useState("");
@@ -85,23 +67,29 @@ export function TeammateCreateDrawer({
   const [avatarTone, setAvatarTone] = useState<AvatarTone>("violet");
   const [avatarFile, setAvatarFile] = useState<File | undefined>();
   const [avatarPreviewUrl, setAvatarPreviewUrl] = useState("");
-  const [setupSteps, setSetupSteps] = useState<Record<TeammateCreateSetupStep, StepViewState>>(createInitialStepState);
+  const [setupSteps, setSetupSteps] = useState<Record<TeammateCreateSetupStep, TeammateCreateStepViewState>>(createInitialStepState);
   const [setupResult, setSetupResult] = useState<TeammateCreateResult | undefined>();
   const [setupInput, setSetupInput] = useState<LocalTeammateCreateInput | undefined>();
+  const closeCommittedRef = useRef(false);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
+
   const selectedTemplate = selectedTemplateId ? templates.find((template) => template.id === selectedTemplateId) : undefined;
   const selectedProvider = providerOptions.find((provider) => provider.id === selectedProviderId);
   const previewName = draftName.trim() || (selectedTemplate ? t(selectedTemplate.name) : t("Custom teammate"));
   const previewDescription = draftDescription.trim() || (selectedTemplate ? t(selectedTemplate.summary) : t("Describe this teammate with a short working brief."));
   const selectedProviderReady = Boolean(selectedProvider && providerPreflightReady(selectedProvider));
-  const canCreateTeammate = Boolean(previewName.trim()) && Boolean(selectedProvider) && selectedProviderReady;
+  const canCreateTeammate = Boolean(previewName.trim()) && selectedProviderReady;
   const visibleCreateTemplates = templates.slice(0, 5);
   const setupBusy = mode === "setup_progress" && (!setupResult || Object.values(setupSteps).some((step) => step.state === "running"));
 
   useEffect(() => {
-    if (!open) {
-      return;
-    }
+    if (!open) return;
     const template = templates.find((item) => item.id === initialTemplateId) ?? selectDefaultTeammateTemplate(templates);
+    returnFocusRef.current = typeof document !== "undefined" && document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    closeCommittedRef.current = false;
+    setDialogOpen(true);
     setMode("role_select");
     setSelectedTemplateId(template?.id ?? "");
     setDraftName(template ? t(template.name) : t("Custom teammate"));
@@ -126,15 +114,11 @@ export function TeammateCreateDrawer({
   }, [avatarFile]);
 
   useEffect(() => {
-    if (!open || !selectedProviderId || providerOptions.some((provider) => provider.id === selectedProviderId)) {
-      return;
-    }
+    if (!open || !selectedProviderId || providerOptions.some((provider) => provider.id === selectedProviderId)) return;
     setSelectedProviderId(selectDefaultTeammateProvider(providerOptions, defaultProviderId)?.id ?? providerOptions[0]?.id ?? "");
   }, [defaultProviderId, open, providerOptions, selectedProviderId]);
 
-  if (!open) {
-    return null;
-  }
+  if (!open) return null;
 
   function selectTemplate(template: AiTeammateTemplate): void {
     setSelectedTemplateId(template.id);
@@ -154,10 +138,12 @@ export function TeammateCreateDrawer({
     setSetupResult(undefined);
   }
 
+  function requestClose(): void {
+    if (!setupBusy) setDialogOpen(false);
+  }
+
   function openProvidersAndClose(): void {
-    if (setupBusy) {
-      return;
-    }
+    if (setupBusy) return;
     onClose();
     onOpenProviders();
   }
@@ -176,9 +162,7 @@ export function TeammateCreateDrawer({
   }
 
   async function createTeammateDraft(): Promise<void> {
-    if (!canCreateTeammate || setupBusy) {
-      return;
-    }
+    if (!canCreateTeammate || setupBusy) return;
     const createInput = buildCreateInput();
     setSetupInput(createInput);
     setSetupSteps(createInitialStepState());
@@ -188,9 +172,7 @@ export function TeammateCreateDrawer({
     setSetupResult(result);
     if (result.ok) {
       onClose();
-      if (result.teammateId) {
-        onOpenCreated?.(result.teammateId);
-      }
+      if (result.teammateId) onOpenCreated?.(result.teammateId);
     }
   }
 
@@ -205,9 +187,7 @@ export function TeammateCreateDrawer({
   }
 
   function retrySetup(): void {
-    if (!setupInput || setupBusy) {
-      return;
-    }
+    if (!setupInput || setupBusy) return;
     setDraftName(setupInput.displayName);
     setDraftDescription(setupInput.description);
     setSelectedProviderId(setupInput.providerPresetId ?? "");
@@ -221,371 +201,166 @@ export function TeammateCreateDrawer({
   }
 
   function finishSetup(): void {
-    const createdTeammateId = setupResult?.ok ? setupResult.teammateId : undefined;
+    const createdTeammateId = setupResult?.ok || setupResult?.partial ? setupResult.teammateId : undefined;
     onClose();
-    if (createdTeammateId) {
-      onOpenCreated?.(createdTeammateId);
-    }
+    if (createdTeammateId) onOpenCreated?.(createdTeammateId);
   }
-
-  const footer = renderFooter();
 
   return (
-    <CreateDialogShell
-      ariaLabel={t("Create AI teammate")}
-      title={mode === "custom_setup" ? t("Custom AI teammate") : mode === "setup_progress" ? t("Creating AI teammate") : t("New AI teammate")}
-      description={mode === "setup_progress" ? t("Ling is checking the model and preparing this teammate.") : mode === "custom_setup" ? t("Choose the identity and ready model this teammate will use.") : t("Recommended role and model are prefilled. Review them, then create.")}
-      closeLabel={t("Cancel")}
-      onClose={setupBusy ? () => undefined : onClose}
-      className={`channel-create-dialog teammate-create-dialog ${mode === "custom_setup" ? "custom-mode" : ""} ${mode === "setup_progress" ? "progress-mode" : ""}`}
-      overlayClassName="channel-create-overlay teammate-create-overlay"
-      bodyClassName="channel-options-grid channel-create-grid teammate-create-body"
-      footer={footer}
+    <Dialog
+      busy={setupBusy}
+      dismissible={!setupBusy}
+      open={dialogOpen}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && !setupBusy) setDialogOpen(false);
+      }}
     >
-      {mode === "custom_setup" ? renderCustomSetup() : mode === "setup_progress" ? renderSetupProgress() : renderRoleSelect()}
-    </CreateDialogShell>
-  );
-
-  function renderRoleSelect(): JSX.Element {
-    return (
-      <>
-        <DialogSection className="teammate-create-section" title={t("Choose initial role")}>
-          <div className="teammate-create-list role-grid" aria-label={t("Teammate template chooser")}>
-            {visibleCreateTemplates.map((template) => (
-              <button
-                key={template.id}
-                className={template.id === selectedTemplate?.id ? "teammate-template-row selected" : "teammate-template-row"}
-                type="button"
-                aria-pressed={template.id === selectedTemplate?.id}
-                onClick={() => selectTemplate(template)}
-              >
-                <span className="teammate-role-icon">{templateRoleIcon(template)}</span>
-                <span className="teammate-template-copy">
-                  <strong>{t(template.name)}</strong>
-                  <small>{t(template.summary)}</small>
-                </span>
-                <small className="template-skill-count">{roleLabel(template.roleKey, t)}</small>
-              </button>
-            ))}
-            <button
-              className="teammate-template-row teammate-custom-entry"
-              type="button"
-              aria-pressed={mode === "custom_setup"}
-              onClick={openCustomSetup}
-            >
-              <span className="teammate-role-icon"><Plus size={14} /></span>
-              <span className="teammate-template-copy">
-                <strong>{t("Start from blank")}</strong>
-                <small>{t("Open a focused setup page for a custom teammate.")}</small>
-              </span>
-              <small className="template-skill-count">{t("Custom")}</small>
-            </button>
-          </div>
-        </DialogSection>
-
-        <DialogSection className="teammate-create-section" title={t("Basic information")}>
-          <div className="teammate-create-fields">
-            <label className="field">
-              <span>{t("Teammate name")}</span>
-              <input value={draftName} onChange={(event) => setDraftName(event.target.value)} />
-            </label>
-            <label className="field">
-              <span>{t("Join channels")}</span>
-              {renderChannelSelect()}
-            </label>
-            <label className="field">
-              <span>{t("Base model")}</span>
-              {renderProviderSelect()}
-            </label>
-          </div>
-          {renderNoModelState()}
-        </DialogSection>
-      </>
-    );
-  }
-
-  function renderCustomSetup(): JSX.Element {
-    return (
-      <section className="teammate-custom-setup" aria-label={t("Custom teammate setup")}>
-        <button className="secondary-button compact-button teammate-custom-back" type="button" onClick={() => setMode("role_select")}>
-          <ArrowLeft size={14} />
-          {t("Back")}
-        </button>
-        <div className="teammate-custom-profile">
-          <div className="teammate-custom-avatar">
-            <label className="teammate-custom-avatar-picker">
-              {avatarPreviewUrl ? (
-                <img src={avatarPreviewUrl} alt="" />
-              ) : (
-                <AvatarInitial label={teammateInitial(previewName)} tone={avatarTone} />
-              )}
-              <span className="teammate-custom-avatar-upload" aria-hidden="true">
-                <Upload size={13} />
-              </span>
-              <input
-                type="file"
-                accept="image/png,image/jpeg,image/webp,image/gif"
-                aria-label={t("Upload avatar")}
-                onChange={(event) => {
-                  const file = event.currentTarget.files?.[0];
-                  event.currentTarget.value = "";
-                  setAvatarFile(file);
-                }}
-              />
-            </label>
-            <span className="teammate-custom-avatar-copy">
-              <strong>{avatarFile ? avatarFile.name : t("Custom")}</strong>
-              <small>{avatarFile ? t("Avatar selected") : t("Upload an avatar or use a color.")}</small>
-            </span>
-          </div>
-          {avatarFile ? (
-            <button className="secondary-button compact-button teammate-avatar-remove" type="button" onClick={() => setAvatarFile(undefined)}>
-              <X size={13} />
-              {t("Remove avatar")}
-            </button>
-          ) : (
-            <div className="teammate-avatar-tone-list" aria-label={t("Avatar color")}>
-              {avatarTones.map((tone) => (
-                <button
-                  key={tone}
-                  className={avatarTone === tone ? `avatar-tone-option ${tone} selected` : `avatar-tone-option ${tone}`}
-                  type="button"
-                  aria-label={t("Avatar color {tone}", { tone })}
-                  aria-pressed={avatarTone === tone}
-                  onClick={() => setAvatarTone(tone)}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="teammate-custom-fields">
-          <label className="field">
-            <span>{t("Teammate name")}</span>
-            <input value={draftName} onChange={(event) => setDraftName(event.target.value)} />
-          </label>
-          <label className="field">
-            <span>{t("Base model")}</span>
-            {renderProviderSelect()}
-          </label>
-          <label className="field teammate-custom-brief">
-            <span>{t("Brief description")}</span>
-            <textarea
-              rows={5}
-              value={draftDescription}
-              onChange={(event) => setDraftDescription(event.target.value)}
-              placeholder={t("Describe what this teammate should help with.")}
-            />
-          </label>
-          <label className="field">
-            <span>{t("Join channels")}</span>
-            {renderChannelSelect()}
-          </label>
-        </div>
-        {renderNoModelState()}
-      </section>
-    );
-  }
-
-  function renderSetupProgress(): JSX.Element {
-    const tone = setupResult?.ok ? "success" : setupResult ? "failed" : "running";
-    return (
-      <section className={`teammate-create-progress ${tone}`} aria-label={t("Teammate setup progress")}>
-        <div className="teammate-create-progress-summary">
-          <span className={`teammate-create-progress-icon ${tone}`}>
-            {setupResult ? setupResult.ok ? <CheckCircle2 size={22} /> : <CircleAlert size={22} /> : <Loader2 className="spin" size={22} />}
-          </span>
-          <div>
-            <strong>{setupResult ? setupResult.ok ? t("Teammate ready") : t("Setup needs attention") : t("Creating and checking teammate")}</strong>
-            <p>{setupResult?.message ?? t("Keep this dialog open while Ling prepares the teammate.")}</p>
-          </div>
-        </div>
-        <ol className="teammate-create-step-list">
-          {setupStepIds.map((step) => (
-            <li key={step} className={`teammate-create-step ${setupSteps[step].state}`}>
-              <span className="teammate-create-step-icon">{renderStepIcon(setupSteps[step].state)}</span>
-              <span>
-                <strong>{t(setupStepLabel(step))}</strong>
-                <small>{setupSteps[step].message || t(setupStepDefaultMessage(step))}</small>
-              </span>
-            </li>
-          ))}
-        </ol>
-      </section>
-    );
-  }
-
-  function renderProviderSelect(): JSX.Element {
-    return (
-      <SelectControl value={selectedProviderId} onChange={(event) => setSelectedProviderId(event.target.value)} disabled={providerOptions.length === 0 || setupBusy}>
-        <option value="">{t("Select model")}</option>
-        {providerOptions.map((provider) => (
-          <option key={provider.id} value={provider.id}>
-            {providerModelRouteLabel(provider)}
-          </option>
-        ))}
-      </SelectControl>
-    );
-  }
-
-  function renderChannelSelect(): JSX.Element {
-    return (
-      <SelectControl
-        value={selectedChannelIds[0] ?? ""}
-        onChange={(event) => setSelectedChannelIds(event.target.value ? [event.target.value] : [])}
-        disabled={channels.length === 0 || setupBusy}
+      <DialogContent
+        aria-label={t("Create AI teammate")}
+        aria-labelledby={undefined}
+        className="teammate-create-dialog"
+        data-mode={mode}
+        data-ui2-teammate-create="true"
+        overlayClassName="teammate-create-overlay"
+        size="lg"
+        onKeyDown={(event) => {
+          if (event.key !== "Escape") return;
+          event.preventDefault();
+          event.stopPropagation();
+          requestClose();
+        }}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          returnFocusRef.current?.focus({ preventScroll: true });
+          if (closeCommittedRef.current) return;
+          closeCommittedRef.current = true;
+          onClose();
+        }}
       >
-        <option value="">{channels.length === 0 ? t("No channels yet") : t("No channel")}</option>
-        {channels.map((channel) => (
-          <option key={channel.id} value={channel.id}>
-            {channel.name}
-          </option>
-        ))}
-      </SelectControl>
-    );
-  }
-
-  function renderNoModelState(): JSX.Element | null {
-    return providerOptions.length === 0 ? (
-      <div className="client-empty-state teammate-empty teammate-create-model-empty">
-        <PlugZap size={20} />
-        <span>{t("No ready chat model")}</span>
-        <button className="secondary-button" type="button" onClick={openProvidersAndClose}>{t("Open Model Workbench")}</button>
-      </div>
-    ) : null;
-  }
+        <DialogHeader
+          closeLabel={t("Cancel")}
+          description={dialogDescription(mode, t)}
+          title={dialogTitle(mode, t)}
+        />
+        <DialogBody className="teammate-create-body">
+          {mode === "role_select" ? (
+            <TeammateCreateRoleStep
+              channels={channels}
+              disabled={setupBusy}
+              draftName={draftName}
+              providers={providerOptions}
+              selectedChannelId={selectedChannelIds[0] ?? ""}
+              selectedProviderId={selectedProviderId}
+              selectedTemplateId={selectedTemplateId}
+              templates={visibleCreateTemplates}
+              onChangeChannel={(value) => setSelectedChannelIds(value ? [value] : [])}
+              onChangeName={setDraftName}
+              onChangeProvider={setSelectedProviderId}
+              onOpenCustom={openCustomSetup}
+              onOpenProviders={openProvidersAndClose}
+              onSelectTemplate={selectTemplate}
+            />
+          ) : mode === "custom_setup" ? (
+            <TeammateCustomSetupStep
+              avatarFile={avatarFile}
+              avatarPreviewUrl={avatarPreviewUrl}
+              avatarTone={avatarTone}
+              channels={channels}
+              disabled={setupBusy}
+              draftDescription={draftDescription}
+              draftName={draftName}
+              previewName={previewName}
+              providers={providerOptions}
+              selectedChannelId={selectedChannelIds[0] ?? ""}
+              selectedProviderId={selectedProviderId}
+              onBack={() => setMode("role_select")}
+              onChangeAvatarFile={setAvatarFile}
+              onChangeAvatarTone={setAvatarTone}
+              onChangeChannel={(value) => setSelectedChannelIds(value ? [value] : [])}
+              onChangeDescription={setDraftDescription}
+              onChangeName={setDraftName}
+              onChangeProvider={setSelectedProviderId}
+              onOpenProviders={openProvidersAndClose}
+            />
+          ) : (
+            <TeammateCreateProgress result={setupResult} steps={setupSteps} />
+          )}
+        </DialogBody>
+        <DialogFooter className="teammate-create-actions">
+          {renderFooter()}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 
   function renderFooter(): JSX.Element {
     if (mode === "setup_progress") {
+      const createdWithWarnings = Boolean(setupResult?.partial && setupResult.teammateId);
       const showModelWorkbench = Boolean(setupResult && !setupResult.ok && setupSteps.model.state === "failed");
       return (
         <>
-          {setupResult && !setupResult.ok ? (
-            <button className="secondary-button compact-button" type="button" onClick={retrySetup}>
-              <ArrowLeft size={14} />
-              {t("Back to setup")}
-            </button>
+          {setupResult && !setupResult.ok && !createdWithWarnings ? (
+            <Button leadingIcon={<ArrowLeft />} size="sm" onClick={retrySetup}>{t("Back to setup")}</Button>
           ) : null}
           {showModelWorkbench ? (
-            <button className="secondary-button compact-button" type="button" onClick={openProvidersAndClose}>
-              <Settings size={14} />
-              {t("Open Model Workbench")}
-            </button>
+            <Button leadingIcon={<Settings />} size="sm" onClick={openProvidersAndClose}>{t("Open Model Workbench")}</Button>
           ) : null}
-          <button className="primary-button compact-button" type="button" onClick={finishSetup} disabled={setupBusy}>
-            {setupBusy ? <Loader2 className="spin" size={14} /> : <Check size={14} />}
-            {setupBusy ? t("Creating...") : setupResult?.ok && setupResult.teammateId ? t("Open teammate chat") : t("Done")}
-          </button>
+          <Button
+            leadingIcon={<Check />}
+            loading={setupBusy}
+            loadingLabel={t("Creating...")}
+            size="sm"
+            variant="primary"
+            onClick={finishSetup}
+          >
+            {setupBusy
+              ? t("Creating...")
+              : (setupResult?.ok || setupResult?.partial) && setupResult.teammateId
+                ? t("Open teammate chat")
+                : setupResult && !setupResult.ok
+                  ? t("Close")
+                  : t("Done")}
+          </Button>
         </>
       );
     }
 
     return (
       <>
-        {!selectedProviderReady ? (
-          <span className="teammate-create-blocked">{selectedProvider ? t("Selected model needs configuration.") : t("Choose a model before creating.")}</span>
+        {!selectedProviderReady && providerOptions.length > 0 ? (
+          <InlineFeedback className="teammate-create-blocked" title={selectedProvider ? t("Selected model needs configuration.") : t("Choose a model before creating.")} tone="warning" />
         ) : null}
-        <button className="secondary-button compact-button" type="button" onClick={onClose}>
-          {t("Cancel")}
-        </button>
-        <button className="primary-button compact-button" type="button" onClick={() => void createTeammateDraft()} disabled={!canCreateTeammate || setupBusy}>
-          {setupBusy ? <Loader2 className="spin" size={14} /> : <Plus size={14} />}
+        <Button size="sm" onClick={requestClose}>{t("Cancel")}</Button>
+        <Button
+          disabled={!canCreateTeammate}
+          leadingIcon={<Plus />}
+          size="sm"
+          variant="primary"
+          onClick={() => void createTeammateDraft()}
+        >
           {mode === "custom_setup" ? t("Create and verify") : t("Create teammate")}
-        </button>
+        </Button>
       </>
     );
   }
 }
 
-function createInitialStepState(): Record<TeammateCreateSetupStep, StepViewState> {
-  return Object.fromEntries(setupStepIds.map((step) => [step, { state: "pending", message: "" }])) as Record<TeammateCreateSetupStep, StepViewState>;
+function createInitialStepState(): Record<TeammateCreateSetupStep, TeammateCreateStepViewState> {
+  return Object.fromEntries(
+    teammateCreateSetupStepIds.map((step) => [step, { state: "pending", message: "" }]),
+  ) as Record<TeammateCreateSetupStep, TeammateCreateStepViewState>;
 }
 
-function renderStepIcon(state: TeammateCreateStepState): JSX.Element {
-  if (state === "running") {
-    return <Loader2 className="spin" size={14} />;
-  }
-  if (state === "success") {
-    return <Check size={14} />;
-  }
-  if (state === "failed") {
-    return <CircleAlert size={14} />;
-  }
-  if (state === "skipped") {
-    return <CheckCircle2 size={14} />;
-  }
-  return <span aria-hidden="true" />;
+function dialogTitle(mode: TeammateCreateMode, t: (key: string) => string): string {
+  if (mode === "custom_setup") return t("Custom AI teammate");
+  if (mode === "setup_progress") return t("Creating AI teammate");
+  return t("New AI teammate");
 }
 
-function setupStepLabel(step: TeammateCreateSetupStep): string {
-  switch (step) {
-    case "workspace":
-      return "Workspace";
-    case "model":
-      return "Model check";
-    case "record":
-      return "Create teammate";
-    case "avatar":
-      return "Upload avatar";
-    case "channels":
-      return "Join channel";
-    case "memory":
-      return "Prepare memory";
-    case "refresh":
-      return "Refresh workspace";
-  }
-}
-
-function setupStepDefaultMessage(step: TeammateCreateSetupStep): string {
-  switch (step) {
-    case "workspace":
-      return "Waiting for workspace";
-    case "model":
-      return "Waiting to check the selected model";
-    case "record":
-      return "Waiting to create the teammate";
-    case "avatar":
-      return "Waiting for avatar upload";
-    case "channels":
-      return "Waiting for channel setup";
-    case "memory":
-      return "Waiting for memory setup";
-    case "refresh":
-      return "Waiting to refresh workspace";
-  }
-}
-
-function templateRoleIcon(template: AiTeammateTemplate): JSX.Element {
-  if (template.roleKey === "product") {
-    return <Brain size={15} />;
-  }
-  if (template.roleKey === "engineer") {
-    return <Code2 size={15} />;
-  }
-  if (template.roleKey === "architect") {
-    return <Workflow size={15} />;
-  }
-  if (template.roleKey === "designer") {
-    return <Palette size={15} />;
-  }
-  if (template.roleKey === "qa") {
-    return <CheckCircle2 size={15} />;
-  }
-  if (template.roleKey === "security") {
-    return <ShieldCheck size={15} />;
-  }
-  if (template.roleKey === "release") {
-    return <Rocket size={15} />;
-  }
-  if (template.roleKey === "docs") {
-    return <FileText size={15} />;
-  }
-  return <Sparkles size={15} />;
-}
-
-function teammateInitial(value: string): string {
-  const trimmed = value.trim();
-  return (trimmed[0] ?? "T").toLocaleUpperCase();
+function dialogDescription(mode: TeammateCreateMode, t: (key: string) => string): string {
+  if (mode === "setup_progress") return t("Ling is checking the model and preparing this teammate.");
+  if (mode === "custom_setup") return t("Choose the identity and ready model this teammate will use.");
+  return t("Recommended role and model are prefilled. Review them, then create.");
 }
 
 function isAvatarTone(value: string | undefined): value is AvatarTone {

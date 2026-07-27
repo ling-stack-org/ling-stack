@@ -19,6 +19,10 @@ test("theme bootstrap prefers last effective workspace theme over legacy system 
 
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   await expect(page.locator("html")).toHaveAttribute("data-theme-preference", "light");
+  await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "ling-light");
+  await expect(page.locator("html")).toHaveAttribute("data-color-scheme", "light");
+  await expect(page.locator("html")).toHaveAttribute("data-theme-selection", "fixed");
+  await expect(page.locator("html")).toHaveAttribute("data-ui-presentation", "ling-standard");
 });
 
 test("main pages and workspace tools follow dark theme tokens", async ({ page }) => {
@@ -33,13 +37,14 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
   await page.goto("/");
 
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "ling-dark");
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await expect(page.locator(".client-window")).toBeVisible();
   await assertDarkPage(page, "channel workspace", [
     ".workspace-client-surface",
     ".client-window",
     ".task-list-panel",
-    ".composer-panel",
+    '[data-conversation-composer="true"][data-surface="channel"]',
   ]);
 
   const navigation = page.getByLabel("Ling Stack navigation");
@@ -90,15 +95,12 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
   ]);
 
   await page.getByLabel("设置分组").getByRole("button", { name: /默认授权|Default authorization/ }).click();
-  await expect(page.locator(".settings-global-approval-card")).toBeVisible();
+  await expect(page.locator("[data-ui2-default-authorization]")).toBeVisible();
   await expect(page.locator(".runtime-runner-settings-panel")).toHaveCount(0);
-  await page.locator(".rich-choice-select-trigger").first().click();
   await assertDarkPage(page, "default authorization settings", [
     ".settings-default-authorization-section",
-    ".settings-global-approval-card",
-    ".settings-decision-row",
-    ".rich-choice-select-trigger",
-    ".rich-choice-select-popover",
+    ".settings-authorization-row",
+    ".settings-authorization-segments",
   ]);
 
   await page.getByLabel("设置分组").getByRole("button", { name: /智囊团工作区|Council Workspace/ }).click();
@@ -112,16 +114,16 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
     ".council-workspace-detail",
     ".council-health-strip",
     ".council-detail-tabs",
-    ".council-member-row",
+    ".council-members-row",
   ]);
   await page.getByLabel("设置分组").getByRole("button", { name: /资料|Profile/ }).click();
-  await expect(page.locator(".profile-settings-surface")).toBeVisible();
+  await expect(page.locator('[data-ui2-settings-profile="true"]')).toBeVisible();
   await assertDarkPage(page, "account profile settings", [
-    ".profile-settings-surface",
-    ".profile-settings-identity-block",
-    ".profile-settings-name-row",
-    ".profile-settings-section",
-    ".profile-usage-summary-grid",
+    '[data-ui2-settings-profile="true"]',
+    '[data-profile-section="identity"]',
+    '[data-profile-name-row="true"]',
+    '[data-profile-section="usage"]',
+    '[data-profile-usage-summary="true"]',
   ]);
 
   await page.getByLabel("设置分组").getByRole("button", { name: /模型工作台|Model Workbench/ }).click();
@@ -141,7 +143,7 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
     ".workspace-settings-surface",
     ".settings-layout",
     ".teammates-page",
-    ".teammate-template-panel",
+    ".teammate-role-catalog",
     ".teammate-add-panel",
     ".teammate-draft-row",
   ]);
@@ -162,24 +164,24 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
   await page.getByLabel("设置分组").getByRole("button", { name: /MCP 工具服务/ }).click();
   await assertDarkPage(page, "MCP settings", [
     ".settings-layout",
-    ".mcp-page",
-    ".mcp-toolbar",
-    ".mcp-server-panel",
-    ".mcp-empty",
+    ".settings-mcp-page",
+    ".settings-mcp-toolbar",
+    ".settings-mcp-empty",
   ]);
 
   await page.getByLabel("设置分组").getByRole("button", { name: /个性化|Personalization/ }).click();
   await expect(page.locator(".personalization-settings-panel")).toBeVisible();
   await expect(page.locator(".skill-governance-settings-panel")).toBeVisible();
+  await page.getByText("高级治理", { exact: true }).click();
   await assertDarkPage(page, "personalization settings", [
     ".settings-layout",
     ".personalization-settings-panel",
-    ".ling-tone-option",
+    ".settings-personalization-tone-control",
     ".skill-governance-settings-panel",
     ".settings-skill-governance",
     ".settings-skill-governance-field",
-    ".settings-compact-details summary",
-    ".settings-skill-governance-fixed span",
+    ".settings-personalization-governance-inspector",
+    ".settings-personalization-governance-fixed span",
   ]);
 
   await page.getByLabel("设置分组").getByRole("button", { name: /技能库|Skill library/ }).click();
@@ -223,7 +225,7 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
   await assertDarkPage(page, "settings run diagnostics", [
     ".settings-layout",
     ".settings-run-diagnostics-panel",
-    ".settings-run-diagnostics-summary",
+    ".settings-run-diagnostics-toolbar",
     ".settings-run-diagnostics-list",
     ".settings-run-diagnostics-detail",
   ]);

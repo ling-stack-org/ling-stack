@@ -1,0 +1,190 @@
+.approvals-ui2-detail {
+  display: grid;
+  align-content: start;
+  gap: var(--ling-space-3);
+  min-width: 0;
+  min-height: 0;
+  padding: var(--ling-space-3);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.approvals-ui2-detail.empty {
+  align-content: center;
+}
+
+.approvals-ui2-detail-header,
+.approvals-ui2-current-issue,
+.approval-main,
+.approval-card-content {
+  display: grid;
+  gap: var(--ling-space-2);
+  min-width: 0;
+}
+
+.approvals-ui2-detail-header h3,
+.approval-head strong {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--ling-font-md);
+  line-height: var(--ling-line-md);
+  letter-spacing: 0;
+}
+
+.approvals-ui2-detail-header > span,
+.approval-summary-indicators,
+.approval-summary-meta,
+.approval-permission-meta,
+.approval-permission-delta header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--ling-space-2);
+}
+
+.approvals-ui2-current-issue {
+  padding: var(--ling-space-3);
+}
+
+.approvals-ui2-current-issue p,
+.approval-main > p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-sm);
+}
+
+.approvals-ui2-detail-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ling-space-2);
+}
+
+.approvals-ui2-detail-meta > span {
+  display: grid;
+  gap: var(--ling-space-1);
+  min-width: 0;
+  padding: var(--ling-space-2);
+}
+
+.approvals-ui2-detail-meta strong {
+  overflow-wrap: anywhere;
+  font-size: var(--ling-font-xs);
+}
+
+.approvals-ui2-feedback-actions,
+.approvals-ui2-route-control,
+.approval-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--ling-space-2);
+}
+
+.approvals-ui2-route-control {
+  justify-content: space-between;
+  padding: var(--ling-space-2);
+}
+
+.approval-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 300px);
+  gap: var(--ling-space-4);
+  min-width: 0;
+  padding: var(--ling-space-3);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  overflow: hidden;
+  color: var(--ling-text-default);
+  background: var(--ling-bg-panel);
+  box-shadow: var(--ling-shadow-low);
+}
+
+.approval-card.compact {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.approval-card.approval-row.compact {
+  padding: 0;
+  border-width: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.approval-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--ling-space-2);
+}
+
+.approval-summary-meta {
+  font-size: var(--ling-font-xs);
+  color: var(--ling-text-muted);
+}
+
+.approval-payload-summary {
+  display: grid;
+  gap: var(--ling-space-2);
+  min-width: 0;
+  padding: var(--ling-space-2);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  color: var(--ling-text-muted);
+  background: var(--ling-bg-subtle);
+  font-size: var(--ling-font-xs);
+}
+
+.approval-payload-summary code,
+.approval-payload-summary pre,
+.approval-technical-details pre {
+  max-width: 100%;
+  margin: 0;
+  padding: var(--ling-space-2);
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--ling-text-default);
+  background: var(--ling-bg-code);
+}
+
+.approval-permission-delta {
+  display: grid;
+  gap: var(--ling-space-2);
+  min-width: 0;
+  padding: var(--ling-space-3);
+}
+
+.approval-permission-delta header {
+  justify-content: space-between;
+}
+
+.approval-permission-delta header > span,
+.approval-permission-meta > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ling-space-2);
+}
+
+.approval-permission-columns {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--ling-space-2);
+}
+
+.approval-permission-column {
+  display: grid;
+  align-content: start;
+  gap: var(--ling-space-1);
+  min-width: 0;
+}
+
+.approval-permission-column code {
+  overflow-wrap: anywhere;
+  font-size: var(--ling-font-xs);
+}
+
+.approvals-ui2-detail-skeleton {
+  grid-template-rows: auto auto auto auto;
+}

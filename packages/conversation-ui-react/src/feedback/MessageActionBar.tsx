@@ -1,5 +1,6 @@
-import type { ReactNode } from "react";
-import { Check } from "lucide-react";
+import { useState, type ReactElement, type ReactNode } from "react";
+import { Check, Loader2 } from "lucide-react";
+import { Tooltip } from "@ling-stack/ui-react";
 import {
   conversationActionAllowedByPolicy,
   getConversationSurfacePolicy,
@@ -7,7 +8,6 @@ import {
   type ConversationSurfaceKind,
   type ConversationSurfacePolicy,
 } from "@ling-stack/conversation-ui-core";
-import { CopyActionButton } from "./CopyActionButton.js";
 
 export type { MessageActionKind };
 
@@ -18,6 +18,7 @@ export interface MessageActionBarAction {
   readonly icon?: ReactNode;
   readonly selected?: boolean;
   readonly disabled?: boolean;
+  readonly loading?: boolean;
   readonly danger?: boolean;
   readonly className?: string;
   readonly href?: string;
@@ -66,6 +67,7 @@ export function MessageActionBar({
   return (
     <div className={rootClassName}>
       {visibleActions.map((action) => {
+        const unavailable = action.disabled || action.loading;
         const actionClassName = [
           "message-footer-action",
           "message-action-bar-action",
@@ -73,63 +75,122 @@ export function MessageActionBar({
           action.className,
           action.selected ? "selected" : "",
           action.danger ? "danger" : "",
+          action.loading ? "loading" : "",
         ].filter(Boolean).join(" ");
         const content = (
           <>
-            {action.icon}
-            <span>{action.label}</span>
+            {action.loading ? <Loader2 className="message-action-bar-spinner" aria-hidden="true" /> : action.icon}
+            <span className="message-action-bar-label">{action.label}</span>
           </>
         );
         if (action.href) {
           return (
-            <a
-              key={action.id}
-              className={actionClassName}
-              href={action.href}
-              target={action.target}
-              rel={action.rel}
-              aria-label={action.label}
-              title={action.label}
-              data-tooltip={action.label}
-            >
-              {content}
-            </a>
+            <MessageActionTooltip key={action.id} label={action.label}>
+              <a
+                className={actionClassName}
+                href={action.href}
+                target={action.target}
+                rel={action.rel}
+                aria-label={action.label}
+                aria-busy={action.loading || undefined}
+                aria-disabled={unavailable || undefined}
+                tabIndex={unavailable ? -1 : undefined}
+                onClick={unavailable ? (event) => event.preventDefault() : undefined}
+              >
+                {content}
+              </a>
+            </MessageActionTooltip>
           );
         }
         if (action.copyText !== undefined) {
           return (
-            <CopyActionButton
+            <MessageActionBarCopyButton
               key={action.id}
-              className={actionClassName}
-              text={action.copyText}
-              label={action.label}
+              action={action}
+              actionClassName={actionClassName}
               copiedLabel={copiedLabel}
-              iconSize={11}
-              idleContent={content}
-              copiedContent={(
-                <>
-                  <Check size={11} />
-                  <span>{copiedLabel}</span>
-                </>
-              )}
             />
           );
         }
         return (
-          <button
-            key={action.id}
-            className={actionClassName}
-            type="button"
-            disabled={action.disabled}
-            onClick={action.onClick}
-            aria-label={action.label}
-            title={action.label}
-            data-tooltip={action.label}
-          >
-            {content}
-          </button>
+          <MessageActionTooltip key={action.id} label={action.label}>
+            <button
+              className={actionClassName}
+              type="button"
+              disabled={unavailable}
+              aria-busy={action.loading || undefined}
+              onClick={action.onClick}
+              aria-label={action.label}
+            >
+              {content}
+            </button>
+          </MessageActionTooltip>
         );
       })}
     </div>
+  );
+}
+
+interface MessageActionTooltipProps {
+  readonly children: ReactElement;
+  readonly label: string;
+}
+
+function MessageActionTooltip({ children, label }: MessageActionTooltipProps): JSX.Element {
+  return (
+    <Tooltip content={label} side="top" sideOffset={6}>
+      <span className="message-action-bar-tooltip-trigger">{children}</span>
+    </Tooltip>
+  );
+}
+
+interface MessageActionBarCopyButtonProps {
+  readonly action: MessageActionBarAction;
+  readonly actionClassName: string;
+  readonly copiedLabel: string;
+}
+
+function MessageActionBarCopyButton({
+  action,
+  actionClassName,
+  copiedLabel,
+}: MessageActionBarCopyButtonProps): JSX.Element {
+  const [copied, setCopied] = useState(false);
+  const currentLabel = copied ? copiedLabel : action.label;
+  const unavailable = action.disabled || action.loading;
+
+  async function copyText(): Promise<void> {
+    if (!globalThis.navigator?.clipboard?.writeText) {
+      setCopied(false);
+      return;
+    }
+
+    try {
+      await globalThis.navigator.clipboard.writeText(action.copyText ?? "");
+      setCopied(true);
+      globalThis.setTimeout(() => setCopied(false), 1400);
+    } catch {
+      setCopied(false);
+    }
+  }
+
+  return (
+    <MessageActionTooltip label={currentLabel}>
+      <button
+        className={actionClassName}
+        type="button"
+        disabled={unavailable}
+        aria-busy={action.loading || undefined}
+        aria-label={currentLabel}
+        onClick={() => void copyText()}
+      >
+        {action.loading ? (
+          <Loader2 className="message-action-bar-spinner" aria-hidden="true" />
+        ) : copied ? (
+          <Check aria-hidden="true" />
+        ) : action.icon}
+        <span className="message-action-bar-label">{currentLabel}</span>
+      </button>
+    </MessageActionTooltip>
   );
 }

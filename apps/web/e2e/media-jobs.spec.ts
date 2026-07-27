@@ -117,10 +117,10 @@ test("generation tasks page lists, runs, and creates generation tasks", async ({
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Media Production" }).click();
   await expect(page.getByRole("heading", { name: "Media Production", level: 1 })).toHaveCount(0);
   await expect(page.locator(".media-production-canvas-toolbar")).toBeVisible();
-  await page.getByRole("tab", { name: "Generation tasks" }).click();
-  await expect(page.locator(".media-jobs-embedded-toolbar #media-jobs-title")).toHaveText("Generation tasks");
-  const jobRows = page.locator(".media-job-row");
-  const detailPanel = page.locator(".media-job-detail-panel");
+  await page.getByRole("radio", { name: "Generation tasks", exact: true }).click();
+  await expect(page.locator("[data-media-jobs-header] #media-jobs-title")).toHaveText("Generation tasks");
+  const jobRows = page.locator("[data-media-job-row]");
+  const detailPanel = page.locator("[data-media-job-inspector]");
   await expect(jobRows).toHaveCount(3);
 
   const failedJob = jobRows.nth(0);
@@ -128,15 +128,16 @@ test("generation tasks page lists, runs, and creates generation tasks", async ({
   await expect(failedJob).toContainText("Live product mockup.");
   await expect(detailPanel).toContainText("Live product mockup.");
   await expect(detailPanel).toContainText("The provider limited this request");
-  const failureSummary = detailPanel.locator(".media-job-failure-summary");
+  const failureSummary = detailPanel.locator("[data-media-job-repair]");
   await expect(failureSummary).toHaveCount(1);
-  await expect(failureSummary.getByText("Needs attention", { exact: true })).toBeVisible();
+  await expect(failureSummary).toContainText("The provider limited this request");
   await expect(failureSummary.getByRole("button", { name: "Retry generation" })).toBeVisible();
-  await expect(failureSummary.getByRole("button", { name: "Copy details" })).toBeVisible();
-  await expect(detailPanel.locator(".media-job-detail-preview.empty.needs_attention")).toHaveCount(0);
-  await expect(detailPanel.locator(".media-job-detail-control-row")).toHaveCount(0);
-  await expect(detailPanel.getByText("Generation details")).toBeVisible();
-  await detailPanel.getByText("Generation details").click();
+  await expect(detailPanel.getByRole("button", { name: "Copy prompt" })).toBeVisible();
+  await expect(detailPanel.locator("[data-media-preview-state]")).toHaveCount(0);
+  const rawFailureDetails = detailPanel.getByRole("group").filter({ hasText: "Raw generation error" });
+  await expect(rawFailureDetails).not.toHaveAttribute("open", "");
+  await rawFailureDetails.locator("summary").click();
+  await expect(rawFailureDetails).toHaveAttribute("open", "");
   await expect(detailPanel).toContainText("Seedream image generation failed with HTTP 429");
 
   const imageJob = jobRows.nth(1);
@@ -145,10 +146,13 @@ test("generation tasks page lists, runs, and creates generation tasks", async ({
   await expect(imageJob).toContainText("Completed");
   await expect(imageJob.getByRole("button", { name: "Start generation" })).toHaveCount(0);
   await expect(imageJob.getByRole("button", { name: "Retry generation" })).toHaveCount(0);
-  await expect(detailPanel.locator(".media-job-detail-control-row")).toHaveCount(0);
   await expect(detailPanel.getByRole("link", { name: "View result" })).toHaveAttribute("href", /\/artifacts\/artifact_media_image\/content/);
   await expect(detailPanel.getByRole("button", { name: "Copy result URL" })).toBeVisible();
-  const imageArtifactRow = detailPanel.locator(".artifact-row").filter({ hasText: "Seedream image 1" });
+  const allResults = detailPanel.getByRole("group").filter({ hasText: "All results" });
+  await expect(allResults).not.toHaveAttribute("open", "");
+  await allResults.locator("summary").click();
+  await expect(allResults).toHaveAttribute("open", "");
+  const imageArtifactRow = detailPanel.locator("[data-media-job-artifact]").filter({ hasText: "Seedream image 1" });
   await expect(imageArtifactRow).toContainText("image");
   await expect(imageArtifactRow).toContainText("4.0 KB");
   await expect(imageArtifactRow.getByRole("link", { name: "Open" })).toHaveAttribute("href", /\/artifacts\/artifact_media_image\/content/);
@@ -164,23 +168,26 @@ test("generation tasks page lists, runs, and creates generation tasks", async ({
   await expect(existingJob).toContainText("Starting generation");
   await expect(existingJob.getByRole("button", { name: /Starting/ })).toBeDisabled();
   await expect(existingJob).toContainText("Completed");
-  await expect(detailPanel.locator(".artifact-row")).toContainText("Seedream image result");
-  await expect(detailPanel.locator(".artifact-main-link")).toHaveAttribute("href", /\/artifacts\/artifact_media_job_existing\/content/);
+  await expect(detailPanel.locator("[data-media-job-artifact]")).toContainText("Seedream image result");
+  await expect(detailPanel.getByRole("link", { name: "View result" })).toHaveAttribute("href", /\/artifacts\/artifact_media_job_existing\/content/);
   expect(state.approvals.some((approval) => approval.mediaJobId === "media_job_existing" && approval.actionType === "media_cost")).toBe(false);
 
-  await page.getByRole("button", { name: "Create generation task" }).click();
-  const createDialog = page.getByRole("dialog", { name: "Create generation task" });
+  await page.locator("[data-media-jobs-header]").getByRole("button", { name: "New generation task" }).click();
+  const createDialog = page.getByRole("dialog", { name: "New generation task" });
   await expect(createDialog.getByText("Advanced parameters")).toBeVisible();
-  await expect(createDialog.getByText("Size, count, seed, watermark")).toBeVisible();
   await expect(createDialog.getByText("Input JSON")).toHaveCount(0);
+  const advancedParameters = createDialog.getByRole("group").filter({ hasText: "Advanced parameters" });
+  await expect(advancedParameters).not.toHaveAttribute("open", "");
+  await advancedParameters.locator("summary").click();
+  await expect(advancedParameters).toHaveAttribute("open", "");
   await createDialog.getByLabel("Image size").selectOption("1024x1024");
   await createDialog.getByLabel("Result count").fill("2");
   await createDialog.getByRole("textbox", { name: "Seed" }).fill("42");
   await createDialog.getByLabel("Watermark").selectOption("false");
   await createDialog.getByRole("textbox", { name: "Prompt" }).fill("New campaign image.");
-  await createDialog.getByRole("button", { name: "Create generation task" }).click();
+  await createDialog.getByRole("button", { name: "Create task" }).click();
 
-  await expect(page.locator(".media-job-row").first()).toContainText("Ready to start");
+  await expect(page.locator("[data-media-job-row]").first()).toContainText("Ready to start");
   await expect(detailPanel).toContainText("New campaign image.");
   await expect.poll(() => state.mediaJobs.length).toBe(4);
   expect(state.mediaJobs[0]?.input).toEqual({
@@ -199,9 +206,9 @@ test("generation tasks page routes empty model state to model configuration", as
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Media Production" }).click();
   await expect(page.getByRole("heading", { name: "Media Production", level: 1 })).toHaveCount(0);
   await expect(page.locator(".media-production-canvas-toolbar")).toBeVisible();
-  await page.getByRole("tab", { name: "Generation tasks" }).click();
-  await expect(page.locator(".media-jobs-embedded-toolbar #media-jobs-title")).toHaveText("Generation tasks");
-  const headerConfigureButton = page.locator(".media-jobs-embedded-toolbar").getByRole("button", { name: "Configure generation model" });
+  await page.getByRole("radio", { name: "Generation tasks", exact: true }).click();
+  await expect(page.locator("[data-media-jobs-header] #media-jobs-title")).toHaveText("Generation tasks");
+  const headerConfigureButton = page.locator("[data-media-jobs-header]").getByRole("button", { name: "Configure generation model" });
   await expect(headerConfigureButton).toBeVisible();
   await expect(page.locator(".media-model-alert").getByRole("button", { name: "Configure generation model" })).toHaveCount(0);
   await headerConfigureButton.click();
@@ -209,7 +216,7 @@ test("generation tasks page routes empty model state to model configuration", as
   const generationEditor = page.getByRole("dialog", { name: "New image generation model" });
   await expect(generationEditor).toBeVisible();
   await expect(generationEditor.getByLabel("Model supplier")).toHaveValue("seedream-image");
-  await expect(page.getByRole("dialog", { name: "Create generation task" })).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "New generation task" })).toHaveCount(0);
 });
 
 test("generation tasks page treats OpenAI Images presets as runnable generation models", async ({ page }) => {
@@ -240,11 +247,11 @@ test("generation tasks page treats OpenAI Images presets as runnable generation 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Media Production" }).click();
   await expect(page.getByRole("heading", { name: "Media Production", level: 1 })).toHaveCount(0);
   await expect(page.locator(".media-production-canvas-toolbar")).toBeVisible();
-  await page.getByRole("tab", { name: "Generation tasks" }).click();
-  await expect(page.locator(".media-jobs-embedded-toolbar #media-jobs-title")).toHaveText("Generation tasks");
-  await expect(page.locator(".media-jobs-embedded-toolbar").getByRole("button", { name: "Configure generation model" })).toHaveCount(0);
-  await page.getByRole("button", { name: "Create generation task" }).click();
-  const createDialog = page.getByRole("dialog", { name: "Create generation task" });
+  await page.getByRole("radio", { name: "Generation tasks", exact: true }).click();
+  await expect(page.locator("[data-media-jobs-header] #media-jobs-title")).toHaveText("Generation tasks");
+  await expect(page.locator("[data-media-jobs-header]").getByRole("button", { name: "Configure generation model" })).toHaveCount(0);
+  await page.locator("[data-media-jobs-header]").getByRole("button", { name: "New generation task" }).click();
+  const createDialog = page.getByRole("dialog", { name: "New generation task" });
   await expect(createDialog).toBeVisible();
   await expect(createDialog.getByLabel("Generation model")).toContainText("gpt-image-2 · api.openai.test");
 });
@@ -289,13 +296,13 @@ test("generation tasks page runs live generation without media cost approval", a
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Media Production" }).click();
-  await page.getByRole("tab", { name: "Generation tasks" }).click();
-  const detailPanel = page.locator(".media-job-detail-panel");
-  const jobRow = page.locator(".media-job-row").first();
+  await page.getByRole("radio", { name: "Generation tasks", exact: true }).click();
+  const detailPanel = page.locator("[data-media-job-inspector]");
+  const jobRow = page.locator("[data-media-job-row]").first();
   await expect(detailPanel).toContainText("Live product mockup.");
   await jobRow.getByRole("button", { name: "Start generation" }).click();
   await expect(jobRow).toContainText("Completed");
-  await expect(page.locator(".media-job-detail-panel .artifact-row")).toContainText("Seedream image result");
+  await expect(detailPanel.locator("[data-media-job-artifact]")).toContainText("Seedream image result");
   expect(state.approvals.some((approval) => approval.mediaJobId === "media_job_live_pending" && approval.actionType === "media_cost")).toBe(false);
 });
 
@@ -339,9 +346,9 @@ test("generation tasks page lets legacy waiting media jobs run directly", async 
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Media Production" }).click();
-  await page.getByRole("tab", { name: "Generation tasks" }).click();
-  const jobRow = page.locator(".media-job-row").first();
-  const detailPanel = page.locator(".media-job-detail-panel");
+  await page.getByRole("radio", { name: "Generation tasks", exact: true }).click();
+  const jobRow = page.locator("[data-media-job-row]").first();
+  const detailPanel = page.locator("[data-media-job-inspector]");
   await expect(detailPanel).toContainText("Legacy waiting product mockup.");
   await expect(detailPanel).toContainText("Ready to start");
   await expect(jobRow.getByRole("button", { name: "Handle approval" })).toHaveCount(0);

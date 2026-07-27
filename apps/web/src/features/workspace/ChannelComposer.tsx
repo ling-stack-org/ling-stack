@@ -16,7 +16,6 @@ import {
   CircleAlert,
   ClipboardList,
   FileText,
-  Info,
   ListChecks,
   Loader2,
   Pause,
@@ -56,15 +55,14 @@ import type {
 } from "../../types.js";
 import { InlineApprovalStrip } from "../approvals/InlineApprovalStrip.js";
 import type { ApprovalResolution } from "../approvals/types.js";
+import {
+  ChannelComposerFeedback,
+  type ChannelComposerInlineFeedback,
+  type ChannelComposerInlineFeedbackTone,
+  type ChannelComposerSendState,
+} from "./ChannelComposerFeedback.js";
 
-export type ChannelComposerSendState = "idle" | "sending" | "failed";
-export type ChannelComposerInlineFeedbackTone = "success" | "info" | "error";
-
-export interface ChannelComposerInlineFeedback {
-  readonly id: number;
-  readonly tone: ChannelComposerInlineFeedbackTone;
-  readonly message: string;
-}
+export type { ChannelComposerInlineFeedback, ChannelComposerInlineFeedbackTone, ChannelComposerSendState };
 
 const GOAL_CONTINUATION_MAX_DEPTH = 3;
 
@@ -513,6 +511,7 @@ export function ChannelComposer({
               <Plus size={17} />
             </button>
             <input
+              data-ling-control-native="true"
               id={fileInputId}
               type="file"
               multiple
@@ -587,7 +586,6 @@ export function ChannelComposer({
             options={conversationPermissionPresetMenuOptions(t)}
             disabled={permissionLocked}
             disabledReason={t("Permission is locked while this channel run or message is active.")}
-            fullAccessConfirmationMessage={t("Full access can allow broad local file, network, and tool access for the next run. Continue?")}
             onPresetChange={onPermissionPresetChange}
           />
           {planModeChipVisible ? (
@@ -661,33 +659,13 @@ export function ChannelComposer({
         </button>
       )}
       feedbackNode={(
-        <>
-          {composerFeedback ? (
-            <div key={composerFeedback.id} className={`composer-status-row ${composerFeedback.tone}`} role="status" aria-live="polite">
-              {composerFeedback.tone === "success"
-                ? <CheckCircle2 size={14} />
-                : composerFeedback.tone === "error"
-                  ? <CircleAlert size={14} />
-                  : <Info size={14} />}
-              <span>{composerFeedback.message}</span>
-            </div>
-          ) : null}
-          {sendState === "failed" ? (
-            <div className="composer-status-list" aria-live="polite">
-              <div className="composer-status-row failed">
-                <CircleAlert size={14} />
-                <span>{t("Message failed")}{sendError ? `: ${sendError}` : ""}</span>
-                <button className="secondary-button compact-button" type="button" onClick={onRetrySend}>
-                  <RefreshCw size={13} />
-                  {t("Retry")}
-                </button>
-                <button className="secondary-button compact-button" type="button" onClick={onDismissSendError}>
-                  {t("Dismiss")}
-                </button>
-              </div>
-            </div>
-          ) : null}
-        </>
+        <ChannelComposerFeedback
+          feedback={composerFeedback}
+          sendState={sendState}
+          sendError={sendError}
+          onRetry={onRetrySend}
+          onDismiss={onDismissSendError}
+        />
       )}
     />
   );

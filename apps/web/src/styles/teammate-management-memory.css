@@ -1,0 +1,313 @@
+.teammate-workspace.settings-mode > .teammate-memory-panel {
+  grid-column: 2;
+  grid-row: 2;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  background: var(--ling-bg-panel);
+}
+
+.teammate-memory-panel {
+  display: grid;
+  width: min(100%, 860px);
+  min-width: 0;
+  align-content: start;
+  justify-self: center;
+  gap: var(--ling-space-6);
+  padding: var(--ling-space-7);
+}
+
+.teammate-memory-heading,
+.teammate-memory-heading > div,
+.teammate-memory-heading-actions,
+.teammate-memory-section-heading,
+.teammate-memory-section-heading > div,
+.teammate-memory-transfer-actions,
+.teammate-memory-detail-statuses {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.teammate-memory-heading {
+  justify-content: space-between;
+  gap: var(--ling-space-5);
+  padding-bottom: var(--ling-space-5);
+  border-bottom: 1px solid var(--ling-border-default);
+}
+
+.teammate-memory-heading > div {
+  gap: var(--ling-space-3);
+  color: var(--ling-text-muted);
+}
+
+.teammate-memory-heading > div > svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  stroke-width: 1.8;
+}
+
+.teammate-memory-heading > div > div,
+.teammate-memory-row-copy {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
+.teammate-memory-heading h2,
+.teammate-memory-heading p,
+.teammate-memory-section-heading h3,
+.teammate-memory-section-heading h4,
+.teammate-memory-section-heading p,
+.teammate-memory-row-copy strong,
+.teammate-memory-row-copy small {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teammate-memory-heading h2 {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-md);
+  line-height: var(--ling-line-md);
+}
+
+.teammate-memory-heading p,
+.teammate-memory-section-heading p,
+.teammate-memory-row-copy small,
+.teammate-memory-quiet-copy {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+.teammate-memory-heading-actions,
+.teammate-memory-transfer-actions,
+.teammate-memory-detail-statuses {
+  gap: var(--ling-space-3);
+}
+
+.teammate-memory-protected,
+.teammate-memory-load-error,
+.teammate-memory-loading,
+.teammate-memory-content,
+.teammate-memory-section,
+.teammate-memory-review-section,
+.teammate-memory-detail-stack,
+.teammate-memory-edit-form,
+.teammate-memory-import-warning-list {
+  display: grid;
+  min-width: 0;
+}
+
+.teammate-memory-load-error {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--ling-space-3);
+}
+
+.teammate-memory-loading {
+  gap: var(--ling-space-3);
+}
+
+.teammate-memory-content {
+  gap: var(--ling-space-7);
+}
+
+.teammate-memory-section,
+.teammate-memory-review-section {
+  gap: var(--ling-space-4);
+}
+
+.teammate-memory-section + .teammate-memory-health,
+.teammate-memory-health + .teammate-memory-section {
+  padding-top: var(--ling-space-6);
+  border-top: 1px solid var(--ling-border-default);
+}
+
+.teammate-memory-section-heading {
+  justify-content: space-between;
+  gap: var(--ling-space-4);
+}
+
+.teammate-memory-section-heading > div {
+  display: grid;
+  gap: var(--ling-space-1);
+}
+
+.teammate-memory-section-heading h3,
+.teammate-memory-section-heading h4 {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+  line-height: var(--ling-line-sm);
+}
+
+.teammate-memory-section-heading.compact {
+  align-items: end;
+}
+
+.teammate-memory-scope-list,
+.teammate-memory-review-list,
+.teammate-memory-finding-list {
+  display: grid;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  background: var(--ling-bg-panel);
+}
+
+.teammate-memory-scope-row,
+.teammate-memory-review-row,
+.teammate-memory-finding-row {
+  min-width: 0;
+  border-bottom: 1px solid var(--ling-border-default);
+}
+
+.teammate-memory-scope-row:last-child,
+.teammate-memory-review-row:last-child,
+.teammate-memory-finding-row:last-child {
+  border-bottom: 0;
+}
+
+.teammate-memory-scope-row,
+.teammate-memory-finding-row {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.teammate-memory-review-list {
+  max-height: min(420px, 45vh);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.teammate-memory-review-row {
+  grid-template-columns: minmax(170px, 1fr) minmax(90px, 0.45fr) auto auto;
+  gap: var(--ling-space-3);
+}
+
+.teammate-memory-row-copy strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+  line-height: var(--ling-line-sm);
+}
+
+.teammate-memory-health {
+  min-width: 0;
+}
+
+.teammate-memory-health-metrics {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--ling-space-3);
+  margin-bottom: var(--ling-space-4);
+}
+
+.teammate-memory-health-metrics > span {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+  padding: var(--ling-space-3);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-sm);
+  background: var(--ling-bg-subtle);
+}
+
+.teammate-memory-health-metrics strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-md);
+  line-height: var(--ling-line-md);
+}
+
+.teammate-memory-health-metrics small {
+  overflow: hidden;
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teammate-memory-quiet-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ling-space-2);
+  margin: 0;
+}
+
+.teammate-memory-quiet-copy svg {
+  width: 15px;
+  height: 15px;
+}
+
+.teammate-memory-policy-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: var(--ling-space-4);
+}
+
+.teammate-memory-policy-field {
+  min-width: 0;
+}
+
+.teammate-memory-export-options {
+  min-width: 0;
+}
+
+.teammate-memory-switch-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--ling-space-4);
+}
+
+.teammate-memory-switch-row > span {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
+.teammate-memory-switch-row strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+}
+
+.teammate-memory-switch-row small {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+@media (max-width: 1180px) {
+  .teammate-memory-panel {
+    gap: var(--ling-space-5);
+    padding: var(--ling-space-5);
+  }
+
+  .teammate-memory-review-row {
+    grid-template-columns: minmax(150px, 1fr) auto auto;
+  }
+
+  .teammate-memory-review-used {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .teammate-memory-panel,
+  .teammate-memory-review-list {
+    scroll-behavior: auto;
+  }
+}

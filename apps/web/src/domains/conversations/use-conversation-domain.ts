@@ -189,10 +189,6 @@ export function useConversationDomain(input: {
       setConversationArchiveError(input.translate("No conversations to archive"));
       return;
     }
-    const confirmed = globalThis.confirm(input.translate("Archive all conversations? You can restore archived conversations from Settings."));
-    if (!confirmed) {
-      return;
-    }
     setConversationsLoading(true);
     try {
       input.setErrorMessage("");

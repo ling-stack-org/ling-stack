@@ -1,1 +1,1 @@
-export type ApprovalResolution = "approve" | "deny";
+export type { ApprovalResolution } from "../../domains/approvals/approval-domain-types.js";

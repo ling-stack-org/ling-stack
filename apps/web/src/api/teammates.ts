@@ -251,10 +251,10 @@ export async function deleteTeammateAvatar(cwd: string, teammateId: string): Pro
   return daemonClient.deleteTeammateAvatar(cwd, teammateId);
 }
 
-export async function listTeammateTasks(cwd: string, teammateId: string): Promise<TaskListResponse> {
-  return daemonClient.listTeammateTasks(cwd, teammateId);
+export async function listTeammateTasks(cwd: string, teammateId: string, limit: number = 100): Promise<TaskListResponse> {
+  return daemonClient.listTeammateTasks(cwd, teammateId, limit);
 }
 
-export async function listTeammateActivity(cwd: string, teammateId: string): Promise<TeammateActivityListResponse> {
-  return daemonClient.listTeammateActivity(cwd, teammateId);
+export async function listTeammateActivity(cwd: string, teammateId: string, limit: number = 100): Promise<TeammateActivityListResponse> {
+  return daemonClient.listTeammateActivity(cwd, teammateId, limit);
 }

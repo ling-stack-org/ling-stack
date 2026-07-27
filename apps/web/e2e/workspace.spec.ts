@@ -143,12 +143,14 @@ test("workspace task runs only expose preflight-ready coding providers", async (
 
   await openTaskFromAttentionQueue(page, "Inspect workspace");
   await openNewTaskPanel(page);
-  const providerSelect = page.locator("label.field").filter({ hasText: "Run provider" }).locator("select");
+  const newTaskPanel = page.getByLabel("New task");
+  const providerSelect = newTaskPanel.getByRole("combobox", { name: "Run provider" });
   await expect(providerSelect.locator('option[value="provider_ready"]')).toHaveCount(1);
   await expect(providerSelect.locator('option[value="provider_missing_key"]')).toHaveCount(1);
   await expect(providerSelect.locator('option[value="provider_missing_key"]')).toHaveAttribute("disabled", "");
   await expect(providerSelect.locator('option[value="provider_seedream"]')).toHaveCount(0);
-  await expect(page.getByText("Generation-only models cannot run coding tasks.").first()).toBeVisible();
+  await newTaskPanel.getByText("Execution context", { exact: true }).click();
+  await expect(newTaskPanel.getByText("Generation-only models cannot run coding tasks.").first()).toBeVisible();
   await page.getByRole("button", { name: "Cancel" }).click();
 
   await openTaskFromAttentionQueue(page, "Inspect workspace");
@@ -186,7 +188,7 @@ test("workspace task run uses the displayed ready provider fallback", async ({ p
 
   await openTaskFromAttentionQueue(page, "Inspect workspace");
   await openNewTaskPanel(page);
-  const providerSelect = page.locator("label.field").filter({ hasText: "Run provider" }).locator("select");
+  const providerSelect = page.getByLabel("New task").getByRole("combobox", { name: "Run provider" });
   await expect(providerSelect).toHaveValue("provider_ready");
   await page.getByRole("button", { name: "Cancel" }).click();
 
@@ -194,7 +196,8 @@ test("workspace task run uses the displayed ready provider fallback", async ({ p
   await page.locator(".task-detail").getByRole("button", { name: "Run", exact: true }).click();
 
   await expect.poll(() => state.runs[0]?.providerPresetId).toBe("provider_ready");
-  await expect(page.locator(".task-detail")).toContainText("Run linked");
+  await expect(page.locator(".task-detail")).toContainText("Task complete");
+  await expect(page.locator(".task-detail").getByRole("button", { name: "View result" })).toBeVisible();
   await expect(page.locator(".task-detail")).not.toContainText("run_1");
 });
 
@@ -226,11 +229,13 @@ test("workspace task detail actions only show a spinner on the clicked action", 
 
   await openTaskFromAttentionQueue(page, "Inspect workspace");
   const taskDetail = page.locator("article.task-detail");
-  await taskDetail.getByRole("button", { name: "Run", exact: true }).click();
+  const runButton = taskDetail.locator(".channel-task-actions .ling-ui-button[data-variant='primary']");
+  const checkRunButton = taskDetail.locator(".channel-task-actions .ling-ui-button").filter({ hasText: "Check & run" });
+  await runButton.click();
 
-  await expect(taskDetail.getByRole("button", { name: "Run", exact: true }).locator(".spin")).toHaveCount(1);
-  await expect(taskDetail.getByRole("button", { name: "Check & run", exact: true }).locator(".spin")).toHaveCount(0);
-  await expect(page.locator(".task-actions .spin")).toHaveCount(1);
+  await expect(runButton).toHaveAttribute("data-loading", "true");
+  await expect(checkRunButton).not.toHaveAttribute("data-loading", "true");
+  await expect(page.locator(".channel-task-actions .ling-ui-spinner")).toHaveCount(1);
 
   await expect.poll(() => state.runs[0]?.taskId).toBe("task_inspect");
 
@@ -239,11 +244,11 @@ test("workspace task detail actions only show a spinner on the clicked action", 
   );
   state.runs = [];
   state.providerCheckDelayMs = 2000;
-  await taskDetail.getByRole("button", { name: "Check & run", exact: true }).click();
+  await checkRunButton.click();
 
-  await expect(taskDetail.getByRole("button", { name: "Check & run", exact: true }).locator(".spin")).toHaveCount(1);
-  await expect(taskDetail.getByRole("button", { name: "Run", exact: true }).locator(".spin")).toHaveCount(0);
-  await expect(page.locator(".task-actions .spin")).toHaveCount(1);
+  await expect(checkRunButton).toHaveAttribute("data-loading", "true");
+  await expect(runButton).not.toHaveAttribute("data-loading", "true");
+  await expect(page.locator(".channel-task-actions .ling-ui-spinner")).toHaveCount(1);
 });
 
 test("workspace task run sends the selected session permission mode", async ({ page }) => {
@@ -270,8 +275,9 @@ test("workspace task run sends the selected session permission mode", async ({ p
 
   await openTaskFromAttentionQueue(page, "Inspect workspace");
   const taskDetail = page.locator("article.task-detail");
-  await expect(taskDetail.getByRole("group", { name: "Permission preset" })).toBeVisible();
-  await taskDetail.getByRole("button", { name: "Workspace write" }).click();
+  await taskDetail.getByText("Permissions", { exact: true }).click();
+  await expect(taskDetail.getByRole("radiogroup", { name: "Permission preset" })).toBeVisible();
+  await taskDetail.getByRole("radio", { name: "Workspace write" }).click();
   await taskDetail.getByRole("button", { name: "Run", exact: true }).click();
 
   await expect.poll(() => {
@@ -317,11 +323,13 @@ test("workspace full access task run requires confirmation and sends confirmatio
 
   await openTaskFromAttentionQueue(page, "Inspect workspace");
   const taskDetail = page.locator("article.task-detail");
-  await taskDetail.getByRole("button", { name: "Full access" }).click();
+  await taskDetail.getByText("Permissions", { exact: true }).click();
+  await taskDetail.getByRole("radio", { name: "Full access" }).click();
   await taskDetail.getByRole("button", { name: "Run", exact: true }).click();
 
   const confirmSheet = page.getByRole("dialog", { name: "Confirm full access" });
   await expect(confirmSheet).toBeVisible();
+  await expect(confirmSheet).toHaveClass(/ling-ui-dialog-content/u);
   await confirmSheet.getByRole("button", { name: "Cancel" }).last().click();
   await expect(confirmSheet).toHaveCount(0);
   expect(state.runs).toHaveLength(0);
@@ -419,7 +427,7 @@ test("succeeded workspace tasks show a clear result action", async ({ page }) =>
       sourceId: "work_item_completed_task",
       title: "Inspect workspace",
       description: "Open the completed task from the work board.",
-      status: "ready",
+      status: "done",
       priority: "normal",
       labels: ["result"],
       taskId: "task_inspect",
@@ -436,7 +444,12 @@ test("succeeded workspace tasks show a clear result action", async ({ page }) =>
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await openTaskFromAttentionQueue(page, "Inspect workspace");
+  const navigation = page.getByLabel("Ling Stack navigation");
+  await navigation.getByRole("button", { name: "Work Board" }).click();
+  const workBoard = page.locator(".work-board-page");
+  await workBoard.getByLabel("Work board views").getByRole("button", { name: "History" }).click();
+  const completedTask = workBoard.locator("[data-work-item-id='work_item_completed_task']");
+  await completedTask.getByRole("button", { name: "Open task" }).click();
   await expect(page.getByText("Task complete").first()).toBeVisible();
 
   const taskDetail = page.locator("article.task-detail");

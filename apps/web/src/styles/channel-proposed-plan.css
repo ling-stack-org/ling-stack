@@ -1,0 +1,80 @@
+.proposed-plan-block {
+  display: grid;
+  width: min(680px, 100%);
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  gap: var(--ling-space-4);
+  margin-top: var(--ling-space-5);
+  padding: var(--ling-space-5);
+  border: 1px solid color-mix(in srgb, var(--accent-border) 58%, var(--conversation-border));
+  border-radius: var(--ling-radius-lg);
+  background: color-mix(in srgb, var(--accent-soft) 34%, var(--conversation-bg));
+}
+
+.proposed-plan-head {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  min-width: 0;
+  gap: var(--ling-space-4);
+}
+
+.proposed-plan-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--ling-radius-md);
+  background: var(--surface-selected);
+  color: var(--accent);
+}
+
+.proposed-plan-head span:last-child {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
+.proposed-plan-head strong,
+.proposed-plan-head small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proposed-plan-head strong {
+  color: var(--conversation-text-strong);
+  font-size: var(--ling-font-sm);
+  font-weight: 720;
+}
+
+.proposed-plan-head small {
+  color: var(--conversation-text-muted);
+  font-size: 11px;
+}
+
+.proposed-plan-body {
+  min-width: 0;
+  max-width: 100%;
+  padding-left: 30px;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.proposed-plan-actions {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--ling-space-4);
+  padding-left: 30px;
+}
+
+.proposed-plan-action {
+  max-width: 100%;
+  flex: 0 1 auto;
+}

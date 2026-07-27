@@ -1,0 +1,117 @@
+.automation-ui2-inspector {
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: var(--ling-space-6);
+  overscroll-behavior: contain;
+  background: var(--ling-bg-subtle);
+  scrollbar-color: color-mix(in srgb, var(--ling-text-muted) 44%, transparent) transparent;
+}
+
+.automation-ui2-inspector-header {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--ling-space-5);
+  padding-bottom: var(--ling-space-5);
+  border-bottom: 1px solid var(--ling-border-default);
+}
+
+.automation-ui2-inspector-header > div {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
+.automation-ui2-inspector-header h2,
+.automation-ui2-inspector-header strong {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.automation-ui2-inspector-header h2 {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  font-weight: 650;
+  line-height: var(--ling-line-xs);
+}
+
+.automation-ui2-inspector-header strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+  line-height: var(--ling-line-sm);
+}
+
+.automation-ui2-inspector-sections {
+  min-width: 0;
+}
+
+.automation-ui2-inspector-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ling-space-5);
+  margin: 0;
+}
+
+.automation-ui2-latest-run,
+.automation-ui2-output-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ling-space-4);
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+}
+
+.automation-ui2-repair {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-5);
+}
+
+.automation-ui2-repair p {
+  margin: 0;
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-sm);
+  line-height: var(--ling-line-sm);
+}
+
+.automation-ui2-target-repair {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--ling-space-4);
+}
+
+.automation-ui2-preview,
+.automation-ui2-raw {
+  max-height: 220px;
+  margin: 0;
+  overflow: auto;
+  padding: var(--ling-space-5);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  color: var(--ling-text-muted);
+  background: var(--ling-bg-panel);
+  font-size: 11px;
+  line-height: 17px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 1100px) {
+  .automation-ui2-inspector {
+    padding: var(--ling-space-5);
+  }
+
+  .automation-ui2-inspector-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

@@ -1,0 +1,545 @@
+.task-workbench-main.channel-settings-main {
+  grid-template-columns: minmax(0, 1fr);
+  background: var(--ling-bg-panel);
+}
+
+.channel-settings-page[data-ui2-channel-settings="true"] {
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  color: var(--ling-text-default);
+  background: var(--ling-bg-canvas);
+}
+
+.channel-settings-refresh-button {
+  justify-self: end;
+  white-space: nowrap;
+}
+
+.workbench-settings-panel.channel-teammate-dock {
+  position: absolute;
+  z-index: 35;
+  top: 54px;
+  left: 50%;
+  width: min(780px, calc(100% - 72px));
+  max-height: min(620px, calc(100dvh - 76px));
+  padding: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 0;
+  border-radius: var(--ling-radius-md);
+  background: transparent;
+  box-shadow: var(--ling-shadow-overlay);
+  transform: translateX(-50%);
+}
+
+.channel-teammate-dock .channel-settings-card {
+  gap: var(--ling-space-5);
+  padding: var(--ling-space-6);
+  background: var(--ling-bg-elevated);
+}
+
+.channel-teammate-dock .channel-teammate-list {
+  gap: var(--ling-space-3);
+}
+
+.channel-teammate-dock .channel-teammate-chip {
+  min-height: 40px;
+}
+
+.channel-teammate-dock .channel-teammate-add-row {
+  gap: var(--ling-space-3);
+}
+
+@media (min-width: 901px) {
+  .task-workbench-window.with-channel-side-panel > .workbench-settings-panel.channel-teammate-dock {
+    left: calc((100% - min(340px, calc(100vw - 320px))) / 2);
+    width: min(780px, calc(100% - min(340px, calc(100vw - 320px)) - 72px));
+    margin-right: 0;
+  }
+}
+
+.channel-settings-stack {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+.channel-settings-tabs-scroll {
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-bottom: 1px solid var(--ling-border-default);
+  background: var(--ling-bg-panel);
+  scrollbar-width: thin;
+}
+
+.channel-settings-tabs {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(112px, 1fr));
+  width: min(1180px, 100%);
+  min-width: 620px;
+  margin: 0 auto;
+  padding: 0 var(--ling-space-6);
+  gap: 0;
+  overflow: visible;
+}
+
+.channel-settings-tabs .channel-settings-tab {
+  width: 100%;
+  height: 48px;
+  border-radius: 0;
+}
+
+.channel-settings-tab-content {
+  min-width: 0;
+  min-height: 0;
+  padding: var(--ling-space-7) var(--ling-space-6) var(--ling-space-8);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.channel-settings-tab-panel {
+  width: min(1120px, 100%);
+  min-width: 0;
+  margin: 0 auto;
+}
+
+.channel-settings-general-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(300px, 0.75fr);
+  align-items: start;
+  gap: var(--ling-space-7);
+  min-width: 0;
+}
+
+.channel-settings-surface {
+  display: grid;
+  align-content: start;
+  gap: var(--ling-space-5);
+  min-width: 0;
+  padding-top: var(--ling-space-5);
+  border: 0;
+  border-top: 1px solid var(--ling-border-default);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.channel-settings-surface-heading,
+.channel-settings-section-head,
+.channel-workspace-control-head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ling-space-5);
+}
+
+.channel-settings-surface-heading strong,
+.channel-settings-section-head strong,
+.channel-workspace-control-head strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+  font-weight: 650;
+  line-height: var(--ling-line-sm);
+}
+
+.channel-settings-section-head > div,
+.channel-settings-section-head > span,
+.channel-workspace-control-head > span {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--ling-space-3);
+}
+
+.channel-settings-section-head > div {
+  display: grid;
+  gap: var(--ling-space-1);
+}
+
+.channel-settings-section-head small {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+.channel-settings-row-list {
+  display: grid;
+  min-width: 0;
+}
+
+.channel-settings-row.ling-ui-data-row {
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: var(--ling-space-5);
+  min-height: 72px;
+  padding: var(--ling-space-5) var(--ling-space-1);
+  border-bottom-color: var(--ling-border-default);
+  background: transparent;
+}
+
+.channel-settings-row.ling-ui-data-row:hover {
+  background: transparent;
+}
+
+.channel-settings-row .ling-ui-data-row-identity {
+  display: inline-grid;
+  place-items: center;
+}
+
+.channel-settings-row .ling-ui-data-row-summary,
+.channel-settings-row .ling-ui-field,
+.channel-settings-row .runtime-policy-summary {
+  width: 100%;
+  min-width: 0;
+}
+
+.channel-settings-row-icon {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  color: var(--ling-text-muted);
+}
+
+.channel-settings-row:focus-within .channel-settings-row-icon,
+.channel-settings-row:hover .channel-settings-row-icon {
+  color: var(--ling-text-strong);
+}
+
+.channel-settings-row .ling-ui-field {
+  grid-template-columns: minmax(138px, 0.42fr) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--ling-space-5);
+}
+
+.channel-settings-row .ling-ui-field-error,
+.channel-settings-row .ling-ui-field-description {
+  grid-column: 2;
+}
+
+.channel-settings-page .ling-ui-input-suffix {
+  display: inline-flex;
+  width: auto;
+  height: auto;
+  align-items: center;
+  gap: var(--ling-space-1);
+  margin-right: var(--ling-space-1);
+}
+
+.channel-settings-field-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ling-space-1);
+}
+
+.channel-settings-field-action.ling-ui-button[data-icon-only="true"] {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+}
+
+.channel-settings-runtime-row .runtime-policy-summary {
+  display: grid;
+  grid-template-columns: minmax(138px, 0.42fr) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--ling-space-2) var(--ling-space-5);
+}
+
+.runtime-policy-summary-label {
+  grid-row: 1 / span 2;
+  color: var(--ling-text-default);
+  font-size: var(--ling-font-xs);
+  font-weight: 650;
+}
+
+.channel-settings-runtime-row .runtime-policy-summary strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+  line-height: var(--ling-line-sm);
+}
+
+.channel-settings-runtime-row .runtime-policy-summary small {
+  max-width: 560px;
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+.channel-notification-panel {
+  gap: var(--ling-space-5);
+}
+
+.channel-settings-page .channel-notification-options.ling-ui-segmented-control {
+  display: grid;
+  grid-template-columns: minmax(0, 0.86fr) minmax(0, 1.62fr) minmax(0, 0.72fr);
+  width: 100%;
+  overflow: hidden;
+}
+
+.channel-settings-page .channel-notification-option.ling-ui-segmented-control-item {
+  width: 100%;
+  height: 34px;
+  gap: var(--ling-space-2);
+  padding: 0 var(--ling-space-3);
+  overflow: hidden;
+}
+
+.channel-settings-page .channel-notification-option > strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.channel-notification-description {
+  margin: 0;
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+.channel-workspace-settings {
+  width: min(880px, 100%);
+}
+
+.channel-workspace-control {
+  display: grid;
+  gap: var(--ling-space-5);
+  min-width: 0;
+  padding-top: var(--ling-space-6);
+  border: 0;
+  border-top: 1px solid var(--ling-border-default);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.channel-workspace-summary {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-2);
+}
+
+.channel-workspace-summary small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-workspace-actions {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: var(--ling-space-3);
+}
+
+.channel-workspace-external-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: var(--ling-space-3);
+  min-width: 0;
+}
+
+.channel-settings-members-panel,
+.channel-settings-councils-panel,
+.channel-settings-health-panel {
+  width: min(980px, 100%);
+}
+
+.channel-settings-loading-list,
+.channel-teammate-list,
+.channel-council-list,
+.channel-council-specialist-list {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-2);
+}
+
+.channel-teammate-chip.ling-ui-data-row,
+.channel-council-specialist.ling-ui-data-row {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  background: var(--ling-bg-panel);
+}
+
+.channel-teammate-chip-main,
+.channel-council-card-main {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--ling-space-3);
+}
+
+.channel-teammate-select {
+  min-width: min(260px, 100%);
+}
+
+.channel-teammate-remove-button.ling-ui-button[data-icon-only="true"] {
+  position: static;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+}
+
+.channel-council-icon {
+  display: inline-grid;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  color: var(--ling-text-default);
+  background: var(--ling-bg-subtle);
+}
+
+.channel-teammate-chip-main strong,
+.channel-council-card-main strong,
+.channel-council-card-main small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-council-card-main > span:last-child {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
+.channel-council-card-main small {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+}
+
+.channel-council-card.ling-ui-data-row {
+  grid-template-columns: minmax(180px, 0.8fr) minmax(0, 1.4fr) auto auto;
+  align-items: start;
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  background: var(--ling-bg-panel);
+}
+
+.channel-council-card.preferred {
+  border-color: var(--ling-border-strong);
+}
+
+.channel-council-summary {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-3);
+}
+
+.channel-council-summary .context-packet {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: var(--ling-space-2);
+}
+
+.channel-council-summary .context-packet > span {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+.channel-council-health {
+  padding: var(--ling-space-2) var(--ling-space-3);
+}
+
+.channel-council-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ling-space-2);
+}
+
+.channel-teammate-add-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto auto;
+  align-items: end;
+  gap: var(--ling-space-3);
+  min-width: 0;
+}
+
+.channel-council-projection {
+  display: grid;
+  max-height: 260px;
+  min-width: 0;
+  gap: var(--ling-space-3);
+  overflow: auto;
+}
+
+.channel-council-projection > strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-xs);
+}
+
+.channel-settings-health-panel > .channel-settings-card,
+.channel-settings-health-panel > .channel-team-metrics-panel {
+  padding-top: var(--ling-space-5);
+  border: 0;
+  border-top: 1px solid var(--ling-border-default);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+@media (max-width: 1100px) {
+  .channel-settings-general-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .channel-council-card.ling-ui-data-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .channel-council-card .ling-ui-data-row-summary {
+    grid-column: 1;
+  }
+}
+
+@media (max-width: 760px) {
+  .channel-settings-tab-content {
+    padding-inline: var(--ling-space-5);
+  }
+
+  .channel-settings-row .ling-ui-field,
+  .channel-settings-runtime-row .runtime-policy-summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .channel-settings-row .ling-ui-field-error,
+  .channel-settings-row .ling-ui-field-description,
+  .runtime-policy-summary-label {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .channel-teammate-add-row,
+  .channel-workspace-external-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .channel-settings-page * {
+    scroll-behavior: auto;
+  }
+}

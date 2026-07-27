@@ -1,0 +1,22 @@
+{
+  "file": "1440x960-ling-light-generating.png",
+  "functionIds": [
+    "MEDIA-JOB-LIST-001",
+    "MEDIA-JOB-RESULT-001"
+  ],
+  "fixtureId": "media_video_running",
+  "url": "/",
+  "servedArtifact": "Vite source",
+  "locale": "zh-CN",
+  "themeId": "ling-light",
+  "viewport": {
+    "width": 1440,
+    "height": 960
+  },
+  "stateTrigger": "media_video_running",
+  "expectedAction": "Wait for authoritative status",
+  "consoleErrors": 0,
+  "rootOverflow": 0,
+  "sha256": "e095168c4c5f4eca4b8560d549137cea9e7ca77c9aaef5daacbd56f8db2d18d2",
+  "packagedDesktop": "pending"
+}

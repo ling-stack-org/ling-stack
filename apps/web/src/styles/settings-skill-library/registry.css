@@ -1,0 +1,140 @@
+.settings-skill-library-body {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  max-height: var(--skill-library-content-max-height);
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: var(--ling-space-5);
+  overflow: hidden;
+}
+
+.settings-skill-library-body.has-drawer {
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.36fr);
+}
+
+.settings-skill-table-wrap {
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  max-height: var(--skill-library-content-max-height);
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.settings-skill-table {
+  min-width: min(680px, 100%);
+  table-layout: fixed;
+}
+
+.settings-skill-table th:first-child,
+.settings-skill-table td:first-child {
+  width: 190px;
+}
+
+.settings-skill-table th:nth-child(3),
+.settings-skill-table td:nth-child(3) {
+  width: 160px;
+}
+
+.settings-skill-table th:nth-child(4),
+.settings-skill-table td:nth-child(4) {
+  width: 136px;
+}
+
+.settings-skill-table--user th:nth-child(5),
+.settings-skill-table--user td:nth-child(5),
+.settings-skill-table--evolved th:nth-child(5),
+.settings-skill-table--evolved td:nth-child(5) {
+  width: 78px;
+  padding-inline: var(--ling-space-2);
+  text-align: right;
+}
+
+.settings-skill-clickable-row {
+  cursor: pointer;
+}
+
+.settings-skill-clickable-row[aria-selected="true"] > td,
+.settings-skill-clickable-row:hover > td {
+  background: var(--ling-bg-subtle);
+}
+
+.settings-skill-clickable-row:focus-visible {
+  outline: 2px solid var(--ling-border-focus);
+  outline-offset: -2px;
+}
+
+.settings-skill-name-cell {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--ling-space-3);
+}
+
+.settings-skill-name-cell strong,
+.settings-skill-summary-cell,
+.settings-skill-bound-cell,
+.settings-skill-updated-cell {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-skill-name-cell strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-xs);
+}
+
+.settings-skill-summary-cell,
+.settings-skill-bound-cell,
+.settings-skill-updated-cell {
+  color: var(--ling-text-muted);
+}
+
+.settings-skill-row-actions {
+  display: inline-flex;
+  min-width: 0;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  gap: var(--ling-space-2);
+}
+
+.settings-skill-empty-token {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+}
+
+.settings-skill-token-list {
+  display: inline-flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ling-space-2);
+}
+
+.settings-skill-token-list code,
+.settings-skill-token-list small {
+  display: inline-flex;
+  min-height: 20px;
+  max-width: 100%;
+  align-items: center;
+  padding: 0 var(--ling-space-3);
+  overflow: hidden;
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-sm);
+  color: var(--ling-text-default);
+  background: var(--ling-bg-subtle);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 1320px) {
+  .settings-skill-library-body.has-drawer {
+    grid-template-columns: minmax(0, 1fr);
+    overflow: visible;
+  }
+}

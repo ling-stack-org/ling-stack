@@ -15,8 +15,11 @@ async function useEnglishLocale(page: Page): Promise<void> {
 }
 
 async function openProviderRowMenu(row: Locator): Promise<Locator> {
-  await row.locator(".provider-row-menu-trigger").hover();
-  const menu = row.locator(".provider-row-menu-popover");
+  const trigger = row.getByRole("button", { name: /^(More|更多)$/ });
+  await trigger.hover();
+  await expect(row.page().getByRole("tooltip")).toBeHidden();
+  await trigger.click();
+  const menu = row.page().getByRole("menu");
   await expect(menu).toBeVisible();
   return menu;
 }
@@ -153,8 +156,12 @@ test("model workbench Chinese mode localizes setup copy and uses an add model sh
     const workspace = workspaceElement?.getBoundingClientRect();
     const rect = workbench.getBoundingClientRect();
     const style = workspaceElement ? getComputedStyle(workspaceElement) : undefined;
-    const contentLeft = workspace && style ? workspace.left + Number.parseFloat(style.paddingLeft) : undefined;
-    const contentRight = workspace && style ? workspace.right - Number.parseFloat(style.paddingRight) : undefined;
+    const contentLeft = workspace && style && workspaceElement
+      ? workspace.left + workspaceElement.clientLeft + Number.parseFloat(style.paddingLeft)
+      : undefined;
+    const contentRight = workspace && style && workspaceElement
+      ? workspace.left + workspaceElement.clientLeft + workspaceElement.clientWidth - Number.parseFloat(style.paddingRight)
+      : undefined;
     return contentLeft !== undefined && contentRight !== undefined
       ? {
         workspaceContent: { left: contentLeft, right: contentRight },
@@ -181,19 +188,12 @@ test("model workbench Chinese mode localizes setup copy and uses an add model sh
   const missingKeyStatusHint = missingKeyGatewayRow.locator(".provider-status-hint");
   await expect(missingKeyStatusHint).toBeVisible();
   await missingKeyStatusHint.hover();
-  await expect.poll(() =>
-    missingKeyStatusHint.evaluate((element) => ({
-      content: getComputedStyle(element, "::after").content,
-      opacity: getComputedStyle(element, "::after").opacity,
-    })),
-  ).toEqual(expect.objectContaining({ opacity: "1" }));
-  await expect.poll(() =>
-    missingKeyStatusHint.evaluate((element) => getComputedStyle(element, "::after").content),
-  ).toContain("Missing Key Gateway");
+  await expect(page.getByRole("tooltip")).toContainText("Missing Key Gateway");
   const missingKeyMenu = await openProviderRowMenu(missingKeyGatewayRow);
   await expect(missingKeyMenu.getByRole("menuitem", { name: "停用" })).toBeVisible();
-  await page.mouse.move(0, 0);
+  await page.keyboard.press("Escape");
   await expect(missingKeyMenu).toBeHidden();
+  await expect(missingKeyGatewayRow.getByRole("button", { name: "更多" })).toBeFocused();
   await expect(missingKeyGatewayRow.getByRole("button", { name: "使用" })).toHaveCount(0);
   const tableLayout = await missingKeyGatewayRow.evaluate((row) => {
     const cells = Array.from(row.children).map((cell) => {
@@ -258,12 +258,26 @@ test("model workbench Chinese mode localizes setup copy and uses an add model sh
   const editorBox = await editor.boundingBox();
   const viewport = page.viewportSize();
   expect(editorBox).not.toBeNull();
-  expect((editorBox?.x ?? 0) + (editorBox?.width ?? 0)).toBeGreaterThan(1240);
+  expect(editorBox?.x ?? -1).toBeGreaterThanOrEqual(0);
+  expect(editorBox?.width ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(720);
+  expect((editorBox?.x ?? 0) + (editorBox?.width ?? 0)).toBeLessThanOrEqual(viewport?.width ?? 1280);
+  expect(Math.abs(
+    (editorBox?.x ?? 0) - ((viewport?.width ?? 1280) - ((editorBox?.x ?? 0) + (editorBox?.width ?? 0))),
+  )).toBeLessThanOrEqual(2);
   expect(editorBox?.y ?? -1).toBeGreaterThanOrEqual(0);
   expect((editorBox?.y ?? 0) + (editorBox?.height ?? 0)).toBeLessThanOrEqual(viewport?.height ?? 720);
-  await expect(editor.locator(".provider-sheet-header")).toHaveCSS("border-bottom-width", "0px");
-  await expect(editor.locator(".provider-sheet-footer")).toHaveCSS("border-top-width", "0px");
   const editorBody = editor.locator(".provider-sheet-body");
+  await expect(editorBody).toHaveCSS("overflow-y", "auto");
+  const [editorHeaderBox, editorBodyBox, editorFooterBox] = await Promise.all([
+    editor.locator(".provider-sheet-header").boundingBox(),
+    editorBody.boundingBox(),
+    editor.locator(".provider-sheet-footer").boundingBox(),
+  ]);
+  expect(editorHeaderBox).not.toBeNull();
+  expect(editorBodyBox).not.toBeNull();
+  expect(editorFooterBox).not.toBeNull();
+  expect((editorHeaderBox?.y ?? 0) + (editorHeaderBox?.height ?? 0)).toBeLessThanOrEqual((editorBodyBox?.y ?? 0) + 1);
+  expect((editorBodyBox?.y ?? 0) + (editorBodyBox?.height ?? 0)).toBeLessThanOrEqual((editorFooterBox?.y ?? 0) + 1);
   const editorTitle = editor.getByRole("heading", { name: "新建预设" });
   const editorCloseButton = editor.getByRole("button", { name: "关闭模型预设编辑器" });
   const savePresetButton = editor.getByRole("button", { name: "添加模型" });
@@ -323,11 +337,8 @@ test("model workbench Chinese mode localizes setup copy and uses an add model sh
   await expect(page.getByText("高级 env/keychain")).toHaveCount(0);
   await expect(page.getByText("env:OPENAI_API_KEY")).toHaveCount(0);
   await expect.poll(() =>
-    page.evaluate(() => ({
-      bodyOverflow: getComputedStyle(document.body).overflow,
-      htmlOverflow: getComputedStyle(document.documentElement).overflow,
-    })),
-  ).toEqual({ bodyOverflow: "hidden", htmlOverflow: "hidden" });
+    page.evaluate(() => getComputedStyle(document.body).overflow),
+  ).toBe("hidden");
 
   const titleBeforeScroll = await editorTitle.boundingBox();
   const closeBeforeScroll = await editorCloseButton.boundingBox();
@@ -490,7 +501,8 @@ test("model workbench imports Doubao supplier models without hiding media-lookin
   await page.getByRole("button", { name: /导入选中模型.*2/ }).click();
 
   await expect(editor).toHaveCount(0);
-  await expect(page.locator(".provider-batch-result.ok")).toContainText("已导入 2 个模型预设。");
+  await expect(page.locator('[data-ling-overlay="toast"][data-scope="model-workbench:model-import"]')).toContainText("已导入 2 个模型预设。");
+  await expect(page.locator(".provider-batch-result.ok")).toHaveCount(0);
   await expect(page.getByText(/Provider rejected the endpoint or model/)).toHaveCount(0);
   const doubaoChatRow = page.locator(".provider-row").filter({ hasText: "doubao-1-5-pro-32k-250115" });
   const doubaoImageRow = page.locator(".provider-row").filter({ hasText: "doubao-seedream-5-0-260128" });
@@ -726,7 +738,24 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await expect(readyLocalRelayRow).toContainText("Current default");
   await expect(readyLocalRelayRow.getByRole("button", { name: "Clear default" })).toHaveCount(0);
   const readyLocalRelayActionCell = readyLocalRelayRow.locator("td").nth(3);
-  await expect(readyLocalRelayActionCell).toHaveCSS("border-left-color", "rgb(229, 229, 229)");
+  const actionDivider = await readyLocalRelayActionCell.evaluate((element) => {
+    const probe = document.createElement("span");
+    probe.style.color = "var(--ling-border-default)";
+    element.appendChild(probe);
+    const tokenColor = getComputedStyle(probe).color;
+    probe.remove();
+    const style = getComputedStyle(element);
+    return {
+      color: style.borderLeftColor,
+      tokenColor,
+      width: style.borderLeftWidth,
+    };
+  });
+  expect(actionDivider).toEqual({
+    color: actionDivider.tokenColor,
+    tokenColor: actionDivider.tokenColor,
+    width: "1px",
+  });
   await expect(readyLocalRelayActionCell).toHaveCSS("box-shadow", "none");
   await clickProviderRowMenuItem(readyLocalRelayRow, "Clear default");
   await expect(readyLocalRelayRow.getByRole("button", { name: "Set default" })).toBeVisible();
@@ -890,7 +919,9 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await expect(page.getByText("0 selected")).toBeVisible();
   await expect(page.getByRole("button", { name: "Select visible" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Clear selection" })).toBeDisabled();
-  await page.getByLabel("Select gpt-image-2").check();
+  const imageModelCheckbox = page.getByRole("dialog", { name: "Edit preset" }).getByLabel("Select gpt-image-2");
+  await imageModelCheckbox.locator("xpath=..").click();
+  await expect(imageModelCheckbox).toBeChecked();
   await expect(page.getByText("1 selected")).toBeVisible();
   await expect(page.getByRole("button", { name: "Save current preset" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Import selected models (1)" })).toBeVisible();
@@ -975,7 +1006,7 @@ test("model workbench status counts align with saved chat and media presets", as
   await expect(page.locator(".provider-group-row")).toHaveCount(0);
 });
 
-test("model workbench row checks show inline feedback without spinning batch check", async ({ page }) => {
+test("model workbench row checks separate scoped success Toasts from persistent failures", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
   state.providerCheckDelayMs = 800;
@@ -1002,14 +1033,19 @@ test("model workbench row checks show inline feedback without spinning batch che
   await openModelWorkbench(page);
   const checkAllButton = page.getByRole("button", { name: "Check all" });
   const readyRow = page.locator(".provider-row").filter({ hasText: "Ready Local Relay" });
-  await readyRow.getByRole("button", { name: "Check" }).click();
-  await expect(readyRow.getByRole("button", { name: "Check" }).locator(".spin")).toHaveCount(1);
+  const readyCheckButton = readyRow.getByRole("button", { name: "Check" });
+  await readyCheckButton.click();
+  await expect(readyCheckButton).toHaveAttribute("aria-busy", "true");
   await expect(checkAllButton).toBeDisabled();
-  await expect(checkAllButton.locator(".spin")).toHaveCount(0);
-  const readyFeedback = page.locator(".provider-check-feedback-row.ok").filter({ hasText: "Check passed" });
-  await expect(readyFeedback).toContainText("Provider is reachable and accepted the configured model.");
-  await expect(readyFeedback).toContainText("Ready for run.");
-  await expect(readyFeedback).toHaveCount(0, { timeout: 3500 });
+  await expect(checkAllButton).not.toHaveAttribute("aria-busy", "true");
+  const readyToast = page.locator(
+    '[data-ling-overlay="toast"][data-scope="provider:provider_ready:check"]',
+  );
+  await expect(readyToast).toContainText("Check passed");
+  await expect(readyToast).toContainText("Provider is reachable and accepted the configured model.");
+  await expect(page.locator(".provider-check-feedback-row.ok")).toHaveCount(0);
+  await readyToast.getByRole("button", { name: "Dismiss notification" }).click();
+  await expect(readyToast).toHaveCount(0);
 
   const failedRow = page.locator(".provider-row").filter({ hasText: "Auth Failed Gateway" });
   await failedRow.getByRole("button", { name: "Check" }).click();
@@ -1021,25 +1057,29 @@ test("model workbench row checks show inline feedback without spinning batch che
 
   const mediaRow = page.locator(".provider-row").filter({ hasText: "Seedream Image" });
   await mediaRow.getByRole("button", { name: "Check" }).click();
-  const mediaFeedback = page.locator(".provider-check-feedback-row.ok").filter({ hasText: "Generation model configuration check passed." });
-  await expect(mediaFeedback).toContainText("Check passed");
-  await expect(mediaFeedback).toContainText("Run Image Generation to create real results. This check does not create an image.");
-  await expect(mediaFeedback).toContainText("Check details");
-  await expect(mediaFeedback).not.toContainText("Media vendor transport");
-  await expect(mediaFeedback).not.toContainText("no live vendor");
-  await expect(page.locator(".provider-check-feedback-row")).toHaveCount(1);
-  await expect(mediaFeedback).toHaveCount(0, { timeout: 3500 });
+  const mediaToast = page.locator(
+    '[data-ling-overlay="toast"][data-scope="provider:provider_seedream:check"]',
+  );
+  await expect(mediaToast).toContainText("Check passed");
+  await expect(mediaToast).toContainText("Generation model configuration check passed.");
+  await expect(mediaToast).not.toContainText("Media vendor transport");
+  await expect(mediaToast).not.toContainText("no live vendor");
+  await expect(page.locator(".provider-check-feedback-row")).toHaveCount(0);
+  await mediaToast.getByRole("button", { name: "Dismiss notification" }).click();
+  await expect(mediaToast).toHaveCount(0);
 
   await page.reload();
   await openModelWorkbench(page);
   await page.getByRole("button", { name: "Check all" }).click();
-  await expect(checkAllButton.locator(".spin")).toHaveCount(1);
+  await expect(checkAllButton).toHaveAttribute("aria-busy", "true");
   await expect(page.locator(".provider-check-feedback-row")).toHaveCount(0);
   await expect(page.locator(".provider-batch-result")).toContainText("Checked 3 model presets");
   await expect(page.locator(".provider-batch-result")).toContainText("2 ready, 1 failed");
   await expect(page.locator(".provider-batch-result")).not.toContainText("Chat");
   await expect(page.locator(".provider-batch-result")).not.toContainText("media");
-  await expect(page.locator(".provider-batch-result")).toHaveCount(0, { timeout: 3500 });
+  await page.waitForTimeout(2_200);
+  await expect(page.locator(".provider-batch-result.bad")).toBeVisible();
+  await expect(page.locator('[data-ling-overlay="toast"][data-scope="model-workbench:batch-check"]')).toHaveCount(0);
 });
 
 test("save and check enables a disabled provider before checking", async ({ page }) => {

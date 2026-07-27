@@ -1,0 +1,160 @@
+.plugin-table {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: var(--ling-bg-panel);
+}
+
+.plugin-table-grid {
+  --plugin-table-columns: minmax(260px, 1fr) 120px 152px 296px;
+  display: grid;
+  grid-template-rows: 36px minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  table-layout: fixed;
+}
+
+.plugin-table-header,
+.plugin-table-body {
+  display: block;
+  min-width: 0;
+}
+
+.plugin-table-header {
+  position: relative;
+  z-index: 1;
+  border-bottom: 1px solid var(--ling-border-strong);
+  background: var(--ling-bg-subtle);
+}
+
+.plugin-table-body {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.plugin-table-header tr,
+.plugin-table-row {
+  display: grid;
+  grid-template-columns: var(--plugin-table-columns);
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+}
+
+.plugin-table-header tr {
+  height: 36px;
+}
+
+.plugin-table-header th {
+  display: flex;
+  min-width: 0;
+  height: 36px;
+  box-sizing: border-box;
+  align-items: center;
+  padding: 0 var(--ling-space-5);
+  border: 0;
+  background: transparent;
+}
+
+.plugin-table-header th:last-child {
+  justify-content: flex-end;
+}
+
+.plugin-table-row {
+  height: 64px;
+  border-bottom: 1px solid var(--ling-border-default);
+}
+
+.plugin-table-row:hover {
+  background: var(--ling-bg-subtle);
+}
+
+.plugin-table-row td {
+  display: flex;
+  min-width: 0;
+  height: 64px;
+  box-sizing: border-box;
+  align-items: center;
+  padding: 0 var(--ling-space-5);
+  border: 0;
+  background: transparent;
+}
+
+.plugin-table-name {
+  gap: var(--ling-space-4);
+}
+
+.plugin-table-name > svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  color: var(--ling-text-muted);
+}
+
+.plugin-table-name-copy {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
+.plugin-table-name-copy strong,
+.plugin-table-name-copy small,
+.plugin-table-source span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plugin-table-name-copy strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+  font-weight: 650;
+  line-height: var(--ling-line-sm);
+}
+
+.plugin-table-name-copy small,
+.plugin-table-source {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+.plugin-table-actions-cell,
+.plugin-table-actions {
+  justify-content: flex-end;
+}
+
+.plugin-table-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--ling-space-2);
+  white-space: nowrap;
+}
+
+.plugin-table-primary-action {
+  max-width: 160px;
+}
+
+.plugin-table-empty-row,
+.plugin-table-empty-row td {
+  display: block;
+  height: auto;
+  border: 0;
+}
+
+.plugin-table-empty {
+  min-height: 160px;
+}
+
+.plugin-table-skeleton-row {
+  pointer-events: none;
+}

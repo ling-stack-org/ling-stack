@@ -1,0 +1,22 @@
+.desktop-computer-use-control {
+  --ling-capability-control-width: auto;
+  --ling-capability-control-max-width: min(360px, calc(100vw - 24px));
+  --ling-capability-control-label-max-width: 128px;
+  flex: 0 0 auto;
+}
+
+.teammate-chat-header:has(.desktop-computer-use-control[data-has-issue="true"]) {
+  z-index: 30;
+  overflow: visible;
+}
+
+@media (max-width: 640px) {
+  .teammate-chat-header {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .teammate-chat-header .teammate-workspace-identity {
+    min-width: 0;
+    max-width: none;
+  }
+}

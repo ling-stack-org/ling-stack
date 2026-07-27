@@ -2,9 +2,17 @@
 
 ## Status
 
-Approved architecture direction. Packaging has not started. The minimal Electron shell
-required by Computer Use picture-in-picture is the first concrete implementation target;
-tray, updater, and full keychain UX remain later shell slices.
+Approved architecture direction with an implemented Electron alpha. Unsigned macOS/Windows
+packaging, shared Web main window, daemon lifecycle/recovery, and the first Computer Use
+picture-in-picture slices exist. Signing/notarization, hosted signed CI, clean-machine release
+acceptance, tray, updater, and full keychain UX remain incomplete or later shell slices.
+
+## Related Docs
+
+- [Ling UI 2.0](ui2.0升级/README.md)
+- [UI React Shared Package Architecture](ui2.0升级/architecture/01-ui-react共享包架构.md)
+- [UI 2.0 Theme Packs](ui2.0升级/themes/README.md)
+- [Theme Registry And Runtime Switching](ui2.0升级/architecture/07-主题注册表与运行时切换.md)
 
 ## Purpose
 
@@ -17,6 +25,10 @@ owns OS integration.
 Desktop keeps the macOS client visual treatment. Web may use a stricter platform-console
 treatment, but both surfaces share the same navigation terms, state semantics, daemon
 contracts, and approval boundaries.
+
+Desktop UI implementation must consume `@ling-stack/ui-react` and the UI 2.0
+tokens. Desktop-specific code may own window chrome and OS integrations, but it
+must not fork Button, Dialog, Menu, Toast, form, status, or feature-page UI.
 
 ## Goals
 
@@ -232,22 +244,35 @@ source attribution and effective specialist resolution.
 Desktop uses the same Ling Stack product model as Web, but a different surface
 treatment:
 
-| Surface | Light treatment | Dark treatment | Theme control |
+| Surface | Theme source | Client treatment | Selection |
 | --- | --- | --- | --- |
-| Web | Strict optical-white developer console | Strict dark technical console | system / light / dark |
-| Desktop | macOS glass workspace | macOS dark glass workspace | system / light / dark |
+| Web | Shared Theme Pack registry | Clear opaque product surface | fixed Theme Pack or System strategy |
+| Desktop | Same Theme Pack registry | Native window material with opaque fallback | fixed Theme Pack or System strategy |
 
 Desktop theme behavior:
 
-- Default to `system` so the app follows macOS appearance.
-- Let users manually choose `light` or `dark`; manual choice takes precedence over
-  system until reset to `system`.
+- `ling-light` and `ling-dark` are independent built-in Theme Packs. They do not
+  form two modes inside one theme.
+- Default to System selection. System light resolves `ling-light`; System dark
+  resolves `ling-dark`.
+- Selecting any Theme Pack switches to fixed mode. OS appearance changes no
+  longer replace that theme until Follow System is enabled again.
 - Keep glass, blur, rounded app-window surfaces, macOS traffic-light chrome, and local
   client affordances in Desktop.
 - Do not copy Web's strict rectangular console chrome into Desktop unless the user is in
   a dense inspector/table subview where platform-console density is useful.
 - Use shared semantic tokens for status, approval, run, provider, and health states so
   screenshots remain comparable across Web and Desktop.
+- Use the same manifest and semantic token map on macOS and Windows. Platform
+  adapters may interpret window material differently, but cannot duplicate or
+  override shared component styling.
+- If blur, vibrancy, Mica, or acrylic is unavailable or disabled, fall back to
+  the Theme Pack's opaque surfaces without changing the Theme Pack ID.
+- Desktop preload resolves and injects the validated Theme Pack before the
+  renderer's first visible frame. Theme persistence belongs to the Desktop
+  settings adapter, not to shared UI components.
+- Locally imported themes are data and approved local images only. Desktop does
+  not execute theme CSS/JavaScript or expose arbitrary filesystem APIs to the renderer.
 
 ## Daemon Lifecycle
 
@@ -277,6 +302,10 @@ export interface LingDesktopApi {
   getDaemonStatus(): Promise<DaemonDesktopStatus>;
   restartDaemon(): Promise<DaemonDesktopStatus>;
   selectWorkspaceDirectory(): Promise<{ readonly path?: string; readonly cancelled: boolean }>;
+  getThemeBootstrapState(): Promise<DesktopThemeBootstrapState>;
+  setThemeSelection(selection: ThemeSelection): Promise<DesktopThemeBootstrapState>;
+  importThemeBundle(): Promise<DesktopThemeImportResult>;
+  removeImportedTheme(themeId: string): Promise<DesktopThemeBootstrapState>;
   getSecretStatus(ref: string, purpose?: SecretPurpose): Promise<SecretStatus>;
   openExternal(url: string): Promise<void>;
   showNotification(input: DesktopNotificationInput): Promise<void>;
@@ -286,6 +315,11 @@ export interface LingDesktopApi {
 
 Do not expose raw Node APIs, arbitrary filesystem reads/writes, shell execution, or raw
 secret values to the renderer.
+
+Theme APIs return validated manifest summaries and client-safe asset handles, not raw
+filesystem paths or archive contents. Import opens a native file picker in the main
+process, validates and stages the bundle, then publishes it atomically. Removing an
+active theme first resolves an internal fallback and never reloads the renderer.
 
 ## Keychain Boundary
 

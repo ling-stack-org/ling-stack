@@ -1,590 +1,201 @@
-import { useMemo, useState } from "react";
-import {
-  CheckCircle2,
-  ChevronDown,
-  ChevronRight,
-  Loader2,
-  Pencil,
-  Plus,
-  RefreshCw,
-  Save,
-  Server,
-  Trash2,
-  Wrench,
-  X,
-} from "lucide-react";
+import { Server, Wrench } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
 import { useI18n } from "../../i18n.js";
-import type {
-  McpServer,
-  McpServerFormState,
-  McpTool,
-} from "../../types.js";
+import {
+  DataRow,
+  EmptyState,
+  InlineFeedback,
+  Skeleton,
+} from "../../shared/ui/index.js";
+import type { McpServer, McpServerFormState, McpTool } from "../../types.js";
+import { McpServerDeleteDialog } from "./McpServerDeleteDialog.js";
+import { McpServerEditorDialog } from "./McpServerEditorDialog.js";
+import { McpServerList } from "./McpServerList.js";
+import { McpServerToolbar } from "./McpServerToolbar.js";
+import {
+  groupMcpToolsByServer,
+  mcpServerStatusPresentation,
+} from "./mcp-settings-view-models.js";
+import { useMcpRowFeedbackController } from "./useMcpRowFeedbackController.js";
 
-import { SelectControl } from "../../shared/components/SelectControl.js";
-
-type PublicMcpServer = McpServer & {
-  readonly secretConfigured?: Readonly<Record<string, boolean>>;
-};
-
-type McpBusyAction = "check" | "sync" | "delete" | "save";
-type McpActionFeedback = {
-  readonly tone: "succeeded" | "failed";
+export interface McpSettingsError {
   readonly message: string;
-};
-
-const defaultMcpServerForm: McpServerFormState = {
-  displayName: "",
-  serverId: "",
-  transportType: "streamable-http",
-  command: "",
-  argsText: "",
-  cwd: "",
-  url: "",
-  headerName: "Authorization",
-  headerSecretRef: "",
-  bearerTokenRef: "",
-  envName: "",
-  envSecretRef: "",
-  startupTimeoutSec: "30",
-  toolTimeoutSec: "60",
-  enabled: true,
-  required: false,
-};
+  readonly scope: "load" | "mutation" | "stream";
+}
 
 export function McpToolsPage({
+  busyAction,
+  busyServerId,
+  cwd,
+  error,
+  isLoading,
+  onCheck,
+  onClearError,
+  onCreate,
+  onDelete,
+  onRefresh,
+  onSyncTools,
+  onUpdate,
   servers,
   tools,
-  isLoading,
-  busyServerId,
-  busyAction,
-  errorMessage,
-  cwd,
-  onRefresh,
-  onCreate,
-  onUpdate,
-  onDelete,
-  onCheck,
-  onSyncTools,
 }: {
+  readonly busyAction?: "check" | "delete" | "save" | "sync";
+  readonly busyServerId: string;
+  readonly cwd: string;
+  readonly error?: McpSettingsError;
+  readonly isLoading: boolean;
+  readonly onCheck: (serverId: string) => Promise<boolean>;
+  readonly onClearError: () => void;
+  readonly onCreate: (form: McpServerFormState) => Promise<void>;
+  readonly onDelete: (serverId: string) => Promise<boolean>;
+  readonly onRefresh: () => void;
+  readonly onSyncTools: (serverId: string) => Promise<boolean>;
+  readonly onUpdate: (serverId: string, form: McpServerFormState) => Promise<void>;
   readonly servers: readonly McpServer[];
   readonly tools: readonly McpTool[];
-  readonly isLoading: boolean;
-  readonly busyServerId: string;
-  readonly busyAction?: McpBusyAction;
-  readonly errorMessage: string;
-  readonly cwd: string;
-  readonly onRefresh: () => void;
-  readonly onCreate: (form: McpServerFormState) => Promise<void>;
-  readonly onUpdate: (serverId: string, form: McpServerFormState) => Promise<void>;
-  readonly onDelete: (serverId: string) => void;
-  readonly onCheck: (serverId: string) => boolean | Promise<boolean> | void | Promise<void>;
-  readonly onSyncTools: (serverId: string) => boolean | Promise<boolean> | void | Promise<void>;
 }): JSX.Element {
   const { t } = useI18n();
-  const [isSheetOpen, setSheetOpen] = useState(false);
-  const [editingServerId, setEditingServerId] = useState("");
-  const [form, setForm] = useState<McpServerFormState>(defaultMcpServerForm);
-  const [sheetError, setSheetError] = useState("");
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editingServer, setEditingServer] = useState<McpServer | undefined>();
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deletingServer, setDeletingServer] = useState<McpServer | undefined>();
   const [expandedServerIds, setExpandedServerIds] = useState<ReadonlySet<string>>(() => new Set());
-  const [feedbackByServerId, setFeedbackByServerId] = useState<Readonly<Record<string, McpActionFeedback>>>({});
-  const toolsByServerId = useMemo(() => {
-    const grouped = new Map<string, McpTool[]>();
-    for (const tool of tools) {
-      grouped.set(tool.serverId, [...(grouped.get(tool.serverId) ?? []), tool]);
-    }
-    return grouped;
-  }, [tools]);
-  const readyCount = servers.filter((server) => server.status.kind === "ready").length;
-  const enabledCount = servers.filter((server) => server.enabled).length;
+  const editorTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const deleteTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const toolsByServerId = useMemo(() => groupMcpToolsByServer(tools), [tools]);
+  const readyCount = servers.filter((server) => mcpServerStatusPresentation(server).id === "ready").length;
+  const { feedbackByServerId, runCheck, runSync } = useMcpRowFeedbackController(servers);
 
-  function openCreateSheet(): void {
-    setEditingServerId("");
-    setForm(defaultMcpServerForm);
-    setSheetError("");
-    setSheetOpen(true);
-  }
+  const openCreate = (trigger: HTMLButtonElement): void => {
+    editorTriggerRef.current = trigger;
+    setEditingServer(undefined);
+    onClearError();
+    setEditorOpen(true);
+  };
 
-  function openEditSheet(server: McpServer): void {
-    setEditingServerId(server.id);
-    setForm(mcpServerToForm(server));
-    setSheetError("");
-    setSheetOpen(true);
-  }
+  const openEdit = (server: McpServer, trigger: HTMLButtonElement): void => {
+    editorTriggerRef.current = trigger;
+    setEditingServer(server);
+    onClearError();
+    setEditorOpen(true);
+  };
 
-  async function saveServer(): Promise<void> {
-    const validationError = validateMcpForm(form, t);
-    if (validationError) {
-      setSheetError(validationError);
-      return;
-    }
+  const openDelete = (server: McpServer, trigger: HTMLButtonElement | null): void => {
+    deleteTriggerRef.current = trigger;
+    setDeletingServer(server);
+    onClearError();
+    setDeleteOpen(true);
+  };
+
+  const saveEditor = async (form: McpServerFormState): Promise<string | undefined> => {
     try {
-      setSheetError("");
-      if (editingServerId) {
-        await onUpdate(editingServerId, form);
-      } else {
-        await onCreate(form);
-      }
-      setForm(defaultMcpServerForm);
-      setEditingServerId("");
-      setSheetOpen(false);
-    } catch (error) {
-      setSheetError(error instanceof Error ? error.message : String(error));
+      if (editingServer) await onUpdate(editingServer.id, form);
+      else await onCreate(form);
+      return undefined;
+    } catch (caught) {
+      return caught instanceof Error ? caught.message : String(caught);
     }
-  }
+  };
 
-  function toggleServerTools(serverId: string): void {
-    setExpandedServerIds((current) => {
-      const next = new Set(current);
-      if (next.has(serverId)) {
-        next.delete(serverId);
-      } else {
-        next.add(serverId);
-      }
-      return next;
-    });
-  }
+  const checkServer = async (serverId: string): Promise<void> => {
+    await runCheck(serverId, onCheck);
+  };
 
-  async function syncServerTools(serverId: string): Promise<void> {
-    setServerFeedback(serverId, undefined);
-    try {
-      const result = await onSyncTools(serverId);
-      if (result === false) {
-        setServerFeedback(serverId, { tone: "failed", message: t("Tool list sync failed") });
-        return;
-      }
+  const syncServer = async (serverId: string): Promise<void> => {
+    const synced = await runSync(serverId, onSyncTools);
+    if (synced) {
       setExpandedServerIds((current) => new Set(current).add(serverId));
-      setServerFeedback(serverId, { tone: "succeeded", message: t("Tool list synced") });
-    } catch (error) {
-      setServerFeedback(serverId, { tone: "failed", message: error instanceof Error ? error.message : t("Tool list sync failed") });
     }
-  }
-
-  async function checkServerConnection(serverId: string): Promise<void> {
-    setServerFeedback(serverId, undefined);
-    try {
-      const result = await onCheck(serverId);
-      setServerFeedback(serverId, result === false
-        ? { tone: "failed", message: t("Connection check failed") }
-        : { tone: "succeeded", message: t("Connection check succeeded") });
-    } catch (error) {
-      setServerFeedback(serverId, { tone: "failed", message: error instanceof Error ? error.message : t("Connection check failed") });
-    }
-  }
-
-  function setServerFeedback(serverId: string, feedback: McpActionFeedback | undefined): void {
-    setFeedbackByServerId((current) => {
-      const next = { ...current };
-      if (feedback) {
-        next[serverId] = feedback;
-      } else {
-        delete next[serverId];
-      }
-      return next;
-    });
-  }
+  };
 
   return (
-    <div className="mcp-page">
-      <section className="mcp-toolbar" aria-label={t("MCP tool access summary")}>
-        <div className="mcp-summary">
-          <span className="mcp-summary-icon"><Wrench size={18} /></span>
-          <div>
-            <h2>{t("MCP tool servers")}</h2>
-            <p>{t("统一管理 MCP 工具服务，并按 AI 队友单独授权。")}</p>
-          </div>
-        </div>
-        <div className="mcp-toolbar-actions">
-          <span className="status-badge neutral">{t("{ready}/{total} ready", { ready: readyCount, total: servers.length })}</span>
-          <span className="status-badge neutral">{t("{count} enabled", { count: enabledCount })}</span>
-          <button className="secondary-button" type="button" onClick={onRefresh} disabled={isLoading}>
-            <RefreshCw size={15} className={isLoading ? "spin" : undefined} />
-            {t("Refresh")}
-          </button>
-          <button className="primary-button" type="button" onClick={openCreateSheet}>
-            <Plus size={15} />
-            {t("Add MCP server")}
-          </button>
-        </div>
-      </section>
+    <div className="mcp-page settings-mcp-page" data-ui2-mcp-tools="">
+      <McpServerToolbar
+        disabled={!cwd.trim()}
+        loading={isLoading}
+        readyCount={readyCount}
+        serverCount={servers.length}
+        toolCount={tools.length}
+        onAdd={openCreate}
+        onRefresh={onRefresh}
+      />
 
-      {errorMessage ? <div className="inline-error">{errorMessage}</div> : null}
-
-      <section className="mcp-server-panel" aria-label={t("MCP servers")}>
-        <div className="panel-title split">
-          <span>
-            <Server size={16} />
-            <h2>{t("MCP servers")}</h2>
-          </span>
-          <small>{isLoading ? t("Loading...") : t("{count} servers", { count: servers.length })}</small>
-        </div>
-        {servers.length === 0 ? (
-          <div className="client-empty-state mcp-empty">
-            <Wrench size={20} />
-            <span>{t("No MCP servers")}</span>
-            <small>{t("Add a server, check it, then assign tools to AI teammates explicitly.")}</small>
-          </div>
-        ) : (
-          <div className="mcp-server-list">
-            {servers.map((server) => {
-              const publicServer = server as PublicMcpServer;
-              const serverTools = toolsByServerId.get(server.id) ?? [];
-              const busy = busyServerId === server.id ? busyAction : undefined;
-              const toolsExpanded = expandedServerIds.has(server.id);
-              const feedback = feedbackByServerId[server.id];
-              return (
-                <article key={server.id} className="mcp-server-row">
-                  <div className="mcp-server-summary-row">
-                    <div className="mcp-server-main">
-                      <span className="mcp-server-icon"><Server size={17} /></span>
-                      <div>
-                        <strong>{server.displayName}</strong>
-                        <small>{transportLabel(server, t)} · {server.enabled ? t("Enabled") : t("Disabled")}</small>
-                      </div>
-                    </div>
-                    <div className="mcp-server-meta">
-                      <span className={`status-badge ${mcpStatusClass(server.status.kind)}`}>{mcpStatusLabel(server.status.kind, t)}</span>
-                      {hasConfiguredSecret(publicServer) ? (
-                        <span className="status-badge succeeded">{t("Secret configured")}</span>
-                      ) : (
-                        <span className="status-badge neutral">{t("No secret")}</span>
-                      )}
-                      <span>{t("{count} tools", { count: serverTools.length })}</span>
-                    </div>
-                    <div className="mcp-server-actions">
-                      <button
-                        className="secondary-button compact-button"
-                        type="button"
-                        aria-expanded={toolsExpanded}
-                        onClick={() => toggleServerTools(server.id)}
-                        disabled={serverTools.length === 0}
-                      >
-                        {toolsExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                        {toolsExpanded ? t("Hide tools") : t("Show tools")}
-                      </button>
-                      <button className="secondary-button compact-button" type="button" onClick={() => void checkServerConnection(server.id)} disabled={Boolean(busy)}>
-                        {busy === "check" ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
-                        {t("Check connection")}
-                      </button>
-                      <button className="secondary-button compact-button" type="button" onClick={() => void syncServerTools(server.id)} disabled={Boolean(busy)}>
-                        {busy === "sync" ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
-                        {t("Sync tool list")}
-                      </button>
-                      <button className="secondary-button compact-button" type="button" onClick={() => openEditSheet(server)} disabled={Boolean(busy)}>
-                        <Pencil size={14} />
-                        {t("Edit")}
-                      </button>
-                      <button className="secondary-button danger compact-button" type="button" onClick={() => onDelete(server.id)} disabled={Boolean(busy)}>
-                        {busy === "delete" ? <Loader2 className="spin" size={14} /> : <Trash2 size={14} />}
-                        {t("Delete")}
-                      </button>
-                    </div>
-                  </div>
-                  {server.status.message ? <p className="mcp-server-message">{server.status.message}</p> : null}
-                  {feedback ? (
-                    <p className={`mcp-server-feedback ${feedback.tone}`} role="status">
-                      {feedback.message}
-                    </p>
-                  ) : null}
-                  {toolsExpanded && serverTools.length > 0 ? (
-                    <div className="mcp-tool-list" aria-label={t("Discovered MCP tools")}>
-                      {serverTools.map((tool) => (
-                        <article key={`${tool.serverId}:${tool.rawName}`} className="mcp-tool-row">
-                          <span className="mcp-tool-copy">
-                            <strong>{tool.displayName || tool.rawName}</strong>
-                            <small>{tool.description || tool.rawName}</small>
-                            {tool.description && tool.description.length > 120 ? (
-                              <details className="mcp-tool-details">
-                                <summary>{t("Tool details")}</summary>
-                                <p>{tool.description}</p>
-                              </details>
-                            ) : null}
-                          </span>
-                          <span className="status-badge neutral">{mcpToolEffectLabel(tool.sideEffectLevel, t)}</span>
-                        </article>
-                      ))}
-                    </div>
-                  ) : null}
-                </article>
-              );
-            })}
-          </div>
-        )}
-      </section>
-
-      {isSheetOpen ? (
-        <div className="mcp-sheet-backdrop" role="presentation">
-          <section className="mcp-sheet" role="dialog" aria-modal="true" aria-label={editingServerId ? t("Edit MCP server") : t("Add MCP server")}>
-            <header className="mcp-sheet-header">
-              <div>
-                <span className="mcp-sheet-kicker">{t("MCP server")}</span>
-                <h2>{editingServerId ? t("Edit MCP server") : t("Add MCP server")}</h2>
-                <p>{t("MCP secrets are stored as refs and never read back into this form.")}</p>
-              </div>
-              <button className="icon-button" type="button" aria-label={t("Close MCP server editor")} onClick={() => setSheetOpen(false)}>
-                <X size={16} />
-              </button>
-            </header>
-            <div className="mcp-sheet-body">
-              {sheetError ? <div className="inline-error">{sheetError}</div> : null}
-              <section className="mcp-form-section">
-                <div className="mcp-section-title mcp-section-title-with-control">
-                  <div className="mcp-section-heading">
-                    <span><Server size={15} />{t("Basic information")}</span>
-                    <small>{t("Name and transport for this workspace-level MCP server.")}</small>
-                  </div>
-                  <label className="mcp-switch-control">
-                    <span className="mcp-switch-copy">
-                      <strong>{t("Enable server")}</strong>
-                    </span>
-                    <input
-                      type="checkbox"
-                      role="switch"
-                      aria-label={t("Enable server")}
-                      checked={form.enabled}
-                      onChange={(event) => setForm({ ...form, enabled: event.target.checked })}
-                    />
-                    <span className="mcp-switch-track" aria-hidden="true">
-                      <span className="mcp-switch-thumb" />
-                    </span>
-                  </label>
-                </div>
-                <div className="mcp-form-grid">
-                  <label className="field">
-                    <span>{t("Server name")}</span>
-                    <input value={form.displayName} onChange={(event) => setForm({ ...form, displayName: event.target.value })} placeholder={t("GitHub MCP")} />
-                  </label>
-                  <label className="field">
-                    <span>{t("Server id")}</span>
-                    <input value={form.serverId} onChange={(event) => setForm({ ...form, serverId: event.target.value })} placeholder={t("github")} disabled={Boolean(editingServerId)} />
-                  </label>
-                  <label className="field">
-                    <span>{t("Transport")}</span>
-                    <SelectControl value={form.transportType} onChange={(event) => setForm({ ...form, transportType: event.target.value as McpServerFormState["transportType"] })}>
-                      <option value="streamable-http">HTTP</option>
-                      <option value="stdio">stdio</option>
-                    </SelectControl>
-                  </label>
-                </div>
-              </section>
-
-              {form.transportType === "stdio" ? (
-                <section className="mcp-form-section">
-                  <div className="mcp-section-title">
-                    <span><Wrench size={15} />stdio</span>
-                    <small>{t("Run a local MCP process from this workspace.")}</small>
-                  </div>
-                  <div className="mcp-form-grid">
-                    <label className="field">
-                      <span>{t("Command")}</span>
-                      <input value={form.command} onChange={(event) => setForm({ ...form, command: event.target.value })} placeholder="npx" />
-                    </label>
-                    <label className="field">
-                      <span>{t("Arguments")}</span>
-                      <input value={form.argsText} onChange={(event) => setForm({ ...form, argsText: event.target.value })} placeholder="-y @modelcontextprotocol/server-filesystem ." />
-                    </label>
-                    <label className="field wide">
-                      <span>{t("Working directory")}</span>
-                      <input value={form.cwd} onChange={(event) => setForm({ ...form, cwd: event.target.value })} placeholder={t("Optional")} />
-                    </label>
-                    <label className="field">
-                      <span>{t("Env secret name")}</span>
-                      <input value={form.envName} onChange={(event) => setForm({ ...form, envName: event.target.value })} placeholder="GITHUB_TOKEN" />
-                    </label>
-                    <label className="field">
-                      <span>{t("Env secret ref")}</span>
-                      <input value={form.envSecretRef} onChange={(event) => setForm({ ...form, envSecretRef: event.target.value })} placeholder="env:GITHUB_TOKEN" />
-                    </label>
-                  </div>
-                </section>
-              ) : (
-                <section className="mcp-form-section">
-                  <div className="mcp-section-title">
-                    <span><Wrench size={15} />HTTP</span>
-                    <small>{t("Connect to a streamable HTTP MCP endpoint.")}</small>
-                  </div>
-                  <div className="mcp-form-grid">
-                    <label className="field wide">
-                      <span>{t("Server URL")}</span>
-                      <input value={form.url} onChange={(event) => setForm({ ...form, url: event.target.value })} placeholder="https://example.com/mcp" />
-                    </label>
-                    <label className="field">
-                      <span>{t("Header secret name")}</span>
-                      <input value={form.headerName} onChange={(event) => setForm({ ...form, headerName: event.target.value })} placeholder="Authorization" />
-                    </label>
-                    <label className="field">
-                      <span>{t("Header secret ref")}</span>
-                      <input value={form.headerSecretRef} onChange={(event) => setForm({ ...form, headerSecretRef: event.target.value })} placeholder="env:MCP_AUTHORIZATION" />
-                    </label>
-                    <label className="field">
-                      <span>{t("Bearer token ref")}</span>
-                      <input value={form.bearerTokenRef} onChange={(event) => setForm({ ...form, bearerTokenRef: event.target.value })} placeholder={t("Optional")} />
-                    </label>
-                  </div>
-                </section>
-              )}
-
-              <details className="mcp-advanced-settings">
-                <summary>{t("Advanced settings")}</summary>
-                <div className="mcp-form-grid">
-                  <label className="field">
-                    <span>{t("Startup timeout")}</span>
-                    <input value={form.startupTimeoutSec} onChange={(event) => setForm({ ...form, startupTimeoutSec: event.target.value })} inputMode="numeric" />
-                  </label>
-                  <label className="field">
-                    <span>{t("Tool timeout")}</span>
-                    <input value={form.toolTimeoutSec} onChange={(event) => setForm({ ...form, toolTimeoutSec: event.target.value })} inputMode="numeric" />
-                  </label>
-                  <div className="mcp-advanced-option wide">
-                    <span className="mcp-advanced-option-copy">
-                      <strong>{t("Critical dependency")}</strong>
-                      <small>{t("When enabled, assigned teammates stop running if this service is unavailable, so they do not continue without critical tools.")}</small>
-                    </span>
-                    <label className="mcp-switch-control mcp-switch-control-compact">
-                      <input
-                        type="checkbox"
-                        role="switch"
-                        aria-label={t("Critical dependency")}
-                        checked={form.required}
-                        onChange={(event) => setForm({ ...form, required: event.target.checked })}
-                      />
-                      <span className="mcp-switch-track" aria-hidden="true">
-                        <span className="mcp-switch-thumb" />
-                      </span>
-                    </label>
-                  </div>
-                </div>
-              </details>
-            </div>
-            <footer className="mcp-sheet-footer">
-              <button className="secondary-button" type="button" onClick={() => setSheetOpen(false)}>{t("Cancel")}</button>
-              <button className="primary-button" type="button" onClick={() => void saveServer()} disabled={busyAction === "save"}>
-                {busyAction === "save" ? <Loader2 className="spin" size={15} /> : <Save size={15} />}
-                {t("Save server")}
-              </button>
-            </footer>
-          </section>
-        </div>
+      {error?.scope === "load" ? (
+        <InlineFeedback tone="danger">
+          {t("MCP servers could not be refreshed. The last loaded list is still shown.")}
+        </InlineFeedback>
       ) : null}
+
+      {isLoading && servers.length === 0 ? (
+        <McpServerLoadingState />
+      ) : servers.length === 0 ? (
+        <EmptyState
+          className="settings-mcp-empty"
+          icon={<Wrench />}
+          title={t("No MCP servers")}
+          description={t("Add a server, check it, then assign tools to AI teammates explicitly.")}
+        />
+      ) : (
+        <McpServerList
+          busyAction={busyAction}
+          busyServerId={busyServerId}
+          expandedServerIds={expandedServerIds}
+          feedbackByServerId={feedbackByServerId}
+          servers={servers}
+          toolsByServerId={toolsByServerId}
+          onCheck={(serverId) => void checkServer(serverId)}
+          onEdit={openEdit}
+          onExpandedChange={(serverId, expanded) => {
+            setExpandedServerIds((current) => {
+              const next = new Set(current);
+              if (expanded) next.add(serverId);
+              else next.delete(serverId);
+              return next;
+            });
+          }}
+          onRequestDelete={openDelete}
+          onSync={(serverId) => void syncServer(serverId)}
+        />
+      )}
+
+      <McpServerEditorDialog
+        busy={busyAction === "save" && busyServerId === (editingServer?.id ?? "")}
+        open={editorOpen}
+        returnFocusRef={editorTriggerRef}
+        server={editingServer}
+        onOpenChange={setEditorOpen}
+        onSubmit={saveEditor}
+      />
+      <McpServerDeleteDialog
+        busy={busyAction === "delete" && busyServerId === deletingServer?.id}
+        errorMessage={deleteOpen && error?.scope === "mutation" ? error.message : undefined}
+        open={deleteOpen}
+        returnFocusRef={deleteTriggerRef}
+        server={deletingServer}
+        onConfirm={async () => deletingServer ? onDelete(deletingServer.id) : false}
+        onOpenChange={setDeleteOpen}
+      />
     </div>
   );
 }
 
-function mcpServerToForm(server: McpServer): McpServerFormState {
-  if (server.transport.type === "stdio") {
-    const envName = Object.keys(server.transport.secretEnvRefs ?? {})[0] ?? server.transport.secretEnvNames?.[0] ?? "";
-    return {
-      ...defaultMcpServerForm,
-      displayName: server.displayName,
-      serverId: server.id,
-      transportType: "stdio",
-      command: server.transport.command,
-      argsText: server.transport.args.join(" "),
-      cwd: server.transport.cwd ?? "",
-      envName,
-      envSecretRef: envName ? (server.transport.secretEnvRefs?.[envName] ?? "") : "",
-      enabled: server.enabled,
-      required: server.required,
-      startupTimeoutSec: server.startupTimeoutSec ? String(server.startupTimeoutSec) : "",
-      toolTimeoutSec: server.toolTimeoutSec ? String(server.toolTimeoutSec) : "",
-    };
-  }
-  const headerName = Object.keys(server.transport.secretHeaderRefs ?? {})[0] ?? server.transport.secretHeaderNames?.[0] ?? "Authorization";
-  return {
-    ...defaultMcpServerForm,
-    displayName: server.displayName,
-    serverId: server.id,
-    transportType: "streamable-http",
-    url: server.transport.url,
-    headerName,
-    headerSecretRef: headerName ? (server.transport.secretHeaderRefs?.[headerName] ?? "") : "",
-    bearerTokenRef: server.transport.bearerTokenRef ?? "",
-    enabled: server.enabled,
-    required: server.required,
-    startupTimeoutSec: server.startupTimeoutSec ? String(server.startupTimeoutSec) : "",
-    toolTimeoutSec: server.toolTimeoutSec ? String(server.toolTimeoutSec) : "",
-  };
-}
-
-function validateMcpForm(form: McpServerFormState, t: (key: string) => string): string {
-  if (!form.displayName.trim()) {
-    return t("Enter a server name.");
-  }
-  if (form.transportType === "stdio" && !form.command.trim()) {
-    return t("Enter a command for stdio MCP.");
-  }
-  if (form.transportType === "streamable-http" && !form.url.trim()) {
-    return t("Enter an HTTP MCP server URL.");
-  }
-  if (form.transportType === "stdio" && form.envName.trim() && !form.envSecretRef.trim()) {
-    return t("Enter an env secret ref.");
-  }
-  if (form.transportType === "streamable-http" && form.headerName.trim() && !form.headerSecretRef.trim() && !form.bearerTokenRef.trim()) {
-    return t("Enter a header secret ref or bearer token ref.");
-  }
-  return "";
-}
-
-function transportLabel(server: McpServer, t: (key: string) => string): string {
-  if (server.transport.type === "stdio") {
-    return "stdio";
-  }
-  return t("HTTP");
-}
-
-function mcpStatusLabel(status: McpServer["status"]["kind"], t: (key: string) => string): string {
-  if (status === "ready") {
-    return t("Ready");
-  }
-  if (status === "failed") {
-    return t("Failed");
-  }
-  if (status === "disabled") {
-    return t("Disabled");
-  }
-  if (status === "checking") {
-    return t("Checking");
-  }
-  return t("Unknown");
-}
-
-function mcpStatusClass(status: McpServer["status"]["kind"]): string {
-  if (status === "ready") {
-    return "succeeded";
-  }
-  if (status === "failed") {
-    return "failed";
-  }
-  if (status === "disabled") {
-    return "neutral";
-  }
-  return "neutral";
-}
-
-function mcpToolEffectLabel(sideEffectLevel: McpTool["sideEffectLevel"], t: (key: string) => string): string {
-  if (sideEffectLevel === "none") {
-    return t("No side effects");
-  }
-  if (sideEffectLevel === "read") {
-    return t("Read");
-  }
-  if (sideEffectLevel === "write") {
-    return t("Write");
-  }
-  if (sideEffectLevel === "write-network") {
-    return t("Write network");
-  }
-  if (sideEffectLevel === "external") {
-    return t("External action");
-  }
-  if (sideEffectLevel === "credential") {
-    return t("Credential");
-  }
-  if (sideEffectLevel === "deploy") {
-    return t("Deploy");
-  }
-  return sideEffectLevel;
-}
-
-function hasConfiguredSecret(server: PublicMcpServer): boolean {
-  return Object.values(server.secretConfigured ?? {}).some(Boolean);
+function McpServerLoadingState(): JSX.Element {
+  const { t } = useI18n();
+  return (
+    <div className="settings-mcp-loading" aria-label={t("Loading MCP servers")}>
+      {[0, 1, 2].map((index) => (
+        <DataRow
+          key={index}
+          identity={(
+            <span className="settings-mcp-loading-identity">
+              <Skeleton shape="circle" width={30} height={30} />
+              <span><Skeleton width="11rem" /><Skeleton width="7rem" /></span>
+            </span>
+          )}
+          summary={<Skeleton width="4rem" />}
+          status={<Skeleton width="5rem" />}
+        />
+      ))}
+    </div>
+  );
 }

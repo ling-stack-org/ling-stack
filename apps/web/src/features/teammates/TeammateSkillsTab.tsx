@@ -1,504 +1,354 @@
-import type { ReactNode } from "react";
-import type { SkillDefinition } from "@ling-stack/core/skill-types";
-import { Brain, CheckCircle2, Loader2, Plus, Search, Trash2, Upload, X } from "lucide-react";
+import { Archive, Brain, Eye, MoreHorizontal, Plus, Search, Upload, X } from "lucide-react";
+import { useRef, type MouseEvent } from "react";
 import { useI18n } from "../../i18n.js";
-import { StatusBadge } from "../../shared/components/index.js";
-import type {
-  EffectiveTeammateSkill,
-  SkillImportDraft,
-  SkillPackSource,
-  SkillRegistryEntry,
-  SkillSourceSnapshot,
-  TeammateSkillBinding,
-} from "../../types.js";
-import { approvalProfileText } from "./helpers.js";
 import {
-  skillExecutionState,
+  Button,
+  DataRow,
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  EmptyState,
+  Field,
+  IconButton,
+  InlineFeedback,
+  Input,
+  InspectorSection,
+  Menu,
+  MenuContent,
+  MenuItem,
+  MenuSeparator,
+  MenuTrigger,
+  Select,
+  StatusIndicator,
+} from "../../shared/ui/index.js";
+import { TeammateSkillImportDialog } from "./TeammateSkillImportDialog.js";
+import { TeammateSkillInspectorDrawer } from "./TeammateSkillInspectorDrawer.js";
+import {
+  teammateSkillActionLabel,
   teammateSkillFilterLabel,
   type SkillBindingFilter,
-} from "./teammate-workspace-utils.js";
+  type TeammateSkillRowModel,
+} from "./teammate-skills-view-models.js";
+import type { TeammateSkillsController } from "./teammate-skills-controller-types.js";
 
-import { SelectControl } from "../../shared/components/SelectControl.js";
+const skillFilters: readonly SkillBindingFilter[] = ["all", "bound", "executable", "blocked", "available"];
 
-export interface SkillImportForm {
-  readonly name: string;
-  readonly sourcePath: string;
-  readonly source: SkillPackSource;
-  readonly content: string;
-}
-
-export interface TeammateSkillRowModel {
-  readonly id: string;
-  readonly skill: SkillDefinition | undefined;
-  readonly binding: TeammateSkillBinding | undefined;
-  readonly effectiveSkill: EffectiveTeammateSkill | undefined;
-  readonly sourceSnapshot: SkillSourceSnapshot | undefined;
-}
-
-interface SkillStats {
-  readonly bound: number;
-  readonly executable: number;
-  readonly blocked: number;
-  readonly available: number;
-}
-
-export function TeammateSkillsTab({
-  savingSkills,
-  skillMessage,
-  skillStats,
-  skillSearchQuery,
-  skillFilter,
-  manualSkillInput,
-  skillImportOpen,
-  skillImportForm,
-  skillImportDraft,
-  importingSkill,
-  skillRows,
-  skillTableRows,
-  selectedSkillRow,
-  registryEntryBySkillId,
-  onSkillSearchQueryChange,
-  onSkillFilterChange,
-  onManualSkillInputChange,
-  onSkillImportOpenChange,
-  onSkillImportFormChange,
-  onAddManualSkillBinding,
-  onPreviewSkillImport,
-  onPublishSkillDraft,
-  onSelectSkill,
-  onToggleSkillBinding,
-  onDeleteUserSkillBinding,
-  onArchiveCustomSkill,
-}: {
-  readonly savingSkills: boolean;
-  readonly skillMessage: string;
-  readonly skillStats: SkillStats;
-  readonly skillSearchQuery: string;
-  readonly skillFilter: SkillBindingFilter;
-  readonly manualSkillInput: string;
-  readonly skillImportOpen: boolean;
-  readonly skillImportForm: SkillImportForm;
-  readonly skillImportDraft: SkillImportDraft | undefined;
-  readonly importingSkill: boolean;
-  readonly skillRows: readonly TeammateSkillRowModel[];
-  readonly skillTableRows: readonly TeammateSkillRowModel[];
-  readonly selectedSkillRow: TeammateSkillRowModel | undefined;
-  readonly registryEntryBySkillId: ReadonlyMap<string, SkillRegistryEntry>;
-  readonly onSkillSearchQueryChange: (value: string) => void;
-  readonly onSkillFilterChange: (filter: SkillBindingFilter) => void;
-  readonly onManualSkillInputChange: (value: string) => void;
-  readonly onSkillImportOpenChange: (open: boolean) => void;
-  readonly onSkillImportFormChange: (form: SkillImportForm) => void;
-  readonly onAddManualSkillBinding: () => void | Promise<void>;
-  readonly onPreviewSkillImport: () => void | Promise<void>;
-  readonly onPublishSkillDraft: () => void | Promise<void>;
-  readonly onSelectSkill: (skillId: string) => void;
-  readonly onToggleSkillBinding: (skillId: string) => void | Promise<void>;
-  readonly onDeleteUserSkillBinding: (skillId: string) => void | Promise<void>;
-  readonly onArchiveCustomSkill: (skillId: string) => void | Promise<void>;
-}): JSX.Element {
+export function TeammateSkillsTab({ controller }: { readonly controller: TeammateSkillsController }): JSX.Element {
   const { t } = useI18n();
-  return (
-    <section className="teammate-list-panel teammate-skills-panel teammate-skills-workbench" aria-label={t("Skills")}>
-      <div className="panel-title split">
-        <span>
-          <Brain size={16} />
-          <h2>{t("Skills")}</h2>
-        </span>
-        <small>{savingSkills ? t("Saving...") : skillMessage || t("{count} executable", { count: skillStats.executable })}</small>
-      </div>
+  const detailReturnFocusRef = useRef<HTMLElement | null>(null);
+  const {
+    archiveConfirmRow,
+    detailsOpen,
+    feedback,
+    filter,
+    importDraft,
+    importError,
+    importForm,
+    importOpen,
+    manualSkillId,
+    manualSkillIdError,
+    mutationBusy,
+    mutationKey,
+    rows,
+    searchQuery,
+    selectedRow,
+    stats,
+    visibleRows,
+  } = controller;
 
-      <div className="teammate-skill-summary-grid" aria-label={t("Skill execution stats")}>
-        <span>
-          <small>{t("Bound")}</small>
-          <strong>{skillStats.bound}</strong>
-        </span>
-        <span>
-          <small>{t("Executable")}</small>
-          <strong>{skillStats.executable}</strong>
-        </span>
-        <span>
-          <small>{t("Blocked")}</small>
-          <strong>{skillStats.blocked}</strong>
-        </span>
-        <span>
-          <small>{t("Bindable")}</small>
-          <strong>{skillStats.available}</strong>
-        </span>
+  return (
+    <section
+      className="teammate-skills-panel"
+      aria-label={t("Skills")}
+      data-ui2-teammate-skills="true"
+    >
+      <header className="teammate-skills-heading">
+        <div>
+          <Brain size={17} aria-hidden="true" />
+          <h2>{t("Skills")}</h2>
+        </div>
+        {stats.attention > 0 ? (
+          <StatusIndicator compact label={t("{count} need attention", { count: stats.attention })} tone="warning" />
+        ) : (
+          <StatusIndicator compact label={t("{count} executable", { count: stats.executable })} tone="neutral" />
+        )}
+      </header>
+
+      <div className="teammate-skill-summary" aria-label={t("Skill execution summary")}>
+        <SummaryItem label={t("Bound")} stat="bound" value={stats.bound} />
+        <SummaryItem label={t("Executable")} stat="executable" value={stats.executable} />
+        <SummaryItem label={t("Needs attention")} stat="attention" value={stats.attention} tone={stats.attention > 0 ? "warning" : "neutral"} />
       </div>
 
       <div className="teammate-skill-toolbar">
-        <label className="teammate-skill-search">
-          <Search size={14} />
-          <input value={skillSearchQuery} onChange={(event) => onSkillSearchQueryChange(event.target.value)} placeholder={t("Search Skill or blocked reason")} />
-        </label>
-        <div className="teammate-skill-filter-tabs" role="tablist" aria-label={t("Skill filters")}>
-          {(["all", "bound", "executable", "blocked", "available"] as const).map((filter) => (
-            <button key={filter} type="button" className={skillFilter === filter ? "active" : ""} onClick={() => onSkillFilterChange(filter)}>
-              {teammateSkillFilterLabel(filter, t)}
-            </button>
+        <Input
+          aria-label={t("Search skills or tools")}
+          containerClassName="teammate-skill-search"
+          prefix={<Search size={15} aria-hidden="true" />}
+          placeholder={t("Search skills or tools")}
+          value={searchQuery}
+          onChange={(event) => controller.setSearchQuery(event.target.value)}
+        />
+        <Select
+          aria-label={t("Skill filters")}
+          className="teammate-skill-filter"
+          value={filter}
+          onChange={(event) => controller.setFilter(event.target.value as SkillBindingFilter)}
+        >
+          {skillFilters.map((item) => (
+            <option key={item} value={item}>{teammateSkillFilterLabel(item, t)}</option>
+          ))}
+        </Select>
+        <Button
+          leadingIcon={<Upload />}
+          size="sm"
+          variant="secondary"
+          disabled={mutationBusy}
+          onClick={() => controller.setImportOpen(true)}
+        >
+          {t("Import skill")}
+        </Button>
+      </div>
+
+      {feedback ? <InlineFeedback className="teammate-skills-feedback" tone="danger">{feedback}</InlineFeedback> : null}
+
+      {rows.length === 0 ? (
+        <EmptyState
+          compact
+          className="teammate-skills-empty"
+          icon={<Brain />}
+          title={t("No skills available")}
+          description={t("Import a skill to make it available for this teammate.")}
+          action={(
+            <Button leadingIcon={<Upload />} size="sm" onClick={() => controller.setImportOpen(true)}>
+              {t("Import skill")}
+            </Button>
+          )}
+        />
+      ) : visibleRows.length === 0 ? (
+        <EmptyState
+          compact
+          className="teammate-skills-empty"
+          icon={<Search />}
+          title={t("No skills match these filters")}
+          action={<Button size="sm" variant="secondary" onClick={controller.clearFilters}>{t("Clear filters")}</Button>}
+        />
+      ) : (
+        <div className="teammate-skill-list" role="listbox" aria-label={t("Skills")}>
+          {visibleRows.map((row) => (
+            <SkillRow
+              key={row.id}
+              mutationBusy={mutationBusy}
+              mutationKey={mutationKey}
+              row={row}
+              onOpenDetails={(skillId, trigger) => {
+                detailReturnFocusRef.current = trigger;
+                controller.openDetails(skillId);
+              }}
+              onRemoveBinding={controller.removeBinding}
+              onRequestArchive={controller.requestArchive}
+              onToggleBinding={controller.toggleBinding}
+            />
           ))}
         </div>
-        <div className="teammate-skill-bind-controls">
-          <input
-            aria-label={t("Skill id")}
-            value={manualSkillInput}
-            onChange={(event) => onManualSkillInputChange(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                void onAddManualSkillBinding();
-              }
-            }}
-            placeholder={t("Skill id")}
-          />
-          <button className="secondary-button compact-button" type="button" onClick={() => void onAddManualSkillBinding()} disabled={savingSkills}>
-            <Plus size={14} />
+      )}
+
+      <InspectorSection
+        className="teammate-skill-advanced-binding"
+        title={t("Advanced binding")}
+        summary={t("Bind by Skill ID")}
+      >
+        <div className="teammate-skill-advanced-binding-body">
+          <Field label={t("Skill id")} error={manualSkillIdError || undefined}>
+            <Input
+              value={manualSkillId}
+              onChange={(event) => controller.setManualSkillId(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void controller.bindManualSkill();
+                }
+              }}
+            />
+          </Field>
+          <Button
+            leadingIcon={<Plus />}
+            size="sm"
+            variant="secondary"
+            loading={mutationKey.startsWith("manual:")}
+            loadingLabel={t("Saving...")}
+            disabled={mutationBusy}
+            onClick={() => void controller.bindManualSkill()}
+          >
             {t("Bind")}
-          </button>
-          <button className="secondary-button compact-button" type="button" onClick={() => onSkillImportOpenChange(!skillImportOpen)}>
-            <Upload size={14} />
-            {t("Import")}
-          </button>
+          </Button>
         </div>
-      </div>
+      </InspectorSection>
 
-      {skillImportOpen ? (
-        <div className="teammate-import-panel teammate-skill-import-panel">
-          <div className="panel-title split">
-            <span>
-              <Upload size={15} />
-              <h3>{t("Import skill draft")}</h3>
-            </span>
-            <span>
-              {skillImportDraft ? <small>{t("{count} parsed", { count: skillImportDraft.definitions.length })}</small> : null}
-              <button className="ghost-button compact-button" type="button" onClick={() => onSkillImportOpenChange(false)}>
-                {t("Close")}
-              </button>
-            </span>
-          </div>
-          <div className="teammate-task-create-grid">
-            <label className="field">
-              <span>{t("Source")}</span>
-              <SelectControl value={skillImportForm.source} onChange={(event) => onSkillImportFormChange({ ...skillImportForm, source: event.target.value as SkillPackSource })}>
-                <option value="custom">{t("custom")}</option>
-                <option value="skill-directory">{t("skill-directory")}</option>
-                <option value="agents-md">{t("agents-md")}</option>
-                <option value="workspace">{t("workspace")}</option>
-              </SelectControl>
-            </label>
-            <label className="field">
-              <span>{t("Draft name")}</span>
-              <input value={skillImportForm.name} onChange={(event) => onSkillImportFormChange({ ...skillImportForm, name: event.target.value })} />
-            </label>
-            <label className="field">
-              <span>{t("Source path")}</span>
-              <input value={skillImportForm.sourcePath} onChange={(event) => onSkillImportFormChange({ ...skillImportForm, sourcePath: event.target.value })} placeholder="SKILL.md" />
-            </label>
-            <label className="field wide">
-              <span>{t("Skill content")}</span>
-              <textarea rows={5} value={skillImportForm.content} onChange={(event) => onSkillImportFormChange({ ...skillImportForm, content: event.target.value })} />
-            </label>
-          </div>
-          {skillImportDraft ? (
-            <div className="teammate-import-preview">
-              {skillImportDraft.definitions.map((item) => (
-                <article key={item.definition.id} className="teammate-data-row">
-                  <span>
-                    <strong>{item.definition.name}</strong>
-                    <small>
-                      {item.definition.id} · {item.definition.summary}
-                    </small>
-                  </span>
-                  <StatusBadge status={item.warnings?.some((warning) => warning.severity === "error") ? "blocked" : "draft"} />
-                </article>
-              ))}
-              {[...skillImportDraft.warnings, ...skillImportDraft.definitions.flatMap((item) => item.warnings ?? [])].map((warning, index) => (
-                <small key={`${warning.code}-${index}`} className={`teammate-warning ${warning.severity}`}>
-                  {t(warning.code)}: {warning.message}
-                </small>
-              ))}
-            </div>
-          ) : null}
-          <div className="teammate-settings-actions">
-            <button className="secondary-button" type="button" onClick={() => void onPreviewSkillImport()} disabled={importingSkill || !skillImportForm.content.trim()}>
-              {importingSkill ? <Loader2 className="spin" size={15} /> : <Search size={15} />}
-              {t("Preview draft")}
-            </button>
-            <button
-              className="primary-button"
-              type="button"
-              onClick={() => void onPublishSkillDraft()}
-              disabled={
-                importingSkill ||
-                !skillImportDraft ||
-                skillImportDraft.warnings.some((warning) => warning.severity === "error") ||
-                skillImportDraft.definitions.some((item) => item.warnings?.some((warning) => warning.severity === "error"))
-              }
+      <TeammateSkillInspectorDrawer
+        mutationKey={mutationKey}
+        open={detailsOpen}
+        returnFocusRef={detailReturnFocusRef}
+        row={selectedRow}
+        onOpenChange={(open) => {
+          if (!open) controller.closeDetails();
+        }}
+        onRemoveBinding={controller.removeBinding}
+        onToggleBinding={controller.toggleBinding}
+      />
+
+      <TeammateSkillImportDialog
+        draft={importDraft}
+        error={importError}
+        form={importForm}
+        mutationKey={mutationKey}
+        open={importOpen}
+        onFormChange={controller.updateImportForm}
+        onOpenChange={controller.setImportOpen}
+        onPreview={controller.previewImport}
+        onPublish={controller.publishImport}
+      />
+
+      <Dialog
+        busy={Boolean(archiveConfirmRow && mutationKey === `archive:${archiveConfirmRow.id}`)}
+        open={Boolean(archiveConfirmRow)}
+        onOpenChange={(open) => {
+          if (!open) controller.requestArchive();
+        }}
+      >
+        <DialogContent className="teammate-skill-archive-dialog" size="sm">
+          <DialogHeader closeLabel={t("Close")} title={t("Archive skill?")} description={archiveConfirmRow?.displayName} />
+          <DialogBody>
+            <InlineFeedback tone="warning">
+              {t("Archiving removes this custom Skill from the Registry. Existing runtime history is not deleted.")}
+            </InlineFeedback>
+          </DialogBody>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => controller.requestArchive()} disabled={mutationBusy}>{t("Cancel")}</Button>
+            <Button
+              leadingIcon={<Archive />}
+              variant="danger"
+              loading={Boolean(archiveConfirmRow && mutationKey === `archive:${archiveConfirmRow.id}`)}
+              loadingLabel={t("Archiving")}
+              disabled={mutationBusy}
+              onClick={() => void controller.archiveSkillFromRegistry()}
             >
-              <CheckCircle2 size={15} />
-              {t("Publish to registry")}
-            </button>
-          </div>
-        </div>
-      ) : null}
+              {t("Archive skill")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </section>
+  );
+}
 
-      {skillRows.length === 0 ? (
-        <div className="client-empty-state teammate-empty">
-          <Brain size={18} />
-          <span>{t("No skills bound to this teammate")}</span>
-        </div>
-      ) : (
-        <div className="teammate-skill-workbench-grid">
-          <div className="teammate-skill-table-wrap">
-            <table className="teammate-skill-table">
-              <thead>
-                <tr>
-                  <th>{t("Status")}</th>
-                  <th>{t("Skill")}</th>
-                  <th>{t("Source")}</th>
-                  <th>{t("Required tools")}</th>
-                  <th>{t("Approval")}</th>
-                  <th>{t("Blocked reasons")}</th>
-                  <th>{t("Actions")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {skillTableRows.length === 0 ? (
-                  <tr>
-                    <td colSpan={7}>
-                      <div className="client-empty-state teammate-empty compact">
-                        <span>{t("No skills match filters")}</span>
-                      </div>
-                    </td>
-                  </tr>
-                ) : (
-                  skillTableRows.map(({ id, skill, binding, effectiveSkill, sourceSnapshot }) => {
-                    const enabled = Boolean(binding?.enabled);
-                    const sourceLabel = binding
-                      ? binding.source === "template"
-                        ? t("Default skill")
-                        : t("User skill")
-                      : registryEntryBySkillId.get(id)?.source === "builtin"
-                        ? t("Available skill")
-                        : t("Registry skill");
-                    const canDelete = binding?.source === "user";
-                    const canArchive = !binding && registryEntryBySkillId.has(id) && registryEntryBySkillId.get(id)?.source !== "builtin";
-                    const blockedLabel = effectiveSkill?.blockedReasons.map((reason) => t(reason.code)).join(", ");
-                    const state = skillExecutionState(binding, effectiveSkill, t);
-                    return (
-                      <tr key={id} className={selectedSkillRow?.id === id ? "selected" : ""}>
-                        <td>
-                          <SkillStatePill label={state.label} tone={state.tone} />
-                        </td>
-                        <td>
-                          <button className="teammate-skill-name-button" type="button" onClick={() => onSelectSkill(id)}>
-                            <strong>{skill ? t(skill.name) : id}</strong>
-                            <small>{skill?.id ?? id}</small>
-                          </button>
-                        </td>
-                        <td>
-                          <TeammateSkillSourceStatus label={sourceLabel} snapshot={sourceSnapshot} />
-                        </td>
-                        <td>
-                          <TeammateSkillTokenList values={skill?.requiredTools ?? []} emptyLabel={t("No tools")} />
-                        </td>
-                        <td>{skill ? approvalProfileText(skill.approvalProfile, t) : "-"}</td>
-                        <td>{blockedLabel || (enabled ? t("Ready") : t("Not bound"))}</td>
-                        <td>
-                          <span className="teammate-skill-row-actions">
-                            <button className="secondary-button compact-button" type="button" onClick={() => onSelectSkill(id)}>
-                              <Search size={14} />
-                              {t("Details")}
-                            </button>
-                            <button className="secondary-button compact-button" type="button" onClick={() => void onToggleSkillBinding(id)} disabled={savingSkills}>
-                              {enabled ? <X size={14} /> : <Plus size={14} />}
-                              {binding ? (enabled ? t("Disable") : t("Enable")) : t("Bind")}
-                            </button>
-                            {canDelete ? (
-                              <button className="secondary-button danger compact-button" type="button" onClick={() => void onDeleteUserSkillBinding(id)} disabled={savingSkills}>
-                                <Trash2 size={14} />
-                                {t("Delete")}
-                              </button>
-                            ) : null}
-                            {canArchive ? (
-                              <button className="secondary-button danger compact-button" type="button" onClick={() => void onArchiveCustomSkill(id)} disabled={savingSkills}>
-                                <Trash2 size={14} />
-                                {t("Archive")}
-                              </button>
-                            ) : null}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
+function SummaryItem({
+  label,
+  stat,
+  tone = "neutral",
+  value,
+}: {
+  readonly label: string;
+  readonly stat: "attention" | "bound" | "executable";
+  readonly tone?: "neutral" | "warning";
+  readonly value: number;
+}): JSX.Element {
+  return (
+    <span data-stat={stat} data-tone={tone}>
+      <strong>{value}</strong>
+      <small>{label}</small>
+    </span>
+  );
+}
 
-          <aside className="teammate-skill-inspector" aria-label={t("Skill detail")}>
-            {selectedSkillRow ? (
-              <>
-                <div className="teammate-skill-inspector-head">
-                  <span>
-                    <Brain size={15} />
-                    <strong>{selectedSkillRow.skill ? t(selectedSkillRow.skill.name) : selectedSkillRow.id}</strong>
-                  </span>
-                  <SkillStatePill
-                    label={skillExecutionState(selectedSkillRow.binding, selectedSkillRow.effectiveSkill, t).label}
-                    tone={skillExecutionState(selectedSkillRow.binding, selectedSkillRow.effectiveSkill, t).tone}
-                  />
-                </div>
-                <SkillInspectorSection title={t("Description")}>
-                  <p>{selectedSkillRow.skill ? t(selectedSkillRow.skill.summary) : t("Custom skill binding")}</p>
-                </SkillInspectorSection>
-                <SkillInspectorSection title={t("Blocked reasons")}>
-                  {selectedSkillRow.effectiveSkill?.blockedReasons.length ? (
-                    <div className="teammate-skill-reason-list">
-                      {selectedSkillRow.effectiveSkill.blockedReasons.map((reason) => (
-                        <span key={reason.code}>
-                          <strong>{t(reason.code)}</strong>
-                          <small>{reason.missing?.length ? reason.missing.join(", ") : reason.message}</small>
-                        </span>
-                      ))}
-                    </div>
-                  ) : (
-                    <p>{selectedSkillRow.binding?.enabled ? t("No blocked reasons") : t("Bind this skill to evaluate executability.")}</p>
-                  )}
-                </SkillInspectorSection>
-                <SkillInspectorSection title={t("Prompt fragments")}>
-                  {selectedSkillRow.skill?.promptFragments.length ? <pre>{selectedSkillRow.skill.promptFragments.slice(0, 3).join("\n\n")}</pre> : <p>{t("No prompt fragments")}</p>}
-                </SkillInspectorSection>
-                <SkillInspectorSection title={t("Required tools")}>
-                  <TeammateSkillTokenList values={selectedSkillRow.skill?.requiredTools ?? []} emptyLabel={t("No tools")} />
-                </SkillInspectorSection>
-                <SkillInspectorSection title={t("Provider capability")}>
-                  <TeammateSkillTokenList values={selectedSkillRow.skill?.requiredProviderCapabilities ?? []} emptyLabel={t("No provider capability required")} />
-                </SkillInspectorSection>
-                <SkillInspectorSection title={t("Approval profile")}>
-                  <p>{selectedSkillRow.skill ? approvalProfileText(selectedSkillRow.skill.approvalProfile, t) : "-"}</p>
-                </SkillInspectorSection>
-                <SkillSourceInspectorSection snapshot={selectedSkillRow.sourceSnapshot} />
-                <div className="teammate-skill-inspector-actions">
-                  <button className="primary-button compact-button" type="button" onClick={() => void onToggleSkillBinding(selectedSkillRow.id)} disabled={savingSkills}>
-                    {selectedSkillRow.binding?.enabled ? <X size={14} /> : <Plus size={14} />}
-                    {selectedSkillRow.binding ? (selectedSkillRow.binding.enabled ? t("Disable skill") : t("Enable skill")) : t("Bind to teammate")}
-                  </button>
-                  {selectedSkillRow.binding?.source === "user" ? (
-                    <button className="secondary-button danger compact-button" type="button" onClick={() => void onDeleteUserSkillBinding(selectedSkillRow.id)} disabled={savingSkills}>
-                      <Trash2 size={14} />
-                      {t("Delete skill")}
-                    </button>
-                  ) : null}
-                </div>
-              </>
-            ) : (
-              <div className="client-empty-state teammate-empty compact">
-                <span>{t("Select a skill to inspect")}</span>
-              </div>
-            )}
-          </aside>
+function SkillRow({
+  mutationBusy,
+  mutationKey,
+  row,
+  onOpenDetails,
+  onRemoveBinding,
+  onRequestArchive,
+  onToggleBinding,
+}: {
+  readonly mutationBusy: boolean;
+  readonly mutationKey: string;
+  readonly row: TeammateSkillRowModel;
+  readonly onOpenDetails: (skillId: string, trigger: HTMLElement) => void;
+  readonly onRemoveBinding: (skillId: string) => void | Promise<void>;
+  readonly onRequestArchive: (skillId: string) => void;
+  readonly onToggleBinding: (skillId: string) => void | Promise<void>;
+}): JSX.Element {
+  const { t } = useI18n();
+  const primaryMutationKey = `${row.primaryAction}:${row.id}`;
+  const stopRowClick = (event: MouseEvent<HTMLElement>): void => event.stopPropagation();
+  return (
+    <DataRow
+      compact
+      className="teammate-management-skill-row"
+      data-skill-id={row.id}
+      data-ui2-teammate-skill-row="true"
+      identity={(
+        <span className="teammate-skill-row-identity">
+          <strong title={row.displayName}>{row.displayName}</strong>
+          <small title={row.summary}>{row.summary}</small>
+        </span>
+      )}
+      onClick={(event) => onOpenDetails(row.id, event.currentTarget)}
+      status={(
+        <span className="teammate-skill-row-status">
+          <StatusIndicator compact label={row.status.label} tone={row.status.tone} />
+          {row.sourceState.attention ? <small>{row.sourceState.label}</small> : null}
+        </span>
+      )}
+      summary={(
+        <span className="teammate-skill-row-summary">
+          <span>{row.sourceLabel}</span>
+          <small>{t("{count} required tools", { count: row.toolCount })}</small>
+        </span>
+      )}
+      actions={(
+        <div className="teammate-skill-row-actions" onClick={stopRowClick} onKeyDown={(event) => event.stopPropagation()}>
+          <Button
+            size="sm"
+            variant="secondary"
+            leadingIcon={row.primaryAction === "disable" ? <X /> : <Plus />}
+            loading={mutationKey === primaryMutationKey}
+            loadingLabel={t("Saving...")}
+            disabled={mutationBusy}
+            onClick={() => void onToggleBinding(row.id)}
+          >
+            {teammateSkillActionLabel(row.primaryAction, t)}
+          </Button>
+          <IconButton
+            icon={Eye}
+            label={t("View skill details")}
+            disabled={mutationBusy}
+            onClick={(event) => onOpenDetails(row.id, event.currentTarget)}
+          />
+          {row.canRemove || row.canArchive ? (
+            <Menu>
+              <MenuTrigger asChild>
+                <IconButton
+                  icon={MoreHorizontal}
+                  label={t("More actions for {name}", { name: row.displayName })}
+                  disabled={mutationBusy}
+                />
+              </MenuTrigger>
+              <MenuContent align="end">
+                {row.canRemove ? (
+                  <MenuItem onSelect={() => void onRemoveBinding(row.id)}>{t("Remove from teammate")}</MenuItem>
+                ) : null}
+                {row.canRemove && row.canArchive ? <MenuSeparator /> : null}
+                {row.canArchive ? (
+                  <MenuItem tone="danger" onSelect={() => onRequestArchive(row.id)}>{t("Archive skill")}</MenuItem>
+                ) : null}
+              </MenuContent>
+            </Menu>
+          ) : null}
         </div>
       )}
-    </section>
-  );
-}
-
-function TeammateSkillSourceStatus({
-  label,
-  snapshot,
-}: {
-  readonly label: string;
-  readonly snapshot: SkillSourceSnapshot | undefined;
-}): JSX.Element {
-  const { t } = useI18n();
-  const state = teammateSkillSourceState(snapshot, t);
-  return (
-    <span className="teammate-skill-source-status">
-      <span>{label}</span>
-      <small className={state.tone}>{state.label}</small>
-    </span>
-  );
-}
-
-function SkillSourceInspectorSection({ snapshot }: { readonly snapshot: SkillSourceSnapshot | undefined }): JSX.Element {
-  const { t } = useI18n();
-  const state = teammateSkillSourceState(snapshot, t);
-  if (!snapshot) {
-    return (
-      <SkillInspectorSection title={t("Source snapshot")}>
-        <p>{state.label}</p>
-      </SkillInspectorSection>
-    );
-  }
-  return (
-    <SkillInspectorSection title={t("Source snapshot")}>
-      <div className="teammate-skill-source-detail">
-        <span><small>{t("State")}</small><code className={state.tone}>{state.label}</code></span>
-        <span><small>{t("Snapshot")}</small><code>{snapshot.id}</code></span>
-        <span><small>{t("Checksum")}</small><code>{snapshot.sourceChecksum}</code></span>
-        <span><small>{t("Path")}</small><code>{snapshot.upstreamSkillPath ?? snapshot.sourcePath ?? "-"}</code></span>
-      </div>
-      <div className="teammate-skill-source-tags">
-        <span>{t("Files")}: {snapshot.referencedFiles.length}</span>
-        <span>{t("Warnings")}: {snapshot.warnings.length}</span>
-        <span>{t("Review")}: {snapshot.reviewStatus}</span>
-      </div>
-    </SkillInspectorSection>
-  );
-}
-
-function teammateSkillSourceState(
-  snapshot: SkillSourceSnapshot | undefined,
-  t: (key: string, values?: Readonly<Record<string, string | number>>) => string,
-): { readonly label: string; readonly tone: "backed" | "warning" | "missing" } {
-  if (!snapshot) {
-    return { label: t("Metadata only"), tone: "missing" };
-  }
-  const warningCodes = new Set(snapshot.warnings.map((warning) => warning.code));
-  if (warningCodes.has("drifted_upstream")) {
-    return { label: t("Drifted source"), tone: "warning" };
-  }
-  if (warningCodes.has("missing_upstream")) {
-    return { label: t("Missing upstream"), tone: "warning" };
-  }
-  if (warningCodes.has("orphaned_snapshot")) {
-    return { label: t("Orphaned source"), tone: "warning" };
-  }
-  if (snapshot.warnings.length > 0) {
-    return { label: t("{count} warnings", { count: snapshot.warnings.length }), tone: "warning" };
-  }
-  return { label: t("Source-backed"), tone: "backed" };
-}
-
-function SkillStatePill({
-  label,
-  tone,
-}: {
-  readonly label: string;
-  readonly tone: "executable" | "blocked" | "disabled" | "available";
-}): JSX.Element {
-  return <span className={`teammate-skill-state ${tone}`}>{label}</span>;
-}
-
-function TeammateSkillTokenList({ values, emptyLabel }: { readonly values: readonly string[]; readonly emptyLabel: string }): JSX.Element {
-  if (values.length === 0) {
-    return <span className="teammate-skill-empty-token">{emptyLabel}</span>;
-  }
-  return (
-    <span className="teammate-skill-token-list">
-      {values.slice(0, 4).map((value) => <code key={value}>{value}</code>)}
-      {values.length > 4 ? <small>+{values.length - 4}</small> : null}
-    </span>
-  );
-}
-
-function SkillInspectorSection({ title, children }: { readonly title: string; readonly children: ReactNode }): JSX.Element {
-  return (
-    <section className="teammate-skill-inspector-section">
-      <h3>{title}</h3>
-      {children}
-    </section>
+    />
   );
 }

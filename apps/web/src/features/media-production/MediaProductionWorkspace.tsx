@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { resolveMediaProviderRuntimeState } from "@ling-stack/core/provider-media-normalization";
-import { Clapperboard, FolderPlus } from "lucide-react";
-import type { MediaProductionPageProps, MediaProductionView, StoryboardFocusRequest } from "./media-production-types.js";
-import type { MediaJobDisplayContextMap } from "../media/media-job-display-context.js";
+import type {
+  MediaProductionOverlay,
+  MediaProductionPageProps,
+  MediaProductionToastIntent,
+  MediaProductionView,
+  StoryboardFocusRequest,
+} from "./media-production-types.js";
 import { useMediaProductionController } from "./use-media-production-controller.js";
 import { StoryboardCanvas } from "./StoryboardCanvas.js";
 import { SceneInspector } from "./SceneInspector.js";
@@ -10,15 +14,22 @@ import { ProjectSceneOutline } from "./ProjectSceneOutline.js";
 import { ProjectRunReviewDialog } from "./ProjectRunReviewDialog.js";
 import { MediaProductionCanvasToolbar } from "./MediaProductionCanvasToolbar.js";
 import { MediaProductionDockRail } from "./MediaProductionDockRail.js";
+import { MediaProductionLoadState } from "./MediaProductionLoadState.js";
+import { ProjectDeleteDialog } from "./ProjectDeleteDialog.js";
 import { SceneDeleteDialog } from "./SceneDeleteDialog.js";
 import { SceneResultPreviewDialog } from "./SceneResultPreviewDialog.js";
 import { deriveProjectRunReview, deriveSceneReadiness } from "./media-production-view-models.js";
 import { useI18n } from "../../i18n.js";
-import { useLingToast } from "../../shared/feedback/LingToastProvider.js";
+import { useLingToast } from "../../shared/ui/index.js";
 import { useMediaWorkflowController } from "./workflows/use-media-workflow-controller.js";
-import { MediaWorkflowLibraryOverlay } from "./workflows/MediaWorkflowLibraryOverlay.js";
+import { MediaWorkflowLibraryDialog } from "./workflows/MediaWorkflowLibraryDialog.js";
 import type { MediaWorkflowLibraryTab } from "./workflows/media-workflow-types.js";
 import { mediaProductionDocksAreExclusive } from "./media-production-layout.js";
+import {
+  mediaProductionLegacyBusyAction,
+  selectMediaProductionFailure,
+} from "./media-production-project-view-models.js";
+import { buildMediaJobHostBridge, buildMediaProductionJobSignature, uniqueMediaImageArtifacts } from "./media-job-host-bridge.js";
 
 const leftDockPreferenceKey = "ling-stack.media-production.left-dock-open";
 
@@ -28,6 +39,7 @@ export function MediaProductionWorkspace({
   mediaJobs,
   mediaArtifactsByJob,
   onJobsChanged,
+  onOpenMediaJob,
   onConfigureVideoModel,
   jobsPanel,
 }: MediaProductionPageProps): JSX.Element {
@@ -37,23 +49,32 @@ export function MediaProductionWorkspace({
   const [leftDockOpen, setLeftDockOpen] = useState(readLeftDockPreference);
   const [rightDockOpen, setRightDockOpen] = useState(false);
   const [storyboardFocusRequest, setStoryboardFocusRequest] = useState<StoryboardFocusRequest>({ sceneId: "", sequence: 0 });
-  const [workflowLibraryOpen, setWorkflowLibraryOpen] = useState(false);
-  const [workflowLibraryTab, setWorkflowLibraryTab] = useState<MediaWorkflowLibraryTab>("workflows");
-  const [isProjectRunReviewOpen, setProjectRunReviewOpen] = useState(false);
-  const [scenePendingDelete, setScenePendingDelete] = useState<import("../../types.js").MediaScene | undefined>();
-  const [previewSceneId, setPreviewSceneId] = useState("");
+  const [overlay, setOverlay] = useState<MediaProductionOverlay>({ kind: "none" });
   const [canvasStageWidth, setCanvasStageWidth] = useState(0);
   const lastProjectJobSignature = useRef<{ readonly projectId: string; readonly signature: string }>();
   const canvasStageRef = useRef<HTMLDivElement>(null);
   const selectionContextRef = useRef({ projectId: "", sceneId: "" });
-  const { state, actions } = useMediaProductionController({ cwd, onJobsChanged });
+  const projectDeleteSnapshotRef = useRef<import("../../types.js").MediaProject>();
+  const sceneDeleteSnapshotRef = useRef<import("../../types.js").MediaScene>();
+  const onToast = useCallback((intent: MediaProductionToastIntent): void => {
+    showToast({ message: t(intent.messageKey, intent.values), tone: "success", scope: intent.scope });
+  }, [showToast, t]);
+  const sceneTitleForIndex = useCallback((index: number): string => t("Scene {number}", { number: index }), [t]);
+  const { state, actions } = useMediaProductionController({
+    cwd,
+    defaultProjectName: t("Untitled media project"),
+    sceneTitleForIndex,
+    onJobsChanged,
+    onToast,
+  });
   const workflowController = useMediaWorkflowController({ cwd, onJobsChanged });
   const project = state.project;
+  const busyAction = mediaProductionLegacyBusyAction(state.busy);
   const videoProviders = useMemo(() => providers.filter((provider) => {
     const runtime = resolveMediaProviderRuntimeState(provider, "video_generate");
     return runtime.canRun && Boolean(runtime.videoGeneration);
   }), [providers]);
-  const imageArtifacts = useMemo(() => uniqueImageArtifacts(Object.values(mediaArtifactsByJob).flat()), [mediaArtifactsByJob]);
+  const imageArtifacts = useMemo(() => uniqueMediaImageArtifacts(Object.values(mediaArtifactsByJob).flat()), [mediaArtifactsByJob]);
   const selectedScene = project?.scenes.find((scene) => scene.id === state.selectedSceneId);
   const sceneReadiness = useMemo(() => project
     ? project.scenes.map((scene) => deriveSceneReadiness({
@@ -67,37 +88,49 @@ export function MediaProductionWorkspace({
     }))
     : [], [mediaArtifactsByJob, mediaJobs, project, providers, workflowController.state.workflows]);
   const projectRunReview = useMemo(() => deriveProjectRunReview(sceneReadiness), [sceneReadiness]);
-  const jobContext = useMemo<MediaJobDisplayContextMap>(() => {
-    if (!project) {
-      return {};
-    }
-    const scenesById = new Map(project.scenes.map((scene) => [scene.id, scene]));
-    return Object.fromEntries(project.sceneRuns.flatMap((run) => {
-      const scene = scenesById.get(run.sceneId);
-      return scene ? [[run.mediaJobId, { projectName: project.mediaProject.name, sceneName: scene.title }]] : [];
-    }));
-  }, [project]);
+  const workflowLibraryOpen = overlay.kind === "workflow";
+  const workflowLibraryTab = workflowLibraryOpen ? overlay.tab : "workflows";
+  const setWorkflowLibraryTab = useCallback((tab: MediaWorkflowLibraryTab): void => {
+    setOverlay((current) => current.kind === "workflow"
+      ? { ...current, tab }
+      : { kind: "workflow", tab, trigger: null });
+  }, []);
+  const setWorkflowLibraryOpen = useCallback((open: boolean): void => {
+    setOverlay((current) => open
+      ? current.kind === "workflow" ? current : { kind: "workflow", tab: "workflows", trigger: null }
+      : current.kind === "workflow" ? { kind: "none" } : current);
+  }, []);
+  const jobHostBridge = useMemo(() => buildMediaJobHostBridge({
+    project,
+    jobs: mediaJobs,
+    workflows: workflowController.state.workflows,
+    connections: workflowController.state.connections,
+    selectWorkflow: workflowController.actions.selectWorkflow,
+    selectConnection: workflowController.actions.selectConnection,
+    setLibraryTab: setWorkflowLibraryTab,
+    setLibraryOpen: setWorkflowLibraryOpen,
+  }), [mediaJobs, project, setWorkflowLibraryOpen, setWorkflowLibraryTab, workflowController.actions.selectConnection,
+    workflowController.actions.selectWorkflow, workflowController.state.connections, workflowController.state.workflows]);
   const docksAreExclusive = mediaProductionDocksAreExclusive(canvasStageWidth);
+  const previewSceneId = overlay.kind === "preview" ? overlay.sceneId : "";
   const previewReadiness = sceneReadiness.find((item) => item.sceneId === previewSceneId);
   const previewScene = project?.scenes.find((scene) => scene.id === previewSceneId);
-  const projectJobSignature = useMemo(() => {
-    if (!project) {
-      return "";
-    }
-    const jobsById = new Map(mediaJobs.map((job) => [job.id, job]));
-    return project.sceneRuns.map((run) => {
-      const job = jobsById.get(run.mediaJobId);
-      const artifacts = mediaArtifactsByJob[run.mediaJobId] ?? [];
-      return `${run.mediaJobId}:${job?.status ?? "missing"}:${job?.artifactIds.join(",") ?? ""}:${artifacts.map((artifact) => artifact.id).join(",")}`;
-    }).join("|");
-  }, [mediaArtifactsByJob, mediaJobs, project]);
+  const projectJobSignature = useMemo(
+    () => buildMediaProductionJobSignature(project, mediaJobs, mediaArtifactsByJob),
+    [mediaArtifactsByJob, mediaJobs, project],
+  );
+  const projectPendingDelete = overlay.kind === "delete-project"
+    ? state.projects.find((item) => item.id === overlay.projectId) ?? projectDeleteSnapshotRef.current
+    : undefined;
+  const scenePendingDelete = overlay.kind === "delete-scene"
+    ? project?.scenes.find((scene) => scene.id === overlay.sceneId) ?? sceneDeleteSnapshotRef.current
+    : undefined;
 
   useEffect(() => {
-    if (!state.noticeMessage) {
-      return;
-    }
-    showToast({ message: t(state.noticeMessage), tone: "success", durationMs: 2_000, scope: "media-production-save" });
-  }, [showToast, state.noticeMessage, t]);
+    setOverlay({ kind: "none" });
+    projectDeleteSnapshotRef.current = undefined;
+    sceneDeleteSnapshotRef.current = undefined;
+  }, [cwd]);
 
   useEffect(() => {
     const projectId = project?.mediaProject.id;
@@ -113,10 +146,10 @@ export function MediaProductionWorkspace({
   }, [actions.refreshCurrentProject, project?.mediaProject.id, projectJobSignature]);
 
   useEffect(() => {
-    if (previewSceneId && (!previewScene || !previewReadiness?.currentArtifact)) {
-      setPreviewSceneId("");
+    if (overlay.kind === "preview" && (!previewScene || !previewReadiness?.currentArtifact)) {
+      setOverlay({ kind: "none" });
     }
-  }, [previewReadiness?.currentArtifact, previewScene, previewSceneId]);
+  }, [overlay.kind, previewReadiness?.currentArtifact, previewScene]);
 
   useEffect(() => {
     const projectId = project?.mediaProject.id ?? "";
@@ -128,25 +161,19 @@ export function MediaProductionWorkspace({
       return;
     }
     if (sceneId && previous.sceneId !== sceneId) {
-      if (docksAreExclusive) {
-        setLeftDockOpen(false);
-      }
+      if (docksAreExclusive) setLeftDockOpen(false);
       setRightDockOpen(true);
       setStoryboardFocusRequest((current) => ({ sceneId, sequence: current.sequence + 1 }));
     }
   }, [docksAreExclusive, project?.mediaProject.id, selectedScene?.id]);
 
   useEffect(() => {
-    if (docksAreExclusive && leftDockOpen && rightDockOpen) {
-      setLeftDockOpen(false);
-    }
+    if (docksAreExclusive && leftDockOpen && rightDockOpen) setLeftDockOpen(false);
   }, [docksAreExclusive, leftDockOpen, rightDockOpen]);
 
   useEffect(() => {
     const stage = canvasStageRef.current;
-    if (!stage || view !== "studio") {
-      return;
-    }
+    if (!stage || view !== "studio") return;
     const updateWidth = (): void => setCanvasStageWidth(stage.clientWidth);
     updateWidth();
     const observer = new ResizeObserver(updateWidth);
@@ -156,12 +183,8 @@ export function MediaProductionWorkspace({
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent): void {
-      if (event.key !== "Escape" || event.defaultPrevented) {
-        return;
-      }
-      if (workflowLibraryOpen) {
-        return;
-      }
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      if (overlay.kind !== "none") return;
       if (rightDockOpen) {
         event.preventDefault();
         setRightDockOpen(false);
@@ -173,14 +196,12 @@ export function MediaProductionWorkspace({
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [leftDockOpen, rightDockOpen, workflowLibraryOpen]);
+  }, [leftDockOpen, overlay.kind, rightDockOpen]);
 
   const selectScene = useCallback((sceneId: string): void => {
     selectionContextRef.current = { projectId: project?.mediaProject.id ?? "", sceneId };
     actions.selectScene(sceneId);
-    if (docksAreExclusive) {
-      setLeftDockOpen(false);
-    }
+    if (docksAreExclusive) setLeftDockOpen(false);
     setRightDockOpen(true);
     setStoryboardFocusRequest((current) => ({ sceneId, sequence: current.sequence + 1 }));
   }, [actions, docksAreExclusive, project?.mediaProject.id]);
@@ -188,18 +209,12 @@ export function MediaProductionWorkspace({
   const previewSceneResult = useCallback((sceneId: string): void => {
     const target = sceneReadiness.find((item) => item.sceneId === sceneId);
     if (target?.currentArtifact) {
-      setPreviewSceneId(sceneId);
+      setOverlay({ kind: "preview", sceneId, artifactId: target.currentArtifact.id, trigger: activeElement() });
     }
   }, [sceneReadiness]);
 
-  function createScene(): void {
-    void actions.createScene();
-  }
-
   function openLeftDock(): void {
-    if (docksAreExclusive) {
-      setRightDockOpen(false);
-    }
+    if (docksAreExclusive) setRightDockOpen(false);
     setLeftDockOpen(true);
     writeLeftDockPreference(true);
   }
@@ -208,9 +223,9 @@ export function MediaProductionWorkspace({
     if (leftDockOpen) {
       setLeftDockOpen(false);
       writeLeftDockPreference(false);
-      return;
+    } else {
+      openLeftDock();
     }
-    openLeftDock();
   }
 
   function closeLeftDock(): void {
@@ -219,18 +234,25 @@ export function MediaProductionWorkspace({
   }
 
   function toggleRightDock(): void {
-    if (!selectedScene) {
-      return;
-    }
+    if (!selectedScene) return;
     if (rightDockOpen) {
       setRightDockOpen(false);
       return;
     }
-    if (docksAreExclusive) {
-      setLeftDockOpen(false);
-    }
+    if (docksAreExclusive) setLeftDockOpen(false);
     setRightDockOpen(true);
     setStoryboardFocusRequest((current) => ({ sceneId: selectedScene.id, sequence: current.sequence + 1 }));
+  }
+
+  function closeOverlay(): void {
+    if (isOverlayBusy(overlay, state.busy, workflowController.state.busyAction)) return;
+    const closingOverlay = overlay;
+    setOverlay({ kind: "none" });
+    if (closingOverlay.kind === "run-project") {
+      restoreOverlayTriggerFocus(closingOverlay.trigger, ".media-production-primary-action");
+    } else if (closingOverlay.kind === "preview") {
+      restoreOverlayTriggerFocus(closingOverlay.trigger, ".storyboard-scene-preview");
+    }
   }
 
   return (
@@ -241,16 +263,19 @@ export function MediaProductionWorkspace({
         view={view}
         readyCount={projectRunReview.ready.length}
         hasGenerationSource={videoProviders.length > 0 || workflowController.state.workflows.some((item) => item.definition.status === "ready" && item.currentVersion)}
-        busy={Boolean(state.busyAction)}
+        busy={Boolean(state.busy.projectRunId)}
         onViewChange={setView}
         onOpenProjectDock={openLeftDock}
-        onRunProject={() => setProjectRunReviewOpen(true)}
+        onRunProject={() => project && setOverlay({ kind: "run-project", projectId: project.mediaProject.id, trigger: activeElement() })}
         onConfigureVideoModel={onConfigureVideoModel}
       />
 
-      {view === "jobs" ? <div className="media-production-jobs-view">{jobsPanel(jobContext)}</div> : (
+      {view === "jobs" ? <div className="media-production-jobs-view">{jobsPanel({
+        jobContext: jobHostBridge.context,
+        hostActions: jobHostBridge.actions,
+      })}</div> : (
         <div className="media-production-studio">
-          {state.errorMessage ? <div className="inline-error media-production-error">{state.errorMessage}</div> : null}
+          <MediaProductionLoadState actions={actions} state={state} />
           {project ? (
             <div ref={canvasStageRef} className="media-production-canvas-stage" data-exclusive-docks={docksAreExclusive ? "true" : "false"}>
               <StoryboardCanvas
@@ -261,11 +286,11 @@ export function MediaProductionWorkspace({
                 focusRequest={storyboardFocusRequest}
                 leftDockOpen={leftDockOpen}
                 rightDockOpen={rightDockOpen}
-                isBusy={Boolean(state.busyAction)}
+                isBusy={state.busy.sceneMoveIds.length > 0}
                 onSelectScene={selectScene}
                 onPreviewResult={previewSceneResult}
                 onMoveScene={(sceneId, canvasPosition) => void actions.updateScene(sceneId, { canvasPosition })}
-                onCreateScene={createScene}
+                onCreateScene={() => void actions.createScene()}
               />
               <MediaProductionDockRail
                 leftOpen={leftDockOpen}
@@ -276,20 +301,29 @@ export function MediaProductionWorkspace({
               />
               <div className={`media-production-dock-panel left${leftDockOpen ? " is-open" : ""}`} aria-hidden={!leftDockOpen}>
                 <ProjectSceneOutline
-                  projects={state.projects}
+                  actions={actions}
+                  busy={state.busy}
+                  failures={state.failures}
+                  onClose={closeLeftDock}
+                  onConfigureVideoModel={onConfigureVideoModel}
+                  onOpenWorkflowLibrary={() => setOverlay({ kind: "workflow", tab: "workflows", trigger: null })}
+                  onRequestProjectDelete={(target, trigger) => {
+                    projectDeleteSnapshotRef.current = target;
+                    setOverlay({ kind: "delete-project", projectId: target.id, trigger });
+                  }}
+                  onRequestSceneDelete={(target, trigger) => {
+                    sceneDeleteSnapshotRef.current = target;
+                    setOverlay({ kind: "delete-scene", sceneId: target.id, trigger });
+                  }}
+                  onSceneSelect={selectScene}
+                  pendingProjectId={state.pendingProjectId}
                   project={project}
+                  projects={state.projects}
+                  providers={providers}
+                  readiness={sceneReadiness}
                   selectedProjectId={state.selectedProjectId}
                   selectedSceneId={state.selectedSceneId}
-                  providers={providers}
                   workflows={workflowController.state.workflows}
-                  readiness={sceneReadiness}
-                  busyAction={state.busyAction}
-                  actions={actions}
-                  onConfigureVideoModel={onConfigureVideoModel}
-                  onOpenWorkflowLibrary={() => { setWorkflowLibraryTab("workflows"); setWorkflowLibraryOpen(true); }}
-                  onClose={closeLeftDock}
-                  onSceneSelect={selectScene}
-                  onRequestDelete={setScenePendingDelete}
                 />
               </div>
               {selectedScene ? (
@@ -305,50 +339,85 @@ export function MediaProductionWorkspace({
                     artifactsByJob={mediaArtifactsByJob}
                     imageArtifacts={imageArtifacts}
                     readiness={sceneReadiness.find((item) => item.sceneId === selectedScene.id)}
-                    busyAction={state.busyAction}
+                    busyAction={busyAction}
                     actions={actions}
                     onClose={() => setRightDockOpen(false)}
-                    onRequestDelete={setScenePendingDelete}
+                    onRequestDelete={(target) => {
+                      sceneDeleteSnapshotRef.current = target;
+                      setOverlay({ kind: "delete-scene", sceneId: target.id, trigger: null });
+                    }}
                     onConfigureVideoModel={onConfigureVideoModel}
-                    onOpenWorkflowLibrary={() => { setWorkflowLibraryTab("workflows"); setWorkflowLibraryOpen(true); }}
+                    onOpenWorkflowLibrary={() => setOverlay({ kind: "workflow", tab: "workflows", trigger: null })}
                   />
                 </div>
               ) : null}
             </div>
-          ) : <EmptyStudio onCreate={() => void actions.createProject()} />}
+          ) : null}
         </div>
       )}
-      {project && isProjectRunReviewOpen ? (
+      {project && overlay.kind === "run-project" && overlay.projectId === project.mediaProject.id ? (
         <ProjectRunReviewDialog
           review={projectRunReview}
-          isSubmitting={state.busyAction === "run-project"}
-          onClose={() => setProjectRunReviewOpen(false)}
-          onConfirm={() => {
-            void actions.runProject(projectRunReview.ready.map((item) => item.sceneId));
-            setProjectRunReviewOpen(false);
+          failure={selectMediaProductionFailure(state.failures, ["project-run"], project.mediaProject.id)}
+          isSubmitting={state.busy.projectRunId === project.mediaProject.id}
+          onClose={closeOverlay}
+          onConfirm={async () => {
+            const outcome = await actions.runProject(projectRunReview.ready.map((item) => item.sceneId));
+            if (outcome.ok) {
+              setOverlay({ kind: "none" });
+              restoreOverlayTriggerFocus(overlay.trigger, ".media-production-primary-action");
+            }
           }}
         />
       ) : null}
-      {scenePendingDelete ? (
+      {projectPendingDelete && overlay.kind === "delete-project" ? (
+        <ProjectDeleteDialog
+          project={projectPendingDelete}
+          sceneCount={project?.mediaProject.id === projectPendingDelete.id ? project.scenes.length : 0}
+          failure={selectMediaProductionFailure(state.failures, ["project-delete"], projectPendingDelete.id)}
+          isDeleting={state.busy.projectDeleteId === projectPendingDelete.id}
+          onClearFailure={() => actions.clearFailure("project-delete", projectPendingDelete.id)}
+          onClose={closeOverlay}
+          onConfirm={() => actions.deleteProject(projectPendingDelete.id)}
+          onDeleted={() => {
+            setOverlay({ kind: "none" });
+            projectDeleteSnapshotRef.current = undefined;
+            focusFallback(".media-production-project-trigger");
+          }}
+          onRestoreFocus={() => restoreTriggerFocus(overlay.trigger, ".media-production-project-trigger")}
+        />
+      ) : null}
+      {scenePendingDelete && overlay.kind === "delete-scene" ? (
         <SceneDeleteDialog
           scene={scenePendingDelete}
-          isDeleting={state.busyAction === `delete-scene:${scenePendingDelete.id}`}
-          onClose={() => setScenePendingDelete(undefined)}
-          onConfirm={() => {
-            void actions.deleteScene(scenePendingDelete.id);
-            setScenePendingDelete(undefined);
+          failure={selectMediaProductionFailure(state.failures, ["scene-delete"], scenePendingDelete.id)}
+          isDeleting={state.busy.sceneDeleteIds.includes(scenePendingDelete.id)}
+          onClearFailure={() => actions.clearFailure("scene-delete", scenePendingDelete.id)}
+          onClose={closeOverlay}
+          onConfirm={() => actions.deleteScene(scenePendingDelete.id)}
+          onDeleted={() => {
+            setOverlay({ kind: "none" });
+            sceneDeleteSnapshotRef.current = undefined;
+            focusFallback(".project-outline-scene.selected .project-outline-scene-main, .project-outline-scenes-head button");
           }}
+          onRestoreFocus={() => restoreTriggerFocus(overlay.trigger, ".project-outline-scene.selected .project-outline-scene-main, .project-outline-scenes-head button")}
         />
       ) : null}
-      {previewScene && previewReadiness?.currentArtifact ? (
+      {previewScene && previewReadiness?.currentArtifact && overlay.kind === "preview" ? (
         <SceneResultPreviewDialog
           cwd={cwd}
           scene={previewScene}
           artifact={previewReadiness.currentArtifact}
-          onClose={() => setPreviewSceneId("")}
+          currentMediaJobId={previewReadiness.currentJob?.id}
+          onClose={closeOverlay}
+          onOpenTask={(mediaJobId) => {
+            setOverlay({ kind: "none" });
+            setView("jobs");
+            onOpenMediaJob(mediaJobId);
+          }}
         />
       ) : null}
-      <MediaWorkflowLibraryOverlay
+      <MediaWorkflowLibraryDialog
         open={workflowLibraryOpen}
         tab={workflowLibraryTab}
         state={workflowController.state}
@@ -356,21 +425,47 @@ export function MediaProductionWorkspace({
         mediaJobs={mediaJobs}
         imageArtifacts={imageArtifacts}
         onTabChange={setWorkflowLibraryTab}
-        onClose={() => setWorkflowLibraryOpen(false)}
+        onClose={closeOverlay}
       />
     </div>
   );
 }
 
-function EmptyStudio({ onCreate }: { readonly onCreate: () => void }): JSX.Element {
-  return (
-    <div className="media-production-empty-state">
-      <Clapperboard size={30} strokeWidth={1.6} />
-      <h2>先创建一个媒体项目</h2>
-      <p>将视频拆成有序分镜，分别生成和挑选片段结果。</p>
-      <button className="primary-button" type="button" onClick={onCreate}><FolderPlus size={16} /> 新建项目</button>
-    </div>
-  );
+function isOverlayBusy(
+  overlay: MediaProductionOverlay,
+  busy: import("./media-production-types.js").MediaProductionBusyState,
+  workflowBusyAction: string,
+): boolean {
+  if (overlay.kind === "delete-project") return busy.projectDeleteId === overlay.projectId;
+  if (overlay.kind === "delete-scene") return busy.sceneDeleteIds.includes(overlay.sceneId);
+  if (overlay.kind === "run-project") return busy.projectRunId === overlay.projectId;
+  if (overlay.kind === "workflow" || overlay.kind === "workflow-danger") return Boolean(workflowBusyAction);
+  return false;
+}
+
+function restoreTriggerFocus(trigger: HTMLElement | null, fallbackSelector: string): void {
+  queueMicrotask(() => {
+    if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+    else focusFallback(fallbackSelector);
+  });
+}
+
+function activeElement(): HTMLElement | null {
+  return document.activeElement instanceof HTMLElement ? document.activeElement : null;
+}
+
+function restoreOverlayTriggerFocus(trigger: HTMLElement | null, fallbackSelector: string): void {
+  window.requestAnimationFrame(() => {
+    if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+    else focusFallback(fallbackSelector);
+  });
+}
+
+function focusFallback(selector: string): void {
+  queueMicrotask(() => {
+    const fallback = document.querySelector<HTMLElement>(selector);
+    fallback?.focus({ preventScroll: true });
+  });
 }
 
 function readLeftDockPreference(): boolean {
@@ -387,9 +482,4 @@ function writeLeftDockPreference(open: boolean): void {
   } catch {
     // The layout still works when browser storage is unavailable.
   }
-}
-
-function uniqueImageArtifacts(artifacts: readonly import("../../types.js").RunArtifact[]): import("../../types.js").RunArtifact[] {
-  const seen = new Set<string>();
-  return artifacts.filter((artifact) => artifact.type === "image" && !seen.has(artifact.id) && Boolean(seen.add(artifact.id)));
 }

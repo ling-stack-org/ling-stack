@@ -69,7 +69,7 @@ export function workflowPhaseLabel(phase: WorkflowPhase, t: Translate): string {
 
 export function approvalProfileText(profile: SkillApprovalProfile, t: Translate): string {
   if (profile.mode === "none") {
-    return t("No approval");
+    return t("No extra approval");
   }
   const risk = profile.risk ? t(`risk.${profile.risk}`) : "";
   if (profile.mode === "standard") {

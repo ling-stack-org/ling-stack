@@ -1,0 +1,125 @@
+.workspace.workspace-provider-surface {
+  display: grid;
+  grid-area: workspace;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  color: var(--ling-text-default);
+  background: var(--ling-bg-app);
+}
+
+.provider-workbench-surface {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+.provider-workbench-surface.provider-management-layout {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.provider-workbench {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--ling-space-5);
+  overflow: hidden;
+  color: var(--ling-text-default);
+}
+
+.provider-workbench-header {
+  display: grid;
+  min-width: 0;
+  flex: 0 0 auto;
+  gap: var(--ling-space-4);
+}
+
+.provider-workbench-title-block {
+  display: grid;
+  gap: var(--ling-space-2);
+}
+
+.provider-workbench-title-block h1,
+.provider-workbench-title-block p {
+  margin: 0;
+  letter-spacing: 0;
+}
+
+.provider-workbench-title-block h1 {
+  color: var(--ling-text-strong);
+  font-size: 20px;
+  line-height: 28px;
+}
+
+.provider-workbench-title-block p {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-sm);
+  line-height: var(--ling-line-sm);
+}
+
+.provider-readiness-summary {
+  display: flex;
+  min-width: 0;
+  min-height: 24px;
+  align-items: center;
+  flex-wrap: wrap;
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+.provider-readiness-summary > span {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.provider-readiness-summary > span + span::before {
+  width: 3px;
+  height: 3px;
+  margin-inline: var(--ling-space-5);
+  border-radius: var(--ling-radius-pill);
+  background: var(--ling-text-muted);
+  content: "";
+}
+
+.provider-readiness-summary .attention {
+  color: var(--ling-status-warning);
+  font-weight: 650;
+}
+
+.provider-readiness-summary .quiet {
+  color: var(--ling-text-muted);
+}
+
+.provider-toolbar-controls {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(220px, 1fr) minmax(148px, auto) auto auto auto;
+  align-items: center;
+  gap: var(--ling-space-4);
+}
+
+.provider-search-field {
+  width: 100%;
+  max-width: 420px;
+}
+
+.provider-status-filter {
+  width: 100%;
+  min-width: 148px;
+}
+
+.provider-refresh-button {
+  justify-self: end;
+}

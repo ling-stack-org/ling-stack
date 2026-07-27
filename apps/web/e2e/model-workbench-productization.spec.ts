@@ -52,7 +52,10 @@ test("P13 shows one neutral summary and one product state per model route", asyn
   }
   await expect(page.locator(".provider-row-technical-details")).toHaveCount(0);
   await expect(page.locator(".provider-key-status-stack")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Refresh" })).toHaveText("");
+  const refreshButton = page.getByRole("button", { name: "Refresh" });
+  await expect(refreshButton).toHaveAttribute("aria-label", "Refresh");
+  await expect(refreshButton).toHaveAttribute("title", "Refresh");
+  await expect(refreshButton).toHaveAttribute("data-icon-only", "true");
 
   const overflow = await page.locator(".provider-table-shell").evaluate((element) => ({
     clientWidth: element.clientWidth,
@@ -115,12 +118,17 @@ test("P13.1 uses model-first identity and keeps routine row actions visible", as
     expect(box?.height).toBeGreaterThanOrEqual(32);
   }
 
-  await customRow.locator(".provider-row-menu-trigger").hover();
-  await expect(customRow.getByRole("menuitem", { name: "Edit" })).toHaveCount(0);
-  await expect(customRow.getByRole("menuitem", { name: "Check" })).toHaveCount(0);
-  await expect(customRow.getByRole("menuitem", { name: "Clear default" })).toBeVisible();
-  await expect(customRow.getByRole("menuitem", { name: "Disable" })).toBeVisible();
-  await expect(customRow.getByRole("menuitem", { name: "Delete" })).toBeVisible();
+  const moreButton = customRow.getByRole("button", { name: "More" });
+  await moreButton.focus();
+  await moreButton.press("Enter");
+  const menu = page.getByRole("menu");
+  await expect(menu.getByRole("menuitem", { name: "Edit" })).toHaveCount(0);
+  await expect(menu.getByRole("menuitem", { name: "Check" })).toHaveCount(0);
+  await expect(menu.getByRole("menuitem", { name: "Clear default" })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "Disable" })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "Delete" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(moreButton).toBeFocused();
 });
 
 test("P13 provider editor progressively discloses supplier-specific technical fields", async ({ page }) => {

@@ -53,7 +53,6 @@ const defaultRuntimeSettingsForm: RuntimeSettingsFormState = {
 
 export function useSettingsDomain(input: {
   readonly cwd: string;
-  readonly setErrorMessage: (message: string) => void;
 }): SettingsController {
   const [approvalPolicy, setApprovalPolicy] = useState<ApprovalPolicy | undefined>();
   const [approvalPolicyForm, setApprovalPolicyForm] = useState<ApprovalPolicyFormState>(defaultApprovalPolicyForm);
@@ -75,14 +74,12 @@ export function useSettingsDomain(input: {
     setApprovalPolicyLoading(true);
     try {
       setError(undefined);
-      input.setErrorMessage("");
       const response = await getApprovalPolicy(input.cwd.trim());
       setApprovalPolicy(response.policy);
       setApprovalPolicyForm(approvalPolicyToForm(response.policy));
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
       setError({ scope: "load", message });
-      input.setErrorMessage(message);
     } finally {
       setApprovalPolicyLoading(false);
     }
@@ -92,21 +89,18 @@ export function useSettingsDomain(input: {
     if (!input.cwd.trim()) {
       const message = "本地工作区未就绪";
       setError({ scope: "mutation", message });
-      input.setErrorMessage(message);
       return;
     }
 
     setApprovalPolicyLoading(true);
     try {
       setError(undefined);
-      input.setErrorMessage("");
       const response = await updateApprovalPolicy(input.cwd.trim(), approvalPolicyForm);
       setApprovalPolicy(response.policy);
       setApprovalPolicyForm(approvalPolicyToForm(response.policy));
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
       setError({ scope: "mutation", message });
-      input.setErrorMessage(message);
     } finally {
       setApprovalPolicyLoading(false);
     }
@@ -152,6 +146,9 @@ export function useSettingsDomain(input: {
 
   async function saveRuntimeSettings(): Promise<void> {
     if (!input.cwd.trim()) {
+      const message = "本地工作区未就绪";
+      setRuntimeSettingsError(message);
+      setError({ scope: "mutation", message });
       return;
     }
     setRuntimeSettingsAction("save");

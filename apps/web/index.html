@@ -5,24 +5,125 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <script>
       (() => {
-        try {
+        const defaultSelection = { mode: "system", lightThemeId: "ling-light", darkThemeId: "ling-dark" };
+        const variables = [
+          "--ling-bg-app", "--ling-bg-panel", "--ling-bg-elevated", "--ling-bg-subtle", "--ling-bg-pressed",
+          "--ling-bg-overlay", "--ling-bg-code", "--ling-bg-sidebar", "--ling-bg-composer",
+          "--ling-text-strong", "--ling-text-default", "--ling-text-muted", "--ling-text-soft", "--ling-text-inverse", "--ling-text-link",
+          "--ling-border-default", "--ling-border-strong", "--ling-border-focus",
+          "--ling-action-accent", "--ling-action-accent-hover", "--ling-action-accent-pressed", "--ling-action-accent-fg", "--ling-action-selection",
+          "--ling-status-success", "--ling-status-success-bg", "--ling-status-success-border",
+          "--ling-status-warning", "--ling-status-warning-bg", "--ling-status-warning-border",
+          "--ling-status-danger", "--ling-status-danger-bg", "--ling-status-danger-border",
+          "--ling-status-info", "--ling-status-info-bg", "--ling-status-info-border",
+          "--ling-shadow-low", "--ling-shadow-medium", "--ling-shadow-overlay",
+          "--ling-native-selection", "--ling-native-scrollbar", "--ling-native-scrollbar-hover",
+        ];
+        const themeIdPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+        const presentationIds = ["ling-standard", "ling-glass", "ling-immersive", "ling-illustrated"];
+        const safeColor = (value) => /^(?:#[0-9a-f]{3,8}|rgba?\([0-9.,%/\s+-]+\)|hsla?\([0-9.degturnra%/,\s+-]+\)|color-mix\(in srgb,\s*#[0-9a-f]{3,8}\s*(?:[0-9.]+%)?,\s*#[0-9a-f]{3,8}\s*(?:[0-9.]+%)?\))$/i.test(value);
+        const safeShadow = (value) => /^[0-9a-z#(),.%/\s+-]+$/i.test(value) && /\d/.test(value);
+        const parseJson = (key) => {
+          try {
+            const raw = localStorage.getItem(key);
+            return raw ? JSON.parse(raw) : undefined;
+          } catch {
+            return undefined;
+          }
+        };
+        const validSelection = (value) => {
+          if (!value || typeof value !== "object") return undefined;
+          if (value.mode === "fixed" && typeof value.themeId === "string" && themeIdPattern.test(value.themeId)) return value;
+          if (value.mode === "system" && themeIdPattern.test(value.lightThemeId || "") && themeIdPattern.test(value.darkThemeId || "")) return value;
+          return undefined;
+        };
+        const validFirstPaintState = (value) => {
+          if (!value || typeof value !== "object" || !Number.isSafeInteger(value.repositoryRevision) || value.repositoryRevision < 1) return undefined;
+          if (typeof value.authorityComplete !== "boolean" || !Array.isArray(value.readyThemes) || value.readyThemes.length > 64) return undefined;
+          if (!value.authorityComplete && value.readyThemes.length > 0) return undefined;
+          if (value.readyThemes.some((entry) => !entry || typeof entry !== "object" || typeof entry.themeId !== "string" || entry.themeId.length > 64 || !themeIdPattern.test(entry.themeId) || typeof entry.packageChecksumSha256 !== "string" || !/^[a-f0-9]{64}$/.test(entry.packageChecksumSha256))) return undefined;
+          const themeIds = value.readyThemes.map((entry) => entry.themeId);
+          if (new Set(themeIds).size !== themeIds.length) return undefined;
+          if (themeIds.some((themeId, index) => index > 0 && themeId < themeIds[index - 1])) return undefined;
+          return value;
+        };
+        const legacySelection = () => {
           const bootstrap = localStorage.getItem("ling-stack.themeBootstrapPreference");
           const saved = localStorage.getItem("ling-stack.themePreference");
-          const preference =
-            bootstrap === "light" || bootstrap === "dark" || bootstrap === "system"
-              ? bootstrap
-              : saved === "light" || saved === "dark" || saved === "system"
-                ? saved
-                : "system";
-          const theme =
-            preference === "system" && matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : preference;
-          document.documentElement.dataset.theme = theme === "system" ? "light" : theme;
-          document.documentElement.dataset.themePreference = preference;
-          document.documentElement.style.colorScheme = document.documentElement.dataset.theme;
+          const preference = ["light", "dark", "system"].includes(bootstrap)
+            ? bootstrap
+            : ["light", "dark", "system"].includes(saved) ? saved : "system";
+          return preference === "system"
+            ? defaultSelection
+            : { mode: "fixed", themeId: preference === "dark" ? "ling-dark" : "ling-light" };
+        };
+        const safeSnapshot = (value, requestedThemeId) => {
+          if (!value || value.schemaVersion !== 1 || value.themeId !== requestedThemeId) return undefined;
+          if (!themeIdPattern.test(value.themeId || "") || !["light", "dark"].includes(value.colorScheme)) return undefined;
+          if (!["local-import", "local-generated"].includes(value.source) || !presentationIds.includes(value.presentationProfileId)) return undefined;
+          if (!value.variableMap || Object.keys(value.variableMap).length !== variables.length) return undefined;
+          for (const variable of variables) {
+            const token = value.variableMap[variable];
+            if (typeof token !== "string" || !token.trim() || token.length > 200 || /[;{}<>]|(?:url|var|env|attr|expression|image-set)\s*\(|@import/i.test(token)) return undefined;
+            if (variable.startsWith("--ling-shadow-") ? !safeShadow(token) : !safeColor(token)) return undefined;
+          }
+          if (Object.keys(value.variableMap).some((key) => !variables.includes(key))) return undefined;
+          if (value.packageChecksumSha256 !== undefined && (typeof value.packageChecksumSha256 !== "string" || !/^[a-f0-9]{64}$/.test(value.packageChecksumSha256))) return undefined;
+          return value;
+        };
+        try {
+          const selection = validSelection(parseJson("ling-stack.themeBootstrapSelection"))
+            || validSelection(parseJson("ling-stack.themeSelection"))
+            || legacySelection();
+          const systemScheme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+          const requestedThemeId = selection.mode === "system"
+            ? systemScheme === "dark" ? selection.darkThemeId : selection.lightThemeId
+            : selection.themeId;
+          const storedSnapshot = safeSnapshot(parseJson("ling-stack.themeBootstrapSnapshot"), requestedThemeId);
+          const builtInScheme = requestedThemeId === "ling-dark" ? "dark" : requestedThemeId === "ling-light" ? "light" : undefined;
+          const desktopClient = Boolean(globalThis.lingDesktop);
+          const firstPaint = validFirstPaintState(globalThis.lingDesktop?.themePackages?.firstPaint);
+          const authority = firstPaint?.authorityComplete
+            ? firstPaint.readyThemes.find((entry) => entry.themeId === requestedThemeId)
+            : undefined;
+          const snapshot = builtInScheme
+            ? undefined
+            : !desktopClient
+              ? storedSnapshot
+              : authority && storedSnapshot?.packageChecksumSha256 === authority.packageChecksumSha256
+                ? storedSnapshot
+                : undefined;
+          const colorScheme = builtInScheme || snapshot?.colorScheme || storedSnapshot?.colorScheme || systemScheme;
+          const themeId = snapshot?.themeId || builtInScheme && requestedThemeId || (colorScheme === "dark" ? "ling-dark" : "ling-light");
+          if (snapshot) {
+            for (const variable of variables) document.documentElement.style.setProperty(variable, snapshot.variableMap[variable]);
+          }
+          document.documentElement.dataset.uiTheme = themeId;
+          document.documentElement.dataset.themeFirstPaint = themeId;
+          document.documentElement.dataset.colorScheme = colorScheme;
+          document.documentElement.dataset.themeSelection = selection.mode;
+          document.documentElement.dataset.uiPresentation = snapshot?.presentationProfileId || "ling-standard";
+          document.documentElement.dataset.client = globalThis.lingDesktop ? "desktop" : "web";
+          document.documentElement.dataset.theme = colorScheme;
+          document.documentElement.dataset.themePreference = selection.mode === "system" ? "system" : colorScheme;
+          document.documentElement.style.colorScheme = colorScheme;
         } catch {
-          document.documentElement.dataset.theme = "light";
+          let fallbackScheme = "light";
+          try {
+            fallbackScheme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+          } catch {
+            fallbackScheme = "light";
+          }
+          const fallbackThemeId = fallbackScheme === "dark" ? "ling-dark" : "ling-light";
+          document.documentElement.dataset.uiTheme = fallbackThemeId;
+          document.documentElement.dataset.themeFirstPaint = fallbackThemeId;
+          document.documentElement.dataset.colorScheme = fallbackScheme;
+          document.documentElement.dataset.themeSelection = "system";
+          document.documentElement.dataset.uiPresentation = "ling-standard";
+          document.documentElement.dataset.client = globalThis.lingDesktop ? "desktop" : "web";
+          document.documentElement.dataset.theme = fallbackScheme;
           document.documentElement.dataset.themePreference = "system";
-          document.documentElement.style.colorScheme = "light";
+          document.documentElement.style.colorScheme = fallbackScheme;
         }
       })();
     </script>
@@ -31,6 +132,7 @@
   </head>
   <body>
     <div id="root"></div>
+    <div id="ling-ui-overlay-root" data-ling-overlay-root="true"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

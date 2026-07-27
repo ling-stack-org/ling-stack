@@ -27,6 +27,7 @@ test("channel team metrics API exposes read-only team metrics for a channel", as
       recommendations: ["Keep this as folded evidence."],
       sourceRefs: [{ type: "turn", id: "turn_demo" }],
       now: "2026-06-26T00:01:00.000Z",
+      expiresAt: null,
     }),
     "2026-06-26T00:01:00.000Z",
   );

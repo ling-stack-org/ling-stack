@@ -1,0 +1,70 @@
+.approval-external-action {
+  display: grid;
+  gap: var(--ling-space-3);
+  min-width: 0;
+  padding: var(--ling-space-3);
+}
+
+.external-action-audit-head,
+.external-action-audit-head > span,
+.external-action-meta,
+.external-action-controls,
+.external-action-target-link,
+.external-action-labels {
+  display: flex;
+  align-items: center;
+}
+
+.external-action-audit-head {
+  justify-content: space-between;
+  gap: var(--ling-space-3);
+}
+
+.external-action-audit-head > span,
+.external-action-target-link {
+  gap: var(--ling-space-2);
+  min-width: 0;
+}
+
+.external-action-meta,
+.external-action-controls,
+.external-action-labels {
+  flex-wrap: wrap;
+  gap: var(--ling-space-2);
+}
+
+.external-action-meta span,
+.external-action-meta time {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  font-size: var(--ling-font-xs);
+}
+
+.external-action-target-link {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.external-action-preview,
+.external-action-artifacts {
+  display: grid;
+  gap: var(--ling-space-2);
+  min-width: 0;
+}
+
+.external-action-preview {
+  padding: var(--ling-space-2);
+}
+
+.external-action-preview p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.external-action-controls {
+  justify-content: flex-end;
+}
+
+.approval-card.compact .external-action-controls {
+  justify-content: flex-start;
+}

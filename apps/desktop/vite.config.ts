@@ -4,6 +4,9 @@ import { defineConfig } from "vite";
 export default defineConfig({
   root: resolve(import.meta.dirname, "renderer/computer-use-preview"),
   base: "./",
+  esbuild: {
+    jsx: "automatic",
+  },
   build: {
     outDir: resolve(import.meta.dirname, "dist/renderer/computer-use-preview"),
     emptyOutDir: true,

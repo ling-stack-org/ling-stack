@@ -1,0 +1,22 @@
+.full-access-confirmation-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ling-space-3);
+}
+
+.full-access-confirmation-title > svg {
+  flex: 0 0 auto;
+  color: var(--ling-text-muted);
+}
+
+.full-access-confirmation-body {
+  display: grid;
+  gap: var(--ling-space-4);
+}
+
+.full-access-confirmation-body > p {
+  margin: 0;
+  color: var(--ling-text-default);
+  font-size: var(--ling-font-sm);
+  line-height: var(--ling-line-sm);
+}

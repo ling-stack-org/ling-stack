@@ -27,7 +27,10 @@ test("external action approval card requires explicit execute after approval", a
   await expect(externalApproval.getByLabel("External action audit")).toContainText("tianxiaochannel-oss88/ling-stack");
   await expect(externalApproval.getByLabel("External action audit")).toContainText("github_pull_request #42");
   await expect(externalApproval.getByLabel("External action audit")).toContainText("Looks good from Ling.");
-  await expect(externalApproval.getByLabel("External action artifacts")).toContainText("Approval preview");
+  const artifacts = externalApproval.locator(".external-action-artifacts");
+  await expect(artifacts).not.toHaveAttribute("open", "");
+  await artifacts.locator("summary").click();
+  await expect(artifacts.getByText("Approval preview")).toBeVisible();
   await expect(externalApproval.getByRole("button", { name: "Execute action" })).toHaveCount(0);
 
   await externalApproval.getByRole("button", { name: "Approve" }).click();
@@ -36,8 +39,15 @@ test("external action approval card requires explicit execute after approval", a
   await expect(externalApproval.getByRole("button", { name: "Execute action" })).toBeVisible();
 
   await externalApproval.getByRole("button", { name: "Execute action" }).click();
-  await expect(externalApproval).toContainText("succeeded");
-  await expect(externalApproval.getByLabel("External action artifacts")).toContainText("GitHub action execution result");
+  await expect.poll(() => action.status).toBe("succeeded");
+  const approvals = page.locator("[data-approvals-ui2-page]");
+  await approvals.getByText("History", { exact: true }).click();
+  await approvals.getByRole("option", { name: "Approve GitHub comment" }).click();
+  const historyDetail = approvals.locator(".approvals-ui2-detail");
+  await expect(historyDetail).toContainText("succeeded");
+  const historyArtifacts = historyDetail.locator(".external-action-artifacts");
+  await historyArtifacts.locator("summary").click();
+  await expect(historyArtifacts.getByText("GitHub action execution result")).toBeVisible();
   await expect.poll(() => state.externalActionExecuteCalls[action.id] ?? 0).toBe(1);
 });
 
@@ -59,8 +69,10 @@ test("external action approval card shows strict GitHub PR review audit", async 
   await expect(externalApproval.getByRole("button", { name: "Execute action" })).toHaveCount(0);
 
   await externalApproval.getByRole("button", { name: "Approve" }).click();
-  await externalApproval.getByLabel("Decision reason").fill("Strict PR review approved.");
-  await externalApproval.getByRole("button", { name: "Confirm approve" }).click();
+  const dialog = page.getByRole("dialog", { name: "Decision: Approve GitHub PR review" });
+  await dialog.getByLabel("Decision reason").fill("Strict PR review approved.");
+  await dialog.getByRole("button", { name: "Approve" }).click();
+  await expect(dialog).toHaveCount(0);
   await expect(externalApproval).toContainText("approved");
   await expect.poll(() => state.externalActionExecuteCalls[action.id] ?? 0).toBe(0);
   await expect(externalApproval.getByRole("button", { name: "Execute action" })).toBeVisible();
@@ -77,8 +89,15 @@ test("external action approval card can cancel without executing", async ({ page
   await expect(externalApproval.getByRole("button", { name: "Execute action" })).toHaveCount(0);
 
   await externalApproval.getByRole("button", { name: "Cancel proposal" }).click();
-  await expect(externalApproval).toContainText("cancelled");
-  await expect(externalApproval).toContainText("Action cancelled");
+  await expect.poll(() => action.status).toBe("cancelled");
+  const approvals = page.locator("[data-approvals-ui2-page]");
+  await approvals.getByText("History", { exact: true }).click();
+  await approvals.getByRole("option", { name: "Approve GitHub comment" }).click();
+  const historyDetail = approvals.locator(".approvals-ui2-detail");
+  await expect(historyDetail).toContainText("cancelled");
+  const historyArtifacts = historyDetail.locator(".external-action-artifacts");
+  await historyArtifacts.locator("summary").click();
+  await expect(historyArtifacts.getByText("Action cancelled")).toBeVisible();
   await expect.poll(() => state.externalActionExecuteCalls[action.id] ?? 0).toBe(0);
 });
 

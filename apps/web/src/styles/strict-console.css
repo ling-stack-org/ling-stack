@@ -1,52 +1,8 @@
 /* Final Web-only visual layer: keep feature pages on strict console tokens. */
-.provider-row,
-.provider-repair-queue,
-.provider-run-repair,
-.provider-repair-item,
-.provider-next-action,
-.provider-env-hint,
-.provider-form-hint,
-.provider-batch-result,
-.provider-template-card,
 .provider-run-notice,
-.run-detail-summary,
-.approval-state-section,
-.runtime-run-repair,
-.runtime-run-repair-meta,
-.run-evidence,
-.run-evidence-grid,
-.run-evidence-copy,
-.file-section,
-.file-card,
-.link-card,
-.session-file-list,
-.artifact-empty-state,
-.artifact-row,
-.run-artifact-group,
-.approval-run-repair,
-.approval-row,
-.approval-payload-summary,
-.approval-main .approval-decision-reason,
-.approval-confirm-panel,
 .meta-list,
 .meta-row,
-.tool-row,
-.media-job-row,
-.settings-toggle,
-.policy-tool-row,
-.teammate-command-strip,
-.teammate-template-panel,
-.teammate-detail-panel,
-.teammate-add-panel,
-.teammate-workflow-panel,
-.teammate-wizard,
-.teammate-wizard-stage,
-.teammate-live-preview,
-.teammate-skill-add-row,
-.teammate-step,
-.teammate-filter-tabs button,
-.teammate-template-card,
-.teammate-provider-card {
+.tool-row {
   border-color: var(--border);
   background: var(--surface-panel);
   color: var(--text);
@@ -55,24 +11,7 @@
   -webkit-backdrop-filter: none;
 }
 
-.channel-tabs,
-.channel-utility-tab,
-.channel-notification-option,
-.activity-view-select,
-.activity-search-field,
-.activity-filter-toggle,
-.activity-filter-chip,
-.attention-queue-pill,
-.segmented-control,
-.mention-chip,
-.mention-chip.muted,
-.pending-assets span,
-.composer-preview-card,
-.composer-preview-file-icon,
-.mention-picker,
-.link-preview-input,
-.mention-picker-popover,
-.mention-suggestion {
+.channel-notification-option {
   border-color: var(--border);
   background: var(--surface-panel-strong);
   color: var(--text-muted);
@@ -81,1057 +20,84 @@
   -webkit-backdrop-filter: none;
 }
 
-.composer-preview-card.uploading,
-.composer-preview-card.failed,
-.composer-preview-card.blocked {
-  background: var(--surface-panel-strong);
-  color: var(--text);
-}
-
-.composer-preview-thumbnail {
-  background: var(--surface-muted);
-}
-
-.channel-tab,
-.segmented-control button,
-.link-preview-input input,
-.mention-suggestion {
-  background: transparent;
-  color: var(--text-muted);
-}
-
-.channel-tab.active,
-.channel-utility-tab.active,
-.channel-notification-option.active,
-.segmented-control button.active,
-.activity-filter-toggle.active,
-.activity-filter-toggle:hover,
-.activity-filter-chip.active,
-.activity-filter-chip.attention.active {
+.channel-notification-option.active {
   background: var(--surface-selected);
   color: var(--text-strong);
 }
 
-.activity-view-select strong,
-.attention-queue-pill strong,
 .provider-run-notice.neutral strong {
   color: var(--text-strong);
 }
 
-.provider-row.selected,
-.provider-template-card.selected,
-.provider-model-card.selected,
-.run-evidence-item.selected,
-.artifact-row.selected,
-.approval-row.selected,
-.media-job-row.selected,
-.teammate-step.active,
-.teammate-step:hover,
-.teammate-skill-row.enabled,
-.teammate-template-card.selected,
-.teammate-provider-card.selected,
-.teammate-filter-tabs button.active,
-.teammate-filter-tabs button:hover {
-  border-color: var(--accent-border);
-  background: var(--surface-selected);
-  color: var(--text-strong);
-  box-shadow: inset 3px 0 0 var(--accent);
-}
-
-.provider-row:hover,
-.provider-template-card:hover,
-.provider-model-card:hover,
-.approval-row:hover,
-.media-job-row:hover,
-.artifact-row:hover,
-.file-card:hover,
-.link-card:hover,
-.activity-filter-chip:hover,
-.tool-row:hover,
-.policy-tool-row:hover,
-.teammate-skill-row:hover,
-.teammate-template-card:hover,
-.teammate-provider-card:hover {
+.tool-row:hover {
   border-color: var(--border-strong);
   background: var(--surface-hover);
 }
 
-.teammate-skill-row.enabled {
-  border-color: var(--border-strong);
-  background: var(--surface-selected);
-  color: var(--text-strong);
-  box-shadow: none;
-}
-
-.activity-filter-chip.active,
-.activity-filter-chip.attention.active {
-  border-color: var(--border-strong);
-  background: var(--surface-selected);
-  color: var(--text-strong);
-}
-
-.provider-next-action.ok,
-.provider-repair-queue.ok,
-.provider-batch-result.ok,
-.provider-state.enabled,
-.provider-state.key-ok,
-.provider-state.run-ready,
-.provider-state.check-ok,
-.provider-run-notice.ok,
-.approval-state.approved,
-.check-result.ok,
-.media-job-row.succeeded,
-.run-evidence-item.succeeded,
-.teammate-status.ok {
+.provider-run-notice.ok {
   border-color: var(--success-border);
   background: var(--success-soft);
   color: var(--success);
 }
 
-.provider-repair-item.warning,
-.provider-env-hint.warning,
-.approval-run-repair,
-.approval-state.pending,
-.approval-waiting-banner,
-.provider-run-notice.neutral,
-.policy-tool-row.risky,
-.check-result.warning,
-.media-job-approval {
+.provider-run-notice.neutral {
   border-color: var(--warning-border);
   background: var(--warning-soft);
   color: var(--warning);
 }
 
-.provider-next-action,
-.provider-env-hint,
-.provider-form-hint,
-.provider-batch-result.bad,
-.provider-run-repair,
-.provider-repair-item,
-.provider-state.disabled,
-.provider-state.key-missing,
-.provider-state.run-blocked,
-.provider-state.check-bad,
-.approval-row.high,
-.approval-row.critical,
-.approval-state.denied,
-.approval-state.expired,
-.approval-state.cancelled,
-.approval-risk.high,
-.approval-risk.critical,
-.approval-confirm-panel,
-.approval-reason-error,
-.run-evidence-copy.error,
-.check-result.bad,
-.media-job-error {
-  border-color: var(--danger-border);
-  background: var(--danger-soft);
-  color: var(--danger);
-}
-
-.provider-state,
-.capability-list span,
-.approval-state,
-.approval-risk,
-.check-result-status,
-.provider-state.check-unknown,
 .provider-run-notice.neutral,
-.settings-toggle,
-.tool-row,
-.phase-token,
-.teammate-pack-label {
+.tool-row {
   border-color: var(--border);
   background: var(--surface-panel-strong);
   color: var(--text-muted);
 }
 
-.provider-row-head strong,
-.provider-run-repair-head strong,
-.provider-repair-copy strong,
-.provider-template-card strong,
-.provider-model-discovery-header strong,
-.provider-model-card strong,
-.run-detail-section > strong,
-.runtime-run-repair-head strong,
-.run-evidence-block > strong,
-.run-evidence-copy strong,
-.file-section .task-strip-head strong,
-.file-card strong,
-.link-card strong,
-.artifact-empty-state span,
-.run-artifact-head strong,
-.approval-run-repair-head strong,
 .approval-head strong,
-.meta-row strong,
-.media-job-row-head strong,
-.policy-tool-row span,
-.teammate-command-strip strong,
-.teammate-step strong,
-.teammate-stage-title span,
-.teammate-template-card strong,
-.teammate-provider-card strong {
+.meta-row strong {
   color: var(--text-strong);
 }
 
-.provider-meta-line,
-.provider-run-repair-copy,
-.provider-run-repair-copy code,
-.provider-repair-copy small,
-.provider-template-card small,
-.provider-template-card code,
-.provider-template-kind,
-.provider-template-model,
-.run-detail-section > p,
-.runtime-run-repair-copy,
-.runtime-run-repair-copy code,
-.run-evidence-copy,
-.file-section .task-strip-head small,
-.file-card small,
-.link-card small,
-.session-file-list span,
-.session-file-list code,
-.artifact-empty-state small,
-.run-artifact-head small,
-.approval-run-repair-copy,
-.approval-run-repair-copy code,
 .approval-main p,
-.approval-payload-summary,
-.approval-reason-field span,
 .meta-row span,
 .tool-row span,
 .tool-row code,
 .muted,
-.persistence-line,
-.media-job-row p,
-.settings-toggle,
-.teammate-command-strip small,
-.teammate-skill-add-row label > span,
-.skill-binding-source,
-.teammate-step,
-.teammate-step small,
-.teammate-stage-title small,
-.teammate-filter-tabs button,
-.teammate-template-card small,
-.teammate-provider-card small {
+.persistence-line {
   color: var(--text-muted);
 }
 
-.provider-run-repair-copy code,
-.provider-next-action code,
-.provider-env-hint code,
-.runtime-run-repair-copy code,
-.run-evidence-copy,
-.session-file-list code,
-.approval-run-repair-copy code,
 .meta-row.compact strong,
-.tool-row code,
-.policy-tool-row span {
+.tool-row code {
   background: var(--surface-subtle);
   color: var(--text);
 }
 
-.file-icon {
-  background: var(--surface-subtle);
-  color: var(--text-muted);
-}
-
-.phase-token.ship,
-.phase-token.secure,
-.phase-token.implement,
-.phase-token.test {
-  border-color: var(--border);
-  background: var(--surface-panel-strong);
-  color: var(--text-muted);
-}
-
-.run-detail-summary,
-.runtime-run-repair-meta,
-.run-evidence-grid,
-.session-file-list,
 .meta-list {
   gap: 1px;
   background: var(--border);
 }
 
-.run-detail-summary > *,
-.runtime-run-repair-meta > *,
-.run-evidence-grid > *,
-.session-file-list span,
-.session-file-list code,
 .meta-row {
   background: var(--surface-panel);
 }
 
-.provider-sheet-backdrop {
-  background: color-mix(in srgb, var(--app-bg) 62%, transparent);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-
-.provider-sheet-header.panel-title,
-.provider-sheet-footer,
-.provider-sheet-header.panel-title::after,
-.provider-sheet-footer::before {
-  background: var(--surface-panel-strong);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-
-.teammate-workspace-hero,
-.teammate-list-panel,
-.teammate-private-chat,
-.teammate-settings-panel,
-.teammate-empty {
-  border-color: var(--border);
-  background: var(--surface-panel);
-  box-shadow: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-
-.workspace.workspace-provider-surface {
-  display: grid;
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
-  background: var(--window-bg);
-  color: var(--text);
-}
-
-.workspace.workspace-generation-surface {
-  display: grid;
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
-  background: var(--window-bg);
-  color: var(--text);
-}
-
-.workspace.workspace-automations-surface {
-  display: grid;
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
-  background: var(--app-bg);
-  color: var(--text);
-  padding: 0;
-}
-
-.workspace-provider-surface .provider-sheet-backdrop {
-  background: color-mix(in srgb, var(--app-bg) 62%, transparent);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-
-.workspace-provider-surface .provider-sheet-header.panel-title,
-.workspace-provider-surface .provider-sheet-footer {
-  background: var(--surface-panel-strong);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-
-.workspace-provider-surface .provider-sheet-header.panel-title::after,
-.workspace-provider-surface .provider-sheet-footer::before {
-  content: none;
-}
-
-.workspace-provider-surface .provider-next-action,
-.workspace-provider-surface .provider-batch-result,
-.workspace-provider-surface .provider-run-repair,
-.workspace-provider-surface .provider-run-notice,
-.workspace-provider-surface .provider-repair-queue,
-.workspace-provider-surface .provider-repair-item,
-.workspace-provider-surface .inline-error {
-  border-color: var(--border);
-  background: var(--surface-panel);
-  color: var(--text);
-}
-
-.workspace-provider-surface .provider-batch-result.bad,
-.workspace-provider-surface .provider-run-notice:not(.ok),
-.workspace-provider-surface .provider-repair-item.warning {
-  color: var(--danger);
-}
-
-.workspace-provider-surface .provider-next-action code,
-.workspace-provider-surface .provider-env-hint code,
-.workspace-provider-surface .provider-run-repair-copy code {
-  background: var(--surface-subtle);
-  color: var(--text);
-}
-
-.workspace-provider-surface .provider-sheet input,
-.workspace-provider-surface .provider-sheet textarea {
-  border-color: var(--border);
-  background: var(--surface-panel);
-  color: var(--text);
-}
-
-.workspace-provider-surface .provider-sheet input:disabled {
-  background: var(--surface-pressed);
-  color: var(--text-muted);
-  opacity: 1;
-}
-
-.workspace-provider-surface .provider-sheet .secondary-button {
-  border-color: var(--border);
-  background: var(--surface-panel);
-  color: var(--text);
-}
-
-.workspace-provider-surface .provider-sheet .primary-button {
-  border-color: var(--accent-border);
-  background: var(--accent);
-  color: var(--window-bg);
-}
-
-.workspace-provider-surface .provider-sheet .settings-toggle {
-  border-color: var(--border);
-  background: var(--surface-panel);
-  color: var(--text);
-}
-
-.teammate-workspace-identity h2,
-.teammate-data-row strong {
-  color: var(--text-strong);
-}
-
-.teammate-workspace-identity p,
-.teammate-data-row small {
-  color: var(--text-muted);
-}
-
-.teammate-workspace-meta,
-.teammate-workspace-tabs {
-  border-color: var(--border);
-  background: var(--surface-panel-strong);
-  box-shadow: none;
-}
-
-.teammate-workspace-tabs button {
-  color: var(--text-muted);
-}
-
-.teammate-workspace-tabs button.active,
-.teammate-workspace-tabs button:hover {
-  background: var(--surface-selected);
-  color: var(--text-strong);
-}
-
-.teammate-workspace-tabs button span {
-  background: var(--surface-subtle);
-  color: var(--text-muted);
-}
-
-.teammate-data-row,
-.teammate-chat-composer {
-  border-color: var(--border);
-  background: var(--surface-panel-strong);
-  box-shadow: none;
-}
-
-.teammate-chat-composer {
-  grid-template-columns: minmax(0, 1fr) 104px;
-  align-items: end;
-}
-
-.teammate-chat-composer .primary-button {
-  align-self: end;
-  width: 100%;
-  min-height: 40px;
-}
-
-.teammate-chat-composer .primary-button:disabled {
-  opacity: 1;
-  border-color: var(--border);
-  background: var(--surface-pressed);
-  color: var(--text-muted);
-}
-
-.teammate-chat-composer textarea {
-  background: var(--surface-panel);
-}
-
-.message-bubble-chat .message-content p,
-.message-bubble-chat-blocked .message-content p {
-  color: var(--text-strong);
-  font-size: 15px;
-  font-weight: 550;
-  line-height: 1.55;
-}
-
-.message-bubble-own .message-meta strong,
-.message-bubble-own .message-meta time,
-.message-bubble-own .message-content p {
-  color: var(--text-strong);
-}
-
-.teammate-step span {
-  border-color: var(--border);
-  background: var(--surface-subtle);
-  color: var(--text-muted);
-}
-
-.teammate-step.active span,
-.teammate-step.done span {
-  border-color: var(--accent-border);
-  background: var(--accent);
-  color: var(--window-bg);
-}
-
-:root[data-theme="dark"] .primary-button,
-:root[data-theme="dark"] .teammate-step.active span,
-:root[data-theme="dark"] .teammate-step.done span {
+:root[data-theme="dark"] .primary-button{
   color: var(--app-bg);
 }
 
-:root[data-theme="dark"] .teammate-chat-composer .primary-button:disabled {
-  color: var(--text-muted);
-}
-
-/* Daylight product tone recovery for the top work pages.
-   This file is imported last, so keep these overrides token-based instead of
-   letting recent strict black/white rules flatten the whole app. */
-.workspace.workspace-provider-surface,
-.workspace.workspace-automations-surface,
-.workspace.workspace-generation-surface,
-.workspace.workspace-teammates-surface {
-  background: var(--app-bg);
-  color: var(--text);
-}
-
-.workspace-provider-surface .provider-workbench.provider-list-panel,
-.workspace-provider-surface .provider-table,
-.workspace-provider-surface .provider-form-panel.provider-sheet,
-.workspace-provider-surface .provider-sheet-header.panel-title,
-.workspace-provider-surface .provider-sheet-footer,
-.workspace-provider-surface .provider-template-card,
-.workspace-provider-surface .provider-model-card,
-.workspace-provider-surface .provider-model-discovery,
-.workspace-provider-surface .provider-next-action,
-.workspace-provider-surface .provider-batch-result,
-.workspace-provider-surface .provider-run-repair,
-.workspace-provider-surface .provider-run-notice,
-.workspace-provider-surface .provider-repair-queue,
-.workspace-provider-surface .provider-repair-item,
-.workspace-provider-surface .inline-error {
-  background: var(--surface-panel);
-  color: var(--text);
-}
-
-.workspace-provider-surface .provider-table-shell,
-.workspace-provider-surface .provider-table-footer,
-.workspace-provider-surface .provider-table th:nth-child(7),
-.workspace-provider-surface .provider-table td:nth-child(7),
-.workspace-provider-surface .provider-search-field,
-.workspace-provider-surface .provider-avatar,
-.workspace-provider-surface .provider-state,
-.workspace-provider-surface .capability-list span,
-.workspace-provider-surface .provider-actions .compact-button,
-.workspace-provider-surface .provider-row-menu-trigger,
-.workspace-provider-surface .provider-row-menu-popover,
-.workspace-provider-surface .provider-sheet input,
-.workspace-provider-surface .provider-sheet textarea,
-.workspace-provider-surface .settings-toggle,
-.workspace-provider-surface .provider-check-feedback {
-  border-color: var(--border);
-  background: var(--surface-panel);
-  color: var(--text);
-}
-
-.workspace-provider-surface .provider-table th,
-.workspace-provider-surface .provider-table td:nth-child(7),
-.workspace-provider-surface .provider-check-feedback-row td {
-  background: var(--surface-panel);
-}
-
-.workspace-provider-surface .provider-row {
-  background: var(--surface-panel);
-}
-
-.workspace-provider-surface .provider-row:hover,
-.workspace-provider-surface .provider-row:focus-within,
-.workspace-provider-surface .provider-row:hover td:nth-child(7),
-.workspace-provider-surface .provider-row:focus-within td:nth-child(7),
-.workspace-provider-surface .provider-actions .compact-button:hover:not(:disabled),
-.workspace-provider-surface .provider-row-menu-trigger:hover,
-.workspace-provider-surface .provider-row-menu.open .provider-row-menu-trigger,
-.workspace-provider-surface .provider-row-menu-popover button:hover:not(:disabled),
-.workspace-provider-surface .provider-template-card:hover,
-.workspace-provider-surface .provider-model-card:hover {
-  background: var(--surface-hover);
-  color: var(--text-strong);
-}
-
-.workspace-provider-surface .provider-row.selected,
-.workspace-provider-surface .provider-row.selected td:nth-child(7),
-.workspace-provider-surface .provider-template-card.selected,
-.workspace-provider-surface .provider-model-card.selected {
-  border-color: var(--accent-border);
-  background: var(--surface-selected);
-  color: var(--text-strong);
-  box-shadow: inset 2px 0 0 var(--accent);
-}
-
-.workspace-provider-surface .provider-row.selected {
-  box-shadow: none;
-}
-
-.workspace-provider-surface .provider-row.selected > td {
-  background: var(--surface-selected);
-}
-
-.workspace-provider-surface .provider-row.selected > td:first-child {
-  box-shadow: inset 2px 0 0 var(--accent);
-}
-
-.workspace-provider-surface .provider-row.selected td:nth-child(7) {
-  border-color: var(--border);
-  border-left-color: var(--border);
-  outline: 0;
-  box-shadow: none;
-}
-
-.workspace-provider-surface .provider-workbench-header h1,
-.workspace-provider-surface .provider-name-copy strong,
-.workspace-provider-surface .provider-model-name,
-.workspace-provider-surface .provider-template-card strong,
-.workspace-provider-surface .provider-sheet-header.panel-title h2,
-.workspace-provider-surface .provider-sheet .field span,
-.workspace-provider-surface .provider-sheet .field > span {
-  color: var(--text-strong);
-}
-
-.workspace-provider-surface .provider-workbench-header p,
-.workspace-provider-surface .provider-page-meta,
-.workspace-provider-surface .provider-name-copy small,
-.workspace-provider-surface .provider-meta-line,
-.workspace-provider-surface .provider-meta-line.mono,
-.workspace-provider-surface .provider-template-kind,
-.workspace-provider-surface .provider-template-model,
-.workspace-provider-surface .provider-template-card small,
-.workspace-provider-surface .provider-action-note,
-.workspace-provider-surface .provider-table th,
-.workspace-provider-surface .provider-table-footer {
-  color: var(--text-muted);
-}
-
-.workspace-provider-surface .provider-workbench .primary-button,
-.workspace-provider-surface .provider-sheet .primary-button {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--window-bg);
-}
-
-.workspace-provider-surface .provider-workbench .primary-button:hover:not(:disabled),
-.workspace-provider-surface .provider-sheet .primary-button:hover:not(:disabled) {
-  border-color: var(--accent-strong);
-  background: var(--accent-strong);
-}
-
-.workspace-provider-surface .provider-workbench .secondary-button,
-.workspace-provider-surface .provider-sheet .secondary-button {
-  border-color: var(--border);
-  background: var(--surface-panel);
-  color: var(--text-strong);
-}
-
-.workspace-provider-surface .provider-template-tab {
-  color: var(--text-muted);
-}
-
-.workspace-provider-surface .provider-template-tab:hover,
-.workspace-provider-surface .provider-template-tab.selected {
-  border-color: var(--accent);
-  color: var(--accent-strong);
-}
-
-.workspace-provider-surface .provider-page-meta span + span::before {
-  background: color-mix(in srgb, var(--text-muted) 38%, transparent);
-}
-
-.workspace-provider-surface .provider-status-hint {
-  color: var(--danger);
-  background: var(--danger-soft);
-}
-
-.workspace-provider-surface .provider-status-hint::after,
-.workspace-provider-surface .provider-status-hint::before {
-  border-color: var(--danger-border);
-  background: var(--surface-panel);
-}
-
-.workspace-automations-surface .automation-inbox-row.selected {
-  background: color-mix(in srgb, var(--accent) 7%, transparent);
-  box-shadow: inset 3px 0 0 var(--accent);
-}
-
-.workspace-automations-surface .automation-current-pane,
-.workspace-automations-surface .automation-history-lite,
-.workspace-automations-surface .automation-modal,
-.workspace-automations-surface .automation-create-dropdown,
-.workspace-automations-surface .automation-create-menu,
-.workspace-automations-surface .automation-popover-panel,
-.workspace-generation-surface .media-job-list-panel,
-.workspace-generation-surface .media-job-form-panel,
-.workspace-generation-surface .media-job-row {
-  border-color: var(--border);
-  background: var(--surface-panel);
-  color: var(--text);
-}
-
-.workspace-automations-surface .automation-row-primary-action,
-.workspace-automations-surface .automation-tool-button,
-.workspace-generation-surface .media-job-row,
-.workspace-generation-surface .media-job-result-preview {
-  border-color: var(--border);
-  background: var(--surface-panel-strong);
-  color: var(--text);
-}
-
-.workspace-automations-surface .automation-row-primary-action:hover:not(:disabled) {
-  background: var(--surface-hover);
-  color: var(--text-strong);
-}
-
-.workspace-generation-surface .media-job-row-head strong {
-  color: var(--text-strong);
-}
-
-.workspace-generation-surface .media-job-title small,
-.workspace-generation-surface .media-job-row p {
-  color: var(--text-muted);
-}
-
-.workspace-teammates-surface .workspace-head h1,
-.workspace-teammates-surface .panel-title h2,
-.workspace-teammates-surface .teammate-template-row strong,
-.workspace-teammates-surface .teammate-draft-row strong,
-.workspace-teammates-surface .teammate-skill-row strong,
-.workspace-teammates-surface .workflow-step-card strong,
-.workspace-teammates-surface .teammate-provider-row strong,
-.workspace-teammates-surface .teammate-detail-hero h2,
-.workspace-teammates-surface .teammate-create-section-title span,
-.workspace-teammates-surface .teammate-create-advanced summary span,
-.workspace-teammates-surface .teammate-section h3,
-.workspace-teammates-surface .teammate-create-advanced-body h3 {
-  color: var(--text-strong);
-}
-
-.workspace-teammates-surface .workspace-head p,
-.workspace-teammates-surface .panel-title small,
-.workspace-teammates-surface .teammate-create-header p,
-.workspace-teammates-surface .teammate-detail-hero p,
-.workspace-teammates-surface .teammate-readable-copy,
-.workspace-teammates-surface .teammate-template-row small,
-.workspace-teammates-surface .teammate-draft-row small,
-.workspace-teammates-surface .teammate-skill-row small,
-.workspace-teammates-surface .workflow-step-card small,
-.workspace-teammates-surface .teammate-provider-row small,
-.workspace-teammates-surface .teammate-pack-label {
-  color: var(--text-muted);
-}
-
-.workspace-teammates-surface .teammate-template-panel,
-.workspace-teammates-surface .teammate-add-panel,
-.workspace-teammates-surface .teammate-create-sheet,
-.workspace-teammates-surface .teammate-detail-sheet,
-.workspace-teammates-surface .teammate-create-header,
-.workspace-teammates-surface .teammate-detail-sheet-header,
-.workspace-teammates-surface .teammate-create-section,
-.workspace-teammates-surface .teammate-advanced-detail,
-.workspace-teammates-surface .teammate-workflow-panel,
-.workspace-teammates-surface .teammate-template-row,
-.workspace-teammates-surface .teammate-draft-row,
-.workspace-teammates-surface .teammate-provider-row,
-.workspace-teammates-surface .teammate-use-list span,
-.workspace-teammates-surface .teammate-skill-row,
-.workspace-teammates-surface .workflow-step-card,
-.workspace-teammates-surface .teammate-row-menu-popover,
-.workspace-teammates-surface .teammate-create-fields input,
-.workspace-teammates-surface .teammate-create-fields textarea,
-.workspace-teammates-surface .teammate-chip,
-.workspace-teammates-surface .teammate-toggle,
-.workspace-teammates-surface .phase-token,
-.workspace-teammates-surface .approval-profile-badge,
-.workspace-teammates-surface .teammate-prompt-preview {
-  border-color: var(--border);
-  background: var(--surface-panel);
-  color: var(--text);
-}
-
-.workspace-teammates-surface .teammate-template-row:hover,
-.workspace-teammates-surface .teammate-template-row.selected,
-.workspace-teammates-surface .teammate-draft-row:hover,
-.workspace-teammates-surface .teammate-provider-row:hover,
-.workspace-teammates-surface .teammate-provider-row.selected,
-.workspace-teammates-surface .teammate-row-menu-trigger:hover,
-.workspace-teammates-surface .teammate-row-menu.open .teammate-row-menu-trigger,
-.workspace-teammates-surface .teammate-row-menu-popover button:hover,
-.workspace-teammates-surface .teammate-filter-tabs button:hover,
-.workspace-teammates-surface .teammate-filter-tabs button.active,
-.workspace-teammates-surface .teammate-chip.selected {
-  border-color: var(--accent-border);
-  background: var(--surface-hover);
-  color: var(--text-strong);
-}
-
-.workspace-teammates-surface .teammate-role-icon,
-.workspace-teammates-surface .teammate-template-row .avatar-initial,
-.workspace-teammates-surface .teammate-draft-row .avatar-initial,
-.workspace-teammates-surface .template-skill-count,
-.workspace-teammates-surface .teammate-row-menu-trigger {
-  border-color: var(--border);
-  background: var(--surface-panel-strong);
-  color: var(--text-strong);
-}
-
-.workspace-teammates-surface .teammate-sheet-backdrop,
-.workspace-provider-surface .provider-sheet-backdrop {
-  background: color-mix(in srgb, var(--app-bg) 68%, transparent);
-}
-
-.workspace-generation-surface .media-job-row.selected,
-.workspace-generation-surface .media-job-row.selected:hover {
-  border-color: var(--border);
-  background: var(--surface-selected);
-  color: var(--text-strong);
-  box-shadow: inset 3px 0 0 var(--accent);
-}
-
-.workspace-generation-surface .primary-button,
-.media-create-overlay .primary-button,
-.workspace-teammates-surface .primary-button,
-.teammate-create-overlay .primary-button {
-  border-color: var(--accent-border);
-  background: var(--accent);
-  color: var(--window-bg);
-}
-
-.workspace-generation-surface .primary-button:hover:not(:disabled),
-.media-create-overlay .primary-button:hover:not(:disabled),
-.workspace-teammates-surface .primary-button:hover:not(:disabled),
-.teammate-create-overlay .primary-button:hover:not(:disabled) {
-  border-color: var(--accent-strong);
-  background: var(--accent-strong);
-  color: var(--window-bg);
-}
-
-.workspace-generation-surface .primary-button:disabled,
-.media-create-overlay .primary-button:disabled,
-.workspace-teammates-surface .primary-button:disabled,
-.teammate-create-overlay .primary-button:disabled {
-  border-color: var(--border);
-  background: var(--surface-pressed);
-  color: var(--text-muted);
-}
-
-.workspace-teammates-surface .teammates-page .teammate-add-panel,
-.workspace-teammates-surface .teammates-page .teammate-template-panel,
-.workspace-teammates-surface .teammates-page .teammate-draft-row {
-  border-color: var(--border);
-  background: var(--surface-panel);
-}
-
-.workspace-teammates-surface .teammates-page .teammate-draft-row:hover {
-  background: var(--surface-hover);
-}
-
-.workspace-teammates-surface .teammates-page .teammate-row-primary-action {
-  border-color: var(--border);
-  background: var(--surface-panel);
-  color: var(--text-strong);
-}
-
-.workspace-teammates-surface .teammates-page .teammate-row-primary-action:hover {
-  background: var(--surface-hover);
-}
-
-/* Approved density pass: keep create dialogs close to the Stitch white-console mocks. */
-.teammate-create-overlay .teammate-create-dialog {
-  width: min(960px, calc(100vw - 40px));
-  max-height: min(820px, calc(100dvh - 40px));
-  padding: 0;
-  overflow: hidden;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 0;
-}
-
-.teammate-create-overlay .teammate-create-dialog .create-dialog-head {
-  min-height: 72px;
-  align-items: center;
-  padding: 18px 28px 14px;
-}
-
-.teammate-create-overlay .teammate-create-dialog .teammate-create-body {
-  gap: 14px;
-  max-height: none;
-  overflow-x: hidden;
-  overflow-y: auto;
-  padding: 18px 28px 0;
-}
-
-.teammate-create-overlay .teammate-create-steps {
-  gap: 22px;
-  font-size: 13px;
-}
-
-.teammate-create-overlay .teammate-create-steps span {
-  gap: 8px;
-}
-
-.teammate-create-overlay .teammate-create-steps strong {
-  width: 22px;
-  height: 22px;
-  font-size: 12px;
-}
-
-.teammate-create-overlay .teammate-create-dialog .teammate-create-list.role-grid {
-  gap: 10px;
-}
-
-.teammate-create-overlay .teammate-create-dialog .teammate-create-list.role-grid .teammate-template-row {
-  grid-template-columns: 24px minmax(0, 1fr);
-  min-height: 76px;
-  padding: 11px 12px;
-}
-
-.teammate-create-overlay .teammate-create-dialog .teammate-template-copy small {
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-.teammate-create-overlay .teammate-create-dialog .teammate-create-section {
-  gap: 12px;
-}
-
-.teammate-create-overlay .teammate-create-dialog .teammate-create-fields {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.teammate-create-overlay .teammate-create-dialog .teammate-create-fields input,
-.teammate-create-overlay .teammate-create-dialog .teammate-create-fields input {
-  min-height: 40px;
-  border-radius: 7px;
-}
-
-.teammate-create-overlay .teammate-create-dialog .teammate-create-advanced summary {
-  min-height: 44px;
-}
-
-.teammate-create-overlay .teammate-create-dialog .teammate-create-actions {
-  margin: 0 -28px;
-  padding: 12px 28px 16px;
-}
-
-.workspace-automations-surface .automation-modal > .panel-title {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 18px;
-  min-height: 108px;
-  margin: 0;
-  padding: 28px 32px 24px;
-}
-
-.workspace-automations-surface .automation-modal > .panel-title > span:first-child {
-  display: flex;
-  align-items: flex-start;
-  min-width: 0;
-  gap: 10px;
-}
-
-.workspace-automations-surface .automation-modal-title-copy h2 {
-  margin: 0;
-  color: var(--text-strong);
-  font-size: 24px;
-  font-weight: 700;
-  line-height: 30px;
-  white-space: nowrap;
-}
-
-.workspace-automations-surface .automation-modal-title-copy p {
-  margin: 4px 0 0;
-  color: var(--text-muted);
-  font-size: 15px;
-  line-height: 22px;
-}
-
-.workspace-automations-surface .automation-modal-header-actions {
-  flex: 0 0 auto;
-  gap: 8px;
-}
-
-.workspace-automations-surface .automation-modal-header-actions .secondary-button,
-.workspace-automations-surface .automation-modal-header-actions .ghost-icon-button {
-  white-space: nowrap;
-}
-
-.workspace-automations-surface .automation-modal-header-actions .secondary-button {
-  min-width: 0;
-  min-height: 36px;
-  padding-inline: 12px;
-}
-
-@media (max-height: 760px) and (min-width: 701px) {
-  .teammate-create-overlay .teammate-create-dialog .create-dialog-head {
-    min-height: 64px;
-    padding-block: 14px 12px;
-  }
-
-  .teammate-create-overlay .teammate-create-dialog .teammate-create-body {
-    gap: 12px;
-    max-height: none;
-    padding-top: 14px;
-  }
-
-  .teammate-create-overlay .teammate-create-dialog .teammate-create-list.role-grid .teammate-template-row {
-    min-height: 64px;
-    padding-block: 10px;
-  }
-
-  .teammate-create-overlay .teammate-create-dialog .teammate-role-icon,
-  .teammate-create-overlay .teammate-create-dialog .template-skill-count {
-    display: none;
-  }
-
-  .teammate-create-overlay .teammate-create-dialog .teammate-create-list.role-grid .teammate-template-row {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-
-
-
-
 /* Dark theme guardrail for pages that still carry white-console local CSS. */
-:root[data-theme="dark"] .workspace,
+:root[data-theme="dark"] .workspace:not(.workspace-provider-surface):where(:not(.workspace-automations-surface):not(.workspace-teammates-surface):not(.workspace-teammate-private-surface):not(.workspace-generation-surface):not(.workspace-plugins-surface)),
 :root[data-theme="dark"] .client-window,
 :root[data-theme="dark"] .workspace-client-surface,
-:root[data-theme="dark"] .workspace-provider-surface,
-:root[data-theme="dark"] .workspace-generation-surface,
-:root[data-theme="dark"] .workspace-automations-surface,
-:root[data-theme="dark"] .workspace-teammates-surface,
-:root[data-theme="dark"] .workspace-teammate-private-surface,
 :root[data-theme="dark"] .workspace-councils-surface,
-:root[data-theme="dark"] .profile-page,
-:root[data-theme="dark"] .settings-page,
 :root[data-theme="dark"] .run-history-layout,
-:root[data-theme="dark"] .work-board-page,
-:root[data-theme="dark"] .media-jobs-page,
-:root[data-theme="dark"] .automations-inbox-page,
-:root[data-theme="dark"] .provider-workbench-surface,
-:root[data-theme="dark"] .teammates-page,
 :root[data-theme="dark"] .council-workspace-page {
   background: var(--window-bg);
   color: var(--text);
 }
 
-:root[data-theme="dark"] .workspace :is(
+:root[data-theme="dark"] .workspace:where(:not(.workspace-automations-surface):not(.workspace-teammates-surface):not(.workspace-teammate-private-surface):not(.workspace-generation-surface):not(.workspace-plugins-surface)) :is(
   [class*="panel"],
   [class*="card"],
   [class*="row"],
@@ -1160,7 +126,34 @@
   [class*="field"],
   [class*="filter"],
   [class*="search"]
-):not([class*="backdrop"]):not([class*="overlay"]):not([class*="spinner"]) {
+):not([class*="backdrop"]):not([class*="overlay"]):not([class*="spinner"]):not(.inline-approval-item):not(
+  [data-ui2-normal-conversation-header="true"],
+  [data-ui2-teammate-chat-header="true"],
+  [data-conversation-toolbar="true"],
+  [data-conversation-toolbar-frame],
+  [data-conversation-action],
+  [data-conversation-message-row],
+  [data-conversation-message-row] *,
+  [data-conversation-transcript-block],
+  [data-conversation-transcript-block] *,
+  [data-settings-shell-navigation],
+  [data-settings-shell-group],
+  [data-settings-shell-group-label],
+  [data-settings-section],
+  [data-settings-section-icon],
+  .conversation-header-search,
+  .conversation-header-search-input,
+  .conversation-header-search-native,
+  .conversation-header-search-clear,
+  .normal-conversation-feed-frame,
+  .normal-conversation-feed-frame *,
+  [data-conversation-composer],
+  [data-conversation-composer] *,
+  .conversation-model-menu,
+  .conversation-model-menu *,
+  .conversation-thinking-menu,
+  .conversation-thinking-menu *
+):not(:where([data-conversation-composer], [data-conversation-composer] *)):not(:where(.work-board-page, .work-board-page *, .channel-work-board, .channel-work-board *, .provider-workbench-surface, .provider-workbench-surface *)) {
   border-color: var(--border);
   background-color: var(--surface-panel);
   color: var(--text);
@@ -1169,7 +162,7 @@
   -webkit-backdrop-filter: none;
 }
 
-:root[data-theme="dark"] .workspace :is(
+:root[data-theme="dark"] .workspace:where(:not(.workspace-automations-surface):not(.workspace-teammates-surface):not(.workspace-teammate-private-surface):not(.workspace-generation-surface):not(.workspace-plugins-surface)) :is(
   [class*="head"],
   [class*="title"],
   [class*="copy"],
@@ -1179,26 +172,16 @@
   [class*="message"],
   [class*="feed"],
   [class*="conversation"]
-):not([class*="backdrop"]):not([class*="overlay"]):not([class*="avatar"]) {
+):not([class*="backdrop"]):not([class*="overlay"]):not([class*="avatar"]):not([data-settings-content-state]):not(:where(
+  [data-conversation-message-row],
+  [data-conversation-message-row] *,
+  [data-conversation-transcript-block],
+  [data-conversation-transcript-block] *
+)):not(:where([data-conversation-composer], [data-conversation-composer] *)):not(:where(.work-board-page, .work-board-page *, .channel-work-board, .channel-work-board *, .provider-workbench-surface, .provider-workbench-surface *)) {
   color: var(--text);
 }
 
-:root[data-theme="dark"] .workspace .conversation-composer {
-  box-shadow: var(--composer-ambient-shadow);
-}
-
-:root[data-theme="dark"] .workspace .conversation-composer:focus-within {
-  box-shadow: var(--composer-ambient-focus-shadow);
-}
-
-:root[data-theme="dark"] .workspace .composer-panel.channel-composer,
-:root[data-theme="dark"] .workspace .normal-conversation-page .conversation-home-composer,
-:root[data-theme="dark"] .workspace .teammate-direct-composer {
-  border-color: var(--border);
-  background-color: var(--surface-panel-strong);
-}
-
-:root[data-theme="dark"] .workspace :is(
+:root[data-theme="dark"] .workspace:where(:not(.workspace-automations-surface):not(.workspace-teammates-surface):not(.workspace-teammate-private-surface):not(.workspace-generation-surface):not(.workspace-plugins-surface)) :is(
   h1,
   h2,
   h3,
@@ -1210,11 +193,11 @@
   .panel-title,
   .panel-title span,
   .panel-title strong
-) {
+):not(:where([data-conversation-composer], [data-conversation-composer] *)):not(:where(.work-board-page, .work-board-page *, .channel-work-board, .channel-work-board *, .provider-workbench-surface, .provider-workbench-surface *)) {
   color: var(--text-strong);
 }
 
-:root[data-theme="dark"] .workspace :is(
+:root[data-theme="dark"] .workspace:where(:not(.workspace-automations-surface):not(.workspace-teammates-surface):not(.workspace-teammate-private-surface):not(.workspace-generation-surface):not(.workspace-plugins-surface)) :is(
   p,
   small,
   time,
@@ -1227,101 +210,69 @@
   [class*="note"],
   [class*="meta"],
   [class*="copy"] small
-) {
+):not(:where([data-conversation-composer], [data-conversation-composer] *)):not(:where(.work-board-page, .work-board-page *, .channel-work-board, .channel-work-board *, .provider-workbench-surface, .provider-workbench-surface *)) {
   color: var(--text-muted);
 }
 
-:root[data-theme="dark"] .workspace :is(input, textarea, [contenteditable="true"]) {
-  border-color: var(--border);
-  background: var(--surface-panel-strong);
-  color: var(--text);
-  box-shadow: inset 0 1px 0 var(--hairline);
-}
-
-:root[data-theme="dark"] .workspace :is(input, textarea)::placeholder {
-  color: var(--text-soft);
-}
-
-:root[data-theme="dark"] .workspace :is(input, textarea):disabled {
-  border-color: var(--border);
-  background: var(--surface-pressed);
-  color: var(--text-soft);
-  opacity: 1;
-}
-
-:root[data-theme="dark"] .workspace :is(button, .secondary-button, .icon-button, .compact-button, [role="button"]) {
+:root[data-theme="dark"] .workspace:where(:not(.workspace-automations-surface):not(.workspace-teammates-surface):not(.workspace-teammate-private-surface):not(.workspace-generation-surface):not(.workspace-plugins-surface)) :is(button, .secondary-button, .icon-button, .compact-button, [role="button"]):not(.ling-ui-button):not(:where([data-conversation-composer], [data-conversation-composer] *)):not(:where(.work-board-page, .work-board-page *, .channel-work-board, .channel-work-board *, .provider-workbench-surface, .provider-workbench-surface *)) {
   border-color: var(--border);
   color: var(--text);
 }
 
-:root[data-theme="dark"] .workspace :is(.secondary-button, .icon-button, .compact-button):not(.primary-button) {
+:root[data-theme="dark"] .workspace:where(:not(.workspace-automations-surface):not(.workspace-teammates-surface):not(.workspace-teammate-private-surface):not(.workspace-generation-surface):not(.workspace-plugins-surface)) :is(.secondary-button, .icon-button, .compact-button):not(.primary-button):not(:where([data-conversation-composer], [data-conversation-composer] *)):not(:where(.work-board-page, .work-board-page *, .channel-work-board, .channel-work-board *, .provider-workbench-surface, .provider-workbench-surface *)) {
   background: var(--surface-panel);
 }
 
-:root[data-theme="dark"] .workspace :is(button, .secondary-button, .icon-button, .compact-button, [role="button"]):hover:not(:disabled) {
+:root[data-theme="dark"] .workspace:where(:not(.workspace-automations-surface):not(.workspace-teammates-surface):not(.workspace-teammate-private-surface):not(.workspace-generation-surface):not(.workspace-plugins-surface)) :is(button, .secondary-button, .icon-button, .compact-button, [role="button"]):not(.ling-ui-button):not(:where([data-conversation-composer], [data-conversation-composer] *)):not(:where(.work-board-page, .work-board-page *, .channel-work-board, .channel-work-board *, .provider-workbench-surface, .provider-workbench-surface *)):hover:not(:disabled) {
   border-color: var(--border-strong);
   background: var(--surface-hover);
   color: var(--text-strong);
 }
 
-:root[data-theme="dark"] .workspace :is(.primary-button, button.primary-button) {
+:root[data-theme="dark"] .workspace:where(:not(.workspace-automations-surface):not(.workspace-teammates-surface):not(.workspace-teammate-private-surface):not(.workspace-generation-surface):not(.workspace-plugins-surface)) :is(.primary-button, button.primary-button):not(:where([data-conversation-composer], [data-conversation-composer] *)):not(:where(.work-board-page, .work-board-page *, .channel-work-board, .channel-work-board *, .provider-workbench-surface, .provider-workbench-surface *)) {
   border-color: var(--accent-border);
   background: var(--accent);
   color: var(--app-bg);
 }
 
-:root[data-theme="dark"] .workspace :is(.primary-button, button.primary-button):hover:not(:disabled) {
+:root[data-theme="dark"] .workspace:where(:not(.workspace-automations-surface):not(.workspace-teammates-surface):not(.workspace-teammate-private-surface):not(.workspace-generation-surface):not(.workspace-plugins-surface)) :is(.primary-button, button.primary-button):not(:where([data-conversation-composer], [data-conversation-composer] *)):not(:where(.work-board-page, .work-board-page *, .channel-work-board, .channel-work-board *, .provider-workbench-surface, .provider-workbench-surface *)):hover:not(:disabled) {
   border-color: var(--accent-strong);
   background: var(--accent-strong);
   color: var(--app-bg);
 }
 
-:root[data-theme="dark"] .workspace :is(.primary-button, .secondary-button, .icon-button, .compact-button):disabled {
+:root[data-theme="dark"] .workspace:where(:not(.workspace-automations-surface):not(.workspace-teammates-surface):not(.workspace-teammate-private-surface):not(.workspace-generation-surface):not(.workspace-plugins-surface)) :is(.primary-button, .secondary-button, .icon-button, .compact-button):not(:where([data-conversation-composer], [data-conversation-composer] *)):not(:where(.work-board-page, .work-board-page *, .channel-work-board, .channel-work-board *, .provider-workbench-surface, .provider-workbench-surface *)):disabled {
   border-color: var(--border);
   background: var(--surface-pressed);
   color: var(--text-soft);
   opacity: 1;
 }
 
-:root[data-theme="dark"] .workspace :is(.selected, .active, [aria-selected="true"]):not(.status-badge):not(.approval-state):not(.approval-risk):not(.provider-state):not(.phase-token) {
+:root[data-theme="dark"] .workspace:where(:not(.workspace-automations-surface):not(.workspace-teammates-surface):not(.workspace-teammate-private-surface):not(.workspace-generation-surface):not(.workspace-plugins-surface)) :is(.selected, .active, [aria-selected="true"]):not(.status-badge):not(:where([data-conversation-composer], [data-conversation-composer] *)):not(:where(.work-board-page, .work-board-page *, .channel-work-board, .channel-work-board *, .provider-workbench-surface, .provider-workbench-surface *)) {
   border-color: var(--border-strong);
   background-color: var(--surface-selected);
   color: var(--text-strong);
 }
 
-:root[data-theme="dark"] .workspace :is(pre, code, kbd, samp, .mono, [class*="code"], [class*="payload"], [class*="json"]) {
+:root[data-theme="dark"] .workspace:where(:not(.workspace-automations-surface):not(.workspace-teammates-surface):not(.workspace-teammate-private-surface):not(.workspace-generation-surface):not(.workspace-plugins-surface)) :is(pre, code, kbd, samp, .mono, [class*="code"], [class*="payload"], [class*="json"]):not(:where([data-conversation-composer], [data-conversation-composer] *)):not(:where(.work-board-page, .work-board-page *, .channel-work-board, .channel-work-board *, .provider-workbench-surface, .provider-workbench-surface *)) {
   border-color: var(--border);
   background: var(--surface-subtle);
   color: var(--text);
 }
 
-:root[data-theme="dark"] .workspace :is(table, thead, tbody, tr, th, td) {
+:root[data-theme="dark"] .workspace:where(:not(.workspace-automations-surface):not(.workspace-teammates-surface):not(.workspace-teammate-private-surface):not(.workspace-generation-surface):not(.workspace-plugins-surface)) :is(table, thead, tbody, tr, th, td):not(:where([data-conversation-composer], [data-conversation-composer] *)):not(:where(.work-board-page, .work-board-page *, .channel-work-board, .channel-work-board *, .provider-workbench-surface, .provider-workbench-surface *)) {
   border-color: var(--border);
 }
 
-:root[data-theme="dark"] .workspace :is(
-  .status-badge,
-  .provider-state,
-  .approval-state,
-  .approval-risk,
-  .phase-token,
-  .check-result-status,
-  .media-job-status,
-  .settings-plugin-token,
-  .settings-skill-state,
-  .settings-skill-sync-state,
-  .settings-skill-candidate-status,
-  .settings-skill-health-severity,
-  .teammate-council-status,
-  .automation-row-status,
-  .automation-run-status
-) {
+:root[data-theme="dark"] .workspace:where(:not(.workspace-automations-surface):not(.workspace-teammates-surface):not(.workspace-teammate-private-surface):not(.workspace-generation-surface):not(.workspace-plugins-surface)) :is(
+  .status-badge
+):not(:where([data-conversation-composer], [data-conversation-composer] *)):not(:where(.work-board-page, .work-board-page *, .channel-work-board, .channel-work-board *, .provider-workbench-surface, .provider-workbench-surface *)) {
   border-color: var(--border);
   background: var(--surface-subtle);
   color: var(--text-muted);
 }
 
-:root[data-theme="dark"] .workspace :is(
+:root[data-theme="dark"] .workspace:where(:not(.workspace-automations-surface):not(.workspace-teammates-surface):not(.workspace-teammate-private-surface):not(.workspace-generation-surface):not(.workspace-plugins-surface)) :is(
   .ok,
   .ready,
   .succeeded,
@@ -1332,13 +283,13 @@
   .check-ok,
   .key-ok,
   .active.status-badge
-) {
+):not(:where([data-conversation-composer], [data-conversation-composer] *)):not(:where(.work-board-page, .work-board-page *, .channel-work-board, .channel-work-board *, .provider-workbench-surface, .provider-workbench-surface *)) {
   border-color: var(--success-border);
   background: var(--success-soft);
   color: var(--success);
 }
 
-:root[data-theme="dark"] .workspace :is(
+:root[data-theme="dark"] .workspace:where(:not(.workspace-automations-surface):not(.workspace-teammates-surface):not(.workspace-teammate-private-surface):not(.workspace-generation-surface):not(.workspace-plugins-surface)) :is(
   .warning,
   .pending,
   .attention,
@@ -1349,13 +300,13 @@
   .draft,
   .media-only,
   .check-unknown
-) {
+):not(:where([data-conversation-composer], [data-conversation-composer] *)):not(:where(.work-board-page, .work-board-page *, .channel-work-board, .channel-work-board *, .provider-workbench-surface, .provider-workbench-surface *)) {
   border-color: var(--warning-border);
   background: var(--warning-soft);
   color: var(--warning);
 }
 
-:root[data-theme="dark"] .workspace :is(
+:root[data-theme="dark"] .workspace:where(:not(.workspace-automations-surface):not(.workspace-teammates-surface):not(.workspace-teammate-private-surface):not(.workspace-generation-surface):not(.workspace-plugins-surface)) :is(
   .bad,
   .failed,
   .failure,
@@ -1371,24 +322,14 @@
   .key-missing,
   .check-bad,
   .error
-) {
+):not(:where([data-conversation-composer], [data-conversation-composer] *)):not(:where(.work-board-page, .work-board-page *, .channel-work-board, .channel-work-board *, .provider-workbench-surface, .provider-workbench-surface *)) {
   border-color: var(--danger-border);
   background: var(--danger-soft);
   color: var(--danger);
 }
 
-:root[data-theme="dark"] .workspace :is(.info, .processing, .running, .collecting) {
+:root[data-theme="dark"] .workspace:where(:not(.workspace-automations-surface):not(.workspace-teammates-surface):not(.workspace-teammate-private-surface):not(.workspace-generation-surface):not(.workspace-plugins-surface)) :is(.info, .processing, .running, .collecting):not(:where([data-conversation-composer], [data-conversation-composer] *)):not(:where(.work-board-page, .work-board-page *, .channel-work-board, .channel-work-board *, .provider-workbench-surface, .provider-workbench-surface *)) {
   border-color: var(--info-border);
   background: var(--info-soft);
   color: var(--info);
-}
-
-:root[data-theme="dark"] .workspace :is(
-  .provider-sheet-backdrop,
-  .teammate-sheet-backdrop,
-  .automation-modal-backdrop,
-  .media-create-overlay,
-  .teammate-create-overlay
-) {
-  background: color-mix(in srgb, var(--app-bg) 68%, transparent);
 }

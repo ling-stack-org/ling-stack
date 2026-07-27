@@ -67,7 +67,6 @@ export interface TeammatesActions {
   readonly toggleAiTeammatePinned: (teammateId: string) => Promise<void>;
   readonly toggleAiTeammateHidden: (teammateId: string) => Promise<void>;
   readonly archiveAiTeammate: (teammateId: string) => Promise<void>;
-  readonly archiveAllVisibleTeammateChats: () => Promise<void>;
   readonly addChannelTeammate: (channelId: string, teammateId: string) => Promise<void>;
   readonly removeChannelTeammate: (channelId: string, teammateId: string) => Promise<void>;
   readonly setDefaultChannelTeammate: (channelId: string, teammateId: string) => Promise<void>;
@@ -320,42 +319,6 @@ export function useTeammatesDomain(input: {
     input.closeTeammateIfActive(teammateId);
   }
 
-  async function archiveAllVisibleTeammateChats(): Promise<void> {
-    const cwd = input.cwd.trim();
-    const visibleTeammates = aiTeammates.filter((teammate) => !teammate.hidden && teammate.status !== "disabled");
-    if (!cwd || visibleTeammates.length === 0) {
-      return;
-    }
-    const confirmed = globalThis.confirm(input.t("Archive all chats? This hides all visible AI teammate chats without deleting messages."));
-    if (!confirmed) {
-      return;
-    }
-    const archivedTeammateIds = new Set(visibleTeammates.map((teammate) => teammate.id));
-    setAiTeammatesLoading(true);
-    try {
-      input.setErrorMessage("");
-      setError(undefined);
-      const responses = await Promise.all(
-        visibleTeammates.map((teammate) => updateAiTeammate(cwd, teammate.id, { hidden: true })),
-      );
-      setAiTeammates((current) => current.map((teammate) =>
-        archivedTeammateIds.has(teammate.id)
-          ? { ...teammate, hidden: true, updatedAt: responses.find((response) => response.teammate.id === teammate.id)?.teammate.updatedAt ?? teammate.updatedAt }
-          : teammate,
-      ));
-      for (const teammate of visibleTeammates) {
-        input.closeTeammateIfActive(teammate.id);
-      }
-      await refreshAiTeammates(cwd);
-    } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "mutation", message });
-      input.setErrorMessage(message);
-    } finally {
-      setAiTeammatesLoading(false);
-    }
-  }
-
   function upsertAiTeammateAction(teammate: AiTeammate): void {
     setAiTeammates((current) => upsertAiTeammate(current, teammate));
   }
@@ -511,7 +474,6 @@ export function useTeammatesDomain(input: {
       toggleAiTeammatePinned,
       toggleAiTeammateHidden,
       archiveAiTeammate,
-      archiveAllVisibleTeammateChats,
       addChannelTeammate,
       removeChannelTeammate,
       setDefaultChannelTeammate,

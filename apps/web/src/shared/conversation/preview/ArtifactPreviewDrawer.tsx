@@ -1,9 +1,16 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { createPortal } from "react-dom";
 import { Download, ExternalLink, Loader2, X } from "lucide-react";
 import { useI18n } from "../../../i18n.js";
 import type { PreviewContentKind } from "../../../types.js";
 import type { PreviewContentResponse } from "../../../types.js";
+import { InlineFeedback, useLingToast } from "../../ui/index.js";
 import { ArtifactPreview } from "./ArtifactPreview.js";
 
 export type ArtifactPreviewRequest =
@@ -46,19 +53,20 @@ export function ArtifactPreviewDrawer({
   onClose,
 }: ArtifactPreviewDrawerProps): JSX.Element | null {
   const { t } = useI18n();
+  const { showToast } = useLingToast();
   const [preview, setPreview] = useState<PreviewContentResponse | undefined>();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [actionFeedback, setActionFeedback] = useState("");
+  const [actionError, setActionError] = useState("");
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const previousFocusRef = useRef<HTMLElement | undefined>();
-  const actionFeedbackTimeoutRef = useRef<number | undefined>();
   const lightboxSwipeRef = useRef<{ readonly pointerId: number; readonly startX: number; readonly startY: number } | undefined>();
 
   useEffect(() => {
     if (!request) {
       setPreview(undefined);
       setError("");
+      setActionError("");
       setLoading(false);
       return;
     }
@@ -66,6 +74,7 @@ export function ArtifactPreviewDrawer({
     let cancelled = false;
     setLoading(true);
     setError("");
+    setActionError("");
     setPreview(undefined);
     void loadPreview(request).then((response) => {
       if (!cancelled) {
@@ -99,12 +108,6 @@ export function ArtifactPreviewDrawer({
     return () => globalThis.cancelAnimationFrame(frameId);
   }, [Boolean(request)]);
 
-  useEffect(() => () => {
-    if (actionFeedbackTimeoutRef.current !== undefined) {
-      globalThis.clearTimeout(actionFeedbackTimeoutRef.current);
-    }
-  }, []);
-
   if (!request) {
     return null;
   }
@@ -114,17 +117,8 @@ export function ArtifactPreviewDrawer({
   const rootClassName = variant === "lightbox"
     ? "artifact-preview-drawer artifact-preview-lightbox"
     : "artifact-preview-drawer";
-
-  function showActionFeedback(message: string): void {
-    if (actionFeedbackTimeoutRef.current !== undefined) {
-      globalThis.clearTimeout(actionFeedbackTimeoutRef.current);
-    }
-    setActionFeedback(message);
-    actionFeedbackTimeoutRef.current = globalThis.setTimeout(() => {
-      setActionFeedback("");
-      actionFeedbackTimeoutRef.current = undefined;
-    }, 1_800);
-  }
+  const toastScope = artifactPreviewToastScope(request);
+  const previewUnavailable = preview !== undefined && !artifactPreviewCanRender(preview);
 
   function closePreview(): void {
     const returnTarget = previousFocusRef.current;
@@ -161,6 +155,72 @@ export function ArtifactPreviewDrawer({
     }
   }
 
+  function handlePreviewClickCapture(event: ReactMouseEvent<HTMLDivElement>): void {
+    if (preview?.text === undefined) {
+      return;
+    }
+    const target = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("button")
+      : null;
+    if (!target || !event.currentTarget.contains(target) || target.getAttribute("aria-label") !== t("Copy preview")) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    void copyPreviewText(preview.text);
+  }
+
+  async function copyPreviewText(text: string): Promise<void> {
+    setActionError("");
+    try {
+      if (!globalThis.navigator?.clipboard?.writeText) {
+        throw new Error("clipboard_unavailable");
+      }
+      await globalThis.navigator.clipboard.writeText(text);
+      showToast({
+        message: t("Copied"),
+        scope: `${toastScope}:copy`,
+        tone: "success",
+        durationMs: 3_000,
+      });
+    } catch {
+      setActionError(t("Copy failed"));
+    }
+  }
+
+  async function downloadPreview(event: ReactMouseEvent<HTMLAnchorElement>): Promise<void> {
+    event.preventDefault();
+    if (!downloadHref) {
+      return;
+    }
+    setActionError("");
+    try {
+      const response = await globalThis.fetch(downloadHref, { credentials: "same-origin" });
+      if (!response.ok) {
+        throw new Error(`download_failed_${response.status}`);
+      }
+      const objectUrl = globalThis.URL.createObjectURL(await response.blob());
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      if (downloadName) {
+        anchor.download = downloadName;
+      }
+      anchor.hidden = true;
+      document.body.append(anchor);
+      anchor.click();
+      anchor.remove();
+      globalThis.requestAnimationFrame(() => globalThis.URL.revokeObjectURL(objectUrl));
+      showToast({
+        message: t("Download started"),
+        scope: `${toastScope}:download`,
+        tone: "success",
+        durationMs: 3_000,
+      });
+    } catch {
+      setActionError(`${t("Download file")}: ${t("Failed")}`);
+    }
+  }
+
   const overlay = (
     <aside
       className={rootClassName}
@@ -188,15 +248,29 @@ export function ArtifactPreviewDrawer({
           </button>
         </header>
 
-        <div className="artifact-preview-body">
+        <div className="artifact-preview-body" onClickCapture={handlePreviewClickCapture}>
           {loading ? (
             <div className="artifact-preview-loading">
               <Loader2 className="spin" size={16} />
               <span>{t("Loading preview...")}</span>
             </div>
           ) : null}
-          {error ? <div className="artifact-preview-error" role="alert">{t("Preview unavailable")}: {error}</div> : null}
-          {preview ? <ArtifactPreview preview={preview} /> : null}
+          {error ? (
+            <InlineFeedback className="artifact-preview-error" data-artifact-preview-feedback="load" tone="danger">
+              {t("Preview unavailable")}: {error}
+            </InlineFeedback>
+          ) : null}
+          {previewUnavailable ? (
+            <InlineFeedback className="artifact-preview-error" data-artifact-preview-feedback="preview" tone="danger">
+              {t("Preview unavailable")}
+            </InlineFeedback>
+          ) : null}
+          {actionError ? (
+            <InlineFeedback className="artifact-preview-error" data-artifact-preview-feedback="action" tone="danger">
+              {actionError}
+            </InlineFeedback>
+          ) : null}
+          {preview && !previewUnavailable ? <ArtifactPreview preview={preview} /> : null}
         </div>
 
         {preview?.redactionNotes.length ? (
@@ -210,7 +284,6 @@ export function ArtifactPreviewDrawer({
         )}
 
         <footer className="artifact-preview-actions">
-          {actionFeedback ? <span className="artifact-preview-action-feedback" role="status" aria-live="polite">{actionFeedback}</span> : null}
           {openHref ? (
             <a
               className="artifact-action-link"
@@ -219,7 +292,6 @@ export function ArtifactPreviewDrawer({
               rel="noreferrer"
               aria-label={t("Open")}
               title={t("Open")}
-              onClick={() => showActionFeedback(t("Opened"))}
             >
               <ExternalLink size={13} />
               {t("Open")}
@@ -232,7 +304,7 @@ export function ArtifactPreviewDrawer({
               download={downloadName}
               aria-label={t("Download file")}
               title={t("Download file")}
-              onClick={() => showActionFeedback(t("Download started"))}
+              onClick={(event) => void downloadPreview(event)}
             >
               <Download size={13} />
               {t("Download file")}
@@ -243,6 +315,18 @@ export function ArtifactPreviewDrawer({
     </aside>
   );
   return typeof document === "undefined" ? overlay : createPortal(overlay, document.body);
+}
+
+function artifactPreviewCanRender(preview: PreviewContentResponse): boolean {
+  if (preview.kind === "image") {
+    return Boolean(preview.imageUrl);
+  }
+  return preview.text !== undefined;
+}
+
+function artifactPreviewToastScope(request: ArtifactPreviewRequest): string {
+  const resourceId = request.source === "artifact" ? request.artifactId : request.attachmentId;
+  return `artifact-preview:${request.source}:${resourceId}`;
 }
 
 function formatPreviewSize(sizeBytes: number): string {

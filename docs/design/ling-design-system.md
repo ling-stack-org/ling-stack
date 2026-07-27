@@ -2,6 +2,11 @@
 
 ## Related Docs
 
+- [Ling UI 2.0](ui2.0升级/README.md)
+- [UI 2.0 Iconography](ui2.0升级/foundations/07-Iconography与图标色系.md)
+- [UI 2.0 CSS Architecture](ui2.0升级/architecture/06-CSS目标目录与加载顺序.md)
+- [UI 2.0 Motion](ui2.0升级/foundations/08-Motion与状态转场.md)
+- [UI 2.0 Theme Packs](ui2.0升级/themes/README.md)
 - [Model Workbench Productization P13](model-workbench-productization-p13.md)
 - [Global Feedback Toast System](global-feedback-toast-system.md)
 
@@ -14,6 +19,10 @@ drift back into chat-shell copy, diagnostics walls, or internal module lists.
 Ling is a local-first AI workspace. The interface should feel quiet, dense,
 scannable, and operational. It should help the user act with confidence, not
 explain implementation internals by default.
+
+UI 2.0 is now the implementation-level source of truth for tokens, shared
+components, module coverage, migration slices, and visual acceptance. This
+document remains the concise product-language entry point.
 
 ## Product Language
 
@@ -97,12 +106,18 @@ Product states are not raw storage states.
 Use [Global Feedback Toast System](global-feedback-toast-system.md) for transient
 action feedback.
 
+UI 2.0 实施以 [Toast 与 InlineFeedback](ui2.0升级/components/07-Toast与InlineFeedback.md)
+和 [全局反馈消息迁移矩阵](ui2.0升级/migration/10-全局反馈消息迁移矩阵.md) 为准。
+
 - Lightweight save, copy, apply, created, and queued confirmations use the
   shared top-center `Ling Toast`.
 - Toasts use a neutral elevated surface with a small tone bead; never use a
   large colored success pill.
 - Feature pages should not define one-off toast styles or browser `alert()`
   calls for product feedback.
+- Feature pages should not own toast lifecycle timers or mount a second toast
+  viewport. Scope, dedupe, duration, pause, dismiss, ARIA, and motion belong to
+  the shared provider.
 - Blocking errors, field validation, destructive warnings, readiness blockers,
   approval states, and diagnostics remain inline near the object they affect.
 - A toast is correct only when the user does not need the message to complete
@@ -116,6 +131,13 @@ action feedback.
 - Buttons with icons use inline-flex alignment, a stable gap, and a minimum
   32px hit area.
 - Icon-only controls require an accessible label and a tooltip/title.
+- Lucide is the default source for UI action, navigation, menu, and status icons.
+- UI icons use the shared size, stroke, and `currentColor` rules; feature pages
+  must not assign arbitrary icon colors or dimensions.
+- Remote icon fonts, PNG action icons, emoji controls, and character icons are
+  not allowed. Brand/language/file-type icons require a documented local exception.
+- `LingStackLogo.tsx` and the current favicon assets are protected: do not
+  replace, redraw, recolor, distort, or substitute them during UI 2.0 work.
 - Menus use fixed icon cells and a consistent row height.
 - Menu descriptions are opt-in; they should not be used for routine actions.
 
@@ -128,14 +150,34 @@ action feedback.
 - Keep visible copy action-oriented: what happened, what it means, what to do.
 - Do not leave orphaned i18n keys after removing visible explanatory copy.
 
-## Dark Theme
+## Theme Packs
 
-- The first painted frame should match the eventual app theme.
-- Bootstrap theme storage must prefer the latest effective preference over
-  legacy keys.
-- Do not hard-code white or black surfaces outside theme tokens.
-- Dark mode must be checked on Settings, plugin/skill diagnostics, dialogs,
-  menus, and empty states.
+- Light and Dark are independent built-in Theme Packs: `ling-light` and
+  `ling-dark`. A theme is not required to provide a paired opposite mode.
+- `System` is a selection strategy that resolves an actual Theme Pack from the
+  operating-system appearance; it is not itself a theme.
+- The first painted frame must match the resolved Theme Pack, color scheme,
+  and semantic token snapshot.
+- Theme Packs may change semantic colors, surfaces, shadows, client material,
+  and approved local artwork. They must not change layout, typography scale,
+  control geometry, icons, Logo, navigation, or business behavior.
+- Feature CSS must not branch on a Theme Pack ID. Add or refine a semantic
+  token when a component needs a visual distinction.
+- Imported themes are validated data and local assets only. They cannot ship
+  arbitrary CSS, JavaScript, remote resources, fonts, or brand replacements.
+- `ling-light` and `ling-dark` must be checked on Settings, conversations,
+  plugin/skill diagnostics, dialogs, menus, empty states, Web, macOS, and Windows.
+
+## Motion
+
+- Motion explains state continuity; it is not decoration.
+- Use the shared `120/180/240ms` duration and easing tokens.
+- Open/close interactions must be reversible and respect the latest input.
+- Dragging disables transition until pointer release.
+- Do not use bounce, shake, staggered long lists, `transition: all`, or
+  unregistered keyframes.
+- `prefers-reduced-motion` removes translation, scaling, shimmer, pulse, and
+  smooth scrolling while preserving understandable state feedback.
 
 ## Reachable-State Review Rule
 

@@ -1,5 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const testPort = Number.parseInt(process.env.LING_PLAYWRIGHT_PORT ?? "4174", 10);
+const testBaseUrl = `http://127.0.0.1:${testPort}`;
+
 export default defineConfig({
   testDir: "./e2e",
   timeout: 30_000,
@@ -11,13 +14,13 @@ export default defineConfig({
     timeout: 5_000,
   },
   use: {
-    baseURL: "http://127.0.0.1:4174",
+    baseURL: testBaseUrl,
     locale: "en-US",
     trace: "on-first-retry",
   },
   webServer: {
-    command: "corepack pnpm exec vite --host 127.0.0.1 --port 4174",
-    url: "http://127.0.0.1:4174",
+    command: `corepack pnpm exec vite --host 127.0.0.1 --port ${testPort}`,
+    url: testBaseUrl,
     reuseExistingServer: true,
     timeout: 30_000,
   },

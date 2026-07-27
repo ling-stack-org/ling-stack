@@ -547,6 +547,70 @@ test("Desktop IPC replays the renderer's latest real selection after Open task s
   unregister();
 });
 
+test("Desktop IPC accepts theme reports only from main and publishes snapshots only to the PiP renderer", async () => {
+  const ipc = new FakeIpcMain();
+  const messages = [];
+  const mainEvent = { sender: { id: 11 } };
+  const previewEvent = {
+    sender: {
+      id: 22,
+      isDestroyed: () => false,
+      send: (channel, snapshot) => messages.push([channel, snapshot]),
+    },
+  };
+  const foreignEvent = { sender: { id: 33 } };
+  const unregister = registerDesktopIpc({
+    ipcMainImpl: ipc,
+    daemon: {
+      status: { state: "connected", baseUrl: "http://127.0.0.1:1", ownedByDesktop: true },
+      onStatusChanged: () => () => {},
+    },
+    computerUse: {
+      ownsPreviewWebContents: (id) => id === 22,
+    },
+    getMainWindow: () => ({ webContents: { id: 11 } }),
+  });
+
+  assert.equal(
+    await ipc.invoke(DESKTOP_IPC_CHANNELS.desktopThemeSnapshotGet, foreignEvent),
+    undefined,
+  );
+  assert.deepEqual(
+    await ipc.invoke(DESKTOP_IPC_CHANNELS.desktopThemeSnapshotGet, previewEvent),
+    {
+      revision: 1,
+      themeId: "ling-light",
+      colorScheme: "light",
+      presentationProfileId: "ling-standard",
+      variables: {},
+    },
+  );
+  ipc.emit(DESKTOP_IPC_CHANNELS.desktopThemeReport, foreignEvent, {
+    themeId: "foreign-dark",
+    colorScheme: "dark",
+    presentationProfileId: "ling-standard",
+    variables: {},
+  });
+  assert.deepEqual(messages, []);
+  ipc.emit(DESKTOP_IPC_CHANNELS.desktopThemeReport, mainEvent, {
+    themeId: "ling-dark",
+    colorScheme: "dark",
+    presentationProfileId: "ling-standard",
+    variables: {},
+  });
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0][0], DESKTOP_IPC_CHANNELS.desktopThemeSnapshotChanged);
+  assert.deepEqual(messages[0][1], {
+    revision: 2,
+    themeId: "ling-dark",
+    colorScheme: "dark",
+    presentationProfileId: "ling-standard",
+    variables: {},
+  });
+
+  unregister();
+});
+
 class FakeIpcMain {
   handlers = new Map();
   listeners = new Map();

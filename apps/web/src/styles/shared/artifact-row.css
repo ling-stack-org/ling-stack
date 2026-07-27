@@ -1,0 +1,120 @@
+.artifact-list {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-3);
+}
+
+.artifact-row {
+  display: grid;
+  min-width: 0;
+  grid-template-areas: "type main size";
+  grid-template-columns: 72px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--ling-space-3) var(--ling-space-4);
+  padding: var(--ling-space-4);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  color: var(--ling-text-default);
+  background: var(--ling-bg-panel);
+  box-shadow: var(--ling-shadow-low);
+}
+
+.artifact-row.with-actions {
+  grid-template-areas:
+    "type main size"
+    ". actions actions";
+}
+
+.artifact-row:hover {
+  border-color: var(--ling-border-strong);
+  background: var(--ling-bg-subtle);
+}
+
+.artifact-type {
+  display: inline-flex;
+  grid-area: type;
+  min-width: 0;
+  min-height: 22px;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ling-space-2);
+  border: 1px solid var(--ling-border-default);
+  border-radius: 999px;
+  color: var(--ling-text-muted);
+  background: var(--ling-bg-subtle);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+}
+
+.artifact-main {
+  display: grid;
+  min-width: 0;
+  grid-area: main;
+  gap: var(--ling-space-1);
+}
+
+.artifact-main-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.artifact-main strong,
+.artifact-main code,
+.artifact-main small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-row > small {
+  grid-area: size;
+  justify-self: end;
+  white-space: nowrap;
+}
+
+.artifact-actions {
+  display: inline-flex;
+  min-width: 0;
+  grid-area: actions;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--ling-space-3);
+}
+
+.artifact-action-link {
+  display: inline-flex;
+  min-height: var(--ling-control-sm);
+  align-items: center;
+  justify-content: center;
+  gap: var(--ling-space-2);
+  padding-inline: var(--ling-space-4);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  color: var(--ling-text-default);
+  background: var(--ling-bg-panel);
+  box-shadow: var(--ling-shadow-low);
+  font-size: var(--ling-font-xs);
+  font-weight: 650;
+  text-decoration: none;
+}
+
+button.artifact-action-link {
+  cursor: pointer;
+}
+
+.artifact-action-link:hover {
+  border-color: var(--ling-border-strong);
+  color: var(--ling-text-strong);
+  background: var(--ling-bg-subtle);
+}
+
+.artifact-main strong {
+  color: var(--ling-text-strong);
+}
+
+.artifact-main code,
+.artifact-row small {
+  color: var(--ling-text-default);
+}

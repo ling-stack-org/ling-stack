@@ -28,8 +28,9 @@ test("shared renderer emits semantic GFM table and read-only task controls", () 
   assert.match(html, /<table class="message-body-table">/);
   assert.match(html, /<th>Item<\/th>/);
   assert.match(html, /<td>Ready<\/td>/);
-  assert.match(html, /<input type="checkbox"[^>]*readonly=""/);
-  assert.match(html, /<input type="checkbox"[^>]*checked=""/);
+  assert.match(html, /<input[^>]*type="checkbox"[^>]*readonly=""/);
+  assert.match(html, /<input[^>]*type="checkbox"[^>]*checked=""/);
+  assert.match(html, /<input[^>]*data-ling-control-native="true"[^>]*type="checkbox"/);
 });
 
 test("shared renderer does not emit raw HTML or unsafe link targets", () => {

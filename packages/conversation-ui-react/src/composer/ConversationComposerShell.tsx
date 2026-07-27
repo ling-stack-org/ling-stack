@@ -65,24 +65,20 @@ export function ConversationComposerShell({
 }: ConversationComposerShellProps): JSX.Element {
   const rootClassName = [
     "conversation-composer",
-    "composer-panel",
     `conversation-composer-surface-${surface}`,
     `conversation-composer-density-${density}`,
     className,
   ].filter(Boolean).join(" ");
   const zoneClassName = [
     "conversation-composer-input-zone",
-    "composer-drop-zone",
     dropZoneClassName,
   ].filter(Boolean).join(" ");
   const toolbarClassNames = [
     "conversation-composer-toolbar",
-    "composer-primary-actions",
     toolbarClassName,
   ].filter(Boolean).join(" ");
   const leftClassNames = [
     "conversation-composer-left-tools",
-    "composer-tool-row",
     leftToolsClassName,
   ].filter(Boolean).join(" ");
   const rightClassNames = [
@@ -96,7 +92,9 @@ export function ConversationComposerShell({
       className={rootClassName}
       style={style}
       aria-label={ariaLabel}
+      data-conversation-composer="true"
       data-surface={surface}
+      data-density={density}
       {...(surface === "teammate_direct"
         ? { "data-computer-use-obstacle": "true", "data-computer-use-obstacle-kind": "composer" }
         : {})}

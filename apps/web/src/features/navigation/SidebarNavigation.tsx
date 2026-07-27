@@ -2,19 +2,14 @@ import {
   useEffect,
   useRef,
   useState,
-  type FocusEvent as ReactFocusEvent,
   type FormEvent,
-  type MouseEvent as ReactMouseEvent,
-  type ReactNode,
 } from "react";
 import {
   Archive,
   Bot,
-  ChevronDown,
   GitBranch,
   Hash,
   MessageSquare,
-  MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
   PlugZap,
@@ -22,7 +17,7 @@ import {
   Settings,
 } from "lucide-react";
 import { useI18n } from "../../i18n.js";
-import { ActionMenuItem } from "../../shared/components/index.js";
+import { Icon, IconButton, InlineFeedback, Input, StatusIndicator } from "../../shared/ui/index.js";
 import {
   channelSidebarTarget,
   teammateSidebarTarget,
@@ -32,13 +27,20 @@ import {
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
 import type { AiTeammate, ApprovalRequest, Channel, ChannelBranch } from "../../types.js";
 import { TeammateAvatarView } from "../teammates/TeammateAvatarView.js";
-import { SidebarPrimaryNavigation, type SidebarTooltipBindings } from "./SidebarPrimaryNavigation.js";
+import { SidebarPrimaryNavigation } from "./SidebarPrimaryNavigation.js";
 import { channelAvatarMeta } from "./sidebar-channel-avatar.js";
+import { SidebarObjectRow } from "./SidebarObjectRow.js";
+import { SidebarArchiveAllConversationsDialog } from "./SidebarArchiveAllConversationsDialog.js";
+import { SidebarSection, SidebarSectionSkeleton, type SidebarSectionId } from "./SidebarSection.js";
+import { SidebarTooltip } from "./SidebarTooltip.js";
 
 export interface SidebarNotification {
   readonly count?: number;
+  readonly primaryStatus?: SidebarPrimaryStatus;
   readonly unread?: boolean;
 }
+
+export type SidebarPrimaryStatus = "failed" | "paused" | "running" | "waiting";
 
 export interface SidebarRecentConversation {
   readonly id: string;
@@ -47,15 +49,8 @@ export interface SidebarRecentConversation {
   readonly updatedAt: string;
   readonly channelId?: string;
   readonly taskId?: string;
+  readonly primaryStatus?: SidebarPrimaryStatus;
 }
-
-type SidebarTooltipState = {
-  readonly label: string;
-  readonly left: number;
-  readonly top: number;
-};
-
-type SidebarSectionId = "channels" | "teammates" | "recent";
 
 export function SidebarNavigation({
   activeSidebarTarget,
@@ -65,9 +60,13 @@ export function SidebarNavigation({
   teammates,
   approvals,
   cwd,
+  channelsLoading = false,
+  teammatesLoading = false,
+  stale = false,
   channelNotifications = {},
   teammateNotifications = {},
   recentConversations = [],
+  recentConversationsLoading = false,
   recentConversationActionError = "",
   selectedRecentConversationId = "",
   onOpenView,
@@ -97,9 +96,13 @@ export function SidebarNavigation({
   readonly teammates: readonly AiTeammate[];
   readonly approvals: readonly ApprovalRequest[];
   readonly cwd: string;
+  readonly channelsLoading?: boolean;
+  readonly teammatesLoading?: boolean;
+  readonly stale?: boolean;
   readonly channelNotifications?: Readonly<Record<string, SidebarNotification>>;
   readonly teammateNotifications?: Readonly<Record<string, SidebarNotification>>;
   readonly recentConversations?: readonly SidebarRecentConversation[];
+  readonly recentConversationsLoading?: boolean;
   readonly recentConversationActionError?: string;
   readonly selectedRecentConversationId?: string;
   readonly onOpenView: (view: ViewId) => void;
@@ -123,15 +126,24 @@ export function SidebarNavigation({
   readonly onChannelDrawerOpenChange?: (open: boolean) => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const sidebarStatusLabels = {
+    failed: t("Failed"),
+    paused: t("Paused"),
+    pendingApprovals: (count: number) => t("{count} pending approvals", { count }),
+    running: t("Running"),
+    unread: t("Unread"),
+    waiting: t("Waiting for approval"),
+  };
   const [branchDraftChannelId, setBranchDraftChannelId] = useState("");
   const [branchDraftName, setBranchDraftName] = useState("");
+  const [archiveAllDialogOpen, setArchiveAllDialogOpen] = useState(false);
+  const recentActionsTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [openSectionMenu, setOpenSectionMenu] = useState<SidebarSectionId | "">("");
   const [collapsedSections, setCollapsedSections] = useState<Record<SidebarSectionId, boolean>>({
     channels: false,
     teammates: false,
     recent: false,
   });
-  const [sidebarTooltip, setSidebarTooltip] = useState<SidebarTooltipState | null>(null);
   const pendingApprovalCount = approvals.filter((approval) => effectiveApprovalStatus(approval) === "pending").length;
   const inboxTooltip = pendingApprovalCount > 0
     ? `${t("Inbox")} · ${t("{count} pending approvals", { count: pendingApprovalCount })}`
@@ -145,7 +157,6 @@ export function SidebarNavigation({
 
   useEffect(() => {
     if (!collapsedTooltipsEnabled) {
-      setSidebarTooltip(null);
       return;
     }
     setCollapsedSections({
@@ -154,35 +165,6 @@ export function SidebarNavigation({
       recent: false,
     });
   }, [collapsedTooltipsEnabled]);
-
-  function showSidebarTooltip(label: string, element: HTMLElement): void {
-    if (!collapsedTooltipsEnabled) {
-      return;
-    }
-    const rect = element.getBoundingClientRect();
-    setSidebarTooltip({
-      label,
-      left: Math.round(rect.right + 8),
-      top: Math.round(rect.top + rect.height / 2),
-    });
-  }
-
-  function hideSidebarTooltip(event?: ReactFocusEvent<HTMLElement>): void {
-    if (event?.relatedTarget instanceof HTMLElement && event.relatedTarget.closest("[data-sidebar-tooltip]")) {
-      return;
-    }
-    setSidebarTooltip(null);
-  }
-
-  function tooltipProps(label: string): SidebarTooltipBindings {
-    return {
-      "data-sidebar-tooltip": label,
-      onMouseEnter: (event) => showSidebarTooltip(label, event.currentTarget),
-      onMouseLeave: hideSidebarTooltip,
-      onFocus: (event) => showSidebarTooltip(label, event.currentTarget),
-      onBlur: (event) => hideSidebarTooltip(event),
-    };
-  }
 
   function openBranchDraft(channelId: string): void {
     setBranchDraftChannelId(channelId);
@@ -207,31 +189,30 @@ export function SidebarNavigation({
     setBranchDraftName("");
   }
 
+  const SidebarToggleIcon = channelDrawerOpen ? PanelLeftClose : PanelLeftOpen;
+
   return (
     <aside className={channelDrawer ? "left-nav channel-left-drawer" : "left-nav"} aria-label="Ling Stack navigation">
       <div className="sidebar-fixed-top">
         <div className={channelDrawer ? "sidebar-brand-row has-sidebar-switch" : "sidebar-brand-row"}>
-          <button
-            className="sidebar-command-button sidebar-command-button-top"
-            type="button"
-            onClick={onOpenConversationHome}
-            aria-label={t("New conversation")}
-            title={t("New conversation")}
-            {...tooltipProps(t("New conversation"))}
-          >
-            <Plus size={15} />
-            <span>{t("New conversation")}</span>
-          </button>
-          {channelDrawer ? (
+          <SidebarTooltip label={t("New conversation")}>
             <button
-              className="channel-sidebar-switch"
+              className="sidebar-command-button sidebar-command-button-top"
               type="button"
-              aria-label={channelDrawerOpen ? t("Hide navigation") : t("Show navigation")}
-              title={channelDrawerOpen ? t("Hide navigation") : t("Show navigation")}
-              onClick={() => onChannelDrawerOpenChange?.(!channelDrawerOpen)}
+              onClick={onOpenConversationHome}
+              aria-label={t("New conversation")}
             >
-              {channelDrawerOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
+              <Icon icon={Plus} />
+              <span>{t("New conversation")}</span>
             </button>
+          </SidebarTooltip>
+          {channelDrawer ? (
+            <IconButton
+              className="channel-sidebar-switch"
+              label={channelDrawerOpen ? t("Hide navigation") : t("Show navigation")}
+              icon={SidebarToggleIcon}
+              onClick={() => onChannelDrawerOpenChange?.(!channelDrawerOpen)}
+            />
           ) : null}
         </div>
 
@@ -239,14 +220,18 @@ export function SidebarNavigation({
           activeSidebarTarget={activeSidebarTarget}
           inboxTooltip={inboxTooltip}
           onOpenView={onOpenView}
-          tooltipProps={tooltipProps}
         />
       </div>
 
-      <div className="sidebar-scroll-region" aria-label={t("Recent")} onScroll={() => hideSidebarTooltip()}>
+      <div className="sidebar-scroll-region" aria-label={t("Recent")}>
       <SidebarSection
         sectionId="channels"
         title={t("Channels")}
+        count={channels.length}
+        loading={channelsLoading}
+        loadingLabel={t("Loading channels...")}
+        stale={stale}
+        staleLabel={t("Stale")}
         collapsed={collapsedSections.channels}
         railCollapsed={collapsedTooltipsEnabled}
         railCollapsedPreview={renderChannelRailPreview(channels)}
@@ -258,23 +243,25 @@ export function SidebarNavigation({
           {
             id: "new-channel",
             label: t("New channel"),
-            icon: <Plus size={14} />,
+            icon: Plus,
             onSelect: onCreateChannel,
           },
         ]}
       >
-        {channels.length === 0 ? (
-          <button
-            className="sidebar-row muted-row"
-            type="button"
-            onClick={onCreateChannel}
-            aria-label={t("No channel yet")}
-            title={t("No channel yet")}
-            {...tooltipProps(t("No channel yet"))}
-          >
-            <Hash size={14} />
-            <span>{t("No channel yet")}</span>
-          </button>
+        {channelsLoading && channels.length === 0 ? (
+          <SidebarSectionSkeleton label={t("Loading channels...")} rows={3} />
+        ) : channels.length === 0 ? (
+          <SidebarTooltip label={t("No channel yet")}>
+            <button
+              className="sidebar-row muted-row"
+              type="button"
+              onClick={onCreateChannel}
+              aria-label={t("No channel yet")}
+            >
+              <Hash size={14} />
+              <span>{t("No channel yet")}</span>
+            </button>
+          </SidebarTooltip>
         ) : (
 	          channels.map((channel) => {
 	            const channelActive = activeSidebarTarget === channelSidebarTarget(channel.id);
@@ -283,54 +270,49 @@ export function SidebarNavigation({
 	            const channelAvatar = channelAvatarMeta(channel);
 	            return (
 	              <div key={channel.id} className="sidebar-channel-group">
-	                <div className={channelActive ? "sidebar-row-shell selected" : "sidebar-row-shell"}>
-	                  <button
-	                    className="sidebar-row-main"
-	                    type="button"
-                    aria-label={channel.name}
-                    title={channel.name}
-                    onClick={() => onSelectChannel(channel.id)}
-                    {...tooltipProps(channel.name)}
-                  >
-                    <span className={`sidebar-channel-avatar ${channelAvatar.tone}`} aria-hidden="true">{channelAvatar.label}</span>
-                    <span>{channel.name}</span>
-                    {renderSidebarNotification(channelNotifications[channel.id])}
-                  </button>
-                  <span className="sidebar-row-tools" aria-label={t("Channel actions")}>
+	                <SidebarObjectRow
+	                  actionsLabel={t("Channel actions")}
+	                  ariaLabel={channel.name}
+	                  icon={<span className={`sidebar-channel-avatar ${channelAvatar.tone}`} aria-hidden="true">{channelAvatar.label}</span>}
+	                  onSelect={() => onSelectChannel(channel.id)}
+	                  selected={channelActive}
+	                  status={renderSidebarNotification(channelNotifications[channel.id], sidebarStatusLabels)}
+	                  statusId={sidebarNotificationId(channelNotifications[channel.id])}
+	                  actions={(
+                    <>
                     {onCreateChannelBranch ? (
-                      <button
+                      <IconButton
                         className="sidebar-mini-action"
-                        type="button"
-                        aria-label={t("Create branch")}
-                        title={t("Create branch")}
+                        label={t("Create branch")}
+                        icon={GitBranch}
                         onClick={(event) => {
                           event.stopPropagation();
                           openBranchDraft(channel.id);
                         }}
-                      >
-                        <GitBranch size={13} />
-                      </button>
+                      />
                     ) : null}
                     {onArchiveChannel ? (
-                      <button
+                      <IconButton
                         className="sidebar-mini-action danger"
-                        type="button"
-                        aria-label={t("Archive channel")}
-                        title={t("Archive channel")}
+                        label={t("Archive channel")}
+                        icon={Archive}
                         onClick={(event) => {
                           event.stopPropagation();
                           void onArchiveChannel(channel.id);
                         }}
-                      >
-                        <Archive size={13} />
-                      </button>
+                      />
                     ) : null}
-                  </span>
-                </div>
+                    </>
+                  )}
+	                >
+	                  {channel.name}
+	                </SidebarObjectRow>
                 {draftOpen ? (
                   <form className="sidebar-branch-create-form" onSubmit={(event) => void submitBranchDraft(event, channel.id)}>
-                    <input
+                    <Input
                       autoFocus
+                      containerClassName="sidebar-branch-name-control"
+                      size="sm"
                       value={branchDraftName}
                       onChange={(event) => setBranchDraftName(event.target.value)}
                       onKeyDown={(event) => {
@@ -342,42 +324,37 @@ export function SidebarNavigation({
                       aria-label={t("Branch name")}
                       placeholder={t("Branch name")}
                     />
-                    <button type="submit" aria-label={t("Create branch")} title={t("Create branch")}>
-                      <Plus size={13} />
-                    </button>
+                    <IconButton type="submit" label={t("Create branch")} icon={Plus} />
                   </form>
                 ) : null}
                 {branches.length > 0 ? (
                   <div className="sidebar-branch-list" role="list" aria-label={t("Sidebar channel branches")}>
                     {branches.map((branch) => (
                       <div key={branch.id} className={selectedChannelBranchId === branch.id ? "sidebar-branch-row-shell selected" : "sidebar-branch-row-shell"}>
-                        <button
-                          className="sidebar-branch-row"
-                          type="button"
-                          aria-label={branch.name}
-                          title={branch.name}
-                          {...tooltipProps(branch.name)}
-                          onClick={() => {
-                            setBranchDraftChannelId("");
-                            onSelectChannelBranch?.(channel.id, branch.id);
-                          }}
-                        >
-                          <span>{branch.name}</span>
-                        </button>
+                        <SidebarTooltip label={branch.name}>
+                          <button
+                            className="sidebar-branch-row"
+                            type="button"
+                            aria-label={branch.name}
+                            onClick={() => {
+                              setBranchDraftChannelId("");
+                              onSelectChannelBranch?.(channel.id, branch.id);
+                            }}
+                          >
+                            <span>{branch.name}</span>
+                          </button>
+                        </SidebarTooltip>
                         {onArchiveChannelBranch ? (
                           <span className="sidebar-row-tools">
-                            <button
+                            <IconButton
                               className="sidebar-mini-action danger"
-                              type="button"
-                              aria-label={t("Archive branch")}
-                              title={t("Archive branch")}
+                              label={t("Archive branch")}
+                              icon={Archive}
                               onClick={(event) => {
                                 event.stopPropagation();
                                 void onArchiveChannelBranch(channel.id, branch.id);
                               }}
-                            >
-                              <Archive size={13} />
-                            </button>
+                            />
                           </span>
                         ) : null}
                       </div>
@@ -393,6 +370,11 @@ export function SidebarNavigation({
       <SidebarSection
         sectionId="teammates"
         title={t("AI Teammates")}
+        count={visibleTeammates.length}
+        loading={teammatesLoading}
+        loadingLabel={t("Loading teammates...")}
+        stale={stale}
+        staleLabel={t("Stale")}
         collapsed={collapsedSections.teammates}
         railCollapsed={collapsedTooltipsEnabled}
         railCollapsedPreview={renderTeammateRailPreview(visibleTeammates, cwd)}
@@ -404,7 +386,7 @@ export function SidebarNavigation({
           {
             id: "new-ai-teammate",
             label: t("New AI teammate"),
-            icon: <Plus size={14} />,
+            icon: Plus,
             disabled: !onCreateTeammate,
             onSelect: () => onCreateTeammate?.(),
           },
@@ -412,59 +394,50 @@ export function SidebarNavigation({
           {
             id: "configure-teammate-model",
             label: t("Configure model"),
-            icon: <PlugZap size={14} />,
+            icon: PlugZap,
             disabled: !onOpenTeammateModelWorkbench,
             onSelect: () => onOpenTeammateModelWorkbench?.(),
           },
         ]}
       >
-        {visibleTeammates.length === 0 ? (
-          <button
-            className="sidebar-row muted-row"
-            type="button"
-            onClick={onCreateTeammate ?? (() => onOpenView("teammates"))}
-            aria-label={t("No teammate yet")}
-            title={t("No teammate yet")}
-            {...tooltipProps(t("No teammate yet"))}
-          >
-            <Bot size={14} />
-            <span>{t("No teammate yet")}</span>
-          </button>
+        {teammatesLoading && visibleTeammates.length === 0 ? (
+          <SidebarSectionSkeleton label={t("Loading teammates...")} rows={2} />
+        ) : visibleTeammates.length === 0 ? (
+          <SidebarTooltip label={t("No teammate yet")}>
+            <button
+              className="sidebar-row muted-row"
+              type="button"
+              onClick={onCreateTeammate ?? (() => onOpenView("teammates"))}
+              aria-label={t("No teammate yet")}
+            >
+              <Bot size={14} />
+              <span>{t("No teammate yet")}</span>
+            </button>
+          </SidebarTooltip>
         ) : (
           visibleTeammates.map((teammate) => (
-            <div
+            <SidebarObjectRow
               key={teammate.id}
-              className={activeSidebarTarget === teammateSidebarTarget(teammate.id) ? "sidebar-row-shell selected" : "sidebar-row-shell"}
+              ariaLabel={teammate.displayName}
+              icon={<TeammateAvatarView teammate={teammate} cwd={cwd} compact />}
+              onSelect={() => onSelectTeammate(teammate.id)}
+              selected={activeSidebarTarget === teammateSidebarTarget(teammate.id)}
+              status={renderSidebarNotification(teammateNotifications[teammate.id], sidebarStatusLabels)}
+              statusId={sidebarNotificationId(teammateNotifications[teammate.id])}
+              actions={onArchiveTeammate ? (
+                <IconButton
+                  className="sidebar-mini-action danger"
+                  label={t("Archive teammate")}
+                  icon={Archive}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void onArchiveTeammate(teammate.id);
+                  }}
+                />
+              ) : undefined}
             >
-              <button
-                className="sidebar-row-main"
-                type="button"
-                aria-label={teammate.displayName}
-                title={teammate.displayName}
-                {...tooltipProps(teammate.displayName)}
-                onClick={() => onSelectTeammate(teammate.id)}
-              >
-                <TeammateAvatarView teammate={teammate} cwd={cwd} compact />
-                <span>{teammate.displayName}</span>
-                {renderSidebarNotification(teammateNotifications[teammate.id])}
-              </button>
-              {onArchiveTeammate ? (
-                <span className="sidebar-row-tools">
-                  <button
-                    className="sidebar-mini-action danger"
-                    type="button"
-                    aria-label={t("Archive teammate")}
-                    title={t("Archive teammate")}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      void onArchiveTeammate(teammate.id);
-                    }}
-                  >
-                    <Archive size={13} />
-                  </button>
-                </span>
-              ) : null}
-            </div>
+              {teammate.displayName}
+            </SidebarObjectRow>
           ))
         )}
       </SidebarSection>
@@ -472,259 +445,160 @@ export function SidebarNavigation({
       <SidebarSection
         sectionId="recent"
         title={t("Recent conversations")}
+        count={recentConversations.length}
+        loading={recentConversationsLoading}
+        loadingLabel={t("Loading conversations...")}
+        stale={stale}
+        staleLabel={t("Stale")}
         collapsed={collapsedSections.recent}
         railCollapsed={collapsedTooltipsEnabled}
         railCollapsedPreview={renderRecentRailPreview(recentConversations)}
         onToggleCollapsed={toggleSection}
         menuLabel={t("Recent conversation actions")}
         menuOpen={openSectionMenu === "recent"}
+        menuTriggerRef={recentActionsTriggerRef}
         onMenuOpenChange={(open) => setOpenSectionMenu(open ? "recent" : "")}
         menuItems={[
           {
             id: "archive-all-conversations",
             label: t("Archive all conversations"),
-            icon: <Archive size={14} />,
+            icon: Archive,
             danger: true,
             disabled: !onArchiveAllRecentConversations || recentConversations.length === 0,
             disabledLabel: t("No conversations to archive"),
-            onSelect: () => onArchiveAllRecentConversations?.(),
+            onSelect: () => setArchiveAllDialogOpen(true),
           },
         ]}
       >
-        {recentConversations.length === 0 ? (
-          <button
-            className="sidebar-row muted-row"
-            type="button"
-            onClick={onOpenConversationHome}
-            aria-label={t("No recent conversations")}
-            title={t("No recent conversations")}
-            {...tooltipProps(t("No recent conversations"))}
-          >
-            <MessageSquare size={14} />
-            <span>{t("No recent conversations")}</span>
-          </button>
+        {recentConversationsLoading && recentConversations.length === 0 ? (
+          <SidebarSectionSkeleton label={t("Loading conversations...")} rows={2} />
+        ) : recentConversations.length === 0 ? (
+          <SidebarTooltip label={t("No recent conversations")}>
+            <button
+              className="sidebar-row muted-row"
+              type="button"
+              onClick={onOpenConversationHome}
+              aria-label={t("No recent conversations")}
+            >
+              <MessageSquare size={14} />
+              <span>{t("No recent conversations")}</span>
+            </button>
+          </SidebarTooltip>
         ) : (
           recentConversations.map((conversation, index) => (
-            <div
+            <SidebarObjectRow
               key={conversation.id}
-              className={conversation.id === selectedRecentConversationId ? "sidebar-row-shell sidebar-recent-row-shell selected" : "sidebar-row-shell sidebar-recent-row-shell"}
+              ariaLabel={t("Open recent conversation {index}", { index: index + 1 })}
+              buttonClassName="sidebar-recent-row"
+              icon={<MessageSquare size={14} />}
+              onSelect={() => onSelectRecentConversation(conversation)}
+              selected={conversation.id === selectedRecentConversationId}
+              shellClassName="sidebar-recent-row-shell"
+              tooltip={conversation.label}
+              status={conversation.primaryStatus
+                ? renderSidebarNotification({ primaryStatus: conversation.primaryStatus }, sidebarStatusLabels)
+                : undefined}
+              statusId={conversation.primaryStatus}
+              actions={onArchiveRecentConversation ? (
+                <IconButton
+                  className="sidebar-mini-action danger"
+                  label={t("Archive conversation")}
+                  icon={Archive}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void onArchiveRecentConversation(conversation);
+                  }}
+                />
+              ) : undefined}
             >
-              <button
-                className="sidebar-row-main sidebar-recent-row"
-                type="button"
-                aria-label={t("Open recent conversation {index}", { index: index + 1 })}
-                title={conversation.label}
-                {...tooltipProps(conversation.label)}
-                onClick={() => onSelectRecentConversation(conversation)}
-              >
-                <MessageSquare size={14} />
-                <span className="sidebar-recent-copy">
-                  <strong>{conversation.label}</strong>
-                  <small>{conversation.meta}</small>
-                </span>
-              </button>
-              {onArchiveRecentConversation ? (
-                <span className="sidebar-row-tools">
-                  <button
-                    className="sidebar-mini-action danger"
-                    type="button"
-                    aria-label={t("Archive conversation")}
-                    title={t("Archive conversation")}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      void onArchiveRecentConversation(conversation);
-                    }}
-                  >
-                    <Archive size={13} />
-                  </button>
-                </span>
-              ) : null}
-            </div>
+              <span className="sidebar-recent-copy">
+                <strong>{conversation.label}</strong>
+                <small>{conversation.meta}</small>
+              </span>
+            </SidebarObjectRow>
           ))
         )}
         {recentConversationActionError ? (
-          <div className="sidebar-section-inline-error" role="alert">
+          <InlineFeedback className="sidebar-section-inline-error" tone="danger">
             {recentConversationActionError}
-          </div>
+          </InlineFeedback>
         ) : null}
       </SidebarSection>
       </div>
 
       <div className={channelDrawer ? "sidebar-bottom" : "sidebar-config"}>
-        <button
-          className={activeSidebarTarget === "settings" ? "config-button active" : "config-button"}
-          type="button"
-          onClick={() => onOpenView("settings")}
-          aria-label={t("Settings")}
-          title={t("Settings")}
-          {...tooltipProps(t("Settings"))}
-        >
-          <Settings size={15} />
-          <span className="config-button-label">{t("Settings")}</span>
-        </button>
+        <SidebarTooltip label={t("Settings")}>
+          <button
+            className={activeSidebarTarget === "settings" ? "config-button active" : "config-button"}
+            type="button"
+            onClick={() => onOpenView("settings")}
+            aria-label={t("Settings")}
+          >
+            <Icon icon={Settings} />
+            <span className="config-button-label">{t("Settings")}</span>
+          </button>
+        </SidebarTooltip>
       </div>
 
-      {sidebarTooltip ? (
-        <span className="sidebar-hover-tooltip" role="tooltip" style={{ left: sidebarTooltip.left, top: sidebarTooltip.top }}>
-          {sidebarTooltip.label}
-        </span>
+      {onArchiveAllRecentConversations ? (
+        <SidebarArchiveAllConversationsDialog
+          open={archiveAllDialogOpen}
+          returnFocusRef={recentActionsTriggerRef}
+          onConfirm={onArchiveAllRecentConversations}
+          onOpenChange={setArchiveAllDialogOpen}
+        />
       ) : null}
+
     </aside>
   );
 }
 
-function renderSidebarNotification(notification: SidebarNotification | undefined): JSX.Element | null {
+function renderSidebarNotification(
+  notification: SidebarNotification | undefined,
+  labels: {
+    readonly failed: string;
+    readonly paused: string;
+    readonly pendingApprovals: (count: number) => string;
+    readonly running: string;
+    readonly unread: string;
+    readonly waiting: string;
+  },
+): JSX.Element | null {
   if (!notification) {
     return null;
   }
 
-  const count = notification.count ?? 0;
-  if (count > 0) {
-    return <span className="channel-mention" aria-hidden="true">{count > 99 ? "99+" : count}</span>;
+  if (notification.primaryStatus) {
+    const label = notification.primaryStatus === "waiting" && (notification.count ?? 0) > 0
+      ? labels.pendingApprovals(notification.count ?? 0)
+      : labels[notification.primaryStatus];
+    const tone = notification.primaryStatus === "failed"
+      ? "danger"
+      : notification.primaryStatus === "paused"
+        ? "neutral"
+        : notification.primaryStatus === "waiting"
+          ? "warning"
+          : "info";
+    return (
+      <StatusIndicator
+        aria-label={label}
+        className="sidebar-object-status"
+        compact
+        data-sidebar-primary-status={notification.primaryStatus}
+        label={label}
+        role="status"
+        tone={tone}
+      />
+    );
   }
 
-  return notification.unread ? <span className="channel-unread" aria-hidden="true" /> : null;
+  return notification.unread ? (
+    <StatusIndicator className="channel-unread sidebar-object-status" compact label={labels.unread} tone="info" />
+  ) : null;
 }
 
-function SidebarSection({
-  sectionId,
-  title,
-  collapsed,
-  railCollapsed = false,
-  railCollapsedPreview,
-  onToggleCollapsed,
-  menuLabel,
-  menuOpen,
-  onMenuOpenChange,
-  menuItems,
-  children,
-}: {
-  readonly sectionId: SidebarSectionId;
-  readonly title: string;
-  readonly collapsed: boolean;
-  readonly railCollapsed?: boolean;
-  readonly railCollapsedPreview?: ReactNode;
-  readonly onToggleCollapsed: (sectionId: SidebarSectionId) => void;
-  readonly menuLabel?: string;
-  readonly menuOpen?: boolean;
-  readonly onMenuOpenChange?: (open: boolean) => void;
-  readonly menuItems?: readonly SidebarSectionMenuItem[];
-  readonly children: ReactNode;
-}): JSX.Element {
-  const menuRef = useRef<HTMLSpanElement | null>(null);
-  const sectionClassName = [
-    "sidebar-section",
-    `sidebar-section-${sectionId}`,
-    railCollapsed ? "rail-collapsed" : "",
-    collapsed ? "collapsed" : "expanded",
-  ].filter(Boolean).join(" ");
-  const hasRichMenuItems = menuItems?.some((item) => item.description) ?? false;
-
-  useEffect(() => {
-    const closeMenu = onMenuOpenChange;
-    if (!menuOpen || !closeMenu || typeof document === "undefined") {
-      return;
-    }
-    function handlePointerDown(event: PointerEvent): void {
-      const target = event.target as Node | null;
-      if (target && menuRef.current?.contains(target)) {
-        return;
-      }
-      closeMenu?.(false);
-    }
-    function handleKeyDown(event: KeyboardEvent): void {
-      if (event.key === "Escape") {
-        closeMenu?.(false);
-      }
-    }
-    document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [menuOpen, onMenuOpenChange]);
-
-  return (
-    <section className={sectionClassName}>
-      <div className="sidebar-section-title">
-        <button
-          className="sidebar-section-toggle"
-          type="button"
-          aria-label={title}
-          aria-expanded={!collapsed}
-          title={title}
-          onClick={() => onToggleCollapsed(sectionId)}
-        >
-          <span className="sidebar-section-heading">{title}</span>
-          <ChevronDown className={collapsed ? "sidebar-section-chevron collapsed" : "sidebar-section-chevron"} size={12} aria-hidden="true" />
-        </button>
-        {menuItems && menuItems.length > 0 && menuLabel && onMenuOpenChange ? (
-          <span
-            ref={menuRef}
-            className={menuOpen ? "sidebar-section-menu open" : "sidebar-section-menu"}
-            onBlur={(event) => {
-              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                onMenuOpenChange(false);
-              }
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                event.stopPropagation();
-                onMenuOpenChange(false);
-              }
-            }}
-          >
-            <button
-              className="sidebar-section-action"
-              type="button"
-              aria-label={menuLabel}
-              title={menuLabel}
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-              onClick={() => onMenuOpenChange(!menuOpen)}
-            >
-              <MoreHorizontal size={14} />
-            </button>
-            <span className={hasRichMenuItems ? "sidebar-section-menu-popover rich" : "sidebar-section-menu-popover"} role="menu" hidden={!menuOpen}>
-              {menuItems.map((item) => (
-                <ActionMenuItem
-                  key={item.id}
-                  icon={item.icon}
-                  label={item.label}
-                  description={item.description}
-                  danger={item.danger}
-                  disabled={item.disabled}
-                  disabledLabel={item.disabledLabel}
-                  onSelect={() => {
-                    onMenuOpenChange(false);
-                    item.onSelect();
-                  }}
-                />
-              ))}
-            </span>
-          </span>
-        ) : null}
-      </div>
-      {railCollapsed ? (
-        <div className="sidebar-rail-section-body">
-          {railCollapsedPreview ? <div className="sidebar-rail-preview" aria-hidden={!collapsed}>{railCollapsedPreview}</div> : null}
-          <div className="sidebar-section-list" aria-hidden={collapsed}>{children}</div>
-        </div>
-      ) : collapsed ? null : <div className="sidebar-section-list">{children}</div>}
-    </section>
-  );
-}
-
-interface SidebarSectionMenuItem {
-  readonly id: string;
-  readonly label: string;
-  readonly icon: ReactNode;
-  readonly description?: string;
-  readonly disabled?: boolean;
-  readonly disabledLabel?: string;
-  readonly danger?: boolean;
-  readonly onSelect: () => void;
+function sidebarNotificationId(notification: SidebarNotification | undefined): string | undefined {
+  return notification?.primaryStatus ?? (notification?.unread ? "unread" : undefined);
 }
 
 function renderChannelRailPreview(channels: readonly Channel[]): JSX.Element {

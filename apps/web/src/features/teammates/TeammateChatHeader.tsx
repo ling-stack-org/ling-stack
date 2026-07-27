@@ -1,15 +1,16 @@
-import { Search, X } from "lucide-react";
-import type { RefCallback } from "react";
+import type { CSSProperties, Ref } from "react";
 import { useI18n } from "../../i18n.js";
-import { StatusBadge } from "../../shared/components/index.js";
 import { ConversationStatusStrip } from "../../shared/conversation/index.js";
+import { StatusIndicator } from "../../shared/ui/index.js";
 import type { AiTeammate } from "../../types.js";
 import {
   ConversationSummaryPopover,
+  ConversationHeaderSearch,
   ConversationTopToolbar,
   type ConversationSummaryRow,
 } from "../workspace/right-dock/index.js";
 import { TeammateAvatarView } from "./TeammateAvatarView.js";
+import { teammateStatusPresentation } from "./teammate-status-presentation.js";
 
 export function TeammateChatHeader({
   cwd,
@@ -17,18 +18,23 @@ export function TeammateChatHeader({
   providerReady,
   memoryScopeCount,
   attachmentCount,
-  loading,
+  refreshing,
+  refreshDisabled,
+  searchInputRef,
   searchOpen,
   searchQuery,
+  searchTriggerRef,
   summaryOpen,
-  summaryShouldRender,
-  summaryMotionClass,
-  summaryPlacementRef,
+  summaryDockOffset,
+  summaryDockResizing,
+  summaryDockMotion,
+  summaryDockState,
   summaryRows,
   terminalOpen,
   terminalDisabled,
   detailsOpen,
   onToggleSearch,
+  onCloseSearch,
   onSearchQueryChange,
   onClearSearch,
   onRefresh,
@@ -42,18 +48,23 @@ export function TeammateChatHeader({
   readonly providerReady: boolean;
   readonly memoryScopeCount: number;
   readonly attachmentCount: number;
-  readonly loading: boolean;
+  readonly refreshing: boolean;
+  readonly refreshDisabled: boolean;
+  readonly searchInputRef: Ref<HTMLInputElement>;
   readonly searchOpen: boolean;
   readonly searchQuery: string;
+  readonly searchTriggerRef: Ref<HTMLButtonElement>;
   readonly summaryOpen: boolean;
-  readonly summaryShouldRender: boolean;
-  readonly summaryMotionClass: "is-popover-expanded" | "is-popover-collapsed";
-  readonly summaryPlacementRef: RefCallback<HTMLElement>;
+  readonly summaryDockOffset: number;
+  readonly summaryDockResizing: boolean;
+  readonly summaryDockMotion?: string;
+  readonly summaryDockState: "closed" | "opening" | "open" | "closing" | "resizing";
   readonly summaryRows: readonly ConversationSummaryRow[];
   readonly terminalOpen: boolean;
   readonly terminalDisabled?: boolean;
   readonly detailsOpen: boolean;
   readonly onToggleSearch: () => void;
+  readonly onCloseSearch: () => void;
   readonly onSearchQueryChange: (value: string) => void;
   readonly onClearSearch: () => void;
   readonly onRefresh: () => void | Promise<void>;
@@ -63,7 +74,7 @@ export function TeammateChatHeader({
   readonly onToggleDetails: () => void;
 }): JSX.Element {
   const { t } = useI18n();
-  const summaryShouldRenderInHeader = summaryShouldRender && !detailsOpen;
+  const lifecycleStatus = teammate.status === "active" ? undefined : teammateStatusPresentation(teammate.status);
   return (
     <section
       className={[
@@ -72,6 +83,7 @@ export function TeammateChatHeader({
         summaryOpen ? "summary-open" : "",
       ].filter(Boolean).join(" ")}
       aria-label={t("AI teammate private chat")}
+      data-ui2-teammate-chat-header="true"
     >
       <div className="teammate-workspace-identity">
         <TeammateAvatarView teammate={teammate} cwd={cwd} />
@@ -81,13 +93,27 @@ export function TeammateChatHeader({
           <p>{t("Private conversation only visible between you and {name}", { name: teammate.displayName })}</p>
         </div>
       </div>
+      {searchOpen ? (
+        <ConversationHeaderSearch
+          ariaLabel={t("Search private messages")}
+          className="teammate-chat-search"
+          clearLabel={t("Clear search")}
+          inputRef={searchInputRef}
+          placeholder={t("Search private messages")}
+          value={searchQuery}
+          onChange={onSearchQueryChange}
+          onClear={onClearSearch}
+          onEscape={onCloseSearch}
+        />
+      ) : null}
       <ConversationTopToolbar
         ariaLabel={t("Private chat actions")}
         searchActive={searchOpen}
+        searchButtonRef={searchTriggerRef}
         searchLabel={t("Search")}
-        refreshDisabled={loading}
+        refreshDisabled={refreshDisabled}
         refreshLabel={t("Refresh")}
-        refreshLoading={loading}
+        refreshLoading={refreshing}
         summaryActive={summaryOpen}
         summaryLabel={t("Summary")}
         terminalActive={terminalOpen}
@@ -104,38 +130,29 @@ export function TeammateChatHeader({
       <ConversationStatusStrip
         className="teammate-chat-status-row"
         title={providerReady ? t("Model ready") : t("Model needs setup")}
-        statusNode={teammate.status === "active" ? null : <StatusBadge status={teammate.status} />}
+        statusNode={lifecycleStatus ? (
+          <StatusIndicator
+            className="teammate-chat-lifecycle-status"
+            label={t(lifecycleStatus.labelKey)}
+            tone={lifecycleStatus.tone}
+          />
+        ) : null}
         metaItems={[
           { id: "recall", value: memoryScopeCount > 0 ? t("Memory on") : t("Memory preparing") },
           { id: "attachments", value: t("{count} attachments", { count: attachmentCount }) },
         ]}
       />
-      {searchOpen ? (
-        <label className="teammate-chat-search">
-          <Search size={14} />
-          <input value={searchQuery} onChange={(event) => onSearchQueryChange(event.target.value)} placeholder={t("Search private messages")} />
-          {searchQuery ? (
-            <button type="button" onClick={onClearSearch} aria-label={t("Clear search")}>
-              <X size={14} />
-          </button>
-        ) : null}
-      </label>
-      ) : null}
-      {summaryShouldRenderInHeader ? (
-        <div
-          ref={summaryPlacementRef}
-          className={`channel-progress-popover conversation-summary-popover-wrap teammate-chat-summary-popover ${summaryMotionClass}`}
-          data-computer-use-obstacle="true"
-          data-computer-use-obstacle-kind="summary"
-        >
-          <ConversationSummaryPopover
-            title={t("Environment")}
-            subtitle={teammate.displayName}
-            rows={summaryRows}
-            onClose={onCloseSummary}
-          />
-        </div>
-      ) : null}
+      <ConversationSummaryPopover
+        open={summaryOpen}
+        title={t("Environment")}
+        subtitle={teammate.displayName}
+        rows={summaryRows}
+        className="teammate-chat-summary-popover teammate-private-summary-panel"
+        dockOffset={summaryDockOffset}
+        dockMotion={summaryDockMotion}
+        motionState={summaryDockResizing ? "resizing" : summaryDockState}
+        onClose={onCloseSummary}
+      />
     </section>
   );
 }

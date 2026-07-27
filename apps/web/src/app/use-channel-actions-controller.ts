@@ -68,7 +68,6 @@ import {
 } from "./app-shell-selectors.js";
 import { defaultTaskForm } from "../domains/workspace/use-workspace-domain.js";
 import {
-  archiveAllSidebarChannelsWithState,
   archiveSidebarChannelBranchWithState,
   archiveSidebarChannelWithState,
   createSidebarChannelBranchWithState,
@@ -81,17 +80,18 @@ export interface ChannelActionsController {
   readonly saveChannelEdit: (channelId: string, formOverride?: ChannelFormState) => Promise<void>;
   readonly saveChannelBranch: (channelId: string, name: string) => Promise<void>;
   readonly archiveSidebarChannel: (channelId: string) => Promise<void>;
-  readonly archiveAllSidebarChannels: () => Promise<void>;
   readonly archiveSidebarChannelBranch: (channelId: string, branchId: string) => Promise<void>;
   readonly removeChannel: (channelId: string) => Promise<void>;
-  readonly saveTask: () => Promise<void>;
+  readonly saveTask: () => Promise<boolean>;
   readonly createTaskFromSlashCommand: (input: CreateTaskFromSlashCommandInput) => Promise<void>;
-  readonly sendChannelMessage: (input: SendChannelMessageInput) => Promise<void>;
+  readonly sendChannelMessage: (input: SendChannelMessageInput) => Promise<ChannelMessageSendResult>;
   readonly uploadChannelFiles: (files: readonly File[]) => Promise<readonly ChannelAttachment[]>;
   readonly addChannelLinkPreview: (url: string) => Promise<ChannelLinkPreview | undefined>;
   readonly removeChannelAttachment: (attachmentId: string) => Promise<void>;
   readonly saveChannelBrief: (input: UpdateChannelBriefRequest) => Promise<void>;
-  readonly saveChannelProtocolPatch: (input: UpdateChannelCollaborationProtocolRequest) => Promise<ChannelCollaborationProtocolResponse | undefined>;
+  readonly saveChannelProtocolPatch: (
+    input: UpdateChannelCollaborationProtocolRequest,
+  ) => Promise<ChannelCollaborationProtocolResponse | undefined>;
   readonly revertChannelProtocolSettings: () => Promise<ChannelCollaborationProtocolResponse | undefined>;
   readonly supersedeChannelDecision: (decision: ChannelDecision) => Promise<void>;
   readonly rejectChannelDecision: (decision: ChannelDecision) => Promise<void>;
@@ -100,6 +100,20 @@ export interface ChannelActionsController {
   readonly startWorkflowFromHandoff: (handoff: ChannelHandoff) => Promise<void>;
   readonly createTaskFromContextSummary: (summary: ChannelContextSummary) => Promise<void>;
   readonly runActivityTriageAction: (draft: ChannelActivityTriageDraft) => Promise<ChannelActivityTriageResult>;
+}
+
+export interface ChannelMessageSendResult {
+  readonly errorMessage?: string;
+}
+
+type ChannelActionFeedbackSurface = "create-dialog" | "workspace" | "composer" | "task" | "workflow" | "protocol" | "dock" | "sidebar";
+type ChannelActionFeedbackScope = "validation" | "mutation" | "stream";
+
+interface ChannelActionFeedbackEntry {
+  readonly surface: ChannelActionFeedbackSurface;
+  readonly identity: string;
+  readonly scope: ChannelActionFeedbackScope;
+  readonly message: string;
 }
 
 interface SendChannelMessageInput {
@@ -157,7 +171,8 @@ export function useChannelActionsController(input: {
   readonly setChannelContextSummaries: Dispatch<SetStateAction<readonly ChannelContextSummary[]>>;
   readonly setChannelWorkflows: Dispatch<SetStateAction<readonly ChannelWorkflow[]>>;
   readonly setChannelWorkflowSteps: Dispatch<SetStateAction<readonly ChannelWorkflowStep[]>>;
-  readonly setErrorMessage: (message: string) => void;
+  readonly reportFeedback: (entry: ChannelActionFeedbackEntry) => void;
+  readonly clearFeedback: (surface: ChannelActionFeedbackSurface, identity: string) => void;
   readonly t: (value: string, values?: Record<string, string | number>) => string;
   readonly addChannelTeammate: (channelId: string, teammateId: string) => Promise<void>;
   readonly setDefaultChannelTeammate: (channelId: string, teammateId: string) => Promise<void>;
@@ -173,6 +188,21 @@ export function useChannelActionsController(input: {
   readonly refreshChannelIntentDecisions: (channelId?: string) => Promise<void>;
   readonly refreshChannelActivity: () => Promise<void>;
 }): ChannelActionsController {
+  function reportFeedback(
+    surface: ChannelActionFeedbackSurface,
+    identity: string,
+    scope: ChannelActionFeedbackScope,
+    caught: unknown,
+  ): string {
+    const message = caught instanceof Error ? caught.message : String(caught);
+    input.reportFeedback({ surface, identity, scope, message });
+    return message;
+  }
+
+  function clearFeedback(surface: ChannelActionFeedbackSurface, identity: string): void {
+    input.clearFeedback(surface, identity);
+  }
+
   function buildChannelCreatePayload(form: ChannelCreateFormState): ChannelFormState {
     return {
       name: form.name,
@@ -196,16 +226,16 @@ export function useChannelActionsController(input: {
 
   async function saveChannel(): Promise<void> {
     if (!input.form.cwd.trim()) {
-      input.setErrorMessage("本地工作区未就绪");
+      reportFeedback("create-dialog", "draft", "validation", "本地工作区未就绪");
       return;
     }
     if (!input.channelForm.name.trim()) {
-      input.setErrorMessage("请输入 channel name");
+      reportFeedback("create-dialog", "draft", "validation", "请输入 channel name");
       return;
     }
 
     try {
-      input.setErrorMessage("");
+      clearFeedback("create-dialog", "draft");
       const response = await createChannel(input.form.cwd.trim(), buildChannelCreatePayload(input.channelForm));
       await applyCreatedChannelTeammates(response.channel.id, input.channelForm);
       input.setSelectedChannelId(response.channel.id);
@@ -221,20 +251,20 @@ export function useChannelActionsController(input: {
       }));
       await input.refreshChannels();
     } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
+      reportFeedback("create-dialog", "draft", "mutation", error);
       throw error;
     }
   }
 
   async function saveDefaultChannel(): Promise<void> {
     if (!input.form.cwd.trim()) {
-      input.setErrorMessage("本地工作区未就绪");
+      reportFeedback("create-dialog", "draft", "validation", "本地工作区未就绪");
       return;
     }
 
     const readyProvider = input.providers.find(providerPreflightReady);
     try {
-      input.setErrorMessage("");
+      clearFeedback("create-dialog", "draft");
       const response = await createChannel(input.form.cwd.trim(), {
         name: input.channelForm.name.trim() || "Engineering",
         status: input.channelForm.status,
@@ -272,7 +302,7 @@ export function useChannelActionsController(input: {
       }));
       await input.refreshChannels();
     } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
+      reportFeedback("create-dialog", "draft", "mutation", error);
       throw error;
     }
   }
@@ -280,20 +310,20 @@ export function useChannelActionsController(input: {
   async function saveChannelEdit(channelId: string, formOverride?: ChannelFormState): Promise<void> {
     const channelForm = formOverride ?? input.channelEditForm;
     if (!input.form.cwd.trim()) {
-      input.setErrorMessage("本地工作区未就绪");
+      reportFeedback("workspace", channelId, "validation", "本地工作区未就绪");
       return;
     }
     if (!channelForm.name.trim()) {
-      input.setErrorMessage("请输入 channel name");
+      reportFeedback("workspace", channelId, "validation", "请输入 channel name");
       return;
     }
     if (channelForm.allowedTools.length === 0) {
-      input.setErrorMessage("请至少选择一个 allowed tool");
+      reportFeedback("workspace", channelId, "validation", "请至少选择一个 allowed tool");
       return;
     }
 
     try {
-      input.setErrorMessage("");
+      clearFeedback("workspace", channelId);
       const response = await updateChannel(input.form.cwd.trim(), channelId, channelForm);
       input.setSelectedChannelId(response.channel.id);
       input.setTaskRunProviderId("");
@@ -304,7 +334,7 @@ export function useChannelActionsController(input: {
       );
       await input.refreshChannels();
     } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
+      reportFeedback("workspace", channelId, "mutation", error);
       throw error;
     }
   }
@@ -319,7 +349,7 @@ export function useChannelActionsController(input: {
       setSelectedChannelId: input.setSelectedChannelId,
       setSelectedChannelBranchId: input.setSelectedChannelBranchId,
       setChannelBranches: input.setChannelBranches,
-      setErrorMessage: input.setErrorMessage,
+      reportError: (message) => reportFeedback("sidebar", channelId, "mutation", message),
       refreshChannels: input.refreshChannels,
     });
   }
@@ -331,32 +361,13 @@ export function useChannelActionsController(input: {
       channelId,
       selectedChannelId: input.selectedChannelId,
       activeSidebarTarget: input.activeSidebarTarget,
-      setActiveView: input.setActiveView,
       setActiveSidebarTarget: input.setActiveSidebarTarget,
       setSelectedChannelId: input.setSelectedChannelId,
       setSelectedChannelBranchId: input.setSelectedChannelBranchId,
       setChannels: input.setChannels,
       setChannelBranches: input.setChannelBranches,
-      setErrorMessage: input.setErrorMessage,
+      reportError: (message) => reportFeedback("sidebar", channelId, "mutation", message),
       refreshChannels: input.refreshChannels,
-    });
-  }
-
-  async function archiveAllSidebarChannels(): Promise<void> {
-    await archiveAllSidebarChannelsWithState({
-      cwd: input.form.cwd.trim(),
-      channels: input.channels,
-      selectedChannelId: input.selectedChannelId,
-      setActiveView: input.setActiveView,
-      setActiveSidebarTarget: input.setActiveSidebarTarget,
-      setSelectedChannelId: input.setSelectedChannelId,
-      setSelectedChannelBranchId: input.setSelectedChannelBranchId,
-      setChannels: input.setChannels,
-      setChannelBranches: input.setChannelBranches,
-      setErrorMessage: input.setErrorMessage,
-      refreshChannels: input.refreshChannels,
-      confirmMessage: input.t("Archive all channels? You can restore archived channels from Settings."),
-      confirm: (message) => globalThis.confirm(message),
     });
   }
 
@@ -366,7 +377,7 @@ export function useChannelActionsController(input: {
       channelId,
       branchId,
       setChannelBranches: input.setChannelBranches,
-      setErrorMessage: input.setErrorMessage,
+      reportError: (message) => reportFeedback("sidebar", branchId, "mutation", message),
       refreshChannels: input.refreshChannels,
     });
   }
@@ -379,23 +390,23 @@ export function useChannelActionsController(input: {
       activeSidebarTarget: input.activeSidebarTarget,
       setActiveSidebarTarget: input.setActiveSidebarTarget,
       setSelectedChannelId: input.setSelectedChannelId,
-      setErrorMessage: input.setErrorMessage,
+      reportError: (message) => reportFeedback("sidebar", channelId, "mutation", message),
       refreshChannels: input.refreshChannels,
     });
   }
 
-  async function saveTask(): Promise<void> {
+  async function saveTask(): Promise<boolean> {
     if (!input.selectedChannelId) {
-      input.setErrorMessage("请先选择 channel");
-      return;
+      reportFeedback("task", "unselected", "validation", "请先选择 channel");
+      return false;
     }
     if (!input.taskForm.prompt.trim()) {
-      input.setErrorMessage("请输入 task prompt");
-      return;
+      reportFeedback("task", input.selectedChannelId, "validation", "请输入 task prompt");
+      return false;
     }
 
     try {
-      input.setErrorMessage("");
+      clearFeedback("task", input.selectedChannelId);
       const response = await createTask(input.form.cwd.trim(), input.selectedChannelId, {
         title: input.taskForm.title.trim() || titleFromPrompt(input.taskForm.prompt),
         prompt: input.taskForm.prompt,
@@ -404,23 +415,25 @@ export function useChannelActionsController(input: {
       input.setSelectedTaskId(response.task.id);
       input.setTaskForm(defaultTaskForm);
       await input.refreshTasks(input.selectedChannelId);
+      return true;
     } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
+      reportFeedback("task", input.selectedChannelId, "mutation", error);
+      return false;
     }
   }
 
   async function createTaskFromSlashCommand(commandInput: CreateTaskFromSlashCommandInput): Promise<void> {
     if (!input.selectedChannelId) {
-      input.setErrorMessage("请先选择 channel");
+      reportFeedback("composer", "unselected", "validation", "请先选择 channel");
       return;
     }
     if (!commandInput.prompt.trim()) {
-      input.setErrorMessage("Slash command prompt 不能为空");
+      reportFeedback("composer", input.selectedChannelId, "validation", "Slash command prompt 不能为空");
       return;
     }
 
     try {
-      input.setErrorMessage("");
+      clearFeedback("composer", input.selectedChannelId);
       const selectedChannel = input.channels.find((channel) => channel.id === input.selectedChannelId);
       const response = await createTask(input.form.cwd.trim(), input.selectedChannelId, {
         title: commandInput.title.trim() || titleFromPrompt(commandInput.prompt),
@@ -433,27 +446,29 @@ export function useChannelActionsController(input: {
       await input.refreshTasks(input.selectedChannelId);
       await input.refreshChannelActivity();
     } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
+      reportFeedback("composer", input.selectedChannelId, "mutation", error);
       throw error;
     }
   }
 
-  async function sendChannelMessage(messageInput: SendChannelMessageInput): Promise<void> {
+  async function sendChannelMessage(messageInput: SendChannelMessageInput): Promise<ChannelMessageSendResult> {
     if (!input.selectedChannelId) {
-      input.setErrorMessage("请先选择 channel");
-      return;
+      const errorMessage = reportFeedback("composer", "unselected", "validation", "请先选择 channel");
+      return { errorMessage };
     }
-    const selectedChannel = input.channels.find((channel) => channel.id === input.selectedChannelId);
+    const channelId = input.selectedChannelId;
+    const selectedChannel = input.channels.find((channel) => channel.id === channelId);
     const firstAiMention = messageInput.mentions.find((mention) => mention.kind === "ai-teammate");
     const providerPresetId = input.resolveChannelMessageProviderPresetId(
       selectedChannel,
       firstAiMention?.id || selectedChannel?.defaultTeammateId,
     );
     try {
-      input.setErrorMessage("");
+      clearFeedback("composer", channelId);
       let receivedAiReply = false;
       let autoStartedWorkflow = false;
-      const response = await streamChannelMessage(input.form.cwd.trim(), input.selectedChannelId, {
+      let streamErrorMessage = "";
+      const response = await streamChannelMessage(input.form.cwd.trim(), channelId, {
         threadId: messageInput.threadId,
         body: messageInput.body,
         mentions: messageInput.mentions,
@@ -491,7 +506,7 @@ export function useChannelActionsController(input: {
           receivedAiReply = receivedAiReply || aiReplies.length > 0;
           input.setChannelMessages((current) => upsertChannelMessages(current, [data.message, ...aiReplies]));
           if (data.error) {
-            input.setErrorMessage(data.error);
+            streamErrorMessage = data.error;
           }
           return;
         }
@@ -504,29 +519,34 @@ export function useChannelActionsController(input: {
             input.setChannelMessages((current) => upsertChannelMessages(current, messages));
           }
           if (data.error) {
-            input.setErrorMessage(data.error);
+            streamErrorMessage = data.error;
           }
         }
       });
-      await input.refreshChannelExecutionProposals(input.selectedChannelId);
-      await input.refreshChannelIntentDecisions(input.selectedChannelId);
+      await input.refreshChannelExecutionProposals(channelId);
+      await input.refreshChannelIntentDecisions(channelId);
       if (receivedAiReply) {
         await input.refreshUsedMemoryAudit(input.form.cwd.trim());
       }
-      await input.refreshChannelMessageRouteDecisions(input.selectedChannelId);
-      await input.refreshChannelFiles(input.selectedChannelId);
+      await input.refreshChannelMessageRouteDecisions(channelId);
+      await input.refreshChannelFiles(channelId);
       if (autoStartedWorkflow) {
         await input.refreshChannelActivity();
       }
+      if (streamErrorMessage) {
+        reportFeedback("composer", channelId, "stream", streamErrorMessage);
+        return { errorMessage: streamErrorMessage };
+      }
+      return {};
     } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
+      reportFeedback("composer", channelId, "stream", error);
       throw error;
     }
   }
 
   async function uploadChannelFiles(files: readonly File[]): Promise<readonly ChannelAttachment[]> {
     if (!input.selectedChannelId) {
-      input.setErrorMessage("请先选择 channel");
+      reportFeedback("composer", "unselected", "validation", "请先选择 channel");
       return [];
     }
     if (files.length === 0) {
@@ -535,13 +555,13 @@ export function useChannelActionsController(input: {
 
     input.setChannelFilesLoading(true);
     try {
-      input.setErrorMessage("");
+      clearFeedback("composer", input.selectedChannelId);
       const responses = await Promise.all(files.map((file) => uploadChannelAttachment(input.form.cwd.trim(), input.selectedChannelId, file)));
       const uploaded = responses.map((response) => response.attachment);
       input.setChannelAttachments((current) => [...uploaded, ...current]);
       return uploaded;
     } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
+      reportFeedback("composer", input.selectedChannelId, "mutation", error);
       throw error;
     } finally {
       input.setChannelFilesLoading(false);
@@ -550,11 +570,11 @@ export function useChannelActionsController(input: {
 
   async function addChannelLinkPreview(url: string): Promise<ChannelLinkPreview | undefined> {
     if (!input.selectedChannelId) {
-      input.setErrorMessage("请先选择 channel");
+      reportFeedback("composer", "unselected", "validation", "请先选择 channel");
       return undefined;
     }
     try {
-      input.setErrorMessage("");
+      clearFeedback("composer", input.selectedChannelId);
       const response = await createChannelLinkPreview(input.form.cwd.trim(), input.selectedChannelId, { url });
       input.setChannelLinkPreviews((current) => [
         response.linkPreview,
@@ -562,49 +582,49 @@ export function useChannelActionsController(input: {
       ]);
       return response.linkPreview;
     } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
+      reportFeedback("composer", input.selectedChannelId, "mutation", error);
       throw error;
     }
   }
 
   async function removeChannelAttachment(attachmentId: string): Promise<void> {
+    const channelId = input.selectedChannelId || "unselected";
     try {
-      input.setErrorMessage("");
+      clearFeedback("composer", channelId);
       await deleteChannelAttachment(input.form.cwd.trim(), attachmentId);
       input.setChannelAttachments((current) => current.filter((attachment) => attachment.id !== attachmentId));
     } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
+      reportFeedback("composer", channelId, "mutation", error);
     }
   }
 
   async function saveChannelBrief(request: UpdateChannelBriefRequest): Promise<void> {
     if (!input.selectedChannelId) {
-      input.setErrorMessage("请先选择 channel");
+      reportFeedback("protocol", "unselected", "validation", "请先选择 channel");
       return;
     }
     try {
-      input.setErrorMessage("");
+      clearFeedback("protocol", input.selectedChannelId);
       const response = await updateChannelBrief(input.form.cwd.trim(), input.selectedChannelId, request);
       input.setChannelBrief(response.brief);
     } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
+      reportFeedback("protocol", input.selectedChannelId, "mutation", error);
     }
   }
 
-  async function saveChannelProtocolPatch(request: UpdateChannelCollaborationProtocolRequest): Promise<ChannelCollaborationProtocolResponse | undefined> {
+  async function saveChannelProtocolPatch(
+    request: UpdateChannelCollaborationProtocolRequest,
+  ): Promise<ChannelCollaborationProtocolResponse | undefined> {
     if (!input.selectedChannelId) {
       const error = new Error("请先选择 channel");
-      input.setErrorMessage(error.message);
       throw error;
     }
     try {
-      input.setErrorMessage("");
       const response = await updateChannelCollaborationProtocol(input.form.cwd.trim(), input.selectedChannelId, request);
       input.setChannelCollaborationProtocol(response);
       await input.refreshChannels();
       return response;
     } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
       throw error;
     }
   }
@@ -612,28 +632,25 @@ export function useChannelActionsController(input: {
   async function revertChannelProtocolSettings(): Promise<ChannelCollaborationProtocolResponse | undefined> {
     if (!input.selectedChannelId) {
       const error = new Error("请先选择 channel");
-      input.setErrorMessage(error.message);
       throw error;
     }
     try {
-      input.setErrorMessage("");
       const response = await revertChannelCollaborationProtocol(input.form.cwd.trim(), input.selectedChannelId);
       input.setChannelCollaborationProtocol(response);
       await input.refreshChannels();
       return response;
     } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
       throw error;
     }
   }
 
   async function supersedeChannelDecision(decision: ChannelDecision): Promise<void> {
     if (!input.selectedChannelId) {
-      input.setErrorMessage("请先选择 channel");
+      reportFeedback("protocol", "unselected", "validation", "请先选择 channel");
       return;
     }
     try {
-      input.setErrorMessage("");
+      clearFeedback("protocol", input.selectedChannelId);
       await createChannelDecision(input.form.cwd.trim(), input.selectedChannelId, {
         title: `${decision.title} update`,
         decision: decision.decision,
@@ -644,29 +661,30 @@ export function useChannelActionsController(input: {
       });
       await input.refreshChannelProtocol(input.selectedChannelId);
     } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
+      reportFeedback("protocol", input.selectedChannelId, "mutation", error);
     }
   }
 
   async function rejectChannelDecision(decision: ChannelDecision): Promise<void> {
+    const channelId = input.selectedChannelId || decision.channelId;
     try {
-      input.setErrorMessage("");
+      clearFeedback("protocol", channelId);
       const response = await updateChannelDecision(input.form.cwd.trim(), decision.id, { status: "rejected" });
       input.setChannelDecisions((current) => current.map((item) => item.id === response.decision.id ? response.decision : item));
     } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
+      reportFeedback("protocol", channelId, "mutation", error);
     }
   }
 
   async function createHandoffFromTask(task: Task): Promise<ChannelHandoff | undefined> {
     if (!input.selectedChannelId) {
-      input.setErrorMessage("请先选择 channel");
+      reportFeedback("task", task.id, "validation", "请先选择 channel");
       return undefined;
     }
     const selectedChannel = input.channels.find((channel) => channel.id === input.selectedChannelId);
     const teammateId = task.assigneeTeammateId ?? selectedChannel?.defaultTeammateId ?? "engineer";
     try {
-      input.setErrorMessage("");
+      clearFeedback("task", task.id);
       const response = await createChannelHandoff(input.form.cwd.trim(), input.selectedChannelId, {
         sourceTaskId: task.id,
         fromParticipantId: "local-user",
@@ -681,29 +699,29 @@ export function useChannelActionsController(input: {
       input.setChannelHandoffs((current) => [response.handoff, ...current]);
       return response.handoff;
     } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
+      reportFeedback("task", task.id, "mutation", error);
       return undefined;
     }
   }
 
   async function updateHandoffStatusValue(handoff: ChannelHandoff, status: ChannelHandoffStatus): Promise<void> {
     try {
-      input.setErrorMessage("");
+      clearFeedback("workflow", handoff.id);
       const response = await updateChannelHandoff(input.form.cwd.trim(), handoff.id, { status });
       input.setChannelHandoffs((current) => current.map((item) => item.id === response.handoff.id ? response.handoff : item));
     } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
+      reportFeedback("workflow", handoff.id, "mutation", error);
     }
   }
 
   async function startWorkflowFromHandoff(handoff: ChannelHandoff): Promise<void> {
     if (!input.selectedChannelId) {
-      input.setErrorMessage("请先选择 channel");
+      reportFeedback("workflow", handoff.id, "validation", "请先选择 channel");
       return;
     }
 
     try {
-      input.setErrorMessage("");
+      clearFeedback("workflow", handoff.id);
       const response = await createChannelWorkflowFromHandoff(input.form.cwd.trim(), handoff.id, {
         title: `${handoff.reason || "Handoff"} workflow`,
         objective: handoff.expectedOutput || handoff.requiredInput || handoff.reason,
@@ -716,18 +734,18 @@ export function useChannelActionsController(input: {
       }
       await input.refreshChannelProtocol(input.selectedChannelId);
     } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
+      reportFeedback("workflow", handoff.id, "mutation", error);
     }
   }
 
   async function createTaskFromContextSummary(summary: ChannelContextSummary): Promise<void> {
     if (!input.selectedChannelId) {
-      input.setErrorMessage("请先选择 channel");
+      reportFeedback("task", summary.targetId, "validation", "请先选择 channel");
       return;
     }
     const selectedChannel = input.channels.find((channel) => channel.id === input.selectedChannelId);
     try {
-      input.setErrorMessage("");
+      clearFeedback("task", summary.targetId);
       const response = await createTask(input.form.cwd.trim(), input.selectedChannelId, {
         title: titleFromPrompt(summary.summary),
         prompt: buildContextTaskPrompt(summary, input.channelDecisions),
@@ -737,20 +755,20 @@ export function useChannelActionsController(input: {
       input.setTasks((current) => [response.task, ...current.filter((task) => task.id !== response.task.id)]);
       await input.refreshTasks(input.selectedChannelId);
     } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
+      reportFeedback("task", summary.targetId, "mutation", error);
     }
   }
 
   async function runActivityTriageAction(draft: ChannelActivityTriageDraft): Promise<ChannelActivityTriageResult> {
     if (!input.selectedChannelId) {
       const error = new Error("请先选择 channel");
-      input.setErrorMessage(error.message);
+      reportFeedback("workspace", "unselected", "validation", error);
       throw error;
     }
     const selectedChannel = input.channels.find((channel) => channel.id === input.selectedChannelId);
     const sourceRefs = draft.sourceRefs;
     try {
-      input.setErrorMessage("");
+      clearFeedback("workspace", input.selectedChannelId);
       if (draft.actionKind === "follow_up_task") {
         const response = await createTask(input.form.cwd.trim(), input.selectedChannelId, {
           title: draft.title.trim(),
@@ -812,7 +830,7 @@ export function useChannelActionsController(input: {
       ]);
       return { kind: "context_summary", contextSummary: response.contextSummary };
     } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
+      reportFeedback("workspace", input.selectedChannelId, "mutation", error);
       throw error;
     }
   }
@@ -823,7 +841,6 @@ export function useChannelActionsController(input: {
     saveChannelEdit,
     saveChannelBranch,
     archiveSidebarChannel,
-    archiveAllSidebarChannels,
     archiveSidebarChannelBranch,
     removeChannel,
     saveTask,

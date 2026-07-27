@@ -1,0 +1,59 @@
+.ling-ui-icon {
+  --ling-icon-size: 16px;
+  --ling-icon-stroke-width: 2;
+
+  box-sizing: border-box;
+  display: inline-block;
+  width: var(--ling-icon-size);
+  height: var(--ling-icon-size);
+  flex: 0 0 auto;
+  color: currentColor;
+  stroke: currentColor;
+  stroke-width: var(--ling-icon-stroke-width);
+  vertical-align: middle;
+}
+
+.ling-ui-icon[data-size="xs"] {
+  --ling-icon-size: 14px;
+  --ling-icon-stroke-width: 2;
+}
+
+.ling-ui-icon[data-size="sm"] {
+  --ling-icon-size: 16px;
+  --ling-icon-stroke-width: 2;
+}
+
+.ling-ui-icon[data-size="md"] {
+  --ling-icon-size: 18px;
+  --ling-icon-stroke-width: 1.75;
+}
+
+.ling-ui-icon[data-size="lg"] {
+  --ling-icon-size: 20px;
+  --ling-icon-stroke-width: 1.75;
+}
+
+.ling-ui-icon[data-size="xl"] {
+  --ling-icon-size: 24px;
+  --ling-icon-stroke-width: 1.75;
+}
+
+.ling-ui-icon[data-tone="muted"] {
+  color: var(--ling-text-muted);
+}
+
+.ling-ui-icon[data-tone="success"] {
+  color: var(--ling-status-success);
+}
+
+.ling-ui-icon[data-tone="warning"] {
+  color: var(--ling-status-warning);
+}
+
+.ling-ui-icon[data-tone="danger"] {
+  color: var(--ling-status-danger);
+}
+
+.ling-ui-icon[data-tone="info"] {
+  color: var(--ling-status-info);
+}

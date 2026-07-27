@@ -1,0 +1,134 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#preview-root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+body {
+  color: var(--ling-compact-window-text);
+}
+
+.preview-shell {
+  display: block;
+  isolation: isolate;
+}
+
+.preview-shell .ling-ui-compact-window-content,
+.preview-frame {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--pip-frame);
+}
+
+.preview-video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: var(--pip-media-bg);
+}
+
+.fake-page {
+  position: absolute;
+  inset: 0;
+  color: #dfe5ee;
+  background:
+    radial-gradient(circle at 76% 18%, rgb(55 105 255 / 18%), transparent 32%),
+    linear-gradient(145deg, #17202c, #0f151e 55%, #0a0d12);
+}
+
+.fake-toolbar {
+  display: flex;
+  height: 13%;
+  align-items: center;
+  gap: 7px;
+  padding: 0 4%;
+  border-bottom: 1px solid rgb(255 255 255 / 8%);
+  background: rgb(255 255 255 / 4%);
+}
+
+.fake-toolbar i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgb(255 255 255 / 22%);
+}
+
+.fake-toolbar span {
+  width: 46%;
+  height: 28%;
+  margin-left: 3%;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 9%);
+}
+
+.fake-body {
+  display: grid;
+  height: 87%;
+  grid-template-columns: 23% 1fr;
+}
+
+.fake-body aside {
+  border-right: 1px solid rgb(255 255 255 / 7%);
+  background: rgb(7 10 15 / 38%);
+}
+
+.fake-body article {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8%;
+  padding: 11%;
+}
+
+.fake-body b {
+  min-height: 42%;
+  border: 1px solid rgb(255 255 255 / 8%);
+  border-radius: var(--ling-radius-lg);
+  background: linear-gradient(140deg, rgb(255 255 255 / 8%), rgb(255 255 255 / 2%));
+}
+
+.fake-cursor {
+  position: absolute;
+  top: 52%;
+  left: 58%;
+  width: 16px;
+  height: 20px;
+  clip-path: polygon(0 0, 100% 70%, 58% 74%, 38% 100%);
+  background: #fff;
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 70%));
+  animation: preview-cursor-drift 4s var(--ling-ease-standard) infinite;
+}
+
+@keyframes preview-cursor-drift {
+  0%,
+  100% { transform: translate(-20px, 8px); }
+  45% { transform: translate(34px, -24px); }
+  72% { transform: translate(16px, 20px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fake-cursor {
+    animation: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .fake-page {
+    color: CanvasText;
+    background: Canvas;
+  }
+
+  .fake-cursor {
+    background: Highlight;
+  }
+}

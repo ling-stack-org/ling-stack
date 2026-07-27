@@ -14,7 +14,6 @@ import {
   Plus,
   RefreshCw,
   Reply,
-  Save,
   Square,
   SquareTerminal,
   ThumbsDown,
@@ -55,6 +54,7 @@ import {
   type ConversationWorkspaceReviewTarget,
   type TerminalReportFileTarget,
 } from "../../shared/conversation/index.js";
+import { Tooltip } from "../../shared/ui/index.js";
 import type {
   ApprovalRequest,
   Channel,
@@ -89,6 +89,8 @@ import {
   workflowCanCancel,
 } from "./ChannelWorkflowProposalCards.js";
 import type { ChannelMessageFeedItem, PendingChannelSendPreview } from "./ChannelMessageFeed.js";
+import { ChannelProposedPlanBlock } from "./ChannelProposedPlanBlock.js";
+import { readChannelProposedPlanMessage } from "./channel-proposed-plan-message.js";
 
 type FeedbackValue = "up" | "down";
 
@@ -655,7 +657,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
       ? input.activityActionRow(item.id, <code>{message.linkedTaskId}</code>)
       : input.activityActionRow(item.id);
     const proposedPlanBlock = message.kind === "ai_reply" && message.authorType === "ai-teammate"
-      ? readProposedPlanBlock(pendingAiReplyBody, message)
+      ? readChannelProposedPlanMessage(pendingAiReplyBody, message)
       : undefined;
     const proposedPlan = proposedPlanBlock
       ? input.proposedPlanArtifactsById.get(proposedPlanBlock.plan.id) ?? proposedPlanBlock.plan
@@ -691,7 +693,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
                 {pendingAiReply ? <Loader2 className="message-pending-spinner spin" size={13} /> : null}
                 {visibleMessageBody.trim() ? <MessageBodyRenderer text={visibleMessageBody} cwd={input.cwd} compact streaming={pendingAiReply} onOpenLocalFile={input.onOpenFileReference} /> : null}
                 {proposedPlanBlock ? (
-                  <ProposedPlanBlock
+                  <ChannelProposedPlanBlock
                     plan={proposedPlan ?? proposedPlanBlock.plan}
                     cwd={input.cwd}
                     t={input.t}
@@ -763,9 +765,16 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
           body={pendingAiReplyBody}
           pending={pendingAiReply}
           metaAction={plainChatMessage ? (
-            <button className="message-reply-button" type="button" onClick={() => input.onOpenThreadForMessage(message)} aria-label={input.t("Reply in topic")} data-tooltip={input.t("Reply in topic")}>
-              <Reply size={11} />
-            </button>
+            <Tooltip content={input.t("Reply in topic")}>
+              <button
+                className="message-reply-button"
+                type="button"
+                onClick={() => input.onOpenThreadForMessage(message)}
+                aria-label={input.t("Reply in topic")}
+              >
+                <Reply size={11} />
+              </button>
+            </Tooltip>
           ) : undefined}
           action={plainChatMessage ? usedMemorySummary : nonChatAction}
         />
@@ -1208,102 +1217,6 @@ function conversationCoordinatorDisplayBody(
     ? conversationCoordinatorTerminalFallback(turn, t)
     : conversationCoordinatorStartFallback(turn, t);
   return isDuplicateCoordinatorDisplayBody(turn, fallback) ? "" : fallback;
-}
-
-interface ParsedProposedPlanBlock {
-  readonly displayBody: string;
-  readonly plan: ProposedPlanArtifact;
-}
-
-const proposedPlanPattern = /<proposed_plan(?:\s+title=(?:"([^"]+)"|'([^']+)'))?\s*>([\s\S]*?)<\/proposed_plan>/i;
-
-function readProposedPlanBlock(text: string, message: ChannelMessage): ParsedProposedPlanBlock | undefined {
-  const match = proposedPlanPattern.exec(text);
-  if (!match) {
-    return undefined;
-  }
-  const bodyMarkdown = (match[3] ?? "").trim();
-  if (!bodyMarkdown) {
-    return undefined;
-  }
-  const before = text.slice(0, match.index).trim();
-  const after = text.slice(match.index + match[0].length).trim();
-  const title = (match[1] ?? match[2] ?? readFirstMarkdownHeading(bodyMarkdown) ?? "Proposed plan").trim();
-  return {
-    displayBody: [before, after].filter(Boolean).join("\n\n"),
-    plan: {
-      id: `proposed_plan_${message.id}`,
-      workspaceId: message.workspaceId,
-      threadId: message.threadId ?? message.id,
-      sourceMessageId: message.id,
-      sourceRunId: message.linkedRunId,
-      title,
-      bodyMarkdown,
-      status: "draft",
-      createdAt: message.createdAt,
-      updatedAt: message.updatedAt,
-    },
-  };
-}
-
-function readFirstMarkdownHeading(markdown: string): string | undefined {
-  const heading = markdown.split(/\n/u).map((line) => /^#{1,3}\s+(.+)$/.exec(line.trim())?.[1]?.trim()).find(Boolean);
-  return heading;
-}
-
-function ProposedPlanBlock({
-  plan,
-  cwd,
-  t,
-  busy,
-  onAccept,
-  onConvert,
-  onRefine,
-  onSave,
-}: {
-  readonly plan: ProposedPlanArtifact;
-  readonly cwd: string;
-  readonly t: (key: string, values?: Record<string, string | number>) => string;
-  readonly busy: boolean;
-  readonly onAccept: (plan: ProposedPlanArtifact) => void;
-  readonly onConvert: (plan: ProposedPlanArtifact) => void;
-  readonly onRefine: (plan: ProposedPlanArtifact) => void;
-  readonly onSave: (plan: ProposedPlanArtifact) => void;
-}): JSX.Element {
-  return (
-    <section className="proposed-plan-block" aria-label={t("Proposed plan")}>
-      <header className="proposed-plan-head">
-        <span className="proposed-plan-icon" aria-hidden="true">
-          <FileCheck2 size={15} />
-        </span>
-        <span>
-          <strong>{plan.title}</strong>
-          <small>{t("Proposed plan")} · {plan.status === "accepted" ? t("Accepted") : plan.savedAt ? t("Saved") : t("Draft")}</small>
-        </span>
-      </header>
-      <div className="proposed-plan-body">
-        <MessageBodyRenderer text={plan.bodyMarkdown} cwd={cwd} compact />
-      </div>
-      <footer className="proposed-plan-actions">
-        <button className="secondary-button compact-button" type="button" onClick={() => onSave(plan)} disabled={busy}>
-          {busy ? <Loader2 className="spin" size={14} /> : <Save size={14} />}
-          {t("Save")}
-        </button>
-        <button className="secondary-button compact-button" type="button" onClick={() => onConvert(plan)} disabled={busy}>
-          {busy ? <Loader2 className="spin" size={14} /> : <Workflow size={14} />}
-          {t("Convert to workflow")}
-        </button>
-        <button className="secondary-button compact-button" type="button" onClick={() => onRefine(plan)} disabled={busy}>
-          {busy ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
-          {t("Refine plan")}
-        </button>
-        <button className="primary-button compact-button" type="button" onClick={() => onAccept(plan)} disabled={busy}>
-          {busy ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
-          {t("Implement")}
-        </button>
-      </footer>
-    </section>
-  );
 }
 
 function shouldSanitizeGeneratedCoordinatorBody(body: string): boolean {

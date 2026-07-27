@@ -23,6 +23,7 @@ import type {
   ChannelMessage,
 } from "../../types.js";
 import type { ApprovalResolution } from "../approvals/types.js";
+import { Field, IconButton, InspectorSection, Textarea } from "../../shared/ui/index.js";
 import { conversationContextSourceGroupIcon } from "./ChannelProgressPanels.js";
 
 export interface SelectedSourceDetailState {
@@ -47,25 +48,39 @@ export function ConversationDetailOverlay({
 }): JSX.Element {
   const { t } = useI18n();
   return (
-    <section
+    <InspectorSection
       className="conversation-detail-overlay"
+      data-ui2-channel-inline-detail="true"
       data-computer-use-obstacle="true"
-      data-computer-use-obstacle-kind="modal"
+      data-computer-use-obstacle-kind="inline-detail"
       aria-label={title}
-    >
-      <header className="conversation-detail-overlay-head">
-        <span>
+      open
+      title={(
+        <span className="conversation-detail-overlay-title">
           {icon}
           <strong>{title}</strong>
         </span>
-        <button className="icon-button" type="button" onClick={onClose} aria-label={t("Close preview")} title={t("Close preview")}>
-          <X size={14} />
-        </button>
-      </header>
+      )}
+      action={(
+        <IconButton
+          icon={X}
+          label={t("Close preview")}
+          size="sm"
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onClose();
+          }}
+        />
+      )}
+      onToggle={(event) => {
+        if (!event.currentTarget.open) onClose();
+      }}
+    >
       <div className="conversation-detail-overlay-body">
         {children}
       </div>
-    </section>
+    </InspectorSection>
   );
 }
 
@@ -290,19 +305,22 @@ export function ChannelApprovalDetailPanel({
 
       {effectiveStatus === "pending" ? (
         <div className="channel-approval-decision-panel">
-          <label className="approval-reason-field">
-            <span>{t("Decision reason")}</span>
-            <textarea
+          <Field
+            className="approval-reason-field"
+            label={t("Decision reason")}
+            required={requiresReason}
+            error={confirmDecision === "approve" && requiresReason && !trimmedReason
+              ? t("High-risk approvals need a decision reason.")
+              : undefined}
+          >
+            <Textarea
               value={decisionReason}
               rows={3}
               placeholder={requiresReason ? t("Required before approving high-risk requests") : t("Optional note for the audit log")}
               disabled={isResolving}
               onChange={(event) => setDecisionReason(event.target.value)}
             />
-          </label>
-          {confirmDecision === "approve" && requiresReason && !trimmedReason ? (
-            <p className="approval-reason-error">{t("High-risk approvals need a decision reason.")}</p>
-          ) : null}
+          </Field>
           <div className="channel-approval-actions">
             <button className="primary-button compact-button" type="button" onClick={() => submitDecision("approve")} disabled={isResolving}>
               {resolvingDecision === "approve" ? <Loader2 className="spin" size={14} /> : <Check size={14} />}

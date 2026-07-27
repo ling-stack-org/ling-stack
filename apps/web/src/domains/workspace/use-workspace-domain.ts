@@ -194,11 +194,22 @@ export interface WorkspaceActions {
 
 export type WorkspaceController = DomainController<WorkspaceState, WorkspaceActions>;
 
+type WorkspaceFeedbackSurface = "workspace" | "composer" | "task" | "workflow" | "protocol" | "dock";
+type WorkspaceFeedbackScope = "load" | "mutation" | "stream";
+
+interface WorkspaceFeedbackEntry {
+  readonly surface: WorkspaceFeedbackSurface;
+  readonly identity: string;
+  readonly scope: WorkspaceFeedbackScope;
+  readonly message: string;
+}
+
 export function useWorkspaceDomain(input: {
   readonly cwd: string;
   readonly initialWorkspaceCwd: string;
   readonly translate: (value: string) => string;
-  readonly setErrorMessage: (message: string) => void;
+  readonly reportFeedback: (entry: WorkspaceFeedbackEntry) => void;
+  readonly clearFeedback: (surface: WorkspaceFeedbackSurface, identity: string) => void;
   readonly onChannelMessagesLoaded?: (channelId: string, messages: readonly ChannelMessage[]) => void;
 }): WorkspaceController {
   const [channels, setChannels] = useState<readonly Channel[]>([]);
@@ -262,6 +273,21 @@ export function useWorkspaceDomain(input: {
   const [error, setError] = useState<DomainError | undefined>();
   const loadGuard = useLatestKeyedRequestGuard();
 
+  function clearScopedFeedback(surface: WorkspaceFeedbackSurface, identity: string): void {
+    input.clearFeedback(surface, identity);
+  }
+
+  function reportScopedFeedback(
+    surface: WorkspaceFeedbackSurface,
+    identity: string,
+    scope: WorkspaceFeedbackScope,
+    caught: unknown,
+  ): void {
+    const message = caught instanceof Error ? caught.message : String(caught);
+    setError({ scope, message });
+    input.reportFeedback({ surface, identity, scope, message });
+  }
+
   async function refreshChannels(cwd = input.cwd): Promise<void> {
     if (!cwd) {
       setChannels([]);
@@ -273,7 +299,7 @@ export function useWorkspaceDomain(input: {
     const token = loadGuard.next(`channels:${cwd}`);
     setChannelsLoading(true);
     try {
-      input.setErrorMessage("");
+      clearScopedFeedback("workspace", cwd);
       setError(undefined);
       const response = await listChannels(cwd);
       if (!loadGuard.isCurrent(`channels:${cwd}`, token)) {
@@ -288,9 +314,8 @@ export function useWorkspaceDomain(input: {
         return "";
       });
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "load", message });
-      input.setErrorMessage(message);
+      if (!loadGuard.isCurrent(`channels:${cwd}`, token)) return;
+      reportScopedFeedback("workspace", cwd, "load", caught);
     } finally {
       if (loadGuard.isCurrent(`channels:${cwd}`, token)) {
         setChannelsLoading(false);
@@ -308,7 +333,7 @@ export function useWorkspaceDomain(input: {
     const token = loadGuard.next(`tasks:${cwd}:${channelId}`);
     setTasksLoading(true);
     try {
-      input.setErrorMessage("");
+      clearScopedFeedback("task", channelId);
       setError(undefined);
       const response = await listTasks(cwd, channelId);
       if (!loadGuard.isCurrent(`tasks:${cwd}:${channelId}`, token)) {
@@ -322,9 +347,8 @@ export function useWorkspaceDomain(input: {
         return "";
       });
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "load", message });
-      input.setErrorMessage(message);
+      if (!loadGuard.isCurrent(`tasks:${cwd}:${channelId}`, token)) return;
+      reportScopedFeedback("task", channelId, "load", caught);
     } finally {
       if (loadGuard.isCurrent(`tasks:${cwd}:${channelId}`, token)) {
         setTasksLoading(false);
@@ -343,7 +367,7 @@ export function useWorkspaceDomain(input: {
     const token = loadGuard.next(`aiCouncils:${cwd}`);
     setAiCouncilsLoading(true);
     try {
-      input.setErrorMessage("");
+      clearScopedFeedback("workspace", selectedChannelId || cwd);
       setError(undefined);
       const [listResponse, healthResponse] = await Promise.all([
         listAiCouncils(cwd, { limit: 100 }),
@@ -355,9 +379,8 @@ export function useWorkspaceDomain(input: {
       setAiCouncils(listResponse.councils);
       setAiCouncilHealthReport(healthResponse.report);
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "load", message });
-      input.setErrorMessage(message);
+      if (!loadGuard.isCurrent(`aiCouncils:${cwd}`, token)) return;
+      reportScopedFeedback("workspace", selectedChannelId || cwd, "load", caught);
     } finally {
       if (loadGuard.isCurrent(`aiCouncils:${cwd}`, token)) {
         setAiCouncilsLoading(false);
@@ -377,7 +400,7 @@ export function useWorkspaceDomain(input: {
     const token = loadGuard.next(`channelCouncil:${cwd}:${channelId}`);
     setChannelCouncilLoading(true);
     try {
-      input.setErrorMessage("");
+      clearScopedFeedback("workspace", channelId);
       setError(undefined);
       const [policyResponse, effectiveResponse] = await Promise.all([
         getChannelCouncilPolicy(cwd, channelId),
@@ -389,9 +412,8 @@ export function useWorkspaceDomain(input: {
       setChannelCouncilPolicy(policyResponse.policy);
       setChannelEffectiveCouncil(effectiveResponse.effectiveCouncil);
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "load", message });
-      input.setErrorMessage(message);
+      if (!loadGuard.isCurrent(`channelCouncil:${cwd}:${channelId}`, token)) return;
+      reportScopedFeedback("workspace", channelId, "load", caught);
     } finally {
       if (loadGuard.isCurrent(`channelCouncil:${cwd}:${channelId}`, token)) {
         setChannelCouncilLoading(false);
@@ -410,16 +432,14 @@ export function useWorkspaceDomain(input: {
 
     setChannelCouncilSaving(true);
     try {
-      input.setErrorMessage("");
+      clearScopedFeedback("workspace", channelId);
       setError(undefined);
       const policyResponse = await updateChannelCouncilPolicy(cwd, channelId, policyInput);
       const effectiveResponse = await getChannelEffectiveCouncil(cwd, channelId);
       setChannelCouncilPolicy(policyResponse.policy);
       setChannelEffectiveCouncil(effectiveResponse.effectiveCouncil);
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "mutation", message });
-      input.setErrorMessage(message);
+      reportScopedFeedback("workspace", channelId, "mutation", caught);
     } finally {
       setChannelCouncilSaving(false);
     }
@@ -437,7 +457,7 @@ export function useWorkspaceDomain(input: {
     const token = loadGuard.next(guardKey);
     setChannelMessagesLoading(true);
     try {
-      input.setErrorMessage("");
+      clearScopedFeedback("composer", channelId);
       setError(undefined);
       const response = await listChannelMessages(cwd, channelId, { limit: channelMessageInitialLimit, threadId });
       if (!loadGuard.isCurrent(guardKey, token)) {
@@ -447,9 +467,8 @@ export function useWorkspaceDomain(input: {
       setChannelMessagesHasOlder(response.hasMore === true);
       input.onChannelMessagesLoaded?.(channelId, response.messages);
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "load", message });
-      input.setErrorMessage(message);
+      if (!loadGuard.isCurrent(guardKey, token)) return;
+      reportScopedFeedback("composer", channelId, "load", caught);
     } finally {
       if (loadGuard.isCurrent(guardKey, token)) {
         setChannelMessagesLoading(false);
@@ -468,7 +487,7 @@ export function useWorkspaceDomain(input: {
     const token = loadGuard.next(guardKey);
     setChannelMessagesLoadingOlder(true);
     try {
-      input.setErrorMessage("");
+      clearScopedFeedback("composer", channelId);
       setError(undefined);
       const response = await listChannelMessages(cwd, channelId, {
         limit: channelMessageOlderLimit,
@@ -481,9 +500,8 @@ export function useWorkspaceDomain(input: {
       setChannelMessages((current) => mergeChannelMessages(response.messages, current));
       setChannelMessagesHasOlder(response.hasMore === true);
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "load", message });
-      input.setErrorMessage(message);
+      if (!loadGuard.isCurrent(guardKey, token)) return;
+      reportScopedFeedback("composer", channelId, "load", caught);
     } finally {
       if (loadGuard.isCurrent(guardKey, token)) {
         setChannelMessagesLoadingOlder(false);
@@ -500,7 +518,7 @@ export function useWorkspaceDomain(input: {
 
     const token = loadGuard.next(`executionProposals:${cwd}:${channelId}`);
     try {
-      input.setErrorMessage("");
+      clearScopedFeedback("workflow", channelId);
       setError(undefined);
       const response = await listChannelExecutionProposals(cwd, channelId);
       if (!loadGuard.isCurrent(`executionProposals:${cwd}:${channelId}`, token)) {
@@ -508,9 +526,8 @@ export function useWorkspaceDomain(input: {
       }
       setChannelExecutionProposals(response.proposals);
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "load", message });
-      input.setErrorMessage(message);
+      if (!loadGuard.isCurrent(`executionProposals:${cwd}:${channelId}`, token)) return;
+      reportScopedFeedback("workflow", channelId, "load", caught);
     }
   }
 
@@ -532,7 +549,7 @@ export function useWorkspaceDomain(input: {
     const token = loadGuard.next(`files:${cwd}:${channelId}`);
     setChannelFilesLoading(true);
     try {
-      input.setErrorMessage("");
+      clearScopedFeedback("dock", channelId);
       setError(undefined);
       const [attachmentsResponse, linksResponse] = await Promise.all([
         listChannelAttachments(cwd, channelId),
@@ -544,9 +561,8 @@ export function useWorkspaceDomain(input: {
       setChannelAttachments(attachmentsResponse.attachments);
       setChannelLinkPreviews(linksResponse.linkPreviews);
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "load", message });
-      input.setErrorMessage(message);
+      if (!loadGuard.isCurrent(`files:${cwd}:${channelId}`, token)) return;
+      reportScopedFeedback("dock", channelId, "load", caught);
     } finally {
       if (loadGuard.isCurrent(`files:${cwd}:${channelId}`, token)) {
         setChannelFilesLoading(false);
@@ -747,15 +763,13 @@ export function useWorkspaceDomain(input: {
 
     setChannelGovernanceNotificationActionId(notificationId);
     try {
-      input.setErrorMessage("");
+      clearScopedFeedback("workspace", selectedChannelId);
       const response = await markGovernanceNotificationSeen(cwd, notificationId);
       setChannelGovernanceNotifications((current) =>
         current.map((notification) => notification.id === notificationId ? response.notification : notification),
       );
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "mutation", message });
-      input.setErrorMessage(message);
+      reportScopedFeedback("workspace", selectedChannelId, "mutation", caught);
     } finally {
       setChannelGovernanceNotificationActionId("");
     }
@@ -769,13 +783,11 @@ export function useWorkspaceDomain(input: {
 
     setChannelGovernanceNotificationActionId(notificationId);
     try {
-      input.setErrorMessage("");
+      clearScopedFeedback("workspace", selectedChannelId);
       await dismissGovernanceNotification(cwd, notificationId);
       setChannelGovernanceNotifications((current) => current.filter((notification) => notification.id !== notificationId));
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "mutation", message });
-      input.setErrorMessage(message);
+      reportScopedFeedback("workspace", selectedChannelId, "mutation", caught);
     } finally {
       setChannelGovernanceNotificationActionId("");
     }
@@ -790,7 +802,7 @@ export function useWorkspaceDomain(input: {
 
     const token = loadGuard.next(`messageRouteDecisions:${cwd}:${channelId}`);
     try {
-      input.setErrorMessage("");
+      clearScopedFeedback("protocol", channelId);
       setError(undefined);
       const response = await listChannelMessageRouteDecisions(cwd, channelId, { limit: channelMessageRouteDecisionLimit });
       if (!loadGuard.isCurrent(`messageRouteDecisions:${cwd}:${channelId}`, token)) {
@@ -798,9 +810,8 @@ export function useWorkspaceDomain(input: {
       }
       setChannelMessageRouteDecisions(response.decisions);
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "load", message });
-      input.setErrorMessage(message);
+      if (!loadGuard.isCurrent(`messageRouteDecisions:${cwd}:${channelId}`, token)) return;
+      reportScopedFeedback("protocol", channelId, "load", caught);
     }
   }
 
@@ -813,7 +824,7 @@ export function useWorkspaceDomain(input: {
 
     const token = loadGuard.next(`intentDecisions:${cwd}:${channelId}`);
     try {
-      input.setErrorMessage("");
+      clearScopedFeedback("protocol", channelId);
       setError(undefined);
       const response = await listChannelIntentDecisions(cwd, channelId, { limit: channelIntentDecisionLimit });
       if (!loadGuard.isCurrent(`intentDecisions:${cwd}:${channelId}`, token)) {
@@ -821,9 +832,8 @@ export function useWorkspaceDomain(input: {
       }
       setChannelIntentDecisions(response.decisions);
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "load", message });
-      input.setErrorMessage(message);
+      if (!loadGuard.isCurrent(`intentDecisions:${cwd}:${channelId}`, token)) return;
+      reportScopedFeedback("protocol", channelId, "load", caught);
     }
   }
 
@@ -837,7 +847,7 @@ export function useWorkspaceDomain(input: {
     const token = loadGuard.next(`protocol:${cwd}:${channelId}`);
     setChannelProtocolLoading(true);
     try {
-      input.setErrorMessage("");
+      clearScopedFeedback("protocol", channelId);
       setError(undefined);
       const [briefResponse, protocolResponse, decisionsResponse, routeDecisionsResponse, intentDecisionsResponse, handoffsResponse, summariesResponse, workflowsResponse] = await Promise.all([
         getChannelBrief(cwd, channelId),
@@ -863,9 +873,8 @@ export function useWorkspaceDomain(input: {
       setChannelWorkflows(workflowsResponse.workflows);
       setChannelWorkflowSteps(workflowSteps);
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "load", message });
-      input.setErrorMessage(message);
+      if (!loadGuard.isCurrent(`protocol:${cwd}:${channelId}`, token)) return;
+      reportScopedFeedback("protocol", channelId, "load", caught);
     } finally {
       if (loadGuard.isCurrent(`protocol:${cwd}:${channelId}`, token)) {
         setChannelProtocolLoading(false);

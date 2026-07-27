@@ -1,0 +1,19 @@
+.channel-work-thread-search-field input {
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  outline: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.channel-work-thread-search-field input:focus,
+.channel-work-thread-search-field input:focus-visible {
+  border: 0;
+  outline: 0;
+  background: transparent;
+  box-shadow: none;
+}

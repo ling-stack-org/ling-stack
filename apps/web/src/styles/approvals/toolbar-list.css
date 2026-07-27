@@ -1,0 +1,94 @@
+.approvals-ui2-toolbar {
+  display: grid;
+  grid-template-columns: auto minmax(180px, 1fr) minmax(150px, auto) minmax(120px, auto) auto;
+  align-items: center;
+  gap: var(--ling-space-2);
+  min-width: 0;
+}
+
+.approvals-ui2-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--ling-space-2);
+  min-width: 0;
+}
+
+.approvals-ui2-list {
+  display: grid;
+  align-content: start;
+  gap: var(--ling-space-2);
+  min-width: 0;
+  min-height: 0;
+  padding: var(--ling-space-3);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.approvals-ui2-list.empty {
+  align-content: center;
+}
+
+.approvals-ui2-row {
+  min-width: 0;
+}
+
+.approvals-ui2-row-identity,
+.approvals-ui2-row-summary {
+  display: grid;
+  gap: var(--ling-space-1);
+  min-width: 0;
+}
+
+.approvals-ui2-row-identity strong,
+.approvals-ui2-row-identity small,
+.approvals-ui2-row-summary > span,
+.approvals-ui2-row-summary small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.approvals-ui2-row-identity strong {
+  font-size: var(--ling-font-sm);
+  letter-spacing: 0;
+}
+
+.approvals-ui2-row-identity small,
+.approvals-ui2-row-summary small,
+.approvals-ui2-row-summary > span {
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+.approvals-ui2-row-status {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--ling-space-2);
+}
+
+.approvals-ui2-list-skeleton {
+  grid-template-rows: repeat(6, minmax(76px, auto));
+}
+
+.approvals-ui2-skeleton-row {
+  display: grid;
+  align-content: center;
+  gap: var(--ling-space-3);
+  min-height: 76px;
+  padding: var(--ling-space-3);
+}
+
+@media (max-width: 1240px) {
+  .approvals-ui2-toolbar {
+    grid-template-columns: auto minmax(180px, 1fr) minmax(140px, auto) minmax(110px, auto);
+  }
+
+  .approvals-ui2-toolbar > :last-child {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+}

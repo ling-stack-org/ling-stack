@@ -1,0 +1,115 @@
+.media-job-list {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+}
+
+.media-job-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--ling-space-3) var(--ling-space-4);
+  min-height: 92px;
+  padding: var(--ling-space-4) var(--ling-space-5);
+}
+
+.media-job-row > :nth-child(1) {
+  grid-row: 1;
+  grid-column: 1;
+}
+
+.media-job-row > :nth-child(2) {
+  grid-row: 2;
+  grid-column: 1;
+}
+
+.media-job-row > :nth-child(3) {
+  grid-row: 1;
+  grid-column: 2;
+}
+
+.media-job-row > :last-child {
+  grid-row: 2;
+  grid-column: 2;
+}
+
+.media-job-row[data-stale="true"] {
+  background: var(--ling-status-warning-bg);
+}
+
+.media-job-row-identity {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  min-width: 0;
+  align-items: center;
+  gap: var(--ling-space-4);
+}
+
+.media-job-row-copy {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
+.media-job-row-copy strong,
+.media-job-row-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.media-job-row-copy strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+  line-height: var(--ling-line-sm);
+  white-space: nowrap;
+}
+
+.media-job-row-copy span {
+  display: -webkit-box;
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.media-job-row-meta {
+  display: flex;
+  min-width: 0;
+  gap: var(--ling-space-2);
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+.media-job-row-meta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.media-job-row-meta span:not(:last-child)::after {
+  margin-left: var(--ling-space-2);
+  content: "·";
+}
+
+.media-job-list-state {
+  min-height: 280px;
+}
+
+.media-job-list-skeleton {
+  padding: 0 var(--ling-space-5);
+}
+
+.media-job-row-skeleton {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) 88px;
+  min-height: 92px;
+  align-items: center;
+  gap: var(--ling-space-4);
+  border-bottom: 1px solid var(--ling-border-default);
+}
+
+.media-job-row-skeleton > span:nth-child(2) {
+  display: grid;
+  gap: var(--ling-space-3);
+}

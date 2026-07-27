@@ -1,0 +1,197 @@
+.teammates-page > .teammate-management-grid {
+  grid-template-columns: minmax(0, 1fr) minmax(276px, 320px);
+  gap: var(--ling-space-5);
+}
+
+.teammate-role-catalog {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  flex-direction: column;
+  overflow: hidden;
+  padding: var(--ling-space-7);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  background: var(--ling-bg-panel);
+}
+
+.teammate-role-catalog-header {
+  display: flex;
+  min-width: 0;
+  min-height: var(--ling-control-md);
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ling-space-4);
+}
+
+.teammate-role-catalog-heading {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--ling-space-4);
+}
+
+.teammate-role-catalog-heading > svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  color: var(--ling-text-muted);
+  stroke-width: 1.8;
+}
+
+.teammate-role-catalog-heading > span {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
+.teammate-role-catalog-heading h2,
+.teammate-role-catalog-heading small {
+  overflow: hidden;
+  margin: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teammate-role-catalog-heading h2 {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+  font-weight: 650;
+  line-height: var(--ling-line-sm);
+}
+
+.teammate-role-catalog-heading small {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+.teammate-role-catalog-create {
+  flex: 0 0 auto;
+}
+
+.teammate-role-catalog-list {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  align-content: start;
+  gap: var(--ling-space-2);
+  margin-top: var(--ling-space-5);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.teammate-role-catalog-row {
+  --ling-button-label-display: block;
+  --ling-button-label-text-align: left;
+  width: 100%;
+  min-height: 54px;
+  height: auto;
+  justify-content: flex-start;
+  padding: var(--ling-space-3) var(--ling-space-4);
+  border-color: transparent;
+  border-radius: var(--ling-radius-md);
+  box-shadow: none;
+}
+
+.teammate-role-catalog-row > [data-ling-button-slot="label"] {
+  flex: 1 1 auto;
+}
+
+.teammate-role-catalog-row[aria-pressed="true"] {
+  border-color: var(--ling-border-strong);
+  background: var(--ling-bg-pressed);
+}
+
+.teammate-role-catalog-copy {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
+.teammate-role-catalog-copy strong,
+.teammate-role-catalog-copy small {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teammate-role-catalog-copy strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+  font-weight: 650;
+  line-height: var(--ling-line-sm);
+}
+
+.teammate-role-catalog-copy small {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+.teammate-role-skill-list {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+}
+
+.teammate-role-skill-row {
+  display: grid;
+  min-width: 0;
+  min-height: 58px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--ling-space-4);
+  padding: var(--ling-space-3) 0;
+  border-bottom: 1px solid var(--ling-border-subtle);
+}
+
+.teammate-role-skill-copy {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
+.teammate-role-skill-copy strong,
+.teammate-role-skill-copy small {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teammate-role-skill-copy strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+  font-weight: 650;
+  line-height: var(--ling-line-sm);
+}
+
+.teammate-role-skill-copy small {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+@media (max-width: 1180px) {
+  .teammates-page > .teammate-management-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(248px, 282px);
+    gap: var(--ling-space-4);
+  }
+
+  .teammate-role-catalog {
+    padding: var(--ling-space-6);
+  }
+
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .teammate-role-catalog-row {
+    transition-duration: var(--ling-motion-instant);
+  }
+}

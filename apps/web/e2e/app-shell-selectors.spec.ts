@@ -1,11 +1,11 @@
 import { expect, test } from "@playwright/test";
 import {
   buildChannelUnreadState,
-  buildSidebarChannelNotifications,
   selectDesktopComputerUseConversation,
   type ChannelUnreadState,
 } from "../src/app/app-shell-selectors.js";
-import type { ApprovalRequest, ChannelMessage } from "../src/types.js";
+import { buildSidebarChannelNotifications } from "../src/app/sidebar-status-projections.js";
+import type { ApprovalRequest, Channel, ChannelMessage } from "../src/types.js";
 
 function channelMessage(
   id: string,
@@ -28,6 +28,26 @@ function channelMessage(
     status: "ready",
     createdAt: updatedAt,
     updatedAt,
+  };
+}
+
+function channel(id: string): Channel {
+  return {
+    id,
+    workspaceId: "workspace_default",
+    name: id,
+    status: "active",
+    autoReplyMode: "mentions_only",
+    allowedTools: [],
+    runtimePolicy: {
+      maxConcurrentRuns: 1,
+      schedulingMode: "smart",
+      writeLockScope: "boundPath",
+      allowReadOnlyParallel: true,
+      queueOnConflict: true,
+    },
+    createdAt: "2026-07-15T00:00:00.000Z",
+    updatedAt: "2026-07-15T00:00:00.000Z",
   };
 }
 
@@ -70,21 +90,22 @@ test("sidebar channel notifications honor all, mentions, muted, and approval blo
     createdAt: "2026-07-15T00:00:00.000Z",
   } satisfies ApprovalRequest;
 
-  expect(buildSidebarChannelNotifications(
-    [pendingApproval],
-    [],
-    [],
-    "channel_selected",
-    unreadById,
-    {
+  expect(buildSidebarChannelNotifications({
+    approvals: [pendingApproval],
+    channels: Object.keys(unreadById).map(channel),
+    channelUnreadById: unreadById,
+    notificationLevels: {
       channel_all: "all",
       channel_mentions: "mentions",
       channel_mentions_without_mention: "mentions",
       channel_muted: "muted",
       channel_selected: "all",
     },
-  )).toEqual({
-    channel_muted: { unread: true },
+    runs: [],
+    selectedChannelId: "channel_selected",
+    tasks: [],
+  })).toEqual({
+    channel_muted: { count: 1, primaryStatus: "waiting" },
     channel_all: { unread: true },
     channel_mentions: { unread: true },
     channel_default: { unread: true },

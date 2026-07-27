@@ -6,6 +6,7 @@ import { getEffectiveConfig } from "../api/config.js";
 import { updateWorkspaceSettings } from "../api/workspace-settings.js";
 import type {
   ChannelCreateFormState,
+  ErrorPresentationOptions,
   EffectiveConfigResponse,
   RunFormState,
   UpdateWorkspaceSettingsRequest,
@@ -18,7 +19,10 @@ export interface WorkspaceSettingsController {
   readonly workspaceSettings: WorkspaceSettings | undefined;
   readonly effectiveConfig: EffectiveConfigResponse | undefined;
   readonly updateWorkspaceCwd: (cwd: string) => void;
-  readonly patchWorkspaceSettings: (patch: UpdateWorkspaceSettingsRequest) => Promise<WorkspaceSettings | undefined>;
+  readonly patchWorkspaceSettings: (
+    patch: UpdateWorkspaceSettingsRequest,
+    options?: ErrorPresentationOptions,
+  ) => Promise<WorkspaceSettings | undefined>;
 }
 
 export function useWorkspaceSettingsController(input: {
@@ -62,7 +66,10 @@ export function useWorkspaceSettingsController(input: {
     }));
   }
 
-  async function patchWorkspaceSettings(patch: UpdateWorkspaceSettingsRequest): Promise<WorkspaceSettings | undefined> {
+  async function patchWorkspaceSettings(
+    patch: UpdateWorkspaceSettingsRequest,
+    options?: ErrorPresentationOptions,
+  ): Promise<WorkspaceSettings | undefined> {
     if (!workspaceCwd) {
       return undefined;
     }
@@ -90,6 +97,9 @@ export function useWorkspaceSettingsController(input: {
       );
       return response.settings;
     } catch (error: unknown) {
+      if (options?.errorOwner === "caller") {
+        throw error;
+      }
       input.setErrorMessage(error instanceof Error ? error.message : String(error));
       return undefined;
     }

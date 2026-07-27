@@ -1,0 +1,268 @@
+.project-scene-outline {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--ling-bg-panel);
+}
+
+.project-outline-project {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px;
+  border-bottom: 1px solid var(--ling-border-default);
+}
+
+.project-outline-label,
+.project-outline-header-actions,
+.project-outline-scenes-head,
+.project-outline-scenes-head > span,
+.project-outline-scene-order-actions,
+.project-outline-failure-actions {
+  display: flex;
+  align-items: center;
+}
+
+.project-outline-label,
+.project-outline-scenes-head {
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.project-outline-label {
+  color: var(--ling-text-strong);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 16px;
+}
+
+.project-outline-label > span:first-child,
+.project-outline-header-actions {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.project-outline-header-actions {
+  gap: 2px;
+}
+
+.project-outline-workflow-entry {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.project-outline-workflow-entry > span:last-child {
+  display: grid;
+  min-width: 0;
+  text-align: left;
+}
+
+.project-outline-workflow-entry strong,
+.project-outline-workflow-entry small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-outline-workflow-entry strong {
+  color: var(--ling-text-strong);
+  font-size: 11px;
+  line-height: 15px;
+}
+
+.project-outline-workflow-entry small {
+  color: var(--ling-text-muted);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.project-outline-settings {
+  min-width: 0;
+}
+
+.project-outline-settings-body,
+.project-outline-danger > div {
+  display: grid;
+  min-width: 0;
+}
+
+.project-outline-settings-body {
+  gap: 12px;
+  padding-bottom: 4px;
+}
+
+.project-outline-configure {
+  width: 100%;
+}
+
+.project-outline-danger {
+  display: grid;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--ling-border-default);
+}
+
+.project-outline-danger > div {
+  gap: 3px;
+}
+
+.project-outline-danger strong {
+  color: var(--ling-text-strong);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.project-outline-danger span {
+  color: var(--ling-text-muted);
+  font-size: 10px;
+  line-height: 15px;
+  overflow-wrap: anywhere;
+}
+
+.project-outline-scenes-head {
+  min-height: 48px;
+  padding: 0 10px 0 14px;
+  border-bottom: 1px solid var(--ling-border-default);
+}
+
+.project-outline-scenes-head > span {
+  min-width: 0;
+  gap: 7px;
+  color: var(--ling-text-strong);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.project-outline-scenes-head small {
+  color: var(--ling-text-muted);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.project-outline-failure {
+  margin: 8px 8px 0;
+}
+
+.project-outline-failure-actions {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.project-outline-scene-list {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 8px;
+  overscroll-behavior: contain;
+}
+
+.project-outline-scene {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+
+.project-outline-scene:hover,
+.project-outline-scene.selected {
+  border-color: var(--ling-border-default);
+  background: var(--ling-bg-subtle);
+}
+
+.project-outline-scene.selected {
+  box-shadow: inset 3px 0 0 var(--ling-action-accent);
+}
+
+.project-outline-scene-main {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 7px;
+  min-width: 0;
+  padding: 8px 0 8px 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.project-outline-scene-main:focus-visible {
+  outline: 2px solid var(--ling-border-focus);
+  outline-offset: -2px;
+}
+
+.project-outline-scene-order {
+  padding-top: 2px;
+  color: var(--ling-text-muted);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  line-height: 15px;
+}
+
+.project-outline-scene-copy {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.project-outline-scene-copy strong {
+  overflow: hidden;
+  color: var(--ling-text-strong);
+  font-size: 12px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-outline-scene-order-actions {
+  align-self: center;
+  gap: 0;
+  padding-right: 3px;
+}
+
+.project-outline-scene-delete {
+  opacity: 0;
+  transition: opacity var(--ling-motion-fast) var(--ling-ease-standard);
+}
+
+.project-outline-scene:hover .project-outline-scene-delete,
+.project-outline-scene.selected .project-outline-scene-delete,
+.project-outline-scene:focus-within .project-outline-scene-delete {
+  opacity: 1;
+}
+
+.project-outline-empty {
+  display: grid;
+  justify-items: start;
+  gap: 7px;
+  padding: 14px 8px;
+  color: var(--ling-text-muted);
+}
+
+.project-outline-empty strong {
+  color: var(--ling-text-strong);
+  font-size: 12px;
+}
+
+.project-outline-empty span {
+  font-size: 11px;
+  line-height: 16px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .project-outline-scene-delete {
+    transition-duration: var(--ling-motion-instant);
+  }
+}

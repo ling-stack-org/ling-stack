@@ -1,0 +1,114 @@
+.plugin-detail-panel {
+  width: min(440px, calc(100vw - 56px));
+  box-sizing: content-box;
+  padding-inline: 20px;
+  border: 0;
+}
+
+.plugin-detail-panel > * {
+  margin-inline: -20px;
+}
+
+.plugin-detail-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--ling-space-4);
+}
+
+.plugin-detail-title > svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  color: var(--ling-text-muted);
+}
+
+.plugin-detail-title > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plugin-detail-body,
+.plugin-create-body,
+.plugin-uninstall-body {
+  display: grid;
+  align-content: start;
+  gap: var(--ling-space-6);
+}
+
+.plugin-detail-description,
+.plugin-trust-summary,
+.plugin-uninstall-body p {
+  margin: 0;
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-sm);
+  line-height: var(--ling-line-sm);
+}
+
+.plugin-detail-failure > div,
+.plugin-detail-failure > div > span {
+  display: grid;
+  gap: var(--ling-space-2);
+}
+
+.plugin-detail-repair-hint {
+  color: var(--ling-text-default);
+}
+
+.plugin-detail-fields {
+  display: grid;
+  gap: 0;
+  margin: 0;
+}
+
+.plugin-detail-fields > div {
+  display: grid;
+  grid-template-columns: minmax(112px, 0.8fr) minmax(0, 1.2fr);
+  gap: var(--ling-space-5);
+  min-width: 0;
+  padding: var(--ling-space-4) 0;
+  border-bottom: 1px solid var(--ling-border-default);
+}
+
+.plugin-detail-fields > div:last-child {
+  border-bottom: 0;
+}
+
+.plugin-detail-fields dt,
+.plugin-detail-fields dd {
+  min-width: 0;
+  margin: 0;
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+.plugin-detail-fields dt {
+  color: var(--ling-text-muted);
+}
+
+.plugin-detail-fields dd {
+  overflow-wrap: anywhere;
+  color: var(--ling-text-strong);
+}
+
+.plugin-technical-fields dd {
+  font-family: var(--ling-font-mono);
+}
+
+.plugin-detail-mcp-link {
+  width: fit-content;
+}
+
+.plugin-create-dialog {
+  max-height: min(720px, calc(100dvh - 32px));
+}
+
+.plugin-create-body textarea {
+  resize: vertical;
+}
+
+.plugin-uninstall-body p:first-child {
+  color: var(--ling-text-default);
+}

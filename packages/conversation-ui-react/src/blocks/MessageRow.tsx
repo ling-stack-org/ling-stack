@@ -52,6 +52,7 @@ export function MessageRow({
   actionsNode,
 }: MessageRowProps): JSX.Element {
   const ownMessage = authorType === "local-user";
+  const hasAvatar = avatar !== null && avatar !== undefined && avatar !== false;
   const legacySideClass = authorType === "local-user" ? "message-bubble-own" : "message-bubble-peer";
   const resolvedTone = tone ?? (authorType === "system" ? "system" : "chat");
   const legacyToneClass = `message-bubble-${resolvedTone}`;
@@ -61,6 +62,7 @@ export function MessageRow({
     "message-bubble-inline",
     legacyToneClass,
     legacySideClass,
+    ownMessage && showOwnAuthor ? "message-bubble-own-with-author" : "",
     bodyStreaming ? "message-bubble-pending" : "",
     authorType,
     className,
@@ -73,7 +75,12 @@ export function MessageRow({
   ) : null);
 
   return (
-    <article id={id} className={rootClassName}>
+    <article
+      id={id}
+      className={rootClassName}
+      data-conversation-message-row="true"
+      data-has-avatar={hasAvatar ? "true" : "false"}
+    >
       {!ownMessage ? avatar : showOwnAuthor ? (
         <header className="message-row-own-identity">
           <strong>{authorName}</strong>

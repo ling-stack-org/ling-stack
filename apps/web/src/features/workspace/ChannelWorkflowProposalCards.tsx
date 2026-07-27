@@ -16,7 +16,6 @@ import {
   SlidersHorizontal,
   Square,
   SquareTerminal,
-  Trash2,
   Workflow,
   X,
 } from "lucide-react";
@@ -29,8 +28,6 @@ import {
   type ConversationContextSourceSummary,
 } from "../../lib/conversation-context-sources.js";
 import { truncatePreview } from "../../lib/data.js";
-import { displayLinkedRunStatus } from "../../lib/run-evidence.js";
-import { StatusBadge } from "../../shared/components/index.js";
 import { approvalProfileText } from "../teammates/helpers.js";
 import type {
   ChannelAttachment,
@@ -51,8 +48,12 @@ import type {
   WorkflowContextInspectSummary,
   WorkflowEvidenceDiagnostic,
 } from "../../types.js";
-
-import { SelectControl } from "../../shared/components/SelectControl.js";
+import {
+  ChannelExecutionProposalEditor,
+  type ChannelExecutionProposalEditorDraft,
+  type ChannelExecutionProposalEditorStep,
+} from "./ChannelExecutionProposalEditor.js";
+import { ChannelWorkflowLinkedStatusIndicators, ChannelWorkflowStatusIndicator, ChannelWorkflowStatusLabel } from "./ChannelWorkflowStatusIndicator.js";
 
 function uniqueStrings(values: readonly string[]): readonly string[] {
   return [...new Set(values.filter(Boolean))];
@@ -69,30 +70,15 @@ function teammateLabel(
   return teammates.find((teammate) => teammate.id === teammateId)?.label ?? fallback;
 }
 
-type ChannelProposalStepDraft = {
-  readonly teammateId: string;
-  readonly action: ChannelExecutionProposal["collaborationSteps"][number]["action"];
-  readonly summary: string;
-  readonly sources?: ChannelExecutionProposal["collaborationSteps"][number]["sources"];
-};
-type ChannelProposalEditDraft = {
-  readonly title: string;
-  readonly prompt: string;
-  readonly assigneeTeammateId: string;
-  readonly acceptanceCriteriaText: string;
-  readonly shapingSummaryText: string;
-  readonly shapingOpenQuestionsText: string;
-  readonly shapingClarificationsText: string;
-  readonly collaborationSteps: readonly ChannelProposalStepDraft[];
-};
+type ChannelProposalStepSource = NonNullable<ChannelExecutionProposal["collaborationSteps"][number]["sources"]>[number];
+type ChannelProposalStepDraft = ChannelExecutionProposalEditorStep<ChannelProposalStepSource>;
+type ChannelProposalEditDraft = ChannelExecutionProposalEditorDraft<ChannelProposalStepSource>;
 type RequirementShapingRow = {
   readonly id: string;
   readonly label: string;
   readonly value: string;
   readonly tone?: "neutral" | "attention" | "success";
 };
-const proposalStepActions: readonly ChannelProposalStepDraft["action"][] = ["coordinated", "consulted", "reviewed", "flagged_risk"];
-
 export function WorkflowQueueCard({
   cwd,
   workflow,
@@ -106,6 +92,7 @@ export function WorkflowQueueCard({
   linkPreviews,
   runningWorkflowStepId,
   orchestrating,
+  operationErrors,
   onOrchestrateWorkflow,
   onCancelWorkflow,
   onStartWorkflowStep,
@@ -124,6 +111,7 @@ export function WorkflowQueueCard({
   readonly linkPreviews: readonly ChannelLinkPreview[];
   readonly runningWorkflowStepId: string;
   readonly orchestrating: boolean;
+  readonly operationErrors: Readonly<Record<string, string>>;
   readonly onOrchestrateWorkflow: (workflow: ChannelWorkflow) => void;
   readonly onCancelWorkflow: (workflow: ChannelWorkflow) => void;
   readonly onStartWorkflowStep: (step: ChannelWorkflowStep, mode: ChannelWorkflowStepStartMode) => void;
@@ -139,10 +127,10 @@ export function WorkflowQueueCard({
       <div className="workflow-queue-head">
         <span>
           <strong>{workflow.title}</strong>
-          <small>{workflow.status} · {workflow.objective}</small>
+          <small><ChannelWorkflowStatusLabel status={workflow.status} /> · {workflow.objective}</small>
         </span>
         <span className="workflow-queue-actions">
-          <StatusBadge status={workflow.status} />
+          <ChannelWorkflowStatusIndicator kind="workflow" status={workflow.status} />
           <button className="secondary-button compact-button" type="button" onClick={() => onOrchestrateWorkflow(workflow)} disabled={!canAdvance || orchestrating}>
             {orchestrating ? <Loader2 className="spin" size={13} /> : <Play size={13} />}
             {t("Advance")}
@@ -153,6 +141,12 @@ export function WorkflowQueueCard({
           </button>
         </span>
       </div>
+      {operationErrors[workflow.id] ? (
+        <div className="provider-run-notice compact" role="alert">
+          <CircleAlert size={14} />
+          <span>{operationErrors[workflow.id]}</span>
+        </div>
+      ) : null}
       <div className="context-packet">
         {brief?.objective ? <span>{t("Brief")}: {brief.objective}</span> : null}
         {handoff ? <span>{t("Source handoff")}: {handoff.fromParticipantLabel} {"->"} {handoff.toParticipantLabel}</span> : null}
@@ -174,6 +168,7 @@ export function WorkflowQueueCard({
               cwd={cwd}
               step={step}
               running={runningWorkflowStepId === step.id}
+              operationError={operationErrors[step.id]}
               contextSummary={contextSummaries.find((summary) => summary.id === step.contextSummaryId)}
               artifactsByRun={artifactsByRun}
               onStartWorkflowStep={onStartWorkflowStep}
@@ -191,6 +186,7 @@ function WorkflowStepCard({
   cwd,
   step,
   running,
+  operationError,
   contextSummary,
   artifactsByRun,
   onStartWorkflowStep,
@@ -200,6 +196,7 @@ function WorkflowStepCard({
   readonly cwd: string;
   readonly step: ChannelWorkflowStep;
   readonly running: boolean;
+  readonly operationError?: string;
   readonly contextSummary: ChannelContextSummary | undefined;
   readonly artifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
   readonly onStartWorkflowStep: (step: ChannelWorkflowStep, mode: ChannelWorkflowStepStartMode) => void;
@@ -228,7 +225,7 @@ function WorkflowStepCard({
           <strong>{step.position}. {step.title}</strong>
           <small>{step.toParticipantLabel} · {step.prompt}</small>
         </span>
-        <StatusBadge status={step.status} />
+        <ChannelWorkflowStatusIndicator kind="step" status={step.status} />
       </div>
       {contextSummary ? (
         <div className="context-packet muted">
@@ -239,6 +236,12 @@ function WorkflowStepCard({
         <div className="provider-run-notice compact">
           <CircleAlert size={14} />
           <span>{step.blocker}</span>
+        </div>
+      ) : null}
+      {operationError && operationError !== step.blocker ? (
+        <div className="provider-run-notice compact" role="alert">
+          <CircleAlert size={14} />
+          <span>{operationError}</span>
         </div>
       ) : null}
       {metadata ? (
@@ -1002,12 +1005,6 @@ export function ChannelExecutionProposalCard({
   const [draft, setDraft] = useState<ChannelProposalEditDraft>(() => proposalToEditDraft(proposal));
   const canStart = proposal.status === "draft" || proposal.status === "blocked" || proposal.status === "run_failed";
   const canEdit = canStart && !proposal.linkedWorkflowId;
-  const linkedRunStatus = proposal.linkedRunId
-    ? displayLinkedRunStatus(proposal.linkedRunId, linkedRun, activeRunId, latestStatus)
-    : "";
-  const linkedWorkflowStatus = proposal.linkedWorkflowId
-    ? (linkedWorkflow?.status ?? "workflow")
-    : "";
   const collaborationSummary = proposalCollaborationSummary(proposal, teammates, t);
   const permissionSummary = buildProposalPermissionSummary({ proposal, assigneeLabel, t });
   const shapingRows = buildRequirementShapingRows({ proposal, assigneeLabel, t });
@@ -1059,6 +1056,10 @@ export function ChannelExecutionProposalCard({
     }));
   }
 
+  function updateDraft(patch: Partial<Omit<ChannelProposalEditDraft, "collaborationSteps">>): void {
+    setDraft((current) => ({ ...current, ...patch }));
+  }
+
   function removeStep(index: number): void {
     setDraft((current) => ({
       ...current,
@@ -1090,82 +1091,17 @@ export function ChannelExecutionProposalCard({
         <small>{t(executionProposalStatusLabel(proposal.status))}</small>
       </div>
       {editing ? (
-        <div className="channel-proposal-edit-form">
-          <label>
-            <span>{t("Title")}</span>
-            <input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.currentTarget.value })} />
-          </label>
-          <label>
-            <span>{t("Scope")}</span>
-            <textarea rows={4} value={draft.prompt} onChange={(event) => setDraft({ ...draft, prompt: event.currentTarget.value })} />
-          </label>
-          <label>
-            <span>{t("Assignee")}</span>
-            <SelectControl value={draft.assigneeTeammateId} onChange={(event) => setDraft({ ...draft, assigneeTeammateId: event.currentTarget.value })}>
-              {teammates.map((teammate) => (
-                <option key={teammate.id} value={teammate.id}>{teammate.label}</option>
-              ))}
-              {teammates.some((teammate) => teammate.id === draft.assigneeTeammateId) ? null : (
-                <option value={draft.assigneeTeammateId}>{teammateLabel(draft.assigneeTeammateId, teammates, t("Deleted teammate"))}</option>
-              )}
-            </SelectControl>
-          </label>
-          <label>
-            <span>{t("Acceptance criteria")}</span>
-            <textarea rows={3} value={draft.acceptanceCriteriaText} onChange={(event) => setDraft({ ...draft, acceptanceCriteriaText: event.currentTarget.value })} />
-          </label>
-          <label>
-            <span>{t("Requirement summary")}</span>
-            <textarea rows={3} value={draft.shapingSummaryText} onChange={(event) => setDraft({ ...draft, shapingSummaryText: event.currentTarget.value })} />
-          </label>
-          <label>
-            <span>{t("Open questions")}</span>
-            <textarea rows={3} value={draft.shapingOpenQuestionsText} onChange={(event) => setDraft({ ...draft, shapingOpenQuestionsText: event.currentTarget.value })} />
-          </label>
-          <label>
-            <span>{t("User clarifications")}</span>
-            <textarea rows={3} value={draft.shapingClarificationsText} onChange={(event) => setDraft({ ...draft, shapingClarificationsText: event.currentTarget.value })} />
-          </label>
-          <div className="channel-proposal-edit-steps">
-            <div className="channel-proposal-edit-steps-head">
-              <strong>{t("Steps")}</strong>
-              <button className="secondary-button compact-button" type="button" onClick={addStep}>
-                <Plus size={14} />
-                {t("Add step")}
-              </button>
-            </div>
-            {draft.collaborationSteps.map((step, index) => (
-              <div className="channel-proposal-edit-step" key={`${index}-${step.teammateId}-${step.action}`}>
-                <SelectControl
-              variant="compact" value={step.teammateId} onChange={(event) => updateStep(index, { teammateId: event.currentTarget.value })}>
-                  {teammates.map((teammate) => (
-                    <option key={teammate.id} value={teammate.id}>{teammate.label}</option>
-                  ))}
-                  {teammates.some((teammate) => teammate.id === step.teammateId) ? null : (
-                    <option value={step.teammateId}>{teammateLabel(step.teammateId, teammates, t("Deleted teammate"))}</option>
-                  )}
-                </SelectControl>
-                <SelectControl
-              variant="compact" value={step.action} onChange={(event) => updateStep(index, { action: event.currentTarget.value as ChannelProposalStepDraft["action"] })}>
-                  {proposalStepActions.map((action) => (
-                    <option key={action} value={action}>{t(proposalStepActionLabel(action))}</option>
-                  ))}
-                </SelectControl>
-                <textarea rows={2} value={step.summary} onChange={(event) => updateStep(index, { summary: event.currentTarget.value })} />
-                <button className="secondary-button danger compact-button" type="button" onClick={() => removeStep(index)} disabled={draft.collaborationSteps.length <= 1}>
-                  <Trash2 size={14} />
-                  {t("Remove")}
-                </button>
-              </div>
-            ))}
-          </div>
-          {editError ? (
-            <div className="channel-proposal-error">
-              <CircleAlert size={14} />
-              <span>{editError}</span>
-            </div>
-          ) : null}
-        </div>
+        <ChannelExecutionProposalEditor
+          canRemoveStep={draft.collaborationSteps.length > 1}
+          disabled={saving}
+          draft={draft}
+          error={editError}
+          teammates={teammates}
+          onAddStep={addStep}
+          onDraftChange={updateDraft}
+          onRemoveStep={removeStep}
+          onStepChange={updateStep}
+        />
       ) : isRequirementShaping ? (
         <RequirementShapingSummary
           rows={shapingRows}
@@ -1179,9 +1115,8 @@ export function ChannelExecutionProposalCard({
       <div className="channel-proposal-meta">
         <span>{t("Assignee")}: <strong>{assigneeLabel}</strong></span>
         {proposal.requiredTools.length > 0 ? <span>{t("Required tools")}: {proposal.requiredTools.join(", ")}</span> : null}
-        {linkedWorkflowStatus ? <StatusBadge status={linkedWorkflowStatus} /> : null}
-        {linkedRunStatus ? <StatusBadge status={linkedRunStatus} /> : null}
       </div>
+      <ChannelWorkflowLinkedStatusIndicators linkedRunId={proposal.linkedRunId} linkedWorkflowId={proposal.linkedWorkflowId} linkedRun={linkedRun} linkedWorkflow={linkedWorkflow} activeRunId={activeRunId} latestStatus={latestStatus} />
       {!editing && canStart ? (
         <section className="channel-proposal-permission" aria-label={t("Task permission confirmation")}>
           <div className="channel-proposal-permission-head">

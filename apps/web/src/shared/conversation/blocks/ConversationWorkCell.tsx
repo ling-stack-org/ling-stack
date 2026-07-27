@@ -11,6 +11,7 @@ import { ConversationCommandBatch } from "./ConversationCommandBatch.js";
 import { DiffViewer } from "./DiffViewer.js";
 import { TerminalReportBlock, type TerminalReportFileTarget } from "./TerminalReportBlock.js";
 import { useConversationBlockView } from "../view-store/use-conversation-block-view.js";
+import { useWorkCellActivityVisibility } from "./use-work-cell-activity-visibility.js";
 
 export type ConversationWorkCellDetailsStatus = "not_loaded" | "loading" | "loaded" | "empty" | "error";
 
@@ -56,6 +57,7 @@ export function ConversationWorkCell({
 }: ConversationWorkCellProps): JSX.Element {
   const { t } = useI18n();
   const active = model.mode === "active";
+  const { rootRef, activityVisibility } = useWorkCellActivityVisibility(active);
   const singleAgentSpan = model.agentSpans.length === 1 ? model.agentSpans[0] : undefined;
   const visibleAgentSpans = model.agentSpans.length > 1 ? model.agentSpans : [];
   const singleAgentRows = singleAgentSpan?.rows ?? [];
@@ -185,7 +187,14 @@ export function ConversationWorkCell({
   );
 
   return (
-    <article className={rootClassName} data-thread-id={model.threadId} data-operation-source={model.sourceKind} aria-label={statusLabel}>
+    <article
+      ref={rootRef}
+      className={rootClassName}
+      data-thread-id={model.threadId}
+      data-operation-source={model.sourceKind}
+      data-work-cell-activity={activityVisibility}
+      aria-label={statusLabel}
+    >
       <span className="visually-hidden" role="status" aria-live="polite" aria-label={statusLabel} />
       <div className={shellClassName} aria-label={statusLabel}>
         {shellExpandable ? (
@@ -505,7 +514,7 @@ function AgentActivitySpanItem({
       </div>
       {hasDetail ? (
         <div className="conversation-work-cell-agent-span-detail" aria-label={t("Agent activity detail")}>
-          <ActiveTurnItemStream items={items} cwd={cwd} loadPreview={loadPreview} />
+          <ActiveTurnItemStream items={items} cwd={cwd} loadPreview={loadPreview} scope="agent" />
         </div>
       ) : null}
     </div>
@@ -636,22 +645,28 @@ function ActiveTurnItemStream({
   items,
   cwd,
   loadPreview,
+  scope = "primary",
 }: {
   readonly items: readonly ConversationWorkCellItem[];
   readonly cwd?: string;
   readonly loadPreview: ArtifactPreviewLoader;
+  readonly scope?: "primary" | "agent";
 }): JSX.Element {
   const { t } = useI18n();
+  const className = scope === "agent"
+    ? "conversation-work-cell-agent-stream"
+    : "conversation-work-cell-active-stream";
+  const ariaLabel = scope === "agent" ? t("Agent activity detail") : t("Active work stream");
   if (items.length === 0) {
     return (
-      <div className="conversation-work-cell-active-stream empty">
+      <div className={`${className} empty`} data-conversation-work-stream={scope}>
         <Clock3 size={13} />
         <span>{t("Waiting for activity")}</span>
       </div>
     );
   }
   return (
-    <div className="conversation-work-cell-active-stream" aria-label={t("Active work stream")}>
+    <div className={className} aria-label={ariaLabel} data-conversation-work-stream={scope}>
       {items.map((item) => item.kind === "command_batch" ? (
         <ConversationCommandBatch
           key={item.batch.id}

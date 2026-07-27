@@ -5,6 +5,7 @@ import type {
   TokenizedComposerInputHandle,
 } from "../../shared/components/index.js";
 import type { ChannelAttachment, ChannelLinkPreview, ChannelMention } from "../../types.js";
+import { useLingToast } from "../../shared/ui/index.js";
 import type {
   ActiveMentionPicker,
   ChannelComposerInlineFeedback,
@@ -60,8 +61,9 @@ export interface ChannelComposerDraftController {
   readonly showComposerFeedback: (tone: ChannelComposerInlineFeedbackTone, message: string) => void;
 }
 
-export function useChannelComposerDraftController(): ChannelComposerDraftController {
-  const [messageDraft, setMessageDraft] = useState("");
+export function useChannelComposerDraftController(channelId: string): ChannelComposerDraftController {
+  const { showToast } = useLingToast();
+  const [messageDraft, setMessageDraftState] = useState("");
   const [pendingAttachments, setPendingAttachments] = useState<readonly PendingAttachmentItem<ChannelAttachment>[]>([]);
   const [pendingLinkPreviews, setPendingLinkPreviews] = useState<readonly PendingLinkPreviewItem[]>([]);
   const [messageMentions, setMessageMentions] = useState<readonly ChannelMention[]>([]);
@@ -78,20 +80,26 @@ export function useChannelComposerDraftController(): ChannelComposerDraftControl
   const [pendingChannelSendPreview, setPendingChannelSendPreview] = useState<PendingChannelSendPreview | undefined>();
   const composerInputRef = useRef<TokenizedComposerInputHandle | null>(null);
   const composerResizeDragRef = useRef<{ readonly pointerId: number; readonly startY: number; readonly startHeight: number } | undefined>();
-  const composerFeedbackTimeoutRef = useRef<number | undefined>();
   const autoPreviewUrlsRef = useRef(new Set<string>());
   const attachmentPreviewUrlsRef = useRef(new Set<string>());
 
-  const showComposerFeedback = useCallback((tone: ChannelComposerInlineFeedbackTone, message: string): void => {
-    if (composerFeedbackTimeoutRef.current !== undefined) {
-      globalThis.clearTimeout(composerFeedbackTimeoutRef.current);
-    }
-    setComposerFeedback({ id: Date.now(), tone, message });
-    composerFeedbackTimeoutRef.current = globalThis.setTimeout(() => {
-      setComposerFeedback(undefined);
-      composerFeedbackTimeoutRef.current = undefined;
-    }, 2_200);
+  const setMessageDraft = useCallback<Dispatch<SetStateAction<string>>>((nextDraft) => {
+    setComposerFeedback(undefined);
+    setMessageDraftState(nextDraft);
   }, []);
+
+  const showComposerFeedback = useCallback((tone: ChannelComposerInlineFeedbackTone, message: string): void => {
+    if (tone === "error") {
+      setComposerFeedback({ id: Date.now(), tone, message });
+      return;
+    }
+    setComposerFeedback(undefined);
+    showToast({ message, scope: `channel:${channelId || "unknown"}:composer`, tone });
+  }, [channelId, showToast]);
+
+  useEffect(() => {
+    setComposerFeedback(undefined);
+  }, [channelId]);
 
   const handleComposerResizePointerDown = useCallback((event: ReactPointerEvent<HTMLButtonElement>): void => {
     if (event.pointerType === "mouse" && event.button !== 0) {
@@ -128,9 +136,6 @@ export function useChannelComposerDraftController(): ChannelComposerDraftControl
   }, []);
 
   useEffect(() => () => {
-    if (composerFeedbackTimeoutRef.current !== undefined) {
-      globalThis.clearTimeout(composerFeedbackTimeoutRef.current);
-    }
     for (const previewUrl of attachmentPreviewUrlsRef.current) {
       URL.revokeObjectURL(previewUrl);
     }

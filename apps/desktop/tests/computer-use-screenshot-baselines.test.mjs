@@ -10,6 +10,24 @@ const desktopRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const baselineRoot = join(desktopRoot, "tests", "screenshots", "computer-use-preview");
 const pngSignature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
+test("Computer Use screenshot cases cover every authoritative visual state", () => {
+  const visualStates = [...new Set(expectedComputerUseScreenshotManifestCases()
+    .map((entry) => entry.visualState))].sort();
+  assert.deepEqual(visualStates, [
+    "approval_required",
+    "completed",
+    "connecting",
+    "failed",
+    "live",
+    "paused",
+    "permission_required",
+    "reconnecting",
+    "stop_failed",
+    "stopped",
+    "stopping",
+  ]);
+});
+
 test("Computer Use screenshot baselines match manifest dimensions and hashes", async (context) => {
   const platformDirectories = (await readdir(baselineRoot, { withFileTypes: true }))
     .filter((entry) => entry.isDirectory())

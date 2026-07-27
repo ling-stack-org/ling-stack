@@ -1,0 +1,53 @@
+.plugin-manager-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 420px) 136px 152px 32px;
+  align-items: center;
+  gap: var(--ling-space-4);
+  min-width: 0;
+  padding: 0 var(--ling-space-7);
+  border-bottom: 1px solid var(--ling-border-default);
+  background: var(--ling-bg-panel);
+}
+
+.plugin-toolbar-field {
+  min-width: 0;
+}
+
+.plugin-toolbar-field > label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.plugin-search-clear {
+  display: inline-grid;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ling-radius-sm);
+  place-items: center;
+  color: var(--ling-text-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.plugin-search-clear:hover,
+.plugin-search-clear:focus-visible {
+  color: var(--ling-text-strong);
+  background: var(--ling-bg-subtle);
+}
+
+.plugin-search-clear:focus-visible {
+  outline: 2px solid var(--ling-border-focus);
+  outline-offset: 1px;
+}
+
+.plugin-search-clear svg {
+  width: 14px;
+  height: 14px;
+}

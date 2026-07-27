@@ -64,6 +64,7 @@ export interface MockState {
   mcpTools: MockMcpTool[];
   teammateMcpBindings: MockTeammateMcpBinding[];
   channels: unknown[];
+  channelCreateDelayMs?: number;
   failNextChannelCreate?: { readonly error: string; readonly message: string; readonly status?: number };
   channelBranches: unknown[];
   channelWorkspaceGitStatusByChannel: Record<string, WorkspaceGitStatus | MockWorkspaceGitStatusFailure>;
@@ -88,6 +89,17 @@ export interface MockState {
   aiTeammates: unknown[];
   aiCouncils: unknown[];
   aiCouncilMembers: unknown[];
+  aiCouncilCreateDelayMs?: number;
+  aiCouncilCloneDelayMs?: number;
+  aiCouncilHealthDelayMs?: number;
+  aiCouncilHealthFindingLimitOverride?: number;
+  aiCouncilHealthGeneratedAt?: string;
+  aiCouncilHealthRequestCount?: number;
+  failNextAiCouncilCreate?: { readonly error: string; readonly message: string; readonly status?: number };
+  failNextAiCouncilClone?: { readonly error: string; readonly message: string; readonly status?: number };
+  failNextAiCouncilHealth?: { readonly error: string; readonly message: string; readonly status?: number };
+  failNextAiCouncilList?: { readonly error: string; readonly message: string; readonly status?: number };
+  failNextAiCouncilGet?: { readonly error: string; readonly message: string; readonly status?: number };
   channelCouncilPolicies: unknown[];
   skillRegistryEntries: unknown[];
   skillSourceSnapshots: unknown[];
@@ -123,6 +135,7 @@ export interface MockState {
   nextStreamEvents?: MockRunEvent[];
   providerCheckDelayMs?: number;
   runResponseDelayMs?: number;
+  conversationStreamDelayMs?: number;
   mediaJobRunDelayMs?: number;
   channelMessageDelayMs?: number;
   governanceNotificationDelayMs?: number;
@@ -240,6 +253,11 @@ export interface MockLingTurn {
   sourceTurnId?: string;
   revision?: number;
   editedAt?: string;
+  pendingReplacement?: {
+    supersessionId: string;
+    idempotencyKey: string;
+    failureReason?: string;
+  };
   interventionId?: string;
   activeRunId?: string;
   lastRunId?: string;
@@ -263,6 +281,7 @@ export interface MockRun {
   cwd: string;
   taskId: string;
   channelId?: string;
+  teammateId?: string;
   providerPresetId?: string;
   providerName: string;
   providerModel: string;
@@ -876,6 +895,10 @@ export async function readSidebarSelection(page: Page): Promise<{ readonly activ
       element.querySelector("span:not(.avatar-initial):not(.sidebar-channel-avatar):not(.sidebar-hash):not(.channel-mention):not(.channel-unread)")?.textContent?.trim() ?? "";
     const shellRowLabel = (element: Element): string => {
       const main = element.querySelector(".sidebar-row-main");
+      const sharedButtonLabel = main?.querySelector('[data-ling-button-slot="label"]')?.textContent?.trim();
+      if (sharedButtonLabel) {
+        return sharedButtonLabel;
+      }
       const directSpan = [...(main?.children ?? [])].find((child) => {
         if (child.tagName !== "SPAN") {
           return false;
@@ -907,7 +930,11 @@ export async function openTaskFromAttentionQueue(page: Page, title: string): Pro
     await expect(page.locator(".channel-side-panel")).toHaveCount(0);
   }
   await openChannelChatTools(page);
-  const workItem = page.getByRole("article", { name: title });
+  const workItem = page
+    .getByLabel(/Channel Work Board|频道工作看板/)
+    .locator("[data-work-item-id]")
+    .filter({ hasText: title })
+    .first();
   if ((await workItem.count()) === 0 || !(await workItem.isVisible().catch(() => false))) {
     const taskEvent = page.locator("article").filter({ hasText: `Task ${title}` });
     await expect(taskEvent).toHaveCount(1);
@@ -2263,7 +2290,7 @@ export function buildMockSkillRegistryEntries(): unknown[] {
     packId: gstackDefaultSkillPack.id,
     source: "builtin",
     version: "builtin",
-    definition,
+    definition: structuredClone(definition),
     visibility: {
       workspaceVisible: true,
       promotableToWorkspace: false,
@@ -5252,7 +5279,11 @@ function detachMockCouncilFromChannels(state: MockState, councilId: string): voi
   });
 }
 
-function buildMockAiCouncilHealthReport(state: MockState, limit = 500): Record<string, unknown> {
+function buildMockAiCouncilHealthReport(
+  state: MockState,
+  limit = 500,
+  generatedAt = "2026-06-20T00:02:00.000Z",
+): Record<string, unknown> {
   const findings: Record<string, unknown>[] = [];
   let totalMembers = 0;
   let availableMembers = 0;
@@ -5319,7 +5350,7 @@ function buildMockAiCouncilHealthReport(state: MockState, limit = 500): Record<s
 
   return {
     workspaceId: "workspace_default",
-    generatedAt: "2026-06-20T00:02:00.000Z",
+    generatedAt,
     summary: {
       totalCouncils: state.aiCouncils.filter(isRecord).length,
       activeCouncils: state.aiCouncils.filter((item) => isRecord(item) && item.status === "active").length,
@@ -6555,6 +6586,7 @@ function createMockConversationUserMessage(
     attachments: resolvedAttachments,
     revision: turn.revision,
     editedAt: turn.editedAt,
+    pendingReplacement: turn.pendingReplacement,
     createdAt: turn.createdAt,
     updatedAt: turn.updatedAt,
   };
@@ -6602,7 +6634,30 @@ function createMockConversationAssistantMessageFromRun(
     .filter((event) => event.type === "assistant_text_delta")
     .map((event) => isRecord(event.data) && typeof event.data.text === "string" ? event.data.text : "")
     .join("");
-  return createMockConversationAssistantMessage(thread, turn, run, content, run.status === "failed" ? "failed" : "succeeded", run.updatedAt);
+  return createMockConversationAssistantMessage(
+    thread,
+    turn,
+    run,
+    content,
+    mockConversationMessageStatus(run.status),
+    run.updatedAt,
+  );
+}
+
+function mockConversationMessageStatus(runStatus: string): string {
+  switch (runStatus) {
+    case "queued":
+      return "pending";
+    case "running":
+    case "waiting_for_approval":
+      return "running";
+    case "failed":
+      return "failed";
+    case "cancelled":
+      return "cancelled";
+    default:
+      return "succeeded";
+  }
 }
 
 function createMockConversationAssistantMessage(
@@ -6694,7 +6749,23 @@ export async function mockDaemon(
     readonly templates?: readonly unknown[];
     readonly providerModelsUnsupported?: boolean;
     readonly providerCheckModelUnsupportedProviderIds?: readonly string[];
+    readonly failTeammateAvatarUploads?: boolean;
+    readonly failTeammateAvatarDeletes?: boolean;
+    readonly failTeammatePersonaDrafts?: boolean;
+    readonly failTeammateProfileUpdates?: boolean;
+    readonly failTeammateSkillLoads?: boolean;
+    readonly failTeammateSkillUpdates?: boolean;
+    readonly failSkillImportDrafts?: boolean;
+    readonly failSkillPublishes?: boolean;
+    readonly failSkillArchives?: boolean;
+    readonly teammateUpdateDelayMs?: number;
+    readonly teammateSkillLoadDelayMs?: number;
+    readonly teammateSkillUpdateDelayMs?: number;
+    readonly skillImportDraftDelayMs?: number;
+    readonly skillPublishDelayMs?: number;
     readonly collaborationCardsUnsupported?: boolean;
+    readonly healthResponseDelayMs?: number;
+    readonly healthResponses?: boolean[];
   } = {},
 ): Promise<void> {
   await mkdir(cwd, { recursive: true });
@@ -6715,17 +6786,62 @@ export async function handleDaemonRoute(
     readonly templates?: readonly unknown[];
     readonly providerModelsUnsupported?: boolean;
     readonly providerCheckModelUnsupportedProviderIds?: readonly string[];
+    readonly failTeammateAvatarUploads?: boolean;
+    readonly failTeammateAvatarDeletes?: boolean;
+    readonly failTeammatePersonaDrafts?: boolean;
+    readonly failTeammateProfileUpdates?: boolean;
+    readonly failTeammateSkillLoads?: boolean;
+    readonly failTeammateSkillUpdates?: boolean;
+    readonly failSkillImportDrafts?: boolean;
+    readonly failSkillPublishes?: boolean;
+    readonly failSkillArchives?: boolean;
+    readonly teammateUpdateDelayMs?: number;
+    readonly teammateSkillLoadDelayMs?: number;
+    readonly teammateSkillUpdateDelayMs?: number;
+    readonly skillImportDraftDelayMs?: number;
+    readonly skillPublishDelayMs?: number;
     readonly collaborationCardsUnsupported?: boolean;
+    readonly healthResponseDelayMs?: number;
+    readonly healthResponses?: boolean[];
   },
 ): Promise<void> {
   const request = route.request();
   const url = new URL(request.url());
   const path = url.pathname;
 
-  if (request.method() === "GET" && path === "/health") {
+  if (request.method() === "GET" && path === "/control-plane/snapshot") {
+    const requestedDomains = (url.searchParams.get("domains") ?? "")
+      .split(",")
+      .map((domain) => domain.trim())
+      .filter(Boolean);
+    const domains = Object.fromEntries(requestedDomains.map((domain) => [domain, {
+      ok: false,
+      revision: 0,
+      error: { code: "fixture_unavailable", message: "Use the mock daemon fallback for this domain." },
+    }]));
     await route.fulfill({
       json: {
-        ok: true,
+        cwd,
+        workspaceId: "workspace_default",
+        generatedAt: "2026-07-20T00:00:00.000Z",
+        latestEventSeq: 0,
+        domains,
+      },
+    });
+    return;
+  }
+  if (request.method() === "GET" && path === "/control-plane/stream") {
+    await route.fulfill({ status: 204 });
+    return;
+  }
+  if (request.method() === "GET" && path === "/health") {
+    const ok = options.healthResponses?.length ? options.healthResponses.shift() ?? true : true;
+    if (options.healthResponseDelayMs) {
+      await new Promise((resolve) => setTimeout(resolve, options.healthResponseDelayMs));
+    }
+    await route.fulfill({
+      json: {
+        ok,
         service: "ling-stack-daemon",
         defaultWorkspaceCwd: options.defaultWorkspaceCwd ?? cwd,
         features: {
@@ -7267,7 +7383,7 @@ export async function handleDaemonRoute(
       json: {
         cwd,
         report: createMockSkillSourceHealthReport(state, Number.isFinite(rawLimit) ? rawLimit : 100),
-        snapshots: state.skillSourceSnapshots.filter((item) => isRecord(item) && item.reviewStatus === "published"),
+        snapshots: state.skillSourceSnapshots.filter(isRecord),
       },
     });
     return;
@@ -7376,6 +7492,44 @@ export async function handleDaemonRoute(
         isRecord(item) && item.id === snapshot.id ? archived : item
       );
       await route.fulfill({ json: { cwd, snapshot: archived } });
+      return;
+    }
+    if (action === "artifacts") {
+      if (request.method() !== "GET") {
+        await route.fulfill({ status: 405, json: { error: "method_not_allowed" } });
+        return;
+      }
+      await route.fulfill({ json: { cwd, artifacts: [] } });
+      return;
+    }
+    if (action === "rollback") {
+      if (request.method() !== "POST") {
+        await route.fulfill({ status: 405, json: { error: "method_not_allowed" } });
+        return;
+      }
+      const body = safePostDataJson(request);
+      const snapshotId = typeof body.snapshotId === "string" ? body.snapshotId : "";
+      const target = state.skillSourceSnapshots.find((item) =>
+        isRecord(item) && item.id === snapshotId && item.skillId === skillId
+      );
+      if (!isRecord(target)) {
+        await route.fulfill({ status: 404, json: { error: "skill_source_snapshot_not_found" } });
+        return;
+      }
+      const rolledBackAt = "2026-06-22T00:08:00.000Z";
+      state.skillSourceSnapshots = state.skillSourceSnapshots.map((item) => {
+        if (!isRecord(item) || item.skillId !== skillId) return item;
+        if (item.id === snapshotId) return { ...item, reviewStatus: "published", updatedAt: rolledBackAt };
+        if (item.reviewStatus === "published") return { ...item, reviewStatus: "archived", updatedAt: rolledBackAt };
+        return item;
+      });
+      await route.fulfill({
+        json: {
+          cwd,
+          rolledBackAt,
+          snapshot: { ...target, reviewStatus: "published", updatedAt: rolledBackAt },
+        },
+      });
       return;
     }
   }
@@ -7964,6 +8118,13 @@ export async function handleDaemonRoute(
     return;
   }
   if (request.method() === "POST" && path === "/skills/import-draft") {
+    if (options.skillImportDraftDelayMs) {
+      await new Promise((resolve) => setTimeout(resolve, options.skillImportDraftDelayMs));
+    }
+    if (options.failSkillImportDrafts) {
+      await route.fulfill({ status: 500, json: { error: "skill_import_failed", message: "Skill draft could not be checked." } });
+      return;
+    }
     const body = await request.postDataJSON() as Record<string, unknown>;
     const draft = createMockSkillImportDraft(state, body);
     state.skillImportDrafts.unshift(draft);
@@ -7984,6 +8145,13 @@ export async function handleDaemonRoute(
       return;
     }
     if (action === "publish" && request.method() === "POST") {
+      if (options.skillPublishDelayMs) {
+        await new Promise((resolve) => setTimeout(resolve, options.skillPublishDelayMs));
+      }
+      if (options.failSkillPublishes) {
+        await route.fulfill({ status: 500, json: { error: "skill_publish_failed", message: "Skill draft could not be published." } });
+        return;
+      }
       const definitions = Array.isArray(draft.definitions) ? draft.definitions.filter(isRecord) : [];
       const published = definitions.map((definitionRecord) => {
         const definition = isRecord(definitionRecord.definition) ? definitionRecord.definition : {};
@@ -8127,6 +8295,10 @@ export async function handleDaemonRoute(
   }
   const skillMatch = /^\/skills\/([^/]+)$/.exec(path);
   if (skillMatch && request.method() === "DELETE") {
+    if (options.failSkillArchives) {
+      await route.fulfill({ status: 500, json: { error: "skill_archive_failed", message: "Skill could not be archived." } });
+      return;
+    }
     const skillId = decodeURIComponent(skillMatch[1]);
     let archived: unknown;
     state.skillRegistryEntries = state.skillRegistryEntries.map((entry) => {
@@ -8227,15 +8399,38 @@ export async function handleDaemonRoute(
     }
   }
   if (request.method() === "GET" && path === "/ai-councils") {
+    if (state.failNextAiCouncilList) {
+      const failure = state.failNextAiCouncilList;
+      state.failNextAiCouncilList = undefined;
+      await route.fulfill({ status: failure.status ?? 503, json: { error: failure.error, message: failure.message } });
+      return;
+    }
     const includeArchived = url.searchParams.get("includeArchived") === "true";
-    const councils = state.aiCouncils.filter((item) =>
-      isRecord(item) && (includeArchived || item.status !== "archived")
-    );
+    const requestedLimit = Number(url.searchParams.get("limit"));
+    const limit = Number.isFinite(requestedLimit) && requestedLimit > 0 ? requestedLimit : 100;
+    const councils = state.aiCouncils
+      .filter((item): item is Record<string, unknown> =>
+        isRecord(item) && (includeArchived || item.status !== "archived")
+      )
+      .sort((left, right) => (
+        Number(right.pinned === true) - Number(left.pinned === true) ||
+        String(left.displayName ?? "").localeCompare(String(right.displayName ?? ""))
+      ))
+      .slice(0, limit);
     await route.fulfill({ json: { cwd, councils } });
     return;
   }
   if (request.method() === "POST" && path === "/ai-councils") {
     const body = await request.postDataJSON() as Record<string, unknown>;
+    if (state.aiCouncilCreateDelayMs) {
+      await new Promise((resolve) => setTimeout(resolve, state.aiCouncilCreateDelayMs));
+    }
+    if (state.failNextAiCouncilCreate) {
+      const failure = state.failNextAiCouncilCreate;
+      state.failNextAiCouncilCreate = undefined;
+      await route.fulfill({ status: failure.status ?? 503, json: { error: failure.error, message: failure.message } });
+      return;
+    }
     const unsupported = unsupportedMockKeyMessage(body, mockCreateAiCouncilRequestKeys, "AI council create request") ??
       (isRecord(body.routingPolicy) ? unsupportedMockKeyMessage(body.routingPolicy, mockCreateAiCouncilRoutingPolicyKeys, "routingPolicy") : undefined) ??
       unsupportedMockAiCouncilMemberMessage(body.members);
@@ -8276,9 +8471,23 @@ export async function handleDaemonRoute(
       await route.fulfill({ status: 405, json: { error: "method_not_allowed" } });
       return;
     }
+    state.aiCouncilHealthRequestCount = (state.aiCouncilHealthRequestCount ?? 0) + 1;
+    if (state.aiCouncilHealthDelayMs) {
+      await new Promise((resolve) => setTimeout(resolve, state.aiCouncilHealthDelayMs));
+    }
+    if (state.failNextAiCouncilHealth) {
+      const failure = state.failNextAiCouncilHealth;
+      state.failNextAiCouncilHealth = undefined;
+      await route.fulfill({ status: failure.status ?? 503, json: { error: failure.error, message: failure.message } });
+      return;
+    }
     const requestedLimit = Number(url.searchParams.get("limit"));
-    const limit = Number.isFinite(requestedLimit) ? requestedLimit : 500;
-    await route.fulfill({ json: { cwd, report: buildMockAiCouncilHealthReport(state, limit) } });
+    const requestedOrDefaultLimit = Number.isFinite(requestedLimit) ? requestedLimit : 500;
+    const limit = state.aiCouncilHealthFindingLimitOverride ?? requestedOrDefaultLimit;
+    const generatedAt = state.aiCouncilHealthGeneratedAt ?? new Date(
+      Date.parse("2026-06-20T00:02:00.000Z") + Math.max(0, state.aiCouncilHealthRequestCount - 1) * 1_000,
+    ).toISOString();
+    await route.fulfill({ json: { cwd, report: buildMockAiCouncilHealthReport(state, limit, generatedAt) } });
     return;
   }
   const aiCouncilMatch = /^\/ai-councils\/([^/]+)(?:\/(members|clone))?$/.exec(path);
@@ -8291,8 +8500,23 @@ export async function handleDaemonRoute(
       await route.fulfill({ status: 404, json: { error: "ai_council_not_found" } });
       return;
     }
+    if (!action && request.method() === "GET" && state.failNextAiCouncilGet) {
+      const failure = state.failNextAiCouncilGet;
+      state.failNextAiCouncilGet = undefined;
+      await route.fulfill({ status: failure.status ?? 503, json: { error: failure.error, message: failure.message } });
+      return;
+    }
     if (action === "clone" && request.method() === "POST") {
       const body = await request.postDataJSON() as Record<string, unknown>;
+      if (state.aiCouncilCloneDelayMs) {
+        await new Promise((resolve) => setTimeout(resolve, state.aiCouncilCloneDelayMs));
+      }
+      if (state.failNextAiCouncilClone) {
+        const failure = state.failNextAiCouncilClone;
+        state.failNextAiCouncilClone = undefined;
+        await route.fulfill({ status: failure.status ?? 503, json: { error: failure.error, message: failure.message } });
+        return;
+      }
       const unsupported = unsupportedMockKeyMessage(body, mockCloneAiCouncilRequestKeys, "AI council clone request");
       if (unsupported) {
         await route.fulfill({ status: 400, json: { error: "bad_request", message: unsupported } });
@@ -8430,6 +8654,16 @@ export async function handleDaemonRoute(
       return;
     }
     if (!action && request.method() === "PATCH") {
+      if (options.teammateUpdateDelayMs) {
+        await new Promise((resolve) => setTimeout(resolve, options.teammateUpdateDelayMs));
+      }
+      if (options.failTeammateProfileUpdates) {
+        await route.fulfill({
+          status: 503,
+          json: { error: "teammate_profile_unavailable", message: "Teammate profile update is unavailable." },
+        });
+        return;
+      }
       const body = await request.postDataJSON() as Record<string, unknown>;
       const updated = {
         ...teammate,
@@ -8549,6 +8783,16 @@ export async function handleDaemonRoute(
       return;
     }
     if (action === "skills" && request.method() === "GET") {
+      if (options.teammateSkillLoadDelayMs) {
+        await new Promise((resolve) => setTimeout(resolve, options.teammateSkillLoadDelayMs));
+      }
+      if (options.failTeammateSkillLoads) {
+        await route.fulfill({
+          status: 500,
+          json: { error: "teammate_skills_load_failed", message: "Teammate skills could not be loaded." },
+        });
+        return;
+      }
       await route.fulfill({
         json: {
           cwd,
@@ -8560,9 +8804,46 @@ export async function handleDaemonRoute(
       return;
     }
     if (action === "skills" && request.method() === "PUT") {
+      if (options.teammateSkillUpdateDelayMs) {
+        await new Promise((resolve) => setTimeout(resolve, options.teammateSkillUpdateDelayMs));
+      }
+      if (options.failTeammateSkillUpdates) {
+        await route.fulfill({ status: 500, json: { error: "teammate_skills_update_failed", message: "Skill bindings could not be saved." } });
+        return;
+      }
       const body = await request.postDataJSON() as Record<string, unknown>;
-      state.teammateSkillBindings = state.teammateSkillBindings.filter((item) => !isRecord(item) || item.teammateId !== teammateId);
       const bindings = Array.isArray(body.bindings) ? body.bindings : [];
+      const existingBindings = state.teammateSkillBindings.filter((item) => isRecord(item) && item.teammateId === teammateId);
+      const existingSkillIds = new Set(existingBindings.map((binding) => String(binding.skillId)));
+      const knownSkillIds = new Set(state.skillRegistryEntries.flatMap((entry) =>
+        isRecord(entry) && typeof entry.id === "string" && (entry.reviewStatus === "builtin" || entry.reviewStatus === "published")
+          ? [entry.id]
+          : []
+      ));
+      const unknownBinding = bindings.find((binding) =>
+        isRecord(binding) &&
+        typeof binding.skillId === "string" &&
+        !knownSkillIds.has(binding.skillId) &&
+        !existingSkillIds.has(binding.skillId)
+      );
+      if (isRecord(unknownBinding) && typeof unknownBinding.skillId === "string") {
+        await route.fulfill({
+          status: 400,
+          json: {
+            error: "skill_not_found",
+            message: `Skill definition not found: ${unknownBinding.skillId}`,
+          },
+        });
+        return;
+      }
+      if (teammateId === "ling_agent" || teammate.systemRole === "ling_agent") {
+        await route.fulfill({
+          status: 400,
+          json: { error: "bad_request", message: "Ling Agent skill bindings are protected." },
+        });
+        return;
+      }
+      state.teammateSkillBindings = state.teammateSkillBindings.filter((item) => !isRecord(item) || item.teammateId !== teammateId);
       for (const binding of bindings) {
         if (!isRecord(binding) || typeof binding.skillId !== "string") {
           continue;
@@ -8675,6 +8956,13 @@ export async function handleDaemonRoute(
       return;
     }
     if (action === "persona-draft" && request.method() === "POST") {
+      if (options.failTeammatePersonaDrafts) {
+        await route.fulfill({
+          status: 503,
+          json: { error: "persona_draft_unavailable", message: "Persona draft is unavailable." },
+        });
+        return;
+      }
       const body = await request.postDataJSON() as Record<string, unknown>;
       await route.fulfill({ status: 201, json: { cwd, draft: createMockPersonaDraft(teammateId, body) } });
       return;
@@ -8816,6 +9104,16 @@ export async function handleDaemonRoute(
     }
     if (action === "avatar") {
       if (request.method() === "POST") {
+        if (options.failTeammateAvatarUploads) {
+          await route.fulfill({
+            status: 503,
+            json: {
+              error: "avatar_unavailable",
+              message: "Avatar upload is unavailable. Try again from teammate settings.",
+            },
+          });
+          return;
+        }
         const body = await request.postDataJSON() as Record<string, unknown>;
         const previousAvatarId = typeof teammate.avatarImageAttachmentId === "string" ? teammate.avatarImageAttachmentId : undefined;
         const attachment = {
@@ -8840,6 +9138,13 @@ export async function handleDaemonRoute(
         return;
       }
       if (request.method() === "DELETE") {
+        if (options.failTeammateAvatarDeletes) {
+          await route.fulfill({
+            status: 503,
+            json: { error: "avatar_delete_unavailable", message: "Avatar removal is unavailable." },
+          });
+          return;
+        }
         const avatarId = typeof teammate.avatarImageAttachmentId === "string" ? teammate.avatarImageAttachmentId : undefined;
         state.teammatePrivateAttachments = state.teammatePrivateAttachments.filter((item) => !isRecord(item) || item.id !== avatarId);
         const updated = { ...teammate, avatarImageAttachmentId: undefined, updatedAt: "2026-06-04T00:12:00.000Z" };
@@ -9532,6 +9837,9 @@ export async function handleDaemonRoute(
   }
   if (request.method() === "POST" && path === "/channels") {
     const body = await request.postDataJSON() as Record<string, unknown>;
+    if (state.channelCreateDelayMs) {
+      await new Promise((resolve) => setTimeout(resolve, state.channelCreateDelayMs));
+    }
     if (state.failNextChannelCreate) {
       const failure = state.failNextChannelCreate;
       state.failNextChannelCreate = undefined;
@@ -11426,6 +11734,9 @@ export async function handleDaemonRoute(
     const userMessage = createMockConversationUserMessage(state, thread, turn, run, boundConversationAttachments);
     const pendingAssistant = createMockConversationAssistantMessage(thread, turn, run, "", "running", now);
     const assistantMessage = createMockConversationAssistantMessage(thread, turn, run, assistantText, "succeeded", now);
+    if (state.conversationStreamDelayMs) {
+      await new Promise((resolve) => setTimeout(resolve, state.conversationStreamDelayMs));
+    }
     await route.fulfill({
       status: 200,
       contentType: "text/event-stream",
@@ -11438,12 +11749,17 @@ export async function handleDaemonRoute(
     });
     return;
   }
-  if (request.method() === "GET" && path === "/terminal-reports") {
+  const channelTerminalReportsMatch = /^\/channels\/([^/]+)\/terminal-reports$/.exec(path);
+  if (request.method() === "GET" && (path === "/terminal-reports" || channelTerminalReportsMatch)) {
+    const channelId = channelTerminalReportsMatch
+      ? decodeURIComponent(channelTerminalReportsMatch[1])
+      : undefined;
     const threadId = url.searchParams.get("threadId");
     const sourceKind = url.searchParams.get("sourceKind");
     const sourceId = url.searchParams.get("sourceId");
     const reports = state.terminalReports.filter((report) => {
       if (!isRecord(report)) return false;
+      if (channelId && report.channelId !== channelId) return false;
       if (threadId && report.threadId !== threadId) return false;
       const source = isRecord(report.source) ? report.source : {};
       if (sourceKind && source.kind !== sourceKind) return false;

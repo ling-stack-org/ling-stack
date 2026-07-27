@@ -1,0 +1,161 @@
+.task-workbench-main {
+  --channel-right-dock-layout-width: 0px;
+  --channel-side-panel-layout-handle-width: 0px;
+  --channel-right-dock-frame-z: 3;
+  --channel-right-dock-resize-z: 4;
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.task-workbench-main.with-channel-side-panel {
+  grid-template-columns: minmax(0, 1fr) var(--channel-side-panel-layout-handle-width) var(--channel-right-dock-layout-width);
+}
+
+.task-workbench-main.with-channel-side-panel.is-resizing-channel-side-panel {
+  transition: none;
+}
+
+.task-workbench-main.is-resizing-channel-side-panel,
+.task-workbench-main.is-resizing-channel-side-panel * {
+  cursor: col-resize !important;
+  user-select: none;
+}
+
+.channel-side-panel-frame,
+.channel-side-panel {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.channel-side-panel-frame {
+  z-index: var(--channel-right-dock-frame-z);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  width: var(--channel-right-dock-layout-width);
+  height: 100%;
+  justify-content: end;
+  justify-items: end;
+  align-items: stretch;
+  contain: layout paint;
+}
+
+.channel-side-panel-frame > .channel-side-panel {
+  justify-self: end;
+}
+
+.task-workbench-main.channel-right-dock-collapsed .channel-side-panel-frame {
+  pointer-events: none;
+}
+
+.channel-side-panel {
+  z-index: var(--channel-right-dock-frame-z);
+  opacity: 1;
+  transform: translate3d(0, 0, 0);
+  transition:
+    opacity var(--channel-right-dock-motion-duration) var(--channel-right-dock-motion-ease),
+    transform var(--channel-right-dock-motion-duration) var(--channel-right-dock-motion-ease),
+    visibility var(--ling-motion-instant) var(--ling-ease-linear) var(--ling-motion-instant);
+  will-change: opacity, transform;
+}
+
+.task-workbench-main.channel-right-dock-collapsed .channel-side-panel {
+  opacity: 1;
+  pointer-events: none;
+  transform: translate3d(0, 0, 0);
+  visibility: visible;
+  transition:
+    opacity var(--channel-right-dock-motion-duration) var(--channel-right-dock-motion-ease),
+    transform var(--channel-right-dock-motion-duration) var(--channel-right-dock-motion-ease),
+    visibility var(--ling-motion-instant) var(--ling-ease-linear) var(--channel-right-dock-motion-duration);
+}
+
+.channel-side-panel-resize-handle {
+  position: relative;
+  z-index: var(--channel-right-dock-resize-z);
+  align-self: stretch;
+  width: var(--channel-side-panel-layout-handle-width, var(--channel-side-panel-handle-width));
+  min-width: var(--channel-side-panel-layout-handle-width, var(--channel-side-panel-handle-width));
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  appearance: none;
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+  opacity: 1;
+  transition: opacity var(--ling-motion-fast) var(--ling-ease-standard);
+}
+
+.task-workbench-main.channel-right-dock-collapsed .channel-side-panel-resize-handle {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.channel-side-panel-resize-handle::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: var(--border);
+  opacity: 0.75;
+  transition:
+    width var(--ling-motion-fast) var(--ling-ease-standard),
+    background var(--ling-motion-fast) var(--ling-ease-standard),
+    opacity var(--ling-motion-fast) var(--ling-ease-standard);
+}
+
+.channel-side-panel-resize-handle:hover::before,
+.channel-side-panel-resize-handle:focus-visible::before,
+.task-workbench-main.is-resizing-channel-side-panel .channel-side-panel-resize-handle::before {
+  width: 2px;
+  background: var(--accent-border);
+  opacity: 1;
+}
+
+.channel-side-panel-resize-handle:focus-visible {
+  outline: 0;
+}
+
+.channel-side-panel .channel-protocol-tab-content {
+  height: 100%;
+}
+
+.channel-side-panel .channel-inspector {
+  min-height: 0;
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+@media (min-width: 901px) {
+  .task-workbench-window.with-channel-side-panel .task-workbench-header,
+  .task-workbench-window.with-channel-side-panel > .workbench-settings-panel {
+    margin-right: 0;
+  }
+
+  .task-workbench-main.with-channel-side-panel {
+    grid-template-columns: minmax(0, 1fr) var(--channel-side-panel-layout-handle-width) var(--channel-right-dock-layout-width);
+    padding-right: 0;
+  }
+
+  .task-workbench-main.with-channel-side-panel .channel-side-panel-frame {
+    position: static;
+    width: var(--channel-right-dock-layout-width);
+  }
+
+  .task-workbench-main.with-channel-side-panel .channel-side-panel,
+  .task-workbench-main.with-channel-side-panel.channel-right-dock-collapsed .channel-side-panel {
+    width: var(--channel-right-dock-width);
+    max-width: var(--channel-right-dock-width);
+  }
+}

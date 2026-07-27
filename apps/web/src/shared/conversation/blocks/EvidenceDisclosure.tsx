@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
+import { Button } from "../../ui/index.js";
 
 export interface EvidenceDisclosureProps {
   readonly className?: string;
@@ -21,15 +22,16 @@ export function EvidenceDisclosure({
 
   return (
     <section className={rootClassName} aria-label={label}>
-      <button
+      <Button
         className="conversation-evidence-toggle"
-        type="button"
         aria-expanded={open}
+        leadingIcon={open ? <ChevronDown /> : <ChevronRight />}
+        size="sm"
+        variant="ghost"
         onClick={() => setOpen((current) => !current)}
       >
-        {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        <span>{summary}</span>
-      </button>
+        {summary}
+      </Button>
       {open ? <div className="conversation-evidence-body">{children}</div> : null}
     </section>
   );

@@ -42,7 +42,8 @@ export function useChannelWorkflowController(input: {
   readonly setChannelWorkflowSteps: Dispatch<SetStateAction<readonly ChannelWorkflowStep[]>>;
   readonly setSelectedTaskId: Dispatch<SetStateAction<string>>;
   readonly setTasks: Dispatch<SetStateAction<readonly Task[]>>;
-  readonly setErrorMessage: (message: string) => void;
+  readonly reportWorkflowError: (identity: string, message: string, scope?: "validation" | "mutation" | "stream") => void;
+  readonly clearWorkflowError: (identity: string) => void;
   readonly createChannelWorkflowFromTemplate: WorkspaceCommands["createChannelWorkflowFromTemplate"];
   readonly orchestrateChannelWorkflow: WorkspaceCommands["orchestrateChannelWorkflow"];
   readonly cancelChannelWorkflow: WorkspaceCommands["cancelChannelWorkflow"];
@@ -59,13 +60,13 @@ export function useChannelWorkflowController(input: {
   async function orchestrateWorkflowById(workflowId: string, channelId?: string): Promise<void> {
     const workspaceCwd = input.form.cwd.trim();
     if (!workspaceCwd) {
-      input.setErrorMessage("本地工作区未就绪");
+      input.reportWorkflowError(workflowId, "本地工作区未就绪", "validation");
       return;
     }
 
     input.setOrchestratingWorkflowId(workflowId);
     try {
-      input.setErrorMessage("");
+      input.clearWorkflowError(workflowId);
       const result = await input.orchestrateChannelWorkflow(workspaceCwd, workflowId);
       input.setChannelWorkflows((current) => [result.workflow, ...current.filter((item) => item.id !== result.workflow.id)]);
       const workflowStep = "workflowStep" in result ? result.workflowStep : undefined;
@@ -76,9 +77,9 @@ export function useChannelWorkflowController(input: {
         input.upsertApprovalRecord(result.approval);
       }
       if (result.status === "blocked" || result.status === "failed") {
-        input.setErrorMessage(result.blocker);
+        input.reportWorkflowError(workflowId, result.blocker);
       } else if (result.status === "idle" && result.reason) {
-        input.setErrorMessage(result.reason);
+        input.reportWorkflowError(workflowId, result.reason);
       }
       await input.emitDomainEvent({
         type: "workflow.advanced",
@@ -86,7 +87,7 @@ export function useChannelWorkflowController(input: {
         channelId: channelId ?? input.selectedChannelId,
       });
     } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
+      input.reportWorkflowError(workflowId, error instanceof Error ? error.message : String(error));
     } finally {
       input.setOrchestratingWorkflowId((current) => current === workflowId ? "" : current);
     }
@@ -94,8 +95,9 @@ export function useChannelWorkflowController(input: {
 
   async function startAutoplanWorkflow(): Promise<void> {
     const workspaceCwd = input.form.cwd.trim();
+    const feedbackIdentity = `new:${input.selectedChannelId || "unselected"}`;
     if (!workspaceCwd || !input.selectedChannelId) {
-      input.setErrorMessage("请先选择 channel");
+      input.reportWorkflowError(feedbackIdentity, "请先选择 channel", "validation");
       return;
     }
 
@@ -108,7 +110,7 @@ export function useChannelWorkflowController(input: {
     const objective = (input.channelBrief?.objective || selectedChannel?.name || "Run the built-in autoplan-lite workflow.").trim();
     input.setOrchestratingWorkflowId("new:autoplan-lite");
     try {
-      input.setErrorMessage("");
+      input.clearWorkflowError(feedbackIdentity);
       const response = await input.createChannelWorkflowFromTemplate(workspaceCwd, input.selectedChannelId, {
         templateId: "autoplan-lite",
         title: `${selectedChannel?.name ?? "Channel"} autoplan`,
@@ -121,7 +123,7 @@ export function useChannelWorkflowController(input: {
       input.setChannelWorkflowSteps((current) => mergeWorkflowSteps(current, response.workflowSteps));
       await orchestrateWorkflowById(response.workflow.id, response.workflow.channelId);
     } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
+      input.reportWorkflowError(feedbackIdentity, error instanceof Error ? error.message : String(error));
     } finally {
       input.setOrchestratingWorkflowId((current) => current === "new:autoplan-lite" ? "" : current);
     }
@@ -134,13 +136,13 @@ export function useChannelWorkflowController(input: {
   async function cancelWorkflowAction(workflow: ChannelWorkflow): Promise<void> {
     const workspaceCwd = input.form.cwd.trim();
     if (!workspaceCwd) {
-      input.setErrorMessage("本地工作区未就绪");
+      input.reportWorkflowError(workflow.id, "本地工作区未就绪", "validation");
       return;
     }
 
     input.setOrchestratingWorkflowId(workflow.id);
     try {
-      input.setErrorMessage("");
+      input.clearWorkflowError(workflow.id);
       const response = await input.cancelChannelWorkflow(workspaceCwd, workflow.id);
       input.setChannelWorkflows((current) => [response.workflow, ...current.filter((item) => item.id !== response.workflow.id)]);
       input.setChannelWorkflowSteps((current) => mergeWorkflowSteps(current, response.workflowSteps));
@@ -151,7 +153,7 @@ export function useChannelWorkflowController(input: {
         runIds: [],
       });
     } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
+      input.reportWorkflowError(workflow.id, error instanceof Error ? error.message : String(error));
     } finally {
       input.setOrchestratingWorkflowId((current) => current === workflow.id ? "" : current);
     }
@@ -160,13 +162,13 @@ export function useChannelWorkflowController(input: {
   async function retryWorkflowStepAction(step: ChannelWorkflowStep): Promise<void> {
     const workspaceCwd = input.form.cwd.trim();
     if (!workspaceCwd) {
-      input.setErrorMessage("本地工作区未就绪");
+      input.reportWorkflowError(step.id, "本地工作区未就绪", "validation");
       return;
     }
 
     input.setRunningWorkflowStepId(step.id);
     try {
-      input.setErrorMessage("");
+      input.clearWorkflowError(step.id);
       const result = await input.retryChannelWorkflowStep(workspaceCwd, step.id);
       input.setChannelWorkflows((current) => [result.workflow, ...current.filter((item) => item.id !== result.workflow.id)]);
       const workflowStep = "workflowStep" in result ? result.workflowStep : undefined;
@@ -177,9 +179,9 @@ export function useChannelWorkflowController(input: {
         input.upsertApprovalRecord(result.approval);
       }
       if (result.status === "blocked" || result.status === "failed") {
-        input.setErrorMessage(result.blocker);
+        input.reportWorkflowError(step.id, result.blocker);
       } else if (result.status === "idle" && result.reason) {
-        input.setErrorMessage(result.reason);
+        input.reportWorkflowError(step.id, result.reason);
       }
       await input.emitDomainEvent({
         type: "workflowStep.retried",
@@ -188,7 +190,7 @@ export function useChannelWorkflowController(input: {
         channelId: step.channelId,
       });
     } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
+      input.reportWorkflowError(step.id, error instanceof Error ? error.message : String(error));
     } finally {
       input.setRunningWorkflowStepId((current) => current === step.id ? "" : current);
     }
@@ -197,7 +199,7 @@ export function useChannelWorkflowController(input: {
   async function startWorkflowStepAction(step: ChannelWorkflowStep, mode: ChannelWorkflowStepStartMode): Promise<void> {
     const workspaceCwd = input.form.cwd.trim();
     if (!workspaceCwd) {
-      input.setErrorMessage("本地工作区未就绪");
+      input.reportWorkflowError(step.id, "本地工作区未就绪", "validation");
       return;
     }
     const workflow = input.channelWorkflows.find((item) => item.id === step.workflowId);
@@ -215,7 +217,7 @@ export function useChannelWorkflowController(input: {
 
     input.setRunningWorkflowStepId(step.id);
     try {
-      input.setErrorMessage("");
+      input.clearWorkflowError(step.id);
       if (mode === "create_task") {
         const response = await input.startChannelWorkflowStep(workspaceCwd, step.id, request);
         if (response.workflow) {
@@ -228,7 +230,7 @@ export function useChannelWorkflowController(input: {
           input.setTasks((current) => [createdTask, ...current.filter((item) => item.id !== createdTask.id)]);
         }
         if (response.blocker) {
-          input.setErrorMessage(response.blocker);
+          input.reportWorkflowError(step.id, response.blocker);
         }
         await Promise.all([input.refreshTasks(step.channelId), input.refreshChannelProtocol(step.channelId), input.refreshRuntimeState(workspaceCwd)]);
         return;
@@ -243,7 +245,7 @@ export function useChannelWorkflowController(input: {
       });
       await Promise.all([input.refreshTasks(step.channelId), input.refreshChannelProtocol(step.channelId), input.refreshRuntimeState(workspaceCwd)]);
     } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
+      input.reportWorkflowError(step.id, error instanceof Error ? error.message : String(error));
     } finally {
       input.setRunningWorkflowStepId((current) => current === step.id ? "" : current);
     }
@@ -251,7 +253,7 @@ export function useChannelWorkflowController(input: {
 
   async function updateWorkflowStepStatus(step: ChannelWorkflowStep, status: "skipped" | "cancelled"): Promise<void> {
     try {
-      input.setErrorMessage("");
+      input.clearWorkflowError(step.id);
       const response = await input.updateChannelWorkflowStep(input.form.cwd.trim(), step.id, { status });
       input.setChannelWorkflowSteps((current) => current.map((item) => item.id === response.workflowStep.id ? response.workflowStep : item));
       if (response.workflow) {
@@ -264,7 +266,7 @@ export function useChannelWorkflowController(input: {
         channelId: step.channelId,
       });
     } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
+      input.reportWorkflowError(step.id, error instanceof Error ? error.message : String(error));
     }
   }
 

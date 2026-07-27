@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   activateMediaWorkflow,
   analyzeMediaWorkflow,
@@ -21,239 +21,494 @@ import type {
 import type {
   MediaWorkflowControllerActions,
   MediaWorkflowControllerState,
+  MediaWorkflowFailure,
+  MediaWorkflowFailureOwner,
   MediaWorkflowImportDraft,
+  MediaWorkflowMutationOutcome,
+  MediaWorkflowResourcePhase,
 } from "./media-workflow-types.js";
+import {
+  deriveMediaWorkflowImportValidation,
+  mediaWorkflowBusyKey,
+  repairMediaWorkflowConnectionSelection,
+  repairMediaWorkflowSelection,
+  referencedWorkflowCount,
+} from "./media-workflow-view-models.js";
+
+interface RequestIdentity {
+  readonly cwd: string;
+  readonly epoch: number;
+}
+
+interface BusyTicket extends RequestIdentity {
+  readonly key: string;
+  readonly lockKey: string;
+  readonly token: number;
+}
+
+const fiveMegabytes = 5 * 1024 * 1024;
 
 export function useMediaWorkflowController(input: {
   readonly cwd: string;
   readonly onJobsChanged: () => void;
 }): { readonly state: MediaWorkflowControllerState; readonly actions: MediaWorkflowControllerActions } {
-  const [connections, setConnections] = useState<readonly MediaWorkflowConnection[]>([]);
-  const [workflows, setWorkflows] = useState<readonly MediaWorkflowDefinitionDetail[]>([]);
+  const [workspaceEpoch, setWorkspaceEpoch] = useState(0);
+  const [phase, setPhase] = useState<MediaWorkflowResourcePhase>("idle");
+  const [connections, setConnectionsState] = useState<readonly MediaWorkflowConnection[]>([]);
+  const [workflows, setWorkflowsState] = useState<readonly MediaWorkflowDefinitionDetail[]>([]);
   const [selectedConnectionId, setSelectedConnectionId] = useState("");
   const [selectedWorkflowId, setSelectedWorkflowId] = useState("");
-  const [importDraft, setImportDraft] = useState<MediaWorkflowImportDraft>();
-  const [isLoading, setLoading] = useState(false);
-  const [busyAction, setBusyAction] = useState("");
-  const [errorMessage, setErrorMessage] = useState("");
+  const [libraryDetail, setLibraryDetail] = useState<"workflow" | "import">("workflow");
+  const [importDraft, setImportDraftState] = useState<MediaWorkflowImportDraft>();
+  const [busyKeys, setBusyKeys] = useState<readonly string[]>([]);
+  const [failures, setFailures] = useState<readonly MediaWorkflowFailure[]>([]);
 
-  const refresh = useCallback(async (): Promise<void> => {
-    const cwd = input.cwd.trim();
-    if (!cwd) {
-      setConnections([]);
-      setWorkflows([]);
-      return;
-    }
-    setLoading(true);
+  const epochRef = useRef(0);
+  const cwdRef = useRef("");
+  const loadRequestRef = useRef(0);
+  const hasLoadedRef = useRef(false);
+  const busyTokenRef = useRef(0);
+  const busyTicketsRef = useRef(new Map<string, number>());
+  const subjectTicketsRef = useRef(new Map<string, number>());
+  const connectionsRef = useRef<readonly MediaWorkflowConnection[]>([]);
+  const workflowsRef = useRef<readonly MediaWorkflowDefinitionDetail[]>([]);
+  const importDraftRef = useRef<MediaWorkflowImportDraft>();
+  const onJobsChangedRef = useRef(input.onJobsChanged);
+  onJobsChangedRef.current = input.onJobsChanged;
+
+  const setConnections = useCallback((next: readonly MediaWorkflowConnection[]): void => {
+    connectionsRef.current = next;
+    setConnectionsState(next);
+  }, []);
+
+  const updateConnections = useCallback((update: (current: readonly MediaWorkflowConnection[]) => readonly MediaWorkflowConnection[]): void => {
+    setConnections(update(connectionsRef.current));
+  }, [setConnections]);
+
+  const setWorkflows = useCallback((next: readonly MediaWorkflowDefinitionDetail[]): void => {
+    workflowsRef.current = next;
+    setWorkflowsState(next);
+  }, []);
+
+  const updateWorkflows = useCallback((update: (current: readonly MediaWorkflowDefinitionDetail[]) => readonly MediaWorkflowDefinitionDetail[]): void => {
+    setWorkflows(update(workflowsRef.current));
+  }, [setWorkflows]);
+
+  const setImportDraft = useCallback((next: MediaWorkflowImportDraft | undefined): void => {
+    importDraftRef.current = next;
+    setImportDraftState(next);
+  }, []);
+
+  const isCurrent = useCallback((identity: RequestIdentity): boolean => (
+    identity.epoch === epochRef.current && identity.cwd === cwdRef.current
+  ), []);
+
+  const clearFailure = useCallback((owner: MediaWorkflowFailureOwner, subjectId?: string): void => {
+    setFailures((current) => current.filter((failure) => failure.owner !== owner || failure.subjectId !== subjectId));
+  }, []);
+
+  const replaceFailure = useCallback((identity: RequestIdentity, failure: MediaWorkflowFailure): void => {
+    if (!isCurrent(identity)) return;
+    setFailures((current) => [
+      ...current.filter((item) => item.owner !== failure.owner || item.subjectId !== failure.subjectId),
+      failure,
+    ]);
+  }, [isCurrent]);
+
+  const claimBusy = useCallback((identity: RequestIdentity, owner: string, subjectId?: string): BusyTicket | undefined => {
+    if (!isCurrent(identity)) return undefined;
+    const key = mediaWorkflowBusyKey(owner, subjectId);
+    const lockKey = mutationLockKey(owner, subjectId);
+    if (busyTicketsRef.current.has(key) || subjectTicketsRef.current.has(lockKey)) return undefined;
+    const ticket = { ...identity, key, lockKey, token: ++busyTokenRef.current };
+    busyTicketsRef.current.set(key, ticket.token);
+    subjectTicketsRef.current.set(lockKey, ticket.token);
+    setBusyKeys([...busyTicketsRef.current.keys()]);
+    return ticket;
+  }, [isCurrent]);
+
+  const releaseBusy = useCallback((ticket: BusyTicket): void => {
+    if (busyTicketsRef.current.get(ticket.key) !== ticket.token) return;
+    busyTicketsRef.current.delete(ticket.key);
+    if (subjectTicketsRef.current.get(ticket.lockKey) === ticket.token) subjectTicketsRef.current.delete(ticket.lockKey);
+    if (isCurrent(ticket)) setBusyKeys([...busyTicketsRef.current.keys()]);
+  }, [isCurrent]);
+
+  const load = useCallback(async (identity: RequestIdentity): Promise<MediaWorkflowMutationOutcome> => {
+    if (!identity.cwd || !isCurrent(identity)) return { ok: false, reason: "stale" };
+    const requestId = ++loadRequestRef.current;
+    const retained = hasLoadedRef.current;
+    setPhase(retained ? "refreshing" : "initial-loading");
+    clearFailure("load");
     try {
-      setErrorMessage("");
       const [connectionResponse, workflowResponse] = await Promise.all([
-        listMediaWorkflowConnections(cwd),
-        listMediaWorkflows(cwd),
+        listMediaWorkflowConnections(identity.cwd),
+        listMediaWorkflows(identity.cwd),
       ]);
+      if (!isCurrent(identity) || requestId !== loadRequestRef.current) return { ok: false, reason: "stale" };
       setConnections(connectionResponse.connections);
       setWorkflows(workflowResponse.workflows);
-      setSelectedConnectionId((current) => current && connectionResponse.connections.some((item) => item.id === current)
-        ? current
-        : connectionResponse.connections[0]?.id ?? "");
-      setSelectedWorkflowId((current) => current && workflowResponse.workflows.some((item) => item.definition.id === current)
-        ? current
-        : workflowResponse.workflows.find((item) => item.definition.status !== "archived")?.definition.id ?? "");
+      setSelectedConnectionId((current) => repairMediaWorkflowConnectionSelection(connectionResponse.connections, current));
+      setSelectedWorkflowId((current) => repairMediaWorkflowSelection(workflowResponse.workflows, current));
+      hasLoadedRef.current = true;
+      setPhase("ready");
+      return { ok: true };
     } catch (error) {
-      setErrorMessage(readError(error));
-    } finally {
-      setLoading(false);
+      if (!isCurrent(identity) || requestId !== loadRequestRef.current) return { ok: false, reason: "stale" };
+      replaceFailure(identity, {
+        owner: "load",
+        productMessageKey: retained
+          ? "Could not refresh production workflows. Showing the last loaded data."
+          : "Could not load production workflows.",
+        technicalMessage: readError(error),
+      });
+      setPhase(retained ? "retained-error" : "initial-error");
+      return { ok: false, reason: "failed" };
     }
-  }, [input.cwd]);
+  }, [clearFailure, isCurrent, replaceFailure, setConnections, setWorkflows]);
+
+  const refresh = useCallback(async (): Promise<MediaWorkflowMutationOutcome> => (
+    load({ cwd: cwdRef.current, epoch: epochRef.current })
+  ), [load]);
 
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    const cwd = input.cwd.trim();
+    const epoch = ++epochRef.current;
+    cwdRef.current = cwd;
+    loadRequestRef.current += 1;
+    busyTicketsRef.current.clear();
+    subjectTicketsRef.current.clear();
+    hasLoadedRef.current = false;
+    setWorkspaceEpoch(epoch);
+    setBusyKeys([]);
+    setFailures([]);
+    setConnections([]);
+    setWorkflows([]);
+    setSelectedConnectionId("");
+    setSelectedWorkflowId("");
+    setLibraryDetail("workflow");
+    setImportDraft(undefined);
+    setPhase(cwd ? "initial-loading" : "idle");
+    if (cwd) void load({ cwd, epoch });
+    return () => {
+      if (epochRef.current === epoch) {
+        epochRef.current += 1;
+        loadRequestRef.current += 1;
+      }
+    };
+  }, [input.cwd, load, setConnections, setImportDraft, setWorkflows]);
 
-  async function createConnection(request: CreateMediaWorkflowConnectionRequest): Promise<MediaWorkflowConnection | undefined> {
-    setBusyAction("create-connection");
+  const createConnection = useCallback(async (
+    request: CreateMediaWorkflowConnectionRequest,
+  ): Promise<MediaWorkflowMutationOutcome<MediaWorkflowConnection>> => {
+    const identity = currentIdentity(cwdRef, epochRef);
+    const ticket = claimBusy(identity, "connection-create", "new");
+    if (!ticket) return { ok: false, reason: "in_flight" };
+    clearFailure("connection-create", "new");
     try {
-      setErrorMessage("");
-      const response = await createMediaWorkflowConnection(input.cwd.trim(), request);
-      setConnections((current) => [response.connection, ...current]);
+      const response = await createMediaWorkflowConnection(identity.cwd, request);
+      if (!isCurrent(identity)) return { ok: false, reason: "stale" };
+      updateConnections((current) => [response.connection, ...current.filter((item) => item.id !== response.connection.id)]);
       setSelectedConnectionId(response.connection.id);
-      return response.connection;
+      return { ok: true, value: response.connection };
     } catch (error) {
-      setErrorMessage(readError(error));
-      return undefined;
+      replaceFailure(identity, mutationFailure("connection-create", "new", "Could not create this connection.", error));
+      return { ok: false, reason: isCurrent(identity) ? "failed" : "stale" };
     } finally {
-      setBusyAction("");
+      releaseBusy(ticket);
     }
-  }
+  }, [claimBusy, clearFailure, isCurrent, releaseBusy, replaceFailure, updateConnections]);
 
-  async function updateConnection(connectionId: string, request: UpdateMediaWorkflowConnectionRequest): Promise<void> {
-    setBusyAction(`save-connection:${connectionId}`);
+  const updateConnection = useCallback(async (
+    connectionId: string,
+    request: UpdateMediaWorkflowConnectionRequest,
+  ): Promise<MediaWorkflowMutationOutcome<MediaWorkflowConnection>> => {
+    const identity = currentIdentity(cwdRef, epochRef);
+    const ticket = claimBusy(identity, "connection-update", connectionId);
+    if (!ticket) return { ok: false, reason: "in_flight" };
+    clearFailure("connection-update", connectionId);
     try {
-      setErrorMessage("");
-      const response = await updateMediaWorkflowConnection(input.cwd.trim(), connectionId, request);
-      setConnections((current) => current.map((item) => item.id === connectionId ? response.connection : item));
+      const response = await updateMediaWorkflowConnection(identity.cwd, connectionId, request);
+      if (!isCurrent(identity)) return { ok: false, reason: "stale" };
+      updateConnections((current) => current.map((item) => item.id === connectionId ? response.connection : item));
+      return { ok: true, value: response.connection };
     } catch (error) {
-      setErrorMessage(readError(error));
+      replaceFailure(identity, mutationFailure("connection-update", connectionId, "Could not save this connection.", error));
+      return { ok: false, reason: isCurrent(identity) ? "failed" : "stale" };
     } finally {
-      setBusyAction("");
+      releaseBusy(ticket);
     }
-  }
+  }, [claimBusy, clearFailure, isCurrent, releaseBusy, replaceFailure, updateConnections]);
 
-  async function checkConnection(connectionId: string): Promise<void> {
-    setBusyAction(`check-connection:${connectionId}`);
+  const checkConnection = useCallback(async (
+    connectionId: string,
+  ): Promise<MediaWorkflowMutationOutcome<MediaWorkflowConnection>> => {
+    const identity = currentIdentity(cwdRef, epochRef);
+    const ticket = claimBusy(identity, "connection-check", connectionId);
+    if (!ticket) return { ok: false, reason: "in_flight" };
+    clearFailure("connection-check", connectionId);
     try {
-      setErrorMessage("");
-      const response = await checkMediaWorkflowConnection(input.cwd.trim(), connectionId);
-      setConnections((current) => current.map((item) => item.id === connectionId ? response.connection : item));
+      const response = await checkMediaWorkflowConnection(identity.cwd, connectionId);
+      if (!isCurrent(identity)) return { ok: false, reason: "stale" };
+      updateConnections((current) => current.map((item) => item.id === connectionId ? response.connection : item));
+      return { ok: true, value: response.connection };
     } catch (error) {
-      setErrorMessage(readError(error));
+      replaceFailure(identity, mutationFailure("connection-check", connectionId, "Could not check this connection.", error));
+      return { ok: false, reason: isCurrent(identity) ? "failed" : "stale" };
     } finally {
-      setBusyAction("");
+      releaseBusy(ticket);
     }
-  }
+  }, [claimBusy, clearFailure, isCurrent, releaseBusy, replaceFailure, updateConnections]);
 
-  async function deleteConnection(connectionId: string): Promise<void> {
-    setBusyAction(`delete-connection:${connectionId}`);
+  const deleteConnection = useCallback(async (connectionId: string): Promise<MediaWorkflowMutationOutcome> => {
+    const identity = currentIdentity(cwdRef, epochRef);
+    if (referencedWorkflowCount(workflowsRef.current, connectionId) > 0) {
+      replaceFailure(identity, {
+        owner: "connection-delete",
+        subjectId: connectionId,
+        productMessageKey: "This connection is used by a production workflow and cannot be deleted.",
+      });
+      return { ok: false, reason: "invalid" };
+    }
+    const ticket = claimBusy(identity, "connection-delete", connectionId);
+    if (!ticket) return { ok: false, reason: "in_flight" };
+    clearFailure("connection-delete", connectionId);
     try {
-      setErrorMessage("");
-      await deleteMediaWorkflowConnection(input.cwd.trim(), connectionId);
-      setConnections((current) => current.filter((item) => item.id !== connectionId));
-      setSelectedConnectionId((current) => current === connectionId ? "" : current);
+      await deleteMediaWorkflowConnection(identity.cwd, connectionId);
+      if (!isCurrent(identity)) return { ok: false, reason: "stale" };
+      const next = connectionsRef.current.filter((item) => item.id !== connectionId);
+      setConnections(next);
+      setSelectedConnectionId((current) => repairMediaWorkflowConnectionSelection(next, current === connectionId ? "" : current));
+      return { ok: true };
     } catch (error) {
-      setErrorMessage(readError(error));
+      replaceFailure(identity, mutationFailure("connection-delete", connectionId, "Could not delete this connection.", error));
+      return { ok: false, reason: isCurrent(identity) ? "failed" : "stale" };
     } finally {
-      setBusyAction("");
+      releaseBusy(ticket);
     }
-  }
+  }, [claimBusy, clearFailure, isCurrent, releaseBusy, replaceFailure, setConnections]);
 
-  async function inspectImportFile(file: File, connectionId: string): Promise<void> {
-    if (!connectionId) {
-      setErrorMessage("请先创建并选择一个 ComfyUI 连接。");
-      return;
-    }
-    setBusyAction("analyze-workflow");
+  const inspectImportFile = useCallback(async (file: File, connectionId: string): Promise<MediaWorkflowMutationOutcome> => {
+    const identity = currentIdentity(cwdRef, epochRef);
+    const subjectId = connectionId || "unselected";
+    const ticket = claimBusy(identity, "import-analyze", subjectId);
+    if (!ticket) return { ok: false, reason: "in_flight" };
+    clearFailure("import-analyze", subjectId);
     try {
-      setErrorMessage("");
-      if (file.size > 5 * 1024 * 1024) throw new Error("工作流 JSON 不能超过 5 MB。");
+      if (!connectionId) throw new WorkflowInputError("Create and select a ComfyUI connection before importing.");
+      if (file.size > fiveMegabytes) throw new WorkflowInputError("Workflow JSON files cannot exceed 5 MB.");
       const parsed = JSON.parse(await file.text()) as unknown;
-      if (!isRecord(parsed)) throw new Error("请选择 ComfyUI API Format JSON 文件。");
-      const analysis = await analyzeMediaWorkflow(input.cwd.trim(), { connectionId, graph: parsed });
-      setImportDraft({
+      if (!isRecord(parsed)) throw new WorkflowInputError("Choose a ComfyUI API Format JSON object.");
+      const analysis = await analyzeMediaWorkflow(identity.cwd, { connectionId, graph: parsed });
+      if (!isCurrent(identity)) return { ok: false, reason: "stale" };
+      const draft: MediaWorkflowImportDraft = {
         connectionId,
         fileName: file.name,
-        name: file.name.replace(/\.json$/iu, "").trim() || "未命名生产流程",
+        name: file.name.replace(/\.json$/iu, "").trim(),
         description: "",
         graph: parsed,
         analysis,
         inputFields: analysis.inputFields,
         outputRules: analysis.outputRules,
-      });
+      };
+      setImportDraft(draft);
+      setLibraryDetail("import");
+      return { ok: true };
     } catch (error) {
-      setErrorMessage(readError(error));
-      setImportDraft(undefined);
+      const productMessageKey = error instanceof WorkflowInputError
+        ? error.messageKey
+        : error instanceof SyntaxError ? "Workflow JSON is not valid." : "Could not analyze this workflow file.";
+      replaceFailure(identity, mutationFailure("import-analyze", subjectId, productMessageKey, error));
+      return { ok: false, reason: isCurrent(identity) ? "failed" : "stale" };
     } finally {
-      setBusyAction("");
+      releaseBusy(ticket);
     }
-  }
+  }, [claimBusy, clearFailure, isCurrent, releaseBusy, replaceFailure, setImportDraft]);
 
-  function updateImportDraft(patch: Partial<Pick<MediaWorkflowImportDraft, "name" | "description" | "inputFields" | "outputRules">>): void {
-    setImportDraft((current) => current ? { ...current, ...patch } : current);
-  }
+  const updateImportDraft = useCallback((patch: Partial<Pick<MediaWorkflowImportDraft, "name" | "description" | "inputFields" | "outputRules">>): void => {
+    const current = importDraftRef.current;
+    if (!current) return;
+    setImportDraft({ ...current, ...patch });
+    clearFailure("import-save", current.connectionId);
+  }, [clearFailure, setImportDraft]);
 
-  async function saveImport(): Promise<MediaWorkflowDefinitionDetail | undefined> {
-    if (!importDraft || !importDraft.name.trim()) return undefined;
-    setBusyAction("import-workflow");
-    try {
-      setErrorMessage("");
-      const response = await importMediaWorkflow(input.cwd.trim(), {
-        connectionId: importDraft.connectionId,
-        name: importDraft.name.trim(),
-        description: importDraft.description.trim() || undefined,
-        fileName: importDraft.fileName,
-        graph: importDraft.graph,
-        inputFields: importDraft.inputFields,
-        outputRules: importDraft.outputRules,
+  const cancelImport = useCallback((): void => {
+    const current = importDraftRef.current;
+    if (current) {
+      clearFailure("import-analyze", current.connectionId);
+      clearFailure("import-save", current.connectionId);
+    }
+    setImportDraft(undefined);
+    setLibraryDetail("workflow");
+  }, [clearFailure, setImportDraft]);
+
+  const saveImport = useCallback(async (): Promise<MediaWorkflowMutationOutcome<MediaWorkflowDefinitionDetail>> => {
+    const identity = currentIdentity(cwdRef, epochRef);
+    const draft = importDraftRef.current;
+    if (!draft) return { ok: false, reason: "invalid" };
+    const validation = deriveMediaWorkflowImportValidation(draft);
+    if (!validation.canImport) {
+      replaceFailure(identity, {
+        owner: "import-save",
+        subjectId: draft.connectionId,
+        productMessageKey: validation.issues[0]?.key ?? "Review the workflow mappings before importing.",
+        productMessageValues: validation.issues[0]?.values,
       });
+      return { ok: false, reason: "invalid" };
+    }
+    const ticket = claimBusy(identity, "import-save", draft.connectionId);
+    if (!ticket) return { ok: false, reason: "in_flight" };
+    clearFailure("import-save", draft.connectionId);
+    try {
+      const response = await importMediaWorkflow(identity.cwd, {
+        connectionId: draft.connectionId,
+        name: draft.name.trim(),
+        description: draft.description.trim() || undefined,
+        fileName: draft.fileName,
+        graph: draft.graph,
+        inputFields: draft.inputFields,
+        outputRules: draft.outputRules,
+      });
+      if (!isCurrent(identity)) return { ok: false, reason: "stale" };
       const detail: MediaWorkflowDefinitionDetail = response;
-      setWorkflows((current) => [detail, ...current.filter((item) => item.definition.id !== detail.definition.id)]);
+      updateWorkflows((current) => [detail, ...current.filter((item) => item.definition.id !== detail.definition.id)]);
       setSelectedWorkflowId(detail.definition.id);
+      clearFailure("import-analyze", draft.connectionId);
       setImportDraft(undefined);
-      return detail;
+      setLibraryDetail("workflow");
+      return { ok: true, value: detail };
     } catch (error) {
-      setErrorMessage(readError(error));
-      return undefined;
+      replaceFailure(identity, mutationFailure("import-save", draft.connectionId, "Could not import this workflow. Your draft is still available.", error));
+      return { ok: false, reason: isCurrent(identity) ? "failed" : "stale" };
     } finally {
-      setBusyAction("");
+      releaseBusy(ticket);
     }
-  }
+  }, [claimBusy, clearFailure, isCurrent, releaseBusy, replaceFailure, setImportDraft, updateWorkflows]);
 
-  async function testWorkflow(workflowId: string, versionId: string, inputValues: Record<string, unknown>): Promise<void> {
-    setBusyAction(`test-workflow:${workflowId}`);
+  const testWorkflow = useCallback(async (
+    workflowId: string,
+    versionId: string,
+    inputValues: Record<string, unknown>,
+  ): Promise<MediaWorkflowMutationOutcome> => {
+    const identity = currentIdentity(cwdRef, epochRef);
+    const ticket = claimBusy(identity, "workflow-test", workflowId);
+    if (!ticket) return { ok: false, reason: "in_flight" };
+    clearFailure("workflow-test", workflowId);
     try {
-      setErrorMessage("");
-      await testMediaWorkflow(input.cwd.trim(), workflowId, { versionId, inputValues });
-      input.onJobsChanged();
-      await refresh();
+      await testMediaWorkflow(identity.cwd, workflowId, { versionId, inputValues });
+      if (!isCurrent(identity)) return { ok: false, reason: "stale" };
+      onJobsChangedRef.current();
+      await load(identity);
+      return isCurrent(identity) ? { ok: true } : { ok: false, reason: "stale" };
     } catch (error) {
-      setErrorMessage(readError(error));
+      replaceFailure(identity, mutationFailure("workflow-test", workflowId, "Could not start this workflow test.", error));
+      return { ok: false, reason: isCurrent(identity) ? "failed" : "stale" };
     } finally {
-      setBusyAction("");
+      releaseBusy(ticket);
     }
-  }
+  }, [claimBusy, clearFailure, isCurrent, load, releaseBusy, replaceFailure]);
 
-  async function activateWorkflow(workflowId: string, versionId: string): Promise<void> {
-    setBusyAction(`activate-workflow:${workflowId}`);
+  const activateWorkflow = useCallback(async (
+    workflowId: string,
+    versionId: string,
+  ): Promise<MediaWorkflowMutationOutcome<MediaWorkflowDefinitionDetail>> => {
+    const identity = currentIdentity(cwdRef, epochRef);
+    const ticket = claimBusy(identity, "workflow-activate", workflowId);
+    if (!ticket) return { ok: false, reason: "in_flight" };
+    clearFailure("workflow-activate", workflowId);
     try {
-      setErrorMessage("");
-      const response = await activateMediaWorkflow(input.cwd.trim(), workflowId, versionId);
-      setWorkflows((current) => current.map((item) => item.definition.id === workflowId ? response : item));
+      const response = await activateMediaWorkflow(identity.cwd, workflowId, versionId);
+      if (!isCurrent(identity)) return { ok: false, reason: "stale" };
+      updateWorkflows((current) => current.map((item) => item.definition.id === workflowId ? response : item));
+      return { ok: true, value: response };
     } catch (error) {
-      setErrorMessage(readError(error));
+      replaceFailure(identity, mutationFailure("workflow-activate", workflowId, "Could not activate this workflow.", error));
+      return { ok: false, reason: isCurrent(identity) ? "failed" : "stale" };
     } finally {
-      setBusyAction("");
+      releaseBusy(ticket);
     }
-  }
+  }, [claimBusy, clearFailure, isCurrent, releaseBusy, replaceFailure, updateWorkflows]);
 
-  async function archiveWorkflow(workflowId: string): Promise<void> {
-    setBusyAction(`archive-workflow:${workflowId}`);
+  const archiveWorkflow = useCallback(async (
+    workflowId: string,
+  ): Promise<MediaWorkflowMutationOutcome<MediaWorkflowDefinitionDetail>> => {
+    const identity = currentIdentity(cwdRef, epochRef);
+    const ticket = claimBusy(identity, "workflow-archive", workflowId);
+    if (!ticket) return { ok: false, reason: "in_flight" };
+    clearFailure("workflow-archive", workflowId);
     try {
-      setErrorMessage("");
-      const response = await archiveMediaWorkflow(input.cwd.trim(), workflowId);
-      setWorkflows((current) => current.map((item) => item.definition.id === workflowId ? response : item));
+      const response = await archiveMediaWorkflow(identity.cwd, workflowId);
+      if (!isCurrent(identity)) return { ok: false, reason: "stale" };
+      updateWorkflows((current) => current.map((item) => item.definition.id === workflowId ? response : item));
+      setSelectedWorkflowId((current) => repairMediaWorkflowSelection(
+        workflowsRef.current,
+        current === workflowId ? "" : current,
+      ));
+      return { ok: true, value: response };
     } catch (error) {
-      setErrorMessage(readError(error));
+      replaceFailure(identity, mutationFailure("workflow-archive", workflowId, "Could not archive this workflow.", error));
+      return { ok: false, reason: isCurrent(identity) ? "failed" : "stale" };
     } finally {
-      setBusyAction("");
+      releaseBusy(ticket);
     }
-  }
+  }, [claimBusy, clearFailure, isCurrent, releaseBusy, replaceFailure, updateWorkflows]);
 
   return {
     state: {
+      workspaceEpoch,
+      phase,
       connections,
       workflows,
       selectedConnectionId,
       selectedWorkflowId,
+      libraryDetail,
       importDraft,
-      isLoading,
-      busyAction,
-      errorMessage,
+      busyKeys,
+      busyAction: busyKeys[0] ?? "",
+      failures,
     },
     actions: {
       refresh,
+      clearFailure,
       selectConnection: setSelectedConnectionId,
-      selectWorkflow: setSelectedWorkflowId,
+      selectWorkflow: (workflowId) => {
+        setSelectedWorkflowId(workflowId);
+        setLibraryDetail("workflow");
+      },
+      showImportDraft: () => { if (importDraftRef.current) setLibraryDetail("import"); },
       createConnection,
       updateConnection,
       checkConnection,
       deleteConnection,
       inspectImportFile,
       updateImportDraft,
-      cancelImport: () => setImportDraft(undefined),
+      cancelImport,
       saveImport,
       testWorkflow,
       activateWorkflow,
       archiveWorkflow,
     },
+  };
+}
+
+function currentIdentity(
+  cwdRef: { readonly current: string },
+  epochRef: { readonly current: number },
+): RequestIdentity {
+  return { cwd: cwdRef.current, epoch: epochRef.current };
+}
+
+function mutationFailure(
+  owner: MediaWorkflowFailureOwner,
+  subjectId: string,
+  productMessageKey: string,
+  error: unknown,
+): MediaWorkflowFailure {
+  return {
+    owner,
+    subjectId,
+    productMessageKey,
+    technicalMessage: error instanceof WorkflowInputError ? undefined : readError(error),
   };
 }
 
@@ -263,4 +518,20 @@ function readError(error: unknown): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+class WorkflowInputError extends Error {
+  readonly messageKey: string;
+
+  constructor(messageKey: string) {
+    super(messageKey);
+    this.messageKey = messageKey;
+  }
+}
+
+function mutationLockKey(owner: string, subjectId?: string): string {
+  if (owner.startsWith("connection-")) return `connection:${subjectId ?? "new"}`;
+  if (owner.startsWith("workflow-")) return `workflow:${subjectId ?? "unknown"}`;
+  if (owner.startsWith("import-")) return "import";
+  return mediaWorkflowBusyKey(owner, subjectId);
 }

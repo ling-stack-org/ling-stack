@@ -18,7 +18,7 @@ test("MCP settings creates servers without exposing secret values", async ({ pag
   await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "工具接入" })).toHaveCount(0);
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "设置" }).click();
   await page.getByLabel("设置分组").getByRole("button", { name: /MCP 工具服务/ }).click();
-  await expect(page.getByText("统一管理 MCP 工具服务，并按 AI 队友单独授权。").first()).toBeVisible();
+  await expect(page.getByRole("toolbar", { name: "MCP 服务操作" })).toContainText("服务 0 · 就绪 0 · 工具 0");
   await expect(page.getByRole("button", { name: "添加 MCP 服务" })).toBeVisible();
   await expect(page.getByText("没有 MCP 服务")).toBeVisible();
 
@@ -29,24 +29,39 @@ test("MCP settings creates servers without exposing secret values", async ({ pag
   await sheet.getByLabel("服务标识").fill("github");
   await sheet.getByLabel("传输方式").selectOption("streamable-http");
   await sheet.getByLabel("服务地址").fill("https://api.githubcopilot.com/mcp");
+  await sheet.getByText("身份验证", { exact: true }).click();
   await sheet.getByLabel("Header 密钥名称").fill("X-Goog-Api-Key");
   await sheet.getByLabel("Header 密钥引用").fill("env:GOOG_API_KEY");
-  await sheet.getByRole("button", { name: "保存服务" }).click();
+  await sheet.getByRole("button", { name: "添加服务" }).click();
 
   const serverRow = page.locator(".mcp-server-row").filter({ hasText: "GitHub MCP" });
   await expect(serverRow).toBeVisible();
+  const createdServer = state.mcpServers.find((server) => server.serverKey === "github");
+  if (!createdServer) throw new Error("Expected the GitHub MCP server fixture to be created");
   await expect(serverRow).toContainText("HTTP");
-  await expect(serverRow).toContainText("密钥已配置");
   await expect(page.locator("body")).not.toContainText("AQ.test-secret-token");
   await expect.poll(() => state.mcpServers.find((server) => server.serverKey === "github")?.secretRefs["X-Goog-Api-Key"]).toBe("env:GOOG_API_KEY");
+  await serverRow.getByRole("button", { name: "显示详情" }).click();
+  await serverRow.getByText("连接与运行详情", { exact: true }).click();
+  await expect(serverRow).toContainText("X-Goog-Api-Key: env:GOOG_API_KEY");
+  await serverRow.getByRole("button", { name: "隐藏详情" }).click();
 
   await serverRow.getByRole("button", { name: "检查连接" }).click();
   await expect(serverRow).toContainText("就绪");
-  await expect(serverRow).toContainText("连接检查成功");
+  const checkToast = page.locator(
+    `[data-ling-overlay="toast"][data-scope="mcp:${createdServer.id}:check"]`,
+  );
+  await expect(checkToast).toHaveCount(1);
+  await expect(checkToast).toContainText("连接检查成功");
+  await expect(page.locator('[data-ling-overlay="toast"]')).toHaveCount(1);
+  await expect(serverRow.locator(".settings-mcp-row-feedback")).toHaveCount(0);
+  await expect(serverRow).not.toContainText("连接检查成功");
   await expect.poll(async () => {
     const box = await serverRow.boundingBox();
     return box?.height ?? 0;
   }).toBeLessThan(240);
+  await checkToast.getByRole("button", { name: "关闭提示" }).click();
+  await expect(checkToast).toHaveCount(0);
 
   await serverRow.getByRole("button", { name: "编辑" }).click();
   const editSheet = page.getByRole("dialog", { name: "编辑 MCP 服务" });
@@ -59,16 +74,25 @@ test("MCP settings creates servers without exposing secret values", async ({ pag
   await editSheet.getByText("高级设置").click();
   await expect(editSheet.getByText("设为关键依赖")).toBeVisible();
   await expect(editSheet.getByText("开启后，已授权队友在该服务不可用时将停止执行，避免缺少关键工具时继续运行。")).toBeVisible();
-  await editSheet.getByRole("button", { name: "保存服务" }).click();
+  await editSheet.getByRole("button", { name: "保存修改" }).click();
   await expect.poll(() => state.mcpServers.find((server) => server.serverKey === "github")?.secretRefs["X-Goog-Api-Key"]).toBe("env:GOOG_API_KEY");
 
   await expect(page.locator(".mcp-tool-row").filter({ hasText: "Search repositories" })).toHaveCount(0);
   await serverRow.getByRole("button", { name: "同步工具列表" }).click();
-  await expect(serverRow).toContainText("工具列表已同步");
+  const syncToast = page.locator(
+    `[data-ling-overlay="toast"][data-scope="mcp:${createdServer.id}:sync"]`,
+  );
+  await expect(syncToast).toHaveCount(1);
+  await expect(syncToast).toContainText("工具列表已同步");
+  await expect(page.locator('[data-ling-overlay="toast"]')).toHaveCount(1);
+  await expect(serverRow.locator(".settings-mcp-row-feedback")).toHaveCount(0);
+  await expect(serverRow).not.toContainText("工具列表已同步");
   await expect(page.locator(".mcp-tool-row").filter({ hasText: "Search repositories" })).toBeVisible();
-  await serverRow.getByRole("button", { name: "收起工具" }).click();
+  await syncToast.getByRole("button", { name: "关闭提示" }).click();
+  await expect(syncToast).toHaveCount(0);
+  await serverRow.getByRole("button", { name: "隐藏详情" }).click();
   await expect(page.locator(".mcp-tool-row").filter({ hasText: "Search repositories" })).toHaveCount(0);
-  await serverRow.getByRole("button", { name: "展开工具" }).click();
+  await serverRow.getByRole("button", { name: "显示详情" }).click();
   await expect(page.locator(".mcp-tool-row").filter({ hasText: "Search repositories" })).toBeVisible();
 });
 
@@ -104,7 +128,7 @@ test("AI teammate MCP tab groups tools by server with filters", async ({ page })
   );
   expect(tabNames).toContain("MCP");
 
-  const settingsPanel = page.getByLabel("队友设置");
+  const settingsPanel = page.getByLabel(/Teammate profile|队友资料/);
   await expect(settingsPanel).toBeVisible();
   await expect(settingsPanel).not.toContainText("MCP 工具授权");
 
@@ -216,8 +240,16 @@ test("AI teammate MCP tab groups tools by server with filters", async ({ page })
   await githubServer.getByRole("button", { name: "全选当前 MCP" }).click();
   await expect(githubServer).toContainText("34 个已授权");
   await expect(githubServer.locator(".teammate-mcp-tool-row input:checked")).toHaveCount(34);
-  const selectedCheckboxLayout = await githubServer.locator(".teammate-mcp-tool-row.selected").evaluateAll((rows) =>
-    rows.slice(0, 5).map((row) => {
+  const selectedBackground = await page.evaluate(() => {
+    const probe = document.createElement("span");
+    probe.style.color = "var(--ling-action-accent)";
+    document.body.append(probe);
+    const color = getComputedStyle(probe).color;
+    probe.remove();
+    return color;
+  });
+  const selectedCheckboxLayout = await githubServer.locator(".teammate-mcp-tool-row.selected").evaluateAll(
+    (rows, expectedBackground) => rows.slice(0, 5).map((row) => {
       const cell = row.querySelector(".teammate-mcp-tool-check");
       const checkbox = row.querySelector("input[type='checkbox']");
       const visual = row.querySelector(".teammate-mcp-tool-check-visual");
@@ -239,8 +271,9 @@ test("AI teammate MCP tab groups tools by server with filters", async ({ page })
         visualBox.top >= cellBox.top - tolerance &&
         visualBox.right <= cellBox.right + tolerance &&
         visualBox.bottom <= cellBox.bottom + tolerance &&
-        visualStyle?.backgroundColor === "rgb(14, 122, 99)");
-    })
+        visualStyle?.backgroundColor === expectedBackground);
+    }),
+    selectedBackground,
   );
   expect(selectedCheckboxLayout.every(Boolean)).toBe(true);
   await githubServer.getByRole("button", { name: "清空授权" }).click();
@@ -263,7 +296,18 @@ test("AI teammate MCP tab groups tools by server with filters", async ({ page })
   await githubServer.getByRole("button", { name: "全部" }).click();
   await mcpPanel.getByRole("button", { name: "更新工具授权" }).click();
 
-  await expect(mcpPanel).toContainText("已保存");
+  const assignmentStatus = mcpPanel.locator(".teammate-mcp-assignment-status");
+  await expect(assignmentStatus).toHaveAttribute("data-tone", "neutral");
+  await expect(assignmentStatus).toContainText("仅显式授权");
+  const saveToast = page.locator(
+    '[data-ling-overlay="toast"][data-scope="teammate:teammate_engineer:mcp"]',
+  );
+  await expect(saveToast).toHaveCount(1);
+  await expect(saveToast).toContainText("已保存");
+  await expect(page.locator('[data-ling-overlay="toast"]')).toHaveCount(1);
+  await expect(mcpPanel.locator(".teammate-mcp-save-status")).toHaveCount(0);
+  await expect(mcpPanel.locator(".teammate-mcp-save-error")).toHaveCount(0);
+  await expect(mcpPanel).not.toContainText("已保存");
   await expect.poll(() =>
     state.teammateMcpBindings.some((binding) =>
       binding.teammateId === "teammate_engineer" &&
