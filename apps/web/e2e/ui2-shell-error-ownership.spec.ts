@@ -8,8 +8,10 @@ import {
 import {
   createShellErrorFeedbackCoordinator,
   SHELL_ERROR_PERSISTENT_DURATION_MS,
+  SHELL_ERROR_TOAST_CAPACITY,
   type ShellErrorFeedbackCommand,
   type ShellErrorFeedbackItem,
+  type ShellErrorToastViewportSnapshot,
 } from "../src/app/shell-error-feedback-coordinator.js";
 import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState } from "./support/mock-state";
@@ -55,10 +57,14 @@ test("T13-P.9EF.E releases five shell owners from the generic AppShell error con
   expect(appShell).toContain("useShellErrorFeedback({ dismissToast, items: shellErrorFeedbackItems, showToast });");
   expect(shellFeedback).toContain("durationMs: SHELL_ERROR_PERSISTENT_DURATION_MS");
   expect(shellFeedback).toContain("markExplicitDismiss(scope)");
+  expect(shellFeedback).toContain('addEventListener("toast.swipeEnd"');
+  expect(shellFeedback).toContain("observeViewport(");
   expect(shellFeedback).not.toContain("seenRequestsRef");
-  expect(shellFeedbackCoordinator).toContain("originSurfaceByRequest.set(requestKey, item.surface)");
+  expect(shellFeedbackCoordinator).toContain("new WeakSet<FocusedDomainError>()");
+  expect(shellFeedbackCoordinator).toContain("new WeakMap<FocusedDomainError, string>()");
+  expect(shellFeedbackCoordinator).toContain("originSurfaceByError.set(error, item.surface)");
   expect(shellFeedbackCoordinator).toContain("active?.requestKey === requestKey");
-  expect(shellFeedbackCoordinator).toContain("dismissedRequests.has(requestKey)");
+  expect(shellFeedbackCoordinator).toContain("dismissedErrors.has(error)");
 
   for (const path of [
     "apps/web/src/app/use-app-navigation-controller.ts",
@@ -186,11 +192,119 @@ test("T13-P.9EF.F explicit dismiss survives surface return until the request cha
   ]);
 });
 
-test("T13-P.9EF.F keeps Settings failures persistent and restores or replaces them by request", async ({ page }) => {
+test("T13-P.9EF.F hidden-first failures never adopt a later surface as their origin", () => {
+  const coordinator = createShellErrorFeedbackCoordinator();
+  const error = shellError({ action: "refresh", message: "background failure", requestId: 1 });
+
+  expect(coordinator.reconcile([
+    shellItem(error, { surface: "settings", visible: false }),
+  ])).toEqual([]);
+  expect(coordinator.reconcile([
+    shellItem(error, { surface: "workspace", visible: true }),
+  ])).toEqual([]);
+  expect(commandSummary(coordinator.reconcile([
+    shellItem(error, { surface: "settings", visible: true }),
+  ]))).toEqual([
+    "show:background failure:shell-error:runtime:workspace-a:refresh",
+  ]);
+});
+
+test("T13-P.9EF.F viewport eviction queues errors without a reshow cycle and recovers available slots", () => {
+  const coordinator = createShellErrorFeedbackCoordinator();
+  const errors = ["one", "two", "three", "four"].map((action, index) => shellError({
+    action,
+    message: `${action} failed`,
+    requestId: index + 1,
+  }));
+  const items = errors.map((error, index) => shellItem(error, { key: `runtime-${index + 1}` }));
+  const initial = coordinator.reconcile(items, toastViewport([]));
+
+  expect(commandSummary(initial)).toEqual([
+    "show:one failed:shell-error:runtime:workspace-a:one",
+    "show:two failed:shell-error:runtime:workspace-a:two",
+    "show:three failed:shell-error:runtime:workspace-a:three",
+  ]);
+
+  const firstThreeScopes = showScopes(initial);
+  const externalScope = "profile:save";
+  expect(coordinator.observeViewport(items, toastViewport([
+    firstThreeScopes[1]!,
+    firstThreeScopes[2]!,
+    externalScope,
+  ]))).toEqual([]);
+  expect(coordinator.observeViewport(items, toastViewport([
+    firstThreeScopes[1]!,
+    firstThreeScopes[2]!,
+  ]))).toMatchObject([{ type: "show", error: errors[3] }]);
+
+  const fourthScope = "shell-error:runtime:workspace-a:four";
+  expect(coordinator.observeViewport(items, toastViewport([
+    firstThreeScopes[1]!,
+    firstThreeScopes[2]!,
+    fourthScope,
+  ]))).toEqual([]);
+  expect(commandSummary(coordinator.observeViewport(items, toastViewport([
+    firstThreeScopes[2]!,
+    fourthScope,
+  ])))).toEqual([
+    "show:one failed:shell-error:runtime:workspace-a:one",
+  ]);
+});
+
+test("T13-P.9EF.F non-user timeout recovers while explicit dismiss remains bounded by error lifetime", () => {
+  const coordinator = createShellErrorFeedbackCoordinator();
+  const dismissed = shellError({ action: "refresh", message: "dismissed failure", requestId: 1 });
+  const dismissedItem = shellItem(dismissed);
+  const [initial] = coordinator.reconcile([dismissedItem], toastViewport([]));
+  expect(initial?.type).toBe("show");
+
+  const scope = "shell-error:runtime:workspace-a:refresh";
+  expect(coordinator.observeViewport([dismissedItem], toastViewport([scope]))).toEqual([]);
+  expect(commandSummary(coordinator.observeViewport([dismissedItem], toastViewport([])))).toEqual([
+    "show:dismissed failure:shell-error:runtime:workspace-a:refresh",
+  ]);
+  coordinator.markExplicitDismiss(scope);
+
+  for (let requestId = 2; requestId <= 140; requestId += 1) {
+    const newer = shellError({ action: `action-${requestId}`, message: `failure ${requestId}`, requestId });
+    coordinator.reconcile([shellItem(newer)]);
+  }
+  coordinator.closeAll();
+  expect(coordinator.reconcile([dismissedItem])).toEqual([]);
+
+  const replacement = shellError({ action: "refresh", message: "replacement failure", requestId: 141 });
+  expect(commandSummary(coordinator.reconcile([shellItem(replacement)]))).toEqual([
+    "show:replacement failure:shell-error:runtime:workspace-a:refresh",
+  ]);
+});
+
+test("T13-P.9EF.F an evicted same-scope replacement waits instead of displacing another toast", () => {
+  const coordinator = createShellErrorFeedbackCoordinator();
+  const first = shellError({ action: "refresh", message: "first failure", requestId: 1 });
+  coordinator.reconcile([shellItem(first)], toastViewport([]));
+
+  const replacement = shellError({ action: "refresh", message: "replacement failure", requestId: 2 });
+  expect(coordinator.reconcile([shellItem(replacement)], toastViewport([
+    "profile:save",
+    "provider:model-a:check",
+    "plugin:plugin-a:install",
+  ]))).toEqual([]);
+  expect(commandSummary(coordinator.observeViewport([shellItem(replacement)], toastViewport([
+    "provider:model-a:check",
+    "plugin:plugin-a:install",
+  ])))).toEqual([
+    "show:replacement failure:shell-error:runtime:workspace-a:refresh",
+  ]);
+});
+
+test("T13-P.9EF.F keeps Settings failures persistent and treats close, Escape, and swipe as explicit", async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem("ling-stack.locale", "en-US"));
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
-  const failureMessages = ["Workspace settings save failed.", "A newer workspace settings request failed."];
-  let failedRequestCount = 0;
+  const failureMessages = [
+    "Workspace settings save failed.",
+    "A newer workspace settings request failed.",
+    "A swiped workspace settings request failed.",
+  ];
   await page.route(/\/workspace-settings(?:\?.*)?$/u, async (route) => {
     if (route.request().method() !== "PATCH") {
       await route.fallback();
@@ -201,8 +315,11 @@ test("T13-P.9EF.F keeps Settings failures persistent and restores or replaces th
       await route.fallback();
       return;
     }
-    const failureMessage = failureMessages[Math.min(failedRequestCount, failureMessages.length - 1)];
-    failedRequestCount += 1;
+    const failureMessage = body.defaultAuthorizationMode === "ask"
+      ? failureMessages[0]
+      : body.defaultAuthorizationMode === "always"
+        ? failureMessages[1]
+        : failureMessages[2];
     await route.fulfill({
       status: 503,
       json: { error: "workspace_settings_save_failed", message: failureMessage },
@@ -236,10 +353,31 @@ test("T13-P.9EF.F keeps Settings failures persistent and restores or replaces th
 
   const reopenedSettingsNavigation = page.getByLabel("Settings sections");
   await reopenedSettingsNavigation.getByRole("button", { name: "Default authorization" }).click();
-  await page.getByRole("radiogroup", { name: "Authorization mode" })
-    .getByRole("radio", { name: "Always authorize" })
-    .click();
+  const authorizationMode = page.getByRole("radiogroup", { name: "Authorization mode" });
+  await authorizationMode.getByRole("radio", { name: "Always authorize" }).click();
   await expect(scopedToast).toContainText(failureMessages[1]);
+  await scopedToast.focus();
+  await page.keyboard.press("Escape");
+  await expect(scopedToast).toHaveCount(0);
+  await page.getByLabel("Settings sections").getByRole("button", { name: "Back to app" }).click();
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await expect(scopedToast).toHaveCount(0);
+
+  await page.getByLabel("Settings sections").getByRole("button", { name: "Default authorization" }).click();
+  await page.getByRole("radiogroup", { name: "Authorization mode" })
+    .getByRole("radio", { name: "Ask first" })
+    .click();
+  await expect(scopedToast).toContainText(failureMessages[0]);
+  const toastBox = await scopedToast.boundingBox();
+  expect(toastBox).not.toBeNull();
+  await page.mouse.move(toastBox!.x + toastBox!.width / 2, toastBox!.y + toastBox!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(toastBox!.x + toastBox!.width / 2, toastBox!.y - 80, { steps: 6 });
+  await page.mouse.up();
+  await expect(scopedToast).toHaveCount(0);
+  await page.getByLabel("Settings sections").getByRole("button", { name: "Back to app" }).click();
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await expect(scopedToast).toHaveCount(0);
 });
 
 function sourcePath(path: string): string {
@@ -272,14 +410,29 @@ function shellError(input: {
 
 function shellItem(
   error: FocusedDomainError,
-  input: { readonly surface?: string; readonly visible?: boolean } = {},
+  input: { readonly key?: string; readonly surface?: string; readonly visible?: boolean } = {},
 ): ShellErrorFeedbackItem {
   return {
-    key: "runtime",
+    key: input.key ?? "runtime",
     error,
     surface: input.surface ?? "workspace",
     visible: input.visible ?? true,
   };
+}
+
+function toastViewport(
+  openScopes: readonly string[],
+  openToastCount = openScopes.length,
+): ShellErrorToastViewportSnapshot {
+  return {
+    maxVisible: SHELL_ERROR_TOAST_CAPACITY,
+    openScopes: new Set(openScopes),
+    openToastCount,
+  };
+}
+
+function showScopes(commands: readonly ShellErrorFeedbackCommand[]): readonly string[] {
+  return commands.flatMap((command) => command.type === "show" ? [command.scope] : []);
 }
 
 function commandSummary(commands: readonly ShellErrorFeedbackCommand[]): readonly string[] {

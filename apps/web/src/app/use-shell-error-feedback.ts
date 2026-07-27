@@ -3,7 +3,10 @@ import type { LingToastInput } from "../shared/ui/index.js";
 import {
   createShellErrorFeedbackCoordinator,
   SHELL_ERROR_PERSISTENT_DURATION_MS,
+  SHELL_ERROR_TOAST_CAPACITY,
+  type ShellErrorFeedbackCommand,
   type ShellErrorFeedbackItem,
+  type ShellErrorToastViewportSnapshot,
 } from "./shell-error-feedback-coordinator.js";
 
 export type { ShellErrorFeedbackItem } from "./shell-error-feedback-coordinator.js";
@@ -15,15 +18,19 @@ export function useShellErrorFeedback(input: {
 }): void {
   const coordinatorRef = useRef<ReturnType<typeof createShellErrorFeedbackCoordinator>>();
   const dismissToastRef = useRef(input.dismissToast);
+  const itemsRef = useRef(input.items);
+  const showToastRef = useRef(input.showToast);
   if (!coordinatorRef.current) coordinatorRef.current = createShellErrorFeedbackCoordinator();
   dismissToastRef.current = input.dismissToast;
+  itemsRef.current = input.items;
+  showToastRef.current = input.showToast;
 
-  useEffect(() => {
-    for (const command of coordinatorRef.current!.reconcile(input.items)) {
+  const executeCommands = (commands: readonly ShellErrorFeedbackCommand[]): void => {
+    for (const command of commands) {
       if (command.type === "dismiss") {
-        input.dismissToast(command.scope);
+        dismissToastRef.current(command.scope);
       } else {
-        input.showToast({
+        showToastRef.current({
           durationMs: SHELL_ERROR_PERSISTENT_DURATION_MS,
           message: command.error.message,
           scope: command.scope,
@@ -31,6 +38,10 @@ export function useShellErrorFeedback(input: {
         });
       }
     }
+  };
+
+  useEffect(() => {
+    executeCommands(coordinatorRef.current!.reconcile(input.items, readToastViewportSnapshot()));
   }, [input.dismissToast, input.items, input.showToast]);
 
   useEffect(() => {
@@ -48,15 +59,59 @@ export function useShellErrorFeedback(input: {
     const handleKeyDown = (event: KeyboardEvent): void => {
       if (event.key === "Escape") markDismissed(event.target);
     };
-    globalThis.document?.addEventListener("click", handleClick, true);
-    globalThis.document?.addEventListener("keydown", handleKeyDown, true);
+    const handleSwipeEnd = (event: Event): void => markDismissed(event.target);
+    const document = globalThis.document;
+    if (!document) return undefined;
+
+    let disposed = false;
+    let viewportSyncScheduled = false;
+    const syncViewport = (): void => {
+      if (viewportSyncScheduled) return;
+      viewportSyncScheduled = true;
+      globalThis.queueMicrotask(() => {
+        viewportSyncScheduled = false;
+        if (disposed) return;
+        executeCommands(coordinatorRef.current!.observeViewport(
+          itemsRef.current,
+          readToastViewportSnapshot(),
+        ));
+      });
+    };
+    const toastViewport = document.querySelector(".ling-ui-toast-viewport");
+    const observer = toastViewport
+      ? new MutationObserver(syncViewport)
+      : undefined;
+    observer?.observe(toastViewport!, {
+      attributeFilter: ["data-state"],
+      attributes: true,
+      childList: true,
+      subtree: true,
+    });
+
+    document.addEventListener("click", handleClick, true);
+    document.addEventListener("keydown", handleKeyDown, true);
+    document.addEventListener("toast.swipeEnd", handleSwipeEnd, true);
     return () => {
-      globalThis.document?.removeEventListener("click", handleClick, true);
-      globalThis.document?.removeEventListener("keydown", handleKeyDown, true);
+      disposed = true;
+      observer?.disconnect();
+      document.removeEventListener("click", handleClick, true);
+      document.removeEventListener("keydown", handleKeyDown, true);
+      document.removeEventListener("toast.swipeEnd", handleSwipeEnd, true);
     };
   }, []);
 
   useEffect(() => () => {
     for (const scope of coordinatorRef.current?.closeAll() ?? []) dismissToastRef.current(scope);
   }, []);
+}
+
+function readToastViewportSnapshot(): ShellErrorToastViewportSnapshot {
+  const openToasts = globalThis.document
+    ? [...globalThis.document.querySelectorAll<HTMLElement>(".ling-ui-toast[data-state=\"open\"]")]
+    : [];
+  return {
+    maxVisible: SHELL_ERROR_TOAST_CAPACITY,
+    openScopes: new Set(openToasts.flatMap((toast) => toast.dataset.scope ? [toast.dataset.scope] : [])),
+    openToastCount: openToasts.length,
+  };
 }

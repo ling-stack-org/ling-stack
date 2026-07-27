@@ -1,12 +1,19 @@
 import type { FocusedDomainError } from "./use-focused-domain-error-owner.js";
 
 export const SHELL_ERROR_PERSISTENT_DURATION_MS = 24 * 60 * 60 * 1000;
+export const SHELL_ERROR_TOAST_CAPACITY = 3;
 
 export interface ShellErrorFeedbackItem {
   readonly key: string;
   readonly error: FocusedDomainError | undefined;
   readonly surface: string;
   readonly visible: boolean;
+}
+
+export interface ShellErrorToastViewportSnapshot {
+  readonly maxVisible: number;
+  readonly openScopes: ReadonlySet<string>;
+  readonly openToastCount: number;
 }
 
 export type ShellErrorFeedbackCommand =
@@ -21,42 +28,125 @@ export type ShellErrorFeedbackCommand =
     };
 
 interface ActiveFeedback {
+  readonly error: FocusedDomainError;
   readonly requestKey: string;
   readonly scope: string;
+}
+
+interface FeedbackCandidate extends ActiveFeedback {
+  readonly itemKey: string;
+  readonly order: number;
+  readonly replacesOpenScope: boolean;
 }
 
 export interface ShellErrorFeedbackCoordinator {
   readonly closeAll: () => readonly string[];
   readonly markExplicitDismiss: (scope: string) => void;
-  readonly reconcile: (items: readonly ShellErrorFeedbackItem[]) => readonly ShellErrorFeedbackCommand[];
+  readonly observeViewport: (
+    items: readonly ShellErrorFeedbackItem[],
+    viewport: ShellErrorToastViewportSnapshot,
+  ) => readonly ShellErrorFeedbackCommand[];
+  readonly reconcile: (
+    items: readonly ShellErrorFeedbackItem[],
+    viewport?: ShellErrorToastViewportSnapshot,
+  ) => readonly ShellErrorFeedbackCommand[];
 }
-
-const MAX_REMEMBERED_REQUESTS = 128;
 
 export function createShellErrorFeedbackCoordinator(): ShellErrorFeedbackCoordinator {
   const activeByItem = new Map<string, ActiveFeedback>();
-  const dismissedRequests = new Set<string>();
-  const originSurfaceByRequest = new Map<string, string>();
-  const rememberedRequests: string[] = [];
-  const rememberedRequestSet = new Set<string>();
+  const dismissedErrors = new WeakSet<FocusedDomainError>();
+  const originSurfaceByError = new WeakMap<FocusedDomainError, string>();
+  const pendingOrderByError = new WeakMap<FocusedDomainError, number>();
+  let pendingSequence = 0;
 
-  function rememberRequest(requestKey: string): void {
-    if (rememberedRequestSet.has(requestKey)) return;
-    rememberedRequestSet.add(requestKey);
-    rememberedRequests.push(requestKey);
-    let pruneAttempts = rememberedRequests.length;
-    while (rememberedRequests.length > MAX_REMEMBERED_REQUESTS && pruneAttempts > 0) {
-      pruneAttempts -= 1;
-      const oldest = rememberedRequests.shift();
-      if (!oldest) continue;
-      if ([...activeByItem.values()].some((active) => active.requestKey === oldest)) {
-        rememberedRequests.push(oldest);
+  function pendingOrder(error: FocusedDomainError): number {
+    const existing = pendingOrderByError.get(error);
+    if (existing !== undefined) return existing;
+    const order = ++pendingSequence;
+    pendingOrderByError.set(error, order);
+    return order;
+  }
+
+  function reconcile(
+    items: readonly ShellErrorFeedbackItem[],
+    viewport?: ShellErrorToastViewportSnapshot,
+    observeAbsence = false,
+  ): readonly ShellErrorFeedbackCommand[] {
+    const commands: ShellErrorFeedbackCommand[] = [];
+    const itemKeys = new Set(items.map((item) => item.key));
+    for (const [itemKey, active] of activeByItem) {
+      if (itemKeys.has(itemKey)) continue;
+      commands.push({ type: "dismiss", scope: active.scope });
+      activeByItem.delete(itemKey);
+    }
+
+    if (viewport && observeAbsence) {
+      for (const [itemKey, active] of activeByItem) {
+        if (viewport.openScopes.has(active.scope)) continue;
+        pendingOrder(active.error);
+        activeByItem.delete(itemKey);
+      }
+    }
+
+    const candidates: FeedbackCandidate[] = [];
+    for (const item of items) {
+      const active = activeByItem.get(item.key);
+      if (!item.error) {
+        if (active) {
+          commands.push({ type: "dismiss", scope: active.scope });
+          activeByItem.delete(item.key);
+        }
         continue;
       }
-      rememberedRequestSet.delete(oldest);
-      originSurfaceByRequest.delete(oldest);
-      dismissedRequests.delete(oldest);
+
+      const error = item.error;
+      if (!originSurfaceByError.has(error)) originSurfaceByError.set(error, item.surface);
+      const visibleOnOrigin = item.visible && originSurfaceByError.get(error) === item.surface;
+      const dismissed = dismissedErrors.has(error);
+      const requestKey = shellErrorRequestKey(item.key, error);
+      const scope = shellErrorScope(error);
+
+      if (active?.requestKey === requestKey) {
+        if (!visibleOnOrigin || dismissed) {
+          commands.push({ type: "dismiss", scope: active.scope });
+          activeByItem.delete(item.key);
+        }
+        continue;
+      }
+
+      let replacesOpenScope = viewport?.openScopes.has(scope) ?? false;
+      if (active) {
+        if (active.scope === scope) {
+          replacesOpenScope = replacesOpenScope || !viewport;
+        } else {
+          commands.push({ type: "dismiss", scope: active.scope });
+        }
+        activeByItem.delete(item.key);
+      }
+      if (!visibleOnOrigin || dismissed) continue;
+
+      candidates.push({
+        error,
+        itemKey: item.key,
+        order: pendingOrder(error),
+        replacesOpenScope,
+        requestKey,
+        scope,
+      });
     }
+
+    candidates.sort((left, right) => left.order - right.order);
+    let availableSlots = viewport
+      ? Math.max(0, viewport.maxVisible - viewport.openToastCount - reservedToastCount(activeByItem, viewport))
+      : Number.POSITIVE_INFINITY;
+    for (const candidate of candidates) {
+      if (!candidate.replacesOpenScope && availableSlots <= 0) continue;
+      commands.push({ type: "show", error: candidate.error, scope: candidate.scope });
+      activeByItem.set(candidate.itemKey, candidate);
+      pendingOrderByError.delete(candidate.error);
+      if (!candidate.replacesOpenScope) availableSlots -= 1;
+    }
+    return commands;
   }
 
   return {
@@ -68,59 +158,25 @@ export function createShellErrorFeedbackCoordinator(): ShellErrorFeedbackCoordin
     markExplicitDismiss: (scope) => {
       for (const [itemKey, active] of activeByItem) {
         if (active.scope !== scope) continue;
-        dismissedRequests.add(active.requestKey);
+        dismissedErrors.add(active.error);
+        pendingOrderByError.delete(active.error);
         activeByItem.delete(itemKey);
       }
     },
-    reconcile: (items) => {
-      const commands: ShellErrorFeedbackCommand[] = [];
-      const itemKeys = new Set(items.map((item) => item.key));
-      for (const [itemKey, active] of activeByItem) {
-        if (itemKeys.has(itemKey)) continue;
-        commands.push({ type: "dismiss", scope: active.scope });
-        activeByItem.delete(itemKey);
-      }
-
-      for (const item of items) {
-        const active = activeByItem.get(item.key);
-        if (!item.error) {
-          if (active) {
-            commands.push({ type: "dismiss", scope: active.scope });
-            activeByItem.delete(item.key);
-          }
-          continue;
-        }
-
-        const requestKey = shellErrorRequestKey(item.key, item.error);
-        rememberRequest(requestKey);
-        if (!originSurfaceByRequest.has(requestKey) && item.visible) {
-          originSurfaceByRequest.set(requestKey, item.surface);
-        }
-        const visibleOnOrigin = item.visible && originSurfaceByRequest.get(requestKey) === item.surface;
-        const scope = shellErrorScope(item.error);
-
-        if (active?.requestKey === requestKey) {
-          if (!visibleOnOrigin || dismissedRequests.has(requestKey)) {
-            commands.push({ type: "dismiss", scope: active.scope });
-            activeByItem.delete(item.key);
-          }
-          continue;
-        }
-
-        if (active) {
-          if (!visibleOnOrigin || dismissedRequests.has(requestKey) || active.scope !== scope) {
-            commands.push({ type: "dismiss", scope: active.scope });
-          }
-          activeByItem.delete(item.key);
-        }
-        if (!visibleOnOrigin || dismissedRequests.has(requestKey)) continue;
-
-        commands.push({ type: "show", error: item.error, scope });
-        activeByItem.set(item.key, { requestKey, scope });
-      }
-      return commands;
-    },
+    observeViewport: (items, viewport) => reconcile(items, viewport, true),
+    reconcile: (items, viewport) => reconcile(items, viewport),
   };
+}
+
+function reservedToastCount(
+  activeByItem: ReadonlyMap<string, ActiveFeedback>,
+  viewport: ShellErrorToastViewportSnapshot,
+): number {
+  const reservedScopes = new Set<string>();
+  for (const active of activeByItem.values()) {
+    if (!viewport.openScopes.has(active.scope)) reservedScopes.add(active.scope);
+  }
+  return reservedScopes.size;
 }
 
 function shellErrorRequestKey(itemKey: string, error: FocusedDomainError): string {
