@@ -5,9 +5,9 @@
 Design source of truth. Implementation is in progress: package foundations、forms、Dialog/Drawer、
 Popover/Tabs/Segmented、Feedback/Data Display、P2A ThemeRegistry/independent Theme Packs、P2B.1
 Presentation Profile/Theme Compiler foundations, selected Desktop slices, Shell/Sidebar and all three conversation
-surfaces exist. Web 主产品面大部分已验证；T13-P.3 已完成 canonical closeout，剩余重点是明确的产品决策门和
-packaged macOS/Windows 证据。Channel、Normal Conversation 和 AI 队友私聊的 UI 2.0 会话切片已全部关闭。
-First Run 的 A/B/C 产品语义等待用户确认；
+surfaces exist. Web 主产品面大部分已验证；T13-P.3 已完成 canonical closeout，P9-EF 正处于 final
+verification pending。Channel、Normal Conversation 和 AI 队友私聊的 UI 2.0 会话切片已全部关闭。
+`First Run 新入口` 是未决产品能力，不阻塞现有可达 Web UI 2.0 closeout；
 `P7A.1 Settings Shell foundation`、`P7A.2 Settings Profile`、
 `P7A.3 Default Authorization + Personalization`、P7A.4 当前可达的 Interface Preferences 与
 `P7A.5 External Work`、`P7B.1 MCP Tool Servers` 与 `P7B.2 Skill Library` 已验证关闭。Skill Library
@@ -24,7 +24,8 @@ D2=A Web-first 完成：package `45/45`、focused `5/5`、selected `83/83`、六
 metadata 均通过，现为 `verified`。Desktop app-data/typed IPC/packaged restart 仍是独立明确待办，
 P7C.2 Quick Theme Studio 的 entry audit、图片验证/分析、IndexedDB v3 草稿、纯 reducer
 和 package-owned 四 surface/五 viewport Preview substrate 已完成，package `50/50`、focused `4/4`、
-Theme 联合 `15/15`。D3 runtime artwork 安全边界等待用户选择，生产 controller/UI/publish 不提前接线。
+Theme 联合 `15/15`。`Quick Theme Studio D3` 是未决产品能力，不阻塞现有可达 Web UI 2.0 closeout；生产
+controller/UI/publish 不提前接线。
 P8.1 AI Teammate Management 已不是当前执行入口：List/Search 已以 focused `4/4`、selected `30/30`
 和四张证据关闭；Default roles/Create 又以 shared Dialog/Form/Feedback、focused `5/5`、selected `35/35`
 和五张证据关闭；Profile/Avatar 又以 shared crop、protected policy、folded persona、scoped feedback、
@@ -50,7 +51,7 @@ focused `7/7`、selected `30/30`、
 未增加全局 `input:focus` 规则。2026-07-27 的 T12.1d 又将 Web 18 个 checkbox/file/range 和 package
 task-list checkbox 纳入显式 native owner，并删除 `components/workspace/layout` 中全部 aggregate
 input/textarea default/focus/disabled/theme branch；代表性 browser `38/38` 与 formal recapture `13/13` 通过。
-原图审查发现并修复 1280 Dark Teammate MCP Header identity/action 碰撞。U13 聚合 CSS 收口又完成 `T13-O.2/O.3`：AI Teammate MCP
+原图审查发现并修复 1280 Dark 当前可达 Teammate MCP Header identity/action 碰撞。U13 聚合 CSS 收口又完成 `T13-O.2/O.3`：当前可达 AI Teammate MCP
 的 328 行视觉归入 focused owner，`teammates.css` 降至 1,435 行；共享消息正文的 580 行
 Markdown/GFM/Mermaid/KaTeX 样式归入 conversation package，`components.css` 降至 10,009 行。
 MCP `7/7`、package `10/10`、三类正文 `3/3` 和三类 Feed/Composer `11/11` 通过，未提升任何 Function ID。
@@ -293,8 +294,9 @@ Runs/Threads P11.2、Approvals P11.3 和 Profile P11.4 也已完成 Web 回归�
 - static `4/4`、Runtime/Runs/Settings/Release selected `28/28`、Runtime capture `4/4`、
   lint/typecheck/i18n/build/diff check 全绿；两张 Runtime 重采图与正式 evidence SHA-256 完全一致。
 - Function ID 仍为 `173/32/31/14=250`；P4 只提升 U13 cleanup，总进度为 `93.4%`。
-- 下一批为 P5 Settings Subnav/Overlay 真实可达合同与账本 closeout；P3-Y、First Run、Theme Studio D3、
-  Skill Source 和 packaged Desktop 决策/平台门保持独立。
+- 下一批为 P5 Settings Subnav/Overlay 真实可达合同与账本 closeout；P3-Y 保持独立决策门；
+  `Quick Theme Studio D3`、`First Run 新入口`、`Skill Source Sync` 属于未决产品能力，不阻塞现有可达 Web UI 2.0
+  closeout；Desktop 平台门继续独立。
 
 ### P5 Settings reachability closeout（2026-07-26）
 
@@ -482,14 +484,35 @@ Windows 11 x64 与完整 release evidence 未关闭前，Icon/Motion 均不提�
 - Intel macOS、Windows、packaged restart 与平台辅助技术验收移入
   [`release/01-Desktop跨平台发布验收清单.md`](release/01-Desktop跨平台发布验收清单.md)，不阻塞 Web 主线。
 
+### Reachable Web Closeout Boundary
+
+以下五项统一登记为**未决产品能力，不阻塞现有可达 Web UI 2.0 closeout**：
+
+- `Quick Theme Studio D3`
+- `First Run 新入口`
+- `Teammate MCP A/A/A`
+- `Skill Source Sync`
+- `Council Runtime`
+
+这些名称表示尚待独立业务/数据合同确认的新能力，不得写成已完成、部分完成或 P9-EF blocker。现有 Theme
+Studio substrate、First Run 旧入口、AI Teammate MCP 状态/反馈、Skill Library 和 Council 配置管理的历史
+验证结果继续有效，但不能推导上述五项已经实现。统一状态见
+[`migration/05-完成状态看板.md`](migration/05-完成状态看板.md)，P9-EF 执行与验收边界见
+[`02-UI2.0实施总计划.md`](02-UI2.0实施总计划.md)、
+[`03-UI2.0验收总规范.md`](03-UI2.0验收总规范.md)、
+[`migration/04-E2E与截图矩阵.md`](migration/04-E2E与截图矩阵.md) 和
+[`migration/10-全局反馈消息迁移矩阵.md`](migration/10-全局反馈消息迁移矩阵.md)。
+
 ## T13-P.8 Feedback Ownership Status
 
-AI Teammate MCP、Plugin CUA Copy、Channel Protocol/Composer、Settings MCP Check/Sync 和 Model row Check
+当前可达的 AI Teammate MCP 状态与反馈、Plugin CUA Copy、Channel Protocol/Composer、Settings MCP
+Check/Sync 和 Model row Check
 已经完成反馈 owner 收口。短暂成功只进入 global Toast，失败留对象 owner，三个旧成功 class 与三个业务
 timer 预算均为 `0`；focused/legacy effective `55/55`、模块 effective `156/156`、formal capture `14/14`
 与 static gates 通过。P9-C 又将 Provider、Runs、Approvals、MCP、Settings 移出 AppShell generic error，
 combined `50/50`、Settings follow-up `5/5`、cross-page evidence `3/3` 通过；P9-E-F 与 Profile standalone
-message 仍 open，因此 UI 2.0 总进度保持 `94.2%`，不宣称全产品 feedback 完成。
+message 仍 open，因此 UI 2.0 总进度保持 `94.2%`，不宣称全产品 feedback 完成；该验证不等于未决产品能力
+`Teammate MCP A/A/A` 已完成。
 
 ## T13-P.9C Existing DomainError Status
 
@@ -512,8 +535,12 @@ standalone 保持 inventory，packaged platform gates 转入独立发布清单�
 
 ## T13-P.9EF Final Web Batch
 
+状态：执行中，final verification pending；不得在最终 non-Desktop 回归与新增 changed-state evidence 完成前
+标记 `verified`。
+
 这是现有可达 Web UI 2.0 主线的最后一个实施批次。它合并 Normal Conversation、AI Teammate、Plugin 与
 startup/control-plane/shell error ownership，最终删除 generic AppShell error writer、consumer 和 compatibility
 prop。P9-D 后 Web 视觉冻结；A-E 小切片只运行 focused，不截图，I 集成时统一运行一次 non-Desktop full
-regression 并只生成一次新增状态证据。完成该批次后，当前已确定范围的 Web UI 2.0 主线可以 closeout；未决
-新增能力和 Desktop 发布门禁继续独立登记。
+regression 并只生成一次新增状态证据。完成该批次后，当前已确定范围的 Web UI 2.0 主线可以 closeout；上述
+五项未决产品能力不进入本批次，也不阻塞 closeout。Intel Mac、Windows 与 packaged acceptance 继续只由
+[`release/01-Desktop跨平台发布验收清单.md`](release/01-Desktop跨平台发布验收清单.md) 记账。
