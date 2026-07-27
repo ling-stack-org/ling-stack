@@ -8,8 +8,18 @@ import {
 } from "./view-types.js";
 import type { RunSession, Task, WorkItemView } from "../types.js";
 import { readRunProviderPresetId } from "../lib/run-evidence.js";
+import {
+  domainErrorMessage,
+  type FocusedDomainError,
+  useFocusedDomainErrorOwner,
+} from "./use-focused-domain-error-owner.js";
+
+export type NavigationRepairError = FocusedDomainError<"navigation-repair", "open-task">;
 
 export interface AppNavigationController {
+  readonly errors: readonly NavigationRepairError[];
+  readonly error: NavigationRepairError | undefined;
+  readonly clearError: () => void;
   readonly openPlainView: (view: ViewId) => void;
   readonly openRunDiagnosticsView: () => void;
   readonly selectWorkspaceChannel: (channelId: string) => void;
@@ -37,14 +47,22 @@ export function useAppNavigationController(input: {
   readonly setTaskRepairRunId: Dispatch<SetStateAction<string>>;
   readonly setTaskRunProviderId: Dispatch<SetStateAction<string>>;
   readonly setThreadPageTargetId: Dispatch<SetStateAction<string>>;
-  readonly setErrorMessage: (message: string) => void;
   readonly markChannelRead: (channelId: string) => void;
   readonly loadRun: (runId?: string, cwd?: string) => Promise<void>;
   readonly refreshApprovals: (cwd?: string, runId?: string) => Promise<void>;
   readonly refreshTasks: (channelId?: string) => Promise<void>;
   readonly handleDomainEvent: (event: DomainEvent) => Promise<void>;
 }): AppNavigationController {
+  const errorOwner = useFocusedDomainErrorOwner<"navigation-repair", "open-task">(
+    input.formCwd || "workspace:unavailable",
+  );
+
+  function invalidatePendingRepair(): void {
+    errorOwner.invalidateRequests();
+  }
+
   function openPlainView(view: ViewId): void {
+    invalidatePendingRepair();
     if (view === "approvals") {
       input.setApprovalRepairRunId("");
     }
@@ -56,6 +74,7 @@ export function useAppNavigationController(input: {
   }
 
   function openRunDiagnosticsView(): void {
+    invalidatePendingRepair();
     input.setThreadPageTargetId("");
     input.setChannelCreateOpen(false);
     input.setActiveView("runs");
@@ -63,6 +82,7 @@ export function useAppNavigationController(input: {
   }
 
   function selectWorkspaceChannel(channelId: string): void {
+    invalidatePendingRepair();
     input.setChannelCreateOpen(false);
     input.setSelectedChannelBranchId("");
     input.markChannelRead(channelId);
@@ -73,6 +93,7 @@ export function useAppNavigationController(input: {
   }
 
   function selectWorkspaceChannelBranch(channelId: string, branchId: string): void {
+    invalidatePendingRepair();
     input.setChannelCreateOpen(false);
     input.setSelectedChannelBranchId(branchId);
     input.markChannelRead(channelId);
@@ -83,6 +104,7 @@ export function useAppNavigationController(input: {
   }
 
   function selectAiTeammate(teammateId: string): void {
+    invalidatePendingRepair();
     input.setChannelCreateOpen(false);
     input.setSelectedChannelBranchId("");
     input.setActiveView("teammates");
@@ -90,6 +112,7 @@ export function useAppNavigationController(input: {
   }
 
   async function openTaskFromWorkBoard(taskId: string): Promise<void> {
+    invalidatePendingRepair();
     const task = input.tasks.find((item) => item.id === taskId);
     const channelId = task?.channelId ?? input.durableWorkItems.find((item) => item.taskId === taskId)?.channelId;
     if (channelId) {
@@ -105,6 +128,7 @@ export function useAppNavigationController(input: {
   }
 
   function openApprovalsFromWorkspace(runId?: string): void {
+    invalidatePendingRepair();
     const targetRunId = runId || input.activeRunId || "";
     input.setApprovalRepairRunId(targetRunId);
     if (targetRunId) {
@@ -116,6 +140,7 @@ export function useAppNavigationController(input: {
   }
 
   function openProvidersFromRun(runToRepair?: RunSession): void {
+    invalidatePendingRepair();
     void input.handleDomainEvent({
       type: "provider.repairRequested",
       providerPresetId: runToRepair ? readRunProviderPresetId(runToRepair) : undefined,
@@ -124,23 +149,38 @@ export function useAppNavigationController(input: {
   }
 
   async function openTaskFromRun(runToRepair: RunSession): Promise<void> {
+    invalidatePendingRepair();
+    const request = errorOwner.begin("navigation-repair", runToRepair.id, "open-task");
     if (!runToRepair.channelId || !runToRepair.taskId) {
-      input.setErrorMessage("This run is not linked to an editable channel task.");
+      errorOwner.report(request, {
+        scope: "mutation",
+        message: "This run is not linked to an editable channel task.",
+      });
       return;
     }
 
-    input.setErrorMessage("");
+    errorOwner.clear(request);
     input.setTaskRepairRunId(runToRepair.id);
     input.setSelectedChannelId(runToRepair.channelId);
     input.setSelectedTaskId(runToRepair.taskId);
     input.setTaskRunProviderId("");
     input.setActiveView("workspace");
     input.setActiveSidebarTarget(channelSidebarTarget(runToRepair.channelId));
-    await input.refreshTasks(runToRepair.channelId);
-    input.setSelectedTaskId(runToRepair.taskId);
+    try {
+      await input.refreshTasks(runToRepair.channelId);
+      if (errorOwner.isCurrent(request)) {
+        input.setSelectedTaskId(runToRepair.taskId);
+        errorOwner.clear(request);
+      }
+    } catch (caught) {
+      errorOwner.report(request, { scope: "mutation", message: domainErrorMessage(caught) });
+    }
   }
 
   return {
+    errors: errorOwner.errors() as readonly NavigationRepairError[],
+    error: errorOwner.latest() as NavigationRepairError | undefined,
+    clearError: errorOwner.clearAll,
     openPlainView,
     openRunDiagnosticsView,
     selectWorkspaceChannel,

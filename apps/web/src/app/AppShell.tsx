@@ -159,6 +159,7 @@ import { useTaskRunController } from "./use-task-run-controller.js";
 import { useWorkspaceSettingsController } from "./use-workspace-settings-controller.js";
 import { useDesktopNavigationIntents } from "./use-desktop-navigation-intents.js";
 import { useAppNarrowViewport } from "./use-app-viewport-state.js";
+import { useShellErrorFeedback } from "./use-shell-error-feedback.js";
 
 const builtinSkillPack = getBuiltinSkillPack(GSTACK_DEFAULT_SKILL_PACK_ID);
 const builtinTeammateTemplates = builtinSkillPack?.teammateTemplates ?? [];
@@ -201,7 +202,7 @@ function isSettingsWorkspaceToolView(view: ViewId): view is Exclude<SettingsWork
 export function AppShell(): JSX.Element {
   const { locale, setLocale, t } = useI18n();
   const { preference: themePreference, setLegacyPreference: setThemePreference } = useTheme();
-  const { showToast } = useLingToast();
+  const { dismissToast, showToast } = useLingToast();
   const fullAccessConfirmation = useFullAccessConfirmationController();
   const narrowViewport = useAppNarrowViewport();
   const desktopHosted = typeof window !== "undefined" && Boolean(window.lingDesktop);
@@ -669,7 +670,6 @@ export function AppShell(): JSX.Element {
   const externalWorkDomain = useExternalWorkDomain({
     cwd: form.cwd.trim(),
     selectedChannelId,
-    setErrorMessage,
   });
   const {
     externalWorkCiTriage,
@@ -721,7 +721,6 @@ export function AppShell(): JSX.Element {
   } = durableWorkItemsDomain.actions;
   const runtimeDomain = useRuntimeDomain({
     cwd: form.cwd.trim(),
-    setErrorMessage,
     onWorkUnitActionComplete: async (workUnitId, action) => {
       if (action === "cancel" && run?.workUnitId === workUnitId) {
         abortCurrentRun();
@@ -739,6 +738,7 @@ export function AppShell(): JSX.Element {
     runtimeLoading,
     runtimeActionWorkUnitId,
   } = runtimeDomain.state;
+  const runtimeError = runtimeDomain.error;
   const {
     setSelectedWorkUnitDetail,
     refreshRuntimeState,
@@ -791,7 +791,13 @@ export function AppShell(): JSX.Element {
     abortCurrentRun,
     cancelRunOrWorkUnit,
   } = runsDomain.actions;
-  const { workspaceSettings, effectiveConfig, updateWorkspaceCwd, patchWorkspaceSettings } = useWorkspaceSettingsController({
+  const {
+    workspaceSettings,
+    effectiveConfig,
+    error: workspaceSettingsError,
+    updateWorkspaceCwd,
+    patchWorkspaceSettings,
+  } = useWorkspaceSettingsController({
     daemonHealthy,
     form,
     setForm,
@@ -800,7 +806,6 @@ export function AppShell(): JSX.Element {
     themePreference,
     setThemePreference,
     setChannelForm,
-    setErrorMessage,
     resetForCwd: (cwd) => {
       channelFeedback.reset();
       resetWorkspaceForCwd(cwd);
@@ -1211,6 +1216,7 @@ export function AppShell(): JSX.Element {
     refreshUsedMemoryAudit,
   });
   const {
+    error: navigationRepairError,
     openPlainView,
     openRunDiagnosticsView,
     selectWorkspaceChannel,
@@ -1236,7 +1242,6 @@ export function AppShell(): JSX.Element {
     setTaskRepairRunId,
     setTaskRunProviderId,
     setThreadPageTargetId,
-    setErrorMessage,
     markChannelRead,
     loadRun,
     refreshApprovals,
@@ -1595,7 +1600,7 @@ export function AppShell(): JSX.Element {
     refreshRuntimeState,
     emitDomainEvent: handleDomainEvent,
   });
-  useControlPlaneInvalidation({
+  const controlPlaneInvalidation = useControlPlaneInvalidation({
     daemonBaseUrl,
     daemonHealthy,
     localWebSocketRpcEnabled: daemonFeatures.transports?.localWebSocketRpc === true,
@@ -1603,7 +1608,6 @@ export function AppShell(): JSX.Element {
     selectedChannelId,
     channelRunsForArtifacts,
     setSkillLibraryRefreshToken,
-    setErrorMessage,
     refreshRuns,
     refreshRuntimeState,
     refreshApprovals,
@@ -1617,6 +1621,45 @@ export function AppShell(): JSX.Element {
     refreshChannelExecutionActions,
     refreshChannelActivity,
   });
+  const shellErrorFeedbackItems = useMemo(() => [
+    {
+      key: "runtime",
+      error: runtimeError,
+      surface: activeView,
+      visible: activeView === "workspace",
+    },
+    {
+      key: "workspace-settings",
+      error: workspaceSettingsError,
+      surface: activeView,
+      visible: activeView === "settings" || activeView === "workspace",
+    },
+    {
+      key: "control-plane",
+      error: controlPlaneInvalidation.error,
+      surface: activeView,
+      visible: true,
+    },
+    {
+      key: "navigation-repair",
+      error: navigationRepairError,
+      surface: activeView,
+      visible: Boolean(navigationRepairError && (
+        (activeView === "runs" && (run?.id === navigationRepairError.objectId || activeRunId === navigationRepairError.objectId))
+        || (activeView === "workspace" && taskRepairRunId === navigationRepairError.objectId)
+      )),
+    },
+  ], [
+    activeRunId,
+    activeView,
+    controlPlaneInvalidation.error,
+    navigationRepairError,
+    run?.id,
+    runtimeError,
+    taskRepairRunId,
+    workspaceSettingsError,
+  ]);
+  useShellErrorFeedback({ dismissToast, items: shellErrorFeedbackItems, showToast });
 
   useEffect(() => {
     void refreshHealth();
