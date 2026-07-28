@@ -2,11 +2,12 @@
 
 ## Status
 
-Design source of truth. Implementation is in progress: package foundations、forms、Dialog/Drawer、
-Popover/Tabs/Segmented、Feedback/Data Display、P2A ThemeRegistry/independent Theme Packs、P2B.1
-Presentation Profile/Theme Compiler foundations, selected Desktop slices, Shell/Sidebar and all three conversation
-surfaces exist. Web 主产品面大部分已验证；T13-P.3 已完成 canonical closeout，P9-EF 正处于 final
-verification pending。Channel、Normal Conversation 和 AI 队友私聊的 UI 2.0 会话切片已全部关闭。
+Design source of truth. 现有可达 Web UI 2.0 主线已在 T13-P.9EF 完成 closeout：package foundations、
+forms、Dialog/Drawer、Popover/Tabs/Segmented、Feedback/Data Display、P2A ThemeRegistry/independent
+Theme Packs、P2B.1 Presentation Profile/Theme Compiler foundations、Shell/Sidebar 与三类会话面的
+现有可达范围均已验证。最终 Web Playwright `962/962`、feedback guard `0/0/0`、全部 non-Desktop
+package tests 和 static/build gates 通过；P9-EF 新增 changed-state 以 `8/8` 专用证据集关闭。
+Channel、Normal Conversation 和 AI 队友私聊的 UI 2.0 会话切片已全部关闭。
 `First Run 新入口` 是未决产品能力，不阻塞现有可达 Web UI 2.0 closeout；
 `P7A.1 Settings Shell foundation`、`P7A.2 Settings Profile`、
 `P7A.3 Default Authorization + Personalization`、P7A.4 当前可达的 Interface Preferences 与
@@ -510,17 +511,17 @@ Check/Sync 和 Model row Check
 已经完成反馈 owner 收口。短暂成功只进入 global Toast，失败留对象 owner，三个旧成功 class 与三个业务
 timer 预算均为 `0`；focused/legacy effective `55/55`、模块 effective `156/156`、formal capture `14/14`
 与 static gates 通过。P9-C 又将 Provider、Runs、Approvals、MCP、Settings 移出 AppShell generic error，
-combined `50/50`、Settings follow-up `5/5`、cross-page evidence `3/3` 通过；P9-E-F 与 Profile standalone
-message 仍 open，因此 UI 2.0 总进度保持 `94.2%`，不宣称全产品 feedback 完成；该验证不等于未决产品能力
-`Teammate MCP A/A/A` 已完成。
+combined `50/50`、Settings follow-up `5/5`、cross-page evidence `3/3` 通过。后续 P9-EF 已将现有可达 Web
+generic writer、consumer 和 compatibility prop 全部归零；standalone Profile message 继续作为不可达
+inventory，不阻塞 Web closeout。该验证不等于未决产品能力 `Teammate MCP A/A/A` 已完成。
 
 ## T13-P.9C Existing DomainError Status
 
 Provider、Runs、Approvals、MCP 与 Settings 已使用 domain/object error owner，AppShell 不再向五个 hook 注入
 generic setter。Approval decision 按对象身份隔离，Provider row failure 继续使用 P8 owner；从失败的 Model
 Workbench 返回 Channel 时错误不会跨页残留。generic writer guard 当前为 `248/14`，released contracts=`8`。
-四张 Light/Dark、1440/1280 原尺寸证据位于 `evidence/shell/app-shell-error-ownership/`。P9-D Channel 已按下节
-关闭，当前 Active batch 进入 P9-EF；共享 Input 的 T12.1b/c/d containment 已验证，不因截图视觉误读重开。
+四张 Light/Dark、1440/1280 原尺寸证据位于 `evidence/shell/app-shell-error-ownership/`。P9-D Channel 与
+P9-EF final Web batch 均已关闭；共享 Input 的 T12.1b/c/d containment 已验证，不因截图视觉误读重开。
 
 ## T13-P.9D Channel Error Ownership Status
 
@@ -530,13 +531,12 @@ WorkspaceClientView 也不再渲染页面级 generic error。迟到的 Engineeri
 Engineering 后 draft、failure 与 Retry 仍在；Rename failure 留在 Dialog。generic writer guard 已下降到 `91/9`，
 released contracts=`13`。focused/capture `3/3`、selected Channel `35/35`、完整 Channel `105/105`、conversation
 package `23/23`、shared UI `70/70`、Form `4/4` 和 static gates 通过；三张正式证据位于
-`evidence/conversations/channel-error-ownership/`。Active batch 进入 P9-EF final Web error ownership；Profile
-standalone 保持 inventory，packaged platform gates 转入独立发布清单；总体进度保持 `94.2%`。
+`evidence/conversations/channel-error-ownership/`。后续 P9-EF final Web error ownership 已验证关闭；Profile
+standalone 保持 inventory，packaged platform gates 继续由独立发布清单管理。
 
 ## T13-P.9EF Final Web Batch
 
-状态：执行中，final verification pending；不得在最终 non-Desktop 回归与新增 changed-state evidence 完成前
-标记 `verified`。
+状态：`verified`，现有可达 Web UI 2.0 主线 closeout 完成。
 
 这是现有可达 Web UI 2.0 主线的最后一个实施批次。它合并 Normal Conversation、AI Teammate、Plugin 与
 startup/control-plane/shell error ownership，最终删除 generic AppShell error writer、consumer 和 compatibility
@@ -544,3 +544,14 @@ prop。P9-D 后 Web 视觉冻结；A-E 小切片只运行 focused，不截图，
 regression 并只生成一次新增状态证据。完成该批次后，当前已确定范围的 Web UI 2.0 主线可以 closeout；上述
 五项未决产品能力不进入本批次，也不阻塞 closeout。Intel Mac、Windows 与 packaged acceptance 继续只由
 [`release/01-Desktop跨平台发布验收清单.md`](release/01-Desktop跨平台发布验收清单.md) 记账。
+
+最终验证：Web Playwright `962/962`（`21.5m`）；Storyboard edge readiness 压测 `10/10`、
+Teammate failed long scenario `1/1`、Teammate Channels `7/7`、Workflow Select geometry 压测 `10/10`、
+Select geometry/alias `8/8`；feedback generic writer / consumer / compatibility prop 为 `0/0/0`，
+released contracts=`22`。Web lint、i18n、typecheck、production build、`git diff --check` 和 evidence
+verifier fixtures `5/5` 通过。non-Desktop package tests 为 `ui-react 70/70`、`conversation-ui-core 27/27`、
+`conversation-ui-react 23/23`、`api-client 48/48`、`core 311/311`、`contracts 5/5`、`plugin-sdk 8/8`、
+`providers 28/28`、`runner-pi 9/9`、`daemon 629/629`、`cli 68/68`。P9-EF 八个 changed-state 证据、
+sidecar、manifest 与 metadata 位于 `evidence/release/web/p9ef-final-error-ownership/`，并由
+`verify-ui2-p9ef-evidence.mjs` 结构校验。该结果表示 reachable Web closeout 完成，不表示 Desktop
+发布或五项未决产品能力完成。
