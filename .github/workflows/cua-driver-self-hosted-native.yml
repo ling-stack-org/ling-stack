@@ -1,0 +1,431 @@
+name: Cua Driver self-hosted native evidence
+
+on:
+  workflow_call:
+    inputs:
+      platform:
+        description: Locked native platform to execute
+        required: true
+        type: string
+      expected_commit:
+        description: Full 40-character commit SHA authorized for this run
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Locked native platform to execute
+        required: true
+        default: macos
+        type: choice
+        options:
+          - macos
+          - windows
+          - both
+      expected_commit:
+        description: Full 40-character commit SHA authorized for this run
+        required: true
+        type: string
+
+concurrency:
+  group: cua-driver-self-hosted-native-${{ github.ref }}-${{ inputs.platform }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CI: "true"
+  CSC_IDENTITY_AUTO_DISCOVERY: "false"
+  LING_CUA_EXPECTED_COMMIT: ${{ inputs.expected_commit }}
+
+jobs:
+  macos-source-build:
+    if: inputs.platform == 'macos' || inputs.platform == 'both'
+    name: Self-hosted Cua Driver source build (macOS arm64)
+    runs-on:
+      - ling-cua-driver-macos-arm64-v1
+    timeout-minutes: 150
+    outputs:
+      package-authorized: ${{ steps.package-authorization.outputs.authorized }}
+    steps:
+      - name: Authorize the immutable manual dispatch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "$GITHUB_ACTOR" = "tianxiaochannel-oss88"
+          test "$GITHUB_TRIGGERING_ACTOR" = "tianxiaochannel-oss88"
+          test "$GITHUB_REPOSITORY" = "tianxiaochannel-oss88/ling-stack"
+          test "$GITHUB_SHA" = "$LING_CUA_EXPECTED_COMMIT"
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+      - name: Initialize run-specific build root
+        shell: bash
+        run: echo "LING_CUA_BUILD_ROOT=$RUNNER_TEMP/ling-cua-driver-source-build/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/macos" >> "$GITHUB_ENV"
+
+      - name: Check out the authorized commit without retaining credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          clean: true
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up locked Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.15.0
+
+      - name: Install the locked Rust toolchain and arm64 target
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          "$HOME/.cargo/bin/rustup" toolchain install 1.97.1 --profile minimal --component rustfmt
+          "$HOME/.cargo/bin/rustup" target add aarch64-apple-darwin --toolchain 1.97.1
+
+      - name: Verify dedicated runner identity and native toolchain
+        shell: bash
+        run: node apps/desktop/scripts/verify-cua-driver-self-hosted-runner.mjs --platform darwin
+
+      - name: Test the atomic package publisher
+        run: >-
+          node --test
+          apps/desktop/tests/cua-driver-package-publisher.test.mjs
+          apps/desktop/tests/cua-driver-macho-identity-normalizer.test.mjs
+          apps/desktop/tests/cua-driver-swift-archive-normalizer.test.mjs
+
+      - name: Build and attest candidate A
+        shell: bash
+        run: |
+          set -euo pipefail
+          node apps/desktop/scripts/build-cua-driver-provider.mjs \
+            --platform darwin \
+            --work-dir "$LING_CUA_BUILD_ROOT/a" \
+            --output-dir "$LING_CUA_BUILD_ROOT/a/output"
+          node apps/desktop/scripts/verify-cua-driver-source-build.mjs \
+            --resource-root apps/desktop/resources/providers/cua-driver/0.8.3-ling.1 \
+            --attestation "$LING_CUA_BUILD_ROOT/a/output/source-build-attestation.json" \
+            --output-root "$LING_CUA_BUILD_ROOT/a/output"
+
+      - name: Build and attest candidate B
+        shell: bash
+        run: |
+          set -euo pipefail
+          node apps/desktop/scripts/build-cua-driver-provider.mjs \
+            --platform darwin \
+            --work-dir "$LING_CUA_BUILD_ROOT/b" \
+            --output-dir "$LING_CUA_BUILD_ROOT/b/output"
+          node apps/desktop/scripts/verify-cua-driver-source-build.mjs \
+            --resource-root apps/desktop/resources/providers/cua-driver/0.8.3-ling.1 \
+            --attestation "$LING_CUA_BUILD_ROOT/b/output/source-build-attestation.json" \
+            --output-root "$LING_CUA_BUILD_ROOT/b/output"
+
+      - name: Compare repeated arm64 pre-sign outputs
+        id: repeat-build-compare
+        shell: bash
+        run: |
+          set -euo pipefail
+          node apps/desktop/scripts/verify-cua-driver-source-build.mjs \
+            --resource-root apps/desktop/resources/providers/cua-driver/0.8.3-ling.1 \
+            --compare-a "$LING_CUA_BUILD_ROOT/a/output" \
+            --compare-b "$LING_CUA_BUILD_ROOT/b/output"
+
+      - name: Diagnose macOS repeated-build mismatch
+        if: failure() && steps.repeat-build-compare.outcome == 'failure'
+        shell: bash
+        run: >-
+          node apps/desktop/scripts/diagnose-cua-driver-darwin-reproducibility.mjs
+          --left-work-dir "$LING_CUA_BUILD_ROOT/a"
+          --right-work-dir "$LING_CUA_BUILD_ROOT/b"
+
+      - name: Resolve committed macOS package authorization
+        id: package-authorization
+        shell: bash
+        run: node apps/desktop/scripts/check-cua-driver-package-authorization.mjs --platform darwin
+
+      - name: Install Desktop packaging dependencies
+        if: steps.package-authorization.outputs.authorized == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack pnpm install --frozen-lockfile
+
+      - name: Run production macOS arm64 package wrapper
+        if: steps.package-authorization.outputs.authorized == 'true'
+        shell: bash
+        run: >-
+          node apps/desktop/tests/run-cua-driver-signing-builder-fixture.mjs
+          --source-root "$LING_CUA_BUILD_ROOT/a/output"
+
+      - name: Upload macOS Electron Builder hook traces
+        if: steps.package-authorization.outputs.authorized == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cua-driver-self-hosted-electron-builder-macos-${{ github.run_id }}-${{ github.run_attempt }}
+          path: apps/desktop/test-results/cua-driver-signing-feasibility
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload immutable macOS A/B evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cua-driver-self-hosted-macos-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 1
+          path: |
+            ${{ env.LING_CUA_BUILD_ROOT }}/a/output
+            ${{ env.LING_CUA_BUILD_ROOT }}/b/output
+
+  macos-promotion-proposal:
+    if: >-
+      (inputs.platform == 'macos' || inputs.platform == 'both') &&
+      needs.macos-source-build.outputs.package-authorized != 'true'
+    name: Self-hosted Cua Driver promotion proposal (macOS arm64)
+    needs: macos-source-build
+    runs-on:
+      - ling-cua-driver-macos-arm64-v1
+    timeout-minutes: 45
+    steps:
+      - name: Authorize the immutable manual dispatch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "$GITHUB_ACTOR" = "tianxiaochannel-oss88"
+          test "$GITHUB_TRIGGERING_ACTOR" = "tianxiaochannel-oss88"
+          test "$GITHUB_REPOSITORY" = "tianxiaochannel-oss88/ling-stack"
+          test "$GITHUB_SHA" = "$LING_CUA_EXPECTED_COMMIT"
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+      - name: Initialize run-specific promotion root
+        shell: bash
+        run: echo "LING_CUA_PROMOTION_ROOT=$RUNNER_TEMP/ling-cua-driver-promotion/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/macos" >> "$GITHUB_ENV"
+
+      - name: Check out the authorized commit without retaining credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          clean: true
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up locked Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.15.0
+
+      - name: Add the locked Rust toolchain to PATH
+        shell: bash
+        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Verify dedicated runner identity and native toolchain
+        shell: bash
+        run: node apps/desktop/scripts/verify-cua-driver-self-hosted-runner.mjs --platform darwin
+
+      - name: Download immutable macOS A/B evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: cua-driver-self-hosted-macos-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.LING_CUA_PROMOTION_ROOT }}/evidence
+
+      - name: Generate the review-only promotion proposal
+        shell: bash
+        run: |
+          set -euo pipefail
+          node apps/desktop/scripts/promote-cua-driver-source-build.mjs \
+            --platform darwin \
+            --candidate-a "$LING_CUA_PROMOTION_ROOT/evidence/a/output" \
+            --candidate-b "$LING_CUA_PROMOTION_ROOT/evidence/b/output" \
+            --output-dir "$LING_CUA_PROMOTION_ROOT/proposal"
+
+      - name: Upload review-only macOS proposal
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cua-driver-self-hosted-promotion-macos-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 1
+          path: ${{ env.LING_CUA_PROMOTION_ROOT }}/proposal/**
+
+  windows-source-build:
+    if: inputs.platform == 'windows' || inputs.platform == 'both'
+    name: Self-hosted Cua Driver source build (Windows x64)
+    runs-on:
+      - ling-cua-driver-windows-x64-v1
+    timeout-minutes: 150
+    outputs:
+      package-authorized: ${{ steps.package-authorization.outputs.authorized }}
+    steps:
+      - name: Authorize the immutable manual dispatch
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_EVENT_NAME -ne "workflow_dispatch") { throw "workflow event is not authorized" }
+          if ($env:GITHUB_ACTOR -ne "tianxiaochannel-oss88") { throw "workflow actor is not authorized" }
+          if ($env:GITHUB_TRIGGERING_ACTOR -ne "tianxiaochannel-oss88") { throw "triggering actor is not authorized" }
+          if ($env:GITHUB_REPOSITORY -ne "tianxiaochannel-oss88/ling-stack") { throw "repository is not authorized" }
+          if ($env:GITHUB_SHA -ne $env:LING_CUA_EXPECTED_COMMIT) { throw "commit anchor mismatch" }
+          if ($env:GITHUB_SHA -notmatch "^[0-9a-f]{40}$") { throw "commit anchor is not a full SHA" }
+
+      - name: Initialize run-specific build root
+        shell: pwsh
+        run: '"LING_CUA_BUILD_ROOT=$env:RUNNER_TEMP\ling-cua-driver-source-build\$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT\windows" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append'
+
+      - name: Check out the authorized commit without retaining credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          clean: true
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up locked Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.15.0
+
+      - name: Install the locked Rust toolchain and target
+        shell: pwsh
+        run: |
+          "$env:USERPROFILE\.cargo\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          & "$env:USERPROFILE\.cargo\bin\rustup.exe" toolchain install 1.97.1 --profile minimal --component rustfmt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$env:USERPROFILE\.cargo\bin\rustup.exe" target add x86_64-pc-windows-msvc --toolchain 1.97.1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify dedicated runner identity and native toolchain
+        shell: pwsh
+        run: node apps/desktop/scripts/verify-cua-driver-self-hosted-runner.mjs --platform win32-x64
+
+      - name: Test the atomic package publisher
+        shell: pwsh
+        run: >-
+          node --test
+          apps/desktop/tests/cua-driver-package-publisher.test.mjs
+          apps/desktop/tests/cua-driver-macho-identity-normalizer.test.mjs
+          apps/desktop/tests/cua-driver-swift-archive-normalizer.test.mjs
+
+      - name: Build and attest candidate A
+        shell: pwsh
+        run: |
+          node apps/desktop/scripts/build-cua-driver-provider.mjs --platform win32-x64 --work-dir "$env:LING_CUA_BUILD_ROOT\a" --output-dir "$env:LING_CUA_BUILD_ROOT\a\output"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node apps/desktop/scripts/verify-cua-driver-source-build.mjs --resource-root apps/desktop/resources/providers/cua-driver/0.8.3-ling.1 --attestation "$env:LING_CUA_BUILD_ROOT\a\output\source-build-attestation.json" --output-root "$env:LING_CUA_BUILD_ROOT\a\output"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build and attest candidate B
+        shell: pwsh
+        run: |
+          node apps/desktop/scripts/build-cua-driver-provider.mjs --platform win32-x64 --work-dir "$env:LING_CUA_BUILD_ROOT\b" --output-dir "$env:LING_CUA_BUILD_ROOT\b\output"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node apps/desktop/scripts/verify-cua-driver-source-build.mjs --resource-root apps/desktop/resources/providers/cua-driver/0.8.3-ling.1 --attestation "$env:LING_CUA_BUILD_ROOT\b\output\source-build-attestation.json" --output-root "$env:LING_CUA_BUILD_ROOT\b\output"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Compare repeated x64 pre-sign outputs
+        shell: pwsh
+        run: |
+          node apps/desktop/scripts/verify-cua-driver-source-build.mjs --resource-root apps/desktop/resources/providers/cua-driver/0.8.3-ling.1 --compare-a "$env:LING_CUA_BUILD_ROOT\a\output" --compare-b "$env:LING_CUA_BUILD_ROOT\b\output"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Resolve committed Windows package authorization
+        id: package-authorization
+        shell: pwsh
+        run: node apps/desktop/scripts/check-cua-driver-package-authorization.mjs --platform win32-x64
+
+      - name: Install Desktop packaging dependencies
+        if: steps.package-authorization.outputs.authorized == 'true'
+        shell: pwsh
+        run: |
+          corepack enable
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          corepack pnpm install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run production Windows package wrapper
+        if: steps.package-authorization.outputs.authorized == 'true'
+        shell: pwsh
+        run: |
+          $sourceRoot = Join-Path $env:LING_CUA_BUILD_ROOT "a\output"
+          node apps/desktop/tests/run-cua-driver-signing-builder-fixture.mjs --source-root $sourceRoot
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload Windows Electron Builder hook trace
+        if: steps.package-authorization.outputs.authorized == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cua-driver-self-hosted-electron-builder-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          path: apps/desktop/test-results/cua-driver-signing-feasibility
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload immutable Windows A/B evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cua-driver-self-hosted-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 1
+          path: |
+            ${{ env.LING_CUA_BUILD_ROOT }}\a\output
+            ${{ env.LING_CUA_BUILD_ROOT }}\b\output
+
+  windows-promotion-proposal:
+    if: >-
+      (inputs.platform == 'windows' || inputs.platform == 'both') &&
+      needs.windows-source-build.outputs.package-authorized != 'true'
+    name: Self-hosted Cua Driver promotion proposal (Windows x64)
+    needs: windows-source-build
+    runs-on:
+      - ling-cua-driver-windows-x64-v1
+    timeout-minutes: 45
+    steps:
+      - name: Authorize the immutable manual dispatch
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_EVENT_NAME -ne "workflow_dispatch") { throw "workflow event is not authorized" }
+          if ($env:GITHUB_ACTOR -ne "tianxiaochannel-oss88") { throw "workflow actor is not authorized" }
+          if ($env:GITHUB_TRIGGERING_ACTOR -ne "tianxiaochannel-oss88") { throw "triggering actor is not authorized" }
+          if ($env:GITHUB_REPOSITORY -ne "tianxiaochannel-oss88/ling-stack") { throw "repository is not authorized" }
+          if ($env:GITHUB_SHA -ne $env:LING_CUA_EXPECTED_COMMIT) { throw "commit anchor mismatch" }
+          if ($env:GITHUB_SHA -notmatch "^[0-9a-f]{40}$") { throw "commit anchor is not a full SHA" }
+
+      - name: Initialize run-specific promotion root
+        shell: pwsh
+        run: '"LING_CUA_PROMOTION_ROOT=$env:RUNNER_TEMP\ling-cua-driver-promotion\$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT\windows" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append'
+
+      - name: Check out the authorized commit without retaining credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          clean: true
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up locked Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.15.0
+
+      - name: Add the locked Rust toolchain to PATH
+        shell: pwsh
+        run: '"$env:USERPROFILE\.cargo\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append'
+
+      - name: Verify dedicated runner identity and native toolchain
+        shell: pwsh
+        run: node apps/desktop/scripts/verify-cua-driver-self-hosted-runner.mjs --platform win32-x64
+
+      - name: Download immutable Windows A/B evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: cua-driver-self-hosted-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.LING_CUA_PROMOTION_ROOT }}\evidence
+
+      - name: Generate the review-only promotion proposal
+        shell: pwsh
+        run: |
+          node apps/desktop/scripts/promote-cua-driver-source-build.mjs --platform win32-x64 --candidate-a "$env:LING_CUA_PROMOTION_ROOT\evidence\a\output" --candidate-b "$env:LING_CUA_PROMOTION_ROOT\evidence\b\output" --output-dir "$env:LING_CUA_PROMOTION_ROOT\proposal"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload review-only Windows proposal
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cua-driver-self-hosted-promotion-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 1
+          path: ${{ env.LING_CUA_PROMOTION_ROOT }}\proposal\**

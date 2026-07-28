@@ -19,6 +19,11 @@ export interface PluginManagerFilters {
 }
 
 export type PluginPrimaryStateId =
+  | "included"
+  | "desktop-required"
+  | "permissions-required"
+  | "interactive-session-required"
+  | "repair-required"
   | "platform-blocked"
   | "provider-incompatible"
   | "restart-required"
@@ -80,6 +85,7 @@ export interface PluginRowView {
   readonly primaryState: PluginPrimaryStateView;
   readonly filterGroup: Exclude<PluginStatusFilter, "all"> | "other";
   readonly primaryAction?: PluginActionView;
+  readonly checkActionLabel?: string;
   readonly showCheckAction: boolean;
   readonly showDisableAction: boolean;
   readonly showDetailsAction: boolean;

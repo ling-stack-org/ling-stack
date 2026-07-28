@@ -2,6 +2,7 @@ import type { Translate } from "../../i18n.js";
 import type { ManagedPluginView } from "../../types.js";
 import type { PluginBusyAction } from "../../domains/plugins/use-plugins-domain.js";
 import { buildCuaHealthView } from "./plugin-manager-cua-view-model.js";
+import { buildBundledCuaDriverView } from "./plugin-manager-bundled-cua-view-model.js";
 import type {
   PluginActionFailure,
   PluginActionView,
@@ -18,31 +19,36 @@ export function buildPluginRowView(
   t: Translate,
   actionFailure?: PluginActionFailure,
 ): PluginRowView {
+  const bundledCua = buildBundledCuaDriverView(plugin, t);
   const settledPrimaryState = actionFailure
     ? { id: "failed", label: t("Needs attention"), tone: "danger" } satisfies PluginPrimaryStateView
-    : deriveSettledState(plugin, now, t);
+    : bundledCua?.primaryState ?? deriveSettledState(plugin, now, t);
   const rowBusyAction = busyPluginId === plugin.id ? busyAction : undefined;
   const primaryState = rowBusyAction
     ? { id: "busy", label: busyStateLabel(rowBusyAction, t), tone: "info" } satisfies PluginPrimaryStateView
     : settledPrimaryState;
-  const actions = deriveActions(plugin, settledPrimaryState, t, actionFailure);
+  const actions = bundledCua
+    ? { primaryAction: bundledCua.primaryAction, menuActions: [] }
+    : deriveActions(plugin, settledPrimaryState, t, actionFailure);
   return {
     id: plugin.id,
     name: plugin.displayName,
-    description: plugin.id === "trusted-local:cua-driver"
+    description: bundledCua?.description ?? (plugin.id === "trusted-local:cua-driver"
       ? t("Controls desktop apps through the local Cua Driver.")
-      : plugin.description?.trim() ?? "",
+      : plugin.description?.trim() ?? ""),
     sourceKind: plugin.sourceKind,
     sourceLabel: pluginSourceLabel(plugin.sourceKind, t),
     settledPrimaryState,
     primaryState,
     filterGroup: stateFilterGroup(settledPrimaryState.id),
     primaryAction: actions.primaryAction,
-    showCheckAction: plugin.actions.canCheck && actions.primaryAction?.id !== "check",
-    showDisableAction: plugin.actions.canDisable
+    checkActionLabel: bundledCua?.checkActionLabel,
+    showCheckAction: bundledCua?.showCheckAction
+      ?? (plugin.actions.canCheck && actions.primaryAction?.id !== "check"),
+    showDisableAction: bundledCua?.showDisableAction ?? (plugin.actions.canDisable
       && plugin.sourceKind === "trusted-local-preset"
-      && actions.primaryAction?.id !== "disable",
-    showDetailsAction: true,
+      && actions.primaryAction?.id !== "disable"),
+    showDetailsAction: bundledCua ? actions.primaryAction?.id !== "details" : true,
     menuActions: actions.menuActions,
     busyAction: rowBusyAction,
     actionFailure,
@@ -165,8 +171,12 @@ function hasRuntimeFailure(plugin: ManagedPluginView): boolean {
 function stateFilterGroup(state: PluginPrimaryStateView["id"]): Exclude<PluginStatusFilter, "all"> | "other" {
   if (["platform-blocked"].includes(state)) return "unavailable";
   if (["ready"].includes(state)) return "enabled";
-  if (["disabled"].includes(state)) return "disabled";
+  if (["disabled", "included"].includes(state)) return "disabled";
   if ([
+    "desktop-required",
+    "permissions-required",
+    "interactive-session-required",
+    "repair-required",
     "provider-incompatible",
     "restart-required",
     "provider-unavailable",

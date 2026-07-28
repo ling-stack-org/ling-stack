@@ -1,0 +1,2405 @@
+diff --git a/libs/cua-driver/rust/crates/cua-driver-core/Cargo.toml b/libs/cua-driver/rust/crates/cua-driver-core/Cargo.toml
+index 35ae609..5943779 100644
+--- a/libs/cua-driver/rust/crates/cua-driver-core/Cargo.toml
++++ b/libs/cua-driver/rust/crates/cua-driver-core/Cargo.toml
+@@ -31,4 +31,11 @@ image = { workspace = true }
+ tempfile = "3"
+ 
+ [target.'cfg(windows)'.dependencies]
+-windows = { version = "0.58", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
++windows = { version = "0.58", features = [
++    "Win32_Foundation",
++    "Win32_Security",
++    "Win32_Security_Authorization",
++    "Win32_Storage_FileSystem",
++    "Win32_System_Threading",
++    "Win32_UI_WindowsAndMessaging",
++] }
+diff --git a/libs/cua-driver/rust/crates/cua-driver-core/src/lib.rs b/libs/cua-driver/rust/crates/cua-driver-core/src/lib.rs
+index 21ffab2..7a78c4a 100644
+--- a/libs/cua-driver/rust/crates/cua-driver-core/src/lib.rs
++++ b/libs/cua-driver/rust/crates/cua-driver-core/src/lib.rs
+@@ -39,6 +39,7 @@ pub mod element_token;
+ pub mod ffmpeg_install;
+ pub mod health_report;
+ pub mod image_utils;
++pub mod ling_managed;
+ pub mod page;
+ pub mod pip_hook;
+ pub mod policy;
+diff --git a/libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed.rs b/libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed.rs
+new file mode 100644
+index 0000000..a11296f
+--- /dev/null
++++ b/libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed.rs
+@@ -0,0 +1,1411 @@
++//! Ling-owned managed-embedding environment and capability-root state access.
++//!
++//! Managed mode intentionally keeps the user's real HOME/USERPROFILE intact.
++//! Driver-owned state is instead accessed relative to one Desktop-created
++//! capability root. Every managed read/write re-opens that root without
++//! following links. Standalone mode never enters these helpers and retains the
++//! upstream path and persistence behavior byte-for-byte.
++
++use serde_json::Value;
++use std::ffi::{OsStr, OsString};
++use std::path::{Component, Path, PathBuf};
++use std::sync::{Mutex, OnceLock};
++
++pub const LING_MANAGED_ENV: &str = "CUA_DRIVER_LING_MANAGED";
++pub const STATE_HOME_ENV: &str = "CUA_DRIVER_STATE_HOME";
++pub const TELEMETRY_ENABLED_ENV: &str = "CUA_DRIVER_RS_TELEMETRY_ENABLED";
++pub const UPDATE_CHECK_ENV: &str = "CUA_DRIVER_RS_UPDATE_CHECK";
++pub const TELEMETRY_HOME_ENV: &str = "CUA_DRIVER_TELEMETRY_HOME";
++
++const INITIAL_DIRECTORIES: [&str; 3] = ["telemetry", "version-check", "run"];
++static STATE_RMW_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
++
++pub struct ManagedStateTransaction {
++    _guard: std::sync::MutexGuard<'static, ()>,
++    root: PathBuf,
++}
++
++impl ManagedStateTransaction {
++    pub fn update_json_keys_atomic(
++        &self,
++        relative: impl AsRef<Path>,
++        entries: &[(String, Value)],
++    ) -> Result<(), String> {
++        update_json_keys_unlocked(&self.root, relative.as_ref(), entries)
++    }
++}
++
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub struct ManagedEnvironment {
++    pub state_home: PathBuf,
++    pub telemetry_home: PathBuf,
++}
++
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub enum ManagedEnvironmentError {
++    Missing(&'static str),
++    InvalidBoolean {
++        name: &'static str,
++        expected: &'static str,
++    },
++    InvalidStateHome,
++    InvalidTelemetryHome,
++    InvalidStateRoot(String),
++}
++
++impl std::fmt::Display for ManagedEnvironmentError {
++    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        match self {
++            Self::Missing(name) => write!(formatter, "{name} is required in Ling-managed mode"),
++            Self::InvalidBoolean { name, expected } => {
++                write!(formatter, "{name} must be exactly {expected}")
++            }
++            Self::InvalidStateHome => formatter.write_str(
++                "managed state home must be a non-empty absolute path without dot segments",
++            ),
++            Self::InvalidTelemetryHome => formatter.write_str(
++                "managed telemetry home must be exactly CUA_DRIVER_STATE_HOME/telemetry",
++            ),
++            Self::InvalidStateRoot(message) => {
++                write!(formatter, "managed state root is invalid: {message}")
++            }
++        }
++    }
++}
++
++impl std::error::Error for ManagedEnvironmentError {}
++
++/// Whether Ling's managed channel is active. This is separate from the
++/// upstream `CUA_DRIVER_EMBEDDED` bit so embedding examples remain compatible.
++pub fn is_managed() -> bool {
++    std::env::var_os(LING_MANAGED_ENV).as_deref() == Some(OsStr::new("1"))
++}
++
++/// Parse and validate the complete managed environment. `Ok(None)` is the
++/// normal result for standalone/external mode.
++pub fn managed_environment() -> Result<Option<ManagedEnvironment>, ManagedEnvironmentError> {
++    if !is_managed() {
++        return Ok(None);
++    }
++    if !crate::embedded_mode() {
++        return Err(ManagedEnvironmentError::InvalidBoolean {
++            name: "CUA_DRIVER_EMBEDDED",
++            expected: "1",
++        });
++    }
++    let state_home = required_path(STATE_HOME_ENV)?;
++    exact_bool(TELEMETRY_ENABLED_ENV, false)?;
++    exact_bool(UPDATE_CHECK_ENV, false)?;
++    let expected_telemetry_home = state_home.join("telemetry");
++    let telemetry_home = match std::env::var_os(TELEMETRY_HOME_ENV) {
++        Some(value) => PathBuf::from(value),
++        None => expected_telemetry_home.clone(),
++    };
++    if telemetry_home != expected_telemetry_home {
++        return Err(ManagedEnvironmentError::InvalidTelemetryHome);
++    }
++    Ok(Some(ManagedEnvironment {
++        state_home,
++        telemetry_home,
++    }))
++}
++
++/// Validate the Desktop-created root and create the fixed initial child
++/// directories before MCP initialize can be accepted. On Unix this traverses
++/// every component with `openat(O_NOFOLLOW)` and requires 0700/current-uid.
++/// Windows uses retained handles, rejects every reparse component, and
++/// requires a protected current-token-only FullControl DACL.
++pub fn validate_state_root() -> Result<(), ManagedEnvironmentError> {
++    let Some(environment) = managed_environment()? else {
++        return Ok(());
++    };
++    platform::validate_root(&environment.state_home)
++        .map_err(ManagedEnvironmentError::InvalidStateRoot)?;
++    for relative in INITIAL_DIRECTORIES {
++        platform::ensure_directory(&environment.state_home, relative_path(relative)?)
++            .map_err(ManagedEnvironmentError::InvalidStateRoot)?;
++    }
++    Ok(())
++}
++
++/// Return Ling's isolated state root when managed mode is active. This is a
++/// diagnostic/path-display helper only; state I/O must use the capability-root
++/// helpers below.
++pub fn state_home() -> Option<PathBuf> {
++    is_managed()
++        .then(|| std::env::var_os(STATE_HOME_ENV).map(PathBuf::from))
++        .flatten()
++}
++
++/// Resolve a relative state path for display or APIs that still require a path.
++/// Traversal, dot segments, and absolute paths are rejected. Managed writers
++/// must not use the returned path directly.
++pub fn state_path(relative: impl AsRef<Path>) -> Option<PathBuf> {
++    let components = relative_components(relative.as_ref()).ok()?;
++    let mut path = state_home()?;
++    for component in components {
++        path.push(component);
++    }
++    Some(path)
++}
++
++/// Read one regular 0600/current-user file without following any link.
++pub fn read_state(relative: impl AsRef<Path>) -> Result<Option<Vec<u8>>, String> {
++    let root = managed_root()?;
++    let relative = relative_components(relative.as_ref())?;
++    platform::read_file(&root, relative)
++}
++
++/// Atomically replace one managed file. Parent directories are created with
++/// the platform's exact private-directory contract and the file is 0600 on
++/// Unix or protected/current-user-only FullControl on Windows.
++pub fn write_state_atomic(relative: impl AsRef<Path>, bytes: &[u8]) -> Result<(), String> {
++    let _guard = state_lock()?;
++    let root = managed_root()?;
++    let relative = relative_components(relative.as_ref())?;
++    platform::write_file_atomic(&root, relative, bytes)
++}
++
++/// Atomically read-modify-write one JSON object key. This is the only managed
++/// config merge primitive so concurrent MCP calls cannot lose sibling keys.
++pub fn update_json_key_atomic(
++    relative: impl AsRef<Path>,
++    key: &str,
++    value: Value,
++) -> Result<(), String> {
++    update_json_keys_atomic(relative, &[(key.to_owned(), value)])
++}
++
++/// Atomically merge a validated set of JSON object entries in one replacement.
++pub fn update_json_keys_atomic(
++    relative: impl AsRef<Path>,
++    entries: &[(String, Value)],
++) -> Result<(), String> {
++    let transaction = begin_state_transaction()?;
++    transaction.update_json_keys_atomic(relative, entries)
++}
++
++pub fn begin_state_transaction() -> Result<ManagedStateTransaction, String> {
++    let guard = state_lock()?;
++    let root = managed_root()?;
++    Ok(ManagedStateTransaction {
++        _guard: guard,
++        root,
++    })
++}
++
++fn update_json_keys_unlocked(
++    root: &Path,
++    relative: &Path,
++    entries: &[(String, Value)],
++) -> Result<(), String> {
++    if entries.is_empty() {
++        return Ok(());
++    }
++    if entries.iter().any(|(key, _)| key.is_empty()) {
++        return Err("managed JSON key is empty".to_owned());
++    }
++    let relative = relative_components(relative)?;
++    let mut json = match platform::read_file(root, relative.clone())? {
++        Some(bytes) => serde_json::from_slice::<Value>(&bytes)
++            .map_err(|error| format!("managed JSON is malformed: {error}"))?,
++        None => serde_json::json!({}),
++    };
++    let object = json
++        .as_object_mut()
++        .ok_or_else(|| "managed JSON root must be an object".to_owned())?;
++    for (key, value) in entries {
++        object.insert(key.clone(), value.clone());
++    }
++    let bytes = serde_json::to_vec_pretty(&json)
++        .map_err(|error| format!("failed to encode managed JSON: {error}"))?;
++    platform::write_file_atomic(root, relative, &bytes)
++}
++
++/// Remove one managed regular file without following a leaf link.
++pub fn remove_state_file(relative: impl AsRef<Path>) -> Result<(), String> {
++    let _guard = state_lock()?;
++    let root = managed_root()?;
++    let relative = relative_components(relative.as_ref())?;
++    platform::remove_file(&root, relative)
++}
++
++/// Return a relative capability path for an absolute path that must be under
++/// the configured root. Useful for legacy PID APIs that still carry strings.
++pub fn relative_from_state_path(path: impl AsRef<Path>) -> Result<Vec<OsString>, String> {
++    let root = managed_root()?;
++    let suffix = path
++        .as_ref()
++        .strip_prefix(&root)
++        .map_err(|_| "path is outside managed state root".to_owned())?;
++    relative_components(suffix)
++}
++
++pub fn write_state_path_atomic(path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), String> {
++    let _guard = state_lock()?;
++    let root = managed_root()?;
++    let relative = relative_from_root(&root, path.as_ref())?;
++    platform::write_file_atomic(&root, relative, bytes)
++}
++
++pub fn remove_state_path_file(path: impl AsRef<Path>) -> Result<(), String> {
++    let _guard = state_lock()?;
++    let root = managed_root()?;
++    let relative = relative_from_root(&root, path.as_ref())?;
++    platform::remove_file(&root, relative)
++}
++
++pub fn prepare_state_socket_path(path: impl AsRef<Path>) -> Result<(), String> {
++    let root = managed_root()?;
++    let relative = relative_from_root(&root, path.as_ref())?;
++    platform::prepare_socket(&root, relative)
++}
++
++pub fn remove_state_socket_path(path: impl AsRef<Path>) -> Result<(), String> {
++    let root = managed_root()?;
++    let relative = relative_from_root(&root, path.as_ref())?;
++    platform::remove_socket(&root, relative)
++}
++
++/// Native acceptance-only helper. Production Desktop owns root creation; test
++/// binaries need a deterministic way to create the same platform permissions
++/// before launching the real provider.
++#[cfg(debug_assertions)]
++#[doc(hidden)]
++pub fn prepare_acceptance_state_root(path: impl AsRef<Path>) -> Result<(), String> {
++    platform::prepare_acceptance_root(path.as_ref())
++}
++
++fn managed_root() -> Result<PathBuf, String> {
++    let environment = managed_environment()
++        .map_err(|error| error.to_string())?
++        .ok_or_else(|| "managed state API used outside Ling-managed mode".to_owned())?;
++    platform::validate_root(&environment.state_home)?;
++    Ok(environment.state_home)
++}
++
++fn relative_from_root(root: &Path, path: &Path) -> Result<Vec<OsString>, String> {
++    let suffix = path
++        .strip_prefix(root)
++        .map_err(|_| "path is outside managed state root".to_owned())?;
++    relative_components(suffix)
++}
++
++fn state_lock() -> Result<std::sync::MutexGuard<'static, ()>, String> {
++    STATE_RMW_LOCK
++        .get_or_init(|| Mutex::new(()))
++        .lock()
++        .map_err(|_| "managed state lock is poisoned".to_owned())
++}
++
++fn required_path(name: &'static str) -> Result<PathBuf, ManagedEnvironmentError> {
++    let value = std::env::var_os(name).ok_or(ManagedEnvironmentError::Missing(name))?;
++    let path = PathBuf::from(value);
++    if !path.is_absolute() || relative_components_for_absolute(&path).is_err() {
++        return Err(ManagedEnvironmentError::InvalidStateHome);
++    }
++    Ok(path)
++}
++
++fn exact_bool(name: &'static str, expected: bool) -> Result<(), ManagedEnvironmentError> {
++    let value = std::env::var(name).map_err(|_| ManagedEnvironmentError::Missing(name))?;
++    let expected_value = if expected { "true" } else { "false" };
++    if value != expected_value {
++        return Err(ManagedEnvironmentError::InvalidBoolean {
++            name,
++            expected: expected_value,
++        });
++    }
++    Ok(())
++}
++
++fn relative_components(path: &Path) -> Result<Vec<OsString>, String> {
++    if path.as_os_str().is_empty() || path.is_absolute() {
++        return Err("managed state path must be non-empty and relative".to_owned());
++    }
++    let mut result = Vec::new();
++    for component in path.components() {
++        match component {
++            Component::Normal(value) if !value.is_empty() => result.push(value.to_owned()),
++            _ => return Err("managed state path contains a forbidden component".to_owned()),
++        }
++    }
++    if result.is_empty() {
++        return Err("managed state path is empty".to_owned());
++    }
++    Ok(result)
++}
++
++fn relative_components_for_absolute(path: &Path) -> Result<Vec<OsString>, String> {
++    let mut result = Vec::new();
++    for component in path.components() {
++        match component {
++            Component::Prefix(_) | Component::RootDir => {}
++            Component::Normal(value) if !value.is_empty() => result.push(value.to_owned()),
++            _ => return Err("absolute state root contains a forbidden component".to_owned()),
++        }
++    }
++    if result.is_empty() {
++        return Err("managed state root cannot be a filesystem root".to_owned());
++    }
++    Ok(result)
++}
++
++fn relative_path(value: &str) -> Result<Vec<OsString>, ManagedEnvironmentError> {
++    relative_components(Path::new(value)).map_err(ManagedEnvironmentError::InvalidStateRoot)
++}
++
++#[cfg(any(target_os = "macos", target_os = "linux"))]
++mod platform {
++    use super::relative_components_for_absolute;
++    use std::ffi::{CString, OsString};
++    use std::fs::File;
++    use std::io::{Read, Write};
++    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
++    use std::os::unix::ffi::OsStrExt;
++    use std::os::unix::fs::{FileTypeExt, MetadataExt};
++    use std::path::{Path, PathBuf};
++    use std::sync::atomic::{AtomicU64, Ordering};
++
++    const O_RDONLY: i32 = 0;
++    const O_WRONLY: i32 = 1;
++    #[cfg(target_os = "macos")]
++    const O_CREAT: i32 = 0x0200;
++    #[cfg(target_os = "linux")]
++    const O_CREAT: i32 = 0x0040;
++    #[cfg(target_os = "macos")]
++    const O_EXCL: i32 = 0x0800;
++    #[cfg(target_os = "linux")]
++    const O_EXCL: i32 = 0x0080;
++    #[cfg(target_os = "macos")]
++    const O_NOFOLLOW: i32 = 0x0100;
++    #[cfg(target_os = "linux")]
++    const O_NOFOLLOW: i32 = 0x20000;
++    #[cfg(target_os = "macos")]
++    const O_DIRECTORY: i32 = 0x100000;
++    #[cfg(target_os = "linux")]
++    const O_DIRECTORY: i32 = 0x10000;
++    #[cfg(target_os = "macos")]
++    const O_CLOEXEC: i32 = 0x1000000;
++    #[cfg(target_os = "linux")]
++    const O_CLOEXEC: i32 = 0x80000;
++
++    static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(1);
++
++    unsafe extern "C" {
++        fn openat(directory: i32, path: *const i8, flags: i32, ...) -> i32;
++        fn mkdirat(directory: i32, path: *const i8, mode: u32) -> i32;
++        fn renameat(
++            old_directory: i32,
++            old_path: *const i8,
++            new_directory: i32,
++            new_path: *const i8,
++        ) -> i32;
++        fn unlinkat(directory: i32, path: *const i8, flags: i32) -> i32;
++        fn fsync(descriptor: i32) -> i32;
++        fn geteuid() -> u32;
++    }
++
++    pub fn validate_root(root: &Path) -> Result<(), String> {
++        let descriptor = open_root(root)?;
++        validate_directory(&descriptor, "state root")
++    }
++
++    pub fn prepare_acceptance_root(root: &Path) -> Result<(), String> {
++        use std::os::unix::fs::PermissionsExt;
++        std::fs::create_dir(root)
++            .map_err(|error| format!("failed to create acceptance state root: {error}"))?;
++        std::fs::set_permissions(root, std::fs::Permissions::from_mode(0o700))
++            .map_err(|error| format!("failed to chmod acceptance state root: {error}"))?;
++        validate_root(root)
++    }
++
++    pub fn ensure_directory(root: &Path, relative: Vec<OsString>) -> Result<(), String> {
++        let _ = open_directories(root, &relative, true)?;
++        Ok(())
++    }
++
++    pub fn read_file(root: &Path, relative: Vec<OsString>) -> Result<Option<Vec<u8>>, String> {
++        let (parent, leaf) = open_parent(root, &relative, false)?;
++        let leaf = c_string(&leaf)?;
++        let raw = unsafe {
++            openat(
++                parent.as_raw_fd(),
++                leaf.as_ptr(),
++                O_RDONLY | O_NOFOLLOW | O_CLOEXEC,
++            )
++        };
++        if raw < 0 {
++            let error = std::io::Error::last_os_error();
++            if error.kind() == std::io::ErrorKind::NotFound {
++                return Ok(None);
++            }
++            return Err(format!(
++                "failed to open managed file without following links: {error}"
++            ));
++        }
++        let descriptor = unsafe { OwnedFd::from_raw_fd(raw) };
++        validate_file(&descriptor, "managed file")?;
++        let mut file = File::from(descriptor);
++        let mut bytes = Vec::new();
++        file.read_to_end(&mut bytes)
++            .map_err(|error| format!("failed to read managed file: {error}"))?;
++        Ok(Some(bytes))
++    }
++
++    pub fn write_file_atomic(
++        root: &Path,
++        relative: Vec<OsString>,
++        bytes: &[u8],
++    ) -> Result<(), String> {
++        let (parent, leaf) = open_parent(root, &relative, true)?;
++        match validate_existing_leaf(&parent, &leaf) {
++            Ok(()) => {}
++            Err(message) if message == "managed file is missing" => {}
++            Err(message) => return Err(message),
++        }
++        let temporary = OsString::from(format!(
++            ".ling-state-{}-{}.tmp",
++            std::process::id(),
++            TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed)
++        ));
++        let temporary_c = c_string(&temporary)?;
++        let raw = unsafe {
++            openat(
++                parent.as_raw_fd(),
++                temporary_c.as_ptr(),
++                O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
++                0o600_u32,
++            )
++        };
++        if raw < 0 {
++            return Err(format!(
++                "failed to create managed temporary file: {}",
++                std::io::Error::last_os_error()
++            ));
++        }
++        let descriptor = unsafe { OwnedFd::from_raw_fd(raw) };
++        let result = (|| {
++            validate_file(&descriptor, "managed temporary file")?;
++            let mut file = File::from(descriptor);
++            file.write_all(bytes)
++                .map_err(|error| format!("failed to write managed file: {error}"))?;
++            file.sync_all()
++                .map_err(|error| format!("failed to sync managed file: {error}"))?;
++            let leaf_c = c_string(&leaf)?;
++            let renamed = unsafe {
++                renameat(
++                    parent.as_raw_fd(),
++                    temporary_c.as_ptr(),
++                    parent.as_raw_fd(),
++                    leaf_c.as_ptr(),
++                )
++            };
++            if renamed != 0 {
++                return Err(format!(
++                    "failed to atomically replace managed file: {}",
++                    std::io::Error::last_os_error()
++                ));
++            }
++            let synced = unsafe { fsync(parent.as_raw_fd()) };
++            if synced != 0 {
++                return Err(format!(
++                    "failed to sync managed directory: {}",
++                    std::io::Error::last_os_error()
++                ));
++            }
++            Ok(())
++        })();
++        if result.is_err() {
++            unsafe {
++                let _ = unlinkat(parent.as_raw_fd(), temporary_c.as_ptr(), 0);
++            }
++        }
++        result
++    }
++
++    pub fn remove_file(root: &Path, relative: Vec<OsString>) -> Result<(), String> {
++        let (parent, leaf) = open_parent(root, &relative, false)?;
++        match validate_existing_leaf(&parent, &leaf) {
++            Ok(()) => {}
++            Err(message) if message == "managed file is missing" => return Ok(()),
++            Err(message) => return Err(message),
++        }
++        let leaf = c_string(&leaf)?;
++        if unsafe { unlinkat(parent.as_raw_fd(), leaf.as_ptr(), 0) } != 0 {
++            return Err(format!(
++                "failed to remove managed file: {}",
++                std::io::Error::last_os_error()
++            ));
++        }
++        if unsafe { fsync(parent.as_raw_fd()) } != 0 {
++            return Err(format!(
++                "failed to sync managed directory: {}",
++                std::io::Error::last_os_error()
++            ));
++        }
++        Ok(())
++    }
++
++    pub fn prepare_socket(root: &Path, relative: Vec<OsString>) -> Result<(), String> {
++        remove_socket_impl(root, &relative, "stale managed socket")
++    }
++
++    pub fn remove_socket(root: &Path, relative: Vec<OsString>) -> Result<(), String> {
++        remove_socket_impl(root, &relative, "managed socket")
++    }
++
++    fn remove_socket_impl(root: &Path, relative: &[OsString], label: &str) -> Result<(), String> {
++        let (parent, leaf) = open_parent(root, relative, false)?;
++        let mut absolute = root.to_path_buf();
++        for component in relative {
++            absolute.push(component);
++        }
++        let metadata = match std::fs::symlink_metadata(&absolute) {
++            Ok(metadata) => metadata,
++            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
++            Err(error) => return Err(format!("failed to inspect {label}: {error}")),
++        };
++        if metadata.file_type().is_symlink() || !metadata.file_type().is_socket() {
++            return Err(format!("{label} leaf is not a native socket"));
++        }
++        let leaf = c_string(&leaf)?;
++        if unsafe { unlinkat(parent.as_raw_fd(), leaf.as_ptr(), 0) } != 0 {
++            return Err(format!(
++                "failed to remove {label}: {}",
++                std::io::Error::last_os_error()
++            ));
++        }
++        if unsafe { fsync(parent.as_raw_fd()) } != 0 {
++            return Err(format!(
++                "failed to sync managed socket directory: {}",
++                std::io::Error::last_os_error()
++            ));
++        }
++        Ok(())
++    }
++
++    fn open_root(root: &Path) -> Result<OwnedFd, String> {
++        let components = relative_components_for_absolute(root)?;
++        let mut current: OwnedFd = File::open("/")
++            .map_err(|error| format!("failed to open filesystem root: {error}"))?
++            .into();
++        for component in components {
++            current = open_directory_at(&current, &component)?;
++        }
++        Ok(current)
++    }
++
++    fn open_parent(
++        root: &Path,
++        relative: &[OsString],
++        create: bool,
++    ) -> Result<(OwnedFd, OsString), String> {
++        let (leaf, parents) = relative
++            .split_last()
++            .ok_or_else(|| "managed state path is empty".to_owned())?;
++        Ok((open_directories(root, parents, create)?, leaf.clone()))
++    }
++
++    fn open_directories(
++        root: &Path,
++        relative: &[OsString],
++        create: bool,
++    ) -> Result<OwnedFd, String> {
++        let mut current = open_root(root)?;
++        validate_directory(&current, "state root")?;
++        for component in relative {
++            match open_directory_at(&current, component) {
++                Ok(next) => current = next,
++                Err(message) if create && message.starts_with("missing managed directory:") => {
++                    let name = c_string(component)?;
++                    let created = unsafe { mkdirat(current.as_raw_fd(), name.as_ptr(), 0o700) };
++                    if created != 0 {
++                        let error = std::io::Error::last_os_error();
++                        if error.kind() != std::io::ErrorKind::AlreadyExists {
++                            return Err(format!("failed to create managed directory: {error}"));
++                        }
++                    }
++                    current = open_directory_at(&current, component)?;
++                }
++                Err(message) => return Err(message),
++            }
++            validate_directory(&current, "managed directory")?;
++        }
++        Ok(current)
++    }
++
++    fn open_directory_at(parent: &OwnedFd, name: &OsString) -> Result<OwnedFd, String> {
++        let name = c_string(name)?;
++        let raw = unsafe {
++            openat(
++                parent.as_raw_fd(),
++                name.as_ptr(),
++                O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC,
++            )
++        };
++        if raw < 0 {
++            let error = std::io::Error::last_os_error();
++            if error.kind() == std::io::ErrorKind::NotFound {
++                return Err(format!("missing managed directory: {error}"));
++            }
++            return Err(format!(
++                "failed to open managed directory without following links: {error}"
++            ));
++        }
++        Ok(unsafe { OwnedFd::from_raw_fd(raw) })
++    }
++
++    fn validate_existing_leaf(parent: &OwnedFd, leaf: &OsString) -> Result<(), String> {
++        let leaf = c_string(leaf)?;
++        let raw = unsafe {
++            openat(
++                parent.as_raw_fd(),
++                leaf.as_ptr(),
++                O_RDONLY | O_NOFOLLOW | O_CLOEXEC,
++            )
++        };
++        if raw < 0 {
++            let error = std::io::Error::last_os_error();
++            if error.kind() == std::io::ErrorKind::NotFound {
++                return Err("managed file is missing".to_owned());
++            }
++            return Err(format!(
++                "managed file cannot be opened without following links: {error}"
++            ));
++        }
++        let descriptor = unsafe { OwnedFd::from_raw_fd(raw) };
++        validate_file(&descriptor, "managed file")
++    }
++
++    fn validate_directory(descriptor: &OwnedFd, label: &str) -> Result<(), String> {
++        let metadata = File::from(
++            descriptor
++                .try_clone()
++                .map_err(|error| format!("failed to clone {label} descriptor: {error}"))?,
++        )
++        .metadata()
++        .map_err(|error| format!("failed to inspect {label}: {error}"))?;
++        if !metadata.is_dir() {
++            return Err(format!("{label} is not a directory"));
++        }
++        validate_unix_owner_mode(&metadata, 0o700, label)
++    }
++
++    fn validate_file(descriptor: &OwnedFd, label: &str) -> Result<(), String> {
++        let metadata = File::from(
++            descriptor
++                .try_clone()
++                .map_err(|error| format!("failed to clone {label} descriptor: {error}"))?,
++        )
++        .metadata()
++        .map_err(|error| format!("failed to inspect {label}: {error}"))?;
++        if !metadata.is_file() {
++            return Err(format!("{label} is not a regular file"));
++        }
++        validate_unix_owner_mode(&metadata, 0o600, label)
++    }
++
++    fn validate_unix_owner_mode(
++        metadata: &std::fs::Metadata,
++        expected_mode: u32,
++        label: &str,
++    ) -> Result<(), String> {
++        let current_uid = unsafe { geteuid() };
++        if metadata.uid() != current_uid {
++            return Err(format!("{label} is not owned by the effective user"));
++        }
++        if metadata.mode() & 0o777 != expected_mode {
++            return Err(format!("{label} must have mode {expected_mode:04o}"));
++        }
++        Ok(())
++    }
++
++    fn c_string(value: &OsString) -> Result<CString, String> {
++        CString::new(value.as_bytes())
++            .map_err(|_| "managed state component contains a NUL byte".to_owned())
++    }
++
++    #[allow(dead_code)]
++    fn _assert_absolute_path_type(_: &PathBuf) {}
++}
++
++#[cfg(target_os = "windows")]
++mod platform {
++    use super::relative_components_for_absolute;
++    use std::ffi::{c_void, OsString};
++    use std::fs::File;
++    use std::io::{Read, Write};
++    use std::os::windows::ffi::OsStrExt;
++    use std::os::windows::io::{AsRawHandle, FromRawHandle};
++    use std::path::{Path, PathBuf};
++    use std::sync::atomic::{AtomicU64, Ordering};
++    use windows::core::{PCWSTR, PWSTR};
++    use windows::Win32::Foundation::{CloseHandle, LocalFree, ERROR_SUCCESS, HANDLE, HLOCAL};
++    use windows::Win32::Security::Authorization::{
++        ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
++        GetSecurityInfo, SetSecurityInfo, SE_FILE_OBJECT,
++    };
++    use windows::Win32::Security::{
++        AclSizeInformation, EqualSid, GetAce, GetAclInformation, GetSecurityDescriptorControl,
++        GetSecurityDescriptorDacl, GetTokenInformation, TokenUser, ACCESS_ALLOWED_ACE, ACL,
++        ACL_SIZE_INFORMATION, DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
++        PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SE_DACL_PROTECTED,
++        TOKEN_QUERY, TOKEN_USER,
++    };
++    use windows::Win32::Storage::FileSystem::{
++        CreateFileW, FileAttributeTagInfo, GetFileInformationByHandleEx, MoveFileExW, ReplaceFileW,
++        CREATE_NEW, FILE_ALL_ACCESS, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL,
++        FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_TAG_INFO, FILE_FLAG_BACKUP_SEMANTICS,
++        FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_DELETE,
++        FILE_SHARE_READ, FILE_SHARE_WRITE, MOVEFILE_WRITE_THROUGH, OPEN_EXISTING,
++        REPLACEFILE_WRITE_THROUGH, WRITE_DAC,
++    };
++    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
++
++    static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(1);
++
++    pub fn validate_root(root: &Path) -> Result<(), String> {
++        validate_path_components(root)?;
++        let handle = open_path_handle_for_dacl(root)?;
++        validate_handle(&handle, true, true)
++    }
++
++    pub fn prepare_acceptance_root(root: &Path) -> Result<(), String> {
++        std::fs::create_dir(root)
++            .map_err(|error| format!("failed to create acceptance state root: {error}"))?;
++        let handle = open_path_handle_for_dacl(root)?;
++        apply_private_dacl(&handle, true)?;
++        validate_root(root)
++    }
++
++    pub fn ensure_directory(root: &Path, relative: Vec<OsString>) -> Result<(), String> {
++        let mut current = root.to_path_buf();
++        validate_root(root)?;
++        for component in relative {
++            current.push(component);
++            if !path_entry_exists(&current)? {
++                match std::fs::create_dir(&current) {
++                    Ok(()) => {
++                        let created = open_path_handle_for_dacl(&current)?;
++                        apply_private_dacl(&created, true)?;
++                    }
++                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
++                        // A concurrent creator may have won the race. Re-open and
++                        // validate the resulting entry below; this also rejects a
++                        // reparse point instead of following it.
++                    }
++                    Err(error) => {
++                        return Err(format!("failed to create managed directory: {error}"));
++                    }
++                }
++            }
++            validate_path_components(&current)?;
++            let handle = open_path_handle(&current)?;
++            validate_handle(&handle, true, true)?;
++        }
++        Ok(())
++    }
++
++    pub fn read_file(root: &Path, relative: Vec<OsString>) -> Result<Option<Vec<u8>>, String> {
++        let path = joined_path(root, &relative)?;
++        let Some(parent) = path.parent() else {
++            return Err("managed file has no parent".to_owned());
++        };
++        validate_path_components(parent)?;
++        if !path_entry_exists(&path)? {
++            return Ok(None);
++        }
++        let handle = open_path_handle(&path)?;
++        validate_handle(&handle, false, true)?;
++        let mut file = handle;
++        let mut bytes = Vec::new();
++        file.read_to_end(&mut bytes)
++            .map_err(|error| format!("failed to read managed file: {error}"))?;
++        Ok(Some(bytes))
++    }
++
++    pub fn write_file_atomic(
++        root: &Path,
++        relative: Vec<OsString>,
++        bytes: &[u8],
++    ) -> Result<(), String> {
++        let path = joined_path(root, &relative)?;
++        let parent = path
++            .parent()
++            .ok_or_else(|| "managed file has no parent".to_owned())?;
++        let parent_relative = path_relative_components(root, parent)?;
++        ensure_directory(root, parent_relative)?;
++        if path_entry_exists(&path)? {
++            let existing = open_path_handle(&path)?;
++            validate_handle(&existing, false, true)?;
++        }
++        let temporary = parent.join(format!(
++            ".ling-state-{}-{}.tmp",
++            std::process::id(),
++            TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed)
++        ));
++        let result = (|| {
++            let mut file = create_private_file_handle(&temporary)?;
++            apply_private_dacl(&file, false)?;
++            file.write_all(bytes)
++                .map_err(|error| format!("failed to write managed file: {error}"))?;
++            file.sync_all()
++                .map_err(|error| format!("failed to sync managed file: {error}"))?;
++            let temp_handle = open_path_handle(&temporary)?;
++            validate_handle(&temp_handle, false, true)?;
++            drop(temp_handle);
++            atomic_replace(&temporary, &path)?;
++            let final_handle = open_path_handle(&path)?;
++            validate_handle(&final_handle, false, true)
++        })();
++        if result.is_err() {
++            let _ = std::fs::remove_file(&temporary);
++        }
++        result
++    }
++
++    pub fn remove_file(root: &Path, relative: Vec<OsString>) -> Result<(), String> {
++        let path = joined_path(root, &relative)?;
++        let Some(parent) = path.parent() else {
++            return Err("managed file has no parent".to_owned());
++        };
++        validate_path_components(parent)?;
++        if !path_entry_exists(&path)? {
++            return Ok(());
++        }
++        let handle = open_path_handle(&path)?;
++        validate_handle(&handle, false, true)?;
++        drop(handle);
++        std::fs::remove_file(&path)
++            .map_err(|error| format!("failed to remove managed file: {error}"))
++    }
++
++    pub fn prepare_socket(_: &Path, _: Vec<OsString>) -> Result<(), String> {
++        Err("managed socket paths are not used on Windows".to_owned())
++    }
++
++    pub fn remove_socket(_: &Path, _: Vec<OsString>) -> Result<(), String> {
++        Err("managed socket paths are not used on Windows".to_owned())
++    }
++
++    fn validate_path_components(path: &Path) -> Result<(), String> {
++        let _ = relative_components_for_absolute(path)?;
++        let mut current = PathBuf::new();
++        for component in path.components() {
++            current.push(component.as_os_str());
++            if matches!(
++                component,
++                std::path::Component::Prefix(_) | std::path::Component::RootDir
++            ) {
++                continue;
++            }
++            let handle = open_path_handle(&current)?;
++            validate_reparse_and_kind(&handle, true)?;
++        }
++        Ok(())
++    }
++
++    fn joined_path(root: &Path, relative: &[OsString]) -> Result<PathBuf, String> {
++        validate_root(root)?;
++        let mut path = root.to_path_buf();
++        for component in relative {
++            path.push(component);
++        }
++        Ok(path)
++    }
++
++    fn path_relative_components(root: &Path, path: &Path) -> Result<Vec<OsString>, String> {
++        let relative = path
++            .strip_prefix(root)
++            .map_err(|_| "managed path escaped state root".to_owned())?;
++        if relative.as_os_str().is_empty() {
++            return Ok(Vec::new());
++        }
++        let mut result = Vec::new();
++        for component in relative.components() {
++            match component {
++                std::path::Component::Normal(value) => result.push(value.to_owned()),
++                _ => return Err("managed path contains a forbidden component".to_owned()),
++            }
++        }
++        Ok(result)
++    }
++
++    /// Check whether a path entry exists without following a symlink or other
++    /// reparse point. `Path::exists()` follows links and returns `false` for a
++    /// dangling link, which would let a hostile entry reach the create/replace
++    /// path. `symlink_metadata()` lets the subsequent handle validation reject
++    /// every reparse point deterministically.
++    fn path_entry_exists(path: &Path) -> Result<bool, String> {
++        match std::fs::symlink_metadata(path) {
++            Ok(_) => Ok(true),
++            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
++            Err(error) => Err(format!("failed to inspect managed path entry: {error}")),
++        }
++    }
++
++    fn open_path_handle(path: &Path) -> Result<File, String> {
++        open_existing_path_handle(path, FILE_GENERIC_READ.0)
++    }
++
++    fn open_path_handle_for_dacl(path: &Path) -> Result<File, String> {
++        open_existing_path_handle(path, (FILE_GENERIC_READ | WRITE_DAC).0)
++    }
++
++    fn open_existing_path_handle(path: &Path, access: u32) -> Result<File, String> {
++        let wide = wide(path.as_os_str());
++        let handle = unsafe {
++            CreateFileW(
++                PCWSTR(wide.as_ptr()),
++                access,
++                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
++                None,
++                OPEN_EXISTING,
++                FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS,
++                None,
++            )
++        }
++        .map_err(|error| format!("failed to open managed path by handle: {error}"))?;
++        Ok(unsafe { File::from_raw_handle(handle.0) })
++    }
++
++    fn create_private_file_handle(path: &Path) -> Result<File, String> {
++        let wide = wide(path.as_os_str());
++        let handle = unsafe {
++            CreateFileW(
++                PCWSTR(wide.as_ptr()),
++                (FILE_GENERIC_READ | FILE_GENERIC_WRITE | WRITE_DAC).0,
++                FILE_SHARE_READ | FILE_SHARE_DELETE,
++                None,
++                CREATE_NEW,
++                FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT,
++                None,
++            )
++        }
++        .map_err(|error| format!("failed to create managed temporary file by handle: {error}"))?;
++        Ok(unsafe { File::from_raw_handle(handle.0) })
++    }
++
++    fn validate_handle(file: &File, directory: bool, validate_acl: bool) -> Result<(), String> {
++        validate_reparse_and_kind(file, directory)?;
++        if validate_acl {
++            validate_private_dacl(file)?;
++        }
++        Ok(())
++    }
++
++    fn validate_reparse_and_kind(file: &File, directory: bool) -> Result<(), String> {
++        let handle = HANDLE(file.as_raw_handle());
++        let mut info = FILE_ATTRIBUTE_TAG_INFO::default();
++        unsafe {
++            GetFileInformationByHandleEx(
++                handle,
++                FileAttributeTagInfo,
++                &mut info as *mut _ as *mut c_void,
++                std::mem::size_of::<FILE_ATTRIBUTE_TAG_INFO>() as u32,
++            )
++        }
++        .map_err(|error| format!("failed to inspect managed path handle: {error}"))?;
++        if info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 {
++            return Err("managed path is a reparse point".to_owned());
++        }
++        let is_directory = info.FileAttributes & FILE_ATTRIBUTE_DIRECTORY.0 != 0;
++        if is_directory != directory {
++            return Err(if directory {
++                "managed path is not a directory".to_owned()
++            } else {
++                "managed path is not a regular file".to_owned()
++            });
++        }
++        Ok(())
++    }
++
++    fn validate_private_dacl(file: &File) -> Result<(), String> {
++        let handle = HANDLE(file.as_raw_handle());
++        let current_sid = current_user_sid()?;
++        let current_sid = PSID(current_sid.as_ptr() as *mut c_void);
++        let mut owner = PSID::default();
++        let mut dacl: *mut ACL = std::ptr::null_mut();
++        let mut descriptor = PSECURITY_DESCRIPTOR::default();
++        let status = unsafe {
++            GetSecurityInfo(
++                handle,
++                SE_FILE_OBJECT,
++                OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
++                Some(&mut owner),
++                None,
++                Some(&mut dacl),
++                None,
++                Some(&mut descriptor),
++            )
++        };
++        if status != ERROR_SUCCESS {
++            return Err(format!("failed to read managed DACL: win32 {}", status.0));
++        }
++        let result = (|| {
++            unsafe { EqualSid(owner, current_sid) }
++                .map_err(|_| "managed path owner is not the current token SID".to_owned())?;
++            let mut control = 0u16;
++            let mut revision = 0u32;
++            unsafe { GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) }
++                .map_err(|error| format!("failed to inspect managed DACL control: {error}"))?;
++            if control & SE_DACL_PROTECTED.0 == 0 {
++                return Err("managed DACL is not protected".to_owned());
++            }
++            if dacl.is_null() {
++                return Err("managed DACL is missing".to_owned());
++            }
++            let mut info = ACL_SIZE_INFORMATION::default();
++            unsafe {
++                GetAclInformation(
++                    dacl,
++                    &mut info as *mut _ as *mut c_void,
++                    std::mem::size_of::<ACL_SIZE_INFORMATION>() as u32,
++                    AclSizeInformation,
++                )
++            }
++            .map_err(|error| format!("failed to inspect managed ACL: {error}"))?;
++            if info.AceCount != 1 {
++                return Err("managed DACL must contain exactly one ACE".to_owned());
++            }
++            let mut ace: *mut c_void = std::ptr::null_mut();
++            unsafe { GetAce(dacl, 0, &mut ace) }
++                .map_err(|error| format!("failed to read managed ACE: {error}"))?;
++            let ace = unsafe { &*(ace as *const ACCESS_ALLOWED_ACE) };
++            if ace.Header.AceType != 0 {
++                return Err("managed DACL ACE is not an explicit Allow rule".to_owned());
++            }
++            if ace.Header.AceFlags & 0x10 != 0 {
++                return Err("managed DACL ACE must not be inherited".to_owned());
++            }
++            if ace.Mask & FILE_ALL_ACCESS.0 != FILE_ALL_ACCESS.0 {
++                return Err("managed DACL Allow rule is not FullControl".to_owned());
++            }
++            let ace_sid = PSID((&ace.SidStart as *const u32).cast_mut().cast());
++            unsafe { EqualSid(ace_sid, current_sid) }
++                .map_err(|_| "managed DACL grants a SID other than the current user".to_owned())
++        })();
++        unsafe {
++            let _ = LocalFree(HLOCAL(descriptor.0));
++        }
++        result
++    }
++
++    fn apply_private_dacl(file: &File, directory: bool) -> Result<(), String> {
++        let sid = current_user_sid()?;
++        let sid = PSID(sid.as_ptr() as *mut c_void);
++        let mut sid_string = PWSTR::null();
++        unsafe { ConvertSidToStringSidW(sid, &mut sid_string) }
++            .map_err(|error| format!("failed to render current user SID: {error}"))?;
++        let sid_value = unsafe { pwstr_to_string(sid_string) };
++        unsafe {
++            let _ = LocalFree(HLOCAL(sid_string.0 as *mut c_void));
++        }
++        let inheritance = if directory { "OICI" } else { "" };
++        let sddl = format!("D:P(A;{inheritance};FA;;;{sid_value})");
++        let sddl_wide = wide(OsString::from(sddl).as_os_str());
++        let mut descriptor = PSECURITY_DESCRIPTOR::default();
++        unsafe {
++            ConvertStringSecurityDescriptorToSecurityDescriptorW(
++                PCWSTR(sddl_wide.as_ptr()),
++                1,
++                &mut descriptor,
++                None,
++            )
++        }
++        .map_err(|error| format!("failed to build private DACL: {error}"))?;
++        let result = (|| {
++            let mut present = windows::Win32::Foundation::BOOL::default();
++            let mut defaulted = windows::Win32::Foundation::BOOL::default();
++            let mut dacl: *mut ACL = std::ptr::null_mut();
++            unsafe {
++                GetSecurityDescriptorDacl(descriptor, &mut present, &mut dacl, &mut defaulted)
++            }
++            .map_err(|error| format!("failed to extract private DACL: {error}"))?;
++            if !present.as_bool() || dacl.is_null() {
++                return Err("private DACL builder returned no DACL".to_owned());
++            }
++            let status = unsafe {
++                SetSecurityInfo(
++                    HANDLE(file.as_raw_handle()),
++                    SE_FILE_OBJECT,
++                    DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
++                    None,
++                    None,
++                    Some(dacl),
++                    None,
++                )
++            };
++            if status != ERROR_SUCCESS {
++                return Err(format!("failed to apply private DACL: win32 {}", status.0));
++            }
++            Ok(())
++        })();
++        unsafe {
++            let _ = LocalFree(HLOCAL(descriptor.0));
++        }
++        result
++    }
++
++    fn current_user_sid() -> Result<Vec<u8>, String> {
++        let mut token = HANDLE::default();
++        unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) }
++            .map_err(|error| format!("failed to open current process token: {error}"))?;
++        let result = (|| {
++            let mut needed = 0u32;
++            let _ = unsafe { GetTokenInformation(token, TokenUser, None, 0, &mut needed) };
++            if needed == 0 {
++                return Err("current token user SID size is unavailable".to_owned());
++            }
++            let mut buffer = vec![0u8; needed as usize];
++            unsafe {
++                GetTokenInformation(
++                    token,
++                    TokenUser,
++                    Some(buffer.as_mut_ptr() as *mut c_void),
++                    needed,
++                    &mut needed,
++                )
++            }
++            .map_err(|error| format!("failed to read current token user SID: {error}"))?;
++            let token_user = unsafe { &*(buffer.as_ptr() as *const TOKEN_USER) };
++            let sid = token_user.User.Sid;
++            let length = unsafe { windows::Win32::Security::GetLengthSid(sid) } as usize;
++            let mut owned = vec![0u8; length];
++            unsafe {
++                std::ptr::copy_nonoverlapping(sid.0 as *const u8, owned.as_mut_ptr(), length);
++            }
++            Ok(owned)
++        })();
++        unsafe {
++            let _ = CloseHandle(token);
++        }
++        result
++    }
++
++    fn atomic_replace(temporary: &Path, destination: &Path) -> Result<(), String> {
++        let temporary_wide = wide(temporary.as_os_str());
++        let destination_wide = wide(destination.as_os_str());
++        if path_entry_exists(destination)? {
++            unsafe {
++                ReplaceFileW(
++                    PCWSTR(destination_wide.as_ptr()),
++                    PCWSTR(temporary_wide.as_ptr()),
++                    PCWSTR::null(),
++                    REPLACEFILE_WRITE_THROUGH,
++                    None,
++                    None,
++                )
++            }
++            .map_err(|error| format!("failed to atomically replace managed file: {error}"))
++        } else {
++            unsafe {
++                MoveFileExW(
++                    PCWSTR(temporary_wide.as_ptr()),
++                    PCWSTR(destination_wide.as_ptr()),
++                    MOVEFILE_WRITE_THROUGH,
++                )
++            }
++            .map_err(|error| format!("failed to atomically install managed file: {error}"))
++        }
++    }
++
++    fn wide(value: &std::ffi::OsStr) -> Vec<u16> {
++        value.encode_wide().chain(std::iter::once(0)).collect()
++    }
++
++    unsafe fn pwstr_to_string(value: PWSTR) -> String {
++        let mut length = 0usize;
++        while *value.0.add(length) != 0 {
++            length += 1;
++        }
++        String::from_utf16_lossy(std::slice::from_raw_parts(value.0, length))
++    }
++}
++
++#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
++mod platform {
++    use std::ffi::OsString;
++    use std::path::Path;
++
++    fn unsupported<T>() -> Result<T, String> {
++        Err("managed capability-root state is unsupported on this platform".to_owned())
++    }
++
++    pub fn validate_root(_: &Path) -> Result<(), String> {
++        unsupported()
++    }
++    pub fn prepare_acceptance_root(_: &Path) -> Result<(), String> {
++        unsupported()
++    }
++    pub fn ensure_directory(_: &Path, _: Vec<OsString>) -> Result<(), String> {
++        unsupported()
++    }
++    pub fn read_file(_: &Path, _: Vec<OsString>) -> Result<Option<Vec<u8>>, String> {
++        unsupported()
++    }
++    pub fn write_file_atomic(_: &Path, _: Vec<OsString>, _: &[u8]) -> Result<(), String> {
++        unsupported()
++    }
++    pub fn remove_file(_: &Path, _: Vec<OsString>) -> Result<(), String> {
++        unsupported()
++    }
++    pub fn prepare_socket(_: &Path, _: Vec<OsString>) -> Result<(), String> {
++        unsupported()
++    }
++    pub fn remove_socket(_: &Path, _: Vec<OsString>) -> Result<(), String> {
++        unsupported()
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    static ENV_LOCK: Mutex<()> = Mutex::new(());
++
++    fn with_managed_env(root: &Path, test: impl FnOnce()) {
++        let _guard = ENV_LOCK.lock().unwrap();
++        std::env::set_var(LING_MANAGED_ENV, "1");
++        std::env::set_var(crate::EMBEDDED_ENV, "1");
++        std::env::set_var(STATE_HOME_ENV, root);
++        std::env::set_var(TELEMETRY_ENABLED_ENV, "false");
++        std::env::set_var(UPDATE_CHECK_ENV, "false");
++        std::env::set_var(TELEMETRY_HOME_ENV, root.join("telemetry"));
++        test();
++        for name in [
++            LING_MANAGED_ENV,
++            crate::EMBEDDED_ENV,
++            STATE_HOME_ENV,
++            TELEMETRY_ENABLED_ENV,
++            UPDATE_CHECK_ENV,
++            TELEMETRY_HOME_ENV,
++        ] {
++            std::env::remove_var(name);
++        }
++    }
++
++    #[cfg(any(target_os = "macos", target_os = "linux"))]
++    #[test]
++    fn capability_root_rejects_leaf_symlink_and_keeps_atomic_json() {
++        use std::os::unix::fs::{symlink, PermissionsExt};
++
++        let temporary = tempfile::tempdir().unwrap();
++        let canonical = std::fs::canonicalize(temporary.path()).unwrap();
++        let root = canonical.join("state");
++        std::fs::create_dir(&root).unwrap();
++        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
++        with_managed_env(&root, || {
++            validate_state_root().unwrap();
++            update_json_key_atomic(
++                "config.json",
++                "capture_scope",
++                Value::String("window".into()),
++            )
++            .unwrap();
++            update_json_key_atomic("config.json", "max_image_dimension", Value::from(1568))
++                .unwrap();
++            let value: Value =
++                serde_json::from_slice(&read_state("config.json").unwrap().unwrap()).unwrap();
++            assert_eq!(value["capture_scope"], "window");
++            assert_eq!(value["max_image_dimension"], 1568);
++
++            remove_state_file("config.json").unwrap();
++            let outside = canonical.join("outside.json");
++            std::fs::write(&outside, b"sentinel").unwrap();
++            symlink(&outside, root.join("config.json")).unwrap();
++            assert!(read_state("config.json").is_err());
++            assert!(write_state_atomic("config.json", b"mutated").is_err());
++            assert_eq!(std::fs::read(&outside).unwrap(), b"sentinel");
++        });
++    }
++
++    #[cfg(any(target_os = "macos", target_os = "linux"))]
++    #[test]
++    fn capability_root_rejects_root_intermediate_and_child_symlinks() {
++        use std::os::unix::fs::{symlink, PermissionsExt};
++
++        let temporary = tempfile::tempdir().unwrap();
++        let base = std::fs::canonicalize(temporary.path()).unwrap();
++
++        let actual_root = base.join("actual-root");
++        std::fs::create_dir(&actual_root).unwrap();
++        std::fs::set_permissions(&actual_root, std::fs::Permissions::from_mode(0o700)).unwrap();
++        let root_link = base.join("root-link");
++        symlink(&actual_root, &root_link).unwrap();
++        with_managed_env(&root_link, || assert!(validate_state_root().is_err()));
++
++        let actual_parent = base.join("actual-parent");
++        let nested_root = actual_parent.join("state");
++        std::fs::create_dir(&actual_parent).unwrap();
++        std::fs::create_dir(&nested_root).unwrap();
++        std::fs::set_permissions(&nested_root, std::fs::Permissions::from_mode(0o700)).unwrap();
++        let parent_link = base.join("parent-link");
++        symlink(&actual_parent, &parent_link).unwrap();
++        with_managed_env(&parent_link.join("state"), || {
++            assert!(validate_state_root().is_err())
++        });
++
++        let child_root = base.join("child-root");
++        std::fs::create_dir(&child_root).unwrap();
++        std::fs::set_permissions(&child_root, std::fs::Permissions::from_mode(0o700)).unwrap();
++        let outside = base.join("outside-directory");
++        std::fs::create_dir(&outside).unwrap();
++        symlink(&outside, child_root.join("telemetry")).unwrap();
++        with_managed_env(&child_root, || assert!(validate_state_root().is_err()));
++    }
++
++    #[test]
++    fn state_path_rejects_absolute_parent_and_dot_paths() {
++        assert!(relative_components(Path::new("config.json")).is_ok());
++        assert!(relative_components(Path::new("../config.json")).is_err());
++        assert!(relative_components(Path::new("./config.json")).is_err());
++        assert!(relative_components(Path::new("/tmp/other.json")).is_err());
++    }
++
++    #[cfg(target_os = "windows")]
++    #[test]
++    fn windows_acceptance_root_requires_protected_current_user_dacl_and_no_junctions() {
++        let temporary = tempfile::tempdir().unwrap();
++        let base = std::fs::canonicalize(temporary.path()).unwrap();
++
++        let good = base.join("good-root");
++        prepare_acceptance_state_root(&good).unwrap();
++        with_managed_env(&good, || {
++            validate_state_root().unwrap();
++            update_json_key_atomic(
++                "config.json",
++                "capture_scope",
++                Value::String("window".into()),
++            )
++            .unwrap();
++            update_json_key_atomic("config.json", "max_image_dimension", Value::from(1568))
++                .unwrap();
++            let value: Value =
++                serde_json::from_slice(&read_state("config.json").unwrap().unwrap()).unwrap();
++            assert_eq!(value["capture_scope"], "window");
++            assert_eq!(value["max_image_dimension"], 1568);
++        });
++
++        let bad = base.join("bad-root");
++        std::fs::create_dir(&bad).unwrap();
++        with_managed_env(&bad, || assert!(validate_state_root().is_err()));
++
++        let outside = base.join("outside");
++        std::fs::create_dir(&outside).unwrap();
++        let junction = good.join("version-check");
++        std::fs::remove_dir(&junction).unwrap();
++        let command = format!(
++            "mklink /J \"{}\" \"{}\"",
++            junction.display(),
++            outside.display()
++        );
++        let status = std::process::Command::new("cmd.exe")
++            .args(["/d", "/s", "/c", &command])
++            .status()
++            .unwrap();
++        assert!(status.success(), "failed to create junction fixture");
++        with_managed_env(&good, || assert!(validate_state_root().is_err()));
++    }
++}
+diff --git a/libs/cua-driver/rust/crates/cua-driver/src/cli.rs b/libs/cua-driver/rust/crates/cua-driver/src/cli.rs
+index 9724177..902cd6b 100644
+--- a/libs/cua-driver/rust/crates/cua-driver/src/cli.rs
++++ b/libs/cua-driver/rust/crates/cua-driver/src/cli.rs
+@@ -2843,11 +2843,16 @@ fn diagnose_tcc_db_section() -> String {
+ }
+ 
+ fn diagnose_config_paths_section() -> String {
+-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
++    let home = std::env::var_os("HOME")
++        .map(std::path::PathBuf::from)
++        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
++    let (user_data_dir, telemetry_id) =
++        diagnose_state_paths(&home, cua_driver_core::ling_managed::state_home().as_deref());
++    let home = home.display();
+     let paths: &[(&str, String)] = &[
+-        ("user data dir",   format!("{home}/.cua-driver")),
++        ("user data dir",   user_data_dir.display().to_string()),
+         ("config cache",    format!("{home}/Library/Caches/cua-driver")),
+-        ("telemetry id",    format!("{home}/.cua-driver/.telemetry_id")),
++        ("telemetry id",    telemetry_id.display().to_string()),
+         ("updater plist",   format!("{home}/Library/LaunchAgents/com.trycua.cua_driver_updater.plist")),
+         ("daemon plist",    format!("{home}/Library/LaunchAgents/com.trycua.cua_driver_daemon.plist")),
+     ];
+@@ -2859,14 +2864,38 @@ fn diagnose_config_paths_section() -> String {
+     lines.join("\n")
+ }
+ 
++fn diagnose_state_paths(
++    home: &std::path::Path,
++    managed_state_home: Option<&std::path::Path>,
++) -> (std::path::PathBuf, std::path::PathBuf) {
++    match managed_state_home {
++        Some(root) => (root.to_path_buf(), root.join("telemetry/.telemetry_id")),
++        None => {
++            let user_data_dir = home.join(".cua-driver");
++            let telemetry_id = user_data_dir.join(".telemetry_id");
++            (user_data_dir, telemetry_id)
++        }
++    }
++}
++
+ /// Path to the persistent JSON config file (`~/.cua-driver/config.json`).
+ fn config_file_path() -> std::path::PathBuf {
++    if let Some(path) = cua_driver_core::ling_managed::state_path("config.json") {
++        return path;
++    }
+     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+     std::path::PathBuf::from(format!("{home}/.cua-driver/config.json"))
+ }
+ 
+ /// Read persisted config from disk.  Returns an empty object if absent/unreadable.
+ fn read_config_file() -> serde_json::Value {
++    if cua_driver_core::ling_managed::is_managed() {
++        return cua_driver_core::ling_managed::read_state("config.json")
++            .ok()
++            .flatten()
++            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
++            .unwrap_or_else(|| serde_json::json!({}));
++    }
+     let path = config_file_path();
+     std::fs::read_to_string(&path)
+         .ok()
+@@ -2875,7 +2904,14 @@ fn read_config_file() -> serde_json::Value {
+ }
+ 
+ /// Write a single key/value into the persisted config file.
+-fn write_config_file(key: &str, value: &serde_json::Value) {
++fn write_config_file(key: &str, value: &serde_json::Value) -> Result<(), String> {
++    if cua_driver_core::ling_managed::is_managed() {
++        return cua_driver_core::ling_managed::update_json_key_atomic(
++            "config.json",
++            key,
++            value.clone(),
++        );
++    }
+     let path = config_file_path();
+     if let Some(parent) = path.parent() {
+         let _ = std::fs::create_dir_all(parent);
+@@ -2887,6 +2923,7 @@ fn write_config_file(key: &str, value: &serde_json::Value) {
+     if let Ok(json) = serde_json::to_string_pretty(&cfg) {
+         let _ = std::fs::write(&path, json);
+     }
++    Ok(())
+ }
+ 
+ /// `cua-driver config [show|get|set|reset] [key] [value]`
+@@ -3062,7 +3099,12 @@ pub fn run_config_cmd(
+                 process::exit(1);
+             }
+             // Persist the value to disk so future CLI invocations can read it.
+-            write_config_file(key, &parsed_value);
++            if !cua_driver_core::ling_managed::is_managed() {
++                if let Err(error) = write_config_file(key, &parsed_value) {
++                    eprintln!("failed to persist config: {error}");
++                    process::exit(1);
++                }
++            }
+             // Print updated config.
+             let config = rt.block_on(async {
+                 registry.invoke("get_config", serde_json::json!({})).await
+@@ -3220,6 +3262,25 @@ mod tests {
+         values.iter().map(|value| (*value).to_owned()).collect()
+     }
+ 
++    #[test]
++    fn diagnose_paths_keep_standalone_telemetry_identity_in_user_data_root() {
++        let home = std::path::Path::new("/fixture/home");
++        let (user_data, telemetry_id) = diagnose_state_paths(home, None);
++
++        assert_eq!(user_data, home.join(".cua-driver"));
++        assert_eq!(telemetry_id, home.join(".cua-driver/.telemetry_id"));
++    }
++
++    #[test]
++    fn diagnose_paths_isolate_managed_telemetry_under_capability_root() {
++        let home = std::path::Path::new("/fixture/home");
++        let managed = std::path::Path::new("/fixture/capability");
++        let (user_data, telemetry_id) = diagnose_state_paths(home, Some(managed));
++
++        assert_eq!(user_data, managed);
++        assert_eq!(telemetry_id, managed.join("telemetry/.telemetry_id"));
++    }
++
+     #[test]
+     fn finite_call_tool_extraction_supports_subcommand_and_legacy_forms() {
+         assert_eq!(
+diff --git a/libs/cua-driver/rust/crates/cua-driver/src/main.rs b/libs/cua-driver/rust/crates/cua-driver/src/main.rs
+index de4333b..408d503 100644
+--- a/libs/cua-driver/rust/crates/cua-driver/src/main.rs
++++ b/libs/cua-driver/rust/crates/cua-driver/src/main.rs
+@@ -61,6 +61,13 @@ fn init_logging() {
+     telemetry::register_stdio_observer();
+ }
+ 
++fn validate_ling_managed_environment() {
++    if let Err(error) = cua_driver_core::ling_managed::managed_environment() {
++        eprintln!("cua-driver: invalid Ling-managed environment: {error}");
++        std::process::exit(78);
++    }
++}
++
+ /// Execute finite commands in a child so the parent can observe every exit,
+ /// including validation failures and legacy `process::exit` paths. Delivery is
+ /// delegated to a detached, no-output worker after the child exits, so network
+@@ -214,14 +221,18 @@ fn maybe_init_pip() {
+ #[cfg(target_os = "macos")]
+ fn build_macos_registry() -> cua_driver_core::tool::ToolRegistry {
+     let mut r = platform_macos::register_tools();
+-    check_update_tool::register_into(&mut r);
++    if !cua_driver_core::ling_managed::is_managed() {
++        check_update_tool::register_into(&mut r);
++    }
+     r
+ }
+ 
+ #[cfg(target_os = "macos")]
+ fn build_macos_registry_with_compat(compat: bool) -> cua_driver_core::tool::ToolRegistry {
+     let mut r = platform_macos::register_tools_with_compat(compat);
+-    check_update_tool::register_into(&mut r);
++    if !cua_driver_core::ling_managed::is_managed() {
++        check_update_tool::register_into(&mut r);
++    }
+     r
+ }
+ 
+@@ -230,6 +241,7 @@ fn build_macos_registry_with_compat(compat: bool) -> cua_driver_core::tool::Tool
+ #[cfg(target_os = "macos")]
+ fn main() {
+     init_logging();
++    validate_ling_managed_environment();
+     if telemetry::run_cli_completion_worker_if_requested() {
+         return;
+     }
+@@ -672,6 +684,7 @@ fn main() {
+ #[cfg(not(target_os = "macos"))]
+ fn main() -> anyhow::Result<()> {
+     init_logging();
++    validate_ling_managed_environment();
+     if telemetry::run_cli_completion_worker_if_requested() {
+         return Ok(());
+     }
+@@ -929,7 +942,13 @@ fn build_registry(cursor_cfg: cursor_overlay::CursorConfig) -> cua_driver_core::
+         cua_driver_core::video::set_video_backend_factory(
+             Box::new(cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory),
+         );
+-        { let mut r = platform_windows::register_tools_with_cursor(cursor_cfg, compat); check_update_tool::register_into(&mut r); r }
++        {
++            let mut r = platform_windows::register_tools_with_cursor(cursor_cfg, compat);
++            if !cua_driver_core::ling_managed::is_managed() {
++                check_update_tool::register_into(&mut r);
++            }
++            r
++        }
+     }
+     #[cfg(target_os = "linux")]
+     {
+@@ -982,7 +1001,13 @@ fn build_registry(cursor_cfg: cursor_overlay::CursorConfig) -> cua_driver_core::
+         if let Err(error) = platform_linux::atspi::ensure_listener_active() {
+             tracing::warn!("could not activate the persistent AT-SPI listener: {error}");
+         }
+-        { let mut r = platform_linux::register_tools_with_cursor(cursor_cfg, compat); check_update_tool::register_into(&mut r); r }
++        {
++            let mut r = platform_linux::register_tools_with_cursor(cursor_cfg, compat);
++            if !cua_driver_core::ling_managed::is_managed() {
++                check_update_tool::register_into(&mut r);
++            }
++            r
++        }
+     }
+     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+     {
+@@ -1021,7 +1046,9 @@ fn build_registry_no_cursor() -> cua_driver_core::tool::ToolRegistry {
+                 cursor_overlay::CursorConfig { enabled: false, ..Default::default() },
+                 compat,
+             );
+-            check_update_tool::register_into(&mut r);
++            if !cua_driver_core::ling_managed::is_managed() {
++                check_update_tool::register_into(&mut r);
++            }
+             r
+         }
+     }
+@@ -1068,7 +1095,9 @@ fn build_registry_no_cursor() -> cua_driver_core::tool::ToolRegistry {
+                 cursor_overlay::CursorConfig { enabled: false, ..Default::default() },
+                 compat,
+             );
+-            check_update_tool::register_into(&mut r);
++            if !cua_driver_core::ling_managed::is_managed() {
++                check_update_tool::register_into(&mut r);
++            }
+             r
+         }
+     }
+diff --git a/libs/cua-driver/rust/crates/cua-driver/src/serve.rs b/libs/cua-driver/rust/crates/cua-driver/src/serve.rs
+index fa8f7b9..9e08f10 100644
+--- a/libs/cua-driver/rust/crates/cua-driver/src/serve.rs
++++ b/libs/cua-driver/rust/crates/cua-driver/src/serve.rs
+@@ -211,6 +211,10 @@ fn register_recording_session_end_hook(
+ 
+ /// Returns the platform default socket/pipe path.
+ pub fn default_socket_path() -> String {
++    if let Some(path) = cua_driver_core::ling_managed::state_path("run/cua-driver.sock") {
++        #[cfg(not(target_os = "windows"))]
++        return path.display().to_string();
++    }
+     #[cfg(target_os = "macos")]
+     {
+         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+@@ -223,6 +227,9 @@ pub fn default_socket_path() -> String {
+     }
+     #[cfg(target_os = "windows")]
+     {
++        if cua_driver_core::ling_managed::is_managed() {
++            return r"\\.\pipe\ling-cua-driver-managed".to_owned();
++        }
+         r"\\.\pipe\cua-driver".to_owned()
+     }
+     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+@@ -246,6 +253,9 @@ pub fn default_uia_pipe_path() -> String {
+ 
+ /// Returns the platform default PID file path.
+ pub fn default_pid_file_path() -> String {
++    if let Some(path) = cua_driver_core::ling_managed::state_path("run/cua-driver.pid") {
++        return path.display().to_string();
++    }
+     #[cfg(target_os = "macos")]
+     {
+         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+@@ -548,6 +558,12 @@ pub fn is_daemon_listening(socket_path: &str) -> bool {
+ 
+ /// Read the PID stored in `pid_file_path`, if any.
+ pub fn read_pid_file(pid_file_path: &str) -> Option<u32> {
++    if cua_driver_core::ling_managed::is_managed() {
++        let root = cua_driver_core::ling_managed::state_home()?;
++        let relative = std::path::Path::new(pid_file_path).strip_prefix(root).ok()?;
++        let bytes = cua_driver_core::ling_managed::read_state(relative).ok()??;
++        return std::str::from_utf8(&bytes).ok()?.trim().parse().ok();
++    }
+     std::fs::read_to_string(pid_file_path)
+         .ok()
+         .and_then(|s| s.trim().parse().ok())
+@@ -686,14 +702,18 @@ pub async fn run_serve(
+     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+     use tokio::net::UnixListener;
+ 
+-    // Create parent directory.
+-    if let Some(dir) = std::path::Path::new(socket_path).parent() {
+-        std::fs::create_dir_all(dir)?;
++    if cua_driver_core::ling_managed::is_managed() {
++        cua_driver_core::ling_managed::prepare_state_socket_path(socket_path)
++            .map_err(anyhow::Error::msg)?;
++    } else {
++        // Create parent directory.
++        if let Some(dir) = std::path::Path::new(socket_path).parent() {
++            std::fs::create_dir_all(dir)?;
++        }
++        // Remove stale socket file (from a crashed previous daemon).
++        let _ = std::fs::remove_file(socket_path);
+     }
+ 
+-    // Remove stale socket file (from a crashed previous daemon).
+-    let _ = std::fs::remove_file(socket_path);
+-
+     let listener = UnixListener::bind(socket_path)
+         .map_err(|e| anyhow::anyhow!("bind {socket_path}: {e}"))?;
+ 
+@@ -701,10 +721,18 @@ pub async fn run_serve(
+ 
+     // Write PID file.
+     if let Some(pid_path) = pid_file_path {
+-        if let Some(dir) = std::path::Path::new(pid_path).parent() {
+-            let _ = std::fs::create_dir_all(dir);
++        if cua_driver_core::ling_managed::is_managed() {
++            cua_driver_core::ling_managed::write_state_path_atomic(
++                pid_path,
++                std::process::id().to_string().as_bytes(),
++            )
++            .map_err(anyhow::Error::msg)?;
++        } else {
++            if let Some(dir) = std::path::Path::new(pid_path).parent() {
++                let _ = std::fs::create_dir_all(dir);
++            }
++            let _ = std::fs::write(pid_path, std::process::id().to_string());
+         }
+-        let _ = std::fs::write(pid_path, std::process::id().to_string());
+     }
+ 
+     // Shutdown channel.
+@@ -953,9 +981,17 @@ pub async fn run_serve(
+     }
+ 
+     // Clean up.
+-    let _ = std::fs::remove_file(socket_path);
++    if cua_driver_core::ling_managed::is_managed() {
++        let _ = cua_driver_core::ling_managed::remove_state_socket_path(socket_path);
++    } else {
++        let _ = std::fs::remove_file(socket_path);
++    }
+     if let Some(pid_path) = pid_file_path {
+-        let _ = std::fs::remove_file(pid_path);
++        if cua_driver_core::ling_managed::is_managed() {
++            let _ = cua_driver_core::ling_managed::remove_state_path_file(pid_path);
++        } else {
++            let _ = std::fs::remove_file(pid_path);
++        }
+     }
+ 
+     Ok(())
+@@ -1178,10 +1214,18 @@ pub async fn run_serve(
+ 
+     // Write PID file.
+     if let Some(pid_path) = pid_file_path {
+-        if let Some(dir) = std::path::Path::new(pid_path).parent() {
+-            let _ = std::fs::create_dir_all(dir);
++        if cua_driver_core::ling_managed::is_managed() {
++            cua_driver_core::ling_managed::write_state_path_atomic(
++                pid_path,
++                std::process::id().to_string().as_bytes(),
++            )
++            .map_err(anyhow::Error::msg)?;
++        } else {
++            if let Some(dir) = std::path::Path::new(pid_path).parent() {
++                let _ = std::fs::create_dir_all(dir);
++            }
++            let _ = std::fs::write(pid_path, std::process::id().to_string());
+         }
+-        let _ = std::fs::write(pid_path, std::process::id().to_string());
+     }
+ 
+     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+@@ -1402,7 +1446,11 @@ pub async fn run_serve(
+     }
+ 
+     if let Some(pid_path) = pid_file_path {
+-        let _ = std::fs::remove_file(pid_path);
++        if cua_driver_core::ling_managed::is_managed() {
++            let _ = cua_driver_core::ling_managed::remove_state_path_file(pid_path);
++        } else {
++            let _ = std::fs::remove_file(pid_path);
++        }
+     }
+     Ok(())
+ }
+diff --git a/libs/cua-driver/rust/crates/cua-driver/src/telemetry.rs b/libs/cua-driver/rust/crates/cua-driver/src/telemetry.rs
+index 7eb0605..45f67d0 100644
+--- a/libs/cua-driver/rust/crates/cua-driver/src/telemetry.rs
++++ b/libs/cua-driver/rust/crates/cua-driver/src/telemetry.rs
+@@ -125,6 +125,9 @@ pub fn is_enabled() -> bool {
+ }
+ 
+ fn effective_enabled() -> (bool, &'static str) {
++    if cua_driver_core::ling_managed::is_managed() {
++        return (false, "ling_managed");
++    }
+     if let Some(value) = parse_env_bool(ENV_TELEMETRY_ENABLED) {
+         return (value, "environment");
+     }
+@@ -138,6 +141,16 @@ fn effective_enabled() -> (bool, &'static str) {
+ }
+ 
+ pub fn status() -> TelemetryStatus {
++    if cua_driver_core::ling_managed::is_managed() {
++        return TelemetryStatus {
++            enabled: false,
++            source: "ling_managed",
++            installation_id_present: false,
++            installation_id: None,
++            registration_recorded: false,
++            current_release_recorded: false,
++        };
++    }
+     let (enabled, source) = effective_enabled();
+     let id = read_install_id();
+     TelemetryStatus {
+@@ -153,6 +166,9 @@ pub fn status() -> TelemetryStatus {
+ }
+ 
+ pub fn set_enabled(enabled: bool) -> Result<(), String> {
++    if cua_driver_core::ling_managed::is_managed() {
++        return Err("telemetry is disabled and immutable in Ling-managed mode".to_owned());
++    }
+     let path = config_path().ok_or_else(|| "home directory is unavailable".to_owned())?;
+     let mut config = read_config();
+     let object = config
+@@ -163,6 +179,9 @@ pub fn set_enabled(enabled: bool) -> Result<(), String> {
+ }
+ 
+ pub fn reset_id() -> Result<(), String> {
++    if cua_driver_core::ling_managed::is_managed() {
++        return Err("telemetry is disabled and immutable in Ling-managed mode".to_owned());
++    }
+     let Some(home) = telemetry_home_dir() else {
+         return Ok(());
+     };
+@@ -1094,6 +1113,9 @@ fn lifecycle_retry_deferred() -> bool {
+ }
+ 
+ fn defer_lifecycle_retry(home: &Path) {
++    if cua_driver_core::ling_managed::is_managed() {
++        return;
++    }
+     let retry_after = std::time::SystemTime::now()
+         .duration_since(std::time::UNIX_EPOCH)
+         .map(|duration| duration.as_secs().saturating_add(LIFECYCLE_RETRY_BACKOFF_SECS));
+@@ -1486,6 +1508,9 @@ fn post_to_posthog_with_timeout(payload: &Value, timeout: Duration) -> Result<u1
+ }
+ 
+ fn telemetry_home_dir() -> Option<PathBuf> {
++    if let Some(path) = cua_driver_core::ling_managed::state_path("telemetry") {
++        return Some(path);
++    }
+     if let Some(path) = std::env::var_os(ENV_TELEMETRY_HOME) {
+         return Some(PathBuf::from(path));
+     }
+@@ -1528,6 +1553,9 @@ fn persisted_enabled() -> Option<bool> {
+ }
+ 
+ fn write_json_atomic(path: &Path, value: &Value) -> Result<(), String> {
++    if cua_driver_core::ling_managed::is_managed() {
++        return Err("telemetry state is immutable in Ling-managed mode".to_owned());
++    }
+     let parent = path.parent().ok_or_else(|| "invalid config path".to_owned())?;
+     std::fs::create_dir_all(parent)
+         .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
+@@ -1545,6 +1573,9 @@ fn write_json_atomic(path: &Path, value: &Value) -> Result<(), String> {
+ }
+ 
+ fn remove_file_if_exists(path: &Path) -> Result<(), String> {
++    if cua_driver_core::ling_managed::is_managed() {
++        return Err("telemetry state is immutable in Ling-managed mode".to_owned());
++    }
+     match std::fs::remove_file(path) {
+         Ok(()) => Ok(()),
+         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+@@ -1553,6 +1584,9 @@ fn remove_file_if_exists(path: &Path) -> Result<(), String> {
+ }
+ 
+ fn write_marker(path: &Path) -> Result<(), String> {
++    if cua_driver_core::ling_managed::is_managed() {
++        return Err("telemetry state is immutable in Ling-managed mode".to_owned());
++    }
+     if let Some(parent) = path.parent() {
+         std::fs::create_dir_all(parent)
+             .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
+@@ -1562,6 +1596,9 @@ fn write_marker(path: &Path) -> Result<(), String> {
+ }
+ 
+ fn open_lock_file(home: &Path, name: &str) -> Result<File, String> {
++    if cua_driver_core::ling_managed::is_managed() {
++        return Err("telemetry state is immutable in Ling-managed mode".to_owned());
++    }
+     std::fs::create_dir_all(home)
+         .map_err(|error| format!("failed to create {}: {error}", home.display()))?;
+     OpenOptions::new()
+@@ -1615,6 +1652,9 @@ fn migrate_legacy_telemetry_home() {
+ }
+ 
+ fn read_install_id() -> Option<String> {
++    if cua_driver_core::ling_managed::is_managed() {
++        return None;
++    }
+     migrate_legacy_telemetry_home();
+     let path = marker_path(TELEMETRY_ID_FILE_NAME)?;
+     read_install_id_path(&path)
+@@ -1656,6 +1696,9 @@ fn load_or_create_install_id_uncached() -> Option<InstallationIdentity> {
+ }
+ 
+ fn persist_install_id_if_absent(path: &Path, candidate: &str) -> Result<String, String> {
++    if cua_driver_core::ling_managed::is_managed() {
++        return Err("telemetry state is immutable in Ling-managed mode".to_owned());
++    }
+     let home = path.parent().ok_or_else(|| "invalid telemetry identity path".to_owned())?;
+     let identity_lock = open_lock_file(home, TELEMETRY_IDENTITY_LOCK_FILE_NAME)?;
+     identity_lock
+diff --git a/libs/cua-driver/rust/crates/cua-driver/src/version_check.rs b/libs/cua-driver/rust/crates/cua-driver/src/version_check.rs
+index b64f36a..088f96f 100644
+--- a/libs/cua-driver/rust/crates/cua-driver/src/version_check.rs
++++ b/libs/cua-driver/rust/crates/cua-driver/src/version_check.rs
+@@ -367,6 +367,9 @@ fn format_banner(latest: &str, current: &str) -> String {
+ /// 2. Persisted config `update_check_enabled` (false → off)
+ /// 3. Built `CARGO_PKG_VERSION` is a pre-release (`-dev`, `-rc.1`, …) → off
+ fn is_enabled() -> bool {
++    if cua_driver_core::ling_managed::is_managed() {
++        return false;
++    }
+     if let Some(false) = parse_env_bool(ENV_UPDATE_CHECK) {
+         return false;
+     }
+@@ -383,6 +386,11 @@ fn is_enabled() -> bool {
+ /// the `cua-driver config set` subcommand writes to. Returns `None` when
+ /// the file is missing, unreadable, or doesn't have the key.
+ fn read_config_flag() -> Option<bool> {
++    if cua_driver_core::ling_managed::is_managed() {
++        let raw = cua_driver_core::ling_managed::read_state("config.json").ok()??;
++        let json: serde_json::Value = serde_json::from_slice(&raw).ok()?;
++        return json.get("update_check_enabled").and_then(|v| v.as_bool());
++    }
+     let home = std::env::var_os("HOME")
+         .or_else(|| std::env::var_os("USERPROFILE"))?;
+     let path = PathBuf::from(home).join(".cua-driver").join("config.json");
+@@ -448,6 +456,13 @@ pub(crate) struct VersionCache {
+ /// Read the cache file. Returns `None` when missing / unreadable / not
+ /// valid JSON — callers fall back to the default (empty) shape.
+ fn read_cache() -> Option<VersionCache> {
++    if cua_driver_core::ling_managed::is_managed() {
++        let raw = cua_driver_core::ling_managed::read_state(
++            format!("version-check/{CACHE_FILE_NAME}"),
++        )
++        .ok()??;
++        return serde_json::from_slice(&raw).ok();
++    }
+     let path = cache_path()?;
+     let raw = std::fs::read_to_string(&path).ok()?;
+     serde_json::from_str(&raw).ok()
+@@ -457,6 +472,15 @@ fn read_cache() -> Option<VersionCache> {
+ /// IO errors propagate so the caller can decide whether to log; the
+ /// fire-and-forget callers in this module always swallow them.
+ fn write_cache(cache: &VersionCache) -> std::io::Result<()> {
++    if cua_driver_core::ling_managed::is_managed() {
++        let json = serde_json::to_vec_pretty(cache)
++            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
++        return cua_driver_core::ling_managed::write_state_atomic(
++            format!("version-check/{CACHE_FILE_NAME}"),
++            &json,
++        )
++        .map_err(std::io::Error::other);
++    }
+     let path = cache_path().ok_or_else(|| {
+         std::io::Error::new(
+             std::io::ErrorKind::NotFound,
+@@ -472,6 +496,11 @@ fn write_cache(cache: &VersionCache) -> std::io::Result<()> {
+ }
+ 
+ fn cache_path() -> Option<PathBuf> {
++    if let Some(path) = cua_driver_core::ling_managed::state_path(format!(
++        "version-check/{CACHE_FILE_NAME}"
++    )) {
++        return Some(path);
++    }
+     let home = std::env::var_os("HOME")
+         .or_else(|| std::env::var_os("USERPROFILE"))?;
+     Some(PathBuf::from(home).join(HOME_SUBDIRECTORY).join(CACHE_FILE_NAME))
+diff --git a/libs/cua-driver/rust/crates/pip-preview/src/lib.rs b/libs/cua-driver/rust/crates/pip-preview/src/lib.rs
+index 9ea83e2..bb5bf00 100644
+--- a/libs/cua-driver/rust/crates/pip-preview/src/lib.rs
++++ b/libs/cua-driver/rust/crates/pip-preview/src/lib.rs
+@@ -16,11 +16,49 @@
+ 
+ use std::sync::OnceLock;
+ 
++/// Capability-root bridge installed by the Ling-managed binary. Keeping this
++/// callback in the leaf PiP crate avoids a dependency cycle while ensuring PiP
++/// config uses the same no-follow/ACL-checked core state implementation as
++/// every other managed writer.
++pub trait ManagedStateAccess: Send + Sync + 'static {
++    fn read_config(&self) -> Result<Option<Vec<u8>>, String>;
++    fn update_config_key(&self, key: &str, value: serde_json::Value) -> Result<(), String>;
++}
++
++static MANAGED_STATE_ACCESS: OnceLock<Box<dyn ManagedStateAccess>> = OnceLock::new();
++
++pub fn set_managed_state_access(access: Box<dyn ManagedStateAccess>) -> bool {
++    MANAGED_STATE_ACCESS.set(access).is_ok()
++}
++
++fn managed_mode() -> bool {
++    std::env::var_os("CUA_DRIVER_LING_MANAGED").as_deref()
++        == Some(std::ffi::OsStr::new("1"))
++}
++
++fn read_config_bytes(path: &std::path::Path) -> Result<Option<Vec<u8>>, String> {
++    if managed_mode() {
++        return MANAGED_STATE_ACCESS
++            .get()
++            .ok_or_else(|| "managed state access is not registered".to_owned())?
++            .read_config();
++    }
++    match std::fs::read(path) {
++        Ok(bytes) => Ok(Some(bytes)),
++        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
++        Err(error) => Err(error.to_string()),
++    }
++}
++
+ /// Canonical `~/.cua-driver/config.json` path matching what the per-platform
+ /// `set_config` tools write to. Resolves `$HOME` first (Unix/macOS) and falls
+ /// back to `%USERPROFILE%` (Windows, where `HOME` is usually unset). Returns
+ /// `None` when neither is set (sandboxed CI).
+ pub fn default_config_path() -> Option<std::path::PathBuf> {
++    if std::env::var_os("CUA_DRIVER_LING_MANAGED").as_deref() == Some(std::ffi::OsStr::new("1")) {
++        return std::env::var_os("CUA_DRIVER_STATE_HOME")
++            .map(|home| std::path::PathBuf::from(home).join("config.json"));
++    }
+     std::env::var_os("HOME")
+         .or_else(|| std::env::var_os("USERPROFILE"))
+         .map(|h| std::path::PathBuf::from(h).join(".cua-driver").join("config.json"))
+@@ -33,8 +71,8 @@ pub fn default_config_path() -> Option<std::path::PathBuf> {
+ /// across stateless `cua-driver call` invocations.
+ pub fn read_config_value(key: &str) -> Option<serde_json::Value> {
+     let path = default_config_path()?;
+-    let text = std::fs::read_to_string(&path).ok()?;
+-    let json: serde_json::Value = serde_json::from_str(&text).ok()?;
++    let bytes = read_config_bytes(&path).ok()??;
++    let json: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+     json.get(key).cloned()
+ }
+ 
+@@ -43,6 +81,12 @@ pub fn read_config_value(key: &str) -> Option<serde_json::Value> {
+ /// per-platform `set_config` tools to persist `experimental_pip` /
+ /// `experimental_pip_geometry` so the next daemon restart picks them up.
+ pub fn write_config_key(key: &str, value: serde_json::Value) -> Result<(), String> {
++    if managed_mode() {
++        return MANAGED_STATE_ACCESS
++            .get()
++            .ok_or_else(|| "managed state access is not registered".to_owned())?
++            .update_config_key(key, value);
++    }
+     let path = default_config_path().ok_or_else(|| "$HOME is not set".to_string())?;
+     let mut json: serde_json::Value = path
+         .exists()
+@@ -68,11 +112,11 @@ pub fn read_pip_keys_from_file() -> (bool, Option<String>) {
+         Some(p) => p,
+         None => return (false, None),
+     };
+-    let text = match std::fs::read_to_string(&path) {
+-        Ok(t) => t,
+-        Err(_) => return (false, None),
++    let bytes = match read_config_bytes(&path) {
++        Ok(Some(bytes)) => bytes,
++        _ => return (false, None),
+     };
+-    let json: serde_json::Value = match serde_json::from_str(&text) {
++    let json: serde_json::Value = match serde_json::from_slice(&bytes) {
+         Ok(v) => v,
+         Err(_) => return (false, None),
+     };
+@@ -207,8 +251,8 @@ impl PipConfig {
+     /// Malformed or missing file falls back to the next layer silently.
+     pub fn from_args_and_file(config_path: &std::path::Path) -> Self {
+         let mut cfg = PipConfig::default();
+-        if let Ok(text) = std::fs::read_to_string(config_path) {
+-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
++        if let Ok(Some(bytes)) = read_config_bytes(config_path) {
++            if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                 if let Some(b) = json.get("experimental_pip").and_then(|v| v.as_bool()) {
+                     cfg.enabled = b;
+                 }
+diff --git a/libs/cua-driver/rust/crates/platform-macos/src/tools/mod.rs b/libs/cua-driver/rust/crates/platform-macos/src/tools/mod.rs
+index c1b21a0..bab5e19 100644
+--- a/libs/cua-driver/rust/crates/platform-macos/src/tools/mod.rs
++++ b/libs/cua-driver/rust/crates/platform-macos/src/tools/mod.rs
+@@ -209,6 +209,9 @@ impl Default for DriverConfig {
+ 
+ /// Path to the persistent JSON config file shared by the CLI and MCP session.
+ pub fn config_file_path() -> std::path::PathBuf {
++    if let Some(path) = cua_driver_core::ling_managed::state_path("config.json") {
++        return path;
++    }
+     let home = std::env::var("HOME").unwrap_or_default();
+     std::path::PathBuf::from(format!("{home}/.cua-driver/config.json"))
+ }
+@@ -219,12 +222,19 @@ pub fn config_file_path() -> std::path::PathBuf {
+ /// the next MCP session without requiring a per-call `set_config`.
+ pub fn load_driver_config() -> DriverConfig {
+     let mut cfg = DriverConfig::default();
+-    let path = config_file_path();
+-    let text = match std::fs::read_to_string(&path) {
+-        Ok(t) => t,
+-        Err(_) => return cfg,  // no file yet — use defaults
++    let bytes = if cua_driver_core::ling_managed::is_managed() {
++        match cua_driver_core::ling_managed::read_state("config.json") {
++            Ok(Some(bytes)) => bytes,
++            _ => return cfg,
++        }
++    } else {
++        let path = config_file_path();
++        match std::fs::read(&path) {
++            Ok(bytes) => bytes,
++            Err(_) => return cfg, // no file yet — use defaults
++        }
+     };
+-    let json: serde_json::Value = match serde_json::from_str(&text) {
++    let json: serde_json::Value = match serde_json::from_slice(&bytes) {
+         Ok(v) => v,
+         Err(_) => return cfg,  // malformed file — use defaults
+     };
+@@ -248,6 +258,13 @@ pub fn load_driver_config() -> DriverConfig {
+ /// Merges with any existing file contents so other keys are preserved.
+ /// Returns `Err` if the directory cannot be created or the file cannot be written.
+ pub fn write_driver_config_key(key: &str, value: &serde_json::Value) -> Result<(), String> {
++    if cua_driver_core::ling_managed::is_managed() {
++        return cua_driver_core::ling_managed::update_json_key_atomic(
++            "config.json",
++            key,
++            value.clone(),
++        );
++    }
+     let path = config_file_path();
+     let mut json: serde_json::Value = path
+         .exists()
+diff --git a/libs/cua-driver/rust/crates/platform-macos/src/tools/set_config.rs b/libs/cua-driver/rust/crates/platform-macos/src/tools/set_config.rs
+index 52771d1..ad65f01 100644
+--- a/libs/cua-driver/rust/crates/platform-macos/src/tools/set_config.rs
++++ b/libs/cua-driver/rust/crates/platform-macos/src/tools/set_config.rs
+@@ -104,6 +104,69 @@ impl Tool for SetConfigTool {
+             None => None,
+         };
+ 
++        let scope_arg = args.opt_str("capture_scope").or_else(|| {
++            kv.as_ref()
++                .filter(|(k, _)| k == "capture_scope")
++                .and_then(|(_, v)| v.as_str().map(str::to_owned))
++        });
++        if let Some(scope) = scope_arg.as_deref() {
++            if scope != "window" && scope != "desktop" {
++                return ToolResult::error(format!(
++                    "`capture_scope` must be \"window\" or \"desktop\", got \"{scope}\"."
++                ));
++            }
++        }
++        let pip_enabled = args.get("experimental_pip").and_then(Value::as_bool);
++        let pip_geometry = args.opt_str("experimental_pip_geometry");
++        if let Some(geometry) = pip_geometry.as_deref() {
++            if pip_preview::PipGeometry::parse(geometry).is_none() {
++                return ToolResult::error(format!(
++                    "experimental_pip_geometry `{geometry}` is not a valid WxH or WxH+X+Y string"
++                ));
++            }
++        }
++        let has_global_updates =
++            scope_arg.is_some() || pip_enabled.is_some() || pip_geometry.is_some();
++
++        // Managed global writes are one capability-root RMW and happen before
++        // any in-memory state changes. A persistence failure is therefore a
++        // ToolResult error and cannot leave the live config ahead of disk.
++        let managed_transaction = if cua_driver_core::ling_managed::is_managed() {
++            match cua_driver_core::ling_managed::begin_state_transaction() {
++                Ok(transaction) => Some(transaction),
++                Err(error) => {
++                    return ToolResult::error(format!(
++                        "failed to begin managed config transaction: {error}"
++                    ))
++                }
++            }
++        } else {
++            None
++        };
++        if let Some(transaction) = managed_transaction.as_ref() {
++            let mut entries = Vec::new();
++            if session_id.is_none() {
++                if let Some(dimension) = max_dim {
++                    entries.push(("max_image_dimension".to_owned(), Value::from(dimension)));
++                }
++            }
++            if let Some(scope) = scope_arg.as_ref() {
++                entries.push(("capture_scope".to_owned(), Value::String(scope.clone())));
++            }
++            if let Some(enabled) = pip_enabled {
++                entries.push(("experimental_pip".to_owned(), Value::Bool(enabled)));
++            }
++            if let Some(geometry) = pip_geometry.as_ref() {
++                entries.push((
++                    "experimental_pip_geometry".to_owned(),
++                    Value::String(geometry.clone()),
++                ));
++            }
++            if let Err(error) = transaction.update_json_keys_atomic("config.json", &entries) {
++                return ToolResult::error(format!("failed to persist managed config: {error}"));
++            }
++        }
++
+         let effective_dim = if let Some(sid) = session_id.as_deref() {
+             // Session-scoped override: in-memory only, no global write, no disk.
+             self.state.session_config.set(sid, ConfigOverrides {
+@@ -114,31 +177,43 @@ impl Tool for SetConfigTool {
+             // Anonymous/global session: write the shared global + persist.
+             let mut cfg = self.state.config.write().unwrap();
+             if let Some(dim32) = max_dim {
+-                cfg.max_image_dimension = dim32;
+-                if let Err(e) = write_driver_config_key("max_image_dimension", &Value::Number(u64::from(dim32).into())) {
+-                    tracing::warn!("set_config: failed to persist max_image_dimension: {e}");
++                if !cua_driver_core::ling_managed::is_managed() {
++                    if let Err(e) = write_driver_config_key(
++                        "max_image_dimension",
++                        &Value::Number(u64::from(dim32).into()),
++                    ) {
++                        tracing::warn!("set_config: failed to persist max_image_dimension: {e}");
++                    }
+                 }
++                cfg.max_image_dimension = dim32;
+             }
+             cfg.max_image_dimension
+         };
+         // PiP keys persist to the same config.json but take effect only on
+         // next daemon restart — the backend is initialised once at startup.
+         let mut pip_note = String::new();
+-        if let Some(enabled) = args.get("experimental_pip").and_then(|v| v.as_bool()) {
+-            if let Err(e) = pip_preview::write_config_key("experimental_pip", Value::Bool(enabled)) {
+-                return ToolResult::error(format!("failed to persist experimental_pip: {e}"));
++        if let Some(enabled) = pip_enabled {
++            if !cua_driver_core::ling_managed::is_managed() {
++                if let Err(e) =
++                    pip_preview::write_config_key("experimental_pip", Value::Bool(enabled))
++                {
++                    return ToolResult::error(format!(
++                        "failed to persist experimental_pip: {e}"
++                    ));
++                }
+             }
+             pip_note = format!(" — restart cua-driver for experimental_pip={enabled} to take effect");
+         }
+-        if let Some(geom) = args.opt_str("experimental_pip_geometry") {
+-            // Validate before persisting so the user gets an immediate error.
+-            if pip_preview::PipGeometry::parse(&geom).is_none() {
+-                return ToolResult::error(format!(
+-                    "experimental_pip_geometry `{geom}` is not a valid WxH or WxH+X+Y string"
+-                ));
+-            }
+-            if let Err(e) = pip_preview::write_config_key("experimental_pip_geometry", Value::String(geom.clone())) {
+-                return ToolResult::error(format!("failed to persist experimental_pip_geometry: {e}"));
++        if let Some(geom) = pip_geometry {
++            if !cua_driver_core::ling_managed::is_managed() {
++                if let Err(e) = pip_preview::write_config_key(
++                    "experimental_pip_geometry",
++                    Value::String(geom.clone()),
++                ) {
++                    return ToolResult::error(format!(
++                        "failed to persist experimental_pip_geometry: {e}"
++                    ));
++                }
+             }
+             if pip_note.is_empty() {
+                 pip_note = format!(" — restart cua-driver for experimental_pip_geometry={geom} to take effect");
+@@ -148,34 +223,25 @@ impl Tool for SetConfigTool {
+         // direct field or {key,value} shape; validate window|desktop; write the
+         // shared global config + persist (matches Windows/Linux — not
+         // session-scoped, since it's the baseline a no-args capture tool reads).
+-        let scope_arg = args.opt_str("capture_scope").or_else(|| {
+-            kv.as_ref()
+-                .filter(|(k, _)| k == "capture_scope")
+-                .and_then(|(_, v)| v.as_str().map(str::to_owned))
+-        });
+         let mut capture_scope_note = String::new();
+         if let Some(sc) = scope_arg {
+-            if sc != "window" && sc != "desktop" {
+-                return ToolResult::error(format!(
+-                    "`capture_scope` must be \"window\" or \"desktop\", got \"{sc}\"."
+-                ));
++            if !cua_driver_core::ling_managed::is_managed() {
++                if let Err(e) =
++                    write_driver_config_key("capture_scope", &Value::String(sc.clone()))
++                {
++                    tracing::warn!("set_config: failed to persist capture_scope: {e}");
++                }
+             }
+             self.state.config.write().unwrap().capture_scope = sc.clone();
+-            if let Err(e) = write_driver_config_key("capture_scope", &Value::String(sc.clone())) {
+-                tracing::warn!("set_config: failed to persist capture_scope: {e}");
+-            }
+             capture_scope_note = format!(", capture_scope={sc}");
+         }
+ 
+-        let scope_note = if session_id.is_some() {
+-            " (session-scoped; persisted default unchanged)"
+-        } else {
+-            ""
+-        };
++        let scope_note =
++            persistence_scope_note(session_id.is_some(), max_dim.is_some(), has_global_updates);
+         // Echo the config back in structured content (matches Windows/Linux
+         // set_config, which callers/tests read for the applied capture_scope).
+         let capture_scope = self.state.config.read().unwrap().capture_scope.clone();
+-        ToolResult::text(format!(
++        let result = ToolResult::text(format!(
+             "Config updated: max_image_dimension={}{}{}{}",
+             effective_dim, capture_scope_note, scope_note, pip_note
+         ))
+@@ -184,6 +250,39 @@ impl Tool for SetConfigTool {
+             "platform": "macos",
+             "max_image_dimension": effective_dim,
+             "capture_scope": capture_scope,
+-        }))
++        }));
++        drop(managed_transaction);
++        result
++    }
++}
++
++fn persistence_scope_note(
++    has_session_id: bool,
++    has_session_dimension: bool,
++    has_global_updates: bool,
++) -> &'static str {
++    match (has_session_id, has_session_dimension, has_global_updates) {
++        (true, true, true) => " (max_image_dimension session-scoped; global keys persisted)",
++        (true, true, false) => " (max_image_dimension session-scoped; persisted default unchanged)",
++        _ => "",
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::persistence_scope_note;
++
++    #[test]
++    fn persistence_note_distinguishes_session_and_global_updates() {
++        assert_eq!(
++            persistence_scope_note(true, true, false),
++            " (max_image_dimension session-scoped; persisted default unchanged)"
++        );
++        assert_eq!(
++            persistence_scope_note(true, true, true),
++            " (max_image_dimension session-scoped; global keys persisted)"
++        );
++        assert_eq!(persistence_scope_note(true, false, true), "");
++        assert_eq!(persistence_scope_note(false, true, true), "");
+     }
+ }

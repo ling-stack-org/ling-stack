@@ -24,6 +24,7 @@ export function SceneExecutionSettings({
   providers,
   workflows,
   imageArtifacts,
+  sceneUpdateBusy,
   actions,
   onConfigureVideoModel,
   onOpenWorkflowLibrary,
@@ -34,6 +35,7 @@ export function SceneExecutionSettings({
   readonly providers: readonly ProviderPreset[];
   readonly workflows: readonly MediaWorkflowDefinitionDetail[];
   readonly imageArtifacts: readonly RunArtifact[];
+  readonly sceneUpdateBusy: boolean;
   readonly actions: MediaProductionActions;
   readonly onConfigureVideoModel: () => void;
   readonly onOpenWorkflowLibrary: () => void;
@@ -102,6 +104,7 @@ export function SceneExecutionSettings({
       <Field className="field" label={t("Default production method")}>
         <Select
           value={draft.executionMode}
+          disabled={sceneUpdateBusy}
           loading={busyFields.has("executionMode")}
           invalid={Boolean(failures.executionMode)}
           onChange={(event) => {
@@ -125,6 +128,7 @@ export function SceneExecutionSettings({
           source={source}
           imageArtifacts={imageArtifacts}
           busyFields={busyFields}
+          sceneUpdateBusy={sceneUpdateBusy}
           failures={failures}
           updateDraft={updateDraft}
           save={save}
@@ -140,6 +144,7 @@ export function SceneExecutionSettings({
           source={source}
           imageArtifacts={imageArtifacts}
           busyFields={busyFields}
+          sceneUpdateBusy={sceneUpdateBusy}
           failures={failures}
           updateDraft={updateDraft}
           save={save}
@@ -158,7 +163,7 @@ function DirectSettings(input: SettingsBranchProps & { readonly cwd: string }): 
     : undefined;
   return <>
     <Field className="field" label={t("Default video model")}>
-      <Select value={input.draft.providerPresetId} loading={input.busyFields.has("provider")} invalid={Boolean(input.failures.provider)} onChange={(event) => {
+      <Select value={input.draft.providerPresetId} disabled={input.sceneUpdateBusy} loading={input.busyFields.has("provider")} invalid={Boolean(input.failures.provider)} onChange={(event) => {
         const providerPresetId = event.target.value;
         input.updateDraft("providerPresetId", providerPresetId, "provider");
         void input.save("provider", { providerPresetId: providerPresetId || null });
@@ -174,14 +179,14 @@ function DirectSettings(input: SettingsBranchProps & { readonly cwd: string }): 
     {capability ? <>
       <div className="scene-parameter-grid">
         <Field className="field" label={t("Aspect ratio")}>
-          <Select value={input.draft.ratio} loading={input.busyFields.has("ratio")} invalid={Boolean(input.failures.ratio)} onChange={(event) => {
+          <Select value={input.draft.ratio} disabled={input.sceneUpdateBusy} loading={input.busyFields.has("ratio")} invalid={Boolean(input.failures.ratio)} onChange={(event) => {
             const ratio = event.target.value;
             input.updateDraft("ratio", ratio, "ratio");
             void input.save("ratio", { ratio });
           }}>{(capability.aspectRatios ?? [input.draft.ratio]).map((ratio) => <option key={ratio} value={ratio}>{ratio}</option>)}</Select>
         </Field>
         <Field className="field" label={t("Video duration")}>
-          <Select value={String(input.draft.durationSeconds)} loading={input.busyFields.has("duration")} invalid={Boolean(input.failures.duration)} onChange={(event) => {
+          <Select value={String(input.draft.durationSeconds)} disabled={input.sceneUpdateBusy} loading={input.busyFields.has("duration")} invalid={Boolean(input.failures.duration)} onChange={(event) => {
             const durationSeconds = Number(event.target.value);
             input.updateDraft("durationSeconds", durationSeconds, "duration");
             void input.save("duration", { durationSeconds });
@@ -199,7 +204,7 @@ function WorkflowSettings(input: SettingsBranchProps): JSX.Element {
   const fields = input.source.blocker ? [] : input.source.selectedWorkflow?.currentVersion?.inputFields.filter((field) => field.semantic !== "prompt") ?? [];
   return <>
     <Field className="field" label={t("Default production workflow")}>
-      <Select value={input.draft.workflowDefinitionId} loading={input.busyFields.has("workflow")} invalid={Boolean(input.failures.workflow)} onChange={(event) => {
+      <Select value={input.draft.workflowDefinitionId} disabled={input.sceneUpdateBusy} loading={input.busyFields.has("workflow")} invalid={Boolean(input.failures.workflow)} onChange={(event) => {
         const workflowDefinitionId = event.target.value;
         input.updateDraft("workflowDefinitionId", workflowDefinitionId, "workflow");
         void input.save("workflow", { workflowDefinitionId: workflowDefinitionId || null });
@@ -226,7 +231,7 @@ function WorkflowField({ field, input }: { readonly field: MediaWorkflowInputFie
     input.updateDraft("workflowInputValues", { ...input.draft.workflowInputValues, [field.id]: next }, fieldKey);
     void input.save(fieldKey, workflowFieldPatch(field, next, input.authorityScene));
   };
-  const common = { loading: input.busyFields.has(fieldKey), invalid };
+  const common = { disabled: input.sceneUpdateBusy, loading: input.busyFields.has(fieldKey), invalid };
   return <div className="scene-workflow-field">
     {field.kind === "boolean" ? <Checkbox checked={Boolean(value)} loading={common.loading} label={field.label} onChange={(event) => saveValue(event.target.checked)} />
       : <Field className="field" label={field.label} required={field.required} error={invalid && !input.failures[fieldKey] ? t("Not ready") : undefined}>
@@ -247,7 +252,7 @@ function ReferenceAssets(input: SettingsBranchProps & { readonly cwd: string }):
       const selected = input.draft.referenceArtifactIds.includes(artifact.id);
       return <div className={`reference-asset${selected ? " selected" : ""}`} key={artifact.id}>
         <img src={artifactContentUrl(artifact.id, input.cwd)} alt="" />
-        <Checkbox checked={selected} loading={input.busyFields.has("references")} label={artifact.title ?? t("Generated result")} onChange={() => {
+        <Checkbox checked={selected} disabled={input.sceneUpdateBusy} loading={input.busyFields.has("references")} label={artifact.title ?? t("Generated result")} onChange={() => {
           const referenceArtifactIds = selected ? input.draft.referenceArtifactIds.filter((id) => id !== artifact.id) : [...input.draft.referenceArtifactIds, artifact.id];
           input.updateDraft("referenceArtifactIds", referenceArtifactIds, "references");
           void input.save("references", { referenceArtifactIds });
@@ -265,6 +270,7 @@ interface SettingsBranchProps {
   readonly source: ReturnType<typeof deriveSceneSourceProjection>;
   readonly imageArtifacts: readonly RunArtifact[];
   readonly busyFields: ReadonlySet<SettingsField>;
+  readonly sceneUpdateBusy: boolean;
   readonly failures: Readonly<Partial<Record<SettingsField, MediaProductionFailure>>>;
   readonly updateDraft: <Key extends keyof ExecutionDraft>(key: Key, value: ExecutionDraft[Key], field: SettingsField) => void;
   readonly save: (field: SettingsField, patch: MediaScenePatch) => Promise<void>;

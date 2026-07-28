@@ -2,17 +2,19 @@ import { createRequire } from "node:module";
 import type { BrowserWindow, IpcMain } from "electron";
 import {
   COMPUTER_USE_HOST_OBSTACLE_KINDS,
+  COMPUTER_USE_PIP_SURFACE_KINDS,
   COMPUTER_USE_PREVIEW_RELEASE_MEDIA_STATUSES,
   isComputerUsePreviewLocale,
   type ComputerUseHostLayout,
   type ComputerUseHostObstacle,
   type ComputerUseHostObstacleKind,
+  type ComputerUsePipDeckOwner,
   type ComputerUsePreviewReleaseMediaAck,
   type DesktopRect,
 } from "../shared/desktop-capabilities.js";
 import { DESKTOP_IPC_CHANNELS } from "../shared/ipc-channels.js";
 import type { ComputerUsePreviewCoordinator } from "./computer-use/coordinator.js";
-import type { DesktopDaemonLifecycle } from "./daemon-lifecycle.js";
+import type { DesktopRuntime } from "./desktop-runtime.js";
 import { DesktopNavigationIntentStore } from "./navigation-intent.js";
 import { DesktopRendererThemeStore } from "./renderer-theme-store.js";
 import { sendToLiveDesktopWindow } from "./safe-window-send.js";
@@ -24,7 +26,7 @@ const MAX_HOST_LAYOUT_AGE_MS = 5 * 60 * 1_000;
 const MAX_HOST_LAYOUT_FUTURE_SKEW_MS = 60 * 1_000;
 
 export function registerDesktopIpc(input: {
-  readonly daemon: DesktopDaemonLifecycle;
+  readonly runtime: Pick<DesktopRuntime, "status" | "restart" | "onStatusChanged">;
   readonly computerUse: ComputerUsePreviewCoordinator;
   readonly getMainWindow: () => BrowserWindow | undefined;
   readonly navigationIntents?: DesktopNavigationIntentStore;
@@ -39,16 +41,20 @@ export function registerDesktopIpc(input: {
   let pendingRendererSelection: string | undefined;
   let pendingRendererSelectionApplied = false;
   let pendingRendererSelectionAppliedValue: string | undefined;
+  let pendingRendererDeckOwnerObserved = false;
+  let pendingRendererDeckOwner: ComputerUsePipDeckOwner | undefined;
+  let pendingRendererDeckOwnerApplied = false;
+  let pendingRendererDeckOwnerAppliedKey: string | undefined;
   const isMainWindowSender = (event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent): boolean =>
     input.getMainWindow()?.webContents.id === event.sender.id;
   const isPreviewSender = (event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent): boolean =>
     input.computerUse.ownsPreviewWebContents(event.sender.id);
 
   desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.daemonStatus, async (event) =>
-    isMainWindowSender(event) ? input.daemon.status : { state: "disconnected", baseUrl: "", ownedByDesktop: false });
+    isMainWindowSender(event) ? input.runtime.status : { state: "disconnected", baseUrl: "", ownedByDesktop: false });
   desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.daemonRestart, async (event) =>
     isMainWindowSender(event)
-      ? input.daemon.restart()
+      ? input.runtime.restart()
       : { state: "disconnected", baseUrl: "", ownedByDesktop: false, message: "unauthorized_sender" });
   desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.navigationIntentGet, async (event) =>
     isMainWindowSender(event) ? navigationIntents.getPendingIntent() : undefined);
@@ -65,11 +71,24 @@ export function registerDesktopIpc(input: {
     ) {
       input.computerUse.reportSelectedConversation(pendingRendererSelection);
     }
+    const pendingDeckOwnerKey = computerUseDeckOwnerKey(pendingRendererDeckOwner);
+    if (
+      result.accepted
+      && !navigationIntents.getPendingIntent()
+      && pendingRendererDeckOwnerObserved
+      && (!pendingRendererDeckOwnerApplied || pendingRendererDeckOwnerAppliedKey !== pendingDeckOwnerKey)
+    ) {
+      input.computerUse.reportSelectedDeckOwner(pendingRendererDeckOwner);
+    }
     if (result.accepted && !navigationIntents.getPendingIntent()) {
       pendingRendererSelectionObserved = false;
       pendingRendererSelection = undefined;
       pendingRendererSelectionApplied = false;
       pendingRendererSelectionAppliedValue = undefined;
+      pendingRendererDeckOwnerObserved = false;
+      pendingRendererDeckOwner = undefined;
+      pendingRendererDeckOwnerApplied = false;
+      pendingRendererDeckOwnerAppliedKey = undefined;
     }
     return result;
   });
@@ -107,6 +126,14 @@ export function registerDesktopIpc(input: {
     input.computerUse.ownsPreviewWebContents(event.sender.id)
       ? input.computerUse.resetPosition()
       : { accepted: false, reason: "unauthorized_preview_sender" });
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.computerUsePreviewActivatePage, (event, pageId: unknown) =>
+    input.computerUse.ownsPreviewWebContents(event.sender.id) && isNonEmptyString(pageId)
+      ? input.computerUse.activatePage(pageId.trim())
+      : { accepted: false, reason: "unauthorized_or_invalid_page" });
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.computerUsePreviewClosePage, (event, pageId: unknown) =>
+    input.computerUse.ownsPreviewWebContents(event.sender.id) && isNonEmptyString(pageId)
+      ? input.computerUse.dismissPage(pageId.trim())
+      : { accepted: false, reason: "unauthorized_or_invalid_page" });
   desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.computerUsePreviewClose, (event) =>
     input.computerUse.ownsPreviewWebContents(event.sender.id)
       ? input.computerUse.closeCurrent()
@@ -114,6 +141,37 @@ export function registerDesktopIpc(input: {
   desktopIpcMain.on(DESKTOP_IPC_CHANNELS.computerUseReportLocale, (event, locale: unknown) => {
     if (isMainWindowSender(event) && isComputerUsePreviewLocale(locale)) {
       input.computerUse.reportLocale(locale);
+    }
+  });
+  desktopIpcMain.on(DESKTOP_IPC_CHANNELS.computerUseReportSelectedDeckOwner, (event, owner: unknown) => {
+    if (!isMainWindowSender(event)) {
+      return;
+    }
+    const parsedOwner = readComputerUseDeckOwner(owner);
+    if (owner !== undefined && owner !== null && !parsedOwner) {
+      return;
+    }
+    const selectedOwner = input.fixedComputerUseConversationId
+      ? { surfaceKind: "normal_conversation" as const, ownerId: input.fixedComputerUseConversationId }
+      : parsedOwner;
+    if (navigationIntents.getPendingIntent()) {
+      pendingRendererDeckOwnerObserved = true;
+      pendingRendererDeckOwner = selectedOwner;
+    }
+    if (!navigationIntents.acceptRendererSelection(selectedOwner?.ownerId)) {
+      return;
+    }
+    const ownerToApply = !navigationIntents.getPendingIntent() && pendingRendererDeckOwnerObserved
+      ? pendingRendererDeckOwner
+      : selectedOwner;
+    input.computerUse.reportSelectedDeckOwner(ownerToApply);
+    pendingRendererDeckOwnerApplied = true;
+    pendingRendererDeckOwnerAppliedKey = computerUseDeckOwnerKey(ownerToApply);
+    if (!navigationIntents.getPendingIntent()) {
+      pendingRendererDeckOwnerObserved = false;
+      pendingRendererDeckOwner = undefined;
+      pendingRendererDeckOwnerApplied = false;
+      pendingRendererDeckOwnerAppliedKey = undefined;
     }
   });
   desktopIpcMain.on(DESKTOP_IPC_CHANNELS.computerUseReportSelectedConversation, (event, conversationId: unknown) => {
@@ -277,7 +335,7 @@ export function registerDesktopIpc(input: {
     }
   });
 
-  const unsubscribeStatus = input.daemon.onStatusChanged((status) => {
+  const unsubscribeStatus = input.runtime.onStatusChanged((status) => {
     sendToLiveDesktopWindow(input.getMainWindow(), DESKTOP_IPC_CHANNELS.daemonStatus, status);
   });
   const unsubscribeNavigationIntents = navigationIntents.onIntentChanged((intent) => {
@@ -285,6 +343,10 @@ export function registerDesktopIpc(input: {
     pendingRendererSelection = undefined;
     pendingRendererSelectionApplied = false;
     pendingRendererSelectionAppliedValue = undefined;
+    pendingRendererDeckOwnerObserved = false;
+    pendingRendererDeckOwner = undefined;
+    pendingRendererDeckOwnerApplied = false;
+    pendingRendererDeckOwnerAppliedKey = undefined;
     sendToLiveDesktopWindow(
       input.getMainWindow(),
       DESKTOP_IPC_CHANNELS.navigationIntentChanged,
@@ -309,6 +371,29 @@ function resolveIpcMain(): IpcMain {
     throw new Error("electron_ipc_main_unavailable");
   }
   return electron.ipcMain;
+}
+
+function readComputerUseDeckOwner(value: unknown): ComputerUsePipDeckOwner | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const surfaceKind = value.surfaceKind;
+  const ownerId = value.ownerId;
+  if (
+    typeof surfaceKind !== "string"
+    || !COMPUTER_USE_PIP_SURFACE_KINDS.includes(surfaceKind as ComputerUsePipDeckOwner["surfaceKind"])
+    || !isNonEmptyString(ownerId)
+  ) {
+    return undefined;
+  }
+  return {
+    surfaceKind: surfaceKind as ComputerUsePipDeckOwner["surfaceKind"],
+    ownerId: ownerId.trim(),
+  };
+}
+
+function computerUseDeckOwnerKey(owner: ComputerUsePipDeckOwner | undefined): string | undefined {
+  return owner ? `${owner.surfaceKind}\u0000${owner.ownerId}` : undefined;
 }
 
 function readHostLayout(value: unknown): ComputerUseHostLayout | undefined {

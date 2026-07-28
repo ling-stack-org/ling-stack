@@ -15,6 +15,8 @@ export interface DesktopComputerUseControlSummary {
   readonly targetLabel: string;
   readonly previewAvailable: boolean;
   readonly visible: boolean;
+  readonly activePageId?: string;
+  readonly pageCount: number;
 }
 
 export type DesktopComputerUseCommandFailureKind = "not-accepted" | "unavailable";

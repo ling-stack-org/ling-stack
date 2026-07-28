@@ -11,6 +11,7 @@ import {
 
 const DESKTOP_BRIDGE_TOKEN = "desktop-computer-use-integration-token";
 const COMPUTER_USE_ROUTE_TOKEN = "computer-use-route-integration-token";
+const SUPPORTED_DESKTOP_PLATFORM = process.platform === "darwin" || process.platform === "win32";
 
 test("cua-driver MCP results publish a private preview and Stop waits for the linked run", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-computer-use-run-"));
@@ -112,6 +113,161 @@ test("cua-driver MCP results publish a private preview and Stop waits for the li
   } finally {
     await daemon.stop().catch(() => undefined);
     await runBodyPromise?.catch(() => undefined);
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("bundled current lease enters the run snapshot and Computer Use projection without package cache", {
+  skip: !SUPPORTED_DESKTOP_PLATFORM,
+}, async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-computer-use-bundled-run-"));
+  const runner = new CompletingComputerUseRunner("list_windows", { pid: 4321 });
+  const { capture, storeFactory } = createCapturedStoreFactory();
+  const daemon = createDaemonServer(
+    bundledConfig(cwd),
+    {
+      runner,
+      desktopBridgeToken: DESKTOP_BRIDGE_TOKEN,
+      computerUseRouteToken: COMPUTER_USE_ROUTE_TOKEN,
+      storeFactory,
+      cuaDriverLeaseClientFactory: bundledLeaseClientFactory(),
+    },
+  );
+  await daemon.start();
+  try {
+    const address = daemon.server.address();
+    assert.ok(address && typeof address === "object");
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    assert.ok(capture.store);
+
+    const enable = await fetch(
+      `${baseUrl}/plugins/${encodeURIComponent("trusted-local:cua-driver")}/enable?cwd=${encodeURIComponent(cwd)}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      },
+    );
+    assert.equal(enable.status, 202);
+    assert.equal((await enable.json()).error, "cua_desktop_lease_unavailable");
+
+    const handshake = await fetch(`${baseUrl}/computer-use/desktop-bridge/handshake`, {
+      headers: { "X-Ling-Desktop-Bridge-Token": DESKTOP_BRIDGE_TOKEN },
+    });
+    assert.equal(handshake.status, 200);
+    const authority = await handshake.json();
+    const published = await fetch(
+      `${baseUrl}/desktop/capabilities/cua-driver/lease?cwd=${encodeURIComponent(cwd)}`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Ling-Desktop-Bridge-Token": DESKTOP_BRIDGE_TOKEN,
+        },
+        body: JSON.stringify(bundledLease(authority, cwd)),
+      },
+    );
+    assert.equal(published.status, 200, await published.text());
+    await waitForCondition(() =>
+      capture.store.getMcpServer("mcp_cua_driver")?.enabled === true
+      && capture.store.listMcpTools({ serverId: "mcp_cua_driver", enabled: true }).length === 1
+    );
+
+    await putJson(`${baseUrl}/teammates/teammate_builtin_engineer/mcp?cwd=${encodeURIComponent(cwd)}`, {
+      bindings: [{
+        serverId: "mcp_cua_driver",
+        mode: "selected",
+        selectedToolNames: ["list_windows"],
+        enabled: true,
+      }],
+    });
+    const taskId = "task_computer_use_bundled_run";
+    const response = await fetch(`${baseUrl}/runs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(runBody(cwd, taskId)),
+    });
+    if (!response.ok) {
+      assert.fail(`${response.status} ${response.statusText}: ${await response.text()}`);
+    }
+    await response.text();
+    assert.equal(runner.callCompleted, true);
+
+    const run = capture.store.listRuns({ limit: 20 }).find((candidate) => candidate.taskId === taskId);
+    assert.ok(run);
+    assert.deepEqual(run.requestSnapshot.managedPluginRuntime.pluginIds, [
+      "bundled:cua-driver",
+      "trusted-local:cua-driver",
+    ]);
+    const capability = run.requestSnapshot.managedPluginRuntime.capabilities.find(
+      (candidate) => candidate.pluginId === "trusted-local:cua-driver",
+    );
+    assert.equal(capability?.status, "injectable");
+    assert.equal(capability?.package, undefined);
+    assert.deepEqual(
+      run.requestSnapshot.mcpToolAccess.servers.map((candidate) => candidate.serverId),
+      ["mcp_cua_driver"],
+    );
+    assert.deepEqual(
+      run.requestSnapshot.mcpToolAccess.servers[0].tools.map((tool) => tool.rawName),
+      ["list_windows"],
+    );
+
+    const projection = await waitForProjectionMatching(
+      baseUrl,
+      cwd,
+      (candidate) => candidate.status === "succeeded",
+    );
+    assert.equal(projection.target.displayName, "Research Browser");
+  } finally {
+    await daemon.stop().catch(() => undefined);
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("bundled package selection stays in the run snapshot while its Desktop lease is unavailable", {
+  skip: !SUPPORTED_DESKTOP_PLATFORM,
+}, async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-computer-use-bundled-no-lease-run-"));
+  const runner = new CompletingWithoutComputerUseRunner();
+  const { capture, storeFactory } = createCapturedStoreFactory();
+  const daemon = createDaemonServer(
+    bundledConfig(cwd),
+    {
+      runner,
+      desktopBridgeToken: DESKTOP_BRIDGE_TOKEN,
+      computerUseRouteToken: COMPUTER_USE_ROUTE_TOKEN,
+      storeFactory,
+    },
+  );
+  await daemon.start();
+  try {
+    const address = daemon.server.address();
+    assert.ok(address && typeof address === "object");
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    assert.ok(capture.store);
+
+    const taskId = "task_computer_use_bundled_no_lease_run";
+    const response = await fetch(`${baseUrl}/runs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(runBody(cwd, taskId)),
+    });
+    if (!response.ok) {
+      assert.fail(`${response.status} ${response.statusText}: ${await response.text()}`);
+    }
+    await response.text();
+    assert.equal(runner.callCompleted, true);
+
+    const run = capture.store.listRuns({ limit: 20 }).find((candidate) => candidate.taskId === taskId);
+    assert.ok(run);
+    assert.deepEqual(
+      run.requestSnapshot.managedPluginRuntime.pluginIds,
+      ["bundled:cua-driver"],
+    );
+    assert.deepEqual(run.requestSnapshot.managedPluginRuntime.capabilities, []);
+  } finally {
+    await daemon.stop().catch(() => undefined);
     await rm(cwd, { recursive: true, force: true });
   }
 });
@@ -308,28 +464,7 @@ class FakeCuaDriverBroker {
   }
 
   async callTool(_server, _options, toolName, input) {
-    if (toolName === "list_windows") {
-      assert.deepEqual(input, { pid: 4321 });
-      return {
-        content: [],
-        details: {
-          structuredContent: {
-            windows: [{ pid: 4321, window_id: "7788" }],
-          },
-        },
-      };
-    }
-    assert.equal(toolName, "screenshot");
-    return {
-      content: [{ type: "text", text: JSON.stringify({ ok: true }) }],
-      details: {
-        pid: 4321,
-        bundle_id: "com.example.browser",
-        window_id: 7788,
-        title: "Research Browser",
-        bounds: { width: 1200, height: 800 },
-      },
-    };
+    return cuaToolResult(toolName, input);
   }
 }
 
@@ -413,8 +548,13 @@ class ApprovalCuaDriverBroker extends FakeCuaDriverBroker {
 class CompletingComputerUseRunner {
   callCompleted = false;
 
+  constructor(toolName = "screenshot", input = {}) {
+    this.toolName = toolName;
+    this.input = input;
+  }
+
   async runTask(options) {
-    const tool = options.mcpTools?.find((candidate) => candidate.rawName === "screenshot");
+    const tool = options.mcpTools?.find((candidate) => candidate.rawName === this.toolName);
     assert.ok(tool);
     assert.ok(options.onMcpToolCall);
     await options.onMcpToolCall({
@@ -422,11 +562,25 @@ class CompletingComputerUseRunner {
       registeredName: tool.registeredName,
       serverId: tool.serverId,
       rawName: tool.rawName,
-      input: {},
+      input: this.input,
       task: options.task,
       cwd: options.cwd,
       defaultApproval: tool.defaultApproval,
     });
+    this.callCompleted = true;
+    return {
+      taskId: options.task.id,
+      events: [],
+      messages: [{ role: "assistant", content: "done" }],
+    };
+  }
+}
+
+class CompletingWithoutComputerUseRunner {
+  callCompleted = false;
+
+  async runTask(options) {
+    assert.deepEqual(options.mcpTools ?? [], []);
     this.callCompleted = true;
     return {
       taskId: options.task.id,
@@ -478,6 +632,112 @@ function runBody(cwd, taskId) {
   };
 }
 
+function bundledConfig(cwd) {
+  return {
+    host: "127.0.0.1",
+    port: 0,
+    defaultWorkspaceCwd: cwd,
+    cuaDriver: {
+      bundledEmbedded: {
+        darwin: process.platform === "darwin",
+        win32: process.platform === "win32",
+      },
+      packagedProvider: {
+        darwin: process.platform === "darwin",
+        win32: process.platform === "win32",
+      },
+    },
+  };
+}
+
+function bundledLeaseClientFactory() {
+  return {
+    async connect() {
+      return {
+        async check(server, checkedAt) {
+          return { statusSnapshot: readyStatus(server.id, checkedAt, 0) };
+        },
+        async checkHealth(server, checkedAt) {
+          return { statusSnapshot: readyStatus(server.id, checkedAt, 0) };
+        },
+        async listTools(server, checkedAt) {
+          return {
+            statusSnapshot: readyStatus(server.id, checkedAt, 1),
+            tools: [listWindowsTool()],
+          };
+        },
+        async callTool(_server, toolName, input) {
+          return cuaToolResult(toolName, input);
+        },
+        async close() {},
+      };
+    },
+  };
+}
+
+function bundledLease(authority, cwd) {
+  return {
+    schemaVersion: 1,
+    providerId: "cua-driver",
+    desktopInstanceId: "desktop-computer-use-integration",
+    desktopInstanceEpoch: authority.desktopInstanceEpoch,
+    bridgeConnectionId: authority.bridgeConnectionId,
+    generation: 1,
+    daemonAuthorityEpoch: authority.daemonAuthorityEpoch,
+    workspaceCwd: cwd,
+    endpoint: "http://127.0.0.1:43123/mcp",
+    providerVersion: "0.8.3",
+    distributionRevision: "ling.1",
+    integrationMode: "embedded-stdio",
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    lockDigest: "a".repeat(64),
+    providerSealDigest: "b".repeat(64),
+    ...(process.platform === "win32" ? { providerCatalogDigest: "c".repeat(64) } : {}),
+    platform: process.platform,
+    architecture: process.arch === "x64" ? "x86_64" : "arm64",
+    ...(process.platform === "win32" ? { integrityCoverage: "standard" } : {}),
+  };
+}
+
+function cuaToolResult(toolName, input) {
+  if (toolName === "list_windows") {
+    assert.deepEqual(input, { pid: 4321 });
+    return {
+      content: [],
+      details: {
+        structuredContent: {
+          windows: [{
+            pid: 4321,
+            window_id: "7788",
+            title: "Research Browser",
+            bounds: { width: 1200, height: 800 },
+          }],
+        },
+      },
+    };
+  }
+  assert.equal(toolName, "screenshot");
+  return {
+    content: [{ type: "text", text: JSON.stringify({ ok: true }) }],
+    details: {
+      pid: 4321,
+      bundle_id: "com.example.browser",
+      window_id: 7788,
+      title: "Research Browser",
+      bounds: { width: 1200, height: 800 },
+    },
+  };
+}
+
+function listWindowsTool() {
+  return {
+    ...screenshotTool(),
+    rawName: "list_windows",
+    displayName: "List windows",
+    callableName: "list_windows",
+  };
+}
+
 class ApprovalComputerUseRunner extends BlockingComputerUseRunner {
   async runTask(options) {
     const tool = options.mcpTools?.find((candidate) => candidate.rawName === "future_authorized_action");
@@ -522,6 +782,15 @@ function readyStatus(serverId, checkedAt, toolCount) {
 
 async function waitForProjection(baseUrl, cwd) {
   return waitForProjectionMatching(baseUrl, cwd, () => true);
+}
+
+async function waitForCondition(predicate) {
+  const deadline = Date.now() + 3_000;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
+  }
+  assert.fail("Timed out waiting for bundled Cua Driver readiness.");
 }
 
 async function waitForProjectionMatching(baseUrl, cwd, predicate) {

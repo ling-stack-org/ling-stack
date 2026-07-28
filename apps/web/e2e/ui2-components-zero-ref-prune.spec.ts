@@ -4,7 +4,11 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 
 const repositoryDirectory = fileURLToPath(new URL("../../../", import.meta.url));
-const componentsCssPath = fileURLToPath(new URL("../src/styles/components.css", import.meta.url));
+const componentCssPaths = [
+  "../src/styles/components.css",
+  "../src/styles/components-workbench.css",
+  "../src/styles/components-workbench-details.css",
+].map((path) => fileURLToPath(new URL(path, import.meta.url)));
 const proposedPlanCssPath = fileURLToPath(new URL("../src/styles/channel-proposed-plan.css", import.meta.url));
 const webSourceDirectory = fileURLToPath(new URL("../src/", import.meta.url));
 const packageSourceDirectory = fileURLToPath(new URL("../../../packages/", import.meta.url));
@@ -102,12 +106,14 @@ test("T13-P.2-A removes only the frozen zero-reference component roots", async (
 });
 
 test("T13-P.2-A preserves adjacent live branches and T12.1d releases aggregate input owners", async () => {
-  const componentsCss = await readFile(componentsCssPath, "utf8");
+  const componentsCss = (await Promise.all(
+    componentCssPaths.map((path) => readFile(path, "utf8")),
+  )).join("\n");
 
   for (const selector of adjacentLiveSelectors) {
     expect(
       cssDefinesExactSelectorBranch(componentsCss, selector),
-      `${selector} must remain in components.css`,
+      `${selector} must remain in the component CSS surface`,
     ).toBe(true);
   }
 

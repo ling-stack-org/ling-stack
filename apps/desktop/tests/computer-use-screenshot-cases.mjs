@@ -15,6 +15,9 @@ export const computerUseScreenshotCases = Object.freeze([
   Object.freeze({ id: "failed", width: 420, height: 263, scenario: "failed" }),
   Object.freeze({ id: "stop-failed", width: 420, height: 263, scenario: "stop-failed" }),
   Object.freeze({ id: "reduced-motion", width: 420, height: 263, scenario: "reduced-motion" }),
+  Object.freeze({ id: "deck-stacked", width: 720, height: 450, scenario: "deck-stacked" }),
+  Object.freeze({ id: "deck-tabs", width: 420, height: 263, scenario: "deck-tabs" }),
+  Object.freeze({ id: "deck-view-all", width: 420, height: 263, scenario: "deck-view-all" }),
 ]);
 
 const scenarioSnapshots = Object.freeze({
@@ -67,6 +70,9 @@ const scenarioSnapshots = Object.freeze({
   }),
   "stop-failed": Object.freeze({}),
   "reduced-motion": Object.freeze({}),
+  "deck-stacked": Object.freeze({}),
+  "deck-tabs": Object.freeze({}),
+  "deck-view-all": Object.freeze({}),
 });
 
 const scenarioVisualStates = Object.freeze({
@@ -82,6 +88,9 @@ const scenarioVisualStates = Object.freeze({
   failed: "failed",
   "stop-failed": "stop_failed",
   "reduced-motion": "live",
+  "deck-stacked": "live",
+  "deck-tabs": "live",
+  "deck-view-all": "live",
 });
 
 export function computerUseScreenshotSnapshot(scenario = "live") {

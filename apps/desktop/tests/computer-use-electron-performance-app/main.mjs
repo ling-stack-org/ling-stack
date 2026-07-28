@@ -41,6 +41,7 @@ const realCaptureSteadySampleMs = positiveInteger(
 );
 const thresholds = {
   firstFrameP95Ms: positiveInteger(process.env.LING_COMPUTER_USE_ELECTRON_FIRST_FRAME_P95_MS, 2_500),
+  pageSwitchP95Ms: positiveInteger(process.env.LING_COMPUTER_USE_PAGE_SWITCH_P95_MS, 500),
   heapGrowthBytes: positiveInteger(process.env.LING_COMPUTER_USE_ELECTRON_HEAP_GROWTH_BYTES, 32 * 1024 * 1024),
   rssGrowthBytes: positiveInteger(process.env.LING_COMPUTER_USE_ELECTRON_RSS_GROWTH_BYTES, 96 * 1024 * 1024),
   appWorkingSetGrowthBytes: positiveInteger(
@@ -156,6 +157,7 @@ async function runRealCaptureHarness() {
     }
 
     coordinator = new ComputerUsePreviewCoordinator({
+      workspaceId: "/fake/workspace",
       projectionClient,
       platformAdapter: adapter,
       preferenceStore: preferences,
@@ -588,10 +590,12 @@ async function runHarness() {
   const wallMs = performance.now() - wallStart;
   const cpu = process.cpuUsage(cpuStart);
   const firstFrameSamples = cycleReports.flatMap((cycle) => Object.values(cycle.firstFrameLatencyMs));
+  const pageSwitchSamples = cycleReports.map((cycle) => cycle.firstFrameLatencyMs.pageSwitch);
   const adapterPrepareCount = sum(cycleReports.map((cycle) => cycle.adapter.prepareCount));
   const adapterReleaseCount = sum(cycleReports.map((cycle) => cycle.adapter.releaseCount));
   const adapterDisposeCount = sum(cycleReports.map((cycle) => cycle.adapter.disposeCount));
   const activeAdapterSources = sum(cycleReports.map((cycle) => cycle.adapter.activeSources));
+  const maxActiveAdapterSources = Math.max(0, ...cycleReports.map((cycle) => cycle.adapter.maxActiveSources));
   const pendingTimers = sum(cycleReports.map((cycle) => cycle.residue.pendingCoordinatorTimers));
   const projectionSubscriptions = sum(cycleReports.map((cycle) => cycle.residue.projectionSubscriptions));
   const ipcListeners = sum(cycleReports.map((cycle) => cycle.residue.ipcListeners));
@@ -605,6 +609,7 @@ async function runHarness() {
   const rssGrowthBytes = final.node.rss - baseline.node.rss;
   const appWorkingSetGrowthBytes = final.appWorkingSetBytes - baseline.appWorkingSetBytes;
   const firstFrameP95Ms = percentile(firstFrameSamples, 0.95);
+  const pageSwitchP95Ms = percentile(pageSwitchSamples, 0.95);
 
   const checks = {
     allCyclesCompleted: {
@@ -616,6 +621,16 @@ async function runHarness() {
       observed: firstFrameP95Ms,
       threshold: thresholds.firstFrameP95Ms,
       pass: firstFrameP95Ms <= thresholds.firstFrameP95Ms,
+    },
+    pageSwitchP95Ms: {
+      observed: pageSwitchP95Ms,
+      threshold: thresholds.pageSwitchP95Ms,
+      pass: pageSwitchP95Ms <= thresholds.pageSwitchP95Ms,
+    },
+    maxActiveAdapterSources: {
+      observed: maxActiveAdapterSources,
+      threshold: 1,
+      pass: maxActiveAdapterSources <= 1,
     },
     heapGrowthBytes: {
       observed: heapGrowthBytes,
@@ -676,6 +691,9 @@ async function runHarness() {
       firstFrameSamples: firstFrameSamples.length,
       firstFrameMedianMs: percentile(firstFrameSamples, 0.5),
       firstFrameP95Ms,
+      pageSwitchSamples: pageSwitchSamples.length,
+      pageSwitchMedianMs: percentile(pageSwitchSamples, 0.5),
+      pageSwitchP95Ms,
     },
     memory: {
       baseline,
@@ -689,6 +707,7 @@ async function runHarness() {
       adapterReleaseCount,
       adapterDisposeCount,
       activeAdapterSources,
+      maxActiveAdapterSources,
       measuredWindowsCreated: sum(cycleReports.map((cycle) => cycle.windowsCreated)),
       warmupWindowsCreated: allWindowRecords.length - sum(cycleReports.map((cycle) => cycle.windowsCreated)),
       rendererCrashesRequested: cycleReports.length,
@@ -727,6 +746,7 @@ async function runLifecycleCycle({ cycle, warmup, allWindowRecords }) {
 
   try {
     coordinator = new ComputerUsePreviewCoordinator({
+      workspaceId: "/fake/workspace",
       projectionClient,
       platformAdapter: adapter,
       preferenceStore: preferences,
@@ -801,6 +821,41 @@ async function runLifecycleCycle({ cycle, warmup, allWindowRecords }) {
     );
     const revisionFirstFrameMs = performance.now() - revisionStartedAt;
 
+    const pageProjection = {
+      ...replacement,
+      sessionId: `${replacement.sessionId}_page_b`,
+      runId: `${replacement.runId}_page_b`,
+      workUnitId: `${replacement.workUnitId}_page_b`,
+      target: { ...replacement.target, displayName: "Electron performance page B" },
+      preview: {
+        ...replacement.preview,
+        descriptorId: `${replacement.preview.descriptorId}_page_b`,
+      },
+      updatedAt: new Date(Date.now() + 1).toISOString(),
+    };
+    projectionClient.emit(pageProjection);
+    await waitFor(
+      () => coordinator.getDeckState()?.availablePageIds.includes(pageProjection.sessionId),
+      "page B deck eligibility",
+    );
+    const windowBeforePageSwitch = currentWindow(cycleWindowRecords, "window before page switch");
+    const pageSwitchStartedAt = performance.now();
+    const pageSwitch = await coordinator.activatePage(pageProjection.sessionId);
+    if (!pageSwitch.accepted) {
+      throw new Error(pageSwitch.reason ?? "electron_perf_page_switch_rejected");
+    }
+    await waitForLiveFrame(
+      coordinator,
+      pageProjection.sessionId,
+      pageProjection.preview.revision,
+      "page switch first frame",
+    );
+    const pageSwitchFirstFrameMs = performance.now() - pageSwitchStartedAt;
+    const windowAfterPageSwitch = currentWindow(cycleWindowRecords, "window after page switch");
+    if (windowAfterPageSwitch.webContents.id !== windowBeforePageSwitch.webContents.id) {
+      throw new Error("electron_perf_page_switch_recreated_window");
+    }
+
     const windowBeforeCrash = currentWindow(cycleWindowRecords, "window before renderer crash");
     const createdBeforeCrash = cycleWindowRecords.length;
     const crashStartedAt = performance.now();
@@ -812,8 +867,8 @@ async function runLifecycleCycle({ cycle, warmup, allWindowRecords }) {
     await waitFor(() => cycleWindowRecords.length > createdBeforeCrash, "renderer crash recreation");
     await waitForLiveFrame(
       coordinator,
-      replacement.sessionId,
-      replacement.preview.revision,
+      pageProjection.sessionId,
+      pageProjection.preview.revision,
       "renderer crash recovery first frame",
     );
     const crashRecoveryFirstFrameMs = performance.now() - crashStartedAt;
@@ -828,6 +883,7 @@ async function runLifecycleCycle({ cycle, warmup, allWindowRecords }) {
         reshow: round(reshowFirstFrameMs),
         closeReopen: round(closeReopenFirstFrameMs),
         revision: round(revisionFirstFrameMs),
+        pageSwitch: round(pageSwitchFirstFrameMs),
         crashRecovery: round(crashRecoveryFirstFrameMs),
       },
       adapter: {
@@ -1444,6 +1500,9 @@ class InstrumentedFakeAdapter {
 
   async prepare() {
     this.prepareCount += 1;
+    if (this.activeSources !== 0) {
+      throw new Error("electron_perf_dual_adapter_source_detected");
+    }
     this.activeSources = 1;
     this.maxActiveSources = Math.max(this.maxActiveSources, this.activeSources);
     return { sourceKind: "fake", aspectRatio: 1.6 };

@@ -1,6 +1,7 @@
 import type { Translate } from "../../i18n.js";
 import type { ManagedPluginView } from "../../types.js";
 import type { PluginDetailFieldView, PluginPrimaryStateView } from "./plugin-manager-types.js";
+import { isBundledCuaDriver } from "./plugin-manager-bundled-cua-view-model.js";
 
 export type CuaRepairAction = "check" | "details";
 
@@ -17,7 +18,7 @@ export function isCuaDriver(plugin: ManagedPluginView): boolean {
 }
 
 export function buildCuaHealthView(plugin: ManagedPluginView, t: Translate): CuaHealthView | undefined {
-  if (!isCuaDriver(plugin) || plugin.health?.status !== "failed") {
+  if (!isCuaDriver(plugin) || isBundledCuaDriver(plugin) || plugin.health?.status !== "failed") {
     return undefined;
   }
   const details = readRecord(plugin.health.details);

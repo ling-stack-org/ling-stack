@@ -1,5 +1,16 @@
 # Cua Driver 自动检测与安装引导细节设计
 
+## Status And Scope
+
+本文是已实现 external provider fallback 的细节设计，适用于 standalone daemon、
+Web/CLI、source/dev Desktop 和显式 `external_local` override。
+
+Packaged macOS 和 Windows Desktop 的默认 provider、进程/会话责任链、bridge lease、平台 readiness、版本锁和
+升级策略由
+[Bundled Embedded Cua Driver Detailed Design](cua-driver-bundled-embedded-detailed-design.md)
+定义。本文中的 `local_binary`、PATH 检测和安装抽屉不得覆盖 bundled embedded
+状态。
+
 ## Canonical Model
 
 `trusted-local:cua-driver` 是唯一产品条目。daemon 在构建 catalog 时继续读取
@@ -10,7 +21,7 @@ canonical 条目通过固定 MCP id `mcp_cua_driver` 识别现有接入，不依
 plugin id。连接时重新写入 canonical contribution，旧 bundled 记录保持禁用且
 不可见，不做数据库迁移。
 
-## Setup Projection
+## External Setup Projection
 
 `ManagedPluginView.setup`：
 
@@ -37,19 +48,24 @@ interface ManagedPluginSetupView {
 
 规则：
 
-- 非 macOS：`unsupported`。
-- 找不到可执行文件：`missing`，附带 guide。
+- 非 macOS/Windows：`unsupported`。
+- 找不到可执行文件：`missing`。当前只有 macOS 返回官方 shell guide；Windows
+  不返回不适用的 Bash 安装命令，仍可通过显式绝对路径调用 connect API。
 - 找到文件但没有 MCP，或旧 MCP 尚未建立 canonical 关联：`detected`。
 - MCP 存在但插件/MCP 未启用：`connected`。
 - 插件、contribution 和 MCP 均启用：`ready`。
-- `guide` 只在 `missing` 时返回。
+- `guide` 只在 macOS `missing` 时返回；Windows 在没有专用官方安装命令前不伪造
+  guide。
 
 `GET /plugins` 每次请求使用 `resolveCuaDriverCommand()` 做只读检测，不写 health、
 event 或数据库。优先级为显式路径、`PATH`、`~/.local/bin`、Homebrew 和
 `/usr/local/bin`、系统 `/Applications/CuaDriver.app` 和用户 `~/Applications`
-中的 App Bundle 可执行文件。
+中的 App Bundle 可执行文件。Windows 在显式路径和 `PATH` 后依次检查
+`%LOCALAPPDATA%\Programs\Cua\cua-driver\bin\cua-driver.exe`、
+`%USERPROFILE%\.cua-driver\packages\current\cua-driver.exe` 和
+`%USERPROFILE%\.local\bin\cua-driver.exe`。
 
-## Connect API
+## External Connect API
 
 ```text
 POST /plugins/trusted-local:cua-driver/connect?cwd=...
@@ -77,7 +93,7 @@ Content-Type: application/json
 
 旧 `apply-preset` 继续兼容，内部执行 connect 后再走显式启用和工具同步。
 
-## Automatic Web Reconciliation
+## External Automatic Web Reconciliation
 
 Web 列表刷新后，只对 canonical Cua Driver 执行一次自动接入：
 
@@ -106,10 +122,12 @@ and current refresh generation has not attempted connect
 只读工具如 `check_permissions`、`list_windows` 默认允许；点击、输入、录制等外部
 副作用工具保持询问。
 
-## Web Presentation
+## External Web Presentation
 
 - Cua Driver 行不显示 `Bundled`/`Trusted local` 双条目。
-- `missing`：显示“尚未安装 Cua Driver”和主按钮“安装引导”。
+- macOS `missing`：显示“尚未安装 Cua Driver”和主按钮“安装引导”。
+- Windows `missing`：显示未检测到外部 provider；当前不展示 Bash 安装命令，
+  高级用户通过配置或 connect API 提供绝对路径。
 - 引导使用轻量右侧抽屉，不使用全屏弹窗。
 - 抽屉包含官方来源、复制命令、打开文档、绝对路径输入和重新检测。
 - `detected`：显示轻量“已检测，正在接入”，无安装按钮。

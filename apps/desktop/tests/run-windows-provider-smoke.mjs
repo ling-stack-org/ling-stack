@@ -1,14 +1,17 @@
 import electronPath from "electron";
-import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  assertWindowsBundledRuntimeProof,
   parseExactWindowsProviderTarget,
+  parseWindowsBundledProviderActivation,
+  parseWindowsBundledProviderRuntimeProof,
   parseWindowsProviderHealthReport,
 } from "./windows-provider-smoke-support.mjs";
+import { spawnOwnedWindowsProcess } from "../scripts/cua-driver-package-atomic-publish.mjs";
 
 const TARGET_CLOSE_REQUEST_MARKER = "Ling Stack Desktop Windows provider current target close requested";
 const DESKTOP_REVISION_A_LIVE_MARKER = "Ling Stack Desktop Windows provider descriptor A live";
@@ -16,6 +19,7 @@ const DESKTOP_REVISION_B_LIVE_MARKER = "Ling Stack Desktop Windows provider desc
 const OLD_TARGET_ISOLATED_MARKER = "Ling Stack Desktop Windows provider old target close isolated";
 const RESTART_REQUESTED_MARKER = "Ling Stack Desktop Windows provider restart requested";
 const DESCRIPTOR_REPLAY_LIVE_MARKER = "Ling Stack Desktop Windows provider descriptor replay live";
+const BUNDLED_RUNTIME_READY_MARKER = "Ling Stack Desktop Windows bundled provider runtime ready";
 const STALLED_RUNTIME_RUNNING_MARKER = "Ling Stack Desktop Windows provider stalled runtime still running";
 const SUCCESS_MARKER = "Ling Stack Desktop Windows provider capture lifecycle passed";
 const desktopRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -45,23 +49,45 @@ async function runWindowsProviderSmoke() {
   let targetB;
   let desktop;
   try {
+    const packagedExecutable = process.env.LING_DESKTOP_SMOKE_EXECUTABLE?.trim();
+    if (!packagedExecutable) {
+      throw new Error("windows_provider_smoke_packaged_desktop_required");
+    }
     const providerCommand = await resolveProviderCommand();
+    const expectedBundledProviderPath = join(
+      dirname(packagedExecutable),
+      "resources",
+      "providers",
+      "cua-driver",
+      "0.8.3-ling.1",
+      "win32-x64",
+      "payload",
+      "ling-cua-driver.exe",
+    );
+    if (
+      normalizeWindowsPath(providerCommand) !==
+      normalizeWindowsPath(expectedBundledProviderPath)
+    ) {
+      throw new Error("windows_provider_smoke_expected_provider_not_packaged");
+    }
     const health = await readProviderHealth(providerCommand);
     process.stdout.write(`Windows provider health passed (${health.driverVersion})\n`);
 
     targetA = await startTarget("A", targetAUserDataDirectory);
     targetB = await startTarget("B", targetBUserDataDirectory);
     const [targetAIdentity, targetBIdentity] = await Promise.all([
-      waitForExactProviderTarget(providerCommand, targetA.child.pid, 15_000),
-      waitForExactProviderTarget(providerCommand, targetB.child.pid, 15_000),
+      waitForExactProviderTarget(providerCommand, targetA.providerTargetPid, 15_000),
+      waitForExactProviderTarget(providerCommand, targetB.providerTargetPid, 15_000),
     ]);
     assertIndependentProviderTargets(targetAIdentity, targetBIdentity);
     const daemonPort = await availablePort();
-    const packagedExecutable = process.env.LING_DESKTOP_SMOKE_EXECUTABLE?.trim();
-    const startDesktop = (descriptor, restartPhase = false) => observeChild(spawn(
-      packagedExecutable || electronPath,
+    const workspaceCwd = dirname(dirname(desktopRoot));
+    const desktopEnvironment = { ...process.env };
+    delete desktopEnvironment.LING_CUA_DRIVER_COMMAND;
+    delete desktopEnvironment.LING_CUA_DRIVER_SMOKE_EXPECTED_COMMAND;
+    const startDesktop = async (descriptor, restartPhase = false) => observeChild(await spawnOwnedWindowsProcess(
+      packagedExecutable,
       [
-        ...(packagedExecutable ? [] : [desktopRoot]),
         "--ling-desktop-smoke-headless",
         "--ling-desktop-windows-provider-capture-smoke",
         ...(restartPhase ? ["--ling-desktop-windows-provider-capture-restart-phase"] : [
@@ -72,15 +98,27 @@ async function runWindowsProviderSmoke() {
       {
         cwd: desktopRoot,
         env: {
-          ...process.env,
+          ...desktopEnvironment,
           LING_DESKTOP_WINDOWS_PROVIDER_DESCRIPTOR: JSON.stringify(descriptor),
           LING_STACK_DAEMON_URL: `http://127.0.0.1:${daemonPort}`,
-          LING_STACK_DEFAULT_WORKSPACE_CWD: dirname(dirname(desktopRoot)),
+          LING_STACK_DEFAULT_WORKSPACE_CWD: workspaceCwd,
         },
         stdio: ["pipe", "pipe", "pipe"],
       },
     ));
-    desktop = startDesktop(targetAIdentity);
+    desktop = await startDesktop(targetAIdentity);
+    const firstBundledActivation = await waitForBundledProviderActivation({
+      daemonPort,
+      workspaceCwd,
+      desktop,
+      timeoutMs: 45_000,
+    });
+    const firstRuntimeProof = assertWindowsBundledRuntimeProof({
+      activation: firstBundledActivation,
+      proof: await waitForBundledRuntimeProof(desktop, 45_000),
+      target: targetAIdentity,
+      expectedExecutablePath: expectedBundledProviderPath,
+    });
 
     await waitForMarker(desktop, DESKTOP_REVISION_A_LIVE_MARKER, 30_000);
     sendDesktopCommand(desktop, {
@@ -99,7 +137,33 @@ async function runWindowsProviderSmoke() {
     if (firstResult.exitCode !== 0) {
       throw new Error(`desktop_restart_exit:${firstResult.exitCode ?? firstResult.signal ?? "unknown"}\n${firstOutput}`);
     }
-    desktop = startDesktop({ ...targetBIdentity, revision: 2 }, true);
+    await waitForWindowsProcessExit(firstRuntimeProof.providerProcessId, 5_000);
+    desktop = await startDesktop({ ...targetBIdentity, revision: 2 }, true);
+    const restartedBundledActivation = await waitForBundledProviderActivation({
+      daemonPort,
+      workspaceCwd,
+      desktop,
+      timeoutMs: 45_000,
+    });
+    const restartedRuntimeProof = assertWindowsBundledRuntimeProof({
+      activation: restartedBundledActivation,
+      proof: await waitForBundledRuntimeProof(desktop, 45_000),
+      target: targetBIdentity,
+      expectedExecutablePath: expectedBundledProviderPath,
+    });
+    if (
+      restartedBundledActivation.desktopInstanceId ===
+      firstBundledActivation.desktopInstanceId
+    ) {
+      throw new Error("windows_provider_smoke_bundled_runtime_not_rotated");
+    }
+    if (
+      restartedRuntimeProof.providerProcessId === firstRuntimeProof.providerProcessId
+      || restartedRuntimeProof.providerChildInstanceNonceSha256 ===
+        firstRuntimeProof.providerChildInstanceNonceSha256
+    ) {
+      throw new Error("windows_provider_smoke_bundled_child_not_rotated");
+    }
     await waitForMarker(desktop, DESCRIPTOR_REPLAY_LIVE_MARKER, 30_000);
     await waitForMarker(desktop, TARGET_CLOSE_REQUEST_MARKER, 30_000);
     await requestTargetClose(targetB, "B");
@@ -113,7 +177,7 @@ async function runWindowsProviderSmoke() {
       throw new Error(`desktop_success_marker_missing\n${output}`);
     }
     process.stdout.write(
-      "Desktop Windows provider health/A-B descriptor/revision/restart/target-close smoke passed\n",
+      `Desktop Windows packaged bundled provider lease/child/readiness and A-B capture lifecycle passed (${firstBundledActivation.toolCount}/${restartedBundledActivation.toolCount} tools)\n`,
     );
   } finally {
     if (desktop) {
@@ -133,6 +197,111 @@ async function runWindowsProviderSmoke() {
   }
 }
 
+async function waitForBundledRuntimeProof(desktop, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let lastFailure = "runtime_proof_not_emitted";
+  while (Date.now() < deadline) {
+    if (desktop.result) {
+      throw new Error(
+        `windows_provider_smoke_desktop_exited_before_runtime_proof:${desktop.result.exitCode ?? desktop.result.signal ?? "unknown"}\n${desktop.stdout}\n${desktop.stderr}`,
+      );
+    }
+    if (desktop.stdout.includes(BUNDLED_RUNTIME_READY_MARKER)) {
+      try {
+        return parseWindowsBundledProviderRuntimeProof(desktop.stdout);
+      } catch (error) {
+        lastFailure = error instanceof Error ? error.message : String(error);
+      }
+    }
+    await delay(20);
+  }
+  throw new Error(
+    `windows_provider_smoke_runtime_proof_timeout:${lastFailure}\n${desktop.stdout}\n${desktop.stderr}`,
+  );
+}
+
+async function waitForWindowsProcessExit(pid, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (windowsProcessExists(pid)) {
+    if (Date.now() >= deadline) {
+      throw new Error(`windows_provider_smoke_old_child_still_running:${pid}`);
+    }
+    await delay(20);
+  }
+}
+
+function windowsProcessExists(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code !== "ESRCH";
+  }
+}
+
+async function waitForBundledProviderActivation({
+  daemonPort,
+  workspaceCwd,
+  desktop,
+  timeoutMs,
+}) {
+  const url = new URL(
+    `/plugins/${encodeURIComponent("trusted-local:cua-driver")}/enable`,
+    `http://127.0.0.1:${daemonPort}`,
+  );
+  url.searchParams.set("cwd", workspaceCwd);
+  const deadline = Date.now() + timeoutMs;
+  let lastFailure = "daemon_not_ready";
+  while (Date.now() < deadline) {
+    if (desktop.result) {
+      throw new Error(
+        `windows_provider_smoke_desktop_exited_before_bundled_activation:${desktop.result.exitCode ?? desktop.result.signal ?? "unknown"}\n${desktop.stdout}\n${desktop.stderr}`,
+      );
+    }
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        redirect: "error",
+        signal: AbortSignal.timeout(5_000),
+      });
+      const bodyText = await response.text();
+      let body;
+      try {
+        body = JSON.parse(bodyText);
+      } catch {
+        throw new Error("windows_bundled_provider_activation_json_invalid");
+      }
+      if (response.ok) {
+        return parseWindowsBundledProviderActivation(body);
+      }
+      lastFailure = `${response.status}:${body?.error ?? "unknown"}`;
+      if (
+        response.status !== 409 ||
+        ![
+          "cua_desktop_lease_unavailable",
+          "cua_driver_activation_stale",
+        ].includes(body?.error)
+      ) {
+        throw new Error(
+          `windows_bundled_provider_activation_failed:${lastFailure}:${bodyText}`,
+        );
+      }
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message.startsWith("windows_bundled_provider_activation_")
+      ) {
+        throw error;
+      }
+      lastFailure = error instanceof Error ? error.message : String(error);
+    }
+    await delay(100);
+  }
+  throw new Error(
+    `windows_bundled_provider_activation_timeout:${lastFailure}\n${desktop.stdout}\n${desktop.stderr}`,
+  );
+}
+
 async function readProviderHealth(command) {
   const result = await runFiniteProcess(command, ["call", "health_report"], 10_000);
   if (result.exitCode !== 0) {
@@ -142,7 +311,7 @@ async function readProviderHealth(command) {
 }
 
 async function startTarget(label, userDataDirectory) {
-  const target = observeChild(spawn(electronPath, [
+  const target = observeChild(await spawnOwnedWindowsProcess(electronPath, [
     join(desktopRoot, "tests", "windows-provider-target"),
     `--user-data-dir=${userDataDirectory}`,
     `--ling-windows-provider-target-label=${label}`,
@@ -155,6 +324,12 @@ async function startTarget(label, userDataDirectory) {
     throw new Error(`windows_provider_smoke_target_${label.toLowerCase()}_pid_missing`);
   }
   await waitForMarker(target, `Ling Windows provider smoke target ${label} ready`, 15_000);
+  const match = target.stdout.match(new RegExp(`Ling Windows provider smoke target ${label} ready pid=(\\d+)`, "u"));
+  const providerTargetPid = Number(match?.[1]);
+  if (!Number.isSafeInteger(providerTargetPid) || providerTargetPid <= 0) {
+    throw new Error(`windows_provider_smoke_target_${label.toLowerCase()}_pid_marker_missing`);
+  }
+  target.providerTargetPid = providerTargetPid;
   return target;
 }
 
@@ -171,7 +346,10 @@ async function resolveProviderCommand() {
   const { resolveCuaDriverCommand } = await import(
     "../../../packages/daemon/dist/features/plugins/presets.js"
   );
-  const explicitCommand = process.env.LING_CUA_DRIVER_COMMAND?.trim();
+  const expectedCommand =
+    process.env.LING_CUA_DRIVER_SMOKE_EXPECTED_COMMAND?.trim();
+  const explicitCommand =
+    expectedCommand || process.env.LING_CUA_DRIVER_COMMAND?.trim();
   const resolution = resolveCuaDriverCommand(explicitCommand ? { command: explicitCommand } : {});
   if (!resolution.ok || !resolution.command) {
     throw new Error("windows_provider_smoke_cua_driver_not_found");
@@ -290,19 +468,27 @@ async function terminateObservedChild(observed, requestGracefulClose = false) {
       await waitForExit(observed, 1_000);
       return;
     } catch {
-      // Fall through to process termination for failed smoke cleanup.
+      // Fall through to the native Job Object owner.
     }
   }
-  observed.child.kill();
+  let killError;
   try {
-    await waitForExit(observed, 2_000);
-  } catch {
-    // The parent process is already terminating; keep cleanup bounded.
+    observed.child.kill("SIGKILL");
+  } catch (error) {
+    killError = error;
+  }
+  try {
+    await waitForExit(observed, 5_000);
+  } catch (error) {
+    throw new AggregateError(
+      [error, ...(killError ? [killError] : [])],
+      `windows_provider_smoke_cleanup_failed:${observed.child.pid ?? "unknown"}\n${observed.stdout}\n${observed.stderr}`,
+    );
   }
 }
 
 async function runFiniteProcess(executable, args, timeoutMs) {
-  const observed = observeChild(spawn(executable, args, {
+  const observed = observeChild(await spawnOwnedWindowsProcess(executable, args, {
     cwd: desktopRoot,
     env: {
       ...process.env,
@@ -314,7 +500,16 @@ async function runFiniteProcess(executable, args, timeoutMs) {
     const result = await waitForExit(observed, timeoutMs);
     return { ...result, stdout: observed.stdout, stderr: observed.stderr };
   } catch (error) {
-    observed.child.kill();
+    let cleanupError;
+    try {
+      observed.child.kill("SIGKILL");
+      await waitForExit(observed, 5_000);
+    } catch (failure) {
+      cleanupError = failure;
+    }
+    if (cleanupError) {
+      throw new AggregateError([error, cleanupError], "windows_provider_smoke_finite_process_cleanup_failed");
+    }
     throw error;
   }
 }
@@ -347,6 +542,10 @@ function boundedAppend(current, chunk) {
 function positiveInteger(value, fallback) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function normalizeWindowsPath(value) {
+  return resolve(value).replaceAll("\\", "/").toLowerCase();
 }
 
 function delay(milliseconds) {

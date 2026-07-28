@@ -76,6 +76,7 @@ async function measureLifecycle(cycles) {
   const windows = [];
   const adapter = new FakeComputerUsePreviewPlatformAdapter();
   const coordinator = new ComputerUsePreviewCoordinator({
+    workspaceId: "/fake/workspace",
     projectionClient: new FakeComputerUseProjectionClient(FAKE_COMPUTER_USE_PROJECTION),
     platformAdapter: adapter,
     preferenceStore: new MemoryPreferenceStore(),
@@ -408,6 +409,7 @@ function runElectron({ executable, args, env }) {
 function electronThresholds() {
   return {
     firstFrameP95Ms: positiveInteger(process.env.LING_COMPUTER_USE_ELECTRON_FIRST_FRAME_P95_MS, 2_500),
+    pageSwitchP95Ms: positiveInteger(process.env.LING_COMPUTER_USE_PAGE_SWITCH_P95_MS, 500),
     heapGrowthBytes: positiveInteger(
       process.env.LING_COMPUTER_USE_ELECTRON_HEAP_GROWTH_BYTES,
       32 * 1024 * 1024,

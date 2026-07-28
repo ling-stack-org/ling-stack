@@ -156,6 +156,10 @@
   z-index: 2;
   top: 9px;
   right: 9px;
+  width: calc(var(--ling-control-sm) + 1px);
+  min-width: calc(var(--ling-control-sm) + 1px);
+  height: calc(var(--ling-control-sm) + 1px);
+  min-height: calc(var(--ling-control-sm) + 1px);
 }
 
 .storyboard-scene-preview svg {

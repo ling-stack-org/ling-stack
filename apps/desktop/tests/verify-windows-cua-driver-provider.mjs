@@ -1,7 +1,17 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { access, mkdir, mkdtemp, readFile, realpath, rename, rm, stat } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  stat,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import {
   dirname,
@@ -16,6 +26,10 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { parseArgs } from "node:util";
 import { pathToFileURL } from "node:url";
+
+import {
+  validateCuaDriverProviderLockContract,
+} from "../shared/cua-driver-provider-lock-contract.mjs";
 
 export const WINDOWS_CUA_DRIVER_RELEASE = Object.freeze({
   repository: "trycua/cua",
@@ -41,6 +55,7 @@ const EXPECTED_PE_MACHINE = 0x8664;
 const EXPECTED_OPTIONAL_HEADER_MAGIC = 0x20b;
 const DOWNLOAD_ATTEMPTS = 3;
 const CHILD_OUTPUT_LIMIT = 32_768;
+const PROVIDER_SEAL_MAX_BYTES = 256 * 1024;
 
 export function resolveWindowsSystemExecutable(name, environment = process.env) {
   const systemRoot = environment.SystemRoot ?? environment.windir;
@@ -248,34 +263,470 @@ export async function acquirePinnedWindowsProvider({
   }
 }
 
-export async function verifyInstalledWindowsProvider(mainBinaryPath) {
-  if (process.platform !== "win32") {
+export async function verifyInstalledWindowsProvider(mainBinaryPath, options = {}) {
+  const platform = options.platform ?? process.platform;
+  if (platform !== "win32") {
     throw new Error("--installed-binary is supported only on Windows because version and Authenticode checks must run there");
   }
   const resolvedMainBinaryPath = resolve(mainBinaryPath);
+  const payloadDirectory = dirname(resolvedMainBinaryPath);
+  const platformRoot = dirname(payloadDirectory);
+  const distributionRoot = dirname(platformRoot);
   const uiaBinaryPath = join(dirname(resolvedMainBinaryPath), "cua-driver-uia.exe");
-  const binaries = await Promise.all([
-    verifyWindowsProviderBinary(resolvedMainBinaryPath, "cua-driver.exe"),
-    verifyWindowsProviderBinary(uiaBinaryPath, "cua-driver-uia.exe"),
+  const providerSealPath = join(payloadDirectory, "provider-seal.json");
+  const providerCatalogPath = join(platformRoot, "provider-integrity.cat");
+  const providerLockPath = join(distributionRoot, "provider-lock.json");
+  const [distributionEntries, platformEntries, payloadEntries] = await Promise.all([
+    readdir(distributionRoot, { withFileTypes: true }),
+    readdir(platformRoot, { withFileTypes: true }),
+    readdir(payloadDirectory, { withFileTypes: true }),
   ]);
-  const versionProbe = await probePinnedProviderVersion(resolvedMainBinaryPath);
-  const authenticode = await inspectAuthenticode([resolvedMainBinaryPath, uiaBinaryPath]);
+  assertExactProviderDirectory(
+    distributionEntries,
+    {
+      "provider-lock.json": "file",
+      "win32-x64": "directory",
+    },
+    "Standard bundled provider distribution root",
+  );
+  assertExactProviderDirectory(
+    platformEntries,
+    {
+      "payload": "directory",
+      "provider-integrity.cat": "file",
+    },
+    "Standard bundled provider platform root",
+  );
+  const expectedPayloadFileNames = ["ling-cua-driver.exe", "provider-seal.json"];
+  const payloadFileNames = payloadEntries
+    .map((entry) => entry.name)
+    .sort();
+  const payloadLayoutValid =
+    payloadEntries.length === expectedPayloadFileNames.length &&
+    payloadEntries.every((entry) => entry.isFile()) &&
+    JSON.stringify(payloadFileNames) === JSON.stringify(expectedPayloadFileNames);
+  if (!payloadLayoutValid) {
+    throw new Error(
+      `Standard bundled provider payload must contain exactly two ordinary files: ${expectedPayloadFileNames.join(", ")}; observed: ${payloadFileNames.join(", ") || "empty"}`,
+    );
+  }
+  const [providerBytes, providerSealBytes, providerCatalogBytes, providerLockBytes] =
+    await Promise.all([
+      readFile(resolvedMainBinaryPath),
+      readFile(providerSealPath),
+      readFile(providerCatalogPath),
+      readFile(providerLockPath),
+    ]);
+  const provider = {
+    name: "ling-cua-driver.exe",
+    path: resolvedMainBinaryPath,
+    bytes: providerBytes.length,
+    sha256: createHash("sha256").update(providerBytes).digest("hex"),
+    ...inspectWindowsX64Pe(providerBytes, "ling-cua-driver.exe"),
+  };
+  const providerSeal = {
+    path: resolve(providerSealPath),
+    bytes: providerSealBytes.length,
+    sha256: createHash("sha256").update(providerSealBytes).digest("hex"),
+  };
+  const providerLock = {
+    path: resolve(providerLockPath),
+    bytes: providerLockBytes.length,
+    sha256: createHash("sha256").update(providerLockBytes).digest("hex"),
+  };
+  const providerCatalog = {
+    path: resolve(providerCatalogPath),
+    bytes: providerCatalogBytes.length,
+    sha256: createHash("sha256").update(providerCatalogBytes).digest("hex"),
+  };
+  const lock = validateInstalledProviderLock(providerLockBytes);
+  const seal = validateInstalledProviderSeal(providerSealBytes, {
+    providerSha256: provider.sha256,
+    providerLockSha256: providerLock.sha256,
+    lock,
+  });
+  const identityInspector =
+    options.identityInspector ?? inspectInstalledWindowsProviderIdentity;
+  const identity = validateInstalledWindowsProviderIdentity(
+    await identityInspector({
+      providerPath: resolvedMainBinaryPath,
+      sealPath: providerSealPath,
+      catalogPath: providerCatalogPath,
+      payloadDirectory,
+    }),
+    {
+      providerPath: resolvedMainBinaryPath,
+      catalogPath: providerCatalogPath,
+      providerSha256: provider.sha256,
+      providerSealSha256: providerSeal.sha256,
+      seal,
+    },
+  );
+  const versionProbe = await (
+    options.versionProbe ?? probePinnedProviderVersion
+  )(resolvedMainBinaryPath);
   return {
-    schemaVersion: 1,
-    mode: "installed_binary_read_only",
-    expectedRelease: WINDOWS_CUA_DRIVER_RELEASE,
-    archiveChecksumVerified: false,
-    binaries,
+    schemaVersion: 2,
+    mode: "installed_bundled_provider_read_only",
+    provider,
+    providerLock: {
+      ...providerLock,
+      componentId: lock.platforms.win32X64.componentId,
+      sourceTarget: lock.platforms.win32X64.sourceBuild.target,
+      sourceBuild: {
+        target: lock.platforms.win32X64.sourceBuild.target,
+        binariesSha256BeforeSigning: {
+          main:
+            lock.platforms.win32X64.sourceBuild.binariesSha256BeforeSigning.main,
+        },
+      },
+    },
+    providerSeal: {
+      ...providerSeal,
+      schemaVersion: seal.schemaVersion,
+      componentId: seal.componentId,
+      lockSha256: seal.lockSha256,
+      signingTier: seal.signingTier,
+      distributionChannel: seal.distributionChannel,
+      productionEligible: seal.productionEligible,
+      ...(Object.hasOwn(seal, "testAuthorityKind")
+        ? { testAuthorityKind: seal.testAuthorityKind }
+        : {}),
+      main: { ...seal.main },
+    },
+    providerCatalog: {
+      ...providerCatalog,
+      membership: identity.catalogMembership,
+    },
+    uiAccessHelper: {
+      path: resolve(uiaBinaryPath),
+      packaged: false,
+      exists: false,
+    },
+    packageLayout: {
+      distributionRootEntryNames: distributionEntries.map((entry) => entry.name).sort(),
+      platformRootEntryNames: platformEntries.map((entry) => entry.name).sort(),
+      payloadFileNames,
+      unexpectedPaths: [],
+    },
     versionProbe,
-    authenticode,
+    authenticode: identity.authenticode,
     installation: {
       globalStateModified: false,
       upstreamInstallerExecuted: false,
       outputDirectory: null,
       retained: true,
     },
-    signingClaim: "Reported from Windows Get-AuthenticodeSignature; no signature status is assumed.",
+    signingClaim:
+      "Observed with Windows Get-AuthenticodeSignature and Test-FileCatalog; the catalog must cover exactly the installed provider and provider seal.",
   };
+}
+
+function assertExactProviderDirectory(entries, expectedEntries, label) {
+  const observedNames = entries.map((entry) => entry.name).sort();
+  const expectedNames = Object.keys(expectedEntries).sort();
+  const valid =
+    JSON.stringify(observedNames) === JSON.stringify(expectedNames)
+    && entries.every((entry) => (
+      expectedEntries[entry.name] === "file"
+        ? entry.isFile()
+        : entry.isDirectory()
+    ));
+  if (!valid) {
+    throw new Error(
+      `${label} must contain exactly ${expectedNames.join(", ")}; observed: ${observedNames.join(", ") || "empty"}`,
+    );
+  }
+}
+
+function validateInstalledProviderLock(bytes) {
+  const value = parseBoundedJson(
+    bytes,
+    PROVIDER_SEAL_MAX_BYTES,
+    "Installed provider lock",
+  );
+  try {
+    return validateCuaDriverProviderLockContract(value, {
+      platform: "win32",
+      architecture: "x86_64",
+      requireReleaseEvidence: true,
+    });
+  } catch (error) {
+    throw new Error(
+      `Installed provider lock is invalid: ${error?.code ?? error?.message ?? error}`,
+    );
+  }
+}
+
+export function validateInstalledProviderSeal(bytes, {
+  providerSha256,
+  providerLockSha256,
+  lock,
+}) {
+  const value = parseBoundedJson(
+    bytes,
+    PROVIDER_SEAL_MAX_BYTES,
+    "Installed provider seal",
+  );
+  const platformLock = lock?.platforms?.win32X64;
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== 2 ||
+    value.componentId !== "cua-driver-win32-x64" ||
+    value.distributionRevision !== "ling.1" ||
+    value.providerVersion !== "0.8.3" ||
+    value.serverInitializeProtocolVersion !== "2025-06-18" ||
+    value.healthSchemaVersion !== "1" ||
+    value.stateSchemaVersion !== 1 ||
+    !isSha256(value.lockSha256) ||
+    value.lockSha256 !== providerLockSha256 ||
+    !isSha256(value.toolsListCanonicalSha256) ||
+    !Array.isArray(value.limitations) ||
+    value.limitations.join(",") !== "elevated_pixel_input,uwp_send_input" ||
+    !isRecord(value.main) ||
+    value.main.relativePath !== "payload/ling-cua-driver.exe" ||
+    value.main.architecture !== "x86_64" ||
+    !isSha256(value.main.sha256) ||
+    value.main.sha256 !== providerSha256 ||
+    !isSha256(value.main.peManifestCanonicalSha256) ||
+    value.main.authenticodeStatus !== "Valid" ||
+    !hasText(value.main.signerSubject) ||
+    !isSha256(value.main.certificateSha256) ||
+    value.integrityCatalogRelativePath !== "provider-integrity.cat" ||
+    !isRecord(platformLock) ||
+    platformLock.componentId !== value.componentId ||
+    platformLock.binary?.architecture !== value.main.architecture ||
+    platformLock.binary?.mainRelativePath !== value.main.relativePath ||
+    platformLock.binary?.providerSealRelativePath !== "payload/provider-seal.json" ||
+    platformLock.binary?.mainManifestCanonicalSha256 !==
+      value.main.peManifestCanonicalSha256 ||
+    platformLock.compatibility?.toolsListSha256 !==
+      value.toolsListCanonicalSha256 ||
+    platformLock.compatibility?.serverInitializeProtocolVersion !==
+      value.serverInitializeProtocolVersion ||
+    platformLock.compatibility?.healthSchemaVersion !== value.healthSchemaVersion ||
+    platformLock.runtime?.stateSchemaVersion !== value.stateSchemaVersion ||
+    platformLock.runtime?.limitations?.join(",") !== value.limitations.join(",")
+  ) {
+    throw new Error("Installed provider seal does not match the provider/source-lock tuple");
+  }
+  const tuple = value.signingTier === "test_signed_internal"
+    ? {
+        distributionChannel: "internal",
+        productionEligible: false,
+        timestampPolicy: "internal-policy",
+      }
+    : value.signingTier === "production_signed"
+      ? {
+          distributionChannel: "production",
+          productionEligible: true,
+          timestampPolicy: "rfc3161-required",
+        }
+      : null;
+  if (
+    !tuple ||
+    value.distributionChannel !== tuple.distributionChannel ||
+    value.productionEligible !== tuple.productionEligible ||
+    value.main.timestampPolicy !== tuple.timestampPolicy ||
+    !["NotRequired", "Valid"].includes(value.main.timestampStatus) ||
+    (value.signingTier === "production_signed" &&
+      value.main.timestampStatus !== "Valid") ||
+    platformLock.binary.integrityCatalogRelativePathBySigningTier?.[
+      value.signingTier
+    ] !== value.integrityCatalogRelativePath ||
+    platformLock.binary.packagedFilesBySigningTier?.[value.signingTier]?.join(",") !==
+      "provider-integrity.cat,payload/ling-cua-driver.exe,payload/provider-seal.json" ||
+    (value.signingTier === "test_signed_internal" &&
+      !["ephemeral-ci", "managed-internal"].includes(value.testAuthorityKind)) ||
+    (value.signingTier === "production_signed" &&
+      Object.hasOwn(value, "testAuthorityKind"))
+  ) {
+    throw new Error("Installed provider seal signing tier/channel tuple is invalid");
+  }
+  return structuredClone(value);
+}
+
+export function validateInstalledWindowsProviderIdentity(value, expected) {
+  if (
+    !isRecord(value) ||
+    !isRecord(value.authenticode) ||
+    value.authenticode.checked !== true ||
+    !Array.isArray(value.authenticode.files) ||
+    !isRecord(value.catalogMembership) ||
+    value.catalogMembership.checked !== true ||
+    value.catalogMembership.validationStatus !== "Valid" ||
+    !Array.isArray(value.catalogMembership.members)
+  ) {
+    throw new Error("Installed provider Windows identity evidence is invalid");
+  }
+  const signatures = new Map(
+    value.authenticode.files.map((entry) => [
+      normalizeForComparison(resolve(entry?.path ?? "")),
+      entry,
+    ]),
+  );
+  const providerSignature = signatures.get(
+    normalizeForComparison(resolve(expected.providerPath)),
+  );
+  const catalogSignature = signatures.get(
+    normalizeForComparison(resolve(expected.catalogPath)),
+  );
+  if (
+    providerSignature?.status !== "Valid" ||
+    providerSignature.signerSubject !== expected.seal.main.signerSubject ||
+    providerSignature.certificateSha256 !==
+      expected.seal.main.certificateSha256 ||
+    providerSignature.timestampStatus !== expected.seal.main.timestampStatus ||
+    catalogSignature?.status !== "Valid" ||
+    !hasText(catalogSignature.signerSubject) ||
+    !isSha256(catalogSignature.certificateSha256) ||
+    !["NotRequired", "Valid"].includes(catalogSignature.timestampStatus) ||
+    (expected.seal.signingTier === "production_signed" &&
+      catalogSignature.timestampStatus !== "Valid")
+  ) {
+    throw new Error("Installed provider Authenticode identity does not match its seal");
+  }
+  const actualMembers = value.catalogMembership.members
+    .map((member) => ({
+      relativePath: String(member?.relativePath ?? "").replaceAll("\\", "/"),
+      sha256: member?.sha256,
+    }))
+    .sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+  const expectedMembers = [
+    {
+      relativePath: "payload/ling-cua-driver.exe",
+      sha256: expected.providerSha256,
+    },
+    {
+      relativePath: "payload/provider-seal.json",
+      sha256: expected.providerSealSha256,
+    },
+  ];
+  if (JSON.stringify(actualMembers) !== JSON.stringify(expectedMembers)) {
+    throw new Error(
+      "Installed provider catalog does not cover exactly the provider and seal",
+    );
+  }
+  return {
+    authenticode: {
+      checked: true,
+      trustRequired: true,
+      files: value.authenticode.files.map((entry) => ({ ...entry })),
+    },
+    catalogMembership: {
+      checked: true,
+      validationStatus: "Valid",
+      members: actualMembers,
+    },
+  };
+}
+
+export async function inspectInstalledWindowsProviderIdentity({
+  providerPath,
+  sealPath,
+  catalogPath,
+  payloadDirectory,
+}) {
+  const result = await runChild(
+    resolveWindowsSystemExecutable("WindowsPowerShell\\v1.0\\powershell.exe"),
+    ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_INSTALLED_PROVIDER_IDENTITY_SCRIPT],
+    {
+      env: {
+        ...process.env,
+        LING_CUA_PROVIDER_BINARY: providerPath,
+        LING_CUA_PROVIDER_SEAL: sealPath,
+        LING_CUA_PROVIDER_CATALOG: catalogPath,
+        LING_CUA_PROVIDER_PAYLOAD: payloadDirectory,
+      },
+      timeoutMs: 30_000,
+    },
+  );
+  try {
+    return JSON.parse(result.stdout.trim());
+  } catch (error) {
+    throw new Error(
+      `Installed provider Windows identity output is invalid: ${error?.message ?? error}`,
+    );
+  }
+}
+
+export const WINDOWS_INSTALLED_PROVIDER_IDENTITY_SCRIPT = String.raw`
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$securityModule = [IO.Path]::Combine($PSHOME, 'Modules', 'Microsoft.PowerShell.Security', 'Microsoft.PowerShell.Security.psd1')
+$utilityModule = [IO.Path]::Combine($PSHOME, 'Modules', 'Microsoft.PowerShell.Utility', 'Microsoft.PowerShell.Utility.psd1')
+$managementModule = [IO.Path]::Combine($PSHOME, 'Modules', 'Microsoft.PowerShell.Management', 'Microsoft.PowerShell.Management.psd1')
+if (![IO.File]::Exists($securityModule) -or ![IO.File]::Exists($utilityModule) -or ![IO.File]::Exists($managementModule)) { throw 'Trusted Windows PowerShell modules are missing' }
+Microsoft.PowerShell.Core\Import-Module -Name $securityModule -Force -ErrorAction Stop
+Microsoft.PowerShell.Core\Import-Module -Name $utilityModule -Force -ErrorAction Stop
+Microsoft.PowerShell.Core\Import-Module -Name $managementModule -Force -ErrorAction Stop
+function Get-LingCertificateSha256([object]$Certificate) {
+  if ($null -eq $Certificate) { return $null }
+  $sha = [Security.Cryptography.SHA256]::Create()
+  try { return ([BitConverter]::ToString($sha.ComputeHash($Certificate.RawData))).Replace('-', '').ToLowerInvariant() }
+  finally { $sha.Dispose() }
+}
+function Get-LingSignature([string]$Path) {
+  $signature = Microsoft.PowerShell.Security\Get-AuthenticodeSignature -LiteralPath $Path
+  return [ordered]@{
+    path = [IO.Path]::GetFullPath($Path)
+    status = [string]$signature.Status
+    statusMessage = [string]$signature.StatusMessage
+    signerSubject = if ($signature.SignerCertificate) { [string]$signature.SignerCertificate.Subject } else { $null }
+    certificateSha256 = Get-LingCertificateSha256 $signature.SignerCertificate
+    timestampStatus = if ($signature.TimeStamperCertificate) { 'Valid' } else { 'NotRequired' }
+  }
+}
+function Get-LingSha256([string]$Path) {
+  return ([string](Microsoft.PowerShell.Utility\Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash).ToLowerInvariant()
+}
+$catalogResult = Microsoft.PowerShell.Security\Test-FileCatalog -CatalogFilePath $env:LING_CUA_PROVIDER_CATALOG -Path $env:LING_CUA_PROVIDER_PAYLOAD -Detailed -ErrorAction Stop
+$payloadRoot = [IO.Path]::GetFullPath($env:LING_CUA_PROVIDER_PAYLOAD)
+$members = @(
+  Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $payloadRoot -File -Force -Recurse |
+    Microsoft.PowerShell.Core\ForEach-Object {
+      $relativePath = $_.FullName.Substring($payloadRoot.Length).TrimStart([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar).Replace('\', '/')
+      [ordered]@{ relativePath = ('payload/' + $relativePath); sha256 = Get-LingSha256 $_.FullName }
+    } |
+    Microsoft.PowerShell.Utility\Sort-Object -Property relativePath
+)
+[ordered]@{
+  authenticode = [ordered]@{
+    checked = $true
+    files = @(
+      Get-LingSignature $env:LING_CUA_PROVIDER_BINARY
+      Get-LingSignature $env:LING_CUA_PROVIDER_CATALOG
+    )
+  }
+  catalogMembership = [ordered]@{
+    checked = $true
+    validationStatus = [string]$catalogResult.Status
+    members = $members
+  }
+} | Microsoft.PowerShell.Utility\ConvertTo-Json -Compress -Depth 8
+`;
+
+function parseBoundedJson(bytes, maxBytes, label) {
+  if (!Buffer.isBuffer(bytes) || bytes.length === 0 || bytes.length > maxBytes) {
+    throw new Error(`${label} is missing or oversized`);
+  }
+  try {
+    return JSON.parse(bytes.toString("utf8").replace(/^\uFEFF/u, ""));
+  } catch (error) {
+    throw new Error(`${label} JSON is invalid: ${error?.message ?? error}`);
+  }
+}
+
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasText(value) {
+  return typeof value === "string" && value.length > 0 && value === value.trim();
+}
+
+function isSha256(value) {
+  return typeof value === "string" && /^[0-9a-f]{64}$/u.test(value) && !/^0{64}$/u.test(value);
 }
 
 async function createExplicitTemporaryDirectory(outputDirectory) {
@@ -405,6 +856,9 @@ async function inspectAuthenticode(binaryPaths) {
   }
   const command = [
     "$ErrorActionPreference = 'Stop'",
+    "$securityModulePath = [System.IO.Path]::Combine($PSHOME, 'Modules', 'Microsoft.PowerShell.Security', 'Microsoft.PowerShell.Security.psd1')",
+    "if (![System.IO.File]::Exists($securityModulePath)) { throw \"Trusted Windows PowerShell security module is missing: $securityModulePath\" }",
+    "Microsoft.PowerShell.Core\\Import-Module -Name $securityModulePath -Force -ErrorAction Stop",
     "$signature = Microsoft.PowerShell.Security\\Get-AuthenticodeSignature -FilePath $env:LING_CUA_PROVIDER_BINARY",
     "$certificateSha256 = if ($signature.SignerCertificate) { $sha256 = [System.Security.Cryptography.SHA256]::Create(); try { ([System.BitConverter]::ToString($sha256.ComputeHash($signature.SignerCertificate.RawData))).Replace('-', '').ToLowerInvariant() } finally { $sha256.Dispose() } } else { $null }",
     "[PSCustomObject]@{ Path = $env:LING_CUA_PROVIDER_BINARY; Status = [string]$signature.Status; StatusMessage = $signature.StatusMessage; SignerSubject = if ($signature.SignerCertificate) { $signature.SignerCertificate.Subject } else { $null }; CertificateSha256 = $certificateSha256 } | ConvertTo-Json -Compress",

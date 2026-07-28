@@ -383,6 +383,7 @@ async function assertTypedIconButton(
   await button.evaluate((element) => (element as HTMLButtonElement).blur());
   await button.page().mouse.move(0, 0);
   await expect(button.page().getByRole("tooltip")).toHaveCount(0);
+  await button.page().waitForTimeout(200);
   await button.hover();
   const tooltip = button.page().getByRole("tooltip");
   await expect(tooltip).toBeVisible();

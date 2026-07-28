@@ -33,7 +33,6 @@ import type {
 } from "./projection-client.js";
 import { ComputerUseRecoveryTimers } from "./recovery-timers.js";
 import {
-  compareLatestComputerUseProjection,
   type ComputerUsePipPresentationDecision,
   isSessionSuppressed,
   selectComputerUsePresentation,
@@ -44,6 +43,17 @@ import {
   ComputerUsePreviewSourceSession,
   runtimeStatusDetail,
 } from "./source-session.js";
+import {
+  cancelComputerUsePipDeckPageSwitch,
+  commitComputerUsePipDeckPage,
+  computerUsePipDeckScopesEqual,
+  dismissComputerUsePipDeckPage,
+  reconcileComputerUsePipDeck,
+  requestComputerUsePipDeckPage,
+  type ComputerUsePipDeckScope,
+  type ComputerUsePipDeckState,
+  type ComputerUsePipSurfaceKind,
+} from "./deck.js";
 import {
   NOOP_COMPUTER_USE_PREVIEW_TELEMETRY,
   type ComputerUsePreviewTelemetry,
@@ -67,7 +77,17 @@ interface ComputerUsePresentationLease {
   readonly sourceGeneration?: number;
 }
 
+interface PendingComputerUsePageSwitch {
+  readonly pageId: string;
+  readonly generation: number;
+  readonly previousPageId?: string;
+  readonly sourceGeneration?: number;
+}
+
+type ComputerUseOpenPreviewResult = "prepared" | "permission_denied" | "failed" | "stale";
+
 export interface ComputerUsePreviewCoordinatorOptions {
+  readonly workspaceId: string;
   readonly projectionClient: ComputerUseProjectionClient;
   readonly platformAdapter: ComputerUsePreviewPlatformAdapter;
   readonly preferenceStore: DesktopPreferenceStore;
@@ -103,6 +123,16 @@ export class ComputerUsePreviewCoordinator {
   };
   private rendererLocale: ComputerUsePreviewLocale = DEFAULT_COMPUTER_USE_PREVIEW_LOCALE;
   private selectedConversationId: string | undefined;
+  private selectedDeckScope: ComputerUsePipDeckScope | undefined;
+  private legacySelectionObserved = false;
+  private legacySelectedConversationId: string | undefined;
+  private structuredDeckOwnerObserved = false;
+  private structuredDeckOwner: {
+    readonly surfaceKind: ComputerUsePipSurfaceKind;
+    readonly ownerId: string;
+  } | undefined;
+  private deckState: ComputerUsePipDeckState | undefined;
+  private pendingPageSwitch: PendingComputerUsePageSwitch | undefined;
   private hostLayout: ComputerUseHostLayout | undefined;
   private subscription: ComputerUseProjectionSubscription | undefined;
   private projectionConnected = false;
@@ -159,7 +189,7 @@ export class ComputerUsePreviewCoordinator {
   }
 
   private set snapshot(value: ComputerUsePipRendererSnapshot | undefined) {
-    this.sourceSession.snapshot = value;
+    this.sourceSession.snapshot = value ? this.decorateSnapshotWithDeck(value) : undefined;
   }
 
   private get frameReady(): boolean {
@@ -244,7 +274,45 @@ export class ComputerUsePreviewCoordinator {
     if (this.isQuiescing()) {
       return;
     }
-    this.selectedConversationId = conversationId;
+    this.legacySelectionObserved = true;
+    this.legacySelectedConversationId = conversationId;
+    this.applyReportedDeckSelection();
+  }
+
+  reportSelectedDeckOwner(owner?: {
+    readonly surfaceKind: ComputerUsePipSurfaceKind;
+    readonly ownerId: string;
+  }): void {
+    if (this.isQuiescing()) {
+      return;
+    }
+    this.structuredDeckOwnerObserved = true;
+    this.structuredDeckOwner = owner;
+    this.applyReportedDeckSelection();
+  }
+
+  private applyReportedDeckSelection(): void {
+    const reportsDisagree = this.legacySelectionObserved
+      && this.structuredDeckOwnerObserved
+      && this.legacySelectedConversationId !== this.structuredDeckOwner?.ownerId;
+    const owner = reportsDisagree
+      ? undefined
+      : this.structuredDeckOwnerObserved
+        ? this.structuredDeckOwner
+        : this.legacySelectedConversationId
+          ? {
+              surfaceKind: "normal_conversation" as const,
+              ownerId: this.legacySelectedConversationId,
+            }
+          : undefined;
+    this.selectedConversationId = owner?.ownerId;
+    this.selectedDeckScope = owner
+      ? {
+          workspaceId: this.options.workspaceId,
+          surfaceKind: owner.surfaceKind,
+          ownerId: owner.ownerId,
+        }
+      : undefined;
     void this.enqueueReconcile();
   }
 
@@ -304,7 +372,11 @@ export class ComputerUsePreviewCoordinator {
   }
 
   getRendererSnapshot(): ComputerUsePipRendererSnapshot | undefined {
-    return this.snapshot;
+    return this.snapshot ? this.decorateSnapshotWithDeck(this.snapshot) : undefined;
+  }
+
+  getDeckState(): ComputerUsePipDeckState | undefined {
+    return this.deckState;
   }
 
   reportMediaReleased(ack: ComputerUsePreviewReleaseMediaAck, webContentsId: number): boolean {
@@ -312,21 +384,70 @@ export class ComputerUsePreviewCoordinator {
   }
 
   async hideCurrent(): Promise<DesktopCommandResult> {
-    return this.currentProjection
-      ? this.hide(this.currentProjection.sessionId)
+    const projection = this.activeDeckProjection() ?? this.currentProjection;
+    return projection
+      ? this.hide(projection.sessionId)
       : { accepted: false, reason: "computer_use_session_not_found" };
   }
 
   async closeCurrent(): Promise<DesktopCommandResult> {
-    return this.currentProjection
-      ? this.close(this.currentProjection.sessionId)
+    const projection = this.activeDeckProjection() ?? this.currentProjection;
+    return projection
+      ? this.close(projection.sessionId)
       : { accepted: false, reason: "computer_use_session_not_found" };
   }
 
   async stopCurrent(): Promise<DesktopCommandResult> {
-    return this.currentProjection
-      ? this.stop(this.currentProjection.sessionId)
+    const projection = this.activeDeckProjection() ?? this.currentProjection;
+    return projection
+      ? this.stop(projection.sessionId)
       : { accepted: false, reason: "computer_use_session_not_found" };
+  }
+
+  activatePage(pageId: string): Promise<DesktopCommandResult> {
+    const state = this.deckState;
+    if (!state || !state.availablePageIds.includes(pageId)) {
+      return Promise.resolve({ accepted: false, reason: "computer_use_page_not_available" });
+    }
+    if (state.activePageId === pageId && !state.requestedPageId) {
+      return Promise.resolve({ accepted: true });
+    }
+    const request = requestComputerUsePipDeckPage(state, pageId, this.now().getTime());
+    if (!request) {
+      return Promise.resolve({ accepted: false, reason: "computer_use_page_not_available" });
+    }
+    this.deckState = request.state;
+    this.sendSnapshot();
+    this.emitSummary();
+    let result: DesktopCommandResult = { accepted: false, reason: "computer_use_coordinator_unavailable" };
+    return this.enqueueOperation(async () => {
+      result = await this.performPageSwitch({
+        pageId,
+        generation: request.generation,
+        previousPageId: state.activePageId,
+      });
+    }).then(() => result);
+  }
+
+  dismissPage(pageId: string): Promise<DesktopCommandResult> {
+    const state = this.deckState;
+    if (!state || !state.availablePageIds.includes(pageId)) {
+      return Promise.resolve({ accepted: false, reason: "computer_use_page_not_available" });
+    }
+    const pendingSwitchAlreadyReplacesActivePage = state.activePageId === pageId
+      && state.requestedPageId !== undefined
+      && state.requestedPageId !== pageId;
+    const wasPresented = this.currentProjection?.sessionId === pageId;
+    this.deckState = dismissComputerUsePipDeckPage(state, pageId, this.now().getTime());
+    this.sendSnapshot();
+    this.emitSummary();
+    if (pendingSwitchAlreadyReplacesActivePage || (!wasPresented && state.requestedPageId !== pageId)) {
+      return Promise.resolve({ accepted: true });
+    }
+    let result: DesktopCommandResult = { accepted: false, reason: "computer_use_coordinator_unavailable" };
+    return this.enqueueOperation(async () => {
+      result = await this.reconcileAfterPageDismissal(pageId);
+    }).then(() => result);
   }
 
   async show(sessionId: string): Promise<DesktopCommandResult> {
@@ -445,14 +566,15 @@ export class ComputerUsePreviewCoordinator {
   }
 
   async openOwnerConversation(): Promise<DesktopCommandResult> {
-    if (!this.currentProjection) {
+    const projection = this.activeDeckProjection() ?? this.currentProjection;
+    if (!projection) {
       return { accepted: false, reason: "computer_use_owner_conversation_missing" };
     }
     if (!this.options.openOwnerConversation) {
       return { accepted: false, reason: "computer_use_owner_navigation_unavailable" };
     }
     try {
-      return await this.options.openOwnerConversation(this.currentProjection.conversationId);
+      return await this.options.openOwnerConversation(projection.conversationId);
     } catch {
       return { accepted: false, reason: "computer_use_owner_navigation_failed" };
     }
@@ -523,6 +645,29 @@ export class ComputerUsePreviewCoordinator {
       return;
     }
     if (!this.sourceSession.matchesSourceIdentity(revision, sourceGeneration)) {
+      return;
+    }
+    const pendingPageSwitch = this.pendingPageSwitch;
+    if (pendingPageSwitch) {
+      if (
+        pendingPageSwitch.pageId !== sessionId
+        || pendingPageSwitch.sourceGeneration !== sourceGeneration
+        || !this.isPageSwitchCurrent(pendingPageSwitch)
+        || !this.deckState
+      ) {
+        return;
+      }
+      const committed = commitComputerUsePipDeckPage(this.deckState, {
+        pageId: sessionId,
+        generation: pendingPageSwitch.generation,
+        nowMs: this.now().getTime(),
+      });
+      if (committed === this.deckState) {
+        return;
+      }
+      this.deckState = committed;
+      this.pendingPageSwitch = undefined;
+    } else if (this.deckState?.requestedPageId && this.deckState.requestedPageId !== sessionId) {
       return;
     }
     if (this.frameReady) {
@@ -618,6 +763,17 @@ export class ComputerUsePreviewCoordinator {
     if (!this.sourceSession.matchesSourceIdentity(revision, sourceGeneration)) {
       return;
     }
+    const pendingPageSwitch = this.pendingPageSwitch;
+    if (
+      pendingPageSwitch?.pageId === sessionId
+      && pendingPageSwitch.sourceGeneration === sourceGeneration
+    ) {
+      void this.enqueueOperation(() => this.rollbackPageSwitch(
+        pendingPageSwitch,
+        "computer_use_page_source_ended",
+      ));
+      return;
+    }
     if (this.snapshot?.sourceStatus === "idle" || this.snapshot?.sourceStatus === "failed" || this.snapshot?.sourceStatus === "permission_denied") {
       return;
     }
@@ -642,6 +798,17 @@ export class ComputerUsePreviewCoordinator {
       return;
     }
     if (!this.sourceSession.matchesSourceIdentity(revision, sourceGeneration)) {
+      return;
+    }
+    const pendingPageSwitch = this.pendingPageSwitch;
+    if (
+      pendingPageSwitch?.pageId === sessionId
+      && pendingPageSwitch.sourceGeneration === sourceGeneration
+    ) {
+      void this.enqueueOperation(() => this.rollbackPageSwitch(
+        pendingPageSwitch,
+        "computer_use_page_source_failed",
+      ));
       return;
     }
     const presentation = this.presentationDecisionFor(sessionId, "failed", false);
@@ -752,6 +919,124 @@ export class ComputerUsePreviewCoordinator {
     return this.enqueueOperation(() => this.recoverRendererAfterCrash(window, details));
   }
 
+  private isPageSwitchCurrent(input: {
+    readonly pageId: string;
+    readonly generation: number;
+  }): boolean {
+    return this.deckState?.requestedPageId === input.pageId
+      && this.deckState.switchGeneration === input.generation;
+  }
+
+  private async performPageSwitch(
+    request: Omit<PendingComputerUsePageSwitch, "sourceGeneration">,
+  ): Promise<DesktopCommandResult> {
+    if (!this.isPageSwitchCurrent(request)) {
+      return { accepted: false, reason: "computer_use_page_switch_superseded" };
+    }
+    const target = this.projections.get(request.pageId);
+    if (!target?.preview || isTerminalComputerUseStatus(target.status)) {
+      await this.rollbackPageSwitch(request, "computer_use_page_not_available");
+      return { accepted: false, reason: "computer_use_page_not_available" };
+    }
+
+    this.pendingPageSwitch = request;
+    this.clearReconnectTimer(true);
+    this.recoveryTimers.clearSourceErrorTimer();
+    try {
+      await this.releaseMedia();
+    } catch {
+      await this.rollbackPageSwitch(request, "computer_use_page_release_failed");
+      return { accepted: false, reason: "computer_use_page_release_failed" };
+    }
+    if (!this.isPageSwitchCurrent(request)) {
+      if (this.pendingPageSwitch?.generation === request.generation) {
+        this.pendingPageSwitch = undefined;
+      }
+      return { accepted: false, reason: "computer_use_page_switch_superseded" };
+    }
+
+    const latest = this.projections.get(request.pageId);
+    if (
+      !latest?.preview
+      || isTerminalComputerUseStatus(latest.status)
+      || latest.conversationId !== this.selectedDeckScope?.ownerId
+    ) {
+      await this.rollbackPageSwitch(request, "computer_use_page_not_available");
+      return { accepted: false, reason: "computer_use_page_not_available" };
+    }
+    this.currentProjection = latest;
+    const opened = await this.openPreview(latest, request);
+    if (opened === "prepared") {
+      return { accepted: true };
+    }
+    if (opened === "stale") {
+      if (this.pendingPageSwitch?.generation === request.generation) {
+        this.pendingPageSwitch = undefined;
+      }
+      return { accepted: false, reason: "computer_use_page_switch_superseded" };
+    }
+    const reason = opened === "permission_denied"
+      ? "computer_use_page_permission_denied"
+      : "computer_use_page_prepare_failed";
+    await this.rollbackPageSwitch(request, reason);
+    return { accepted: false, reason };
+  }
+
+  private async rollbackPageSwitch(
+    request: Pick<PendingComputerUsePageSwitch, "pageId" | "generation">,
+    _reason: string,
+  ): Promise<void> {
+    if (!this.isPageSwitchCurrent(request)) {
+      return;
+    }
+    this.deckState = cancelComputerUsePipDeckPageSwitch(this.deckState!, {
+      generation: request.generation,
+      nowMs: this.now().getTime(),
+    });
+    if (this.pendingPageSwitch?.generation === request.generation) {
+      this.pendingPageSwitch = undefined;
+    }
+    this.clearReconnectTimer(true);
+    this.recoveryTimers.clearSourceErrorTimer();
+    await this.releaseMedia().catch(() => undefined);
+
+    const fallbackPageId = this.deckState.activePageId;
+    const fallback = fallbackPageId ? this.projections.get(fallbackPageId) : undefined;
+    if (
+      fallback?.preview
+      && !isTerminalComputerUseStatus(fallback.status)
+      && fallback.conversationId === this.selectedDeckScope?.ownerId
+    ) {
+      this.currentProjection = fallback;
+      await this.openPreview(fallback);
+      return;
+    }
+    await this.reconcile();
+  }
+
+  private async reconcileAfterPageDismissal(pageId: string): Promise<DesktopCommandResult> {
+    if (this.pendingPageSwitch?.pageId === pageId) {
+      this.pendingPageSwitch = undefined;
+    }
+    this.clearReconnectTimer(true);
+    this.recoveryTimers.clearSourceErrorTimer();
+    await this.releaseMedia().catch(() => undefined);
+
+    const nextPageId = this.deckState?.requestedPageId ?? this.deckState?.activePageId;
+    const next = nextPageId ? this.projections.get(nextPageId) : undefined;
+    if (
+      next?.preview
+      && !isTerminalComputerUseStatus(next.status)
+      && next.conversationId === this.selectedDeckScope?.ownerId
+    ) {
+      this.currentProjection = next;
+      await this.openPreview(next);
+      return { accepted: true };
+    }
+    await this.destroyWindow(false);
+    return { accepted: true };
+  }
+
   private enqueueOperation(operation: () => Promise<void>, allowWhileDisposing = false): Promise<void> {
     const guardedOperation = async (): Promise<void> => {
       if (this.isQuiescing() && !allowWhileDisposing) {
@@ -797,16 +1082,42 @@ export class ComputerUsePreviewCoordinator {
 
   private async reconcile(): Promise<void> {
     this.pruneRendererCrashRecoveryState();
-    const selected = selectComputerUsePresentation({
+    const projections = [...this.projections.values()];
+    const previousDeckScope = this.deckState?.scope;
+    if (this.selectedDeckScope) {
+      this.deckState = reconcileComputerUsePipDeck({
+        state: this.deckState,
+        scope: this.selectedDeckScope,
+        projections,
+        nowMs: this.now().getTime(),
+      });
+    } else {
+      this.deckState = undefined;
+      this.pendingPageSwitch = undefined;
+    }
+    const deckScopeChanged = Boolean(
+      previousDeckScope
+      && (!this.selectedDeckScope || !computerUsePipDeckScopesEqual(previousDeckScope, this.selectedDeckScope)),
+    );
+    if (this.pendingPageSwitch && !this.isPageSwitchCurrent(this.pendingPageSwitch)) {
+      this.pendingPageSwitch = undefined;
+    }
+    if (deckScopeChanged && (this.window || this.currentProjection || this.snapshot)) {
+      this.telemetry.record({ name: "preview_closed", reason: "route_change" });
+      await this.destroyWindow(false);
+    }
+
+    const fallbackSelected = selectComputerUsePresentation({
       selectedConversationId: this.selectedConversationId,
-      projections: [...this.projections.values()],
+      projections,
     });
+    const selectedPageId = this.deckState?.requestedPageId ?? this.deckState?.activePageId;
+    const selected = selectedPageId
+      ? this.projections.get(selectedPageId)
+      : fallbackSelected;
     const currentLatest = this.currentProjection && this.projections.get(this.currentProjection.sessionId);
     if (currentLatest && isTerminalComputerUseStatus(currentLatest.status)) {
-      const selectedPreemptsTerminal = Boolean(
-        selected && compareLatestComputerUseProjection(selected, currentLatest) < 0,
-      );
-      if (currentLatest.conversationId === this.selectedConversationId && !selectedPreemptsTerminal) {
+      if (currentLatest.conversationId === this.selectedConversationId && !selected?.preview) {
         this.currentProjection = currentLatest;
         this.updateRuntimeSnapshot(currentLatest);
         this.startTerminalLinger(currentLatest);
@@ -816,7 +1127,6 @@ export class ComputerUsePreviewCoordinator {
         name: "preview_closed",
         reason: currentLatest.conversationId === this.selectedConversationId ? "session_switch" : "route_change",
       });
-      await this.destroyWindow(false);
     }
     if (!selected?.preview) {
       if (this.window || this.snapshot) {
@@ -843,8 +1153,10 @@ export class ComputerUsePreviewCoordinator {
     if (!sameSession) {
       if (this.window || this.snapshot) {
         this.telemetry.record({ name: "preview_closed", reason: "session_switch" });
+        this.clearLifecycleTimers();
+        this.resetInteractionState();
+        await this.releaseMedia().catch(() => undefined);
       }
-      await this.destroyWindow(false);
       this.currentProjection = selected;
     } else {
       this.currentProjection = selected;
@@ -879,16 +1191,26 @@ export class ComputerUsePreviewCoordinator {
       this.emitSummary();
       return;
     }
-    if (descriptorChanged || !this.window || this.window.isDestroyed() || this.snapshot?.sourceStatus === "idle") {
+    if (!sameSession || descriptorChanged || !this.window || this.window.isDestroyed() || this.snapshot?.sourceStatus === "idle") {
       await this.openPreview(selected);
     }
   }
 
-  private async openPreview(projection: ComputerUsePreviewProjection): Promise<void> {
+  private async openPreview(
+    projection: ComputerUsePreviewProjection,
+    pageSwitch?: Omit<PendingComputerUsePageSwitch, "sourceGeneration">,
+  ): Promise<ComputerUseOpenPreviewResult> {
     if (!this.projectionConnected || !projection.preview || !this.isSourceProjectionCurrent(projection)) {
-      return;
+      return "stale";
     }
     const sourceGeneration = this.sourceSession.beginSourceActivation();
+    if (pageSwitch) {
+      if (!this.isPageSwitchCurrent(pageSwitch)) {
+        this.sourceSession.invalidateSourceActivation();
+        return "stale";
+      }
+      this.pendingPageSwitch = { ...pageSwitch, sourceGeneration };
+    }
     this.sourceAttemptStartedAtMs = this.now().getTime();
     let permission: Awaited<ReturnType<ComputerUsePreviewPlatformAdapter["getPermissionState"]>>;
     try {
@@ -900,7 +1222,7 @@ export class ComputerUsePreviewCoordinator {
       permission = "denied";
     }
     if (!this.isSourceActivationCurrent(projection, sourceGeneration)) {
-      return;
+      return "stale";
     }
     if (!this.window) {
       const initialPlacement = this.initialPreviewPlacement(
@@ -979,13 +1301,13 @@ export class ComputerUsePreviewCoordinator {
       }, this.rendererLocale);
       await this.ensureRendererLoaded(this.window);
       if (!this.isSourceActivationCurrent(projection, sourceGeneration)) {
-        return;
+        return "stale";
       }
       this.sendSnapshot();
       this.presentWindowIfEligible();
       this.startSourceErrorLinger();
       this.emitSummary();
-      return;
+      return "permission_denied";
     }
     if (this.loadedRendererWindow !== this.window) {
       this.frameReady = false;
@@ -1001,7 +1323,7 @@ export class ComputerUsePreviewCoordinator {
       }, this.rendererLocale);
       await this.ensureRendererLoaded(this.window);
       if (!this.isSourceActivationCurrent(projection, sourceGeneration)) {
-        return;
+        return "stale";
       }
       this.sendSnapshot();
     }
@@ -1016,7 +1338,7 @@ export class ComputerUsePreviewCoordinator {
       });
       if (!this.isSourceActivationCurrent(projection, sourceGeneration)) {
         await this.options.platformAdapter.release().catch(() => undefined);
-        return;
+        return "stale";
       }
       this.frameReady = false;
       const aspectRatio = normalizeSourceAspectRatio(
@@ -1036,7 +1358,7 @@ export class ComputerUsePreviewCoordinator {
       await this.ensureRendererLoaded(this.window);
       if (!this.isSourceActivationCurrent(projection, sourceGeneration)) {
         await this.options.platformAdapter.release().catch(() => undefined);
-        return;
+        return "stale";
       }
       this.sendSnapshot();
       this.emitSummary();
@@ -1047,9 +1369,10 @@ export class ComputerUsePreviewCoordinator {
           sourceGeneration,
         );
       }
+      return "prepared";
     } catch (error) {
       if (!this.isSourceActivationCurrent(projection, sourceGeneration)) {
-        return;
+        return "stale";
       }
       this.sourceAttemptStartedAtMs = undefined;
       this.snapshot = buildRendererSnapshot(projection, {
@@ -1062,12 +1385,13 @@ export class ComputerUsePreviewCoordinator {
       }, this.rendererLocale);
       await this.ensureRendererLoaded(this.window);
       if (!this.isSourceActivationCurrent(projection, sourceGeneration)) {
-        return;
+        return "stale";
       }
       this.sendSnapshot();
       this.presentWindowIfEligible();
       this.startSourceErrorLinger();
       this.emitSummary();
+      return "failed";
     }
   }
 
@@ -1374,10 +1698,19 @@ export class ComputerUsePreviewCoordinator {
     const currentPreview = this.currentProjection?.preview;
     const latest = this.projections.get(projection.sessionId);
     const latestPreview = latest?.preview;
+    const pendingPageSwitch = this.pendingPageSwitch;
+    const deckAllowsProjection = !this.deckState
+      || this.deckState.activePageId === projection.sessionId
+      || (
+        this.deckState.requestedPageId === projection.sessionId
+        && pendingPageSwitch?.pageId === projection.sessionId
+        && pendingPageSwitch.generation === this.deckState.switchGeneration
+      );
     if (!preview || !currentPreview || !latest || !latestPreview || isTerminalComputerUseStatus(latest.status)) {
       return false;
     }
     if (
+      !deckAllowsProjection ||
       this.currentProjection?.sessionId !== projection.sessionId ||
       currentPreview.descriptorId !== preview.descriptorId ||
       currentPreview.revision !== preview.revision ||
@@ -1533,10 +1866,13 @@ export class ComputerUsePreviewCoordinator {
     if (!projection?.preview || isTerminalComputerUseStatus(projection.status)) {
       return false;
     }
-    const selected = selectComputerUsePresentation({
-      selectedConversationId: this.selectedConversationId,
-      projections: [...this.projections.values()],
-    });
+    const selectedPageId = this.deckState?.requestedPageId ?? this.deckState?.activePageId;
+    const selected = selectedPageId
+      ? this.projections.get(selectedPageId)
+      : selectComputerUsePresentation({
+          selectedConversationId: this.selectedConversationId,
+          projections: [...this.projections.values()],
+        });
     if (selected?.sessionId !== sessionId) {
       return false;
     }
@@ -1737,6 +2073,17 @@ export class ComputerUsePreviewCoordinator {
           this.snapshot?.sourceKind !== "display_media" ||
           this.snapshot.sourceStatus !== "connecting"
         ) {
+          return;
+        }
+        const pendingPageSwitch = this.pendingPageSwitch;
+        if (
+          pendingPageSwitch?.pageId === sessionId
+          && pendingPageSwitch.sourceGeneration === sourceGeneration
+        ) {
+          await this.rollbackPageSwitch(
+            pendingPageSwitch,
+            "computer_use_page_first_frame_timeout",
+          );
           return;
         }
         await this.startReconnect("first_frame_timeout", sourceGeneration);
@@ -2044,6 +2391,9 @@ export class ComputerUsePreviewCoordinator {
     if (!window || window.isDestroyed()) {
       return;
     }
+    if (this.snapshot) {
+      this.snapshot = this.snapshot;
+    }
     try {
       window.webContents.send(DESKTOP_IPC_CHANNELS.computerUsePreviewSnapshotChanged, this.snapshot);
     } catch {
@@ -2054,6 +2404,58 @@ export class ComputerUsePreviewCoordinator {
       this.sourceSession.reportRendererGone(window.webContents.id);
       void this.enqueueRendererCrashRecovery(window, { reason: "snapshot_send_failed" });
     }
+  }
+
+  private activeDeckProjection(): ComputerUsePreviewProjection | undefined {
+    const activePageId = this.deckState?.activePageId;
+    return activePageId ? this.projections.get(activePageId) : undefined;
+  }
+
+  private decorateSnapshotWithDeck(
+    snapshot: ComputerUsePipRendererSnapshot,
+  ): ComputerUsePipRendererSnapshot {
+    const { deck: _previousDeck, ...baseSnapshot } = snapshot;
+    const state = this.deckState;
+    if (!state?.activePageId) {
+      return baseSnapshot;
+    }
+    const residentIds = new Set(state.pages.map((page) => page.pageId));
+    const pages: NonNullable<ComputerUsePipRendererSnapshot["deck"]>["pages"][number][] = [];
+    for (const page of state.pages) {
+      const projection = this.projections.get(page.sessionId);
+      if (!projection || projection.conversationId !== state.scope.ownerId) {
+        continue;
+      }
+      pages.push({
+        pageId: page.pageId,
+        targetLabel: projection.target.displayName,
+        runtimeStatus: projection.status,
+        presentationState: page.presentationState,
+      });
+    }
+    const availablePages: NonNullable<ComputerUsePipRendererSnapshot["deck"]>["availablePages"][number][] = [];
+    for (const pageId of state.availablePageIds) {
+      const projection = this.projections.get(pageId);
+      if (!projection || projection.conversationId !== state.scope.ownerId) {
+        continue;
+      }
+      availablePages.push({
+        pageId,
+        targetLabel: projection.target.displayName,
+        runtimeStatus: projection.status,
+        resident: residentIds.has(pageId),
+      });
+    }
+    return {
+      ...baseSnapshot,
+      deck: {
+        activePageId: state.activePageId,
+        ...(state.requestedPageId ? { requestedPageId: state.requestedPageId } : {}),
+        availablePageCount: availablePages.length,
+        pages,
+        availablePages,
+      },
+    };
   }
 
   private presentWindowIfEligible(): void {
@@ -2105,7 +2507,9 @@ export class ComputerUsePreviewCoordinator {
   }
 
   private currentSummary(): ComputerUsePreviewSummary | undefined {
-    const projection = this.currentProjection;
+    const projection = this.currentProjection
+      ? this.activeDeckProjection() ?? this.currentProjection
+      : undefined;
     if (!projection) {
       return undefined;
     }
@@ -2116,6 +2520,8 @@ export class ComputerUsePreviewCoordinator {
       targetLabel: projection.target.displayName,
       previewAvailable: projection.preview !== undefined,
       visible: Boolean(this.window && !this.window.isDestroyed() && this.window.isVisible()),
+      ...(this.deckState?.activePageId ? { activePageId: this.deckState.activePageId } : {}),
+      pageCount: this.deckState?.pages.length ?? (projection.preview ? 1 : 0),
     };
   }
 

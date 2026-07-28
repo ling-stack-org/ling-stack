@@ -392,9 +392,11 @@ test("P9EF-EVIDENCE-06 Plugin row failure survives unrelated success", async ({ 
   await secondRow.getByRole("button", { name: "Check" }).click();
   await expect(secondRow.getByRole("alert")).toHaveCount(0);
   const failure = firstRow.getByRole("alert");
-  await expect(failure).toHaveAttribute("title", "Synthetic late Owner A failure");
+  await expect(failure).toHaveAttribute("title", "Plugin action failed. Try again.");
+  await expect(failure).not.toContainText("Synthetic late Owner A failure");
   const toast = page.locator('[data-ling-overlay="toast"][data-tone="error"][data-scope="plugin:built-in:owner-a:check:row"]');
-  await expect(toast).toBeVisible();
+  await expect(toast).toContainText("Plugin action failed. Try again.");
+  await expect(toast).not.toContainText("Synthetic late Owner A failure");
   await toast.locator(".ling-ui-toast-close").click({ force: true });
   await expect(failure).toBeVisible();
   const retry = firstRow.getByRole("button", { name: "Retry" });

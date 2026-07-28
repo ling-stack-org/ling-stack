@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ling-stack.dev/schemas/windows-candidate-build-attestation-v1.json",
+  "$id": "https://ling-stack.dev/schemas/windows-candidate-build-attestation-v2.json",
   "title": "Ling Desktop Windows Candidate Build Attestation",
   "type": "object",
   "additionalProperties": false,
@@ -11,6 +11,10 @@
     "candidateManifestSha256",
     "candidateCommit",
     "releasePolicySha256",
+    "signingTier",
+    "distributionChannel",
+    "productionEligible",
+    "verdict",
     "daemonPayload",
     "attestorId",
     "keyId",
@@ -18,18 +22,22 @@
     "signature"
   ],
   "properties": {
-    "schemaVersion": { "const": 1 },
+    "schemaVersion": { "const": 2 },
     "kind": { "const": "ling.windows.candidate-build-attestation" },
-    "scope": { "const": "windows-candidate-build" },
+    "scope": { "const": "windows-signed-candidate-build" },
     "candidateManifestSha256": { "$ref": "#/$defs/sha256" },
-    "candidateCommit": { "type": "string", "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$" },
+    "candidateCommit": { "$ref": "#/$defs/commit" },
     "releasePolicySha256": { "$ref": "#/$defs/sha256" },
+    "signingTier": { "enum": ["test_signed_internal", "production_signed"] },
+    "distributionChannel": { "enum": ["internal", "production"] },
+    "productionEligible": { "type": "boolean" },
+    "verdict": { "enum": ["INTERNAL_TEST_PASS", "RELEASE_PASS"] },
     "daemonPayload": {
       "type": "object",
       "additionalProperties": false,
       "required": ["sourceCommit", "strategy", "treeSha256"],
       "properties": {
-        "sourceCommit": { "type": "string", "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$" },
+        "sourceCommit": { "$ref": "#/$defs/commit" },
         "strategy": {
           "enum": ["deterministic-rebuild", "signed-candidate-embedded-daemon"]
         },
@@ -41,8 +49,27 @@
     "attestedAt": { "type": "string", "format": "date-time" },
     "signature": { "$ref": "#/$defs/signature" }
   },
+  "oneOf": [
+    {
+      "properties": {
+        "signingTier": { "const": "test_signed_internal" },
+        "distributionChannel": { "const": "internal" },
+        "productionEligible": { "const": false },
+        "verdict": { "const": "INTERNAL_TEST_PASS" }
+      }
+    },
+    {
+      "properties": {
+        "signingTier": { "const": "production_signed" },
+        "distributionChannel": { "const": "production" },
+        "productionEligible": { "const": true },
+        "verdict": { "const": "RELEASE_PASS" }
+      }
+    }
+  ],
   "$defs": {
     "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "commit": { "type": "string", "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$" },
     "signature": {
       "type": "object",
       "additionalProperties": false,

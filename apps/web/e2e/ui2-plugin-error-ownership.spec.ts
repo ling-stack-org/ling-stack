@@ -73,10 +73,12 @@ test("T13-P.9EF.D detected connect failure belongs to its Plugin row instead of 
   await openPluginManager(page);
   const rowFailure = pluginRow(page, detected.id).getByRole("alert");
   await expect(rowFailure).toHaveText("Recheck · failed");
-  await expect(rowFailure).toHaveAttribute("title", "Synthetic detected connect failure");
+  await expect(rowFailure).toHaveAttribute("title", "Plugin action failed. Try again.");
+  await expect(rowFailure).not.toContainText("Synthetic detected connect failure");
   await expect(page.locator('[data-plugin-refresh-retained="true"]')).toHaveCount(0);
-  await expect(failureToast(page, detected.id, "connect", "detected-connect"))
-    .toContainText("Synthetic detected connect failure");
+  const connectToast = failureToast(page, detected.id, "connect", "detected-connect");
+  await expect(connectToast).toContainText("Plugin action failed. Try again.");
+  await expect(connectToast).not.toContainText("Synthetic detected connect failure");
 });
 
 test("T13-P.9EF.D Plugin load failure remains on the Plugin page and never reaches Work Board", async ({ page }) => {
@@ -142,10 +144,12 @@ test("T13-P.9EF.D late row failure keeps plugin identity and survives unrelated 
 
   const firstFailure = firstRow.getByRole("alert");
   await expect(firstFailure).toHaveText("Check · failed");
-  await expect(firstFailure).toHaveAttribute("title", "Synthetic late Owner A failure");
+  await expect(firstFailure).toHaveAttribute("title", "Plugin action failed. Try again.");
+  await expect(firstFailure).not.toContainText("Synthetic late Owner A failure");
   await expect(secondRow.getByRole("alert")).toHaveCount(0);
   const errorToast = failureToast(page, first.id, "check", "row");
-  await expect(errorToast).toContainText("Synthetic late Owner A failure");
+  await expect(errorToast).toContainText("Plugin action failed. Try again.");
+  await expect(errorToast).not.toContainText("Synthetic late Owner A failure");
   await errorToast.locator(".ling-ui-toast-close").click({ force: true });
   await expect(errorToast).toHaveCount(0);
   await expect(firstFailure).toBeVisible();
@@ -208,8 +212,11 @@ test("T13-P.9EF.D Detail and draft failures stay persistent in their Drawer and 
   await details.getByRole("button", { name: "Runtime preview" }).click();
   const detailFailure = details.locator('[data-plugin-action-failure="runtime-preview"]');
   await expect(detailFailure).toContainText("Runtime preview · failed");
-  await expect(detailFailure).toContainText("Synthetic detail preview failure");
+  await expect(detailFailure).toContainText("Plugin action failed. Try again.");
+  await expect(detailFailure).not.toContainText("Synthetic detail preview failure");
   const previewToast = failureToast(page, plugin.id, "runtime-preview", "detail");
+  await expect(previewToast).toContainText("Plugin action failed. Try again.");
+  await expect(previewToast).not.toContainText("Synthetic detail preview failure");
   await previewToast.locator(".ling-ui-toast-close").click({ force: true });
   await expect(detailFailure).toBeVisible();
   await details.getByRole("button", { name: "Close" }).click();
@@ -221,9 +228,11 @@ test("T13-P.9EF.D Detail and draft failures stay persistent in their Drawer and 
   await create.getByRole("textbox", { name: "Command", exact: true }).fill("node");
   await create.getByRole("button", { name: "Add plugin" }).click();
   const createFailure = create.locator('[data-plugin-action-failure="create"]');
-  await expect(createFailure).toContainText("Synthetic draft creation failure");
+  await expect(createFailure).toContainText("Plugin action failed. Try again.");
+  await expect(createFailure).not.toContainText("Synthetic draft creation failure");
   const createToast = failureToast(page, "draft", "create", "create");
-  await expect(createToast).toContainText("Synthetic draft creation failure");
+  await expect(createToast).toContainText("Plugin action failed. Try again.");
+  await expect(createToast).not.toContainText("Synthetic draft creation failure");
   await createToast.locator(".ling-ui-toast-close").click({ force: true });
   await expect(createFailure).toBeVisible();
   await expect(page.locator('[data-plugin-refresh-retained="true"]')).toHaveCount(0);

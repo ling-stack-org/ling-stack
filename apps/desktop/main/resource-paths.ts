@@ -3,6 +3,8 @@ import { resolve } from "node:path";
 import type { App } from "electron";
 
 export interface DesktopResourcePaths {
+  /** Root passed to private bundled-provider path resolution. */
+  readonly resourcesRoot: string;
   readonly webIndexPath: string;
   readonly daemonEntryPath: string;
   readonly previewIndexPath: string;
@@ -15,16 +17,21 @@ export class DesktopResourceResolutionError extends Error {
   }
 }
 
-export async function resolveDesktopResourcePaths(app: Pick<App, "getAppPath" | "isPackaged">): Promise<DesktopResourcePaths> {
+export async function resolveDesktopResourcePaths(
+  app: Pick<App, "getAppPath" | "isPackaged">,
+  packagedResourcesPath: string = process.resourcesPath,
+): Promise<DesktopResourcePaths> {
   const appPath = app.getAppPath();
-  const resourcesRoot = app.isPackaged ? process.resourcesPath : resolve(appPath, "../..");
+  const resourcesRoot = resolveDesktopResourcesRoot(app, packagedResourcesPath);
   const paths: DesktopResourcePaths = app.isPackaged
     ? {
+        resourcesRoot,
         webIndexPath: resolve(resourcesRoot, "web/index.html"),
         daemonEntryPath: resolve(appPath, "dist/daemon/cli.mjs"),
         previewIndexPath: resolve(appPath, "dist/renderer/computer-use-preview/index.html"),
       }
     : {
+        resourcesRoot,
         webIndexPath: resolve(appPath, "../web/dist/index.html"),
         daemonEntryPath: resolve(appPath, "dist/daemon/cli.mjs"),
         previewIndexPath: resolve(appPath, "dist/renderer/computer-use-preview/index.html"),
@@ -35,4 +42,13 @@ export async function resolveDesktopResourcePaths(app: Pick<App, "getAppPath" | 
     throw new DesktopResourceResolutionError(error);
   }
   return paths;
+}
+
+export function resolveDesktopResourcesRoot(
+  app: Pick<App, "getAppPath" | "isPackaged">,
+  packagedResourcesPath: string = process.resourcesPath,
+): string {
+  return app.isPackaged
+    ? resolve(packagedResourcesPath)
+    : resolve(app.getAppPath(), "resources");
 }

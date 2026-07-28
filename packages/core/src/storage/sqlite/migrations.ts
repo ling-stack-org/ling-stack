@@ -212,19 +212,23 @@ const MEDIA_PRODUCTION_STUDIO_MIGRATION_VERSION = 103;
 const MEDIA_PRODUCTION_STUDIO_MIGRATION_NAME = "create_media_production_studio";
 const MEDIA_EXTERNAL_WORKFLOWS_MIGRATION_VERSION = 104;
 const MEDIA_EXTERNAL_WORKFLOWS_MIGRATION_NAME = "create_media_external_workflows";
+const CUA_DRIVER_ACTIVATION_MIGRATION_VERSION = 105;
+const CUA_DRIVER_ACTIVATION_MIGRATION_NAME = "create_cua_driver_activation_state";
+const MCP_AUTHORITY_REVISIONS_MIGRATION_VERSION = 106;
+const MCP_AUTHORITY_REVISIONS_MIGRATION_NAME = "add_mcp_authority_revisions";
 const AI_EVOLUTION_SKILL_LIFECYCLE_MIGRATION_NAME = "repair_ai_evolution_skill_lifecycle";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
+    PRAGMA busy_timeout = 5000;
     PRAGMA journal_mode = WAL;
     PRAGMA foreign_keys = ON;
-    PRAGMA busy_timeout = 5000;
   `);
 }
 
 export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationContext): void {
   const { database } = context;
-    database.exec(`
+  database.exec(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
         version INTEGER PRIMARY KEY,
         name TEXT NOT NULL,
@@ -4968,4 +4972,121 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       }
     }
 
+    const hasCuaDriverActivationMigration = context.hasMigration(CUA_DRIVER_ACTIVATION_MIGRATION_VERSION);
+    if (!hasCuaDriverActivationMigration || !context.hasTable("cua_driver_activation_state")) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS cua_driver_activation_state (
+          plugin_id TEXT PRIMARY KEY,
+          requested_enabled INTEGER NOT NULL CHECK (requested_enabled IN (0, 1)),
+          requested_revision INTEGER NOT NULL CHECK (requested_revision >= 0),
+          activation_epoch INTEGER NOT NULL CHECK (activation_epoch >= 0),
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(plugin_id) REFERENCES managed_plugins(id) ON DELETE CASCADE
+        );
+      `);
+
+      // Preserve legacy user intent when upgrading an existing installation.
+      // External mode remains authoritative over its current effective flag; the
+      // bundled gate is still off unless explicitly enabled by daemon config.
+      database.exec(`
+        INSERT INTO cua_driver_activation_state (
+          plugin_id,
+          requested_enabled,
+          requested_revision,
+          activation_epoch,
+          updated_at
+        )
+        SELECT id, enabled, 0, 0, updated_at
+        FROM managed_plugins
+        WHERE id = 'trusted-local:cua-driver'
+        ON CONFLICT(plugin_id) DO NOTHING;
+      `);
+
+      if (!hasCuaDriverActivationMigration) {
+        context.recordMigration(CUA_DRIVER_ACTIVATION_MIGRATION_VERSION, CUA_DRIVER_ACTIVATION_MIGRATION_NAME);
+      }
+    }
+
+    const hasMcpAuthorityRevisionsMigration = context.hasMigration(MCP_AUTHORITY_REVISIONS_MIGRATION_VERSION);
+    if (!hasMcpAuthorityRevisionsMigration || !context.hasTable("mcp_authority_revisions")) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS mcp_authority_revisions (
+          server_id TEXT PRIMARY KEY,
+          server_revision INTEGER NOT NULL DEFAULT 0 CHECK (server_revision >= 0),
+          tools_revision INTEGER NOT NULL DEFAULT 0 CHECK (tools_revision >= 0)
+        );
+      `);
+      if (!hasMcpAuthorityRevisionsMigration) {
+        context.recordMigration(MCP_AUTHORITY_REVISIONS_MIGRATION_VERSION, MCP_AUTHORITY_REVISIONS_MIGRATION_NAME);
+      }
+    }
+
+    database.exec(`
+      INSERT INTO mcp_authority_revisions (server_id, server_revision, tools_revision)
+      SELECT id, 0, 0 FROM mcp_servers
+      WHERE true
+      ON CONFLICT(server_id) DO NOTHING;
+
+      CREATE TRIGGER IF NOT EXISTS trg_mcp_authority_server_insert
+      AFTER INSERT ON mcp_servers
+      BEGIN
+        INSERT INTO mcp_authority_revisions (server_id, server_revision, tools_revision)
+        VALUES (NEW.id, 1, 0)
+        ON CONFLICT(server_id) DO UPDATE SET
+          server_revision = server_revision + 1;
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_mcp_authority_server_update
+      AFTER UPDATE OF transport_json, enabled, required, startup_timeout_sec,
+        tool_timeout_sec, enabled_tools_json, disabled_tools_json ON mcp_servers
+      WHEN OLD.transport_json IS NOT NEW.transport_json
+        OR OLD.enabled IS NOT NEW.enabled
+        OR OLD.required IS NOT NEW.required
+        OR OLD.startup_timeout_sec IS NOT NEW.startup_timeout_sec
+        OR OLD.tool_timeout_sec IS NOT NEW.tool_timeout_sec
+        OR OLD.enabled_tools_json IS NOT NEW.enabled_tools_json
+        OR OLD.disabled_tools_json IS NOT NEW.disabled_tools_json
+      BEGIN
+        UPDATE mcp_authority_revisions
+        SET server_revision = server_revision + 1
+        WHERE server_id = NEW.id;
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_mcp_authority_server_delete
+      AFTER DELETE ON mcp_servers
+      BEGIN
+        INSERT INTO mcp_authority_revisions (server_id, server_revision, tools_revision)
+        VALUES (OLD.id, 1, 1)
+        ON CONFLICT(server_id) DO UPDATE SET
+          server_revision = server_revision + 1,
+          tools_revision = tools_revision + 1;
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_mcp_authority_tool_insert
+      AFTER INSERT ON mcp_tools
+      BEGIN
+        INSERT INTO mcp_authority_revisions (server_id, server_revision, tools_revision)
+        VALUES (NEW.server_id, 0, 1)
+        ON CONFLICT(server_id) DO UPDATE SET
+          tools_revision = tools_revision + 1;
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_mcp_authority_tool_update
+      AFTER UPDATE ON mcp_tools
+      BEGIN
+        INSERT INTO mcp_authority_revisions (server_id, server_revision, tools_revision)
+        VALUES (NEW.server_id, 0, 1)
+        ON CONFLICT(server_id) DO UPDATE SET
+          tools_revision = tools_revision + 1;
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_mcp_authority_tool_delete
+      AFTER DELETE ON mcp_tools
+      BEGIN
+        INSERT INTO mcp_authority_revisions (server_id, server_revision, tools_revision)
+        VALUES (OLD.server_id, 0, 1)
+        ON CONFLICT(server_id) DO UPDATE SET
+          tools_revision = tools_revision + 1;
+      END;
+  `);
 }

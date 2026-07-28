@@ -23,6 +23,9 @@ plus daemon/API-client data, not from copied Web DOM labels or Web-only helpers.
 Design source of truth:
 
 - [Desktop Shell](../../docs/design/desktop-shell.md)
+- [Bundled Embedded Cua Driver](../../docs/design/cua-driver-bundled-embedded.md)
+- [Bundled Embedded Cua Driver Detailed Design](../../docs/design/cua-driver-bundled-embedded-detailed-design.md)
+- [Bundled Embedded Cua Driver Implementation Plan](../../docs/design/cua-driver-bundled-embedded-implementation-plan.md)
 - [Desktop Computer Use Picture-in-Picture](../../docs/design/desktop-computer-use-picture-in-picture.md)
 - [Desktop Computer Use Picture-in-Picture Detailed Design](../../docs/design/desktop-computer-use-picture-in-picture-detailed-design.md)
 - [Desktop Computer Use Picture-in-Picture Implementation Plan](../../docs/design/desktop-computer-use-picture-in-picture-implementation-plan.md)
@@ -34,12 +37,12 @@ implementation path for this slice; reconsidering it would be a separate archite
 decision after the daemon and capture contracts stabilize.
 
 The presentation contract targets macOS and Windows, but real source support is gated
-per platform. The selected Windows provider is the maintained open-source Cua Driver Rust
-provider (`cua-driver-rs-v0.8.3`, exact reviewed allowlist). Its current upstream artifact
-is an unsigned prerelease, so public release remains blocked even after internal/beta VM
-acceptance unless that risk is explicitly accepted or a signed stable provider replaces it.
-Windows real capture remains blocked until the provider is installed and the x64 VM
-source/lifecycle matrix passes. The main window
+per platform. The current Windows implementation baseline resolves the exact reviewed
+upstream `cua-driver-rs-v0.8.3` asset externally; that reference asset is an unsigned
+prerelease and still requires separate installation. The approved target replaces that
+distribution boundary with Ling's locked source-built and signed `0.8.3 (Ling build 1)`
+inside packaged Desktop. Windows release readiness remains blocked until Windows
+colleagues run the signed bundled x64 VM source/lifecycle matrix. The main window
 reuses the shared React application while the PiP uses a small isolated renderer plus a
 narrow capture adapter. Hide or window
 close must never stop the underlying Computer Use session; stopping remains a separate
@@ -53,11 +56,195 @@ same workspace. Startup is single-flight, and headless smoke remains fail-closed
 After a ten-second zero-frame deadline, V1 does not listen for resume/unlock/user-active.
 Recovery requires explicit Show/Retry, a new descriptor identity, or an explicit Desktop
 restart; the Computer Use task continues throughout.
+This rule is only about PiP presentation. The bundled Windows provider readiness monitor
+must still revoke tools on lock/session/input-desktop change and start a fresh provider
+generation after unlock; that recovery never auto-opens PiP.
 
 Packaged Desktop builds copy the bundled Cua Driver plugin shell into
 `resources/bundled/cua-driver`. That resource contains only the Ling plugin
 manifest, MCP configuration metadata, and README. It deliberately does not include the
 user-installed `cua-driver` binary, native app bundles, credentials, or permission state.
+
+The closed-gate runtime foundation now includes a fixed-path strict trust-policy loader,
+one process-wide Darwin/Win32 platform owner and an authenticated non-ready availability
+projection. The availability path may hide tools and report permission/session/platform
+repair state; it cannot report ready or replace lease/activation authority.
+
+The production package scripts now run through one governed wrapper. Ordinary builds keep
+their previous external-only Electron Builder configuration. A build can add the provider
+only when both `LING_CUA_DRIVER_PACKAGE_PROVIDER=1` and an absolute
+`LING_CUA_DRIVER_SOURCE_BUILD_ROOT` are present. That path invokes the production stager,
+copies only its verified platform output into a private temporary resource root, generates
+`runtime-trust-policy.json` plus `packaged-provider-capabilities.json`, and passes only that
+root and the verified pre-sign digest to Electron Builder. `afterPack` signs/seals the
+provider, platform signing preserves the sealed tuple, and `afterSign`/final-artifact hooks
+reverify it. Signing state is bound per packager output and architecture. macOS packaging
+has one arm64 output; Windows retains one x64 output. The package intent lives in
+the packaged `package.json` inside signed `app.asar`; Electron's embedded ASAR-integrity
+validation binds those bytes to the host executable. Both provider-bearing and external-only
+packages set `asar: true`, `enableEmbeddedAsarIntegrityValidation: true` and
+`onlyLoadAppFromAsar: true`. A provider-bearing intent remains bundled-authoritative when
+its loose capability or runtime-policy replica is missing, malformed or digest-mismatched:
+runtime start stays closed and never falls back to `PATH`, Homebrew or
+`/Applications/CuaDriver.app`.
+
+The Builder fixture uses the real final target shapes: macOS runs `--mac dmg zip` and must
+verify exactly `outer-dmg` plus `outer-zip`; Windows runs `--win nsis` and must verify exactly
+`outer-nsis`. Generated `.blockmap` sidecars are not verified artifacts and do not count
+toward those roles. The macOS fixture proves the final artifacts retain all three private
+resources and the sealed provider digest. Real release signing and Windows hosted/real-machine
+acceptance remain open.
+
+This plumbing does not promote a payload. The committed `provider-lock.json` still has no
+enabled platform and the repository carries no native provider executable, so normal
+packages still omit both authority documents and the final payload and remain
+`external_local`. The approved next step is to attach repeated native-build evidence,
+promote the platform lock, and then produce the real macOS and Windows package candidates.
+Windows starts with the existing per-user/asInvoker standard integrity tier; UIAccess-only
+elevated/UWP pixel input remains a separate secure-helper release decision. Until a
+platform candidate passes its completion gates, do not remove the external provider.
+
+The pre-sign package-staging path is deliberately opt-in while that lock remains closed:
+
+```bash
+corepack pnpm --filter @ling-stack/desktop stage:cua-driver-provider -- \
+  --platform darwin \
+  --source-root <verified-native-source-build-root> \
+  --output-root <fresh-electron-staging-root>
+```
+
+This command is pre-sign staging only. It first runs the existing source-build verifier,
+requires the source `provider-lock.json` bytes to match the independent checked-in lock,
+and then validates that lock's enabled platform and pre-sign digest. The production
+`stageCuaDriverProvider()` and `verifyCuaDriverSourceInput()` entry points always use that
+committed lock root and the real verifier; caller-supplied `trustedResourceRoot` or
+`sourceBuildVerifier` fields are rejected before use. Fixture trust is available only from
+the test-only stager factory and is not reachable from the CLI or environment. The parent
+stage passes its bounded provider snapshot digest to the child verifier, which compares that
+digest with its own bounded snapshot. In package-staging mode the verifier does not execute
+the provider candidate at all; locked version evidence must instead agree across the
+attestation, promotion input and provider lock already bound to those exact bytes. The outer
+source verifier uses the owned process-tree runner. Standalone source-build verification
+retains an owned `--version` probe: Unix uses a detached process group and Windows uses the
+native `KILL_ON_JOB_CLOSE` Job Object path, so timeout, abort or output overflow fences owned
+descendants instead of settling with an orphan. Source-build attestation or promotion JSON
+cannot enable packaging by itself. The command copies only the current platform binary
+plus lock/license/notices into
+`providers/cua-driver/0.8.3-ling.1`, and returns the exact Electron Builder
+`extraResources` entry that keeps the provider outside `app.asar`. Publication uses the
+checked-in Darwin/Win32 native no-replace publisher and fails closed instead of overwriting
+an existing destination. The native helper is built and identity-preflighted before a temp
+payload tree exists. Darwin invokes the held helper vnode through its volume/file identity;
+the preflight executes a harmless probe through that path and fails before payload creation
+when the platform cannot resolve it. Standalone preflight invocations recheck helper
+identity afterward, and the held RPC helper is rechecked when its lease session closes. The
+build-only helper root contains no provider/package bytes and is deliberately
+left to OS temp reclamation; staging performs no path-based deletion of that root. The final
+signed/prebuilt helper slice removes this temporary compiler root. After that preflight,
+each production stage or explicit cleanup session holds one cross-process parent lease
+while Node runs its ordered output-parent workflow. The lease holder is also a bounded
+synchronous native RPC actor: the same process that owns `flock` or the Windows mutex
+performs every native inspect, private-security, verification, publish and removal
+operation. Production does not expose those mutators as standalone native CLI commands, so
+no sibling native mutation helper can outlive the lease. This strong lifetime guarantee is
+deliberately limited to native mutation. Node still performs JavaScript `mkdir`, copy and
+write work; if Node exits between RPCs, an incomplete payload or quarantine may remain and
+the next lease must inspect it under the normal bounded residue quota.
+
+On macOS the helper opens the exact no-link output-parent directory and applies `flock`
+directly to that already-open directory vnode. Staging creates no `.ling` lock file and
+needs no lock-control entry or quota exclusion. On Windows a
+`Global\\LingCuaStage-*` mutex is derived from the exact parent `FILE_ID`; its protected DACL
+contains only the current user, SYSTEM and Administrators. `WAIT_ABANDONED` records only a
+waiter that was already present when a Windows mutex owner died; it is not a persistent
+crash journal and a later acquirer may
+legitimately report `false`. Clean idle EOF or explicit release drains queued/in-flight RPC
+work and unlocks normally. If the caller dies during an RPC, the holder keeps the lock until
+that bounded operation finishes, then observes EOF and exits. If the holder dies during an
+RPC, the in-process native mutation stops and the OS releases its lock. RPC timeout,
+protocol failure or receipt mismatch invalidates the session by killing the holder and
+waiting for its actual exit before the capability is discarded. Any payload or quarantine
+residue stays on disk and every next lease performs the same bounded inspection regardless
+of the abandonment flag. Each RPC has a fixed 30-second native watchdog so a stuck
+in-flight operation cannot leave the parent locked indefinitely.
+
+Publication also reopens the canonical parent path without following links immediately
+before commit and again after observing the commit result. The named path must still match
+the held vnode/`FILE_ID`: a pre-commit replacement is `not_committed`, while a replacement
+observed after the rename is `ambiguous` and can never be reported as `committed`. The
+replacement path is never mutated; if the rename already happened, the published identity
+remains only under the displaced held parent for diagnosis.
+
+Immediately after creating a payload temp root, staging reads the exact native parent/root
+identities, requires the parent to equal the held lease identity, and passes both values as
+mandatory expectations to `secure-private`. Each payload temp root is then secured and
+reverified as current-EUID mode
+`0700` on macOS or a protected current-user/SYSTEM/Administrators DACL on Windows before
+publication. Native commit confirmation is recorded inside the guarded publish callback. If
+the lease is lost by either the inner or outer guard after that confirmation, staging reports
+an ambiguous `published=true` failure bound to the final output root, exposes no temporary
+cleanup receipt and never removes the final root. A pre-commit failure retains the exact
+tree for diagnosis. With a healthy lease, ordinary failures observe the retained root and
+return its exact identity plus bounded inventory in `error.cleanup`. Lease loss after
+identity capture may return only `residuePath` plus `residueIdentity`; lease loss after
+`mkdir` but before capture may return only `residuePath`. The next lease can use the
+read-only listing flow below to recover any missing identity or inventory. Residue count,
+entry count and cumulative bytes are bounded, so repeated failures stop before creating
+another tree when a quota is exhausted. Both original temp residues and retryable cleanup-
+quarantine/rollback residues participate in that quota. Cleanup is explicit, never
+path-only, and requires a recorded or freshly listed native identity:
+
+```bash
+corepack pnpm --filter @ling-stack/desktop stage:cua-driver-provider -- \
+  --list-residue \
+  --output-root <original-electron-staging-root>
+```
+
+`listCuaDriverStagingResidues()` and the matching CLI run under the same parent lease and
+recover the exact identity, security state and bounded inventory for up to four retained
+roots when a hard process exit prevented an `error.cleanup` receipt or lease loss left an
+incomplete one. A larger legacy set is reported as truncated; clean one listed identity
+and repeat. Listing never hardens or deletes a root.
+
+```bash
+corepack pnpm --filter @ling-stack/desktop stage:cua-driver-provider -- \
+  --cleanup-residue <error.cleanup.residuePath> \
+  --output-root <original-electron-staging-root> \
+  --expected-residue-identity <error.cleanup.residueIdentity>
+```
+
+After the same output-bound path check, the corresponding
+`cleanupCuaDriverStagingResidue()` API acquires the parent lease before reading or mutating
+residue state. It first verifies the recorded parent/root identities and private-security
+profile. If a failure occurred before `secure-private`
+completed, cleanup retries identity-bound security hardening. If that also fails, the only
+permitted fallback is native `remove-unsecured-empty`, which deletes only the exact
+current-user-owned, no-reparse, completely empty root; a non-empty, replaced or otherwise
+unsafe root is retained. Cleanup then performs the identity-bound native quarantine rename
+and second inventory check. Final removal is a native handle-relative operation: it
+completes a bounded deep-tree preflight against the expected root/parent identities, entry
+count and total bytes before deleting any member, then returns matching
+removed-entry/byte evidence.
+If removal or quarantine commit fails, staging identity-checks and rolls the same tree back
+when safe; an ambiguous quarantine is retained as a retryable, quota-counted receipt. An
+identity mismatch is never deleted. A successful publication leaves no temp residue.
+Staging never creates a provider lock, seal, catalog, signature, native final-identity
+verdict or release claim. Its return value is descriptive
+and is not wired into the default package configuration. The checked-in scaffold lock has
+no enabled platform or native binary, so it intentionally cannot stage and normal package
+commands remain unchanged with the Darwin and Win32 bundled-provider production gates off.
+Final signing, `Ling Stack Setup.exe` inclusion, production runtime wiring, and Windows
+hosted-runner/real-machine validation remain open; the Win32 path has not been validated on
+a hosted Windows runner in this slice. In particular, neither the Windows native-helper
+compile/`Global` parent-mutex/DACL/`WAIT_ABANDONED` path nor the Windows owned-process
+runtime/Job Object path has hosted execution evidence yet. This pre-sign build tool trusts
+the current build account plus the checked-in verifier/compiler inputs; it does not claim
+protection from hostile code already executing
+as that account. Final signed helper/bootstrap identity belongs to the signing-ladder slice.
+Current `external_local`
+installations, including one that resolves through
+`/Applications/CuaDriver.app`, must remain installed until `bundled_embedded` is wired and
+accepted on the active platform.
 
 The Desktop main window must load the shared Web application instead of copying its page
 tree. This lets the shell, contracts, coordinator, and fake PiP renderer land before the
@@ -68,6 +255,8 @@ Focused verification commands:
 
 ```bash
 corepack pnpm --filter @ling-stack/desktop test:renderer
+corepack pnpm --filter @ling-stack/desktop test:cua-driver-package-staging
+node --test apps/desktop/tests/cua-driver-package-publisher.test.mjs
 node --test apps/desktop/tests/*.test.mjs
 node --expose-gc apps/desktop/tests/computer-use-performance-harness.mjs
 corepack pnpm --filter @ling-stack/desktop performance:computer-use:real
@@ -108,9 +297,9 @@ Latest confirmed final pre-commit local evidence (2026-07-17, current worktree):
   typecheck/lint, and actionlint all pass. `docs/release/evidence/**` is included in the Desktop
   artifact workflow path filters, so a schema-only pull request or `main` push runs the schema
   gate;
-- packaged arm64/x64 `.app` bundles and both mounted DMGs pass fake, real-window, and
+- the packaged arm64 `.app` bundle and mounted DMG pass fake, real-window, and
   primary-display provenance smokes;
-- Cua native-window handoff passes in dev Electron and both packaged `.app` bundles.
+- Cua native-window handoff passes in dev Electron and the packaged arm64 `.app` bundle.
   Electron source ID is used only as the test oracle; the Ling descriptor carries only
   the Cua provider PID and `nativeWindowId`, with no title, foreground-window, or z-order
   fallback;
@@ -131,28 +320,19 @@ Latest confirmed final pre-commit local evidence (2026-07-17, current worktree):
   default icon. The Windows installer is explicitly one-click, per-user, `asInvoker`, and
   contains no elevation helper.
 
-Historical unsigned artifact SHA-256 baseline at `e20777f5` (not hashes of the current diff):
-
-| Artifact | SHA-256 |
-| --- | --- |
-| arm64 DMG | `e42b944b84bf67174d18dec422637cbde6988c4d2283f503597b09aae50727fb` |
-| x64 DMG | `a9e8aa208af6dc9baff96b9550166095660adc1b596c4f86544287ac0ca19258` |
-| arm64 ZIP | `6c9ac51d212a7a4b930cf8bcb8c93f7e4b4f07bb17b93d1205f01b2ff99face5` |
-| x64 ZIP | `49a8bc3d5dce9def59c49b7a53f9fb31fea72e960dd9e99f806809d995bb695e` |
-| Windows x64 unpacked app | `3f6ad1bbb45816bb46b15d2e23eb7a60843eb2a8fbc25ae0e541fb29af1d596e` |
-| Windows x64 NSIS | `52b115f2ef02394ed0e352c28f60052ec572eec02f708c2a942bd64d9b4de5e2` |
-
-Both DMGs and ZIPs pass their integrity checks. The unpacked Windows application and NSIS
-PE certificate-table sizes are both **0**, and no Apple Developer ID identity is installed.
+Historical universal/x64 macOS artifact hashes are no longer release inputs. The supported
+distribution matrix is `macOS arm64` plus `Windows x64`; every run regenerates installer
+checksums under the canonical `Ling-Stack-*` filenames. The unpacked Windows application and
+NSIS PE certificate-table sizes are both **0**, and no Apple Developer ID identity is installed.
 Developer ID signing/notarization/Gatekeeper, clean-host TCC/capture-indicator evidence,
 Windows interactive provider/DPI/dual-display execution,
 Authenticode/SmartScreen/signed NSIS, hosted signed CI execution, clean-machine install/update/uninstall,
 and VoiceOver/Narrator/NVDA evidence are still open release gates.
 
 Local release tooling is present but deliberately cannot close those gates by itself:
-`verify-macos-signed-candidate.mjs` requires a content-bound arm64/x86_64 app+DMG+ZIP matrix,
-`run-macos-tcc-acceptance.mjs` live-reverifies that candidate and writes eight architecture-
-specific case reports, `run-macos-tcc-revocation.mjs` derives the interactive revoke transition,
+`verify-macos-signed-candidate.mjs` requires a content-bound arm64 app+DMG+ZIP matrix,
+`run-macos-tcc-acceptance.mjs` live-reverifies that candidate and writes four arm64 case
+reports, `run-macos-tcc-revocation.mjs` derives the interactive revoke transition,
 `run-macos-signed-performance.mjs` profiles the packaged signed executable, and
 `finalize-macos-signed-acceptance.mjs` rehashes, live-reverifies, and cross-binds final evidence
 while deliberately stopping at `MANUAL_REVIEW_REQUIRED`.

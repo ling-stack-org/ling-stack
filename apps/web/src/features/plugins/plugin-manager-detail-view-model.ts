@@ -1,6 +1,7 @@
 import type { Translate } from "../../i18n.js";
 import type { ManagedPluginLinkedResource, ManagedPluginView } from "../../types.js";
 import { buildCuaHealthView } from "./plugin-manager-cua-view-model.js";
+import { buildBundledCuaDriverView } from "./plugin-manager-bundled-cua-view-model.js";
 import type { PluginManagerCopy } from "./plugin-manager-copy.js";
 import type {
   PluginDetailFieldView,
@@ -17,12 +18,13 @@ export function buildPluginDetailView(
   t: Translate,
 ): PluginDetailView {
   const cuaHealth = buildCuaHealthView(plugin, t);
+  const bundledCua = buildBundledCuaDriverView(plugin, t);
   return {
-    sourceVersion: `${row.sourceLabel} · ${plugin.version}`,
+    sourceVersion: bundledCua?.sourceVersion ?? `${row.sourceLabel} · ${plugin.version}`,
     description: row.description,
-    overviewFields: buildOverviewFields(plugin, row, t),
-    failureReason: cuaHealth?.failureReason ?? genericFailureReason(plugin, t),
-    repairHint: cuaHealth?.repairHint ?? genericRepairHint(plugin, t),
+    overviewFields: bundledCua?.overviewFields ?? buildOverviewFields(plugin, row, t),
+    failureReason: bundledCua?.failureReason ?? cuaHealth?.failureReason ?? genericFailureReason(plugin, t),
+    repairHint: bundledCua?.repairHint ?? cuaHealth?.repairHint ?? genericRepairHint(plugin, t),
     capabilities: plugin.contributions.map((contribution) => ({
       id: contribution.id,
       label: contribution.label,
@@ -34,7 +36,8 @@ export function buildPluginDetailView(
     trustSummary: plugin.trustSummary,
     trustFields: buildTrustFields(plugin, t),
     runtime: plugin.runtimePreview ? buildRuntimeView(plugin, copy, t) : undefined,
-    technicalFields: buildTechnicalFields(plugin, cuaHealth?.technicalFields ?? [], Boolean(cuaHealth), t),
+    technicalFields: bundledCua?.technicalFields
+      ?? buildTechnicalFields(plugin, cuaHealth?.technicalFields ?? [], Boolean(cuaHealth), t),
     hasLinkedMcp: plugin.linkedResources.some((resource) => resource.kind === "mcp-server" && resource.present),
   };
 }

@@ -14,6 +14,8 @@ interface DesktopComputerUseTestSummary {
   readonly targetLabel: string;
   readonly previewAvailable: boolean;
   readonly visible: boolean;
+  readonly activePageId?: string;
+  readonly pageCount?: number;
 }
 
 interface DesktopNavigationTestIntent {
@@ -63,6 +65,10 @@ interface DesktopComputerUseTestControl {
     readonly reportedLocales: readonly ("en-US" | "zh-CN")[];
     readonly reportedThemes: readonly DesktopThemeTestInput[];
     readonly selectedConversationId?: string;
+    readonly selectedDeckOwner?: {
+      readonly surfaceKind: "channel" | "normal_conversation" | "teammate_direct";
+      readonly ownerId: string;
+    };
     readonly showCalls: readonly string[];
     readonly stopCalls: readonly string[];
     readonly subscribeCalls: number;
@@ -81,6 +87,10 @@ test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
     let selectedConversationId: string | undefined;
+    let selectedDeckOwner: {
+      readonly surfaceKind: "channel" | "normal_conversation" | "teammate_direct";
+      readonly ownerId: string;
+    } | undefined;
     let latestHostLayout: DesktopComputerUseTestHostLayout | undefined;
     const reportedLocales: Array<"en-US" | "zh-CN"> = [];
     const reportedThemes: DesktopThemeTestInput[] = [];
@@ -148,6 +158,7 @@ test.beforeEach(async ({ page }) => {
           reportedLocales: [...reportedLocales],
           reportedThemes: [...reportedThemes],
           selectedConversationId,
+          selectedDeckOwner,
           showCalls: [...showCalls],
           stopCalls: [...stopCalls],
           subscribeCalls,
@@ -190,6 +201,13 @@ test.beforeEach(async ({ page }) => {
         computerUse: {
           reportLocale(locale: "en-US" | "zh-CN") {
             reportedLocales.push(locale);
+          },
+          reportSelectedDeckOwner(owner?: {
+            readonly surfaceKind: "channel" | "normal_conversation" | "teammate_direct";
+            readonly ownerId: string;
+          }) {
+            selectedDeckOwner = owner;
+            selectedConversationId = owner?.ownerId;
           },
           reportSelectedConversation(conversationId?: string) {
             selectedConversationId = conversationId;
@@ -245,6 +263,10 @@ test.beforeEach(async ({ page }) => {
   await page.goto("/");
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Desktop bridge test" }).click();
   await expect.poll(async () => (await desktopControlSnapshot(page)).selectedConversationId).toBeTruthy();
+  await expect.poll(async () => (await desktopControlSnapshot(page)).selectedDeckOwner).toEqual({
+    surfaceKind: "channel",
+    ownerId: DESKTOP_BRIDGE_THREAD_ID,
+  });
 });
 
 test("reports initial and runtime locale changes through the narrow Desktop capability", async ({ page }) => {
@@ -424,10 +446,18 @@ test("mounts the current Computer Use entry in channel, normal conversation, and
 
   await openDesktopBridgeNormalConversation(page);
   await expect.poll(async () => (await desktopControlSnapshot(page)).selectedConversationId).toBe(DESKTOP_BRIDGE_THREAD_ID);
+  await expect.poll(async () => (await desktopControlSnapshot(page)).selectedDeckOwner).toEqual({
+    surfaceKind: "normal_conversation",
+    ownerId: DESKTOP_BRIDGE_THREAD_ID,
+  });
   await expect(page.locator(".normal-conversation-header").getByLabel("Computer Use preview controls")).toBeVisible();
 
   await openDesktopBridgeTeammate(page);
   await expect.poll(async () => (await desktopControlSnapshot(page)).selectedConversationId).toBe(DESKTOP_BRIDGE_TEAMMATE_THREAD_ID);
+  await expect.poll(async () => (await desktopControlSnapshot(page)).selectedDeckOwner).toEqual({
+    surfaceKind: "teammate_direct",
+    ownerId: DESKTOP_BRIDGE_TEAMMATE_THREAD_ID,
+  });
   await emitComputerUseSummary(page, { sessionId: "computer-use-teammate" });
   await expect(page.locator(".teammate-chat-header").getByLabel("Computer Use preview controls")).toBeVisible();
 });
@@ -487,6 +517,10 @@ test("remounts the header slot without duplicating the bridge subscription or lo
 
   await openDesktopBridgeChannel(page);
   await expect.poll(async () => (await desktopControlSnapshot(page)).selectedConversationId).toBe(DESKTOP_BRIDGE_THREAD_ID);
+  await expect.poll(async () => (await desktopControlSnapshot(page)).selectedDeckOwner).toEqual({
+    surfaceKind: "channel",
+    ownerId: DESKTOP_BRIDGE_THREAD_ID,
+  });
   const channelControls = page.locator(".channel-header").getByLabel("Computer Use preview controls");
   await expect(channelControls.getByRole("button", { name: "Hiding" })).toBeDisabled();
   await expect.poll(async () => await desktopControlSnapshot(page)).toMatchObject({

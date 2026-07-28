@@ -1,0 +1,164 @@
+{
+  "schemaVersion": 1,
+  "componentId": "cua-driver-source-build",
+  "distributionRevision": "ling.1",
+  "productVersionLabel": "0.8.3 (Ling build 1)",
+  "providerLockRelativePath": "provider-lock.json",
+  "upstreamBuild": {
+    "sourceDateEpoch": 1784158114,
+    "workspaceRoot": "libs/cua-driver/rust",
+    "cargoLockSha256": "098b0527c35def4fdd1d08e5dd3d1b0d5f5dda9a04b1888ec1bf15b52311c51b",
+    "licensePath": "LICENSE.md"
+  },
+  "referenceArtifacts": {
+    "darwin": {
+      "filename": "cua-driver-rs-0.8.3-darwin-universal-binary.tar.gz",
+      "sizeBytes": 15320898,
+      "sha256": "a2a29f3ccbd45989819df639d60fa68ac6f28b844f74d7d2b0a1495e4359c6a1",
+      "member": "cua-driver",
+      "binarySizeBytes": 42324640,
+      "binarySha256": "c1c015ccceda4880b9e171dc438700a8276af0eeecfdf0bb4b3fb23298ae7305",
+      "minimumOSVersion": "13.0",
+      "sdkVersion": "26.5",
+      "identifier": "cua-driver",
+      "teamId": "YCK386LBJ7",
+      "authority": "Developer ID Application: Cua AI, Inc. (YCK386LBJ7)",
+      "runtimeVersion": "26.5.0",
+      "entitlements": {
+        "com.apple.security.automation.apple-events": true,
+        "com.apple.security.device.screen-capture": true
+      },
+      "usage": "reference_only_never_packaged"
+    },
+    "win32X64": {
+      "filename": "cua-driver-rs-0.8.3-windows-x86_64.zip",
+      "sizeBytes": 10585087,
+      "sha256": "6acdc84b98629fcd0be2368cc16565c18d5f21d9dedd4e10fdb6f58547fce9d0",
+      "mainMember": "cua-driver-rs-0.8.3-windows-x86_64/cua-driver.exe",
+      "mainSizeBytes": 19417088,
+      "mainSha256": "3cc33572defac29e23bc07e211c20245da9f6ebe8e6481f865b31534b1de8cee",
+      "mainManifestSha256": "c9292d0a7640c5a9b7eaa2df68410900a0ebf475b0acee6087a95afb2733de9e",
+      "uiaMember": "cua-driver-rs-0.8.3-windows-x86_64/cua-driver-uia.exe",
+      "uiaSizeBytes": 8238592,
+      "uiaSha256": "1b35a27d41008507d66f819248751b9e79a15c9e6e03390c56749c6fe5daca1c",
+      "uiaManifestSha256": "ade4fdc1fa2c2227deef697e3867f0ca1e20a478fcc1564103562f1683161ed7",
+      "usage": "reference_only_never_packaged"
+    }
+  },
+  "patchSet": {
+    "id": "ling-managed-embedded-v1",
+    "manifest": "patches/ling-managed-embedded-v1/series.json",
+    "sha256": "87b6b71942bc93d33ba293ffcc67e245aefd43a416bbf9e5516e2dbc1de43936",
+    "implementationStatus": "runtime_integrated"
+  },
+  "toolchain": {
+    "rustcVersion": "1.97.1",
+    "cargoVersion": "1.97.1",
+    "rustToolchainFile": "toolchains/rust-toolchain.toml",
+    "darwin": {
+      "runner": "ling-cua-driver-macos-arm64-v1",
+      "developerDir": "/Applications/Xcode.app/Contents/Developer",
+      "xcodeVersion": "26.6",
+      "xcodeBuildVersion": "17F113",
+      "macOSSDKVersion": "26.5",
+      "deploymentTarget": "13.0",
+      "targets": ["aarch64-apple-darwin"],
+      "postLinkIdentityNormalization": {
+        "algorithm": "sha256-zeroed-lc-uuid-and-code-signature-v1",
+        "adHocIdentifier": "ling-cua-driver-presign",
+        "codesignPath": "/usr/bin/codesign"
+      },
+      "swiftArchiveNormalization": {
+        "section": "__LLVM,__swift_modhash",
+        "dwarfSegment": "__DWARF",
+        "finalMetadata": "ling-cua-final-v1",
+        "finalRelink": {
+          "strategy": "bounded-canonical-source-identity-v1",
+          "cleanPackage": "cua-driver",
+          "targets": {
+            "aarch64-apple-darwin": {
+              "expectedSourceSha256": "af7a2f9bfabe98704bafca0f2c7f6e2ae4e9f53fe6653d5cd8cea44fc25e103d",
+              "maxAttempts": 32
+            }
+          }
+        },
+        "linkerFlags": ["-reproducible"],
+        "archives": [
+          { "archive": "libapple_cf.rlib", "machoMembers": 19, "normalizedSections": 13, "normalizedDwarfSections": 130 },
+          { "archive": "libscreencapturekit.rlib", "machoMembers": 21, "normalizedSections": 10, "normalizedDwarfSections": 100 }
+        ]
+      }
+    },
+    "win32X64": {
+      "runner": "ling-cua-driver-windows-x64-v1",
+      "visualStudioVersion": "17.14.37502.11",
+      "msvcToolsetVersion": "14.44.35211",
+      "windowsSdkVersion": "10.0.26100.0",
+      "target": "x86_64-pc-windows-msvc"
+    }
+  },
+  "sourceBuildPlatforms": ["darwin", "win32-x64"],
+  "platformOutputs": {
+    "darwin": {
+      "status": "awaiting_native_reproducibility_evidence",
+      "artifactRelativePath": "darwin/ling-cua-driver",
+      "architectures": ["arm64"],
+      "binarySha256BeforeSigning": null
+    },
+    "win32X64": {
+      "status": "awaiting_native_reproducibility_evidence",
+      "artifactRelativePath": "win32-x64/payload/ling-cua-driver.exe",
+      "auditArtifactRelativePath": "audit/win32-x64/cua-driver-uia.exe",
+      "architecture": "x86_64",
+      "mainSha256BeforeSigning": null,
+      "uiaAuditSha256BeforeSigning": null,
+      "uiaPackaged": false
+    }
+  },
+  "runtime": {
+    "args": ["mcp", "--embedded", "--host-bundle-id", "com.lingstack.desktop"],
+    "stateHomeEnvironmentVariable": "CUA_DRIVER_STATE_HOME",
+    "hostProcessIdEnvironmentVariable": "CUA_DRIVER_HOST_PID",
+    "childInstanceNonceEnvironmentVariable": "CUA_DRIVER_CHILD_INSTANCE_NONCE",
+    "leaseGenerationEnvironmentVariable": "CUA_DRIVER_LEASE_GENERATION",
+    "stateSchemaVersion": 1,
+    "telemetryEnabled": false,
+    "startupUpdateCheckEnabled": false,
+    "managedUpdaterToolsAllowed": false,
+    "managedDeniedTools": [
+      "check_for_update"
+    ],
+    "managedReadinessMethod": "ling/managed_readiness",
+    "managedReadinessChangedNotification": "ling/managed_readiness_changed",
+    "healthProbeSkip": [
+      "ax_capability",
+      "bundle_identity",
+      "screen_capture_capability",
+      "tcc_accessibility",
+      "tcc_screen_recording"
+    ],
+    "readinessHeartbeatMs": 1000,
+    "defaultIntegrityCoverage": "standard",
+    "requiredHostIntegrityLevel": "medium",
+    "requiredProviderIntegrityLevel": "medium",
+    "killOnJobCloseRequired": true,
+    "limitations": ["elevated_pixel_input", "uwp_send_input"],
+    "uiaHelperActivation": "not-packaged-until-secure-path-contract",
+    "contentObserved": false
+  },
+  "compatibility": {
+    "mcpClientSdk": "@modelcontextprotocol/sdk@1.29.0",
+    "clientInitializeProtocolVersion": "2025-11-25",
+    "serverInitializeProtocolVersion": "2025-06-18",
+    "healthSchemaVersion": "1",
+    "toolsListSha256": null
+  },
+  "packagingGate": {
+    "eligible": false,
+    "reasons": [
+      "native same-platform repeated-build pre-sign digests are not recorded",
+      "managed state, EOF, readiness, lifetime and structured-capability tests have not run on both locked native toolchains",
+      "tools-list digest and platform binary manifest digests are not recorded"
+    ]
+  }
+}

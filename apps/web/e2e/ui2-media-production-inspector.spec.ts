@@ -404,6 +404,10 @@ async function assertTypedIconButton(button: Locator, label: string): Promise<vo
   const box = await button.boundingBox();
   expect(box?.width ?? 0).toBeGreaterThanOrEqual(32);
   expect(box?.height ?? 0).toBeGreaterThanOrEqual(32);
+  await button.evaluate((element) => (element as HTMLButtonElement).blur());
+  await button.page().mouse.move(0, 0);
+  await expect(button.page().getByRole("tooltip")).toHaveCount(0);
+  await button.page().waitForTimeout(200);
   await button.hover();
   const tooltip = button.page().getByRole("tooltip").filter({ hasText: label });
   await expect(tooltip).toBeVisible();

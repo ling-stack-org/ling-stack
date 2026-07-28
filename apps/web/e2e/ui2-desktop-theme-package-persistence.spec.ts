@@ -810,6 +810,7 @@ async function installDesktopHarness(page: Page, options: DesktopHarnessOptions)
         computerUse: {
           reportLocale() {},
           reportSelectedConversation() {},
+          reportSelectedDeckOwner() {},
           reportHostLayout() {},
           show: async () => ({ accepted: true }),
           hide: async () => ({ accepted: true }),

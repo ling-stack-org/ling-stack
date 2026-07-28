@@ -9,8 +9,15 @@ import type {
 } from "@ling-stack/core";
 import { BUNDLED_CUA_DRIVER_PLUGIN_ID } from "../plugins/bundled-index.js";
 import {
+  createCuaDriverDescriptor,
+  CUA_DRIVER_BUNDLED_LOGICAL_ENDPOINT,
   CUA_DRIVER_MCP_SERVER_ID,
+  CUA_DRIVER_PLUGIN_ID,
 } from "../plugins/presets.js";
+import {
+  isBundledEmbeddedCuaDriverRuntime,
+  isBundledEmbeddedCuaDriverSelected,
+} from "../plugins/cua-driver-runtime-mode.js";
 import {
   CUA_DRIVER_REQUIRED_HEALTH_CHECK_NAMES,
   CUA_DRIVER_SUPPORTED_VERSIONS,
@@ -25,6 +32,12 @@ export function resolveEligibleCuaDriverProjectionServerIds(input: {
   readonly now: string;
   readonly authorizedServerIds: readonly string[];
   readonly platform?: NodeJS.Platform;
+  readonly cuaDriverRuntimeAuthority?: {
+    readonly enabled: boolean;
+    readonly workspaceCwd: string;
+    readonly platform: NodeJS.Platform;
+    readonly hasCurrentLease: () => boolean;
+  };
 }): readonly string[] {
   if (
     input.runtimeSnapshot.runId !== input.runId
@@ -38,6 +51,7 @@ export function resolveEligibleCuaDriverProjectionServerIds(input: {
     descriptors: input.descriptors,
     now: input.now,
     platform: input.platform,
+    cuaDriverRuntimeAuthority: input.cuaDriverRuntimeAuthority,
   });
   if (!provider || !input.authorizedServerIds.includes(provider.server.id)) {
     return [];
@@ -48,10 +62,17 @@ export function resolveEligibleCuaDriverProjectionServerIds(input: {
   );
   if (
     !capability
-    || capability.package?.pluginId !== provider.descriptor.id
-    || capability.package.sourceKind !== provider.descriptor.sourceKind
-    || capability.package.version !== provider.descriptor.version
-    || capability.package.status !== "installed"
+  ) {
+    return [];
+  }
+  if (
+    provider.descriptor.id !== CUA_DRIVER_PLUGIN_ID
+    && (
+      capability.package?.pluginId !== provider.descriptor.id
+      || capability.package.sourceKind !== provider.descriptor.sourceKind
+      || capability.package.version !== provider.descriptor.version
+      || capability.package.status !== "installed"
+    )
   ) {
     return [];
   }
@@ -69,7 +90,27 @@ export function resolveManagedCuaDriverProvider(input: {
   readonly descriptors: readonly ManagedPluginDescriptor[];
   readonly now: string;
   readonly platform?: NodeJS.Platform;
+  readonly cuaDriverRuntimeAuthority?: {
+    readonly enabled: boolean;
+    readonly workspaceCwd: string;
+    readonly platform: NodeJS.Platform;
+    readonly hasCurrentLease: () => boolean;
+  };
 }): { readonly descriptor: ManagedPluginDescriptor; readonly server: McpServer } | undefined {
+  const bundledEmbedded = resolveBundledEmbeddedCuaDriverProvider(input);
+  if (bundledEmbedded) {
+    return bundledEmbedded;
+  }
+  if (
+    input.cuaDriverRuntimeAuthority
+    && isBundledEmbeddedCuaDriverSelected(
+      input.cuaDriverRuntimeAuthority,
+      input.store.paths.cwd,
+    )
+  ) {
+    return undefined;
+  }
+
   const descriptor = input.descriptors.find(
     (candidate) => candidate.id === BUNDLED_CUA_DRIVER_PLUGIN_ID,
   );
@@ -161,6 +202,95 @@ export function resolveManagedCuaDriverProvider(input: {
     return undefined;
   }
   return { descriptor, server };
+}
+
+function resolveBundledEmbeddedCuaDriverProvider(input: {
+  readonly store: RunStore;
+  readonly now: string;
+  readonly platform?: NodeJS.Platform;
+  readonly cuaDriverRuntimeAuthority?: {
+    readonly enabled: boolean;
+    readonly workspaceCwd: string;
+    readonly platform: NodeJS.Platform;
+    readonly hasCurrentLease: () => boolean;
+  };
+}): { readonly descriptor: ManagedPluginDescriptor; readonly server: McpServer } | undefined {
+  if (
+    !input.cuaDriverRuntimeAuthority
+    || (input.platform ?? input.cuaDriverRuntimeAuthority.platform) !== input.cuaDriverRuntimeAuthority.platform
+    || !isBundledEmbeddedCuaDriverRuntime(
+      input.store,
+      input.cuaDriverRuntimeAuthority,
+      input.store.paths.cwd,
+    )
+  ) {
+    return undefined;
+  }
+  const descriptor = createCuaDriverDescriptor();
+  const activation = input.store.getCuaDriverActivationState(descriptor.id);
+  const record = input.store.getManagedPlugin(descriptor.id);
+  if (
+    !activation?.requestedEnabled
+    || !record?.enabled
+    || record.sourceKind !== descriptor.sourceKind
+    || record.version !== descriptor.version
+    || record.descriptor.id !== descriptor.id
+    || record.descriptor.sourceKind !== descriptor.sourceKind
+    || record.descriptor.version !== descriptor.version
+  ) {
+    return undefined;
+  }
+
+  const contribution = input.store.listManagedPluginContributions(descriptor.id).find(
+    (candidate) => candidate.contributionKind === "mcp-server"
+      && candidate.contributionId === CUA_DRIVER_MCP_SERVER_ID,
+  );
+  if (
+    !contribution?.enabled
+    || contribution.linkedResourceId !== CUA_DRIVER_MCP_SERVER_ID
+  ) {
+    return undefined;
+  }
+  const owners = input.store.listManagedPluginContributions().filter(
+    (candidate) => candidate.contributionKind === "mcp-server"
+      && candidate.linkedResourceId === CUA_DRIVER_MCP_SERVER_ID,
+  );
+  if (
+    owners.length !== 1
+    || owners[0]?.pluginId !== descriptor.id
+    || owners[0]?.contributionId !== CUA_DRIVER_MCP_SERVER_ID
+  ) {
+    return undefined;
+  }
+
+  const server = input.store.getMcpServer(CUA_DRIVER_MCP_SERVER_ID);
+  if (
+    !server?.enabled
+    || server.transport.type !== "streamable-http"
+    || server.transport.url !== CUA_DRIVER_BUNDLED_LOGICAL_ENDPOINT
+  ) {
+    return undefined;
+  }
+  const pluginHealth = input.store.getManagedPluginHealthSnapshot(descriptor.id, input.now);
+  const mcpHealth = input.store.getMcpStatusSnapshot(server.id, input.now);
+  if (
+    pluginHealth?.status !== "ready"
+    || mcpHealth?.status !== "ready"
+    || readProviderState(pluginHealth) !== "ready"
+    || activation.updatedAt > pluginHealth.checkedAt
+    || contribution.updatedAt > pluginHealth.checkedAt
+    || server.updatedAt > pluginHealth.checkedAt
+    || server.updatedAt > mcpHealth.checkedAt
+  ) {
+    return undefined;
+  }
+  return { descriptor, server };
+}
+
+function readProviderState(health: ManagedPluginHealthSnapshot): string | undefined {
+  return isRecord(health.details) && typeof health.details.providerState === "string"
+    ? health.details.providerState
+    : undefined;
 }
 
 function isApprovedWindowsProviderHealth(health: ManagedPluginHealthSnapshot): boolean {

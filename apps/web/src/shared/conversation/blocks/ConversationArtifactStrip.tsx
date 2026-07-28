@@ -18,7 +18,7 @@ import { DiffViewer } from "./DiffViewer.js";
 import { WorkspaceFileOpenMenu } from "./WorkspaceFileOpenMenu.js";
 
 const artifactHoverDelayMs = 2_000;
-const artifactHoverHideDelayMs = 140;
+const artifactHoverHideDelayMs = 300;
 const collapsedChangeFileCount = 3;
 type WorkspaceRecoveryResponse = RunWorkspaceChangesResponse | WorkflowWorkspaceChangesResponse;
 

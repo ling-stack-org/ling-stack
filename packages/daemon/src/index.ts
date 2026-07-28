@@ -47,6 +47,20 @@ import { StartupOptionalWarmupCoordinator } from "./startup/optional-warmups.js"
 import { StartupStateRegistry } from "./startup/state.js";
 import { warmDefaultWorkspaceStartup } from "./startup/warmup.js";
 import { ComputerUseProjectionRegistry } from "./features/computer-use/registry.js";
+import { CuaDriverDesktopBridgeAuthority } from "./features/computer-use/desktop-bridge-authority.js";
+import { bundledEmbeddedCuaDriverGateEnabled } from "./features/plugins/cua-driver-feature-gates.js";
+import {
+  CuaDriverClientPool,
+  type CuaDriverPooledClientFactory,
+} from "./features/plugins/cua-driver-client-pool.js";
+import {
+  DefaultCuaDriverLeaseMcpClientFactory,
+  type CuaDriverLeaseMcpClient,
+} from "./features/plugins/cua-driver-lease-client.js";
+import { BundledCuaDriverActivationService } from "./features/plugins/cua-driver-bundled-activation.js";
+import { CuaDriverDaemonActivationCoordinator } from "./features/plugins/cua-driver-daemon-composition.js";
+import { createCuaDriverGenerationBroker } from "./features/plugins/cua-driver-generation-broker.js";
+import { createCuaDriverDescriptor } from "./features/plugins/presets.js";
 
 export { defaultDaemonConfig } from "./config.js";
 export type { DaemonConfig, ResolvedDaemonConfig } from "./config.js";
@@ -70,6 +84,51 @@ export { RuntimeSupervisor } from "./runtime/supervisor.js";
 export { StartupStateRegistry } from "./startup/state.js";
 export type { RunStoreFactory } from "./runtime/store-registry.js";
 export type { RunRequest } from "./features/runs/schemas.js";
+export {
+  bundledEmbeddedCuaDriverGateEnabled,
+  cuaDriverFeatureFlagsFromConfig,
+  resolveCuaDriverDistribution,
+} from "./features/plugins/cua-driver-feature-gates.js";
+export {
+  CuaDriverLeaseRegistry,
+  cuaDriverLeasePoolKey,
+  type CuaDriverLeasePublishResult,
+  type CuaDriverLeaseRegistryOptions,
+} from "./features/plugins/cua-driver-lease.js";
+export {
+  CuaDriverClientPool,
+  type CuaDriverPoolHandle,
+  type CuaDriverPooledClient,
+  type CuaDriverPooledClientFactory,
+} from "./features/plugins/cua-driver-client-pool.js";
+export {
+  captureCuaDriverActivationFence,
+  commitCurrentCuaDriverActivation,
+  isCurrentCuaDriverActivationFence,
+} from "./features/plugins/cua-driver-activation-fence.js";
+export {
+  DefaultCuaDriverLeaseMcpClientFactory,
+  createCuaDriverLeaseProxyHeaders,
+  deriveCuaDriverLeaseProxyToken,
+  type CuaDriverLeaseClientCheckResult,
+  type CuaDriverLeaseClientHealthResult,
+  type CuaDriverLeaseClientListToolsResult,
+  type CuaDriverLeaseMcpClient,
+  type CuaDriverLeaseMcpClientFactoryOptions,
+} from "./features/plugins/cua-driver-lease-client.js";
+export {
+  BundledCuaDriverActivationError,
+  BundledCuaDriverActivationService,
+  type BundledCuaDriverActivationOperation,
+  type BundledCuaDriverActivationResult,
+  type BundledCuaDriverResetResult,
+} from "./features/plugins/cua-driver-bundled-activation.js";
+export {
+  CuaDriverGenerationBrokerError,
+  createCuaDriverGenerationBroker,
+  type CuaDriverGenerationBrokerErrorCode,
+} from "./features/plugins/cua-driver-generation-broker.js";
+export { CuaDriverDaemonActivationCoordinator } from "./features/plugins/cua-driver-daemon-composition.js";
 
 export interface DaemonServer {
   readonly server: Server;
@@ -94,7 +153,14 @@ export function createDaemonServer(
   const webFetch = dependencies.webFetch ?? dependencies.channelWebFetch;
   const webResolveHostAddresses = dependencies.webResolveHostAddresses ?? dependencies.channelWebResolveHostAddresses;
   const imageVisionSummarizer = dependencies.imageVisionSummarizer;
-  const mcpBroker = dependencies.mcpBroker ?? createDefaultMcpBroker();
+  const baseMcpBroker = dependencies.mcpBroker ?? createDefaultMcpBroker();
+  const desktopBridgeToken = dependencies.desktopBridgeToken ?? process.env.LING_DESKTOP_BRIDGE_TOKEN;
+  const bundledCuaDriverEnabled = bundledEmbeddedCuaDriverGateEnabled(resolvedConfig, process.platform);
+  const cuaDriverDescriptor = createCuaDriverDescriptor();
+  const cuaDriverClientPool = new CuaDriverClientPool<CuaDriverLeaseMcpClient>({
+    factory: dependencies.cuaDriverLeaseClientFactory
+      ?? createLazyCuaDriverLeaseClientFactory(desktopBridgeToken),
+  });
   const controlPlaneEvents = new ControlPlaneEventHub();
   const startupState = new StartupStateRegistry();
   const computerUsePreviews = new ComputerUseProjectionRegistry(dependencies.computerUseProjectionOptions);
@@ -114,6 +180,36 @@ export function createDaemonServer(
         void recoverTerminalReports(store).catch(() => undefined);
       }
     },
+  });
+  let cuaDriverActivationCoordinator: CuaDriverDaemonActivationCoordinator | undefined;
+  const cuaDriverDesktopBridgeAuthority = new CuaDriverDesktopBridgeAuthority({
+    workspaceCwd: resolvedConfig.defaultWorkspaceCwd,
+    scheduleDeadline: dependencies.cuaDriverLeaseScheduleDeadline,
+    onLeaseReplaced: (_previous, next) => {
+      cuaDriverActivationCoordinator?.handleLeaseChanged(next);
+    },
+  });
+  const cuaDriverActivationService = new BundledCuaDriverActivationService({
+    leaseRegistry: cuaDriverDesktopBridgeAuthority.leaseRegistry,
+    clientPool: cuaDriverClientPool,
+    getDesktopAvailability: () => cuaDriverDesktopBridgeAuthority.getCurrentAvailability(),
+  });
+  cuaDriverActivationCoordinator = new CuaDriverDaemonActivationCoordinator({
+    enabled: bundledCuaDriverEnabled,
+    workspaceCwd: resolvedConfig.defaultWorkspaceCwd,
+    storeRegistry,
+    descriptor: cuaDriverDescriptor,
+    leaseRegistry: cuaDriverDesktopBridgeAuthority.leaseRegistry,
+    getDesktopAvailability: () => cuaDriverDesktopBridgeAuthority.getCurrentAvailability(),
+    activationService: cuaDriverActivationService,
+    clientPool: cuaDriverClientPool,
+  });
+  const mcpBroker = createCuaDriverGenerationBroker({
+    baseBroker: baseMcpBroker,
+    bundledEnabled: bundledCuaDriverEnabled,
+    workspaceCwd: resolvedConfig.defaultWorkspaceCwd,
+    leaseRegistry: cuaDriverDesktopBridgeAuthority.leaseRegistry,
+    clientPool: cuaDriverClientPool,
   });
   const backgroundSchedulers = new ExternalWorkBackgroundSchedulerRegistry(storeRegistry, secretResolver, externalWorkFetch);
   const activeRuns = new ActiveRunRegistry();
@@ -173,8 +269,11 @@ export function createDaemonServer(
     startupState,
     startupOptionalWarmups,
     computerUsePreviews,
+    cuaDriverDesktopBridgeAuthority,
+    cuaDriverActivationService,
+    cuaDriverActivationCoordinator,
     computerUseStop: dependencies.computerUseStop,
-    desktopBridgeToken: dependencies.desktopBridgeToken ?? process.env.LING_DESKTOP_BRIDGE_TOKEN,
+    desktopBridgeToken,
     computerUseRouteToken:
       dependencies.computerUseRouteToken
       ?? process.env.LING_COMPUTER_USE_ROUTE_TOKEN
@@ -205,6 +304,7 @@ export function createDaemonServer(
     startupState,
     computerUsePreviews,
     start: async () => {
+      cuaDriverActivationCoordinator.resetForDaemonStart();
       await new Promise<void>((resolve, reject) => {
         server.once("error", reject);
         server.listen(resolvedConfig.port, resolvedConfig.host, () => {
@@ -243,6 +343,7 @@ export function createDaemonServer(
       });
     },
     stop: async () => {
+      cuaDriverActivationCoordinator.beginShutdown();
       await new Promise<void>((resolve, reject) => {
         activeRuns.cancelAll();
         activeDirectReplies.cancelAll();
@@ -251,6 +352,7 @@ export function createDaemonServer(
         automationSchedulers.stopAll();
         controlPlaneEvents.closeAll();
         computerUsePreviews.closeAll();
+        cuaDriverDesktopBridgeAuthority.clear();
         rpcWebSocketServer.close();
         server.close((error) => {
           if (error) {
@@ -262,6 +364,7 @@ export function createDaemonServer(
         server.closeAllConnections();
       });
       await activeRuns.waitForIdle();
+      await cuaDriverActivationCoordinator.shutdown();
       storeRegistry.closeAll();
     },
   };
@@ -269,6 +372,22 @@ export function createDaemonServer(
 
 function createDefaultRunStore(cwd: string) {
   return createSqliteRunStore(cwd, resolveStoragePaths(cwd).workspace);
+}
+
+function createLazyCuaDriverLeaseClientFactory(
+  bridgeToken: string | undefined,
+): CuaDriverPooledClientFactory<CuaDriverLeaseMcpClient> {
+  let factory: DefaultCuaDriverLeaseMcpClientFactory | undefined;
+  return {
+    async connect(lease, signal) {
+      const token = bridgeToken?.trim();
+      if (!token) {
+        throw new Error("cua_driver_desktop_bridge_token_missing");
+      }
+      factory ??= new DefaultCuaDriverLeaseMcpClientFactory({ bridgeToken: token });
+      return factory.connect(lease, signal);
+    },
+  };
 }
 
 export const LOCAL_CHANNEL_SOURCE_EXTENSION_ID = "channel-source:local";

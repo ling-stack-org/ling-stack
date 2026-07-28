@@ -17,6 +17,8 @@ broker, teammate bindings, and approval policy as the execution authority.
 Related docs:
 
 - [Plugin Manager Implementation Plan](plugin-manager-implementation-plan.md)
+- [Bundled Embedded Cua Driver](cua-driver-bundled-embedded.md)
+- [Bundled Embedded Cua Driver Detailed Design](cua-driver-bundled-embedded-detailed-design.md)
 - [Core Tools, Runners, MCP Tools, and Plugin Boundary](core-tools-runtime-boundary.md)
 - [Core Tools Runtime Boundary Implementation Plan](core-tools-runtime-boundary-implementation-plan.md)
 - [Internal Registry and Plugin SDK](internal-registry-plugin-sdk.md)
@@ -74,6 +76,11 @@ resolution, third-party install APIs, and remote marketplaces stay deferred.
   policy, resource leases, and state machines.
 - Preserve the existing internal registry and MCP server APIs.
 - Add `cua-driver` as the first high-risk trusted local preset.
+
+The implemented trusted-local preset remains the external fallback. Packaged macOS and
+Windows Desktop may project the same stable product id through `bundled_embedded`
+distribution, while the daemon keeps MCP policy and audit authority. The
+distribution-specific contract lives in the Bundled Embedded Cua Driver documents.
 
 ## Non-Goals
 

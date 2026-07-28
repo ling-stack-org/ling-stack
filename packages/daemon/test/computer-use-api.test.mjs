@@ -11,6 +11,7 @@ import {
 } from "./computer-use-test-fixtures.mjs";
 
 const COMPUTER_USE_ROUTE_TOKEN = "computer-use-route-test-token-0123456789";
+const supportedDesktopPlatform = process.platform === "darwin" || process.platform === "win32";
 
 test("Computer Use registry ignores stale updates and replays ordered events", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-computer-use-registry-"));
@@ -247,13 +248,15 @@ test("Computer Use HTTP projection and Stop wait for runtime acknowledgement", a
       headers: { "X-Ling-Desktop-Bridge-Token": "desktop-bridge-test-token-0123456789" },
     });
     assert.equal(handshake.status, 200);
-    assert.deepEqual(await handshake.json(), {
-      protocolVersion: 1,
-      capabilities: ["preview-source"],
-      bridgeTokenAccepted: true,
-      routeTokenAccepted: false,
-      defaultWorkspaceCwd: cwd,
-    });
+    const handshakeBody = await handshake.json();
+    assert.equal(handshakeBody.protocolVersion, 1);
+    assert.deepEqual(handshakeBody.capabilities, ["preview-source", "cua-driver-lease-v1"]);
+    assert.equal(handshakeBody.bridgeTokenAccepted, true);
+    assert.equal(handshakeBody.routeTokenAccepted, false);
+    assert.equal(handshakeBody.defaultWorkspaceCwd, cwd);
+    assert.equal(typeof handshakeBody.daemonAuthorityEpoch, "string");
+    assert.equal(typeof handshakeBody.bridgeConnectionId, "string");
+    assert.equal(handshakeBody.desktopInstanceEpoch, 1);
     assert.equal(handshake.headers.get("access-control-allow-origin"), null);
     assert.equal(handshake.headers.get("cache-control"), "no-store");
 
@@ -757,13 +760,15 @@ test("Computer Use desktop bridge handshake proves workspace and scoped route au
       headers: { "X-Ling-Desktop-Bridge-Token": sharedToken },
     });
     assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), {
-      protocolVersion: 1,
-      capabilities: ["preview-source"],
-      bridgeTokenAccepted: true,
-      routeTokenAccepted: true,
-      defaultWorkspaceCwd: cwd,
-    });
+    const body = await response.json();
+    assert.equal(body.protocolVersion, 1);
+    assert.deepEqual(body.capabilities, ["preview-source", "cua-driver-lease-v1"]);
+    assert.equal(body.bridgeTokenAccepted, true);
+    assert.equal(body.routeTokenAccepted, true);
+    assert.equal(body.defaultWorkspaceCwd, cwd);
+    assert.equal(typeof body.daemonAuthorityEpoch, "string");
+    assert.equal(typeof body.bridgeConnectionId, "string");
+    assert.equal(body.desktopInstanceEpoch, 1);
   } finally {
     await daemon.stop();
     await rm(cwd, { recursive: true, force: true });
@@ -946,6 +951,209 @@ test("Windows private source revalidates the current HWND owner before renewing 
     });
     assert.equal(revoked.status, 404);
   } finally {
+    await daemon.stop();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("bundled embedded private source revalidates ownership through the canonical lease client", {
+  skip: !supportedDesktopPlatform,
+}, async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-computer-use-embedded-source-"));
+  const desktopBridgeToken = "desktop-bridge-embedded-source-test-token";
+  const { capture, storeFactory } = createCapturedStoreFactory();
+  let providerCalls = 0;
+  let blockProviderCall = false;
+  const providerCallStarted = deferred();
+  const releaseProviderCall = deferred();
+  const daemon = createDaemonServer(
+    {
+      host: "127.0.0.1",
+      port: 0,
+      defaultWorkspaceCwd: cwd,
+      cuaDriver: {
+        bundledEmbedded: {
+          darwin: process.platform === "darwin",
+          win32: process.platform === "win32",
+        },
+        packagedProvider: {
+          darwin: process.platform === "darwin",
+          win32: process.platform === "win32",
+        },
+      },
+    },
+    {
+      desktopBridgeToken,
+      computerUseRouteToken: COMPUTER_USE_ROUTE_TOKEN,
+      storeFactory,
+      cuaDriverLeaseClientFactory: {
+        async connect() {
+          return {
+            async check(server, checkedAt) {
+              return { statusSnapshot: embeddedReadyStatus(server.id, checkedAt, 0) };
+            },
+            async checkHealth(server, checkedAt) {
+              return { statusSnapshot: embeddedReadyStatus(server.id, checkedAt, 0) };
+            },
+            async listTools(server, checkedAt) {
+              return {
+                statusSnapshot: embeddedReadyStatus(server.id, checkedAt, 1),
+                tools: [embeddedListWindowsTool()],
+              };
+            },
+            async callTool(_server, toolName, input) {
+              assert.equal(toolName, "list_windows");
+              assert.deepEqual(input, { pid: 4321 });
+              providerCalls += 1;
+              if (blockProviderCall) {
+                providerCallStarted.resolve();
+                await releaseProviderCall.promise;
+              }
+              return {
+                content: [],
+                details: {
+                  structuredContent: {
+                    windows: [{
+                      pid: 4321,
+                      window_id: process.platform === "darwin" ? 7788 : "7788",
+                    }],
+                  },
+                },
+              };
+            },
+            async close() {},
+          };
+        },
+      },
+    },
+  );
+  await daemon.start();
+  try {
+    assert.ok(capture.store);
+    const address = daemon.server.address();
+    assert.ok(address && typeof address === "object");
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    const requested = await fetch(
+      `${baseUrl}/plugins/${encodeURIComponent("trusted-local:cua-driver")}/enable?cwd=${encodeURIComponent(cwd)}`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
+    );
+    assert.equal(requested.status, 202);
+
+    const handshake = await fetch(`${baseUrl}/computer-use/desktop-bridge/handshake`, {
+      headers: { "X-Ling-Desktop-Bridge-Token": desktopBridgeToken },
+    });
+    assert.equal(handshake.status, 200);
+    const authority = await handshake.json();
+    const lease = embeddedLease(authority, cwd);
+    const published = await fetch(
+      `${baseUrl}/desktop/capabilities/cua-driver/lease?cwd=${encodeURIComponent(cwd)}`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Ling-Desktop-Bridge-Token": desktopBridgeToken,
+        },
+        body: JSON.stringify(lease),
+      },
+    );
+    assert.equal(published.status, 200);
+    await waitForCondition(
+      () => capture.store.getMcpServer("mcp_cua_driver")?.enabled === true,
+    );
+
+    const targetProofUrl =
+      `${baseUrl}/computer-use/provider-target/verify?cwd=${encodeURIComponent(cwd)}`;
+    const unauthorizedTargetProof = await fetch(targetProofUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        platform: process.platform === "darwin" ? "macos" : "windows",
+        processId: 4321,
+        nativeWindowId: "7788",
+      }),
+    });
+    assert.equal(unauthorizedTargetProof.status, 403);
+    const targetProof = await fetch(targetProofUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Ling-Desktop-Bridge-Token": desktopBridgeToken,
+      },
+      body: JSON.stringify({
+        platform: process.platform === "darwin" ? "macos" : "windows",
+        processId: 4321,
+        nativeWindowId: "7788",
+      }),
+    });
+    const targetProofText = await targetProof.text();
+    assert.equal(targetProof.status, 200, targetProofText);
+    const targetProofBody = JSON.parse(targetProofText);
+    assert.equal(targetProofBody.verified, true);
+    assert.deepEqual(targetProofBody.target, {
+      platform: process.platform === "darwin" ? "macos" : "windows",
+      processId: 4321,
+      nativeWindowId: "7788",
+    });
+    assert.equal(targetProofBody.runtime.desktopInstanceId, lease.desktopInstanceId);
+    assert.equal(targetProofBody.runtime.desktopInstanceEpoch, lease.desktopInstanceEpoch);
+    assert.equal(targetProofBody.runtime.generation, lease.generation);
+    assert.equal(targetProofBody.runtime.lockDigest, lease.lockDigest);
+    assert.equal(targetProofBody.runtime.providerSealDigest, lease.providerSealDigest);
+    assert.equal(providerCalls, 1);
+
+    daemon.computerUsePreviews.upsert(cwd, projection());
+    daemon.computerUsePreviews.registerPrivateDescriptor(cwd, {
+      ...privateDescriptor(),
+      platform: process.platform === "darwin" ? "macos" : "windows",
+    });
+    const source = await fetch(
+      `${baseUrl}/computer-use/sessions/session-1/source?cwd=${encodeURIComponent(cwd)}`,
+      { headers: { "X-Ling-Desktop-Bridge-Token": desktopBridgeToken } },
+    );
+    assert.equal(source.status, 200, await source.text());
+    assert.equal(providerCalls, 2);
+
+    blockProviderCall = true;
+    const staleTargetProofPromise = fetch(targetProofUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Ling-Desktop-Bridge-Token": desktopBridgeToken,
+      },
+      body: JSON.stringify({
+        platform: process.platform === "darwin" ? "macos" : "windows",
+        processId: 4321,
+        nativeWindowId: "7788",
+      }),
+    });
+    await providerCallStarted.promise;
+    const replacement = {
+      ...lease,
+      generation: 2,
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    };
+    const replaced = await fetch(
+      `${baseUrl}/desktop/capabilities/cua-driver/lease?cwd=${encodeURIComponent(cwd)}`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Ling-Desktop-Bridge-Token": desktopBridgeToken,
+        },
+        body: JSON.stringify(replacement),
+      },
+    );
+    assert.equal(replaced.status, 200);
+    releaseProviderCall.resolve();
+    const staleTargetProof = await staleTargetProofPromise;
+    assert.equal(staleTargetProof.status, 409);
+    assert.equal(
+      (await staleTargetProof.json()).error,
+      "computer_use_provider_target_owner_mismatch",
+    );
+    assert.equal(providerCalls, 3);
+  } finally {
+    releaseProviderCall.resolve();
     await daemon.stop();
     await rm(cwd, { recursive: true, force: true });
   }
@@ -1372,6 +1580,72 @@ function privateDescriptor(overrides = {}) {
     target: overrides.target ?? { processId: 4321, nativeWindowId: "7788" },
     authorization: { grantId: "source-race-grant", expiresAt: "2099-01-01T00:00:00.000Z" },
   };
+}
+
+function embeddedLease(authority, cwd) {
+  return {
+    schemaVersion: 1,
+    providerId: "cua-driver",
+    desktopInstanceId: "desktop-computer-use-source",
+    desktopInstanceEpoch: authority.desktopInstanceEpoch,
+    bridgeConnectionId: authority.bridgeConnectionId,
+    generation: 1,
+    daemonAuthorityEpoch: authority.daemonAuthorityEpoch,
+    workspaceCwd: cwd,
+    endpoint: "http://127.0.0.1:43123/mcp",
+    providerVersion: "0.8.3",
+    distributionRevision: "ling.1",
+    integrationMode: "embedded-stdio",
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    lockDigest: "a".repeat(64),
+    providerSealDigest: "b".repeat(64),
+    ...(process.platform === "win32" ? { providerCatalogDigest: "c".repeat(64) } : {}),
+    platform: process.platform,
+    architecture: process.arch === "x64" ? "x86_64" : "arm64",
+    ...(process.platform === "win32" ? { integrityCoverage: "standard" } : {}),
+  };
+}
+
+function embeddedReadyStatus(serverId, checkedAt, toolCount) {
+  return {
+    serverId,
+    checkedAt,
+    expiresAt: new Date(Date.parse(checkedAt) + 300_000).toISOString(),
+    status: "ready",
+    toolCount,
+    missingSecretRefs: [],
+    authStatus: { kind: "not_required", refs: [], missingRefs: [] },
+  };
+}
+
+function embeddedListWindowsTool() {
+  return {
+    rawName: "list_windows",
+    displayName: "List windows",
+    inputSchema: { type: "object" },
+    callableNamespace: "mcp_cua_driver",
+    callableName: "list_windows",
+    sideEffectLevel: "read",
+    defaultApproval: "allow",
+    enabled: true,
+  };
+}
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
+async function waitForCondition(predicate, timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+  }
+  assert.fail("Timed out waiting for bundled Cua Driver readiness");
 }
 
 async function getJson(url) {

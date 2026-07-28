@@ -4,6 +4,7 @@ import {
   desktopCapturer,
   dialog,
   nativeTheme,
+  powerMonitor,
   screen,
   shell,
   systemPreferences,
@@ -12,9 +13,11 @@ import {
 } from "electron";
 import {
   parseComputerUsePreviewProjection,
+  type CuaDriverFeatureFlags,
   type ComputerUsePreviewProjection,
 } from "@ling-stack/contracts";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { dirname } from "node:path";
@@ -22,6 +25,16 @@ import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { ComputerUsePreviewCoordinator } from "./computer-use/coordinator.js";
+import {
+  desktopBundledCuaDriverGateEnabled,
+} from "./cua-driver/feature-gates.js";
+import { CuaDriverDesktopCoordinator as BundledCuaDriverDesktopCoordinator } from "./cua-driver/coordinator.js";
+import { createPackagedCuaDriverDesktopPlatformOwner } from "./cua-driver/platform-owner-composition.js";
+import {
+  resolveDesktopCuaDriverPackagedStartupAuthority,
+  type DesktopCuaDriverPackagedStartupAuthority,
+} from "./cua-driver/packaged-startup.js";
+import { resolveCuaDriverResourcePaths } from "./cua-driver/resource-path.js";
 import { DaemonComputerUsePreviewDescriptorResolver } from "./computer-use/daemon-descriptor-resolver.js";
 import { DaemonComputerUseProjectionClient } from "./computer-use/daemon-projection-client.js";
 import {
@@ -40,6 +53,7 @@ import { COMPUTER_USE_PREVIEW_SESSION_PARTITION } from "./computer-use/session-p
 import { parseElectronWindowSourceId } from "./computer-use/source-mapping.js";
 import { FileComputerUsePreviewTelemetry } from "./computer-use/telemetry.js";
 import { DesktopDaemonLifecycle } from "./daemon-lifecycle.js";
+import { DesktopRuntime } from "./desktop-runtime.js";
 import {
   ensureDesktopDaemonWithStartupRecovery,
 } from "./daemon-startup-recovery.js";
@@ -72,6 +86,8 @@ import { builtInDesktopRendererThemeInput } from "../shared/renderer-theme.js";
 import { createDesktopThemePackageFirstPaintState } from "../shared/theme-package-first-paint.js";
 
 const daemonBaseUrl = process.env.LING_STACK_DAEMON_URL ?? "http://127.0.0.1:17891";
+let cuaDriverFeatureFlags: CuaDriverFeatureFlags | undefined;
+let cuaDriverPackagedStartupAuthority: DesktopCuaDriverPackagedStartupAuthority | undefined;
 const execFileAsync = promisify(execFile);
 const smokeHeadless = process.argv.includes("--ling-desktop-smoke-headless");
 const performanceHoldMs = (() => {
@@ -135,9 +151,10 @@ let realCaptureSmokeDescriptor: ResolvedComputerUsePreviewDescriptor | undefined
 let realCaptureSmokeDescriptorRegistry: InMemoryComputerUsePreviewDescriptorRegistry | undefined;
 let realCaptureSmokeProjectionClient: FakeComputerUseProjectionClient | undefined;
 let smokeProjectionSource: "daemon" | "fake" = "fake";
+let desktopBridgeToken: string | undefined;
 let unregisterIpc: (() => void) | undefined;
 let unregisterThemePackageIpc: (() => void) | undefined;
-let daemon: DesktopDaemonLifecycle | undefined;
+let desktopRuntime: DesktopRuntime | undefined;
 let computerUse: ComputerUsePreviewCoordinator | undefined;
 const desktopNavigationIntents = new DesktopNavigationIntentStore();
 const desktopRendererThemeStore = new DesktopRendererThemeStore(
@@ -284,6 +301,7 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
     return false;
   }
   logStartup("resources.resolved", {
+    resourcesRoot: resources.resourcesRoot,
     webIndexPath: resources.webIndexPath,
     daemonEntryPath: resources.daemonEntryPath,
     previewIndexPath: resources.previewIndexPath,
@@ -298,18 +316,94 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
     app.isPackaged ? resolve(app.getPath("userData"), "workspace") : resolve(app.getAppPath(), "../..")
   ));
   const bridgeToken = await loadOrCreateDesktopBridgeToken(resolve(app.getPath("userData"), "desktop-bridge-token"));
+  desktopBridgeToken = bridgeToken;
   if (!attempt.isCurrent()) {
     return false;
   }
-  daemon ??= new DesktopDaemonLifecycle({
-    baseUrl: daemonBaseUrl,
-    daemonEntryPath: resources.daemonEntryPath,
-    defaultWorkspaceCwd,
-    desktopBridgeToken: bridgeToken,
-    onDiagnostic: logStartup,
-  });
+  if (!desktopRuntime) {
+    if (!cuaDriverFeatureFlags) {
+      cuaDriverPackagedStartupAuthority = await resolveDesktopCuaDriverPackagedStartupAuthority({
+        packaged: app.isPackaged,
+        appPath: app.getAppPath(),
+        resourcesPath: resources.resourcesRoot,
+        platform: process.platform,
+      });
+      if (cuaDriverPackagedStartupAuthority.failure) {
+        logStartup("cua_driver.packaged_capabilities_unavailable", {
+          error: cuaDriverPackagedStartupAuthority.failure instanceof Error
+            ? cuaDriverPackagedStartupAuthority.failure.message
+            : String(cuaDriverPackagedStartupAuthority.failure),
+          bundledAuthoritative: true,
+        });
+      }
+      cuaDriverFeatureFlags = cuaDriverPackagedStartupAuthority.featureFlags;
+    }
+    const featureFlags = cuaDriverFeatureFlags;
+    const gateEnabled = desktopBundledCuaDriverGateEnabled(
+      featureFlags,
+      process.platform,
+    );
+    let platformOwner: Awaited<ReturnType<typeof createPackagedCuaDriverDesktopPlatformOwner>> | undefined;
+    if (
+      gateEnabled
+      && cuaDriverPackagedStartupAuthority?.runtimeEligible === true
+      && cuaDriverPackagedStartupAuthority.policy
+    ) {
+      try {
+        platformOwner = await createPackagedCuaDriverDesktopPlatformOwner({
+          platform: process.platform,
+          policy: cuaDriverPackagedStartupAuthority.policy,
+          ...(process.platform === "win32"
+            ? {
+                win32PowerMonitor: powerMonitor,
+                baseEnvironment: process.env,
+              }
+            : {}),
+          onDarwinPermissionChanged: async () => {
+            await desktopRuntime?.refreshCuaDriverPlatform("darwin_permission_changed");
+          },
+        });
+      } catch (error) {
+        // A bad or missing trust policy disables only the bundled provider.
+        // The normal Ling window stays up while the provider remains fail-closed.
+        logStartup("cua_driver.platform_owner_unavailable", {
+          platform: process.platform,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    if (!attempt.isCurrent()) {
+      await platformOwner?.dispose();
+      return false;
+    }
+    try {
+      desktopRuntime = new DesktopRuntime({
+        daemon: new DesktopDaemonLifecycle({
+          baseUrl: daemonBaseUrl,
+          daemonEntryPath: resources.daemonEntryPath,
+          defaultWorkspaceCwd,
+          desktopBridgeToken: bridgeToken,
+          cuaDriverFeatureFlags: featureFlags,
+          ...(smokeHeadless && app.runningUnderARM64Translation ? { startupTimeoutMs: 60_000 } : {}),
+          onDiagnostic: logStartup,
+        }),
+        daemonBaseUrl,
+        bridgeToken,
+        workspaceCwd: defaultWorkspaceCwd,
+        resourcesRoot: resources.resourcesRoot,
+        userDataPath: app.getPath("userData"),
+        featureFlags,
+        packaged: app.isPackaged,
+        ...(platformOwner ? { platformOwner } : {}),
+        onDiagnostic: logStartup,
+      });
+    } catch (error) {
+      await platformOwner?.dispose();
+      throw error;
+    }
+  }
   const daemonStartup = await ensureDesktopDaemonWithStartupRecovery({
-    daemon,
+    daemon: desktopRuntime,
     allowInteractiveRecovery: !smokeHeadless,
     prompt: async (prompt) => {
       const decision = await showIncompatibleDaemonRecoveryDialog({
@@ -335,7 +429,7 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
     attempt.requestExit(0);
     return false;
   }
-  logStartup("daemon.connected", { ownedByDesktop: daemon.status.ownedByDesktop });
+  logStartup("daemon.connected", { ownedByDesktop: desktopRuntime.status.ownedByDesktop });
   if (!computerUse) {
     const descriptorRegistry = new InMemoryComputerUsePreviewDescriptorRegistry();
     if (fakeComputerUseMode) {
@@ -371,6 +465,7 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
       realCaptureSmokeProjectionClient = projectionClient;
     }
     computerUse = new ComputerUsePreviewCoordinator({
+      workspaceId: defaultWorkspaceCwd,
       projectionClient,
       platformAdapter: fakeComputerUseMode
         ? new FakeComputerUsePreviewPlatformAdapter()
@@ -438,7 +533,7 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
     });
   }
   unregisterIpc ??= registerDesktopIpc({
-    daemon,
+    runtime: desktopRuntime,
     computerUse,
     getMainWindow: () => mainWindow ?? loadingMainWindow,
     navigationIntents: desktopNavigationIntents,
@@ -1356,6 +1451,7 @@ async function exerciseWindowsProviderRevisionAndTargetClose(
   if (!registry || !projectionClient) {
     throw new Error("desktop_windows_provider_smoke_revision_fixture_missing");
   }
+  await verifyWindowsPackagedBundledProviderRuntime();
   const initialRevision = smokeComputerUseProjection.preview?.revision ?? 1;
   assertWindowsProviderSmokeSourceLive(coordinator, initialRevision, "descriptor_a_not_live");
   console.log("Ling Stack Desktop Windows provider descriptor A live");
@@ -1415,6 +1511,7 @@ async function exerciseWindowsProviderRevisionAndTargetClose(
 async function exerciseWindowsProviderRestartRecovery(
   coordinator: ComputerUsePreviewCoordinator,
 ): Promise<void> {
+  await verifyWindowsPackagedBundledProviderRuntime();
   const expectedRevision = realCaptureSmokeDescriptor?.revision;
   if (!expectedRevision) {
     throw new Error("desktop_windows_provider_smoke_restart_revision_missing");
@@ -1431,6 +1528,180 @@ async function exerciseWindowsProviderRestartRecovery(
     throw new Error("desktop_windows_provider_smoke_restart_stopped_runtime");
   }
   console.log("Ling Stack Desktop Windows provider stalled runtime still running");
+}
+
+async function verifyWindowsPackagedBundledProviderRuntime(): Promise<void> {
+  if (
+    process.platform !== "win32"
+    || process.arch !== "x64"
+    || !app.isPackaged
+    || cuaDriverPackagedStartupAuthority?.runtimeEligible !== true
+    || cuaDriverPackagedStartupAuthority.authority?.providerExpected !== true
+    || cuaDriverPackagedStartupAuthority.authority.platform !== "win32"
+    || cuaDriverPackagedStartupAuthority.policy?.platform !== "win32"
+    || !cuaDriverFeatureFlags
+    || !desktopBundledCuaDriverGateEnabled(cuaDriverFeatureFlags, "win32")
+  ) {
+    throw new Error("desktop_windows_bundled_provider_authority_not_eligible");
+  }
+  const expectedPaths = resolveCuaDriverResourcePaths({
+    resourcesPath: process.resourcesPath,
+    platform: "win32",
+    architecture: "x86_64",
+  });
+  const deadline = Date.now() + 45_000;
+  let activeCoordinator: BundledCuaDriverDesktopCoordinator | undefined;
+  while (Date.now() < deadline) {
+    const candidate = desktopRuntime?.cuaDriverCoordinator;
+    if (
+      candidate instanceof BundledCuaDriverDesktopCoordinator
+      && candidate.providerHost?.state === "ready"
+      && candidate.snapshot.lifecycle === "active"
+      && candidate.snapshot.providerState === "ready"
+    ) {
+      activeCoordinator = candidate;
+      break;
+    }
+    await new Promise<void>((resolveWait) => setTimeout(resolveWait, 20));
+  }
+  const host = activeCoordinator?.providerHost;
+  const snapshot = activeCoordinator?.snapshot;
+  if (
+    !host
+    || host.state !== "ready"
+    || !readSafePositiveInteger(host.pid)
+    || snapshot?.endpoint?.generation !== host.generation
+    || snapshot.integrityCoverage !== "standard"
+    || !/^[0-9a-f]{64}$/u.test(snapshot.artifacts?.lockDigest ?? "")
+    || !/^[0-9a-f]{64}$/u.test(snapshot.artifacts?.providerSealDigest ?? "")
+    || !/^[0-9a-f]{64}$/u.test(snapshot.artifacts?.providerCatalogDigest ?? "")
+  ) {
+    throw new Error("desktop_windows_bundled_provider_child_not_ready");
+  }
+  const observedExecutablePath = resolve(host.executablePath).toLowerCase();
+  const expectedExecutablePath = resolve(expectedPaths.executablePath).toLowerCase();
+  if (observedExecutablePath !== expectedExecutablePath) {
+    throw new Error("desktop_windows_bundled_provider_executable_path_mismatch");
+  }
+  const descriptor = realCaptureSmokeDescriptor;
+  const processId = readSafePositiveInteger(descriptor?.target.processId);
+  const nativeWindowId = readCanonicalNativeWindowId(descriptor?.target.nativeWindowId);
+  if (
+    !descriptor
+    || descriptor.platform !== "windows"
+    || descriptor.sourceKind !== "window"
+    || processId === undefined
+    || nativeWindowId === undefined
+  ) {
+    throw new Error("desktop_windows_bundled_provider_target_missing");
+  }
+  const daemonProof = await verifyWindowsDaemonBundledProviderTarget({
+    processId,
+    nativeWindowId,
+  });
+  if (
+    daemonProof.runtime.desktopInstanceId !== desktopRuntime?.desktopInstanceId
+    || daemonProof.runtime.generation !== host.generation
+    || daemonProof.runtime.providerVersion !== "0.8.3"
+    || daemonProof.runtime.lockDigest !== snapshot.artifacts?.lockDigest
+    || daemonProof.runtime.providerSealDigest !== snapshot.artifacts?.providerSealDigest
+    || daemonProof.runtime.providerCatalogDigest !== snapshot.artifacts?.providerCatalogDigest
+  ) {
+    throw new Error("desktop_windows_bundled_provider_runtime_proof_mismatch");
+  }
+  console.log(
+    `Ling Stack Desktop Windows bundled provider runtime ready ${JSON.stringify({
+      schemaVersion: 1,
+      desktopInstanceId: daemonProof.runtime.desktopInstanceId,
+      desktopInstanceEpoch: daemonProof.runtime.desktopInstanceEpoch,
+      generation: host.generation,
+      providerProcessId: host.pid,
+      executablePath: expectedPaths.executablePath,
+      providerChildInstanceNonceSha256: createHash("sha256")
+        .update(host.childInstanceNonce, "utf8")
+        .digest("hex"),
+      lockDigest: daemonProof.runtime.lockDigest,
+      providerSealDigest: daemonProof.runtime.providerSealDigest,
+      providerCatalogDigest: daemonProof.runtime.providerCatalogDigest,
+      target: daemonProof.target,
+    })}`,
+  );
+}
+
+interface WindowsBundledProviderTargetProof {
+  readonly verified: true;
+  readonly target: {
+    readonly platform: "windows";
+    readonly processId: number;
+    readonly nativeWindowId: string;
+  };
+  readonly runtime: {
+    readonly desktopInstanceId: string;
+    readonly desktopInstanceEpoch: number;
+    readonly generation: number;
+    readonly providerVersion: "0.8.3";
+    readonly lockDigest: string;
+    readonly providerSealDigest: string;
+    readonly providerCatalogDigest: string;
+  };
+}
+
+async function verifyWindowsDaemonBundledProviderTarget(target: {
+  readonly processId: number;
+  readonly nativeWindowId: string;
+}): Promise<WindowsBundledProviderTargetProof> {
+  const bridgeToken = desktopBridgeToken;
+  if (!bridgeToken) {
+    throw new Error("desktop_windows_bundled_provider_bridge_token_missing");
+  }
+  const url = new URL("/computer-use/provider-target/verify", daemonBaseUrl);
+  url.searchParams.set(
+    "cwd",
+    resolve(process.env.LING_STACK_DEFAULT_WORKSPACE_CWD ?? (
+      app.isPackaged ? resolve(app.getPath("userData"), "workspace") : resolve(app.getAppPath(), "../..")
+    )),
+  );
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Ling-Desktop-Bridge-Token": bridgeToken,
+    },
+    body: JSON.stringify({ platform: "windows", ...target }),
+    redirect: "error",
+    signal: AbortSignal.timeout(5_000),
+  });
+  const text = await response.text();
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw new Error("desktop_windows_bundled_provider_target_proof_json_invalid");
+  }
+  if (!response.ok) {
+    throw new Error(`desktop_windows_bundled_provider_target_proof_http_${response.status}:${text}`);
+  }
+  if (!isRecord(value) || value.verified !== true || !isRecord(value.target) || !isRecord(value.runtime)) {
+    throw new Error("desktop_windows_bundled_provider_target_proof_invalid");
+  }
+  const provedTarget = value.target;
+  const runtime = value.runtime;
+  if (
+    provedTarget.platform !== "windows"
+    || provedTarget.processId !== target.processId
+    || provedTarget.nativeWindowId !== target.nativeWindowId
+    || typeof runtime.desktopInstanceId !== "string"
+    || runtime.desktopInstanceId.length === 0
+    || !readSafePositiveInteger(runtime.desktopInstanceEpoch)
+    || !readSafePositiveInteger(runtime.generation)
+    || runtime.providerVersion !== "0.8.3"
+    || !/^[0-9a-f]{64}$/u.test(String(runtime.lockDigest ?? ""))
+    || !/^[0-9a-f]{64}$/u.test(String(runtime.providerSealDigest ?? ""))
+    || !/^[0-9a-f]{64}$/u.test(String(runtime.providerCatalogDigest ?? ""))
+  ) {
+    throw new Error("desktop_windows_bundled_provider_target_proof_invalid");
+  }
+  return value as unknown as WindowsBundledProviderTargetProof;
 }
 
 function assertWindowsProviderSmokeSourceLive(
@@ -1608,9 +1879,9 @@ async function shutdown(): Promise<void> {
   await attemptCleanup(() => windowsProviderSmokeCommandReader?.close());
   await attemptCleanup(() => mainSession?.closeAllConnections());
 
-  const activeDaemon = daemon;
-  daemon = undefined;
-  await attemptCleanup(() => activeDaemon?.stopOwnedDaemon());
+  const activeDesktopRuntime = desktopRuntime;
+  desktopRuntime = undefined;
+  await attemptCleanup(() => activeDesktopRuntime?.shutdown());
   await attemptCleanup(() => activeMainWindowOpen);
 
   if (cleanupFailed) {

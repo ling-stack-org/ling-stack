@@ -1240,7 +1240,8 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
   await page.getByRole("button", { name: "Back to app" }).click();
 
   await navigation.getByRole("button", { name: "Media Production" }).click();
-  await expect(page.locator(".media-production-page.showing-studio")).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Media production views" }))
+    .toBeVisible({ timeout: 15_000 });
   await expect(page.locator(".media-production-canvas-toolbar")).toContainText("Production studio");
   await expect(page.getByLabel("Run context")).toHaveCount(0);
 

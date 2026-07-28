@@ -8,10 +8,28 @@ Implementation-shaped detailed design for
 Implementation sequencing:
 [Desktop Computer Use Picture-in-Picture Implementation Plan](desktop-computer-use-picture-in-picture-implementation-plan.md).
 
+The current provider distribution baseline remains external. The approved packaged
+macOS and Windows Desktop provider boundary is defined by
+[Bundled Embedded Cua Driver](cua-driver-bundled-embedded.md) and its
+[Detailed Design](cua-driver-bundled-embedded-detailed-design.md); standalone/dev mode
+retains explicit external provider support.
+
 This document fixes the state model, selection rules, Desktop IPC, window behavior,
 layout algorithm, platform adapter, recovery timers, and test cases. The local implementation
 baseline is verified; the companion implementation plan is the source of truth for what is
 verified, partial, blocked by platform prerequisites, or still pending.
+
+The V2 extension now implements a multi-page logical deck inside the existing native PiP
+window. The local baseline includes exact scope reconciliation, the five-page resident cap,
+inactive-LRU eviction, serialized one-stream switching, rollback and failover, stacked/tabs/
+`View all` renderer states, the narrow preload/Web bridge, and zero-residue fake plus real
+MediaStream validation. Signed packaged candidates and native screen-reader/platform matrices
+remain release gates rather than local V2 completion claims.
+
+The 2026-07-18 V2 matrix passes Desktop Node **337/338** with one environment-only unsigned-
+candidate skip, PiP renderer **25/25**, focused shared-Web Desktop bridge E2E **19/19**, both
+Desktop/Web typechecks, Web lint/i18n, real and fake smoke, and all **16** macOS arm64 Computer
+Use screenshot baselines. Structured IPC regressions cover Open-task owner replay and replacement.
 
 ## Current Code Anchors
 
@@ -26,12 +44,16 @@ Existing architectural anchors:
 - `packages/api-client/src`
 - `packages/conversation-ui-core`
 - `packages/conversation-ui-react`
+- `apps/desktop/main/computer-use/deck.ts`
+- `apps/desktop/main/computer-use/deck-selectors.ts`
+- `apps/desktop/main/computer-use/coordinator.ts`
+- `apps/desktop/renderer/computer-use-preview/page-deck-view-model.ts`
 
 The branch now contains a Desktop alpha application, first-class Computer Use preview
 contracts, authenticated daemon compatibility with fixed-port Retry/Quit recovery,
 shared-UI ownership/layout reports,
 requester-bound single-use capture grants, typed obstacle transport, bounded first-frame
-recovery, and fresh unsigned macOS arm64/x64 package smokes. It is not release-complete:
+recovery, and fresh unsigned macOS arm64 package smokes. It is not release-complete:
 Apple Developer ID signing/notarization/Gatekeeper and the signed macOS clean-host
 TCC/capture-indicator matrix, Windows interactive provider/real-source/DPI/dual-screen VM
 evidence, Authenticode/SmartScreen/signed NSIS, hosted signed CI, clean-machine
@@ -113,7 +135,7 @@ Local engineering evidence recorded across 2026-07-16 and 2026-07-17:
   the normal path completed through acknowledgement rather than forced teardown. The real
   lane additionally verifies a live renderer MediaStream track before Hide, zero live tracks
   after the release acknowledgement, and a newly live track after Show.
-- Fresh arm64/x64 `.app` and mounted-DMG fake, real-window, and primary-display lifecycle
+- Fresh arm64 `.app` and mounted-DMG fake, real-window, and primary-display lifecycle
   plus packaged provenance smokes pass. The provenance matrix rejects wrong URL, wrong
   partition, a foreign renderer, audio, a subframe or CSP-blocked request, main-document
   reload/navigation, release interruption, expired grants, and replay while allowing one
@@ -164,6 +186,8 @@ apps/desktop/
   main/
     computer-use/
       coordinator.ts
+      deck.ts
+      deck-selectors.ts
       selectors.ts
       recovery-timers.ts
       source-session.ts
@@ -183,6 +207,7 @@ apps/desktop/
     computer-use-preview/
       main.ts
       messages.ts
+      page-deck-view-model.ts
       preview-view-model.ts
       styles.css
 ```
@@ -246,6 +271,10 @@ export interface LingDesktopCapabilities {
   readonly computerUse: {
     reportLocale(locale: "en-US" | "zh-CN"): void;
     reportSelectedConversation(conversationId?: string): void;
+    reportSelectedDeckOwner(owner?: {
+      readonly surfaceKind: ComputerUsePipSurfaceKind;
+      readonly ownerId: string;
+    }): void;
     reportHostLayout(layout: ComputerUseHostLayout): void;
     show(sessionId: string): Promise<DesktopCommandResult>;
     hide(sessionId: string): Promise<DesktopCommandResult>;
@@ -274,6 +303,14 @@ Rules:
 
 - Route or surface controllers report structured conversation ids. Desktop must not read
   breadcrumbs, headings, CSS selectors, or transcript text to determine selection.
+- V2 route controllers also report the exact `surfaceKind + ownerId` deck boundary. For the
+  current channel, normal-conversation, and teammate-direct surfaces, `ownerId` is the
+  structured selected conversation id. Desktop supplies the already-authoritative workspace
+  identity; Web cannot choose another workspace. Absence clears the eligible deck just like
+  an absent selected conversation clears V1.
+- If `reportSelectedConversation()` and `reportSelectedDeckOwner()` disagree, Desktop fails
+  closed for V2 deck eligibility until the structured reports converge; it never guesses which
+  owner is authoritative from timing or rendered text.
 - `open_conversation` intents are consumed by `useDesktopNavigationIntents`; the Web route
   controller ACKs only after the conversation lookup and selection succeed. A missing or
   failed target remains unacknowledged so a later renderer can retry it.
@@ -291,6 +328,12 @@ Rules:
 - Show, Hide, and Stop suppress duplicate in-flight commands, fail with fixed safe copy, and
   leave authority with the structured projection. A command that does not settle within ten
   seconds becomes locally retryable; its eventual late result is ignored.
+- V2 PiP page activation and page close stay inside the isolated PiP preload boundary.
+  Shared Web reports only the structured owner scope and cannot provide descriptor ids,
+  native source ids, titles, or arbitrary page metadata.
+- In V2, `ComputerUsePreviewSummary.sessionId` and its existing Stop action always refer to
+  the active deck page. The additive summary fields `activePageId` and `pageCount` let shared
+  UI show selection/count without duplicating deck order or thumbnails.
 - Desktop main owns the effect of those commands.
 - The capability surface stays small. Do not expose generic IPC, `desktopCapturer`, raw
   window handles, Node.js, filesystem, or shell access.
@@ -444,6 +487,71 @@ type ComputerUsePipWindowState =
 
 The Desktop preview coordinator owns this state.
 
+### V2 page-deck state
+
+The page deck is a separate presentation axis. It must not be folded into runtime status,
+source status, visibility intent, or native-window lifecycle.
+
+```ts
+export type ComputerUsePipSurfaceKind =
+  | "channel"
+  | "normal_conversation"
+  | "teammate_direct";
+
+export interface ComputerUsePipDeckScope {
+  readonly workspaceId: string;
+  readonly surfaceKind: ComputerUsePipSurfaceKind;
+  readonly ownerId: string;
+}
+
+export type ComputerUsePipPagePresentationState =
+  | "inactive"
+  | "activating"
+  | "active"
+  | "unavailable"
+  | "terminal";
+
+export interface ComputerUsePipPageState {
+  readonly pageId: string;
+  readonly sessionId: string;
+  readonly conversationId: string;
+  readonly presentationState: ComputerUsePipPagePresentationState;
+  readonly lastActivatedAt: number;
+}
+
+export interface ComputerUsePipDeckState {
+  readonly scope: ComputerUsePipDeckScope;
+  readonly availablePageIds: readonly string[];
+  readonly pages: readonly ComputerUsePipPageState[];
+  readonly dismissedPageIds: readonly string[];
+  readonly activePageId?: string;
+  readonly requestedPageId?: string;
+  readonly switchGeneration: number;
+}
+```
+
+Rules:
+
+- `pageId` is a Desktop-local opaque identity derived one-to-one from `sessionId`. A
+  descriptor revision or same-session target update changes the existing page; it does not
+  append a new page.
+- The deck contains at most five resident pages. A sixth open evicts the least-recently-used
+  inactive page from the resident deck. It never stops that page's session and never evicts
+  the active page.
+- `availablePageIds` contains every eligible session in the current scope. The renderer's
+  `View all` list shows metadata-only nonresident and dismissed pages. Explicitly opening one
+  clears its dismissal and applies the inactive-LRU rule when the resident deck is full.
+- Closing a page adds it to memory-only `dismissedPageIds`; ordinary projection reconciliation
+  cannot immediately re-add it. Terminal/removal and exact scope replacement prune dismissal.
+- The deck scope is exact `workspaceId + surfaceKind + ownerId`. Pages never cross channel,
+  normal-conversation, or teammate-direct privacy boundaries.
+- `activePageId` names the page whose source may own the single live capture stream.
+  `requestedPageId` represents a serialized switch that has not passed its first-frame gate.
+- Page ordering is most-recently-active first after a successful switch. A failed or stale
+  switch does not reorder the deck.
+- Inactive pages may own one downsampled last-frame thumbnail in renderer memory. They own
+  no source handle, media track, capture grant, retry loop, or terminal timer in Desktop main.
+
 ## Public Projection Contract
 
 ```ts
@@ -505,6 +613,23 @@ export interface ComputerUsePipRendererSnapshot {
   readonly statusDetail?: string;
   readonly canStop: boolean;
   readonly canOpenSettings: boolean;
+  readonly deck?: {
+    readonly activePageId: string;
+    readonly requestedPageId?: string;
+    readonly availablePageCount: number;
+    readonly pages: readonly {
+      readonly pageId: string;
+      readonly targetLabel: string;
+      readonly runtimeStatus: ComputerUseRuntimeStatus;
+      readonly presentationState: ComputerUsePipPagePresentationState;
+    }[];
+    readonly availablePages: readonly {
+      readonly pageId: string;
+      readonly targetLabel: string;
+      readonly runtimeStatus: ComputerUseRuntimeStatus;
+      readonly resident: boolean;
+    }[];
+  };
 }
 ```
 
@@ -529,6 +654,12 @@ The three-state `visibilityIntent` remains the product contract. Snapshots emit 
 global preference-driven presentation, `shown` for an explicit per-session override, and
 `hidden` for user suppression. Terminal and removed sessions clear their memory-only intent
 and persisted suppression eagerly; the 24-hour expiry remains a crash/restart fallback.
+
+The optional V2 `deck` block carries metadata only. `availablePages` powers `View all` and
+contains only exact-current-scope structured metadata. Thumbnail pixels never cross preload or
+daemon IPC. Before releasing the active media track, the isolated renderer may downsample
+the current decoded frame into an in-memory thumbnail keyed by `pageId`. The renderer drops
+that bitmap on page eviction, scope replacement, renderer crash, or process exit.
 
 ## Presentation Selector
 
@@ -561,6 +692,27 @@ Rules:
 - Terminal sessions are eligible only for their terminal linger timer.
 - Application blur does not clear `selectedConversationId`.
 - An internal Ling route change does update `selectedConversationId`.
+
+V2 replaces the one-result selector at the presentation edge with a deck selector while
+leaving daemon projections unchanged:
+
+```ts
+function selectComputerUseDeckPages(input: {
+  readonly scope: ComputerUsePipDeckScope;
+  readonly projections: readonly ComputerUsePreviewProjection[];
+}): readonly ComputerUsePreviewProjection[] {
+  return input.projections
+    .filter((item) => projectionBelongsToDeckScope(item, input.scope))
+    .filter((item) => !isTerminalComputerUseStatus(item.status))
+    .filter((item) => item.preview !== undefined)
+    .sort(compareLatestComputerUseProjection);
+}
+```
+
+The current `selectComputerUsePresentation()` remains the V1 compatibility path. V2 derives
+one page per eligible session, reconciles it with the local resident deck, and chooses only
+the active page for `selectComputerUsePipPresentation()`. Starting or approval-waiting
+sessions without a descriptor remain summary-only and never become empty deck cards.
 
 ## Effective Visibility Selector
 
@@ -633,7 +785,34 @@ user stops Computer Use
   -> if no acknowledgement arrives: return controls to active, show retryable failure
   -> terminal event arrives
   -> release preview and close window
+
+user activates another V2 page
+  -> validate current deck scope, page eligibility, and opaque page id
+  -> increment switchGeneration and coalesce rapid clicks to the latest request
+  -> renderer captures a bounded memory-only thumbnail of the current frame
+  -> release the current media track and consume/expire its exact grant
+  -> prepare the requested page's authorized descriptor
+  -> first frame arrives for the exact page/session/revision/generation
+  -> atomically commit activePageId and move the page to the front
+  -> if prepare or first-frame fails, invalidate the request and restore the prior page
+     through the same single-stream queue while keeping its thumbnail visible
+
+user closes a V2 page
+  -> remove only the page from the resident deck
+  -> add its pageId to memory-only dismissedPageIds
+  -> if active, activate the next most-recent eligible page or hide the PiP
+  -> release page thumbnail and local presentation state
+  -> Computer Use runtime continues
+
+user opens View all and selects a nonresident page
+  -> validate exact current scope and clear its dismissedPageId
+  -> evict only the least-recent inactive resident page if the five-page cap is full
+  -> activate the selected page through the same release-before-prepare queue
 ```
+
+At no point may the switch flow hold two live capture streams. Release acknowledgement or
+forced exact-renderer teardown completes before the next adapter `prepare()` begins. This
+trades a short frozen-frame transition for a much smaller privacy and resource boundary.
 
 ## Event Matrix
 
@@ -646,6 +825,12 @@ user stops Computer Use
 | User selects Hide | `hidden` | Hide | Stop tracks within 500 ms | None |
 | User closes window | `hidden` | Destroy preview window | Stop tracks | None |
 | User selects Stop | unchanged | Show `Stopping` | Continue last frame | Send audited stop request |
+| V2 user activates inactive page | unchanged | Keep prior thumbnail visible until new first frame; then reorder deck | Release old before preparing new | None |
+| V2 activation fails or becomes stale | unchanged | Keep/restore prior page and show safe retryable feedback | No stale track survives; reacquire prior page only through the serialized queue | None |
+| V2 user closes inactive page | unchanged | Remove card/tab | Discard thumbnail only | None |
+| V2 user closes active page | unchanged | Activate next MRU eligible page or hide | Release active track before any replacement prepare | None |
+| V2 sixth page opens | unchanged | Evict least-recent inactive resident page; keep it available from page list | Discard evicted thumbnail | None |
+| V2 user selects View all | unchanged | Show exact-scope metadata list; no full-page preview is mounted | No capture change | None |
 | Approval required | unchanged | Stay visible | Continue or freeze last frame | None |
 | Authoritative runtime `paused` projection | unchanged | Stay visible | Continue or freeze last frame | None |
 | Stop accepted but not acknowledged | unchanged | Return to active/retryable controls; keep existing preview | Continue last frame | Retry remains available; do not claim stopped |
@@ -864,6 +1049,8 @@ export interface LingComputerUsePreviewApi {
   ): () => void;
   retryCapture(): Promise<{ readonly accepted: boolean; readonly reason?: string }>;
   resetPosition(): Promise<{ readonly accepted: boolean; readonly reason?: string }>;
+  activatePage(pageId: string): Promise<{ readonly accepted: boolean; readonly reason?: string }>;
+  closePage(pageId: string): Promise<{ readonly accepted: boolean; readonly reason?: string }>;
   close(): Promise<{ readonly accepted: boolean; readonly reason?: string }>;
   hide(): Promise<void>;
   openOwnerConversation(): Promise<void>;
@@ -880,12 +1067,17 @@ export interface LingComputerUsePreviewApi {
 The main application renderer receives only:
 
 - `reportLocale(locale)`;
+- `reportSelectedDeckOwner({ surfaceKind, ownerId })`;
 - `reportHostLayout(layout)`;
 - `showComputerUsePreview(sessionId)`;
 - `hideComputerUsePreview(sessionId)`;
 - `stopComputerUse(sessionId)`;
 - `getComputerUsePreferences()` and `setComputerUseAutoShow(enabled)`;
 - `onComputerUsePreviewSummaryChanged(...)`.
+
+The main-window summary may add `activePageId` and `pageCount`; `sessionId` continues to
+name the active page's session. It never exposes deck order, thumbnails, dismissal state, or
+nonresident page metadata to shared Web.
 
 Do not expose `desktopCapturer`, raw `MediaStream`, native handles, or arbitrary IPC send
 methods through preload.
@@ -958,7 +1150,7 @@ it stores the requester webContents id and validates the request frame against t
 webContents' current `mainFrame` at consumption time.
 
 Implementation status: the shared boundary and fake/macOS path are implemented and pass
-the current dev plus unsigned arm64/x64 `.app` and mounted-DMG smoke matrix. The
+the current dev plus unsigned arm64 `.app` and mounted-DMG smoke matrix. The
 display-media grant is exact-document-bound, generation-guarded, single-use, and disposed
 with the adapter. The negative matrix covers subframes, foreign/missing webContents, wrong
 URL/query/origin/Session, audio requests, detached/destroyed/navigated frames, expiry,
@@ -982,12 +1174,18 @@ test-only oracle, and then forwards only Cua's canonical native window id plus t
 provider-reported owner PID. Title matching, active-window state, z-order, and nearest-candidate
 fallback are forbidden because they can silently reveal the wrong source.
 
-For macOS and Windows V1, Ling packages only the Cua Driver plugin shell metadata. The `cua-driver`
-executable, native application, permissions, and update channel remain separately installed
-provider responsibilities. The daemon resolves an explicit command or supported local
-installation path and reports `plugin_binary_not_found` when the provider is absent. A
-clean-machine real-capture test must install and permission that external provider before
-starting Ling; no renderer or public contract may depend on its installation path.
+The current verified baseline packages only the Cua Driver plugin shell metadata. The
+target distribution is now platform-specific:
+
+| Platform/runtime | Provider boundary |
+| --- | --- |
+| Packaged macOS Desktop | Ling packages locked `0.8.3 (Ling build 1)`, Electron main spawns it in embedded mode, and Ling owns the TCC identity |
+| macOS standalone/dev/external override | daemon resolves an explicit or supported external command and fails missing providers closed |
+| Packaged Windows Desktop | bundled source-built x64 `0.8.3 (Ling build 1)` in Desktop-owned embedded mode; standard integrity tier, Windows-team VM acceptance required |
+| Windows standalone/dev/external override | separately installed exact-reviewed provider remains available |
+
+No renderer or public Computer Use contract may depend on a native installation path. The
+cross-platform process/bridge details live in the Bundled Embedded Cua Driver detailed design.
 
 ## Visual Contract
 
@@ -1049,6 +1247,15 @@ idle -> pending -> runtime projection owns stopping/terminal
   revocation, which use assertive announcements.
 - Preview content itself is decorative unless the runtime supplies a safe textual target
   description.
+- V2 page cards use real buttons with `aria-selected`, target label, runtime status, and
+  position in the resident deck. Left/Right moves focus; Enter/Space activates; Delete or a
+  labeled menu action closes the focused page without stopping its session.
+- The `View all` control exposes the available-page count and a metadata-only list. It is
+  keyboard reachable, announces the active scope, and never exposes a thumbnail for a page
+  outside that scope.
+- Reduced motion replaces card fan/reorder animation with an immediate state change. Focus
+  remains on the activated card after reordering and moves to the next eligible card after
+  close.
 
 ## Persistence
 
@@ -1077,6 +1284,8 @@ Memory-only state:
 - terminal linger timers;
 - current source handle;
 - current frame and cursor position.
+- V2 deck scope, resident page order, active/requested page ids, switch generation, and up
+  to four inactive downsampled last-frame thumbnails.
 
 Never persist frame bytes, raw source identifiers, permission tokens, or cursor history.
 
@@ -1131,14 +1340,17 @@ media phases, and track/process residue. The machine-readable checks also lock o
 descriptor-matching source enumeration per activation, reuse of the loaded renderer
 document, absence of a second post-acquisition `applyConstraints()` reconfiguration, a live
 track throughout steady capture, and complete release afterward. Churn and steady-state
-comparisons remain separate. The latest fake ownership/crash lane records **415.27 ms p95**.
-The latest full real run records **168.09/177.84 ms** first-frame p50/p95,
-**2.16/3.65 ms** Hide p50/p95, **0.21%** 30-second active CPU delta, **11,763,712 B**
-active working-set overhead, **6.04%** churn CPU, and **17,661,952 B** churn working-set
-delta. Its structural assertions record **12 activations = 12 source
-enumerations**, **1 renderer document**, **0 `applyConstraints()` calls**, and **0** lifecycle
-residue. Signed packaged per-process CPU/working-set, visual-latency, and capture-indicator
-results remain separate G2/G3/G6 evidence.
+comparisons remain separate. The latest fake ownership/crash lane records **383.38 ms
+first-frame p95** and **11.32 ms page-switch p95**. It observes
+`maxActiveAdapterSources = 1` and zero process/window/renderer/listener/IPC/timer/subscription/
+source residue. The latest full real run records **153.73/164.31 ms** first-frame p50/p95,
+**1.39/6.76 ms** Hide p50/p95, **0.23%** 30-second incremental active CPU,
+**9,863,168 B** active working-set overhead, **4.9%** churn CPU, and **18,857,984 B** churn
+working-set growth. Ten active samples each contain exactly one live track and every hidden
+sample contains zero. Its structural assertions record **12 activations = 12 source
+enumerations**, **1 renderer document**, **0 `applyConstraints()` calls**, and **0** final
+lifecycle residue. Signed packaged per-process CPU/working-set, visual-latency, and
+capture-indicator results remain separate G2/G3/G6 evidence.
 
 ## Failure Modes
 
@@ -1157,15 +1369,20 @@ results remain separate G2/G3/G6 evidence.
 | A terminal/source-error linger fires while route or source replacement is in progress | Enqueue cleanup on the coordinator operation queue and bind it to the exact window, session, descriptor revision, and source generation captured when the timer was armed. | An expired old linger cannot destroy or clear the newly selected preview. | Timer-fired-then-switch regression with delayed renderer release ACK. |
 | Display is disconnected | Clamp to remaining work area. | Preview remains reachable. | Display topology simulation. |
 | Renderer crashes | Release the dead renderer's media, detach the old window listener, destroy the old BrowserWindow, and recreate once per still-eligible active session. A second crash blocks automatic looping and waits for explicit Show. | Preview briefly reconnects; after the bounded retry the runtime remains active but the preview stays hidden until the user asks to show it. | Fake renderer-crash lifecycle test covering media-send failure, listener cleanup, first recreation, second-crash bound, and explicit Show recovery. |
-| Hidden renderer throttles the first-frame callback | Disable BrowserWindow background throttling and use the 16 ms identity-bounded decoded-ready poll. The poll still requires `HAVE_CURRENT_DATA` and ends on Hide/revision/reconnect/teardown; Hide releases the source, so no hidden capture remains active. Fake sources acknowledge with a timer rather than a paint-dependent animation frame. | Hide -> Show can reopen without flashing an empty window, including macOS x64 under Rosetta. | Packaged arm64/x64 first-frame -> Hide -> Show -> Stop smoke plus real first-frame performance lane. |
+| Hidden renderer throttles the first-frame callback | Disable BrowserWindow background throttling and use the 16 ms identity-bounded decoded-ready poll. The poll still requires `HAVE_CURRENT_DATA` and ends on Hide/revision/reconnect/teardown; Hide releases the source, so no hidden capture remains active. Fake sources acknowledge with a timer rather than a paint-dependent animation frame. | Hide -> Show can reopen without flashing an empty window on the supported arm64 build. | Packaged arm64 first-frame -> Hide -> Show -> Stop smoke plus real first-frame performance lane. |
 | Reconnect callback races Hide or descriptor replacement | Cancel pending retries before preference I/O, serialize retry work with projection reconciliation, and revalidate selection, suppression, terminal status, descriptor id, and revision after each async permission/prepare boundary. | A hidden preview stays hidden and an old source cannot overwrite a newer revision. | Slow preference, delayed permission, and delayed old-revision prepare regressions. |
 | Shutdown cleanup throws or a late source event arrives while disposal awaits release | Mark the coordinator quiescing before any await; reject new projection/renderer/display events; run every fallible cleanup inside an outer fail-safe envelope; dispose the adapter exactly once; clear timers again after queue/window drain. | App exit completes without a hidden capture grant, timer, listener, or queued reopen. | Throwing subscription/unsubscribe plus deferred release with late `sourceEnded`/`sourceFailed`. |
 | Renderer does not process the release-media IPC | Require a release identity acknowledgement after all renderer tracks are ended. Hide may update UI immediately, but timeout force-destroys the renderer/window before cleanup is considered complete. | Preview disappears and capture is guaranteed to stop even if the renderer hangs; runtime continues. | Real MediaStream Hide/stall/revision/shutdown plus injected lost-IPC/hung-renderer timeout. |
-| Bundled daemon cold-starts near the readiness deadline | Keep health probing bounded but allow 20 seconds for packaged cold start. The observed x64/Rosetta mounted-DMG daemon needed about 7.98 seconds, making the prior 8-second boundary flaky. | Cold packaged launch succeeds instead of randomly showing a startup failure. | x64 mounted-DMG fake and real lifecycle smoke. |
+| Bundled daemon cold-starts near the readiness deadline | Keep health probing bounded but allow 20 seconds for packaged cold start. Historical Rosetta validation exposed that the prior 8-second boundary was flaky; Rosetta is no longer a supported release target. | Cold packaged launch succeeds instead of randomly showing a startup failure. | arm64 mounted-DMG fake and real lifecycle smoke. |
 | Stop request fails or is accepted without acknowledgement | Reconcile any returned projection, keep the authoritative active status and preview, clear pending state, and do not claim it stopped. | Error toast/overlay with an enabled retry action. | Rejected, transport-failed, timeout, and accepted-but-unacknowledged Stop regressions. |
 | Producer has no authoritative pause event | Preserve the real starting/running/approval state; never synthesize `paused` from silence, capture state, or local UI inactivity. | No false `Paused` label. | Producer and run-integration histories assert approval and Stop never emit synthetic `paused`. |
 | A stale drag-end snap fires after Hide, Reset, Close, replacement, or disposal | Replace the timer on every move and clear it on all lifecycle/reset paths before window state changes. | Hidden or replacement PiP is not moved and stale placement is not persisted. | Virtual-timer last-move-wins, corner persistence, and teardown/reset cancellation regressions. |
 | Main window route changes rapidly | Coalesce selection and layout updates. | No stale preview flash. | Rapid route-switch E2E. |
+| V2 page clicks race while a source is releasing or preparing | Serialize switches, increment `switchGeneration`, and coalesce to the latest eligible request after every async boundary. | Only the latest requested page may become active; no stale flash or leaked track. | A -> B -> C rapid-click regression with delayed release ACK and delayed B first frame. |
+| Requested V2 page becomes terminal, hidden, or leaves scope before first frame | Revalidate scope, session, descriptor, and generation; cancel the request and restore the prior eligible page through the same queue. | Safe `Page no longer available` feedback; prior page remains or the PiP hides. | Terminal/scope-change during switch with stale callback denial. |
+| V2 page activation fails permission or first-frame recovery | Preserve the prior memory thumbnail, release failed resources, and reacquire the prior page if still eligible. | Prior page returns live when possible; otherwise it remains frozen with explicit Retry/Open task. | Permission denial and ten-second zero-frame exhaustion during switch plus rollback. |
+| V2 active page is closed or ends while inactive pages remain | Remove its local page state, select the next MRU eligible page, and use the normal single-stream switch path. | Next page activates without stopping any other session. | Active close and terminal linger with two remaining pages. |
+| V2 renderer crashes with inactive thumbnails | Destroy all renderer-owned bitmaps and the exact live track; rebuild deck metadata from structured projections and auto-recreate only the still-active page under the existing one-recreation bound. | Inactive cards return without stale images; active page reconnects once. | Renderer crash with five pages and zero bitmap/track/listener residue. |
 
 ## Test Coverage Map
 
@@ -1176,6 +1393,12 @@ Pure state
     ignores historical terminal sessions
     keeps waiting/paused/stopping active
     handles concurrent projection updates
+  reconcileComputerUsePipDeck [V2]
+    one page per eligible session; descriptor revision updates in place
+    exact workspace/surface/owner scope and privacy separation
+    five-page resident cap and inactive-only LRU eviction
+    active/requested identity and successful-switch MRU ordering
+    terminal/removal pruning without runtime Stop
   selectComputerUsePipPresentation [selectors.ts; 896 combinations covered]
     global auto show on/off
     explicit shown override
@@ -1208,6 +1431,11 @@ Desktop main
   descriptor and prepared-source aspect ratio updates, including portrait ratios
   starting/approval summary without descriptor -> zero BrowserWindow allocation
   accepted-but-unacknowledged Stop -> active summary and retryable command
+  V2 A -> B switch releases A before B prepare and commits only after B first frame
+  V2 rapid A -> B -> C switch coalesces to C and rejects all stale generations
+  V2 failed B switch restores A without two live tracks
+  V2 active close/terminal selects next MRU page or hides with zero residue
+  V2 View all lists nonresident/dismissed pages and explicit reopen clears dismissal
 
 Renderer
   en-US / zh-CN catalog key coverage and unsupported-locale fallback
@@ -1218,6 +1446,8 @@ Renderer
   reduced motion
   stop failure and permission recovery
   renderer crash cleanup, one-time recreation, and bounded second-crash behavior
+  V2 clickable/keyboard page cards, selected state, focus retention, and reduced motion
+  V2 downsampled memory-only thumbnail cap, eviction, scope cleanup, and crash cleanup
 
 E2E [fake adapter]
   active session -> first frame -> auto show
@@ -1228,6 +1458,11 @@ E2E [fake adapter]
   explicit stop -> terminal close
   app blur/minimize -> preview remains visible
   stream stall -> recover or hide after timeout
+  V2 open five pages -> click exposed cards -> correct active target and MRU order
+  V2 open sixth page -> inactive LRU eviction without Stop
+  V2 close -> refresh does not resurrect page; View all -> explicit reopen
+  V2 rapid switch, failed switch rollback, active close, and terminal failover
+  V2 route to a different surface/owner -> old deck and thumbnails disappear
 
 Shared UI synchronization
   browser surface works with no Desktop bridge
@@ -1253,7 +1488,10 @@ Shared UI synchronization
 
 - Direct user input forwarded through the preview.
 - Multiple simultaneous picture-in-picture windows.
-- A preview stack or historical carousel.
+- Multiple simultaneous live capture streams.
+- Historical preview carousel, recorded frame history, or cross-surface deck sharing.
+- Treating browser tabs or URLs as pages without an authorized Computer Use session and
+  descriptor.
 - Cloud relay or off-device video streaming.
 - Frame recording, screenshots, or replay generated by the preview layer.
 - Native capture optimization in the first cross-platform slice.
@@ -1272,8 +1510,21 @@ teardown. Future work must preserve that split, keep trust-boundary parsing outs
 coordinator, and avoid turning product-surface polish into another lifecycle state cluster;
 broader cosmetic refactoring remains out of scope.
 
+V2 must keep deck reconciliation in pure `deck.ts` / `deck-selectors.ts` modules and keep
+serialized source switching in the existing coordinator operation queue. Do not add one
+coordinator instance per page, one renderer per page, or page-owned retry loops. Those
+approaches multiply the exact capture, recovery, and shutdown races the V1 coordinator
+already closes.
+
 ## Open Decisions
 
-- Exact Windows provider allowlist advancement and public distribution risk acceptance.
-- Windows legal Publisher/signing service, supported-version floor, and whether enterprise
-  distribution needs a separate per-machine artifact; the first candidate remains per-user.
+V2 deck decisions are locked: one native PiP window, one live capture stream, five resident
+pages, inactive memory-only thumbnails, exact owner-surface scoping, and inactive-LRU
+eviction. No V2 product or architecture decision blocks implementation.
+
+- Exact Windows source/build lock and Ling distribution-revision advancement, including
+  public risk acceptance for a prerelease source pin.
+- Windows legal Publisher/signing service, minimum supported Windows build and
+  policy-pinned VM matrix, whether full UIAccess is required, and whether enterprise
+  distribution needs a separate per-machine artifact; the first standard candidate
+  remains per-user.

@@ -224,7 +224,7 @@ test("report limitations explicitly exclude TCC, capture-indicator, and VoiceOve
     captureIndicatorEvidence: false,
     voiceOverEvidence: false,
     statement:
-      "This verifier establishes the arm64/x86_64 app, DMG, and ZIP signing, notarization-ticket, Gatekeeper, archive-integrity, and embedded-app binding evidence only. " +
+      "This verifier establishes the arm64 app, DMG, and ZIP signing, notarization-ticket, Gatekeeper, archive-integrity, and embedded-app binding evidence only. " +
       "It does not inspect or mutate macOS TCC state, observe the operating-system capture indicator, or exercise VoiceOver.",
   });
 });
@@ -403,56 +403,53 @@ test("bundle tree fingerprint is deterministic and changes with nested content",
 });
 
 
-test("signed candidate matrix requires matching arm64 and x86_64 app, DMG, and ZIP artifacts", () => {
+test("signed candidate matrix requires matching arm64 app, DMG, and ZIP artifacts", () => {
   const arm64 = candidate("arm64", "a".repeat(64));
-  const x64 = candidate("x86_64", "b".repeat(64));
   assert.deepEqual(
     assertMacosCandidateMatrix({
-      apps: [arm64, x64],
-      dmgs: [archive("arm.dmg", arm64), archive("x64.dmg", x64)],
-      zips: [archive("arm.zip", arm64), archive("x64.zip", x64)],
+      apps: [arm64],
+      dmgs: [archive("arm.dmg", arm64)],
+      zips: [archive("arm.zip", arm64)],
     }),
     {
       pass: true,
-      requiredArchitectures: ["arm64", "x86_64"],
+      requiredArchitectures: ["arm64"],
       coverage: {
-        apps: ["arm64", "x86_64"],
-        dmgs: ["arm64", "x86_64"],
-        zips: ["arm64", "x86_64"],
+        apps: ["arm64"],
+        dmgs: ["arm64"],
+        zips: ["arm64"],
       },
     },
   );
   assert.throws(
     () =>
       assertMacosCandidateMatrix({
-        apps: [arm64, x64],
-        dmgs: [archive("arm.dmg", arm64)],
-        zips: [archive("arm.zip", arm64), archive("x64.zip", x64)],
+        apps: [arm64],
+        dmgs: [],
+        zips: [archive("arm.zip", arm64)],
       }),
-    /dmgs release matrix is missing x86_64/u,
+    /requires app, DMG, and ZIP artifacts/u,
   );
   assert.throws(
     () =>
       assertMacosCandidateMatrix({
-        apps: [arm64, x64],
-        dmgs: [archive("arm.dmg", arm64), archive("x64.dmg", x64)],
+        apps: [arm64],
+        dmgs: [archive("arm.dmg", arm64)],
         zips: [
-          archive("arm.zip", arm64),
-          archive("x64.zip", candidate("x86_64", "c".repeat(64))),
+          archive("arm.zip", candidate("arm64", "c".repeat(64))),
         ],
       }),
     /does not match a verified standalone app/u,
   );
-  const mismatchedBundle = structuredClone(x64);
+  const mismatchedBundle = structuredClone(arm64);
   mismatchedBundle.bundleFingerprint.treeSha256 = "9".repeat(64);
   assert.throws(
     () =>
       assertMacosCandidateMatrix({
-        apps: [arm64, x64],
-        dmgs: [archive("arm.dmg", arm64), archive("x64.dmg", x64)],
+        apps: [arm64],
+        dmgs: [archive("arm.dmg", arm64)],
         zips: [
-          archive("arm.zip", arm64),
-          archive("x64.zip", mismatchedBundle),
+          archive("arm.zip", mismatchedBundle),
         ],
       }),
     /does not match a verified standalone app/u,
@@ -483,9 +480,9 @@ test("candidate report rejects summary-only PASS and resolves report-relative ar
         matrix: {
           pass: true,
           coverage: {
-            apps: ["arm64", "x86_64"],
-            dmgs: ["arm64", "x86_64"],
-            zips: ["arm64", "x86_64"],
+            apps: ["arm64"],
+            dmgs: ["arm64"],
+            zips: ["arm64"],
           },
         },
         verdict: { status: "PASS", pass: true, signedCandidateEvidence: true },
@@ -495,23 +492,21 @@ test("candidate report rejects summary-only PASS and resolves report-relative ar
 
   const reportPath = resolve("reports/macos/candidate.json");
   const arm64 = candidate("arm64", "a".repeat(64));
-  const x64 = candidate("x86_64", "b".repeat(64));
   arm64.path = "../../release/arm64.app";
-  x64.path = "../../release/x64.app";
   const report = {
     schemaVersion: 1,
     kind: "ling-desktop-macos-signed-candidate",
     expected: { teamId: TEAM_ID, bundleId: "com.lingstack.desktop" },
-    apps: [arm64, x64],
-    dmgs: [archive("../../release/arm64.dmg", arm64), archive("../../release/x64.dmg", x64)],
-    zips: [archive("../../release/arm64.zip", arm64), archive("../../release/x64.zip", x64)],
+    apps: [arm64],
+    dmgs: [archive("../../release/arm64.dmg", arm64)],
+    zips: [archive("../../release/arm64.zip", arm64)],
     matrix: {
       pass: true,
-      requiredArchitectures: ["arm64", "x86_64"],
+      requiredArchitectures: ["arm64"],
       coverage: {
-        apps: ["arm64", "x86_64"],
-        dmgs: ["arm64", "x86_64"],
-        zips: ["arm64", "x86_64"],
+        apps: ["arm64"],
+        dmgs: ["arm64"],
+        zips: ["arm64"],
       },
     },
     verdict: { status: "PASS", pass: true, signedCandidateEvidence: true },
@@ -519,7 +514,7 @@ test("candidate report rejects summary-only PASS and resolves report-relative ar
   candidateReportFingerprint(report);
   const paths = resolveMacosCandidateArtifactPaths(report, reportPath);
   assert.equal(paths.apps[0], resolve("release/arm64.app"));
-  assert.equal(paths.zips[1], resolve("release/x64.zip"));
+  assert.equal(paths.zips[0], resolve("release/arm64.zip"));
 });
 
 const localUnsignedApp = resolve(

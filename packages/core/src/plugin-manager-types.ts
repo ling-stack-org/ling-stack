@@ -7,6 +7,23 @@ export type ManagedPluginHealthStatus = "unknown" | "ready" | "failed" | "disabl
 export type ManagedPluginPackageStatus = "installed" | "uninstalled";
 export type ManagedPluginRuntimePreviewStatus = "injectable" | "blocked" | "disabled";
 export type ManagedPluginSetupState = "detected" | "missing" | "unsupported" | "connected" | "ready";
+export type CuaDriverDistribution = "bundled_embedded" | "external_local";
+export type CuaDriverPlatform = "darwin" | "win32" | "unsupported";
+export type CuaDriverProviderState =
+  | "included"
+  | "desktop_unavailable"
+  | "permission_required"
+  | "interactive_session_required"
+  | "platform_unavailable"
+  | "ready"
+  | "incompatible"
+  | "corrupt"
+  | "external_missing"
+  | "external_detected"
+  | "external_connected"
+  | "unsupported";
+export type CuaDriverIntegrityCoverage = "standard" | "uiaccess";
+export type CuaDriverLimitation = "elevated_pixel_input" | "uwp_send_input";
 
 export interface ManagedPluginSetupGuide {
   readonly documentationUrl: string;
@@ -20,6 +37,43 @@ export interface ManagedPluginSetupView {
   readonly checkedAt: string;
   readonly detectedCommand?: string;
   readonly guide?: ManagedPluginSetupGuide;
+  readonly schemaVersion?: 2;
+  readonly distribution?: CuaDriverDistribution;
+  readonly platform?: CuaDriverPlatform;
+  readonly providerState?: CuaDriverProviderState;
+  readonly requestedEnabled?: boolean;
+  readonly effectiveEnabled?: boolean;
+  readonly integrityCoverage?: CuaDriverIntegrityCoverage;
+  readonly limitations?: readonly CuaDriverLimitation[];
+  readonly providerVersion?: string;
+  readonly providerDistributionRevision?: string;
+  readonly providerRevision?: string;
+  readonly providerDisplayVersion?: string;
+  readonly expectedProviderVersion?: string;
+  readonly providerSealDigest?: string;
+  readonly providerCatalogDigest?: string;
+  readonly sealDigest?: string;
+  readonly catalogDigest?: string;
+  readonly integrity?: "verified" | "failed" | "unknown";
+  readonly bridge?: "available" | "missing" | "incompatible";
+  readonly permissions?: {
+    readonly accessibility: "granted" | "denied" | "prompt" | "unknown";
+    readonly screenRecording: "granted" | "denied" | "prompt" | "unknown";
+    readonly capturable?: boolean;
+  };
+  readonly windowsReadiness?: {
+    readonly interactiveSession: "ready" | "session_zero" | "locked" | "unknown";
+    readonly wgcApi: "supported" | "unsupported" | "unavailable" | "unknown";
+    readonly d3d11: "available" | "unavailable" | "unknown";
+    readonly uiaRuntime: "available" | "unavailable" | "unknown";
+    readonly contentObserved: false;
+    readonly integrityCoverage: CuaDriverIntegrityCoverage | "unknown";
+    readonly uiaHelper: "not_required" | "ready" | "unavailable" | "invalid";
+  };
+  readonly externalOverride?: {
+    readonly command: string;
+    readonly explicit: true;
+  };
 }
 
 export type ManagedPluginContributionKind =
@@ -184,6 +238,8 @@ export interface CreateManagedPluginRuntimeSnapshotInput {
   readonly id?: string;
   readonly runId?: string;
   readonly cwd: string;
+  /** Selected plugin identities, including selected plugins that are currently blocked. */
+  readonly pluginIds?: readonly string[];
   readonly capabilities: readonly ManagedPluginRuntimePreview[];
   readonly policyOverlays: readonly ManagedPluginPolicyOverlayView[];
   readonly createdAt?: string;

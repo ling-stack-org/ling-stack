@@ -24,6 +24,7 @@ interface SceneInspectorProps {
   readonly imageArtifacts: readonly RunArtifact[];
   readonly readiness?: SceneReadiness;
   readonly busyAction: string;
+  readonly sceneUpdateBusy: boolean;
   readonly actions: MediaProductionActions;
   readonly onClose?: () => void;
   readonly onRequestDelete: (scene: MediaScene) => void;
@@ -121,14 +122,14 @@ function SceneSettingsPanel(props: SceneInspectorProps & { readonly scene: Media
 
   return <>
     <Field className="field" label={t("Scene {number}", { number: props.scene.sortOrder + 1 })}>
-      <Input value={draft.title} loading={busy === "title"} invalid={Boolean(failure.title)} onChange={(event) => { setDraft((current) => ({ ...current, title: event.target.value })); clear("title"); }} onKeyDown={(event) => { if (event.key === "Escape") revert("title", event.currentTarget); }} onBlur={() => void save("title", draft.title.trim() || props.scene.title)} />
+      <Input value={draft.title} disabled={props.sceneUpdateBusy || busy !== undefined} loading={busy === "title"} invalid={Boolean(failure.title)} onChange={(event) => { setDraft((current) => ({ ...current, title: event.target.value })); clear("title"); }} onKeyDown={(event) => { if (event.key === "Escape") revert("title", event.currentTarget); }} onBlur={() => void save("title", draft.title.trim() || props.scene.title)} />
     </Field>
     {failure.title ? <MutationFeedback failure={failure.title} busy={busy === "title"} onRetry={() => void retry("title", failure.title!)} onClear={() => clear("title")} /> : null}
     <Field className="field scene-prompt-field" label={t("Prompt")}>
-      <Textarea value={draft.prompt} rows={6} loading={busy === "prompt"} invalid={Boolean(failure.prompt)} onChange={(event) => { setDraft((current) => ({ ...current, prompt: event.target.value })); clear("prompt"); }} onKeyDown={(event) => { if (event.key === "Escape") revert("prompt", event.currentTarget); }} onBlur={() => void save("prompt", draft.prompt)} />
+      <Textarea value={draft.prompt} rows={6} disabled={props.sceneUpdateBusy || busy !== undefined} loading={busy === "prompt"} invalid={Boolean(failure.prompt)} onChange={(event) => { setDraft((current) => ({ ...current, prompt: event.target.value })); clear("prompt"); }} onKeyDown={(event) => { if (event.key === "Escape") revert("prompt", event.currentTarget); }} onBlur={() => void save("prompt", draft.prompt)} />
     </Field>
     {failure.prompt ? <MutationFeedback failure={failure.prompt} busy={busy === "prompt"} onRetry={() => void retry("prompt", failure.prompt!)} onClear={() => clear("prompt")} /> : null}
-    <SceneExecutionSettings cwd={props.cwd} scene={props.scene} project={props.project} providers={props.providers} workflows={props.workflows} imageArtifacts={props.imageArtifacts} actions={props.actions} onConfigureVideoModel={props.onConfigureVideoModel} onOpenWorkflowLibrary={props.onOpenWorkflowLibrary} />
+    <SceneExecutionSettings cwd={props.cwd} scene={props.scene} project={props.project} providers={props.providers} workflows={props.workflows} imageArtifacts={props.imageArtifacts} sceneUpdateBusy={props.sceneUpdateBusy || busy !== undefined} actions={props.actions} onConfigureVideoModel={props.onConfigureVideoModel} onOpenWorkflowLibrary={props.onOpenWorkflowLibrary} />
   </>;
 }
 

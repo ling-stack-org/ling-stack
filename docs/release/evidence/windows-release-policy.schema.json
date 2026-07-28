@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ling-stack.dev/schemas/windows-release-policy-v2.json",
+  "$id": "https://ling-stack.dev/schemas/windows-release-policy-v3.json",
   "title": "Ling Desktop Windows Approved Release Policy",
   "type": "object",
   "additionalProperties": false,
@@ -11,31 +11,55 @@
     "status",
     "approvedBy",
     "approvedAt",
+    "windowsAcceptanceOwner",
+    "requiredSigningTier",
+    "requiredDistributionChannel",
+    "requiredProductionEligible",
+    "requiredTestAuthorityKind",
     "lingSignerSubject",
     "providerSignerSubject",
+    "catalogSignerSubject",
     "lingSignerCertificateSha256",
     "providerSignerCertificateSha256",
+    "catalogSignerCertificateSha256",
     "supportedWindowsBuilds",
+    "requiredAcceptanceCells",
     "manualEvidenceReviewers",
     "reviewerKeys",
     "candidateBuildAttestors"
   ],
   "properties": {
-    "schemaVersion": { "const": 2 },
+    "schemaVersion": { "const": 3 },
     "kind": { "const": "ling.windows.release-policy" },
-    "policyVersion": { "const": 2 },
+    "policyVersion": { "const": 3 },
     "status": { "const": "approved" },
     "approvedBy": { "type": "string", "minLength": 1 },
     "approvedAt": { "type": "string", "format": "date-time" },
+    "windowsAcceptanceOwner": { "type": "string", "minLength": 1 },
+    "requiredSigningTier": { "enum": ["test_signed_internal", "production_signed"] },
+    "requiredDistributionChannel": { "enum": ["internal", "production"] },
+    "requiredProductionEligible": { "type": "boolean" },
+    "requiredTestAuthorityKind": {
+      "type": ["string", "null"],
+      "enum": ["ephemeral-ci", "managed-internal", null]
+    },
     "lingSignerSubject": { "type": "string", "minLength": 1 },
     "providerSignerSubject": { "type": "string", "minLength": 1 },
-    "lingSignerCertificateSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-    "providerSignerCertificateSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "catalogSignerSubject": { "type": "string", "minLength": 1 },
+    "lingSignerCertificateSha256": { "$ref": "#/$defs/sha256" },
+    "providerSignerCertificateSha256": { "$ref": "#/$defs/sha256" },
+    "catalogSignerCertificateSha256": { "$ref": "#/$defs/sha256" },
     "supportedWindowsBuilds": {
       "type": "array",
       "minItems": 1,
       "uniqueItems": true,
       "items": { "type": "string", "minLength": 1 }
+    },
+    "requiredAcceptanceCells": {
+      "type": "array",
+      "minItems": 2,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/acceptanceCell" }
     },
     "manualEvidenceReviewers": {
       "type": "array",
@@ -56,7 +80,26 @@
       "items": { "$ref": "#/$defs/attestorKey" }
     }
   },
+  "oneOf": [
+    {
+      "properties": {
+        "requiredSigningTier": { "const": "test_signed_internal" },
+        "requiredDistributionChannel": { "const": "internal" },
+        "requiredProductionEligible": { "const": false },
+        "requiredTestAuthorityKind": { "enum": ["ephemeral-ci", "managed-internal"] }
+      }
+    },
+    {
+      "properties": {
+        "requiredSigningTier": { "const": "production_signed" },
+        "requiredDistributionChannel": { "const": "production" },
+        "requiredProductionEligible": { "const": true },
+        "requiredTestAuthorityKind": { "const": null }
+      }
+    }
+  ],
   "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "attestorKey": {
       "type": "object",
       "additionalProperties": false,
@@ -65,8 +108,47 @@
         "id": { "type": "string", "minLength": 1 },
         "keyId": { "type": "string", "minLength": 1 },
         "algorithm": { "const": "RSA-SHA256" },
-        "publicKeySpkiSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        "publicKeySpkiSha256": { "$ref": "#/$defs/sha256" }
       }
+    },
+    "acceptanceCell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "windowsBuild",
+        "architecture",
+        "displayTopology",
+        "displayScalePercents",
+        "requiredEvidenceKinds"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
+        "windowsBuild": { "type": "string", "minLength": 1 },
+        "architecture": { "const": "x64" },
+        "displayTopology": { "enum": ["single", "dual"] },
+        "displayScalePercents": {
+          "type": "array",
+          "items": { "enum": [100, 150, 200] }
+        },
+        "requiredEvidenceKinds": {
+          "const": ["accessibility", "display", "install-lifecycle", "provider-runtime"]
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "displayTopology": { "const": "single" },
+            "displayScalePercents": { "type": "array", "minItems": 1, "maxItems": 1 }
+          }
+        },
+        {
+          "properties": {
+            "displayTopology": { "const": "dual" },
+            "displayScalePercents": { "type": "array", "minItems": 2, "maxItems": 2, "uniqueItems": true }
+          }
+        }
+      ]
     }
   }
 }

@@ -3,7 +3,17 @@ import { EventEmitter } from "node:events";
 import { access, mkdir } from "node:fs/promises";
 import { connect } from "node:net";
 import { resolve as resolvePath } from "node:path";
+import {
+  isCuaDriverDesktopBridgeHandshakeResponseV1,
+  type CuaDriverFeatureFlags,
+  type CuaDriverLeaseHandshakeAuthorityV1,
+} from "@ling-stack/contracts";
 import type { DesktopDaemonStatus } from "../shared/desktop-capabilities.js";
+import {
+  desktopCuaDriverDaemonFeatureEnvironment,
+  desktopBundledCuaDriverGateEnabled,
+  resolveDesktopCuaDriverFeatureFlags,
+} from "./cua-driver/feature-gates.js";
 
 const DEFAULT_DAEMON_STARTUP_TIMEOUT_MS = 20_000;
 
@@ -17,6 +27,12 @@ export type DesktopDaemonPortOccupant = "foreign_service" | "ling_daemon";
 
 type DaemonProbeResult = "compatible" | "incompatible" | "occupied" | "unavailable";
 type DaemonPortProbeResult = "free" | "occupied";
+
+export type DesktopDaemonCuaDriverAuthorityTuple = Readonly<
+  CuaDriverLeaseHandshakeAuthorityV1 & {
+    readonly workspaceCwd: string;
+  }
+>;
 
 interface OwnedDaemonExit {
   readonly code: number | null;
@@ -55,6 +71,9 @@ export interface DesktopDaemonLifecycleOptions {
   }) => ChildProcess;
   readonly executablePath?: string;
   readonly desktopBridgeToken?: string;
+  readonly cuaDriverFeatureFlags?: CuaDriverFeatureFlags;
+  /** Test seam for evaluating the platform-specific bundled gate. */
+  readonly platform?: string;
   readonly onDiagnostic?: (event: string, details?: Readonly<Record<string, unknown>>) => void;
 }
 
@@ -62,8 +81,12 @@ export class DesktopDaemonLifecycle {
   private readonly events = new EventEmitter();
   private readonly fetchImpl: typeof globalThis.fetch;
   private readonly defaultWorkspaceCwd: string;
+  private readonly cuaDriverFeatureFlags: CuaDriverFeatureFlags;
+  private readonly bundledCuaDriverGateEnabled: boolean;
   private child: ChildProcess | undefined;
   private statusValue: DesktopDaemonStatus;
+  private cuaDriverAuthorityTupleValue: DesktopDaemonCuaDriverAuthorityTuple | undefined;
+  private cuaDriverAuthorityGeneration = 0;
   private ensureStartedPromise: Promise<DesktopDaemonStatus> | undefined;
   private restartPromise: Promise<DesktopDaemonStatus> | undefined;
   private stopOwnedDaemonPromise: Promise<void> | undefined;
@@ -73,6 +96,11 @@ export class DesktopDaemonLifecycle {
   constructor(private readonly options: DesktopDaemonLifecycleOptions) {
     this.fetchImpl = options.fetch ?? globalThis.fetch;
     this.defaultWorkspaceCwd = resolvePath(options.defaultWorkspaceCwd);
+    this.cuaDriverFeatureFlags = options.cuaDriverFeatureFlags ?? resolveDesktopCuaDriverFeatureFlags();
+    this.bundledCuaDriverGateEnabled = desktopBundledCuaDriverGateEnabled(
+      this.cuaDriverFeatureFlags,
+      options.platform ?? process.platform,
+    );
     this.statusValue = {
       state: "checking",
       baseUrl: options.baseUrl,
@@ -84,13 +112,22 @@ export class DesktopDaemonLifecycle {
     return this.statusValue;
   }
 
+  /** Authority is memory-only and changes only after a new authenticated handshake. */
+  get cuaDriverAuthorityTuple(): DesktopDaemonCuaDriverAuthorityTuple | undefined {
+    return this.cuaDriverAuthorityTupleValue;
+  }
+
   onStatusChanged(listener: (status: DesktopDaemonStatus) => void): () => void {
     this.events.on("status", listener);
     return () => this.events.off("status", listener);
   }
 
   ensureStarted(): Promise<DesktopDaemonStatus> {
-    if (this.child && this.statusValue.state === "connected") {
+    if (
+      this.statusValue.state === "connected"
+      && !this.stopOwnedDaemonPromise
+      && !this.restartPromise
+    ) {
       return Promise.resolve(this.statusValue);
     }
     if (this.ensureStartedPromise) {
@@ -173,6 +210,7 @@ export class DesktopDaemonLifecycle {
         cwd: this.defaultWorkspaceCwd,
         env: {
           ...process.env,
+          ...desktopCuaDriverDaemonFeatureEnvironment(this.cuaDriverFeatureFlags),
           ELECTRON_RUN_AS_NODE: "1",
           LING_STACK_HOST: url.hostname,
           LING_STACK_PORT: url.port || (url.protocol === "https:" ? "443" : "80"),
@@ -228,6 +266,7 @@ export class DesktopDaemonLifecycle {
         return;
       }
       this.child = undefined;
+      this.clearCuaDriverAuthorityTuple();
       this.update({
         state: "disconnected",
         baseUrl: this.options.baseUrl,
@@ -239,10 +278,9 @@ export class DesktopDaemonLifecycle {
       resolveChildExit(exit);
     });
 
-    // A cold packaged x64 build launched through Rosetta can spend almost eight
-    // seconds starting the bundled daemon from a mounted DMG. Keep the timeout
-    // bounded, but leave enough margin for real packaged cold starts rather
-    // than racing the health probe at the old eight-second boundary.
+    // Keep ordinary startup bounded. Callers that intentionally exercise a
+    // translated cold-start path may supply a larger budget without relaxing
+    // native product behavior.
     const deadline = Date.now() + (this.options.startupTimeoutMs ?? DEFAULT_DAEMON_STARTUP_TIMEOUT_MS);
     while (Date.now() < deadline) {
       this.assertStartupCurrent(startupGeneration);
@@ -353,6 +391,7 @@ export class DesktopDaemonLifecycle {
   }
 
   private async restartInternal(): Promise<DesktopDaemonStatus> {
+    this.clearCuaDriverAuthorityTuple();
     while (true) {
       const stoppingOwnedDaemon = this.stopOwnedDaemonPromise;
       if (stoppingOwnedDaemon) {
@@ -407,6 +446,7 @@ export class DesktopDaemonLifecycle {
   }
 
   stopOwnedDaemon(): Promise<void> {
+    this.clearCuaDriverAuthorityTuple();
     const stopStatusGeneration = ++this.statusGeneration;
     this.startupGeneration += 1;
     this.ensureStartedPromise = undefined;
@@ -460,6 +500,7 @@ export class DesktopDaemonLifecycle {
   }
 
   private async probeDaemon(): Promise<DaemonProbeResult> {
+    const authorityGeneration = this.cuaDriverAuthorityGeneration;
     let response: Response;
     try {
       response = await this.fetchImpl(new URL("/health", `${this.options.baseUrl}/`), {
@@ -482,6 +523,9 @@ export class DesktopDaemonLifecycle {
       return "incompatible";
     }
     if (!this.options.desktopBridgeToken) {
+      if (this.bundledCuaDriverGateEnabled) {
+        return "incompatible";
+      }
       return "compatible";
     }
     try {
@@ -495,19 +539,31 @@ export class DesktopDaemonLifecycle {
       if (!handshake.ok) {
         return "incompatible";
       }
-      const compatibility = await handshake.json() as {
-        protocolVersion?: unknown;
-        capabilities?: unknown;
-        bridgeTokenAccepted?: unknown;
-        routeTokenAccepted?: unknown;
-        defaultWorkspaceCwd?: unknown;
-      };
-      return compatibility.protocolVersion === 1
-        && Array.isArray(compatibility.capabilities)
-        && compatibility.capabilities.includes("preview-source")
-        && compatibility.bridgeTokenAccepted === true
-        && compatibility.routeTokenAccepted === true
-        && compatibility.defaultWorkspaceCwd === this.defaultWorkspaceCwd
+      const compatibility: unknown = await handshake.json();
+      if (isCuaDriverDesktopBridgeHandshakeResponseV1(compatibility)) {
+        if (
+          compatibility.routeTokenAccepted !== true
+          || compatibility.defaultWorkspaceCwd !== this.defaultWorkspaceCwd
+        ) {
+          return "incompatible";
+        }
+        if (
+          this.bundledCuaDriverGateEnabled
+          && authorityGeneration === this.cuaDriverAuthorityGeneration
+        ) {
+          this.cuaDriverAuthorityTupleValue = Object.freeze({
+            daemonAuthorityEpoch: compatibility.daemonAuthorityEpoch,
+            bridgeConnectionId: compatibility.bridgeConnectionId,
+            desktopInstanceEpoch: compatibility.desktopInstanceEpoch,
+            workspaceCwd: compatibility.defaultWorkspaceCwd,
+          });
+        }
+        return "compatible";
+      }
+      if (this.bundledCuaDriverGateEnabled) {
+        return "incompatible";
+      }
+      return isLegacyPreviewHandshakeCompatible(compatibility, this.defaultWorkspaceCwd)
         ? "compatible"
         : "incompatible";
     } catch {
@@ -516,6 +572,11 @@ export class DesktopDaemonLifecycle {
       // the same occupied port.
       return "incompatible";
     }
+  }
+
+  private clearCuaDriverAuthorityTuple(): void {
+    this.cuaDriverAuthorityGeneration += 1;
+    this.cuaDriverAuthorityTupleValue = undefined;
   }
 
   private async probeConfiguredPort(): Promise<DaemonPortProbeResult> {
@@ -539,6 +600,20 @@ export class DesktopDaemonLifecycle {
     this.events.emit("status", status);
     return status;
   }
+}
+
+function isLegacyPreviewHandshakeCompatible(value: unknown, workspaceCwd: string): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const compatibility = value as Readonly<Record<string, unknown>>;
+  return compatibility.protocolVersion === 1
+    && Array.isArray(compatibility.capabilities)
+    && compatibility.capabilities.every((capability) => typeof capability === "string")
+    && compatibility.capabilities.includes("preview-source")
+    && compatibility.bridgeTokenAccepted === true
+    && compatibility.routeTokenAccepted === true
+    && compatibility.defaultWorkspaceCwd === workspaceCwd;
 }
 
 function defaultSpawnDaemon(input: {

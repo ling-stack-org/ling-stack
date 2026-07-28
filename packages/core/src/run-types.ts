@@ -347,6 +347,7 @@ import type {
   CreateMcpServerInput,
   ListMcpServersOptions,
   ListMcpToolsOptions,
+  McpAuthorityRevision,
   McpServer,
   McpRuntimeStatusSnapshot,
   McpServerStatus,
@@ -356,6 +357,11 @@ import type {
   TeammateMcpBinding,
   UpdateMcpServerInput,
 } from "./mcp-types.js";
+import type {
+  CommitCuaDriverActivationInput,
+  CommitCuaDriverActivationResult,
+  CuaDriverActivationState,
+} from "./cua-driver-activation-types.js";
 import type {
   CreateMemoryObjectInput,
   ApplyMemoryReviewActionInput,
@@ -1814,9 +1820,13 @@ export interface RunStore {
   failWorkItem(id: string, input: WorkItemFailRequest, now: string): WorkItem | undefined;
   createMcpServer(input: CreateMcpServerInput, now: string): McpServer;
   getMcpServer(id: string): McpServer | undefined;
+  getMcpAuthorityRevision(serverId: string): McpAuthorityRevision | undefined;
   listMcpServers(options?: ListMcpServersOptions): McpServer[];
   updateMcpServer(id: string, input: UpdateMcpServerInput, now: string): McpServer | undefined;
   updateMcpServerStatus(id: string, status: McpServerStatus, now: string): McpServer | undefined;
+  ensureCuaDriverActivationState(pluginId: string, now: string): CuaDriverActivationState;
+  getCuaDriverActivationState(pluginId: string): CuaDriverActivationState | undefined;
+  commitCuaDriverActivation(input: CommitCuaDriverActivationInput): CommitCuaDriverActivationResult;
   upsertMcpStatusSnapshot(snapshot: McpRuntimeStatusSnapshot, now: string): McpRuntimeStatusSnapshot;
   getMcpStatusSnapshot(serverId: string, now?: string): McpRuntimeStatusSnapshot | undefined;
   deleteMcpStatusSnapshot(serverId: string): boolean;
@@ -2276,6 +2286,7 @@ export type WorkItemStoreFacet = RunStoreFacet<
 export type McpStoreFacet = RunStoreFacet<
   | "createMcpServer"
   | "getMcpServer"
+  | "getMcpAuthorityRevision"
   | "listMcpServers"
   | "updateMcpServer"
   | "updateMcpServerStatus"
@@ -2293,6 +2304,12 @@ export type McpStoreFacet = RunStoreFacet<
   | "listMcpTools"
   | "replaceTeammateMcpBindings"
   | "listTeammateMcpBindings"
+>;
+
+export type CuaDriverActivationStoreFacet = RunStoreFacet<
+  | "ensureCuaDriverActivationState"
+  | "getCuaDriverActivationState"
+  | "commitCuaDriverActivation"
 >;
 
 export type AutomationStoreFacet = RunStoreFacet<

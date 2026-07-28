@@ -45,6 +45,9 @@ importers:
       '@electron/asar':
         specifier: 3.4.1
         version: 3.4.1
+      '@electron/osx-sign':
+        specifier: 1.3.3
+        version: 1.3.3
       '@fontsource-variable/inter':
         specifier: 5.2.8
         version: 5.2.8

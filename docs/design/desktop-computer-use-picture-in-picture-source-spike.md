@@ -1,9 +1,17 @@
 # Desktop Computer Use PiP Source Spike
 
+> 2026-07-23 support update: macOS delivery is arm64-only. The x64/Rosetta observations
+> below are retained as historical spike evidence and do not define a supported artifact.
+
 Status: initial installed `cua-driver` runtime verified on 2026-07-15; provider selection,
 current-host native handoff, unsigned packaged provenance, performance, and artifact
 integrity evidence updated through 2026-07-17. Later renderer and interaction work did not
 change the transport boundary below.
+
+This is a historical source baseline. Its packaged macOS and Windows external-distribution
+conclusions are superseded by [Bundled Embedded Cua Driver](cua-driver-bundled-embedded.md).
+Native source identity and Windows backend findings remain useful; distribution ownership
+does not.
 
 ## Verified Runtime Surface
 
@@ -40,8 +48,9 @@ upstream audit found that the maintained open-source `trycua/cua` repository pub
 - the schema-v1 `health_report` contract with canonical `session_active`, UIA
   (`ax_capability`), and DXGI/D3D (`screen_capture_capability`) checks.
 
-This is now the selected third-party Windows source/identity provider. Ling does not
-bundle its binary or copy its native implementation. The provider's explicit `pid` and
+This established the selected third-party Windows source/identity provider for the
+historical external baseline. At that time Ling did not bundle its binary or copy its
+native implementation. The provider's explicit `pid` and
 `window_id` are converted into the private daemon descriptor, and Desktop resolves that
 descriptor through Electron's public `desktopCapturer` boundary. The Windows provider
 decision is therefore closed, but the Windows real-capture gate remains open until a
@@ -109,32 +118,33 @@ Repository and runtime audit performed on 2026-07-16:
 
 ### Decision
 
-The provider decision is **closed** in favor of the maintained open-source Cua Driver Rust
-provider. The Windows implementation is still **release-gated**, not complete: the
-provider must be installed in an interactive user session and verified on a Windows x64
-VM before Ling claims Windows real capture.
+The source-provider decision remains **closed** in favor of the maintained open-source Cua
+Driver Rust provider. At the time of this spike, Windows distribution was external and
+release-gated: the provider had to be installed in an interactive user session and
+verified on a Windows x64 VM. The superseding bundled design removes the separate install
+but retains the real-machine gate.
 
 The G3 gate can close only after all of the following exist:
 
-1. the selected Cua Driver provider is installed and healthy in the interactive session;
+1. the selected Cua Driver provider is available and healthy in the interactive session;
 2. an explicit authorized-target handoff with permission and source lifecycle semantics;
 3. implementation and cleanup/revision/restart tests in Desktop main; and
 4. Windows x64 VM smoke covering permission, first frame, source-ended, revision
    replacement, and app restart.
 
-Until then, the support matrix is: macOS real capture candidate; Windows provider
-integration implemented behind a VM gate; no Windows real Computer Use completion claim.
+That historical gate did not establish Windows completion. The bundled target still
+requires Windows-team VM evidence before a Windows support claim.
 
-## V1 Provider Distribution Decision
+## Historical External Provider Distribution Baseline
 
-Ling Desktop packages only the public Cua Driver plugin shell metadata:
+The implementation captured by this spike packages only the public Cua Driver plugin shell metadata:
 
 - `.ling-plugin/plugin.json`;
 - `mcp-server.json`;
 - the plugin README.
 
 It does not bundle the `cua-driver` executable, `CuaDriver.app`, native libraries,
-credentials, or permission state. The macOS and Windows providers are installed and
+credentials, or permission state. In this historical baseline, macOS and Windows providers are installed and
 permissioned separately from Ling. Runtime resolution accepts an explicit configured
 command, `PATH`, the official Windows per-user install locations, `~/.local/bin/cua-driver`,
 Homebrew, and `/usr/local/bin/cua-driver`. If no executable is available, setup fails
@@ -144,9 +154,9 @@ providers.
 The clean-machine release matrix must therefore install and verify Cua Driver before the
 real-source smoke. On Windows the expected upstream artifact is
 `cua-driver-rs-0.8.3-windows-x86_64.zip`; the provider's own signing/SmartScreen and
-interactive-session behavior remain separate release evidence. This boundary lets Ling
-ship public integration metadata without taking ownership of the provider's binary,
-native permissions, or update channel.
+interactive-session behavior remain separate release evidence. This boundary remains only
+for standalone/dev external mode. Packaged Desktop now targets a locked Ling source build
+and owns provider versioning through the Ling release.
 
 The clean-machine acquisition verifier pins the reviewed release asset rather than
 executing the upstream installer:

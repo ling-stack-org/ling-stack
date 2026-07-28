@@ -1,13 +1,15 @@
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolve } from "node:path";
 import type {
   ComputerUsePreviewProjection,
+  CuaDriverDesktopBridgeHandshakeResponseV1,
   StopComputerUseRequest,
   StopComputerUseResponse,
 } from "@ling-stack/contracts";
 import {
   COMPUTER_USE_ROUTE_TOKEN_HEADER,
+  CUA_DRIVER_LEASE_V1_CAPABILITY,
   isTerminalComputerUseStatus,
 } from "@ling-stack/contracts";
 import type { DaemonContext } from "../../context.js";
@@ -18,9 +20,18 @@ import { writeJson, writeSse, writeSseHead } from "../../shared/response.js";
 import { listBundledPackageDescriptors } from "../plugins/source-index.js";
 import { resolveManagedCuaDriverProvider } from "./provider-eligibility.js";
 import { validateProviderTargetOwnership } from "./windows-target-validation.js";
+import {
+  assertMcpResultAuthorityCurrent,
+  captureMcpServerResultAuthority,
+} from "../mcp/result-authority.js";
+import {
+  configuredTokenMatches,
+  desktopBridgeTokenStatus,
+} from "./desktop-bridge-auth.js";
 
 const STOP_ACK_TIMEOUT_MS = 10_000;
 const PRIVATE_SOURCE_OWNERSHIP_TIMEOUT_MS = 1_500;
+const PROVIDER_TARGET_VERIFY_PATH = "/computer-use/provider-target/verify";
 const stopRequestsInFlight = new WeakMap<DaemonContext, Map<string, Set<string>>>();
 
 export async function handleComputerUseRoute(
@@ -50,7 +61,7 @@ export async function handleComputerUseRoute(
         });
         return true;
       }
-      const tokenStatus = desktopBridgeTokenStatus(request, context);
+      const tokenStatus = desktopBridgeTokenStatus(request, context.desktopBridgeToken);
       if (tokenStatus === "unavailable") {
         writePrivateJson(response, 503, {
           error: "desktop_bridge_unavailable",
@@ -65,16 +76,24 @@ export async function handleComputerUseRoute(
         });
         return true;
       }
-      writePrivateJson(response, 200, {
+      const authority = context.cuaDriverDesktopBridgeAuthority.issueAuthenticatedHandshake();
+      const handshake: CuaDriverDesktopBridgeHandshakeResponseV1 = {
         protocolVersion: 1,
-        capabilities: ["preview-source"],
+        capabilities: ["preview-source", CUA_DRIVER_LEASE_V1_CAPABILITY],
         bridgeTokenAccepted: true,
         routeTokenAccepted: configuredTokenMatches(
           context.computerUseRouteToken,
           request.headers["x-ling-desktop-bridge-token"],
         ),
         defaultWorkspaceCwd: context.config.defaultWorkspaceCwd,
-      });
+        ...authority,
+      };
+      writePrivateJson(response, 200, handshake);
+      return true;
+    }
+
+    if (url.pathname === PROVIDER_TARGET_VERIFY_PATH) {
+      await handleProviderTargetVerification(request, response, url, context);
       return true;
     }
 
@@ -212,6 +231,124 @@ export async function handleComputerUseRoute(
   }
 }
 
+async function handleProviderTargetVerification(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL,
+  context: DaemonContext,
+): Promise<void> {
+  if (request.method !== "POST") {
+    writePrivateJson(response, 405, {
+      error: "method_not_allowed",
+      message: "Computer Use provider target verification supports POST only.",
+    });
+    return;
+  }
+  const tokenStatus = desktopBridgeTokenStatus(request, context.desktopBridgeToken);
+  if (tokenStatus === "unavailable") {
+    writePrivateJson(response, 503, {
+      error: "desktop_bridge_unavailable",
+      message: "The daemon was not started with a Desktop bridge token.",
+    });
+    return;
+  }
+  if (tokenStatus === "forbidden") {
+    writePrivateJson(response, 403, {
+      error: "desktop_bridge_forbidden",
+      message: "Desktop bridge authentication failed.",
+    });
+    return;
+  }
+
+  const cwd = readCwd(url);
+  const target = readProviderTargetVerificationRequest(
+    await readOptionalJsonBody(request, context.config.maxBodyBytes),
+  );
+  const now = new Date().toISOString();
+  const store = context.storeRegistry.getStore(cwd);
+  const provider = resolveManagedCuaDriverProvider({
+    store,
+    descriptors: listBundledPackageDescriptors(),
+    now,
+    platform: target.platform === "windows" ? "win32" : "darwin",
+    cuaDriverRuntimeAuthority: context.mcpBroker.cuaDriverRuntimeAuthority,
+  });
+  const capturedProvider = provider
+    ? captureMcpServerResultAuthority(store, provider.server.id)
+    : undefined;
+  const lease = context.cuaDriverDesktopBridgeAuthority.leaseRegistry.getCurrent();
+  if (!capturedProvider || !lease || lease.workspaceCwd !== resolve(cwd)) {
+    writePrivateJson(response, 409, {
+      verified: false,
+      error: "computer_use_provider_not_ready",
+      message: "The current bundled Cua Driver generation is unavailable.",
+    });
+    return;
+  }
+
+  const ownershipAbort = createPrivateSourceOwnershipAbort(
+    request,
+    response,
+    context.computerUseTargetOwnershipTimeoutMs ?? PRIVATE_SOURCE_OWNERSHIP_TIMEOUT_MS,
+  );
+  let targetOwned = false;
+  try {
+    targetOwned = await validateProviderTargetOwnership({
+      platform: target.platform,
+      server: capturedProvider.server,
+      mcpBroker: context.mcpBroker,
+      secretResolver: context.secretResolver,
+      processId: target.processId,
+      nativeWindowId: target.nativeWindowId,
+      now,
+      workspaceCwd: cwd,
+      signal: ownershipAbort.signal,
+      assertResultCurrent: () => {
+        assertMcpResultAuthorityCurrent(store, capturedProvider.authority);
+        if (!context.cuaDriverDesktopBridgeAuthority.leaseRegistry.isCurrent(lease)) {
+          throw new Error("computer_use_provider_generation_stale");
+        }
+      },
+    });
+  } catch (error) {
+    if (!ownershipAbort.signal.aborted) {
+      throw error;
+    }
+    if (ownershipAbort.timedOut() && !response.destroyed && !response.writableEnded) {
+      writePrivateJson(response, 504, {
+        verified: false,
+        error: "computer_use_provider_target_validation_timeout",
+        message: "The bundled provider did not validate the target before the deadline.",
+      });
+    }
+    return;
+  } finally {
+    ownershipAbort.close();
+  }
+  if (!targetOwned || !context.cuaDriverDesktopBridgeAuthority.leaseRegistry.isCurrent(lease)) {
+    writePrivateJson(response, 409, {
+      verified: false,
+      error: "computer_use_provider_target_owner_mismatch",
+      message: "The bundled provider did not return the exact requested PID and native window id.",
+    });
+    return;
+  }
+
+  writePrivateJson(response, 200, {
+    verified: true,
+    target,
+    runtime: {
+      desktopInstanceId: lease.desktopInstanceId,
+      desktopInstanceEpoch: lease.desktopInstanceEpoch,
+      generation: lease.generation,
+      providerVersion: lease.providerVersion,
+      lockDigest: lease.lockDigest,
+      providerSealDigest: lease.providerSealDigest,
+      providerCatalogDigest: lease.providerCatalogDigest,
+    },
+  });
+}
+
 async function handlePrivatePreviewSource(
   request: IncomingMessage,
   response: ServerResponse,
@@ -220,7 +357,7 @@ async function handlePrivatePreviewSource(
   sessionId: string,
 ): Promise<void> {
   response.removeHeader("Access-Control-Allow-Origin");
-  const tokenStatus = desktopBridgeTokenStatus(request, context);
+  const tokenStatus = desktopBridgeTokenStatus(request, context.desktopBridgeToken);
   if (tokenStatus === "unavailable") {
     writePrivateJson(response, 503, { error: "desktop_bridge_unavailable", message: "The daemon was not started with a Desktop bridge token." });
     return;
@@ -249,12 +386,17 @@ async function handlePrivatePreviewSource(
     const nativeWindowId = resolvedDescriptor.target.nativeWindowId;
     const store = context.storeRegistry.getStore(cwd);
     const now = new Date().toISOString();
-    const server = resolveManagedCuaDriverProvider({
+    const provider = resolveManagedCuaDriverProvider({
       store,
       descriptors: listBundledPackageDescriptors(),
       now,
       platform: resolvedDescriptor.platform === "windows" ? "win32" : "darwin",
-    })?.server;
+      cuaDriverRuntimeAuthority: context.mcpBroker.cuaDriverRuntimeAuthority,
+    });
+    const capturedProvider = provider
+      ? captureMcpServerResultAuthority(store, provider.server.id)
+      : undefined;
+    const server = capturedProvider?.server;
     const ownershipAbort = createPrivateSourceOwnershipAbort(
       request,
       response,
@@ -274,7 +416,31 @@ async function handlePrivatePreviewSource(
           processId,
           nativeWindowId,
           now,
+          workspaceCwd: cwd,
           signal: ownershipAbort.signal,
+          assertResultCurrent: () => {
+            try {
+              const currentServer = assertMcpResultAuthorityCurrent(
+                store,
+                capturedProvider.authority,
+              );
+              const current = resolveManagedCuaDriverProvider({
+                store,
+                descriptors: listBundledPackageDescriptors(),
+                now: new Date().toISOString(),
+                platform: resolvedDescriptor.platform === "windows" ? "win32" : "darwin",
+                cuaDriverRuntimeAuthority: context.mcpBroker.cuaDriverRuntimeAuthority,
+              });
+              if (
+                current?.server.id !== server.id
+                || current.server.updatedAt !== currentServer.updatedAt
+              ) {
+                throw new Error("provider_changed");
+              }
+            } catch {
+              throw new Error("computer_use_provider_authority_stale");
+            }
+          },
         }),
       );
     } catch (error) {
@@ -612,6 +778,33 @@ function readStopRequest(value: unknown): StopComputerUseRequest {
   return typeof value.reason === "string" && value.reason.trim() ? { reason: value.reason.trim() } : {};
 }
 
+function readProviderTargetVerificationRequest(value: unknown): {
+  readonly platform: "macos" | "windows";
+  readonly processId: number;
+  readonly nativeWindowId: string;
+} {
+  if (!isRecord(value)) {
+    throw new Error("Computer Use provider target verification body must be a JSON object");
+  }
+  const platform = value.platform;
+  const processId = value.processId;
+  const nativeWindowId = value.nativeWindowId;
+  if (platform !== "macos" && platform !== "windows") {
+    throw new Error("Computer Use provider target platform must be macos or windows");
+  }
+  if (!Number.isSafeInteger(processId) || (processId as number) <= 0 || (processId as number) > 0xffff_ffff) {
+    throw new Error("Computer Use provider target processId must be a positive 32-bit integer");
+  }
+  if (typeof nativeWindowId !== "string" || !/^[1-9][0-9]*$/u.test(nativeWindowId)) {
+    throw new Error("Computer Use provider target nativeWindowId must be a canonical positive integer string");
+  }
+  const maximumWindowId = platform === "windows" ? 0xffff_ffff_ffff_ffffn : 0xffff_ffffn;
+  if (BigInt(nativeWindowId) > maximumWindowId) {
+    throw new Error("Computer Use provider target nativeWindowId exceeds the platform boundary");
+  }
+  return { platform, processId: processId as number, nativeWindowId };
+}
+
 function parseStopRoute(pathname: string): { readonly sessionId: string } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   return segments.length === 4 && segments[0] === "computer-use" && segments[1] === "sessions" && segments[3] === "stop"
@@ -658,25 +851,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function safeTokenEquals(left: string, right: string): boolean {
-  const leftBuffer = Buffer.from(left);
-  const rightBuffer = Buffer.from(right);
-  return leftBuffer.byteLength === rightBuffer.byteLength && timingSafeEqual(leftBuffer, rightBuffer);
-}
-
-function desktopBridgeTokenStatus(
-  request: IncomingMessage,
-  context: DaemonContext,
-): "accepted" | "unavailable" | "forbidden" {
-  const configuredToken = context.desktopBridgeToken;
-  if (!configuredToken) {
-    return "unavailable";
-  }
-  return configuredTokenMatches(configuredToken, request.headers["x-ling-desktop-bridge-token"])
-    ? "accepted"
-    : "forbidden";
-}
-
 function computerUseRouteAuthorization(
   request: IncomingMessage,
   context: DaemonContext,
@@ -698,16 +872,6 @@ function computerUseRouteAuthorization(
   )
     ? "accepted"
     : "forbidden";
-}
-
-function configuredTokenMatches(
-  configuredToken: string | undefined,
-  providedToken: string | readonly string[] | undefined,
-): boolean {
-  return typeof configuredToken === "string" &&
-    configuredToken.length > 0 &&
-    typeof providedToken === "string" &&
-    safeTokenEquals(providedToken, configuredToken);
 }
 
 function writePrivateJson(response: ServerResponse, statusCode: number, body: unknown): void {

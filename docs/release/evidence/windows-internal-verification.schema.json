@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ling-stack.dev/schemas/windows-internal-verification-v1.json",
+  "title": "Ling Desktop Windows Internal Verification",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "verifiedAt",
+    "matrixEvidenceSha256",
+    "candidateManifestSha256",
+    "releasePolicySha256",
+    "signingTier",
+    "distributionChannel",
+    "productionEligible",
+    "testAuthorityKind",
+    "verifier",
+    "reviewer",
+    "candidateBuild",
+    "verdict"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "kind": { "const": "ling.windows.internal-verification" },
+    "verifiedAt": { "type": "string", "format": "date-time" },
+    "matrixEvidenceSha256": { "$ref": "#/$defs/sha256" },
+    "candidateManifestSha256": { "$ref": "#/$defs/sha256" },
+    "releasePolicySha256": { "$ref": "#/$defs/sha256" },
+    "signingTier": { "const": "test_signed_internal" },
+    "distributionChannel": { "const": "internal" },
+    "productionEligible": { "const": false },
+    "testAuthorityKind": { "enum": ["ephemeral-ci", "managed-internal"] },
+    "verifier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "harnessCommit"],
+      "properties": {
+        "name": { "const": "ling.windows.internal-attestation-verifier" },
+        "harnessCommit": { "$ref": "#/$defs/commit" }
+      }
+    },
+    "reviewer": { "$ref": "#/$defs/reviewer" },
+    "candidateBuild": { "$ref": "#/$defs/candidateBuild" },
+    "verdict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "fullAcceptanceStatus",
+        "promotionStatus",
+        "releaseReady",
+        "releaseBlockers"
+      ],
+      "properties": {
+        "status": { "const": "INTERNAL_TEST_PASS" },
+        "fullAcceptanceStatus": { "const": "PASS" },
+        "promotionStatus": { "const": "INTERNAL_TEST_PASS" },
+        "releaseReady": { "const": false },
+        "releaseBlockers": {
+          "type": "array",
+          "prefixItems": [{ "const": "production_signing_required" }],
+          "minItems": 1,
+          "maxItems": 1
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "commit": { "type": "string", "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$" },
+    "reviewer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "keyId", "reviewedAt", "verification"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "keyId": { "type": "string", "minLength": 1 },
+        "reviewedAt": { "type": "string", "format": "date-time" },
+        "verification": { "const": "trusted_external_signature" }
+      }
+    },
+    "candidateBuild": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attestorId",
+        "keyId",
+        "attestedAt",
+        "strategy",
+        "daemonTreeSha256",
+        "verification"
+      ],
+      "properties": {
+        "attestorId": { "type": "string", "minLength": 1 },
+        "keyId": { "type": "string", "minLength": 1 },
+        "attestedAt": { "type": "string", "format": "date-time" },
+        "strategy": {
+          "enum": ["deterministic-rebuild", "signed-candidate-embedded-daemon"]
+        },
+        "daemonTreeSha256": { "$ref": "#/$defs/sha256" },
+        "verification": { "const": "trusted_external_signature" }
+      }
+    }
+  }
+}

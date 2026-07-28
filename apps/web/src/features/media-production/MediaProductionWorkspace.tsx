@@ -340,6 +340,7 @@ export function MediaProductionWorkspace({
                     imageArtifacts={imageArtifacts}
                     readiness={sceneReadiness.find((item) => item.sceneId === selectedScene.id)}
                     busyAction={busyAction}
+                    sceneUpdateBusy={state.busy.sceneUpdateIds.includes(selectedScene.id)}
                     actions={actions}
                     onClose={() => setRightDockOpen(false)}
                     onRequestDelete={(target) => {

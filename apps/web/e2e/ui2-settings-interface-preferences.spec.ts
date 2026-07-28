@@ -388,6 +388,7 @@ async function installDesktopPreferenceHarness(page: Page): Promise<void> {
         computerUse: {
           reportLocale() {},
           reportSelectedConversation() {},
+          reportSelectedDeckOwner() {},
           reportHostLayout() {},
           show: async () => ({ accepted: true }),
           hide: async () => ({ accepted: true }),

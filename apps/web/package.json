@@ -11,7 +11,7 @@
     "lint": "node scripts/check-appshell-imports.mjs && node scripts/check-select-controls.mjs && node scripts/check-ui2-imports.mjs && node scripts/check-ui2-overlays.mjs && node scripts/check-ui2-text-controls.mjs && node scripts/check-ui2-icons.mjs && node scripts/check-ui2-motion.mjs && node scripts/check-ui2-feedback.mjs && node scripts/check-browser-blocking-dialogs.mjs",
     "check:i18n": "node scripts/check-i18n.mjs",
     "check:select-controls": "node scripts/check-select-controls.mjs",
-    "test": "echo \"tests not configured yet\"",
+    "test": "node --experimental-strip-types --test test/*.test.mjs",
     "test:e2e": "corepack pnpm --filter @ling-stack/ui-react build && corepack pnpm --filter @ling-stack/conversation-ui-core build && corepack pnpm --filter @ling-stack/conversation-ui-react build && corepack pnpm --filter @ling-stack/api-client build && corepack pnpm --filter @ling-stack/core build && playwright test"
   },
   "dependencies": {

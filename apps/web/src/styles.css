@@ -36,6 +36,8 @@
 @import "./styles/council-list-health.css";
 @import "./styles/council-settings-archive.css";
 @import "./styles/components.css";
+@import "./styles/components-workbench.css";
+@import "./styles/components-workbench-details.css";
 @import "./styles/shared/conversation-composer-slots.css";
 @import "./styles/teammate-private-feed-composer.css";
 @import "./styles/channel-message-transcript.css";
@@ -102,3 +104,4 @@
 @import "./styles/app/full-access-confirmation.css";
 @import "./styles/app/app-shell-overlay-size.css";
 @import "./styles/app/sidebar-ui2.css";
+@import "./styles/app/macos-titlebar.css";

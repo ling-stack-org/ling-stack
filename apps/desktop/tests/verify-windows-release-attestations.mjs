@@ -2,10 +2,9 @@ import {
   createHash,
   createPublicKey,
   constants as cryptoConstants,
-  randomUUID,
   verify as verifySignature,
 } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { isDeepStrictEqual, parseArgs } from "node:util";
@@ -13,10 +12,13 @@ import { isDeepStrictEqual, parseArgs } from "node:util";
 import {
   WINDOWS_ACCEPTANCE_RELEASE_BLOCKERS,
   canonicalJson,
-  validateWindowsAcceptanceReportShape,
-  verifyWindowsAcceptanceEvidenceFiles,
-  windowsAcceptanceEvidenceSha256,
 } from "./windows-acceptance-report.mjs";
+import { windowsAcceptanceMatrixEvidenceSha256 } from "./finalize-windows-signed-acceptance.mjs";
+import { validateWindowsSignedAcceptanceMatrixDocument } from "./windows-handoff-contracts.mjs";
+import {
+  validateWindowsCandidateManifestDocument,
+  validateWindowsReleasePolicyDocument,
+} from "./windows-release-evidence-contracts.mjs";
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 const SIGNATURE_ALGORITHM = "RSA-SHA256";
@@ -30,6 +32,9 @@ export function windowsReviewerAttestationPayload(value) {
     evidenceSha256: value?.evidenceSha256,
     candidateManifestSha256: value?.candidateManifestSha256,
     releasePolicySha256: value?.releasePolicySha256,
+    signingTier: value?.signingTier,
+    distributionChannel: value?.distributionChannel,
+    productionEligible: value?.productionEligible,
     reviewerId: value?.reviewerId,
     keyId: value?.keyId,
     reviewedAt: value?.reviewedAt,
@@ -45,6 +50,10 @@ export function windowsCandidateBuildAttestationPayload(value) {
     candidateManifestSha256: value?.candidateManifestSha256,
     candidateCommit: value?.candidateCommit,
     releasePolicySha256: value?.releasePolicySha256,
+    signingTier: value?.signingTier,
+    distributionChannel: value?.distributionChannel,
+    productionEligible: value?.productionEligible,
+    verdict: value?.verdict,
     daemonPayload: value?.daemonPayload,
     attestorId: value?.attestorId,
     keyId: value?.keyId,
@@ -53,56 +62,112 @@ export function windowsCandidateBuildAttestationPayload(value) {
 }
 
 /**
- * Promote an already file-validated Full report only after two independent, detached
+ * Promote an already finalized matrix only after two independent, detached
  * signatures are checked against public-key fingerprints pinned by the externally anchored
  * release policy. The report builder itself has no code path that returns releaseReady=true.
  */
 export async function verifyWindowsReleaseAttestations(input, options = {}) {
-  const report = input?.report;
-  validateWindowsAcceptanceReportShape(report);
+  const verified = await verifyWindowsSignedAttestationPair(input, {
+    ...options,
+    expectedProfile: "production",
+  });
+  return {
+    schemaVersion: 2,
+    kind: "ling.windows.release-verification",
+    verifiedAt: verified.verifiedAt,
+    matrixEvidenceSha256: verified.matrixEvidenceSha256,
+    candidateManifestSha256: verified.candidateManifestSha256,
+    releasePolicySha256: verified.releasePolicySha256,
+    signingTier: "production_signed",
+    distributionChannel: "production",
+    productionEligible: true,
+    verifier: {
+      name: "ling.windows.release-attestation-verifier",
+      harnessCommit: verified.harnessCommit,
+    },
+    reviewer: verified.reviewer,
+    candidateBuild: verified.candidateBuild,
+    verdict: {
+      status: "RELEASE_PASS",
+      fullAcceptanceStatus: "PASS",
+      promotionStatus: "RELEASE_PASS",
+      releaseReady: true,
+      releaseBlockers: [],
+    },
+  };
+}
+
+/** Verify detached signatures without emitting an internal or production verdict. */
+export async function verifyWindowsSignedAttestationPair(input, options = {}) {
+  const matrix = input?.matrix;
+  validateWindowsSignedAcceptanceMatrixDocument(matrix);
   if (
-    report.mode !== "Full" ||
-    report.summary.fullAcceptanceStatus !== "PASS" ||
-    report.summary.releaseStatus !== "MANUAL_REVIEW_REQUIRED" ||
-    report.summary.releaseReady !== false ||
-    report.summary.reviewerAttestation !== "not_verified" ||
-    report.summary.candidateBuildProvenance !== "not_verified" ||
+    matrix.verdict.fullAcceptanceStatus !== "PASS" ||
+    matrix.verdict.status !== "MANUAL_REVIEW_REQUIRED" ||
+    matrix.verdict.promotionStatus !== "ATTESTATION_REQUIRED" ||
+    matrix.verdict.releaseReady !== false ||
     !isDeepStrictEqual(
-      report.summary.releaseBlockers,
+      matrix.verdict.releaseBlockers,
       WINDOWS_ACCEPTANCE_RELEASE_BLOCKERS,
     )
   ) {
-    throw new TypeError("windows_release_attestation_report_not_promotable");
+    throw new TypeError("windows_release_attestation_matrix_not_promotable");
   }
-  const evidenceSha256 = windowsAcceptanceEvidenceSha256(report);
-  if (report.summary.evidenceSha256 !== evidenceSha256) {
+  const evidenceSha256 = windowsAcceptanceMatrixEvidenceSha256(matrix);
+  if (matrix.evidenceSha256 !== evidenceSha256) {
     throw new TypeError("windows_release_attestation_evidence_digest_mismatch");
   }
 
   const context = input?.context;
   const releasePolicy = context?.releasePolicy;
   const candidateManifest = context?.candidateManifest;
-  const manualReviewerIds = context?.manualEvidence?.reviewerIds;
+  const manualReviewerIds = matrix?.manualReviewerIds;
   if (!releasePolicy || !candidateManifest || !Array.isArray(manualReviewerIds)) {
     throw new TypeError("windows_release_attestation_verified_context_required");
   }
+  validateWindowsReleasePolicyDocument(releasePolicy);
+  validateWindowsCandidateManifestDocument(candidateManifest, {
+    policy: releasePolicy,
+    expectedCommit: matrix.candidateCommit,
+    expectedReleasePolicySha256: matrix.releasePolicySha256,
+  });
+  const expectedProfile = options.expectedProfile ?? "production";
+  const internal = candidateManifest.signingTier === "test_signed_internal";
+  const production = candidateManifest.signingTier === "production_signed";
   if (
-    releasePolicy.schemaVersion !== 2 ||
-    releasePolicy.kind !== "ling.windows.release-policy" ||
-    releasePolicy.policyVersion !== 2 ||
-    releasePolicy.status !== "approved" ||
-    candidateManifest.schemaVersion !== 3 ||
-    candidateManifest.kind !== "ling.windows.candidate-manifest" ||
+    (expectedProfile === "internal" && !internal)
+    || (expectedProfile === "production" && !production)
+    || !["internal", "production"].includes(expectedProfile)
+  ) {
+    throw new TypeError("windows_release_attestation_profile_mismatch");
+  }
+  const expectedVerdict = internal ? "INTERNAL_TEST_PASS" : "RELEASE_PASS";
+  const expectedArtifacts = {
+    lingApp: candidateManifest.tierGovernedArtifacts.lingApp.sha256,
+    lingInstaller:
+      candidateManifest.tierGovernedArtifacts.lingInstaller.sha256,
+    lingUninstaller:
+      candidateManifest.tierGovernedArtifacts.lingUninstaller.sha256,
+    provider: candidateManifest.tierGovernedArtifacts.provider.sha256,
+    providerSeal: candidateManifest.packagedProvider.providerSealSha256,
+    providerCatalog:
+      candidateManifest.tierGovernedArtifacts.providerCatalog.sha256,
+  };
+  if (
     !isDeepStrictEqual(
-      releasePolicy.reviewerKeys,
-      report.bindings.releasePolicy.reviewerKeys,
+      matrix.cells.map((cell) => cell.cellId),
+      releasePolicy.requiredAcceptanceCells.map((cell) => cell.id),
     ) ||
-    !isDeepStrictEqual(
-      releasePolicy.candidateBuildAttestors,
-      report.bindings.releasePolicy.candidateBuildAttestors,
-    ) ||
-    candidateManifest.commit !== report.bindings.commit ||
-    candidateManifest.releasePolicySha256 !== report.bindings.releasePolicy.sha256
+    candidateManifest.commit !== matrix.candidateCommit ||
+    candidateManifest.releasePolicySha256 !== matrix.releasePolicySha256 ||
+    matrix.candidateManifestSha256 !== input?.candidateManifestSha256 ||
+    matrix.releasePolicySha256 !== input?.releasePolicySha256 ||
+    matrix.signingTier !== candidateManifest.signingTier ||
+    matrix.distributionChannel !== candidateManifest.distributionChannel ||
+    matrix.productionEligible !== candidateManifest.productionEligible ||
+    matrix.testAuthorityKind !== candidateManifest.testAuthorityKind ||
+    !isDeepStrictEqual(matrix.artifacts, expectedArtifacts) ||
+    matrix.harness.commit !== candidateManifest.commit
   ) {
     throw new TypeError("windows_release_attestation_context_binding_invalid");
   }
@@ -115,6 +180,9 @@ export async function verifyWindowsReleaseAttestations(input, options = {}) {
     "evidenceSha256",
     "candidateManifestSha256",
     "releasePolicySha256",
+    "signingTier",
+    "distributionChannel",
+    "productionEligible",
     "reviewerId",
     "keyId",
     "reviewedAt",
@@ -135,16 +203,19 @@ export async function verifyWindowsReleaseAttestations(input, options = {}) {
     throw new TypeError("windows_release_attestation_verifier_time_invalid");
   }
   if (
-    reviewAttestation.schemaVersion !== 1 ||
+    reviewAttestation.schemaVersion !== 2 ||
     reviewAttestation.kind !== "ling.windows.review-attestation" ||
-    reviewAttestation.scope !== "windows-full-acceptance" ||
+    reviewAttestation.scope !== "windows-signed-acceptance" ||
     reviewAttestation.evidenceSha256 !== evidenceSha256 ||
     reviewAttestation.candidateManifestSha256 !==
-      report.bindings.candidateManifest.sha256 ||
-    reviewAttestation.releasePolicySha256 !== report.bindings.releasePolicy.sha256 ||
-    reviewAttestation.verdict !== "PASS" ||
+      matrix.candidateManifestSha256 ||
+    reviewAttestation.releasePolicySha256 !== matrix.releasePolicySha256 ||
+    reviewAttestation.signingTier !== candidateManifest.signingTier ||
+    reviewAttestation.distributionChannel !== candidateManifest.distributionChannel ||
+    reviewAttestation.productionEligible !== candidateManifest.productionEligible ||
+    reviewAttestation.verdict !== expectedVerdict ||
     reviewAttestation.signature.algorithm !== SIGNATURE_ALGORITHM ||
-    reviewedAt.getTime() < Date.parse(report.generatedAt) ||
+    reviewedAt.getTime() < Date.parse(matrix.finalizedAt) ||
     reviewedAt.getTime() > verifiedAt.getTime() + FUTURE_SKEW_MS ||
     !isDeepStrictEqual(manualReviewerIds, [reviewAttestation.reviewerId])
   ) {
@@ -172,6 +243,10 @@ export async function verifyWindowsReleaseAttestations(input, options = {}) {
     "candidateManifestSha256",
     "candidateCommit",
     "releasePolicySha256",
+    "signingTier",
+    "distributionChannel",
+    "productionEligible",
+    "verdict",
     "daemonPayload",
     "attestorId",
     "keyId",
@@ -188,18 +263,22 @@ export async function verifyWindowsReleaseAttestations(input, options = {}) {
     "windows_candidate_build_attestation_time_invalid",
   );
   if (
-    buildAttestation.schemaVersion !== 1 ||
+    buildAttestation.schemaVersion !== 2 ||
     buildAttestation.kind !== "ling.windows.candidate-build-attestation" ||
-    buildAttestation.scope !== "windows-candidate-build" ||
+    buildAttestation.scope !== "windows-signed-candidate-build" ||
     buildAttestation.candidateManifestSha256 !==
-      report.bindings.candidateManifest.sha256 ||
-    buildAttestation.candidateCommit !== report.bindings.commit ||
-    buildAttestation.releasePolicySha256 !== report.bindings.releasePolicy.sha256 ||
+      matrix.candidateManifestSha256 ||
+    buildAttestation.candidateCommit !== matrix.candidateCommit ||
+    buildAttestation.releasePolicySha256 !== matrix.releasePolicySha256 ||
+    buildAttestation.signingTier !== candidateManifest.signingTier ||
+    buildAttestation.distributionChannel !== candidateManifest.distributionChannel ||
+    buildAttestation.productionEligible !== candidateManifest.productionEligible ||
+    buildAttestation.verdict !== expectedVerdict ||
     !isDeepStrictEqual(
       buildAttestation.daemonPayload,
       candidateManifest.daemonPayload,
     ) ||
-    buildAttestation.daemonPayload?.sourceCommit !== report.bindings.commit ||
+    buildAttestation.daemonPayload?.sourceCommit !== matrix.candidateCommit ||
     ![
       "deterministic-rebuild",
       "signed-candidate-embedded-daemon",
@@ -207,7 +286,7 @@ export async function verifyWindowsReleaseAttestations(input, options = {}) {
     !SHA256_PATTERN.test(buildAttestation.daemonPayload?.treeSha256 ?? "") ||
     buildAttestation.signature.algorithm !== SIGNATURE_ALGORITHM ||
     attestedAt.getTime() < Date.parse(releasePolicy.approvedAt) ||
-    attestedAt.getTime() > Date.parse(report.generatedAt) + FUTURE_SKEW_MS ||
+    attestedAt.getTime() > Date.parse(matrix.finalizedAt) + FUTURE_SKEW_MS ||
     attestedAt.getTime() > verifiedAt.getTime() + FUTURE_SKEW_MS
   ) {
     throw new TypeError("windows_candidate_build_attestation_binding_invalid");
@@ -231,16 +310,15 @@ export async function verifyWindowsReleaseAttestations(input, options = {}) {
   }
 
   return {
-    schemaVersion: 1,
-    kind: "ling.windows.release-verification",
     verifiedAt: verifiedAt.toISOString(),
-    reportEvidenceSha256: evidenceSha256,
-    candidateManifestSha256: report.bindings.candidateManifest.sha256,
-    releasePolicySha256: report.bindings.releasePolicy.sha256,
-    verifier: {
-      name: "ling.windows.release-attestation-verifier",
-      harnessCommit: report.bindings.harness.commit,
-    },
+    matrixEvidenceSha256: evidenceSha256,
+    candidateManifestSha256: matrix.candidateManifestSha256,
+    releasePolicySha256: matrix.releasePolicySha256,
+    harnessCommit: matrix.harness.commit,
+    signingTier: candidateManifest.signingTier,
+    distributionChannel: candidateManifest.distributionChannel,
+    productionEligible: candidateManifest.productionEligible,
+    testAuthorityKind: candidateManifest.testAuthorityKind,
     reviewer: {
       id: reviewAttestation.reviewerId,
       keyId: reviewAttestation.keyId,
@@ -254,12 +332,6 @@ export async function verifyWindowsReleaseAttestations(input, options = {}) {
       strategy: buildAttestation.daemonPayload.strategy,
       daemonTreeSha256: buildAttestation.daemonPayload.treeSha256,
       verification: "trusted_external_signature",
-    },
-    verdict: {
-      status: "PASS",
-      fullAcceptanceStatus: "PASS",
-      releaseReady: true,
-      releaseBlockers: [],
     },
   };
 }
@@ -370,17 +442,86 @@ async function readJson(path, label) {
   }
 }
 
+async function readJsonWithDigest(path, label) {
+  const bytes = await readFile(resolve(path));
+  let document;
+  try {
+    document = JSON.parse(bytes.toString("utf8").replace(/^\uFEFF/u, ""));
+  } catch (error) {
+    throw new TypeError(`${label}_invalid:${error?.message ?? error}`);
+  }
+  return {
+    document,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  };
+}
+
+export async function loadWindowsAttestationVerificationInput(values) {
+  const matrix = await readJson(values.matrix, "windows_acceptance_matrix");
+  validateWindowsSignedAcceptanceMatrixDocument(matrix);
+  const candidateManifestFile = await readJsonWithDigest(
+    values["candidate-manifest"],
+    "windows_candidate_manifest",
+  );
+  const releasePolicyFile = await readJsonWithDigest(
+    values["release-policy"],
+    "windows_release_policy",
+  );
+  const expectedHandoffIndexSha256 = values[
+    "expected-handoff-index-sha256"
+  ].toLowerCase();
+  const expectedCandidateManifestSha256 = values[
+    "expected-candidate-manifest-sha256"
+  ].toLowerCase();
+  const expectedReleasePolicySha256 = values[
+    "expected-release-policy-sha256"
+  ].toLowerCase();
+  if (
+    matrix.handoffIndexSha256 !== expectedHandoffIndexSha256 ||
+    matrix.candidateManifestSha256 !== expectedCandidateManifestSha256 ||
+    candidateManifestFile.sha256 !== expectedCandidateManifestSha256 ||
+    matrix.releasePolicySha256 !== expectedReleasePolicySha256 ||
+    releasePolicyFile.sha256 !== expectedReleasePolicySha256 ||
+    matrix.candidateCommit !== values["expected-candidate-commit"].toLowerCase()
+  ) {
+    throw new TypeError("windows_release_attestation_external_anchor_mismatch");
+  }
+  return {
+    matrix,
+    context: {
+      candidateManifest: candidateManifestFile.document,
+      releasePolicy: releasePolicyFile.document,
+    },
+    candidateManifestSha256: candidateManifestFile.sha256,
+    releasePolicySha256: releasePolicyFile.sha256,
+    reviewAttestation: await readJson(
+      values["review-attestation"],
+      "windows_reviewer_attestation",
+    ),
+    reviewerPublicKey: await readFile(resolve(values["reviewer-public-key"])),
+    candidateBuildAttestation: await readJson(
+      values["candidate-build-attestation"],
+      "windows_candidate_build_attestation",
+    ),
+    candidateBuildPublicKey: await readFile(
+      resolve(values["candidate-build-public-key"]),
+    ),
+  };
+}
+
 async function main() {
   const { values } = parseArgs({
     options: {
-      report: { type: "string" },
+      matrix: { type: "string" },
+      "candidate-manifest": { type: "string" },
+      "release-policy": { type: "string" },
       "review-attestation": { type: "string" },
       "reviewer-public-key": { type: "string" },
       "candidate-build-attestation": { type: "string" },
       "candidate-build-public-key": { type: "string" },
-      "git-executable": { type: "string" },
+      "expected-handoff-index-sha256": { type: "string" },
+      "expected-candidate-manifest-sha256": { type: "string" },
       "expected-candidate-commit": { type: "string" },
-      "expected-repository-root": { type: "string" },
       "expected-release-policy-sha256": { type: "string" },
       output: { type: "string" },
       help: { type: "boolean", short: "h", default: false },
@@ -389,19 +530,21 @@ async function main() {
     allowPositionals: false,
   });
   const required = [
-    "report",
+    "matrix",
+    "candidate-manifest",
+    "release-policy",
     "review-attestation",
     "reviewer-public-key",
     "candidate-build-attestation",
     "candidate-build-public-key",
-    "git-executable",
+    "expected-handoff-index-sha256",
+    "expected-candidate-manifest-sha256",
     "expected-candidate-commit",
-    "expected-repository-root",
     "expected-release-policy-sha256",
   ];
   if (values.help || required.some((name) => !values[name])) {
     process.stdout.write(
-      "Usage: node verify-windows-release-attestations.mjs --report <acceptance.json> --review-attestation <review.json> --reviewer-public-key <reviewer.pem> --candidate-build-attestation <build.json> --candidate-build-public-key <builder.pem> --git-executable <trusted-git.exe> --expected-candidate-commit <commit> --expected-repository-root <clean-root> --expected-release-policy-sha256 <sha256> [--output <verification.json>]\n",
+      "Usage: node verify-windows-release-attestations.mjs --matrix <matrix.json> --candidate-manifest <candidate.json> --release-policy <policy.json> --review-attestation <review.json> --reviewer-public-key <reviewer.pem> --candidate-build-attestation <build.json> --candidate-build-public-key <builder.pem> --expected-handoff-index-sha256 <sha256> --expected-candidate-manifest-sha256 <sha256> --expected-candidate-commit <commit> --expected-release-policy-sha256 <sha256> [--output <verification.json>]\n",
     );
     if (!values.help) {
       process.exitCode = 2;
@@ -409,52 +552,20 @@ async function main() {
     return;
   }
   const outputPath = values.output ? resolve(values.output) : null;
-  const temporaryOutputPath = outputPath
-    ? `${outputPath}.tmp-${process.pid}-${randomUUID()}`
-    : null;
   if (outputPath) {
     await mkdir(dirname(outputPath), { recursive: true });
-    await rm(outputPath, { force: true });
   }
-  try {
-    const report = await readJson(values.report, "windows_acceptance_report");
-    validateWindowsAcceptanceReportShape(report);
-    const context = await verifyWindowsAcceptanceEvidenceFiles(report, {
-      gitExecutable: values["git-executable"],
-      expectedCandidateCommit: values["expected-candidate-commit"],
-      expectedRepositoryRoot: values["expected-repository-root"],
-      expectedReleasePolicySha256: values["expected-release-policy-sha256"],
+  const verification = await verifyWindowsReleaseAttestations(
+    await loadWindowsAttestationVerificationInput(values),
+  );
+  const serialized = `${JSON.stringify(verification, null, 2)}\n`;
+  if (outputPath) {
+    await writeFile(outputPath, serialized, {
+      encoding: "utf8",
+      flag: "wx",
     });
-    const verification = await verifyWindowsReleaseAttestations({
-      report,
-      context,
-      reviewAttestation: await readJson(
-        values["review-attestation"],
-        "windows_reviewer_attestation",
-      ),
-      reviewerPublicKey: await readFile(resolve(values["reviewer-public-key"])),
-      candidateBuildAttestation: await readJson(
-        values["candidate-build-attestation"],
-        "windows_candidate_build_attestation",
-      ),
-      candidateBuildPublicKey: await readFile(
-        resolve(values["candidate-build-public-key"]),
-      ),
-    });
-    const serialized = `${JSON.stringify(verification, null, 2)}\n`;
-    if (outputPath && temporaryOutputPath) {
-      await writeFile(temporaryOutputPath, serialized, {
-        encoding: "utf8",
-        flag: "wx",
-      });
-      await rename(temporaryOutputPath, outputPath);
-    } else {
-      process.stdout.write(serialized);
-    }
-  } finally {
-    if (temporaryOutputPath) {
-      await rm(temporaryOutputPath, { force: true });
-    }
+  } else {
+    process.stdout.write(serialized);
   }
 }
 

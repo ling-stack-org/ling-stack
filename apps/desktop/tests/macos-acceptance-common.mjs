@@ -14,7 +14,7 @@ export const RELEASE_HARNESS_REPO_ROOT = resolve(
   "../../..",
 );
 
-export const MACOS_RELEASE_ARCHITECTURES = Object.freeze(["arm64", "x86_64"]);
+export const MACOS_RELEASE_ARCHITECTURES = Object.freeze(["arm64"]);
 export const MACOS_TCC_CASE_IDS = Object.freeze([
   "denied",
   "prompt",

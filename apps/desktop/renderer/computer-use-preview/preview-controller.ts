@@ -1,5 +1,6 @@
 import type {
   ComputerUsePipRendererSnapshot,
+  DesktopCommandResult,
   LingComputerUsePreviewCapabilities,
 } from "../../shared/desktop-capabilities.js";
 import { subscribeWithInitialRead } from "../../shared/initial-state-subscription.js";
@@ -18,6 +19,8 @@ export interface ComputerUsePreviewControllerState {
 }
 
 export interface ComputerUsePreviewController {
+  activatePage(pageId: string): Promise<DesktopCommandResult>;
+  closePage(pageId: string): Promise<DesktopCommandResult>;
   dispose(): void;
   getState(): ComputerUsePreviewControllerState;
   invokeAction(action: ComputerUsePreviewActionId): Promise<void>;
@@ -180,6 +183,8 @@ export function createComputerUsePreviewController(input: {
   };
 
   return {
+    activatePage: async (pageId) => runPageCommand(input.capabilities?.activatePage(pageId)),
+    closePage: async (pageId) => runPageCommand(input.capabilities?.closePage(pageId)),
     dispose: () => {
       unsubscribeSnapshot?.();
       unsubscribeSnapshot = undefined;
@@ -227,5 +232,18 @@ async function waitForRendererCommand<T>(command: Promise<T>): Promise<T> {
     if (timeoutId !== undefined) {
       window.clearTimeout(timeoutId);
     }
+  }
+}
+
+async function runPageCommand(
+  command: Promise<DesktopCommandResult> | undefined,
+): Promise<DesktopCommandResult> {
+  if (!command) {
+    return { accepted: false, reason: "computer_use_page_command_unavailable" };
+  }
+  try {
+    return await waitForRendererCommand(command);
+  } catch {
+    return { accepted: false, reason: "computer_use_page_command_failed" };
   }
 }

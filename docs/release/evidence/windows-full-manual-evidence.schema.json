@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ling-stack.dev/schemas/windows-full-manual-evidence-v2.json",
+  "$id": "https://ling-stack.dev/schemas/windows-full-manual-evidence-v3.json",
   "title": "Ling Desktop Windows Full Manual Evidence",
   "type": "object",
   "additionalProperties": false,
@@ -16,7 +16,7 @@
     "attachments"
   ],
   "properties": {
-    "schemaVersion": { "const": 2 },
+    "schemaVersion": { "const": 3 },
     "kind": {
       "enum": [
         "ling.windows.full-evidence.windows-version",
@@ -179,13 +179,36 @@
     "displayDetails": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["displayIds", "dpiProfiles", "crossDisplayCapturePassed", "visualReviewPassed"],
+      "required": ["displayTopology", "displayIds", "dpiProfiles", "crossDisplayCapturePassed", "visualReviewPassed"],
       "properties": {
-        "displayIds": { "type": "array", "minItems": 2, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
-        "dpiProfiles": { "type": "array", "minItems": 2, "uniqueItems": true, "items": { "type": "number", "exclusiveMinimum": 0 } },
-        "crossDisplayCapturePassed": { "type": "boolean" },
+        "displayTopology": { "enum": ["single", "dual"] },
+        "displayIds": { "type": "array", "minItems": 1, "maxItems": 2, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+        "dpiProfiles": { "type": "array", "minItems": 1, "maxItems": 2, "uniqueItems": true, "items": { "enum": [100, 150, 200] } },
+        "crossDisplayCapturePassed": { "type": ["boolean", "null"] },
         "visualReviewPassed": { "type": "boolean" }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "displayTopology": { "const": "single" } } },
+          "then": {
+            "properties": {
+              "displayIds": { "type": "array", "maxItems": 1 },
+              "dpiProfiles": { "type": "array", "maxItems": 1 },
+              "crossDisplayCapturePassed": { "type": "null", "const": null }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "displayTopology": { "const": "dual" } } },
+          "then": {
+            "properties": {
+              "displayIds": { "type": "array", "minItems": 2 },
+              "dpiProfiles": { "type": "array", "minItems": 2 },
+              "crossDisplayCapturePassed": { "type": "boolean", "const": true }
+            }
+          }
+        }
+      ]
     },
     "screenReaderDetails": {
       "type": "object",

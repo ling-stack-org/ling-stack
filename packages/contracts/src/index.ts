@@ -26,6 +26,7 @@ export type * from "./providers.js";
 export type * from "./mcp.js";
 export type * from "./tool-surfaces.js";
 export type * from "./plugins.js";
+export * from "./cua-driver-bundled.js";
 export type * from "./skills.js";
 export type * from "./official-skill-source.js";
 export type * from "./governance-notifications.js";

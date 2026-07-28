@@ -110,6 +110,8 @@ function command(name, args = []) {
 contextBridge.exposeInMainWorld("lingComputerUsePreview", {
   getThemeSnapshot: () => Promise.resolve(themeSnapshot),
   getSnapshot: () => Promise.resolve(snapshot),
+  activatePage: (pageId) => command("activatePage", [pageId]),
+  closePage: (pageId) => command("closePage", [pageId]),
   retryCapture: () => command("retryCapture"),
   resetPosition: () => command("resetPosition"),
   close: () => command("close"),

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ling-stack.dev/schemas/windows-review-attestation-v1.json",
+  "$id": "https://ling-stack.dev/schemas/windows-review-attestation-v2.json",
   "title": "Ling Desktop Windows Detached Reviewer Attestation",
   "type": "object",
   "additionalProperties": false,
@@ -11,6 +11,9 @@
     "evidenceSha256",
     "candidateManifestSha256",
     "releasePolicySha256",
+    "signingTier",
+    "distributionChannel",
+    "productionEligible",
     "reviewerId",
     "keyId",
     "reviewedAt",
@@ -18,18 +21,39 @@
     "signature"
   ],
   "properties": {
-    "schemaVersion": { "const": 1 },
+    "schemaVersion": { "const": 2 },
     "kind": { "const": "ling.windows.review-attestation" },
-    "scope": { "const": "windows-full-acceptance" },
+    "scope": { "const": "windows-signed-acceptance" },
     "evidenceSha256": { "$ref": "#/$defs/sha256" },
     "candidateManifestSha256": { "$ref": "#/$defs/sha256" },
     "releasePolicySha256": { "$ref": "#/$defs/sha256" },
+    "signingTier": { "enum": ["test_signed_internal", "production_signed"] },
+    "distributionChannel": { "enum": ["internal", "production"] },
+    "productionEligible": { "type": "boolean" },
     "reviewerId": { "type": "string", "minLength": 1 },
     "keyId": { "type": "string", "minLength": 1 },
     "reviewedAt": { "type": "string", "format": "date-time" },
-    "verdict": { "const": "PASS" },
+    "verdict": { "enum": ["INTERNAL_TEST_PASS", "RELEASE_PASS"] },
     "signature": { "$ref": "#/$defs/signature" }
   },
+  "oneOf": [
+    {
+      "properties": {
+        "signingTier": { "const": "test_signed_internal" },
+        "distributionChannel": { "const": "internal" },
+        "productionEligible": { "const": false },
+        "verdict": { "const": "INTERNAL_TEST_PASS" }
+      }
+    },
+    {
+      "properties": {
+        "signingTier": { "const": "production_signed" },
+        "distributionChannel": { "const": "production" },
+        "productionEligible": { "const": true },
+        "verdict": { "const": "RELEASE_PASS" }
+      }
+    }
+  ],
   "$defs": {
     "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "signature": {

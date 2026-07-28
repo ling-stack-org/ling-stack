@@ -24,7 +24,6 @@ test("finalizer validates complete machine evidence but leaves final review exte
     assert.equal(report.verdict.signedReleaseEvidence, false);
     assert.equal(report.review.verification.status, "not_verified");
     assert.ok(report.tccCases.granted.arm64);
-    assert.ok(report.tccCases.granted.x86_64);
     assert.equal(report.performance.arm64.sha256, fixture.input.performance.arm64.sha256);
   } finally {
     await fixture.cleanup();
@@ -166,7 +165,7 @@ test("finalizer atomically overwrites an old PASS with FAIL on CLI failure", asy
   }
 });
 
-test("finalizer rejects forged permission semantics and architecture reuse", async () => {
+test("finalizer rejects forged permission semantics", async () => {
   const fixture = await createFixture();
   try {
     const deniedArmPath = fixture.paths.tcc.denied.arm64;
@@ -182,17 +181,6 @@ test("finalizer rejects forged permission semantics and architecture reuse", asy
       finalizeMacosSignedAcceptance(fixture.input, fixture.options),
       /tcc_permission_invalid:denied:arm64/u,
     );
-
-    const fresh = await createFixture();
-    try {
-      fresh.input.tccCases.prompt.x86_64 = fresh.input.tccCases.prompt.arm64;
-      await assert.rejects(
-        finalizeMacosSignedAcceptance(fresh.input, fresh.options),
-        /tcc_case_invalid:prompt:x86_64/u,
-      );
-    } finally {
-      await fresh.cleanup();
-    }
   } finally {
     await fixture.cleanup();
   }
@@ -285,7 +273,7 @@ async function createFixture() {
   const candidatePath = join(root, "candidate.json");
   const executablePaths = {};
   const appRecords = [];
-  for (const architecture of ["arm64", "x86_64"]) {
+  for (const architecture of ["arm64"]) {
     const appPath = join(root, "artifacts", `${architecture}.app`);
     const executablePath = join(appPath, "Contents", "MacOS", "Ling Stack");
     await mkdir(dirname(executablePath), { recursive: true });
@@ -303,7 +291,7 @@ async function createFixture() {
   const packageRecords = { dmgs: [], zips: [] };
   const notaryLogs = [];
   for (const kind of ["dmgs", "zips"]) {
-    for (const architecture of ["arm64", "x86_64"]) {
+    for (const architecture of ["arm64"]) {
       const extension = kind === "dmgs" ? "dmg" : "zip";
       const artifactPath = join(root, "artifacts", `${architecture}.${extension}`);
       await writeFile(artifactPath, `${kind}-${architecture}`, "utf8");
@@ -339,11 +327,11 @@ async function createFixture() {
     zips: packageRecords.zips,
     matrix: {
       pass: true,
-      requiredArchitectures: ["arm64", "x86_64"],
+      requiredArchitectures: ["arm64"],
       coverage: {
-        apps: ["arm64", "x86_64"],
-        dmgs: ["arm64", "x86_64"],
-        zips: ["arm64", "x86_64"],
+        apps: ["arm64"],
+        dmgs: ["arm64"],
+        zips: ["arm64"],
       },
     },
     verdict: { status: "PASS", pass: true, signedCandidateEvidence: true },
@@ -375,7 +363,7 @@ async function createFixture() {
     ["denied", "prompt", "granted", "revoked"].map((caseId) => [caseId, {}]),
   );
   const indicators = {};
-  for (const architecture of ["arm64", "x86_64"]) {
+  for (const architecture of ["arm64"]) {
     const windowIndicator = join(root, "evidence", `${architecture}-window.mov`);
     const displayIndicator = join(root, "evidence", `${architecture}-display.mov`);
     await mkdir(dirname(windowIndicator), { recursive: true });
@@ -468,7 +456,7 @@ async function createFixture() {
 
   const performance = {};
   const performancePaths = {};
-  for (const architecture of ["arm64", "x86_64"]) {
+  for (const architecture of ["arm64"]) {
     const reportPath = join(root, "performance", `${architecture}.json`);
     await mkdir(dirname(reportPath), { recursive: true });
     const cycles = [];
@@ -553,12 +541,6 @@ async function createFixture() {
     arm64: {
       window: await reference(manifestPath, indicators.arm64.windowIndicator),
       display: await reference(manifestPath, indicators.arm64.displayIndicator),
-      clearedAfterHide: true,
-      clearedAfterExit: true,
-    },
-    x86_64: {
-      window: await reference(manifestPath, indicators.x86_64.windowIndicator),
-      display: await reference(manifestPath, indicators.x86_64.displayIndicator),
       clearedAfterHide: true,
       clearedAfterExit: true,
     },

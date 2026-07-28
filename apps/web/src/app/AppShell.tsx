@@ -201,6 +201,7 @@ export function AppShell(): JSX.Element {
   const { dismissToast, showToast } = useLingToast();
   const fullAccessConfirmation = useFullAccessConfirmationController();
   const narrowViewport = useAppNarrowViewport();
+  const desktopPlatform = typeof window === "undefined" ? undefined : window.lingDesktop?.platform;
   const desktopHosted = typeof window !== "undefined" && Boolean(window.lingDesktop);
   const initialWorkspaceCwd = desktopHosted ? "" : readInitialWorkspaceCwd();
   const [form, setForm] = useState<RunFormState>(() => ({
@@ -1346,7 +1347,10 @@ export function AppShell(): JSX.Element {
     if (!opened || !isCurrentIntent()) {
       return false;
     }
-    window.lingDesktop?.computerUse.reportSelectedConversation(conversationId);
+    window.lingDesktop?.computerUse.reportSelectedDeckOwner({
+      surfaceKind: "normal_conversation",
+      ownerId: conversationId,
+    });
     return true;
   }
 
@@ -2152,6 +2156,7 @@ export function AppShell(): JSX.Element {
     !channelSidebarOpen ? "channel-sidebar-collapsed" : "",
     showInspector && inspectorCollapsed ? "inspector-collapsed" : "",
     showInspector ? "" : "inspector-hidden",
+    desktopPlatform === "macos" ? "desktop-macos" : "",
   ].filter(Boolean).join(" ");
   const workspaceSurfaceRef = useRef<HTMLElement>(null);
   const desktopSelectedConversationId = selectDesktopComputerUseConversation({
@@ -2162,9 +2167,19 @@ export function AppShell(): JSX.Element {
     selectedAiTeammateId: selectedAiTeammate?.id,
     teammateDirectThreadId: desktopTeammateConversationId,
   });
+  const desktopComputerUseSurfaceKind = desktopSelectedConversationId
+    ? activeView === "teammates"
+      ? "teammate_direct"
+      : selectedChannelId
+        ? "channel"
+        : "normal_conversation"
+    : undefined;
 
   return (
     <AppShellOverlayBoundary className={shellClassName}>
+      {desktopPlatform === "macos" ? (
+        <div className="desktop-window-drag-region" aria-hidden="true" />
+      ) : null}
       <AppPresentationSurfaceBridge
         activeView={activeView}
         hasSelectedChannel={Boolean(selectedChannelId)}
@@ -2261,6 +2276,7 @@ export function AppShell(): JSX.Element {
         <CurrentSessionHeaderCapabilityProvider>
           <DesktopComputerUseBridge
             selectedConversationId={desktopSelectedConversationId}
+            surfaceKind={desktopComputerUseSurfaceKind}
             hostRef={workspaceSurfaceRef}
           />
           <LazyPageErrorBoundary

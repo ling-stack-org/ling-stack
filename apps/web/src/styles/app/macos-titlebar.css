@@ -1,0 +1,61 @@
+.app-shell.desktop-macos {
+  --desktop-window-titlebar-height: 28px;
+  --desktop-window-drag-layer: var(--ling-z-dialog);
+  position: relative;
+  height: 100vh;
+  min-height: 0;
+}
+
+@supports (height: 100dvh) {
+  .app-shell.desktop-macos {
+    height: 100dvh;
+  }
+}
+
+.desktop-window-drag-region {
+  -webkit-app-region: drag;
+  -webkit-user-select: none;
+  position: absolute;
+  z-index: var(--desktop-window-drag-layer);
+  inset: 0 auto auto 76px;
+  width: calc(var(--sidebar-expanded-width) - 76px);
+  height: var(--desktop-window-titlebar-height);
+  background: transparent;
+  user-select: none;
+}
+
+.app-shell.desktop-macos.channel-sidebar-collapsed > .desktop-window-drag-region {
+  display: none;
+}
+
+.app-shell.desktop-macos .sidebar-fixed-top {
+  margin-top: var(--desktop-window-titlebar-height);
+}
+
+.app-shell.desktop-macos :is(
+  .normal-conversation-header,
+  .teammate-chat-header,
+  .teammate-settings-header
+) {
+  -webkit-app-region: drag;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.app-shell.desktop-macos :is(
+  .normal-conversation-header,
+  .teammate-chat-header,
+  .teammate-settings-header
+) :is(button, a, input, textarea, select, [role="button"], [role="link"]) {
+  -webkit-app-region: no-drag;
+}
+
+.app-shell.desktop-macos > :is(.channel-left-drawer, .workspace, .right-panel) {
+  height: 100%;
+  min-height: 0;
+  max-height: 100%;
+}
+
+.app-shell.desktop-macos > .workspace > * {
+  max-height: 100%;
+}

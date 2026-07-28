@@ -108,7 +108,9 @@ export function usePluginsDomain(input: {
       if (loadRequestIdRef.current !== loadRequestId) return;
       setPlugins(response.plugins);
       const detectedCuaDriver = response.plugins.find((plugin) =>
-        plugin.id === "trusted-local:cua-driver" && plugin.setup?.state === "detected"
+        plugin.id === "trusted-local:cua-driver"
+        && plugin.setup?.distribution !== "bundled_embedded"
+        && plugin.setup?.state === "detected"
       );
       if (detectedCuaDriver) {
         const existingRequest = autoConnectInFlightRef.current;
@@ -176,10 +178,8 @@ export function usePluginsDomain(input: {
   }
 
   async function checkPlugin(pluginId: string, request: PluginActionRequest): Promise<void> {
-    await mutatePlugin(pluginId, "check", request, async (cwd) => (await checkManagedPlugin(cwd, pluginId)).plugin, (plugin) =>
-      plugin.health?.message
-        ? `${input.translate("Plugin check completed.")} ${plugin.health.message}`
-        : input.translate("Plugin check completed."));
+    await mutatePlugin(pluginId, "check", request, async (cwd) => (await checkManagedPlugin(cwd, pluginId)).plugin, () =>
+      input.translate("Plugin check completed."));
   }
 
   async function validatePackage(pluginId: string, request: PluginActionRequest): Promise<void> {
@@ -187,7 +187,7 @@ export function usePluginsDomain(input: {
       const response = await validatePluginPackage(cwd, pluginId);
       const validationError = response.validation.ok
         ? undefined
-        : `${input.translate("Package validation failed.")} ${formatValidationMessage(response.validation.errors[0])}`.trim();
+        : input.translate("Package validation failed.");
       return {
         value: undefined,
         errorMessage: validationError,
@@ -197,10 +197,8 @@ export function usePluginsDomain(input: {
   }
 
   async function installPlugin(pluginId: string, request: PluginActionRequest): Promise<void> {
-    await mutatePlugin(pluginId, "install", request, async (cwd) => (await installManagedPlugin(cwd, pluginId)).plugin, (plugin) =>
-      plugin.package?.packageHash
-        ? `${input.translate("Plugin package installed.")} ${plugin.package.packageHash.slice(0, 12)}`
-        : input.translate("Plugin package installed."));
+    await mutatePlugin(pluginId, "install", request, async (cwd) => (await installManagedPlugin(cwd, pluginId)).plugin, () =>
+      input.translate("Plugin package installed."));
   }
 
   async function uninstallPlugin(pluginId: string, request: PluginActionRequest): Promise<void> {
@@ -218,9 +216,7 @@ export function usePluginsDomain(input: {
       const response = await getManagedPluginRuntimePreview(cwd, pluginId);
       const previewError = response.preview.status === "injectable"
         ? undefined
-        : response.preview.blockers.length
-          ? `${input.translate("Runtime preview blocked.")} ${response.preview.blockers[0]}`
-          : input.translate("Runtime preview blocked.");
+        : input.translate("Runtime preview blocked.");
       return {
         plugin: response.plugin,
         value: undefined,
@@ -231,8 +227,12 @@ export function usePluginsDomain(input: {
   }
 
   async function enablePlugin(pluginId: string, request: PluginActionRequest): Promise<void> {
-    await mutatePlugin(pluginId, "enable", request, async (cwd) => (await enableManagedPlugin(cwd, pluginId)).plugin, () =>
-      input.translate("Plugin enabled."));
+    await mutatePlugin(pluginId, "enable", request, async (cwd) => (await enableManagedPlugin(cwd, pluginId)).plugin, (plugin) =>
+      plugin.setup?.distribution === "bundled_embedded"
+        && plugin.setup.requestedEnabled === true
+        && plugin.setup.effectiveEnabled === false
+        ? input.translate("Plugin enable requested.")
+        : input.translate("Plugin enabled."));
   }
 
   async function disablePlugin(pluginId: string, request: PluginActionRequest): Promise<void> {
@@ -296,7 +296,7 @@ export function usePluginsDomain(input: {
       return outcome.value;
     } catch (caught) {
       if (!isLatestPluginAction(pending)) return undefined;
-      const message = caught instanceof Error ? caught.message : String(caught);
+      const message = input.translate("Plugin action failed. Try again.");
       recordPluginActionError(pending, message);
       input.notify({ ...pending, tone: "error", message });
       return undefined;
@@ -391,16 +391,6 @@ function matchesPluginActionFilter(action: PluginActionError, filter: PluginActi
   return (filter.pluginId === undefined || action.pluginId === filter.pluginId)
     && (filter.action === undefined || action.action === filter.action)
     && (filter.owner === undefined || action.owner === filter.owner);
-}
-
-function formatValidationMessage(value: unknown): string {
-  if (typeof value === "string") {
-    return value;
-  }
-  if (value && typeof value === "object" && "message" in value && typeof value.message === "string") {
-    return value.message;
-  }
-  return "";
 }
 
 function upsertPlugin(current: readonly ManagedPluginView[], plugin: ManagedPluginView): readonly ManagedPluginView[] {

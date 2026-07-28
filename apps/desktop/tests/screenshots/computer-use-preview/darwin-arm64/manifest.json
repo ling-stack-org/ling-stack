@@ -36,7 +36,7 @@
       "height": 263,
       "visualState": "connecting",
       "reducedMotion": false,
-      "sha256": "f1e955c0edcff8ff4e6cd13387885ab695a51ab176c99bb7854895f5b58320e8"
+      "sha256": "da12d18f5d348803c35f9d49477554be3984d18396f8ab46ca57ed79f8e0a256"
     },
     {
       "filename": "reconnecting-light.png",
@@ -45,7 +45,7 @@
       "height": 263,
       "visualState": "reconnecting",
       "reducedMotion": false,
-      "sha256": "f4b550fe49bda1b7cd43fdbc4a630c2b1668972cb9243038d94f19ed6074df68"
+      "sha256": "0c17deae5b4d1fae44e0c6db72accb8324ef42a29e39af4791bd75347cc7c774"
     },
     {
       "filename": "paused-light.png",
@@ -54,7 +54,7 @@
       "height": 263,
       "visualState": "paused",
       "reducedMotion": false,
-      "sha256": "fe61a625935248b7240ef37d7fc4e5dd3264b03f8656c38953b0bf34c362a972"
+      "sha256": "a3027a47c32951f36fa53609dfa3f4ebdef18d196cea168fb76044f907e15365"
     },
     {
       "filename": "approval-required-light.png",
@@ -63,7 +63,7 @@
       "height": 263,
       "visualState": "approval_required",
       "reducedMotion": false,
-      "sha256": "ea77d6502123b0b32bb87a799a5439c3a4196920a76d0400bf4ea4291f6939c1"
+      "sha256": "772d95da97762d1634fee1cd2ab55936211ce86b1614fab6f4382b05c3b0ee69"
     },
     {
       "filename": "permission-required-light.png",
@@ -72,7 +72,7 @@
       "height": 263,
       "visualState": "permission_required",
       "reducedMotion": false,
-      "sha256": "57e1ae8e81c25a170abf42231c6f7d66945c6b525bbf8d12cc472e577cc8448d"
+      "sha256": "985b19b4afc8200937afc6dad9807e7f4845b219cd536922079ee3c49ded7061"
     },
     {
       "filename": "stopping-light.png",
@@ -81,7 +81,7 @@
       "height": 263,
       "visualState": "stopping",
       "reducedMotion": false,
-      "sha256": "312dd35d851cefa75118dbf2f826443c769482edb32da9f9e594444691ce779c"
+      "sha256": "299e9378c008fb04e8e0c6a047fe575f147f8be96ff720af8a96b8fe1e7b64c7"
     },
     {
       "filename": "completed-light.png",
@@ -90,7 +90,7 @@
       "height": 263,
       "visualState": "completed",
       "reducedMotion": false,
-      "sha256": "48043b087b645cae867871881250f4abb38c0a0a442740e8759f68ab2e5165d3"
+      "sha256": "7d5fd7b787d414023b3307dd907173cc7643f6dca0ddc0b0246e52240013a15f"
     },
     {
       "filename": "stopped-light.png",
@@ -99,7 +99,7 @@
       "height": 263,
       "visualState": "stopped",
       "reducedMotion": false,
-      "sha256": "4ec10eb6e0397117baf0f885387a98567d4ddec276513d02868e7035c75a2981"
+      "sha256": "1b60938a3d285fc5fd261b9991e12532071ab13af96a2f217651349b7c81af43"
     },
     {
       "filename": "failed-light.png",
@@ -108,7 +108,7 @@
       "height": 263,
       "visualState": "failed",
       "reducedMotion": false,
-      "sha256": "3581791e34fcb6e599bca20a6479a0537124289fc605a66636ed0108eacb37ca"
+      "sha256": "83390e2f18f2ea70f17378ad6f00ccd84ac810ae1c61134d56017c27b27d8277"
     },
     {
       "filename": "stop-failed-light.png",
@@ -117,7 +117,7 @@
       "height": 263,
       "visualState": "stop_failed",
       "reducedMotion": false,
-      "sha256": "fa90485c3fa8386f594218c9aeb1444deca55540da71a3f0df71f03b8cde0a17"
+      "sha256": "19e8d1abe7a0f5b786d5d2f64f16b60e1363dff5342a423f7f485b7d18a8cf60"
     },
     {
       "filename": "reduced-motion-light.png",
@@ -127,6 +127,33 @@
       "visualState": "live",
       "reducedMotion": true,
       "sha256": "0bdc3fcadbe4762c2e5e2c4f1a3f7319376c4fb1c616f656c3061e3bf443f988"
+    },
+    {
+      "filename": "deck-stacked-light.png",
+      "theme": "light",
+      "width": 720,
+      "height": 450,
+      "visualState": "live",
+      "reducedMotion": false,
+      "sha256": "97c5cf7385f432a6f810cdf2ac69b6a33bda7105692a8b36a68e9f6a4bd85fac"
+    },
+    {
+      "filename": "deck-tabs-light.png",
+      "theme": "light",
+      "width": 420,
+      "height": 263,
+      "visualState": "live",
+      "reducedMotion": false,
+      "sha256": "71c828059f16101d539ada01b8b0fa926a43f7e025e22c7962ecb4105880f67f"
+    },
+    {
+      "filename": "deck-view-all-light.png",
+      "theme": "light",
+      "width": 420,
+      "height": 263,
+      "visualState": "live",
+      "reducedMotion": false,
+      "sha256": "f22b50e2f08c484a44da18d2b4d2710c273c301d68428ce7573c696b14179826"
     },
     {
       "filename": "minimum-dark.png",
@@ -162,7 +189,7 @@
       "height": 263,
       "visualState": "connecting",
       "reducedMotion": false,
-      "sha256": "2ce17d422893606bf0ec56805be028d74ba00d84cfe7fac7847ed9cea92d9a06"
+      "sha256": "ca92a4bf9818f9b8469412d26dadcd5e0322d2c1483fa4356ce2f1f2f02b9c69"
     },
     {
       "filename": "reconnecting-dark.png",
@@ -171,7 +198,7 @@
       "height": 263,
       "visualState": "reconnecting",
       "reducedMotion": false,
-      "sha256": "8f12cbeee3835e3a8cfe0c01a9a3ac90c31f316af67595a3a0f6a3716eaa55a4"
+      "sha256": "ca558cfb8bd8763e94d72d3660863faa43cf7fd766bfb0509c96747c64c5872a"
     },
     {
       "filename": "paused-dark.png",
@@ -180,7 +207,7 @@
       "height": 263,
       "visualState": "paused",
       "reducedMotion": false,
-      "sha256": "2c7c56a64ca64719f4a28b75d58add1bdb6631f8ddaa960d56bb029603846c5c"
+      "sha256": "3d8ab02be46220f658f6adac47b4a003f54f1ca4bc2ac075d04e1e0a3c0bec50"
     },
     {
       "filename": "approval-required-dark.png",
@@ -189,7 +216,7 @@
       "height": 263,
       "visualState": "approval_required",
       "reducedMotion": false,
-      "sha256": "cb1e97e63ee3e1f4730f49349a1953ead52e1095bf17d1e7f0ad267d95b3db1d"
+      "sha256": "8140706d079e696083fb2a0e564d65ba2887f15bb632a155040c60891c4013bb"
     },
     {
       "filename": "permission-required-dark.png",
@@ -198,7 +225,7 @@
       "height": 263,
       "visualState": "permission_required",
       "reducedMotion": false,
-      "sha256": "67792e968b61d5504c46e657771ec1f017dd9505eea50e89459875c2f64beb73"
+      "sha256": "e06da2db885f4d4b276e453ba574cc341be18d74c124d9b44c79708f8b5b65ad"
     },
     {
       "filename": "stopping-dark.png",
@@ -207,7 +234,7 @@
       "height": 263,
       "visualState": "stopping",
       "reducedMotion": false,
-      "sha256": "fd4553189e2586abd719dfb258e1b48627c4e68535e68be262ac81338c457196"
+      "sha256": "5719f669af7b400677df87aa6a8f7da0b35084f3c0b089e9b051ae0b1824945c"
     },
     {
       "filename": "completed-dark.png",
@@ -216,7 +243,7 @@
       "height": 263,
       "visualState": "completed",
       "reducedMotion": false,
-      "sha256": "5771abd259c426d4cd514c6612155091e4c3b079ac317a1781c6b15f88374137"
+      "sha256": "895599698c6f4deadd41d092b2b06ef647fd3e9aca52340903caa082d6808cac"
     },
     {
       "filename": "stopped-dark.png",
@@ -225,7 +252,7 @@
       "height": 263,
       "visualState": "stopped",
       "reducedMotion": false,
-      "sha256": "e325906b7a47c596e8ad7c72c6b141cc626162313d65d7f63e40f3680ce2a074"
+      "sha256": "4fb616793412a8fba0fa7878e4a8957ac074572e319b1e60b6f88abf327b8429"
     },
     {
       "filename": "failed-dark.png",
@@ -234,7 +261,7 @@
       "height": 263,
       "visualState": "failed",
       "reducedMotion": false,
-      "sha256": "a4603f044fafcfa62db88ac05da4b4222c53eba3d095800c5ef7b87a3c6bdf20"
+      "sha256": "404d23cb185012d5fe28292a3c8cb1771d24651428273d20a038e311d0d9a1ab"
     },
     {
       "filename": "stop-failed-dark.png",
@@ -243,7 +270,7 @@
       "height": 263,
       "visualState": "stop_failed",
       "reducedMotion": false,
-      "sha256": "745e5bed411c250ae0acc23039c8f73c74ec256de4e3dd4fe121c5d3d155ff5e"
+      "sha256": "d51ff8e0baf2796f4c6fde28fa51655e5d385db5b18aa025960a826bf17d95ef"
     },
     {
       "filename": "reduced-motion-dark.png",
@@ -253,6 +280,33 @@
       "visualState": "live",
       "reducedMotion": true,
       "sha256": "9e9f0dbb9b0e0d5409a6b6b358139dce153b503e2e47f9b3968fe1435fe7162d"
+    },
+    {
+      "filename": "deck-stacked-dark.png",
+      "theme": "dark",
+      "width": 720,
+      "height": 450,
+      "visualState": "live",
+      "reducedMotion": false,
+      "sha256": "b1d250a5ab937b5e4b4331c1b13187137ac5bdad979a56d8254eec5640585a09"
+    },
+    {
+      "filename": "deck-tabs-dark.png",
+      "theme": "dark",
+      "width": 420,
+      "height": 263,
+      "visualState": "live",
+      "reducedMotion": false,
+      "sha256": "779ec31b6a679a10fc2dc4b9f62eac61e877b970e79bf900e002a1191ca197c3"
+    },
+    {
+      "filename": "deck-view-all-dark.png",
+      "theme": "dark",
+      "width": 420,
+      "height": 263,
+      "visualState": "live",
+      "reducedMotion": false,
+      "sha256": "35464be2f7e5eecb957766ab79bff8cfa5997f71035f6296ae51b8a6035868ca"
     }
   ]
 }

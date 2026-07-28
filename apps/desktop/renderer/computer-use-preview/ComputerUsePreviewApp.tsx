@@ -22,6 +22,8 @@ import {
   createComputerUsePreviewTranslator,
   normalizeComputerUsePreviewLocale,
 } from "./messages.js";
+import { ComputerUsePageDeck } from "./ComputerUsePageDeck.js";
+import { createComputerUsePipPageDeckViewModel } from "./page-deck-view-model.js";
 import type { ComputerUsePreviewController } from "./preview-controller.js";
 import type { ComputerUsePreviewMediaController } from "./preview-media-controller.js";
 import {
@@ -30,6 +32,7 @@ import {
   type ComputerUsePreviewActionViewModel,
   type ComputerUsePreviewVisualState,
 } from "./preview-view-model.js";
+import { useComputerUsePageThumbnails } from "./use-page-thumbnails.js";
 
 const PREVIEW_ACCESSIBLE_NAME_ID = "computer-use-preview-accessible-name";
 
@@ -48,6 +51,8 @@ export function ComputerUsePreviewApp({
     () => createComputerUsePreviewViewModel(snapshot, { openCommandState, stopCommandState }),
     [openCommandState, snapshot, stopCommandState],
   );
+  const pageDeck = useMemo(() => createComputerUsePipPageDeckViewModel(snapshot), [snapshot]);
+  const thumbnails = useComputerUsePageThumbnails(snapshot);
   const [menuOpen, setMenuOpen] = useState(false);
 
   useLayoutEffect(() => {
@@ -100,8 +105,14 @@ export function ComputerUsePreviewApp({
   return (
     <CompactDesktopWindow
       className="preview-shell"
-      content={snapshot.sourceKind === "display_media" ? (
-        <div className="preview-frame">
+      content={(
+        <ComputerUsePageDeck
+          controller={controller}
+          pageDeck={pageDeck}
+          thumbnails={thumbnails}
+          t={t}
+        >
+          {snapshot.sourceKind === "display_media" ? (
           <video
             ref={setVideoElement}
             aria-label={t("livePreviewLabel")}
@@ -110,12 +121,16 @@ export function ComputerUsePreviewApp({
             muted
             playsInline
           />
-        </div>
-      ) : <FakePreviewFrame />}
+          ) : <FakePreviewFrame />}
+        </ComputerUsePageDeck>
+      )}
       controlsVisibility={viewModel.controlsPersistent ? "persistent" : "hover-focus"}
       data-controls={viewModel.controlsPersistent ? "persistent" : "hover"}
       data-menu-open={menuOpen ? "true" : undefined}
       data-open-command={openCommandState}
+      data-page-deck={pageDeck?.showChrome ? "visible" : "single"}
+      data-page-thumbnail-bytes={thumbnails.bytes}
+      data-page-thumbnail-count={thumbnails.count}
       data-stop-command={stopCommandState}
       header={(
         <CompactWindowHeader
@@ -212,12 +227,10 @@ function PreviewActionButton({
 
 function FakePreviewFrame() {
   return (
-    <div className="preview-frame">
-      <div className="fake-page" aria-hidden="true">
-        <div className="fake-toolbar"><i /><i /><i /><span /></div>
-        <div className="fake-body"><aside /><article><b /><b /><b /><b /></article></div>
-        <div className="fake-cursor" />
-      </div>
+    <div className="fake-page" aria-hidden="true">
+      <div className="fake-toolbar"><i /><i /><i /><span /></div>
+      <div className="fake-body"><aside /><article><b /><b /><b /><b /></article></div>
+      <div className="fake-cursor" />
     </div>
   );
 }

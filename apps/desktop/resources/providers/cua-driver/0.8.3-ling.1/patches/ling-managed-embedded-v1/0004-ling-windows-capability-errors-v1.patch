@@ -1,0 +1,763 @@
+diff --git a/libs/cua-driver/rust/crates/cua-driver-core/src/protocol.rs b/libs/cua-driver/rust/crates/cua-driver-core/src/protocol.rs
+index 773dbb3..bb02a35 100644
+--- a/libs/cua-driver/rust/crates/cua-driver-core/src/protocol.rs
++++ b/libs/cua-driver/rust/crates/cua-driver-core/src/protocol.rs
+@@ -278,7 +278,12 @@ impl ToolResult {
+     }
+ 
+     pub fn error(msg: impl Into<String>) -> Self {
+-        Self { content: vec![Content::text(msg)], is_error: Some(true), ..Default::default() }
++        let message = msg.into();
++        Self {
++            content: vec![Content::text(message.clone())],
++            is_error: Some(true),
++            structured_content: ling_capability_error(&message),
++        }
+     }
+ 
+     pub fn with_structured(mut self, v: Value) -> Self {
+@@ -287,6 +292,53 @@ impl ToolResult {
+     }
+ }
+ 
++fn ling_capability_error(message: &str) -> Option<Value> {
++    if !crate::ling_managed::is_managed() {
++        return None;
++    }
++    exact_ling_capability_error(message)
++}
++
++fn exact_ling_capability_error(message: &str) -> Option<Value> {
++    let value: Value = serde_json::from_str(message).ok()?;
++    let object = value.as_object()?;
++    if object.len() != 3
++        || object.get("code").and_then(Value::as_str)
++            != Some("cua_windows_uiaccess_required")
++        || object
++            .get("requiredIntegrityCoverage")
++            .and_then(Value::as_str)
++            != Some("uiaccess")
++        || !matches!(
++            object.get("limitation").and_then(Value::as_str),
++            Some("elevated_pixel_input" | "uwp_send_input")
++        )
++    {
++        return None;
++    }
++    Some(value)
++}
++
++#[cfg(test)]
++mod ling_capability_error_tests {
++    use super::*;
++
++    #[test]
++    fn accepts_only_the_exact_three_field_uiaccess_shape() {
++        let exact = r#"{"code":"cua_windows_uiaccess_required","requiredIntegrityCoverage":"uiaccess","limitation":"uwp_send_input"}"#;
++        let value = exact_ling_capability_error(exact).unwrap();
++        assert_eq!(value.as_object().unwrap().len(), 3);
++        assert!(exact_ling_capability_error(
++            r#"{"code":"cua_windows_uiaccess_required","requiredIntegrityCoverage":"uiaccess","limitation":"uwp_send_input","extra":true}"#
++        )
++        .is_none());
++        assert!(exact_ling_capability_error(
++            r#"{"code":"cua_windows_uiaccess_required","required_integrity_coverage":"uiaccess","limitation":"uwp_send_input"}"#
++        )
++        .is_none());
++    }
++}
++
+ // ── Initialize result ─────────────────────────────────────────────────────────
+ 
+ pub fn initialize_result() -> Value {
+diff --git a/libs/cua-driver/rust/crates/platform-windows/src/input/delivery.rs b/libs/cua-driver/rust/crates/platform-windows/src/input/delivery.rs
+index 93aca9a..0a1570d 100644
+--- a/libs/cua-driver/rust/crates/platform-windows/src/input/delivery.rs
++++ b/libs/cua-driver/rust/crates/platform-windows/src/input/delivery.rs
+@@ -364,6 +364,11 @@ pub fn background_unavailable_error_with_cause(
+ ) -> cua_driver_core::protocol::ToolResult {
+     let class = read_class_name(hwnd);
+     let cause = cause.into();
++    if cua_driver_core::ling_managed::is_managed()
++        && crate::ling_managed_capability::is_exact_wire(&cause)
++    {
++        return cua_driver_core::protocol::ToolResult::error(cause);
++    }
+     let cause_lower = cause.to_ascii_lowercase();
+     let code = if cause_lower.contains("occluded") {
+         "background_occluded"
+diff --git a/libs/cua-driver/rust/crates/platform-windows/src/input/inject.rs b/libs/cua-driver/rust/crates/platform-windows/src/input/inject.rs
+index ce8157f..a073137 100644
+--- a/libs/cua-driver/rust/crates/platform-windows/src/input/inject.rs
++++ b/libs/cua-driver/rust/crates/platform-windows/src/input/inject.rs
+@@ -285,7 +285,7 @@ pub fn inject_click_screen(target: u64, sx: i32, sy: i32, count: usize, button:
+             bail!("inject_click_screen: invalid or stale target HWND");
+         }
+     }
+-    if let Some(msg) = crate::input::post_message_blocked_by_uipi(target) {
++    if let Some(msg) = crate::input::input_capability_guard(target) {
+         // Higher-integrity target: injection into its queue is blocked too.
+         bail!(msg);
+     }
+@@ -548,7 +548,7 @@ pub fn inject_drag_screen(
+             bail!("inject_drag_screen: invalid or stale target HWND");
+         }
+     }
+-    if let Some(msg) = crate::input::post_message_blocked_by_uipi(target) {
++    if let Some(msg) = crate::input::input_capability_guard(target) {
+         bail!(msg);
+     }
+     let barrel = match button {
+diff --git a/libs/cua-driver/rust/crates/platform-windows/src/input/keyboard.rs b/libs/cua-driver/rust/crates/platform-windows/src/input/keyboard.rs
+index 75e00bc..cf0f171 100644
+--- a/libs/cua-driver/rust/crates/platform-windows/src/input/keyboard.rs
++++ b/libs/cua-driver/rust/crates/platform-windows/src/input/keyboard.rs
+@@ -222,7 +222,7 @@ pub fn wait_for_focused_descendant(hwnd: u64, timeout: Duration) -> Option<u64>
+ 
+ /// Post a Unicode character as WM_CHAR.
+ pub fn post_char(hwnd: u64, ch: char) -> Result<()> {
+-    if let Some(msg) = crate::input::post_message_blocked_by_uipi(hwnd) {
++    if let Some(msg) = crate::input::input_capability_guard(hwnd) {
+         anyhow::bail!(msg);
+     }
+     // Retarget to the focused child if any — top-level WindowProcs typically
+@@ -288,7 +288,7 @@ pub fn post_type_text(hwnd: u64, text: &str) -> Result<()> {
+ /// (see [`post_enter_keystroke`]) — see the LibreOffice screenshot in
+ /// the PR description for the bug this fixes.
+ pub fn post_type_text_with_delay(hwnd: u64, text: &str, inter_char_ms: u64) -> Result<()> {
+-    if let Some(msg) = crate::input::post_message_blocked_by_uipi(hwnd) {
++    if let Some(msg) = crate::input::input_capability_guard(hwnd) {
+         anyhow::bail!(msg);
+     }
+     let h_parent = HWND(hwnd as *mut _);
+@@ -332,7 +332,7 @@ pub fn post_type_text_with_delay(hwnd: u64, text: &str, inter_char_ms: u64) -> R
+ 
+ /// Press a named key (and optional modifiers) via WM_KEYDOWN/WM_KEYUP.
+ pub fn post_key(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<()> {
+-    if let Some(msg) = crate::input::post_message_blocked_by_uipi(hwnd) {
++    if let Some(msg) = crate::input::input_capability_guard(hwnd) {
+         anyhow::bail!(msg);
+     }
+     let hwnd_win = HWND(hwnd as *mut _);
+@@ -431,7 +431,7 @@ pub fn send_key_synthesized(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<
+     if target.0.is_null() {
+         bail!("invalid target hwnd");
+     }
+-    if let Some(msg) = crate::input::post_message_blocked_by_uipi(hwnd) {
++    if let Some(msg) = crate::input::input_capability_guard(hwnd) {
+         // Same UIPI defense as the PostMessage path. SendInput from UIAccess
+         // _is_ allowed cross-integrity, but if our daemon is somehow at a
+         // lower integrity than target, SendInput would land in the wrong
+@@ -535,7 +535,7 @@ pub fn send_text_synthesized(hwnd: u64, text: &str) -> Result<()> {
+     if target.0.is_null() {
+         bail!("invalid target hwnd");
+     }
+-    if let Some(msg) = crate::input::post_message_blocked_by_uipi(hwnd) {
++    if let Some(msg) = crate::input::input_capability_guard(hwnd) {
+         bail!(msg);
+     }
+     // Build the key-event sequence. Printable codepoints go through as Unicode
+diff --git a/libs/cua-driver/rust/crates/platform-windows/src/input/mod.rs b/libs/cua-driver/rust/crates/platform-windows/src/input/mod.rs
+index 0501db4..f4b30fb 100644
+--- a/libs/cua-driver/rust/crates/platform-windows/src/input/mod.rs
++++ b/libs/cua-driver/rust/crates/platform-windows/src/input/mod.rs
+@@ -21,7 +21,8 @@ pub(crate) use inject::force_foreground_attached;
+ pub use mouse::{
+     has_chromium_descendant, is_chromium_target_window, post_click, post_click_screen,
+     send_click_synthesized, send_click_synthesized_active_mods, send_click_synthesized_mods,
+-    send_wheel_synthesized,
++    send_wheel_synthesized, send_wheel_synthesized_targeted, wheel_point_targets_window,
++    TARGETED_WHEEL_OCCLUDED,
+ };
+ pub use keyboard::{
+     is_xaml_host_hwnd, post_char, post_key, post_type_text, post_type_text_with_delay,
+@@ -138,7 +139,12 @@ pub fn post_message_blocked_by_uipi(hwnd: u64) -> Option<String> {
+     let _ = unsafe { CloseHandle(target_handle) };
+     let target = target?;
+     if target > own {
+-        Some(format!(
++    if cua_driver_core::ling_managed::is_managed() {
++        return Some(crate::ling_managed_capability::StructuredCapabilityError::uiaccess_required(
++            crate::ling_managed_capability::CapabilityLimitation::ElevatedPixelInput,
++        ).to_json());
++    }
++    Some(format!(
+             "UIPI: target hwnd 0x{hwnd:x} (pid {pid}) is at {} integrity; \
+              cua-driver is at {} integrity. PostMessage to a higher-integrity \
+              window is silently dropped by the target's message pump — the \
+@@ -155,3 +161,16 @@ pub fn post_message_blocked_by_uipi(hwnd: u64) -> Option<String> {
+         None
+     }
+ }
++
++/// Unified classifier for every pixel/key synthesis path. Standalone retains
++/// the upstream UIPI diagnostic; Ling-managed standard mode additionally
++/// rejects XAML/AppContainer targets with the exact UIAccess limitation wire.
++pub fn input_capability_guard(hwnd: u64) -> Option<String> {
++    if let Some(error) = post_message_blocked_by_uipi(hwnd) { return Some(error); }
++    if cua_driver_core::ling_managed::is_managed() && keyboard::is_xaml_host_hwnd(hwnd) {
++        return Some(crate::ling_managed_capability::StructuredCapabilityError::uiaccess_required(
++            crate::ling_managed_capability::CapabilityLimitation::UwpSendInput,
++        ).to_json());
++    }
++    None
++}
+diff --git a/libs/cua-driver/rust/crates/platform-windows/src/input/mouse.rs b/libs/cua-driver/rust/crates/platform-windows/src/input/mouse.rs
+index d370855..5766c90 100644
+--- a/libs/cua-driver/rust/crates/platform-windows/src/input/mouse.rs
++++ b/libs/cua-driver/rust/crates/platform-windows/src/input/mouse.rs
+@@ -21,7 +21,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
+     CWP_SKIPDISABLED, CWP_SKIPINVISIBLE, GA_ROOT, GCL_STYLE,
+     CWP_SKIPTRANSPARENT, GWL_EXSTYLE, HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST,
+     SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_NOACTIVATE,
+-    SWP_NOMOVE, SWP_NOSIZE, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP,
++    SWP_NOMOVE, SWP_NOSIZE, WindowFromPoint, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP,
+     WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE, WM_RBUTTONDBLCLK,
+     WM_RBUTTONDOWN, WM_RBUTTONUP, WS_EX_TOPMOST,
+ };
+@@ -104,7 +104,7 @@ fn post_click_on(hwnd: HWND, x: i32, y: i32, count: usize, button: &str) -> Resu
+     // UIPI check — Medium-IL daemon → High-IL target silently drops mouse
+     // messages just like keyboard ones. Surface an actionable error before
+     // PostMessage returns its misleading TRUE. See post_message_blocked_by_uipi.
+-    if let Some(msg) = crate::input::post_message_blocked_by_uipi(hwnd.0 as u64) {
++    if let Some(msg) = crate::input::input_capability_guard(hwnd.0 as u64) {
+         anyhow::bail!(msg);
+     }
+ 
+@@ -232,7 +232,7 @@ pub fn post_drag_screen(
+     let (target, c_from) = deepest_child(root_hwnd, POINT { x: sx_from, y: sy_from });
+     let mut c_to = POINT { x: sx_to, y: sy_to };
+     unsafe { let _ = ScreenToClient(target, &mut c_to); }
+-    if let Some(msg) = crate::input::post_message_blocked_by_uipi(target.0 as u64) {
++    if let Some(msg) = crate::input::input_capability_guard(target.0 as u64) {
+         anyhow::bail!(msg);
+     }
+     let (down_msg, up_msg, mk_flag) = match button {
+@@ -455,7 +455,7 @@ fn send_click_synthesized_mods_impl(
+     if target.0.is_null() {
+         bail!("invalid target hwnd");
+     }
+-    if let Some(msg) = crate::input::post_message_blocked_by_uipi(target.0 as u64) {
++    if let Some(msg) = crate::input::input_capability_guard(target.0 as u64) {
+         // Same UIPI defense as PostMessage path — SendInput from non-UIAccess
+         // would fail just as silently as PostMessage when target is at higher
+         // integrity. Surface the diagnostic early.
+@@ -655,7 +655,7 @@ pub fn send_drag_synthesized(
+     if target.0.is_null() {
+         bail!("invalid target hwnd");
+     }
+-    if let Some(msg) = crate::input::post_message_blocked_by_uipi(target.0 as u64) {
++    if let Some(msg) = crate::input::input_capability_guard(target.0 as u64) {
+         bail!(msg);
+     }
+ 
+@@ -768,6 +768,7 @@ pub fn send_drag_synthesized(
+ /// Standard wheel notch delta. A `mouseData` value of `±WHEEL_DELTA` is one
+ /// detent of the physical mouse wheel.
+ const WHEEL_DELTA: i32 = 120;
++pub const TARGETED_WHEEL_OCCLUDED: &str = "cua_windows_targeted_wheel_occluded";
+ 
+ /// Compute the `MOUSEINPUT::mouseData` value for a wheel event of `ticks`
+ /// detents. Positive ticks = wheel forward/up (vertical) or right (horizontal);
+@@ -795,6 +796,82 @@ fn wheel_mouse_data(ticks: i32) -> u32 {
+ /// delivery follows the cursor, so positioning the cursor is sufficient. The
+ /// cursor is restored to its previous position afterward.
+ pub fn send_wheel_synthesized(sx: i32, sy: i32, ticks: i32, horizontal: bool) -> Result<()> {
++    if cua_driver_core::ling_managed::is_managed() {
++        let target = unsafe { WindowFromPoint(POINT { x: sx, y: sy }) };
++        if !target.0.is_null() {
++            let root = unsafe {
++                let root = GetAncestor(target, GA_ROOT);
++                if root.0.is_null() { target } else { root }
++            };
++            if let Some(message) = crate::input::input_capability_guard(root.0 as u64) {
++                bail!(message);
++            }
++        }
++    }
++    send_wheel_input(sx, sy, ticks, horizontal, None)
++}
++
++/// Synthesize a wheel event only when `(sx, sy)` currently belongs to the
++/// intended top-level window. Targeted `pid`/`window_id` calls must never
++/// silently scroll an occluding window merely because it owns the pixel.
++pub fn send_wheel_synthesized_targeted(
++    intended_hwnd: u64,
++    sx: i32,
++    sy: i32,
++    ticks: i32,
++    horizontal: bool,
++) -> Result<()> {
++    if let Some(message) = crate::input::input_capability_guard(intended_hwnd) {
++        bail!(message);
++    }
++    if !wheel_point_targets_window(intended_hwnd, sx, sy) {
++        bail!(TARGETED_WHEEL_OCCLUDED);
++    }
++    send_wheel_input(sx, sy, ticks, horizontal, Some(intended_hwnd))
++}
++
++/// True only when WindowFromPoint and the intended HWND resolve to the same
++/// non-null GA_ROOT window. Kept separate from injection so callers can return
++/// a structured occlusion result before entering the blocking SendInput path.
++pub fn wheel_point_targets_window(intended_hwnd: u64, sx: i32, sy: i32) -> bool {
++    if intended_hwnd == 0 {
++        return false;
++    }
++    let hit = unsafe { WindowFromPoint(POINT { x: sx, y: sy }) };
++    if hit.0.is_null() {
++        return false;
++    }
++    let intended = HWND(intended_hwnd as *mut _);
++    let intended_root = unsafe { normalized_root(intended) };
++    let hit_root = unsafe { normalized_root(hit) };
++    same_nonzero_window_root(intended_root.0 as u64, hit_root.0 as u64)
++}
++
++fn same_nonzero_window_root(intended_root: u64, hit_root: u64) -> bool {
++    intended_root != 0 && hit_root != 0 && intended_root == hit_root
++}
++
++fn cursor_reached_requested_point(
++    requested_x: i32,
++    requested_y: i32,
++    actual_x: i32,
++    actual_y: i32,
++) -> bool {
++    requested_x == actual_x && requested_y == actual_y
++}
++
++unsafe fn normalized_root(hwnd: HWND) -> HWND {
++    let root = GetAncestor(hwnd, GA_ROOT);
++    if root.0.is_null() { hwnd } else { root }
++}
++
++fn send_wheel_input(
++    sx: i32,
++    sy: i32,
++    ticks: i32,
++    horizontal: bool,
++    intended_hwnd: Option<u64>,
++) -> Result<()> {
+     let flag = if horizontal { MOUSEEVENTF_HWHEEL } else { MOUSEEVENTF_WHEEL };
+     let mouse_data = wheel_mouse_data(ticks);
+ 
+@@ -814,10 +891,44 @@ pub fn send_wheel_synthesized(sx: i32, sy: i32, ticks: i32, horizontal: bool) ->
+ 
+     unsafe {
+         let mut prev_cursor = POINT::default();
+-        let _ = GetCursorPos(&mut prev_cursor);
++        GetCursorPos(&mut prev_cursor)
++            .map_err(|error| anyhow::anyhow!("failed to read cursor position for wheel: {error}"))?;
+ 
+         // Wheel routes to the window under the cursor — place it on the target.
+-        let _ = SetCursorPos(sx, sy);
++        SetCursorPos(sx, sy)
++            .map_err(|error| anyhow::anyhow!("failed to position cursor for wheel: {error}"))?;
++        let mut actual_cursor = POINT::default();
++        if let Err(error) = GetCursorPos(&mut actual_cursor) {
++            let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
++            bail!("failed to verify cursor position for wheel: {error}");
++        }
++        if !cursor_reached_requested_point(
++            sx,
++            sy,
++            actual_cursor.x,
++            actual_cursor.y,
++        ) {
++            let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
++            if intended_hwnd.is_some() {
++                bail!(TARGETED_WHEEL_OCCLUDED);
++            }
++            bail!(
++                "wheel target ({sx},{sy}) is outside the active cursor clipping region; \
++                 the system positioned the cursor at ({},{}) instead",
++                actual_cursor.x,
++                actual_cursor.y
++            );
++        }
++        if let Some(intended_hwnd) = intended_hwnd {
++            if !wheel_point_targets_window(
++                intended_hwnd,
++                actual_cursor.x,
++                actual_cursor.y,
++            ) {
++                let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
++                bail!(TARGETED_WHEEL_OCCLUDED);
++            }
++        }
+ 
+         let events = [wheel_input];
+         let sent = SendInput(&events, std::mem::size_of::<INPUT>() as i32);
+@@ -836,7 +947,10 @@ pub fn send_wheel_synthesized(sx: i32, sy: i32, ticks: i32, horizontal: bool) ->
+ 
+ #[cfg(test)]
+ mod wheel_tests {
+-    use super::{posted_press_message, wheel_mouse_data, WHEEL_DELTA};
++    use super::{
++        cursor_reached_requested_point, posted_press_message, same_nonzero_window_root,
++        send_wheel_synthesized_targeted, wheel_mouse_data, TARGETED_WHEEL_OCCLUDED, WHEEL_DELTA,
++    };
+     use windows::Win32::UI::WindowsAndMessaging::{WM_LBUTTONDBLCLK, WM_LBUTTONDOWN};
+ 
+     #[test]
+@@ -884,4 +998,25 @@ mod wheel_tests {
+     fn wheel_data_zero_is_zero() {
+         assert_eq!(wheel_mouse_data(0), 0);
+     }
++
++    #[test]
++    fn targeted_wheel_root_classifier_rejects_null_or_different_windows() {
++        assert!(same_nonzero_window_root(41, 41));
++        assert!(!same_nonzero_window_root(0, 0));
++        assert!(!same_nonzero_window_root(41, 0));
++        assert!(!same_nonzero_window_root(41, 42));
++    }
++
++    #[test]
++    fn targeted_wheel_requires_the_cursor_to_reach_the_exact_requested_point() {
++        assert!(cursor_reached_requested_point(120, 240, 120, 240));
++        assert!(!cursor_reached_requested_point(120, 240, 119, 240));
++        assert!(!cursor_reached_requested_point(120, 240, 120, 239));
++    }
++
++    #[test]
++    fn targeted_wheel_rejects_a_null_target_before_send_input() {
++        let error = send_wheel_synthesized_targeted(0, 0, 0, 1, false).unwrap_err();
++        assert_eq!(error.to_string(), TARGETED_WHEEL_OCCLUDED);
++    }
+ }
+diff --git a/libs/cua-driver/rust/crates/platform-windows/src/lib.rs b/libs/cua-driver/rust/crates/platform-windows/src/lib.rs
+index ab9534a..56a4ed2 100644
+--- a/libs/cua-driver/rust/crates/platform-windows/src/lib.rs
++++ b/libs/cua-driver/rust/crates/platform-windows/src/lib.rs
+@@ -24,6 +24,7 @@ pub mod diagnostics;
+ pub mod health_report;
+ pub mod managed_readiness;
+ pub mod managed_lifetime;
++pub mod ling_managed_capability;
+ pub mod recording_hooks;
+ pub mod pip;
+ pub mod terminal;
+diff --git a/libs/cua-driver/rust/crates/platform-windows/src/ling_managed_capability.rs b/libs/cua-driver/rust/crates/platform-windows/src/ling_managed_capability.rs
+new file mode 100644
+index 0000000..bab223b
+--- /dev/null
++++ b/libs/cua-driver/rust/crates/platform-windows/src/ling_managed_capability.rs
+@@ -0,0 +1,78 @@
++//! Stable capability failures for Ling's standard-integrity distribution.
++
++use serde::Serialize;
++
++#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++pub enum CapabilityLimitation {
++    ElevatedPixelInput,
++    UwpSendInput,
++}
++
++#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
++#[serde(rename_all = "camelCase")]
++pub struct StructuredCapabilityError {
++    pub code: &'static str,
++    pub required_integrity_coverage: &'static str,
++    pub limitation: CapabilityLimitation,
++}
++
++impl StructuredCapabilityError {
++    pub fn uiaccess_required(limitation: CapabilityLimitation) -> Self {
++        Self {
++            code: "cua_windows_uiaccess_required",
++            required_integrity_coverage: "uiaccess",
++            limitation,
++        }
++    }
++
++    pub fn to_json(&self) -> String {
++        serde_json::to_string(self).unwrap_or_else(|_| {
++            format!(
++                "{{\"code\":\"cua_windows_uiaccess_required\",\"requiredIntegrityCoverage\":\"uiaccess\",\"limitation\":\"{}\"}}",
++                match self.limitation {
++                    CapabilityLimitation::ElevatedPixelInput => "elevated_pixel_input",
++                    CapabilityLimitation::UwpSendInput => "uwp_send_input",
++                }
++            )
++        })
++    }
++}
++
++pub fn is_exact_wire(message: &str) -> bool {
++    let Ok(value) = serde_json::from_str::<serde_json::Value>(message) else {
++        return false;
++    };
++    let Some(object) = value.as_object() else {
++        return false;
++    };
++    object.len() == 3
++        && object.get("code").and_then(serde_json::Value::as_str)
++            == Some("cua_windows_uiaccess_required")
++        && object
++            .get("requiredIntegrityCoverage")
++            .and_then(serde_json::Value::as_str)
++            == Some("uiaccess")
++        && matches!(
++            object.get("limitation").and_then(serde_json::Value::as_str),
++            Some("elevated_pixel_input" | "uwp_send_input")
++        )
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn emits_stable_structured_code() {
++        let value =
++            StructuredCapabilityError::uiaccess_required(CapabilityLimitation::UwpSendInput);
++        let json: serde_json::Value = serde_json::from_str(&value.to_json()).unwrap();
++        assert_eq!(json.as_object().unwrap().len(), 3);
++        assert_eq!(json["code"], "cua_windows_uiaccess_required");
++        assert_eq!(json["requiredIntegrityCoverage"], "uiaccess");
++        assert_eq!(json["limitation"], "uwp_send_input");
++        assert!(json.get("requirement").is_none());
++        assert!(json.get("configuredIntegrityCoverage").is_none());
++    }
++}
+diff --git a/libs/cua-driver/rust/crates/platform-windows/src/tools/impl_.rs b/libs/cua-driver/rust/crates/platform-windows/src/tools/impl_.rs
+index 404b6c4..fba9b28 100644
+--- a/libs/cua-driver/rust/crates/platform-windows/src/tools/impl_.rs
++++ b/libs/cua-driver/rust/crates/platform-windows/src/tools/impl_.rs
+@@ -5120,6 +5120,9 @@ impl Tool for ScrollTool {
+         // desktop-scope wheel branch above; `by` (line/page) folds into the tick
+         // count (page ≈ 3 detents).
+         if delivery == DeliveryMode::Foreground {
++            if let Some(message) = crate::input::input_capability_guard(hwnd) {
++                return ToolResult::error(message);
++            }
+             let (horizontal, sign) = match direction.as_str() {
+                 "up" => (false, 1),
+                 "down" => (false, -1),
+@@ -5164,10 +5167,15 @@ impl Tool for ScrollTool {
+                     ))
+                 }
+             };
++            if !crate::input::wheel_point_targets_window(hwnd, cx, cy) {
++                return targeted_wheel_occluded_error(cx, cy);
++            }
+             let dir_disp = direction.clone();
+             let tick_disp = ticks.abs();
+             let result = tokio::task::spawn_blocking(move || {
+-                crate::input::send_wheel_synthesized(cx, cy, ticks, horizontal)
++                crate::input::send_wheel_synthesized_targeted(
++                    hwnd, cx, cy, ticks, horizontal,
++                )
+             })
+             .await;
+             return match result {
+@@ -5175,11 +5183,23 @@ impl Tool for ScrollTool {
+                     "✅ Scrolled {dir_disp} via SendInput wheel ({tick_disp} tick(s)) at \
+                      screen ({cx},{cy}) (delivery_mode:foreground)."
+                 )),
++                Ok(Err(e)) if e.to_string() == crate::input::TARGETED_WHEEL_OCCLUDED => {
++                    targeted_wheel_occluded_error(cx, cy)
++                }
+                 Ok(Err(e)) => ToolResult::error(e.to_string()),
+                 Err(e) => ToolResult::error(format!("Task error: {e}")),
+             };
+         }
+ 
++        // The remaining background fallback uses raw WM_VSCROLL/WM_HSCROLL.
++        // PostMessage reports success even when UIPI or a XAML/AppContainer
++        // surface drops the message, so classify the target before claiming
++        // delivery. Managed mode preserves the exact three-field UIAccess
++        // capability error through ToolResult::structuredContent.
++        if let Some(message) = crate::input::input_capability_guard(hwnd) {
++            return ToolResult::error(message);
++        }
++
+         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+             use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+             use windows::Win32::UI::WindowsAndMessaging::{
+@@ -5235,6 +5255,18 @@ impl Tool for ScrollTool {
+     }
+ }
+ 
++fn targeted_wheel_occluded_error(x: i32, y: i32) -> ToolResult {
++    ToolResult::error(format!(
++        "scroll: targeted point ({x},{y}) is covered by another top-level window; \
++         call bring_to_front for the intended window and retry."
++    ))
++    .with_structured(serde_json::json!({
++        "code": "target_occluded",
++        "delivery_mode": "foreground",
++        "suggestion": "call bring_to_front for the intended window, then retry",
++    }))
++}
++
+ // `ScreenshotTool` and `ScreenshotCompatTool` were removed in PR #1692 —
+ // `get_window_state` (which now always returns a screenshot) is the single
+ // canonical screenshot path. The underlying capture functions
+@@ -7351,6 +7383,9 @@ impl Tool for SetConfigTool {
+         })
+     }
+     async fn invoke(&self, args: Value) -> ToolResult {
++        if cua_driver_core::ling_managed::is_managed() {
++            return invoke_managed_set_config(&self.state, &args);
++        }
+         let mut cfg = self.state.config.write().unwrap();
+         let mut applied = false;
+         // Swift-compatible {key, value} shape.
+@@ -7505,6 +7540,153 @@ impl Tool for SetConfigTool {
+     }
+ }
+ 
++fn invoke_managed_set_config(state: &Arc<ToolState>, args: &Value) -> ToolResult {
++    let transaction = match cua_driver_core::ling_managed::begin_state_transaction() {
++        Ok(transaction) => transaction,
++        Err(error) => {
++            return ToolResult::error(format!(
++                "failed to begin managed config transaction: {error}"
++            ))
++        }
++    };
++    let mut next = state.config.read().unwrap().clone();
++    let mut entries = std::collections::BTreeMap::<String, Value>::new();
++
++    if let (Some(key), Some(value)) = (
++        args.get("key").and_then(Value::as_str),
++        args.get("value"),
++    ) {
++        if let Err(error) = apply_managed_config_value(key, value, &mut next, &mut entries) {
++            return ToolResult::error(error);
++        }
++    }
++    // Legacy direct fields intentionally win over the {key,value} shape, as in
++    // upstream. Unlike upstream, a present field with the wrong JSON type is a
++    // fail-closed ToolResult error rather than a silent no-op.
++    for key in [
++        "capture_mode",
++        "capture_scope",
++        "max_image_dimension",
++        "experimental_pip",
++        "experimental_pip_geometry",
++    ] {
++        if let Some(value) = args.get(key) {
++            if let Err(error) = apply_managed_config_value(key, value, &mut next, &mut entries) {
++                return ToolResult::error(error);
++            }
++        }
++    }
++    if entries.is_empty() {
++        return ToolResult::error(
++            "Missing required string field `key` (or a known legacy per-field).",
++        );
++    }
++
++    let entries: Vec<(String, Value)> = entries.into_iter().collect();
++    if let Err(error) = transaction.update_json_keys_atomic("config.json", &entries) {
++        return ToolResult::error(format!("failed to persist managed config: {error}"));
++    }
++    // Persistence is authoritative: publish the candidate to memory only after
++    // the atomic capability-root replacement has completed.
++    *state.config.write().unwrap() = next.clone();
++
++    let cursor_enabled = state
++        .cursor_registry
++        .all_states()
++        .first()
++        .map(|cursor| cursor.config.enabled)
++        .unwrap_or(true);
++    let managed_json = cua_driver_core::ling_managed::read_state("config.json")
++        .ok()
++        .flatten()
++        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
++        .unwrap_or_else(|| json!({}));
++    let pip_enabled = managed_json
++        .get("experimental_pip")
++        .and_then(Value::as_bool)
++        .unwrap_or(false);
++    let pip_geometry = managed_json
++        .get("experimental_pip_geometry")
++        .and_then(Value::as_str)
++        .map(str::to_owned);
++    let payload = json!({
++        "schema_version":      1,
++        "version":             env!("CARGO_PKG_VERSION"),
++        "platform":            "windows",
++        "capture_mode":        next.capture_mode,
++        "capture_scope":       next.capture_scope,
++        "max_image_dimension": next.max_image_dimension,
++        "agent_cursor":        { "enabled": cursor_enabled },
++        "experimental_pip":    pip_enabled,
++        "experimental_pip_geometry": pip_geometry,
++    });
++    let pretty = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string());
++    let result = ToolResult::text(format!("✅ {pretty}")).with_structured(payload);
++    drop(transaction);
++    result
++}
++
++fn apply_managed_config_value(
++    key: &str,
++    value: &Value,
++    next: &mut DriverConfig,
++    entries: &mut std::collections::BTreeMap<String, Value>,
++) -> Result<(), String> {
++    match key {
++        "capture_mode" => {
++            let mode = value
++                .as_str()
++                .ok_or_else(|| format!("`capture_mode` must be a string, got {value}."))?;
++            next.capture_mode = mode.to_owned();
++            entries.insert(key.to_owned(), Value::String(mode.to_owned()));
++        }
++        "capture_scope" => {
++            let scope = value
++                .as_str()
++                .ok_or_else(|| format!("`capture_scope` must be a string, got {value}."))?;
++            if !matches!(scope, "window" | "desktop") {
++                return Err(format!(
++                    "`capture_scope` must be \"window\" or \"desktop\", got \"{scope}\"."
++                ));
++            }
++            next.capture_scope = scope.to_owned();
++            entries.insert(key.to_owned(), Value::String(scope.to_owned()));
++        }
++        "max_image_dimension" => {
++            let raw = value.as_u64().ok_or_else(|| {
++                format!("`max_image_dimension` must be an integer, got {value}.")
++            })?;
++            let dimension = u32::try_from(raw)
++                .map_err(|_| format!("max_image_dimension {raw} exceeds u32::MAX"))?;
++            next.max_image_dimension = dimension;
++            entries.insert(key.to_owned(), Value::from(dimension));
++        }
++        "experimental_pip" => {
++            let enabled = value.as_bool().ok_or_else(|| {
++                format!("`experimental_pip` must be a boolean, got {value}.")
++            })?;
++            entries.insert(key.to_owned(), Value::Bool(enabled));
++        }
++        "experimental_pip_geometry" => {
++            let geometry = value.as_str().ok_or_else(|| {
++                format!("`experimental_pip_geometry` must be a string, got {value}.")
++            })?;
++            if pip_preview::PipGeometry::parse(geometry).is_none() {
++                return Err(format!(
++                    "experimental_pip_geometry `{geometry}` is not a valid WxH or WxH+X+Y string"
++                ));
++            }
++            entries.insert(key.to_owned(), Value::String(geometry.to_owned()));
++        }
++        other => {
++            return Err(format!(
++                "Unknown config key `{other}`. Known: capture_mode, capture_scope, max_image_dimension, experimental_pip, experimental_pip_geometry."
++            ));
++        }
++    }
++    Ok(())
++}
++
+ // ── get_accessibility_tree ────────────────────────────────────────────────────
+ 
+ pub struct GetAccessibilityTreeTool;

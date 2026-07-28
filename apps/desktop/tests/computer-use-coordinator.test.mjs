@@ -1110,6 +1110,7 @@ test("starting and approval projections remain visible in the Desktop summary be
     targetLabel: starting.target.displayName,
     previewAvailable: false,
     visible: false,
+    pageCount: 0,
   });
   assert.deepEqual(await coordinator.show(starting.sessionId), {
     accepted: false,
@@ -1171,7 +1172,7 @@ test("route change during terminal linger destroys the old preview immediately",
   await coordinator.dispose();
 });
 
-test("a newer active session preempts an older terminal linger immediately", async () => {
+test("a newer active page preempts terminal linger without recreating the PiP window", async () => {
   const timers = [];
   const windows = [];
   const client = new CountingProjectionClient(FAKE_COMPUTER_USE_PROJECTION);
@@ -1209,13 +1210,13 @@ test("a newer active session preempts an older terminal linger immediately", asy
   await flush();
 
   assert.equal(terminalTimer.cleared, true);
-  assert.equal(windows[0].destroyCount, 1);
-  assert.equal(windows.length, 2);
+  assert.equal(windows[0].destroyCount, 0);
+  assert.equal(windows.length, 1);
   assert.equal(coordinator.getSummary()?.sessionId, replacement.sessionId);
   await coordinator.dispose();
 });
 
-test("an older active projection does not preempt a newer terminal surface", async () => {
+test("a terminal active page fails over to an older eligible page", async () => {
   const windows = [];
   const client = new CountingProjectionClient(FAKE_COMPUTER_USE_PROJECTION);
   const coordinator = createCoordinator({
@@ -1240,8 +1241,8 @@ test("an older active projection does not preempt a newer terminal surface", asy
   await flush();
 
   assert.equal(windows.length, 1);
-  assert.equal(coordinator.getSummary()?.sessionId, FAKE_COMPUTER_USE_PROJECTION.sessionId);
-  assert.equal(coordinator.getSummary()?.status, "failed");
+  assert.equal(coordinator.getSummary()?.sessionId, "computer-use-session-older");
+  assert.equal(coordinator.getSummary()?.status, "running");
   await coordinator.dispose();
 });
 
@@ -2811,6 +2812,505 @@ test("display disconnect restores manual placement to the nearest remaining disp
   await coordinator.dispose();
 });
 
+test("rapid A to B to C page activation commits only C and never owns two live sources", async () => {
+  const sessionA = FAKE_COMPUTER_USE_PROJECTION;
+  const sessionB = activeReplacementProjection("computer-use-session-b", "2026-07-15T00:00:02.000Z");
+  const sessionC = activeReplacementProjection("computer-use-session-c", "2026-07-15T00:00:03.000Z");
+  const client = new CountingProjectionClient(sessionA);
+  const adapter = new SingleLiveSourceAdapter();
+  const windows = [];
+  const coordinator = createCoordinator({
+    client,
+    adapter,
+    preferences: new MemoryPreferenceStore(),
+    windows,
+  });
+  await coordinator.start();
+  coordinator.reportSelectedConversation(sessionA.conversationId);
+  await flush();
+  coordinator.reportFrameReady(sessionA.sessionId);
+
+  client.emit(sessionB);
+  client.emit(sessionC);
+  await flush();
+
+  assert.deepEqual(await coordinator.activatePage(sessionB.sessionId), { accepted: true });
+  const bSnapshot = structuredClone(coordinator.getRendererSnapshot());
+  assert.equal(bSnapshot.sessionId, sessionB.sessionId);
+  assert.equal(coordinator.getDeckState().activePageId, sessionA.sessionId);
+  assert.equal(coordinator.getDeckState().requestedPageId, sessionB.sessionId);
+
+  const switchToC = coordinator.activatePage(sessionC.sessionId);
+  coordinator.reportFrameReady(
+    sessionB.sessionId,
+    bSnapshot.sourceRevision,
+    bSnapshot.sourceGeneration,
+  );
+  assert.equal(coordinator.getDeckState().activePageId, sessionA.sessionId, "B must not commit after C is requested");
+
+  assert.deepEqual(await switchToC, { accepted: true });
+  const cSnapshot = structuredClone(coordinator.getRendererSnapshot());
+  coordinator.reportFrameReady(
+    sessionC.sessionId,
+    cSnapshot.sourceRevision,
+    cSnapshot.sourceGeneration,
+  );
+  coordinator.reportSourceFailure(
+    sessionB.sessionId,
+    bSnapshot.sourceRevision,
+    bSnapshot.sourceGeneration,
+    "late_b_failure",
+  );
+
+  assert.equal(coordinator.getDeckState().activePageId, sessionC.sessionId);
+  assert.equal(coordinator.getDeckState().requestedPageId, undefined);
+  assert.deepEqual(
+    coordinator.getDeckState().pages.map((page) => page.pageId),
+    [sessionC.sessionId, sessionA.sessionId, sessionB.sessionId],
+  );
+  assert.equal(adapter.maxLiveSourceCount, 1);
+  assert.equal(windows.length, 1);
+  assert.equal(client.stopCount, 0);
+  await coordinator.dispose();
+  assert.equal(adapter.liveSourceCount, 0);
+});
+
+test("rapid A to B to C coalesces while the old source release is still pending", async () => {
+  const sessionA = FAKE_COMPUTER_USE_PROJECTION;
+  const sessionB = activeReplacementProjection("computer-use-session-b", "2026-07-15T00:00:02.000Z");
+  const sessionC = activeReplacementProjection("computer-use-session-c", "2026-07-15T00:00:03.000Z");
+  const client = new CountingProjectionClient(sessionA);
+  const adapter = new DeferredSingleLiveSourceAdapter();
+  const coordinator = createCoordinator({
+    client,
+    adapter,
+    preferences: new MemoryPreferenceStore(),
+    windows: [],
+  });
+  await coordinator.start();
+  coordinator.reportSelectedConversation(sessionA.conversationId);
+  await flush();
+  coordinator.reportFrameReady(sessionA.sessionId);
+  client.emit(sessionB);
+  client.emit(sessionC);
+  await flush();
+
+  const switchToB = coordinator.activatePage(sessionB.sessionId);
+  await adapter.releaseStarted.promise;
+  const switchToC = coordinator.activatePage(sessionC.sessionId);
+  adapter.allowRelease.resolve();
+
+  assert.deepEqual(await switchToB, { accepted: false, reason: "computer_use_page_switch_superseded" });
+  assert.deepEqual(await switchToC, { accepted: true });
+  const cSnapshot = coordinator.getRendererSnapshot();
+  coordinator.reportFrameReady(sessionC.sessionId, cSnapshot.sourceRevision, cSnapshot.sourceGeneration);
+
+  assert.equal(coordinator.getDeckState().activePageId, sessionC.sessionId);
+  assert.equal(coordinator.getDeckState().requestedPageId, undefined);
+  assert.equal(adapter.prepareCount, 2, "B must never prepare after C supersedes it during release");
+  assert.equal(adapter.maxLiveSourceCount, 1);
+  await coordinator.dispose();
+});
+
+test("failed page preparation rolls back to the prior page through the same source queue", async () => {
+  const sessionA = FAKE_COMPUTER_USE_PROJECTION;
+  const sessionB = activeReplacementProjection("computer-use-session-b", "2026-07-15T00:00:02.000Z");
+  const client = new CountingProjectionClient(sessionA);
+  const adapter = new SingleLiveSourceAdapter(sessionB.sessionId);
+  const windows = [];
+  const coordinator = createCoordinator({
+    client,
+    adapter,
+    preferences: new MemoryPreferenceStore(),
+    windows,
+  });
+  await coordinator.start();
+  coordinator.reportSelectedConversation(sessionA.conversationId);
+  await flush();
+  coordinator.reportFrameReady(sessionA.sessionId);
+  client.emit(sessionB);
+  await flush();
+
+  const result = await coordinator.activatePage(sessionB.sessionId);
+  assert.deepEqual(result, { accepted: false, reason: "computer_use_page_prepare_failed" });
+  assert.equal(coordinator.getDeckState().activePageId, sessionA.sessionId);
+  assert.equal(coordinator.getDeckState().requestedPageId, undefined);
+  assert.equal(coordinator.getRendererSnapshot().sessionId, sessionA.sessionId);
+  assert.equal(adapter.maxLiveSourceCount, 1);
+  assert.equal(windows.length, 1);
+  assert.equal(client.stopCount, 0);
+  await coordinator.dispose();
+  assert.equal(adapter.liveSourceCount, 0);
+});
+
+test("page permission denial rolls back to the prior page without Stop", async () => {
+  const sessionA = FAKE_COMPUTER_USE_PROJECTION;
+  const sessionB = activeReplacementProjection("computer-use-session-b", "2026-07-15T00:00:02.000Z");
+  const client = new CountingProjectionClient(sessionA);
+  const adapter = new PagePermissionDeniedAdapter(sessionB.preview.descriptorId);
+  const coordinator = createCoordinator({
+    client,
+    adapter,
+    preferences: new MemoryPreferenceStore(),
+    windows: [],
+  });
+  await coordinator.start();
+  coordinator.reportSelectedConversation(sessionA.conversationId);
+  await flush();
+  coordinator.reportFrameReady(sessionA.sessionId);
+  client.emit(sessionB);
+  await flush();
+
+  assert.deepEqual(await coordinator.activatePage(sessionB.sessionId), {
+    accepted: false,
+    reason: "computer_use_page_permission_denied",
+  });
+  assert.equal(coordinator.getDeckState().activePageId, sessionA.sessionId);
+  assert.equal(coordinator.getDeckState().requestedPageId, undefined);
+  assert.equal(coordinator.getRendererSnapshot().sessionId, sessionA.sessionId);
+  assert.equal(adapter.maxLiveSourceCount, 1);
+  assert.equal(client.stopCount, 0);
+  await coordinator.dispose();
+});
+
+test("page first-frame timeout rolls back to the prior page", async () => {
+  const sessionA = FAKE_COMPUTER_USE_PROJECTION;
+  const sessionB = activeReplacementProjection("computer-use-session-b", "2026-07-15T00:00:02.000Z");
+  const clock = createVirtualTimerHarness("2026-07-15T12:00:00.000Z");
+  const client = new CountingProjectionClient(sessionA);
+  const adapter = new DisplayMediaFakeAdapter();
+  const coordinator = createCoordinator({
+    client,
+    adapter,
+    preferences: new MemoryPreferenceStore(),
+    windows: [],
+    now: () => new Date(clock.nowMs),
+    setTimer: clock.setTimer,
+    clearTimer: clock.clearTimer,
+  });
+  await coordinator.start();
+  coordinator.reportSelectedConversation(sessionA.conversationId);
+  await flush();
+  const aSnapshot = coordinator.getRendererSnapshot();
+  coordinator.reportFrameReady(sessionA.sessionId, aSnapshot.sourceRevision, aSnapshot.sourceGeneration);
+  client.emit(sessionB);
+  await flush();
+
+  assert.deepEqual(await coordinator.activatePage(sessionB.sessionId), { accepted: true });
+  assert.ok(clock.activeTimer(1_000), "the requested page must arm its first-frame watchdog");
+  await clock.fireNext();
+
+  assert.equal(coordinator.getDeckState().activePageId, sessionA.sessionId);
+  assert.equal(coordinator.getDeckState().requestedPageId, undefined);
+  assert.equal(coordinator.getRendererSnapshot().sessionId, sessionA.sessionId);
+  assert.equal(client.stopCount, 0);
+  await coordinator.dispose();
+});
+
+test("pending page source failure rolls back and rejects its late first frame", async () => {
+  const sessionA = FAKE_COMPUTER_USE_PROJECTION;
+  const sessionB = activeReplacementProjection("computer-use-session-b", "2026-07-15T00:00:02.000Z");
+  const client = new CountingProjectionClient(sessionA);
+  const adapter = new SingleLiveSourceAdapter();
+  const coordinator = createCoordinator({
+    client,
+    adapter,
+    preferences: new MemoryPreferenceStore(),
+    windows: [],
+  });
+  await coordinator.start();
+  coordinator.reportSelectedConversation(sessionA.conversationId);
+  await flush();
+  coordinator.reportFrameReady(sessionA.sessionId);
+  client.emit(sessionB);
+  await flush();
+  await coordinator.activatePage(sessionB.sessionId);
+  const bSnapshot = structuredClone(coordinator.getRendererSnapshot());
+
+  coordinator.reportSourceFailure(
+    sessionB.sessionId,
+    bSnapshot.sourceRevision,
+    bSnapshot.sourceGeneration,
+    "page_capture_failed",
+  );
+  await flush();
+  coordinator.reportFrameReady(sessionB.sessionId, bSnapshot.sourceRevision, bSnapshot.sourceGeneration);
+
+  assert.equal(coordinator.getDeckState().activePageId, sessionA.sessionId);
+  assert.equal(coordinator.getDeckState().requestedPageId, undefined);
+  assert.equal(coordinator.getRendererSnapshot().sessionId, sessionA.sessionId);
+  assert.equal(adapter.maxLiveSourceCount, 1);
+  assert.equal(client.stopCount, 0);
+  await coordinator.dispose();
+});
+
+test("closing the active page during a pending switch does not reacquire the requested page", async () => {
+  const sessionA = FAKE_COMPUTER_USE_PROJECTION;
+  const sessionB = activeReplacementProjection("computer-use-session-b", "2026-07-15T00:00:02.000Z");
+  const client = new CountingProjectionClient(sessionA);
+  const adapter = new SingleLiveSourceAdapter();
+  const coordinator = createCoordinator({
+    client,
+    adapter,
+    preferences: new MemoryPreferenceStore(),
+    windows: [],
+  });
+  await coordinator.start();
+  coordinator.reportSelectedConversation(sessionA.conversationId);
+  await flush();
+  coordinator.reportFrameReady(sessionA.sessionId);
+  client.emit(sessionB);
+  await flush();
+
+  const switchToB = coordinator.activatePage(sessionB.sessionId);
+  const closeA = coordinator.dismissPage(sessionA.sessionId);
+  assert.deepEqual(await closeA, { accepted: true });
+  assert.deepEqual(await switchToB, { accepted: true });
+
+  const bSnapshot = coordinator.getRendererSnapshot();
+  coordinator.reportFrameReady(
+    sessionB.sessionId,
+    bSnapshot.sourceRevision,
+    bSnapshot.sourceGeneration,
+  );
+
+  assert.equal(coordinator.getDeckState().activePageId, sessionB.sessionId);
+  assert.equal(coordinator.getDeckState().requestedPageId, undefined);
+  assert.equal(adapter.prepareCount, 2, "the pending switch must prepare B exactly once");
+  assert.equal(adapter.maxLiveSourceCount, 1);
+  assert.equal(client.stopCount, 0);
+  await coordinator.dispose();
+});
+
+test("closing the active page keeps the runtime alive and activates the next MRU page", async () => {
+  const sessionA = FAKE_COMPUTER_USE_PROJECTION;
+  const sessionB = activeReplacementProjection("computer-use-session-b", "2026-07-15T00:00:02.000Z");
+  const client = new CountingProjectionClient(sessionA);
+  const adapter = new SingleLiveSourceAdapter();
+  const windows = [];
+  const coordinator = createCoordinator({
+    client,
+    adapter,
+    preferences: new MemoryPreferenceStore(),
+    windows,
+  });
+  await coordinator.start();
+  coordinator.reportSelectedConversation(sessionA.conversationId);
+  await flush();
+  coordinator.reportFrameReady(sessionA.sessionId);
+  client.emit(sessionB);
+  await flush();
+  await coordinator.activatePage(sessionB.sessionId);
+  const bSnapshot = coordinator.getRendererSnapshot();
+  coordinator.reportFrameReady(sessionB.sessionId, bSnapshot.sourceRevision, bSnapshot.sourceGeneration);
+
+  assert.deepEqual(await coordinator.dismissPage(sessionB.sessionId), { accepted: true });
+  assert.equal(coordinator.getDeckState().activePageId, sessionA.sessionId);
+  assert.deepEqual(coordinator.getDeckState().dismissedPageIds, [sessionB.sessionId]);
+  assert.equal(coordinator.getRendererSnapshot().sessionId, sessionA.sessionId);
+  assert.equal(client.stopCount, 0);
+  assert.equal(adapter.maxLiveSourceCount, 1);
+  assert.equal(windows.length, 1);
+  await coordinator.dispose();
+});
+
+test("terminal active page automatically fails over with zero dual-source overlap", async () => {
+  const sessionA = FAKE_COMPUTER_USE_PROJECTION;
+  const sessionB = activeReplacementProjection("computer-use-session-b", "2026-07-15T00:00:02.000Z");
+  const client = new CountingProjectionClient(sessionA);
+  const adapter = new SingleLiveSourceAdapter();
+  const coordinator = createCoordinator({
+    client,
+    adapter,
+    preferences: new MemoryPreferenceStore(),
+    windows: [],
+  });
+  await coordinator.start();
+  coordinator.reportSelectedConversation(sessionA.conversationId);
+  await flush();
+  coordinator.reportFrameReady(sessionA.sessionId);
+  client.emit(sessionB);
+  await flush();
+  await coordinator.activatePage(sessionB.sessionId);
+  const bSnapshot = coordinator.getRendererSnapshot();
+  coordinator.reportFrameReady(sessionB.sessionId, bSnapshot.sourceRevision, bSnapshot.sourceGeneration);
+
+  client.emit({
+    ...sessionB,
+    status: "succeeded",
+    terminalAt: "2026-07-15T00:00:04.000Z",
+    updatedAt: "2026-07-15T00:00:04.000Z",
+  });
+  await flush();
+
+  assert.equal(coordinator.getDeckState().activePageId, sessionA.sessionId);
+  assert.equal(coordinator.getRendererSnapshot().sessionId, sessionA.sessionId);
+  assert.equal(adapter.maxLiveSourceCount, 1);
+  assert.equal(client.stopCount, 0);
+  await coordinator.dispose();
+});
+
+test("sixth-page eviction and View all reopen never stop an eligible runtime", async () => {
+  const sessionA = FAKE_COMPUTER_USE_PROJECTION;
+  const sessions = ["b", "c", "d", "e", "f"].map((suffix, index) =>
+    activeReplacementProjection(`computer-use-session-${suffix}`, `2026-07-15T00:00:0${index + 2}.000Z`));
+  const client = new CountingProjectionClient(sessionA);
+  const adapter = new SingleLiveSourceAdapter();
+  const coordinator = createCoordinator({
+    client,
+    adapter,
+    preferences: new MemoryPreferenceStore(),
+    windows: [],
+  });
+  await coordinator.start();
+  coordinator.reportSelectedDeckOwner({ surfaceKind: "channel", ownerId: sessionA.conversationId });
+  await flush();
+  coordinator.reportFrameReady(sessionA.sessionId);
+  sessions.forEach((projection) => client.emit(projection));
+  await flush();
+
+  assert.equal(coordinator.getDeckState().pages.length, 5);
+  assert.equal(coordinator.getDeckState().availablePageIds.length, 6);
+  const dismissed = sessions[1];
+  assert.deepEqual(await coordinator.dismissPage(dismissed.sessionId), { accepted: true });
+  client.emit({ ...dismissed, updatedAt: "2026-07-15T00:00:09.000Z" });
+  await flush();
+  assert.equal(coordinator.getDeckState().pages.some((page) => page.pageId === dismissed.sessionId), false);
+
+  const nonresident = sessions.at(-1);
+  assert.deepEqual(await coordinator.activatePage(nonresident.sessionId), { accepted: true });
+  const nonresidentSnapshot = coordinator.getRendererSnapshot();
+  coordinator.reportFrameReady(
+    nonresident.sessionId,
+    nonresidentSnapshot.sourceRevision,
+    nonresidentSnapshot.sourceGeneration,
+  );
+  assert.equal(coordinator.getDeckState().pages.length, 5);
+  assert.equal(coordinator.getDeckState().activePageId, nonresident.sessionId);
+
+  assert.deepEqual(await coordinator.activatePage(dismissed.sessionId), { accepted: true });
+  const reopenedSnapshot = coordinator.getRendererSnapshot();
+  coordinator.reportFrameReady(
+    dismissed.sessionId,
+    reopenedSnapshot.sourceRevision,
+    reopenedSnapshot.sourceGeneration,
+  );
+  assert.equal(coordinator.getDeckState().activePageId, dismissed.sessionId);
+  assert.equal(coordinator.getDeckState().dismissedPageIds.includes(dismissed.sessionId), false);
+  assert.equal(coordinator.getDeckState().pages.length, 5);
+  assert.equal(client.stopCount, 0);
+  assert.equal(adapter.maxLiveSourceCount, 1);
+  await coordinator.dispose();
+});
+
+test("same-owner surface changes replace the exact deck scope and renderer window", async () => {
+  const sessionA = FAKE_COMPUTER_USE_PROJECTION;
+  const sessionB = activeReplacementProjection("computer-use-session-b", "2026-07-15T00:00:02.000Z");
+  const client = new CountingProjectionClient(sessionA);
+  const windows = [];
+  const coordinator = createCoordinator({
+    client,
+    adapter: new SingleLiveSourceAdapter(),
+    preferences: new MemoryPreferenceStore(),
+    windows,
+  });
+  await coordinator.start();
+  coordinator.reportSelectedDeckOwner({ surfaceKind: "channel", ownerId: sessionA.conversationId });
+  await flush();
+  coordinator.reportFrameReady(sessionA.sessionId);
+  client.emit(sessionB);
+  await flush();
+  await coordinator.dismissPage(sessionB.sessionId);
+
+  coordinator.reportSelectedDeckOwner({
+    surfaceKind: "normal_conversation",
+    ownerId: sessionA.conversationId,
+  });
+  await flush();
+  assert.equal(windows[0].destroyCount, 1);
+  assert.equal(windows.length, 2);
+  assert.equal(coordinator.getDeckState().scope.surfaceKind, "normal_conversation");
+  assert.deepEqual(coordinator.getDeckState().dismissedPageIds, []);
+  assert.equal(coordinator.getRendererSnapshot().deck.pages.every((page) =>
+    [sessionA.sessionId, sessionB.sessionId].includes(page.pageId)), true);
+
+  coordinator.reportSelectedDeckOwner({ surfaceKind: "teammate_direct", ownerId: "different-owner" });
+  await flush();
+  assert.equal(windows[1].destroyCount, 1);
+  assert.equal(coordinator.getSummary(), undefined);
+  assert.deepEqual(coordinator.getDeckState().availablePageIds, []);
+  await coordinator.dispose();
+});
+
+test("legacy and structured owner disagreement fails closed until both reports converge", async () => {
+  const sessionA = FAKE_COMPUTER_USE_PROJECTION;
+  const sessionB = {
+    ...activeReplacementProjection("computer-use-session-b", "2026-07-15T00:00:02.000Z"),
+    conversationId: "different-owner",
+  };
+  const client = new CountingProjectionClient(sessionA);
+  const windows = [];
+  const coordinator = createCoordinator({
+    client,
+    adapter: new SingleLiveSourceAdapter(),
+    preferences: new MemoryPreferenceStore(),
+    windows,
+  });
+  await coordinator.start();
+  client.emit(sessionB);
+  coordinator.reportSelectedConversation(sessionA.conversationId);
+  await flush();
+  coordinator.reportFrameReady(sessionA.sessionId);
+
+  coordinator.reportSelectedDeckOwner({ surfaceKind: "channel", ownerId: sessionB.conversationId });
+  await flush();
+  assert.equal(coordinator.getSummary(), undefined);
+  assert.equal(windows[0].destroyCount, 1);
+
+  coordinator.reportSelectedConversation(sessionB.conversationId);
+  await flush();
+  assert.equal(coordinator.getDeckState().scope.surfaceKind, "channel");
+  assert.equal(coordinator.getDeckState().scope.ownerId, sessionB.conversationId);
+  assert.equal(coordinator.getSummary().sessionId, sessionB.sessionId);
+  await coordinator.dispose();
+});
+
+test("renderer crash rebuilds five-page metadata and only the active source", async () => {
+  const projections = [
+    FAKE_COMPUTER_USE_PROJECTION,
+    ...["b", "c", "d", "e"].map((suffix, index) =>
+      activeReplacementProjection(`computer-use-session-${suffix}`, `2026-07-15T00:00:0${index + 2}.000Z`)),
+  ];
+  const client = new MultiProjectionClient(projections);
+  const adapter = new SingleLiveSourceAdapter();
+  const windows = [];
+  const coordinator = createCoordinator({
+    client,
+    adapter,
+    preferences: new MemoryPreferenceStore(),
+    windows,
+  });
+  await coordinator.start();
+  coordinator.reportSelectedDeckOwner({
+    surfaceKind: "normal_conversation",
+    ownerId: FAKE_COMPUTER_USE_PROJECTION.conversationId,
+  });
+  await flush();
+  const activeBeforeCrash = coordinator.getDeckState().activePageId;
+  coordinator.reportFrameReady(activeBeforeCrash);
+
+  windows[0].emitRendererProcessGone({ reason: "crashed-with-deck", exitCode: 17 });
+  await flush();
+  assert.equal(windows[0].destroyCount, 1);
+  assert.equal(windows.length, 2);
+  assert.equal(coordinator.getDeckState().pages.length, 5);
+  assert.equal(coordinator.getDeckState().activePageId, activeBeforeCrash);
+  assert.equal(coordinator.getRendererSnapshot().deck.pages.length, 5);
+  assert.equal(adapter.maxLiveSourceCount, 1);
+  await coordinator.dispose();
+  assert.equal(adapter.liveSourceCount, 0);
+});
+
 function activeReplacementProjection(sessionId, updatedAt) {
   return {
     ...FAKE_COMPUTER_USE_PROJECTION,
@@ -2844,6 +3344,7 @@ function createCoordinator({
   const displayList = displays ?? [{ id: "primary", primary: true, workArea: { x: 0, y: 0, width: 1440, height: 900 } }];
   let coordinator;
   coordinator = new ComputerUsePreviewCoordinator({
+    workspaceId: "/fake/workspace",
     projectionClient: client,
     platformAdapter: adapter,
     preferenceStore: preferences,
@@ -2947,6 +3448,17 @@ class CountingProjectionClient extends FakeComputerUseProjectionClient {
   async stop(sessionId, reason) {
     this.stopCount += 1;
     return super.stop(sessionId, reason);
+  }
+}
+
+class MultiProjectionClient extends CountingProjectionClient {
+  constructor(projections) {
+    super(projections[0]);
+    this.projections = projections;
+  }
+
+  async list() {
+    return this.projections.map((projection) => structuredClone(projection));
   }
 }
 
@@ -3088,6 +3600,59 @@ class DeferredSecondPrepareAdapter extends FakeComputerUsePreviewPlatformAdapter
       await this.allowSecondPrepare.promise;
     }
     return { sourceKind: "fake", aspectRatio: 1.6 };
+  }
+}
+
+class SingleLiveSourceAdapter extends FakeComputerUsePreviewPlatformAdapter {
+  liveSourceCount = 0;
+  maxLiveSourceCount = 0;
+
+  constructor(failingSessionId) {
+    super();
+    this.failingSessionId = failingSessionId;
+  }
+
+  async prepare(input) {
+    this.prepareCount += 1;
+    if (input.sessionId === this.failingSessionId) {
+      throw new Error("page_prepare_failed");
+    }
+    assert.equal(this.liveSourceCount, 0, "a replacement source must prepare only after the old source releases");
+    this.liveSourceCount += 1;
+    this.maxLiveSourceCount = Math.max(this.maxLiveSourceCount, this.liveSourceCount);
+    return { sourceKind: "fake", aspectRatio: 1.6 };
+  }
+
+  async release() {
+    this.releaseCount += 1;
+    this.liveSourceCount = 0;
+  }
+}
+
+class DeferredSingleLiveSourceAdapter extends SingleLiveSourceAdapter {
+  releaseStarted = deferred();
+  allowRelease = deferred();
+  shouldDelayRelease = true;
+
+  async release() {
+    this.releaseCount += 1;
+    if (this.shouldDelayRelease) {
+      this.shouldDelayRelease = false;
+      this.releaseStarted.resolve();
+      await this.allowRelease.promise;
+    }
+    this.liveSourceCount = 0;
+  }
+}
+
+class PagePermissionDeniedAdapter extends SingleLiveSourceAdapter {
+  constructor(deniedDescriptorId) {
+    super();
+    this.deniedDescriptorId = deniedDescriptorId;
+  }
+
+  async getPermissionState(input) {
+    return input.descriptorId === this.deniedDescriptorId ? "denied" : "granted";
   }
 }
 

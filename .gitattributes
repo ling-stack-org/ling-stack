@@ -1,0 +1,2 @@
+# Unified diffs require a single-space line to preserve blank context lines.
+apps/desktop/resources/providers/cua-driver/*/patches/*/*.patch whitespace=-blank-at-eol

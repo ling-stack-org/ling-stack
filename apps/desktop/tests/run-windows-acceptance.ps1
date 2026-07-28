@@ -3,23 +3,13 @@ param(
   [ValidateSet("Preflight", "Full")]
   [string]$Mode = "Preflight",
 
-  [Parameter(Mandatory = $true)]
+  [string]$HandoffManifest,
+
   [string]$Output,
 
   [string]$LingAppPath,
   [string]$LingInstallerPath,
-  [string]$ProviderBinary,
-  [string]$CandidateManifest,
-  [string]$ReleasePolicy,
-  [string]$ExpectedCandidateCommit,
-  [string]$ExpectedRepositoryRoot,
-  [string]$ExpectedReleasePolicySha256,
-  [string]$WindowsVersionEvidence,
-  [string]$DisplayEvidence,
-  [string]$NarratorEvidence,
-  [string]$NvdaEvidence,
-  [string]$SmartScreenEvidence,
-  [string]$InstallLifecycleEvidence
+  [string]$ProviderBinary
 )
 
 Set-StrictMode -Version Latest
@@ -28,67 +18,59 @@ if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction Sile
   $PSNativeCommandUseErrorActionPreference = $false
 }
 
-$Mode = if ($Mode -ieq "Full") { "Full" } else { "Preflight" }
+$Mode = if (-not [string]::IsNullOrWhiteSpace($HandoffManifest)) {
+  "Full"
+} elseif ($Mode -ieq "Full") {
+  "Full"
+} else {
+  "Preflight"
+}
+$CandidateManifest = $null
+$ReleasePolicy = $null
+$ExpectedCandidateCommit = $null
+$ExpectedRepositoryRoot = $null
+$ExpectedReleasePolicySha256 = $null
+$WindowsVersionEvidence = $null
+$DisplayEvidence = $null
+$NarratorEvidence = $null
+$NvdaEvidence = $null
+$SmartScreenEvidence = $null
+$InstallLifecycleEvidence = $null
 $acceptanceRunner = $MyInvocation.MyCommand.Path
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
 $desktopRoot = (Resolve-Path (Join-Path $scriptDirectory "..")).Path
 $repoRoot = (Resolve-Path (Join-Path $scriptDirectory "..\..\..")).Path
 $reportModule = Join-Path $scriptDirectory "windows-acceptance-report.mjs"
+$handoffLoader = Join-Path $scriptDirectory "load-windows-cell-handoff.mjs"
 $providerVerifier = Join-Path $scriptDirectory "verify-windows-cua-driver-provider.mjs"
 $providerSmokeRunner = Join-Path $scriptDirectory "run-windows-provider-smoke.mjs"
+$releaseHarnessRelativePaths = @(
+  "apps/desktop/tests/finalize-windows-signed-acceptance.mjs",
+  "apps/desktop/tests/load-windows-cell-handoff.mjs",
+  "apps/desktop/tests/produce-windows-acceptance-handoff.mjs",
+  "apps/desktop/tests/run-windows-acceptance.ps1",
+  "apps/desktop/tests/run-windows-provider-smoke.mjs",
+  "apps/desktop/tests/verify-windows-cua-driver-provider.mjs",
+  "apps/desktop/tests/verify-windows-internal-attestations.mjs",
+  "apps/desktop/tests/verify-windows-release-attestations.mjs",
+  "apps/desktop/tests/windows-acceptance-report.mjs",
+  "apps/desktop/tests/windows-handoff-contracts.mjs",
+  "apps/desktop/tests/windows-provider-smoke-support.mjs",
+  "apps/desktop/tests/windows-release-evidence-contracts.mjs"
+)
 $nodePath = $null
-$outputPath = if ([System.IO.Path]::IsPathRooted($Output)) {
-  [System.IO.Path]::GetFullPath($Output)
-} else {
-  [System.IO.Path]::GetFullPath((Join-Path (Get-Location).Path $Output))
-}
-
 if ($Mode -eq "Full") {
-  if ([string]::IsNullOrWhiteSpace($ExpectedCandidateCommit)) {
-    throw "Full mode requires -ExpectedCandidateCommit from the release orchestrator"
+  if ([string]::IsNullOrWhiteSpace($HandoffManifest)) {
+    throw "Full mode accepts only -HandoffManifest <windows-cell-handoff.json>"
   }
-  if ($ExpectedCandidateCommit -notmatch "^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$") {
-    throw "ExpectedCandidateCommit must be a 40- or 64-character Git object id"
-  }
-  if ([string]::IsNullOrWhiteSpace($ExpectedRepositoryRoot)) {
-    throw "Full mode requires -ExpectedRepositoryRoot from the release orchestrator"
-  }
-  if (-not [System.IO.Path]::IsPathRooted($ExpectedRepositoryRoot)) {
-    throw "ExpectedRepositoryRoot must be an absolute path"
-  }
-  if (-not (Test-Path -LiteralPath $ExpectedRepositoryRoot -PathType Container)) {
-    throw "ExpectedRepositoryRoot must identify an existing directory"
-  }
-  if ([string]::IsNullOrWhiteSpace($ExpectedReleasePolicySha256)) {
-    throw "Full mode requires -ExpectedReleasePolicySha256 from the release orchestrator"
-  }
-  if ($ExpectedReleasePolicySha256 -notmatch "^[0-9a-fA-F]{64}$") {
-    throw "ExpectedReleasePolicySha256 must be a SHA-256 digest"
-  }
-
-  $ExpectedCandidateCommit = $ExpectedCandidateCommit.ToLowerInvariant()
-  $ExpectedRepositoryRoot = (Resolve-Path -LiteralPath $ExpectedRepositoryRoot).Path
-  $ExpectedReleasePolicySha256 = $ExpectedReleasePolicySha256.ToLowerInvariant()
-  if (
-    -not [string]::Equals(
-      [System.IO.Path]::GetFullPath($repoRoot).TrimEnd('\', '/'),
-      [System.IO.Path]::GetFullPath($ExpectedRepositoryRoot).TrimEnd('\', '/'),
-      [System.StringComparison]::OrdinalIgnoreCase
-    )
-  ) {
-    throw "ExpectedRepositoryRoot does not match the acceptance harness repository"
-  }
+} elseif ([string]::IsNullOrWhiteSpace($Output)) {
+  throw "Preflight mode requires -Output"
 }
 
 if (-not [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
   [System.Runtime.InteropServices.OSPlatform]::Windows
 )) {
   throw "run-windows-acceptance.ps1 requires Windows; use a PowerShell parser for non-Windows static validation"
-}
-
-# A failed rerun must not leave an older PASS report at the requested path.
-if (Test-Path -LiteralPath $outputPath -PathType Leaf) {
-  Remove-Item -LiteralPath $outputPath -Force
 }
 
 function Stop-NativeProcessTree {
@@ -244,6 +226,31 @@ function Get-ArtifactEvidence {
   }
 }
 
+function Assert-FullLooseArtifactDigests {
+  param(
+    [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Handoff,
+    [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Artifacts
+  )
+
+  foreach ($role in @(
+    "lingInstaller",
+    "lingApp",
+    "provider",
+    "providerSeal",
+    "providerCatalog"
+  )) {
+    $artifact = $Artifacts[$role]
+    $expectedSha256 = [string]$Handoff.expected.artifacts[$role]
+    if (
+      $null -eq $artifact -or
+      $artifact.exists -ne $true -or
+      [string]$artifact.sha256 -cne $expectedSha256
+    ) {
+      throw "windows_handoff_loose_artifact_digest_mismatch:$role"
+    }
+  }
+}
+
 function Get-EvidenceReference {
   param([AllowNull()][string]$Path)
 
@@ -274,7 +281,7 @@ function Get-StructuredManualAcceptanceEvidence {
   }
   try {
     $document = Get-Content -LiteralPath $evidence.path -Raw | ConvertFrom-Json -Depth 32
-    if ($document.schemaVersion -ne 2) {
+    if ($document.schemaVersion -ne 3) {
       throw "manual_evidence_schema_version_invalid:$($document.schemaVersion)"
     }
     if ([string]$document.kind -ne $ExpectedKind) {
@@ -314,189 +321,12 @@ function Get-StructuredManualAcceptanceEvidence {
   }
 }
 
-function Get-ReleasePolicyEvidence {
-  param([AllowNull()][string]$Path)
-
-  $reference = Get-EvidenceReference -Path $Path
-  if ([string]::IsNullOrWhiteSpace($reference.path)) {
-    return [ordered]@{
-      path = $null
-      sha256 = $null
-      verified = $false
-      kind = $null
-      policyVersion = $null
-      approvedBy = $null
-      approvedAt = $null
-      lingSignerSubject = $null
-      providerSignerSubject = $null
-      lingSignerCertificateSha256 = $null
-      providerSignerCertificateSha256 = $null
-      supportedWindowsBuilds = @()
-      manualEvidenceReviewers = @()
-      reviewerKeys = @()
-      candidateBuildAttestors = @()
-      error = "release_policy_missing"
-    }
-  }
-  try {
-    $policy = Get-Content -LiteralPath $reference.path -Raw | ConvertFrom-Json -Depth 16
-    [DateTimeOffset]::Parse([string]$policy.approvedAt) | Out-Null
-    $supportedWindowsBuilds = @($policy.supportedWindowsBuilds | ForEach-Object { [string]$_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-    $manualEvidenceReviewers = @($policy.manualEvidenceReviewers | ForEach-Object { [string]$_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-    $reviewerKeys = @($policy.reviewerKeys | ForEach-Object {
-      [ordered]@{
-        id = [string]$_.id
-        keyId = [string]$_.keyId
-        algorithm = [string]$_.algorithm
-        publicKeySpkiSha256 = ([string]$_.publicKeySpkiSha256).ToLowerInvariant()
-      }
-    } | Sort-Object id, keyId)
-    $candidateBuildAttestors = @($policy.candidateBuildAttestors | ForEach-Object {
-      [ordered]@{
-        id = [string]$_.id
-        keyId = [string]$_.keyId
-        algorithm = [string]$_.algorithm
-        publicKeySpkiSha256 = ([string]$_.publicKeySpkiSha256).ToLowerInvariant()
-      }
-    } | Sort-Object id, keyId)
-    $validReviewerKeys = @($reviewerKeys | Where-Object {
-      -not [string]::IsNullOrWhiteSpace($_.id) -and
-      -not [string]::IsNullOrWhiteSpace($_.keyId) -and
-      $_.algorithm -eq "RSA-SHA256" -and
-      $_.publicKeySpkiSha256 -match "^[0-9a-f]{64}$"
-    })
-    $validBuildAttestors = @($candidateBuildAttestors | Where-Object {
-      -not [string]::IsNullOrWhiteSpace($_.id) -and
-      -not [string]::IsNullOrWhiteSpace($_.keyId) -and
-      $_.algorithm -eq "RSA-SHA256" -and
-      $_.publicKeySpkiSha256 -match "^[0-9a-f]{64}$"
-    })
-    $valid = $policy.schemaVersion -eq 2 -and
-      [string]$policy.kind -eq "ling.windows.release-policy" -and
-      $policy.policyVersion -eq 2 -and
-      [string]$policy.status -eq "approved" -and
-      -not [string]::IsNullOrWhiteSpace([string]$policy.approvedBy) -and
-      -not [string]::IsNullOrWhiteSpace([string]$policy.approvedAt) -and
-      -not [string]::IsNullOrWhiteSpace([string]$policy.lingSignerSubject) -and
-      -not [string]::IsNullOrWhiteSpace([string]$policy.providerSignerSubject) -and
-      [string]$policy.lingSignerCertificateSha256 -match "^[0-9a-fA-F]{64}$" -and
-      [string]$policy.providerSignerCertificateSha256 -match "^[0-9a-fA-F]{64}$" -and
-      $policy.supportedWindowsBuilds -is [System.Array] -and
-      $supportedWindowsBuilds.Count -gt 0 -and
-      (@($supportedWindowsBuilds | Sort-Object -Unique).Count -eq $supportedWindowsBuilds.Count) -and
-      $policy.manualEvidenceReviewers -is [System.Array] -and
-      $manualEvidenceReviewers.Count -gt 0 -and
-      (@($manualEvidenceReviewers | Sort-Object -Unique).Count -eq $manualEvidenceReviewers.Count) -and
-      $policy.reviewerKeys -is [System.Array] -and
-      $reviewerKeys.Count -eq $manualEvidenceReviewers.Count -and
-      $validReviewerKeys.Count -eq $reviewerKeys.Count -and
-      (@($reviewerKeys.id | Sort-Object -Unique).Count -eq $reviewerKeys.Count) -and
-      (@($reviewerKeys.keyId | Sort-Object -Unique).Count -eq $reviewerKeys.Count) -and
-      (@($reviewerKeys.id | Sort-Object) -join "`n") -eq (@($manualEvidenceReviewers | Sort-Object) -join "`n") -and
-      $policy.candidateBuildAttestors -is [System.Array] -and
-      $candidateBuildAttestors.Count -gt 0 -and
-      $validBuildAttestors.Count -eq $candidateBuildAttestors.Count -and
-      (@($candidateBuildAttestors.id | Sort-Object -Unique).Count -eq $candidateBuildAttestors.Count) -and
-      (@($candidateBuildAttestors.keyId | Sort-Object -Unique).Count -eq $candidateBuildAttestors.Count)
-    return [ordered]@{
-      path = $reference.path
-      sha256 = $reference.sha256
-      verified = $valid
-      kind = if ($policy.kind) { [string]$policy.kind } else { $null }
-      policyVersion = if ($null -ne $policy.policyVersion) { [int]$policy.policyVersion } else { $null }
-      approvedBy = if ($policy.approvedBy) { [string]$policy.approvedBy } else { $null }
-      approvedAt = if ($policy.approvedAt) { [string]$policy.approvedAt } else { $null }
-      lingSignerSubject = if ($policy.lingSignerSubject) { [string]$policy.lingSignerSubject } else { $null }
-      providerSignerSubject = if ($policy.providerSignerSubject) { [string]$policy.providerSignerSubject } else { $null }
-      lingSignerCertificateSha256 = if ($policy.lingSignerCertificateSha256) { ([string]$policy.lingSignerCertificateSha256).ToLowerInvariant() } else { $null }
-      providerSignerCertificateSha256 = if ($policy.providerSignerCertificateSha256) { ([string]$policy.providerSignerCertificateSha256).ToLowerInvariant() } else { $null }
-      supportedWindowsBuilds = @($supportedWindowsBuilds | Sort-Object -Unique)
-      manualEvidenceReviewers = @($manualEvidenceReviewers | Sort-Object -Unique)
-      reviewerKeys = $reviewerKeys
-      candidateBuildAttestors = $candidateBuildAttestors
-      error = if ($valid) { $null } else { "release_policy_invalid" }
-    }
-  } catch {
-    return [ordered]@{
-      path = $reference.path
-      sha256 = $reference.sha256
-      verified = $false
-      kind = $null
-      policyVersion = $null
-      approvedBy = $null
-      approvedAt = $null
-      lingSignerSubject = $null
-      providerSignerSubject = $null
-      lingSignerCertificateSha256 = $null
-      providerSignerCertificateSha256 = $null
-      supportedWindowsBuilds = @()
-      manualEvidenceReviewers = @()
-      reviewerKeys = @()
-      candidateBuildAttestors = @()
-      error = "release_policy_invalid:$($_.Exception.Message)"
-    }
-  }
-}
-
-function Get-CandidateManifestEvidence {
-  param(
-    [AllowNull()][string]$Path,
-    [AllowNull()][string]$Commit,
-    [Parameter(Mandatory = $true)][System.Collections.IDictionary]$LingApp,
-    [Parameter(Mandatory = $true)][System.Collections.IDictionary]$LingInstaller,
-    [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Provider,
-    [Parameter(Mandatory = $true)][System.Collections.IDictionary]$ProviderHelper,
-    [Parameter(Mandatory = $true)][System.Collections.IDictionary]$ReleasePolicy
-  )
-
-  $reference = Get-EvidenceReference -Path $Path
-  if ([string]::IsNullOrWhiteSpace($reference.path)) {
-    return [ordered]@{ path = $null; sha256 = $null; verified = $false; error = "candidate_manifest_missing" }
-  }
-  try {
-    $manifest = Get-Content -LiteralPath $reference.path -Raw | ConvertFrom-Json -Depth 16
-    $valid = $manifest.schemaVersion -eq 3 -and
-      [string]$manifest.kind -eq "ling.windows.candidate-manifest" -and
-      [string]$manifest.commit -eq $Commit -and
-      [string]$manifest.releasePolicySha256 -eq $ReleasePolicy.sha256 -and
-      [string]$manifest.daemonPayload.sourceCommit -eq $Commit -and
-      [string]$manifest.daemonPayload.strategy -in @("deterministic-rebuild", "signed-candidate-embedded-daemon") -and
-      [string]$manifest.daemonPayload.treeSha256 -match "^[0-9a-f]{64}$" -and
-      [string]$manifest.providerRelease.repository -eq "trycua/cua" -and
-      [string]$manifest.providerRelease.component -eq "cua-driver-rs" -and
-      [string]$manifest.providerRelease.version -eq "0.8.3" -and
-      [string]$manifest.providerRelease.tag -eq "cua-driver-rs-v0.8.3" -and
-      [string]$manifest.providerRelease.assetName -eq "cua-driver-rs-0.8.3-windows-x86_64.zip" -and
-      $manifest.providerRelease.assetBytes -eq 10585087 -and
-      [string]$manifest.providerRelease.archiveSha256 -eq "6acdc84b98629fcd0be2368cc16565c18d5f21d9dedd4e10fdb6f58547fce9d0" -and
-      [string]$manifest.providerRelease.providerSha256 -eq "3cc33572defac29e23bc07e211c20245da9f6ebe8e6481f865b31534b1de8cee" -and
-      [string]$manifest.providerRelease.providerHelperSha256 -eq "1b35a27d41008507d66f819248751b9e79a15c9e6e03390c56749c6fe5daca1c" -and
-      [string]$manifest.artifacts.lingAppSha256 -eq $LingApp.sha256 -and
-      [string]$manifest.artifacts.lingInstallerSha256 -eq $LingInstaller.sha256 -and
-      [string]$manifest.artifacts.providerSha256 -eq $Provider.sha256 -and
-      [string]$manifest.artifacts.providerHelperSha256 -eq $ProviderHelper.sha256
-    return [ordered]@{
-      path = $reference.path
-      sha256 = $reference.sha256
-      verified = $valid
-      error = if ($valid) { $null } else { "candidate_manifest_tuple_mismatch" }
-    }
-  } catch {
-    return [ordered]@{
-      path = $reference.path
-      sha256 = $reference.sha256
-      verified = $false
-      error = "candidate_manifest_invalid:$($_.Exception.Message)"
-    }
-  }
-}
-
 function Invoke-NativeCapture {
   param(
     [Parameter(Mandatory = $true)][string]$FilePath,
     [string[]]$ArgumentList = @(),
     [AllowNull()][string]$WorkingDirectory,
-    [int]$TimeoutMilliseconds = 120_000
+    [int]$TimeoutMilliseconds = 120000
   )
 
   if ($TimeoutMilliseconds -le 0) {
@@ -533,7 +363,7 @@ function Invoke-NativeCapture {
     $stderrTask = $process.StandardError.ReadToEndAsync()
     if (-not $process.WaitForExit($TimeoutMilliseconds)) {
       Stop-NativeProcessTree -ProcessId $process.Id
-      [void]$process.WaitForExit(5_000)
+      [void]$process.WaitForExit(5000)
       if (-not $process.HasExited) {
         try {
           $process.Kill()
@@ -567,9 +397,79 @@ function Invoke-NativeCapture {
   }
 }
 
+function ConvertTo-ComparableToolVersion {
+  param(
+    [Parameter(Mandatory = $true)][string]$Value,
+    [Parameter(Mandatory = $true)][string]$Label
+  )
+
+  $match = [System.Text.RegularExpressions.Regex]::Match(
+    $Value,
+    "(?<major>0|[1-9][0-9]*)\.(?<minor>0|[1-9][0-9]*)\.(?<patch>0|[1-9][0-9]*)"
+  )
+  if (-not $match.Success) {
+    throw "Windows handoff $Label version is not parseable: $Value"
+  }
+  return [System.Version]::new(
+    [int]$match.Groups["major"].Value,
+    [int]$match.Groups["minor"].Value,
+    [int]$match.Groups["patch"].Value
+  )
+}
+
+function Assert-MinimumToolVersion {
+  param(
+    [Parameter(Mandatory = $true)][string]$Label,
+    [Parameter(Mandatory = $true)][string]$Observed,
+    [Parameter(Mandatory = $true)][string]$Requirement
+  )
+
+  $requirementMatch = [System.Text.RegularExpressions.Regex]::Match(
+    $Requirement,
+    "^>=(?<major>0|[1-9][0-9]*)\.(?<minor>0|[1-9][0-9]*)\.(?<patch>0|[1-9][0-9]*)$"
+  )
+  if (-not $requirementMatch.Success) {
+    throw "Windows handoff $Label requirement is invalid: $Requirement"
+  }
+  $requiredVersion = [System.Version]::new(
+    [int]$requirementMatch.Groups["major"].Value,
+    [int]$requirementMatch.Groups["minor"].Value,
+    [int]$requirementMatch.Groups["patch"].Value
+  )
+  $observedVersion = ConvertTo-ComparableToolVersion -Value $Observed -Label $Label
+  if ($observedVersion -lt $requiredVersion) {
+    throw "Windows handoff requires $Label $Requirement, observed $observedVersion"
+  }
+}
+
+function Assert-RequiredToolVersions {
+  param([Parameter(Mandatory = $true)][System.Collections.IDictionary]$Requirements)
+
+  $keys = @($Requirements.Keys | ForEach-Object { [string]$_ } | Sort-Object)
+  if (($keys -join ",") -ne "git,node,powershell") {
+    throw "Windows handoff requiredToolVersions must contain exactly git, node, and powershell"
+  }
+  $nodeVersion = Invoke-NativeCapture -FilePath $nodePath `
+    -ArgumentList @("--version") -WorkingDirectory $repoRoot -TimeoutMilliseconds 10000
+  if ($nodeVersion.exitCode -ne 0 -or $nodeVersion.error) {
+    throw "Windows handoff Node version probe failed"
+  }
+  $gitVersion = Invoke-NativeCapture -FilePath $gitPath `
+    -ArgumentList @("--version") -WorkingDirectory $repoRoot -TimeoutMilliseconds 10000
+  if ($gitVersion.exitCode -ne 0 -or $gitVersion.error) {
+    throw "Windows handoff Git version probe failed"
+  }
+  Assert-MinimumToolVersion -Label "Node" -Observed $nodeVersion.output `
+    -Requirement ([string]$Requirements["node"])
+  Assert-MinimumToolVersion -Label "PowerShell" -Observed $PSVersionTable.PSVersion.ToString() `
+    -Requirement ([string]$Requirements["powershell"])
+  Assert-MinimumToolVersion -Label "Git" -Observed $gitVersion.output `
+    -Requirement ([string]$Requirements["git"])
+}
+
 function Get-GitCommit {
   $status = Invoke-NativeCapture -FilePath $gitPath `
-    -ArgumentList @("status", "--porcelain=v1", "--untracked-files=all") -WorkingDirectory $repoRoot -TimeoutMilliseconds 10_000
+    -ArgumentList @("status", "--porcelain=v1", "--untracked-files=all") -WorkingDirectory $repoRoot -TimeoutMilliseconds 10000
   if ($status.exitCode -ne 0 -or $status.error) {
     throw "windows_release_harness_git_status_failed"
   }
@@ -577,7 +477,7 @@ function Get-GitCommit {
     throw "windows_release_harness_worktree_dirty"
   }
   $probe = Invoke-NativeCapture -FilePath $gitPath `
-    -ArgumentList @("rev-parse", "HEAD") -WorkingDirectory $repoRoot -TimeoutMilliseconds 10_000
+    -ArgumentList @("rev-parse", "HEAD") -WorkingDirectory $repoRoot -TimeoutMilliseconds 10000
   if ($probe.exitCode -eq 0 -and $probe.output -match "^[0-9a-fA-F]{40,64}$") {
     return $probe.output.Trim().ToLowerInvariant()
   }
@@ -587,14 +487,7 @@ function Get-GitCommit {
 function Get-ReleaseHarnessEvidence {
   param([Parameter(Mandatory = $true)][string]$Commit)
 
-  $paths = @(
-    $acceptanceRunner,
-    $reportModule,
-    $providerVerifier,
-    (Join-Path $scriptDirectory "verify-windows-release-attestations.mjs"),
-    $providerSmokeRunner,
-    (Join-Path $scriptDirectory "windows-provider-smoke-support.mjs")
-  )
+  $paths = @($releaseHarnessRelativePaths | ForEach-Object { Join-Path $repoRoot $_ })
   $files = foreach ($path in $paths) {
     $resolved = (Resolve-Path -LiteralPath $path).Path
     if (-not (Test-PathWithinRoot -Path $resolved -Root $repoRoot)) {
@@ -943,7 +836,14 @@ function Get-InstallationEvidence {
 function Invoke-InstallerPayloadVerification {
   param(
     [AllowNull()][string]$InstallerPath,
+    [Parameter(Mandatory = $true)][string]$ExpectedInstallerSha256,
     [Parameter(Mandatory = $true)][System.Collections.IDictionary]$ExpectedApp,
+    [Parameter(Mandatory = $true)][System.Collections.IDictionary]$ExpectedProvider,
+    [Parameter(Mandatory = $true)][System.Collections.IDictionary]$ExpectedProviderSeal,
+    [Parameter(Mandatory = $true)][System.Collections.IDictionary]$ExpectedProviderCatalog,
+    [Parameter(Mandatory = $true)][string]$ExpectedUninstallerSha256,
+    [Parameter(Mandatory = $true)][System.Collections.IDictionary]$ExpectedCandidateManifest,
+    [Parameter(Mandatory = $true)][System.Collections.IDictionary]$HostEvidence,
     [Parameter(Mandatory = $true)][System.Collections.IDictionary]$ReleasePolicy,
     [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Baseline
   )
@@ -972,6 +872,9 @@ function Invoke-InstallerPayloadVerification {
     }
   }
   $installerEvidence = Get-ArtifactEvidence -Path $InstallerPath
+  if ($installerEvidence.sha256 -cne $ExpectedInstallerSha256) {
+    throw "windows_handoff_loose_artifact_digest_mismatch:lingInstaller"
+  }
   foreach ($artifact in @($installerEvidence, $ExpectedApp)) {
     if (
       $artifact.exists -ne $true -or
@@ -1004,10 +907,22 @@ function Invoke-InstallerPayloadVerification {
   $installRoots = @()
   $installedApp = $null
   $uninstallerEvidence = $null
+  $installedProviderEvidence = $null
+  $installedProviderSealEvidence = $null
+  $installedProviderCatalogEvidence = $null
+  $installedVendorNativeInventory = @()
+  $providerVerificationEvidence = $null
+  $providerSmokeEvidence = $null
   $primaryError = $null
   $cleanupError = $null
   try {
-    $install = Invoke-NativeCapture -FilePath $InstallerPath -ArgumentList @("/S") -TimeoutMilliseconds 120_000
+    # Residual TOCTOU: PowerShell cannot launch an EXE from a previously hashed,
+    # held file handle. Rehash immediately before Process.Start and fail closed;
+    # Windows VM acceptance must still run on an isolated, trusted candidate host.
+    if ((Get-ArtifactEvidence -Path $InstallerPath).sha256 -cne $ExpectedInstallerSha256) {
+      throw "windows_handoff_loose_artifact_digest_mismatch:lingInstaller"
+    }
+    $install = Invoke-NativeCapture -FilePath $InstallerPath -ArgumentList @("/S") -TimeoutMilliseconds 120000
     if ($install.exitCode -ne 0 -or $install.error) {
       throw ("signed_installer_failed:{0}" -f $(if ($install.error) { $install.error } else { $install.exitCode }))
     }
@@ -1039,6 +954,80 @@ function Invoke-InstallerPayloadVerification {
     if ($installedApp.sha256 -ne $ExpectedApp.sha256) {
       throw "signed_installer_payload_app_hash_mismatch"
     }
+    if ($uninstallerEvidence.sha256 -ne $ExpectedUninstallerSha256) {
+      throw "signed_installer_payload_uninstaller_hash_mismatch"
+    }
+    $installedProviderPath = Join-Path $installRoots[0] "resources\providers\cua-driver\0.8.3-ling.1\win32-x64\payload\ling-cua-driver.exe"
+    $installedProviderSealPath = Join-Path $installRoots[0] "resources\providers\cua-driver\0.8.3-ling.1\win32-x64\payload\provider-seal.json"
+    $installedProviderCatalogPath = Join-Path $installRoots[0] "resources\providers\cua-driver\0.8.3-ling.1\win32-x64\provider-integrity.cat"
+    $unexpectedUiAccessPath = Join-Path $installRoots[0] "resources\providers\cua-driver\0.8.3-ling.1\win32-x64\payload\cua-driver-uia.exe"
+    if (Test-Path -LiteralPath $unexpectedUiAccessPath) {
+      throw "signed_installer_standard_payload_contains_uiaccess"
+    }
+    $installedProviderEvidence = Get-ArtifactEvidence -Path $installedProviderPath
+    $installedProviderSealEvidence = Get-ArtifactEvidence -Path $installedProviderSealPath
+    $installedProviderCatalogEvidence = Get-ArtifactEvidence -Path $installedProviderCatalogPath
+    if (
+      $installedProviderEvidence.sha256 -ne $ExpectedProvider.sha256 -or
+      $installedProviderSealEvidence.sha256 -ne $ExpectedProviderSeal.sha256 -or
+      $installedProviderCatalogEvidence.sha256 -ne $ExpectedProviderCatalog.sha256
+    ) {
+      throw "signed_installer_private_provider_hash_mismatch"
+    }
+    if (
+      $installedProviderEvidence.signature.checked -ne $true -or
+      $installedProviderEvidence.signature.status -ne "Valid" -or
+      $installedProviderEvidence.signature.signerSubject -ne $ReleasePolicy.providerSignerSubject -or
+      $installedProviderEvidence.signature.certificateSha256 -ne $ReleasePolicy.providerSignerCertificateSha256
+    ) {
+      throw "signed_installer_private_provider_signature_invalid"
+    }
+    if (
+      $installedProviderCatalogEvidence.signature.checked -ne $true -or
+      $installedProviderCatalogEvidence.signature.status -ne "Valid" -or
+      $installedProviderCatalogEvidence.signature.signerSubject -ne $ReleasePolicy.catalogSignerSubject -or
+      $installedProviderCatalogEvidence.signature.certificateSha256 -ne $ReleasePolicy.catalogSignerCertificateSha256
+    ) {
+      throw "signed_installer_private_catalog_signature_invalid"
+    }
+    foreach ($nativeArtifact in @($ExpectedCandidateManifest.vendorNativeInventory)) {
+      $relativePath = [string]$nativeArtifact.relativePath
+      $installedNativePath = [System.IO.Path]::GetFullPath(
+        (Join-Path $installRoots[0] $relativePath)
+      )
+      if (-not (Test-PathWithinRoot -Path $installedNativePath -Root $installRoots[0])) {
+        throw "signed_installer_vendor_native_path_escape"
+      }
+      $nativeEvidence = Get-ArtifactEvidence -Path $installedNativePath
+      if (
+        $nativeEvidence.exists -ne $true -or
+        $nativeEvidence.sha256 -ne [string]$nativeArtifact.sha256 -or
+        $nativeEvidence.signature.checked -ne $true -or
+        $nativeEvidence.signature.status -ne [string]$nativeArtifact.authenticodeStatus -or
+        $nativeEvidence.signature.signerSubject -ne $nativeArtifact.signerSubject -or
+        $nativeEvidence.signature.certificateSha256 -ne $nativeArtifact.certificateSha256
+      ) {
+        throw "signed_installer_vendor_native_inventory_mismatch"
+      }
+      $installedVendorNativeInventory += [ordered]@{
+        relativePath = $relativePath.Replace("\", "/")
+        path = $nativeEvidence.path
+        exists = $nativeEvidence.exists
+        sha256 = $nativeEvidence.sha256
+        signature = $nativeEvidence.signature
+      }
+    }
+    $providerVerificationEvidence = Invoke-ProviderVerification -Path $installedProviderPath
+    if ($providerVerificationEvidence.passed -ne $true) {
+      throw "signed_installer_private_provider_verification_failed"
+    }
+    $providerSmokeEvidence = Invoke-ProviderSmoke `
+      -HostEvidence $HostEvidence `
+      -ProviderPath $installedProviderPath `
+      -AppPath $installedAppPath
+    if ($providerSmokeEvidence.passed -ne $true) {
+      throw "signed_installer_private_provider_smoke_failed"
+    }
   } catch {
     $primaryError = $_.Exception.Message
   } finally {
@@ -1066,7 +1055,10 @@ function Invoke-InstallerPayloadVerification {
         ) {
           throw "signed_installer_cleanup_uninstaller_signature_invalid"
         }
-        $uninstall = Invoke-NativeCapture -FilePath $uninstaller.FullName -ArgumentList @("/S") -TimeoutMilliseconds 120_000
+        if ($cleanupUninstallerEvidence.sha256 -ne $ExpectedUninstallerSha256) {
+          throw "signed_installer_cleanup_uninstaller_hash_invalid"
+        }
+        $uninstall = Invoke-NativeCapture -FilePath $uninstaller.FullName -ArgumentList @("/S") -TimeoutMilliseconds 120000
         if ($uninstall.exitCode -ne 0 -or $uninstall.error) {
           throw ("signed_uninstaller_failed:{0}" -f $(if ($uninstall.error) { $uninstall.error } else { $uninstall.exitCode }))
         }
@@ -1110,6 +1102,12 @@ function Invoke-InstallerPayloadVerification {
       cleanupPassed = $null -eq $cleanupError
       installedApp = $installedApp
       uninstaller = $uninstallerEvidence
+      installedProvider = $installedProviderEvidence
+      installedProviderSeal = $installedProviderSealEvidence
+      installedProviderCatalog = $installedProviderCatalogEvidence
+      installedVendorNativeInventory = $installedVendorNativeInventory
+      providerVerification = $providerVerificationEvidence
+      providerSmoke = $providerSmokeEvidence
     }
   }
 }
@@ -1129,7 +1127,7 @@ function Invoke-ProviderVerification {
   }
   $probe = Invoke-NativeCapture -FilePath $nodePath `
     -ArgumentList @($providerVerifier, "--installed-binary", $Path) `
-    -WorkingDirectory $repoRoot -TimeoutMilliseconds 90_000
+    -WorkingDirectory $repoRoot -TimeoutMilliseconds 90000
   $parsedReport = $null
   $parseError = $null
   if ($probe.exitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace($probe.output)) {
@@ -1199,15 +1197,20 @@ function Invoke-ProviderSmoke {
   }
 
   $previousProviderCommand = $env:LING_CUA_DRIVER_COMMAND
+  $previousExpectedProviderCommand = $env:LING_CUA_DRIVER_SMOKE_EXPECTED_COMMAND
   $previousDesktopExecutable = $env:LING_DESKTOP_SMOKE_EXECUTABLE
   $previousTimeout = $env:LING_DESKTOP_SMOKE_TIMEOUT_MS
   try {
-    $env:LING_CUA_DRIVER_COMMAND = $ProviderPath
+    # The smoke helper may call the expected provider directly to obtain exact
+    # PID/HWND targets, but the packaged Desktop must resolve its own bundled
+    # provider. Never let the legacy command override enter the app process.
+    $env:LING_CUA_DRIVER_COMMAND = $null
+    $env:LING_CUA_DRIVER_SMOKE_EXPECTED_COMMAND = $ProviderPath
     $env:LING_DESKTOP_SMOKE_EXECUTABLE = $AppPath
     $env:LING_DESKTOP_SMOKE_TIMEOUT_MS = "60000"
     $probe = Invoke-NativeCapture -FilePath $nodePath `
       -ArgumentList @($providerSmokeRunner) `
-      -WorkingDirectory $repoRoot -TimeoutMilliseconds 120_000
+      -WorkingDirectory $repoRoot -TimeoutMilliseconds 120000
     return [ordered]@{
       attempted = $true
       passed = $probe.exitCode -eq 0
@@ -1218,9 +1221,67 @@ function Invoke-ProviderSmoke {
     }
   } finally {
     $env:LING_CUA_DRIVER_COMMAND = $previousProviderCommand
+    $env:LING_CUA_DRIVER_SMOKE_EXPECTED_COMMAND = $previousExpectedProviderCommand
     $env:LING_DESKTOP_SMOKE_EXECUTABLE = $previousDesktopExecutable
     $env:LING_DESKTOP_SMOKE_TIMEOUT_MS = $previousTimeout
   }
+}
+
+$fullHandoff = $null
+if ($Mode -eq "Full") {
+  $resolvedHandoffManifest = (Resolve-Path -LiteralPath $HandoffManifest -ErrorAction Stop).Path
+  $handoffLoad = Invoke-NativeCapture -FilePath $nodePath `
+    -ArgumentList @($handoffLoader, "--manifest", $resolvedHandoffManifest) `
+    -WorkingDirectory $repoRoot -TimeoutMilliseconds 60000
+  if ($handoffLoad.exitCode -ne 0 -or [string]::IsNullOrWhiteSpace($handoffLoad.output)) {
+    throw "Windows handoff manifest load failed: $($handoffLoad.output) $($handoffLoad.error)"
+  }
+  try {
+    $fullHandoff = $handoffLoad.output | ConvertFrom-Json -AsHashtable -Depth 64
+  } catch {
+    throw "Windows handoff manifest loader returned invalid JSON: $($_.Exception.Message)"
+  }
+  $Output = [string]$fullHandoff.outputReport
+  $LingAppPath = [string]$fullHandoff.inputs.lingApp
+  $LingInstallerPath = [string]$fullHandoff.inputs.lingInstaller
+  $ProviderBinary = [string]$fullHandoff.inputs.provider
+  $CandidateManifest = [string]$fullHandoff.inputs.candidateManifest
+  $ReleasePolicy = [string]$fullHandoff.inputs.releasePolicy
+  $ExpectedCandidateCommit = [string]$fullHandoff.expected.candidateCommit
+  $ExpectedRepositoryRoot = [string]$fullHandoff.repositoryRoot
+  $ExpectedReleasePolicySha256 = [string]$fullHandoff.expected.releasePolicySha256
+  $WindowsVersionEvidence = [string]$fullHandoff.manualEvidence.windowsVersion
+  $DisplayEvidence = [string]$fullHandoff.manualEvidence.display
+  $NarratorEvidence = [string]$fullHandoff.manualEvidence.narrator
+  $NvdaEvidence = [string]$fullHandoff.manualEvidence.nvda
+  $SmartScreenEvidence = if ($null -ne $fullHandoff.manualEvidence.smartScreen) {
+    [string]$fullHandoff.manualEvidence.smartScreen
+  } else {
+    $null
+  }
+  $InstallLifecycleEvidence = [string]$fullHandoff.manualEvidence.installLifecycle
+  if (
+    -not [string]::Equals(
+      [System.IO.Path]::GetFullPath($repoRoot).TrimEnd('\', '/'),
+      [System.IO.Path]::GetFullPath($ExpectedRepositoryRoot).TrimEnd('\', '/'),
+      [System.StringComparison]::OrdinalIgnoreCase
+    )
+  ) {
+    throw "Handoff repositoryRoot does not match the acceptance harness repository"
+  }
+  Assert-RequiredToolVersions -Requirements $fullHandoff.requiredToolVersions
+}
+
+$outputPath = if ([System.IO.Path]::IsPathRooted($Output)) {
+  [System.IO.Path]::GetFullPath($Output)
+} else {
+  [System.IO.Path]::GetFullPath((Join-Path (Get-Location).Path $Output))
+}
+
+# Preflight is a replaceable diagnostic. Full cell reports are immutable and the
+# handoff loader already rejected an existing output path.
+if ($Mode -eq "Preflight" -and (Test-Path -LiteralPath $outputPath -PathType Leaf)) {
+  Remove-Item -LiteralPath $outputPath -Force
 }
 
 $providerInputExplicit = -not [string]::IsNullOrWhiteSpace($ProviderBinary) -or
@@ -1262,25 +1323,44 @@ $resolvedProvider = if (
 $lingApp = Get-ArtifactEvidence -Path $(if ($resolvedLingApp) { $resolvedLingApp } else { $LingAppPath })
 $lingInstaller = Get-ArtifactEvidence -Path $(if ($resolvedLingInstaller) { $resolvedLingInstaller } else { $LingInstallerPath })
 $provider = Get-ArtifactEvidence -Path $(if ($resolvedProvider) { $resolvedProvider } else { $ProviderBinary })
-$providerHelperPath = if ($resolvedProvider) { Join-Path (Split-Path -Parent $resolvedProvider) "cua-driver-uia.exe" } else { $null }
-$providerHelper = Get-ArtifactEvidence -Path $providerHelperPath
+$providerSeal = if ($Mode -eq "Full") {
+  Get-ArtifactEvidence -Path ([string]$fullHandoff.inputs.providerSeal)
+} else {
+  Get-ArtifactEvidence -Path $null
+}
+$providerCatalog = if ($Mode -eq "Full") {
+  Get-ArtifactEvidence -Path ([string]$fullHandoff.inputs.providerCatalog)
+} else {
+  Get-ArtifactEvidence -Path $null
+}
+$looseArtifacts = [ordered]@{
+  lingInstaller = $lingInstaller
+  lingApp = $lingApp
+  provider = $provider
+  providerSeal = $providerSeal
+  providerCatalog = $providerCatalog
+}
+if ($Mode -eq "Full") {
+  Assert-FullLooseArtifactDigests -Handoff $fullHandoff -Artifacts $looseArtifacts
+}
 $commit = Get-GitCommit
 if ($Mode -eq "Full" -and $commit -ne $ExpectedCandidateCommit) {
   throw "ExpectedCandidateCommit does not match the clean acceptance harness commit"
 }
 $releaseHarnessEvidence = Get-ReleaseHarnessEvidence -Commit $commit
-$releasePolicyEvidence = Get-ReleasePolicyEvidence -Path $ReleasePolicy
+$releasePolicyEvidence = if ($Mode -eq "Full") {
+  $fullHandoff.releasePolicy
+} else {
+  [ordered]@{ path = $null; sha256 = $null; verified = $false; error = "preflight_mode" }
+}
 if ($Mode -eq "Full" -and $releasePolicyEvidence.sha256 -ne $ExpectedReleasePolicySha256) {
   throw "ExpectedReleasePolicySha256 does not match the supplied release policy"
 }
-$candidateManifestEvidence = Get-CandidateManifestEvidence `
-  -Path $CandidateManifest `
-  -Commit $commit `
-  -LingApp $lingApp `
-  -LingInstaller $lingInstaller `
-  -Provider $provider `
-  -ProviderHelper $providerHelper `
-  -ReleasePolicy $releasePolicyEvidence
+$candidateManifestEvidence = if ($Mode -eq "Full") {
+  $fullHandoff.candidateManifest
+} else {
+  [ordered]@{ path = $null; sha256 = $null; verified = $false; error = "preflight_mode" }
+}
 
 $providerMayVerify = $providerInputExplicit -and (
   $Mode -eq "Preflight" -or (
@@ -1289,7 +1369,7 @@ $providerMayVerify = $providerInputExplicit -and (
   )
 )
 $hostEvidence = Get-HostEvidence
-$providerVerification = if ($providerMayVerify) {
+$providerVerification = if ($providerMayVerify -and $Mode -eq "Preflight") {
   Invoke-ProviderVerification -Path $resolvedProvider
 } else {
   [ordered]@{
@@ -1301,19 +1381,38 @@ $providerVerification = if ($providerMayVerify) {
     report = $null
   }
 }
-$provider["version"] = if ($providerVerification.passed -eq $true) {
-  [string]$providerVerification.report.expectedRelease.version
-} else {
-  $null
-}
+$provider["version"] = "0.8.3"
 $installationBaseline = Get-InstallationEvidence
 $installerPayloadMayVerify = $Mode -eq "Full" -and
   $candidateManifestEvidence.verified -eq $true -and
   $releasePolicyEvidence.verified -eq $true
 $installerPayloadVerification = if ($installerPayloadMayVerify) {
+  # Close as much of the loader-to-execution replacement window as PowerShell
+  # permits by refreshing every loose-file digest immediately before the call.
+  $lingApp = Get-ArtifactEvidence -Path $resolvedLingApp
+  $lingInstaller = Get-ArtifactEvidence -Path $resolvedLingInstaller
+  $provider = Get-ArtifactEvidence -Path $resolvedProvider
+  $provider["version"] = "0.8.3"
+  $providerSeal = Get-ArtifactEvidence -Path ([string]$fullHandoff.inputs.providerSeal)
+  $providerCatalog = Get-ArtifactEvidence -Path ([string]$fullHandoff.inputs.providerCatalog)
+  $looseArtifacts = [ordered]@{
+    lingInstaller = $lingInstaller
+    lingApp = $lingApp
+    provider = $provider
+    providerSeal = $providerSeal
+    providerCatalog = $providerCatalog
+  }
+  Assert-FullLooseArtifactDigests -Handoff $fullHandoff -Artifacts $looseArtifacts
   Invoke-InstallerPayloadVerification `
     -InstallerPath $resolvedLingInstaller `
+    -ExpectedInstallerSha256 ([string]$fullHandoff.expected.artifacts.lingInstaller) `
     -ExpectedApp $lingApp `
+    -ExpectedProvider $provider `
+    -ExpectedProviderSeal $providerSeal `
+    -ExpectedProviderCatalog $providerCatalog `
+    -ExpectedUninstallerSha256 ([string]$fullHandoff.expected.artifacts.lingUninstaller) `
+    -ExpectedCandidateManifest $fullHandoff.candidateManifest `
+    -HostEvidence $hostEvidence `
     -ReleasePolicy $releasePolicyEvidence `
     -Baseline $installationBaseline
 } else {
@@ -1326,19 +1425,37 @@ $installerPayloadVerification = if ($installerPayloadMayVerify) {
     report = $null
   }
 }
-$providerMaySmoke = $Mode -eq "Full" -and
-  $providerVerification.passed -eq $true -and
-  $installerPayloadVerification.passed -eq $true -and
-  $candidateManifestEvidence.verified -eq $true -and
-  $releasePolicyEvidence.verified -eq $true
-$providerSmoke = if ($providerMaySmoke) {
-  Invoke-ProviderSmoke -HostEvidence $hostEvidence -ProviderPath $resolvedProvider -AppPath $resolvedLingApp
+$providerVerification = if ($Mode -eq "Full" -and $null -ne $installerPayloadVerification.report) {
+  $installerPayloadVerification.report.providerVerification
+} elseif ($Mode -eq "Preflight") {
+  $providerVerification
 } else {
   [ordered]@{
     attempted = $false
     passed = $null
     exitCode = $null
-    error = if ($Mode -eq "Preflight") { "preflight_mode" } else { "provider_not_verified_or_manifest_bound" }
+    error = "provider_not_verified_or_manifest_bound"
+    output = $null
+    report = $null
+  }
+}
+$providerSmoke = if ($Mode -eq "Full" -and $null -ne $installerPayloadVerification.report) {
+  $installerPayloadVerification.report.providerSmoke
+} elseif ($Mode -eq "Preflight") {
+  [ordered]@{
+    attempted = $false
+    passed = $null
+    exitCode = $null
+    error = "preflight_mode"
+    output = $null
+    report = $null
+  }
+} else {
+  [ordered]@{
+    attempted = $false
+    passed = $null
+    exitCode = $null
+    error = "provider_not_verified_or_manifest_bound"
     output = $null
     report = $null
   }
@@ -1360,13 +1477,24 @@ $installLifecycleAcceptance = Get-StructuredManualAcceptanceEvidence `
 $rawEvidence = [ordered]@{
   mode = $Mode
   generatedAt = [DateTimeOffset]::UtcNow.ToString("o")
+  handoff = if ($Mode -eq "Full") {
+    [ordered]@{
+      runId = [string]$fullHandoff.runId
+      handoffIndexSha256 = [string]$fullHandoff.indexSha256
+      cellManifestSha256 = [string]$fullHandoff.manifestSha256
+    }
+  } else {
+    $null
+  }
+  cell = if ($Mode -eq "Full") { $fullHandoff.cell } else { $null }
   bindings = [ordered]@{
     commit = $commit
     harness = $releaseHarnessEvidence
     lingApp = $lingApp
     lingInstaller = $lingInstaller
     provider = $provider
-    providerHelper = $providerHelper
+    providerSeal = $providerSeal
+    providerCatalog = $providerCatalog
     releasePolicy = $releasePolicyEvidence
     candidateManifest = $candidateManifestEvidence
   }
@@ -1405,7 +1533,7 @@ try {
   }
   $reportBuild = Invoke-NativeCapture -FilePath $nodePath `
     -ArgumentList $reportArguments `
-    -WorkingDirectory $repoRoot -TimeoutMilliseconds 60_000
+    -WorkingDirectory $repoRoot -TimeoutMilliseconds 60000
   if ($reportBuild.exitCode -ne 0) {
     $reportFailure = if ($reportBuild.output) { $reportBuild.output } else { $reportBuild.error }
     throw "Windows acceptance report builder failed: $reportFailure"
@@ -1425,6 +1553,12 @@ Write-Output ("Windows acceptance {0}: {1}; full={2}; report={3}" -f `
 if ($finalReport.summary.status -eq "FAIL") {
   exit 1
 }
-if ($Mode -eq "Full" -and $finalReport.summary.releaseReady -ne $true) {
-  exit 2
+if ($Mode -eq "Full") {
+  if (
+    $finalReport.summary.fullAcceptanceStatus -ne "PASS" -or
+    $finalReport.summary.releaseStatus -ne "MANUAL_REVIEW_REQUIRED" -or
+    $finalReport.summary.releaseReady -ne $false
+  ) {
+    exit 2
+  }
 }

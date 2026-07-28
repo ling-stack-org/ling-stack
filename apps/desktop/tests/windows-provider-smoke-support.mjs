@@ -7,6 +7,9 @@ const REQUIRED_HEALTH_CHECKS = [
   "ax_capability",
   "screen_capture_capability",
 ];
+const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
+const BUNDLED_RUNTIME_READY_PREFIX =
+  "Ling Stack Desktop Windows bundled provider runtime ready ";
 
 /**
  * Parse the provider-owned schema-v1 health report. This is deliberately
@@ -53,6 +56,152 @@ export function parseWindowsProviderHealthReport(stdout) {
       status: byName.get(name).status,
     })),
   };
+}
+
+/**
+ * Validate the daemon response that can only become ready after packaged
+ * Desktop publishes a verified lease and the daemon initializes that exact
+ * bundled child through Desktop's loopback MCP proxy.
+ */
+export function parseWindowsBundledProviderActivation(value) {
+  if (!isRecord(value)) {
+    throw new Error("windows_bundled_provider_activation_shape_invalid");
+  }
+  const plugin = value.plugin;
+  const setup = isRecord(plugin) ? plugin.setup : undefined;
+  const health = value.health;
+  const details = isRecord(health) ? health.details : undefined;
+  const statusSnapshot = value.statusSnapshot;
+  const tools = Array.isArray(value.tools) ? value.tools : [];
+  const toolIds = tools.map((tool) => isRecord(tool)
+    && tool.serverId === "mcp_cua_driver"
+    && typeof tool.rawName === "string"
+    && tool.callableNamespace === "mcp_cua_driver"
+    && tool.callableName === tool.rawName
+    && tool.enabled === true
+    ? `${tool.serverId}:${tool.rawName}`
+    : undefined);
+  if (
+    !isRecord(plugin)
+    || plugin.id !== "trusted-local:cua-driver"
+    || !isRecord(setup)
+    || setup.distribution !== "bundled_embedded"
+    || setup.providerState !== "ready"
+    || !isRecord(health)
+    || health.status !== "ready"
+    || !isRecord(details)
+    || details.providerState !== "ready"
+    || details.platform !== "win32"
+    || details.providerVersion !== "0.8.3"
+    || details.providerDistributionRevision !== "ling.1"
+    || details.integrityCoverage !== "standard"
+    || typeof details.desktopInstanceId !== "string"
+    || details.desktopInstanceId.length === 0
+    || !positiveInteger(details.desktopInstanceEpoch)
+    || !positiveInteger(details.generation)
+    || !SHA256_PATTERN.test(details.providerSealDigest ?? "")
+    || !SHA256_PATTERN.test(details.providerCatalogDigest ?? "")
+    || !isRecord(statusSnapshot)
+    || statusSnapshot.status !== "ready"
+    || tools.length === 0
+    || toolIds.some((toolId) => typeof toolId !== "string" || toolId.length === 0)
+    || new Set(toolIds).size !== toolIds.length
+    || toolIds.filter((toolId) => toolId === "mcp_cua_driver:list_windows").length !== 1
+  ) {
+    throw new Error("windows_bundled_provider_activation_not_ready");
+  }
+  return {
+    desktopInstanceId: details.desktopInstanceId,
+    desktopInstanceEpoch: details.desktopInstanceEpoch,
+    generation: details.generation,
+    providerVersion: details.providerVersion,
+    providerSealDigest: details.providerSealDigest,
+    providerCatalogDigest: details.providerCatalogDigest,
+    toolCount: tools.length,
+    toolIds,
+  };
+}
+
+/**
+ * Parse the structured proof emitted only after packaged Desktop asks the
+ * daemon to call list_windows through the current generation proxy and the
+ * daemon returns the exact PID/HWND owner.
+ */
+export function parseWindowsBundledProviderRuntimeProof(stdout) {
+  if (typeof stdout !== "string") {
+    throw new Error("windows_bundled_provider_runtime_proof_output_invalid");
+  }
+  const proofLines = stdout
+    .split(/\r?\n/u)
+    .filter((line) => line.startsWith(BUNDLED_RUNTIME_READY_PREFIX));
+  if (proofLines.length !== 1) {
+    throw new Error(`windows_bundled_provider_runtime_proof_count_invalid:${proofLines.length}`);
+  }
+  let value;
+  try {
+    value = JSON.parse(proofLines[0].slice(BUNDLED_RUNTIME_READY_PREFIX.length));
+  } catch {
+    throw new Error("windows_bundled_provider_runtime_proof_json_invalid");
+  }
+  const target = isRecord(value) ? value.target : undefined;
+  if (
+    !isRecord(value)
+    || value.schemaVersion !== 1
+    || typeof value.desktopInstanceId !== "string"
+    || value.desktopInstanceId.length === 0
+    || !positiveInteger(value.desktopInstanceEpoch)
+    || !positiveInteger(value.generation)
+    || !positiveInteger(value.providerProcessId)
+    || typeof value.executablePath !== "string"
+    || !/^(?:[A-Za-z]:[\\/]|\\\\)[\s\S]+/u.test(value.executablePath)
+    || !SHA256_PATTERN.test(value.providerChildInstanceNonceSha256 ?? "")
+    || !SHA256_PATTERN.test(value.lockDigest ?? "")
+    || !SHA256_PATTERN.test(value.providerSealDigest ?? "")
+    || !SHA256_PATTERN.test(value.providerCatalogDigest ?? "")
+    || !isRecord(target)
+    || target.platform !== "windows"
+    || !positiveInteger(target.processId)
+    || typeof target.nativeWindowId !== "string"
+    || !/^[1-9][0-9]*$/u.test(target.nativeWindowId)
+  ) {
+    throw new Error("windows_bundled_provider_runtime_proof_invalid");
+  }
+  return {
+    desktopInstanceId: value.desktopInstanceId,
+    desktopInstanceEpoch: value.desktopInstanceEpoch,
+    generation: value.generation,
+    providerProcessId: value.providerProcessId,
+    executablePath: value.executablePath,
+    providerChildInstanceNonceSha256: value.providerChildInstanceNonceSha256,
+    lockDigest: value.lockDigest,
+    providerSealDigest: value.providerSealDigest,
+    providerCatalogDigest: value.providerCatalogDigest,
+    target: {
+      processId: target.processId,
+      nativeWindowId: target.nativeWindowId,
+    },
+  };
+}
+
+export function assertWindowsBundledRuntimeProof({
+  activation,
+  proof,
+  target,
+  expectedExecutablePath,
+}) {
+  if (
+    proof.desktopInstanceId !== activation.desktopInstanceId
+    || proof.desktopInstanceEpoch !== activation.desktopInstanceEpoch
+    || proof.generation !== activation.generation
+    || proof.providerSealDigest !== activation.providerSealDigest
+    || proof.providerCatalogDigest !== activation.providerCatalogDigest
+    || proof.target.processId !== target.processId
+    || proof.target.nativeWindowId !== target.nativeWindowId
+    || normalizeWindowsPath(proof.executablePath) !== normalizeWindowsPath(expectedExecutablePath)
+  ) {
+    throw new Error("windows_bundled_provider_runtime_proof_activation_mismatch");
+  }
+  return proof;
 }
 
 /**
@@ -117,6 +266,14 @@ function readProviderWindowId(value) {
   } catch {
     return undefined;
   }
+}
+
+function positiveInteger(value) {
+  return Number.isSafeInteger(value) && value > 0;
+}
+
+function normalizeWindowsPath(value) {
+  return typeof value === "string" ? value.replaceAll("/", "\\").toLowerCase() : "";
 }
 
 function isRecord(value) {

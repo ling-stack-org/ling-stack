@@ -371,7 +371,7 @@ export class SqliteManagedPluginStore {
       id: input.id ?? createManagedPluginRuntimeSnapshotId(),
       runId: input.runId,
       cwd: input.cwd,
-      pluginIds: input.capabilities.map((item) => item.pluginId),
+      pluginIds: input.pluginIds ?? input.capabilities.map((item) => item.pluginId),
       capabilities: input.capabilities,
       policyOverlays: input.policyOverlays,
       createdAt: input.createdAt ?? new Date().toISOString(),

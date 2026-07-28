@@ -53,7 +53,7 @@ export function PluginRowActions({
       ) : null}
       {row.showCheckAction ? (
         <PluginIconAction
-          action={{ id: "check", label: t("Check"), tone: "secondary" }}
+          action={{ id: "check", label: row.checkActionLabel ?? t("Check"), tone: "secondary" }}
           busy={actionIsBusy("check", row.busyAction)}
           disabled={rowBusy}
           onClick={() => handlers.onCheck(row.id)}
