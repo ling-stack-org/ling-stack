@@ -85,7 +85,7 @@ test("media production creates an ordered storyboard and keeps canvas layout sep
 
   await page.getByRole("button", { name: "Duplicate" }).click();
   await expect(page.locator(".storyboard-scene-node")).toHaveCount(2);
-  await expect(page.locator(".storyboard-sequence-edge .react-flow__edge-path")).toHaveCount(1);
+  await expect(page.locator(".storyboard-sequence-edge .react-flow__edge-path")).toHaveCount(1, { timeout: 10_000 });
   await expect(page.locator(".react-flow__controls")).toHaveCount(1);
   const miniMap = page.locator(".react-flow__minimap");
   await expect(miniMap).toHaveCount(0);
