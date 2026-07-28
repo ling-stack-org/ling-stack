@@ -167,6 +167,9 @@ for (const themeCase of themeCases) {
 
     await page.getByLabel("Proposed plan").getByRole("button", { name: "Convert to workflow" }).click();
     const dialog = page.getByRole("dialog", { name: "Workflow conversion preview" });
+    await dialog.evaluate(async (element) => {
+      await Promise.all(element.getAnimations().map((animation) => animation.finished.catch(() => undefined)));
+    });
     const owner = dialog.getByRole("combobox", { name: "Owner for step 1" });
     const container = dialog.locator(".workflow-preview-owner-select").first();
     await expectSharedSelectGeometry(page, owner, container, "sm", 32);
