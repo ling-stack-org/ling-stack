@@ -1350,7 +1350,7 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect.poll(() => state.teammateChannelMemberships.some((item) =>
     isRecord(item) && item.teammateId === teammateId && item.channelId === "channel_design"
   )).toBe(true);
-  await expect(designRow.getByRole("button", { name: "Set default" })).toHaveCount(0);
+  await expect(designRow.getByRole("button", { name: "Set default" })).toBeEnabled();
   await expect.poll(() => {
     const membership = state.teammateChannelMemberships.find((item) =>
       isRecord(item) && item.teammateId === teammateId && item.channelId === "channel_design"
