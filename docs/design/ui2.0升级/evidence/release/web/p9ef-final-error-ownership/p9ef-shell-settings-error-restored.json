@@ -1,0 +1,112 @@
+{
+  "stableId": "p9ef-shell-settings-error-restored",
+  "label": "Settings failure persists, hides on exit, and restores on return",
+  "functionIds": [
+    "FEEDBACK-SHELL-001",
+    "SETTINGS-AUTH-PRESET-001"
+  ],
+  "fixture": "workspace-settings-persistent-error",
+  "trigger": {
+    "summary": "Fail authorization save, wait six seconds, leave Settings, then return",
+    "steps": [
+      "Open Default authorization",
+      "Choose Ask first",
+      "Wait more than six seconds",
+      "Leave Settings",
+      "Return to Settings"
+    ]
+  },
+  "owner": {
+    "surface": "settings",
+    "scope": "workspace-settings",
+    "key": "defaultAuthorizationMode"
+  },
+  "assertions": {
+    "visible": [
+      "Restored scoped Settings Toast"
+    ],
+    "absent": [
+      "Settings error outside Settings"
+    ]
+  },
+  "expectedHttpFailures": [
+    {
+      "method": "PATCH",
+      "status": 503,
+      "urlPattern": "^/workspace-settings(?:\\?.*)?$",
+      "count": 1
+    }
+  ],
+  "overflowOwners": [
+    {
+      "label": "Settings shell",
+      "selector": ".workspace-settings-surface"
+    }
+  ],
+  "viewport": {
+    "width": 1280,
+    "height": 800
+  },
+  "theme": "ling-dark",
+  "locale": "en-US",
+  "keyboard": {
+    "exercised": true,
+    "checks": [
+      "Restored Toast dismiss action accepts keyboard focus"
+    ]
+  },
+  "reducedMotion": "reduce",
+  "status": "captured",
+  "url": "http://127.0.0.1:4284/",
+  "runtime": {
+    "consoleErrors": [
+      {
+        "text": "Failed to load resource: the server responded with a status of 503 (Service Unavailable)",
+        "locationUrl": "http://127.0.0.1:17891/workspace-settings?cwd=%2Ftmp%2Fling-stack-workspace"
+      }
+    ],
+    "pageErrors": [],
+    "httpFailures": [
+      {
+        "method": "PATCH",
+        "status": 503,
+        "url": "/workspace-settings?cwd=%2Ftmp%2Fling-stack-workspace"
+      }
+    ],
+    "expectedConsole503Pattern": "^Failed to load resource: the server responded with a status of 503 \\(Service Unavailable\\)$",
+    "expectedConsole503Count": 1,
+    "unexpectedConsoleErrors": [],
+    "unexpectedHttpFailures": [],
+    "overflow": {
+      "document": 0,
+      "body": 0,
+      "owners": [
+        {
+          "label": "Settings shell",
+          "selector": ".workspace-settings-surface",
+          "found": true,
+          "overflow": 0,
+          "clientWidth": 1280,
+          "scrollWidth": 1280
+        }
+      ]
+    }
+  },
+  "png": {
+    "file": "p9ef-shell-settings-error-restored.png",
+    "width": 1280,
+    "height": 800,
+    "sha256": "0f69f9f5f08cb0f7ad3ffc90805433b479100225bc1d930eba0936fbc8333ca3"
+  },
+  "sidecarFile": "p9ef-shell-settings-error-restored.json",
+  "servedArtifact": "Vite source via Playwright webServer",
+  "captureCommand": "LING_CAPTURE_UI2_P9EF_EVIDENCE=1 LING_PLAYWRIGHT_PORT=4284 corepack pnpm --filter @ling-stack/web exec playwright test e2e/ui2-p9ef-final-evidence.spec.ts --workers=1",
+  "source": {
+    "commit": "101de84e7fd84dc5ae665547b6d271cdfc75cad5",
+    "branch": "codex/ui2-p9ef-final-batch",
+    "dirty": false,
+    "worktreeStatusSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "identifier": "101de84e7fd84dc5ae665547b6d271cdfc75cad5"
+  },
+  "capturedAt": "2026-07-28T03:27:37.126Z"
+}

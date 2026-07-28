@@ -1,0 +1,94 @@
+{
+  "stableId": "p9ef-conversation-new-draft-clean-after-stale-upload",
+  "label": "A new draft ignores a stale attachment upload",
+  "functionIds": [
+    "CONV-NORMAL-COMPOSER-001"
+  ],
+  "fixture": "conversation-draft-generation-stale-upload",
+  "trigger": {
+    "summary": "Begin an upload, create another draft, then release the old upload",
+    "steps": [
+      "Open a new conversation",
+      "Start attachment upload",
+      "Create a second new conversation",
+      "Release old upload"
+    ]
+  },
+  "owner": {
+    "surface": "normal-conversation",
+    "scope": "draft-attachment",
+    "key": "draft-generation-2"
+  },
+  "assertions": {
+    "visible": [
+      "Empty new conversation composer"
+    ],
+    "absent": [
+      "Old attachment chip",
+      "Old upload busy state",
+      "Old upload error"
+    ]
+  },
+  "expectedHttpFailures": [],
+  "overflowOwners": [
+    {
+      "label": "Conversation home",
+      "selector": "[aria-label='Conversation home']"
+    }
+  ],
+  "viewport": {
+    "width": 1280,
+    "height": 800
+  },
+  "theme": "ling-dark",
+  "locale": "en-US",
+  "keyboard": {
+    "exercised": true,
+    "checks": [
+      "New conversation composer accepts keyboard focus"
+    ]
+  },
+  "reducedMotion": "reduce",
+  "status": "captured",
+  "url": "http://127.0.0.1:4284/",
+  "runtime": {
+    "consoleErrors": [],
+    "pageErrors": [],
+    "httpFailures": [],
+    "expectedConsole503Pattern": "^Failed to load resource: the server responded with a status of 503 \\(Service Unavailable\\)$",
+    "expectedConsole503Count": 0,
+    "unexpectedConsoleErrors": [],
+    "unexpectedHttpFailures": [],
+    "overflow": {
+      "document": 0,
+      "body": 0,
+      "owners": [
+        {
+          "label": "Conversation home",
+          "selector": "[aria-label='Conversation home']",
+          "found": true,
+          "overflow": 0,
+          "clientWidth": 1039,
+          "scrollWidth": 1039
+        }
+      ]
+    }
+  },
+  "png": {
+    "file": "p9ef-conversation-new-draft-clean-after-stale-upload.png",
+    "width": 1280,
+    "height": 800,
+    "sha256": "4fa1e5f929fac3221bbd2eb24b4e7f6d9f8343cf813f80451fa6f2f8fcbc6be6"
+  },
+  "sidecarFile": "p9ef-conversation-new-draft-clean-after-stale-upload.json",
+  "servedArtifact": "Vite source via Playwright webServer",
+  "captureCommand": "LING_CAPTURE_UI2_P9EF_EVIDENCE=1 LING_PLAYWRIGHT_PORT=4284 corepack pnpm --filter @ling-stack/web exec playwright test e2e/ui2-p9ef-final-evidence.spec.ts --workers=1",
+  "source": {
+    "commit": "101de84e7fd84dc5ae665547b6d271cdfc75cad5",
+    "branch": "codex/ui2-p9ef-final-batch",
+    "dirty": false,
+    "worktreeStatusSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "identifier": "101de84e7fd84dc5ae665547b6d271cdfc75cad5"
+  },
+  "capturedAt": "2026-07-28T03:27:24.932Z"
+}
