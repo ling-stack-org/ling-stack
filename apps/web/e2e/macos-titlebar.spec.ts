@@ -98,6 +98,7 @@ test("macOS Settings and Media expose stable drag markers without swallowing too
   await expectDragRegion(settingsNavigation);
   await expectNoDragControl(backButton);
   await expect.poll(async () => Math.round((await backButton.boundingBox())?.x ?? -1)).toBeGreaterThanOrEqual(76);
+  await expect.poll(async () => Math.round((await backButton.boundingBox())?.y ?? -1)).toBe(32);
   await backButton.click();
   await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
 
