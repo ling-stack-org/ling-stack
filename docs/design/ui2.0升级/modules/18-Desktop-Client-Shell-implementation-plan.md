@@ -99,9 +99,10 @@ Show / hide / close rules:
 - 有真实 Header 的页面不使用覆盖它的 sibling layer，而在 Header 本身声明 drag contract。
 - AppShell 最后绘制的 `76x28` pseudo region 只做 `no-drag` subtraction，且使用
   `pointer-events: none`；它不遮挡原生 traffic lights，也不成为可命中的透明 Web 层。
-- Settings 返回按钮只在 macOS 横向避让到 `x>=76`，这是允许的 native safe-area
-  geometry exception；按钮暴露 `data-desktop-window-traffic-light-clearance="true"`，focused CSS
-  不识别 Settings Feature class。它不增加页面 top padding、可见 Toolbar 或改变 Settings 其他内容密度。
+- Settings 返回按钮只在 macOS 横向避让到 `x>=76`，并通过导航局部 top safe inset 落在 `y=32`；
+  这是允许的 native safe-area geometry exception。按钮暴露
+  `data-desktop-window-traffic-light-clearance="true"`，focused CSS 不识别 Settings Feature class。
+  它不增加 workspace / 全局 top padding、可见 Toolbar 或改变 Settings 主内容密度。
 - Dialog、Drawer、Menu、Popover、Toast、Tooltip 及 body-level preview 在 macOS 明确声明
   `no-drag`；body-level preview root 自身暴露 `data-desktop-window-no-drag="true"`，focused CSS
   不识别其 Feature class；overlay 的 z-index 不能替代 Electron hit-test subtraction。
