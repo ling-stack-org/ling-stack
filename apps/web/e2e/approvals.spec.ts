@@ -3,6 +3,7 @@ import { mockDaemon } from "./support/mock-daemon";
 import {
   createBaseState,
 } from "./support/mock-state";
+import { openPendingInbox } from "./support/pending-primary-navigation";
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
@@ -14,7 +15,7 @@ test("approval inbox shows expired approvals without decision buttons", async ({
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Inbox" }).click();
+  await openPendingInbox(page);
   await expect(page.locator(".approvals-panel").getByRole("heading", { name: "Inbox" })).toBeVisible();
   const approvalRows = page.locator(".approval-list .approval-row");
   await expect(approvalRows).toContainText("expired");
@@ -35,7 +36,7 @@ test("review queue resolves offline local approvals and refreshes state", async 
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Inbox" }).click();
+  await openPendingInbox(page);
   const approvalRows = page.locator(".approval-list .approval-row").filter({ hasText: "Approve offline shell command" });
   await expect(approvalRows).toContainText("pending");
   await expect(page.locator(".review-queue-summary")).toContainText("Offline local approval");
@@ -47,7 +48,8 @@ test("review queue resolves offline local approvals and refreshes state", async 
 
   await page.locator("[data-approvals-ui2-page]").getByRole("button", { name: "Open Work Board" }).click();
   await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Work Board" })).toHaveClass(/active/);
+  await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Work Board" })).toHaveCount(0);
+  await expect(page.getByLabel("Ling Stack navigation").locator(".primary-nav [aria-current='page']")).toHaveCount(0);
   await expect(page.locator(".work-board-page")).toBeVisible();
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
 });

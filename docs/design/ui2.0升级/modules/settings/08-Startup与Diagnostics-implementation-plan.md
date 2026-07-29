@@ -1,6 +1,12 @@
 # P7B.4 Startup 与 Run Diagnostics Implementation Plan
 
-> Status: `verified` on 2026-07-20. Implementation, regression, six real-browser evidence images and all closeout gates completed.
+## Status
+
+**产品化待开发。** Settings 导航入口自 2026-07-28 起隐藏。2026-07-20 完成的实现、回归和
+六张浏览器证据继续作为保留代码的历史技术验证，不再作为当前版本已发布能力的证明。
+
+重新开放入口前必须重新确认用户任务、默认信息层级和诊断文案，并重新执行本文的浏览器验收；
+不得仅因为底层组件仍然存在就恢复导航项。
 
 ## 1. Slice Contract
 

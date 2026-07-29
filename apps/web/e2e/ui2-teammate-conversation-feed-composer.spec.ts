@@ -33,11 +33,40 @@ for (const fixture of [
     await expect(feedOwner).toBeVisible();
     await expect(composerOwner).toBeVisible();
     await expect(feed.locator(".message-feed-virtualizer")).toBeVisible();
+    const feedGeometry = await Promise.all([
+      feedOwner.boundingBox(),
+      feed.boundingBox(),
+    ]).then(([ownerBox, feedBox]) => ({
+      bottomDelta: ownerBox && feedBox
+        ? Math.abs(ownerBox.y + ownerBox.height - (feedBox.y + feedBox.height))
+        : Number.POSITIVE_INFINITY,
+      heightDelta: ownerBox && feedBox
+        ? Math.abs(ownerBox.height - feedBox.height)
+        : Number.POSITIVE_INFINITY,
+    }));
+    expect(feedGeometry.bottomDelta).toBeLessThanOrEqual(1);
+    expect(feedGeometry.heightDelta).toBeLessThanOrEqual(1);
     await expect(feed.getByText("AI teammate is replying...", { exact: true })).toBeVisible();
     await expect(feed.getByText("Reply stopped", { exact: true })).toBeVisible();
     await expect(feed.getByRole("alert").filter({ hasText: "Provider failed after the request started." })).toBeVisible();
     const memoryRow = feed.locator(".teammate-message-row.ai-teammate").filter({ hasText: "Memory-backed private response." });
     await expect(memoryRow.getByRole("link", { name: "private-feed-evidence.md" })).toBeVisible();
+    await expectAvatarTopAligned(
+      memoryRow.locator(":scope > .teammate-avatar-image"),
+      memoryRow.locator(":scope > .message-content > header"),
+    );
+    const blockedRow = feed.locator(".teammate-message-row.ai-teammate.message-bubble-chat-blocked").filter({ hasText: "Provider failed after the request started." });
+    await expectAvatarTopAligned(
+      blockedRow.locator(":scope > .teammate-avatar-image"),
+      blockedRow,
+    );
+    const queuedGuidanceRow = feed.locator('[data-feed-item-id="message_ui2_teammate_guidance"] .teammate-message-row');
+    await expect(queuedGuidanceRow).toBeVisible();
+    await expect(queuedGuidanceRow).toHaveClass(/local-user/);
+    await expect(queuedGuidanceRow).toHaveClass(/message-bubble-own/);
+    await expect(queuedGuidanceRow).toContainText("Continue with the user's weather question.");
+    await expect(queuedGuidanceRow).not.toContainText("排队引导");
+    await expect(queuedGuidanceRow).not.toContainText("System");
     await memoryRow.locator(".conversation-evidence-toggle").click();
     await expect(memoryRow.getByText("Private feed memory", { exact: true })).toBeVisible();
     await expectNoDocumentOverflow(page);
@@ -179,6 +208,30 @@ test("AI teammate composer preserves active guidance, locked permission, and sto
   expect(runtimeErrors).toEqual([]);
 });
 
+test("AI teammate removes accepted guidance from the queue before its reply completes", async ({ page }) => {
+  await prepareSurface(page, "light", 1440, 960);
+  const runtimeErrors = collectRuntimeErrors(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  installActiveComposerFixture(state);
+  await mockDaemon(page, state);
+
+  await page.goto("/");
+  await openTeammate(page, "UI2 Guidance Engineer");
+
+  const composer = page.getByLabel("Private chat composer", { exact: true });
+  const input = composer.getByRole("textbox");
+  await replaceTokenizedComposerValue(input, "Send this queued guidance next.");
+  await input.press("Enter");
+
+  const queuedGuidance = page.locator(".conversation-guidance-row").filter({ hasText: "Send this queued guidance next." });
+  await expect(queuedGuidance).toBeVisible();
+  state.workUnits = [];
+  await queuedGuidance.getByRole("button", { name: "Run this guidance now" }).click();
+  await expect.poll(() => state.teammateDirectInterventions.at(-1)?.status).toBe("starting_continuation");
+  await expect(queuedGuidance).toHaveCount(0);
+  expect(runtimeErrors).toEqual([]);
+});
+
 function installFeedFixture(state: MockState): string {
   const teammateId = "teammate_ui2_feed";
   const threadId = `tdthread_${teammateId}`;
@@ -256,6 +309,14 @@ function installFeedFixture(state: MockState): string {
         failureReason: "Provider temporarily unavailable",
       },
     },
+    directMessage({
+      id: "message_ui2_teammate_guidance",
+      teammateId,
+      threadId,
+      authorType: "system",
+      body: "排队引导：Continue with the user's weather question.",
+      createdAt: "2026-07-19T09:04:30.000Z",
+    }),
     {
       ...directMessage({ id: "message_ui2_teammate_memory", teammateId, threadId, authorType: "ai-teammate", body: "Memory-backed private response.", createdAt: "2026-07-19T09:05:00.000Z" }),
       attachmentIds: ["attachment_ui2_teammate_feed"],
@@ -357,7 +418,7 @@ function directMessage(input: {
   readonly id: string;
   readonly teammateId: string;
   readonly threadId: string;
-  readonly authorType: "local-user" | "ai-teammate";
+  readonly authorType: "local-user" | "ai-teammate" | "system";
   readonly body: string;
   readonly status?: "pending" | "ready" | "blocked" | "failed" | "cancelled";
   readonly errorMessage?: string;
@@ -369,7 +430,7 @@ function directMessage(input: {
     threadId: input.threadId,
     teammateId: input.teammateId,
     authorType: input.authorType,
-    authorId: input.authorType === "ai-teammate" ? input.teammateId : "local-user",
+    authorId: input.authorType === "ai-teammate" ? input.teammateId : input.authorType === "system" ? "system" : "local-user",
     body: input.body,
     attachmentIds: [],
     linkPreviewIds: [],
@@ -394,6 +455,13 @@ async function expectAlignedConversationColumns(feed: Locator, composer: Locator
     if (!feedBox || !composerBox) return false;
     return Math.abs(feedBox.x - composerBox.x) <= 1 && Math.abs(feedBox.width - composerBox.width) <= 1;
   }).toBe(true);
+}
+
+async function expectAvatarTopAligned(avatar: Locator, anchor: Locator): Promise<void> {
+  const [avatarBox, anchorBox] = await Promise.all([avatar.boundingBox(), anchor.boundingBox()]);
+  expect(avatarBox).not.toBeNull();
+  expect(anchorBox).not.toBeNull();
+  expect(Math.abs((avatarBox?.y ?? 0) - (anchorBox?.y ?? 0))).toBeLessThanOrEqual(1);
 }
 
 async function replaceTokenizedComposerValue(input: Locator, value: string): Promise<void> {

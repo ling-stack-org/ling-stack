@@ -83,7 +83,7 @@ test("Default Authorization preserves keyboard selection and dark compact geomet
   expect(runtimeErrors).toEqual([]);
 });
 
-test("Personalization uses shared controls, scoped Toast, and collapsed governance at 1440x960 light", async ({ page }) => {
+test("Personalization keeps only editable controls and actionable feedback at 1440x960 light", async ({ page }) => {
   await prepareSurface(page, "light", 1440, 960);
   const runtimeErrors = collectRuntimeErrors(page);
   const state = createBaseState({ approvalStatus: "expired" });
@@ -94,8 +94,9 @@ test("Personalization uses shared controls, scoped Toast, and collapsed governan
   const surface = page.locator("[data-ui2-personalization]");
   const tone = surface.locator("[data-personalization-tone]");
   const governanceSection = surface.locator("[data-personalization-governance]");
-  await expect(tone.getByRole("button", { name: "Refresh" })).toHaveClass(/ling-ui-button/u);
-  await expect(governanceSection.getByRole("button", { name: "Refresh" })).toHaveClass(/ling-ui-button/u);
+  await expect(tone.getByRole("button", { name: "Refresh" })).toHaveCount(0);
+  await expect(governanceSection.getByRole("button", { name: "Refresh" })).toHaveCount(0);
+  await expect(tone.getByText("Concise, focused, direct.", { exact: true })).toHaveCount(0);
 
   const toneGroup = tone.getByRole("radiogroup", { name: "Ling conversation tone" });
   await expect(toneGroup).toHaveClass(/ling-ui-segmented-control/u);
@@ -105,14 +106,15 @@ test("Personalization uses shared controls, scoped Toast, and collapsed governan
   await expect(page.locator('.ling-ui-toast[data-scope="settings:personalization:tone:save"]')).toContainText(
     "Ling conversation tone applied",
   );
-  await expect(tone).toContainText("Workspace");
+  await expect(tone.getByText("Workspace", { exact: true })).toHaveCount(0);
 
   const governance = governanceSection.getByRole("region", { name: "Skill policy" });
   await expect(governance.locator(".ling-ui-field")).toHaveCount(2);
-  const advanced = governance.locator(".ling-ui-inspector-section");
-  await expect(advanced).toHaveCount(1);
-  await expect(advanced).not.toHaveAttribute("open", "");
-  await expect(governance.getByText("Ling does not record background agent work automatically")).not.toBeVisible();
+  await expect(governance.locator(".ling-ui-inspector-section")).toHaveCount(0);
+  await expect(governance.getByText("Advanced governance", { exact: true })).toHaveCount(0);
+  await expect(governance.getByText("Create pending candidates after repeated stable success", { exact: true })).toHaveCount(0);
+  await expect(governance.getByText("Users can start skill recording explicitly", { exact: true })).toHaveCount(0);
+  await expect(governance.getByText("Candidate publishing and binding still require manual review.")).toHaveCount(0);
 
   const save = governance.getByRole("button", { name: "Save governance policy" });
   await expect(save).toBeDisabled();
@@ -129,13 +131,11 @@ test("Personalization uses shared controls, scoped Toast, and collapsed governan
   );
   await expect(save).toBeDisabled();
 
-  await advanced.getByText("Advanced governance", { exact: true }).click();
-  await expect(advanced).toHaveAttribute("open", "");
-  await expect(advanced).toContainText("Explicit only");
-  await expect(advanced).toContainText("Stored in");
+  await expect(governance.getByText("Source", { exact: true })).toHaveCount(0);
+  await expect(governance.getByText("Stored in workspace settings", { exact: true })).toHaveCount(0);
   await expect(surface.locator(".settings-inline-tip, .settings-inline-success")).toHaveCount(0);
   await expectNoDocumentOverflow(page);
-  await captureEvidence(page, "1440x960-ling-light-personalization-advanced.png");
+  await captureEvidence(page, "1440x960-ling-light-personalization-compact.png");
   expect(runtimeErrors).toEqual([]);
 });
 

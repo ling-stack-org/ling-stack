@@ -146,6 +146,13 @@ import {
 } from "./sidebar-status-projections.js";
 import { useAppNavigationController } from "./use-app-navigation-controller.js";
 import { useFullAccessConfirmationController } from "./useFullAccessConfirmationController.js";
+import {
+  channelFullAccessScope,
+  fullAccessPolicyRevision,
+  fullAccessRunScope,
+  normalConversationFullAccessScope,
+  teammateFullAccessScope,
+} from "./full-access-confirmation-scopes.js";
 import { useChannelActionsController } from "./use-channel-actions-controller.js";
 import { useChannelWorkflowController } from "./use-channel-workflow-controller.js";
 import { useControlPlaneInvalidation } from "./use-control-plane-invalidation.js";
@@ -822,6 +829,23 @@ export function AppShell(): JSX.Element {
       setStartupStatusAction(undefined);
     },
   });
+  const currentFullAccessPolicyRevision = useMemo(() => fullAccessPolicyRevision({
+    defaultAuthorizationMode: workspaceSettings?.defaultAuthorizationMode ?? form.authorizationMode,
+    defaultWorkspaceAccessMode: workspaceSettings?.defaultWorkspaceAccessMode ?? form.workspaceAccessMode,
+    defaultPermissionMode: workspaceSettings?.defaultPermissionMode ?? form.permissionMode,
+    defaultPermissionPreset: workspaceSettings?.defaultPermissionPreset ?? form.permissionPreset,
+    approvalPolicyUpdatedAt: approvalPolicy?.updatedAt,
+  }), [
+    approvalPolicy?.updatedAt,
+    form.authorizationMode,
+    form.permissionMode,
+    form.permissionPreset,
+    form.workspaceAccessMode,
+    workspaceSettings?.defaultAuthorizationMode,
+    workspaceSettings?.defaultPermissionMode,
+    workspaceSettings?.defaultPermissionPreset,
+    workspaceSettings?.defaultWorkspaceAccessMode,
+  ]);
 
   async function loadStartupStatus(workspaceCwd = form.cwd.trim()): Promise<void> {
     if (!workspaceCwd) {
@@ -1079,6 +1103,23 @@ export function AppShell(): JSX.Element {
   }, [aiTeammates, channels, selectedChannelId, teammateChannelMembershipsByTeammate]);
   const activeTeammateId = readTeammateSidebarTarget(activeSidebarTarget);
   const selectedAiTeammate = activeTeammateId ? aiTeammates.find((teammate) => teammate.id === activeTeammateId) : undefined;
+  const normalConversationConfirmationScope = useMemo(() => normalConversationFullAccessScope({
+    workspaceCwd: form.cwd,
+    conversationIdentity,
+    policyRevision: currentFullAccessPolicyRevision,
+  }), [conversationIdentity, currentFullAccessPolicyRevision, form.cwd]);
+  const channelConversationFullAccessScope = useMemo(() => channelFullAccessScope({
+    channel: channels.find((item) => item.id === selectedChannelId),
+    channelId: selectedChannelId,
+    branchId: selectedChannelBranchId,
+    workspaceCwd: form.cwd,
+    policyRevision: currentFullAccessPolicyRevision,
+  }), [channels, currentFullAccessPolicyRevision, form.cwd, selectedChannelBranchId, selectedChannelId]);
+  const teammateConversationFullAccessScope = useMemo(() => teammateFullAccessScope({
+    workspaceCwd: form.cwd,
+    teammateId: selectedAiTeammate?.id,
+    policyRevision: currentFullAccessPolicyRevision,
+  }), [currentFullAccessPolicyRevision, form.cwd, selectedAiTeammate?.id]);
   const selectedWorkspaceTask = useMemo(
     () => tasks.find((task) => task.id === selectedTaskId),
     [selectedTaskId, tasks],
@@ -1933,7 +1974,13 @@ export function AppShell(): JSX.Element {
     if (workspaceAccessMode !== "full_access" && (workspaceAccessMode !== undefined || readRequestPermissionMode(requestBody) !== "full_access")) {
       return requestBody;
     }
-    const permissionConfirmation = await fullAccessConfirmation.request();
+    const permissionConfirmation = await fullAccessConfirmation.request(fullAccessRunScope({
+      requestBody,
+      fallbackWorkspaceCwd: form.cwd,
+      selectedChannelId,
+      selectedChannelBranchId,
+      policyRevision: currentFullAccessPolicyRevision,
+    }));
     if (!permissionConfirmation) {
       return undefined;
     }
@@ -2198,7 +2245,6 @@ export function AppShell(): JSX.Element {
         channelBranches={channelBranches}
         selectedChannelBranchId={selectedChannelBranchId}
         teammates={aiTeammates}
-        approvals={approvals}
         cwd={form.cwd}
         channelsLoading={channelsLoading}
         teammatesLoading={aiTeammatesLoading}
@@ -2374,6 +2420,7 @@ export function AppShell(): JSX.Element {
             approvalPolicy={approvalPolicy}
             permissionMode={form.permissionMode}
             permissionPreset={permissionPresetForWorkspaceAccessMode(form.workspaceAccessMode)}
+            fullAccessConfirmed={fullAccessConfirmation.isConfirmed(channelConversationFullAccessScope)}
             activeTaskRunAction={activeTaskRunAction}
             runningWorkflowStepId={runningWorkflowStepId}
             orchestratingWorkflowId={orchestratingWorkflowId}
@@ -2486,6 +2533,7 @@ export function AppShell(): JSX.Element {
               />
               ) : (
                 <ConversationHome
+                  userProfile={userProfile}
                   conversationTitle={selectedConversationDetail?.thread.title ?? ""}
                   initialMessages={selectedConversationMessages}
                   initialProjectPath={selectedConversationProjectPath}
@@ -2514,7 +2562,16 @@ export function AppShell(): JSX.Element {
                   activeRun={activeConversationRun}
                   stopping={Boolean(activeConversationRun && cancellingRunId === activeConversationRun.id)}
                   onOpenRun={(runId) => void openRunFromWorkspace(runId)}
-                  onConfirmFullAccess={fullAccessConfirmation.request}
+                  fullAccessConfirmed={fullAccessConfirmation.isConfirmed(normalConversationConfirmationScope)}
+                  onConfirmFullAccess={() => fullAccessConfirmation.request(normalConversationConfirmationScope)}
+                  onConfirmFullAccessSelection={() => fullAccessConfirmation.confirmExplicitSelection(normalConversationConfirmationScope)}
+                  onFullAccessConversationBound={(threadId) => fullAccessConfirmation.bind(
+                    normalConversationConfirmationScope,
+                    {
+                      ...normalConversationConfirmationScope,
+                      conversationId: `conversation:${threadId}`,
+                    },
+                  )}
                   onRefreshConversation={() => Promise.all([
                     refreshConversationThreads(form.cwd.trim()),
                     refreshSelectedConversation(form.cwd.trim()),
@@ -2606,7 +2663,9 @@ export function AppShell(): JSX.Element {
                 workspaceDefaultsAvailable={workspaceSettings !== undefined}
                 onOpenAuthorizationSettings={() => openSettingsSection("approval-strategy")}
                 onDirectConversationChange={setDesktopTeammateConversationId}
-                onConfirmFullAccess={fullAccessConfirmation.request}
+                fullAccessConfirmed={fullAccessConfirmation.isConfirmed(teammateConversationFullAccessScope)}
+                onConfirmFullAccess={() => fullAccessConfirmation.request(teammateConversationFullAccessScope)}
+                onConfirmFullAccessSelection={() => fullAccessConfirmation.confirmExplicitSelection(teammateConversationFullAccessScope)}
                 defaultPermissionMode={workspaceSettings?.defaultPermissionMode}
                 defaultPermissionPreset={workspaceSettings?.defaultPermissionPreset}
                 workspacePolicy={approvalPolicy}

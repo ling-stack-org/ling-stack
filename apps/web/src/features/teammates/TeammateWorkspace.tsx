@@ -155,7 +155,9 @@ export function TeammateWorkspace({
   workspaceDefaultsAvailable = false,
   onOpenAuthorizationSettings,
   onDirectConversationChange,
+  fullAccessConfirmed = false,
   onConfirmFullAccess,
+  onConfirmFullAccessSelection,
   defaultPermissionMode,
   defaultPermissionPreset,
   workspacePolicy,
@@ -190,7 +192,9 @@ export function TeammateWorkspace({
   readonly workspaceDefaultsAvailable?: boolean;
   readonly onOpenAuthorizationSettings?: () => void;
   readonly onDirectConversationChange?: (threadId?: string) => void;
+  readonly fullAccessConfirmed?: boolean;
   readonly onConfirmFullAccess?: () => Promise<PermissionConfirmation | undefined>;
+  readonly onConfirmFullAccessSelection?: () => PermissionConfirmation;
   readonly defaultPermissionMode?: SessionPermissionMode;
   readonly defaultPermissionPreset?: PermissionPreset;
   readonly workspacePolicy?: ApprovalPolicy;
@@ -650,7 +654,7 @@ export function TeammateWorkspace({
       defaultPermissionMode,
       defaultPermissionPreset,
     ));
-  }, [defaultPermissionMode, defaultPermissionPreset, defaultWorkspaceAccessMode]);
+  }, [defaultPermissionMode, defaultPermissionPreset, defaultWorkspaceAccessMode, teammate.id]);
 
   useEffect(() => {
     setSettingsForm(teammateToSettingsForm(teammate));
@@ -1674,6 +1678,7 @@ export function TeammateWorkspace({
           openDirectInterventions={openDirectInterventions}
           directLinkPreviewById={directLinkPreviewById}
           messageDraft={messageDraft}
+          fullAccessConfirmed={fullAccessConfirmed}
           privateComposerSending={privateComposerSending}
           privateComposerSendDisabled={privateComposerSendDisabled}
           privateComposerSendLabel={privateComposerSendLabel}
@@ -1713,6 +1718,7 @@ export function TeammateWorkspace({
           onRemovePendingAttachment={removePendingAttachment}
           workspaceAccessMode={selectedWorkspaceAccessMode}
           onWorkspaceAccessModeChange={setSelectedWorkspaceAccessMode}
+          onFullAccessPresetSelected={onConfirmFullAccessSelection}
           dockOpen={chatDockOpen}
           dockController={chatDockController}
           dockPageRequest={chatDockPageRequest}

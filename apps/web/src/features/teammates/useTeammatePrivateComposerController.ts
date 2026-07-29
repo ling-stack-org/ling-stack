@@ -33,6 +33,7 @@ export function useTeammatePrivateComposerController({
   messageDraft,
   onComposerKeyDown,
   onComposerSubmit,
+  onFullAccessPresetSelected,
   onMessageDraftChange,
   onWorkspaceAccessModeChange,
   privateComposerSending,
@@ -50,6 +51,7 @@ export function useTeammatePrivateComposerController({
   readonly onComposerSubmit: (authorization: {
     readonly permissionPreset: PermissionPreset;
   }) => void;
+  readonly onFullAccessPresetSelected?: () => void;
   readonly onMessageDraftChange: (value: string) => void;
   readonly onWorkspaceAccessModeChange: (mode: WorkspaceAccessMode) => void;
   readonly privateComposerSending: boolean;
@@ -135,6 +137,9 @@ export function useTeammatePrivateComposerController({
   }
 
   function handlePermissionPresetChange(preset: PermissionPreset): void {
+    if (preset === "full_access") {
+      onFullAccessPresetSelected?.();
+    }
     setSelectedPermissionPreset(preset);
     onWorkspaceAccessModeChange(workspaceAccessModeForPermissionPreset(preset));
   }

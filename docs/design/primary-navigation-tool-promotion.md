@@ -1,25 +1,30 @@
 # Primary Navigation Tool Promotion
 
+## Status
+
+Partially shipped. Plugin Manager and Media Production remain in primary navigation.
+Inbox and Work Board are pending product capabilities; both primary-navigation
+entries are hidden as of 2026-07-29. Their retained implementations stay available
+only to contextual flows and focused development tests.
+
 ## Summary
 
-Ling promotes `Work Board` and `Plugin Manager` from Settings into the global
-desktop navigation. These surfaces are operational workspaces that users may open
-repeatedly during normal work; they are not low-frequency configuration forms.
+Ling promotes `Plugin Manager` from Settings into the global desktop navigation.
+Work Board is not currently a primary workflow and remains a pending product
+capability. Existing code, data derivation, and contextual entry points are retained
+without advertising it in the left sidebar.
 
 The media entry is renamed from `Image Generation` to `Media Production` so the
 navigation truthfully covers both image and video jobs.
 
-This decision supersedes the older Settings P3/P10 placement that kept Work Board
-and Plugin Manager inside Settings. It aligns with the resolved Work Board IA in
-`review-queue-work-board-detailed-design.md`.
+This current-release decision supersedes the earlier Work Board promotion portion of
+this document. Plugin Manager promotion remains effective.
 
 ## Target Navigation
 
 ```text
 Primary navigation
-  Inbox
   Media Production
-  Work Board
   Plugin Manager
   Automations
 ```
@@ -32,10 +37,19 @@ skills, archives, and diagnostics.
 
 ### Work Board
 
-Work Board is the global work ledger. It is used to review actionable work,
-blocked items, ownership, runs, approvals, and related channel activity. It keeps
-the global sidebar visible and may open contextual work objects in their existing
-surfaces.
+**Pending development.** Work Board is intended to become the global work ledger for
+actionable work, blocked items, ownership, runs, approvals, and related channel
+activity. Until its product workflow is complete, it has no primary-navigation item.
+Contextual links may continue to open the retained implementation for internal
+validation.
+
+### Inbox
+
+**Pending development.** Inbox/Review Queue still has retained Approvals domain and
+UI code, but it is not a released primary workflow. The hidden entry must not be
+visible, focusable, or announced by assistive technology. Approval decisions remain
+available through their owning run or conversation context while the standalone
+Inbox product flow is redesigned.
 
 ### Plugin Manager
 
@@ -60,6 +74,8 @@ operations, provider capability checks, and task terminology remain unchanged.
   during this slice; AppShell must not absorb its UI or action logic.
 - `usePluginsDomain.ts` continues to own plugin state and mutations.
 - `SettingsPage.tsx` no longer owns Work Board or Plugin Manager navigation.
+- `GlobalWorkBoardPage.tsx` remains implemented but is not advertised in primary
+  navigation while Work Board is pending development.
 - `AppShell.tsx` performs only view, refresh, and callback wiring.
 
 ## State And Navigation
@@ -79,8 +95,9 @@ Plugin Manager > MCP settings
   -> select MCP tool servers
 ```
 
-Work Board scope requests from Inbox continue to open the same top-level Work
-Board page and preserve the requested scope.
+Retained Inbox and Work Board routes may continue to be exercised by contextual
+actions and focused development tests. These paths do not imply that either feature
+is generally released.
 
 ## Non-goals
 
@@ -94,13 +111,14 @@ Board page and preserve the requested scope.
 
 ## Acceptance Criteria
 
-- The global sidebar order is Inbox, Media Production, Work Board, Plugin Manager,
-  Automations.
-- Work Board and Plugin Manager keep the global sidebar visible.
+- The global sidebar order is Media Production, Plugin Manager, Automations.
+- Inbox does not appear in the global sidebar.
+- Work Board does not appear in the global sidebar.
+- Plugin Manager keeps the global sidebar visible.
 - Settings navigation no longer contains Work Board or Plugin Manager.
 - Plugin operations keep their current real behavior.
 - `MCP settings` opens the MCP tool server section inside Settings.
-- Work Board links from Inbox open the top-level Work Board.
+- Retained contextual approval and Work Board routes continue to function.
 - Existing image and video jobs continue to work without API changes.
 - Desktop widths 1280, 1440, and 1920 have no navigation wrapping or horizontal
   overflow.

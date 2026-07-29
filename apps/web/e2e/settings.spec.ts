@@ -98,7 +98,7 @@ test("product language preference toggles Chinese and English UI labels", async 
   await page.getByRole("button", { name: "返回应用" }).click();
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "收件箱" })).toBeVisible();
+  await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "收件箱" })).toHaveCount(0);
   await expect(page.getByLabel("频道动态")).toBeVisible();
   await openChannelChatTools(page);
   await expect(page.getByPlaceholder("搜索动态")).toBeVisible();
@@ -318,7 +318,7 @@ test("settings default authorization hides internal tool policy and runner contr
   await expect(page.getByText("Advanced workspace policy", { exact: true })).toHaveCount(0);
 });
 
-test("settings developer section contains startup readiness", async ({ page }) => {
+test("settings hides pending startup and diagnostics", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
@@ -328,22 +328,9 @@ test("settings developer section contains startup readiness", async ({ page }) =
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
   const settingsSections = page.getByLabel("Settings sections");
   await expect(settingsSections.getByRole("button", { name: /Startup readiness/ })).toHaveCount(0);
-
-  await settingsSections.getByRole("button", { name: /Startup and diagnostics/ }).click();
-  const startupPanel = page.locator("[data-ui2-settings-startup-diagnostics]");
-  await expect(startupPanel).toBeVisible();
-  await expect(startupPanel.getByText("Startup status", { exact: true })).toBeVisible();
-  await expect(startupPanel.locator(".settings-startup-primary-state").getByText("Ready", { exact: true })).toBeVisible();
-  await expect(startupPanel.getByText("Technical details", { exact: true })).toBeVisible();
-  await expect(startupPanel.getByRole("button", { name: "Refresh startup status" })).toBeVisible();
-  await startupPanel.getByRole("button", { name: "Open Run Diagnostics" }).click();
-  await expect(page.getByLabel("Settings sections")).toBeVisible();
-  await expect(page.getByLabel("Settings sections").getByRole("button", { name: /Startup and diagnostics/ })).toHaveClass(/active/);
-  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
-  await expect(page.locator(".settings-run-diagnostics-panel")).toBeVisible();
-  await expect(page.locator(".run-history-layout")).toHaveCount(0);
-  await page.locator(".settings-run-diagnostics-panel").getByRole("button", { name: "Close run diagnostics" }).click();
-  await expect(startupPanel.getByText("Startup status", { exact: true })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: /Startup and diagnostics/ })).toHaveCount(0);
+  await expect(settingsSections.locator('[data-settings-section="startup-diagnostics"]')).toBeHidden();
+  await expect(page.locator("[data-ui2-settings-startup-diagnostics]")).toHaveCount(0);
 });
 
 test("settings archived items use one remembered category list with scoped search", async ({ page }) => {
@@ -867,7 +854,7 @@ test("settings skill governance saves policy from a separate section", async ({ 
   await expect(tonePanel.getByRole("heading", { name: "Ling conversation tone" })).toBeVisible();
   await expect(tonePanel).not.toContainText("Choose how Ling replies by default in this workspace.");
   await expect(tonePanel.getByRole("radio", { name: /Pragmatic/ })).toHaveAttribute("aria-checked", "true");
-  await expect(tonePanel).toContainText("Built-in");
+  await expect(tonePanel.getByText("Built-in", { exact: true })).toHaveCount(0);
   await expect(tonePanel.getByRole("button", { name: "Save conversation tone" })).toHaveCount(0);
   await tonePanel.getByRole("radio", { name: /Friendly/ }).click();
   await expect.poll(() => state.workspaceSettings.lingConversationTone).toBe("friendly");
@@ -875,7 +862,7 @@ test("settings skill governance saves policy from a separate section", async ({ 
     "Ling conversation tone applied",
   );
   await expect(tonePanel.locator(".settings-inline-tip")).toHaveCount(0);
-  await expect(tonePanel).toContainText("Workspace");
+  await expect(tonePanel.getByText("Workspace", { exact: true })).toHaveCount(0);
   const panel = page.locator(".skill-governance-settings-panel");
   await expect.poll(async () => {
     const boxes = await Promise.all([
@@ -889,13 +876,12 @@ test("settings skill governance saves policy from a separate section", async ({ 
   await expect(panel).not.toContainText("Control skill recording, generation, and publication policy.");
   await expect(governancePanel).toContainText("Semi-auto");
   await expect(governancePanel).toContainText("User initiated");
-  await expect(governancePanel).toContainText("Candidate generation options");
-  await governancePanel.getByText("Advanced governance", { exact: true }).click();
-  await expect(governancePanel).toContainText("Explicit only");
-  await expect(governancePanel).toContainText("Create pending candidates from one stable successful observation");
-  await expect(governancePanel).toContainText("How recording works");
-  await expect(governancePanel).toContainText("Ling does not record background agent work automatically");
-  await expect(governancePanel).toContainText("Generated candidates still require draft, publish, and binding review");
+  await expect(governancePanel).toContainText("Create pending candidates after repeated stable success");
+  await expect(governancePanel).toContainText("Users can start skill recording explicitly");
+  await expect(governancePanel).toContainText("Candidate publishing and binding still require manual review.");
+  await expect(governancePanel.getByText("Advanced governance", { exact: true })).toHaveCount(0);
+  await expect(governancePanel.getByText("Source", { exact: true })).toHaveCount(0);
+  await expect(governancePanel.getByText("Stored in workspace settings", { exact: true })).toHaveCount(0);
 
   const governanceSelects = governancePanel.getByRole("combobox");
   await expect(governanceSelects).toHaveCount(2);

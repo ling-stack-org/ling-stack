@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
 import { mockDaemon } from "./support/mock-daemon";
+import { openWorkBoardFromInbox } from "./support/open-work-board";
 import {
   createBaseState,
   createChatProvider,
@@ -484,8 +485,7 @@ test("succeeded workspace tasks show a clear result action", async ({ page }) =>
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
-  await navigation.getByRole("button", { name: "Work Board" }).click();
+  await openWorkBoardFromInbox(page);
   const workBoard = page.locator(".work-board-page");
   await workBoard.getByLabel("Work board views").getByRole("button", { name: "History" }).click();
   const completedTask = workBoard.locator("[data-work-item-id='work_item_completed_task']");

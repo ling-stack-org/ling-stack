@@ -1,6 +1,12 @@
 # Startup 与 Diagnostics
 
-> P7B.4 design contract. Current status: `verified`; reachability、data ownership、component boundary、state matrix、CSS ownership、自动化和六张真实浏览器证据已于 2026-07-20 闭环。
+## Status
+
+**产品状态：待开发，Settings 导航入口已于 2026-07-28 隐藏。**
+
+P7B.4 的既有组件、数据边界、状态矩阵、CSS owner、自动化和六张浏览器证据曾于
+2026-07-20 完成技术验证；这些记录作为保留实现的历史证据，不代表该入口当前对用户发布。
+底层 Startup/Run Diagnostics 能力暂不删除，供内部回归和后续产品化继续使用。
 
 ## 1. 页面目标
 
@@ -12,14 +18,16 @@ Settings > 启动与诊断用于回答两个问题：
 它不是 daemon 日志墙、配置浏览器或自动修复中心。默认层只显示单一启动状态、更新时间、真实 blocker、
 Refresh 和 Open Run Diagnostics。phase、attempt、code、path、provider、event log 和 raw failure 默认折叠。
 
-## 2. 入口、Shell 与真实 IA
+## 2. 待开发入口、Shell 与目标 IA
 
-- 入口：Settings > Maintenance > Startup and diagnostics。
+- 当前版本不展示 Settings > Maintenance > Startup and diagnostics 导航项。
+- 待开发完成后，目标入口仍为 Settings > Maintenance > Startup and diagnostics。
 - Shell owner：`SettingsShell`；Settings 左侧导航始终可见，主应用 Sidebar 必须 absent。
 - 默认页显示 Startup surface；Open Run Diagnostics 在同一 Settings Shell 内切换为 Diagnostics surface。
 - Close Run Diagnostics 返回 Startup surface；点击其他 Settings section 关闭 Diagnostics 并打开目标 section。
 - Open full diagnostics in app 显式离开 Settings，进入既有 Runs view；不新增 route、ViewId 或二级 Settings section。
 - Web 与 Electron Desktop 主窗口复用同一 surface；移动端不在本轮范围。
+- 回话语气和技能治理的来源、存储路径只允许出现在本页 Technical details；Personalization 不再显示这些技术字段。
 
 ## 3. 已确认的数据与业务边界
 

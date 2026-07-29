@@ -138,6 +138,49 @@ test("UI2 model list exposes one state and the exact routine action matrix", asy
     expect(box?.height).toBeGreaterThanOrEqual(32);
   }
 
+  const tableGeometry = await page.locator(".provider-table").evaluate((table) => {
+    const actionHead = table.querySelector<HTMLElement>("thead th:last-child");
+    const firstRow = table.querySelector<HTMLElement>(".provider-row");
+    const modelCell = firstRow?.firstElementChild as HTMLElement | null;
+    const actionCell = firstRow?.lastElementChild as HTMLElement | null;
+    const actionCellStyle = actionCell ? getComputedStyle(actionCell) : undefined;
+    const actionGroupsFit = Array.from(table.querySelectorAll<HTMLElement>(".provider-row")).every((routeRow) => {
+      const cell = routeRow.lastElementChild?.getBoundingClientRect();
+      const actions = routeRow.querySelector<HTMLElement>(".provider-actions")?.getBoundingClientRect();
+      return Boolean(cell && actions && actions.left >= cell.left - 0.5 && actions.right <= cell.right + 0.5);
+    });
+    return {
+      actionColumnWidth: actionCell?.getBoundingClientRect().width ?? 0,
+      actionHeadAlignment: actionHead ? getComputedStyle(actionHead).textAlign : "",
+      actionLeftBorderWidth: actionCellStyle?.borderLeftWidth ?? "",
+      modelColumnWidth: modelCell?.getBoundingClientRect().width ?? 0,
+      actionGroupsFit,
+    };
+  });
+  expect(Math.abs(tableGeometry.actionColumnWidth - 184)).toBeLessThanOrEqual(1);
+  expect(tableGeometry.actionHeadAlignment).toBe("right");
+  expect(tableGeometry.actionLeftBorderWidth).toBe("0px");
+  expect(tableGeometry.modelColumnWidth).toBeGreaterThan(tableGeometry.actionColumnWidth);
+  expect(tableGeometry.actionGroupsFit).toBe(true);
+
+  await page.setViewportSize({ width: 1280, height: 800 });
+  const compactGeometry = await page.locator(".provider-table-shell").evaluate((shell) => {
+    const actionCell = shell.querySelector<HTMLElement>(".provider-row td:last-child");
+    const actionGroupsFit = Array.from(shell.querySelectorAll<HTMLElement>(".provider-row")).every((routeRow) => {
+      const cell = routeRow.lastElementChild?.getBoundingClientRect();
+      const actions = routeRow.querySelector<HTMLElement>(".provider-actions")?.getBoundingClientRect();
+      return Boolean(cell && actions && actions.left >= cell.left - 0.5 && actions.right <= cell.right + 0.5);
+    });
+    return {
+      actionColumnWidth: actionCell?.getBoundingClientRect().width ?? 0,
+      horizontalOverflow: shell.scrollWidth - shell.clientWidth,
+      actionGroupsFit,
+    };
+  });
+  expect(Math.abs(compactGeometry.actionColumnWidth - 184)).toBeLessThanOrEqual(1);
+  expect(compactGeometry.horizontalOverflow).toBeLessThanOrEqual(1);
+  expect(compactGeometry.actionGroupsFit).toBe(true);
+
   const more = current.getByRole("button", { name: "More" });
   await more.hover();
   await expect(page.getByRole("menuitem", { name: "Clear default" })).toHaveCount(0);

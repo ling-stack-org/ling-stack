@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { mockDaemon, type MockWorkItem } from "./support/mock-daemon";
 import { createBaseState, createChatProvider, cwd } from "./support/mock-state";
+import { openWorkBoardFromInbox } from "./support/open-work-board";
 import { openChannelChatTools } from "./support/test-helpers";
 
 const evidenceDirectory = fileURLToPath(new URL("../../../docs/design/ui2.0升级/evidence/features/work-board/", import.meta.url));
@@ -415,7 +416,7 @@ test.describe("UI2 Work Board", () => {
 });
 
 async function openWorkBoard(page: Page): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Work Board" }).click();
+  await openWorkBoardFromInbox(page);
   await expect(page.locator(".work-board-page")).toBeVisible();
 }
 

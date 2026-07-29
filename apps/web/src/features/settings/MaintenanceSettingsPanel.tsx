@@ -1,4 +1,4 @@
-import type { StartupStatusResponse } from "../../types.js";
+import type { EffectiveConfigResponse, StartupStatusResponse } from "../../types.js";
 import { useI18n } from "../../i18n.js";
 import { StartupIssueList } from "./StartupIssueList.js";
 import { StartupReadinessSummary } from "./StartupReadinessSummary.js";
@@ -9,6 +9,7 @@ import {
 } from "./startup-readiness-view-models.js";
 
 export function StartupDiagnosticsSettingsPanel({
+  effectiveConfig,
   startupStatus,
   startupStatusLoading,
   startupStatusError,
@@ -16,6 +17,7 @@ export function StartupDiagnosticsSettingsPanel({
   onOpenRunDiagnostics,
 }: {
   readonly cwd: string;
+  readonly effectiveConfig?: EffectiveConfigResponse;
   readonly startupStatus: StartupStatusResponse | undefined;
   readonly startupStatusLoading: boolean;
   readonly startupStatusAction: "refresh" | undefined;
@@ -45,7 +47,7 @@ export function StartupDiagnosticsSettingsPanel({
         hasSnapshot={Boolean(startupStatus)}
         issues={issues}
       />
-      {startupStatus ? <StartupTechnicalDetails status={startupStatus} /> : null}
+      {startupStatus ? <StartupTechnicalDetails effectiveConfig={effectiveConfig} status={startupStatus} /> : null}
     </section>
   );
 }

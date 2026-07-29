@@ -15,7 +15,7 @@
 
 .ling-ui-switch::before {
   position: absolute;
-  top: 7px;
+  top: 50%;
   right: 0;
   left: 0;
   height: 18px;
@@ -23,6 +23,7 @@
   border-radius: 999px;
   background: var(--ling-bg-subtle);
   content: "";
+  transform: translateY(-50%);
   transition:
     background-color var(--ling-motion-fast) var(--ling-ease-standard),
     border-color var(--ling-motion-fast) var(--ling-ease-standard),
@@ -31,7 +32,7 @@
 
 .ling-ui-switch-thumb {
   position: absolute;
-  top: 9px;
+  top: 50%;
   left: 2px;
   display: block;
   width: 14px;
@@ -39,7 +40,7 @@
   border-radius: 50%;
   background: var(--ling-text-muted);
   box-shadow: var(--ling-shadow-low);
-  transform: translateX(0);
+  transform: translate(0, -50%);
   transition:
     background-color var(--ling-motion-fast) var(--ling-ease-standard),
     transform var(--ling-motion-fast) var(--ling-ease-standard);
@@ -52,7 +53,7 @@
 
 .ling-ui-switch[data-state="checked"] .ling-ui-switch-thumb {
   background: var(--ling-action-accent-fg);
-  transform: translateX(14px);
+  transform: translate(14px, -50%);
 }
 
 .ling-ui-switch:hover:not(:disabled)::before {

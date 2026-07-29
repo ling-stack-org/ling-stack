@@ -153,6 +153,9 @@ export function TeammatePrivateChatFeed({
             const taskCreateBusy = taskCreateBusyKeys.has(taskCreateKey);
             const taskCreateError = taskCreateErrors[message.id];
             const editing = messageController.editingMessageId === message.id;
+            const actionMessage = projection.userGuidance
+              ? { ...message, body: projection.body }
+              : message;
             const messageFileRefs = message.fileRefs ?? [];
             const messageLinkPreviews = (message.linkPreviewIds ?? [])
               .map((id) => directLinkPreviewById.get(id))
@@ -178,12 +181,12 @@ export function TeammatePrivateChatFeed({
 
             return (
               <MessageRow
-                className={`teammate-message-row ${message.authorType}${projection.blocked ? " blocked" : ""}`}
-                authorType={message.authorType}
+                className={`teammate-message-row ${projection.authorType}${projection.blocked ? " blocked" : ""}`}
+                authorType={projection.authorType}
                 tone={projection.blocked ? "chat-blocked" : undefined}
-                avatar={message.authorType === "ai-teammate"
+                avatar={projection.authorType === "ai-teammate"
                   ? <TeammateAvatarView teammate={teammate} cwd={cwd} compact />
-                  : message.authorType === "system"
+                  : projection.authorType === "system"
                     ? <AvatarInitial label="S" tone="violet" />
                     : <UserProfileAvatar profile={userProfile} fallbackLabel={localUserDisplayName} />}
                 authorName={projection.authorName}
@@ -322,7 +325,7 @@ export function TeammatePrivateChatFeed({
                         kind: "copy",
                         label: t("Copy message"),
                         icon: <Copy size={14} />,
-                        onClick: () => onCopyMessageText(message.body),
+                        onClick: () => onCopyMessageText(projection.copyBody),
                       },
                       ...(message.authorType === "local-user" && message.id === messageController.latestEditableMessageId ? [{
                         id: "edit",
@@ -339,7 +342,7 @@ export function TeammatePrivateChatFeed({
                         icon: taskCreateBusy ? <Loader2 className="spin" size={14} /> : <Plus size={14} />,
                         disabled: taskCreateBusy || taskChannelOptions.length === 0,
                         loading: taskCreateBusy,
-                        onClick: () => void onCreateTaskFromMessage(message),
+                        onClick: () => void onCreateTaskFromMessage(actionMessage),
                       },
                     ]}
                   />

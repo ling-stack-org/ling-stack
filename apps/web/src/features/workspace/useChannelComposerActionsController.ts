@@ -16,7 +16,10 @@ import {
   type ComposerInputPart,
   type PendingAttachmentItem,
 } from "../../shared/components/index.js";
-import type { ConversationGuidanceItem } from "../../shared/conversation/index.js";
+import {
+  isConversationGuidanceQueueVisible,
+  type ConversationGuidanceItem,
+} from "../../shared/conversation/index.js";
 import type {
   Channel,
   ChannelAttachment,
@@ -316,7 +319,7 @@ export function useChannelComposerActionsController({
     [activeConversationSourceRunId, runGuidanceInterventions],
   );
   const openRunGuidanceInterventions = useMemo(
-    () => visibleRunGuidanceInterventions.filter((item) => item.status === "queued" || item.status === "cancelling_source" || item.status === "starting_continuation"),
+    () => visibleRunGuidanceInterventions.filter((item) => isConversationGuidanceQueueVisible(item.status)),
     [visibleRunGuidanceInterventions],
   );
   const runGuidanceItems = useMemo<readonly ConversationGuidanceItem[]>(

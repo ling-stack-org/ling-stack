@@ -2,7 +2,10 @@
 
 ## Status
 
-Implementation plan.
+Implementation plan. Inline approval and Review Queue slices may remain active;
+user-facing Channel and Global Work Board productization is **pending development**.
+The existing Work Board prototype is retained behind contextual entry points, with its
+left sidebar entry hidden as of 2026-07-28.
 
 This document turns the boundary and detailed design docs into small implementation
 slices. It should be used to create PRs or issues. It deliberately keeps Codex-style

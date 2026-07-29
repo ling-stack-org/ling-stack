@@ -35,6 +35,7 @@ export interface SettingsSectionDefinition {
   readonly label: string;
   readonly pageTitle?: string;
   readonly description?: string;
+  readonly pending?: boolean;
   readonly icon: LucideIcon;
 }
 
@@ -78,7 +79,7 @@ export const settingsSectionGroups: readonly SettingsSectionGroupDefinition[] = 
     heading: "Maintenance",
     items: [
       { id: "archived-items", label: "Archived items", icon: Archive },
-      { id: "startup-diagnostics", label: "Startup and diagnostics", icon: Database },
+      { id: "startup-diagnostics", label: "Startup and diagnostics", pending: true, icon: Database },
     ],
   },
 ];

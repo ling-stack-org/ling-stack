@@ -62,6 +62,7 @@ export type {
   ConversationHomeSendInput,
 } from "./normal-conversation-types.js";
 export function ConversationHome({
+  userProfile,
   conversationTitle = "",
   initialDraft = "",
   initialMessages = [],
@@ -84,8 +85,11 @@ export function ConversationHome({
   sending = false,
   activeRun,
   stopping = false,
+  fullAccessConfirmed = false,
   onOpenRun,
   onConfirmFullAccess,
+  onConfirmFullAccessSelection,
+  onFullAccessConversationBound,
   onRefreshConversation,
   onStopConversation,
   onSendConversation,
@@ -124,6 +128,7 @@ export function ConversationHome({
   const editSaving = editSaveOperation.busy;
   const replacementRetryingMessageId = replacementRetryOperation.activeValue;
   const composerInputRef = useRef<TokenizedComposerInputHandle | null>(null);
+  const permissionSelectionBoundThreadRef = useRef("");
   const sendBusy = sending || localSending;
   const composerBusy = sendBusy || Boolean(activeRun);
   const attachmentController = useNormalConversationAttachmentController({
@@ -395,6 +400,10 @@ export function ConversationHome({
   }, [conversationIdentityController.ownerKey, initialProviderPresetId, initialThinkingLevel]);
 
   useEffect(() => {
+    if (permissionSelectionBoundThreadRef.current === conversationIdentityController.identity) {
+      return;
+    }
+    permissionSelectionBoundThreadRef.current = "";
     setSelectedPermissionPreset(permissionPresetForWorkspaceAccessMode(resolveWorkspaceAccessMode(
       initialWorkspaceAccessMode,
       initialPermissionMode,
@@ -465,7 +474,9 @@ export function ConversationHome({
     const readyAttachmentIdsSnapshot = readyAttachmentIds;
     const commitGuard = conversationIdentityController.createCommitGuard();
     let sendBound = false;
-    const onThreadBound = (_threadId: string): void => {
+    const onThreadBound = (threadId: string): void => {
+      permissionSelectionBoundThreadRef.current = threadId;
+      onFullAccessConversationBound?.(threadId);
       if (!sendBound) {
         sendBound = true;
         attachmentController.markSendBound(pendingAttachmentsSnapshot);
@@ -643,6 +654,7 @@ export function ConversationHome({
       slashActiveIndex={slashActiveIndex}
       pendingAttachments={pendingAttachments}
       permissionPreset={selectedPermissionPreset}
+      fullAccessConfirmed={fullAccessConfirmed}
       modelOptions={modelOptions}
       selectedProviderPresetId={selectedProviderPresetId}
       defaultProviderPresetId={defaultProviderPresetId}
@@ -664,7 +676,12 @@ export function ConversationHome({
       onCommitSlashCommand={commitSlashCommand}
       onAttachFiles={attachmentController.attachFiles}
       onRemoveAttachment={attachmentController.removeAttachment}
-      onPermissionPresetChange={setSelectedPermissionPreset}
+      onPermissionPresetChange={(preset) => {
+        if (preset === "full_access") {
+          onConfirmFullAccessSelection?.();
+        }
+        setSelectedPermissionPreset(preset);
+      }}
       onModelChange={selectModel}
       onThinkingLevelChange={selectThinkingLevel}
       onSubmit={submitDraft}
@@ -713,6 +730,7 @@ export function ConversationHome({
           },
         }}
         feedProps={{
+          userProfile,
           messages,
           visibleMessages,
           runById,

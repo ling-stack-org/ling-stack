@@ -338,6 +338,10 @@
   text-align: left;
 }
 
+.app-shell .channel-left-drawer .primary-nav .nav-item[hidden] {
+  display: none;
+}
+
 .channel-left-drawer .nav-item:hover,
 .channel-left-drawer .nav-item.active {
   background: var(--surface-selected);

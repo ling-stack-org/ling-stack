@@ -216,16 +216,25 @@
 }
 
 .teammate-model-pill {
-  grid-column: 1 / -1;
+  grid-column: 1;
+  grid-row: 1;
   color: var(--ling-text-default);
 }
 
 .teammate-channel-pill {
   grid-column: 1;
+  grid-row: 2;
 }
 
 .teammate-updated-time {
   grid-column: 2;
+  grid-row: 1 / 3;
+  align-self: center;
+}
+
+.teammate-management-row > .ling-ui-data-row-status {
+  display: flex;
+  align-items: center;
 }
 
 .teammate-row-actions {

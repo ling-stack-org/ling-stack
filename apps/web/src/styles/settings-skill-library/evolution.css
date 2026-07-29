@@ -55,11 +55,6 @@
   scrollbar-gutter: stable;
 }
 
-.settings-skill-review-empty {
-  min-height: 136px;
-  align-content: center;
-}
-
 .settings-skill-candidate-card {
   display: grid;
   min-width: 0;

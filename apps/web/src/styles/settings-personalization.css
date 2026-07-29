@@ -62,42 +62,13 @@
 }
 
 .settings-personalization-tone-row {
-  display: grid;
-  grid-template-columns: minmax(220px, 1fr) auto;
+  display: flex;
   align-items: center;
-  gap: var(--ling-space-7);
   min-width: 0;
-}
-
-.settings-personalization-tone-meta {
-  display: grid;
-  gap: var(--ling-space-2);
-  min-width: 0;
-}
-
-.settings-personalization-tone-meta > span {
-  width: fit-content;
-  max-width: 100%;
-  overflow: hidden;
-  color: var(--ling-text-soft);
-  font-size: var(--ling-font-xs);
-  font-weight: 680;
-  line-height: var(--ling-line-xs);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.settings-personalization-tone-meta p {
-  max-width: 620px;
-  margin: 0;
-  color: var(--ling-text-muted);
-  font-size: var(--ling-font-xs);
-  line-height: var(--ling-line-xs);
-  overflow-wrap: anywhere;
 }
 
 .settings-personalization-tone-control {
-  justify-self: end;
+  max-width: 360px;
 }
 
 .settings-skill-governance {
@@ -121,114 +92,6 @@
   max-width: 720px;
 }
 
-.settings-personalization-governance-inspector {
-  min-width: 0;
-}
-
-.settings-personalization-governance-mode-guide,
-.settings-personalization-governance-recording-guide {
-  display: grid;
-  gap: var(--ling-space-4);
-  min-width: 0;
-}
-
-.settings-personalization-governance-mode-guide > div {
-  display: grid;
-  min-width: 0;
-  border-top: 1px solid var(--ling-border-default);
-}
-
-.settings-personalization-governance-mode-guide span {
-  display: grid;
-  grid-template-columns: minmax(92px, 0.32fr) minmax(0, 1fr);
-  align-items: start;
-  gap: var(--ling-space-5);
-  min-width: 0;
-  padding: var(--ling-space-4) 0;
-  border-bottom: 1px solid var(--ling-border-default);
-}
-
-.settings-personalization-governance-mode-guide small,
-.settings-personalization-governance-fixed small,
-.settings-personalization-governance-storage small {
-  color: var(--ling-text-muted);
-  font-size: var(--ling-font-xs);
-  line-height: var(--ling-line-xs);
-}
-
-.settings-personalization-governance-mode-guide small {
-  font-weight: 700;
-}
-
-.settings-personalization-governance-mode-guide em {
-  min-width: 0;
-  color: var(--ling-text-muted);
-  font-size: var(--ling-font-xs);
-  font-style: normal;
-  line-height: var(--ling-line-xs);
-  overflow-wrap: anywhere;
-}
-
-.settings-personalization-governance-mode-guide span.active small,
-.settings-personalization-governance-mode-guide span.active em {
-  color: var(--ling-text-strong);
-}
-
-.settings-personalization-governance-recording-guide {
-  margin-top: var(--ling-space-6);
-}
-
-.settings-personalization-governance-recording-guide > strong {
-  color: var(--ling-text-strong);
-  font-size: var(--ling-font-sm);
-  line-height: var(--ling-line-sm);
-}
-
-.settings-personalization-governance-recording-guide ol {
-  display: grid;
-  gap: var(--ling-space-3);
-  margin: 0;
-  padding-left: 18px;
-  color: var(--ling-text-muted);
-  font-size: var(--ling-font-xs);
-  line-height: var(--ling-line-xs);
-}
-
-.settings-personalization-governance-fixed,
-.settings-personalization-governance-storage {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--ling-space-4);
-  min-width: 0;
-  margin-top: var(--ling-space-6);
-}
-
-.settings-personalization-governance-storage {
-  grid-template-columns: minmax(120px, 0.35fr) minmax(0, 1fr);
-}
-
-.settings-personalization-governance-fixed span,
-.settings-personalization-governance-storage span {
-  display: grid;
-  gap: var(--ling-space-1);
-  min-width: 0;
-  padding: var(--ling-space-4);
-  border: 1px solid var(--ling-border-default);
-  border-radius: var(--ling-radius-md);
-  background: var(--ling-bg-subtle);
-}
-
-.settings-personalization-governance-fixed strong,
-.settings-personalization-governance-storage strong {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--ling-text-strong);
-  font-size: var(--ling-font-sm);
-  line-height: var(--ling-line-sm);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .settings-skill-governance-actions {
   display: flex;
   min-width: 0;
@@ -237,20 +100,17 @@
 
 @media (max-width: 1080px) {
   .settings-personalization-tone-row {
-    grid-template-columns: minmax(0, 1fr);
-    gap: var(--ling-space-4);
+    display: block;
   }
 
   .settings-personalization-tone-control {
     width: 100%;
-    justify-self: stretch;
+    max-width: none;
   }
 }
 
 @media (max-width: 900px) {
-  .settings-skill-governance-grid,
-  .settings-personalization-governance-fixed,
-  .settings-personalization-governance-storage {
+  .settings-skill-governance-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 }

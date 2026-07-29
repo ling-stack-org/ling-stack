@@ -45,18 +45,42 @@
 }
 
 .normal-conversation-feed .normal-conversation-message-row:not(.local-user) {
-  grid-template-columns: minmax(0, min(720px, 78%));
+  grid-template-columns: var(--conversation-message-avatar-size) minmax(0, min(720px, 78%));
 }
 
 .normal-conversation-feed .normal-conversation-message-row.local-user {
-  grid-template-columns: minmax(0, min(640px, 78%));
+  grid-template-columns: minmax(0, min(640px, 78%)) var(--conversation-message-avatar-size);
   justify-content: end;
 }
 
 .normal-conversation-message-row > .message-content {
-  grid-column: 1;
   width: fit-content;
   max-width: 100%;
+}
+
+.normal-conversation-message-row:not(.local-user) > .message-content {
+  grid-column: 2;
+}
+
+.normal-conversation-message-row.local-user > .message-content {
+  grid-column: 1;
+}
+
+.normal-conversation-message-row > :is(.user-profile-avatar, .avatar-initial, .normal-conversation-agent-avatar) {
+  width: var(--conversation-message-avatar-size);
+  height: var(--conversation-message-avatar-size);
+  min-width: var(--conversation-message-avatar-size);
+  margin-top: var(--ling-space-4);
+}
+
+.normal-conversation-agent-avatar {
+  box-sizing: border-box;
+  display: block;
+  padding: 2px;
+  border: 1px solid var(--ling-border-default);
+  border-radius: 50%;
+  background: var(--ling-bg-elevated);
+  object-fit: contain;
 }
 
 .normal-conversation-message-row > .message-row-own-actions {

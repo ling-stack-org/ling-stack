@@ -459,6 +459,7 @@ export function WorkspaceClientView({
   approvalPolicy,
   permissionMode,
   permissionPreset,
+  fullAccessConfirmed,
   activeTaskRunAction,
   runningWorkflowStepId,
   orchestratingWorkflowId,
@@ -622,6 +623,7 @@ export function WorkspaceClientView({
   readonly approvalPolicy: ApprovalPolicy | undefined;
   readonly permissionMode: SessionPermissionMode;
   readonly permissionPreset?: PermissionPreset;
+  readonly fullAccessConfirmed: boolean;
   readonly activeTaskRunAction: TaskRunActionState | undefined;
   readonly runningWorkflowStepId: string;
   readonly orchestratingWorkflowId: string;
@@ -3366,6 +3368,7 @@ export function WorkspaceClientView({
       pendingMessageAssetsVisible={pendingMessageAssetsVisible}
       permissionLocked={channelComposerPermissionLocked}
       permissionPreset={channelComposerPermissionPreset}
+      fullAccessConfirmed={fullAccessConfirmed}
       planModeActive={channelPlanModeActive}
       planModeBusy={channelPlanModeBusy}
       planModeChipVisible={channelPlanModeChipVisible}

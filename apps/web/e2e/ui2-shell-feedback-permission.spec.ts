@@ -26,9 +26,9 @@ test("offline feedback preserves the active view and scopes reconnect loading", 
   await expect(feedback).toBeVisible();
   await shell.evaluate((element) => element.setAttribute("data-ui2-feedback-marker", "preserved"));
 
-  await navigation.getByRole("button", { name: "Work Board" }).click();
-  const workBoard = page.locator(".work-board-page");
-  await expect(workBoard).toBeVisible();
+  await navigation.getByRole("button", { name: "Plugin Manager" }).click();
+  const pluginManager = page.locator(".plugin-manager-page");
+  await expect(pluginManager).toBeVisible();
   await expect(feedback).toContainText("Some information may be out of date");
   await expect(connectionStatus).toHaveCSS("z-index", "59");
   await captureEvidence(page, "1440x960-ling-light-offline-feedback.png");
@@ -37,10 +37,10 @@ test("offline feedback preserves the active view and scopes reconnect loading", 
   await reconnect.click();
   await expect(reconnect).toHaveAttribute("aria-busy", "true");
   await expect(reconnect).toBeDisabled();
-  await expect(workBoard).toBeVisible();
+  await expect(pluginManager).toBeVisible();
   await expect(shell).toHaveAttribute("data-ui2-feedback-marker", "preserved");
   await expect(feedback).toHaveCount(0);
-  await expect(workBoard).toBeVisible();
+  await expect(pluginManager).toBeVisible();
   await expectNoPageOverflow(page);
   expect(runtimeErrors).toEqual([]);
 });

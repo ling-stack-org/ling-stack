@@ -18,8 +18,11 @@ import { isHistoricalProviderPreflightMessage } from "./teammate-workspace-utils
 
 export interface TeammatePrivateMessageProjection {
   readonly authorName: string;
+  readonly authorType: TeammateDirectMessage["authorType"];
   readonly blocked: boolean;
   readonly body: string;
+  readonly copyBody: string;
+  readonly userGuidance: boolean;
   readonly pendingAiReply: boolean;
   readonly recoveredHistoricalProviderFailure: boolean;
 }
@@ -47,9 +50,11 @@ export function projectTeammatePrivateMessage({
     message.errorMessage.trim() === message.body.trim() &&
     (message.status === "blocked" || message.status === "failed"),
   );
-  const authorName = message.authorType === "ai-teammate"
+  const guidanceBody = projectUserGuidanceBody(message);
+  const authorType = guidanceBody === undefined ? message.authorType : "local-user";
+  const authorName = authorType === "ai-teammate"
     ? teammateDisplayName
-    : message.authorType === "system"
+    : authorType === "system"
       ? t("System")
       : localUserDisplayName;
   const body = hasStructuredTerminalReport || errorOwnsBody
@@ -60,15 +65,39 @@ export function projectTeammatePrivateMessage({
         ? t("Reply stopped")
         : recoveredHistoricalProviderFailure
           ? t("Historical model check failed. The model is available now; resend or continue the chat.")
-          : message.body;
+          : guidanceBody ?? message.body;
 
   return {
     authorName,
+    authorType,
     blocked,
     body,
+    copyBody: guidanceBody ?? message.body,
+    userGuidance: guidanceBody !== undefined,
     pendingAiReply,
     recoveredHistoricalProviderFailure,
   };
+}
+
+const directGuidancePrefixes = [
+  "排队引导：",
+  "已停止上一条回复，并按新引导继续：",
+] as const;
+
+function projectUserGuidanceBody(message: TeammateDirectMessage): string | undefined {
+  if (message.authorType !== "system") {
+    return undefined;
+  }
+  const source = message.body.trim();
+  const prefix = directGuidancePrefixes.find((candidate) => source.startsWith(candidate));
+  if (!prefix) {
+    return undefined;
+  }
+  const detailLineCount = Number(message.attachmentIds.length > 0)
+    + Number(message.linkPreviewIds.length > 0)
+    + Number(message.fileRefs.length > 0);
+  const lines = source.slice(prefix.length).trimStart().split("\n");
+  return lines.slice(0, detailLineCount > 0 ? -detailLineCount : undefined).join("\n").trim();
 }
 
 export function buildTeammatePrivateWorkCellMap(input: {

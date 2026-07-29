@@ -5,6 +5,8 @@ import { resolveAppPresentationSurface } from "../src/app/AppPresentationSurface
 import type { ViewId } from "../src/app/view-types.js";
 import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState, createMockTeammate, type MockState } from "./support/mock-state";
+import { openWorkBoardFromInbox } from "./support/open-work-board";
+import { openPendingInbox } from "./support/pending-primary-navigation";
 
 const evidenceDirectory = fileURLToPath(new URL(
   "../../../docs/design/ui2.0升级/evidence/shell/app-shell-state/",
@@ -23,7 +25,7 @@ test("AppShell returns from Settings to the exact view and selected channel with
   await shell.evaluate((element) => element.setAttribute("data-ui2-shell-state-marker", "preserved"));
   await expect(root).toHaveAttribute("data-ui-surface", "home");
 
-  await navigation.getByRole("button", { name: "Work Board" }).click();
+  await openWorkBoardFromInbox(page);
   await expect(page.locator(".work-board-page")).toBeVisible();
   await expect(root).toHaveAttribute("data-ui-surface", "management");
   await navigation.getByRole("button", { name: "Settings" }).click();
@@ -32,7 +34,8 @@ test("AppShell returns from Settings to the exact view and selected channel with
   await expect(root).toHaveAttribute("data-ui-surface", "settings");
   await page.getByRole("button", { name: "Back to app" }).click();
   await expect(page.locator(".work-board-page")).toBeVisible();
-  await expect(navigation.getByRole("button", { name: "Work Board" })).toHaveAttribute("aria-current", "page");
+  await expect(navigation.getByRole("button", { name: "Work Board" })).toHaveCount(0);
+  await expect(navigation.locator(".primary-nav [aria-current='page']")).toHaveCount(0);
 
   await navigation.getByRole("button", { name: "Engineering" }).click();
   await expect(page.getByLabel("Channel composer")).toBeVisible();
@@ -74,7 +77,7 @@ test("AppShell keeps one fixed theme while route presentation surfaces change", 
   await navigation.getByRole("button", { name: "Media Production" }).click();
   await expect(page.locator(".media-production-page")).toBeVisible();
   await expect(root).toHaveAttribute("data-ui-surface", "media-canvas");
-  await navigation.getByRole("button", { name: "Inbox" }).click();
+  await openPendingInbox(page);
   await expect(page.locator(".approvals-panel")).toBeVisible();
   await expect(root).toHaveAttribute("data-ui-surface", "approvals");
   await expect(root).toHaveAttribute("data-ui-theme", "ling-dark");

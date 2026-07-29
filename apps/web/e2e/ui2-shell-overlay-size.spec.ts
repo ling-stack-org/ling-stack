@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { resolveAppViewportSize } from "../src/app/use-app-viewport-state.js";
 import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState, cwd } from "./support/mock-state";
+import { openWorkBoardFromInbox } from "./support/open-work-board";
 
 test("viewport resolver keeps Electron minimum, compact, standard, and large sizes deterministic", () => {
   expect(resolveAppViewportSize(980, 680)).toBe("minimum");
@@ -78,7 +79,7 @@ test("AppShell keeps Popover and active view while viewport size changes", async
   const shell = page.locator("main.app-shell");
   const overlayRoot = page.locator("#ling-ui-overlay-root");
   await shell.evaluate((element) => element.setAttribute("data-ui2-resize-marker", "preserved"));
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Work Board" }).click();
+  await openWorkBoardFromInbox(page);
   const board = page.locator(".work-board-page");
   const filterTrigger = board.getByRole("button", { name: "Filter work" });
   await filterTrigger.click();

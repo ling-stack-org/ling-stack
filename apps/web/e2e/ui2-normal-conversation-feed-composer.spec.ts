@@ -9,6 +9,7 @@ const evidenceDirectory = fileURLToPath(new URL(
   "../../../docs/design/ui2.0升级/evidence/conversations/normal-conversation-feed-composer/",
   import.meta.url,
 ));
+const configuredAvatarDataUrl = `data:image/svg+xml;base64,${Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><circle cx="32" cy="32" r="32" fill="#0e7a63"/></svg>').toString("base64")}`;
 
 for (const fixture of [
   { theme: "light" as const, width: 1440, height: 960 },
@@ -18,6 +19,10 @@ for (const fixture of [
     await prepareSurface(page, fixture.theme, fixture.width, fixture.height);
     const runtimeErrors = collectRuntimeErrors(page);
     const state = createBaseState({ approvalStatus: "expired" });
+    state.userProfile = {
+      ...state.userProfile,
+      avatarDataUrl: fixture.theme === "light" ? configuredAvatarDataUrl : undefined,
+    };
     installProviders(state);
     const threadId = installFeedStateFixture(state);
     await mockDaemon(page, state);
@@ -62,6 +67,21 @@ for (const fixture of [
     await expect(ownMessage).toHaveClass(/message-bubble-own/);
     await expect(peerMessage).toHaveClass(/message-bubble-chat/);
     await expect(peerMessage).toHaveClass(/message-bubble-peer/);
+    const userAvatar = fixture.theme === "light"
+      ? ownMessage.locator(":scope > .user-profile-avatar")
+      : ownMessage.locator(":scope > .avatar-initial");
+    if (fixture.theme === "light") {
+      await expect(userAvatar).toHaveAttribute("src", configuredAvatarDataUrl);
+    } else {
+      await expect(userAvatar).toBeVisible();
+      await expect(ownMessage.locator(":scope > .user-profile-avatar")).toHaveCount(0);
+    }
+    const agentAvatar = peerMessage.locator(":scope > .normal-conversation-agent-avatar");
+    await expect(agentAvatar).toHaveAttribute("src", "/icons/ling-stack-gpt-image-2-icon.png");
+    await expectSquareAvatar(userAvatar);
+    await expectSquareAvatar(agentAvatar);
+    await expectAvatarAlignedWithFirstContentLine(ownMessage, userAvatar, "own");
+    await expectAvatarAlignedWithFirstContentLine(peerMessage, agentAvatar, "peer");
     await expectMessageFrameContained(ownMessage);
     await expectMessageFrameContained(peerMessage);
 
@@ -390,6 +410,28 @@ async function expectInputContained(input: Locator, field: Locator): Promise<voi
   expect(inputBox!.x + inputBox!.width).toBeLessThanOrEqual(fieldBox!.x + fieldBox!.width + 1);
   expect(inputBox!.y).toBeGreaterThanOrEqual(fieldBox!.y - 1);
   expect(inputBox!.y + inputBox!.height).toBeLessThanOrEqual(fieldBox!.y + fieldBox!.height + 1);
+}
+
+async function expectSquareAvatar(avatar: Locator): Promise<void> {
+  await expect.poll(async () => {
+    const box = await avatar.boundingBox();
+    return box ? { width: box.width, height: box.height } : null;
+  }).toEqual({ width: 30, height: 30 });
+}
+
+async function expectAvatarAlignedWithFirstContentLine(
+  row: Locator,
+  avatar: Locator,
+  side: "own" | "peer",
+): Promise<void> {
+  const anchor = side === "own"
+    ? row.locator(":scope > .message-content > .message-body-shell")
+    : row.locator(":scope > .message-content > header");
+  await expect(anchor).toBeVisible();
+  const [avatarBox, anchorBox] = await Promise.all([avatar.boundingBox(), anchor.boundingBox()]);
+  expect(avatarBox).not.toBeNull();
+  expect(anchorBox).not.toBeNull();
+  expect(Math.abs((avatarBox?.y ?? 0) - (anchorBox?.y ?? 0))).toBeLessThanOrEqual(1);
 }
 
 async function prepareSurface(page: Page, theme: "light" | "dark", width: number, height: number): Promise<void> {

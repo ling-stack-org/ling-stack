@@ -7,7 +7,7 @@ Sidebar 是对象导航，不是状态说明墙。它需要快速扫描频道、
 
 ## Function Points
 
-- `SIDEBAR-PRIMARY-001`：Inbox、Media、Work Board、Plugins、Automations。
+- `SIDEBAR-PRIMARY-001`：当前发布 Media、Plugins、Automations；Inbox 与 Work Board 待开发并隐藏。
 - `SIDEBAR-CHANNEL-001`：频道列表、头像、未读和运行状态。
 - `SIDEBAR-TEAMMATE-001`：AI 队友列表、隐藏和选择。
 - `SIDEBAR-RECENT-001`：最近对话、长标题和空态。
@@ -45,7 +45,9 @@ StatusIndicator；领域头像保留 feature helper，普通业务数据列表�
   `.sidebar-hover-tooltip`；
 - Tooltip 作为非交互说明，离开 trigger 后可快速切换，不保留 hoverable content 宽限区；
 - 折叠开关、创建分支、提交分支和归档 icon action 已接共享 `IconButton`，保留 32px hit area；
-- Inbox、Media、Work Board、Plugin、Automation 使用共享 `Button + Tooltip`，展开态保留文字，
+- Media、Plugin、Automation 使用共享 `Button + Tooltip`，展开态保留文字；Inbox 与 Work Board
+  保留隐藏的待开发节点，不参与可见导航、键盘焦点或辅助技术树；
+  既有历史验证覆盖 Inbox、Media、Work Board、Plugin、Automation，
   48px rail 只显示 leading icon，并用 `aria-current=page` 表达当前项；
 - Recent 分组错误使用 persistent `InlineFeedback`，不再维护硬编码 danger 颜色；
 - Portal 后 E2E 使用 role/name，不再假设 `menuitem` 是 navigation DOM 子节点；
@@ -88,6 +90,9 @@ P4.5 evidence：focused controls `2/2`、Sidebar 四专项 `8/8`、App target `3
 Channel/Teammate menu target `4/4`，并保存 `1440x960` Light disabled danger Menu 与
 `1280x800` Dark compact Tooltip 截图，见
 [Sidebar controls evidence](../evidence/shell/sidebar-controls/metadata.md)。
+
+2026-07-29 产品决策：Inbox 独立产品入口改为待开发。以下 `SIDEBAR-PRIMARY-001`
+验证结论只适用于当前三个可见入口和隐藏边界，不表示 Inbox 已发布。
 
 `SIDEBAR-PRIMARY-001`、`SIDEBAR-CHANNEL-001`、`SIDEBAR-TEAMMATE-001`、
 `SIDEBAR-RECENT-001`、`SIDEBAR-SECTION-001`、`SIDEBAR-MENU-001` 和

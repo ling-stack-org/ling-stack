@@ -8,6 +8,7 @@ import {
 import {
   openChannelChatTools,
 } from "./support/test-helpers";
+import { openPendingInbox } from "./support/pending-primary-navigation";
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
@@ -21,7 +22,7 @@ test("external action approval card requires explicit execute after approval", a
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Inbox" }).click();
+  await openPendingInbox(page);
   const externalApproval = page.locator(".approval-list .approval-row").filter({ hasText: "Approve GitHub comment" });
   await expect(externalApproval.getByLabel("External action audit")).toContainText("github_comment");
   await expect(externalApproval.getByLabel("External action audit")).toContainText("tianxiaochannel-oss88/ling-stack");
@@ -60,7 +61,7 @@ test("external action approval card shows strict GitHub PR review audit", async 
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Inbox" }).click();
+  await openPendingInbox(page);
   const externalApproval = page.locator(".approval-list .approval-row").filter({ hasText: "Approve GitHub PR review" });
   await expect(externalApproval.getByLabel("External action audit")).toContainText("github_pr_review");
   await expect(externalApproval.getByLabel("External action audit")).toContainText("REQUEST_CHANGES");
@@ -84,7 +85,7 @@ test("external action approval card can cancel without executing", async ({ page
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Inbox" }).click();
+  await openPendingInbox(page);
   const externalApproval = page.locator(".approval-list .approval-row").filter({ hasText: "Approve GitHub comment" });
   await expect(externalApproval.getByRole("button", { name: "Execute action" })).toHaveCount(0);
 
@@ -107,7 +108,7 @@ test("external action approval card shows stale target audit as read-only", asyn
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Inbox" }).click();
+  await openPendingInbox(page);
   const externalApproval = page.locator(".approval-list .approval-row").filter({ hasText: "Approve GitHub comment" });
   await expect(externalApproval.getByLabel("External action audit")).toContainText("stale_target");
   await expect(externalApproval.getByLabel("External action audit")).toContainText("PR head SHA changed before execution.");

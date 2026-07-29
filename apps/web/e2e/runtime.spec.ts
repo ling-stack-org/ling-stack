@@ -13,6 +13,7 @@ import {
   openChannelContextPanel,
   readHorizontalOverflow,
 } from "./support/test-helpers";
+import { openPendingStartupDiagnostics } from "./support/pending-settings-sections";
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
@@ -22,7 +23,7 @@ test.beforeEach(async ({ page }) => {
 
 async function openSettingsRunDiagnostics(page: Page): Promise<void> {
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Startup and diagnostics/ }).click();
+  await openPendingStartupDiagnostics(page);
   await page.getByRole("button", { name: "Open Run Diagnostics" }).click();
   await expect(page.getByLabel("Settings sections")).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
@@ -219,9 +220,7 @@ test("settings run diagnostics stays inside the Settings shell", async ({ page }
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Startup and diagnostics/ }).click();
-  const startupPanel = page.locator("[data-ui2-settings-startup-diagnostics]");
-  await expect(startupPanel).toBeVisible();
+  const startupPanel = await openPendingStartupDiagnostics(page);
   await expect(startupPanel.locator(".settings-startup-primary-state").getByText("Ready", { exact: true })).toBeVisible();
   await expect(startupPanel.locator(".startup-readiness-card, .meta-row")).toHaveCount(0);
   await expect(startupPanel.getByText("No startup diagnostics")).toHaveCount(0);

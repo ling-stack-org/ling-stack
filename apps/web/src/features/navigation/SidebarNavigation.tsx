@@ -24,8 +24,7 @@ import {
   type SidebarTarget,
   type ViewId,
 } from "../../app/view-types.js";
-import { effectiveApprovalStatus } from "../../lib/approvals.js";
-import type { AiTeammate, ApprovalRequest, Channel, ChannelBranch } from "../../types.js";
+import type { AiTeammate, Channel, ChannelBranch } from "../../types.js";
 import { TeammateAvatarView } from "../teammates/TeammateAvatarView.js";
 import { SidebarPrimaryNavigation } from "./SidebarPrimaryNavigation.js";
 import { channelAvatarMeta } from "./sidebar-channel-avatar.js";
@@ -58,7 +57,6 @@ export function SidebarNavigation({
   channelBranches = [],
   selectedChannelBranchId = "",
   teammates,
-  approvals,
   cwd,
   channelsLoading = false,
   teammatesLoading = false,
@@ -94,7 +92,6 @@ export function SidebarNavigation({
   readonly channelBranches?: readonly ChannelBranch[];
   readonly selectedChannelBranchId?: string;
   readonly teammates: readonly AiTeammate[];
-  readonly approvals: readonly ApprovalRequest[];
   readonly cwd: string;
   readonly channelsLoading?: boolean;
   readonly teammatesLoading?: boolean;
@@ -144,10 +141,6 @@ export function SidebarNavigation({
     teammates: false,
     recent: false,
   });
-  const pendingApprovalCount = approvals.filter((approval) => effectiveApprovalStatus(approval) === "pending").length;
-  const inboxTooltip = pendingApprovalCount > 0
-    ? `${t("Inbox")} · ${t("{count} pending approvals", { count: pendingApprovalCount })}`
-    : t("Inbox");
   const visibleTeammates = teammates.filter((teammate) => !teammate.hidden && teammate.status !== "disabled");
   const collapsedTooltipsEnabled = channelDrawer && !channelDrawerOpen;
   const branchesByChannel = new Map<string, readonly ChannelBranch[]>();
@@ -218,7 +211,6 @@ export function SidebarNavigation({
 
         <SidebarPrimaryNavigation
           activeSidebarTarget={activeSidebarTarget}
-          inboxTooltip={inboxTooltip}
           onOpenView={onOpenView}
         />
       </div>

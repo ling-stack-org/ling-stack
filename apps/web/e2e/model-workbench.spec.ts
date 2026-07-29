@@ -738,24 +738,7 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await expect(readyLocalRelayRow).toContainText("Current default");
   await expect(readyLocalRelayRow.getByRole("button", { name: "Clear default" })).toHaveCount(0);
   const readyLocalRelayActionCell = readyLocalRelayRow.locator("td").nth(3);
-  const actionDivider = await readyLocalRelayActionCell.evaluate((element) => {
-    const probe = document.createElement("span");
-    probe.style.color = "var(--ling-border-default)";
-    element.appendChild(probe);
-    const tokenColor = getComputedStyle(probe).color;
-    probe.remove();
-    const style = getComputedStyle(element);
-    return {
-      color: style.borderLeftColor,
-      tokenColor,
-      width: style.borderLeftWidth,
-    };
-  });
-  expect(actionDivider).toEqual({
-    color: actionDivider.tokenColor,
-    tokenColor: actionDivider.tokenColor,
-    width: "1px",
-  });
+  await expect(readyLocalRelayActionCell).toHaveCSS("border-left-width", "0px");
   await expect(readyLocalRelayActionCell).toHaveCSS("box-shadow", "none");
   await clickProviderRowMenuItem(readyLocalRelayRow, "Clear default");
   await expect(readyLocalRelayRow.getByRole("button", { name: "Set default" })).toBeVisible();

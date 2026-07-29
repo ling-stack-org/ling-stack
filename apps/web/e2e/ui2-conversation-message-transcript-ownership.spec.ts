@@ -4,6 +4,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { installNormalWorkCellFixture } from "./support/conversation-work-cell-fixture";
 import { seedImportedQuietOcean } from "./support/media-jobs-fixtures";
 import { expectMessageFrameContained } from "./support/message-frame-assertions";
+import { expectMessageInteractionPolicy } from "./support/message-interaction-policy";
 import { mockDaemon } from "./support/mock-daemon";
 import {
   createBaseState,
@@ -47,10 +48,17 @@ test("1440x960 Ling Light owns a complete Channel turn, transcript disclosure, t
     hasText: "把频道里的多 agent 操作记录按我们讨论的最终效果接进去",
   });
   const assistantRow = turn.locator("[data-conversation-message-row].conversation-turn-assistant-row");
+  const blockedRow = feed.locator(".channel-message-row.blocked").filter({
+    hasText: "Blocked channel response remains visible",
+  });
   await expect(sourceRow).toHaveCount(1);
   await expect(assistantRow).toHaveCount(1);
+  await expect(blockedRow).toHaveCount(1);
   await expectMessageFrameContained(sourceRow);
   await expectMessageFrameContained(assistantRow);
+  await expectMessageInteractionPolicy(sourceRow, "user", "Copy message");
+  await expectMessageInteractionPolicy(assistantRow, "assistant", "Copy message");
+  await expectMessageInteractionPolicy(blockedRow, "state", "Copy message");
 
   const operationBlock = assistantRow.locator(".conversation-turn-operation");
   const terminalBlock = assistantRow.locator(".terminal-report-block");
@@ -115,6 +123,8 @@ test("1280x800 Ling Dark keeps Normal message states independent from Channel ow
   await expect(pending.locator(".message-pending-spinner")).toBeVisible();
   await expect(failed).toHaveClass(/failed/u);
   await expect(failed.locator('.normal-conversation-message-error[data-tone="danger"]')).toBeVisible();
+  await expectMessageInteractionPolicy(own, "user", "Copy message");
+  await expectMessageInteractionPolicy(ready, "assistant", "Copy message");
   const workCells = feed.locator(".conversation-work-cell");
   expect(await workCells.count()).toBeGreaterThanOrEqual(1);
   await expect(workCells.first()).toBeVisible();
@@ -168,6 +178,9 @@ test("1440x960 imported Quiet Ocean keeps Teammate identity, attachments, Memory
   await expect(blocked).toHaveClass(/message-bubble-chat-blocked/u);
   await expect(blocked.getByRole("alert")).toContainText("Private ownership request is blocked");
   await expect(peer.getByRole("link", { name: "message-ownership-notes.md" })).toBeVisible();
+  await expectMessageInteractionPolicy(own, "user", "Copy message");
+  await expectMessageInteractionPolicy(peer, "assistant", "Copy message");
+  await expectMessageInteractionPolicy(blocked, "state", "Copy message");
 
   const memoryToggle = peer.locator(".conversation-evidence-toggle");
   await memoryToggle.click();
@@ -189,23 +202,42 @@ test("1440x960 imported Quiet Ocean keeps Teammate identity, attachments, Memory
 
 function installChannelTranscriptFixture(state: MockState): void {
   const createdAt = "2026-07-24T03:00:00.000Z";
-  state.channelMessages = [{
-    id: "message_ui2_transcript_contract",
-    workspaceId: "workspace_default",
-    channelId: "channel_engineering",
-    kind: "message",
-    intent: "discuss",
-    authorType: "local-user",
-    authorId: "local-user",
-    body: "Clarify the message and transcript ownership boundary.",
-    mentions: [],
-    attachmentIds: [],
-    linkPreviewIds: [],
-    fileRefs: [],
-    status: "ready",
-    createdAt,
-    updatedAt: createdAt,
-  }];
+  state.channelMessages = [
+    {
+      id: "message_ui2_transcript_contract",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "local-user",
+      body: "Clarify the message and transcript ownership boundary.",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt,
+      updatedAt: createdAt,
+    },
+    {
+      id: "message_ui2_blocked_visual_contract",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: "ling_agent",
+      body: "Blocked channel response remains visible",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "blocked",
+      createdAt: "2026-07-24T03:01:00.000Z",
+      updatedAt: "2026-07-24T03:01:00.000Z",
+    },
+  ];
   state.channelExecutionProposals = [{
     id: "proposal_ui2_transcript_contract",
     workspaceId: "workspace_default",

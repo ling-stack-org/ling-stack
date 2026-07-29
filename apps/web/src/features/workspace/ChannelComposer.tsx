@@ -96,6 +96,7 @@ interface ChannelComposerProps {
   readonly pendingMessageAssetsVisible: boolean;
   readonly permissionLocked: boolean;
   readonly permissionPreset: PermissionPreset;
+  readonly fullAccessConfirmed: boolean;
   readonly planModeActive: boolean;
   readonly planModeBusy: boolean;
   readonly planModeChipVisible: boolean;
@@ -215,6 +216,7 @@ export function ChannelComposer({
   pendingMessageAssetsVisible,
   permissionLocked,
   permissionPreset,
+  fullAccessConfirmed,
   planModeActive,
   planModeBusy,
   planModeChipVisible,
@@ -583,7 +585,7 @@ export function ChannelComposer({
           </button>
           <ComposerPermissionMenu
             preset={permissionPreset}
-            options={conversationPermissionPresetMenuOptions(t)}
+            options={conversationPermissionPresetMenuOptions(t, fullAccessConfirmed)}
             disabled={permissionLocked}
             disabledReason={t("Permission is locked while this channel run or message is active.")}
             onPresetChange={onPermissionPresetChange}

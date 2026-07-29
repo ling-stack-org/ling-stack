@@ -53,6 +53,21 @@ test("channel runtime status and guidance use shared controls with a keyboard-sa
   expect(runtimeErrors).toEqual([]);
 });
 
+test("channel removes accepted guidance from the queue while its continuation runs", async ({ page }) => {
+  await prepareSurface(page, "light", 1440, 960);
+  const runtimeErrors = collectRuntimeErrors(page);
+  const state = channelRuntimeFeedbackState();
+  state.runInterventions[0]!.status = "starting_continuation";
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  const guidance = page.getByLabel("Run guidance");
+  await expect(guidance).toBeVisible();
+  await expect(guidance.locator(".conversation-guidance-row").filter({ hasText: "KeepThisLongQueuedGuidanceContained" })).toHaveCount(0);
+  expect(runtimeErrors).toEqual([]);
+});
+
 test("teammate runtime status and queued guidance stay contained in dark reduced motion", async ({ page }) => {
   await prepareSurface(page, "dark", 1280, 800);
   await page.emulateMedia({ reducedMotion: "reduce" });

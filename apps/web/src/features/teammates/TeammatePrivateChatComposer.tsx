@@ -9,6 +9,7 @@ import {
   ComposerPermissionMenu,
   ConversationComposerShell,
   ConversationGuidanceStrip,
+  isConversationGuidanceQueueVisible,
   TokenizedComposerInput,
 } from "../../shared/conversation/index.js";
 import { IconButton } from "../../shared/ui/index.js";
@@ -32,6 +33,7 @@ export type TeammatePrivateChatComposerProps = Pick<TeammatePrivateChatSurfacePr
   | "directGuidanceSubmitting"
   | "directLinkPreviewById"
   | "directReplyActive"
+  | "fullAccessConfirmed"
   | "hasDirectRuntimeActivity"
   | "messageDraft"
   | "onCancelDirectGuidance"
@@ -71,6 +73,7 @@ export function TeammatePrivateChatComposer({
   directGuidanceSubmitting,
   directLinkPreviewById,
   directReplyActive,
+  fullAccessConfirmed,
   hasDirectRuntimeActivity,
   messageDraft,
   onCancelDirectGuidance,
@@ -98,18 +101,21 @@ export function TeammatePrivateChatComposer({
 }: TeammatePrivateChatComposerProps): JSX.Element {
   const { t } = useI18n();
   const permissionLocked = privateComposerSending || hasDirectRuntimeActivity || Boolean(directGuidanceSubmitting);
+  const visibleDirectInterventions = openDirectInterventions.filter((intervention) =>
+    isConversationGuidanceQueueVisible(intervention.status)
+  );
   const SendIcon = directReplyActive && !privateComposerHasGuidancePayload ? Square : Send;
   const sendLabel = privateComposerSending ? privateComposerSendingLabel : privateComposerSendLabel;
 
   return (
     <div className="teammate-private-composer-owner" data-ui2-teammate-private-composer="true">
-      {hasDirectRuntimeActivity ? (
+      {directReplyActive || visibleDirectInterventions.length > 0 ? (
         <ConversationGuidanceStrip
           title={directReplyActive ? t("Replying") : t("Private guidance")}
           description={directReplyActive ? t("Stop the current reply or queue new guidance.") : t("Guidance is queued.")}
           submitting={directGuidanceSubmitting}
           stopDisabled={!directReplyActive}
-          items={openDirectInterventions.map((intervention) => {
+          items={visibleDirectInterventions.map((intervention) => {
             const isQueued = intervention.status === "queued";
             const rowBusy = directGuidanceCancelingId === intervention.id || directGuidancePromotingId === intervention.id;
             return {
@@ -263,7 +269,7 @@ export function TeammatePrivateChatComposer({
             </label>
             <ComposerPermissionMenu
               preset={controller.selectedPermissionPreset}
-              options={conversationPermissionPresetMenuOptions(t)}
+              options={conversationPermissionPresetMenuOptions(t, fullAccessConfirmed)}
               disabled={permissionLocked}
               disabledReason={t("Permission is locked while the private reply is running.")}
               onPresetChange={controller.handlePermissionPresetChange}

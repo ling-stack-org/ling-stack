@@ -15,6 +15,7 @@ import {
   installMediaProductionScenarioRoutes,
   openMediaProduction,
 } from "./support/media-production-fixtures";
+import { openWorkBoardFromInbox } from "./support/open-work-board";
 import { openEngineeringChannel } from "./support/test-helpers";
 
 test.describe.configure({ timeout: 90_000 });
@@ -237,7 +238,7 @@ async function openPluginManager(page: Page): Promise<Locator> {
 }
 
 async function openWorkBoard(page: Page): Promise<Locator> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Work Board" }).click();
+  await openWorkBoardFromInbox(page);
   const workBoard = page.locator(".work-board-page");
   await expect(workBoard).toBeVisible();
   return workBoard;

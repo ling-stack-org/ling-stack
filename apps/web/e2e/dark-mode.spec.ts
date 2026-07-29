@@ -1,5 +1,7 @@
 import { expect, type Page, test } from "@playwright/test";
 import { mockDaemon } from "./support/mock-daemon";
+import { openWorkBoardFromInbox } from "./support/open-work-board";
+import { openPendingStartupDiagnostics } from "./support/pending-settings-sections";
 import {
   createBaseState,
   createChatProvider,
@@ -48,7 +50,7 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
   ]);
 
   const navigation = page.getByLabel("Ling Stack navigation");
-  await expect(navigation.getByRole("button", { name: "收件箱" })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "收件箱" })).toHaveCount(0);
 
   await navigation.getByRole("button", { name: "媒体生产" }).click();
   await expect(page.locator(".media-production-page")).toBeVisible();
@@ -172,7 +174,6 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
   await page.getByLabel("设置分组").getByRole("button", { name: /个性化|Personalization/ }).click();
   await expect(page.locator(".personalization-settings-panel")).toBeVisible();
   await expect(page.locator(".skill-governance-settings-panel")).toBeVisible();
-  await page.getByText("高级治理", { exact: true }).click();
   await assertDarkPage(page, "personalization settings", [
     ".settings-layout",
     ".personalization-settings-panel",
@@ -180,8 +181,7 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
     ".skill-governance-settings-panel",
     ".settings-skill-governance",
     ".settings-skill-governance-field",
-    ".settings-personalization-governance-inspector",
-    ".settings-personalization-governance-fixed span",
+    ".settings-skill-governance-safety-note",
   ]);
 
   await page.getByLabel("设置分组").getByRole("button", { name: /技能库|Skill library/ }).click();
@@ -206,7 +206,7 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
   await expect(page.getByRole("tab", { name: /官方技能更新|Official skill updates/ })).toHaveCount(0);
 
   await page.getByRole("button", { name: /返回应用|Back to app/ }).click();
-  await navigation.getByRole("button", { name: /工作看板|Work Board/ }).click();
+  await openWorkBoardFromInbox(page);
   await expect(page.locator(".work-board-page")).toBeVisible();
   await assertDarkPage(page, "work board", [
     ".work-board-page",
@@ -217,7 +217,7 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
   ]);
 
   await navigation.getByRole("button", { name: /设置|Settings/ }).click();
-  await page.getByLabel("设置分组").getByRole("button", { name: /启动与诊断|Startup and diagnostics/ }).click();
+  await openPendingStartupDiagnostics(page);
   await page.getByRole("button", { name: /打开运行诊断|Open run diagnostics/ }).first().click();
   await expect(page.getByLabel("设置分组")).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);

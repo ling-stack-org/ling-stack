@@ -2,13 +2,17 @@
 
 ## 1. Status And Authority
 
-Status：`verified (Web) / packaged Desktop pending`。本合同覆盖主应用 Inbox/Approvals、run-scoped repair view、
+Status：保留实现 `verified (Web)`；独立 Inbox 产品入口自 2026-07-29 起为 `pending development` 并隐藏。
+本合同覆盖主应用 Inbox/Approvals、run-scoped repair view、
 Approval Card、权限变化、external action audit 和会话内 Inline Approval Strip。
 
 2026-07-23 Web closeout 已完成：focused `9/9`、legacy Approvals `2/2`、精确 external-work selected
 `5/5`，并以 `workers=1` 和三个独立 Vite 端口串行验证。8 张原始 viewport PNG 已逐张核对尺寸、
 SHA-256、主题、overlay、滚动边界和视觉叠层，账本见
 [Approvals evidence metadata](../evidence/features/approvals/metadata.md)。
+
+上述证据是历史实现证据，不表示 Inbox 当前已作为主导航产品发布。重新开放前需要补齐独立信息架构、
+入口优先级、空态与跨上下文审批体验验收；当前审批能力继续由运行和会话上下文承接。
 
 本状态不代表 imported Theme Pack 或 packaged Electron macOS/Windows 已验收。U13 已完成
 `components.css` / `strict-console.css` / `workspace.css` 的旧 Approvals selector 清理；Inbox owner 留在

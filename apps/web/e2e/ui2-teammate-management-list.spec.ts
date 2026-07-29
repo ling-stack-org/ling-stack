@@ -33,15 +33,24 @@ test("teammate management searches and filters one-status rows", async ({ page }
   await expect(readyRow).toContainText("Engineering");
   const readyRowColumns = await readyRow.evaluate((element) => {
     const summary = element.querySelector<HTMLElement>(".teammate-management-row-summary")?.getBoundingClientRect();
+    const updated = element.querySelector<HTMLElement>(".teammate-updated-time")?.getBoundingClientRect();
     const status = element.querySelector<HTMLElement>(".teammate-row-status")?.getBoundingClientRect();
     const actions = element.querySelector<HTMLElement>(".teammate-row-actions")?.getBoundingClientRect();
     return {
       summaryBeforeStatus: Boolean(summary && status && summary.right <= status.left + 1),
       statusBeforeActions: Boolean(status && actions && status.right <= actions.left + 1),
+      updatedStatusCenterDelta: updated && status
+        ? Math.abs(updated.top + updated.height / 2 - (status.top + status.height / 2))
+        : Number.POSITIVE_INFINITY,
+      updatedActionsCenterDelta: updated && actions
+        ? Math.abs(updated.top + updated.height / 2 - (actions.top + actions.height / 2))
+        : Number.POSITIVE_INFINITY,
     };
   });
   expect(readyRowColumns.summaryBeforeStatus).toBe(true);
   expect(readyRowColumns.statusBeforeActions).toBe(true);
+  expect(readyRowColumns.updatedStatusCenterDelta).toBeLessThanOrEqual(1);
+  expect(readyRowColumns.updatedActionsCenterDelta).toBeLessThanOrEqual(1);
 
   await panel.getByLabel("Search teammates").fill("gpt-5.5");
   await expect(list.locator(".teammate-draft-row")).toHaveCount(3);

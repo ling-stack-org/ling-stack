@@ -8,6 +8,8 @@ Theme Packs、P2B.1 Presentation Profile/Theme Compiler foundations、Shell/Side
 现有可达范围均已验证。最终 Web Playwright `962/962`、feedback guard `0/0/0`、全部 non-Desktop
 package tests 和 static/build gates 通过；P9-EF 新增 changed-state 以 `8/8` 专用证据集关闭。
 Channel、Normal Conversation 和 AI 队友私聊的 UI 2.0 会话切片已全部关闭。
+`P7B.4 Startup + Run Diagnostics` 当前产品状态已于 2026-07-28 调整为待开发，Settings 导航入口隐藏；
+既有组件和验证证据仅作为保留实现的历史记录，后续重新开放前必须重新完成产品与视觉验收。
 `First Run 新入口` 是未决产品能力，不阻塞现有可达 Web UI 2.0 closeout；
 `P7A.1 Settings Shell foundation`、`P7A.2 Settings Profile`、
 `P7A.3 Default Authorization + Personalization`、P7A.4 当前可达的 Interface Preferences 与

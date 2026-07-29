@@ -3,6 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState } from "./support/mock-state";
+import { openPendingStartupDiagnostics } from "./support/pending-settings-sections";
 
 const evidenceDirectory = fileURLToPath(new URL(
   "../../../docs/design/ui2.0升级/evidence/settings/settings-shell/",
@@ -21,7 +22,6 @@ const settingsSectionLabels = [
   "MCP tool servers",
   "Skill library",
   "Archived items",
-  "Startup and diagnostics",
 ] as const;
 
 test("Settings shell owns navigation, embedded tools, and exact return at 1440x960 light", async ({ page }) => {
@@ -51,6 +51,8 @@ test("Settings shell owns navigation, embedded tools, and exact return at 1440x9
   }
   await expect(settingsNavigation.locator('[aria-current="page"]')).toHaveCount(1);
   await expect(settingsNavigation.getByRole("button", { name: "User profile", exact: true })).toHaveAttribute("aria-current", "page");
+  await expect(settingsNavigation.getByRole("button", { name: "Startup and diagnostics", exact: true })).toHaveCount(0);
+  await expect(settingsNavigation.locator('[data-settings-section="startup-diagnostics"]')).toBeHidden();
   await expect(settingsNavigation.getByRole("button", { name: "Back to app" })).toHaveClass(/ling-ui-button/u);
   await expectSettingsScrollOwnership(settingsNavigation, content);
   await captureEvidence(page, "1440x960-ling-light-settings-profile-shell.png");
@@ -90,7 +92,7 @@ test("Settings shell contains error, diagnostics, and desktop resize states at 1
   const shell = page.locator("[data-ui2-settings-shell]");
   const settingsNavigation = page.getByLabel("Settings sections");
   const content = page.locator("[data-settings-content-state]");
-  await settingsNavigation.getByRole("button", { name: "Startup and diagnostics", exact: true }).click();
+  await openPendingStartupDiagnostics(page);
   await expect(shell).toHaveAttribute("data-settings-active-section", "startup-diagnostics");
   const startupFailure = content.getByRole("alert");
   await expect(startupFailure).toContainText("Startup status is unavailable");
@@ -103,7 +105,7 @@ test("Settings shell contains error, diagnostics, and desktop resize states at 1
   await page.getByRole("button", { name: "Open Run Diagnostics" }).click();
   await expect(page.getByRole("region", { name: "Run Diagnostics" })).toBeVisible();
   await expect(content).toHaveAttribute("data-settings-content-state", "run-diagnostics");
-  await expect(settingsNavigation.getByRole("button", { name: "Startup and diagnostics", exact: true })).toHaveAttribute("aria-current", "page");
+  await expect(settingsNavigation.locator('[data-settings-section="startup-diagnostics"]')).toHaveAttribute("aria-current", "page");
 
   await page.setViewportSize({ width: 980, height: 680 });
   await expect(shell).toBeVisible();

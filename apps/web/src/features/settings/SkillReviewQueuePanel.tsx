@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { CheckCircle2, Search } from "lucide-react";
 import {
   Badge,
-  EmptyState,
   InlineFeedback,
   Input,
   Select,
@@ -142,14 +141,7 @@ export function SkillReviewQueuePanel({
           <div className="settings-skill-review-loading" aria-label={t("Loading AI evolution...")}>
             {[0, 1, 2].map((index) => <Skeleton key={index} shape="block" width="100%" height={82} />)}
           </div>
-        ) : projection.visibleItems.length === 0 ? (
-          <EmptyState
-            className="settings-skill-review-empty"
-            compact
-            icon={<CheckCircle2 size={18} />}
-            title={searchQuery.trim() ? t("No evolution items in this filter") : activeFilter === "all" ? t("No evolution items need attention") : t("No evolution items in this filter")}
-          />
-        ) : (
+        ) : projection.visibleItems.length > 0 ? (
           <div className="settings-skill-candidate-list settings-skill-review-queue-list">
             {projection.visibleItems.map((item) => {
               if (item.kind === "skill_candidates") {
@@ -161,7 +153,7 @@ export function SkillReviewQueuePanel({
               return <PlaybookCandidateCard key={item.id} candidate={item.candidate} channelName={projection.channelNames.get(item.candidate.channelId) ?? item.candidate.channelId} readOnly={view !== "pending"} busyAction={busyAction} onReview={onReviewPlaybookCandidate} t={t} />;
             })}
           </div>
-        )}
+        ) : null}
       </section>
     </>
   );

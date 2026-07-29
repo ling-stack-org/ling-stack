@@ -65,11 +65,20 @@ test("channel permission selection is immediate and run activation confirms exac
     mode: "full_access",
     reason: "user_confirmed_full_access",
   });
+  await expect(permissionTrigger).toContainText("Full access · Confirmed for this conversation");
+  await runButton.click();
+  await expect(fullAccessDialog(page)).toHaveCount(0);
+  await expect.poll(() => state.runs.length).toBe(2);
+  expect(readPermissionConfirmation(state.runs[1]?.requestSnapshot)).toMatchObject({
+    confirmed: true,
+    mode: "full_access",
+    reason: "user_confirmed_full_access",
+  });
   await expectNoDocumentOverflow(page);
   expect(runtimeErrors).toEqual([]);
 });
 
-test("normal conversation cancel preserves draft and confirm sends one evidenced run", async ({ page }) => {
+test("normal conversation treats an explicit full access selection as confirmation", async ({ page }) => {
   await prepareSurface(page, "dark", 1280, 800, true);
   const runtimeErrors = collectRuntimeErrors(page);
   const state = createFullAccessState();
@@ -81,28 +90,99 @@ test("normal conversation cancel preserves draft and confirm sends one evidenced
   const permissionTrigger = home.getByRole("button", { name: /Selected permission preset/ });
   await selectFullAccess(page, permissionTrigger);
   await expect(fullAccessDialog(page)).toHaveCount(0);
+  await expect(permissionTrigger).toContainText("Full access · Confirmed for this conversation");
+  await captureP6FeedbackEvidence(
+    page,
+    "shell/full-access-confirmation-parity",
+    "1280x800-ling-dark-normal-explicit-selection-confirmed.png",
+  );
 
   const input = home.getByRole("textbox", { name: "Conversation message" });
   const sendButton = home.getByRole("button", { name: "Send" });
   await input.fill("Inspect one trusted workspace");
   await sendButton.click();
-  await expect(fullAccessDialog(page)).toHaveCount(1);
-  await page.keyboard.press("Escape");
   await expect(fullAccessDialog(page)).toHaveCount(0);
-  await expect(sendButton).toBeFocused();
-  await expect(input).toHaveAttribute("data-value", "Inspect one trusted workspace");
-  expect(state.runs).toHaveLength(0);
-  await captureP6FeedbackEvidence(
-    page,
-    "shell/full-access-confirmation-parity",
-    "1280x800-ling-dark-normal-cancel-preserves-draft.png",
-  );
+  await expect.poll(() => state.runs.length).toBe(1);
+  expect(readPermissionConfirmation(state.runs[0]?.requestSnapshot)).toMatchObject({
+    confirmed: true,
+    mode: "full_access",
+    reason: "user_confirmed_full_access",
+  });
 
-  await sendButton.click();
-  const dialog = fullAccessDialog(page);
-  await expect(dialog).toHaveCount(1);
-  await dialog.getByRole("button", { name: "Start with full access" }).click();
-  await expect(dialog).toHaveCount(0);
+  const activeConversation = page.getByLabel("Conversation page");
+  const activePermissionTrigger = activeConversation.getByRole("button", { name: /Selected permission preset/ });
+  await expect(activePermissionTrigger).toContainText("Full access · Confirmed for this conversation");
+  await activeConversation.getByRole("textbox", { name: "Conversation message" }).fill("Continue in the same trusted conversation");
+  await activeConversation.getByRole("button", { name: "Send" }).click();
+  await expect(fullAccessDialog(page)).toHaveCount(0);
+  await expect.poll(() => state.runs.length).toBe(2);
+  expect(readPermissionConfirmation(state.runs[1]?.requestSnapshot)).toMatchObject({
+    confirmed: true,
+    mode: "full_access",
+    reason: "user_confirmed_full_access",
+  });
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "New conversation" }).click();
+  const nextHome = page.getByLabel("Conversation home");
+  const nextPermissionTrigger = nextHome.getByRole("button", { name: /Selected permission preset/ });
+  await selectFullAccess(page, nextPermissionTrigger);
+  await expect(nextPermissionTrigger).toContainText("Full access · Confirmed for this conversation");
+  await nextHome.getByRole("textbox", { name: "Conversation message" }).fill("Start another trusted conversation");
+  await nextHome.getByRole("button", { name: "Send" }).click();
+  await expect(fullAccessDialog(page)).toHaveCount(0);
+  await expect.poll(() => state.runs.length).toBe(3);
+  expect(readPermissionConfirmation(state.runs[2]?.requestSnapshot)).toMatchObject({
+    confirmed: true,
+    mode: "full_access",
+    reason: "user_confirmed_full_access",
+  });
+
+  await page.reload();
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: /Open recent conversation/ }).first().click();
+  const restoredConversation = page.getByLabel("Conversation page");
+  const restoredPermissionTrigger = restoredConversation.getByRole("button", { name: /Selected permission preset/ });
+  await selectFullAccess(page, restoredPermissionTrigger);
+  await expect(restoredPermissionTrigger).toContainText("Full access · Confirmed for this conversation");
+  await restoredConversation.getByRole("textbox", { name: "Conversation message" }).fill("Continue after restarting the app");
+  await restoredConversation.getByRole("button", { name: "Send" }).click();
+  await expect(fullAccessDialog(page)).toHaveCount(0);
+  await expect.poll(() => state.runs.length).toBe(4);
+  expect(readPermissionConfirmation(state.runs[3]?.requestSnapshot)).toMatchObject({
+    confirmed: true,
+    mode: "full_access",
+    reason: "user_confirmed_full_access",
+  });
+  await expectNoDocumentOverflow(page);
+  expect(runtimeErrors).toEqual([]);
+});
+
+test("normal conversation confirms inherited full access on the first run", async ({ page }) => {
+  await prepareSurface(page, "dark", 1280, 800, true);
+  const runtimeErrors = collectRuntimeErrors(page);
+  const state = createFullAccessState();
+  state.workspaceSettings = {
+    ...state.workspaceSettings,
+    defaultAuthorizationMode: "always",
+    defaultWorkspaceAccessMode: "full_access",
+    defaultPermissionMode: "full_access",
+    defaultPermissionPreset: "full_access",
+  };
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "New conversation" }).click();
+
+  const home = page.getByLabel("Conversation home");
+  const permissionTrigger = home.getByRole("button", { name: /Selected permission preset/ });
+  await expect(permissionTrigger).toContainText("Full access");
+  await expect(permissionTrigger).not.toContainText("Confirmed for this conversation");
+
+  await home.getByRole("textbox", { name: "Conversation message" }).fill("Inspect inherited trusted files");
+  await home.getByRole("button", { name: "Send" }).click();
+  await expect(fullAccessDialog(page)).toHaveCount(1);
+  expect(state.runs).toHaveLength(0);
+
+  await fullAccessDialog(page).getByRole("button", { name: "Start with full access" }).click();
+  await expect(fullAccessDialog(page)).toHaveCount(0);
   await expect.poll(() => state.runs.length).toBe(1);
   expect(readPermissionConfirmation(state.runs[0]?.requestSnapshot)).toMatchObject({
     confirmed: true,
@@ -113,26 +193,38 @@ test("normal conversation cancel preserves draft and confirm sends one evidenced
   expect(runtimeErrors).toEqual([]);
 });
 
-test("teammate private chat cancel is mutation-free and confirm sends one evidenced request", async ({ page }) => {
+test("teammate private chat treats an explicit full access selection as confirmation", async ({ page }) => {
   await prepareSurface(page, "light", 1440, 960);
   const runtimeErrors = collectRuntimeErrors(page);
   const state = createFullAccessState();
   const teammateId = "teammate_full_access";
-  state.aiTeammates = [createMockTeammate({
-    id: teammateId,
-    displayName: "Full Access Teammate",
-    providerPresetId: "provider_full_access",
-  })];
+  const secondTeammateId = "teammate_full_access_second";
+  state.aiTeammates = [
+    createMockTeammate({
+      id: teammateId,
+      displayName: "Full Access Teammate",
+      providerPresetId: "provider_full_access",
+    }),
+    createMockTeammate({
+      id: secondTeammateId,
+      displayName: "Second Full Access Teammate",
+      providerPresetId: "provider_full_access",
+    }),
+  ];
   state.teammateDirectMessages = [];
   let directSendCount = 0;
+  let secondDirectSendCount = 0;
   page.on("request", (request) => {
     if (request.method() === "POST" && request.url().includes(`/teammates/${teammateId}/direct-messages/stream`)) {
       directSendCount += 1;
     }
+    if (request.method() === "POST" && request.url().includes(`/teammates/${secondTeammateId}/direct-messages/stream`)) {
+      secondDirectSendCount += 1;
+    }
   });
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Full Access Teammate" }).click();
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Full Access Teammate", exact: true }).click();
   await expect(page.getByText("Loading teammate workspace...")).toHaveCount(0, { timeout: 15_000 });
 
   const chat = page.getByLabel("Private chat", { exact: true });
@@ -140,31 +232,18 @@ test("teammate private chat cancel is mutation-free and confirm sends one eviden
   const permissionTrigger = composer.getByRole("button", { name: /Selected permission preset/ });
   await selectFullAccess(page, permissionTrigger);
   await expect(fullAccessDialog(page)).toHaveCount(0);
+  await expect(permissionTrigger).toContainText("Full access · Confirmed for this conversation");
+  await captureP6FeedbackEvidence(
+    page,
+    "shell/full-access-confirmation-parity",
+    "1440x960-ling-light-teammate-explicit-selection-confirmed.png",
+  );
 
   const input = composer.getByRole("textbox");
   const sendButton = composer.getByRole("button", { name: "Send" });
   await input.fill("Inspect private trusted files");
   await sendButton.click();
-  await expect(fullAccessDialog(page)).toHaveCount(1);
-  await page.keyboard.press("Escape");
   await expect(fullAccessDialog(page)).toHaveCount(0);
-  await expect(sendButton).toBeFocused();
-  await expect(input).toHaveAttribute("data-value", "Inspect private trusted files");
-  expect(directSendCount).toBe(0);
-  expect(state.lastTeammateDirectMessageRequest).toBeUndefined();
-  expect(state.teammateDirectMessages).toHaveLength(0);
-
-  await sendButton.click();
-  const dialog = fullAccessDialog(page);
-  await expect(dialog).toHaveCount(1);
-  await expect(dialog.locator('button[data-variant="secondary"]')).toBeFocused();
-  await captureP6FeedbackEvidence(
-    page,
-    "shell/full-access-confirmation-parity",
-    "1440x960-ling-light-teammate-confirm-draft.png",
-  );
-  await dialog.getByRole("button", { name: "Start with full access" }).click();
-  await expect(dialog).toHaveCount(0);
   await expect.poll(() => directSendCount).toBe(1);
   await expect.poll(() => state.teammateDirectMessages.length).toBe(2);
   expect(state.lastTeammateDirectMessageRequest?.permissionPreset).toBe("full_access");
@@ -174,6 +253,104 @@ test("teammate private chat cancel is mutation-free and confirm sends one eviden
     mode: "full_access",
     reason: "user_confirmed_full_access",
   });
+
+  await expect(permissionTrigger).toContainText("Full access · Confirmed for this conversation");
+  await input.fill("Continue with the same teammate");
+  await sendButton.click();
+  await expect(fullAccessDialog(page)).toHaveCount(0);
+  await expect.poll(() => directSendCount).toBe(2);
+  expect(readPermissionConfirmation(state.lastTeammateDirectMessageRequest)).toMatchObject({
+    confirmed: true,
+    mode: "full_access",
+    reason: "user_confirmed_full_access",
+  });
+
+  await page.reload();
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Full Access Teammate", exact: true }).click();
+  await expect(page.getByText("Loading teammate workspace...")).toHaveCount(0, { timeout: 15_000 });
+  const restoredComposer = page.getByLabel("Private chat composer", { exact: true });
+  const restoredPermissionTrigger = restoredComposer.getByRole("button", { name: /Selected permission preset/ });
+  await selectFullAccess(page, restoredPermissionTrigger);
+  await expect(restoredPermissionTrigger).toContainText("Full access · Confirmed for this conversation");
+  await restoredComposer.getByRole("textbox").fill("Continue after restarting the app");
+  await restoredComposer.getByRole("button", { name: "Send" }).click();
+  await expect(fullAccessDialog(page)).toHaveCount(0);
+  await expect.poll(() => directSendCount).toBe(3);
+  expect(readPermissionConfirmation(state.lastTeammateDirectMessageRequest)).toMatchObject({
+    confirmed: true,
+    mode: "full_access",
+    reason: "user_confirmed_full_access",
+  });
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Second Full Access Teammate" }).click();
+  await expect(page.getByText("Loading teammate workspace...")).toHaveCount(0, { timeout: 15_000 });
+  const nextComposer = page.getByLabel("Private chat composer", { exact: true });
+  const nextPermissionTrigger = nextComposer.getByRole("button", { name: /Selected permission preset/ });
+  await selectFullAccess(page, nextPermissionTrigger);
+  await expect(nextPermissionTrigger).toContainText("Full access · Confirmed for this conversation");
+  await nextComposer.getByRole("textbox").fill("Start with the second teammate");
+  await nextComposer.getByRole("button", { name: "Send" }).click();
+  await expect(fullAccessDialog(page)).toHaveCount(0);
+  await expect.poll(() => secondDirectSendCount).toBe(1);
+  expect(readPermissionConfirmation(state.lastTeammateDirectMessageRequest)).toMatchObject({
+    confirmed: true,
+    mode: "full_access",
+    reason: "user_confirmed_full_access",
+  });
+  await expectNoDocumentOverflow(page);
+  expect(runtimeErrors).toEqual([]);
+});
+
+test("teammate private chat confirms inherited full access on the first run", async ({ page }) => {
+  await prepareSurface(page, "light", 1440, 960);
+  const runtimeErrors = collectRuntimeErrors(page);
+  const state = createFullAccessState();
+  const teammateId = "teammate_inherited_full_access";
+  state.aiTeammates = [createMockTeammate({
+    id: teammateId,
+    displayName: "Inherited Full Access Teammate",
+    providerPresetId: "provider_full_access",
+  })];
+  state.teammateDirectMessages = [];
+  state.workspaceSettings = {
+    ...state.workspaceSettings,
+    defaultAuthorizationMode: "always",
+    defaultWorkspaceAccessMode: "full_access",
+    defaultPermissionMode: "full_access",
+    defaultPermissionPreset: "full_access",
+  };
+  let directSendCount = 0;
+  page.on("request", (request) => {
+    if (request.method() === "POST" && request.url().includes(`/teammates/${teammateId}/direct-messages/stream`)) {
+      directSendCount += 1;
+    }
+  });
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Inherited Full Access Teammate", exact: true }).click();
+  await expect(page.getByText("Loading teammate workspace...")).toHaveCount(0, { timeout: 15_000 });
+
+  const composer = page.getByLabel("Private chat composer", { exact: true });
+  const permissionTrigger = composer.getByRole("button", { name: /Selected permission preset/ });
+  await expect(permissionTrigger).toContainText("Full access");
+  await expect(permissionTrigger).not.toContainText("Confirmed for this conversation");
+
+  await composer.getByRole("textbox").fill("Inspect inherited trusted files");
+  await composer.getByRole("button", { name: "Send" }).click();
+  await expect(fullAccessDialog(page)).toHaveCount(1);
+  expect(directSendCount).toBe(0);
+  expect(state.lastTeammateDirectMessageRequest).toBeUndefined();
+
+  await fullAccessDialog(page).getByRole("button", { name: "Start with full access" }).click();
+  await expect(fullAccessDialog(page)).toHaveCount(0);
+  await expect.poll(() => directSendCount).toBe(1);
+  await expect.poll(() => state.teammateDirectMessages.length).toBe(2);
+  expect(readPermissionConfirmation(state.lastTeammateDirectMessageRequest)).toMatchObject({
+    confirmed: true,
+    mode: "full_access",
+    reason: "user_confirmed_full_access",
+  });
+  await expect(permissionTrigger).toContainText("Full access · Confirmed for this conversation");
   await expectNoDocumentOverflow(page);
   expect(runtimeErrors).toEqual([]);
 });

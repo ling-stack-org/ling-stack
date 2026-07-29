@@ -11,6 +11,7 @@ import {
   installApprovalsFaults,
 } from "./support/approvals-fixture";
 import { createBaseState, type MockState } from "./support/mock-state";
+import { openPendingInbox } from "./support/pending-primary-navigation";
 
 const evidenceDirectory = fileURLToPath(new URL(
   "../../../docs/design/ui2.0升级/evidence/features/approvals/",
@@ -319,7 +320,7 @@ test("Inline Strip deduplicates, sorts highest risk, folds secondary items, and 
   await expect.poll(() => state.approvals.find((item) => item.id === "inline_low")?.status).toBe("denied");
   await expect(strip).toContainText("2 pending approvals");
 
-  await page.getByLabel(/Ling Stack navigation|Ling Stack 导航/).getByRole("button", { name: "Inbox" }).click();
+  await openPendingInbox(page);
   const surface = page.locator("[data-approvals-ui2-page]");
   await expect(surface.getByText("Critical runtime permission")).toHaveCount(0);
   await expect(surface.getByText("Medium shell approval")).toHaveCount(0);
@@ -360,8 +361,7 @@ async function prepareSurface(page: Page, locale: "en-US" | "zh-CN", theme: "lig
 
 async function openInbox(page: Page): Promise<Locator> {
   await page.goto("/");
-  await page.getByLabel(/Ling Stack navigation|Ling Stack 导航/).getByRole("button", { name: /Inbox|收件箱/ }).click();
-  const surface = page.locator("[data-approvals-ui2-page]");
+  const surface = await openPendingInbox(page);
   await expect(surface).toBeVisible();
   await expect(surface.getByRole("heading", { name: /Inbox|收件箱/ })).toBeVisible();
   return surface;

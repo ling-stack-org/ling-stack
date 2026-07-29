@@ -174,7 +174,7 @@ export async function createAiTeammateDirectReply(input: {
         updateDirectWebEvidenceProgress(input.store, input.sourceMessage, pending, input.stream, progress);
       },
     });
-    const systemPrompt = buildDirectSystemPrompt(input.teammate, renderedMemory.prompt);
+    const systemPrompt = buildDirectSystemPrompt(input.teammate, renderedMemory.prompt, input.continuationReason);
     const execution = resolveTeammateDirectExecutionContext({
       store: input.store,
       teammate: input.teammate,
@@ -277,7 +277,11 @@ function directExecutionBlockedReason(
   return undefined;
 }
 
-function buildDirectSystemPrompt(teammate: AiTeammate, memoryPrompt: string | undefined): string {
+function buildDirectSystemPrompt(
+  teammate: AiTeammate,
+  memoryPrompt: string | undefined,
+  continuationReason: "queue_followup" | "interrupt_redirect" | undefined,
+): string {
   return [
     teammate.systemPrompt ?? `You are ${teammate.displayName}, an AI teammate inside Ling Stack.`,
     ...teammate.appendSystemPrompt,
@@ -287,6 +291,9 @@ function buildDirectSystemPrompt(teammate: AiTeammate, memoryPrompt: string | un
     "Do not claim to see channel history, attachments, web pages, or memory beyond the explicit Used memory and Ling web context sections unless the user pasted or attached that content in this chat.",
     "If Ling web context is included, you may use only those web_search/open_url results and must keep cited source URLs visible in the reply.",
     "If Ling web context is blocked, degraded, or has no usable source URLs, explain the limitation briefly in user-facing language and do not repeat provider, relay, or protocol diagnostics verbatim.",
+    continuationReason === "queue_followup"
+      ? "Treat the latest queued follow-up as an ordinary user message. Do not acknowledge receipt, queueing, or continuation mechanics. Respond directly to the request."
+      : undefined,
     memoryPrompt,
   ].filter((line): line is string => Boolean(line)).join("\n");
 }

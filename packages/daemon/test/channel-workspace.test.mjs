@@ -10825,7 +10825,9 @@ test("teammate direct queued guidance can promote to immediate continuation", as
     assert.equal(runner.abortCount, 1);
     await waitForCondition(() => runner.runs.length === 2, "promoted continuation to start");
     assert.equal(runner.runs[1].task.prompt.includes("Use this queued guidance immediately."), true);
-    assert.equal(runner.runs[1].task.prompt.includes("排队引导"), true);
+    assert.equal(runner.runs[1].task.prompt.includes("排队引导"), false);
+    assert.match(runner.runs[1].task.prompt, /User: Use this queued guidance immediately\./);
+    assert.match(runner.runs[1].systemPrompt, /Do not acknowledge receipt, queueing, or continuation mechanics/);
 
     const listed = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-interventions?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(listed.interventions.filter((item) => item.id === queued.intervention.id).length, 1);
@@ -10877,14 +10879,16 @@ test("teammate direct queued guidance starts automatically after source reply co
     runner.resolve("Initial private reply");
     await waitForCondition(() => runner.runs.length === 2, "queued continuation to start");
     assert.equal(runner.runs[1].task.prompt.includes("Continue from the queued guidance."), true);
-    assert.equal(runner.runs[1].task.prompt.includes("排队引导"), true);
+    assert.equal(runner.runs[1].task.prompt.includes("排队引导"), false);
+    assert.match(runner.runs[1].task.prompt, /User: Continue from the queued guidance\./);
+    assert.match(runner.runs[1].systemPrompt, /Do not acknowledge receipt, queueing, or continuation mechanics/);
     runner.resolve("Queued continuation reply");
     await streamResponse.text();
 
     const listedInterventions = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-interventions?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(listedInterventions.interventions.some((item) => item.id === queued.intervention.id), false);
     const messages = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages?cwd=${encodeURIComponent(cwd)}`);
-    assert.equal(messages.messages.some((message) => message.authorType === "system" && message.body.includes("Continue from the queued guidance.")), true);
+    assert.equal(messages.messages.some((message) => message.authorType === "local-user" && message.body === "Continue from the queued guidance."), true);
     assert.equal(messages.messages.at(-1).body, "Queued continuation reply");
   } finally {
     runner.resolve("cleanup");
@@ -10953,7 +10957,7 @@ test("teammate direct queued guidance drains multiple queued items in thread FIF
     }, "queued guidance chain to close");
     const messages = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages?cwd=${encodeURIComponent(cwd)}`);
     for (const instruction of queuedInstructions) {
-      assert.equal(messages.messages.some((message) => message.authorType === "system" && message.body.includes(instruction)), true);
+      assert.equal(messages.messages.some((message) => message.authorType === "local-user" && message.body === instruction), true);
     }
     assert.equal(messages.messages.at(-1).body, "Third queued continuation reply");
   } finally {

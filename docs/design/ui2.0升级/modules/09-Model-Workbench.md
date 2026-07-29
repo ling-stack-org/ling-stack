@@ -168,6 +168,10 @@ Page geometry:
 - Header and page feedback do not scroll. The table shell is the page's only vertical scroll owner.
 - The header toolbar stays one row at both acceptance viewports; search is the flexible track.
 - The list table is `width:100%`, fixed-layout, and does not require document/body horizontal scrolling.
+- The Actions column is fixed at `184px`, with its header and action group right-aligned. Model owns the
+  remaining width; Usage and Status retain their compact proportional tracks.
+- Check, Edit, and More keep at least a `32px` hit area. Clear default, Disable, and Delete remain in More.
+- Actions has no decorative left divider; spacing, not a heavy rule, separates it from Status.
 - The editor is one shared large Dialog, maximum `720px` wide and `calc(100vh - 32px)` high.
 - Dialog header/footer remain fixed; only Dialog body scrolls.
 

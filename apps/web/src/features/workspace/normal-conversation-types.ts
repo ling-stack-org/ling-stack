@@ -12,6 +12,7 @@ import type {
   RunSession,
   SessionPermissionMode,
   TerminalReportDto,
+  UserProfile,
   WorkspaceAccessMode,
 } from "../../types.js";
 
@@ -80,6 +81,7 @@ export interface ConversationHomeSendInput {
 }
 
 export interface ConversationHomeProps {
+  readonly userProfile?: UserProfile;
   readonly conversationTitle?: string;
   readonly initialDraft?: string;
   readonly initialMessages?: readonly ConversationHomeMessage[];
@@ -102,8 +104,11 @@ export interface ConversationHomeProps {
   readonly sending?: boolean;
   readonly activeRun?: RunSession;
   readonly stopping?: boolean;
+  readonly fullAccessConfirmed?: boolean;
   readonly onOpenRun?: (runId: string) => void;
   readonly onConfirmFullAccess?: () => Promise<PermissionConfirmation | undefined>;
+  readonly onConfirmFullAccessSelection?: () => PermissionConfirmation;
+  readonly onFullAccessConversationBound?: (threadId: string) => void;
   readonly onRefreshConversation?: () => void | Promise<void>;
   readonly onStopConversation?: () => void | Promise<void>;
   readonly onSendConversation: (input: ConversationHomeSendInput) => Promise<void>;

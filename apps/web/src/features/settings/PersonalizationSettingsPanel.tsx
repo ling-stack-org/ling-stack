@@ -1,10 +1,9 @@
-import { MessageCircle, RefreshCw } from "lucide-react";
+import { MessageCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { getEffectiveConfig } from "../../api.js";
 import { updateWorkspaceSettings } from "../../api/workspace-settings.js";
 import { useI18n, type Translate } from "../../i18n.js";
 import {
-  IconButton,
   InlineFeedback,
   SegmentedControl,
   SegmentedControlItem,
@@ -28,10 +27,10 @@ export function PersonalizationSettingsPanel({ cwd }: { readonly cwd: string }):
   const [error, setError] = useState("");
 
   useEffect(() => {
-    void refresh(false);
+    void refresh();
   }, [cwd]);
 
-  async function refresh(showMessage = true): Promise<void> {
+  async function refresh(): Promise<void> {
     const workspaceCwd = cwd.trim();
     if (!workspaceCwd) {
       setError(t("Workspace path is required."));
@@ -44,13 +43,6 @@ export function PersonalizationSettingsPanel({ cwd }: { readonly cwd: string }):
       const nextConfig = await getEffectiveConfig(workspaceCwd);
       setEffectiveConfig(nextConfig);
       setToneDraft(nextConfig.values.lingConversationTone?.value ?? defaultLingConversationTone);
-      if (showMessage) {
-        showToast({
-          message: t("Ling conversation tone refreshed"),
-          scope: "settings:personalization:tone:refresh",
-          tone: "success",
-        });
-      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -92,7 +84,6 @@ export function PersonalizationSettingsPanel({ cwd }: { readonly cwd: string }):
 
   const initialLoading = !loadAttempted || (loading && !effectiveConfig);
   const state = initialLoading ? "loading" : error ? "error" : "loaded";
-  const toneSource = effectiveConfig?.values.lingConversationTone?.source;
 
   return (
     <div
@@ -110,13 +101,6 @@ export function PersonalizationSettingsPanel({ cwd }: { readonly cwd: string }):
             <MessageCircle size={18} />
             <h2 id="personalization-settings-title">{t("Ling conversation tone")}</h2>
           </span>
-          <IconButton
-            icon={RefreshCw}
-            label={t("Refresh")}
-            loading={loading}
-            loadingLabel={t("Loading")}
-            onClick={() => void refresh(true)}
-          />
         </div>
 
         {error ? <InlineFeedback className="settings-personalization-feedback" tone="danger">{error}</InlineFeedback> : null}
@@ -127,10 +111,6 @@ export function PersonalizationSettingsPanel({ cwd }: { readonly cwd: string }):
           </div>
         ) : effectiveConfig ? (
           <div className="settings-personalization-tone-row">
-            <div className="settings-personalization-tone-meta">
-              <span>{toneSource ? configSourceLabel(toneSource, t) : t("Loading")}</span>
-              <p>{lingToneDescription(toneDraft, t)}</p>
-            </div>
             <SegmentedControl
               className="settings-personalization-tone-control"
               aria-label={t("Ling conversation tone")}
@@ -152,19 +132,6 @@ export function PersonalizationSettingsPanel({ cwd }: { readonly cwd: string }):
   );
 }
 
-function configSourceLabel(source: EffectiveConfigResponse["values"]["theme"]["source"] | undefined, t: Translate): string {
-  if (source === "workspace") {
-    return t("Workspace");
-  }
-  if (source === "user") {
-    return t("User default");
-  }
-  if (source === "built_in") {
-    return t("Built-in");
-  }
-  return t("Loading");
-}
-
 function lingToneLabel(tone: LingConversationTone, t: Translate): string {
   if (tone === "friendly") {
     return t("Friendly");
@@ -173,14 +140,4 @@ function lingToneLabel(tone: LingConversationTone, t: Translate): string {
     return t("Pragmatic");
   }
   return t("No extra tone");
-}
-
-function lingToneDescription(tone: LingConversationTone, t: Translate): string {
-  if (tone === "friendly") {
-    return t("Warm, collaborative, considerate.");
-  }
-  if (tone === "pragmatic") {
-    return t("Concise, focused, direct.");
-  }
-  return t("Do not add a default tone instruction.");
 }

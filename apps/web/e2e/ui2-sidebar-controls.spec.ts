@@ -18,14 +18,16 @@ test("Sidebar primary navigation and section menus keep one accessible interacti
   const navigation = page.getByLabel("Ling Stack navigation");
   const primary = navigation.locator(".primary-nav");
   const primaryButtons = primary.getByRole("button");
-  await expect(primaryButtons).toHaveCount(5);
+  await expect(primaryButtons).toHaveCount(3);
+  await expect(primary.getByRole("button", { name: "Inbox" })).toHaveCount(0);
   for (const button of await primaryButtons.all()) {
     await expectHitArea(button, 36);
   }
 
-  const workBoard = primary.getByRole("button", { name: "Work Board" });
-  await workBoard.click();
-  await expect(workBoard).toHaveAttribute("aria-current", "page");
+  await expect(primary.getByRole("button", { name: "Work Board" })).toHaveCount(0);
+  const pluginManager = primary.getByRole("button", { name: "Plugin Manager" });
+  await pluginManager.click();
+  await expect(pluginManager).toHaveAttribute("aria-current", "page");
   await expect(primary.locator('[aria-current="page"]')).toHaveCount(1);
 
   const channelActions = navigation.getByRole("button", { name: "Channel actions" });
@@ -64,20 +66,21 @@ test("Sidebar compact rail switches one portal tooltip without motion or overflo
   await navigationToggle.click();
   await expect.poll(async () => Math.round((await navigation.boundingBox())?.width ?? 0)).toBe(48);
 
-  const inbox = navigation.getByRole("button", { name: "Inbox" });
   const media = navigation.getByRole("button", { name: "Media Production" });
+  const plugins = navigation.getByRole("button", { name: "Plugin Manager" });
   const automations = navigation.getByRole("button", { name: "Automations" });
-  for (const button of [inbox, media, automations]) {
+  await expect(navigation.getByRole("button", { name: "Inbox" })).toHaveCount(0);
+  for (const button of [media, plugins, automations]) {
     await expectHitArea(button, 36);
     await expect(button.locator('[data-ling-button-slot="label"]')).toHaveCSS("display", "none");
   }
 
-  await inbox.hover();
-  const tooltip = page.getByRole("tooltip");
-  await expect(tooltip).toHaveText("Inbox");
-  expect(await tooltip.evaluate((element) => element.closest("aside") === null)).toBe(true);
   await media.hover();
+  const tooltip = page.getByRole("tooltip");
   await expect(tooltip).toHaveText("Media Production");
+  expect(await tooltip.evaluate((element) => element.closest("aside") === null)).toBe(true);
+  await plugins.hover();
+  await expect(tooltip).toHaveText("Plugin Manager");
   await expect(page.getByRole("tooltip")).toHaveCount(1);
   await automations.focus();
   await expect(tooltip).toHaveText("Automations");

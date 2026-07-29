@@ -1,6 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState, cwd } from "./support/mock-state";
+import { openWorkBoardFromInbox } from "./support/open-work-board";
 
 test("Settings subnavigation uses shared Tabs with stable keyboard selection", async ({ page }, testInfo) => {
   const browserErrors = captureBrowserErrors(page);
@@ -89,7 +90,7 @@ test("Work Board lightweight filters use one collision-safe Popover", async ({ p
   await mockControlPlaneReads(page);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "工作看板" }).click();
+  await openWorkBoardFromInbox(page);
   const board = page.locator(".work-board-page");
   const filterTrigger = board.getByRole("button", { name: "筛选工作" });
   await filterTrigger.click();

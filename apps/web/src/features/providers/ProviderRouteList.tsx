@@ -105,6 +105,12 @@ export function ProviderRouteList({
   return (
     <TableContainer className="provider-table-shell">
       <Table className="provider-table">
+        <colgroup>
+          <col className="provider-table-model-column" />
+          <col className="provider-table-usage-column" />
+          <col className="provider-table-status-column" />
+          <col className="provider-table-action-column" />
+        </colgroup>
         <TableHead>
           <TableRow>
             <TableHeaderCell>{t("Model")}</TableHeaderCell>
@@ -158,7 +164,7 @@ export function ProviderRouteList({
                       ) : null}
                     </span>
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="provider-table-action-cell">
                     <ProviderRouteActions
                       provider={provider}
                       row={row}

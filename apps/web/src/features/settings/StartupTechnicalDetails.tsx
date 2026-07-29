@@ -1,16 +1,24 @@
 import { useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import { DataRow, InspectorSection, StatusIndicator } from "../../shared/ui/index.js";
-import type { StartupDiagnostic, StartupStatusResponse } from "../../types.js";
+import type { EffectiveConfigResponse, StartupDiagnostic, StartupStatusResponse } from "../../types.js";
 import {
   projectStartupPhases,
   startupDiagnosticKey,
 } from "./startup-readiness-view-models.js";
 
-export function StartupTechnicalDetails({ status }: { readonly status: StartupStatusResponse }): JSX.Element {
+export function StartupTechnicalDetails({
+  effectiveConfig,
+  status,
+}: {
+  readonly effectiveConfig?: EffectiveConfigResponse;
+  readonly status: StartupStatusResponse;
+}): JSX.Element {
   const { t } = useI18n();
   const phases = projectStartupPhases(status);
   const issueCount = status.diagnostics.filter((diagnostic) => diagnostic.level !== "info").length;
+  const conversationToneConfig = effectiveConfig?.values.lingConversationTone;
+  const skillGovernanceConfig = effectiveConfig?.values.skillGovernancePolicy;
 
   return (
     <InspectorSection
@@ -27,6 +35,18 @@ export function StartupTechnicalDetails({ status }: { readonly status: StartupSt
           label={t("Effective config")}
           value={status.effectiveConfigLoadedAt ? formatDateTime(status.effectiveConfigLoadedAt) : t("Not available")}
         />
+        {conversationToneConfig ? (
+          <TechnicalValue label={t("Conversation tone source")} value={t(configSourceLabel(conversationToneConfig.source))} />
+        ) : null}
+        {conversationToneConfig?.path ? (
+          <TechnicalValue label={t("Conversation tone storage")} value={conversationToneConfig.path} />
+        ) : null}
+        {skillGovernanceConfig ? (
+          <TechnicalValue label={t("Skill policy source")} value={t(configSourceLabel(skillGovernanceConfig.source))} />
+        ) : null}
+        {skillGovernanceConfig?.path ? (
+          <TechnicalValue label={t("Skill policy storage")} value={skillGovernanceConfig.path} />
+        ) : null}
       </dl>
 
       <section className="settings-startup-technical-section" aria-label={t("Startup phases")}>
@@ -61,6 +81,12 @@ export function StartupTechnicalDetails({ status }: { readonly status: StartupSt
       ) : null}
     </InspectorSection>
   );
+}
+
+function configSourceLabel(source: EffectiveConfigResponse["values"]["theme"]["source"]): string {
+  if (source === "workspace") return "Workspace";
+  if (source === "user") return "User default";
+  return "Built-in";
 }
 
 function TechnicalValue({ label, value }: { readonly label: string; readonly value: string }): JSX.Element {

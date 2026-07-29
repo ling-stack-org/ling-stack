@@ -1,9 +1,9 @@
-import { RefreshCw, ShieldCheck } from "lucide-react";
+import { ShieldCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 import { getEffectiveConfig } from "../../api.js";
 import { updateWorkspaceSettings } from "../../api/workspace-settings.js";
 import { useI18n } from "../../i18n.js";
-import { IconButton, InlineFeedback, Skeleton, useLingToast } from "../../shared/ui/index.js";
+import { InlineFeedback, Skeleton, useLingToast } from "../../shared/ui/index.js";
 import type { EffectiveConfigResponse, SkillGovernancePolicy } from "../../types.js";
 import { defaultSkillGovernancePolicy, SkillGovernanceSettingsPanel } from "./SkillGovernanceSettingsPanel.js";
 
@@ -18,10 +18,10 @@ export function SkillGovernanceSettingsSection({ cwd }: { readonly cwd: string }
   const [error, setError] = useState("");
 
   useEffect(() => {
-    void refresh(false);
+    void refresh();
   }, [cwd]);
 
-  async function refresh(showMessage = true): Promise<void> {
+  async function refresh(): Promise<void> {
     const workspaceCwd = cwd.trim();
     if (!workspaceCwd) {
       setError(t("Workspace path is required."));
@@ -34,13 +34,6 @@ export function SkillGovernanceSettingsSection({ cwd }: { readonly cwd: string }
       const nextConfig = await getEffectiveConfig(workspaceCwd);
       setEffectiveConfig(nextConfig);
       setSkillGovernanceDraft(nextConfig.values.skillGovernancePolicy?.value ?? defaultSkillGovernancePolicy);
-      if (showMessage) {
-        showToast({
-          message: t("Skill governance policy refreshed"),
-          scope: "settings:personalization:governance:refresh",
-          tone: "success",
-        });
-      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -95,13 +88,6 @@ export function SkillGovernanceSettingsSection({ cwd }: { readonly cwd: string }
           <ShieldCheck size={18} />
           <h2 id="skill-governance-settings-title">{t("Skill policy")}</h2>
         </span>
-        <IconButton
-          icon={RefreshCw}
-          label={t("Refresh")}
-          loading={loading}
-          loadingLabel={t("Loading")}
-          onClick={() => void refresh(true)}
-        />
       </div>
 
       {error ? <InlineFeedback className="settings-personalization-feedback" tone="danger">{error}</InlineFeedback> : null}
@@ -114,8 +100,6 @@ export function SkillGovernanceSettingsSection({ cwd }: { readonly cwd: string }
         <SkillGovernanceSettingsPanel
           dirty={dirty}
           policy={skillGovernanceDraft}
-          source={effectiveConfig.values.skillGovernancePolicy?.source}
-          path={effectiveConfig.values.skillGovernancePolicy?.path}
           supported={supported}
           saving={saving || loading}
           onChange={setSkillGovernanceDraft}

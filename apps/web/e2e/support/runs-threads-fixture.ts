@@ -1,6 +1,7 @@
 import type { Page } from "@playwright/test";
 import { mockDaemon, type MockArtifact, type MockLingThread, type MockRun, type MockState } from "./mock-daemon";
 import { createBaseState, createVerboseRunEvents, cwd } from "./mock-state";
+import { openPendingStartupDiagnostics } from "./pending-settings-sections";
 
 export function createRunsThreadsFixture(visibleThreadCount = 4): MockState {
   const state = createBaseState({ approvalStatus: "pending" });
@@ -79,7 +80,7 @@ export async function installRunsThreadsFixture(page: Page, state: MockState): P
 
 export async function openMainRunHistory(page: Page, taskTitle?: string): Promise<void> {
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: /Settings|设置/ }).click();
-  await page.getByLabel(/Settings sections|设置分组/).getByRole("button", { name: /Startup and diagnostics|启动与诊断/ }).click();
+  await openPendingStartupDiagnostics(page);
   await page.getByRole("button", { name: /Open Run Diagnostics|打开运行诊断/ }).click();
   const diagnostics = page.locator(".settings-run-diagnostics-panel");
   if (taskTitle) {

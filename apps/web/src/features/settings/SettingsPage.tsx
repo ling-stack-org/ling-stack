@@ -212,6 +212,7 @@ export function SettingsPage({
       label: t(item.label),
       title: t(item.pageTitle ?? item.label),
       icon: item.icon,
+      hidden: item.pending === true,
     })),
   }));
   const workspaceToolDefinition = workspaceToolSection
@@ -349,6 +350,7 @@ export function SettingsPage({
         {visibleActiveSection === "startup-diagnostics" && !workspaceToolDetailOpen && !runDiagnosticsOpen ? (
           <StartupDiagnosticsSettingsPanel
             cwd={cwd}
+            effectiveConfig={effectiveConfig}
             startupStatus={startupStatus}
             startupStatusLoading={startupStatusLoading}
             startupStatusAction={startupStatusAction}

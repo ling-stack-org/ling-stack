@@ -63,10 +63,12 @@ test("Web preferences preserve system and fixed themes, languages, keyboard flow
   await expect(panel.locator(".settings-interface-theme-heading")).toContainText("Ling Light");
   await expectReducedMotion(lightTheme);
   await expectReducedMotion(followSystem);
+  await expectSwitchCentersAligned(followSystem);
   await expectNoHorizontalOverflow(panel);
   await captureEvidence(page, "1440x960-ling-light-system.png");
 
   await followSystem.uncheck();
+  await expectSwitchCentersAligned(followSystem);
   await expect(lightTheme).toHaveAttribute("aria-checked", "true");
   await expect(page.locator("html")).toHaveAttribute("data-theme-selection", "fixed");
   await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
@@ -305,6 +307,29 @@ async function openInterfacePreferences(page: Page): Promise<Locator> {
   const panel = page.locator("[data-ui2-interface-preferences]");
   await expect(panel).toBeVisible();
   return panel;
+}
+
+async function expectSwitchCentersAligned(control: Locator): Promise<void> {
+  const geometry = await control.evaluate((element) => {
+    const rootRect = element.getBoundingClientRect();
+    const thumb = element.querySelector<HTMLElement>(".ling-ui-switch-thumb");
+    const thumbRect = thumb?.getBoundingClientRect();
+    const trackStyle = getComputedStyle(element, "::before");
+    const trackTransform = new DOMMatrixReadOnly(trackStyle.transform);
+    const trackBorderBoxHeight = Number.parseFloat(trackStyle.height)
+      + Number.parseFloat(trackStyle.borderTopWidth)
+      + Number.parseFloat(trackStyle.borderBottomWidth);
+    const trackCenter = Number.parseFloat(trackStyle.top)
+      + trackTransform.m42
+      + trackBorderBoxHeight / 2;
+    return {
+      rootCenter: rootRect.height / 2,
+      thumbCenter: thumbRect ? thumbRect.top - rootRect.top + thumbRect.height / 2 : -1,
+      trackCenter,
+    };
+  });
+  expect(geometry.thumbCenter).toBeCloseTo(geometry.rootCenter, 5);
+  expect(geometry.trackCenter).toBeCloseTo(geometry.rootCenter, 5);
 }
 
 function longLocalThemeFixture(): LingThemePackManifest {

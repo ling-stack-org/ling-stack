@@ -152,6 +152,20 @@ State transition and runtime event types should include:
 - `run_continuation_started`
 - `run_intervention_failed`
 
+Queue presentation is narrower than durable intervention history:
+
+- `queued` and `cancelling_source` remain visible in the guidance queue because the
+  follow-up has not started yet.
+- `starting_continuation` exits the guidance queue immediately. The accepted guidance
+  is represented by the ordinary user message and the active reply surface instead of
+  being duplicated in both places until the reply completes.
+- `started`, `failed`, and `cancelled` remain durable audit states but are not active
+  queue rows. Failures use their owning run or conversation feedback surface.
+- An accepted teammate follow-up is persisted as an ordinary `local-user` message with
+  the user's original body. It must not add `排队引导` or another control prefix to the
+  model prompt. The continuation system prompt tells the Agent to respond directly and
+  not acknowledge receipt, queueing, or continuation mechanics.
+
 ## API Shape
 
 ```text

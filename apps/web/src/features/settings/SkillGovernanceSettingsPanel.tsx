@@ -1,5 +1,5 @@
 import { Save } from "lucide-react";
-import { Button, Field, InlineFeedback, InspectorSection, Select } from "../../shared/ui/index.js";
+import { Button, Field, InlineFeedback, Select } from "../../shared/ui/index.js";
 import type {
   SkillGovernanceGenerationMode,
   SkillGovernancePolicy,
@@ -28,8 +28,6 @@ const skillGovernanceRecordingModes: readonly SkillGovernanceRecordingMode[] = [
 export function SkillGovernanceSettingsPanel({
   dirty,
   policy,
-  source,
-  path,
   supported,
   saving,
   onChange,
@@ -38,8 +36,6 @@ export function SkillGovernanceSettingsPanel({
 }: {
   readonly dirty: boolean;
   readonly policy: SkillGovernancePolicy;
-  readonly source?: string;
-  readonly path?: string;
   readonly supported: boolean;
   readonly saving: boolean;
   readonly onChange: (policy: SkillGovernancePolicy) => void;
@@ -58,7 +54,6 @@ export function SkillGovernanceSettingsPanel({
         <Field
           className="settings-skill-governance-field"
           label={t("Candidate generation")}
-          description={skillGovernanceGenerationModeDescription(policy.generationMode, t)}
         >
           <Select
             aria-label={t("Skill candidate generation mode")}
@@ -75,7 +70,6 @@ export function SkillGovernanceSettingsPanel({
         <Field
           className="settings-skill-governance-field"
           label={t("Recording")}
-          description={skillGovernanceRecordingModeDescription(policy.recordingMode, t)}
         >
           <Select
             aria-label={t("Skill recording mode")}
@@ -90,40 +84,6 @@ export function SkillGovernanceSettingsPanel({
           </Select>
         </Field>
       </div>
-
-      <InspectorSection
-        className="settings-personalization-governance-inspector"
-        title={t("Advanced governance")}
-        summary={t("Candidate generation options")}
-      >
-        <div className="settings-personalization-governance-mode-guide" aria-label={t("Candidate generation options")}>
-          <div>
-            {skillGovernanceGenerationModes.map((mode) => (
-              <span key={mode} className={policy.generationMode === mode ? "active" : undefined}>
-                <small>{skillGovernanceGenerationModeLabel(mode, t)}</small>
-                <em>{skillGovernanceGenerationModeDescription(mode, t)}</em>
-              </span>
-            ))}
-          </div>
-        </div>
-        <div className="settings-personalization-governance-recording-guide" aria-label={t("How recording works")}>
-          <strong>{t("How recording works")}</strong>
-          <ol>
-            <li>{t("Start recording from a deliberate user action; Ling does not record background agent work automatically.")}</li>
-            <li>{t("Finish the run, then review the captured evidence before any candidate is created.")}</li>
-            <li>{t("Generated candidates still require draft, publish, and binding review before runtime use.")}</li>
-          </ol>
-        </div>
-        <div className="settings-personalization-governance-fixed" aria-label={t("Fixed skill governance guards")}>
-          <span><small>{t("Invocation")}</small><strong>{skillGovernanceFixedModeLabel(policy.invocationMode, t)}</strong></span>
-          <span><small>{t("Publish")}</small><strong>{skillGovernanceFixedModeLabel(policy.publishMode, t)}</strong></span>
-          <span><small>{t("Bind")}</small><strong>{skillGovernanceFixedModeLabel(policy.bindMode, t)}</strong></span>
-        </div>
-        <div className="settings-personalization-governance-storage">
-          <span><small>{t("Source")}</small><strong>{supported ? (source ? t(skillGovernanceSourceLabel(source)) : t("not loaded")) : t("Unsupported by daemon")}</strong></span>
-          <span title={path}><small>{t("Stored in workspace settings")}</small><strong>{path ?? t("Read-only compatibility mode")}</strong></span>
-        </div>
-      </InspectorSection>
 
       <footer className="settings-skill-governance-actions">
         <Button
@@ -155,43 +115,6 @@ function skillGovernanceGenerationModeLabel(mode: SkillGovernanceGenerationMode,
   return t("Semi-auto");
 }
 
-function skillGovernanceGenerationModeDescription(mode: SkillGovernanceGenerationMode, t: (key: string) => string): string {
-  if (mode === "off") {
-    return t("Record evidence only");
-  }
-  if (mode === "approval_only") {
-    return t("Create candidates only from approved recording jobs");
-  }
-  if (mode === "auto_candidate") {
-    return t("Create pending candidates from one stable successful observation");
-  }
-  return t("Create pending candidates after repeated stable success");
-}
-
 function skillGovernanceRecordingModeLabel(mode: SkillGovernanceRecordingMode, t: (key: string) => string): string {
   return mode === "disabled" ? t("Disabled") : t("User initiated");
-}
-
-function skillGovernanceRecordingModeDescription(mode: SkillGovernanceRecordingMode, t: (key: string) => string): string {
-  return mode === "disabled" ? t("Skill recording endpoint is disabled") : t("Users can start skill recording explicitly");
-}
-
-function skillGovernanceFixedModeLabel(
-  mode: SkillGovernancePolicy["invocationMode"] | SkillGovernancePolicy["publishMode"] | SkillGovernancePolicy["bindMode"],
-  t: (key: string) => string,
-): string {
-  if (mode === "explicit_only") {
-    return t("Explicit only");
-  }
-  return t("Manual review");
-}
-
-function skillGovernanceSourceLabel(source: string): string {
-  if (source === "workspace") {
-    return "Workspace";
-  }
-  if (source === "user") {
-    return "User default";
-  }
-  return "Built-in";
 }

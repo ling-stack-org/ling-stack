@@ -1,4 +1,6 @@
 .provider-table-shell {
+  --provider-action-column-width: 184px;
+
   min-width: 0;
   min-height: 168px;
   max-height: 100%;
@@ -17,16 +19,25 @@
   padding: var(--ling-space-5) var(--ling-space-6);
 }
 
-.provider-table th:nth-child(1),
-.provider-table td:nth-child(1) { width: 35%; }
-.provider-table th:nth-child(2),
-.provider-table td:nth-child(2) { width: 18%; }
-.provider-table th:nth-child(3),
-.provider-table td:nth-child(3) { width: 19%; }
-.provider-table th:nth-child(4),
-.provider-table td:nth-child(4) {
-  width: 28%;
-  border-left: 1px solid var(--ling-border-default);
+.provider-table-model-column {
+  width: auto;
+}
+
+.provider-table-usage-column {
+  width: 18%;
+}
+
+.provider-table-status-column {
+  width: 19%;
+}
+
+.provider-table-action-column {
+  width: var(--provider-action-column-width);
+}
+
+.provider-table-action-head,
+.provider-table-action-cell {
+  text-align: right;
 }
 
 .provider-table td {
@@ -193,7 +204,7 @@
 .provider-table-skeleton-row {
   display: grid;
   min-height: 52px;
-  grid-template-columns: 35% 18% 19% 28%;
+  grid-template-columns: minmax(0, 1fr) minmax(104px, 0.34fr) minmax(116px, 0.36fr) var(--provider-action-column-width);
   align-items: center;
   gap: var(--ling-space-5);
   padding-inline: var(--ling-space-6);

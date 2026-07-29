@@ -104,6 +104,7 @@
   width: min(var(--channel-conversation-width, 800px), calc(100% - 48px));
   height: 100%;
   min-height: 0;
+  max-height: none;
   flex: 0 1 auto;
   padding: 16px 18px 14px;
   overflow-y: auto;
@@ -130,6 +131,12 @@
   width: 30px;
   height: 30px;
   font-size: var(--ling-font-xs);
+}
+
+.teammate-workspace.chat-mode
+  .teammate-message-row.ai-teammate.message-bubble-chat
+  > :is(.avatar-initial, .teammate-avatar-image.compact) {
+  margin-top: var(--ling-space-4);
 }
 
 .teammate-message-error.ling-ui-inline-feedback {

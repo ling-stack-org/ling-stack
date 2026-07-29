@@ -159,8 +159,7 @@
   grid-row: 3;
 }
 
-[data-conversation-message-row].message-bubble-chat > .message-content,
-[data-conversation-message-row].message-bubble-chat-blocked > .message-content {
+[data-conversation-message-row].message-bubble-chat > .message-content {
   border-color: transparent;
   background: transparent;
 }
@@ -169,19 +168,7 @@
   background: var(--conversation-bg-muted, var(--ling-bg-subtle));
 }
 
-[data-conversation-message-row].message-bubble-chat:hover > .message-content,
-[data-conversation-message-row].message-bubble-chat:focus-within > .message-content {
-  border-color: var(--conversation-border, var(--ling-border-default));
-  background: var(--conversation-bg-muted, var(--ling-bg-subtle));
-}
-
-[data-conversation-message-row].message-bubble-chat.message-bubble-own:hover > .message-content,
-[data-conversation-message-row].message-bubble-chat.message-bubble-own:focus-within > .message-content {
-  background: var(--ling-bg-pressed);
-}
-
-[data-conversation-message-row].message-bubble-chat-blocked:hover > .message-content,
-[data-conversation-message-row].message-bubble-chat-blocked:focus-within > .message-content {
+[data-conversation-message-row].message-bubble-chat-blocked > .message-content {
   border-color: var(--ling-status-warning-border);
   background: var(--ling-status-warning-bg);
 }

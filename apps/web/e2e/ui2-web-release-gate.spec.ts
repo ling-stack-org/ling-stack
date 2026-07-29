@@ -21,6 +21,8 @@ import {
   openMainRunHistory,
 } from "./support/runs-threads-fixture";
 import { createApproval } from "./support/approvals-fixture";
+import { openWorkBoardFromInbox } from "./support/open-work-board";
+import { openPendingInbox } from "./support/pending-primary-navigation";
 import {
   captureUi2ReleaseScenario,
   prepareUi2ReleaseSurface,
@@ -35,7 +37,7 @@ const scenarios = {
     label: "AppShell and global navigation",
     functionIds: ["SHELL-NAV-001"],
     fixture: "base-ready-shell",
-    trigger: { summary: "Open the application root", steps: ["Navigate to /", "Focus Work Board in global navigation"] },
+    trigger: { summary: "Open the application root", steps: ["Navigate to /", "Confirm Work Board is hidden", "Focus Plugin Manager in global navigation"] },
     viewport: { width: 1440, height: 960 },
     theme: "ling-light",
     locale: "en-US",
@@ -155,7 +157,7 @@ const scenarios = {
     label: "Runs history and detail",
     functionIds: ["RUN-HISTORY-001"],
     fixture: "runs-threads-release",
-    trigger: { summary: "Open full Run Diagnostics", steps: ["Open Startup and diagnostics", "Open Run Diagnostics", "Open full diagnostics in app", "Focus a history row"] },
+    trigger: { summary: "Open retained Run Diagnostics fixture", steps: ["Activate pending diagnostics fixture", "Open Run Diagnostics", "Open full diagnostics in app", "Focus a history row"] },
     viewport: { width: 1440, height: 960 },
     theme: "ling-light",
     locale: "en-US",
@@ -183,7 +185,10 @@ test("WEB-REL-01 Shell representative surface", async ({ page }) => {
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
   await expect(page.locator("main.app-shell")).toBeVisible();
-  const action = page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Work Board" });
+  const navigation = page.getByLabel("Ling Stack navigation");
+  await expect(navigation.getByRole("button", { name: "Inbox" })).toHaveCount(0);
+  await expect(navigation.getByRole("button", { name: "Work Board" })).toHaveCount(0);
+  const action = navigation.getByRole("button", { name: "Plugin Manager" });
   await exerciseKeyboardFocus(action);
   await finishScenario(page, scenarios.shell, runtime);
 });
@@ -317,7 +322,7 @@ test("WEB-REL-10 Work Board representative surface", async ({ page }) => {
   state.workItems = [releaseWorkItem()];
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Work Board" }).click();
+  await openWorkBoardFromInbox(page);
   const board = page.locator(".work-board-page");
   const row = board.getByRole("option", { name: /Release evidence work item/ });
   await expect(row).toBeVisible();
@@ -349,8 +354,7 @@ test("WEB-REL-12 Approvals representative surface", async ({ page }) => {
   })];
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Inbox" }).click();
-  const surface = page.locator("[data-approvals-ui2-page]");
+  const surface = await openPendingInbox(page);
   const row = surface.getByRole("listbox", { name: "Inbox" }).getByRole("option").first();
   await expect(row).toBeVisible();
   await exerciseKeyboardFocus(row);

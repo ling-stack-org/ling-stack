@@ -34,6 +34,15 @@ Dock/Terminal 使用 `240ms` enter、`180ms` exit。拖动时设置 resizing sta
 
 Composer 有明确 label，token 可键盘删除，发送/停止有状态名称，权限菜单可键盘操作。
 
+## Message Interaction Contract
+
+- 频道、普通对话和 AI 队友私聊共享“正文稳定、操作按需出现”的交互语义。
+- AI 普通回复始终透明、无可见边框；消息 hover 或 `focus-within` 不改变正文背景、边框或阴影。
+- 用户消息保持稳定的浅色气泡，hover 和内部按钮 focus 不加深整条消息。
+- `MessageActionBar` 仅在消息 hover、键盘 `focus-within` 或必须常显的状态下出现。
+- 键盘焦点由具体按钮的 focus ring 表达，不点亮整条消息。
+- 警告、阻断、审批、协议和运行状态使用持续的语义背景与边框，不得依赖 hover 才可见。
+
 ## P5.1 Current Status
 
 - `@ling-stack/conversation-ui-react` 已允许单向依赖 `@ling-stack/ui-react`；

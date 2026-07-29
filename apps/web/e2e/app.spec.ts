@@ -140,7 +140,9 @@ test("sidebar selection is exclusive and conversation sections stay below primar
   const commandButtonWidth = await newConversationButton.evaluate((button) => Math.round(button.getBoundingClientRect().width));
   expect(commandButtonWidth).toBeGreaterThan(100);
   expect(commandButtonWidth).toBeLessThan(320);
-  await expect(primaryNav.getByRole("button")).toHaveText(["Inbox", "Media Production", "Work Board", "Plugin Manager", "Automations"]);
+  await expect(primaryNav.getByRole("button")).toHaveText(["Media Production", "Plugin Manager", "Automations"]);
+  await expect(primaryNav.getByRole("button", { name: "Inbox" })).toHaveCount(0);
+  await expect(primaryNav.getByRole("button", { name: "Work Board" })).toHaveCount(0);
   await expect(primaryNav.getByRole("button", { name: "AI Councils" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Workspace" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Tasks" })).toHaveCount(0);
@@ -1166,7 +1168,7 @@ test("conversation home refreshes interface language and theme after workspace s
   await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   await expect(page.getByLabel("对话首页").getByRole("heading", { name: "Ling Stack，让工作更简单。", level: 1 })).toBeVisible();
-  await expect(navigation.getByRole("button", { name: "收件箱" })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "收件箱" })).toHaveCount(0);
 });
 
 test("sidebar text entries route to context-aware inspectors", async ({ page }) => {
@@ -1178,26 +1180,20 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
   const primaryNav = navigation.locator(".primary-nav");
   await expect(navigation.getByRole("button", { name: "Search or start" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Run", exact: true })).toHaveCount(0);
-  await expect(primaryNav.getByRole("button")).toHaveText(["Inbox", "Media Production", "Work Board", "Plugin Manager", "Automations"]);
+  await expect(primaryNav.getByRole("button")).toHaveText(["Media Production", "Plugin Manager", "Automations"]);
+  await expect(primaryNav.getByRole("button", { name: "Inbox" })).toHaveCount(0);
   await expect(primaryNav.getByRole("button", { name: "AI Councils" })).toHaveCount(0);
   await expect(primaryNav.getByRole("button", { name: "AI Teammates" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Settings" })).toBeVisible();
   await expect(navigation.getByRole("button", { name: "Profile" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Model Workbench" })).toHaveCount(0);
-  await expect(primaryNav.getByRole("button", { name: "Work Board" })).toBeVisible();
+  await expect(primaryNav.getByRole("button", { name: "Work Board" })).toHaveCount(0);
   await expect(primaryNav.getByRole("button", { name: "Plugin Manager" })).toBeVisible();
   await expect(page.getByLabel("Run context")).toHaveCount(0);
 
   await navigation.getByRole("button", { name: "New conversation" }).click();
   await expect(page.getByLabel("Conversation home")).toBeVisible();
   await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: [] });
-
-  await primaryNav.getByRole("button", { name: "Inbox" }).click();
-  await expect(page.locator(".approvals-panel").getByRole("heading", { name: "Inbox" })).toBeVisible();
-
-  await primaryNav.getByRole("button", { name: "Work Board" }).click();
-  await expect(page.locator(".work-board-page")).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
 
   await primaryNav.getByRole("button", { name: "Plugin Manager" }).click();
   await expect(page.locator(".plugin-manager-page .settings-plugin-manager")).toBeVisible();
@@ -1438,7 +1434,7 @@ test("conversation home model picker uses the model workbench default without ch
   await expect(conversationPage.getByRole("button", { name: "Selected thinking mode High" })).toBeVisible();
 });
 
-test("settings keeps configuration tools embedded while promoted tools use global navigation", async ({ page }) => {
+test("settings keeps configuration tools embedded while Work Board stays hidden from global navigation", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [createChatProvider({
@@ -1485,7 +1481,7 @@ test("settings keeps configuration tools embedded while promoted tools use globa
 
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await page.getByRole("button", { name: "Back to app" }).click();
-  await navigation.getByRole("button", { name: "Work Board" }).click();
+  await navigation.getByRole("button", { name: "Plugin Manager" }).click();
   await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
-  await expect(page.locator(".work-board-page")).toBeVisible();
+  await expect(page.locator(".plugin-manager-page")).toBeVisible();
 });

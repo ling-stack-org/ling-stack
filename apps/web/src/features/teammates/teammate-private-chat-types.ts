@@ -66,6 +66,7 @@ export interface TeammatePrivateChatSurfaceProps {
   readonly openDirectInterventions: readonly TeammateDirectReplyIntervention[];
   readonly directLinkPreviewById: ReadonlyMap<string, TeammateDirectLinkPreview>;
   readonly messageDraft: string;
+  readonly fullAccessConfirmed: boolean;
   readonly privateComposerSending: boolean;
   readonly privateComposerSendDisabled: boolean;
   readonly privateComposerSendLabel: string;
@@ -117,6 +118,7 @@ export interface TeammatePrivateChatSurfaceProps {
   readonly onRemovePendingAttachment: (localId: string) => void | Promise<void>;
   readonly workspaceAccessMode: WorkspaceAccessMode;
   readonly onWorkspaceAccessModeChange: (mode: WorkspaceAccessMode) => void;
+  readonly onFullAccessPresetSelected?: () => void;
   readonly dockOpen: boolean;
   readonly dockController: WorkspaceRightDockController;
   readonly dockPageRequest?: WorkspaceRightDockPageRequest;

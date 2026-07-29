@@ -8,6 +8,7 @@ export interface SettingsShellItem {
   readonly label: string;
   readonly title: string;
   readonly icon: LucideIcon;
+  readonly hidden?: boolean;
 }
 
 export interface SettingsShellGroup {
@@ -70,6 +71,18 @@ export function SettingsShell({
               {group.heading}
             </span>
             {group.items.map((item) => {
+              if (item.hidden) {
+                return (
+                  <span
+                    key={item.id}
+                    data-settings-section={item.id}
+                    hidden
+                    aria-hidden="true"
+                    aria-current={activeSection === item.id ? "page" : undefined}
+                    onClick={() => onSelectSection(item.id)}
+                  />
+                );
+              }
               const SectionIcon = item.icon;
               const active = activeSection === item.id;
               return (

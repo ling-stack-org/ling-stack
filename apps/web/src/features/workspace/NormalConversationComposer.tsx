@@ -39,6 +39,7 @@ export interface NormalConversationComposerProps {
   readonly slashActiveIndex: number;
   readonly pendingAttachments: readonly PendingAttachmentItem<ConversationAttachment>[];
   readonly permissionPreset: PermissionPreset;
+  readonly fullAccessConfirmed: boolean;
   readonly modelOptions: readonly ConversationHomeModelOption[];
   readonly selectedProviderPresetId: string;
   readonly defaultProviderPresetId: string;
@@ -87,6 +88,7 @@ export function NormalConversationComposer({
   onThinkingLevelChange,
   pendingAttachments,
   permissionPreset,
+  fullAccessConfirmed,
   selectedProviderPresetId,
   selectedThinkingLevel,
   sendBusy,
@@ -257,7 +259,7 @@ export function NormalConversationComposer({
           </label>
           <ComposerPermissionMenu
             preset={permissionPreset}
-            options={conversationPermissionPresetMenuOptions(t)}
+            options={conversationPermissionPresetMenuOptions(t, fullAccessConfirmed)}
             disabled={interactionLocked}
             disabledReason={t("Permission is locked while the current message is running.")}
             onPresetChange={onPermissionPresetChange}

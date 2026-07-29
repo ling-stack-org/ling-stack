@@ -487,9 +487,9 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
   await expect(page.locator(".channel-sidebar-toolbar")).toBeHidden();
   await expect(navigation.getByRole("button", { name: "Search or start" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Run", exact: true })).toHaveCount(0);
-  await expect(navigation.getByRole("button", { name: "Inbox" })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Inbox" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Media Production" })).toBeVisible();
-  await expect(navigation.getByRole("button", { name: "Work Board" })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Work Board" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Plugin Manager" })).toBeVisible();
   await expect(navigation.locator(".primary-nav").getByRole("button", { name: "AI Teammates" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "AI Teammates" })).toBeVisible();

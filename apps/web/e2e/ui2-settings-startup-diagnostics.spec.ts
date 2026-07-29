@@ -2,9 +2,11 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { mockDaemon } from "./support/mock-daemon";
+import { openPendingStartupDiagnostics } from "./support/pending-settings-sections";
 import {
   createBaseState,
   createVerboseRunEvents,
+  cwd,
   type MockArtifact,
   type MockRun,
 } from "./support/mock-state";
@@ -50,6 +52,13 @@ test("Startup blockers stay product-first while raw phase, code, and path remain
   const runtimeErrors = collectRuntimeErrors(page);
   await prepareSurface(page, "light", "en-US", 1440, 960);
   const state = createBaseState({ approvalStatus: "expired" });
+  state.workspaceSettings.skillGovernancePolicy = {
+    generationMode: "semi_auto",
+    recordingMode: "user_initiated",
+    invocationMode: "explicit_only",
+    publishMode: "manual_review",
+    bindMode: "manual_review",
+  };
   const longPath = `/tmp/${"nested-workspace-segment/".repeat(12)}provider.json`;
   state.startupStatus = {
     ...state.startupStatus,
@@ -95,6 +104,9 @@ test("Startup blockers stay product-first while raw phase, code, and path remain
   await panel.getByText("Technical details", { exact: true }).click();
   await expect(panel.getByText("provider_warmup_delayed", { exact: true })).toBeVisible();
   await expect(panel.getByText(longPath, { exact: true })).toBeVisible();
+  const startupMetadata = panel.locator(".settings-startup-metadata");
+  await expect(startupMetadata.getByText("Skill policy source", { exact: true })).toBeVisible();
+  await expect(startupMetadata.getByText(`${cwd}/.ling-stack/ling-stack.sqlite`, { exact: true })).toBeVisible();
   await expect(panel.locator(".settings-startup-phase-row")).toHaveCount(10);
   await expectNoHorizontalOverflow(panel);
   await captureEvidence(page, "1440x960-ling-light-startup-blocker-details.png");
@@ -228,10 +240,7 @@ async function prepareSurface(
 
 async function openStartupDiagnostics(page: Page): Promise<Locator> {
   await page.getByLabel(/Ling Stack navigation/).getByRole("button", { name: /Settings|设置/ }).click();
-  await page.getByLabel(/Settings sections|设置分组/).getByRole("button", { name: /Startup and diagnostics|启动与诊断/ }).click();
-  const panel = page.locator("[data-ui2-settings-startup-diagnostics]");
-  await expect(panel).toBeVisible();
-  return panel;
+  return openPendingStartupDiagnostics(page);
 }
 
 async function openRunDiagnostics(page: Page): Promise<Locator> {

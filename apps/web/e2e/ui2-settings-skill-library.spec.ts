@@ -126,6 +126,25 @@ test("AI evolution uses shared filters and keeps a failed review action inside i
   expect(runtimeErrors).toEqual([]);
 });
 
+test("AI evolution keeps an empty queue compact without redundant empty-state copy", async ({ page }) => {
+  await prepareSurface(page, "light", "zh-CN", 1440, 960);
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.skillCandidates = [];
+  state.procedureObservationClusters = [];
+  state.channelPlaybookCandidates = [];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const panel = await openSkillLibrary(page);
+  await panel.getByRole("tab", { name: "AI 进化" }).click();
+  const queue = panel.locator("[data-ui2-skill-review-queue]");
+  await expect(queue).toBeVisible();
+  await expect(queue).toContainText("0 个进化项目");
+  await expect(queue.locator(".settings-skill-review-empty")).toHaveCount(0);
+  await expect(queue).not.toContainText("暂无需要审核的进化内容");
+  await expectNoPageOverflow(page);
+});
+
 test("Import and permanent delete keep failures in their Dialogs while success uses an expiring Toast", async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page);
   await prepareSurface(page, "dark", "zh-CN", 1280, 800);
