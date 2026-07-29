@@ -570,12 +570,13 @@ export function TeammateWorkspace({
       id: "memory",
       icon: <Brain size={18} />,
       primary: t("Memory"),
-      secondary: privateDockViewModel.context.memoryEventCount === 1 ? t("1 item") : t("{count} items", { count: privateDockViewModel.context.memoryEventCount }),
+      secondary: memoryScopes.length > 0 ? t("Memory on") : t("Memory preparing"),
       onOpen: () => openChatDockPage("context"),
     },
   ], [
     directWorkspace,
     privateDockViewModel,
+    memoryScopes.length,
     t,
     teammate.displayName,
     teammate.roleKey,
@@ -1576,7 +1577,6 @@ export function TeammateWorkspace({
           cwd={cwd}
           teammate={teammate}
           providerReady={providerReady}
-          memoryScopeCount={memoryScopes.length}
           attachmentCount={directAttachments.length}
           refreshing={chatHeaderController.refreshing}
           refreshDisabled={loading || !cwd.trim()}
@@ -1601,6 +1601,14 @@ export function TeammateWorkspace({
           onSearchQueryChange={setMessageSearchQuery}
           onClearSearch={chatHeaderController.clearSearch}
           onRefresh={chatHeaderController.refresh}
+          onOpenAttachments={() => openChatDockPage("files")}
+          onOpenModelSettings={() => {
+            chatHeaderController.closeSearch();
+            setChatSummaryOpen(false);
+            setChatDockOpen(false);
+            setWorkspaceView("settings");
+            setActiveTab("model");
+          }}
           onToggleSummary={() => {
             chatHeaderController.closeSearch();
             setChatSummaryOpen((current) => !current);

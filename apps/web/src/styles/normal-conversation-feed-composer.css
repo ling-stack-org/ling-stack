@@ -76,10 +76,10 @@
 .normal-conversation-agent-avatar {
   box-sizing: border-box;
   display: block;
-  padding: 2px;
-  border: 1px solid var(--ling-border-default);
+  padding: 0;
+  border: 0;
   border-radius: 50%;
-  background: var(--ling-bg-elevated);
+  background: transparent;
   object-fit: contain;
 }
 

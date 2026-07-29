@@ -52,6 +52,42 @@ test("MP-08 direct source drift keeps field failure drafts and restores authorit
   expect(errors).toEqual([]);
 });
 
+test("MP-08 Run validates the visible prompt and commits it before creating a task", async ({ page }) => {
+  const errors = collectBrowserErrors(page);
+  const state = directFixture();
+  state.mediaScenes = [scene("scene_prompt_commit", "Prompt commit scene", "", 0)];
+  const control = routeControl();
+  await prepare(page, state, control);
+  await openInspector(page);
+
+  const inspector = page.locator(".scene-inspector");
+  const prompt = inspector.getByLabel("Prompt");
+  const run = inspector.getByRole("button", { name: "Run", exact: true });
+
+  await expect(run).toBeEnabled();
+  await run.click();
+  await expect(prompt).toBeFocused();
+  await expect(inspector.getByText("Enter a prompt before running.", { exact: true })).toBeVisible();
+  expect(control.runCalls.scene_prompt_commit ?? 0).toBe(0);
+  expect(state.mediaJobs).toHaveLength(0);
+  expect(state.mediaSceneRuns).toHaveLength(0);
+
+  control.failNextSceneUpdate = 1;
+  await prompt.fill("Keep this draft when saving fails.");
+  await run.click();
+  await expect(inspector.getByRole("alert").filter({ hasText: "Could not save this scene." })).toBeVisible();
+  expect(control.runCalls.scene_prompt_commit ?? 0).toBe(0);
+  expect(state.mediaJobs).toHaveLength(0);
+
+  await prompt.fill("Use the current visible prompt without requiring a blur.");
+  await run.click();
+  await expect.poll(() => control.runCalls.scene_prompt_commit ?? 0).toBe(1);
+  expect(control.requestOrder.slice(-2)).toEqual(["patch:prompt", "run:scene_prompt_commit"]);
+  expect(state.mediaScenes[0].prompt).toBe("Use the current visible prompt without requiring a blur.");
+  expect(state.mediaJobs[0]?.prompt).toBe("Use the current visible prompt without requiring a blur.");
+  expect(errors).toEqual([]);
+});
+
 test("MP-09 workflow source drift exposes one repair route and never mixes direct controls", async ({ page }) => {
   const errors = collectBrowserErrors(page);
   const state = workflowFixture();
@@ -238,10 +274,11 @@ interface InspectorRouteControl {
   selectCalls: Record<string, number>;
   duplicateCalls: Record<string, number>;
   deleteCalls: Record<string, number>;
+  requestOrder: string[];
 }
 
 function routeControl(): InspectorRouteControl {
-  return { failNextSceneUpdate: 0, sceneUpdateCalls: 0, actionDelayMs: 0, runCalls: {}, cancelCalls: {}, selectCalls: {}, duplicateCalls: {}, deleteCalls: {} };
+  return { failNextSceneUpdate: 0, sceneUpdateCalls: 0, actionDelayMs: 0, runCalls: {}, cancelCalls: {}, selectCalls: {}, duplicateCalls: {}, deleteCalls: {}, requestOrder: [] };
 }
 
 async function prepare(page: Page, state: MockState, control: InspectorRouteControl): Promise<void> {
@@ -255,6 +292,8 @@ async function handleInspectorRoute(route: Route, control: InspectorRouteControl
   const path = new URL(request.url()).pathname;
   if (request.method() === "PATCH" && /^\/media-scenes\/[^/]+$/u.test(path)) {
     control.sceneUpdateCalls += 1;
+    const body = await request.postDataJSON() as { readonly prompt?: unknown };
+    if (typeof body.prompt === "string") control.requestOrder.push("patch:prompt");
     if (control.failNextSceneUpdate > 0) {
       control.failNextSceneUpdate -= 1;
       await route.fulfill({ json: { fixtureError: "scene_update_failed" } });
@@ -277,6 +316,7 @@ async function handleInspectorRoute(route: Route, control: InspectorRouteControl
   if (request.method() === "POST" && runMatch) {
     const sceneId = decodeURIComponent(runMatch[1] ?? "");
     control.runCalls[sceneId] = (control.runCalls[sceneId] ?? 0) + 1;
+    control.requestOrder.push(`run:${sceneId}`);
     await delay(control.actionDelayMs);
   }
   const cancelMatch = /^\/media-scene-runs\/([^/]+)\/cancel$/u.exec(path);

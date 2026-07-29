@@ -1,7 +1,7 @@
 import type { CSSProperties, Ref } from "react";
+import { TriangleAlert } from "lucide-react";
 import { useI18n } from "../../i18n.js";
-import { ConversationStatusStrip } from "../../shared/conversation/index.js";
-import { StatusIndicator } from "../../shared/ui/index.js";
+import { Button, StatusIndicator } from "../../shared/ui/index.js";
 import type { AiTeammate } from "../../types.js";
 import {
   ConversationSummaryPopover,
@@ -16,7 +16,6 @@ export function TeammateChatHeader({
   cwd,
   teammate,
   providerReady,
-  memoryScopeCount,
   attachmentCount,
   refreshing,
   refreshDisabled,
@@ -38,6 +37,8 @@ export function TeammateChatHeader({
   onSearchQueryChange,
   onClearSearch,
   onRefresh,
+  onOpenAttachments,
+  onOpenModelSettings,
   onToggleSummary,
   onCloseSummary,
   onToggleTerminal,
@@ -46,7 +47,6 @@ export function TeammateChatHeader({
   readonly cwd: string;
   readonly teammate: AiTeammate;
   readonly providerReady: boolean;
-  readonly memoryScopeCount: number;
   readonly attachmentCount: number;
   readonly refreshing: boolean;
   readonly refreshDisabled: boolean;
@@ -68,6 +68,8 @@ export function TeammateChatHeader({
   readonly onSearchQueryChange: (value: string) => void;
   readonly onClearSearch: () => void;
   readonly onRefresh: () => void | Promise<void>;
+  readonly onOpenAttachments: () => void;
+  readonly onOpenModelSettings: () => void;
   readonly onToggleSummary: () => void;
   readonly onCloseSummary: () => void;
   readonly onToggleTerminal: () => void;
@@ -114,6 +116,8 @@ export function TeammateChatHeader({
         refreshDisabled={refreshDisabled}
         refreshLabel={t("Refresh")}
         refreshLoading={refreshing}
+        fileCount={attachmentCount}
+        filesLabel={t("{label}: {count}", { label: t("Private attachments"), count: attachmentCount })}
         summaryActive={summaryOpen}
         summaryLabel={t("Summary")}
         terminalActive={terminalOpen}
@@ -123,25 +127,33 @@ export function TeammateChatHeader({
         detailsLabel={detailsOpen ? t("Hide details") : t("Show details")}
         onToggleSearch={onToggleSearch}
         onRefresh={() => void onRefresh()}
+        onOpenFiles={onOpenAttachments}
         onToggleSummary={onToggleSummary}
         onToggleTerminal={onToggleTerminal}
         onToggleDetails={onToggleDetails}
       />
-      <ConversationStatusStrip
-        className="teammate-chat-status-row"
-        title={providerReady ? t("Model ready") : t("Model needs setup")}
-        statusNode={lifecycleStatus ? (
-          <StatusIndicator
-            className="teammate-chat-lifecycle-status"
-            label={t(lifecycleStatus.labelKey)}
-            tone={lifecycleStatus.tone}
-          />
-        ) : null}
-        metaItems={[
-          { id: "recall", value: memoryScopeCount > 0 ? t("Memory on") : t("Memory preparing") },
-          { id: "attachments", value: t("{count} attachments", { count: attachmentCount }) },
-        ]}
-      />
+      {!providerReady || lifecycleStatus ? (
+        <div className="teammate-chat-alert-row" role="status">
+          {!providerReady ? (
+            <Button
+              className="teammate-chat-model-warning"
+              leadingIcon={<TriangleAlert size={14} />}
+              size="sm"
+              variant="ghost"
+              onClick={onOpenModelSettings}
+            >
+              {t("Model needs setup")}
+            </Button>
+          ) : null}
+          {lifecycleStatus ? (
+            <StatusIndicator
+              className="teammate-chat-lifecycle-status"
+              label={t(lifecycleStatus.labelKey)}
+              tone={lifecycleStatus.tone}
+            />
+          ) : null}
+        </div>
+      ) : null}
       <ConversationSummaryPopover
         open={summaryOpen}
         title={t("Environment")}

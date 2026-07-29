@@ -65,7 +65,7 @@
   height: 28px;
   flex: 0 0 auto;
   place-items: center;
-  border: 1px solid var(--ling-border-default);
+  border: 0;
   border-radius: var(--ling-radius-md);
   color: var(--ling-text-muted);
   background: var(--ling-bg-subtle);

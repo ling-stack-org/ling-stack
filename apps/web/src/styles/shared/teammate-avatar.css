@@ -1,16 +1,15 @@
 .teammate-avatar-image {
   width: 54px;
   height: 54px;
-  border: 1px solid var(--ling-border-default);
+  border: 0;
   border-radius: var(--ling-radius-pill);
   object-fit: cover;
   background: var(--ling-bg-subtle);
 }
 
 .teammate-avatar-image-default {
-  border-color: color-mix(in srgb, var(--ling-border-default) 80%, transparent);
   background: transparent;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ling-border-strong) 24%, transparent);
+  box-shadow: none;
 }
 
 .teammate-avatar-image.compact {

@@ -8,6 +8,7 @@ import type { SceneReadiness } from "./media-production-view-models.js";
 import { SceneExecutionSettings } from "./SceneExecutionSettings.js";
 import { SceneResultPanel } from "./SceneResultPanel.js";
 import { SceneRunHistory } from "./SceneRunHistory.js";
+import { useSceneTextDraft, type SceneTextDraftController } from "./use-scene-text-draft.js";
 
 type InspectorView = "settings" | "result" | "history";
 type TextField = "title" | "prompt";
@@ -33,10 +34,14 @@ interface SceneInspectorProps {
 }
 
 export function SceneInspector(props: SceneInspectorProps): JSX.Element {
+  if (!props.scene) return <aside className="scene-inspector" />;
+  return <SceneInspectorContent key={props.scene.id} {...props} scene={props.scene} />;
+}
+
+function SceneInspectorContent(props: SceneInspectorProps & { readonly scene: MediaScene }): JSX.Element {
   const { t } = useI18n();
   const [view, setView] = useState<InspectorView>("settings");
-  useEffect(() => setView("settings"), [props.scene?.id]);
-  if (!props.scene) return <aside className="scene-inspector" />;
+  const editor = useSceneTextDraft(props.scene, props.actions);
   const scene = props.scene;
   const status = props.readiness ?? fallbackReadiness(scene);
 
@@ -59,81 +64,38 @@ export function SceneInspector(props: SceneInspectorProps): JSX.Element {
         </TabsList>
 
         <div className="scene-inspector-scroll">
-          <TabsContent value="settings"><SceneSettingsPanel {...props} scene={scene} /></TabsContent>
+          <TabsContent value="settings"><SceneSettingsPanel {...props} scene={scene} editor={editor} /></TabsContent>
           <TabsContent value="result"><SceneResultPanel cwd={props.cwd} readiness={props.readiness} artifactsByJob={props.artifactsByJob} /></TabsContent>
           <TabsContent value="history"><SceneRunHistory scene={scene} runs={props.sceneRuns} jobs={props.jobs} artifactsByJob={props.artifactsByJob} actions={props.actions} /></TabsContent>
         </div>
-        <SceneRunFooter scene={scene} readiness={props.readiness} busyAction={props.busyAction} actions={props.actions} />
+        <SceneRunFooter scene={scene} readiness={props.readiness} busyAction={props.busyAction} actions={props.actions} editor={editor} />
       </aside>
     </Tabs>
   );
 }
 
-function SceneSettingsPanel(props: SceneInspectorProps & { readonly scene: MediaScene }): JSX.Element {
+function SceneSettingsPanel(props: SceneInspectorProps & { readonly scene: MediaScene; readonly editor: SceneTextDraftController }): JSX.Element {
   const { t } = useI18n();
-  const [draft, setDraft] = useState({ title: props.scene.title, prompt: props.scene.prompt });
-  const [busy, setBusy] = useState<TextField>();
-  const [failure, setFailure] = useState<Partial<Record<TextField, MediaProductionFailure>>>({});
-  const targetRef = useRef(props.scene.id);
-  const authorityRef = useRef({ id: props.scene.id, title: props.scene.title, prompt: props.scene.prompt });
-  useEffect(() => {
-    const previous = authorityRef.current;
-    targetRef.current = props.scene.id;
-    if (previous.id !== props.scene.id) {
-      setDraft({ title: props.scene.title, prompt: props.scene.prompt });
-      setBusy(undefined);
-      setFailure({});
-    } else {
-      setDraft((current) => ({ title: current.title === previous.title ? props.scene.title : current.title, prompt: current.prompt === previous.prompt ? props.scene.prompt : current.prompt }));
-    }
-    authorityRef.current = { id: props.scene.id, title: props.scene.title, prompt: props.scene.prompt };
-  }, [props.scene.id, props.scene.prompt, props.scene.title]);
-
-  const clear = (field: TextField): void => {
-    setFailure((current) => omitField(current, field));
-    props.actions.clearFailure("scene-update", props.scene.id);
-  };
-  const save = async (field: TextField, value: string): Promise<void> => {
-    if (busy === field || value === props.scene[field]) return;
-    const sceneId = props.scene.id;
-    setBusy(field);
-    clear(field);
-    const outcome = await props.actions.updateScene(sceneId, { [field]: value });
-    if (targetRef.current === sceneId) {
-      if (!outcome.ok) setFailure((current) => ({ ...current, [field]: outcome.failure }));
-      setBusy(undefined);
-    }
-  };
-  const retry = async (field: TextField, item: MediaProductionFailure): Promise<void> => {
-    if (busy === field) return;
-    const sceneId = props.scene.id;
-    setBusy(field);
-    const outcome = await props.actions.retryFailure(item);
-    if (targetRef.current === sceneId) {
-      setFailure((current) => outcome.ok ? omitField(current, field) : { ...current, [field]: outcome.failure });
-      setBusy(undefined);
-    }
-  };
+  const { editor } = props;
   const revert = (field: TextField, target: HTMLElement): void => {
-    setDraft((current) => ({ ...current, [field]: props.scene[field] }));
-    clear(field);
+    editor.revert(field);
     target.blur();
   };
 
   return <>
     <Field className="field" label={t("Scene {number}", { number: props.scene.sortOrder + 1 })}>
-      <Input value={draft.title} disabled={props.sceneUpdateBusy || busy !== undefined} loading={busy === "title"} invalid={Boolean(failure.title)} onChange={(event) => { setDraft((current) => ({ ...current, title: event.target.value })); clear("title"); }} onKeyDown={(event) => { if (event.key === "Escape") revert("title", event.currentTarget); }} onBlur={() => void save("title", draft.title.trim() || props.scene.title)} />
+      <Input value={editor.draft.title} disabled={props.sceneUpdateBusy || editor.busyField !== undefined} loading={editor.busyField === "title"} invalid={Boolean(editor.failures.title)} onChange={(event) => editor.change("title", event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") revert("title", event.currentTarget); }} onBlur={() => void editor.commit("title", editor.draft.title.trim() || props.scene.title)} />
     </Field>
-    {failure.title ? <MutationFeedback failure={failure.title} busy={busy === "title"} onRetry={() => void retry("title", failure.title!)} onClear={() => clear("title")} /> : null}
-    <Field className="field scene-prompt-field" label={t("Prompt")}>
-      <Textarea value={draft.prompt} rows={6} disabled={props.sceneUpdateBusy || busy !== undefined} loading={busy === "prompt"} invalid={Boolean(failure.prompt)} onChange={(event) => { setDraft((current) => ({ ...current, prompt: event.target.value })); clear("prompt"); }} onKeyDown={(event) => { if (event.key === "Escape") revert("prompt", event.currentTarget); }} onBlur={() => void save("prompt", draft.prompt)} />
+    {editor.failures.title ? <MutationFeedback failure={editor.failures.title} busy={editor.busyField === "title"} onRetry={() => void editor.retry("title", editor.failures.title!)} onClear={() => editor.clear("title")} /> : null}
+    <Field className="field scene-prompt-field" label={t("Prompt")} error={editor.promptRequired ? t("Enter a prompt before running.") : undefined}>
+      <Textarea ref={editor.promptRef} value={editor.draft.prompt} rows={6} disabled={props.sceneUpdateBusy || editor.busyField !== undefined} loading={editor.busyField === "prompt"} invalid={Boolean(editor.failures.prompt) || editor.promptRequired} onChange={(event) => editor.change("prompt", event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") revert("prompt", event.currentTarget); }} onBlur={() => void editor.commit("prompt")} />
     </Field>
-    {failure.prompt ? <MutationFeedback failure={failure.prompt} busy={busy === "prompt"} onRetry={() => void retry("prompt", failure.prompt!)} onClear={() => clear("prompt")} /> : null}
-    <SceneExecutionSettings cwd={props.cwd} scene={props.scene} project={props.project} providers={props.providers} workflows={props.workflows} imageArtifacts={props.imageArtifacts} sceneUpdateBusy={props.sceneUpdateBusy || busy !== undefined} actions={props.actions} onConfigureVideoModel={props.onConfigureVideoModel} onOpenWorkflowLibrary={props.onOpenWorkflowLibrary} />
+    {editor.failures.prompt ? <MutationFeedback failure={editor.failures.prompt} busy={editor.busyField === "prompt"} onRetry={() => void editor.retry("prompt", editor.failures.prompt!)} onClear={() => editor.clear("prompt")} /> : null}
+    <SceneExecutionSettings cwd={props.cwd} scene={props.scene} project={props.project} providers={props.providers} workflows={props.workflows} imageArtifacts={props.imageArtifacts} sceneUpdateBusy={props.sceneUpdateBusy || editor.busyField !== undefined} actions={props.actions} onConfigureVideoModel={props.onConfigureVideoModel} onOpenWorkflowLibrary={props.onOpenWorkflowLibrary} />
   </>;
 }
 
-function SceneRunFooter({ scene, readiness, busyAction, actions }: { readonly scene: MediaScene; readonly readiness?: SceneReadiness; readonly busyAction: string; readonly actions: MediaProductionActions }): JSX.Element {
+function SceneRunFooter({ scene, readiness, busyAction, actions, editor }: { readonly scene: MediaScene; readonly readiness?: SceneReadiness; readonly busyAction: string; readonly actions: MediaProductionActions; readonly editor: SceneTextDraftController }): JSX.Element {
   const { t } = useI18n();
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<MediaProductionFailure>();
@@ -146,15 +108,21 @@ function SceneRunFooter({ scene, readiness, busyAction, actions }: { readonly sc
     pendingRef.current = true;
     setPending(true);
     setFailure(undefined);
+    if (!retry && !await editor.commitPromptForRun()) {
+      pendingRef.current = false;
+      if (sceneIdRef.current === sceneId) setPending(false);
+      return;
+    }
     const outcome = retry ? await actions.retryFailure(retry) : await actions.runScene(sceneId);
     if (sceneIdRef.current === sceneId && !outcome.ok) setFailure(outcome.failure);
     pendingRef.current = false;
     if (sceneIdRef.current === sceneId) setPending(false);
   };
   const loading = pending || busyAction === `run-scene:${scene.id}`;
+  const canRequestRun = Boolean(readiness?.canRun || readiness?.state === "needs_prompt");
   return <div className="scene-inspector-footer">
     {failure ? <MutationFeedback failure={failure} busy={loading} onRetry={() => void run(failure)} onClear={() => { actions.clearFailure(failure.owner, failure.subjectId); setFailure(undefined); }} /> : null}
-    <Button leadingIcon={<Play size={16} />} loading={loading} variant="primary" disabled={!readiness?.canRun} onClick={() => void run()}>{readiness?.latestIssue ? t("Retry") : t("Run")}</Button>
+    <Button leadingIcon={<Play size={16} />} loading={loading} variant="primary" disabled={loading || !canRequestRun} onClick={() => void run()}>{readiness?.latestIssue ? t("Retry") : t("Run")}</Button>
   </div>;
 }
 
@@ -165,4 +133,3 @@ function MutationFeedback({ failure, busy, onRetry, onClear }: { readonly failur
 
 function fallbackReadiness(scene: MediaScene): SceneReadiness { return { sceneId: scene.id, sceneTitle: scene.title, sortOrder: scene.sortOrder, state: "needs_model", status: "needs_model", labelKey: "Not ready", reasonKey: "Not ready", primaryAction: "none", label: "Not ready", reason: "Not ready", isRegenerating: false, latestIssue: false, canRun: false }; }
 function statusTone(readiness: SceneReadiness): "neutral" | "info" | "success" | "warning" { if (readiness.currentArtifact) return readiness.latestIssue ? "warning" : "success"; if (readiness.state === "generating") return "info"; return readiness.state === "needs_attention" ? "warning" : "neutral"; }
-function omitField<T>(value: T, field: keyof T): T { const next = { ...value }; delete next[field]; return next; }

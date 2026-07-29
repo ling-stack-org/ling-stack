@@ -1,4 +1,4 @@
-import { ListChecks, PanelBottom, PanelBottomClose, PanelRightClose, PanelRightOpen, RefreshCw, Search } from "lucide-react";
+import { FileText, ListChecks, PanelBottom, PanelBottomClose, PanelRightClose, PanelRightOpen, RefreshCw, Search } from "lucide-react";
 import type { Ref } from "react";
 import { CurrentSessionHeaderCapabilitySlot } from "../../../shared/current-session/CurrentSessionHeaderCapability.js";
 import {
@@ -14,6 +14,8 @@ export interface ConversationTopToolbarProps {
   readonly refreshDisabled?: boolean;
   readonly refreshLabel: string;
   readonly refreshLoading?: boolean;
+  readonly fileCount?: number;
+  readonly filesLabel?: string;
   readonly summaryActive: boolean;
   readonly summaryDisabled?: boolean;
   readonly summaryLabel: string;
@@ -24,6 +26,7 @@ export interface ConversationTopToolbarProps {
   readonly detailsLabel: string;
   readonly onToggleSearch: () => void;
   readonly onRefresh: () => void;
+  readonly onOpenFiles?: () => void;
   readonly onToggleSummary: () => void;
   readonly onToggleTerminal: () => void;
   readonly onToggleDetails: () => void;
@@ -37,6 +40,8 @@ export function ConversationTopToolbar({
   refreshDisabled = false,
   refreshLabel,
   refreshLoading = false,
+  fileCount = 0,
+  filesLabel,
   summaryActive,
   summaryDisabled = false,
   summaryLabel,
@@ -47,6 +52,7 @@ export function ConversationTopToolbar({
   detailsLabel,
   onToggleSearch,
   onRefresh,
+  onOpenFiles,
   onToggleSummary,
   onToggleTerminal,
   onToggleDetails,
@@ -85,6 +91,16 @@ export function ConversationTopToolbar({
         label={summaryLabel}
         onClick={onToggleSummary}
       />
+      {fileCount > 0 && filesLabel && onOpenFiles ? (
+        <WorkspaceToolbarIconButton
+          actionId="files"
+          className="conversation-toolbar-files"
+          count={fileCount}
+          icon={FileText}
+          label={filesLabel}
+          onClick={onOpenFiles}
+        />
+      ) : null}
       <WorkspaceToolbarIconButton
         actionId="terminal"
         active={terminalActive}

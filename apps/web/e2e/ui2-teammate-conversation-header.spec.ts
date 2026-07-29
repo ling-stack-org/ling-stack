@@ -37,10 +37,22 @@ for (const fixture of [
     const composer = page.locator(".teammate-direct-composer");
     await expect(header).toBeVisible();
     await expect(identity).toContainText("Ling Research Engineer");
-    await expectToolbarActions(toolbar, ["search", "refresh", "summary", "terminal", "details"]);
+    await expect(header.locator(".teammate-chat-alert-row")).toHaveCount(0);
+    await expect(header).not.toContainText("Model ready");
+    await expect(header).not.toContainText("Memory on");
+    const attachments = toolbar.getByRole("button", { name: "Private attachments: 1" });
+    await expect(attachments).toBeVisible();
+    await expect(attachments.locator("xpath=..").getByText("1", { exact: true })).toBeVisible();
+    await expectToolbarActions(toolbar, ["search", "refresh", "summary", "files", "terminal", "details"]);
     expect(Math.round((await header.boundingBox())?.height ?? 0)).toBe(48);
     await expectAlignedConversationColumns(feed, composer);
     await expectHeaderSlotsDoNotOverlap(identity, toolbar);
+
+    await toolbar.getByRole("button", { name: "Summary" }).click();
+    const summary = page.locator(".teammate-chat-summary-popover");
+    await expect(summary).toContainText("Memory");
+    await expect(summary).toContainText(/Memory on|Memory preparing/u);
+    await toolbar.getByRole("button", { name: "Summary" }).click();
 
     const searchTrigger = toolbar.getByRole("button", { name: "Search" });
     await searchTrigger.click();
@@ -96,6 +108,7 @@ for (const fixture of [
     await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Review Partner" }).click();
     await expect(page.locator("[data-ui2-teammate-chat-header='true']")).toContainText("Review Partner");
     await expect(page.getByRole("search", { name: "Search private messages" })).toHaveCount(0);
+    await expect(page.getByLabel("Private chat actions").getByRole("button", { name: /^Private attachments:/u })).toHaveCount(0);
 
     await page.getByLabel("Ling Stack navigation").getByRole("button", { name: /Ling Research Engineer/ }).click();
     const restoredHeader = page.locator("[data-ui2-teammate-chat-header='true']");
@@ -131,6 +144,7 @@ function installTeammateHeaderFixture(state: MockState): string {
     id: "provider_ui2_teammate_header",
     displayName: "Local Relay",
     model: "gpt-5.5",
+    lastCheck: { ok: true, message: "Ready", checkedAt: timestamp },
   })];
   state.aiTeammates = [
     createMockTeammate({

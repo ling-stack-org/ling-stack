@@ -39,12 +39,14 @@
 4. 场景检查器使用现有 SelectControl、ArtifactRow 和确认 dialog 视觉模式；参考素材只从当前 workspace 的图片 artifact 列表选择。
 5. 默认创建空项目并引导添加第一场景；项目存在时画布占主要视觉区，右侧检查器按选择状态出现，任务/素材各自内部滚动。
 6. 仅在 resolver 返回 `image_reference` 时渲染参考素材选择和输入连接；初始 Seedance 场景始终只展示文本生成字段。
+7. `SceneInspector` 的提示词草稿由场景级编辑控制器持有；“运行”读取当前草稿并复用正在进行的失焦保存。草稿未保存时执行 `PATCH scene -> POST scene run`，只有 PATCH 成功后才允许 POST；PATCH 失败保留草稿和重试反馈。
+8. `needs_prompt` 不再把单场景运行按钮变成不可达状态。空提示词点击运行时通过 shared `Field.error` 显示中文字段错误、聚焦 Textarea，并保证 Scene Run 与 Media Job 数量不变；模型、工作流、运行中任务等真实 blocker 继续遵守原可用性规则。
 
 ## Tests And Verification
 
 - Core：capability resolver、文本/参考图能力、scene validation、排序稳定性、migration 幂等性、旧 Media Job 兼容性。
 - Providers/daemon：Seedance submit/poll/download、handle 恢复、取消、错误脱敏、dispatcher 并发、项目和场景 API、跨 workspace 素材阻断。
-- Web：媒体生产项目创建、场景增删复制、节点拖拽、排序不随拖拽变化、文本模型不显示参考图、项目/场景运行、任务结果回流、历史选择、中文 i18n。
+- Web：媒体生产项目创建、场景增删复制、节点拖拽、排序不随拖拽变化、文本模型不显示参考图、输入提示词后不失焦直接运行、空提示词字段校验、保存失败不运行、项目/场景运行、任务结果回流、历史选择、中文 i18n。
 - 浏览器：1440x1000 与 1280x800，生产台与生成任务都无整页滚动；画布、素材、任务列表分别内部滚动。
 - 回归：`core`、`daemon`、`web` tests/typecheck，`media-jobs.spec.ts`、新增 `media-production.spec.ts`、Model Workbench E2E、`check:i18n`、`git diff --check`。
 
@@ -57,7 +59,7 @@
 3. Web 的 `SceneReadiness` 将当前结果与最新运行并行建模：重新生成中、失败或取消不会覆盖旧结果；已有结果的单场景按钮显示“重新生成”。
 4. 项目批量运行只提交 `ready` 场景，已有结果以“已生成”原因明确跳过；不增加批量重新生成。
 5. 画布节点增加同级预览按钮，`StoryboardCanvas` 只发出 `onPreviewResult(sceneId)`；`MediaProductionWorkspace` 管理弹窗与静默项目刷新。
-6. `SceneResultPreviewDialog` 复用 `MediaArtifactPreview`，视频有 controls、无 autoplay，并统一支持 Esc、遮罩与关闭按钮。
+6. `SceneResultPreviewDialog` 复用 `MediaArtifactPreview`；用户点击预览后，视频静音 autoplay 并保留 controls，图片保持静态。弹窗统一支持 Esc、遮罩与关闭按钮，关闭后停止播放。
 7. 测试覆盖首次 Provider/ComfyUI 自动采用、后续成功和取消不覆盖、重新生成状态、失败保留、批量跳过、预览不触发生成和手动切换当前结果。
 
 ## Hard Stops

@@ -1152,11 +1152,10 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(page.getByRole("heading", { name: "Ling Engineer", level: 1 })).toBeVisible();
   await expect(page.locator(".brand-mark")).toHaveCount(0);
   await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: ["Ling Engineer"] });
-  await expect(page.getByText(/Model ready|Model needs setup/)).toBeVisible();
-  const privateChatStatus = page.locator(".teammate-chat-status-row");
-  await expect(privateChatStatus).toContainText("Memory on");
-  await expect(privateChatStatus).toContainText(/\d+ attachments/u);
-  await expect(privateChatStatus.locator(".conversation-status-meta small")).toHaveCount(0);
+  const privateChatHeader = page.locator(".teammate-chat-header");
+  await expect(privateChatHeader.getByRole("button", { name: "Model needs setup" })).toBeVisible();
+  await expect(privateChatHeader).not.toContainText("Model ready");
+  await expect(privateChatHeader).not.toContainText("Memory on");
   const privateChatDarkSurfaces = await page.evaluate(() => {
     const selectors = [
       ".workspace-teammate-private-surface",
@@ -1218,8 +1217,10 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(privateToolbar.getByRole("button", { name: /^Review/ })).toHaveCount(0);
   await expect(privateToolbar.getByRole("button", { name: /^Evidence/ })).toHaveCount(0);
   await expect(privateToolbar.getByRole("button", { name: /^Files/ })).toHaveCount(0);
+  await expect(privateToolbar.getByRole("button", { name: /^Private attachments:/ })).toHaveCount(0);
   await privateToolbar.getByRole("button", { name: "Summary" }).click();
   await expect(page.locator(".teammate-chat-summary-popover")).toContainText("Private workspace");
+  await expect(page.locator(".teammate-chat-summary-popover")).toContainText("Memory on");
   await expect(page.getByLabel("Conversation context")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Show details" })).toBeVisible();
   await page.getByRole("button", { name: "Show details" }).click();
@@ -1288,6 +1289,7 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
     buffer: Buffer.from("# private notes"),
   });
   await expect.poll(() => state.teammatePrivateAttachments.length).toBe(1);
+  await expect(privateToolbar.getByRole("button", { name: "Private attachments: 1" })).toBeVisible();
 
   const privateComposer = page.locator(".teammate-direct-composer");
   await privateComposer.getByRole("button", { name: /Selected permission preset Workspace write/ }).click();
