@@ -71,6 +71,10 @@
   margin-top: var(--desktop-window-titlebar-height);
 }
 
+.app-shell.desktop-macos.settings-fullscreen-shell .settings-section-nav {
+  padding-top: calc(var(--desktop-window-titlebar-height) + var(--ling-space-2));
+}
+
 .app-shell.desktop-macos [data-desktop-window-drag-region="true"] {
   -webkit-app-region: drag;
   -webkit-user-select: none;
