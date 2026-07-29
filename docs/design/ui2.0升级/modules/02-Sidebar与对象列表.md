@@ -20,10 +20,18 @@ Sidebar 是对象导航，不是状态说明墙。它需要快速扫描频道、
 宽度默认 `236px`。Nav item 高度至少 `36px`，小图标按钮 hit area `32px`。Section header
 保持一行；count、spinner 和 menu 不改变标题位置。对象列表占剩余高度并内部滚动。
 
+折叠态为 `48px` compact launcher rail，只保留新对话、当前发布的主工具、频道、AI 队友、
+最近对话和设置入口。频道、队友和最近对话对象列表不得在 rail 中挂载；点击分区入口后先展开
+到 `240px`，再显示对应完整列表。对象数量不得改变 rail 的高度和滚动长度。
+
 ## Interaction
 
 行点击只导航，三点按钮不触发行点击。Menu 使用统一 Menu；归档为普通低频行动，永久删除
 只在 Settings。Tooltip hover/focus 可达。折叠状态不隐藏当前选中对象的可识别反馈。
+
+rail 分区入口不是 section disclosure 的缩小版：点击后展开 Sidebar，并确保目标 section 打开；
+其他 section 在展开态的折叠状态继续保留。rail 的 loading/stale 最多使用一个轻量状态点，不能
+让对象头像、未读行或 preview stack 回流。
 
 ## States
 
@@ -68,11 +76,16 @@ StatusIndicator；领域头像保留 feature helper，普通业务数据列表�
 - primary navigation 展开态统一为 `36px`，compact rail 保持 `36px`；active 只允许一个
   `aria-current=page`；
 - section menu trigger 使用共享 IconButton，Menu 继续由受控 Radix Portal、Esc 和 focus restore 管理；
-- compact rail 隐藏 section menu，避免 32px disclosure 与 32px action/rail preview 互相覆盖；
+- compact rail 使用三个独立分区 launcher，section menu、disclosure 和对象列表仅在展开态存在；
 - Tooltip 支持 hover/focus、rapid switch、Portal 和 reduced motion；
 - 已删除无运行时 owner 的 `.sidebar-section-menu-popover/.open/.copy/.rich-*` selector family；
 - `SidebarNavigation.tsx` 为 633 行，`SidebarObjectRow.tsx` 为 59 行，
   `sidebar-status-projections.ts` 为 152 行，均低于 800 行生产文件警戒线。
+
+2026-07-29 合同修正：此前 compact rail 将完整对象列表去文字化，并以 identity/avatar 和
+preview stack 表示 section 内容。该设计在对象数据增长后形成重复图标墙，且让 rail 的视觉长度
+由业务数据决定，现已被本节的 compact launcher rail 合同取代。历史截图和完成证据继续保留，
+仅作为旧实现记录，不再作为当前验收基线。
 
 P4.2 evidence：共享包 `37/37`、Sidebar target `7/7`、focused browser `2/2`，并保存
 `1440x960` Light expanded 与 `1280x800` Dark collapsed Tooltip 截图，见

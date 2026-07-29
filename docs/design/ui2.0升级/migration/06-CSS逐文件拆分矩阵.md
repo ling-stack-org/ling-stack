@@ -116,9 +116,9 @@ Desktop PiP 另有 focused renderer CSS。迁移规则：
 | `strict-console.css` | 335 | remaining legacy Theme/client blankets with explicit focused-surface exclusions | U3-U13 | T13-P.2-B released obsolete text-input repaint and six dead leaves；background/button/active/status blankets remain audited no-go |
 | `app/sidebar-layout.css` | 737 / target 620-740 / max 800 | expanded AppShell Sidebar shell、navigation、sections、rows、branch form/list and fixed footer | U4/U13 / T13-O.17 | token-only focused owner；focused + existing `12/12`、broad `149/149`、ten screenshots；must not absorb rail motion/responsive duplication |
 | `sidebar.css` | 138 | Sidebar variables/keyframes、expanded compatibility and non-rail responsive layout | U2/U4/U13 | T13-P.2-C removed dead compatibility；T13-P.3-H/K retained the 240/48、900/901 and reduced-motion geometry contract |
-| `app/sidebar-rail-sections.css` | 350 / target 340-430 / max 480 | 48px compact rail、three section preview stacks、compact identity/action visibility and local state | U4/U13 / T13-O.18/P.2-C | write-only stack variables and duplicate hover owner removed；Sidebar `16/16` + broad `161/161` |
+| `app/sidebar-rail-sections.css` | 175 / max 240 | 48px compact launcher rail、three fixed section launchers、primary actions、Settings footer and local state | U4/U13 / T13-O.18/P.2-C | object list/preview/stack paths removed；collapsed owner unique；Sidebar focused `19/19` |
 | `app/full-access-confirmation.css` | 22 | AppShell permission Dialog content only | U4 | keep focused, tokenised |
-| `app/sidebar-ui2.css` | 199 | Sidebar Menu/IconButton、public Button slot variables、domain avatar、section/list state 和 local feedback layout | U4/U13 | ownerless child animation and duplicate narrow reset removed in T13-P.2-C |
+| `app/sidebar-ui2.css` | 153 | Expanded Sidebar Menu/IconButton、public Button slot variables、domain avatar、section/list state 和 local feedback layout | U4/U13 | collapsed child rules removed；rail state 仅由 `sidebar-rail-sections.css` 持有 |
 | `app/connection-status.css` | 34 | AppShell daemon health feedback placement | U4 | keep focused, tokenised |
 | `action-menus.css` | 87 -> deleted | shared Radix Menu | U2/U10/U13 | completed T13-H；ActionMenuItem reference count reached zero |
 | `model-workbench.css` | 589 -> 1 -> deleted | `features/model-workbench/index.css` | U10/U13 | completed T13-H；root import now points directly to focused index at the same cascade position |
@@ -543,6 +543,10 @@ hover/focus 从 `sidebar.css` 收敛到 396 行 token-only `app/sidebar-rail-sec
 状态，Show navigation 后直接回落 O.17 expanded owner。`sidebar.css 1,148 -> 192`；focused + existing Sidebar
 `16/16`、App/Channel/Teammates/Archive/Dark `149/149`、typecheck/lint/i18n/build/diff、九张证据和
 console/pageerror/overflow 全绿。Web CSS 为 `155 files / 36,988 lines`；Function ID 与 packaged Desktop 不变。
+
+2026-07-29 correction：上述 proof 是旧 identity rail 的历史完成证据，产品合同已被 compact launcher rail
+取代。当前 owner 为 175 行；对象 list/preview/stack 不在 collapsed DOM 中，三个 launcher 的数量与 rail
+高度不受业务数据影响。旧截图保留但不再作为当前视觉基线。
 
 T13-O.19 proof：`strict-console.css` 的 Model-specific Provider repaint 与 `components.css` 的旧 Provider
 source family 已释放；18 个 dead roots、旧七列表格、旧 panel header/menu 和 pre-primitive branches 归零。

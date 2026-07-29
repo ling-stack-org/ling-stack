@@ -60,15 +60,18 @@ test("Compact Sidebar rail removes dead hover and stack variables while preservi
   );
   expect(css).not.toContain("--sidebar-rail-stack-offset");
   expect(css).not.toContain("--sidebar-rail-order");
+  expect(css).not.toContain("sidebar-rail-preview");
+  expect(css).not.toContain("sidebar-rail-stack");
+  expect(css).not.toContain("sidebar-rail-section-body");
+  expect(css).not.toContain(".sidebar-row");
 
   expect(css).toMatch(
-    /\.app-shell\.channel-sidebar-collapsed \.channel-left-drawer\s*\{[^}]*width: var\(--sidebar-collapsed-width\);[^}]*padding: 10px 8px;[^}]*overflow: hidden;/su,
+    /\.app-shell\.channel-sidebar-collapsed \.channel-left-drawer\s*\{[^}]*width: var\(--sidebar-collapsed-width\);[^}]*padding: 10px 6px;[^}]*overflow: hidden;/su,
   );
   expect(css).toMatch(
     /\.app-shell\.channel-sidebar-collapsed \.sidebar-scroll-region\s*\{[^}]*height: 100%;[^}]*min-height: 0;[^}]*overflow-y: auto;[^}]*overflow-x: hidden;/su,
   );
-  expect(css).toContain("max-height: var(--sidebar-rail-section-open-height, 960px);");
-  expect(css).toContain("max-height: var(--sidebar-rail-section-preview-height, 136px);");
+  expect(css).toContain(".sidebar-rail-launcher");
 });
 
 test("Sidebar UI2 layer removes ownerless child resets and the duplicate compact row override", async () => {
@@ -78,6 +81,7 @@ test("Sidebar UI2 layer removes ownerless child resets and the duplicate compact
     /\.sidebar-rail-section-body > \.sidebar-section-list > \*\s*\{\s*animation: none;/u,
   );
   expect(css).not.toContain("@media (max-width: 900px)");
+  expect(css).not.toContain(".app-shell.channel-sidebar-collapsed");
 
   expect(css).toContain(".channel-left-drawer .sidebar-section-action.ling-ui-button");
   expect(css).toContain(".channel-left-drawer .sidebar-row-main.ling-ui-button");

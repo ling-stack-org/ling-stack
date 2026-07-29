@@ -589,10 +589,9 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
     const brandCopy = document.querySelector(".channel-left-drawer .sidebar-brand-copy");
     const firstNavText = document.querySelector(".channel-left-drawer .primary-nav .nav-item .ling-ui-button-label");
     const settingsLabel = document.querySelector(".channel-left-drawer .config-button-label");
-    const selectedChannelAvatar = document.querySelector(".channel-left-drawer .sidebar-row-shell.selected .sidebar-channel-avatar");
-    const selectedChannelHash = document.querySelectorAll(".channel-left-drawer .sidebar-row-shell.selected .sidebar-hash");
-    const selectedChannelButton = document.querySelector(".channel-left-drawer .sidebar-row-shell.selected .sidebar-row-main");
-    const teammateButton = document.querySelector('.channel-left-drawer .sidebar-row-main[aria-label="Designer"]');
+    const objectRows = document.querySelectorAll(".channel-left-drawer .sidebar-row-shell");
+    const railLaunchers = document.querySelectorAll(".channel-left-drawer .sidebar-rail-launcher");
+    const channelLauncher = document.querySelector('[data-sidebar-rail-launcher="channels"]');
     return {
       columns: shell ? getComputedStyle(shell).gridTemplateColumns : "",
       firstColumnWidth: Math.round(Number.parseFloat(shell ? getComputedStyle(shell).gridTemplateColumns : "0")),
@@ -603,12 +602,9 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
       brandCopyHidden: !brandCopy || getComputedStyle(brandCopy).display === "none",
       firstNavTextDisplay: firstNavText ? getComputedStyle(firstNavText).display : "",
       settingsLabelDisplay: settingsLabel ? getComputedStyle(settingsLabel).display : "",
-      selectedChannelAvatarDisplay: selectedChannelAvatar ? getComputedStyle(selectedChannelAvatar).display : "",
-      selectedChannelAvatarText: selectedChannelAvatar?.textContent?.trim() ?? "",
-      selectedChannelAvatarWidth: Math.round(selectedChannelAvatar?.getBoundingClientRect().width ?? 0),
-      selectedChannelHashCount: selectedChannelHash.length,
-      selectedChannelLabel: selectedChannelButton?.getAttribute("aria-label") ?? "",
-      teammateLabel: teammateButton?.getAttribute("aria-label") ?? "",
+      objectRowCount: objectRows.length,
+      railLauncherCount: railLaunchers.length,
+      channelLauncherLabel: channelLauncher?.getAttribute("aria-label") ?? "",
     };
   });
   expect(leftCollapsed.firstColumnWidth).toBe(48);
@@ -619,16 +615,13 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
   expect(leftCollapsed.brandCopyHidden).toBe(true);
   expect(leftCollapsed.firstNavTextDisplay).toBe("none");
   expect(leftCollapsed.settingsLabelDisplay).toBe("none");
-  expect(leftCollapsed.selectedChannelAvatarDisplay).toBe("grid");
-  expect(leftCollapsed.selectedChannelAvatarText).toBe("EN");
-  expect(leftCollapsed.selectedChannelAvatarWidth).toBe(26);
-  expect(leftCollapsed.selectedChannelHashCount).toBe(0);
-  expect(leftCollapsed.selectedChannelLabel).toBe("Engineering");
-  expect(leftCollapsed.teammateLabel).toBe("Designer");
+  expect(leftCollapsed.objectRowCount).toBe(0);
+  expect(leftCollapsed.railLauncherCount).toBe(3);
+  expect(leftCollapsed.channelLauncherLabel).toBe("Channels");
 
   const sidebarTooltip = page.getByRole("tooltip");
-  await navigation.locator(".sidebar-row-shell.selected .sidebar-row-main").hover();
-  await expect(sidebarTooltip).toHaveText("Engineering");
+  await navigation.getByRole("button", { name: "Channels", exact: true }).hover();
+  await expect(sidebarTooltip).toHaveText("Channels");
   await expect.poll(async () => sidebarTooltip.evaluate((node) => Math.round(node.getBoundingClientRect().left))).toBeGreaterThan(45);
   await navigation.getByRole("button", { name: "Settings" }).hover();
   await expect(sidebarTooltip).toHaveText("Settings");

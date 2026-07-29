@@ -101,31 +101,6 @@
   height: 8px;
 }
 
-.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-section-title {
-  grid-template-columns: 1fr;
-}
-
-.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-section-toggle.ling-ui-button {
-  --ling-button-label-display: none;
-  --ling-button-trailing-size: 14px;
-
-  width: 32px;
-  min-width: 32px;
-  height: 32px;
-  min-height: 32px;
-}
-
-.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-section-action.ling-ui-button {
-  display: none;
-}
-
-.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-rail-preview {
-  transition:
-    opacity var(--ling-motion-standard) var(--ling-ease-standard),
-    transform var(--ling-motion-standard) var(--ling-ease-standard),
-    visibility var(--ling-motion-instant) var(--ling-ease-linear) var(--ling-motion-standard);
-}
-
 .channel-left-drawer .nav-item.ling-ui-button {
   --ling-button-icon-slot-display: grid;
   --ling-button-leading-size: 24px;
@@ -134,10 +109,6 @@
 
   height: 36px;
   min-height: 36px;
-}
-
-.app-shell.channel-sidebar-collapsed .channel-left-drawer .nav-item.ling-ui-button {
-  --ling-button-label-display: none;
 }
 
 .channel-left-drawer .sidebar-section-inline-error {
@@ -173,25 +144,8 @@
   height: 22px;
 }
 
-.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-row-main.ling-ui-button {
-  --ling-button-label-display: none;
-  --ling-button-leading-size: 26px;
-}
-
-.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-row-status {
-  display: none;
-}
-
-.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-row-main.ling-ui-button .sidebar-channel-avatar,
-.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-row-main.ling-ui-button .teammate-avatar-image.compact,
-.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-row-main.ling-ui-button .avatar-initial {
-  width: 26px;
-  height: 26px;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .channel-left-drawer .sidebar-section-list[data-ling-collapsible-content][data-state],
-  .app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-rail-preview,
   .channel-left-drawer .sidebar-section-chevron {
     animation-duration: var(--ling-motion-instant);
     transition-duration: var(--ling-motion-instant);

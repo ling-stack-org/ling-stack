@@ -88,9 +88,11 @@ test("Sidebar compact rail switches one portal tooltip without motion or overflo
 
   await expect(navigation.getByRole("button", { name: "Channel actions" })).toBeHidden();
   await expect(navigation.getByRole("button", { name: /Teammate actions/i })).toBeHidden();
-  const channelsToggle = navigation.getByRole("button", { name: "Channels" });
+  const channelsToggle = navigation.getByRole("button", { name: "Channels", exact: true });
   await expectHitArea(channelsToggle, 32);
-  await expect(channelsToggle.locator('[data-ling-button-slot="trailing"]')).toBeVisible();
+  await expect(channelsToggle).toHaveAttribute("data-sidebar-rail-launcher", "channels");
+  await expect(channelsToggle.locator('[data-ling-button-slot="leading"]')).toBeVisible();
+  await expect(channelsToggle.locator('[data-ling-button-slot="trailing"]')).toHaveCount(0);
 
   await automations.focus();
   await expect(tooltip).toHaveText("Automations");

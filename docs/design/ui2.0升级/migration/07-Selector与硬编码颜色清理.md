@@ -120,7 +120,8 @@ compatibility、涉及 Theme Pack/semantic tokens、`ling-light` / `ling-dark` E
 - `ActionMenuItem` 删除误导性的 Sidebar rich class，只保留模型工作台仍有 owner 的
   `.action-menu-item-*`；
 - section trigger 的 active state 改用 Radix `data-state=open`，不再依赖手写 `.open` wrapper；
-- compact rail 用 focused selector 隐藏 menu action，disclosure、rail preview 和 Tooltip 保持可达；
+- compact rail 使用 focused launcher 分支；menu、disclosure、对象列表和 preview 不进入 collapsed DOM，
+  Tooltip 继续可达；
 - 旧 menu selector family 删除后，`layout/components/sidebar/action-menus.css` 合计减少 332 行；
 - 仍有 owner 的 row、rail、drawer selector 与 keyframe 留给 U13，不以行数目标替代可达状态证据。
 
@@ -829,17 +830,17 @@ compatibility、涉及 Theme Pack/semantic tokens、`ling-light` / `ling-dark` E
 
 ## T13-O.18 Sidebar Compact Rail / Sections Owner
 
-- 48px collapsed drawer、fixed top、primary navigation、three section rail bodies/previews/stacks、compact
-  identity/action visibility、Settings footer 和 local hover/focus 由 396 行 `app/sidebar-rail-sections.css` 持有。
+- 48px collapsed drawer、fixed top、primary navigation、three fixed section launchers、Settings footer 和
+  local hover/focus 由 175 行 `app/sidebar-rail-sections.css` 持有；对象 rows/previews/stacks 的 collapsed
+  selector 和组件渲染路径已归零。
 - `sidebar.css` 只保留 variables/keyframes、shell transition、expanded compatibility reset 与非 rail responsive
   layout；`<=900px` 内 broad `.channel-drawer-shell` compact family 和重复 command hover/first/last branches 已删除。
 - 900px 初始 collapsed、Show navigation 后 240px expanded、再次 collapse 和 901px round trip 由 AppShell state
   决定；focused owner 不复制 expanded declarations，也不修改产品断点或 viewport hook。
-- 新 owner 的颜色字面量、`!important`、Theme/Profile selector、`transition: all`、private keyframe、literal
-  z-index 和 package-private selector 命中为 `0`；`sidebar.css 1,148 -> 192`，Web CSS 为
-  `155 files / 36,988 lines`。
-- focused + existing Sidebar `16/16`、broad `149/149`；九张截图、typecheck/lint/i18n/build/diff、keyboard、
-  rapid reversal/reduced motion、single Tooltip portal、console/pageerror/document overflow 全绿。
+- rail owner 的颜色字面量、`!important`、Theme/Profile selector、`transition: all`、private keyframe、literal
+  z-index 和 package-private selector 命中为 `0`；`sidebar-ui2.css` 不再拥有 collapsed child rules。
+- focused Sidebar `19/19`、typecheck/i18n/diff、keyboard、reduced motion、single Tooltip portal、
+  console/pageerror/document overflow 全绿；旧 identity rail evidence 标记为 superseded。
 
 ## T13-O.19 Model Workbench Legacy Writer Release
 
