@@ -224,6 +224,7 @@ export function ArtifactPreviewDrawer({
   const overlay = (
     <aside
       className={rootClassName}
+      data-desktop-window-no-drag="true"
       aria-label={t("File preview")}
       onPointerDown={handleLightboxPointerDown}
       onPointerUp={handleLightboxPointerUp}

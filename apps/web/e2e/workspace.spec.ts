@@ -407,15 +407,19 @@ test("macOS desktop titlebar overlays the workspace without shifting the applica
     const shell = document.querySelector<HTMLElement>(".app-shell.desktop-macos");
     const workspace = document.querySelector<HTMLElement>(".app-shell.desktop-macos > .workspace");
     const sidebarTop = document.querySelector<HTMLElement>(".app-shell.desktop-macos .sidebar-fixed-top");
-    const dragRegion = document.querySelector<HTMLElement>(".desktop-window-drag-region");
+    const sidebarDragRegion = document.querySelector<HTMLElement>("[data-desktop-window-drag-owner='sidebar']");
+    const contentDragRegion = document.querySelector<HTMLElement>("[data-desktop-window-drag-owner='content-fallback']");
     return {
       shellPaddingTop: shell ? getComputedStyle(shell).paddingTop : "missing",
       workspaceTop: workspace?.getBoundingClientRect().top,
       workspaceHeight: workspace?.getBoundingClientRect().height,
       sidebarTop: sidebarTop?.getBoundingClientRect().top,
-      dragRegionTop: dragRegion?.getBoundingClientRect().top,
-      dragRegionHeight: dragRegion?.getBoundingClientRect().height,
-      dragRegionMode: dragRegion ? getComputedStyle(dragRegion).getPropertyValue("-webkit-app-region") : "missing",
+      sidebarDragRegionTop: sidebarDragRegion?.getBoundingClientRect().top,
+      sidebarDragRegionHeight: sidebarDragRegion?.getBoundingClientRect().height,
+      sidebarDragRegionMode: sidebarDragRegion ? getComputedStyle(sidebarDragRegion).getPropertyValue("-webkit-app-region") : "missing",
+      contentDragRegionTop: contentDragRegion?.getBoundingClientRect().top,
+      contentDragRegionHeight: contentDragRegion?.getBoundingClientRect().height,
+      contentDragRegionMode: contentDragRegion ? getComputedStyle(contentDragRegion).getPropertyValue("-webkit-app-region") : "missing",
       viewportHeight: document.documentElement.clientHeight,
     };
   });
@@ -424,9 +428,12 @@ test("macOS desktop titlebar overlays the workspace without shifting the applica
   expect(metrics.workspaceTop).toBe(0);
   expect(metrics.workspaceHeight).toBe(metrics.viewportHeight);
   expect(metrics.sidebarTop).toBeGreaterThanOrEqual(28);
-  expect(metrics.dragRegionTop).toBe(0);
-  expect(metrics.dragRegionHeight).toBe(28);
-  expect(metrics.dragRegionMode).toBe("drag");
+  expect(metrics.sidebarDragRegionTop).toBe(0);
+  expect(metrics.sidebarDragRegionHeight).toBe(28);
+  expect(metrics.sidebarDragRegionMode).toBe("drag");
+  expect(metrics.contentDragRegionTop).toBe(0);
+  expect(metrics.contentDragRegionHeight).toBe(28);
+  expect(metrics.contentDragRegionMode).toBe("drag");
 });
 
 test("succeeded workspace tasks show a clear result action", async ({ page }) => {

@@ -144,6 +144,14 @@ import "./styles/index.css";
 Desktop renderer 加载同一 package CSS，再加载 `desktop-surface.css`。该文件只能定义窗口
 chrome、drag region 和 `[data-client="desktop"]` token，不能复制 Theme Pack、Button/Dialog/Menu 样式。
 
+Shared main BrowserWindow 的现有 `apps/web/src/styles/app/macos-titlebar.css` 是 focused chrome owner。
+它只在 `.desktop-macos` 下消费 `data-desktop-window-drag-region` /
+`data-desktop-window-no-drag` contract，以及 Settings Back 的
+`data-desktop-window-traffic-light-clearance` native safe-area exception；不能维护 Feature class 白名单，
+也不能把使用 Dialog 层级的透明 sibling overlay 铺过控件。
+Feature/shared Header 只声明 marker；平台 hit testing、traffic-light safe area 和 no-drag carve-out 仍由
+该 focused shell CSS 独占。
+
 Computer Use PiP 最终加载顺序：
 
 ```ts

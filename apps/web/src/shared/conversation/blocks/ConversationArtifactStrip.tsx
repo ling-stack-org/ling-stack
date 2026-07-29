@@ -613,6 +613,7 @@ function ArtifactHoverPreview({
     <aside
       ref={previewRef}
       className="conversation-artifact-hover-preview"
+      data-desktop-window-no-drag="true"
       style={state.position}
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}

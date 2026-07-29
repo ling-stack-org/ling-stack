@@ -207,7 +207,7 @@ export function ProfilePage({
 
   return (
     <div className="profile-page">
-      <header className="profile-topbar">
+      <header className="profile-topbar" data-desktop-window-drag-region="true">
         <div>
           <p className="profile-kicker">个人资料</p>
           <h1>{profile?.displayName ?? (displayName || "Ling User")}</h1>

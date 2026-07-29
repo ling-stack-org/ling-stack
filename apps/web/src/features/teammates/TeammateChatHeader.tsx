@@ -85,6 +85,7 @@ export function TeammateChatHeader({
         summaryOpen ? "summary-open" : "",
       ].filter(Boolean).join(" ")}
       aria-label={t("AI teammate private chat")}
+      data-desktop-window-drag-region="true"
       data-ui2-teammate-chat-header="true"
     >
       <div className="teammate-workspace-identity">

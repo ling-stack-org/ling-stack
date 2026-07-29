@@ -13,6 +13,7 @@ acceptance, tray, updater, and full keychain UX remain incomplete or later shell
 - [UI React Shared Package Architecture](ui2.0升级/architecture/01-ui-react共享包架构.md)
 - [UI 2.0 Theme Packs](ui2.0升级/themes/README.md)
 - [Theme Registry And Runtime Switching](ui2.0升级/architecture/07-主题注册表与运行时切换.md)
+- [Desktop Main Window Integrated Chrome](ui2.0升级/modules/18-Desktop-Client-Shell-implementation-plan.md)
 
 ## Purpose
 
@@ -88,6 +89,9 @@ Rules:
   contracts but do not become a second application model.
 - A main UI restyle or navigation change should normally require zero Desktop-main
   changes and at most a small capability-slot or geometry-marker update.
+- macOS main-window dragging is a shared renderer contract: a focused AppShell chrome
+  component owns confirmed-empty regions, stable page headers expose data markers, and
+  Desktop shell CSS owns platform hit testing. Feature CSS must not maintain a class whitelist.
 
 This allows Desktop shell and Computer Use infrastructure to start before final main UI
 placement is approved.

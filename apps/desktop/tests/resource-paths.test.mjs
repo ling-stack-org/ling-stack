@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -33,7 +33,7 @@ test("packaged resourcesRoot is Electron process.resourcesPath", async (t) => {
   assert.equal(paths.webIndexPath, resolve(packagedResourcesPath, "web/index.html"));
 });
 
-test("packaged Web entry keeps public assets relative and exposes macOS drag chrome", async () => {
+test("packaged Web entry keeps public assets relative and exposes the shared macOS drag contract", async () => {
   const webDistRoot = resolve(import.meta.dirname, "../../web/dist");
   const html = await readFile(join(webDistRoot, "index.html"), "utf8");
   const scriptPath = entryAssetPath(html, "script", "js");
@@ -42,6 +42,7 @@ test("packaged Web entry keeps public assets relative and exposes macOS drag chr
     readFile(join(webDistRoot, scriptPath), "utf8"),
     readFile(join(webDistRoot, stylesheetPath), "utf8"),
   ]);
+  const javascriptBundles = await readJavascriptBundles(join(webDistRoot, "assets"));
 
   assert.match(script, /icons\/ling-stack-gpt-image-2-icon\.png/u);
   assert.match(script, /avatars\/teammates/u);
@@ -51,13 +52,32 @@ test("packaged Web entry keeps public assets relative and exposes macOS drag chr
   ]);
   assert.ok(conversationMark.byteLength > 0);
   assert.ok(teammateAvatar.byteLength > 0);
-  assert.match(script, /desktop-window-drag-region/u);
-  assert.match(stylesheet, /\.desktop-window-drag-region/u);
+  assert.match(javascriptBundles, /desktop-window-chrome/u);
+  assert.match(javascriptBundles, /data-desktop-window-chrome/u);
+  assert.match(javascriptBundles, /data-desktop-window-drag-owner/u);
+  assert.match(javascriptBundles, /content-fallback/u);
+  assert.match(javascriptBundles, /data-desktop-window-drag-region/u);
+  assert.match(javascriptBundles, /data-desktop-window-no-drag/u);
+  assert.match(stylesheet, /\.desktop-window-chrome-region/u);
   assert.match(stylesheet, /\.app-shell\.desktop-macos/u);
-  assert.match(stylesheet, /\.teammate-chat-header/u);
+  assert.match(stylesheet, /\[data-desktop-window-drag-region=/u);
+  assert.match(stylesheet, /\[data-desktop-window-no-drag=/u);
+  assert.match(stylesheet, /data-desktop-window-drag-owner=/u);
+  assert.match(stylesheet, /content-fallback/u);
+  assert.match(stylesheet, /data-ling-overlay-scrim/u);
+  assert.match(stylesheet, /data-desktop-window-traffic-light-clearance/u);
+  assert.match(stylesheet, /pointer-events:\s*none/u);
   assert.match(stylesheet, /-webkit-app-region:\s*drag/u);
   assert.match(stylesheet, /-webkit-app-region:\s*no-drag/u);
 });
+
+async function readJavascriptBundles(assetsRoot) {
+  const entries = await readdir(assetsRoot, { withFileTypes: true });
+  const scripts = entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".js"))
+    .map((entry) => readFile(join(assetsRoot, entry.name), "utf8"));
+  return (await Promise.all(scripts)).join("\n");
+}
 
 async function createFixture(t) {
   const root = await mkdtemp(join(tmpdir(), "ling-desktop-resource-paths-"));

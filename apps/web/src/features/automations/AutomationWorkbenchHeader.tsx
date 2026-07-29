@@ -18,7 +18,10 @@ export function AutomationWorkbenchHeader({
   readonly onRefresh: () => void;
 }): JSX.Element {
   return (
-    <header className="automations-inbox-header automation-ui2-header">
+    <header
+      className="automations-inbox-header automation-ui2-header"
+      data-desktop-window-drag-region="true"
+    >
       <div className="automation-ui2-header-copy">
         <h1 id="automations-title">{t("Automations")}</h1>
         <p>{t("{count} automations · {enabled} enabled · {scheduled} scheduled watches · {attention} need attention", {

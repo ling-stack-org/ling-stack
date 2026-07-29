@@ -9,7 +9,7 @@ closeout，也不得用 Web/Playwright 结果替代真实安装包和平台实�
 
 | Gate | Platform | Required evidence | Status |
 |---|---|---|---|
-| DESKTOP-RELEASE-MAC-ARM64 | Apple Silicon macOS | packaged launch/restart、Light/Dark、Input/Motion、window restore、0 runtime error | existing partial evidence retained |
+| DESKTOP-RELEASE-MAC-ARM64 | Apple Silicon macOS | packaged launch/restart、Light/Dark、Input/Motion、window restore、main-window Home + collapsed Sidebar drag/no-drag coordinate smoke、0 runtime error | partial；[main-window drag subgate passed](../modules/18-Desktop-Client-Shell-implementation-plan.md#verification-evidence) |
 | DESKTOP-RELEASE-MAC-X64 | Intel macOS x64 | clean install、first launch、restart、window chrome、font/control geometry、theme startup、CUA/PiP | pending |
 | DESKTOP-RELEASE-WIN-X64 | Windows 11 x64 | installer、first launch、restart、DPI 100/125/150%、window chrome、font/control geometry、theme startup、CUA/PiP | pending |
 | DESKTOP-RELEASE-AT-MAC | macOS | VoiceOver keyboard path、focus order、Dialog/Drawer/Menu announcements | pending |
@@ -22,6 +22,8 @@ closeout，也不得用 Web/Playwright 结果替代真实安装包和平台实�
 - 截图必须来自真实 packaged app，不得来自 Vite、Playwright Web 或 Electron dev renderer。
 - 每个 gate 保留 launch/restart logs、runtime errors、原尺寸截图和 SHA-256 metadata。
 - 平台差异只能进入 Desktop surface tokens、window chrome 或 native bridge，不得复制 Web components。
+- macOS main-window drag 证据必须记录 drag 前后 window bounds、safe target、no-drag control、复位结果、
+  `app.asar` 和 packaged Web resource tree hash；Windows 继续用 native title bar，不执行 renderer drag smoke。
 - Logo 继续是受保护资产，不替换、不重绘、不改色、不改比例。
 
 ## Release Decision
