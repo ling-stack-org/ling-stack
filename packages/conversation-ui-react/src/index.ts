@@ -16,6 +16,16 @@ export { InlineMessageEditor, type InlineMessageEditorProps } from "./feedback/I
 export { SourceIconStack, type SourceIconKind, type SourceIconStackItem, type SourceIconStackProps } from "./identity/SourceIconStack.js";
 export { TeammateAvatarStack, type TeammateAvatarStackItem, type TeammateAvatarStackProps } from "./identity/TeammateAvatarStack.js";
 export {
+  ConversationToolbar,
+  ConversationToolbarActionButton,
+  ConversationToolbarCountBadge,
+  ConversationToolbarIconButton,
+  type ConversationToolbarActionButtonProps,
+  type ConversationToolbarCountBadgeProps,
+  type ConversationToolbarIconButtonProps,
+  type ConversationToolbarProps,
+} from "./toolbar/ConversationToolbar.js";
+export {
   DockEmptyState,
   DockLauncher,
   DockPageHeader,

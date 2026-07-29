@@ -1,0 +1,292 @@
+.teammates-page > .teammate-management-grid {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  align-items: stretch;
+  overflow: hidden;
+}
+
+.teammate-management-list-panel {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  max-height: 100%;
+  flex-direction: column;
+  overflow: hidden;
+  padding: var(--ling-space-7);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  background: var(--ling-bg-panel);
+}
+
+.teammate-management-list-head {
+  display: flex;
+  min-width: 0;
+  min-height: var(--ling-control-md);
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ling-space-5);
+}
+
+.teammate-management-list-title {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--ling-space-4);
+}
+
+.teammate-management-list-title > svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  color: var(--ling-text-muted);
+  stroke-width: 1.8;
+}
+
+.teammate-management-list-title > span {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
+.teammate-management-list-title h2,
+.teammate-management-list-title small {
+  overflow: hidden;
+  margin: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teammate-management-list-title h2 {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+  font-weight: 650;
+  line-height: var(--ling-line-sm);
+}
+
+.teammate-management-list-title small {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+.teammate-management-list-toolbar {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(180px, 1fr) minmax(132px, auto);
+  gap: var(--ling-space-4);
+  margin-top: var(--ling-space-5);
+}
+
+.teammate-management-list-feedback {
+  margin-top: var(--ling-space-4);
+}
+
+.teammate-management-list-panel .teammate-council-inline-entry {
+  display: flex;
+  min-width: 0;
+  min-height: 40px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ling-space-5);
+  margin: var(--ling-space-5) 0 0;
+  padding: var(--ling-space-3) var(--ling-space-5);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  background: var(--ling-bg-subtle);
+}
+
+.teammate-management-list-panel .teammate-council-inline-entry > span {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--ling-space-3);
+  color: var(--ling-text-muted);
+}
+
+.teammate-management-list-panel .teammate-council-inline-entry > span > svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+}
+
+.teammate-management-list-panel .teammate-council-inline-entry small {
+  overflow: hidden;
+  min-width: 0;
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teammate-management-list-panel .teammate-draft-list {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  align-content: start;
+  grid-auto-rows: max-content;
+  gap: 0;
+  margin-top: var(--ling-space-5);
+  contain: layout paint;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.teammate-management-row {
+  min-width: 0;
+  min-height: 64px;
+  grid-template-columns: minmax(150px, 1.3fr) minmax(160px, 1fr) minmax(94px, auto) minmax(136px, auto);
+  gap: var(--ling-space-5);
+  padding: var(--ling-space-5);
+  border-bottom: 1px solid var(--ling-border-default);
+  background: transparent;
+}
+
+.teammate-management-row[data-hidden="true"] {
+  opacity: 0.64;
+}
+
+.teammate-management-row-identity {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 36px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--ling-space-4);
+}
+
+.teammate-management-row-identity .teammate-avatar-image.compact,
+.teammate-management-row-identity .avatar-initial {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+}
+
+.teammate-draft-copy {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
+.teammate-draft-copy strong,
+.teammate-draft-copy small {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teammate-draft-copy strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+  font-weight: 650;
+  line-height: var(--ling-line-sm);
+}
+
+.teammate-draft-copy small {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+.teammate-management-row-summary {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(64px, 1fr) minmax(48px, auto);
+  grid-template-rows: repeat(2, minmax(0, auto));
+  align-items: center;
+  gap: var(--ling-space-1) var(--ling-space-3);
+}
+
+.teammate-model-pill,
+.teammate-channel-pill,
+.teammate-updated-time {
+  display: block;
+  overflow: hidden;
+  min-width: 0;
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teammate-model-pill {
+  grid-column: 1;
+  grid-row: 1;
+  color: var(--ling-text-default);
+}
+
+.teammate-channel-pill {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.teammate-updated-time {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  align-self: center;
+}
+
+.teammate-management-row > .ling-ui-data-row-status {
+  display: flex;
+  align-items: center;
+}
+
+.teammate-row-actions {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--ling-space-3);
+}
+
+.teammate-row-primary-action {
+  max-width: 112px;
+}
+
+.teammate-row-primary-action > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teammate-management-list-panel .teammate-empty,
+.teammate-management-no-results {
+  min-height: 88px;
+  margin-top: var(--ling-space-5);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  background: var(--ling-bg-subtle);
+}
+
+.teammate-management-list-skeleton {
+  pointer-events: none;
+}
+
+@media (max-width: 1320px) {
+  .teammate-management-list-panel {
+    padding: var(--ling-space-6);
+  }
+
+  .teammate-management-row {
+    grid-template-columns: minmax(138px, 1.2fr) minmax(128px, 0.9fr) minmax(88px, auto) minmax(126px, auto);
+    gap: var(--ling-space-4);
+    padding-inline: var(--ling-space-4);
+  }
+
+  .teammate-management-row-summary {
+    grid-template-columns: minmax(56px, 1fr) minmax(44px, auto);
+    gap: var(--ling-space-3);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .teammate-management-row {
+    transition-duration: var(--ling-motion-instant);
+  }
+}

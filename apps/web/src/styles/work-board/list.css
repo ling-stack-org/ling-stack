@@ -1,0 +1,118 @@
+.work-board-view-title {
+  margin: 0 0 var(--ling-space-4);
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+  line-height: var(--ling-line-sm);
+  letter-spacing: 0;
+}
+
+.work-board-source-feedback {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ling-space-5);
+  margin-bottom: var(--ling-space-5);
+}
+
+.work-board-groups {
+  display: grid;
+  align-content: start;
+  min-width: 0;
+  gap: var(--ling-space-6);
+}
+
+.work-board-group {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-2);
+}
+
+.work-board-group-head {
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ling-space-4);
+  padding: 0 var(--ling-space-4);
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+}
+
+.work-board-group-head strong {
+  color: var(--ling-text-strong);
+  font-weight: 600;
+}
+
+.work-board-list {
+  display: grid;
+  min-width: 0;
+  border-top: 1px solid var(--ling-border-default);
+}
+
+.work-item-row {
+  min-height: 56px;
+  border-left: 2px solid transparent;
+}
+
+.work-item-row.waiting {
+  border-left-color: var(--ling-status-warning);
+}
+
+.work-item-row.blocked {
+  border-left-color: var(--ling-status-danger);
+}
+
+.work-item-identity {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--ling-space-4);
+}
+
+.work-item-identity > svg {
+  flex: 0 0 auto;
+  color: var(--ling-text-muted);
+}
+
+.work-item-identity > strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.work-item-summary {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+  font-size: var(--ling-font-xs);
+}
+
+.work-item-summary > strong,
+.work-item-summary > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.work-item-summary > strong {
+  color: var(--ling-text-default);
+  font-weight: 500;
+}
+
+.work-item-summary > span {
+  color: var(--ling-text-muted);
+}
+
+.work-board-empty {
+  min-height: 260px;
+}
+
+@media (max-width: 1180px) {
+  .work-item-label-count {
+    display: none;
+  }
+}

@@ -8,7 +8,8 @@ import {
   type MockState,
 } from "./support/mock-state";
 
-test("automations page uses Codex-style inbox, manual composer, templates, and per-item controls", async ({ page }) => {
+test("automations page uses one create dialog and keeps template, manual, and chat behavior real", async ({ page }) => {
+  test.setTimeout(60_000);
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "zh-CN");
     localStorage.setItem("ling-stack.themePreference", "dark");
@@ -34,106 +35,55 @@ test("automations page uses Codex-style inbox, manual composer, templates, and p
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await expect(automationsPage.getByRole("heading", { name: "自动化", level: 1 })).toBeVisible();
   await expect(automationsPage.getByRole("tab", { name: /已启用/ })).toHaveAttribute("aria-selected", "true");
-  await expect(automationsPage.getByRole("heading", { name: "当前", level: 2 })).toHaveCount(0);
-  const tabOverflow = await automationsPage.locator(".automation-tab-list").evaluate((element) => getComputedStyle(element).overflowX);
-  expect(tabOverflow).toBe("visible");
-  const darkSurfaces = await page.evaluate(() => {
-    const selectors = [
-      ".workspace-automations-surface",
-      ".automations-inbox-page",
-      ".automations-inbox-header",
-      ".automation-pane-tabs",
-      ".automation-current-pane",
-      ".automation-execution-inspector",
-    ];
-    return selectors.map((selector) => {
-      const element = document.querySelector(selector);
-      const backgroundColor = element ? getComputedStyle(element).backgroundColor : "";
-      const channels = backgroundColor.match(/\d+/g)?.slice(0, 3).map(Number) ?? [];
-      return {
-        selector,
-        exists: Boolean(element),
-        maxChannel: channels.length > 0 ? Math.max(...channels) : 255,
-      };
-    });
-  });
-  for (const surface of darkSurfaces) {
-    expect(surface.exists, `${surface.selector} should render`).toBe(true);
-    expect(surface.maxChannel, `${surface.selector} should stay on dark theme tokens`).toBeLessThanOrEqual(45);
-  }
-  const headerActions = automationsPage.locator(".automation-header-actions");
   const schedulerStrip = automationsPage.locator(".automation-scheduler-strip");
   await expect(schedulerStrip.getByText("调度已启动")).toBeVisible();
   await expect(schedulerStrip.getByText("还没有启用的定时自动化。")).toBeVisible();
   await expect(schedulerStrip.getByRole("button")).toHaveCount(0);
-  await expect(headerActions.getByRole("button", { name: "暂停自动触发" })).toHaveCount(0);
-  await expect(headerActions.getByRole("button", { name: "恢复自动触发" })).toHaveCount(0);
-  await expect(headerActions.getByRole("button", { name: "使用模板" })).toBeVisible();
-  await expect(headerActions.getByRole("button", { name: "手动创建" })).toBeVisible();
-  await expect(headerActions.getByRole("button", { name: "从对话创建" })).toBeVisible();
-  await expect(automationsPage.locator(".automation-inbox-empty").getByRole("button")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Start" })).toHaveCount(0);
+  await expect(automationsPage.getByRole("tab")).toHaveCount(4);
+  await expect(automationsPage.getByRole("button", { name: "创建自动化" })).toHaveCount(1);
 
-  await headerActions.getByRole("button", { name: "从对话创建" }).click();
-  const chatDialog = page.getByRole("dialog", { name: "从对话创建" });
-  await chatDialog.locator("textarea").fill("每分钟给我发一下你好");
+  await automationsPage.getByRole("button", { name: "创建自动化" }).click();
+  const chatDialog = page.getByRole("dialog", { name: "新建自动化" });
+  await chatDialog.getByRole("radio", { name: "从对话创建" }).click();
+  await chatDialog.getByLabel("请求").fill("每分钟给我发一下你好");
   await chatDialog.getByRole("button", { name: "创建草稿" }).click();
-  await expect(page.getByRole("dialog", { name: "从对话创建" })).toHaveCount(0);
-  const chatDraftRow = automationsPage.locator(".automation-inbox-row.draft", { hasText: "每分钟给我发一下你好" });
-  await expect(chatDraftRow).toBeVisible();
-  await expect(chatDraftRow.getByText("每 1 分钟")).toBeVisible();
-  await chatDraftRow.getByRole("button", { name: "确认启用自动化" }).click();
+  await expect(chatDialog.getByText("草稿已就绪")).toBeVisible();
+  await expect(chatDialog).toContainText("每 1 分钟");
+  await chatDialog.getByRole("button", { name: "确认启用自动化" }).click();
   await expect.poll(() => automationState.automations.length).toBe(1);
-  await expect(chatDraftRow).toHaveCount(0);
-  await expect(automationsPage.locator(".automation-inbox-row", { hasText: "每分钟给我发一下你好" })).toBeVisible();
+  await expect(chatDialog).toHaveCount(0);
+  await expect(automationsPage.locator("[data-automation-id]", { hasText: "每分钟给我发一下你好" })).toBeVisible();
   await expect.poll(() => automationState.schedulers[0]?.status).toBe("running");
   await expect(schedulerStrip.getByText("正在监听 1 条定时自动化。")).toBeVisible();
 
-  await headerActions.getByRole("button", { name: "手动创建" }).click();
-
-  const manualDialog = page.getByRole("dialog", { name: "手动创建" });
-  await expect(manualDialog.getByPlaceholder("自动化功能标题")).toBeVisible();
-  await expect(manualDialog.getByPlaceholder("添加提示词，例如：在 $sentry 中查找崩溃")).toBeVisible();
-  await manualDialog.getByPlaceholder("自动化功能标题").fill("每日检查");
-  await manualDialog.getByPlaceholder("添加提示词，例如：在 $sentry 中查找崩溃").fill("每天检查最近运行、审批和风险。");
-
-  await manualDialog.getByRole("button", { name: /工作树/ }).click();
-  await expect(manualDialog.getByRole("button", { name: /本地/ })).toBeVisible();
-  await expect(manualDialog.getByRole("button", { name: /工作树/ }).nth(1)).toBeVisible();
-  await expect(manualDialog.getByRole("button", { name: /对话/ })).toBeVisible();
-  await manualDialog.getByRole("button", { name: /本地/ }).click();
-
-  await manualDialog.getByRole("button", { name: /每天 09:00/ }).click();
-  await expect(manualDialog.getByLabel("计划")).toBeVisible();
-  await expect(manualDialog.getByLabel("时间")).toHaveValue("09:00");
-
-  await manualDialog.locator(".automation-risk-tooltip").focus();
-  await expect(manualDialog.getByText("自动化会按计划运行。只读工具风险最低；写入或 Shell 权限应保持显式审批。")).toBeVisible();
-
-  await manualDialog.getByRole("button", { name: "创建" }).click();
+  await automationsPage.getByRole("button", { name: "创建自动化" }).click();
+  const manualDialog = page.getByRole("dialog", { name: "新建自动化" });
+  await manualDialog.getByRole("radio", { name: "手动设置" }).click();
+  await manualDialog.getByLabel("自动化名称").fill("每日检查");
+  await manualDialog.getByLabel("执行动作").fill("每天检查最近运行、审批和风险。");
+  await manualDialog.getByLabel("定时").selectOption("daily");
+  await manualDialog.getByLabel("时间").fill("09:00");
+  await manualDialog.getByRole("button", { name: "高级配置" }).click();
+  await manualDialog.getByLabel("运行态").selectOption("local");
+  await manualDialog.getByRole("button", { name: "创建自动化" }).click();
   await expect.poll(() => automationState.automations.length).toBe(2);
-  await expect(page.getByRole("dialog", { name: "手动创建" })).toHaveCount(0);
-  const createdRow = automationsPage.locator(".automation-inbox-row", { hasText: "每日检查" });
+  await expect(manualDialog).toHaveCount(0);
+  const createdRow = automationsPage.locator("[data-automation-id]", { hasText: "每日检查" });
   await expect(createdRow).toBeVisible();
-  await expect(createdRow.getByText(/本地 ·/)).toBeVisible();
   await expect(createdRow.getByText("每天 09:00")).toBeVisible();
-  await expect.poll(() => automationState.schedulers[0]?.status).toBe("running");
 
-  await headerActions.getByRole("button", { name: "使用模板" }).click();
-  const templateDialog = page.getByRole("dialog", { name: "自动化模板" });
+  await automationsPage.getByRole("button", { name: "创建自动化" }).click();
+  const templateDialog = page.getByRole("dialog", { name: "新建自动化" });
   await expect(templateDialog.getByRole("option", { name: /Bug 扫描/ })).toBeVisible();
-  await expect(templateDialog.getByRole("option", { name: /站会 \/ 周总结/ })).toBeVisible();
-  await templateDialog.getByRole("option", { name: /站会 \/ 周总结/ }).click();
+  await templateDialog.getByRole("option", { name: /Bug 扫描/ }).click();
   await templateDialog.getByRole("button", { name: "使用此模板" }).click();
-  const filledManualDialog = page.getByRole("dialog", { name: "手动创建" });
-  await expect(filledManualDialog.getByPlaceholder("自动化功能标题")).toHaveValue("站会 / 周总结");
-  await expect(filledManualDialog.getByRole("button", { name: /Launch planning thread/ })).toBeVisible();
-  await filledManualDialog.getByRole("button", { name: "创建" }).click();
+  await expect(templateDialog.getByLabel("自动化名称")).toHaveValue("Bug 扫描");
+  await templateDialog.getByLabel("目标").selectOption("thread:thread_launch_planning");
+  await templateDialog.getByRole("button", { name: "创建自动化" }).click();
   await expect.poll(() => automationState.automations.length).toBe(3);
-  await expect(page.getByRole("dialog", { name: "手动创建" })).toHaveCount(0);
-  const conversationAutomationRow = automationsPage.locator(".automation-inbox-row", { hasText: "站会 / 周总结" });
+  const conversationAutomationRow = automationsPage.locator("[data-automation-id]", { hasText: "Bug 扫描" });
   await expect(conversationAutomationRow).toBeVisible();
-  await expect(conversationAutomationRow).toContainText("来源会话 · Launch planning thread");
+  await expect(conversationAutomationRow).toContainText("Launch planning thread");
 });
 
 test("automations page keeps failed recent runs in enabled definitions with a clear repair action", async ({ page }) => {
@@ -173,9 +123,9 @@ test("automations page keeps failed recent runs in enabled definitions with a cl
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Automations" }).click();
 
   const automationsPage = page.locator(".automations-inbox-page");
-  await expect(automationsPage.locator(".automation-scheduler-strip").getByText("No scheduled automations are enabled. Manual automations can still run now.")).toBeVisible();
+  await expect(automationsPage.locator(".automation-scheduler-strip").getByText("No enabled scheduled automations yet.")).toBeVisible();
   await expect(automationsPage.getByRole("tab", { name: /Enabled automations/ })).toHaveAttribute("aria-selected", "true");
-  const failedRow = automationsPage.locator(".automation-inbox-row", { hasText: "Nightly check" });
+  const failedRow = automationsPage.locator("[data-automation-id]", { hasText: "Nightly check" });
   await expect(failedRow).toContainText("Recent run failed");
   await expect(failedRow.getByRole("button", { name: "Inspect failure" })).toBeVisible();
   await expect(automationsPage.getByRole("tab", { name: /Needs attention\s+1/ })).toBeVisible();

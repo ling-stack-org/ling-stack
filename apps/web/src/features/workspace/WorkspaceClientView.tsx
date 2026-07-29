@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type ReactNode, type UIEvent } from "react";
 import {
-  ArrowDown,
   ArrowLeft,
   ChevronUp,
   CircleAlert,
@@ -53,14 +52,10 @@ import {
   saveProposedPlanArtifact,
 } from "../../api.js";
 import {
-  createChannelWorktree,
   getChannelWorkspaceGitStatus,
   getChannelTeamMetricsProjection,
-  handoffChannelWorkspace,
   listChannelCollaborationCards,
   listChannelTerminalReports,
-  openChannelWorkspace,
-  refreshChannelWorkspace,
 } from "../../api/channels.js";
 import { useI18n, type Translate } from "../../i18n.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
@@ -119,24 +114,22 @@ import {
   providerRunPreflightBlocker,
 } from "../../lib/providers.js";
 import { TeammateAvatarView } from "../teammates/TeammateAvatarView.js";
-import {
-  StatusBadge,
-} from "../../shared/components/index.js";
+import { IconButton, InlineFeedback, Spinner } from "../../shared/ui/index.js";
 import {
   ConversationStatusStrip,
   type DockPageKind,
   type ConversationWorkCellDetailsState,
 } from "../../shared/conversation/index.js";
 import {
+  ConversationHeaderSearch,
   WorkspaceRightDock,
-  WorkspaceToolbarIconButton,
   type WorkspaceRightDockFileTarget,
   type WorkspaceRightDockReviewTarget,
 } from "./right-dock/index.js";
-import { channelRightDockTransitionMs } from "./layout/channel-workspace-layout.js";
 import {
   ChannelEnvironmentCommitDialog,
-} from "./ChannelEnvironmentPage.js";
+} from "./ChannelEnvironmentCommitDialog.js";
+import { ChannelActiveStatusIndicator } from "./ChannelActiveStatusIndicator.js";
 import {
   ChannelEnvironmentPage,
   useChannelEnvironmentSummary,
@@ -144,9 +137,12 @@ import {
 } from "./ChannelEnvironmentSummary.js";
 import { ChannelRenameDialog } from "./ChannelRenameDialog.js";
 import { ChannelHeaderToolbar } from "./ChannelHeaderToolbar.js";
+import { revealConversationTarget } from "./conversation-locate-pulse.js";
+import { useChannelHeaderController } from "./useChannelHeaderController.js";
 import { WorkflowConversionPreviewDrawer, type WorkflowConversionDraft } from "./WorkflowConversionPreviewDialog.js";
 import { ChannelGovernanceNotificationsPopover } from "./ChannelGovernanceNotificationsPopover.js";
 import { useWorkspaceTerminalSession, WorkspaceTerminalPanel } from "./WorkspaceTerminalPanel.js";
+import { useConversationPanelPresence } from "./useConversationPanelPresence.js";
 import {
   NewTaskPanel,
   TaskDetailPanel,
@@ -195,7 +191,6 @@ import type {
   ChannelWorkflowStep,
   ChannelWorkflowStepStartMode,
   ChannelWorkspaceBinding,
-  ChannelWorkspaceMode,
   ExecutionAction,
   GovernanceNotification,
   ExternalWorkActionView,
@@ -228,6 +223,7 @@ import type {
   WorkUnit,
   WorkspaceSettings,
   UpdateWorkspaceSettingsRequest,
+  ErrorPresentationOptions,
   UserProfile,
 } from "../../types.js";
 import { ApprovalCard } from "../approvals/ApprovalCard.js";
@@ -241,9 +237,11 @@ import {
   channelWorkspaceModeIcon,
   isLingAgentTeammate,
   type ChannelNotificationLevel,
+  type ChannelTeammateRelationFeedback,
 } from "./ChannelSettingsPanels.js";
 import { ChannelComposer } from "./ChannelComposer.js";
 import { ChannelActivityWorkspace } from "./ChannelActivityWorkspace.js";
+import { ChannelFeedLatestControl, ChannelFeedStatus } from "./ChannelFeedChrome.js";
 import { useChannelRightDockController } from "./useChannelRightDockController.js";
 import { useChannelBottomPanelResizeController } from "./useChannelBottomPanelResizeController.js";
 import { useChannelMessageFeed } from "./ChannelMessageFeed.js";
@@ -260,8 +258,10 @@ import { useChannelComposerActionsController } from "./useChannelComposerActions
 import { useChannelThreadReplyController } from "./useChannelThreadReplyController.js";
 import { useChannelComposerInputController } from "./useChannelComposerInputController.js";
 import { useChannelComposerSnapshotController } from "./useChannelComposerSnapshotController.js";
+import type { ChannelFeedbackEntry } from "./useChannelFeedbackController.js";
 import { useChannelMessageFeedAssembly } from "./useChannelMessageFeedAssembly.js";
 import { useChannelConversationBlockInteractions } from "./useChannelConversationBlockInteractions.js";
+import { useChannelWorkspaceFeedback } from "./useChannelWorkspaceFeedback.js";
 
 type ChannelSidePanelView = "context" | "settings" | "task";
 type ChannelDrawerRootView = Extract<ChannelSidePanelView, "context">;
@@ -429,6 +429,7 @@ export function WorkspaceClientView({
   channelTeammateMemberships,
   channelTeammateMembershipsLoading,
   channelTeammateSavingId,
+  channelTeammateError,
   taskRunProviderId,
   fallbackProviderId,
   channelsLoading,
@@ -458,17 +459,18 @@ export function WorkspaceClientView({
   approvalPolicy,
   permissionMode,
   permissionPreset,
+  fullAccessConfirmed,
   activeTaskRunAction,
   runningWorkflowStepId,
   orchestratingWorkflowId,
-  errorMessage,
+  channelFeedbackEntries,
+  onClearChannelFeedback,
   onChannelCreateOpenChange,
   onChannelEditFormChange,
   onTaskFormChange,
   onProviderSelect,
   onAddChannelTeammate,
   onRemoveChannelTeammate,
-  onSetDefaultChannelTeammate,
   onOpenTeammates,
   onRefreshChannels,
   onSaveChannel,
@@ -591,6 +593,7 @@ export function WorkspaceClientView({
   readonly channelTeammateMemberships: readonly TeammateChannelMembership[];
   readonly channelTeammateMembershipsLoading: boolean;
   readonly channelTeammateSavingId: string;
+  readonly channelTeammateError: ChannelTeammateRelationFeedback | undefined;
   readonly taskRunProviderId: string;
   readonly fallbackProviderId: string;
   readonly channelsLoading: boolean;
@@ -620,21 +623,22 @@ export function WorkspaceClientView({
   readonly approvalPolicy: ApprovalPolicy | undefined;
   readonly permissionMode: SessionPermissionMode;
   readonly permissionPreset?: PermissionPreset;
+  readonly fullAccessConfirmed: boolean;
   readonly activeTaskRunAction: TaskRunActionState | undefined;
   readonly runningWorkflowStepId: string;
   readonly orchestratingWorkflowId: string;
-  readonly errorMessage: string;
+  readonly channelFeedbackEntries: readonly ChannelFeedbackEntry[];
+  readonly onClearChannelFeedback: (surface: ChannelFeedbackEntry["surface"], identity: string) => void;
   readonly onChannelCreateOpenChange: (open: boolean) => void;
   readonly onChannelEditFormChange: (form: ChannelFormState) => void;
   readonly onTaskFormChange: (form: TaskFormState) => void;
   readonly onProviderSelect: (providerId: string) => void;
   readonly onAddChannelTeammate: (teammateId: string) => Promise<void>;
   readonly onRemoveChannelTeammate: (teammateId: string) => Promise<void>;
-  readonly onSetDefaultChannelTeammate: (teammateId: string) => Promise<void>;
   readonly onOpenTeammates: () => void;
   readonly onRefreshChannels: () => void;
   readonly onSaveChannel: (formOverride?: ChannelFormState) => void | Promise<void>;
-  readonly onCreateTask: () => void;
+  readonly onCreateTask: () => Promise<boolean>;
   readonly onCreateTaskFromSlashCommand: (input: {
     readonly title: string;
     readonly prompt: string;
@@ -650,7 +654,7 @@ export function WorkspaceClientView({
     readonly linkPreviewIds: readonly string[];
     readonly fileRefs: readonly ChannelMessageFileRef[];
     readonly requestAiReply: boolean;
-  }) => Promise<void>;
+  }) => Promise<{ readonly errorMessage?: string }>;
   readonly onConfirmExecutionProposal: (proposal: ChannelExecutionProposal) => void;
   readonly onCancelExecutionProposal: (proposal: ChannelExecutionProposal) => void;
   readonly onUpdateExecutionProposal: (
@@ -678,7 +682,7 @@ export function WorkspaceClientView({
   readonly onRunActivityTriageAction: (draft: ChannelActivityTriageDraft) => Promise<ChannelActivityTriageResult>;
   readonly onLoadOlderChannelMessages: () => void;
   readonly onRefreshChannelMessages: () => void;
-  readonly onRefreshChannelActivity: () => void;
+  readonly onRefreshChannelActivity: () => Promise<void>;
   readonly onRefreshExternalWorkCiTriage: () => void;
   readonly onRefreshWorkItems: () => void;
   readonly onRefreshChannelProtocol: () => void;
@@ -712,11 +716,31 @@ export function WorkspaceClientView({
   readonly busyWorkItemId: string;
   readonly onOpenProviders: (run?: RunSession) => void;
   readonly workspaceSettings: WorkspaceSettings | undefined;
-  readonly onWorkspaceSettingsPatch: (patch: UpdateWorkspaceSettingsRequest) => void;
+  readonly onWorkspaceSettingsPatch: (
+    patch: UpdateWorkspaceSettingsRequest,
+    options?: ErrorPresentationOptions,
+  ) => void | Promise<WorkspaceSettings | undefined>;
 }): JSX.Element {
   const { t } = useI18n();
   const [createTaskOpen, setCreateTaskOpen] = useState(false);
   const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
+  const channelFeedbackByKey = useMemo(
+    () => new Map(channelFeedbackEntries.map((entry) => [`${entry.surface}:${entry.identity}`, entry.message] as const)),
+    [channelFeedbackEntries],
+  );
+  const channelFeedbackMessage = (surface: ChannelFeedbackEntry["surface"], identity: string): string =>
+    channelFeedbackByKey.get(`${surface}:${identity}`) ?? "";
+  const selectedComposerError = channelFeedbackMessage("composer", selectedChannelId);
+  const selectedTaskError = channelFeedbackMessage("task", selectedTaskId || selectedChannelId);
+  const selectedProtocolError = channelFeedbackMessage("protocol", selectedChannelId);
+  const selectedDockError = channelFeedbackMessage("dock", selectedChannelId);
+  const workflowErrors = useMemo(() => Object.fromEntries(
+    channelFeedbackEntries
+      .filter((entry) => entry.surface === "workflow")
+      .map((entry) => [entry.identity, entry.message]),
+  ), [channelFeedbackEntries]);
+  const selectedChannelIdRef = useRef(selectedChannelId);
+  selectedChannelIdRef.current = selectedChannelId;
   const selectedChannelWorkspace = selectedChannel ? resolveChannelWorkspaceBinding(selectedChannel, cwd) : undefined;
   const selectedChannelExecutionPath = selectedChannel && selectedChannelWorkspace ? resolveChannelWorkspaceExecutionPath(selectedChannelWorkspace, selectedChannel, cwd) : "";
   const selectedTask = tasks.find((task) => task.id === selectedTaskId);
@@ -727,6 +751,7 @@ export function WorkspaceClientView({
   const [environmentCommitDialogOpen, setEnvironmentCommitDialogOpen] = useState(false);
   const [environmentCommitMessage, setEnvironmentCommitMessage] = useState("");
   const [environmentIncludeUnstaged, setEnvironmentIncludeUnstaged] = useState(true);
+  const environmentCommitReturnFocusRef = useRef<HTMLElement | null>(null);
   const [channelGitStatusState, setChannelGitStatusState] = useState<ChannelGitStatusLoadState>({ status: "idle" });
   const [selectedApprovalId, setSelectedApprovalId] = useState("");
   const [conversationWorkCellDetailsByKey, setConversationWorkCellDetailsByKey] = useState<Readonly<Record<string, ConversationWorkCellDetailsState>>>({});
@@ -736,17 +761,17 @@ export function WorkspaceClientView({
   const [channelRenameOpen, setChannelRenameOpen] = useState(false);
   const [channelRenameName, setChannelRenameName] = useState("");
   const [channelRenameSaving, setChannelRenameSaving] = useState(false);
+  const [channelRenameError, setChannelRenameError] = useState("");
   const [progressPopoverOpen, setProgressPopoverOpen] = useState(false);
-  const [progressPopoverRendered, setProgressPopoverRendered] = useState(false);
-  const [progressPopoverExpanded, setProgressPopoverExpanded] = useState(false);
-  const progressPopoverOpenFrameRef = useRef<number | undefined>();
   const [governanceNotificationsOpen, setGovernanceNotificationsOpen] = useState(false);
   const [attentionProgressExpanded, setAttentionProgressExpanded] = useState(true);
   const [conversationDetailOverlay, setConversationDetailOverlay] = useState<ConversationDetailOverlayState | undefined>();
   const [selectedSourceDetail, setSelectedSourceDetail] = useState<SelectedSourceDetailState | undefined>();
   const [channelBottomPanelOpen, setChannelBottomPanelOpen] = useState(false);
   const channelUtilityPageOpen = channelSettingsPageOpen || channelEnvironmentPageOpen;
-  const channelBottomPanelVisible = channelBottomPanelOpen && !channelUtilityPageOpen;
+  const channelBottomPanelIntentOpen = channelBottomPanelOpen && !channelUtilityPageOpen;
+  const channelBottomPanelPresence = useConversationPanelPresence(channelBottomPanelIntentOpen, false);
+  const channelBottomPanelVisible = channelBottomPanelPresence.rendered;
   const channelRightDockIntentOpen = !channelUtilityPageOpen && sidePanelOpen;
   const channelRightDock = useChannelRightDockController({
     initialOpen: Boolean(selectedTaskId),
@@ -764,8 +789,6 @@ export function WorkspaceClientView({
     containerRef: taskWorkbenchWindowRef,
     resizeObserverKey: selectedChannelId ?? "",
   });
-  const progressPopoverCanFitMainLayout = channelRightDock.progressPopoverCanFitMainLayout;
-  const progressPopoverCanUseMainLayout = channelRightDock.progressPopoverCanUseMainLayout;
 
   useEffect(() => {
     const channelId = selectedChannelId ?? "";
@@ -858,7 +881,7 @@ export function WorkspaceClientView({
     handleComposerResizePointerMove,
     handleComposerResizePointerEnd,
     showComposerFeedback,
-  } = useChannelComposerDraftController();
+  } = useChannelComposerDraftController(selectedChannelId);
   const [activeChannelGoal, setActiveChannelGoal] = useState<LingThreadGoal | undefined>();
   const [channelGoalLoadingThreadId, setChannelGoalLoadingThreadId] = useState("");
   const [channelGoalBusy, setChannelGoalBusy] = useState(false);
@@ -872,10 +895,6 @@ export function WorkspaceClientView({
   const [pendingChannelCouncilId, setPendingChannelCouncilId] = useState("");
   const [channelNotificationLevel, setChannelNotificationLevel] = useState<ChannelNotificationLevel>("mentions");
   const [channelSettingsAutosaveRevision, setChannelSettingsAutosaveRevision] = useState(0);
-  const [channelWorkspaceBusyAction, setChannelWorkspaceBusyAction] = useState("");
-  const [channelWorkspaceExternalPath, setChannelWorkspaceExternalPath] = useState("");
-  const [channelWorkspaceNotice, setChannelWorkspaceNotice] = useState("");
-  const [channelWorkspaceError, setChannelWorkspaceError] = useState("");
   const [channelCollaborationCardsState, setChannelCollaborationCardsState] = useState<{
     readonly channelId: string;
     readonly signature: string;
@@ -893,14 +912,13 @@ export function WorkspaceClientView({
   const [channelReplacementRetryingMessageId, setChannelReplacementRetryingMessageId] = useState<string>();
   const [channelReplacementRetryError, setChannelReplacementRetryError] = useState("");
   const channelMoreRef = useRef<HTMLDivElement | null>(null);
-  const governanceNotificationsRef = useRef<HTMLDivElement | null>(null);
+  const channelMoreButtonRef = useRef<HTMLButtonElement | null>(null);
   const teammateManagerButtonRef = useRef<HTMLButtonElement | null>(null);
   const teammateManagerPanelRef = useRef<HTMLElement | null>(null);
   const conversationWorkCellEvidenceLoadsRef = useRef(new Set<string>());
   const conversationThreadTurnLoadsRef = useRef(new Set<string>());
   const conversationThreadTurnRunSignaturesRef = useRef(new Map<string, string>());
   const messageFeedChannelIdRef = useRef(selectedChannelId);
-  const channelWorkspaceExternalPathChannelIdRef = useRef(selectedChannelId);
   const channelSettingsAutosaveTimerRef = useRef<number | undefined>();
   const channelSettingsAutosaveInFlightRef = useRef(false);
   const channelSettingsAutosaveQueuedRef = useRef(false);
@@ -910,6 +928,16 @@ export function WorkspaceClientView({
   const onSaveChannelRef = useRef(onSaveChannel);
   const workspaceSettingsRef = useRef(workspaceSettings);
   const onWorkspaceSettingsPatchRef = useRef(onWorkspaceSettingsPatch);
+  const channelWorkspaceFeedback = useChannelWorkspaceFeedback({
+    cwd,
+    selectedChannelId,
+    selectedChannelExecutionPath,
+    selectedChannelWorkspace,
+    channelEditForm,
+    onChannelEditFormChange,
+    onRefreshChannels,
+    t,
+  });
 
   useEffect(() => {
     onSaveChannelRef.current = onSaveChannel;
@@ -1287,6 +1315,7 @@ export function WorkspaceClientView({
     cwd,
     selectedChannelId,
     channelMessages: channelMessagesForDisplay,
+    channelAttachments,
     tasks,
     runs: runsForDisplay,
     approvals,
@@ -1301,6 +1330,15 @@ export function WorkspaceClientView({
     onWorkspaceSettingsPatch,
     t,
   });
+  const channelHeader = useChannelHeaderController({
+    channelId: selectedChannelId,
+    onRefresh: onRefreshChannelActivity,
+    onSearchChange: setActivitySearch,
+  });
+  const channelActivityToolsVisible =
+    activityToolsOpen ||
+    activityCategoryFilter !== "all" ||
+    activityAttentionFilter !== "all";
   useEffect(() => {
     const workspaceCwd = cwd.trim();
     const visibleKeys = new Set(visibleConversationThreadIds.map((threadId) => threadTurnsCacheKey(threadId)));
@@ -1403,7 +1441,7 @@ export function WorkspaceClientView({
       icon={<Workflow size={15} />}
       title={t("Run in progress")}
       description={activeConversationTask ? t("Run for {title} is {status}.", { title: activeConversationTask.title, status: activeConversationRun.status }) : t("Run is still running.")}
-      statusNode={<StatusBadge status={activeConversationRun.status} />}
+      statusNode={<ChannelActiveStatusIndicator kind="run" status={activeConversationRun.status} />}
       metaItems={[
         { id: "provider", label: t("Provider"), value: effectiveProvider?.displayName ?? t("No model selected") },
         { id: "approvals", label: t("Approvals"), value: pendingApprovalCount },
@@ -1431,7 +1469,7 @@ export function WorkspaceClientView({
       icon={<ShieldCheck size={15} />}
       title={t("Pending approvals")}
       description={selectedApproval?.title ?? t("Approval request")}
-      statusNode={<StatusBadge status="waiting_for_approval" />}
+      statusNode={<ChannelActiveStatusIndicator kind="pending-approval" />}
       metaItems={[
         { id: "approvals", label: t("Approvals"), value: pendingApprovalCount },
       ]}
@@ -1450,7 +1488,7 @@ export function WorkspaceClientView({
       icon={<CircleAlert size={15} />}
       title={t("Provider needs attention")}
       description={providerBlocker}
-      statusNode={<StatusBadge status="blocked" />}
+      statusNode={<ChannelActiveStatusIndicator kind="provider-blocked" />}
       metaItems={[
         { id: "provider", label: t("Provider"), value: effectiveProvider?.displayName ?? t("No model selected") },
       ]}
@@ -1501,30 +1539,6 @@ export function WorkspaceClientView({
   useEffect(() => {
     setGovernanceNotificationsOpen(false);
   }, [selectedChannelId]);
-
-  useEffect(() => {
-    if (!governanceNotificationsOpen) {
-      return undefined;
-    }
-    function handlePointerDown(event: MouseEvent): void {
-      const target = event.target;
-      if (target instanceof Node && governanceNotificationsRef.current?.contains(target)) {
-        return;
-      }
-      setGovernanceNotificationsOpen(false);
-    }
-    function handleKeyDown(event: KeyboardEvent): void {
-      if (event.key === "Escape") {
-        setGovernanceNotificationsOpen(false);
-      }
-    }
-    document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [governanceNotificationsOpen]);
 
   useEffect(() => {
     if (!teammateManagerOpen) {
@@ -1784,7 +1798,7 @@ export function WorkspaceClientView({
     teammateOptions,
     onSendMessage,
   });
-  useChannelComposerSnapshotController({
+  const channelComposerSnapshots = useChannelComposerSnapshotController({
     selectedChannelId,
     messageDraft,
     setMessageDraft,
@@ -1951,19 +1965,6 @@ export function WorkspaceClientView({
   }, [closeConversationBlockActionMenu, cwd, messageFeedState.reset, selectedChannelId, selectedChannelNotificationLevel, workspaceSettingsLoaded]);
 
   useEffect(() => {
-    const channelChanged = channelWorkspaceExternalPathChannelIdRef.current !== selectedChannelId;
-    channelWorkspaceExternalPathChannelIdRef.current = selectedChannelId;
-    if (selectedChannelWorkspace?.mode === "external_path" && selectedChannelWorkspace.executionPath) {
-      setChannelWorkspaceExternalPath(selectedChannelWorkspace.executionPath);
-    } else if (channelChanged) {
-      setChannelWorkspaceExternalPath("");
-    }
-    setChannelWorkspaceNotice("");
-    setChannelWorkspaceError("");
-    setChannelWorkspaceBusyAction("");
-  }, [selectedChannelId, selectedChannelWorkspace?.mode, selectedChannelWorkspace?.executionPath]);
-
-  useEffect(() => {
     setBriefDraft({
       objective: channelBrief?.objective ?? "",
       scope: channelBrief?.scope ?? "",
@@ -2076,10 +2077,8 @@ export function WorkspaceClientView({
     globalThis.setTimeout(() => {
       const target = Array.from(document.querySelectorAll<HTMLElement>(".conversation-work-cell"))
         .find((element) => element.dataset.threadId === threadId);
-      target?.scrollIntoView({ block: "center", behavior: "smooth" });
-      target?.classList.add("conversation-work-cell-locate-pulse");
       if (target) {
-        globalThis.setTimeout(() => target.classList.remove("conversation-work-cell-locate-pulse"), 1400);
+        revealConversationTarget(target);
       }
     }, 80);
   }
@@ -2287,96 +2286,9 @@ export function WorkspaceClientView({
     if (!selectedChannelId) {
       return;
     }
-    const previousForm = channelEditForm;
     const nextForm = { ...channelEditForm, name: name.trim() };
+    await onSaveChannel(nextForm);
     onChannelEditFormChange(nextForm);
-    try {
-      await onSaveChannel(nextForm);
-    } catch (error) {
-      onChannelEditFormChange(previousForm);
-      throw error;
-    }
-  }
-
-  async function runChannelWorkspaceAction(
-    action: string,
-    operation: () => Promise<{ readonly binding: ChannelWorkspaceBinding }>,
-    successMessage: string,
-  ): Promise<void> {
-    if (!selectedChannelId || channelWorkspaceBusyAction) {
-      return;
-    }
-    setChannelWorkspaceBusyAction(action);
-    setChannelWorkspaceNotice("");
-    setChannelWorkspaceError("");
-    try {
-      const response = await operation();
-      onChannelEditFormChange({ ...channelEditForm, workspaceBinding: response.binding });
-      setChannelWorkspaceNotice(successMessage);
-      onRefreshChannels();
-    } catch (caught: unknown) {
-      setChannelWorkspaceError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setChannelWorkspaceBusyAction("");
-    }
-  }
-
-  function onCreateManagedChannelWorktree(): void {
-    const workspaceCwd = cwd.trim();
-    if (!workspaceCwd || !selectedChannelId) {
-      return;
-    }
-    void runChannelWorkspaceAction(
-      "create-worktree",
-      () => createChannelWorktree(workspaceCwd, selectedChannelId),
-      t("Managed worktree is ready."),
-    );
-  }
-
-  function onRefreshChannelWorkspace(): void {
-    const workspaceCwd = cwd.trim();
-    if (!workspaceCwd || !selectedChannelId) {
-      return;
-    }
-    void runChannelWorkspaceAction(
-      "refresh",
-      () => refreshChannelWorkspace(workspaceCwd, selectedChannelId),
-      t("Workspace status refreshed."),
-    );
-  }
-
-  function onHandoffChannelWorkspace(mode: ChannelWorkspaceMode): void {
-    const workspaceCwd = cwd.trim();
-    if (!workspaceCwd || !selectedChannelId) {
-      return;
-    }
-    const executionPath = mode === "external_path" ? channelWorkspaceExternalPath.trim() : undefined;
-    if (mode === "external_path" && !executionPath) {
-      setChannelWorkspaceError(t("Enter an external workspace path."));
-      return;
-    }
-    void runChannelWorkspaceAction(
-      `handoff-${mode}`,
-      () => handoffChannelWorkspace(workspaceCwd, selectedChannelId, { mode, executionPath }),
-      mode === "local" ? t("Channel handed off to Local.") : mode === "managed_worktree" ? t("Channel handed off to Worktree.") : t("Channel handed off to External path."),
-    );
-  }
-
-  function onOpenChannelWorkspacePath(): void {
-    const workspaceCwd = cwd.trim();
-    if (!workspaceCwd || !selectedChannelId || !selectedChannelExecutionPath || channelWorkspaceBusyAction) {
-      return;
-    }
-    setChannelWorkspaceBusyAction("open");
-    setChannelWorkspaceNotice("");
-    setChannelWorkspaceError("");
-    void openChannelWorkspace(workspaceCwd, selectedChannelId)
-      .catch((caught: unknown) => {
-        setChannelWorkspaceError(caught instanceof Error ? caught.message : String(caught));
-      })
-      .finally(() => {
-        setChannelWorkspaceBusyAction("");
-      });
   }
 
   function addSelectedChannelTeammate(): void {
@@ -2385,7 +2297,7 @@ export function WorkspaceClientView({
     }
     const teammateId = pendingChannelTeammateId;
     setPendingChannelTeammateId("");
-    void onAddChannelTeammate(teammateId);
+    void onAddChannelTeammate(teammateId).catch(() => undefined);
   }
 
   function addSelectedChannelCouncil(): void {
@@ -2424,9 +2336,10 @@ export function WorkspaceClientView({
     });
   }
 
-  function createTask(): void {
-    onCreateTask();
-    setCreateTaskOpen(false);
+  async function createTask(): Promise<void> {
+    if (await onCreateTask()) {
+      setCreateTaskOpen(false);
+    }
   }
 
   function openCreateTaskPanel(): void {
@@ -2464,9 +2377,10 @@ export function WorkspaceClientView({
       setupChatProviders={setupChatProviders}
       mediaProviders={mediaProviders}
       providersLoading={providersLoading}
+      error={channelFeedbackMessage("task", selectedChannelId)}
       onProviderSelect={onProviderSelect}
       onTaskFormChange={onTaskFormChange}
-      onCreateTask={createTask}
+      onCreateTask={() => void createTask()}
       onCancel={() => setCreateTaskOpen(false)}
     />
   ) : selectedTask ? (
@@ -2496,6 +2410,7 @@ export function WorkspaceClientView({
       contextSummaries={channelContextSummaries}
       workflows={channelWorkflows}
       workflowSteps={channelWorkflowSteps}
+      operationError={selectedTaskError}
       onCreateHandoffFromTask={onCreateHandoffFromTask}
       onOpenHandoffs={() => openProtocolFromActivity("handoffs")}
       onCreateTaskFromContextSummary={onCreateTaskFromContextSummary}
@@ -3146,9 +3061,7 @@ export function WorkspaceClientView({
       showComposerFeedback("info", t("Source message is not loaded."));
       return;
     }
-    target.scrollIntoView({ block: "center", behavior: "smooth" });
-    target.classList.add("conversation-work-cell-locate-pulse");
-    globalThis.setTimeout(() => target.classList.remove("conversation-work-cell-locate-pulse"), 1400);
+    revealConversationTarget(target);
   }
 
   function closeWorkflowConversionPreview(): void {
@@ -3224,6 +3137,9 @@ export function WorkspaceClientView({
     onCompleteGoal: completeChannelGoal,
     onClearGoal: clearChannelGoal,
     onSendMessage,
+    isChannelCurrent: (channelId) => selectedChannelIdRef.current === channelId,
+    rememberDetachedSendFailure: channelComposerSnapshots.rememberDetachedSendFailure,
+    rememberDetachedSendSuccess: channelComposerSnapshots.rememberDetachedSendSuccess,
     onCancelActiveRun,
     onRefreshChannelActivity,
     onRefreshTasks,
@@ -3452,6 +3368,7 @@ export function WorkspaceClientView({
       pendingMessageAssetsVisible={pendingMessageAssetsVisible}
       permissionLocked={channelComposerPermissionLocked}
       permissionPreset={channelComposerPermissionPreset}
+      fullAccessConfirmed={fullAccessConfirmed}
       planModeActive={channelPlanModeActive}
       planModeBusy={channelPlanModeBusy}
       planModeChipVisible={channelPlanModeChipVisible}
@@ -3468,7 +3385,7 @@ export function WorkspaceClientView({
       runGuidanceLoading={runGuidanceLoading}
       runGuidanceSubmitting={runGuidanceSubmitting}
       selectedChannelId={selectedChannelId}
-      sendError={sendError}
+      sendError={sendError || selectedComposerError}
       sendState={sendState}
       showGuidance={Boolean(activeConversationRun) || openRunGuidanceInterventions.length > 0}
       slashActiveIndex={slashActiveIndex}
@@ -3482,7 +3399,10 @@ export function WorkspaceClientView({
       onAttachFiles={attachFiles}
       onCommitMention={commitMention}
       onCommitSlashCommand={commitSlashCommand}
-      onDismissSendError={dismissSendError}
+      onDismissSendError={() => {
+        dismissSendError();
+        onClearChannelFeedback("composer", selectedChannelId);
+      }}
       onDragOver={handleComposerDragOver}
       onDragLeave={handleComposerDragLeave}
       onDrop={handleComposerDrop}
@@ -3561,6 +3481,7 @@ export function WorkspaceClientView({
   }
 
   function openChannelSettingsPage(): void {
+    channelHeader.closeSearch();
     setChannelSettingsPageOpen(true);
     setChannelEnvironmentPageOpen(false);
     setEnvironmentCommitDialogOpen(false);
@@ -3581,6 +3502,7 @@ export function WorkspaceClientView({
   }
 
   function openChannelEnvironmentPage(): void {
+    channelHeader.closeSearch();
     setChannelEnvironmentPageOpen(true);
     setChannelSettingsPageOpen(false);
     setEnvironmentCommitDialogOpen(false);
@@ -3628,13 +3550,19 @@ export function WorkspaceClientView({
   }
 
   function openEnvironmentCommitDialog(): void {
+    environmentCommitReturnFocusRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
     setEnvironmentCommitDialogOpen(true);
     setProgressPopoverOpen(false);
     setChannelMoreOpen(false);
   }
 
   function closeEnvironmentCommitDialog(): void {
+    const returnFocusTarget = environmentCommitReturnFocusRef.current;
+    environmentCommitReturnFocusRef.current = null;
     setEnvironmentCommitDialogOpen(false);
+    globalThis.requestAnimationFrame(() => returnFocusTarget?.focus({ preventScroll: true }));
   }
 
   function openChannelRenameDialog(): void {
@@ -3642,6 +3570,8 @@ export function WorkspaceClientView({
       return;
     }
     setChannelRenameName(selectedChannel.name);
+    setChannelRenameError("");
+    onClearChannelFeedback("workspace", selectedChannel.id);
     setChannelRenameOpen(true);
     setChannelMoreOpen(false);
     setEnvironmentCommitDialogOpen(false);
@@ -3657,6 +3587,8 @@ export function WorkspaceClientView({
     if (channelRenameSaving) {
       return;
     }
+    setChannelRenameError("");
+    onClearChannelFeedback("workspace", selectedChannelId);
     setChannelRenameOpen(false);
   }
 
@@ -3672,12 +3604,13 @@ export function WorkspaceClientView({
       name: nextName,
     };
     setChannelRenameSaving(true);
+    setChannelRenameError("");
     onChannelEditFormChange(nextForm);
     try {
       await onSaveChannel(nextForm);
       setChannelRenameOpen(false);
-    } catch {
-      // saveChannelEdit already publishes the user-facing error message.
+    } catch (error) {
+      setChannelRenameError(error instanceof Error ? error.message : String(error));
     } finally {
       setChannelRenameSaving(false);
     }
@@ -3693,9 +3626,6 @@ export function WorkspaceClientView({
     setEnvironmentCommitDialogOpen(false);
     setChannelMoreOpen(false);
     setActivityToolsOpen(false);
-    if (!progressPopoverCanFitMainLayout) {
-      setProgressPopoverOpen(false);
-    }
     setWorkspaceSettingsOpen(false);
     setTeammateManagerOpen(false);
     channelRightDock.requestPage(page, workspaceFile, workspaceReview);
@@ -3714,9 +3644,6 @@ export function WorkspaceClientView({
     setConversationDetailOverlay(undefined);
     setChannelMoreOpen(false);
     setActivityToolsOpen(false);
-    if (!progressPopoverCanFitMainLayout) {
-      setProgressPopoverOpen(false);
-    }
     setWorkspaceSettingsOpen(false);
     setTeammateManagerOpen(false);
     if (view === "context") {
@@ -3788,17 +3715,11 @@ export function WorkspaceClientView({
     />
   ) : channelTeamMetricsError ? (
     <section className="channel-settings-card channel-team-metrics-panel" aria-label={t("Team metrics")}>
-      <div className="inline-error compact">
-        <CircleAlert size={14} />
-        {t("Team metrics could not be loaded")}
-      </div>
+      <InlineFeedback tone="danger">{t("Team metrics could not be loaded")}</InlineFeedback>
     </section>
   ) : channelTeamMetricsLoading ? (
     <section className="channel-settings-card channel-team-metrics-panel" aria-label={t("Team metrics")}>
-      <div className="activity-feed-status" role="status">
-        <Loader2 className="spin" size={14} />
-        <span>{t("Loading team metrics...")}</span>
-      </div>
+      <Spinner label={t("Loading team metrics...")} size="sm" />
     </section>
   ) : null;
   const channelSettingsContent = (
@@ -3813,6 +3734,7 @@ export function WorkspaceClientView({
       availableChannelTeammates={availableChannelTeammates}
       pendingChannelTeammateId={pendingChannelTeammateId}
       channelTeammateSavingId={channelTeammateSavingId}
+      channelTeammateError={channelTeammateError}
       onPendingChannelTeammateIdChange={setPendingChannelTeammateId}
       onAddSelectedChannelTeammate={addSelectedChannelTeammate}
       onRemoveChannelTeammate={onRemoveChannelTeammate}
@@ -3845,15 +3767,14 @@ export function WorkspaceClientView({
       setupChatProviders={setupChatProviders}
       selectedChannelWorkspace={selectedChannelWorkspace}
       selectedChannelExecutionPath={selectedChannelExecutionPath}
-      channelWorkspaceBusyAction={channelWorkspaceBusyAction}
-      channelWorkspaceExternalPath={channelWorkspaceExternalPath}
-      channelWorkspaceNotice={channelWorkspaceNotice}
-      channelWorkspaceError={channelWorkspaceError}
-      onChannelWorkspaceExternalPathChange={setChannelWorkspaceExternalPath}
-      onCreateManagedChannelWorktree={onCreateManagedChannelWorktree}
-      onRefreshChannelWorkspace={onRefreshChannelWorkspace}
-      onOpenChannelWorkspacePath={onOpenChannelWorkspacePath}
-      onHandoffChannelWorkspace={onHandoffChannelWorkspace}
+      channelWorkspaceBusyAction={channelWorkspaceFeedback.busyAction}
+      channelWorkspaceExternalPath={channelWorkspaceFeedback.externalPath}
+      channelWorkspaceError={channelWorkspaceFeedback.error}
+      onChannelWorkspaceExternalPathChange={channelWorkspaceFeedback.onExternalPathChange}
+      onCreateManagedChannelWorktree={channelWorkspaceFeedback.createManagedWorktree}
+      onRefreshChannelWorkspace={channelWorkspaceFeedback.refreshWorkspace}
+      onOpenChannelWorkspacePath={channelWorkspaceFeedback.openWorkspacePath}
+      onHandoffChannelWorkspace={channelWorkspaceFeedback.handoffWorkspace}
     />
   );
   const channelContextDockContent = (
@@ -3864,6 +3785,7 @@ export function WorkspaceClientView({
         onModeChange={setInspectorMode}
         channel={selectedChannel}
         protocol={channelCollaborationProtocol}
+        protocolError={selectedProtocolError}
         teammates={teammateOptions}
         autoRouteEnabled={channelAutoRouteEnabled}
         brief={channelBrief}
@@ -3879,6 +3801,7 @@ export function WorkspaceClientView({
         contextSummaries={channelContextSummaries}
         workflows={channelWorkflows}
         workflowSteps={channelWorkflowSteps}
+        workflowErrors={workflowErrors}
         artifactsByRun={channelArtifactsByRun}
         runtimeDiagnostics={runtimeDiagnostics}
         workUnits={workUnits}
@@ -3909,7 +3832,11 @@ export function WorkspaceClientView({
     </div>
   );
   const sidePanelContent = sidePanelView === "context" ? channelContextDockContent : (
-    <section className="task-detail-panel inline-task-detail-panel" aria-label={sidePanelTitle}>
+    <section
+      className="task-detail-panel inline-task-detail-panel"
+      aria-label={sidePanelTitle}
+      data-ui2-channel-task={createTaskOpen ? "create" : "detail"}
+    >
       {taskDetailContent}
     </section>
   );
@@ -3984,54 +3911,11 @@ export function WorkspaceClientView({
   const progressPopoverPlacementAvailable =
     !teammateManagerOpen &&
     !channelUtilityPageOpen &&
-    channelHasProgressPopoverContent &&
-    (!channelRightDockVisible || progressPopoverCanUseMainLayout);
-  const progressPopoverCanRender =
-    progressPopoverVisible && (!channelRightDockVisible || progressPopoverCanUseMainLayout);
-  const progressPopoverShouldRender = progressPopoverRendered && progressPopoverPlacementAvailable;
-  const progressPopoverInMainLayout = progressPopoverShouldRender && progressPopoverCanUseMainLayout;
-  const progressPopoverMotionClass = progressPopoverExpanded ? "is-popover-expanded" : "is-popover-collapsed";
-  useEffect(() => {
-    if (progressPopoverCanRender) {
-      if (!progressPopoverRendered) {
-        setProgressPopoverExpanded(false);
-        setProgressPopoverRendered(true);
-        return undefined;
-      }
-
-      const firstFrameId = globalThis.requestAnimationFrame(() => {
-        const secondFrameId = globalThis.requestAnimationFrame(() => {
-          progressPopoverOpenFrameRef.current = undefined;
-          setProgressPopoverExpanded(true);
-        });
-        progressPopoverOpenFrameRef.current = secondFrameId;
-      });
-      progressPopoverOpenFrameRef.current = firstFrameId;
-      return () => {
-        const frameId = progressPopoverOpenFrameRef.current;
-        if (frameId !== undefined) {
-          globalThis.cancelAnimationFrame(frameId);
-          progressPopoverOpenFrameRef.current = undefined;
-        }
-      };
-    }
-
-    const frameId = progressPopoverOpenFrameRef.current;
-    if (frameId !== undefined) {
-      globalThis.cancelAnimationFrame(frameId);
-      progressPopoverOpenFrameRef.current = undefined;
-    }
-    setProgressPopoverExpanded(false);
-    if (!progressPopoverRendered) {
-      return undefined;
-    }
-    const timeoutId = globalThis.setTimeout(() => {
-      setProgressPopoverRendered(false);
-    }, channelRightDockTransitionMs);
-    return () => {
-      globalThis.clearTimeout(timeoutId);
-    };
-  }, [progressPopoverCanRender, progressPopoverRendered]);
+    channelHasProgressPopoverContent;
+  const progressPopoverCanRender = progressPopoverVisible;
+  const progressPopoverPresence = useConversationPanelPresence(progressPopoverCanRender, false);
+  const progressPopoverShouldRender = progressPopoverPresence.rendered && progressPopoverPlacementAvailable;
+  const progressPopoverMotionClass = progressPopoverPresence.expanded ? "is-popover-expanded" : "is-popover-collapsed";
   const progressPopoverNode = (
     <ProgressPopover
       expanded={attentionProgressExpanded}
@@ -4052,6 +3936,7 @@ export function WorkspaceClientView({
     const nextOpen = !teammateManagerOpen;
     setTeammateManagerOpen(nextOpen);
     if (nextOpen) {
+      channelHeader.closeSearch();
       setChannelSettingsPageOpen(false);
       setChannelEnvironmentPageOpen(false);
       setEnvironmentCommitDialogOpen(false);
@@ -4068,16 +3953,23 @@ export function WorkspaceClientView({
       ref={taskWorkbenchWindowRef}
       className={[
         "client-window task-workbench-window",
+        `right-dock-motion-${channelRightDock.motionState}`,
         channelRightDockVisible ? "with-channel-side-panel" : "",
         channelRightDockVisible ? (channelRightDockExpanded ? "channel-right-dock-expanded" : "channel-right-dock-collapsed") : "",
-        progressPopoverCanRender && !progressPopoverInMainLayout ? "with-channel-progress-popover" : "",
+        progressPopoverCanRender ? "with-channel-progress-popover" : "",
         channelBottomPanelVisible ? "with-channel-bottom-panel" : "",
         channelBottomPanelResize.resizing ? "is-resizing-channel-bottom-panel" : "",
       ].filter(Boolean).join(" ")}
       style={taskWorkbenchWindowStyle}
       aria-label={t("Workspace")}
     >
-      <header className={channelUtilityPageOpen ? "channel-header task-workbench-header settings-page-header" : "channel-header task-workbench-header"}>
+      <header
+        className={[
+          "channel-header task-workbench-header",
+          channelUtilityPageOpen ? "settings-page-header" : "",
+          channelHeader.searchOpen && !channelUtilityPageOpen ? "channel-header-searching" : "",
+        ].filter(Boolean).join(" ")}
+      >
         <div className="channel-title-area">
           {channelSettingsPageOpen ? (
             <div className="channel-settings-header-line">
@@ -4113,12 +4005,19 @@ export function WorkspaceClientView({
               <h1>{selectedChannel?.name ?? "Engineering"}</h1>
               <div className="channel-more-wrap" ref={channelMoreRef}>
                 <button
+                  ref={channelMoreButtonRef}
                   className={channelMoreOpen ? "icon-button channel-more-button active" : "icon-button channel-more-button"}
                   type="button"
                   aria-expanded={channelMoreOpen}
                   aria-label={t("More channel views")}
                   title={t("More channel views")}
-                  onClick={() => setChannelMoreOpen((current) => !current)}
+                  onClick={() => {
+                    const nextOpen = !channelMoreOpen;
+                    if (nextOpen) {
+                      channelHeader.closeSearch();
+                    }
+                    setChannelMoreOpen(nextOpen);
+                  }}
                 >
                   <MoreHorizontal size={17} />
                 </button>
@@ -4189,6 +4088,19 @@ export function WorkspaceClientView({
             </div>
           )}
         </div>
+        {channelHeader.searchOpen && !channelUtilityPageOpen ? (
+          <ConversationHeaderSearch
+            ariaLabel={t("Search channel activity")}
+            className="channel-header-search"
+            clearLabel={t("Clear search")}
+            inputRef={channelHeader.searchInputRef}
+            placeholder={t("Search activity")}
+            value={activitySearch}
+            onChange={setActivitySearch}
+            onClear={channelHeader.clearSearch}
+            onEscape={channelHeader.closeSearch}
+          />
+        ) : null}
         <ChannelHeaderToolbar
           ariaLabel={t("Workspace task toolbar")}
           settingsPageOpen={channelSettingsPageOpen}
@@ -4197,6 +4109,22 @@ export function WorkspaceClientView({
           settingsRefreshDisabled={!selectedChannelId || channelSettingsLoading}
           settingsRefreshLabel={t("Refresh")}
           onRefreshSettings={refreshChannelSettingsPage}
+          searchActive={channelHeader.searchOpen}
+          searchDisabled={!selectedChannelId}
+          searchLabel={t("Search")}
+          onToggleSearch={() => {
+            if (!channelHeader.searchOpen) {
+              setProgressPopoverOpen(false);
+              setGovernanceNotificationsOpen(false);
+              setChannelMoreOpen(false);
+              setTeammateManagerOpen(false);
+            }
+            channelHeader.toggleSearch();
+          }}
+          refreshDisabled={!selectedChannelId}
+          refreshLabel={t("Refresh")}
+          refreshLoading={channelHeader.refreshing}
+          onRefresh={() => void channelHeader.refresh()}
           teammateActionNode={channelHeaderTeammateCount > 0 ? (
             <button
               ref={teammateManagerButtonRef}
@@ -4219,38 +4147,28 @@ export function WorkspaceClientView({
             </button>
           ) : undefined}
           governanceActionNode={governanceNotificationCount > 0 ? (
-            <div className="channel-governance-wrap" ref={governanceNotificationsRef}>
-              <WorkspaceToolbarIconButton
-                className={governanceNotificationsOpen ? "channel-governance-button active" : "channel-governance-button"}
-                aria-expanded={governanceNotificationsOpen}
-                count={governanceNotificationCount}
-                icon={channelGovernanceNotificationsLoading ? <Loader2 className="spin" size={14} /> : <ShieldCheck size={14} />}
-                label={t("{label}: {count}", { label: t("Review queue"), count: governanceNotificationCount })}
-                onClick={() => {
-                  const nextOpen = !governanceNotificationsOpen;
-                  setGovernanceNotificationsOpen(nextOpen);
-                  if (nextOpen) {
-                    setProgressPopoverOpen(false);
-                    setChannelMoreOpen(false);
-                    setActivityToolsOpen(false);
-                    setTeammateManagerOpen(false);
-                    setSidePanelOpen(false);
-                    onChannelCreateOpenChange(false);
-                  }
-                }}
-                disabled={channelGovernanceNotificationsLoading}
-              />
-              {governanceNotificationsOpen ? (
-                <ChannelGovernanceNotificationsPopover
-                  notifications={actionableGovernanceNotifications}
-                  loading={channelGovernanceNotificationsLoading}
-                  actionId={channelGovernanceNotificationActionId}
-                  onRefresh={onRefreshChannelGovernanceNotifications}
-                  onMarkSeen={onMarkChannelGovernanceNotificationSeen}
-                  onDismiss={onDismissChannelGovernanceNotification}
-                />
-              ) : null}
-            </div>
+            <ChannelGovernanceNotificationsPopover
+              open={governanceNotificationsOpen}
+              count={governanceNotificationCount}
+              notifications={actionableGovernanceNotifications}
+              loading={channelGovernanceNotificationsLoading}
+              actionId={channelGovernanceNotificationActionId}
+              onOpenChange={(nextOpen) => {
+                setGovernanceNotificationsOpen(nextOpen);
+                if (nextOpen) {
+                  channelHeader.closeSearch();
+                  setProgressPopoverOpen(false);
+                  setChannelMoreOpen(false);
+                  setActivityToolsOpen(false);
+                  setTeammateManagerOpen(false);
+                  setSidePanelOpen(false);
+                  onChannelCreateOpenChange(false);
+                }
+              }}
+              onRefresh={onRefreshChannelGovernanceNotifications}
+              onMarkSeen={onMarkChannelGovernanceNotificationSeen}
+              onDismiss={onDismissChannelGovernanceNotification}
+            />
           ) : undefined}
           showEmptyTeammateAction={channelHeaderTeammateCount === 0}
           emptyTeammateActionRef={teammateManagerButtonRef}
@@ -4258,7 +4176,7 @@ export function WorkspaceClientView({
           emptyTeammateActionDisabled={!selectedChannelId}
           emptyTeammateActionLabel={t("AI teammate management")}
           onToggleEmptyTeammateAction={toggleChannelTeammateManager}
-          progressActive={progressPopoverRendered}
+          progressActive={progressPopoverPresence.rendered}
           progressLabel={t("Summary")}
           onToggleProgress={() => {
             if (!channelHasProgressPopoverContent) {
@@ -4266,6 +4184,7 @@ export function WorkspaceClientView({
               return;
             }
             setChannelSettingsPageOpen(false);
+            channelHeader.closeSearch();
             setChannelEnvironmentPageOpen(false);
             setEnvironmentCommitDialogOpen(false);
             setCreateTaskOpen(false);
@@ -4274,11 +4193,11 @@ export function WorkspaceClientView({
             setTeammateManagerOpen(false);
             setProgressPopoverOpen((current) => !current);
           }}
-          bottomPanelOpen={channelBottomPanelVisible}
+          bottomPanelOpen={channelBottomPanelIntentOpen}
           bottomPanelDisabled={!cwd.trim()}
           bottomPanelLabel={t("Toggle bottom panel")}
           onToggleBottomPanel={() => {
-            if (channelBottomPanelVisible) {
+            if (channelBottomPanelIntentOpen) {
               setChannelBottomPanelOpen(false);
               return;
             }
@@ -4289,7 +4208,6 @@ export function WorkspaceClientView({
             setChannelMoreOpen(false);
             setActivityToolsOpen(false);
             setTeammateManagerOpen(false);
-            setProgressPopoverOpen(false);
             setChannelBottomPanelOpen(true);
           }}
           detailsOpen={channelRightDockIntentOpen}
@@ -4302,8 +4220,8 @@ export function WorkspaceClientView({
             openSidePanelView(sidePanelView === "settings" ? "context" : sidePanelView);
           }}
         />
-        {progressPopoverShouldRender && !progressPopoverInMainLayout ? (
-          <div className={`channel-progress-popover ${progressPopoverMotionClass}`}>
+        {progressPopoverShouldRender ? (
+          <div className={`channel-progress-popover ${progressPopoverMotionClass}`} data-right-dock-motion={channelRightDock.motionState}>
             {progressPopoverNode}
           </div>
         ) : null}
@@ -4320,6 +4238,7 @@ export function WorkspaceClientView({
             availableChannelTeammates={availableChannelTeammates}
             pendingChannelTeammateId={pendingChannelTeammateId}
             channelTeammateSavingId={channelTeammateSavingId}
+            channelTeammateError={channelTeammateError}
             onPendingChannelTeammateIdChange={setPendingChannelTeammateId}
             onAddSelectedChannelTeammate={addSelectedChannelTeammate}
             onRemoveChannelTeammate={onRemoveChannelTeammate}
@@ -4333,9 +4252,15 @@ export function WorkspaceClientView({
           value={channelRenameName}
           currentName={selectedChannel?.name ?? ""}
           saving={channelRenameSaving}
-          onValueChange={setChannelRenameName}
+          error={channelRenameError}
+          onValueChange={(value) => {
+            setChannelRenameName(value);
+            setChannelRenameError("");
+            onClearChannelFeedback("workspace", selectedChannelId);
+          }}
           onSubmit={(event) => void submitChannelRename(event)}
           onClose={closeChannelRenameDialog}
+          returnFocusRef={channelMoreButtonRef}
         />
       ) : null}
 
@@ -4362,13 +4287,6 @@ export function WorkspaceClientView({
         />
       ) : null}
 
-      {errorMessage ? (
-        <div className="inline-error">
-          <CircleAlert size={17} />
-          {errorMessage}
-        </div>
-      ) : null}
-
       <div
         ref={taskWorkbenchMainRef}
         style={taskWorkbenchMainStyle}
@@ -4378,13 +4296,11 @@ export function WorkspaceClientView({
           channelEnvironmentPageOpen ? "channel-environment-main" : "",
           channelRightDockVisible ? "with-channel-side-panel" : "",
           channelRightDockVisible ? (channelRightDockExpanded ? "channel-right-dock-expanded" : "channel-right-dock-collapsed") : "",
-          progressPopoverInMainLayout ? "with-channel-progress-panel" : "",
-          progressPopoverInMainLayout ? (progressPopoverExpanded ? "progress-panel-expanded" : "progress-panel-collapsed") : "",
           channelRightDockResizing ? "is-resizing-channel-side-panel" : "",
         ].filter(Boolean).join(" ")}
       >
         {channelSettingsPageOpen ? (
-          <section className="channel-settings-page" aria-label={t("Channel settings")}>
+          <section className="channel-settings-page" aria-label={t("Channel settings")} data-ui2-channel-settings="true">
             {channelSettingsContent}
           </section>
         ) : channelEnvironmentPageOpen ? (
@@ -4399,7 +4315,7 @@ export function WorkspaceClientView({
         ) : (
           <>
         <ChannelActivityWorkspace
-          activityTools={auditActivityVisible ? {
+          activityTools={channelActivityToolsVisible ? {
             search: activitySearch,
             categoryFilter: activityCategoryFilter,
             attentionFilter: activityAttentionFilter,
@@ -4412,6 +4328,7 @@ export function WorkspaceClientView({
             attentionCounts: activityAttentionCounts,
             filtersActive: activityFiltersActive,
             customViewLimitReached,
+            showSearch: !channelHeader.searchOpen,
             onSavedViewSelect: applyActivityView,
             onSaveView: saveActivityView,
             onRenameView: renameActivityView,
@@ -4488,35 +4405,17 @@ export function WorkspaceClientView({
             onPointerCancel: handleMessageFeedPointerEnd,
             onContextMenu: handleMessageFeedContextMenu,
             statusNode: (
-              <>
-                {channelActivityTransitionsLoading ? (
-                  <div className="activity-feed-status" role="status">
-                    <Loader2 className="spin" size={14} />
-                    <span>{t("Loading activity events...")}</span>
-                  </div>
-                ) : null}
-                {channelActivityTransitionError ? (
-                  <div className="activity-feed-status warning" role="status">
-                    <CircleAlert size={14} />
-                    <span>{t("Some activity changes could not be loaded")}</span>
-                  </div>
-                ) : null}
-              </>
+              <ChannelFeedStatus
+                loading={channelActivityTransitionsLoading}
+                error={Boolean(channelActivityTransitionError)}
+              />
             ),
             latestButtonNode: (
-              <>
-                {conversationBlockFeedbackNode}
-                {messageFeedState.latestButtonVisible ? (
-                  <button
-                    className="message-feed-latest-button"
-                    type="button"
-                    onClick={messageFeedState.scrollToLatest}
-                    aria-label={t("Jump to latest message")}
-                  >
-                    <ArrowDown size={22} />
-                  </button>
-                ) : null}
-              </>
+              <ChannelFeedLatestControl
+                feedbackNode={conversationBlockFeedbackNode}
+                visible={messageFeedState.latestButtonVisible}
+                onActivate={messageFeedState.scrollToLatest}
+              />
             ),
           }}
           conversationBlockActionMenuNode={conversationBlockActionMenuNode}
@@ -4564,16 +4463,6 @@ export function WorkspaceClientView({
             onOpenTriageResult: openActivityTriageResult,
           } : undefined}
         />
-        {progressPopoverInMainLayout ? (
-          <aside
-            className={`channel-progress-popover channel-progress-panel ${progressPopoverMotionClass}`}
-            data-computer-use-obstacle="true"
-            data-computer-use-obstacle-kind="summary"
-            aria-label={t("Summary")}
-          >
-            {progressPopoverNode}
-          </aside>
-        ) : null}
         {channelRightDockVisible ? (
           <button
             className="channel-side-panel-resize-handle"
@@ -4612,6 +4501,7 @@ export function WorkspaceClientView({
               proposedPlans={proposedPlanArtifacts}
               proposedPlansLoading={proposedPlanHistoryLoading}
               proposedPlansError={proposedPlanHistoryError}
+              externalError={selectedDockError}
               currentPlanThreadId={channelPlanModeThreadId}
               planActionBusyId={proposedPlanActionBusyId}
               includeActivity
@@ -4629,20 +4519,23 @@ export function WorkspaceClientView({
               actions={(
                 <>
                   {sidePanelView !== "settings" ? (
-                    <button
-                      className="icon-button"
-                      type="button"
+                    <IconButton
+                      icon={Plus}
+                      label={t("New task")}
                       onClick={openCreateTaskPanel}
                       disabled={!selectedChannelId}
-                      aria-label={t("New task")}
-                      title={t("New task")}
-                    >
-                      <Plus size={15} />
-                    </button>
+                      size="sm"
+                    />
                   ) : null}
-                  <button className="icon-button" type="button" onClick={refreshSidePanel} disabled={sidePanelLoading || !selectedChannelId} aria-label={t("Refresh")} title={t("Refresh")}>
-                    {sidePanelLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
-                  </button>
+                  <IconButton
+                    icon={RefreshCw}
+                    label={t("Refresh")}
+                    loading={sidePanelLoading}
+                    loadingLabel={t("Refresh")}
+                    onClick={refreshSidePanel}
+                    disabled={sidePanelLoading || !selectedChannelId}
+                    size="sm"
+                  />
                 </>
               )}
               onClose={closeChannelRightDock}
@@ -4657,6 +4550,9 @@ export function WorkspaceClientView({
           cwd={cwd.trim()}
           className="channel-bottom-terminal"
           session={workspaceTerminalSession}
+          expanded={channelBottomPanelPresence.expanded}
+          motionState={channelBottomPanelPresence.motionState}
+          resizing={channelBottomPanelResize.resizing}
           resizeHandleNode={(
             <button
               className="channel-bottom-panel-resize-handle"

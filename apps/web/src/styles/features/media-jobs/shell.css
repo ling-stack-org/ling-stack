@@ -1,0 +1,106 @@
+.media-production-jobs-view > .media-jobs-page {
+  height: 100%;
+}
+
+.media-jobs-page {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  color: var(--ling-text-default);
+  background: var(--ling-bg-app);
+}
+
+.media-jobs-header {
+  display: grid;
+  min-width: 0;
+  border-bottom: 1px solid var(--ling-border-default);
+  background: var(--ling-bg-panel);
+}
+
+.media-jobs-heading-row {
+  display: flex;
+  min-height: 60px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ling-space-6);
+  padding: var(--ling-space-5) var(--ling-space-7);
+}
+
+.media-jobs-heading-copy {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
+.media-jobs-heading-copy strong {
+  overflow: hidden;
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-lg);
+  line-height: var(--ling-line-lg);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.media-jobs-heading-copy span {
+  overflow: hidden;
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.media-jobs-header-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--ling-space-3);
+}
+
+.media-jobs-filter {
+  justify-self: start;
+  margin: 0 var(--ling-space-7) var(--ling-space-5);
+}
+
+.media-jobs-feedback {
+  margin: var(--ling-space-4) var(--ling-space-7) 0;
+}
+
+.media-jobs-feedback button {
+  justify-self: start;
+  min-height: 32px;
+}
+
+.media-jobs-layout {
+  display: grid;
+  grid-template-columns: minmax(360px, .78fr) minmax(0, 1.22fr);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.media-jobs-list-pane {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  border-right: 1px solid var(--ling-border-default);
+  overscroll-behavior: contain;
+}
+
+@media (max-width: 1100px) {
+  .media-jobs-layout {
+    grid-template-columns: minmax(330px, .9fr) minmax(0, 1.1fr);
+  }
+
+  .media-jobs-heading-row {
+    padding-inline: var(--ling-space-5);
+  }
+
+  .media-jobs-filter {
+    margin-inline: var(--ling-space-5);
+  }
+}

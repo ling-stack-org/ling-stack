@@ -17,7 +17,12 @@ import {
 
 const DEFAULT_DAEMON_STARTUP_TIMEOUT_MS = 20_000;
 
-export type DesktopDaemonLifecycleErrorCode = "bridge_incompatible" | "child_exited" | "start_timeout";
+export type DesktopDaemonLifecycleErrorCode =
+  | "bridge_incompatible"
+  | "child_exited"
+  | "start_timeout"
+  | "resource_missing"
+  | "spawn_failed";
 export type DesktopDaemonPortOccupant = "foreign_service" | "ling_daemon";
 
 type DaemonProbeResult = "compatible" | "incompatible" | "occupied" | "unavailable";
@@ -187,32 +192,40 @@ export class DesktopDaemonLifecycle {
       throw new DesktopDaemonLifecycleError("bridge_incompatible", this.options.baseUrl, "foreign_service");
     }
 
-    await access(this.options.daemonEntryPath);
-    this.assertStartupCurrent(startupGeneration);
-    await mkdir(this.defaultWorkspaceCwd, { recursive: true });
+    try {
+      await access(this.options.daemonEntryPath);
+      await mkdir(this.defaultWorkspaceCwd, { recursive: true });
+    } catch (error) {
+      this.failOwnedStartup("resource_missing", "Required Desktop files or workspace storage are unavailable.", error);
+    }
     this.assertStartupCurrent(startupGeneration);
     this.update({ state: "starting", baseUrl: this.options.baseUrl, ownedByDesktop: true });
     const url = new URL(this.options.baseUrl);
     const spawnDaemon = this.options.spawnDaemon ?? defaultSpawnDaemon;
-    const child = spawnDaemon({
-      executable: this.options.executablePath ?? process.execPath,
-      args: [this.options.daemonEntryPath],
-      cwd: this.defaultWorkspaceCwd,
-      env: {
-        ...process.env,
-        ...desktopCuaDriverDaemonFeatureEnvironment(this.cuaDriverFeatureFlags),
-        ELECTRON_RUN_AS_NODE: "1",
-        LING_STACK_HOST: url.hostname,
-        LING_STACK_PORT: url.port || (url.protocol === "https:" ? "443" : "80"),
-        LING_STACK_DEFAULT_WORKSPACE_CWD: this.defaultWorkspaceCwd,
-        ...(this.options.desktopBridgeToken
-          ? {
-              LING_DESKTOP_BRIDGE_TOKEN: this.options.desktopBridgeToken,
-              LING_COMPUTER_USE_ROUTE_TOKEN: this.options.desktopBridgeToken,
-            }
-          : {}),
-      },
-    });
+    let child: ChildProcess;
+    try {
+      child = spawnDaemon({
+        executable: this.options.executablePath ?? process.execPath,
+        args: [this.options.daemonEntryPath],
+        cwd: this.defaultWorkspaceCwd,
+        env: {
+          ...process.env,
+          ...desktopCuaDriverDaemonFeatureEnvironment(this.cuaDriverFeatureFlags),
+          ELECTRON_RUN_AS_NODE: "1",
+          LING_STACK_HOST: url.hostname,
+          LING_STACK_PORT: url.port || (url.protocol === "https:" ? "443" : "80"),
+          LING_STACK_DEFAULT_WORKSPACE_CWD: this.defaultWorkspaceCwd,
+          ...(this.options.desktopBridgeToken
+            ? {
+                LING_DESKTOP_BRIDGE_TOKEN: this.options.desktopBridgeToken,
+                LING_COMPUTER_USE_ROUTE_TOKEN: this.options.desktopBridgeToken,
+              }
+            : {}),
+        },
+      });
+    } catch (error) {
+      this.failOwnedStartup("spawn_failed", "Desktop could not launch the local daemon process.", error);
+    }
     if (!this.isStartupCurrent(startupGeneration)) {
       await this.stopChild(child);
       throw new Error("daemon_start_cancelled");
@@ -222,6 +235,29 @@ export class DesktopDaemonLifecycle {
     let resolveChildExit: (exit: OwnedDaemonExit) => void = () => undefined;
     const childExit = new Promise<OwnedDaemonExit>((resolve) => {
       resolveChildExit = resolve;
+    });
+    let resolveChildError: (error: Error) => void = () => undefined;
+    let childSpawnError: Error | undefined;
+    const childError = new Promise<Error>((resolve) => {
+      resolveChildError = resolve;
+    });
+    child.once("error", (error) => {
+      childSpawnError = error;
+      if (this.child === child) {
+        this.child = undefined;
+        this.update({
+          state: "disconnected",
+          baseUrl: this.options.baseUrl,
+          ownedByDesktop: false,
+          reason: "spawn_failed",
+          message: "Desktop could not launch the local daemon process.",
+        });
+        this.options.onDiagnostic?.("daemon.spawn_failed", {
+          baseUrl: this.options.baseUrl,
+          error: error.message,
+        });
+      }
+      resolveChildError(error);
     });
     child.once("exit", (code, signal) => {
       const exit = { code, signal } satisfies OwnedDaemonExit;
@@ -251,13 +287,20 @@ export class DesktopDaemonLifecycle {
       const readiness = await Promise.race([
         this.probeDaemon().then((probe) => ({ kind: "probe" as const, probe })),
         childExit.then((exit) => ({ kind: "child_exit" as const, exit })),
+        childError.then((error) => ({ kind: "child_error" as const, error })),
       ]);
+      if (readiness.kind === "child_error") {
+        throw new DesktopDaemonLifecycleError("spawn_failed", this.options.baseUrl);
+      }
       if (readiness.kind === "child_exit") {
         throw new DesktopDaemonLifecycleError("child_exited", this.options.baseUrl);
       }
       this.assertStartupCurrent(startupGeneration);
       const probe = readiness.probe;
       if (probe === "compatible") {
+        if (childSpawnError) {
+          throw new DesktopDaemonLifecycleError("spawn_failed", this.options.baseUrl);
+        }
         if (this.child !== child || child.exitCode !== null || child.signalCode !== null) {
           throw new DesktopDaemonLifecycleError("child_exited", this.options.baseUrl);
         }
@@ -279,11 +322,18 @@ export class DesktopDaemonLifecycle {
       const pause = await Promise.race([
         wait(100).then(() => ({ kind: "elapsed" as const })),
         childExit.then((exit) => ({ kind: "child_exit" as const, exit })),
+        childError.then((error) => ({ kind: "child_error" as const, error })),
       ]);
+      if (pause.kind === "child_error") {
+        throw new DesktopDaemonLifecycleError("spawn_failed", this.options.baseUrl);
+      }
       if (pause.kind === "child_exit") {
         throw new DesktopDaemonLifecycleError("child_exited", this.options.baseUrl);
       }
       this.assertStartupCurrent(startupGeneration);
+    }
+    if (childSpawnError) {
+      throw new DesktopDaemonLifecycleError("spawn_failed", this.options.baseUrl);
     }
     if (this.child !== child || child.exitCode !== null || child.signalCode !== null) {
       throw new DesktopDaemonLifecycleError("child_exited", this.options.baseUrl);
@@ -298,6 +348,25 @@ export class DesktopDaemonLifecycle {
       message: "Desktop-owned daemon did not become ready before the startup deadline.",
     });
     throw new DesktopDaemonLifecycleError("start_timeout", this.options.baseUrl);
+  }
+
+  private failOwnedStartup(
+    code: "resource_missing" | "spawn_failed",
+    message: string,
+    error: unknown,
+  ): never {
+    this.update({
+      state: "disconnected",
+      baseUrl: this.options.baseUrl,
+      ownedByDesktop: false,
+      reason: code,
+      message,
+    });
+    this.options.onDiagnostic?.(`daemon.${code}`, {
+      baseUrl: this.options.baseUrl,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw new DesktopDaemonLifecycleError(code, this.options.baseUrl);
   }
 
   restart(): Promise<DesktopDaemonStatus> {
@@ -602,9 +671,16 @@ function lifecycleErrorMessage(
       ? `daemon_port_occupied_by_foreign_service: ${baseUrl}`
       : `daemon_desktop_bridge_incompatible: ${baseUrl}`;
   }
-  return code === "child_exited"
-    ? `daemon_child_exited_before_ready: ${baseUrl}`
-    : `daemon_start_timeout: ${baseUrl}`;
+  switch (code) {
+    case "child_exited":
+      return `daemon_child_exited_before_ready: ${baseUrl}`;
+    case "start_timeout":
+      return `daemon_start_timeout: ${baseUrl}`;
+    case "resource_missing":
+      return `daemon_resource_missing: ${baseUrl}`;
+    case "spawn_failed":
+      return `daemon_spawn_failed: ${baseUrl}`;
+  }
 }
 
 function wait(milliseconds: number): Promise<void> {

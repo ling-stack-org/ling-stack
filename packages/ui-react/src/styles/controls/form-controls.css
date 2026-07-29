@@ -1,0 +1,299 @@
+.ling-ui-input,
+.ling-ui-select,
+.ling-ui-textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  color: var(--ling-text-default);
+  background: var(--ling-bg-panel);
+  box-shadow: var(--ling-shadow-low);
+  font: inherit;
+  font-size: var(--ling-font-sm);
+  line-height: var(--ling-line-sm);
+  letter-spacing: 0;
+  transition:
+    background-color var(--ling-motion-fast) var(--ling-ease-standard),
+    border-color var(--ling-motion-fast) var(--ling-ease-standard),
+    box-shadow var(--ling-motion-fast) var(--ling-ease-standard),
+    opacity var(--ling-motion-fast) var(--ling-ease-standard);
+}
+
+.ling-ui-input,
+.ling-ui-select {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: var(--ling-control-md);
+}
+
+.ling-ui-input {
+  overflow: hidden;
+}
+
+.ling-ui-input[data-size="sm"],
+.ling-ui-select[data-size="sm"] {
+  height: var(--ling-control-sm);
+}
+
+.ling-ui-input:hover:not([data-disabled="true"]),
+.ling-ui-select:hover:not([data-disabled="true"]),
+.ling-ui-textarea:hover:not(:disabled) {
+  border-color: var(--ling-border-strong);
+}
+
+.ling-ui-input:focus-within,
+.ling-ui-select:focus-within,
+.ling-ui-textarea:focus-visible {
+  border-color: var(--ling-border-focus);
+  outline: 0;
+  box-shadow: inset 0 0 0 1px var(--ling-border-focus);
+}
+
+.ling-ui-input[data-invalid="true"],
+.ling-ui-select[data-invalid="true"],
+.ling-ui-textarea[data-invalid="true"] {
+  border-color: var(--ling-status-danger);
+}
+
+.ling-ui-input[data-invalid="true"]:focus-within,
+.ling-ui-select[data-invalid="true"]:focus-within,
+.ling-ui-textarea[data-invalid="true"]:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--ling-status-danger);
+}
+
+.ling-ui-input[data-disabled="true"],
+.ling-ui-select[data-disabled="true"],
+.ling-ui-textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.ling-ui-input[data-readonly="true"],
+.ling-ui-textarea:read-only {
+  background: var(--ling-bg-subtle);
+}
+
+.ling-ui-input-native,
+.ling-ui-select-native {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  margin: 0;
+  padding: 0 10px;
+  border: 0;
+  border-radius: inherit;
+  outline: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.ling-ui-input-native::placeholder,
+.ling-ui-textarea::placeholder {
+  color: var(--ling-text-muted);
+  opacity: 1;
+}
+
+.ling-ui-input-native:focus,
+.ling-ui-input-native:focus-visible,
+.ling-ui-select-native:focus-visible {
+  border: 0;
+  outline: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+.ling-ui-input-prefix,
+.ling-ui-input-suffix,
+.ling-ui-select-indicator {
+  display: inline-grid;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  place-items: center;
+  color: var(--ling-text-muted);
+}
+
+.ling-ui-input-prefix {
+  margin-left: 10px;
+}
+
+.ling-ui-input-suffix {
+  margin-right: 10px;
+}
+
+.ling-ui-input-prefix + .ling-ui-input-native {
+  padding-left: 8px;
+}
+
+.ling-ui-input-prefix > svg,
+.ling-ui-input-suffix > svg,
+.ling-ui-select-indicator > svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.8;
+}
+
+.ling-ui-select-native {
+  height: calc(100% + 2px);
+  margin-block: -1px;
+  padding-right: 32px;
+  appearance: none;
+  cursor: pointer;
+}
+
+.ling-ui-select-native:disabled {
+  cursor: not-allowed;
+}
+
+.ling-ui-select-indicator {
+  position: absolute;
+  right: 9px;
+  pointer-events: none;
+}
+
+.ling-ui-textarea {
+  display: block;
+  min-height: 88px;
+  padding: 8px 10px;
+  resize: vertical;
+  outline: 0;
+}
+
+.ling-ui-textarea[data-size="sm"] {
+  min-height: 72px;
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+.ling-ui-field {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-2);
+}
+
+.ling-ui-field-label {
+  display: inline-flex;
+  width: fit-content;
+  min-width: 0;
+  align-items: baseline;
+  gap: var(--ling-space-2);
+  color: var(--ling-text-default);
+  font-size: var(--ling-font-xs);
+  font-weight: 650;
+  line-height: var(--ling-line-xs);
+}
+
+.ling-ui-field-required,
+.ling-ui-field-error {
+  color: var(--ling-status-danger);
+}
+
+.ling-ui-field-description,
+.ling-ui-field-error {
+  min-width: 0;
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+.ling-ui-field-description {
+  color: var(--ling-text-muted);
+}
+
+.ling-ui-checkbox {
+  display: inline-flex;
+  min-width: 0;
+  min-height: 32px;
+  align-items: center;
+  gap: var(--ling-space-3);
+  color: var(--ling-text-default);
+  cursor: pointer;
+  font-size: var(--ling-font-sm);
+  line-height: var(--ling-line-sm);
+}
+
+.ling-ui-checkbox input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.ling-ui-checkbox-control {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid var(--ling-border-strong);
+  border-radius: var(--ling-radius-sm);
+  color: transparent;
+  background: var(--ling-bg-panel);
+  transition: background-color var(--ling-motion-fast) var(--ling-ease-standard), border-color var(--ling-motion-fast) var(--ling-ease-standard), color var(--ling-motion-fast) var(--ling-ease-standard);
+}
+
+.ling-ui-checkbox-control > svg {
+  width: 13px;
+  height: 13px;
+  stroke-width: 2;
+}
+
+.ling-ui-checkbox[data-checked="true"] .ling-ui-checkbox-control {
+  border-color: var(--ling-action-accent);
+  color: var(--ling-action-accent-fg);
+  background: var(--ling-action-accent);
+}
+
+.ling-ui-checkbox input:focus-visible + .ling-ui-checkbox-control {
+  outline: 2px solid var(--ling-border-focus);
+  outline-offset: 2px;
+}
+
+.ling-ui-checkbox[data-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.ling-ui-checkbox-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ling-ui-input,
+  .ling-ui-select,
+  .ling-ui-textarea,
+  .ling-ui-checkbox-control {
+    transition-duration: var(--ling-motion-instant);
+  }
+}
+
+@media (forced-colors: active) {
+  .ling-ui-input,
+  .ling-ui-select,
+  .ling-ui-textarea {
+    border-color: ButtonText;
+    background: Field;
+    color: FieldText;
+    forced-color-adjust: none;
+  }
+
+  .ling-ui-input:focus-within,
+  .ling-ui-select:focus-within,
+  .ling-ui-textarea:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 1px;
+  }
+}

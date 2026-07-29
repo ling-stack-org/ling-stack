@@ -1,0 +1,5 @@
+:root {
+  font-family: "Inter Variable", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --pip-frame: var(--ling-bg-app);
+  --pip-media-bg: var(--ling-bg-app);
+}

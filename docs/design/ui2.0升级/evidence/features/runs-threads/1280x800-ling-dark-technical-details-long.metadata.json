@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 2,
+  "file": "1280x800-ling-dark-technical-details-long.png",
+  "fixtureId": "run_long_raw_technical",
+  "functionIds": "RUN-DETAIL-001",
+  "url": "http://127.0.0.1:4222/",
+  "servedArtifact": "Vite source via Playwright webServer",
+  "capture": {
+    "command": null,
+    "testFile": "apps/web/e2e/ui2-runs-threads.spec.ts",
+    "testHelper": "captureLedger",
+    "pendingReason": "The exact historical shell invocation was not recorded. The repository proves the owning test file and capture helper, but the aggregate command uses a different port from this artifact URL."
+  },
+  "viewport": {
+    "width": 1280,
+    "height": 800
+  },
+  "verification": {
+    "historicalFunctionalVerification": {
+      "status": "verified",
+      "evidence": "The focused ui2-runs-threads suite was recorded as 7/7 passed in the aggregate ledger."
+    },
+    "currentArtifactIntegrity": {
+      "status": "verified",
+      "checkedAt": "2026-07-23T11:32:43+08:00",
+      "fileExists": true,
+      "sha256MatchesPng": true,
+      "pixelDimensionsMatchPng": true,
+      "screenshotRegenerated": false
+    },
+    "finalP13ReleaseRecapture": {
+      "status": "pending",
+      "pendingReason": "Final P13 release evidence must be recaptured after aggregate cleanup stabilizes."
+    }
+  },
+  "console": {
+    "status": "verified-at-capture",
+    "unexpectedErrors": [],
+    "expectedErrors": [],
+    "basis": "captureLedger asserted the collected console and page errors before writing the screenshot."
+  },
+  "sha256": "a63510e184724ee8a977f01e80d528d730e6b37378b5f6f08909add6482e35b0",
+  "imageDimensions": {
+    "width": 1280,
+    "height": 800
+  },
+  "document": {
+    "clientHeight": 800,
+    "clientWidth": 1280,
+    "scrollHeight": 800,
+    "scrollWidth": 1280
+  },
+  "list": {
+    "clientHeight": 511,
+    "clientWidth": 358,
+    "scrollHeight": 511,
+    "scrollWidth": 358
+  },
+  "detail": {
+    "clientHeight": 666,
+    "clientWidth": 625,
+    "scrollHeight": 666,
+    "scrollWidth": 625
+  },
+  "overflow": {
+    "status": "verified-from-capture-metrics",
+    "horizontalPixels": {
+      "document": 0,
+      "list": 0,
+      "detail": 0
+    }
+  },
+  "locale": "en-US",
+  "reducedMotion": false,
+  "theme": "ling-dark"
+}

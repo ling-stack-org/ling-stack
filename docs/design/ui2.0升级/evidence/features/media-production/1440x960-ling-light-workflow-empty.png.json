@@ -1,0 +1,24 @@
+{
+  "filename": "1440x960-ling-light-workflow-empty.png",
+  "capturedAt": "2026-07-23T02:01:08.790Z",
+  "viewport": {
+    "width": 1440,
+    "height": 960
+  },
+  "theme": "ling-light",
+  "locale": "en-US",
+  "fixture": "production_workflow_empty",
+  "state": "workflow-empty",
+  "functionIds": [
+    "PROD-WORKFLOW-001"
+  ],
+  "sourceCommitOrWorktree": "0a0b80502715+worktree",
+  "consoleErrors": [],
+  "expectedConsoleErrors": [],
+  "pageErrors": [],
+  "documentOverflow": 0,
+  "ownerOverflow": 0,
+  "canvasPixel": null,
+  "mediaPixelHash": null,
+  "sha256": "11a1c6a5d06504aaeb86cab9ff9d68137acae8b0a4728f4e0b7a1a34c6066d7a"
+}

@@ -4,7 +4,6 @@ import process from "node:process";
 
 const webRoot = process.cwd();
 const sourceRoot = resolve(webRoot, "src");
-const selectControlPath = resolve(sourceRoot, "shared/components/SelectControl.tsx");
 
 function collectTsxFiles(root) {
   const files = [];
@@ -20,7 +19,6 @@ function collectTsxFiles(root) {
 }
 
 const violations = collectTsxFiles(sourceRoot)
-  .filter((file) => file !== selectControlPath)
   .flatMap((file) => {
     const source = readFileSync(file, "utf8");
     const matches = [...source.matchAll(/<select\b/g)];
@@ -31,7 +29,7 @@ const violations = collectTsxFiles(sourceRoot)
   });
 
 if (violations.length > 0) {
-  console.error("Use SelectControl for production native select controls:");
+  console.error("Use Select from src/shared/ui for production select controls:");
   console.error(violations.join("\n"));
   process.exit(1);
 }

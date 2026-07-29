@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   configureExternalWorkSecret,
   configureExternalWorkWorkflow,
@@ -11,7 +11,13 @@ import {
   startGitHubExternalWorkBackground,
   stopExternalWorkBackground,
 } from "../../api.js";
-import type { DomainController, DomainError } from "../../app/domain-controller.js";
+import type { DomainController } from "../../app/domain-controller.js";
+import {
+  domainErrorMessage,
+  type FocusedDomainError,
+  type FocusedErrorRequest,
+  useFocusedDomainErrorOwner,
+} from "../../app/use-focused-domain-error-owner.js";
 import type {
   ExternalWorkCiTriageView,
   ExternalWorkStatusResponse,
@@ -21,6 +27,28 @@ import type {
 export type ExternalWorkStatusAction = "poll" | "reconcile" | "start" | "stop";
 export type ExternalWorkSecretAction = "configure" | "delete";
 export type ExternalWorkWorkflowAction = "configure";
+export type ExternalWorkErrorAction =
+  | "background:start"
+  | "background:stop"
+  | "credential:configure"
+  | "credential:delete"
+  | "poll"
+  | "reconcile"
+  | "status:load"
+  | "triage:load"
+  | "workflow:configure";
+export type ExternalWorkErrorScope =
+  | "background"
+  | "credential"
+  | "poll"
+  | "reconcile"
+  | "status"
+  | "triage"
+  | "workflow";
+
+export interface ExternalWorkDomainError extends FocusedDomainError<"external-work", ExternalWorkErrorAction> {
+  readonly kind: ExternalWorkErrorScope;
+}
 
 export interface ExternalWorkState {
   readonly externalWorkCiTriage: readonly ExternalWorkCiTriageView[];
@@ -30,25 +58,27 @@ export interface ExternalWorkState {
   readonly externalWorkStatusAction: ExternalWorkStatusAction | undefined;
   readonly externalWorkSecretAction: ExternalWorkSecretAction | undefined;
   readonly externalWorkWorkflowAction: ExternalWorkWorkflowAction | undefined;
+  readonly externalWorkErrors: readonly ExternalWorkDomainError[];
 }
 
 export interface ExternalWorkActions {
   readonly refreshExternalWorkCiTriage: (cwd?: string, channelId?: string) => Promise<void>;
   readonly refreshExternalWorkStatus: (cwd?: string, channelId?: string) => Promise<void>;
-  readonly configureExternalWorkWorkflowAction: (input: Omit<ExternalWorkWorkflowConfigureRequest, "channelId">) => Promise<void>;
-  readonly runExternalWorkStatusAction: (action: ExternalWorkStatusAction) => Promise<void>;
-  readonly configureExternalWorkSecretAction: (token: string) => Promise<void>;
-  readonly deleteExternalWorkSecretAction: () => Promise<void>;
+  readonly configureExternalWorkWorkflowAction: (input: Omit<ExternalWorkWorkflowConfigureRequest, "channelId">) => Promise<boolean>;
+  readonly runExternalWorkStatusAction: (action: ExternalWorkStatusAction) => Promise<boolean>;
+  readonly configureExternalWorkSecretAction: (token: string) => Promise<boolean>;
+  readonly deleteExternalWorkSecretAction: () => Promise<boolean>;
   readonly resetSelectedChannel: () => void;
   readonly resetForCwd: () => void;
 }
 
-export type ExternalWorkController = DomainController<ExternalWorkState, ExternalWorkActions>;
+export type ExternalWorkController = Omit<DomainController<ExternalWorkState, ExternalWorkActions>, "error"> & {
+  readonly error: ExternalWorkDomainError | undefined;
+};
 
 export function useExternalWorkDomain(input: {
   readonly cwd: string;
   readonly selectedChannelId: string;
-  readonly setErrorMessage: (message: string) => void;
 }): ExternalWorkController {
   const [externalWorkCiTriage, setExternalWorkCiTriage] = useState<readonly ExternalWorkCiTriageView[]>([]);
   const [externalWorkCiTriageLoading, setExternalWorkCiTriageLoading] = useState(false);
@@ -57,7 +87,25 @@ export function useExternalWorkDomain(input: {
   const [externalWorkStatusAction, setExternalWorkStatusAction] = useState<ExternalWorkStatusAction | undefined>();
   const [externalWorkSecretAction, setExternalWorkSecretAction] = useState<ExternalWorkSecretAction | undefined>();
   const [externalWorkWorkflowAction, setExternalWorkWorkflowAction] = useState<ExternalWorkWorkflowAction | undefined>();
-  const [error, setError] = useState<DomainError | undefined>();
+  const externalWorkIdentity = externalWorkRequestIdentity(input.cwd, input.selectedChannelId);
+  const errorOwner = useFocusedDomainErrorOwner<"external-work", ExternalWorkErrorAction>(externalWorkIdentity);
+
+  function isCurrentExternalRequest(
+    request: FocusedErrorRequest<"external-work", ExternalWorkErrorAction>,
+    cwd: string,
+    channelId: string,
+  ): boolean {
+    return errorOwner.isCurrent(request)
+      && request.identity === externalWorkRequestIdentity(cwd, channelId);
+  }
+
+  useEffect(() => {
+    setExternalWorkCiTriageLoading(false);
+    setExternalWorkStatusLoading(false);
+    setExternalWorkStatusAction(undefined);
+    setExternalWorkSecretAction(undefined);
+    setExternalWorkWorkflowAction(undefined);
+  }, [externalWorkIdentity]);
 
   async function refreshExternalWorkCiTriage(
     cwd = input.cwd.trim(),
@@ -68,15 +116,22 @@ export function useExternalWorkDomain(input: {
       return;
     }
 
-    setExternalWorkCiTriageLoading(true);
+    const request = errorOwner.begin("external-work", channelId, "triage:load");
+    errorOwner.clear(request);
+    if (request.identity === externalWorkRequestIdentity(cwd, channelId)) setExternalWorkCiTriageLoading(true);
     try {
-      setError(undefined);
       const response = await listGitHubExternalWorkCiTriage(cwd, { channelId, limit: 25 });
-      setExternalWorkCiTriage(response.records);
-    } catch {
-      setExternalWorkCiTriage([]);
+      if (isCurrentExternalRequest(request, cwd, channelId)) {
+        setExternalWorkCiTriage(response.records);
+        errorOwner.clear(request);
+      }
+    } catch (caught) {
+      if (isCurrentExternalRequest(request, cwd, channelId)) setExternalWorkCiTriage([]);
+      if (isCurrentExternalRequest(request, cwd, channelId)) {
+        errorOwner.report(request, { scope: "load", message: domainErrorMessage(caught) });
+      }
     } finally {
-      setExternalWorkCiTriageLoading(false);
+      if (isCurrentExternalRequest(request, cwd, channelId)) setExternalWorkCiTriageLoading(false);
     }
   }
 
@@ -89,60 +144,79 @@ export function useExternalWorkDomain(input: {
       return;
     }
 
-    setExternalWorkStatusLoading(true);
+    const request = errorOwner.begin("external-work", channelId, "status:load");
+    errorOwner.clear(request);
+    if (request.identity === externalWorkRequestIdentity(cwd, channelId)) setExternalWorkStatusLoading(true);
     try {
-      setError(undefined);
       const response = await getExternalWorkStatus(cwd, { channelId });
-      setExternalWorkStatus(response);
-    } catch {
-      setExternalWorkStatus(undefined);
+      if (isCurrentExternalRequest(request, cwd, channelId)) {
+        setExternalWorkStatus(response);
+        errorOwner.clear(request);
+      }
+    } catch (caught) {
+      if (isCurrentExternalRequest(request, cwd, channelId)) {
+        errorOwner.report(request, { scope: "load", message: domainErrorMessage(caught) });
+      }
     } finally {
-      setExternalWorkStatusLoading(false);
+      if (isCurrentExternalRequest(request, cwd, channelId)) setExternalWorkStatusLoading(false);
     }
   }
 
   async function configureExternalWorkWorkflowAction(
     workflowInput: Omit<ExternalWorkWorkflowConfigureRequest, "channelId">,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const cwd = input.cwd.trim();
     const channelId = input.selectedChannelId;
     if (!cwd || !channelId) {
-      input.setErrorMessage("Select a channel before creating WORKFLOW.md.");
-      return;
+      errorOwner.reportImmediate("external-work", channelId || "channel:unselected", "workflow:configure", {
+        scope: "mutation",
+        message: "Select a channel before creating WORKFLOW.md.",
+      });
+      return false;
     }
+    if (errorOwner.identity() !== externalWorkRequestIdentity(cwd, channelId)) return false;
 
+    const request = errorOwner.begin("external-work", channelId, "workflow:configure");
+    errorOwner.clear(request);
     setExternalWorkWorkflowAction("configure");
     try {
-      input.setErrorMessage("");
-      setError(undefined);
       await configureExternalWorkWorkflow(cwd, {
         channelId,
         sourceKind: workflowInput.sourceKind,
         repository: workflowInput.repository,
         projectSlug: workflowInput.projectSlug,
       });
+      if (!isCurrentExternalRequest(request, cwd, channelId)) return false;
       await refreshExternalWorkStatus(cwd, channelId);
+      if (!isCurrentExternalRequest(request, cwd, channelId)) return false;
+      errorOwner.clear(request);
+      return true;
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "mutation", message });
-      input.setErrorMessage(message);
-      await refreshExternalWorkStatus(cwd, channelId);
+      if (isCurrentExternalRequest(request, cwd, channelId)) await refreshExternalWorkStatus(cwd, channelId);
+      if (isCurrentExternalRequest(request, cwd, channelId)) {
+        errorOwner.report(request, { scope: "mutation", message: domainErrorMessage(caught) });
+      }
+      return false;
     } finally {
-      setExternalWorkWorkflowAction(undefined);
+      if (isCurrentExternalRequest(request, cwd, channelId)) setExternalWorkWorkflowAction(undefined);
     }
   }
 
-  async function runExternalWorkStatusAction(action: ExternalWorkStatusAction): Promise<void> {
+  async function runExternalWorkStatusAction(action: ExternalWorkStatusAction): Promise<boolean> {
     const cwd = input.cwd.trim();
     const channelId = input.selectedChannelId;
     if (!cwd || !channelId || externalWorkStatusAction) {
-      return;
+      return false;
     }
+    if (errorOwner.identity() !== externalWorkRequestIdentity(cwd, channelId)) return false;
 
+    const errorAction: ExternalWorkErrorAction = action === "start" || action === "stop"
+      ? `background:${action}`
+      : action;
+    const request = errorOwner.begin("external-work", channelId, errorAction);
+    errorOwner.clear(request);
     setExternalWorkStatusAction(action);
     try {
-      input.setErrorMessage("");
-      setError(undefined);
       if (action === "poll") {
         if (externalWorkStatus?.workflow.sourceKind === "linear") {
           await pollLinearExternalWork(cwd, { channelId, limit: 50 });
@@ -160,76 +234,103 @@ export function useExternalWorkDomain(input: {
         }
         await stopExternalWorkBackground(cwd, schedulerId);
       }
+      if (!isCurrentExternalRequest(request, cwd, channelId)) return false;
       await Promise.all([
         refreshExternalWorkStatus(cwd, channelId),
         refreshExternalWorkCiTriage(cwd, channelId),
       ]);
+      if (!isCurrentExternalRequest(request, cwd, channelId)) return false;
+      errorOwner.clear(request);
+      return true;
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "mutation", message });
-      input.setErrorMessage(message);
-      await refreshExternalWorkStatus(cwd, channelId);
+      if (isCurrentExternalRequest(request, cwd, channelId)) await refreshExternalWorkStatus(cwd, channelId);
+      if (isCurrentExternalRequest(request, cwd, channelId)) {
+        errorOwner.report(request, { scope: "mutation", message: domainErrorMessage(caught) });
+      }
+      return false;
     } finally {
-      setExternalWorkStatusAction(undefined);
+      if (isCurrentExternalRequest(request, cwd, channelId)) setExternalWorkStatusAction(undefined);
     }
   }
 
-  async function configureExternalWorkSecretAction(token: string): Promise<void> {
+  async function configureExternalWorkSecretAction(token: string): Promise<boolean> {
     const cwd = input.cwd.trim();
     const channelId = input.selectedChannelId;
     if (!cwd || !channelId) {
-      input.setErrorMessage("Select a channel before configuring an external work token.");
-      return;
+      errorOwner.reportImmediate("external-work", channelId || "channel:unselected", "credential:configure", {
+        scope: "mutation",
+        message: "Select a channel before configuring an external work token.",
+      });
+      return false;
     }
+    if (errorOwner.identity() !== externalWorkRequestIdentity(cwd, channelId)) return false;
 
+    const request = errorOwner.begin("external-work", channelId, "credential:configure");
+    errorOwner.clear(request);
     setExternalWorkSecretAction("configure");
     try {
-      input.setErrorMessage("");
-      setError(undefined);
       await configureExternalWorkSecret(cwd, { channelId, token });
+      if (!isCurrentExternalRequest(request, cwd, channelId)) return false;
       await refreshExternalWorkStatus(cwd, channelId);
+      if (!isCurrentExternalRequest(request, cwd, channelId)) return false;
+      errorOwner.clear(request);
+      return true;
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "mutation", message });
-      input.setErrorMessage(message);
-      await refreshExternalWorkStatus(cwd, channelId);
+      if (isCurrentExternalRequest(request, cwd, channelId)) await refreshExternalWorkStatus(cwd, channelId);
+      if (isCurrentExternalRequest(request, cwd, channelId)) {
+        errorOwner.report(request, { scope: "mutation", message: domainErrorMessage(caught) });
+      }
+      return false;
     } finally {
-      setExternalWorkSecretAction(undefined);
+      if (isCurrentExternalRequest(request, cwd, channelId)) setExternalWorkSecretAction(undefined);
     }
   }
 
-  async function deleteExternalWorkSecretAction(): Promise<void> {
+  async function deleteExternalWorkSecretAction(): Promise<boolean> {
     const cwd = input.cwd.trim();
     const channelId = input.selectedChannelId;
     const secretRef = externalWorkStatus?.secret.ref ?? externalWorkStatus?.workflow.secretRef;
     if (!cwd || !channelId) {
-      input.setErrorMessage("Select a channel before removing an external work token.");
-      return;
+      errorOwner.reportImmediate("external-work", channelId || "channel:unselected", "credential:delete", {
+        scope: "mutation",
+        message: "Select a channel before removing an external work token.",
+      });
+      return false;
     }
     if (!secretRef?.startsWith("keychain:")) {
-      input.setErrorMessage("Only keychain external work tokens can be removed from Settings.");
-      return;
+      errorOwner.reportImmediate("external-work", channelId, "credential:delete", {
+        scope: "mutation",
+        message: "Only keychain external work tokens can be removed from Settings.",
+      });
+      return false;
     }
+    if (errorOwner.identity() !== externalWorkRequestIdentity(cwd, channelId)) return false;
 
+    const request = errorOwner.begin("external-work", channelId, "credential:delete");
+    errorOwner.clear(request);
     setExternalWorkSecretAction("delete");
     try {
-      input.setErrorMessage("");
-      setError(undefined);
       await deleteExternalWorkSecret(cwd, { channelId, secretRef });
+      if (!isCurrentExternalRequest(request, cwd, channelId)) return false;
       await refreshExternalWorkStatus(cwd, channelId);
+      if (!isCurrentExternalRequest(request, cwd, channelId)) return false;
+      errorOwner.clear(request);
+      return true;
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "mutation", message });
-      input.setErrorMessage(message);
-      await refreshExternalWorkStatus(cwd, channelId);
+      if (isCurrentExternalRequest(request, cwd, channelId)) await refreshExternalWorkStatus(cwd, channelId);
+      if (isCurrentExternalRequest(request, cwd, channelId)) {
+        errorOwner.report(request, { scope: "mutation", message: domainErrorMessage(caught) });
+      }
+      return false;
     } finally {
-      setExternalWorkSecretAction(undefined);
+      if (isCurrentExternalRequest(request, cwd, channelId)) setExternalWorkSecretAction(undefined);
     }
   }
 
   function resetSelectedChannel(): void {
     setExternalWorkCiTriage([]);
     setExternalWorkStatus(undefined);
+    errorOwner.clearAll();
   }
 
   function resetForCwd(): void {
@@ -240,7 +341,7 @@ export function useExternalWorkDomain(input: {
     setExternalWorkStatusAction(undefined);
     setExternalWorkSecretAction(undefined);
     setExternalWorkWorkflowAction(undefined);
-    setError(undefined);
+    errorOwner.clearAll();
   }
 
   return {
@@ -252,6 +353,7 @@ export function useExternalWorkDomain(input: {
       externalWorkStatusAction,
       externalWorkSecretAction,
       externalWorkWorkflowAction,
+      externalWorkErrors: externalErrors(errorOwner.errors()),
     },
     actions: {
       refreshExternalWorkCiTriage,
@@ -265,7 +367,32 @@ export function useExternalWorkDomain(input: {
     },
     refresh: refreshExternalWorkStatus,
     isLoading: externalWorkCiTriageLoading || externalWorkStatusLoading,
-    error,
-    clearError: () => setError(undefined),
+    error: externalError(errorOwner.latest()),
+    clearError: errorOwner.clearAll,
   };
+}
+
+function externalErrors(
+  errors: readonly FocusedDomainError<"external-work", ExternalWorkErrorAction>[],
+): readonly ExternalWorkDomainError[] {
+  return errors.map((error) => ({ ...error, kind: externalWorkErrorKind(error.action) }));
+}
+
+function externalError(
+  error: FocusedDomainError<"external-work", ExternalWorkErrorAction> | undefined,
+): ExternalWorkDomainError | undefined {
+  return error ? { ...error, kind: externalWorkErrorKind(error.action) } : undefined;
+}
+
+function externalWorkRequestIdentity(cwd: string, channelId: string): string {
+  return `${cwd.trim() || "workspace:unavailable"}::${channelId || "channel:unselected"}`;
+}
+
+function externalWorkErrorKind(action: ExternalWorkErrorAction): ExternalWorkErrorScope {
+  if (action.startsWith("background:")) return "background";
+  if (action.startsWith("credential:")) return "credential";
+  if (action.startsWith("status:")) return "status";
+  if (action.startsWith("triage:")) return "triage";
+  if (action.startsWith("workflow:")) return "workflow";
+  return action === "poll" ? "poll" : "reconcile";
 }

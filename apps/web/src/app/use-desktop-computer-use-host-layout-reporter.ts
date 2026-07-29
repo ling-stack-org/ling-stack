@@ -29,9 +29,23 @@ export function useDesktopComputerUseHostLayoutReporter(
     if (!capabilities || !host) {
       return;
     }
+    const overlayRoot = document.getElementById("ling-ui-overlay-root");
+    const observedRoots = overlayRoot && overlayRoot !== host
+      ? [host, overlayRoot]
+      : [host];
     let frameId: number | undefined;
     let disposed = false;
     const autoMarkedDialogs = new Set<HTMLElement>();
+    const observedElements = (selector: string): readonly HTMLElement[] => {
+      const elements = new Set<HTMLElement>();
+      observedRoots.forEach((root) => {
+        root.querySelectorAll<HTMLElement>(selector).forEach((element) => elements.add(element));
+      });
+      return [...elements];
+    };
+    const belongsToObservedRoot = (element: HTMLElement): boolean => (
+      observedRoots.some((root) => root.contains(element))
+    );
     const screenRect = (element: Element): ComputerUseObstacleRect | undefined => {
       const bounds = element.getBoundingClientRect();
       if (bounds.width <= 0 || bounds.height <= 0) {
@@ -51,7 +65,7 @@ export function useDesktopComputerUseHostLayoutReporter(
         return;
       }
       const bounds = host.getBoundingClientRect();
-      const obstacles = Array.from(host.querySelectorAll<HTMLElement>("[data-computer-use-obstacle]"))
+      const obstacles = observedElements("[data-computer-use-obstacle]")
         .map(screenRect)
         .filter((rect): rect is ComputerUseObstacleRect => Boolean(rect));
       capabilities.reportHostLayout({
@@ -83,9 +97,9 @@ export function useDesktopComputerUseHostLayoutReporter(
     };
     const syncObservedElements = (): void => {
       resizeObserver?.disconnect();
-      resizeObserver?.observe(host);
+      observedRoots.forEach((root) => resizeObserver?.observe(root));
       autoMarkedDialogs.forEach((element) => {
-        if (!element.isConnected || !host.contains(element) || !element.matches('[role="dialog"][aria-modal="true"]')) {
+        if (!element.isConnected || !belongsToObservedRoot(element) || !element.matches('[role="dialog"][aria-modal="true"]')) {
           releaseAutoMarkedDialog(element);
           return;
         }
@@ -96,9 +110,9 @@ export function useDesktopComputerUseHostLayoutReporter(
           autoMarkedDialogs.delete(element);
         }
       });
-      host.querySelectorAll<HTMLElement>("[data-computer-use-obstacle]")
+      observedElements("[data-computer-use-obstacle]")
         .forEach((element) => resizeObserver?.observe(element));
-      host.querySelectorAll<HTMLElement>('[role="dialog"][aria-modal="true"]').forEach((element) => {
+      observedElements('[role="dialog"][aria-modal="true"]').forEach((element) => {
         if (!element.hasAttribute("data-computer-use-obstacle")) {
           element.dataset.computerUseObstacle = "true";
           element.dataset.computerUseObstacleKind = "modal";
@@ -112,7 +126,7 @@ export function useDesktopComputerUseHostLayoutReporter(
       scheduleReport();
     }) : undefined;
     syncObservedElements();
-    mutationObserver?.observe(host, {
+    observedRoots.forEach((root) => mutationObserver?.observe(root, {
       subtree: true,
       childList: true,
       attributes: true,
@@ -124,7 +138,7 @@ export function useDesktopComputerUseHostLayoutReporter(
         "class",
         "style",
       ],
-    });
+    }));
     window.addEventListener("resize", scheduleReport);
     window.addEventListener("scroll", scheduleReport, { capture: true, passive: true });
     window.visualViewport?.addEventListener("resize", scheduleReport);

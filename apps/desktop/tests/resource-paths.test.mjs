@@ -43,8 +43,14 @@ test("packaged Web entry keeps public assets relative and exposes macOS drag chr
     readFile(join(webDistRoot, stylesheetPath), "utf8"),
   ]);
 
-  assert.match(script, /\.\/icons\/ling-stack-gpt-image-2-icon\.png/u);
-  assert.match(script, /\.\/avatars\/teammates/u);
+  assert.match(script, /icons\/ling-stack-gpt-image-2-icon\.png/u);
+  assert.match(script, /avatars\/teammates/u);
+  const [conversationMark, teammateAvatar] = await Promise.all([
+    readFile(join(webDistRoot, "icons", "ling-stack-gpt-image-2-icon.png")),
+    readFile(join(webDistRoot, "avatars", "teammates", "engineer.png")),
+  ]);
+  assert.ok(conversationMark.byteLength > 0);
+  assert.ok(teammateAvatar.byteLength > 0);
   assert.match(script, /desktop-window-drag-region/u);
   assert.match(stylesheet, /\.desktop-window-drag-region/u);
   assert.match(stylesheet, /\.app-shell\.desktop-macos/u);

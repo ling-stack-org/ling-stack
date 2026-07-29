@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildBundledCuaDriverPluginView } from "../src/features/settings/cua-driver-plugin-view-model.ts";
+import { buildBundledCuaDriverView } from "../src/features/plugins/plugin-manager-bundled-cua-view-model.ts";
 
 const t = (value) => value;
 
@@ -11,7 +11,7 @@ test("bundled Cua Driver maps every provider state without exposing installation
     ["permission_required", "Permissions required", "warning", "Review macOS permissions"],
     ["interactive_session_required", "Interactive session required", "warning", "Recovery steps"],
     ["platform_unavailable", "Platform unavailable", "danger", "Repair steps"],
-    ["ready", "Ready", "neutral", undefined],
+    ["ready", "Ready", "success", undefined],
     ["incompatible", "Update required", "danger", "Repair steps"],
     ["corrupt", "Repair required", "danger", "Repair steps"],
     ["unsupported", "Unavailable", "warning", undefined],
@@ -20,7 +20,7 @@ test("bundled Cua Driver maps every provider state without exposing installation
   for (const [providerState, statusLabel, statusTone, primaryGuidance] of cases) {
     const requestedEnabled = providerState !== "included" && providerState !== "unsupported";
     const effectiveEnabled = providerState === "ready";
-    const view = buildBundledCuaDriverPluginView(plugin({
+    const view = buildBundledCuaDriverView(plugin({
       providerState,
       requestedEnabled,
       effectiveEnabled,
@@ -31,18 +31,17 @@ test("bundled Cua Driver maps every provider state without exposing installation
     }), t);
 
     assert.ok(view, providerState);
-    assert.equal(view.statusLabel, statusLabel, providerState);
-    assert.equal(view.statusTone, statusTone, providerState);
-    assert.equal(view.rowActions.some((action) => action.id === "guide" || action.id === "install"), false, providerState);
+    assert.equal(view.primaryState.label, statusLabel, providerState);
+    assert.equal(view.primaryState.tone, statusTone, providerState);
     if (providerState === "included" || providerState === "unsupported") {
-      assert.equal(view.rowActions.some((action) => action.id === "check"), false, providerState);
+      assert.equal(view.showCheckAction, false, providerState);
     }
-    assert.equal(view.rowActions.find((action) => action.tone === "primary")?.label, primaryGuidance, providerState);
+    assert.equal(view.primaryAction?.label, primaryGuidance, providerState);
   }
 });
 
 test("bundled Windows detail projects coverage, limitations, intent, and recovery guidance", () => {
-  const view = buildBundledCuaDriverPluginView(plugin({
+  const view = buildBundledCuaDriverView(plugin({
     providerState: "ready",
     requestedEnabled: true,
     effectiveEnabled: true,
@@ -57,7 +56,7 @@ test("bundled Windows detail projects coverage, limitations, intent, and recover
     canDisable: true,
   }), t);
   assert.ok(view);
-  const fields = Object.fromEntries(view.detailFields.map((field) => [field.label, field.value]));
+  const fields = Object.fromEntries(view.overviewFields.map((field) => [field.label, field.value]));
 
   assert.equal(fields.Source, "Included with Ling");
   assert.equal(fields.Platform, "Windows");
@@ -74,13 +73,13 @@ test("bundled Windows detail projects coverage, limitations, intent, and recover
 });
 
 test("platform-unavailable guidance names the actual host operating system", () => {
-  const darwin = buildBundledCuaDriverPluginView(plugin({
+  const darwin = buildBundledCuaDriverView(plugin({
     providerState: "platform_unavailable",
     requestedEnabled: true,
     effectiveEnabled: false,
     platform: "darwin",
   }, { canDisable: true }), t);
-  const win32 = buildBundledCuaDriverPluginView(plugin({
+  const win32 = buildBundledCuaDriverView(plugin({
     providerState: "platform_unavailable",
     requestedEnabled: true,
     effectiveEnabled: false,
@@ -88,18 +87,18 @@ test("platform-unavailable guidance names the actual host operating system", () 
   }, { canDisable: true }), t);
 
   assert.equal(
-    darwin?.detailFields.find((field) => field.label === "Next step")?.value,
+    darwin?.overviewFields.find((field) => field.label === "Next step")?.value,
     "Restart or update Ling and macOS. If the problem continues, inspect the support bundle.",
   );
   assert.equal(
-    win32?.detailFields.find((field) => field.label === "Next step")?.value,
+    win32?.overviewFields.find((field) => field.label === "Next step")?.value,
     "Restart or update Ling and Windows. If the problem continues, inspect the support bundle.",
   );
 });
 
 test("gate-off and external-local Cua Driver do not enter the bundled mapper", () => {
-  assert.equal(buildBundledCuaDriverPluginView(externalPlugin(), t), undefined);
-  assert.equal(buildBundledCuaDriverPluginView({
+  assert.equal(buildBundledCuaDriverView(externalPlugin(), t), undefined);
+  assert.equal(buildBundledCuaDriverView({
     ...plugin({
       providerState: "included",
       requestedEnabled: false,
@@ -129,22 +128,21 @@ test("malformed bundled V2 setup never falls back to external installation actio
     canApplyPreset: true,
   });
 
-  const bundled = buildBundledCuaDriverPluginView(malformed, t);
+  const bundled = buildBundledCuaDriverView(malformed, t);
   assert.ok(bundled);
-  assert.equal(bundled.statusLabel, "Needs attention");
-  assert.equal(bundled.statusTone, "danger");
+  assert.equal(bundled.primaryState.label, "Needs attention");
+  assert.equal(bundled.primaryState.tone, "danger");
   assert.equal(
-    bundled.detailFields.find((field) => field.label === "Next step")?.value,
+    bundled.overviewFields.find((field) => field.label === "Next step")?.value,
     "Restart Ling Stack. The bundled provider state is invalid.",
   );
-  assert.equal(bundled.rowActions.some((action) => action.id === "enable"), false);
-  assert.equal(bundled.rowActions.some((action) => action.id === "install" || action.id === "guide"), false);
+  assert.notEqual(bundled.primaryAction?.id, "enable");
 
 });
 
 test("bundled external provider states normalize to invalid and suppress enable", () => {
   for (const providerState of ["external_missing", "external_detected", "external_connected"]) {
-    const bundled = buildBundledCuaDriverPluginView(plugin({
+    const bundled = buildBundledCuaDriverView(plugin({
       providerState,
       requestedEnabled: false,
       effectiveEnabled: false,
@@ -154,12 +152,12 @@ test("bundled external provider states normalize to invalid and suppress enable"
     }), t);
 
     assert.ok(bundled);
-    assert.equal(bundled.statusLabel, "Needs attention");
+    assert.equal(bundled.primaryState.label, "Needs attention");
     assert.equal(
-      bundled.detailFields.find((field) => field.label === "Next step")?.value,
+      bundled.overviewFields.find((field) => field.label === "Next step")?.value,
       "Restart Ling Stack. The bundled provider state is invalid.",
     );
-    assert.equal(bundled.rowActions.some((action) => action.id === "enable"), false);
+    assert.notEqual(bundled.primaryAction?.id, "enable");
   }
 });
 

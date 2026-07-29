@@ -1,0 +1,127 @@
+.profile-settings-activity-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ling-space-5);
+  min-width: 0;
+}
+
+.profile-settings-activity-range {
+  flex: 0 0 auto;
+}
+
+.profile-settings-activity-body {
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-gutter: stable;
+}
+
+.profile-settings-heatmap {
+  display: grid;
+  gap: var(--ling-space-4);
+  min-width: 720px;
+}
+
+.profile-settings-heatmap-grid {
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(7, 9px);
+  grid-auto-columns: minmax(9px, 1fr);
+  gap: 3px;
+}
+
+.profile-settings-heatmap-cell {
+  display: block;
+  height: 9px;
+  border-radius: 2px;
+  background: var(--ling-bg-panel);
+}
+
+.profile-settings-heatmap-cell.level-1 {
+  background: color-mix(in srgb, var(--ling-action-accent) 18%, var(--ling-bg-subtle));
+}
+
+.profile-settings-heatmap-cell.level-2 {
+  background: color-mix(in srgb, var(--ling-action-accent) 34%, var(--ling-bg-subtle));
+}
+
+.profile-settings-heatmap-cell.level-3 {
+  background: color-mix(in srgb, var(--ling-action-accent) 58%, var(--ling-bg-subtle));
+}
+
+.profile-settings-heatmap-cell.level-4 {
+  background: var(--ling-action-accent);
+}
+
+.profile-settings-heatmap-months {
+  display: grid;
+  grid-template-columns: repeat(53, minmax(9px, 1fr));
+  gap: 3px;
+  color: var(--ling-text-soft);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+.profile-usage-streak-section,
+.profile-usage-skill-section {
+  display: grid;
+  align-content: start;
+  gap: var(--ling-space-4);
+  min-width: 0;
+}
+
+.profile-usage-streak-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--ling-space-4);
+  min-width: 0;
+}
+
+.profile-settings-skill-list {
+  display: grid;
+  gap: var(--ling-space-3);
+  min-width: 0;
+}
+
+.profile-settings-skill-row {
+  min-height: 32px;
+}
+
+.profile-settings-skill-identity {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--ling-space-3);
+  min-width: 0;
+}
+
+.profile-settings-skill-identity svg {
+  color: var(--ling-text-soft);
+}
+
+.profile-settings-skill-identity strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ling-text-default);
+  font-size: var(--ling-font-sm);
+  font-weight: 650;
+  line-height: var(--ling-line-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 1040px) {
+  .profile-settings-activity-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .profile-settings-activity-range {
+    align-self: start;
+  }
+
+  .profile-usage-streak-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

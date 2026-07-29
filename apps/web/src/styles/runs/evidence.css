@@ -1,0 +1,81 @@
+.runs-code-scroll {
+  min-width: 0;
+  max-width: 100%;
+  max-height: 360px;
+  margin: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  white-space: pre;
+  overflow-wrap: normal;
+}
+
+.runs-snapshot-list {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-4);
+}
+
+.runs-artifact-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--ling-control-sm);
+  padding-inline: var(--ling-space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--ling-radius-md);
+  color: inherit;
+  text-decoration: none;
+}
+
+.tool-event-list,
+.run-approval-list {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-4);
+}
+
+.run-detail-events {
+  max-height: 420px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: auto;
+}
+
+.run-detail-events pre {
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.artifact-list {
+  min-width: 0;
+}
+
+.artifact-list .artifact-row {
+  min-width: 0;
+}
+
+.artifact-list .artifact-main,
+.artifact-list .artifact-main strong,
+.artifact-list .artifact-main code {
+  min-width: 0;
+}
+
+.runs-section-heading,
+.runs-skill-source-refs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--ling-space-3);
+  min-width: 0;
+}
+
+.runs-section-heading {
+  margin: 0;
+  font-size: var(--ling-font-sm);
+  letter-spacing: 0;
+}
+
+.runs-skill-source-refs code {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}

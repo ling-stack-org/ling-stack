@@ -1,8 +1,15 @@
-import { Eye, FolderOpen, Hand, Shield, ShieldCheck } from "lucide-react";
+import { Eye, FolderOpen, Hand, Shield, ShieldCheck, type LucideIcon } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import { resolveAuthorizationMode, resolveWorkspaceAccessMode } from "../../lib/conversation-authorization.js";
-import { RichChoiceSelect, type RichChoiceOption } from "../../shared/components/RichChoiceSelect.js";
+import { DataRow, SegmentedControl, SegmentedControlItem } from "../../shared/ui/index.js";
 import type { AuthorizationMode, PermissionPreset, SessionPermissionMode, WorkspaceAccessMode } from "../../types.js";
+
+interface AuthorizationChoice<Value extends string> {
+  readonly value: Value;
+  readonly label: string;
+  readonly description: string;
+  readonly icon: LucideIcon;
+}
 
 export function ExecutionPermissionsSettingsPanel({
   workspaceDefaultPermissionMode,
@@ -30,7 +37,7 @@ export function ExecutionPermissionsSettingsPanel({
     workspaceDefaultPermissionMode,
     workspaceDefaultPermissionPreset,
   );
-  const authorizationOptions: readonly RichChoiceOption<AuthorizationMode>[] = [
+  const authorizationOptions: readonly AuthorizationChoice<AuthorizationMode>[] = [
     {
       value: "ask",
       label: t("Ask first"),
@@ -50,7 +57,7 @@ export function ExecutionPermissionsSettingsPanel({
       icon: ShieldCheck,
     },
   ];
-  const accessOptions: readonly RichChoiceOption<WorkspaceAccessMode>[] = [
+  const accessOptions: readonly AuthorizationChoice<WorkspaceAccessMode>[] = [
     {
       value: "read_only",
       label: t("Read only"),
@@ -72,33 +79,79 @@ export function ExecutionPermissionsSettingsPanel({
   ];
 
   return (
-    <div className="settings-section-stack settings-default-authorization-section">
-      <section className="settings-global-approval-card" aria-label={t("Default authorization")}>
-        <div className="settings-decision-row">
-          <div className="settings-decision-copy">
-            <strong>{t("Default authorization")}</strong>
-            <small>{t("Choose when Ling asks before acting.")}</small>
-          </div>
-          <RichChoiceSelect
-            ariaLabel={t("Authorization mode")}
-            value={authorizationMode}
-            options={authorizationOptions}
-            onChange={onWorkspaceDefaultAuthorizationChange}
-          />
-        </div>
-        <div className="settings-decision-row">
-          <div className="settings-decision-copy">
-            <strong>{t("Sandbox settings")}</strong>
-            <small>{t("Limit the files and commands Ling can use by default.")}</small>
-          </div>
-          <RichChoiceSelect
-            ariaLabel={t("Sandbox settings")}
-            value={workspaceAccessMode}
-            options={accessOptions}
-            onChange={onWorkspaceDefaultWorkspaceAccessChange}
-          />
-        </div>
-      </section>
-    </div>
+    <section
+      className="settings-default-authorization-section"
+      data-ui2-default-authorization="true"
+      aria-label={t("Default authorization")}
+    >
+      <AuthorizationDecisionRow
+        id="mode"
+        ariaLabel={t("Authorization mode")}
+        label={t("Default authorization")}
+        value={authorizationMode}
+        options={authorizationOptions}
+        onChange={onWorkspaceDefaultAuthorizationChange}
+      />
+      <AuthorizationDecisionRow
+        id="access"
+        ariaLabel={t("Sandbox settings")}
+        label={t("Sandbox settings")}
+        value={workspaceAccessMode}
+        options={accessOptions}
+        onChange={onWorkspaceDefaultWorkspaceAccessChange}
+      />
+    </section>
+  );
+}
+
+function AuthorizationDecisionRow<Value extends string>({
+  id,
+  ariaLabel,
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  readonly id: "access" | "mode";
+  readonly ariaLabel: string;
+  readonly label: string;
+  readonly value: Value;
+  readonly options: readonly AuthorizationChoice<Value>[];
+  readonly onChange: (value: Value) => void;
+}): JSX.Element {
+  const selected = options.find((option) => option.value === value) ?? options[0];
+  return (
+    <DataRow
+      compact
+      className="settings-authorization-row"
+      data-authorization-choice={id}
+      identity={(
+        <span className="settings-authorization-copy">
+          <strong>{label}</strong>
+          <small>{selected.description}</small>
+        </span>
+      )}
+      actions={(
+        <SegmentedControl
+          className="settings-authorization-segments"
+          aria-label={ariaLabel}
+          value={value}
+          onValueChange={(nextValue) => {
+            const next = options.find((option) => option.value === nextValue);
+            if (next) onChange(next.value);
+          }}
+        >
+          {options.map((option) => {
+            const Icon = option.icon;
+            return (
+              <SegmentedControlItem key={option.value} value={option.value} title={option.description}>
+                <Icon aria-hidden="true" />
+                <span>{option.label}</span>
+              </SegmentedControlItem>
+            );
+          })}
+        </SegmentedControl>
+      )}
+    />
   );
 }

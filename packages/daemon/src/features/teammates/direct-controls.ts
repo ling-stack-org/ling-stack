@@ -261,12 +261,13 @@ export class DirectReplyControlService {
       if (!workspace.ok) {
         throw new Error(workspace.message);
       }
+      const queuedFollowup = starting.mode === "queue_followup";
       const guidance = input.store.createTeammateDirectMessage(
         {
           threadId: workspace.workspace.thread.id,
           teammateId: input.teammate.id,
-          authorType: "system",
-          authorId: "system",
+          authorType: queuedFollowup ? "local-user" : "system",
+          authorId: queuedFollowup ? "local-user" : "system",
           body: renderDirectGuidanceMessage(starting),
           attachmentIds: starting.messagePayload?.attachmentIds ?? [],
           linkPreviewIds: starting.messagePayload?.linkPreviewIds ?? [],
@@ -404,7 +405,7 @@ function renderDirectGuidanceMessage(intervention: TeammateDirectReplyInterventi
   if (intervention.mode === "interrupt_redirect") {
     return `已停止上一条回复，并按新引导继续：${body}${detailSummary}`;
   }
-  return `排队引导：${body}${detailSummary}`;
+  return body;
 }
 
 function renderDirectGuidanceFileRef(fileRef: ChannelMessageFileRef): string {

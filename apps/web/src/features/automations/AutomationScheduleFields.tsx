@@ -1,66 +1,88 @@
-import { SelectControl } from "../../shared/components/SelectControl.js";
-export type AutomationScheduleChoice = "daily" | "workdays" | "weekly" | "custom";
+import { Field, Input, Select } from "../../shared/ui/index.js";
+import type { AutomationTranslate } from "./automation-view-models.js";
 
-export function AutomationScheduleFields({
-  scheduleMode,
-  timeOfDay,
-  weekday,
-  customRRule,
-  t,
-  onScheduleModeChange,
-  onTimeOfDayChange,
-  onWeekdayChange,
-  onCustomRRuleChange,
-}: {
-  readonly scheduleMode: AutomationScheduleChoice;
+export type AutomationScheduleChoice = "custom" | "daily" | "interval" | "manual" | "weekly";
+
+export interface AutomationScheduleValue {
+  readonly customRRule: string;
+  readonly intervalMinutes: string;
+  readonly mode: AutomationScheduleChoice;
   readonly timeOfDay: string;
   readonly weekday: string;
-  readonly customRRule: string;
-  readonly t: (value: string) => string;
-  readonly onScheduleModeChange: (mode: AutomationScheduleChoice) => void;
-  readonly onTimeOfDayChange: (value: string) => void;
-  readonly onWeekdayChange: (value: string) => void;
-  readonly onCustomRRuleChange: (value: string) => void;
+}
+
+export function AutomationScheduleFields({
+  disabled = false,
+  error,
+  t,
+  value,
+  onChange,
+}: {
+  readonly disabled?: boolean;
+  readonly error?: string;
+  readonly t: AutomationTranslate;
+  readonly value: AutomationScheduleValue;
+  readonly onChange: (value: AutomationScheduleValue) => void;
 }): JSX.Element {
   return (
-    <div className="automation-popover-form">
-      <label>
-        <span>{t("Plan")}</span>
-        <SelectControl value={scheduleMode} onChange={(event) => onScheduleModeChange(event.target.value as AutomationScheduleChoice)}>
+    <div className="automation-ui2-schedule-fields">
+      <Field label={t("Schedule")} error={error}>
+        <Select
+          aria-label={t("Schedule")}
+          disabled={disabled}
+          value={value.mode}
+          onChange={(event) => onChange({ ...value, mode: event.target.value as AutomationScheduleChoice })}
+        >
+          <option value="manual">{t("Manual")}</option>
+          <option value="interval">{t("Interval")}</option>
           <option value="daily">{t("Daily")}</option>
-          <option value="workdays">{t("Workdays")}</option>
           <option value="weekly">{t("Weekly")}</option>
           <option value="custom">{t("Custom RRULE")}</option>
-        </SelectControl>
-      </label>
-      {scheduleMode === "weekly" ? (
-        <label>
-          <span>{t("Weekday")}</span>
-          <SelectControl value={weekday} onChange={(event) => onWeekdayChange(event.target.value)}>
-            <option value="1">{t("Monday")}</option>
-            <option value="2">{t("Tuesday")}</option>
-            <option value="3">{t("Wednesday")}</option>
-            <option value="4">{t("Thursday")}</option>
-            <option value="5">{t("Friday")}</option>
-            <option value="6">{t("Saturday")}</option>
-            <option value="0">{t("Sunday")}</option>
-          </SelectControl>
-        </label>
+        </Select>
+      </Field>
+      {value.mode === "interval" ? (
+        <Field label={`${t("Interval")} (${t("minutes")})`}>
+          <Input
+            disabled={disabled}
+            min={1}
+            onChange={(event) => onChange({ ...value, intervalMinutes: event.target.value })}
+            type="number"
+            value={value.intervalMinutes}
+          />
+        </Field>
       ) : null}
-      {scheduleMode === "custom" ? (
-        <details className="automation-advanced-schedule" open>
-          <summary>{t("Advanced schedule")}</summary>
-          <label>
-            <span>{t("RRULE")}</span>
-            <input value={customRRule} onChange={(event) => onCustomRRuleChange(event.target.value)} />
-          </label>
-        </details>
-      ) : (
-        <label>
-          <span>{t("Time")}</span>
-          <input type="time" value={timeOfDay} onChange={(event) => onTimeOfDayChange(event.target.value)} />
-        </label>
-      )}
+      {value.mode === "daily" || value.mode === "weekly" ? (
+        <Field label={t("Time")}>
+          <Input
+            disabled={disabled}
+            onChange={(event) => onChange({ ...value, timeOfDay: event.target.value })}
+            type="time"
+            value={value.timeOfDay}
+          />
+        </Field>
+      ) : null}
+      {value.mode === "weekly" ? (
+        <Field label={t("Weekday")}>
+          <Select
+            disabled={disabled}
+            onChange={(event) => onChange({ ...value, weekday: event.target.value })}
+            value={value.weekday}
+          >
+            {[t("Sunday"), t("Monday"), t("Tuesday"), t("Wednesday"), t("Thursday"), t("Friday"), t("Saturday")].map((label, index) => (
+              <option key={label} value={String(index)}>{label}</option>
+            ))}
+          </Select>
+        </Field>
+      ) : null}
+      {value.mode === "custom" ? (
+        <Field label={t("RRULE")}>
+          <Input
+            disabled={disabled}
+            onChange={(event) => onChange({ ...value, customRRule: event.target.value })}
+            value={value.customRRule}
+          />
+        </Field>
+      ) : null}
     </div>
   );
 }

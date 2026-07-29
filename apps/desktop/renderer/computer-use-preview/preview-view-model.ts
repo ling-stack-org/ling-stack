@@ -26,13 +26,23 @@ export interface ComputerUsePreviewActionViewModel {
   readonly label: string;
   readonly danger: boolean;
   readonly disabled: boolean;
+  readonly loading?: boolean;
   readonly separatorBefore?: boolean;
 }
 
 export type ComputerUsePreviewStopCommandState = "idle" | "pending" | "failed";
+export type ComputerUsePreviewOpenCommandState = "idle" | "pending" | "failed";
 
 export interface ComputerUsePreviewTransientState {
   readonly stopCommandState?: ComputerUsePreviewStopCommandState;
+  readonly openCommandState?: ComputerUsePreviewOpenCommandState;
+}
+
+export interface ComputerUsePreviewCommandIssue {
+  readonly label: string;
+  readonly detail: string;
+  readonly tone: "danger";
+  readonly action: ComputerUsePreviewActionViewModel;
 }
 
 export interface ComputerUsePreviewViewModel {
@@ -47,6 +57,7 @@ export interface ComputerUsePreviewViewModel {
   readonly primaryActions: readonly ComputerUsePreviewActionViewModel[];
   readonly menuActions: readonly ComputerUsePreviewActionViewModel[];
   readonly overlayAction?: ComputerUsePreviewActionViewModel;
+  readonly commandIssue?: ComputerUsePreviewCommandIssue;
 }
 
 export function createComputerUsePreviewViewModel(
@@ -56,6 +67,12 @@ export function createComputerUsePreviewViewModel(
   const t = createComputerUsePreviewTranslator(snapshot.locale);
   const presentation = presentationFor(snapshot, transient, t);
   const actions = actionsFor(snapshot, transient, t);
+  const commandIssue = transient.openCommandState === "failed" ? {
+    label: t("openTaskFailedLabel"),
+    detail: t("openTaskFailedDetail"),
+    tone: "danger" as const,
+    action: action("open", t("tryOpenTaskAgainAction")),
+  } : undefined;
   return {
     ...presentation,
     detail: transient.stopCommandState && transient.stopCommandState !== "idle"
@@ -67,6 +84,7 @@ export function createComputerUsePreviewViewModel(
     overlayAction: transient.stopCommandState === "failed"
       ? action("stop", t("tryStopAgainAction"), true)
       : undefined,
+    commandIssue,
   };
 }
 
@@ -178,7 +196,14 @@ function actionsFor(
   t: ComputerUsePreviewTranslate,
 ): Pick<ComputerUsePreviewViewModel, "primaryActions" | "menuActions"> {
   const primaryActions: ComputerUsePreviewActionViewModel[] = [
-    action("open", t("openTaskAction")),
+    action(
+      "open",
+      t("openTaskAction"),
+      false,
+      transient.openCommandState === "pending",
+      false,
+      transient.openCommandState === "pending",
+    ),
     action("hide", t("hideAction")),
   ];
   const menuActions: ComputerUsePreviewActionViewModel[] = [
@@ -209,6 +234,14 @@ function action(
   danger = false,
   disabled = false,
   separatorBefore = false,
+  loading = false,
 ): ComputerUsePreviewActionViewModel {
-  return { id, label, danger, disabled, ...(separatorBefore ? { separatorBefore: true } : {}) };
+  return {
+    id,
+    label,
+    danger,
+    disabled,
+    ...(separatorBefore ? { separatorBefore: true } : {}),
+    ...(loading ? { loading: true } : {}),
+  };
 }

@@ -1,0 +1,43 @@
+.preview-status-overlay {
+  z-index: 2;
+  max-width: min(420px, calc(100% - 24px));
+  pointer-events: none;
+  transition: opacity var(--ling-motion-fast) var(--ling-ease-standard);
+}
+
+.preview-status-overlay:has(.status-action) {
+  pointer-events: auto;
+}
+
+.preview-status-overlay.compact {
+  right: auto;
+  grid-template-columns: minmax(0, 1fr) auto;
+  max-width: calc(100% - 24px);
+  min-height: 40px;
+  padding: var(--ling-space-3) var(--ling-space-4);
+}
+
+.status-action {
+  -webkit-app-region: no-drag;
+  flex: 0 0 auto;
+}
+
+.preview-shell[data-state="live"] .preview-status-overlay {
+  opacity: 0;
+}
+
+.preview-shell[data-state="live"] .preview-status-overlay.command-issue {
+  opacity: 1;
+}
+
+.preview-shell[data-state="live"]:hover .preview-status-overlay,
+.preview-shell[data-state="live"]:focus-within .preview-status-overlay,
+.preview-shell[data-menu-open="true"] .preview-status-overlay {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .preview-status-overlay {
+    transition-duration: var(--ling-motion-instant);
+  }
+}

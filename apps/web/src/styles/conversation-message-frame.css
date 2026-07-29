@@ -1,0 +1,27 @@
+.teammate-chat-day-separator {
+  justify-self: center;
+  color: var(--ling-text-soft);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+.message-feed {
+  display: grid;
+  min-height: 280px;
+  max-height: min(52vh, 560px);
+  align-content: start;
+  gap: var(--ling-space-4);
+  padding: var(--ling-space-2) var(--ling-space-2) 0;
+  overflow: auto;
+}
+
+.message-group {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-3);
+}
+
+.message-mention-token {
+  color: var(--ling-status-info);
+  font-weight: 700;
+}

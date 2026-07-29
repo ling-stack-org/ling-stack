@@ -1,0 +1,55 @@
+.conversation-block-feedback {
+  position: absolute;
+  right: 16px;
+  bottom: 18px;
+  z-index: 8;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  max-width: min(360px, calc(100% - 32px));
+  padding: 7px 7px 7px 10px;
+  border: 1px solid var(--danger-border);
+  border-radius: 8px;
+  background: var(--conversation-bg);
+  color: var(--conversation-status-danger);
+  box-shadow: var(--shadow-panel);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 16px;
+}
+
+.conversation-block-feedback > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.conversation-block-feedback .conversation-block-feedback-dismiss {
+  display: inline-grid;
+  place-items: center;
+  min-width: 28px;
+  min-height: 28px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  gap: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: currentColor;
+}
+
+.conversation-block-feedback .conversation-block-feedback-dismiss:hover,
+.conversation-block-feedback .conversation-block-feedback-dismiss:focus-visible {
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+}
+
+.conversation-block-action-menu .conversation-block-feedback {
+  position: static;
+  right: auto;
+  bottom: auto;
+  width: 100%;
+  max-width: none;
+  box-shadow: none;
+}

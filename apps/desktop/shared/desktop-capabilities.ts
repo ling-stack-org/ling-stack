@@ -1,4 +1,9 @@
 import type { ComputerUseRuntimeStatus } from "@ling-stack/contracts";
+import type {
+  DesktopRendererThemeInput,
+  DesktopRendererThemeSnapshot,
+} from "./renderer-theme.js";
+import type { DesktopThemePackageCapabilities } from "./theme-package-capabilities.js";
 
 export type DesktopPlatform = "macos" | "windows" | "linux";
 
@@ -18,7 +23,12 @@ export interface DesktopDaemonStatus {
   readonly state: "checking" | "starting" | "connected" | "disconnected";
   readonly baseUrl: string;
   readonly ownedByDesktop: boolean;
-  readonly reason?: "bridge_incompatible" | "start_timeout" | "child_exited";
+  readonly reason?:
+    | "bridge_incompatible"
+    | "start_timeout"
+    | "child_exited"
+    | "resource_missing"
+    | "spawn_failed";
   readonly message?: string;
 }
 
@@ -155,6 +165,10 @@ export interface ComputerUsePreviewPreferences {
 export interface LingDesktopCapabilities {
   readonly platform: DesktopPlatform;
   readonly daemonBaseUrl: string;
+  readonly appearance: {
+    reportTheme(theme: DesktopRendererThemeInput): void;
+  };
+  readonly themePackages: DesktopThemePackageCapabilities;
   readonly navigation: {
     acknowledgeIntent(requestId: number): Promise<DesktopCommandResult>;
     onIntent(listener: (intent: DesktopNavigationIntent) => void): () => void;
@@ -215,6 +229,7 @@ export interface ComputerUsePipRendererSnapshot {
 }
 
 export interface LingComputerUsePreviewCapabilities {
+  getThemeSnapshot(): Promise<DesktopRendererThemeSnapshot>;
   getSnapshot(): Promise<ComputerUsePipRendererSnapshot | undefined>;
   activatePage(pageId: string): Promise<DesktopCommandResult>;
   closePage(pageId: string): Promise<DesktopCommandResult>;
@@ -222,7 +237,7 @@ export interface LingComputerUsePreviewCapabilities {
   resetPosition(): Promise<DesktopCommandResult>;
   close(): Promise<DesktopCommandResult>;
   hide(): Promise<void>;
-  openOwnerConversation(): Promise<void>;
+  openOwnerConversation(): Promise<DesktopCommandResult>;
   requestStop(): Promise<DesktopCommandResult>;
   openScreenPermissionSettings(): Promise<void>;
   reportFrameReady(sessionId: string, revision: number, sourceGeneration: number): void;
@@ -236,4 +251,5 @@ export interface LingComputerUsePreviewCapabilities {
     ) => Promise<ComputerUsePreviewReleaseMediaResult> | ComputerUsePreviewReleaseMediaResult,
   ): () => void;
   onSnapshotChanged(listener: (snapshot: ComputerUsePipRendererSnapshot | undefined) => void): () => void;
+  onThemeSnapshotChanged(listener: (snapshot: DesktopRendererThemeSnapshot) => void): () => void;
 }

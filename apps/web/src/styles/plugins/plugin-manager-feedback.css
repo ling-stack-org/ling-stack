@@ -1,0 +1,39 @@
+.plugin-manager-page > .settings-plugin-manager[data-retained-refresh="true"] {
+  grid-template-rows: 64px 52px auto minmax(0, 1fr);
+}
+
+.plugin-manager-retained-feedback {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--ling-space-4);
+  margin: var(--ling-space-3) var(--ling-space-7);
+}
+
+.plugin-manager-retained-feedback [data-ling-inline-feedback-slot="detail"] {
+  display: contents;
+}
+
+.plugin-manager-retained-copy {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ling-text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plugin-table-action-failure {
+  color: var(--ling-text-danger);
+}
+
+.plugin-detail-action-failure [data-ling-inline-feedback-slot="detail"] {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+@media (max-width: 1320px) {
+  .plugin-manager-retained-feedback {
+    margin-inline: var(--ling-space-5);
+  }
+}

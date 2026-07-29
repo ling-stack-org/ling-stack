@@ -1,0 +1,12 @@
+@layer ling.reset, ling.tokens.base, ling.tokens.theme, ling.tokens.client,
+  ling.legacy, ling.primitives, ling.conversation, ling.shell,
+  ling.features, ling.utilities;
+
+@import url("./toolbar/conversation-toolbar.css") layer(ling.conversation);
+@import url("./layout/conversation-shell.css") layer(ling.conversation);
+@import url("./blocks/message-frame.css") layer(ling.conversation);
+@import url("./blocks/message-body.css") layer(ling.conversation);
+@import url("./feedback/message-action-bar.css") layer(ling.conversation);
+@import url("./composer/conversation-composer.css") layer(ling.conversation);
+@import url("./dock/right-dock.css") layer(ling.conversation);
+@import url("./dock/review-queue.css") layer(ling.conversation);

@@ -1,0 +1,5 @@
+.conversation-shell {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+}

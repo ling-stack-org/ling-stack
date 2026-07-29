@@ -1,0 +1,98 @@
+.ling-ui-tooltip {
+  z-index: var(--ling-z-tooltip);
+  max-width: 240px;
+  padding: var(--ling-space-2) var(--ling-space-4);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-sm);
+  color: var(--ling-text-default);
+  background: var(--ling-bg-elevated);
+  box-shadow: var(--ling-shadow-overlay);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+  letter-spacing: 0;
+  animation: ling-ui-tooltip-enter var(--ling-motion-fast) var(--ling-ease-enter);
+}
+
+.ling-ui-tooltip-arrow {
+  fill: var(--ling-bg-elevated);
+}
+
+.ling-ui-menu-content {
+  z-index: var(--ling-z-menu);
+  min-width: 168px;
+  padding: var(--ling-space-2);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  color: var(--ling-text-default);
+  background: var(--ling-bg-elevated);
+  box-shadow: var(--ling-shadow-overlay);
+  animation: ling-ui-menu-enter var(--ling-motion-fast) var(--ling-ease-enter);
+}
+
+.ling-ui-menu-item {
+  box-sizing: border-box;
+  display: flex;
+  min-height: var(--ling-control-sm);
+  align-items: center;
+  gap: var(--ling-space-3);
+  padding: 0 var(--ling-space-4);
+  border-radius: var(--ling-radius-sm);
+  outline: none;
+  font-size: var(--ling-font-sm);
+  line-height: var(--ling-line-sm);
+  cursor: default;
+  user-select: none;
+}
+
+.ling-ui-menu-item[data-highlighted] {
+  background: var(--ling-bg-subtle);
+}
+
+.ling-ui-menu-radio-item[data-state="checked"] {
+  color: var(--ling-text-strong);
+  background: var(--ling-bg-subtle);
+}
+
+.ling-ui-menu-item[data-disabled] {
+  opacity: 0.48;
+}
+
+.ling-ui-menu-item[data-tone="danger"] {
+  color: var(--ling-status-danger);
+}
+
+.ling-ui-menu-separator {
+  height: 1px;
+  margin: var(--ling-space-2);
+  background: var(--ling-border-default);
+}
+
+.ling-ui-menu-item-icon {
+  display: inline-grid;
+  width: 16px;
+  height: 16px;
+  place-items: center;
+}
+
+.ling-ui-menu-item-icon > svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.8;
+}
+
+@keyframes ling-ui-tooltip-enter {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes ling-ui-menu-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ling-ui-tooltip,
+  .ling-ui-menu-content {
+    animation: none;
+  }
+}

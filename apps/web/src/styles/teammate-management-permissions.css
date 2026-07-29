@@ -1,0 +1,217 @@
+.teammate-permissions-panel {
+  display: grid;
+  width: min(100%, 760px);
+  min-width: 0;
+  align-content: start;
+  justify-self: center;
+  gap: var(--ling-space-7);
+  padding: var(--ling-space-7);
+}
+
+.teammate-permissions-heading,
+.teammate-permissions-section-heading,
+.teammate-permissions-section-heading > div {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.teammate-permissions-heading {
+  justify-content: space-between;
+  gap: var(--ling-space-5);
+  padding-bottom: var(--ling-space-5);
+  border-bottom: 1px solid var(--ling-border-default);
+}
+
+.teammate-permissions-heading > div,
+.teammate-permissions-section-heading > div {
+  gap: var(--ling-space-3);
+  color: var(--ling-text-muted);
+}
+
+.teammate-permissions-heading svg,
+.teammate-permissions-section-heading svg {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
+  stroke-width: 1.8;
+}
+
+.teammate-permissions-heading h2,
+.teammate-permissions-section-heading h3 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--ling-text-strong);
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teammate-permissions-heading h2 {
+  font-size: var(--ling-font-md);
+  line-height: var(--ling-line-md);
+}
+
+.teammate-permissions-section-heading h3 {
+  font-size: var(--ling-font-sm);
+  line-height: var(--ling-line-sm);
+}
+
+.teammate-permissions-section {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-4);
+}
+
+.teammate-permissions-section + .teammate-permissions-section {
+  padding-top: var(--ling-space-6);
+  border-top: 1px solid var(--ling-border-default);
+}
+
+.teammate-permissions-section-heading {
+  justify-content: space-between;
+  gap: var(--ling-space-4);
+}
+
+.teammate-permission-tool-list,
+.teammate-permission-runtime-list,
+.teammate-permission-runtime-decision-list {
+  display: grid;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  background: var(--ling-bg-panel);
+}
+
+.teammate-permission-tool-row,
+.teammate-permission-runtime-row,
+.teammate-permission-runtime-decision-row {
+  border-bottom: 1px solid var(--ling-border-default);
+}
+
+.teammate-permission-tool-row:last-child,
+.teammate-permission-runtime-row:last-child,
+.teammate-permission-runtime-decision-row:last-child {
+  border-bottom: 0;
+}
+
+.teammate-permission-approval-row,
+.teammate-permission-tool-row,
+.teammate-permission-runtime-row,
+.teammate-permission-runtime-decision-row {
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--ling-space-4);
+}
+
+.teammate-permission-row-copy {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
+.teammate-permission-row-copy strong,
+.teammate-permission-row-copy small,
+.teammate-permission-runtime-list strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teammate-permission-row-copy strong,
+.teammate-permission-runtime-list strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+  line-height: var(--ling-line-sm);
+}
+
+.teammate-permission-row-copy small {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+.teammate-permission-policy-details {
+  min-width: 0;
+}
+
+.teammate-permission-runtime-details,
+.teammate-permission-runtime-decision-list {
+  min-width: 0;
+}
+
+.teammate-permission-detail-list {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-3);
+  margin: 0;
+}
+
+.teammate-permission-detail-list > div {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(144px, 0.68fr) minmax(0, 1.32fr);
+  gap: var(--ling-space-4);
+}
+
+.teammate-permission-detail-list dt,
+.teammate-permission-detail-list dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+.teammate-permission-detail-list dt {
+  color: var(--ling-text-muted);
+}
+
+.teammate-permission-detail-list dd {
+  color: var(--ling-text-strong);
+}
+
+.teammate-permission-runtime-note {
+  margin: 0;
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+.teammate-permission-runtime-actions {
+  display: flex;
+  min-width: 0;
+  justify-content: flex-end;
+}
+
+.teammate-permission-runtime-loading,
+.teammate-permission-runtime-error {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-3);
+}
+
+.teammate-permission-runtime-error {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+@media (max-width: 1100px) {
+  .teammate-permissions-panel {
+    gap: var(--ling-space-6);
+    padding: var(--ling-space-5);
+  }
+
+  .teammate-permission-detail-list > div {
+    grid-template-columns: minmax(120px, 0.64fr) minmax(0, 1.36fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .teammate-permissions-panel {
+    scroll-behavior: auto;
+  }
+}

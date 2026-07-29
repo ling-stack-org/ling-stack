@@ -1,4 +1,10 @@
-import { Eye, EyeOff, LoaderCircle, Square } from "lucide-react";
+import {
+  CurrentSessionCapabilityControl,
+  type CapabilityAction,
+  type CapabilityIssue,
+  type StatusTone,
+} from "../shared/ui/index.js";
+import { Eye, EyeOff, Square } from "lucide-react";
 import { useId } from "react";
 import { useI18n, type Translate } from "../i18n.js";
 
@@ -45,89 +51,103 @@ export function DesktopComputerUseControlSlot({
     : summary.visible ? t("Hide") : t("Show");
   const stopLabel = stopPending || stopping ? t("Stopping") : t("Stop");
   const visibilityActionAvailable = summary.visible || (summary.previewAvailable && !stopping);
+  const issue = buildCapabilityIssue({
+    stopFailure,
+    stopFeedbackId,
+    visibilityFailure,
+    visibilityFeedbackId,
+    t,
+  });
+  const actions: CapabilityAction[] = [];
+  if (visibilityActionAvailable) {
+    actions.push({
+      describedBy: issue?.id === visibilityFeedbackId ? visibilityFeedbackId : undefined,
+      disabled: visibilityPending !== undefined,
+      icon: summary.visible ? <EyeOff /> : <Eye />,
+      id: "visibility",
+      label: visibilityLabel,
+      loading: visibilityPending !== undefined,
+      onClick: onToggleVisibility,
+      pressed: summary.visible,
+    });
+  }
+  actions.push({
+    describedBy: issue?.id === stopFeedbackId ? stopFeedbackId : undefined,
+    disabled: stopPending || stopping,
+    icon: <Square />,
+    id: "stop",
+    label: stopLabel,
+    loading: stopPending || stopping,
+    onClick: onStop,
+    tone: "danger",
+  });
 
   return (
-    <aside
-      className="desktop-computer-use-control"
+    <CurrentSessionCapabilityControl
+      actions={actions}
       aria-label={t("Computer Use preview controls")}
+      className="desktop-computer-use-control"
       data-status={summary.status}
-    >
-      <span className="desktop-computer-use-control-dot" aria-hidden="true" />
-      <span className="desktop-computer-use-control-label">
-        <strong title={summary.targetLabel}>{summary.targetLabel}</strong>
-        <small role="status" aria-live="polite" aria-atomic="true">
-          {computerUseStatusLabel(summary.status, t)}
-        </small>
-      </span>
-      <span className="desktop-computer-use-control-actions">
-        {visibilityActionAvailable ? (
-          <button
-            type="button"
-            className="desktop-computer-use-control-action"
-            disabled={visibilityPending !== undefined}
-            aria-busy={visibilityPending !== undefined}
-            aria-describedby={visibilityFailure ? visibilityFeedbackId : undefined}
-            aria-label={visibilityLabel}
-            title={visibilityLabel}
-            onClick={onToggleVisibility}
-          >
-            <span className="desktop-computer-use-control-action-icon" aria-hidden="true">
-              {visibilityPending
-                ? <LoaderCircle className="spin" size={15} />
-                : summary.visible ? <EyeOff size={15} /> : <Eye size={15} />}
-            </span>
-            <span className="desktop-computer-use-control-action-label">{visibilityLabel}</span>
-          </button>
-        ) : null}
-        <button
-          type="button"
-          className="desktop-computer-use-control-action danger"
-          disabled={stopPending || stopping}
-          aria-busy={stopPending || stopping}
-          aria-describedby={stopFailure ? stopFeedbackId : undefined}
-          aria-label={stopLabel}
-          title={stopLabel}
-          onClick={onStop}
-        >
-          <span className="desktop-computer-use-control-action-icon" aria-hidden="true">
-            {stopPending || stopping ? <LoaderCircle className="spin" size={15} /> : <Square size={14} />}
-          </span>
-          <span className="desktop-computer-use-control-action-label">{stopLabel}</span>
-        </button>
-      </span>
-      {visibilityFailure || stopFailure ? (
-        <span className="desktop-computer-use-control-feedback-stack">
-          {visibilityFailure ? (
-            <span
-              id={visibilityFeedbackId}
-              className="desktop-computer-use-control-label desktop-computer-use-control-feedback"
-              role="alert"
-              aria-live="assertive"
-              aria-atomic="true"
-              data-visibility-error-action={visibilityFailure.action}
-              data-visibility-error-kind={visibilityFailure.failureKind}
-            >
-              <strong>{visibilityFailureTitle(visibilityFailure.action, t)}</strong>
-              <small>{visibilityFailureMessage(visibilityFailure.failureKind, t)}</small>
-            </span>
-          ) : null}
-          {stopFailure ? (
-            <span
-              id={stopFeedbackId}
-              className="desktop-computer-use-control-label desktop-computer-use-control-feedback"
-              role="alert"
-              aria-live="assertive"
-              aria-atomic="true"
-              data-stop-error-kind={stopFailure}
-            >
-              <strong>{t("Unable to stop Computer Use")}</strong>
-              <small>{stopFailureMessage(stopFailure, t)}</small>
-            </span>
-          ) : null}
-        </span>
-      ) : null}
-    </aside>
+      issue={issue}
+      label={summary.targetLabel}
+      statusLabel={computerUseStatusLabel(summary.status, t)}
+      tone={computerUseStatusTone(summary.status)}
+    />
   );
+}
+
+function buildCapabilityIssue({
+  stopFailure,
+  stopFeedbackId,
+  visibilityFailure,
+  visibilityFeedbackId,
+  t,
+}: {
+  readonly stopFailure?: DesktopComputerUseCommandFailureKind;
+  readonly stopFeedbackId: string;
+  readonly visibilityFailure?: {
+    readonly action: DesktopComputerUseVisibilityAction;
+    readonly failureKind: DesktopComputerUseCommandFailureKind;
+  };
+  readonly visibilityFeedbackId: string;
+  readonly t: Translate;
+}): CapabilityIssue | undefined {
+  if (stopFailure) {
+    return {
+      attributes: {
+        "aria-atomic": true,
+        "aria-live": "assertive",
+        "data-stop-error-kind": stopFailure,
+      },
+      id: stopFeedbackId,
+      message: (
+        <>
+          <strong>{t("Unable to stop Computer Use")}</strong>
+          <span>{stopFailureMessage(stopFailure, t)}</span>
+        </>
+      ),
+      tone: "danger",
+    };
+  }
+  if (!visibilityFailure) {
+    return undefined;
+  }
+  return {
+    attributes: {
+      "aria-atomic": true,
+      "aria-live": "assertive",
+      "data-visibility-error-action": visibilityFailure.action,
+      "data-visibility-error-kind": visibilityFailure.failureKind,
+    },
+    id: visibilityFeedbackId,
+    message: (
+      <>
+        <strong>{visibilityFailureTitle(visibilityFailure.action, t)}</strong>
+        <span>{visibilityFailureMessage(visibilityFailure.failureKind, t)}</span>
+      </>
+    ),
+    tone: "danger",
+  };
 }
 
 function visibilityFailureTitle(action: DesktopComputerUseVisibilityAction, t: Translate): string {
@@ -157,4 +177,17 @@ function computerUseStatusLabel(status: DesktopComputerUseControlSummary["status
     failed: t("Failed"),
     cancelled: t("Stopped"),
   }[status];
+}
+
+function computerUseStatusTone(status: DesktopComputerUseControlSummary["status"]): StatusTone {
+  return {
+    starting: "info",
+    running: "success",
+    waiting_for_approval: "warning",
+    paused: "neutral",
+    stopping: "warning",
+    succeeded: "success",
+    failed: "danger",
+    cancelled: "neutral",
+  }[status] as StatusTone;
 }

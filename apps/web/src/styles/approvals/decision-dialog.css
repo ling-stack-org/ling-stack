@@ -1,0 +1,25 @@
+.approval-decision-panel {
+  display: grid;
+  align-content: start;
+  gap: var(--ling-space-3);
+  min-width: 0;
+}
+
+.approval-actions {
+  justify-content: flex-end;
+}
+
+.approval-card.compact .approval-actions {
+  justify-content: flex-start;
+}
+
+.approval-decision-dialog {
+  max-height: min(680px, calc(100vh - 48px));
+}
+
+.approval-decision-dialog-body {
+  display: grid;
+  gap: var(--ling-space-4);
+  min-width: 0;
+  overflow: auto;
+}

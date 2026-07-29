@@ -1,0 +1,71 @@
+import type { LingThemePackManifest } from "../types.js";
+
+export const lingLightTheme: LingThemePackManifest = Object.freeze({
+  schemaVersion: 1,
+  id: "ling-light",
+  name: "Ling Light",
+  familyId: "ling",
+  description: "Ling's quiet, dense light workspace theme.",
+  author: "Ling Stack",
+  license: "MIT",
+  colorScheme: "light",
+  source: "built-in",
+  tokens: {
+    background: {
+      app: "#f6f7f8",
+      panel: "#ffffff",
+      elevated: "#ffffff",
+      subtle: "#f1f3f5",
+      pressed: "#e8ebee",
+      overlay: "rgb(18 20 23 / 36%)",
+      code: "#f5f6f7",
+      sidebar: "#fbfcfd",
+      composer: "#ffffff",
+    },
+    text: {
+      strong: "#121417",
+      default: "#2b3036",
+      muted: "#68707a",
+      soft: "#7c858f",
+      inverse: "#ffffff",
+      link: "#315f8d",
+    },
+    border: {
+      default: "#d9dde2",
+      strong: "#b8bec6",
+      focus: "#4f6f96",
+    },
+    action: {
+      accent: "#17191c",
+      accentHover: "#2b2e32",
+      accentPressed: "#050607",
+      accentForeground: "#ffffff",
+      selection: "#dfe8f2",
+    },
+    status: {
+      success: { foreground: "#2f7654", background: "#edf7f1", border: "#b9d9c7" },
+      warning: { foreground: "#8a5d12", background: "#fff8e8", border: "#e6d4a7" },
+      danger: { foreground: "#a13e3b", background: "#fff3f2", border: "#e7c0bd" },
+      info: { foreground: "#466b91", background: "#eef4fa", border: "#bfd0e1" },
+    },
+    shadow: {
+      low: "0 1px 2px rgb(18 20 23 / 8%)",
+      medium: "0 6px 18px rgb(18 20 23 / 12%)",
+      overlay: "0 12px 32px rgb(18 20 23 / 16%)",
+    },
+    native: {
+      selection: "#cdddec",
+      scrollbar: "#c4c9cf",
+      scrollbarHover: "#9ea5ad",
+    },
+  },
+  desktop: {
+    windowBackground: "#f6f7f8",
+    sidebarMaterial: "sidebar",
+    overlayMaterial: "popover",
+    titlebarForeground: "#2b3036",
+    shadowStrength: 0.24,
+    blurStrength: 0,
+  },
+  presentation: { profileId: "ling-standard" },
+} satisfies LingThemePackManifest);

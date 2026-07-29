@@ -1,0 +1,34 @@
+.app-connection-status {
+  grid-area: workspace;
+  z-index: calc(var(--ling-z-dialog) - 1);
+  align-self: start;
+  justify-self: center;
+  box-sizing: border-box;
+  width: min(560px, calc(100% - 32px));
+  margin-top: var(--ling-space-5);
+  pointer-events: none;
+}
+
+.app-connection-status > .ling-ui-inline-feedback {
+  box-shadow: var(--ling-shadow-overlay);
+  pointer-events: auto;
+}
+
+.app-connection-status-content {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ling-space-5);
+}
+
+.app-connection-status-content > span {
+  min-width: 0;
+}
+
+@media (max-width: 720px) {
+  .app-connection-status-content {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}

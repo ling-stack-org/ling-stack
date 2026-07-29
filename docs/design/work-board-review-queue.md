@@ -2,8 +2,12 @@
 
 ## Status
 
-Design plan with current Web IA implemented for the top-level Review Queue and Work
-Board surfaces.
+**Work Board product surface: pending development.**
+
+Review Queue and inline approval boundaries remain active. The current Web Work Board
+implementation is retained as an internal/contextual validation surface, but its left
+sidebar entry is hidden as of 2026-07-28 and it must not be described as generally
+released.
 
 This document defines the product boundary between Codex-style local runtime
 permission approvals, external-work review, the global Work Board, and channel-scoped

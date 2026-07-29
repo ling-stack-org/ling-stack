@@ -126,6 +126,10 @@ export interface TaskRunActionState {
   readonly action: "run" | "check";
 }
 
+export interface ErrorPresentationOptions {
+  readonly errorOwner?: "global" | "caller";
+}
+
 export interface TaskEditFormState {
   readonly title: string;
   readonly prompt: string;

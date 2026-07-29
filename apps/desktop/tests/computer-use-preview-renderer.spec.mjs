@@ -66,6 +66,47 @@ test("keeps Open task, Hide, and More as the ordered top-level actions", async (
     .toEqual(["openOwnerConversation", "hide"]);
 });
 
+test("keeps Computer Use running and exposes a retry when Open task cannot recover the owner window", async () => {
+  await page.evaluate(() => window.lingPreviewTestHarness.setCommandResult("openOwnerConversation", {
+    accepted: false,
+    reason: "private owner-window failure",
+  }));
+
+  await page.getByRole("button", { name: "Open task" }).click();
+  await expect(page.locator(".preview-shell")).toHaveAttribute("data-open-command", "failed");
+  const issue = page.getByRole("alert");
+  await expect(issue).toContainText("Unable to open task");
+  await expect(issue).toContainText("The task is still running. Try again.");
+  await expect(issue).not.toContainText("private owner-window failure");
+
+  await page.evaluate(() => window.lingPreviewTestHarness.setCommandResult("openOwnerConversation", {
+    accepted: true,
+  }));
+  await issue.getByRole("button", { name: "Try again" }).click();
+  await expect(page.locator(".preview-shell")).toHaveAttribute("data-open-command", "idle");
+  await expect(page.getByText("Unable to open task")).toHaveCount(0);
+});
+
+test("suppresses duplicate Open task commands while owner-window recovery is pending", async () => {
+  await page.evaluate(() => {
+    window.lingPreviewTestHarness.clearCalls();
+    window.lingPreviewTestHarness.setCommandPending("openOwnerConversation");
+  });
+  const openButton = page.getByRole("button", { name: "Open task" });
+  await openButton.evaluate((button) => {
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+  await expect(page.locator(".preview-shell")).toHaveAttribute("data-open-command", "pending");
+  expect(await page.evaluate(() => window.lingPreviewTestHarness.getCalls()
+    .filter((call) => call.name === "openOwnerConversation").length)).toBe(1);
+
+  await page.evaluate(() => window.lingPreviewTestHarness.resolveCommand("openOwnerConversation", {
+    accepted: true,
+  }));
+  await expect(page.locator(".preview-shell")).toHaveAttribute("data-open-command", "idle");
+});
+
 test("supports Arrow, Home, End, and Escape navigation with focus return", async () => {
   const moreButton = page.getByRole("button", { name: "More preview actions" });
   await moreButton.click();
@@ -517,7 +558,6 @@ test("keeps document.title synchronized with the current target", async () => {
 
 test("serializes pending display-media acquisition across repeated same-source snapshots", async () => {
   await page.evaluate(() => {
-    window.lingPreviewTestHarness.clearCalls();
     window.lingPreviewTestHarness.pushSnapshot({ statusDetail: "Connecting capture 1" });
     window.lingPreviewTestHarness.pushSnapshot({ statusDetail: "Connecting capture 2" });
   });
@@ -577,6 +617,45 @@ test("display-media locale changes do not reacquire the source or report another
   await expect(page.getByRole("button", { name: "打开任务" })).toBeVisible();
   expect(await page.evaluate(() => window.lingPreviewTestHarness.getDisplayMediaRequestCount())).toBe(1);
   expect(await callCount("reportFrameReady")).toBe(0);
+});
+
+test("display-media theme revisions apply atomically without reacquiring the source", async () => {
+  await expect.poll(() => page.evaluate(() => window.lingPreviewTestHarness
+    .getDisplayMediaRequestCount()))
+    .toBe(1);
+  await expect.poll(() => callCount("reportFrameReady")).toBe(1);
+  await page.evaluate(() => window.lingPreviewTestHarness.clearCalls());
+
+  await page.evaluate(() => window.lingPreviewTestHarness.pushThemeSnapshot({
+    revision: 2,
+    themeId: "ling-dark",
+    colorScheme: "dark",
+    presentationProfileId: "ling-standard",
+    variables: { "--ling-compact-window-bg": "#101214" },
+  }));
+
+  await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "ling-dark");
+  await expect(page.locator("html")).toHaveAttribute("data-color-scheme", "dark");
+  await expect(page.locator("html")).toHaveAttribute("data-ui-presentation", "ling-standard");
+  await expect(page.locator("html")).toHaveAttribute("data-ui-surface", "overlay");
+  await expect(page.locator("html")).toHaveAttribute("data-ui-surface-recipe", "solid");
+  await expect(page.locator("html")).toHaveAttribute("data-ui-artwork-policy", "off");
+  await expect(page.locator("html")).toHaveAttribute("data-ui-decoration-policy", "off");
+  await expect(page.locator("html")).toHaveAttribute("data-theme-revision", "2");
+  expect(await page.evaluate(() => getComputedStyle(document.documentElement)
+    .getPropertyValue("--ling-compact-window-bg").trim())).toBe("#101214");
+  expect(await page.evaluate(() => window.lingPreviewTestHarness.getDisplayMediaRequestCount())).toBe(1);
+  expect(await callCount("reportFrameReady")).toBe(0);
+
+  await page.evaluate(() => window.lingPreviewTestHarness.pushThemeSnapshot({
+    revision: 1,
+    themeId: "ling-light",
+    colorScheme: "light",
+    presentationProfileId: "ling-standard",
+    variables: {},
+  }));
+  await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "ling-dark");
+  await expect(page.locator("html")).toHaveAttribute("data-theme-revision", "2");
 });
 
 test("releases live display-media tracks before acknowledging", async () => {

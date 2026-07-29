@@ -47,31 +47,6 @@ export function useI18n(): I18nContextValue {
   return useContext(I18nContext);
 }
 
-export function LanguageSwitcher(): JSX.Element {
-  const { locale, setLocale, t } = useI18n();
-
-  return (
-    <div className="language-switcher" aria-label={t("Language")}>
-      <button
-        type="button"
-        className={locale === "zh-CN" ? "active" : ""}
-        aria-pressed={locale === "zh-CN"}
-        onClick={() => setLocale("zh-CN")}
-      >
-        中文
-      </button>
-      <button
-        type="button"
-        className={locale === "en-US" ? "active" : ""}
-        aria-pressed={locale === "en-US"}
-        onClick={() => setLocale("en-US")}
-      >
-        EN
-      </button>
-    </div>
-  );
-}
-
 export function readSavedLocale(): Locale | undefined {
   try {
     const saved = globalThis.localStorage?.getItem(storageKey);

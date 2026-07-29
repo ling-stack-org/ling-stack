@@ -6,6 +6,10 @@ export {
   ConversationGuidanceStrip,
   ConversationShell,
   ConversationStatusStrip,
+  ConversationToolbar,
+  ConversationToolbarActionButton,
+  ConversationToolbarCountBadge,
+  ConversationToolbarIconButton,
   CopyActionButton,
   DockEmptyState,
   DockLauncher,
@@ -34,6 +38,10 @@ export {
   type ConversationStatusAction,
   type ConversationStatusMetaItem,
   type ConversationStatusStripProps,
+  type ConversationToolbarActionButtonProps,
+  type ConversationToolbarCountBadgeProps,
+  type ConversationToolbarIconButtonProps,
+  type ConversationToolbarProps,
   type CopyActionButtonProps,
   type DockEmptyStateProps,
   type DockLauncherPageItem,
@@ -105,6 +113,7 @@ export {
 } from "@ling-stack/conversation-ui-core";
 export { ConversationAttachmentStrip, type ConversationAttachmentChip, type ConversationAttachmentStripProps } from "./preview/ConversationAttachmentStrip.js";
 export { ConversationReferenceStrip, type ConversationReferenceItem } from "./preview/ConversationReferenceStrip.js";
+export { isConversationGuidanceQueueVisible } from "./feedback/conversation-guidance-visibility.js";
 export { ConversationEvidenceBundlePanel, type ConversationEvidenceBundle, type ConversationEvidenceBundlePanelProps, type ConversationEvidenceItem, type ConversationEvidenceSection } from "./blocks/ConversationEvidenceBundlePanel.js";
 export { MessageBubble, type MessageBubbleProps, type MessageBubbleTone } from "./blocks/MessageBubble.js";
 export { MessageBodyRenderer, type MessageBodyRendererProps } from "./blocks/MessageBodyRenderer.js";
@@ -129,7 +138,6 @@ export { FileChangeEvidencePanel, type FileChangeEvidencePanelProps } from "./bl
 export { FileRefChip, type FileRefChipProps } from "./blocks/FileRefChip.js";
 export { ImageCompareViewer, type ImageCompareViewerProps } from "./preview/ImageCompareViewer.js";
 export { LocalFileLink, type LocalFileLinkProps } from "./blocks/LocalFileLink.js";
-export { MessageFooterActions, type MessageFooterAction, type MessageFooterActionsProps } from "./blocks/MessageFooterActions.js";
 export { OperationBubble, type OperationBubbleProps } from "./blocks/OperationBubble.js";
 export { OperationBubbleActions, type OperationBubbleActionsProps } from "./blocks/OperationBubbleActions.js";
 export { OperationBubbleBody, type OperationBubbleBodyProps } from "./blocks/OperationBubbleBody.js";
@@ -141,7 +149,6 @@ export { useConversationBlockView, type ConversationBlockViewState } from "./vie
 export { useConversationSpanView, type ConversationSpanViewState } from "./view-store/use-conversation-span-view.js";
 export { useConversationViewReconciliation } from "./view-store/use-conversation-view-reconciliation.js";
 export type { ConversationViewRetainKeys } from "./view-store/conversation-view-store.js";
-export { RightDrawer, type RightDrawerNavItem, type RightDrawerProps } from "./blocks/RightDrawer.js";
 export {
   conversationTranscriptFixtures,
   createTranscriptBlockRendererRegistry,

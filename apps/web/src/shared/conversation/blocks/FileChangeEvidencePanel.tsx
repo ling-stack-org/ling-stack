@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CircleAlert, FileCode2, Loader2 } from "lucide-react";
 import { useI18n } from "../../../i18n.js";
 import { summarizeFileChanges, type ConversationFileChange, type ConversationFileChangeStatus } from "../../../lib/diff-summary.js";
@@ -30,26 +30,37 @@ export function FileChangeEvidencePanel({
 }: FileChangeEvidencePanelProps): JSX.Element | null {
   const { t } = useI18n();
   const diffArtifacts = useMemo(() => deriveFileChangeArtifacts(artifacts), [artifacts]);
+  const artifactIdentity = diffArtifacts.map((artifact) => artifact.id).join("|");
+  const requestIdRef = useRef(0);
+  const loadAttemptedRef = useRef(false);
   const [expanded, setExpanded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [changes, setChanges] = useState<readonly ConversationFileChange[]>([]);
   const [selectedId, setSelectedId] = useState("");
 
+  useEffect(() => () => {
+    requestIdRef.current += 1;
+  }, []);
+
   useEffect(() => {
+    requestIdRef.current += 1;
+    loadAttemptedRef.current = false;
     setExpanded(false);
     setLoading(false);
     setError("");
     setChanges([]);
     setSelectedId("");
-  }, [cwd, diffArtifacts.map((artifact) => artifact.id).join("|"), status, sourceRunId, approvalId]);
+  }, [approvalId, artifactIdentity, cwd, sourceRunId, status]);
 
   useEffect(() => {
-    if (!expanded || diffArtifacts.length === 0 || changes.length > 0 || loading) {
+    if (!expanded || diffArtifacts.length === 0 || loadAttemptedRef.current) {
       return;
     }
 
-    let cancelled = false;
+    loadAttemptedRef.current = true;
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
     setLoading(true);
     setError("");
     void Promise.all(diffArtifacts.map(async (artifact) => {
@@ -58,26 +69,30 @@ export function FileChangeEvidencePanel({
         ? parseFileChangeArtifact({ artifact, diff: preview.text, status, sourceRunId, approvalId })
         : [];
     })).then((items) => {
-      if (cancelled) {
+      if (requestIdRef.current !== requestId) {
         return;
       }
       const nextChanges = items.flat();
       setChanges(nextChanges);
       setSelectedId(nextChanges[0]?.id ?? "");
     }, (reason) => {
-      if (!cancelled) {
+      if (requestIdRef.current === requestId) {
         setError(reason instanceof Error ? reason.message : String(reason));
       }
     }).finally(() => {
-      if (!cancelled) {
+      if (requestIdRef.current === requestId) {
         setLoading(false);
       }
     });
+  }, [approvalId, cwd, diffArtifacts, expanded, loadArtifactPreview, sourceRunId, status]);
 
-    return () => {
-      cancelled = true;
-    };
-  }, [approvalId, changes.length, cwd, diffArtifacts, expanded, loadArtifactPreview, loading, sourceRunId, status]);
+  function handleToggle(open: boolean): void {
+    if (open && error && changes.length === 0 && !loading) {
+      loadAttemptedRef.current = false;
+      setError("");
+    }
+    setExpanded(open);
+  }
 
   if (diffArtifacts.length === 0 || !cwd) {
     return null;
@@ -91,7 +106,7 @@ export function FileChangeEvidencePanel({
     <details
       className={compact ? "file-change-evidence compact" : "file-change-evidence"}
       open={expanded}
-      onToggle={(event) => setExpanded(event.currentTarget.open)}
+      onToggle={(event) => handleToggle(event.currentTarget.open)}
     >
       <summary>
         <span>

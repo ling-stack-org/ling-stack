@@ -1,5 +1,6 @@
 import type { MediaWorkflowInputField, RunArtifact } from "../../../types.js";
-import { SelectControl } from "../../../shared/components/SelectControl.js";
+import { useI18n } from "../../../i18n.js";
+import { Checkbox, Field, Input, Select } from "../../../shared/ui/index.js";
 
 export function WorkflowFieldRenderer({
   fields,
@@ -16,54 +17,60 @@ export function WorkflowFieldRenderer({
   readonly hiddenSemantics?: readonly MediaWorkflowInputField["semantic"][];
   readonly onChange: (fieldId: string, value: unknown) => void;
 }): JSX.Element {
+  const { t } = useI18n();
   const visibleFields = fields.filter((field) => !hiddenSemantics.includes(field.semantic));
-  if (visibleFields.length === 0) {
-    return <p className="media-workflow-muted">这个流程没有额外参数。</p>;
-  }
+  if (visibleFields.length === 0) return <p className="media-workflow-muted">{t("No additional parameters")}</p>;
+
   return (
     <div className="media-workflow-field-grid">
       {visibleFields.map((field) => {
         const value = values[field.id] ?? field.defaultValue ?? "";
         if (field.kind === "boolean") {
           return (
-            <label className="media-workflow-toggle-row" key={field.id}>
-              <span>{field.label}{field.required ? " *" : ""}</span>
-              <input type="checkbox" checked={value === true} disabled={disabled} onChange={(event) => onChange(field.id, event.target.checked)} />
-            </label>
+            <Checkbox
+              key={field.id}
+              checked={value === true}
+              disabled={disabled}
+              label={field.label}
+              required={field.required}
+              onChange={(event) => onChange(field.id, event.target.checked)}
+            />
           );
         }
         if (field.kind === "select") {
           return (
-            <label className="field" key={field.id}>
-              <span>{field.label}{field.required ? " *" : ""}</span>
-              <SelectControl value={String(value)} disabled={disabled} onChange={(event) => onChange(field.id, event.target.value)}>
-                {!field.required ? <option value="">不设置</option> : null}
+            <Field key={field.id} label={field.label} required={field.required}>
+              <Select value={String(value)} disabled={disabled} onChange={(event) => onChange(field.id, event.target.value)}>
+                {!field.required ? <option value="">{t("Not set")}</option> : null}
                 {(field.options ?? []).map((option) => <option value={option} key={option}>{option}</option>)}
-              </SelectControl>
-            </label>
+              </Select>
+            </Field>
           );
         }
         if (field.kind === "image_artifact") {
           return (
-            <label className="field" key={field.id}>
-              <span>{field.label}{field.required ? " *" : ""}</span>
-              <SelectControl value={String(value)} disabled={disabled} onChange={(event) => onChange(field.id, event.target.value)}>
-                <option value="">不使用参考图片</option>
-                {imageArtifacts.map((artifact) => <option value={artifact.id} key={artifact.id}>{artifact.title || "图片结果"}</option>)}
-              </SelectControl>
-            </label>
+            <Field key={field.id} label={field.label} required={field.required}>
+              <Select value={String(value)} disabled={disabled} onChange={(event) => onChange(field.id, event.target.value)}>
+                <option value="">{t("No reference image")}</option>
+                {imageArtifacts.map((artifact) => (
+                  <option value={artifact.id} key={artifact.id}>{artifact.title || t("Image result")}</option>
+                ))}
+              </Select>
+            </Field>
           );
         }
         return (
-          <label className="field" key={field.id}>
-            <span>{field.label}{field.required ? " *" : ""}</span>
-            <input
+          <Field key={field.id} label={field.label} required={field.required}>
+            <Input
               type={field.kind === "number" ? "number" : "text"}
               value={String(value)}
               disabled={disabled}
-              onChange={(event) => onChange(field.id, field.kind === "number" ? numberValue(event.target.value) : event.target.value)}
+              onChange={(event) => onChange(
+                field.id,
+                field.kind === "number" ? numberValue(event.target.value) : event.target.value,
+              )}
             />
-          </label>
+          </Field>
         );
       })}
     </div>

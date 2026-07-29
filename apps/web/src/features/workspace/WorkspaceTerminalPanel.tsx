@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import type { WorkspaceTerminalCommandResponse, WorkspaceTerminalProfileResponse } from "@ling-stack/contracts";
-import { LoaderCircle, SquareTerminal, X } from "lucide-react";
+import { SquareTerminal, X } from "lucide-react";
 import { getWorkspaceTerminalProfile, runWorkspaceTerminalCommand } from "../../api.js";
 import { useI18n } from "../../i18n.js";
+import { Input, Spinner } from "../../shared/ui/index.js";
+import type { ConversationPanelMotionState } from "./useConversationPanelPresence.js";
 
 export interface WorkspaceTerminalHistoryEntry {
   readonly id: string;
@@ -29,6 +31,9 @@ export interface WorkspaceTerminalPanelProps {
   readonly onClose?: () => void;
   readonly resizeHandleNode?: ReactNode;
   readonly style?: CSSProperties;
+  readonly expanded?: boolean;
+  readonly motionState?: ConversationPanelMotionState;
+  readonly resizing?: boolean;
 }
 
 export function useWorkspaceTerminalSession(cwd?: string): WorkspaceTerminalSession {
@@ -121,6 +126,9 @@ export function WorkspaceTerminalPanel({
   onClose,
   resizeHandleNode,
   style,
+  expanded = true,
+  motionState = "open",
+  resizing = false,
 }: WorkspaceTerminalPanelProps): JSX.Element {
   const { t } = useI18n();
   const internalSession = useWorkspaceTerminalSession(session ? undefined : cwd);
@@ -151,7 +159,10 @@ export function WorkspaceTerminalPanel({
 
   return (
     <section
-      className={["workspace-terminal-panel", className].filter(Boolean).join(" ")}
+      className={["workspace-terminal-panel", `bottom-panel-motion-${motionState}`, className].filter(Boolean).join(" ")}
+      data-bottom-panel-expanded={expanded ? "true" : "false"}
+      data-bottom-panel-motion={resizing ? "resizing" : motionState}
+      data-resizing={resizing ? "true" : undefined}
       data-computer-use-obstacle="true"
       data-computer-use-obstacle-kind="terminal"
       style={style}
@@ -187,18 +198,21 @@ export function WorkspaceTerminalPanel({
           ))}
           <form className="workspace-terminal-prompt-row" onSubmit={handleSubmit}>
             <span className="workspace-terminal-prompt" title={terminalSession.prompt}>{terminalSession.prompt}</span>
-            <input
+            <Input
               ref={inputRef}
               aria-label={t("Command")}
               autoCapitalize="off"
               autoComplete="off"
+              className="workspace-terminal-command-native"
+              containerClassName="workspace-terminal-command-input"
               disabled={!cwd || terminalSession.running}
               placeholder={cwd ? "" : t("Workspace folder unavailable")}
+              size="sm"
               spellCheck={false}
               value={terminalSession.command}
               onChange={(event) => terminalSession.setCommand(event.target.value)}
             />
-            {terminalSession.running ? <LoaderCircle size={14} className="spin-icon workspace-terminal-running" /> : null}
+            {terminalSession.running ? <Spinner size="sm" className="workspace-terminal-running" /> : null}
           </form>
           <div ref={historyEndRef} />
         </div>

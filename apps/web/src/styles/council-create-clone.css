@@ -1,0 +1,264 @@
+.council-create-clone-dialog {
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(760px, calc(100vw - 32px));
+  max-height: min(820px, calc(100dvh - 32px));
+}
+
+.council-create-clone-form {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.council-create-clone-body {
+  display: grid;
+  align-content: start;
+  gap: var(--ling-space-6);
+}
+
+.council-create-clone-section,
+.council-create-members,
+.council-clone-source {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-4);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.council-create-clone-fields {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.72fr);
+  gap: var(--ling-space-5);
+}
+
+.council-create-description {
+  grid-column: 1 / -1;
+}
+
+.council-create-members > legend {
+  display: flex;
+  width: 100%;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--ling-space-4);
+  margin-bottom: var(--ling-space-4);
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+  font-weight: 650;
+  line-height: var(--ling-line-sm);
+}
+
+.council-create-members > legend small {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  font-weight: 500;
+  line-height: var(--ling-line-xs);
+}
+
+.council-create-member-options {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ling-space-3);
+  max-height: 216px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: var(--ling-space-1);
+}
+
+.council-create-member-option {
+  display: grid;
+  min-width: 0;
+  min-height: 52px;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--ling-space-4);
+  padding: var(--ling-space-4) var(--ling-space-5);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  background: var(--ling-bg-panel);
+  cursor: pointer;
+}
+
+.council-create-member-option:hover {
+  border-color: var(--ling-border-strong);
+  background: var(--ling-bg-subtle);
+}
+
+.council-create-member-option:focus-within,
+.council-create-member-option[data-selected="true"] {
+  border-color: var(--ling-border-focus);
+  background: var(--ling-bg-pressed);
+  box-shadow: inset 0 0 0 1px var(--ling-border-focus);
+}
+
+.council-create-member-option > input,
+.council-clone-pin-option > input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.council-create-member-copy {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
+.council-create-member-copy strong,
+.council-create-member-copy small {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.council-create-member-copy strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+  line-height: var(--ling-line-sm);
+}
+
+.council-create-member-copy small {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+.council-clone-source {
+  padding: var(--ling-space-5);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  background: var(--ling-bg-subtle);
+}
+
+.council-clone-source-heading {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--ling-space-4);
+}
+
+.council-clone-source-heading > span,
+.council-clone-facts small {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+.council-clone-source-heading > strong {
+  overflow: hidden;
+  min-width: 0;
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+  line-height: var(--ling-line-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.council-clone-facts {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--ling-space-4);
+}
+
+.council-clone-facts > span {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
+.council-clone-facts strong {
+  overflow: hidden;
+  color: var(--ling-text-default);
+  font-size: var(--ling-font-sm);
+  line-height: var(--ling-line-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.council-clone-member-summary {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: var(--ling-space-2);
+}
+
+.council-clone-member-summary > span {
+  overflow: hidden;
+  max-width: 180px;
+  padding: var(--ling-space-1) var(--ling-space-3);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-sm);
+  color: var(--ling-text-muted);
+  background: var(--ling-bg-panel);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.council-clone-member-summary > span[data-enabled="false"] {
+  opacity: 0.64;
+}
+
+.council-clone-pin-option {
+  display: flex;
+  min-width: 0;
+  min-height: var(--ling-control-md);
+  align-items: center;
+  gap: var(--ling-space-4);
+  align-self: end;
+  padding-inline: var(--ling-space-4);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  color: var(--ling-text-default);
+  background: var(--ling-bg-panel);
+}
+
+.council-clone-pin-option > span {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--ling-space-3);
+  font-size: var(--ling-font-sm);
+  line-height: var(--ling-line-sm);
+}
+
+.council-clone-active-note {
+  margin: 0;
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+.council-projection-feedback {
+  margin-block: var(--ling-space-4);
+}
+
+.council-projection-feedback > div {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ling-space-4);
+}
+
+@media (max-width: 680px) {
+  .council-create-clone-fields,
+  .council-create-member-options,
+  .council-clone-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .council-create-description {
+    grid-column: auto;
+  }
+}

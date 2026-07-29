@@ -1,0 +1,113 @@
+{
+  "stableId": "p9ef-plugin-row-failure-after-unrelated-success",
+  "label": "Plugin row failure survives unrelated success and Toast dismissal",
+  "functionIds": [
+    "PLUGIN-CHECK-001",
+    "FEEDBACK-ALERT-001"
+  ],
+  "fixture": "plugin-owner-a-owner-b",
+  "trigger": {
+    "summary": "Fail Owner A check late while Owner B succeeds",
+    "steps": [
+      "Start Owner A check",
+      "Check Owner B",
+      "Receive Owner A 503",
+      "Dismiss Toast"
+    ]
+  },
+  "owner": {
+    "surface": "plugin-manager",
+    "scope": "row-check",
+    "key": "built-in:owner-a:check:row"
+  },
+  "assertions": {
+    "visible": [
+      "Owner A persistent row failure",
+      "Owner B ready row"
+    ],
+    "absent": [
+      "Owner A failure on Owner B",
+      "Dismissed error Toast"
+    ]
+  },
+  "expectedHttpFailures": [
+    {
+      "method": "POST",
+      "status": 503,
+      "urlPattern": "^/plugins/(?:built-in%3A|built-in:)owner-a/check(?:\\?.*)?$",
+      "count": 1
+    }
+  ],
+  "overflowOwners": [
+    {
+      "label": "Plugin manager",
+      "selector": ".settings-plugin-manager"
+    }
+  ],
+  "viewport": {
+    "width": 1440,
+    "height": 960
+  },
+  "theme": "ling-light",
+  "locale": "en-US",
+  "keyboard": {
+    "exercised": true,
+    "checks": [
+      "Owner A Retry accepts keyboard focus"
+    ]
+  },
+  "reducedMotion": "no-preference",
+  "status": "captured",
+  "url": "http://127.0.0.1:4284/",
+  "runtime": {
+    "consoleErrors": [
+      {
+        "text": "Failed to load resource: the server responded with a status of 503 (Service Unavailable)",
+        "locationUrl": "http://127.0.0.1:17891/plugins/built-in%3Aowner-a/check?cwd=%2Ftmp%2Fling-stack-workspace"
+      }
+    ],
+    "pageErrors": [],
+    "httpFailures": [
+      {
+        "method": "POST",
+        "status": 503,
+        "url": "/plugins/built-in%3Aowner-a/check?cwd=%2Ftmp%2Fling-stack-workspace"
+      }
+    ],
+    "expectedConsole503Pattern": "^Failed to load resource: the server responded with a status of 503 \\(Service Unavailable\\)$",
+    "expectedConsole503Count": 1,
+    "unexpectedConsoleErrors": [],
+    "unexpectedHttpFailures": [],
+    "overflow": {
+      "document": 0,
+      "body": 0,
+      "owners": [
+        {
+          "label": "Plugin manager",
+          "selector": ".settings-plugin-manager",
+          "found": true,
+          "overflow": 0,
+          "clientWidth": 1199,
+          "scrollWidth": 1199
+        }
+      ]
+    }
+  },
+  "png": {
+    "file": "p9ef-plugin-row-failure-after-unrelated-success.png",
+    "width": 1440,
+    "height": 960,
+    "sha256": "d8a13cfb13fc15112c9ec0649ae554404bfbbeee5b0840915ac028316f43dfca"
+  },
+  "sidecarFile": "p9ef-plugin-row-failure-after-unrelated-success.json",
+  "servedArtifact": "Vite source via Playwright webServer",
+  "captureCommand": "LING_CAPTURE_UI2_P9EF_EVIDENCE=1 LING_PLAYWRIGHT_PORT=4284 corepack pnpm --filter @ling-stack/web exec playwright test e2e/ui2-p9ef-final-evidence.spec.ts --workers=1",
+  "source": {
+    "commit": "101de84e7fd84dc5ae665547b6d271cdfc75cad5",
+    "branch": "codex/ui2-p9ef-final-batch",
+    "dirty": false,
+    "worktreeStatusSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "identifier": "101de84e7fd84dc5ae665547b6d271cdfc75cad5"
+  },
+  "capturedAt": "2026-07-28T03:27:29.718Z"
+}

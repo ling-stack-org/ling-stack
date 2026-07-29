@@ -1,10 +1,16 @@
 # Primary Navigation Tool Promotion Implementation Plan
 
+## Status
+
+Partially complete. Plugin Manager and Media Production changes are shipped. Inbox
+and Work Board are **pending development** as of 2026-07-29; both left-sidebar
+entries are hidden while retained domain code and contextual routes remain intact.
+
 ## Goal
 
-Promote Work Board and Plugin Manager to the global desktop navigation, remove
-their Settings-owned routes, and rename the media navigation entry without
-changing backend behavior.
+Promote Plugin Manager to the global desktop navigation, keep Inbox and Work Board
+out of the left sidebar until their product workflows are ready, and preserve backend
+behavior.
 
 ## Slice 1: View And Page Boundary
 
@@ -17,11 +23,15 @@ changing backend behavior.
 ## Slice 2: Navigation And Settings Cleanup
 
 - Update the global sidebar order to:
-  `Inbox / Media Production / Work Board / Plugin Manager / Automations`.
+  `Media Production / Plugin Manager / Automations`.
+- Hide the Inbox primary-navigation item without deleting Approvals domain, routes,
+  or contextual decision flows.
+- Hide the Work Board primary-navigation item without deleting its view, domain
+  logic, or contextual entry points.
 - Remove Work Board and Plugin Manager from Settings section navigation.
 - Remove the Settings Work Board embedded view state and render branch.
-- Route Inbox Work Board actions to the top-level Work Board while preserving
-  the requested scope.
+- Keep retained Inbox and Work Board routes available only to contextual flows and
+  focused pending-feature tests.
 - Add a focused Settings-section request so Plugin Manager can open MCP tool
   server settings directly.
 
@@ -48,4 +58,6 @@ changing backend behavior.
 - Do not keep hidden duplicate Settings entry points.
 - Do not rename backend media or plugin endpoints.
 - Do not change Work Board item derivation, claim semantics, or approval behavior.
+- Do not expose Inbox as a released primary-navigation workflow.
+- Do not treat the retained Work Board prototype as a generally released feature.
 - Do not modify unrelated dirty-worktree changes.

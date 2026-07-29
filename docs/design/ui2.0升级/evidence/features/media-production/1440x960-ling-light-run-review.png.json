@@ -1,0 +1,24 @@
+{
+  "filename": "1440x960-ling-light-run-review.png",
+  "capturedAt": "2026-07-23T02:01:16.818Z",
+  "viewport": {
+    "width": 1440,
+    "height": 960
+  },
+  "theme": "ling-light",
+  "locale": "en-US",
+  "fixture": "production_run_review",
+  "state": "run-review",
+  "functionIds": [
+    "PROD-RUN-001"
+  ],
+  "sourceCommitOrWorktree": "0a0b80502715+worktree",
+  "consoleErrors": [],
+  "expectedConsoleErrors": [],
+  "pageErrors": [],
+  "documentOverflow": 0,
+  "ownerOverflow": 0,
+  "canvasPixel": null,
+  "mediaPixelHash": null,
+  "sha256": "abe94e9b9c2972a32ed5c523fd9e3d9f7363c47efd96b5c4c46d5506a3309b8f"
+}

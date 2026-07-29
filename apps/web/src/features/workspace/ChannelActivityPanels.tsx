@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type RefObject } from "react";
 import {
   CheckCircle2,
   CircleAlert,
@@ -38,8 +38,7 @@ import type {
 } from "../../lib/channel-activity-views.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import { MetaRow } from "../../shared/components/index.js";
-
-import { SelectControl } from "../../shared/components/SelectControl.js";
+import { Field, Input, Select, Textarea } from "../../shared/ui/index.js";
 
 type ActivityCategoryFilter = ChannelActivityViewCategoryFilter;
 type ActivityAttentionFilter = ChannelActivityViewAttentionFilter;
@@ -60,6 +59,8 @@ export function ActivityFilterToolbar({
   attentionCounts,
   clearDisabled,
   customViewLimitReached,
+  showSearch = true,
+  savedViewSelectRef,
   onSavedViewSelect,
   onSaveView,
   onRenameView,
@@ -82,6 +83,8 @@ export function ActivityFilterToolbar({
   readonly attentionCounts: Readonly<Record<Exclude<ActivityAttentionFilter, "all">, number>>;
   readonly clearDisabled: boolean;
   readonly customViewLimitReached: boolean;
+  readonly showSearch?: boolean;
+  readonly savedViewSelectRef?: RefObject<HTMLSelectElement>;
   readonly onSavedViewSelect: (view: ChannelActivitySavedView) => void;
   readonly onSaveView: () => void;
   readonly onRenameView: () => void;
@@ -104,9 +107,10 @@ export function ActivityFilterToolbar({
       <div className="activity-view-control" aria-label={t("Saved views")}>
         <label className="activity-view-select">
           <span>{t("View")}</span>
-          <SelectControl
-              variant="compact"
+          <Select
+            ref={savedViewSelectRef}
             aria-label={t("Saved views")}
+            size="sm"
             value={activeSavedViewId}
             onChange={(event) => {
               const view = savedViews.find((candidate) => candidate.id === event.target.value);
@@ -120,18 +124,23 @@ export function ActivityFilterToolbar({
                 {savedViewLabel(view, t)} ({savedViewCounts[view.id] ?? 0})
               </option>
             ))}
-          </SelectControl>
+          </Select>
         </label>
       </div>
-      <label className="activity-search-field">
-        <Search size={14} />
-        <input
-          aria-label={t("Search activity")}
-          placeholder={t("Search activity")}
-          value={search}
-          onChange={(event) => onSearchChange(event.target.value)}
-        />
-      </label>
+      {showSearch ? (
+        <label className="activity-search-field">
+          <Input
+            aria-label={t("Search activity")}
+            containerClassName="activity-search-control"
+            placeholder={t("Search activity")}
+            prefix={<Search aria-hidden="true" size={14} />}
+            size="sm"
+            type="search"
+            value={search}
+            onChange={(event) => onSearchChange(event.target.value)}
+          />
+        </label>
+      ) : null}
       <button
         className={filtersExpanded ? "activity-filter-toggle active" : "activity-filter-toggle"}
         type="button"
@@ -150,7 +159,13 @@ export function ActivityFilterToolbar({
       {filtersExpanded ? (
         <div className="activity-filter-panel" aria-label={t("Channel event filters")}>
           <div className="activity-saved-view-actions" aria-label={t("Saved view actions")}>
-            <button className="secondary-button compact-button" type="button" onClick={onSaveView} disabled={customViewLimitReached}>
+            <button
+              className="secondary-button compact-button"
+              type="button"
+              onClick={onSaveView}
+              disabled={customViewLimitReached}
+              title={customViewLimitReached ? t("Custom saved views are limited to 8.") : undefined}
+            >
               <Plus size={13} />
               {t("Save view")}
             </button>
@@ -424,77 +439,64 @@ function ActivityTriageDraftForm({
   if (draft.actionKind === "follow_up_task") {
     return (
       <div className="activity-triage-form">
-        <label className="field wide">
-          <span>{t("Triage title")}</span>
-          <input value={draft.title} disabled={disabled} onChange={(event) => onChange("title", event.target.value)} />
-        </label>
-        <label className="field wide">
-          <span>{t("Triage prompt")}</span>
-          <textarea rows={5} value={draft.prompt} disabled={disabled} onChange={(event) => onChange("prompt", event.target.value)} />
-        </label>
+        <Field className="activity-triage-field wide" label={t("Triage title")}>
+          <Input size="sm" value={draft.title} disabled={disabled} onChange={(event) => onChange("title", event.target.value)} />
+        </Field>
+        <Field className="activity-triage-field wide" label={t("Triage prompt")}>
+          <Textarea size="sm" rows={5} value={draft.prompt} disabled={disabled} onChange={(event) => onChange("prompt", event.target.value)} />
+        </Field>
       </div>
     );
   }
   if (draft.actionKind === "handoff") {
     return (
       <div className="activity-triage-form">
-        <label className="field wide">
-          <span>{t("Reason")}</span>
-          <input value={draft.reason} disabled={disabled} onChange={(event) => onChange("reason", event.target.value)} />
-        </label>
+        <Field className="activity-triage-field wide" label={t("Reason")}>
+          <Input size="sm" value={draft.reason} disabled={disabled} onChange={(event) => onChange("reason", event.target.value)} />
+        </Field>
         <div className="activity-triage-two-up">
-          <label className="field">
-            <span>{t("To participant")}</span>
-            <input value={draft.toParticipantId} disabled={disabled} onChange={(event) => onChange("toParticipantId", event.target.value)} />
-          </label>
-          <label className="field">
-            <span>{t("Participant label")}</span>
-            <input value={draft.toParticipantLabel} disabled={disabled} onChange={(event) => onChange("toParticipantLabel", event.target.value)} />
-          </label>
+          <Field className="activity-triage-field" label={t("To participant")}>
+            <Input size="sm" value={draft.toParticipantId} disabled={disabled} onChange={(event) => onChange("toParticipantId", event.target.value)} />
+          </Field>
+          <Field className="activity-triage-field" label={t("Participant label")}>
+            <Input size="sm" value={draft.toParticipantLabel} disabled={disabled} onChange={(event) => onChange("toParticipantLabel", event.target.value)} />
+          </Field>
         </div>
-        <label className="field wide">
-          <span>{t("Required input")}</span>
-          <textarea rows={5} value={draft.requiredInput} disabled={disabled} onChange={(event) => onChange("requiredInput", event.target.value)} />
-        </label>
-        <label className="field wide">
-          <span>{t("Expected output")}</span>
-          <textarea rows={3} value={draft.expectedOutput} disabled={disabled} onChange={(event) => onChange("expectedOutput", event.target.value)} />
-        </label>
+        <Field className="activity-triage-field wide" label={t("Required input")}>
+          <Textarea size="sm" rows={5} value={draft.requiredInput} disabled={disabled} onChange={(event) => onChange("requiredInput", event.target.value)} />
+        </Field>
+        <Field className="activity-triage-field wide" label={t("Expected output")}>
+          <Textarea size="sm" rows={3} value={draft.expectedOutput} disabled={disabled} onChange={(event) => onChange("expectedOutput", event.target.value)} />
+        </Field>
       </div>
     );
   }
   if (draft.actionKind === "decision") {
     return (
       <div className="activity-triage-form">
-        <label className="field wide">
-          <span>{t("Triage title")}</span>
-          <input value={draft.title} disabled={disabled} onChange={(event) => onChange("title", event.target.value)} />
-        </label>
-        <label className="field wide">
-          <span>{t("Decision text")}</span>
-          <textarea rows={4} value={draft.decision} disabled={disabled} onChange={(event) => onChange("decision", event.target.value)} />
-        </label>
-        <label className="field wide">
-          <span>{t("Rationale")}</span>
-          <textarea rows={3} value={draft.rationale} disabled={disabled} onChange={(event) => onChange("rationale", event.target.value)} />
-        </label>
+        <Field className="activity-triage-field wide" label={t("Triage title")}>
+          <Input size="sm" value={draft.title} disabled={disabled} onChange={(event) => onChange("title", event.target.value)} />
+        </Field>
+        <Field className="activity-triage-field wide" label={t("Decision text")}>
+          <Textarea size="sm" rows={4} value={draft.decision} disabled={disabled} onChange={(event) => onChange("decision", event.target.value)} />
+        </Field>
+        <Field className="activity-triage-field wide" label={t("Rationale")}>
+          <Textarea size="sm" rows={3} value={draft.rationale} disabled={disabled} onChange={(event) => onChange("rationale", event.target.value)} />
+        </Field>
       </div>
     );
   }
   return (
     <div className="activity-triage-form">
-      <label className="field wide">
-        <span>{t("Summary")}</span>
-        <textarea rows={5} value={draft.summary} disabled={disabled} onChange={(event) => onChange("summary", event.target.value)} />
-      </label>
-      <label className="field wide">
-        <span>{t("Acceptance criteria")}</span>
-        <textarea rows={3} value={draft.acceptanceCriteria} disabled={disabled} onChange={(event) => onChange("acceptanceCriteria", event.target.value)} />
-      </label>
-      <label className="field wide">
-        <span>{t("Open questions")}</span>
-        <textarea rows={3} value={draft.openQuestions} disabled={disabled} onChange={(event) => onChange("openQuestions", event.target.value)} />
-      </label>
+      <Field className="activity-triage-field wide" label={t("Summary")}>
+        <Textarea size="sm" rows={5} value={draft.summary} disabled={disabled} onChange={(event) => onChange("summary", event.target.value)} />
+      </Field>
+      <Field className="activity-triage-field wide" label={t("Acceptance criteria")}>
+        <Textarea size="sm" rows={3} value={draft.acceptanceCriteria} disabled={disabled} onChange={(event) => onChange("acceptanceCriteria", event.target.value)} />
+      </Field>
+      <Field className="activity-triage-field wide" label={t("Open questions")}>
+        <Textarea size="sm" rows={3} value={draft.openQuestions} disabled={disabled} onChange={(event) => onChange("openQuestions", event.target.value)} />
+      </Field>
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { CircleAlert, Copy, Loader2, Pencil, Reply, Send, X } from "lucide-react
 import { useI18n } from "../../i18n.js";
 import { filterUsedMemoryEventsByResponse, UsedMemorySummary } from "../../shared/components/index.js";
 import { ConversationReplacementRetry, InlineMessageEditor, MessageActionBar, MessageBodyRenderer, MessageRow } from "../../shared/conversation/index.js";
+import { Textarea } from "../../shared/ui/index.js";
 import type { ChannelMention, ChannelMessage, MemoryObject, UsedMemoryEvent } from "../../types.js";
 
 export function ThreadReplyPanel({
@@ -142,7 +143,8 @@ export function ThreadReplyPanel({
         })}
       </div>
       <div className="thread-reply-composer">
-        <textarea
+        <Textarea
+          className="thread-reply-input"
           value={draft}
           rows={3}
           onChange={(event) => onDraftChange(event.currentTarget.value)}

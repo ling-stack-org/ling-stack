@@ -1,0 +1,350 @@
+.right-dock-review-workbench {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  align-content: stretch;
+  gap: var(--ling-space-3);
+}
+
+.right-dock-review-list-pane,
+.right-dock-review-detail-pane,
+.right-dock-review-accordion-item {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+}
+
+.right-dock-review-list-pane {
+  align-content: start;
+  gap: var(--ling-space-3);
+}
+
+.right-dock-review-page-accordion .right-dock-review-list-pane,
+.right-dock-review-list-pane .right-dock-section {
+  gap: 0;
+}
+
+.right-dock-review-page-accordion .right-dock-filter-row,
+.right-dock-review-page-accordion .right-dock-review-status-card,
+.right-dock-review-page-accordion > .right-dock-review-list-pane > .right-dock-empty {
+  margin-inline: var(--ling-space-5);
+}
+
+.right-dock-review-detail-pane {
+  grid-template-rows: minmax(0, 1fr) auto;
+  margin-top: 1px;
+  border-top: 1px solid var(--ling-border-default);
+}
+
+.right-dock-review-detail-scroll {
+  min-width: 0;
+  min-height: 0;
+  padding-top: var(--ling-space-3);
+  overflow: auto;
+  scrollbar-width: none;
+}
+
+.right-dock-review-detail-scroll::-webkit-scrollbar,
+.right-dock-filter-row::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+@container (min-width: 680px) {
+  .right-dock-review-workbench {
+    grid-template-columns: minmax(210px, 252px) minmax(0, 1fr);
+    height: 100%;
+    gap: 0;
+  }
+
+  .right-dock-review-list-pane {
+    padding-right: var(--ling-space-4);
+    border-right: 1px solid var(--ling-border-default);
+  }
+
+  .right-dock-review-detail-pane {
+    padding-left: var(--ling-space-4);
+    border-top: 0;
+  }
+
+  .right-dock-review-detail-scroll {
+    padding-top: 0;
+  }
+}
+
+.right-dock-review-accordion-item {
+  border-bottom: 1px solid var(--ling-border-default);
+}
+
+.right-dock-review-page-accordion .right-dock-review-accordion-item {
+  border-bottom: 0;
+}
+
+.right-dock-review-accordion-item > .right-dock-review-row,
+.right-dock-review-accordion-item > .right-dock-review-row:first-child {
+  width: 100%;
+  border-bottom: 0;
+}
+
+.right-dock-review-accordion-item.expanded {
+  background: color-mix(in srgb, var(--ling-action-selection) 34%, transparent);
+}
+
+.right-dock-review-inline-detail {
+  min-width: 0;
+  padding: 0 0 var(--ling-space-5) var(--ling-space-6);
+  overflow: hidden;
+  transform-origin: top;
+  animation: ling-right-dock-review-open var(--ling-motion-standard) var(--ling-ease-standard);
+}
+
+.right-dock-review-page-accordion .right-dock-review-inline-detail {
+  padding: 0 0 var(--ling-space-6);
+}
+
+.right-dock-review-inline-detail .right-dock-review-detail.compact {
+  gap: 0;
+}
+
+.right-dock-review-inline-detail .right-dock-code-preview {
+  border-radius: var(--ling-radius-md);
+  box-shadow: var(--ling-shadow-overlay);
+}
+
+.right-dock-review-page-accordion .right-dock-review-inline-detail .right-dock-code-preview {
+  border-inline: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.right-dock-review-inline-detail .right-dock-code-preview pre {
+  max-height: min(520px, 58vh);
+}
+
+@keyframes ling-right-dock-review-open {
+  from {
+    max-height: 0;
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  to {
+    max-height: 620px;
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.right-dock-review-row.ling-ui-button {
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  min-height: 54px;
+  gap: var(--ling-space-4);
+  padding-block: var(--ling-space-3);
+  border-top: 0;
+  border-bottom: 1px solid var(--ling-border-default);
+}
+
+.right-dock-review-row.ling-ui-button:first-child {
+  border-bottom: 1px solid var(--ling-border-default);
+}
+
+.right-dock-review-row.selected {
+  background: color-mix(in srgb, var(--ling-action-selection) 82%, transparent);
+  box-shadow: inset 2px 0 0 var(--ling-status-info);
+}
+
+.right-dock-row-dot {
+  width: 7px;
+  height: 7px;
+  align-self: center;
+  border-radius: var(--ling-radius-pill);
+  background: var(--ling-status-neutral);
+}
+
+.right-dock-row-severity-info .right-dock-row-dot,
+.right-dock-row-dot.tone-info {
+  background: var(--ling-status-info);
+}
+
+.right-dock-row-severity-warning .right-dock-row-dot,
+.right-dock-row-dot.tone-warning {
+  background: var(--ling-status-warning);
+}
+
+.right-dock-row-severity-danger .right-dock-row-dot,
+.right-dock-row-dot.tone-danger {
+  background: var(--ling-status-danger);
+}
+
+.right-dock-row-dot.tone-muted {
+  background: var(--ling-status-neutral);
+}
+
+.right-dock-review-row .right-dock-row-copy {
+  gap: var(--ling-space-1);
+}
+
+.right-dock-review-row .right-dock-row-copy strong {
+  font-size: var(--ling-font-xs);
+  font-weight: 650;
+  line-height: var(--ling-line-xs);
+}
+
+.right-dock-review-row .right-dock-row-copy small {
+  display: block;
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  line-height: 15px;
+}
+
+.right-dock-row-state {
+  display: inline-flex;
+  max-width: 76px;
+  min-width: 0;
+  min-height: 20px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 var(--ling-space-3);
+  overflow: hidden;
+  border-radius: var(--ling-radius-pill);
+  color: var(--ling-text-muted);
+  background: var(--ling-bg-subtle);
+  font-size: 10px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.right-dock-row-state.tone-info {
+  color: var(--ling-status-info);
+  background: var(--ling-status-info-bg);
+}
+
+.right-dock-row-state.tone-warning {
+  color: var(--ling-status-warning);
+  background: var(--ling-status-warning-bg);
+}
+
+.right-dock-row-state.tone-danger {
+  color: var(--ling-status-danger);
+  background: var(--ling-status-danger-bg);
+}
+
+.right-dock-filter-row.ling-ui-segmented-control {
+  display: flex;
+  min-width: 0;
+  gap: var(--ling-space-1);
+  overflow-x: auto;
+  border: 0;
+  background: transparent;
+  scrollbar-width: none;
+}
+
+.right-dock-filter.ling-ui-segmented-control-item {
+  flex: 0 0 auto;
+  min-height: 28px;
+  padding-inline: var(--ling-space-3);
+  border-radius: var(--ling-radius-pill);
+}
+
+.right-dock-review-status-card {
+  display: flex;
+  min-width: 0;
+  min-height: 42px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ling-space-4);
+  padding: var(--ling-space-3) var(--ling-space-4);
+  border-block: 1px solid var(--ling-border-default);
+  color: var(--ling-text-muted);
+  background: transparent;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.right-dock-review-status-card strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-md);
+  font-weight: 650;
+}
+
+.right-dock-diff-stat {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--ling-space-2);
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.right-dock-diff-stat .add {
+  color: var(--ling-status-success);
+}
+
+.right-dock-diff-stat .del {
+  color: var(--ling-status-danger);
+}
+
+.right-dock-review-action-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-width: 0;
+  align-items: center;
+  gap: var(--ling-space-3);
+  padding-top: var(--ling-space-4);
+  border-top: 1px solid var(--ling-border-default);
+}
+
+.right-dock-review-action-copy {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  min-width: 0;
+  align-items: center;
+  column-gap: var(--ling-space-3);
+  row-gap: var(--ling-space-1);
+}
+
+.right-dock-review-action-dot {
+  grid-row: 1 / 3;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--ling-radius-pill);
+  background: var(--ling-status-warning);
+}
+
+.right-dock-review-action-copy strong,
+.right-dock-review-action-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.right-dock-review-action-copy strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+.right-dock-review-action-copy small {
+  color: var(--ling-text-muted);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.right-dock-review-action-buttons {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--ling-space-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .right-dock-review-inline-detail {
+    animation: none;
+  }
+}

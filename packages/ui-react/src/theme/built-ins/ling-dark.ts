@@ -1,0 +1,71 @@
+import type { LingThemePackManifest } from "../types.js";
+
+export const lingDarkTheme: LingThemePackManifest = Object.freeze({
+  schemaVersion: 1,
+  id: "ling-dark",
+  name: "Ling Dark",
+  familyId: "ling",
+  description: "Ling's quiet, dense dark workspace theme.",
+  author: "Ling Stack",
+  license: "MIT",
+  colorScheme: "dark",
+  source: "built-in",
+  tokens: {
+    background: {
+      app: "#111315",
+      panel: "#171a1d",
+      elevated: "#1d2024",
+      subtle: "#22262b",
+      pressed: "#2c3137",
+      overlay: "rgb(0 0 0 / 58%)",
+      code: "#15181b",
+      sidebar: "#141618",
+      composer: "#191c20",
+    },
+    text: {
+      strong: "#f4f5f6",
+      default: "#d7dbe0",
+      muted: "#9ba3ad",
+      soft: "#89929d",
+      inverse: "#111315",
+      link: "#9fc2e6",
+    },
+    border: {
+      default: "#353b42",
+      strong: "#4b535d",
+      focus: "#8aa8c7",
+    },
+    action: {
+      accent: "#f0f2f4",
+      accentHover: "#ffffff",
+      accentPressed: "#d8dde2",
+      accentForeground: "#151719",
+      selection: "#2b3a49",
+    },
+    status: {
+      success: { foreground: "#79bd94", background: "#1c2c23", border: "#365a45" },
+      warning: { foreground: "#ddb45f", background: "#2c271b", border: "#5f512f" },
+      danger: { foreground: "#e48782", background: "#2d2020", border: "#633c3a" },
+      info: { foreground: "#8cb5df", background: "#1d2935", border: "#3a5773" },
+    },
+    shadow: {
+      low: "0 1px 2px rgb(0 0 0 / 30%)",
+      medium: "0 8px 22px rgb(0 0 0 / 38%)",
+      overlay: "0 12px 32px rgb(0 0 0 / 44%)",
+    },
+    native: {
+      selection: "#36506a",
+      scrollbar: "#414850",
+      scrollbarHover: "#626c77",
+    },
+  },
+  desktop: {
+    windowBackground: "#111315",
+    sidebarMaterial: "sidebar",
+    overlayMaterial: "popover",
+    titlebarForeground: "#f4f5f6",
+    shadowStrength: 0.48,
+    blurStrength: 0,
+  },
+  presentation: { profileId: "ling-standard" },
+} satisfies LingThemePackManifest);

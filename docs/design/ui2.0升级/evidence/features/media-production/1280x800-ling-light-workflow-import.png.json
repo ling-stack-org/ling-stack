@@ -1,0 +1,24 @@
+{
+  "filename": "1280x800-ling-light-workflow-import.png",
+  "capturedAt": "2026-07-23T02:01:11.094Z",
+  "viewport": {
+    "width": 1280,
+    "height": 800
+  },
+  "theme": "ling-light",
+  "locale": "en-US",
+  "fixture": "production_workflow_import",
+  "state": "workflow-import",
+  "functionIds": [
+    "PROD-WORKFLOW-001"
+  ],
+  "sourceCommitOrWorktree": "0a0b80502715+worktree",
+  "consoleErrors": [],
+  "expectedConsoleErrors": [],
+  "pageErrors": [],
+  "documentOverflow": 0,
+  "ownerOverflow": 0,
+  "canvasPixel": null,
+  "mediaPixelHash": null,
+  "sha256": "bd1290801d3e5325ea58149af2f1e08e9bedf093fd36398f26581752c911b563"
+}

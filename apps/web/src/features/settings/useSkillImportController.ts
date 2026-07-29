@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   createSkillImportDraft,
   previewSkillImport,
@@ -15,17 +15,17 @@ import {
   type SkillImportForm,
 } from "./skill-import-utils.js";
 
-const feedbackDurationMs = 2000;
-
 export type SkillImportBusyState = "" | "reading" | "publishing";
 
 export function useSkillImportController({
   cwd,
   onPublished,
+  onSuccess,
   t,
 }: {
   readonly cwd: string;
   readonly onPublished: (skills: readonly SkillRegistryEntry[]) => Promise<void>;
+  readonly onSuccess: (message: string) => void;
   readonly t: SettingsTranslator;
 }) {
   const [open, setOpen] = useState(false);
@@ -33,13 +33,6 @@ export function useSkillImportController({
   const [busy, setBusy] = useState<SkillImportBusyState>("");
   const [error, setError] = useState("");
   const [blockingIssues, setBlockingIssues] = useState<readonly SkillImportWarningCode[]>([]);
-  const [notice, setNotice] = useState("");
-
-  useEffect(() => {
-    if (!notice) return undefined;
-    const timeoutId = globalThis.setTimeout(() => setNotice(""), feedbackDurationMs);
-    return () => globalThis.clearTimeout(timeoutId);
-  }, [notice]);
 
   function openImport(): void {
     setForm(initialSkillImportForm);
@@ -111,7 +104,7 @@ export function useSkillImportController({
       setOpen(false);
       setForm(initialSkillImportForm);
       await onPublished(response.skills);
-      setNotice(t("Imported {count} skills", { count: response.skills.length }));
+      onSuccess(t("Imported {count} skills", { count: response.skills.length }));
     } catch {
       setError(t("This skill could not be imported. Check the file and try again."));
     } finally {
@@ -125,7 +118,6 @@ export function useSkillImportController({
     busy,
     error,
     blockingIssues,
-    notice,
     openImport,
     closeImport,
     loadFile,

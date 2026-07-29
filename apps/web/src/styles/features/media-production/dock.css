@@ -1,0 +1,103 @@
+.media-production-dock-rail {
+  position: absolute;
+  z-index: 31;
+  top: 16px;
+}
+
+.media-production-dock-rail.left {
+  left: 16px;
+}
+
+.media-production-dock-rail.right {
+  right: 16px;
+}
+
+.media-production-dock-rail > button {
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+}
+
+.media-production-dock-panel {
+  position: absolute;
+  z-index: 30;
+  top: 68px;
+  bottom: 16px;
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--ling-border-default);
+  border-radius: 8px;
+  background: var(--ling-bg-elevated);
+  box-shadow: var(--ling-shadow-overlay);
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+  will-change: opacity, transform;
+  transition:
+    opacity var(--ling-motion-standard) var(--ling-ease-standard),
+    transform var(--ling-motion-slow) var(--ling-ease-standard),
+    visibility var(--ling-motion-instant) var(--ling-ease-linear) var(--ling-motion-slow);
+}
+
+.media-production-dock-panel.left {
+  left: 16px;
+  width: min(288px, calc(100% - 96px));
+  transform: translateX(calc(-100% - 12px));
+}
+
+.media-production-dock-panel.right {
+  right: 16px;
+  width: min(360px, calc(100% - 96px));
+  transform: translateX(calc(100% + 12px));
+}
+
+.media-production-dock-panel.is-open {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
+  visibility: visible;
+  transition:
+    opacity var(--ling-motion-standard) var(--ling-ease-standard),
+    transform var(--ling-motion-slow) var(--ling-ease-standard),
+    visibility var(--ling-motion-instant) var(--ling-ease-linear) var(--ling-motion-instant);
+}
+
+@starting-style {
+  .media-production-dock-panel.is-open {
+    opacity: 0;
+  }
+
+  .media-production-dock-panel.left.is-open {
+    transform: translateX(calc(-100% - 12px));
+  }
+
+  .media-production-dock-panel.right.is-open {
+    transform: translateX(calc(100% + 12px));
+  }
+}
+
+.media-production-dock-panel > .project-scene-outline,
+.media-production-dock-panel > .scene-inspector {
+  height: 100%;
+  min-height: 0;
+  border: 0;
+}
+
+@media (max-width: 980px) {
+  .media-production-dock-panel.left {
+    width: min(288px, calc(100% - 76px));
+  }
+
+  .media-production-dock-panel.right {
+    width: min(360px, calc(100% - 76px));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .media-production-dock-panel,
+  .media-production-dock-panel.is-open {
+    transition-duration: var(--ling-motion-instant);
+  }
+}

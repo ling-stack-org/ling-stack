@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
-import { CheckCircle2, CircleAlert, Copy, Info, Search } from "lucide-react";
+import { Copy, Search } from "lucide-react";
 import type { Translate } from "../../i18n.js";
-import type { ChannelComposerInlineFeedback, ChannelComposerInlineFeedbackTone } from "./ChannelComposer.js";
+import { useLingToast } from "../../shared/ui/index.js";
+import {
+  ChannelConversationBlockFeedback,
+  type ConversationBlockFailure,
+} from "./ChannelConversationBlockFeedback.js";
 
 interface ConversationBlockActionMenuState {
   readonly blockId: string;
   readonly label: string;
   readonly x: number;
   readonly y: number;
-  readonly feedback?: string;
 }
 
 interface ConversationBlockLongPressState {
@@ -39,25 +42,17 @@ export function useChannelConversationBlockInteractions({
   scrollRef,
   t,
 }: ChannelConversationBlockInteractionsInput): ChannelConversationBlockInteractions {
-  const [conversationBlockFeedback, setConversationBlockFeedback] = useState<ChannelComposerInlineFeedback | undefined>();
+  const { showToast } = useLingToast();
+  const [conversationBlockFailure, setConversationBlockFailure] = useState<ConversationBlockFailure | undefined>();
   const [conversationBlockActionMenu, setConversationBlockActionMenu] = useState<ConversationBlockActionMenuState | undefined>();
-  const conversationBlockFeedbackTimeoutRef = useRef<number | undefined>();
+  const conversationBlockCopyAttemptRef = useRef(0);
   const conversationBlockLongPressRef = useRef<ConversationBlockLongPressState | undefined>();
   const conversationBlockActionMenuRef = useRef<HTMLDivElement | null>(null);
 
   const closeConversationBlockActionMenu = useCallback((): void => {
+    conversationBlockCopyAttemptRef.current += 1;
+    setConversationBlockFailure((current) => current?.owner === "menu" ? { ...current, owner: "block" } : current);
     setConversationBlockActionMenu(undefined);
-  }, []);
-
-  const showConversationBlockFeedback = useCallback((tone: ChannelComposerInlineFeedbackTone, message: string): void => {
-    if (conversationBlockFeedbackTimeoutRef.current !== undefined) {
-      globalThis.clearTimeout(conversationBlockFeedbackTimeoutRef.current);
-    }
-    setConversationBlockFeedback({ id: Date.now(), tone, message });
-    conversationBlockFeedbackTimeoutRef.current = globalThis.setTimeout(() => {
-      setConversationBlockFeedback(undefined);
-      conversationBlockFeedbackTimeoutRef.current = undefined;
-    }, 1_600);
   }, []);
 
   const messageFeedFocusableBlocks = useCallback((): HTMLElement[] => {
@@ -79,8 +74,16 @@ export function useChannelConversationBlockInteractions({
   }, [scrollRef]);
 
   const focusConversationBlock = useCallback((block: HTMLElement): void => {
+    const blockId = conversationBlockId(block);
+    conversationBlockCopyAttemptRef.current += 1;
     block.focus({ preventScroll: true });
     block.scrollIntoView({ block: "nearest" });
+    setConversationBlockFailure((current) => {
+      if (!current || current.blockId !== blockId) {
+        return undefined;
+      }
+      return current.owner === "menu" ? { ...current, owner: "block" } : current;
+    });
     setConversationBlockActionMenu(undefined);
   }, []);
 
@@ -103,7 +106,7 @@ export function useChannelConversationBlockInteractions({
       conversationBlockActionMenuRef.current?.querySelector<HTMLElement>("[role='menuitem']")?.focus({ preventScroll: true });
     });
     function closeActionMenu(): void {
-      setConversationBlockActionMenu(undefined);
+      closeConversationBlockActionMenu();
       globalThis.requestAnimationFrame(() => focusConversationBlockById(returnBlockId));
     }
     function handlePointerDown(event: PointerEvent): void {
@@ -125,7 +128,7 @@ export function useChannelConversationBlockInteractions({
       document.removeEventListener("pointerdown", handlePointerDown, true);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [conversationBlockActionMenu, focusConversationBlockById]);
+  }, [closeConversationBlockActionMenu, conversationBlockActionMenu, focusConversationBlockById]);
 
   const focusAdjacentConversationBlock = useCallback((direction: "previous" | "next"): void => {
     const blocks = messageFeedFocusableBlocks();
@@ -140,30 +143,44 @@ export function useChannelConversationBlockInteractions({
     focusConversationBlock(blocks[nextIndex]);
   }, [focusConversationBlock, focusedConversationBlock, messageFeedFocusableBlocks]);
 
-  const copyConversationBlock = useCallback(async (block: HTMLElement): Promise<void> => {
+  const showConversationBlockActionToast = useCallback((block: HTMLElement, action: "copy" | "expand", message: string, tone: "success" | "info"): void => {
+    showToast({
+      durationMs: 3_000,
+      message,
+      scope: `message:${conversationBlockId(block)}:${action}`,
+      tone,
+    });
+  }, [showToast]);
+
+  const copyConversationBlock = useCallback(async (block: HTMLElement, owner: "block" | "menu"): Promise<void> => {
+    const blockId = conversationBlockId(block);
+    const attempt = ++conversationBlockCopyAttemptRef.current;
+    const showFailure = (message: string): void => {
+      if (conversationBlockCopyAttemptRef.current !== attempt) {
+        return;
+      }
+      setConversationBlockFailure({ action: "copy", blockId, message, owner });
+    };
+    setConversationBlockFailure(undefined);
     const text = conversationBlockText(block);
     if (!text) {
-      showConversationBlockFeedback("error", t("Nothing to copy"));
+      showFailure(t("Nothing to copy"));
       return;
     }
     if (!globalThis.navigator?.clipboard?.writeText) {
-      showConversationBlockFeedback("error", t("Copy unavailable"));
+      showFailure(t("Copy unavailable"));
       return;
     }
     try {
       await globalThis.navigator.clipboard.writeText(text);
-      showConversationBlockFeedback("success", t("Copied focused block"));
-      const blockId = block.dataset.feedItemId ?? "";
-      setConversationBlockActionMenu((current) => {
-        if (!current || current.blockId !== blockId) {
-          return current;
-        }
-        return { ...current, feedback: t("Copied") };
-      });
+      if (conversationBlockCopyAttemptRef.current !== attempt) {
+        return;
+      }
+      showConversationBlockActionToast(block, "copy", t("Copied focused block"), "success");
     } catch {
-      showConversationBlockFeedback("error", t("Copy unavailable"));
+      showFailure(t("Copy unavailable"));
     }
-  }, [showConversationBlockFeedback, t]);
+  }, [showConversationBlockActionToast, t]);
 
   const cancelConversationBlockLongPress = useCallback((): void => {
     const pending = conversationBlockLongPressRef.current;
@@ -177,7 +194,7 @@ export function useChannelConversationBlockInteractions({
   const openConversationBlockActionMenu = useCallback((block: HTMLElement, x: number, y: number): void => {
     focusConversationBlock(block);
     setConversationBlockActionMenu({
-      blockId: block.dataset.feedItemId ?? "",
+      blockId: conversationBlockId(block),
       label: conversationBlockLabel(block, t),
       x: Math.max(12, Math.min(x, globalThis.innerWidth - 220)),
       y: Math.max(12, Math.min(y, globalThis.innerHeight - 160)),
@@ -190,7 +207,7 @@ export function useChannelConversationBlockInteractions({
     }
     if (event.key === "Escape" && conversationBlockActionMenu) {
       event.preventDefault();
-      setConversationBlockActionMenu(undefined);
+      closeConversationBlockActionMenu();
       return;
     }
     if (event.altKey && !event.metaKey && !event.ctrlKey && !event.shiftKey && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
@@ -204,7 +221,7 @@ export function useChannelConversationBlockInteractions({
         return;
       }
       event.preventDefault();
-      void copyConversationBlock(block);
+      void copyConversationBlock(block, "block");
       return;
     }
     if (event.key === "Enter" && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
@@ -217,16 +234,22 @@ export function useChannelConversationBlockInteractions({
       }
       event.preventDefault();
       expandable.click();
-      showConversationBlockFeedback("info", t("Expanded focused block"));
+      showConversationBlockActionToast(
+        expandable.closest<HTMLElement>("[data-conversation-focus-block='true']") ?? block ?? expandable,
+        "expand",
+        t("Expanded focused block"),
+        "info",
+      );
     }
   }, [
+    closeConversationBlockActionMenu,
     conversationBlockActionMenu,
     copyConversationBlock,
     focusAdjacentConversationBlock,
     focusedConversationBlock,
     messageFeedFocusableBlocks,
     scrollRef,
-    showConversationBlockFeedback,
+    showConversationBlockActionToast,
     t,
   ]);
 
@@ -277,26 +300,40 @@ export function useChannelConversationBlockInteractions({
   }, [openConversationBlockActionMenu]);
 
   useEffect(() => () => {
-    if (conversationBlockFeedbackTimeoutRef.current !== undefined) {
-      globalThis.clearTimeout(conversationBlockFeedbackTimeoutRef.current);
-    }
     if (conversationBlockLongPressRef.current) {
       globalThis.clearTimeout(conversationBlockLongPressRef.current.timeoutId);
       conversationBlockLongPressRef.current = undefined;
     }
   }, []);
 
+  const dismissConversationBlockFailure = useCallback((): void => {
+    const dismissed = conversationBlockFailure;
+    conversationBlockCopyAttemptRef.current += 1;
+    setConversationBlockFailure(undefined);
+    if (!dismissed) {
+      return;
+    }
+    globalThis.requestAnimationFrame(() => {
+      if (dismissed.owner === "menu" && conversationBlockActionMenuRef.current) {
+        conversationBlockActionMenuRef.current.querySelector<HTMLElement>("[role='menuitem']")?.focus({ preventScroll: true });
+        return;
+      }
+      focusConversationBlockById(dismissed.blockId);
+    });
+  }, [conversationBlockFailure, focusConversationBlockById]);
+
   const conversationBlockFeedbackNode = useMemo(() => {
-    if (!conversationBlockFeedback) {
+    if (!conversationBlockFailure || conversationBlockFailure.owner !== "block") {
       return null;
     }
     return (
-      <div key={conversationBlockFeedback.id} className={`conversation-block-feedback ${conversationBlockFeedback.tone}`} role="status" aria-live="polite">
-        {conversationBlockFeedback.tone === "success" ? <CheckCircle2 size={13} /> : conversationBlockFeedback.tone === "error" ? <CircleAlert size={13} /> : <Info size={13} />}
-        <span>{conversationBlockFeedback.message}</span>
-      </div>
+      <ChannelConversationBlockFeedback
+        dismissLabel={t("Dismiss")}
+        failure={conversationBlockFailure}
+        onDismiss={dismissConversationBlockFailure}
+      />
     );
-  }, [conversationBlockFeedback]);
+  }, [conversationBlockFailure, dismissConversationBlockFailure, t]);
 
   const conversationBlockActionMenuNode = useMemo(() => {
     if (!conversationBlockActionMenu) {
@@ -311,14 +348,20 @@ export function useChannelConversationBlockInteractions({
         style={{ left: conversationBlockActionMenu.x, top: conversationBlockActionMenu.y }}
       >
         <strong>{conversationBlockActionMenu.label}</strong>
-        {conversationBlockActionMenu.feedback ? <small role="status" aria-live="polite">{conversationBlockActionMenu.feedback}</small> : null}
+        {conversationBlockFailure?.owner === "menu" && conversationBlockFailure.blockId === conversationBlockActionMenu.blockId ? (
+          <ChannelConversationBlockFeedback
+            dismissLabel={t("Dismiss")}
+            failure={conversationBlockFailure}
+            onDismiss={dismissConversationBlockFailure}
+          />
+        ) : null}
         <button
           type="button"
           role="menuitem"
           onClick={() => {
             const block = scrollRef.current?.querySelector<HTMLElement>(`[data-feed-item-id="${cssEscape(conversationBlockActionMenu.blockId)}"]`);
             if (block) {
-              void copyConversationBlock(block);
+              void copyConversationBlock(block, "menu");
             }
           }}
         >
@@ -337,7 +380,7 @@ export function useChannelConversationBlockInteractions({
         </button>
       </div>
     );
-  }, [conversationBlockActionMenu, copyConversationBlock, focusConversationBlockById, scrollRef, t]);
+  }, [conversationBlockActionMenu, conversationBlockFailure, copyConversationBlock, dismissConversationBlockFailure, focusConversationBlockById, scrollRef, t]);
 
   return {
     conversationBlockActionMenuNode,
@@ -379,6 +422,10 @@ function conversationBlockText(block: HTMLElement): string {
   return (block.innerText ?? "")
     .replace(/\n{3,}/gu, "\n\n")
     .trim();
+}
+
+function conversationBlockId(block: HTMLElement): string {
+  return block.dataset.feedItemId?.trim() || block.id.trim() || "unknown";
 }
 
 function conversationBlockLabel(block: HTMLElement, t: Translate): string {

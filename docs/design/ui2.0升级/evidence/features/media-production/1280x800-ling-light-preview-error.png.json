@@ -1,0 +1,24 @@
+{
+  "filename": "1280x800-ling-light-preview-error.png",
+  "capturedAt": "2026-07-23T02:01:29.323Z",
+  "viewport": {
+    "width": 1280,
+    "height": 800
+  },
+  "theme": "ling-light",
+  "locale": "en-US",
+  "fixture": "production_preview_error",
+  "state": "preview-error",
+  "functionIds": [
+    "PROD-PREVIEW-001"
+  ],
+  "sourceCommitOrWorktree": "0a0b80502715+worktree",
+  "consoleErrors": [],
+  "expectedConsoleErrors": [],
+  "pageErrors": [],
+  "documentOverflow": 0,
+  "ownerOverflow": 0,
+  "canvasPixel": null,
+  "mediaPixelHash": null,
+  "sha256": "e6a4b008848db6e94f59c06f2eff36c4c7fc28ef45f998b4b029fac8792b7806"
+}

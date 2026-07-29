@@ -147,7 +147,7 @@ function renderBlock(
         <ListTag key={`list-${index}`} className={listClassName} start={block.ordered ? block.start : undefined}>
           {block.items.map((item, itemIndex) => (
             <li key={`item-${itemIndex}`} className={item.checked === undefined ? undefined : "message-body-task-item"}>
-              {item.checked === undefined ? null : <input type="checkbox" checked={item.checked} readOnly tabIndex={-1} aria-hidden="true" />}
+              {item.checked === undefined ? null : <input data-ling-control-native="true" type="checkbox" checked={item.checked} readOnly tabIndex={-1} aria-hidden="true" />}
               <div>{item.blocks.map((child, childIndex) => renderBlock(child, childIndex, options))}</div>
             </li>
           ))}

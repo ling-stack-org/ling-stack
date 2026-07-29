@@ -530,7 +530,19 @@ export function mergeDockFileItems(...groups: readonly (readonly DockFileItem[])
 }
 
 export function mergeEvidenceGroups(...groups: readonly DockEvidenceGroupView[]): readonly DockEvidenceGroupView[] {
-  return groups.filter((group) => group.items.length > 0);
+  const merged = new Map<string, DockEvidenceGroupView>();
+  for (const group of groups) {
+    if (group.items.length === 0) continue;
+    const current = merged.get(group.id);
+    if (!current) {
+      merged.set(group.id, group);
+      continue;
+    }
+    const itemById = new Map(current.items.map((item) => [item.id, item]));
+    for (const item of group.items) itemById.set(item.id, item);
+    merged.set(group.id, { ...current, items: [...itemById.values()] });
+  }
+  return [...merged.values()];
 }
 
 export function reviewNeedsAction(item: DockReviewItem): boolean {

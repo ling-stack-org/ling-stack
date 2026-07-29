@@ -1,3 +1,4 @@
+import { Button } from "@ling-stack/ui-react";
 import type { ReactNode } from "react";
 
 export interface ConversationStatusMetaItem {
@@ -59,18 +60,19 @@ export function ConversationStatusStrip({
       {actions.length > 0 ? (
         <div className="conversation-status-actions">
           {actions.map((action) => (
-            <button
+            <Button
               key={action.id}
-              className={action.danger ? "secondary-button danger compact-button" : "secondary-button compact-button"}
-              type="button"
-              onClick={action.onClick}
+              className="conversation-status-action"
               disabled={action.disabled}
+              leadingIcon={action.icon}
+              onClick={action.onClick}
+              size="sm"
               title={action.label}
               aria-label={action.label}
+              variant={action.danger ? "danger" : "secondary"}
             >
-              {action.icon}
-              <span>{action.label}</span>
-            </button>
+              {action.label}
+            </Button>
           ))}
         </div>
       ) : null}

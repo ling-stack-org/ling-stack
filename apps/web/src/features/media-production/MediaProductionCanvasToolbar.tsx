@@ -1,6 +1,13 @@
+import { Button, SegmentedControl, SegmentedControlItem } from "../../shared/ui/index.js";
 import { Clapperboard, ListChecks, ListVideo, PanelsTopLeft, Play, Settings2 } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import type { MediaProductionView } from "./media-production-types.js";
+import {
+  deriveMediaProductionToolbarProjection,
+  isMediaProductionView,
+  type MediaProductionToolbarActionProjection,
+  type TranslationDescriptor,
+} from "./media-production-canvas-view-models.js";
 
 export function MediaProductionCanvasToolbar({
   projectName,
@@ -26,40 +33,93 @@ export function MediaProductionCanvasToolbar({
   readonly onConfigureVideoModel: () => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const projection = deriveMediaProductionToolbarProjection({
+    projectName,
+    sceneCount,
+    view,
+    readyCount,
+    hasGenerationSource,
+    runBusy: busy,
+  });
   return (
-    <nav className="media-production-canvas-toolbar" aria-label="媒体生产工具栏">
-      <button className="media-production-project-trigger" type="button" onClick={onOpenProjectDock} title="打开项目与分镜" aria-label="打开项目与分镜">
-        <PanelsTopLeft size={15} />
-        <span>{projectName ?? "项目与分镜"}</span>
-        {projectName ? <small>{sceneCount} 个场景</small> : null}
-      </button>
+    <nav className="media-production-canvas-toolbar" aria-label={t("Media production views")}>
+      <Button
+        className="media-production-project-trigger"
+        size="sm"
+        variant="ghost"
+        leadingIcon={<PanelsTopLeft aria-hidden="true" />}
+        onClick={onOpenProjectDock}
+        title={projection.projectName ?? t("Projects and scenes")}
+      >
+        <span>{projection.projectName ?? translateDescriptor(t, projection.projectLabel)}</span>
+        {projection.sceneCountLabel ? <small>{translateDescriptor(t, projection.sceneCountLabel)}</small> : null}
+      </Button>
       <span className="media-production-toolbar-divider" aria-hidden="true" />
-      <span className="media-production-view-switcher" role="tablist" aria-label="媒体生产视图">
-        <button className={view === "studio" ? "active" : ""} type="button" role="tab" aria-selected={view === "studio"} onClick={() => onViewChange("studio")}>
-          <Clapperboard size={14} /> {t("Production studio")}
-        </button>
-        <button className={view === "jobs" ? "active" : ""} type="button" role="tab" aria-selected={view === "jobs"} onClick={() => onViewChange("jobs")}>
-          <ListVideo size={14} /> {t("Generation tasks")}
-        </button>
-      </span>
-      {view === "studio" && projectName ? (
+      <SegmentedControl
+        className="media-production-view-switcher"
+        size="sm"
+        value={view}
+        aria-label={t("Media production views")}
+        onValueChange={(nextView) => {
+          if (isMediaProductionView(nextView)) onViewChange(nextView);
+        }}
+      >
+        <SegmentedControlItem value="studio">
+          <Clapperboard aria-hidden="true" /> {t("Production studio")}
+        </SegmentedControlItem>
+        <SegmentedControlItem value="jobs">
+          <ListVideo aria-hidden="true" /> {t("Generation tasks")}
+        </SegmentedControlItem>
+      </SegmentedControl>
+      {projection.action.kind !== "none" ? (
         <>
           <span className="media-production-toolbar-divider" aria-hidden="true" />
-          {readyCount > 0 ? (
-            <button className="primary-button compact-button" type="button" onClick={onRunProject} disabled={busy} title={`确认并生成 ${readyCount} 个场景`}>
-              <Play size={15} /> 生成 {readyCount} 个场景
-            </button>
-          ) : hasGenerationSource ? (
-            <button className="secondary-button compact-button" type="button" onClick={onRunProject} disabled={busy} title="查看需要完善或已完成的场景">
-              <ListChecks size={15} /> 检查场景
-            </button>
-          ) : (
-            <button className="secondary-button compact-button" type="button" onClick={onConfigureVideoModel} disabled={busy}>
-              <Settings2 size={15} /> 配置视频模型
-            </button>
-          )}
+          <ToolbarPrimaryAction
+            action={projection.action}
+            onConfigure={onConfigureVideoModel}
+            onReviewOrRun={onRunProject}
+          />
         </>
       ) : null}
     </nav>
   );
+}
+
+function ToolbarPrimaryAction({
+  action,
+  onConfigure,
+  onReviewOrRun,
+}: {
+  readonly action: MediaProductionToolbarActionProjection;
+  readonly onConfigure: () => void;
+  readonly onReviewOrRun: () => void;
+}): JSX.Element | null {
+  const { t } = useI18n();
+  if (action.kind === "none") return null;
+  const icon = action.kind === "configure"
+    ? <Settings2 aria-hidden="true" />
+    : action.kind === "review"
+      ? <ListChecks aria-hidden="true" />
+      : <Play aria-hidden="true" />;
+  return (
+    <Button
+      className="media-production-primary-action"
+      size="sm"
+      variant={action.kind === "run" ? "primary" : "secondary"}
+      leadingIcon={icon}
+      loading={action.busy}
+      loadingLabel={t("Generating")}
+      onClick={action.kind === "configure" ? onConfigure : onReviewOrRun}
+    >
+      {translateDescriptor(t, action.label)}
+      {action.countLabel ? <> · {translateDescriptor(t, action.countLabel)}</> : null}
+    </Button>
+  );
+}
+
+function translateDescriptor(
+  translate: (key: string, values?: Readonly<Record<string, string | number>>) => string,
+  descriptor: TranslationDescriptor,
+): string {
+  return translate(descriptor.key, descriptor.values);
 }

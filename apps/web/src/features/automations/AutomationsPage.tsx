@@ -1,8 +1,3 @@
-import { useEffect, useMemo, useState } from "react";
-import { CalendarClock, Info, Layers, Loader2, MessageSquare, RefreshCw } from "lucide-react";
-import { listLingThreads } from "../../api.js";
-import { useI18n } from "../../i18n.js";
-import { PageActionHeader } from "../../shared/components/index.js";
 import type {
   AutomationContextPreview,
   AutomationDefinition,
@@ -10,76 +5,31 @@ import type {
   AutomationRun,
   AutomationSchedulerState,
   AutomationStatus,
+  AutomationTarget,
   AutomationTrigger,
   BuiltinAutomationTemplate,
-  BuiltinAutomationTemplateId,
   Channel,
   CreateAutomationRequest,
-  LingThread,
   ProviderPreset,
 } from "../../types.js";
-import {
-  AutomationChatCreateModal,
-  AutomationManualSetupModal,
-  AutomationTemplateModal,
-  type AutomationTemplatePreset,
-} from "./AutomationCreateDialogs.js";
+import type {
+  AutomationCreateKind,
+  AutomationDraftMutationKind,
+  AutomationMutationKind,
+} from "../../domains/automations/use-automations-domain.js";
+import { useI18n } from "../../i18n.js";
+import { InlineFeedback, useLingToast } from "../../shared/ui/index.js";
+import { AutomationArchiveDialog } from "./AutomationArchiveDialog.js";
+import { AutomationCreateDialog } from "./AutomationCreateDialog.js";
+import { AutomationDiscardDraftDialog } from "./AutomationDiscardDraftDialog.js";
 import { AutomationExecutionInspector } from "./AutomationExecutionInspector.js";
 import { AutomationListPane } from "./AutomationListPane.js";
-import { AutomationSchedulerStrip } from "./AutomationSchedulerStrip.js";
-import {
-  activeAutomations as deriveActiveAutomations,
-  buildAutomationTabs,
-  failedAutomations as deriveFailedAutomations,
-  latestRunByAutomationId,
-  pausedAutomations as derivePausedAutomations,
-  succeededAutomations as deriveSucceededAutomations,
-  summarizeAutomationsPage,
-  visibleAutomationsForTab,
-  type AutomationTab,
-} from "./automation-view-models.js";
+import { AutomationScheduleDialog } from "./AutomationScheduleDialog.js";
+import { AutomationSchedulerSummary } from "./AutomationSchedulerSummary.js";
+import { AutomationWorkbenchHeader } from "./AutomationWorkbenchHeader.js";
+import { useAutomationsPageController } from "./useAutomationsPageController.js";
 
-type CreateDialog = "" | "templates" | "manual" | "chat";
-type CreateMode = Exclude<CreateDialog, "">;
-
-export function AutomationsPage({
-  cwd,
-  channels,
-  providers,
-  automations,
-  automationRuns,
-  automationDrafts,
-  templates,
-  schedulers,
-  schedulerAction,
-  selectedAutomationId,
-  selectedDraftId,
-  previewByAutomationId,
-  draftPreviewById,
-  isLoading,
-  mutatingAutomationId,
-  mutatingDraftId,
-  onRefresh,
-  onCreateFromTemplate,
-  onCreateManualDraft,
-  onCreateAutomation,
-  onCreateChatDraft,
-  onStartScheduler,
-  onStopScheduler,
-  onSelectAutomation,
-  onSelectDraft,
-  onUpdateDraft,
-  onPreviewDraft,
-  onConfirmDraft,
-  onDiscardDraft,
-  onPreview,
-  onRun,
-  onArchive,
-  onSetStatus,
-  onSetSchedule,
-  onOpenRun,
-  onOpenThread,
-}: {
+export interface AutomationsPageProps {
   readonly cwd: string;
   readonly channels: readonly Channel[];
   readonly providers: readonly ProviderPreset[];
@@ -88,283 +38,242 @@ export function AutomationsPage({
   readonly automationDrafts: readonly AutomationDraft[];
   readonly templates: readonly BuiltinAutomationTemplate[];
   readonly schedulers: readonly AutomationSchedulerState[];
-  readonly schedulerAction: "start" | "stop" | "";
   readonly selectedAutomationId: string;
   readonly selectedDraftId: string;
   readonly previewByAutomationId: Readonly<Record<string, AutomationContextPreview>>;
   readonly draftPreviewById: Readonly<Record<string, AutomationContextPreview>>;
   readonly isLoading: boolean;
-  readonly mutatingAutomationId: string;
-  readonly mutatingDraftId: string;
-  readonly onRefresh: () => void;
-  readonly onCreateFromTemplate: (templateId: BuiltinAutomationTemplateId) => Promise<void>;
-  readonly onCreateManualDraft: (partialAutomation: Partial<CreateAutomationRequest>) => Promise<void>;
-  readonly onCreateAutomation: (automation: CreateAutomationRequest) => Promise<void>;
-  readonly onCreateChatDraft: (prompt: string) => Promise<void>;
-  readonly onStartScheduler: () => void;
-  readonly onStopScheduler: () => void;
+  readonly isRefreshing: boolean;
+  readonly createAction: AutomationCreateKind;
+  readonly schedulerAction: "start" | "stop" | "";
+  readonly automationActionById: Readonly<Record<string, AutomationMutationKind | undefined>>;
+  readonly draftActionById: Readonly<Record<string, AutomationDraftMutationKind | undefined>>;
+  readonly refreshError: string;
+  readonly createError: string;
+  readonly schedulerError: string;
+  readonly automationErrorById: Readonly<Record<string, string | undefined>>;
+  readonly draftErrorById: Readonly<Record<string, string | undefined>>;
+  readonly onRefresh: () => Promise<boolean>;
+  readonly onCreateAutomation: (automation: CreateAutomationRequest) => Promise<AutomationDefinition | undefined>;
+  readonly onCreateChatDraft: (prompt: string) => Promise<AutomationDraft | undefined>;
   readonly onSelectAutomation: (automationId: string) => void;
   readonly onSelectDraft: (draftId: string) => void;
-  readonly onUpdateDraft: (draftId: string, partialAutomation: Partial<CreateAutomationRequest>) => Promise<void>;
-  readonly onPreviewDraft: (draftId: string) => Promise<void>;
-  readonly onConfirmDraft: (draftId: string) => Promise<void>;
-  readonly onDiscardDraft: (draftId: string) => Promise<void>;
-  readonly onPreview: () => void;
-  readonly onRun: () => void;
-  readonly onArchive: () => void;
-  readonly onSetStatus: (status: AutomationStatus) => void;
-  readonly onSetSchedule: (trigger: AutomationTrigger) => void;
+  readonly onUpdateDraft: (draftId: string, partialAutomation: Partial<CreateAutomationRequest>) => Promise<AutomationDraft | undefined>;
+  readonly onPreviewDraft: (draftId: string) => Promise<AutomationContextPreview | undefined>;
+  readonly onConfirmDraft: (draftId: string) => Promise<AutomationDefinition | undefined>;
+  readonly onDiscardDraft: (draftId: string) => Promise<boolean>;
+  readonly onPreview: (automationId: string) => Promise<AutomationContextPreview | undefined>;
+  readonly onRun: (automationId: string) => Promise<AutomationRun | undefined>;
+  readonly onArchive: (automationId: string) => Promise<boolean>;
+  readonly onSetStatus: (automationId: string, status: AutomationStatus) => Promise<AutomationDefinition | undefined>;
+  readonly onSetSchedule: (automationId: string, trigger: AutomationTrigger, rrule?: string) => Promise<AutomationDefinition | undefined>;
+  readonly onSetTarget: (automationId: string, target: AutomationTarget) => Promise<AutomationDefinition | undefined>;
+  readonly onStartScheduler: () => Promise<boolean>;
+  readonly onStopScheduler: () => Promise<boolean>;
   readonly onOpenRun: (runId: string) => void;
   readonly onOpenThread: (threadId: string) => void;
-}): JSX.Element {
-  void onCreateFromTemplate;
-  void onCreateManualDraft;
-  void onUpdateDraft;
-  void onPreviewDraft;
-  void onPreview;
-  void onSetSchedule;
-  void schedulerAction;
-  void onStartScheduler;
-  void onStopScheduler;
+}
 
+export function AutomationsPage(props: AutomationsPageProps): JSX.Element {
   const { t } = useI18n();
-  const [dialog, setDialog] = useState<CreateDialog>("");
-  const [automationTab, setAutomationTab] = useState<AutomationTab>("enabled");
-  const [manualPreset, setManualPreset] = useState<AutomationTemplatePreset | undefined>(undefined);
-  const [threads, setThreads] = useState<readonly LingThread[]>([]);
-  const [threadsLoading, setThreadsLoading] = useState(false);
-  const activeAutomations = useMemo(
-    () => deriveActiveAutomations(automations),
-    [automations],
-  );
-  const pausedAutomations = useMemo(
-    () => derivePausedAutomations(automations),
-    [automations],
-  );
-  const recentRuns = automationRuns.slice(0, 8);
-  const latestRunById = useMemo(() => latestRunByAutomationId(automationRuns), [automationRuns]);
-  const failedAutomations = useMemo(
-    () => deriveFailedAutomations(automations, latestRunById),
-    [automations, latestRunById],
-  );
-  const succeededAutomations = useMemo(
-    () => deriveSucceededAutomations(automations, latestRunById),
-    [automations, latestRunById],
-  );
-  const visibleAutomations = visibleAutomationsForTab({
-    tab: automationTab,
-    enabled: activeAutomations,
-    paused: pausedAutomations,
-    failed: failedAutomations,
-    succeeded: succeededAutomations,
+  const { showToast } = useLingToast();
+  const controller = useAutomationsPageController({
+    automations: props.automations,
+    automationDrafts: props.automationDrafts,
+    automationRuns: props.automationRuns,
+    channels: props.channels,
+    cwd: props.cwd,
+    schedulers: props.schedulers,
+    selectedAutomationId: props.selectedAutomationId,
+    selectedDraftId: props.selectedDraftId,
+    templates: props.templates,
+    t,
   });
-  const selectedAutomation = automations.find((automation) => automation.id === selectedAutomationId);
-  const selectedDraft = automationDrafts.find((draft) => draft.id === selectedDraftId);
-  const selectedRun = selectedAutomation ? latestRunById.get(selectedAutomation.id) : recentRuns[0];
-  const scheduler = schedulers[0];
-  const automationSummary = useMemo(
-    () => summarizeAutomationsPage({ automations, automationRuns, automationDrafts, scheduler }),
-    [automations, automationRuns, automationDrafts, scheduler],
-  );
-  const automationTabs = useMemo(
-    () => buildAutomationTabs({
-      enabled: activeAutomations,
-      paused: pausedAutomations,
-      needsAttention: failedAutomations,
-      succeeded: succeededAutomations,
-      recentRuns,
-      attentionCount: automationSummary.attentionCount,
-      t,
-    }),
-    [activeAutomations, pausedAutomations, failedAutomations, succeededAutomations, recentRuns, automationSummary.attentionCount, t],
-  );
-  const threadTitleById = useMemo(() => new Map(threads.map((thread) => [thread.id, thread.title])), [threads]);
+  const selectedAutomationViewModel = controller.definitionViewModels.find((item) => item.automation.id === props.selectedAutomationId);
+  const selectedDraftViewModel = controller.draftViewModels.find((item) => item.draft.id === props.selectedDraftId);
+  const selectedAutomationAction = selectedAutomationViewModel ? props.automationActionById[selectedAutomationViewModel.automation.id] : undefined;
+  const selectedAutomationError = selectedAutomationViewModel ? props.automationErrorById[selectedAutomationViewModel.automation.id] ?? "" : "";
 
-  useEffect(() => {
-    if (!cwd.trim()) {
-      setThreads([]);
-      return;
+  async function runAutomation(automationId: string): Promise<void> {
+    if (await props.onRun(automationId)) showToast({ message: t("Automation run"), scope: `automation:run:${automationId}`, tone: "success" });
+  }
+
+  async function setStatus(automationId: string, status: AutomationStatus): Promise<void> {
+    if (await props.onSetStatus(automationId, status)) showToast({ message: t(status === "enabled" ? "Resume" : "Pause"), scope: `automation:status:${automationId}`, tone: "success" });
+  }
+
+  async function archiveSelected(): Promise<void> {
+    const automation = controller.archiveAutomation;
+    if (!automation) return;
+    if (await props.onArchive(automation.id)) {
+      controller.closeArchive();
+      showToast({ message: t("Archived"), scope: `automation:archive:${automation.id}`, tone: "success" });
     }
-    let cancelled = false;
-    setThreadsLoading(true);
-    void listLingThreads(cwd, { limit: 80 })
-      .then((response) => {
-        if (!cancelled) {
-          setThreads(response.threads.filter((thread) => thread.status !== "archived" && !thread.archivedAt));
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setThreads([]);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setThreadsLoading(false);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [cwd]);
+  }
 
-  useEffect(() => {
-    if (!dialog) {
-      return undefined;
+  async function discardSelectedDraft(): Promise<void> {
+    const draft = controller.discardDraft;
+    if (!draft) return;
+    if (await props.onDiscardDraft(draft.id)) {
+      controller.closeDiscard();
+      showToast({ message: t("Discard"), scope: `automation:draft:discard:${draft.id}`, tone: "success" });
     }
-    const previousBodyOverflow = document.body.style.overflow;
-    const previousDocumentOverflow = document.documentElement.style.overflow;
-    document.body.style.overflow = "hidden";
-    document.documentElement.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = previousBodyOverflow;
-      document.documentElement.style.overflow = previousDocumentOverflow;
-    };
-  }, [dialog]);
-
-  function openCreateDialog(mode: CreateMode): void {
-    setDialog(mode === "manual" ? "manual" : mode === "templates" ? "templates" : "chat");
   }
 
-  async function createManualAutomation(automation: CreateAutomationRequest): Promise<void> {
-    await onCreateAutomation(automation);
-    setDialog("");
+  async function saveSchedule(trigger: AutomationTrigger, rrule?: string): Promise<void> {
+    const automation = controller.scheduleAutomation;
+    if (!automation) return;
+    if (await props.onSetSchedule(automation.id, trigger, rrule)) {
+      controller.closeSchedule();
+      showToast({ message: t("Saved"), scope: `automation:schedule:${automation.id}`, tone: "success" });
+    }
   }
 
-  async function createChatDraft(prompt: string): Promise<void> {
-    await onCreateChatDraft(prompt);
-    setDialog("");
-  }
-
-  function mutateSelectedAutomation(automationId: string, action: () => void): void {
-    onSelectDraft("");
-    onSelectAutomation(automationId);
-    window.setTimeout(action, 0);
+  async function runScheduler(action: "start" | "stop"): Promise<void> {
+    const succeeded = action === "start" ? await props.onStartScheduler() : await props.onStopScheduler();
+    if (succeeded) showToast({ message: t(action === "start" ? "Scheduler started" : "Scheduler stopped"), scope: "automation:scheduler", tone: "success" });
   }
 
   return (
-    <div className="automations-inbox-page">
-      <PageActionHeader
-        className="automations-inbox-header"
-        title={<span id="automations-title">{t("Automations")}</span>}
-        description={t("{count} automations · {enabled} enabled · {scheduled} scheduled watches · {attention} need attention", {
-          count: automationSummary.totalDefinitions,
-          enabled: automationSummary.enabledDefinitions,
-          scheduled: automationSummary.scheduledWatchCount,
-          attention: automationSummary.attentionCount,
-        })}
-        secondaryActions={(
-          <button className="secondary-button compact-button automation-refresh-button" type="button" onClick={onRefresh} disabled={isLoading} aria-label={t("Refresh")}>
-            {isLoading ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
-          </button>
-        )}
-        primaryAction={(
-          <div className="automation-header-actions automation-create-actions header-actions" aria-label={t("Create automation")}>
-            <button className="automation-create-trigger" type="button" onClick={() => openCreateDialog("templates")} disabled={isLoading}>
-              <Layers size={15} />
-              {t("Use template")}
-            </button>
-            <button className="secondary-button compact-button automation-create-secondary" type="button" onClick={() => openCreateDialog("manual")} disabled={isLoading}>
-              <CalendarClock size={15} />
-              {t("Manual create")}
-            </button>
-            <button className="secondary-button compact-button automation-create-secondary" type="button" onClick={() => openCreateDialog("chat")} disabled={isLoading}>
-              <MessageSquare size={15} />
-              {t("Create from conversation")}
-            </button>
-          </div>
-        )}
+    <div className="automations-inbox-page automation-ui2-page" data-automation-ui2-page>
+      <AutomationWorkbenchHeader
+        disabled={!props.cwd.trim()}
+        refreshing={props.isRefreshing}
+        summary={controller.summary}
+        t={t}
+        onCreate={() => controller.openCreate("template")}
+        onRefresh={() => void props.onRefresh()}
       />
-      <AutomationSchedulerStrip
-        scheduler={scheduler}
-        manualEnabledCount={automationSummary.manualEnabledDefinitions}
+      <AutomationSchedulerSummary
+        busy={Boolean(props.schedulerAction)}
+        error={props.schedulerError}
+        scheduler={controller.schedulerViewModel}
+        t={t}
+        onStart={() => void runScheduler("start")}
+        onStop={() => void runScheduler("stop")}
       />
-
-      <main className="automations-inbox-main" aria-labelledby="automations-title">
-        {automationSummary.attentionCount > 0 ? (
-          <div className="automation-attention-banner">
-            <Info size={17} />
-            <strong>{t("{count} automation items need attention", { count: automationSummary.attentionCount })}</strong>
-            <span>{automationSummary.schedulerStoppedWithScheduledWatches
-              ? t("Review the schedule or run the automation manually.")
-              : automationSummary.readyDraftCount > 0
-                ? t("Review drafts before enabling.")
-                : t("Check recent failed runs or automation errors.")}</span>
-          </div>
-        ) : null}
+      {props.refreshError ? (
+        <InlineFeedback className="automation-ui2-stale" title={t("Refresh")} tone="warning">{props.refreshError}</InlineFeedback>
+      ) : null}
+      <main className="automation-ui2-main" aria-labelledby="automations-title">
         <AutomationListPane
-          activeTab={automationTab}
-          tabs={automationTabs}
-          automations={visibleAutomations}
-          automationRuns={automationTab === "history" ? recentRuns : automationRuns}
-          allAutomations={automations}
-          channels={channels}
-          drafts={automationDrafts}
-          selectedAutomationId={selectedAutomationId}
-          selectedDraftId={selectedDraftId}
-          mutatingAutomationId={mutatingAutomationId}
-          mutatingDraftId={mutatingDraftId}
-          isLoading={isLoading}
-          threadTitleById={threadTitleById}
-          onTabChange={setAutomationTab}
-          onSelectAutomation={(automationId) => {
-            onSelectDraft("");
-            onSelectAutomation(automationId);
-          }}
-          onSelectDraft={onSelectDraft}
-          onRun={(automationId) => mutateSelectedAutomation(automationId, onRun)}
-          onOpenRun={onOpenRun}
-          onToggle={(automation) => mutateSelectedAutomation(automation.id, () => onSetStatus(automation.status === "enabled" ? "paused" : "enabled"))}
-          onArchive={(automationId) => mutateSelectedAutomation(automationId, onArchive)}
-          onOpenThread={onOpenThread}
-          onConfirmDraft={(draftId) => void onConfirmDraft(draftId)}
-          onDiscardDraft={(draftId) => void onDiscardDraft(draftId)}
+          activeTab={controller.activeTab}
+          automationActionById={props.automationActionById}
+          automationErrorById={props.automationErrorById}
+          definitions={controller.visibleDefinitions}
+          draftActionById={props.draftActionById}
+          draftErrorById={props.draftErrorById}
+          drafts={controller.visibleDrafts}
+          loading={props.isLoading}
+          runs={controller.visibleRuns}
+          search={controller.search}
+          selectedAutomationId={props.selectedAutomationId}
+          selectedDraftId={props.selectedDraftId}
+          tabs={controller.tabs}
           t={t}
+          onArchive={controller.openArchive}
+          onConfirmDraft={(draftId) => void props.onConfirmDraft(draftId).then((automation) => {
+            if (automation) showToast({ message: t("Confirm automation"), scope: `automation:draft:confirm:${draftId}`, tone: "success" });
+          })}
+          onDiscardDraft={controller.openDiscard}
+          onOpenRun={props.onOpenRun}
+          onOpenSchedule={controller.openSchedule}
+          onOpenThread={props.onOpenThread}
+          onRun={(automationId) => void runAutomation(automationId)}
+          onSearchChange={controller.setSearch}
+          onSelectAutomation={(automationId) => {
+            props.onSelectDraft("");
+            props.onSelectAutomation(automationId);
+          }}
+          onSelectDraft={(draftId) => {
+            props.onSelectAutomation("");
+            props.onSelectDraft(draftId);
+          }}
+          onStatusChange={(automationId, status) => void setStatus(automationId, status)}
+          onTabChange={controller.setActiveTab}
         />
-
         <AutomationExecutionInspector
-          automation={selectedAutomation}
-          draft={selectedDraft}
-          latestRun={selectedRun}
-          channels={channels}
-          threadTitleById={threadTitleById}
-          preview={selectedAutomation ? previewByAutomationId[selectedAutomation.id] : selectedDraft ? draftPreviewById[selectedDraft.id] : undefined}
-          onOpenRun={onOpenRun}
-          onOpenThread={onOpenThread}
+          action={selectedAutomationAction}
+          automationViewModel={selectedAutomationViewModel}
+          channels={props.channels}
+          cwd={props.cwd}
+          draftViewModel={selectedDraftViewModel}
+          error={selectedAutomationError}
+          latestRun={controller.selectedLatestRun}
+          preview={selectedAutomationViewModel
+            ? props.previewByAutomationId[selectedAutomationViewModel.automation.id]
+            : selectedDraftViewModel
+              ? props.draftPreviewById[selectedDraftViewModel.draft.id]
+              : undefined}
+          t={t}
+          threads={controller.threads}
+          onOpenRun={props.onOpenRun}
+          onOpenThread={props.onOpenThread}
+          onPreview={(automationId) => void props.onPreview(automationId)}
+          onRepairTarget={(automationId, target) => void props.onSetTarget(automationId, target).then((automation) => {
+            if (automation) showToast({ message: t("Saved"), scope: `automation:target:${automationId}`, tone: "success" });
+          })}
+          onRun={(automationId) => void runAutomation(automationId)}
         />
       </main>
 
-      {dialog === "templates" ? (
-        <AutomationTemplateModal
-          templates={templates}
-          onApply={(preset) => {
-            setManualPreset(preset);
-            setDialog("manual");
-          }}
-          onManual={() => setDialog("manual")}
-          onClose={() => setDialog("")}
-        />
-      ) : null}
-      {dialog === "manual" ? (
-        <AutomationManualSetupModal
-          cwd={cwd}
-          channels={channels}
-          providers={providers}
-          threads={threads}
-          threadsLoading={threadsLoading}
-          preset={manualPreset}
-          onUseTemplate={() => setDialog("templates")}
-          onCreate={createManualAutomation}
-          onClose={() => setDialog("")}
-        />
-      ) : null}
-      {dialog === "chat" ? (
-        <AutomationChatCreateModal
-          onUseTemplate={() => setDialog("templates")}
-          onCreate={createChatDraft}
-          onClose={() => setDialog("")}
-        />
-      ) : null}
+      <AutomationCreateDialog
+        channels={props.channels}
+        createAction={props.createAction}
+        createError={props.createError || controller.threadLoadError}
+        cwd={props.cwd}
+        draftActionById={props.draftActionById}
+        draftErrorById={props.draftErrorById}
+        draftPreviewById={props.draftPreviewById}
+        drafts={props.automationDrafts}
+        mode={controller.createMode}
+        open={controller.createOpen}
+        providers={props.providers}
+        t={t}
+        templates={props.templates}
+        threadTitleById={controller.threadTitleById}
+        threads={controller.threads}
+        threadsLoading={controller.threadsLoading}
+        onConfirmDraft={async (draftId) => {
+          const automation = await props.onConfirmDraft(draftId);
+          if (automation) showToast({ message: t("Confirm automation"), scope: `automation:create:${automation.id}`, tone: "success" });
+          return automation;
+        }}
+        onCreateAutomation={async (request) => {
+          const automation = await props.onCreateAutomation(request);
+          if (automation) showToast({ message: t("Create automation"), scope: `automation:create:${automation.id}`, tone: "success" });
+          return automation;
+        }}
+        onCreateChatDraft={props.onCreateChatDraft}
+        onModeChange={controller.setCreateMode}
+        onOpenChange={(open) => { if (!open) controller.closeCreate(); }}
+        onPreviewDraft={props.onPreviewDraft}
+        onUpdateDraft={props.onUpdateDraft}
+      />
+      <AutomationArchiveDialog
+        automation={controller.archiveAutomation}
+        busy={Boolean(controller.archiveAutomation && props.automationActionById[controller.archiveAutomation.id] === "archive")}
+        error={controller.archiveAutomation ? props.automationErrorById[controller.archiveAutomation.id] ?? "" : ""}
+        t={t}
+        onConfirm={() => void archiveSelected()}
+        onOpenChange={(open) => { if (!open) controller.closeArchive(); }}
+      />
+      <AutomationDiscardDraftDialog
+        busy={Boolean(controller.discardDraft && props.draftActionById[controller.discardDraft.id] === "discard")}
+        draft={controller.discardDraft}
+        error={controller.discardDraft ? props.draftErrorById[controller.discardDraft.id] ?? "" : ""}
+        t={t}
+        onConfirm={() => void discardSelectedDraft()}
+        onOpenChange={(open) => { if (!open) controller.closeDiscard(); }}
+      />
+      <AutomationScheduleDialog
+        automation={controller.scheduleAutomation}
+        busy={Boolean(controller.scheduleAutomation && props.automationActionById[controller.scheduleAutomation.id] === "schedule")}
+        error={controller.scheduleAutomation ? props.automationErrorById[controller.scheduleAutomation.id] ?? "" : ""}
+        t={t}
+        onOpenChange={(open) => { if (!open) controller.closeSchedule(); }}
+        onSave={(trigger, rrule) => void saveSchedule(trigger, rrule)}
+      />
     </div>
   );
 }

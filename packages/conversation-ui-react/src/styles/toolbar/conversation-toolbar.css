@@ -1,0 +1,81 @@
+.ling-conversation-toolbar {
+  box-sizing: border-box;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+  gap: var(--ling-space-2);
+  min-width: 0;
+}
+
+.ling-conversation-toolbar-button-frame,
+.ling-conversation-toolbar-action-frame {
+  position: relative;
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  min-width: 0;
+}
+
+.ling-conversation-toolbar-icon-button.ling-ui-button {
+  border-radius: var(--ling-radius-pill);
+  color: var(--ling-text-muted);
+}
+
+.ling-conversation-toolbar-icon-button.ling-ui-button:hover:not(:disabled),
+.ling-conversation-toolbar-icon-button.ling-ui-button:focus-visible,
+.ling-conversation-toolbar-icon-button.ling-ui-button[data-active="true"],
+.ling-conversation-toolbar-icon-button.ling-ui-button[aria-pressed="true"] {
+  border-color: var(--ling-border-default);
+  color: var(--ling-text-strong);
+  background: var(--ling-bg-subtle);
+}
+
+.ling-conversation-toolbar-action-button.ling-ui-button {
+  max-width: 132px;
+  border-radius: var(--ling-radius-pill);
+  color: var(--ling-text-muted);
+  box-shadow: none;
+}
+
+.ling-conversation-toolbar-action-button.ling-ui-button:hover:not(:disabled),
+.ling-conversation-toolbar-action-button.ling-ui-button:focus-visible,
+.ling-conversation-toolbar-action-button.ling-ui-button[data-active="true"],
+.ling-conversation-toolbar-action-button.ling-ui-button[aria-pressed="true"] {
+  border-color: var(--ling-border-default);
+  color: var(--ling-text-strong);
+  background: var(--ling-bg-subtle);
+}
+
+.ling-conversation-toolbar-count {
+  position: absolute;
+  z-index: 1;
+  top: -1px;
+  right: -1px;
+  box-sizing: border-box;
+  display: inline-grid;
+  place-items: center;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border: 1px solid var(--ling-bg-panel);
+  border-radius: var(--ling-radius-pill);
+  color: var(--ling-action-accent);
+  background: var(--ling-action-selection);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.ling-conversation-toolbar-count-inline {
+  top: -2px;
+  right: -3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ling-conversation-toolbar .ling-ui-button {
+    transition-duration: var(--ling-motion-instant);
+  }
+}

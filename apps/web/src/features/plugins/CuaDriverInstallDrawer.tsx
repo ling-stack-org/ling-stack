@@ -1,157 +1,177 @@
-import { useEffect, useState } from "react";
-import { Check, Copy, ExternalLink, Loader2, RefreshCw, X } from "lucide-react";
+import { Check, Copy, ExternalLink, RefreshCw } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import {
+  Button,
+  Drawer,
+  DrawerBody,
+  DrawerContent,
+  DrawerFooter,
+  DrawerHeader,
+  Field,
+  IconButton,
+  InlineFeedback,
+  Input,
+  InspectorSection,
+  useLingToast,
+} from "../../shared/ui/index.js";
 import { useI18n } from "../../i18n.js";
 import type { ManagedPluginView } from "../../types.js";
+import type { PluginActionFailure } from "./plugin-manager-types.js";
 
 export function CuaDriverInstallDrawer({
   open,
   plugin,
   busy,
+  actionFailure,
   onConnect,
+  onDismissFailure,
   onClose,
 }: {
   readonly open: boolean;
   readonly plugin?: ManagedPluginView;
   readonly busy: boolean;
+  readonly actionFailure?: PluginActionFailure;
   readonly onConnect: (pluginId: string, command?: string) => Promise<ManagedPluginView | undefined>;
+  readonly onDismissFailure: (pluginId: string) => void;
   readonly onClose: () => void;
-}): JSX.Element | null {
+}): JSX.Element {
   const { t } = useI18n();
+  const { showToast } = useLingToast();
   const [customCommand, setCustomCommand] = useState("");
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const [validationMessage, setValidationMessage] = useState("");
+  const drawerRef = useRef<HTMLDivElement>(null);
   const guide = plugin?.setup?.guide;
+  const available = Boolean(open && plugin && plugin.setup?.state === "missing" && guide);
 
   useEffect(() => {
-    if (!open) {
-      return;
-    }
     setCustomCommand("");
     setCopyState("idle");
     setValidationMessage("");
-  }, [open, plugin?.id]);
+  }, [guide?.installCommand, open, plugin?.id]);
 
   useEffect(() => {
-    if (!open) {
-      return undefined;
-    }
-    function handleKeyDown(event: KeyboardEvent): void {
-      if (event.key === "Escape" && !busy) {
-        onClose();
-      }
-    }
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [busy, onClose, open]);
-
-  useEffect(() => {
-    if (open && plugin && plugin.setup?.state !== "missing") {
-      onClose();
-    }
+    if (open && plugin && plugin.setup?.state !== "missing") onClose();
   }, [onClose, open, plugin]);
 
-  if (!open || !plugin || plugin.setup?.state !== "missing" || !guide) {
-    return null;
-  }
-  const activePlugin = plugin;
-  const activeGuide = guide;
-
   async function copyInstallCommand(): Promise<void> {
+    if (!guide) return;
     try {
-      await copyText(activeGuide.installCommand);
+      await copyText(guide.installCommand);
       setCopyState("copied");
-      window.setTimeout(() => setCopyState("idle"), 1800);
+      showToast({ message: t("Command copied"), scope: `plugin:cua:${plugin?.id ?? "unknown"}:copy`, tone: "success" });
     } catch {
       setCopyState("failed");
     }
   }
 
   async function recheck(): Promise<void> {
+    if (!plugin) return;
     const command = customCommand.trim();
     if (command && !command.startsWith("/")) {
       setValidationMessage(t("Enter an absolute executable path."));
       return;
     }
     setValidationMessage("");
-    const connected = await onConnect(activePlugin.id, command || undefined);
-    if (connected?.setup?.state === "connected" || connected?.setup?.state === "ready") {
-      onClose();
-    }
+    const connected = await onConnect(plugin.id, command || undefined);
+    if (connected?.setup?.state === "connected" || connected?.setup?.state === "ready") onClose();
+    else setValidationMessage(t("Unknown error"));
   }
 
+  const CopyStateIcon = copyState === "copied" ? Check : Copy;
+
   return (
-    <div className="cua-install-drawer" role="presentation" onMouseDown={(event) => {
-      if (event.target === event.currentTarget && !busy) {
-        onClose();
-      }
-    }}>
-      <aside className="cua-install-panel" role="dialog" aria-modal="true" aria-labelledby="cua-install-title">
-        <header className="cua-install-head">
-          <div>
-            <h2 id="cua-install-title">{t("Install Cua Driver")}</h2>
-            <p>{t("Ling did not detect Cua Driver on this Mac.")}</p>
-          </div>
-          <button className="icon-button" type="button" onClick={onClose} disabled={busy} aria-label={t("Close")}>
-            <X size={16} />
-          </button>
-        </header>
-
-        <div className="cua-install-body">
-          <section className="cua-install-section">
-            <div className="cua-install-section-head">
-              <div>
-                <strong>{t("Official installation")}</strong>
-                <span>{t("Review the official guide, then run the command yourself in Terminal.")}</span>
-              </div>
-              <a className="secondary-button compact-button" href={activeGuide.documentationUrl} target="_blank" rel="noreferrer">
-                <ExternalLink size={14} />
-                {t("Open official guide")}
-              </a>
-            </div>
-            <div className="cua-install-command">
-              <code>{activeGuide.installCommand}</code>
-              <button className="icon-button" type="button" onClick={() => void copyInstallCommand()} aria-label={t("Copy install command")}>
-                {copyState === "copied" ? <Check size={15} /> : <Copy size={15} />}
-              </button>
-            </div>
-            <span className={`cua-install-copy-status ${copyState}`} role="status" aria-live="polite">
-              {copyState === "copied" ? t("Command copied") : copyState === "failed" ? t("Copy failed") : ""}
-            </span>
-          </section>
-
-          {activeGuide.supportsCustomCommand ? (
-            <details className="cua-install-custom-path">
-              <summary>{t("Use a custom executable path")}</summary>
-              <label className="field">
-                <span>{t("Executable path")}</span>
-                <input
-                  value={customCommand}
-                  onChange={(event) => setCustomCommand(event.target.value)}
-                  placeholder="/opt/homebrew/bin/cua-driver"
-                  spellCheck={false}
-                  autoComplete="off"
-                />
-              </label>
-              {validationMessage ? <span className="cua-install-validation" role="alert">{validationMessage}</span> : null}
-            </details>
-          ) : null}
-
-          <div className="cua-install-safety-note">
-            {t("Ling will only detect and connect the local driver. It will not run the installation command for you.")}
-          </div>
-        </div>
-
-        <footer className="cua-install-footer">
-          <button className="ghost-button compact-button" type="button" onClick={onClose} disabled={busy}>
-            {t("Cancel")}
-          </button>
-          <button className="primary-button compact-button" type="button" onClick={() => void recheck()} disabled={busy}>
-            {busy ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
-            {t("Recheck")}
-          </button>
-        </footer>
-      </aside>
-    </div>
+    <Drawer busy={busy} onOpenChange={(nextOpen) => { if (!nextOpen) onClose(); }} open={available}>
+      <DrawerContent
+        ref={drawerRef}
+        className="cua-install-panel"
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          drawerRef.current?.focus();
+        }}
+        size="lg"
+      >
+        {plugin && guide ? (
+          <>
+            <DrawerHeader
+              closeLabel={t("Close")}
+              description={t("Ling did not detect Cua Driver on this Mac.")}
+              title={t("Install Cua Driver")}
+            />
+            <DrawerBody className="cua-install-body">
+              {actionFailure ? (
+                <InlineFeedback
+                  data-plugin-action-failure={actionFailure.action}
+                  title={actionFailure.message}
+                  tone="danger"
+                >
+                  {actionFailure.detail}
+                </InlineFeedback>
+              ) : null}
+              <section className="cua-install-section">
+                <div className="cua-install-section-head">
+                  <span>
+                    <strong>{t("Official installation")}</strong>
+                    <small>{t("Review the official guide, then run the command yourself in Terminal.")}</small>
+                  </span>
+                  <Button asChild leadingIcon={<ExternalLink aria-hidden="true" />} size="sm">
+                    <a href={guide.documentationUrl} rel="noreferrer" target="_blank">{t("Open official guide")}</a>
+                  </Button>
+                </div>
+                <div className="cua-install-command">
+                  <code>{guide.installCommand}</code>
+                  <IconButton
+                    data-cua-copy-state={copyState}
+                    icon={CopyStateIcon}
+                    label={t("Copy install command")}
+                    onClick={() => void copyInstallCommand()}
+                    size="sm"
+                  />
+                </div>
+                {copyState === "failed" ? (
+                  <InlineFeedback data-cua-copy-feedback="failure" tone="danger">
+                    {t("Copy failed")}
+                  </InlineFeedback>
+                ) : null}
+              </section>
+              {guide.supportsCustomCommand ? (
+                <InspectorSection className="cua-install-custom-path" title={t("Use a custom executable path")}>
+                  <Field error={validationMessage ? <span role="alert">{validationMessage}</span> : undefined} label={t("Executable path")}>
+                    <Input
+                      autoComplete="off"
+                      onChange={(event) => {
+                        setCustomCommand(event.target.value);
+                        setCopyState("idle");
+                        setValidationMessage("");
+                        if (plugin) onDismissFailure(plugin.id);
+                      }}
+                      placeholder="/opt/homebrew/bin/cua-driver"
+                      spellCheck={false}
+                      value={customCommand}
+                    />
+                  </Field>
+                </InspectorSection>
+              ) : null}
+              <InlineFeedback className="cua-install-safety-note" role="note" tone="neutral">
+                {t("Ling will only detect and connect the local driver. It will not run the installation command for you.")}
+              </InlineFeedback>
+            </DrawerBody>
+            <DrawerFooter className="cua-install-footer">
+              <Button disabled={busy} onClick={onClose}>{t("Cancel")}</Button>
+              <Button
+                leadingIcon={<RefreshCw aria-hidden="true" />}
+                loading={busy}
+                loadingLabel={t("Loading")}
+                onClick={() => void recheck()}
+                variant="primary"
+              >
+                {t("Recheck")}
+              </Button>
+            </DrawerFooter>
+          </>
+        ) : null}
+      </DrawerContent>
+    </Drawer>
   );
 }
 
@@ -169,8 +189,6 @@ async function copyText(value: string): Promise<void> {
     textarea.select();
     const copied = document.execCommand("copy");
     textarea.remove();
-    if (!copied) {
-      throw new Error("Clipboard is unavailable.");
-    }
+    if (!copied) throw new Error("Clipboard is unavailable.");
   }
 }

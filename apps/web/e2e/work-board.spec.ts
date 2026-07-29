@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { mockDaemon } from "./support/mock-daemon";
+import { openWorkBoardFromInbox } from "./support/open-work-board";
 import {
   createBaseState,
 } from "./support/mock-state";
@@ -46,7 +47,7 @@ test("work board merges durable items and supports claim heartbeat", async ({ pa
   await expect(channelBoard).toContainText("durable");
 
   const navigation = page.getByLabel("Ling Stack navigation");
-  await navigation.getByRole("button", { name: "Work Board" }).click();
+  await openWorkBoardFromInbox(page);
   await expect(navigation).toBeVisible();
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.locator(".work-board-page").getByRole("heading", { name: "Needs action" })).toBeVisible();

@@ -1,4 +1,4 @@
-import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
+import { useState, type Dispatch, type SetStateAction } from "react";
 import {
   checkProvider,
   checkProviderDraft,
@@ -11,7 +11,12 @@ import {
   updateProvider,
 } from "../../api.js";
 import type { DomainController, DomainError } from "../../app/domain-controller.js";
-import type { ProviderBatchResult, ProviderCheckScope } from "../../features/providers/index.js";
+import type {
+  ProviderBatchResult,
+  ProviderCheckScope,
+  ProviderImportResult,
+  ProviderSaveResult,
+} from "../../features/providers/index.js";
 import {
   canBatchCheckProvider,
   canWorkbenchBatchCheckProvider,
@@ -29,7 +34,6 @@ import {
 import type {
   ProviderCheckResult,
   ProviderFormState,
-  ProviderModelImportResponse,
   ProviderModelOption,
   ProviderPreset,
   ProviderTemplate,
@@ -47,8 +51,7 @@ export interface ProvidersState {
   readonly providerCheckScope: ProviderCheckScope | undefined;
   readonly checkingProviderIds: readonly string[];
   readonly providerBatchResult: ProviderBatchResult | undefined;
-  readonly providerSaveMessage: string;
-  readonly providerSaveMessageTone: "ok" | "warning";
+  readonly providerOperationWarning: string;
   readonly providerRepairRunId: string;
 }
 
@@ -65,11 +68,11 @@ export interface ProvidersActions {
   readonly refreshProviders: (cwd?: string) => Promise<void>;
   readonly refreshProviderTemplates: () => Promise<void>;
   readonly checkProviderForRun: (provider: ProviderPreset) => Promise<boolean>;
-  readonly saveProviderWithPreflight: () => Promise<{ readonly ok: boolean; readonly errorMessage?: string; readonly warningMessage?: string }>;
-  readonly importModelsFromProviderForm: (models: readonly ProviderModelOption[]) => Promise<{ readonly ok: boolean; readonly response?: ProviderModelImportResponse; readonly errorMessage?: string }>;
+  readonly saveProviderWithPreflight: () => Promise<ProviderSaveResult>;
+  readonly importModelsFromProviderForm: (models: readonly ProviderModelOption[]) => Promise<ProviderImportResult>;
   readonly removeProvider: (providerId: string) => Promise<void>;
   readonly runProviderCheck: (providerId: string) => Promise<void>;
-  readonly runProviderBatchCheck: () => Promise<void>;
+  readonly runProviderBatchCheck: () => Promise<ProviderBatchResult | undefined>;
   readonly editProvider: (provider: ProviderPreset) => void;
   readonly selectProviderTemplate: (template: ProviderTemplate) => void;
   readonly startNewProviderFromTemplate: (template: ProviderTemplate) => void;
@@ -81,10 +84,16 @@ export interface ProvidersActions {
 
 export type ProvidersController = DomainController<ProvidersState, ProvidersActions>;
 
+function readProviderDomainError(scope: DomainError["scope"], caught: unknown): DomainError {
+  return {
+    scope,
+    message: caught instanceof Error ? caught.message : String(caught),
+  };
+}
+
 export function useProvidersDomain(input: {
   readonly cwd: string;
   readonly translate: (value: string, params?: Record<string, string | number>) => string;
-  readonly setErrorMessage: (message: string) => void;
   readonly clearSelectedProvider: (providerId: string) => void;
   readonly clearProviderUsage: (providerId: string) => Promise<void>;
 }): ProvidersController {
@@ -99,35 +108,27 @@ export function useProvidersDomain(input: {
   const [providerCheckScope, setProviderCheckScope] = useState<ProviderCheckScope | undefined>();
   const [checkingProviderIds, setCheckingProviderIds] = useState<readonly string[]>([]);
   const [providerBatchResult, setProviderBatchResult] = useState<ProviderBatchResult | undefined>();
-  const [providerSaveMessage, setProviderSaveMessage] = useState("");
-  const [providerSaveMessageTone, setProviderSaveMessageTone] = useState<"ok" | "warning">("ok");
+  const [providerOperationWarning, setProviderOperationWarning] = useState("");
   const [providerRepairRunId, setProviderRepairRunId] = useState("");
-  const [error, setError] = useState<DomainError | undefined>();
-
-  useEffect(() => {
-    if (!providerSaveMessage) {
-      return;
-    }
-    const timeout = window.setTimeout(() => setProviderSaveMessage(""), 3500);
-    return () => window.clearTimeout(timeout);
-  }, [providerSaveMessage]);
+  const [providerListError, setProviderListError] = useState<DomainError | undefined>();
+  const [providerTemplateError, setProviderTemplateError] = useState<DomainError | undefined>();
+  const [providerMutationError, setProviderMutationError] = useState<DomainError | undefined>();
+  const error = providerMutationError ?? providerListError ?? providerTemplateError;
 
   async function refreshProviders(cwd = input.cwd): Promise<void> {
     if (!cwd) {
       setProviders([]);
+      setProviderListError(undefined);
       return;
     }
 
     setProvidersLoading(true);
     try {
-      input.setErrorMessage("");
-      setError(undefined);
+      setProviderListError(undefined);
       const response = await listProviders(cwd);
       setProviders(response.providers);
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "load", message });
-      input.setErrorMessage(message);
+      setProviderListError(readProviderDomainError("load", caught));
     } finally {
       setProvidersLoading(false);
     }
@@ -135,24 +136,28 @@ export function useProvidersDomain(input: {
 
   async function refreshProviderTemplates(): Promise<void> {
     try {
-      setError(undefined);
+      setProviderTemplateError(undefined);
       const response = await listProviderTemplates();
       setProviderTemplates(response.templates);
     } catch (caught) {
-      setError({ scope: "load", message: caught instanceof Error ? caught.message : String(caught) });
+      setProviderTemplateError(readProviderDomainError("load", caught));
       setProviderTemplates([]);
     }
   }
 
   async function checkProviderForRun(provider: ProviderPreset): Promise<boolean> {
     if (!canBatchCheckProvider(provider)) {
-      input.setErrorMessage(input.translate("Provider preset is not runnable: {reason}", { reason: providerRunBlockerLabel(provider, input.translate) }));
+      setProviderMutationError({
+        scope: "mutation",
+        message: input.translate("Provider preset is not runnable: {reason}", {
+          reason: providerRunBlockerLabel(provider, input.translate),
+        }),
+      });
       return false;
     }
 
     try {
-      input.setErrorMessage("");
-      setError(undefined);
+      setProviderMutationError(undefined);
       setProviderBatchResult(undefined);
       setCheckingProviderIds([provider.id]);
       setProviderCheckTargetId(provider.id);
@@ -160,21 +165,22 @@ export function useProvidersDomain(input: {
       setProviderCheck(result);
       await refreshProviders();
       if (!result.ok) {
-        input.setErrorMessage(`${provider.displayName}: provider check failed (${providerCheckStatusLabel(result)}). ${providerCheckGuidance(result, provider)}`);
+        setProviderMutationError({
+          scope: "mutation",
+          message: `${provider.displayName}: provider check failed (${providerCheckStatusLabel(result)}). ${providerCheckGuidance(result, provider)}`,
+        });
         return false;
       }
       return true;
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "mutation", message });
-      input.setErrorMessage(message);
+      setProviderMutationError(readProviderDomainError("mutation", caught));
       return false;
     } finally {
       setCheckingProviderIds([]);
     }
   }
 
-  async function saveProviderWithPreflight(): Promise<{ readonly ok: boolean; readonly errorMessage?: string; readonly warningMessage?: string }> {
+  async function saveProviderWithPreflight(): Promise<ProviderSaveResult> {
     const workspaceCwd = input.cwd.trim();
     if (!workspaceCwd) {
       return { ok: false, errorMessage: "本地工作区未就绪" };
@@ -183,13 +189,12 @@ export function useProvidersDomain(input: {
     const nextProviderForm = { ...providerForm, enabled: true };
     const checkingId = editingProviderId || "provider_draft_check";
     try {
-      setProviderSaveMessage("");
+      setProviderOperationWarning("");
       setProviderCheck(undefined);
       setProviderCheckScope("save");
       setProviderCheckTargetId(checkingId);
       setProviderBatchResult(undefined);
       setCheckingProviderIds([checkingId]);
-      setError(undefined);
 
       const draftCheck = await checkProviderDraft(workspaceCwd, nextProviderForm);
       setProviderCheck(draftCheck);
@@ -209,9 +214,7 @@ export function useProvidersDomain(input: {
 
       if (savedProvider.api === "media-job") {
         await refreshProviders();
-        setProviderSaveMessageTone("ok");
-        setProviderSaveMessage(input.translate("Model preset saved successfully."));
-        return { ok: true };
+        return { ok: true, successMessage: input.translate("Model preset saved successfully.") };
       }
       setProviderCheckTargetId(savedProvider.id);
       const savedCheck = await checkProvider(workspaceCwd, savedProvider.id);
@@ -219,17 +222,17 @@ export function useProvidersDomain(input: {
       await refreshProviders();
       if (!savedCheck.ok) {
         const warningMessage = input.translate(providerSaveWarningMessage(savedCheck));
-        setProviderSaveMessageTone("warning");
-        setProviderSaveMessage(warningMessage);
-        return { ok: true, warningMessage };
+        setProviderOperationWarning(warningMessage);
+        return {
+          ok: true,
+          warningMessage,
+          successMessage: input.translate("Model preset saved successfully."),
+        };
       }
 
-      setProviderSaveMessageTone("ok");
-      setProviderSaveMessage(input.translate("Model preset saved successfully."));
-      return { ok: true };
+      return { ok: true, successMessage: input.translate("Model preset saved successfully.") };
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "mutation", message });
       return { ok: false, errorMessage: message };
     } finally {
       setCheckingProviderIds([]);
@@ -238,7 +241,7 @@ export function useProvidersDomain(input: {
 
   async function importModelsFromProviderForm(
     models: readonly ProviderModelOption[],
-  ): Promise<{ readonly ok: boolean; readonly response?: ProviderModelImportResponse; readonly errorMessage?: string }> {
+  ): Promise<ProviderImportResult> {
     const workspaceCwd = input.cwd.trim();
     if (!workspaceCwd) {
       return { ok: false, errorMessage: "本地工作区未就绪" };
@@ -248,21 +251,26 @@ export function useProvidersDomain(input: {
     }
 
     try {
-      setProviderSaveMessage("");
+      setProviderOperationWarning("");
       setProviderCheck(undefined);
       setProviderCheckScope("save");
       setProviderCheckTargetId("provider_model_import");
       setProviderBatchResult(undefined);
       setCheckingProviderIds(["provider_model_import"]);
-      setError(undefined);
       const response = await importProviderModels(workspaceCwd, { ...providerForm, enabled: true }, models);
       await refreshProviders();
-      setProviderSaveMessageTone(response.warnings.length > 0 ? "warning" : "ok");
-      setProviderSaveMessage(input.translate("Imported {count} model presets.", { count: response.createdCount + response.updatedCount }));
-      return { ok: true, response };
+      if (response.warnings.length > 0) {
+        setProviderOperationWarning(response.warnings.join(" "));
+      }
+      return {
+        ok: true,
+        response,
+        successMessage: input.translate("Imported {count} model presets.", {
+          count: response.createdCount + response.updatedCount,
+        }),
+      };
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "mutation", message });
       return { ok: false, errorMessage: message };
     } finally {
       setCheckingProviderIds([]);
@@ -294,8 +302,7 @@ export function useProvidersDomain(input: {
 
   async function removeProvider(providerId: string): Promise<void> {
     try {
-      input.setErrorMessage("");
-      setError(undefined);
+      setProviderMutationError(undefined);
       setProviderCheck(undefined);
       setProviderCheckScope(undefined);
       setProviderCheckTargetId("");
@@ -309,16 +316,12 @@ export function useProvidersDomain(input: {
       await input.clearProviderUsage(providerId);
       await refreshProviders();
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "mutation", message });
-      input.setErrorMessage(message);
+      setProviderMutationError(readProviderDomainError("mutation", caught));
     }
   }
 
   async function runProviderCheck(providerId: string): Promise<void> {
     try {
-      input.setErrorMessage("");
-      setError(undefined);
       setProviderBatchResult(undefined);
       setProviderCheck(undefined);
       setProviderCheckScope("row");
@@ -336,23 +339,29 @@ export function useProvidersDomain(input: {
       await refreshProviders();
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "mutation", message });
-      input.setErrorMessage(message);
+      setProviderCheck({
+        ok: false,
+        code: "request_failed",
+        message,
+        checkedAt: new Date().toISOString(),
+      });
     } finally {
       setCheckingProviderIds([]);
     }
   }
 
-  async function runProviderBatchCheck(): Promise<void> {
+  async function runProviderBatchCheck(): Promise<ProviderBatchResult | undefined> {
     const candidates = providers.filter(canWorkbenchBatchCheckProvider);
     if (candidates.length === 0) {
-      input.setErrorMessage(input.translate("No enabled model presets to check."));
-      return;
+      setProviderMutationError({
+        scope: "mutation",
+        message: input.translate("No enabled model presets to check."),
+      });
+      return undefined;
     }
 
     try {
-      input.setErrorMessage("");
-      setError(undefined);
+      setProviderMutationError(undefined);
       setProviderCheck(undefined);
       setProviderCheckScope("batch");
       setProviderCheckTargetId("");
@@ -379,14 +388,11 @@ export function useProvidersDomain(input: {
         }),
         failedCount,
       };
-      setProviderBatchResult(nextBatchResult);
-      window.setTimeout(() => {
-        setProviderBatchResult((current) => current === nextBatchResult ? undefined : current);
-      }, 2000);
+      setProviderBatchResult(failedCount > 0 ? nextBatchResult : undefined);
+      return nextBatchResult;
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "mutation", message });
-      input.setErrorMessage(message);
+      setProviderMutationError(readProviderDomainError("mutation", caught));
+      return undefined;
     } finally {
       setCheckingProviderIds([]);
     }
@@ -440,14 +446,16 @@ export function useProvidersDomain(input: {
   async function toggleProviderEnabled(provider: ProviderPreset, enabled: boolean): Promise<void> {
     const workspaceCwd = input.cwd.trim();
     if (!workspaceCwd) {
-      input.setErrorMessage(input.translate("Local workspace is not ready."));
+      setProviderMutationError({
+        scope: "mutation",
+        message: input.translate("Local workspace is not ready."),
+      });
       return;
     }
 
     const shouldClearDefault = !enabled;
     try {
-      input.setErrorMessage("");
-      setError(undefined);
+      setProviderMutationError(undefined);
       setProviderBatchResult(undefined);
       const response = await updateProvider(workspaceCwd, provider.id, { ...providerToForm(provider, providerTemplates), enabled });
       if (editingProviderId === provider.id) {
@@ -459,9 +467,7 @@ export function useProvidersDomain(input: {
       }
       await refreshProviders();
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "mutation", message });
-      input.setErrorMessage(message);
+      setProviderMutationError(readProviderDomainError("mutation", caught));
       await refreshProviders(workspaceCwd);
     }
   }
@@ -495,10 +501,11 @@ export function useProvidersDomain(input: {
     setProviderCheckScope(undefined);
     setCheckingProviderIds([]);
     setProviderBatchResult(undefined);
-    setProviderSaveMessage("");
-    setProviderSaveMessageTone("ok");
+    setProviderOperationWarning("");
     setProviderRepairRunId("");
-    setError(undefined);
+    setProviderListError(undefined);
+    setProviderTemplateError(undefined);
+    setProviderMutationError(undefined);
   }
 
   return {
@@ -514,8 +521,7 @@ export function useProvidersDomain(input: {
       providerCheckScope,
       checkingProviderIds,
       providerBatchResult,
-      providerSaveMessage,
-      providerSaveMessageTone,
+      providerOperationWarning,
       providerRepairRunId,
     },
     actions: {
@@ -547,6 +553,10 @@ export function useProvidersDomain(input: {
     refresh: refreshProviders,
     isLoading: providersLoading,
     error,
-    clearError: () => setError(undefined),
+    clearError: () => {
+      setProviderListError(undefined);
+      setProviderTemplateError(undefined);
+      setProviderMutationError(undefined);
+    },
   };
 }

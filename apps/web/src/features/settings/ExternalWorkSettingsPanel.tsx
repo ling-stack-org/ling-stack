@@ -1,399 +1,127 @@
-import { useEffect, useState } from "react";
-import {
-  CircleAlert,
-  Database,
-  GitBranch,
-  KeyRound,
-  Loader2,
-  Play,
-  Power,
-  PowerOff,
-  RefreshCw,
-  Save,
-  ShieldCheck,
-  Trash2,
-} from "lucide-react";
+import { CircleAlert, GitBranch, RefreshCw } from "lucide-react";
 import { useI18n } from "../../i18n.js";
+import {
+  Button,
+  EmptyState,
+  IconButton,
+  InspectorSection,
+  Skeleton,
+} from "../../shared/ui/index.js";
 import type { Channel, ExternalWorkStatusResponse } from "../../types.js";
-import { SettingsMetaLine } from "./SettingsSubnav.js";
-
-import { SelectControl } from "../../shared/components/SelectControl.js";
+import { ExternalWorkDetailList } from "./ExternalWorkDetailList.js";
+import { ExternalWorkReadySurface, type ExternalWorkSettingsError } from "./ExternalWorkReadySurface.js";
 
 export function ExternalWorkSettingsPanel({
-  selectedChannel,
-  externalWorkStatus,
-  externalWorkStatusLoading,
-  externalWorkStatusAction,
+  error,
   externalWorkSecretAction,
+  externalWorkStatus,
+  externalWorkStatusAction,
+  externalWorkStatusLoading,
   externalWorkWorkflowAction,
-  onRefreshExternalWork,
-  onExternalWorkAction,
-  onConfigureExternalWorkWorkflow,
   onConfigureExternalWorkSecret,
+  onConfigureExternalWorkWorkflow,
   onDeleteExternalWorkSecret,
+  onExternalWorkAction,
+  onRefreshExternalWork,
+  selectedChannel,
 }: {
-  readonly selectedChannel: Channel | undefined;
-  readonly externalWorkStatus: ExternalWorkStatusResponse | undefined;
-  readonly externalWorkStatusLoading: boolean;
-  readonly externalWorkStatusAction: "poll" | "reconcile" | "start" | "stop" | undefined;
+  readonly error?: ExternalWorkSettingsError;
   readonly externalWorkSecretAction: "configure" | "delete" | undefined;
+  readonly externalWorkStatus: ExternalWorkStatusResponse | undefined;
+  readonly externalWorkStatusAction: "poll" | "reconcile" | "start" | "stop" | undefined;
+  readonly externalWorkStatusLoading: boolean;
   readonly externalWorkWorkflowAction: "configure" | undefined;
-  readonly onRefreshExternalWork: () => void;
-  readonly onExternalWorkAction: (action: "poll" | "reconcile" | "start" | "stop") => void;
+  readonly onConfigureExternalWorkSecret: (token: string) => Promise<boolean>;
   readonly onConfigureExternalWorkWorkflow: (input: {
     readonly sourceKind: "github" | "linear";
     readonly repository?: string;
     readonly projectSlug?: string;
-  }) => Promise<void>;
-  readonly onConfigureExternalWorkSecret: (token: string) => Promise<void>;
-  readonly onDeleteExternalWorkSecret: () => Promise<void>;
-  readonly onOpenExternalWorkRecords: () => void;
-  readonly onOpenExternalWorkTriage: () => void;
+  }) => Promise<boolean>;
+  readonly onDeleteExternalWorkSecret: () => Promise<boolean>;
+  readonly onExternalWorkAction: (action: "poll" | "reconcile" | "start" | "stop") => Promise<boolean>;
+  readonly onRefreshExternalWork: () => void;
+  readonly selectedChannel: Channel | undefined;
 }): JSX.Element {
   const { t } = useI18n();
-  const [externalWorkToken, setExternalWorkToken] = useState("");
-  const [workflowSourceKind, setWorkflowSourceKind] = useState<"github" | "linear">("github");
-  const [workflowRepository, setWorkflowRepository] = useState("");
-  const [workflowProjectSlug, setWorkflowProjectSlug] = useState("");
-  const [recordsPanel, setRecordsPanel] = useState<"records" | "triage" | "">("");
-
-  const secretRef = externalWorkStatus?.secret.ref ?? externalWorkStatus?.workflow.secretRef;
-  const canConfigureSecret = Boolean(externalWorkStatus?.workflow.valid && externalWorkStatus.workflow.sourceKind !== "unknown");
-  const canRemoveSecret = Boolean(secretRef?.startsWith("keychain:"));
-  const sourceLabel = externalWorkStatus?.workflow.sourceKind === "linear" ? "Linear" : "GitHub";
-  const secretBusy = externalWorkSecretAction !== undefined;
-  const workflowBusy = externalWorkWorkflowAction !== undefined;
-  const shouldShowWorkflowSetup = Boolean(selectedChannel && (!externalWorkStatus?.workflow.valid || externalWorkStatus.workflow.sourceKind === "unknown"));
-  const normalizedWorkflowRepository = normalizeGitHubRepositoryInput(workflowRepository);
-  const workflowTargetReady = workflowSourceKind === "github"
-    ? normalizedWorkflowRepository !== undefined
-    : workflowProjectSlug.trim().length > 0;
-
-  useEffect(() => {
-    const sourceKind = externalWorkStatus?.workflow.sourceKind;
-    if (sourceKind === "github" || sourceKind === "linear") {
-      setWorkflowSourceKind(sourceKind);
-    }
-    if (externalWorkStatus?.workflow.repository) {
-      setWorkflowRepository(externalWorkStatus.workflow.repository);
-    }
-    if (externalWorkStatus?.workflow.projectSlug) {
-      setWorkflowProjectSlug(externalWorkStatus.workflow.projectSlug);
-    }
-  }, [
-    externalWorkStatus?.workflow.sourceKind,
-    externalWorkStatus?.workflow.repository,
-    externalWorkStatus?.workflow.projectSlug,
-  ]);
+  const statusError = error?.kind === "status" || error?.kind === "triage" ? error : undefined;
 
   return (
-    <section className="panel settings-panel external-work-settings-panel" aria-labelledby="external-work-settings-title">
-      <div className="panel-title split">
+    <section
+      className="settings-external-work"
+      aria-label={t("External work")}
+      data-ui2-external-work
+    >
+      <header className="settings-external-work-header">
         <span>
-          <GitBranch size={18} />
-          <h2 id="external-work-settings-title">{t("External work")}</h2>
+          <GitBranch aria-hidden="true" />
+          <strong>{t("Connection status")}</strong>
         </span>
-        <button className="secondary-button compact-button" type="button" onClick={onRefreshExternalWork} disabled={externalWorkStatusLoading || !selectedChannel}>
-          {externalWorkStatusLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
-          {t("Refresh")}
-        </button>
-      </div>
+        {selectedChannel ? (
+          <IconButton
+            icon={RefreshCw}
+            label={t("Refresh external work status")}
+            loading={externalWorkStatusLoading}
+            onClick={onRefreshExternalWork}
+          />
+        ) : null}
+      </header>
 
       {!selectedChannel ? (
-        <div className="empty-state compact-empty">
-          <GitBranch />
-          <span>{t("Select a channel to inspect external work setup.")}</span>
-        </div>
+        <EmptyState
+          compact
+          icon={<GitBranch />}
+          title={t("Select a channel")}
+          description={t("Choose a channel in the app before configuring external work.")}
+        />
+      ) : externalWorkStatusLoading && !externalWorkStatus ? (
+        <ExternalWorkLoadingState label={t("Loading external work status")} />
+      ) : !externalWorkStatus ? (
+        <EmptyState
+          compact
+          icon={<CircleAlert />}
+          title={t("External work status is unavailable")}
+          description={t("Refresh to load the selected channel's workflow and credential state.")}
+          action={(
+            <Button leadingIcon={<RefreshCw />} onClick={onRefreshExternalWork}>
+              {t("Refresh")}
+            </Button>
+          )}
+        />
       ) : (
-        <>
-          <div className="settings-interaction-summary" aria-label={t("External work status")}>
-            <strong>{t("Workflow")}: {workflowStatusLabel(externalWorkStatus)}</strong>
-            <span>{t("Target")}: {externalWorkTargetLabel(externalWorkStatus)}</span>
-          </div>
-          <details className="settings-compact-details">
-            <summary>{t("Details")}</summary>
-            <SettingsMetaLine
-              label={t("External work status")}
-              items={[
-                { label: "Channel", value: `${selectedChannel.name} (${selectedChannel.id})` },
-                { label: "Bound path", value: selectedChannel.boundPath ?? t("not set") },
-                { label: "Workflow", value: externalWorkStatus?.workflow.path ?? "WORKFLOW.md" },
-                { label: "Source", value: externalWorkStatus?.workflow.sourceKind ?? "unknown" },
-                { label: "Token", value: externalWorkStatus?.secret.status ?? "not_required" },
-                { label: "Background", value: externalWorkStatus?.background.status ?? "not_configured" },
-              ]}
-            />
-          </details>
-
-          {!selectedChannel.boundPath ? (
-            <div className="inline-warning">
-              <CircleAlert size={16} />
-              {t("External work is easiest to operate from a channel bound path. Bind this channel to the repository root before enabling polling.")}
-            </div>
-          ) : null}
-
-          {externalWorkStatus?.workflow.error ? (
-            <div className="inline-error">
-              <CircleAlert size={17} />
-              {externalWorkStatus.workflow.error}
-            </div>
-          ) : null}
-
-          {externalWorkStatus?.secret.message ? (
-            <div className="inline-warning">
-              <ShieldCheck size={16} />
-              {externalWorkStatus.secret.message}
-            </div>
-          ) : null}
-
-          {shouldShowWorkflowSetup ? (
-            <div className="settings-action-box">
-              <div>
-                <strong>{t("Create WORKFLOW.md")}</strong>
-                <details className="settings-compact-details settings-interaction-details">
-                  <summary>{t("Setup details")}</summary>
-                  <span>{t("Create a minimal local workflow before saving the token. This does not contact GitHub or Linear.")}</span>
-                </details>
-              </div>
-              <div className="external-work-workflow-form">
-                <label className="field">
-                  <span>{t("Source")}</span>
-                  <SelectControl
-                    value={workflowSourceKind}
-                    onChange={(event) => setWorkflowSourceKind(event.target.value === "linear" ? "linear" : "github")}
-                    disabled={workflowBusy}
-                  >
-                    <option value="github">{t("GitHub")}</option>
-                    <option value="linear">{t("Linear")}</option>
-                  </SelectControl>
-                </label>
-                {workflowSourceKind === "github" ? (
-                  <label className="field">
-                    <span>{t("Repository")}</span>
-                    <input
-                      value={workflowRepository}
-                      onChange={(event) => setWorkflowRepository(event.target.value)}
-                      placeholder={t("owner/repo or GitHub URL")}
-                      disabled={workflowBusy}
-                    />
-                  </label>
-                ) : (
-                  <label className="field">
-                    <span>{t("Project slug")}</span>
-                    <input
-                      value={workflowProjectSlug}
-                      onChange={(event) => setWorkflowProjectSlug(event.target.value)}
-                      placeholder={t("linear-project")}
-                      disabled={workflowBusy}
-                    />
-                  </label>
-                )}
-                <button
-                  className="secondary-button"
-                  type="button"
-                  onClick={() => void onConfigureExternalWorkWorkflow({
-                    sourceKind: workflowSourceKind,
-                    repository: workflowSourceKind === "github" ? normalizedWorkflowRepository : undefined,
-                    projectSlug: workflowSourceKind === "linear" ? workflowProjectSlug.trim() : undefined,
-                  })}
-                  disabled={!workflowTargetReady || workflowBusy}
-                >
-                  {workflowBusy ? <Loader2 className="spin" size={16} /> : <Save size={16} />}
-                  {externalWorkStatus?.workflow.exists ? t("Repair WORKFLOW.md") : t("Create WORKFLOW.md")}
-                </button>
-              </div>
-            </div>
-          ) : null}
-
-          <div className="settings-action-box">
-            <div>
-              <strong>{t("External token")}</strong>
-            </div>
-            <details className="settings-compact-details">
-              <summary>{t("Token storage")}</summary>
-              <SettingsMetaLine
-                label={t("External credential status")}
-                items={[{ label: "Secret ref", value: secretRef ?? t("not configured") }]}
-              />
-              <span>
-                {canConfigureSecret
-                  ? t("Saved to system Keychain; token value is never shown in Ling.")
-                  : t("Create a valid WORKFLOW.md before saving an external token.")}
-              </span>
-            </details>
-            <div className="external-work-secret-form">
-              <label className="field">
-                <span>{t("Token")}</span>
-                <input
-                  type="password"
-                  autoComplete="off"
-                  value={externalWorkToken}
-                  onChange={(event) => setExternalWorkToken(event.target.value)}
-                  placeholder={t(`Paste ${sourceLabel} token`)}
-                  disabled={!canConfigureSecret || secretBusy}
-                />
-              </label>
-              <button
-                className="secondary-button"
-                type="button"
-                onClick={() => {
-                  const token = externalWorkToken;
-                  setExternalWorkToken("");
-                  void onConfigureExternalWorkSecret(token);
-                }}
-                disabled={!canConfigureSecret || !externalWorkToken.trim() || secretBusy}
-              >
-                {externalWorkSecretAction === "configure" ? <Loader2 className="spin" size={16} /> : <KeyRound size={16} />}
-                {t(`Save ${sourceLabel} token`)}
-              </button>
-              {canRemoveSecret ? (
-                <button
-                  className="ghost-button danger-ghost-button"
-                  type="button"
-                  onClick={() => void onDeleteExternalWorkSecret()}
-                  disabled={secretBusy}
-                >
-                  {externalWorkSecretAction === "delete" ? <Loader2 className="spin" size={16} /> : <Trash2 size={16} />}
-                  {t("Remove token")}
-                </button>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="settings-inline-counts">
-            <span>{t("External work")}: {externalWorkStatus?.records.externalWork.total ?? 0}</span>
-            <span>{t("Ready")}: {externalWorkStatus?.records.externalWork.ready ?? 0}</span>
-            <span>{t("CI triage")}: {externalWorkStatus?.records.ciTriage.total ?? 0}</span>
-            <span>{t("Actions")}: {externalWorkStatus?.records.actions.total ?? 0}</span>
-            <span>{t("Waiting")}: {externalWorkStatus?.records.actions.waitingForApproval ?? 0}</span>
-          </div>
-
-          <div className="action-row wrap">
-            <button
-              className="secondary-button"
-              type="button"
-              onClick={() => onExternalWorkAction("poll")}
-              disabled={!externalWorkStatus?.workflow.valid || externalWorkStatusAction !== undefined}
-            >
-              {externalWorkStatusAction === "poll" ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
-              {t("Poll once")}
-            </button>
-            <button
-              className="secondary-button"
-              type="button"
-              onClick={() => onExternalWorkAction("reconcile")}
-              disabled={!externalWorkStatus || externalWorkStatusAction !== undefined}
-            >
-              {externalWorkStatusAction === "reconcile" ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
-              {t("Reconcile")}
-            </button>
-            {externalWorkStatus?.workflow.sourceKind === "github" && externalWorkStatus.background.status !== "running" ? (
-              <button
-                className="secondary-button"
-                type="button"
-                onClick={() => onExternalWorkAction("start")}
-                disabled={!externalWorkStatus.workflow.valid || externalWorkStatusAction !== undefined}
-              >
-                {externalWorkStatusAction === "start" ? <Loader2 className="spin" size={16} /> : <Power size={16} />}
-                {t("Start background")}
-              </button>
-            ) : null}
-            {externalWorkStatus?.background.status === "running" ? (
-              <button
-                className="secondary-button"
-                type="button"
-                onClick={() => onExternalWorkAction("stop")}
-                disabled={externalWorkStatusAction !== undefined}
-              >
-                {externalWorkStatusAction === "stop" ? <Loader2 className="spin" size={16} /> : <PowerOff size={16} />}
-                {t("Stop background")}
-              </button>
-            ) : null}
-            <button className="ghost-button" type="button" onClick={() => setRecordsPanel((current) => current === "records" ? "" : "records")} disabled={!externalWorkStatus}>
-              <Database size={16} />
-              {t("View records")}
-            </button>
-            <button className="ghost-button" type="button" onClick={() => setRecordsPanel((current) => current === "triage" ? "" : "triage")} disabled={!externalWorkStatus}>
-              <ShieldCheck size={16} />
-              {t("View CI triage")}
-            </button>
-          </div>
-
-          {recordsPanel ? (
-            <div className="settings-action-box settings-external-work-inspector" aria-label={t(recordsPanel === "records" ? "External work records" : "CI triage records")}>
-              <strong>{t(recordsPanel === "records" ? "External work records" : "CI triage records")}</strong>
-              <div className="settings-status-grid compact-status-grid">
-                <SettingsMetaLine
-                  label={t("Record summary")}
-                  items={recordsPanel === "records"
-                    ? [
-                        { label: t("External work"), value: String(externalWorkStatus?.records.externalWork.total ?? 0) },
-                        { label: t("Ready"), value: String(externalWorkStatus?.records.externalWork.ready ?? 0) },
-                        { label: t("Actions"), value: String(externalWorkStatus?.records.actions.total ?? 0) },
-                      ]
-                    : [
-                        { label: t("CI triage"), value: String(externalWorkStatus?.records.ciTriage.total ?? 0) },
-                        { label: t("Waiting"), value: String(externalWorkStatus?.records.actions.waitingForApproval ?? 0) },
-                        { label: t("Background"), value: externalWorkStatus?.background.status ?? "not_configured" },
-                      ]}
-                />
-              </div>
-            </div>
-          ) : null}
-        </>
+        <ExternalWorkReadySurface
+          error={error}
+          externalWorkSecretAction={externalWorkSecretAction}
+          externalWorkStatus={externalWorkStatus}
+          externalWorkStatusAction={externalWorkStatusAction}
+          externalWorkStatusLoading={externalWorkStatusLoading}
+          externalWorkWorkflowAction={externalWorkWorkflowAction}
+          onConfigureExternalWorkSecret={onConfigureExternalWorkSecret}
+          onConfigureExternalWorkWorkflow={onConfigureExternalWorkWorkflow}
+          onDeleteExternalWorkSecret={onDeleteExternalWorkSecret}
+          onExternalWorkAction={onExternalWorkAction}
+          selectedChannel={selectedChannel}
+        />
       )}
+
+      {statusError ? (
+        <InspectorSection
+          className="settings-external-work-details"
+          title={t("Status error details")}
+          summary={t("Needs attention")}
+        >
+          <ExternalWorkDetailList items={[{ label: t("Last operation error"), value: statusError.message }]} />
+        </InspectorSection>
+      ) : null}
     </section>
   );
 }
 
-function workflowStatusLabel(status: ExternalWorkStatusResponse | undefined): string {
-  if (!status) {
-    return "not loaded";
-  }
-  if (!status.workflow.exists) {
-    return "missing";
-  }
-  return status.workflow.valid ? "valid" : "invalid";
-}
-
-function externalWorkTargetLabel(status: ExternalWorkStatusResponse | undefined): string {
-  if (!status) {
-    return "not configured";
-  }
-  return status.workflow.repository ?? status.workflow.projectSlug ?? "not configured";
-}
-
-function normalizeGitHubRepositoryInput(value: string): string | undefined {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-
-  let candidate = trimmed;
-  if (/^https?:\/\//i.test(candidate)) {
-    try {
-      const url = new URL(candidate);
-      if (url.hostname !== "github.com") {
-        return undefined;
-      }
-      const [owner, repo] = url.pathname.split("/").filter(Boolean);
-      candidate = owner && repo ? `${owner}/${repo}` : "";
-    } catch {
-      return undefined;
-    }
-  } else if (candidate.startsWith("git@github.com:")) {
-    candidate = candidate.slice("git@github.com:".length);
-  } else if (candidate.startsWith("github.com/")) {
-    candidate = candidate.slice("github.com/".length);
-  }
-
-  candidate = candidate.replace(/\.git$/i, "").replace(/\/+$/g, "");
-  const [owner, repo, ...extra] = candidate.split("/");
-  if (!owner || !repo || extra.length > 0) {
-    return undefined;
-  }
-  if (!/^[A-Za-z0-9_.-]+$/.test(owner) || !/^[A-Za-z0-9_.-]+$/.test(repo)) {
-    return undefined;
-  }
-  return `${owner}/${repo}`;
+function ExternalWorkLoadingState({ label }: { readonly label: string }): JSX.Element {
+  return (
+    <div className="settings-external-work-loading" role="status" aria-label={label}>
+      <Skeleton shape="block" height={62} width="100%" />
+      <Skeleton shape="block" height={104} width="100%" />
+      <Skeleton shape="block" height={82} width="100%" />
+    </div>
+  );
 }

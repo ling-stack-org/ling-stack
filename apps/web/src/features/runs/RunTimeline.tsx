@@ -1,37 +1,14 @@
-import {
-  Bot,
-  CheckCircle2,
-  CircleAlert,
-  Clock3,
-  Database,
-  FileText,
-  Loader2,
-  RefreshCw,
-  ShieldCheck,
-  Wrench,
-} from "lucide-react";
+import { Bot, CheckCircle2, CircleAlert, Clock3, Database, FileText, RefreshCw, ShieldCheck, Wrench } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApprovalCard } from "../approvals/ApprovalCard.js";
 import type { ApprovalResolution } from "../approvals/types.js";
 import { useI18n } from "../../i18n.js";
 import { buildRunActivities, type RunActivityItem } from "../../lib/run-activity.js";
-import type {
-  ApprovalRequest,
-  RunEventEnvelope,
-} from "../../types.js";
+import { Button, EmptyState, InlineFeedback, InspectorSection } from "../../shared/ui/index.js";
+import type { ApprovalRequest, RunEventEnvelope } from "../../types.js";
 import { EventRow } from "./EventRow.js";
 
-export function RunTimeline({
-  events,
-  assistantText,
-  errorMessage,
-  isRunning,
-  pendingApprovals,
-  approvalsLoading,
-  resolvingApprovals,
-  onRefreshApprovals,
-  onResolveApproval,
-}: {
+export function RunTimeline({ events, assistantText, errorMessage, isRunning, pendingApprovals, approvalsLoading, resolvingApprovals, onRefreshApprovals, onResolveApproval }: {
   readonly events: readonly RunEventEnvelope[];
   readonly assistantText: string;
   readonly errorMessage: string;
@@ -46,137 +23,67 @@ export function RunTimeline({
   const activities = useMemo(() => buildRunActivities(events), [events]);
   const activityListRef = useRef<HTMLDivElement>(null);
   const rawEventListRef = useRef<HTMLDivElement>(null);
+  const followActivityRef = useRef(true);
+  const followRawRef = useRef(true);
   const [rawEventsOpen, setRawEventsOpen] = useState(false);
 
   useEffect(() => {
-    scrollToBottom(activityListRef.current);
+    if (followActivityRef.current) scrollToBottom(activityListRef.current);
   }, [activities.length, events.length]);
-
   useEffect(() => {
-    if (rawEventsOpen) {
-      scrollToBottom(rawEventListRef.current);
-    }
+    if (rawEventsOpen && followRawRef.current) scrollToBottom(rawEventListRef.current);
   }, [events.length, rawEventsOpen]);
 
   return (
-    <section className="panel timeline" aria-labelledby="run-timeline-title">
-      <div className="panel-title split">
-        <span>
-          <Database size={18} />
-          <h2 id="run-timeline-title">{t("Run activity")}</h2>
-        </span>
-        <span className="event-count">{t("{count} activities", { count: activities.length })}</span>
+    <InspectorSection className="timeline" open summary={t("{count} activities", { count: activities.length })} title={t("Run activity")}>
+      {errorMessage ? <InlineFeedback tone="danger">{errorMessage}</InlineFeedback> : null}
+      {pendingApprovals.length ? <section className="runs-inline-approvals">
+        <header><strong><ShieldCheck size={16} />{t("Pending approval")}</strong><Button leadingIcon={<RefreshCw size={14} />} loading={approvalsLoading} onClick={onRefreshApprovals} size="sm">{t("Refresh")}</Button></header>
+        {pendingApprovals.map((approval) => <ApprovalCard approval={approval} compact key={approval.id} onResolve={onResolveApproval} resolvingDecision={resolvingApprovals[approval.id]} />)}
+      </section> : null}
+      <div
+        className="timeline-activity-list"
+        data-following={followActivityRef.current ? "true" : "false"}
+        onScroll={(event) => { followActivityRef.current = isNearBottom(event.currentTarget); event.currentTarget.dataset.following = String(followActivityRef.current); }}
+        ref={activityListRef}
+      >
+        {activities.length === 0 ? <EmptyState compact icon={<Clock3 />} title={isRunning ? t("Waiting for runner activity...") : t("No activity yet")} /> : activities.map((activity) => <ActivityRow activity={activity} key={activity.id} />)}
       </div>
-
-      {errorMessage ? (
-        <div className="inline-error">
-          <CircleAlert size={17} />
-          {errorMessage}
-        </div>
+      {assistantText ? <div className="assistant-output"><span>{t("Assistant")}</span><p>{assistantText}</p></div> : null}
+      {events.length ? (
+        <InspectorSection
+          className="raw-event-panel"
+          onToggle={(event) => setRawEventsOpen(event.currentTarget.open)}
+          open={rawEventsOpen}
+          summary={t("Raw events ({count})", { count: events.length })}
+          title={t("Event timeline")}
+        >
+          {rawEventsOpen ? <div className="raw-event-list event-list runs-code-scroll" onScroll={(event) => { followRawRef.current = isNearBottom(event.currentTarget); }} ref={rawEventListRef}>{events.map((event) => <EventRow event={event} key={event.id} />)}</div> : null}
+        </InspectorSection>
       ) : null}
-
-      {pendingApprovals.length > 0 ? (
-        <div className="inline-approval-panel" aria-live="polite">
-          <div className="inline-approval-head">
-            <span>
-              <ShieldCheck size={16} />
-              {t("Pending approval")}
-            </span>
-            <button className="secondary-button compact-button" type="button" onClick={onRefreshApprovals} disabled={approvalsLoading}>
-              {approvalsLoading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
-              {t("Refresh")}
-            </button>
-          </div>
-          <div className="inline-approval-list">
-            {pendingApprovals.map((approval) => (
-              <ApprovalCard
-                key={approval.id}
-                approval={approval}
-                compact
-                resolvingDecision={resolvingApprovals[approval.id]}
-                onResolve={onResolveApproval}
-              />
-            ))}
-          </div>
-        </div>
-      ) : null}
-
-      <div className="timeline-activity-list" ref={activityListRef}>
-        {activities.length === 0 ? (
-          <div className="empty-state">
-            {isRunning ? <Loader2 className="spin" /> : <Clock3 />}
-            <span>{isRunning ? t("Waiting for runner activity...") : t("No activity yet")}</span>
-          </div>
-        ) : (
-          activities.map((activity) => <ActivityRow key={activity.id} activity={activity} />)
-        )}
-      </div>
-
-      {assistantText ? (
-        <div className="assistant-output">
-          <span>{t("Assistant")}</span>
-          <p>{assistantText}</p>
-        </div>
-      ) : null}
-
-      {events.length > 0 ? (
-        <details className="raw-event-panel" open={rawEventsOpen} onToggle={(event) => setRawEventsOpen(event.currentTarget.open)}>
-          <summary>
-            <Database size={14} />
-            <span>{t("Raw events ({count})", { count: events.length })}</span>
-          </summary>
-          {rawEventsOpen ? (
-            <div className="raw-event-list event-list" ref={rawEventListRef}>
-              {events.map((event) => <EventRow key={event.id} event={event} />)}
-            </div>
-          ) : null}
-        </details>
-      ) : null}
-    </section>
+    </InspectorSection>
   );
 }
 
+function isNearBottom(element: HTMLDivElement): boolean {
+  return element.scrollHeight - element.scrollTop - element.clientHeight <= 24;
+}
+
 function scrollToBottom(element: HTMLDivElement | null): void {
-  if (element) {
-    element.scrollTop = element.scrollHeight;
-  }
+  if (element) element.scrollTop = element.scrollHeight;
 }
 
 function ActivityRow({ activity }: { readonly activity: RunActivityItem }): JSX.Element {
   const { t } = useI18n();
-
-  return (
-    <article className={`timeline-activity-row ${activity.kind} ${activity.status}`}>
-      <span className="timeline-activity-icon">{activityIcon(activity)}</span>
-      <div className="timeline-activity-copy">
-        <div className="timeline-activity-head">
-          <strong>{t(activity.titleKey, activity.values)}</strong>
-          <time>{new Date(activity.ts).toLocaleTimeString()}</time>
-        </div>
-        {activity.detail ? <small>{activity.detail}</small> : null}
-      </div>
-    </article>
-  );
+  return <article className={`timeline-activity-row ${activity.kind} ${activity.status}`}><span className="timeline-activity-icon">{activityIcon(activity)}</span><div className="timeline-activity-copy"><div className="timeline-activity-head"><strong>{t(activity.titleKey, activity.values)}</strong><time>{new Date(activity.ts).toLocaleTimeString()}</time></div>{activity.detail ? <small>{activity.detail}</small> : null}</div></article>;
 }
 
 function activityIcon(activity: RunActivityItem): JSX.Element {
-  if (activity.status === "failed") {
-    return <CircleAlert size={15} />;
-  }
-  if (activity.status === "succeeded") {
-    return <CheckCircle2 size={15} />;
-  }
-  if (activity.kind === "thinking") {
-    return <Bot size={15} />;
-  }
-  if (activity.kind === "tool") {
-    return <Wrench size={15} />;
-  }
-  if (activity.kind === "artifact") {
-    return <FileText size={15} />;
-  }
-  if (activity.kind === "approval") {
-    return <ShieldCheck size={15} />;
-  }
-  return <Clock3 size={15} />;
+  if (activity.status === "failed") return <CircleAlert size={15} />;
+  if (activity.status === "succeeded") return <CheckCircle2 size={15} />;
+  if (activity.kind === "thinking") return <Bot size={15} />;
+  if (activity.kind === "tool") return <Wrench size={15} />;
+  if (activity.kind === "artifact") return <FileText size={15} />;
+  if (activity.kind === "approval") return <ShieldCheck size={15} />;
+  return <Database size={15} />;
 }

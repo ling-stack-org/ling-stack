@@ -2,9 +2,17 @@
 
 ## Status
 
-Approved architecture direction. The minimal Electron shell and Computer Use
-picture-in-picture packaging baseline are implemented; signed release closure, tray,
-updater, full keychain UX, and bundled native-provider hosting remain later shell slices.
+Approved architecture direction with an implemented Electron alpha. Unsigned macOS/Windows
+packaging, shared Web main window, daemon lifecycle/recovery, and the first Computer Use
+picture-in-picture slices exist. Signing/notarization, hosted signed CI, clean-machine release
+acceptance, tray, updater, and full keychain UX remain incomplete or later shell slices.
+
+## Related Docs
+
+- [Ling UI 2.0](ui2.0升级/README.md)
+- [UI React Shared Package Architecture](ui2.0升级/architecture/01-ui-react共享包架构.md)
+- [UI 2.0 Theme Packs](ui2.0升级/themes/README.md)
+- [Theme Registry And Runtime Switching](ui2.0升级/architecture/07-主题注册表与运行时切换.md)
 
 ## Purpose
 
@@ -18,6 +26,10 @@ Desktop keeps the macOS client visual treatment. Web may use a stricter platform
 treatment, but both surfaces share the same navigation terms, state semantics, daemon
 contracts, and approval boundaries.
 
+Desktop UI implementation must consume `@ling-stack/ui-react` and the UI 2.0
+tokens. Desktop-specific code may own window chrome and OS integrations, but it
+must not fork Button, Dialog, Menu, Toast, form, status, or feature-page UI.
+
 ## Goals
 
 - Package the local Ling Stack experience.
@@ -26,9 +38,6 @@ contracts, and approval boundaries.
 - Add OS keychain, tray/menu bar, notifications, file picker, and update UX.
 - Add cross-platform floating Computer Use preview windows without owning Computer Use
   runtime state or approval policy.
-- Host reviewed embedded native providers when platform process responsibility,
-  permission attribution or interactive-session lifecycle requires the signed Desktop
-  app to own the direct child process.
 - Keep Desktop downstream of daemon state machines, approvals, leases, and audit logs.
 - Render the shared `ConversationTranscript` contract from the daemon instead of copying
   Web-only conversation grouping logic.
@@ -103,31 +112,8 @@ apps/desktop/
       # dedicated Desktop-only PiP renderer
   resources/
     icons/
-    providers/
-      cua-driver/
   tests/
 ```
-
-## Embedded Native Provider Boundary
-
-Desktop may own a native provider process when the operating system binds permissions to
-the GUI application's process responsibility chain. This does not move MCP authorization
-or tool policy into Desktop.
-
-For Cua Driver on packaged macOS and Windows:
-
-- Desktop packages and directly spawns the locked provider;
-- on macOS, Desktop owns TCC permission UX and signed-host attribution;
-- on Windows, Desktop owns interactive-session readiness, lock/disconnect invalidation,
-  the retained child handle and `KILL_ON_JOB_CLOSE` Job Object lifecycle;
-- Desktop owns bridge publication and process cleanup on both platforms;
-- the daemon owns plugin state, MCP health, tool synchronization, approvals, bindings,
-  audit, and run snapshots;
-- the shared renderer never receives provider stdio, path, endpoint, or secrets;
-- provider enablement remains an explicit user action.
-
-See [Bundled Embedded Cua Driver](cua-driver-bundled-embedded.md) and its
-[Detailed Design](cua-driver-bundled-embedded-detailed-design.md).
 
 ## Responsibilities
 
@@ -141,11 +127,9 @@ Desktop owns:
 - OS notifications,
 - OS keychain access,
 - update UX,
-- crash/restart affordances,
+- crash/restart affordances.
 - Computer Use picture-in-picture BrowserWindow lifecycle, screen placement, local
-  visibility preferences, capture-adapter lifecycle, and media cleanup,
-- reviewed embedded Cua Driver artifact verification, platform adapters, direct-child
-  process groups, platform readiness controllers, MCP proxies, and lease publication.
+  visibility preferences, capture-adapter lifecycle, and media cleanup.
 
 Desktop does not own:
 
@@ -157,7 +141,7 @@ Desktop does not own:
 - conversation transcript projection,
 - intent routing or target resolution,
 - runner execution,
-- model/media provider routing adapters or daemon-owned provider selection and tool policy,
+- provider adapters,
 - GitHub automation logic,
 - workspace persistence schema.
 - Computer Use session legality, stop authorization, approval state, durable audit state,
@@ -260,22 +244,35 @@ source attribution and effective specialist resolution.
 Desktop uses the same Ling Stack product model as Web, but a different surface
 treatment:
 
-| Surface | Light treatment | Dark treatment | Theme control |
+| Surface | Theme source | Client treatment | Selection |
 | --- | --- | --- | --- |
-| Web | Strict optical-white developer console | Strict dark technical console | system / light / dark |
-| Desktop | macOS glass workspace | macOS dark glass workspace | system / light / dark |
+| Web | Shared Theme Pack registry | Clear opaque product surface | fixed Theme Pack or System strategy |
+| Desktop | Same Theme Pack registry | Native window material with opaque fallback | fixed Theme Pack or System strategy |
 
 Desktop theme behavior:
 
-- Default to `system` so the app follows macOS appearance.
-- Let users manually choose `light` or `dark`; manual choice takes precedence over
-  system until reset to `system`.
+- `ling-light` and `ling-dark` are independent built-in Theme Packs. They do not
+  form two modes inside one theme.
+- Default to System selection. System light resolves `ling-light`; System dark
+  resolves `ling-dark`.
+- Selecting any Theme Pack switches to fixed mode. OS appearance changes no
+  longer replace that theme until Follow System is enabled again.
 - Keep glass, blur, rounded app-window surfaces, macOS traffic-light chrome, and local
   client affordances in Desktop.
 - Do not copy Web's strict rectangular console chrome into Desktop unless the user is in
   a dense inspector/table subview where platform-console density is useful.
 - Use shared semantic tokens for status, approval, run, provider, and health states so
   screenshots remain comparable across Web and Desktop.
+- Use the same manifest and semantic token map on macOS and Windows. Platform
+  adapters may interpret window material differently, but cannot duplicate or
+  override shared component styling.
+- If blur, vibrancy, Mica, or acrylic is unavailable or disabled, fall back to
+  the Theme Pack's opaque surfaces without changing the Theme Pack ID.
+- Desktop preload resolves and injects the validated Theme Pack before the
+  renderer's first visible frame. Theme persistence belongs to the Desktop
+  settings adapter, not to shared UI components.
+- Locally imported themes are data and approved local images only. Desktop does
+  not execute theme CSS/JavaScript or expose arbitrary filesystem APIs to the renderer.
 
 ## Daemon Lifecycle
 
@@ -305,6 +302,10 @@ export interface LingDesktopApi {
   getDaemonStatus(): Promise<DaemonDesktopStatus>;
   restartDaemon(): Promise<DaemonDesktopStatus>;
   selectWorkspaceDirectory(): Promise<{ readonly path?: string; readonly cancelled: boolean }>;
+  getThemeBootstrapState(): Promise<DesktopThemeBootstrapState>;
+  setThemeSelection(selection: ThemeSelection): Promise<DesktopThemeBootstrapState>;
+  importThemeBundle(): Promise<DesktopThemeImportResult>;
+  removeImportedTheme(themeId: string): Promise<DesktopThemeBootstrapState>;
   getSecretStatus(ref: string, purpose?: SecretPurpose): Promise<SecretStatus>;
   openExternal(url: string): Promise<void>;
   showNotification(input: DesktopNotificationInput): Promise<void>;
@@ -314,6 +315,11 @@ export interface LingDesktopApi {
 
 Do not expose raw Node APIs, arbitrary filesystem reads/writes, shell execution, or raw
 secret values to the renderer.
+
+Theme APIs return validated manifest summaries and client-safe asset handles, not raw
+filesystem paths or archive contents. Import opens a native file picker in the main
+process, validates and stages the bundle, then publishes it atomically. Removing an
+active theme first resolves an internal fallback and never reloads the renderer.
 
 ## Keychain Boundary
 

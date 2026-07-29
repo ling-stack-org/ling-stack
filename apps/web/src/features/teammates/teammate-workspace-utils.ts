@@ -2,20 +2,12 @@ import type { Translate } from "../../i18n.js";
 import { composerWorkspaceFileParts, createLocalComposerAssetId, type PendingAttachmentItem } from "../../shared/components/index.js";
 import type {
   AiTeammate,
-  Channel,
   ChannelMessageFileRef,
   DirectWorkspaceResponse,
-  EffectiveTeammateSkill,
-  MemoryHealthReport,
-  MemoryObject,
-  MemoryReviewAction,
-  MemoryReviewMode,
-  SkillSourceSnapshot,
   TeammateDirectLinkPreview,
   TeammateDirectMessage,
   TeammateDirectReplyIntervention,
   TeammatePrivateAttachment,
-  TeammateSkillBinding,
 } from "../../types.js";
 
 export interface TeammateSettingsForm {
@@ -27,28 +19,6 @@ export interface TeammateSettingsForm {
   readonly hidden: boolean;
   readonly systemPrompt: string;
   readonly appendSystemPromptText: string;
-}
-
-export interface TeammateSkillRowModel {
-  readonly id: string;
-  readonly skill: import("@ling-stack/core/skill-types").SkillDefinition | undefined;
-  readonly binding: TeammateSkillBinding | undefined;
-  readonly effectiveSkill: EffectiveTeammateSkill | undefined;
-  readonly sourceSnapshot: SkillSourceSnapshot | undefined;
-}
-
-export type SkillBindingFilter = "all" | "bound" | "executable" | "blocked" | "available";
-
-export function downloadTextFile(fileName: string, content: string): void {
-  const url = URL.createObjectURL(new Blob([content], { type: "text/markdown;charset=utf-8" }));
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = fileName;
-  anchor.rel = "noopener";
-  document.body.append(anchor);
-  anchor.click();
-  anchor.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 export function truncateText(value: string, maxLength: number): string {
@@ -67,168 +37,6 @@ export function formatBytes(sizeBytes: number): string {
     return `${(sizeBytes / 1024).toFixed(1)} KB`;
   }
   return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-export function filterTeammateSkillRows(
-  rows: readonly TeammateSkillRowModel[],
-  searchQuery: string,
-  filter: SkillBindingFilter,
-): readonly TeammateSkillRowModel[] {
-  const normalizedQuery = searchQuery.trim().toLowerCase();
-  return rows
-    .filter((row) => {
-      if (filter === "bound" && !row.binding?.enabled) {
-        return false;
-      }
-      if (filter === "executable" && !row.effectiveSkill?.executable) {
-        return false;
-      }
-      if (filter === "blocked" && (!row.binding?.enabled || row.effectiveSkill?.executable)) {
-        return false;
-      }
-      if (filter === "available" && row.binding) {
-        return false;
-      }
-      if (!normalizedQuery) {
-        return true;
-      }
-      const searchable = [
-        row.id,
-        row.skill?.name ?? "",
-        row.skill?.summary ?? "",
-        ...(row.skill?.requiredTools ?? []),
-        ...(row.skill?.requiredProviderCapabilities ?? []),
-        row.sourceSnapshot?.sourcePath ?? "",
-        row.sourceSnapshot?.upstreamSkillPath ?? "",
-        row.sourceSnapshot?.sourceChecksum ?? "",
-        ...(row.sourceSnapshot?.warnings.map((warning) => `${warning.code} ${warning.message}`) ?? []),
-        ...(row.effectiveSkill?.blockedReasons.map((reason) => `${reason.code} ${reason.message} ${(reason.missing ?? []).join(" ")}`) ?? []),
-      ].join(" ").toLowerCase();
-      return searchable.includes(normalizedQuery);
-    })
-    .sort((left, right) => {
-      const leftBoundRank = left.binding?.enabled ? 0 : left.binding ? 1 : 2;
-      const rightBoundRank = right.binding?.enabled ? 0 : right.binding ? 1 : 2;
-      if (leftBoundRank !== rightBoundRank) {
-        return leftBoundRank - rightBoundRank;
-      }
-      return (left.skill?.name ?? left.id).localeCompare(right.skill?.name ?? right.id);
-    });
-}
-
-export function teammateSkillFilterLabel(filter: SkillBindingFilter, t: Translate): string {
-  if (filter === "bound") {
-    return t("Bound");
-  }
-  if (filter === "executable") {
-    return t("Executable");
-  }
-  if (filter === "blocked") {
-    return t("Blocked");
-  }
-  if (filter === "available") {
-    return t("Bindable");
-  }
-  return t("All");
-}
-
-export function skillExecutionState(
-  binding: TeammateSkillBinding | undefined,
-  effectiveSkill: EffectiveTeammateSkill | undefined,
-  t: Translate,
-): { readonly label: string; readonly tone: "executable" | "blocked" | "disabled" | "available" } {
-  if (!binding) {
-    return { label: t("Bindable"), tone: "available" };
-  }
-  if (!binding.enabled) {
-    return { label: t("Disabled"), tone: "disabled" };
-  }
-  if (effectiveSkill?.executable) {
-    return { label: t("Executable"), tone: "executable" };
-  }
-  return { label: t("Blocked"), tone: "blocked" };
-}
-
-export function memoryOwnerLabel(memory: MemoryObject, channelsById: ReadonlyMap<string, Channel>, teammate: AiTeammate, t: Translate): string {
-  if (memory.scopeType === "channel") {
-    return channelsById.get(memory.ownerId)?.name ?? memory.ownerId;
-  }
-  if (memory.scopeType === "teammate" && memory.ownerId === teammate.id) {
-    return teammate.displayName;
-  }
-  if (memory.scopeType === "workspace") {
-    return t("Workspace");
-  }
-  return memory.ownerId;
-}
-
-export function truncateMemoryBody(value: string, limit = 220): string {
-  const normalized = value.replace(/\s+/g, " ").trim();
-  return normalized.length > limit ? `${normalized.slice(0, limit - 3)}...` : normalized;
-}
-
-export function memoryReviewModeDescription(mode: MemoryReviewMode): string {
-  switch (mode) {
-    case "conservative":
-      return "Most extracted memories stay candidates until reviewed.";
-    case "balanced":
-      return "Low-risk same-scope memories can become active; high-impact items still need review.";
-    case "fast":
-      return "Same-scope memories auto-activate more often; cross-scope and sensitive items still need review.";
-  }
-}
-
-export function memoryReviewActionMessage(action: MemoryReviewAction): string {
-  switch (action) {
-    case "approve":
-      return "Memory approved";
-    case "edit_and_approve":
-      return "Memory edited and approved";
-    case "keep_candidate":
-      return "Memory kept as candidate";
-    case "reject":
-      return "Memory rejected";
-    case "archive":
-      return "Memory archived";
-    case "quarantine":
-      return "Memory quarantined";
-  }
-}
-
-export function memoryHealthStatus(report: MemoryHealthReport | undefined): string {
-  if (!report) {
-    return "optional";
-  }
-  if (report.summary.findings.critical > 0) {
-    return "failed";
-  }
-  if (report.summary.findings.warning > 0) {
-    return "paused";
-  }
-  return "active";
-}
-
-export function memoryHealthFindingTitle(kind: MemoryHealthReport["findings"][number]["kind"]): string {
-  switch (kind) {
-    case "missing_source_refs":
-      return "Missing source";
-    case "expired_candidate":
-      return "Expired candidate";
-    case "volatile_without_verify_before_use":
-      return "Needs verification";
-    case "duplicate_candidate":
-      return "Duplicate candidate";
-    case "superseded_active_memory":
-      return "Superseded active memory";
-    case "secret_adjacent_recallable":
-      return "Secret-adjacent recall";
-    case "authority_changing_claim":
-      return "Authority-changing claim";
-    case "stale_candidate":
-      return "Stale candidate";
-    case "high_review_backlog":
-      return "High review backlog";
-  }
 }
 
 export function normalizeManualSkillId(value: string): string {

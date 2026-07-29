@@ -1,0 +1,27 @@
+.run-guidance-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.run-repair-hint.ling-ui-inline-feedback {
+  width: 100%;
+}
+
+.run-repair-body {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--ling-space-4);
+}
+
+.run-repair-copy {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 980px) {
+  .run-repair-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

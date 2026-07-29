@@ -10,6 +10,13 @@ export interface DesktopResourcePaths {
   readonly previewIndexPath: string;
 }
 
+export class DesktopResourceResolutionError extends Error {
+  constructor(cause: unknown) {
+    super("desktop_resource_missing", { cause });
+    this.name = "DesktopResourceResolutionError";
+  }
+}
+
 export async function resolveDesktopResourcePaths(
   app: Pick<App, "getAppPath" | "isPackaged">,
   packagedResourcesPath: string = process.resourcesPath,
@@ -29,7 +36,11 @@ export async function resolveDesktopResourcePaths(
         daemonEntryPath: resolve(appPath, "dist/daemon/cli.mjs"),
         previewIndexPath: resolve(appPath, "dist/renderer/computer-use-preview/index.html"),
       };
-  await Promise.all([access(paths.webIndexPath), access(paths.daemonEntryPath), access(paths.previewIndexPath)]);
+  try {
+    await Promise.all([access(paths.webIndexPath), access(paths.daemonEntryPath), access(paths.previewIndexPath)]);
+  } catch (error) {
+    throw new DesktopResourceResolutionError(error);
+  }
   return paths;
 }
 

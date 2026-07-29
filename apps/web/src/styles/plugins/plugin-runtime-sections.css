@@ -1,0 +1,49 @@
+.plugin-capability-list,
+.plugin-runtime-content {
+  display: grid;
+  gap: var(--ling-space-5);
+}
+
+.plugin-capability-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ling-space-5);
+  min-width: 0;
+}
+
+.plugin-capability-row > span {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
+.plugin-capability-row strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+}
+
+.plugin-capability-row small,
+.plugin-detail-empty,
+.plugin-runtime-policy {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+.plugin-runtime-group {
+  display: grid;
+  gap: var(--ling-space-3);
+}
+
+.plugin-runtime-group > strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-xs);
+}
+
+.plugin-runtime-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--ling-space-4);
+}

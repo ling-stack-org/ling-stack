@@ -1,0 +1,218 @@
+.ling-ui-dialog-overlay,
+.ling-ui-drawer-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--ling-z-dialog);
+  background: var(--ling-overlay-scrim);
+}
+
+.ling-ui-dialog-overlay[data-state],
+.ling-ui-drawer-overlay[data-state] {
+  z-index: var(--ling-z-dialog);
+}
+
+.ling-ui-dialog-overlay[data-state="open"],
+.ling-ui-drawer-overlay[data-state="open"] {
+  animation: ling-ui-overlay-presence var(--ling-motion-standard) var(--ling-ease-standard) both;
+}
+
+.ling-ui-dialog-overlay[data-state="closed"],
+.ling-ui-drawer-overlay[data-state="closed"] {
+  animation: ling-ui-overlay-presence var(--ling-motion-fast) var(--ling-ease-exit) reverse both;
+}
+
+.ling-ui-dialog-content,
+.ling-ui-drawer-content {
+  z-index: calc(var(--ling-z-dialog) + 1);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  box-sizing: border-box;
+  min-width: 0;
+  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
+  overflow: hidden;
+  border: 1px solid var(--ling-border-default);
+  background: var(--ling-bg-elevated);
+  color: var(--ling-text-default);
+  box-shadow: var(--ling-shadow-overlay);
+}
+
+.ling-ui-dialog-content {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  border-radius: var(--ling-radius-lg);
+  transform: translate(-50%, -50%);
+}
+
+.ling-ui-dialog-content[data-size="sm"] {
+  width: min(360px, calc(100vw - 32px));
+}
+
+.ling-ui-dialog-content[data-size="md"] {
+  width: min(520px, calc(100vw - 32px));
+}
+
+.ling-ui-dialog-content[data-size="lg"] {
+  width: min(720px, calc(100vw - 32px));
+}
+
+.ling-ui-dialog-content[data-state="open"] {
+  animation: ling-ui-dialog-presence var(--ling-motion-standard) var(--ling-ease-enter) both;
+}
+
+.ling-ui-dialog-content[data-state="closed"] {
+  animation: ling-ui-dialog-presence var(--ling-motion-fast) var(--ling-ease-exit) reverse both;
+}
+
+.ling-ui-drawer-content {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  max-height: none;
+  border-width: 0 0 0 1px;
+  border-radius: 0;
+}
+
+.ling-ui-drawer-content[data-size="sm"] {
+  width: min(320px, calc(100vw - 16px));
+}
+
+.ling-ui-drawer-content[data-size="md"] {
+  width: min(400px, calc(100vw - 16px));
+}
+
+.ling-ui-drawer-content[data-size="lg"] {
+  width: min(480px, calc(100vw - 16px));
+}
+
+.ling-ui-drawer-content[data-state="open"] {
+  animation: ling-ui-drawer-presence var(--ling-motion-slow) var(--ling-ease-enter) both;
+}
+
+.ling-ui-drawer-content[data-state="closed"] {
+  animation: ling-ui-drawer-presence var(--ling-motion-standard) var(--ling-ease-exit) reverse both;
+}
+
+.ling-ui-dialog-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--ling-space-6);
+  min-width: 0;
+  padding: var(--ling-space-7) var(--ling-space-8) var(--ling-space-6);
+  border-bottom: 1px solid var(--ling-border-default);
+}
+
+.ling-ui-dialog-title-block {
+  display: grid;
+  gap: var(--ling-space-2);
+  min-width: 0;
+}
+
+.ling-ui-dialog-title,
+.ling-ui-dialog-description {
+  margin: 0;
+  letter-spacing: 0;
+}
+
+.ling-ui-dialog-title {
+  color: var(--ling-text-strong);
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 22px;
+}
+
+.ling-ui-dialog-description {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-sm);
+  line-height: var(--ling-line-sm);
+}
+
+.ling-ui-dialog-content .ling-ui-dialog-header .ling-ui-button[data-icon-only="true"],
+.ling-ui-drawer-content .ling-ui-dialog-header .ling-ui-button[data-icon-only="true"] {
+  width: var(--ling-control-sm);
+  min-width: var(--ling-control-sm);
+  height: var(--ling-control-sm);
+  min-height: var(--ling-control-sm);
+}
+
+.ling-ui-dialog-body {
+  min-width: 0;
+  min-height: 0;
+  padding: var(--ling-space-6) var(--ling-space-8);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.ling-ui-dialog-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--ling-space-4);
+  min-width: 0;
+  padding: var(--ling-space-5) var(--ling-space-8) var(--ling-space-6);
+  border-top: 1px solid var(--ling-border-default);
+  background: var(--ling-bg-elevated);
+}
+
+.ling-ui-dialog-content:focus-visible,
+.ling-ui-drawer-content:focus-visible {
+  outline: 2px solid var(--ling-border-focus);
+  outline-offset: -2px;
+}
+
+@keyframes ling-ui-overlay-presence {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes ling-ui-dialog-presence {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + 8px)) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+@keyframes ling-ui-drawer-presence {
+  from {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@media (max-width: 560px) {
+  .ling-ui-dialog-header,
+  .ling-ui-dialog-body,
+  .ling-ui-dialog-footer {
+    padding-right: var(--ling-space-6);
+    padding-left: var(--ling-space-6);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ling-ui-dialog-overlay[data-state],
+  .ling-ui-drawer-overlay[data-state],
+  .ling-ui-dialog-content[data-state],
+  .ling-ui-drawer-content[data-state] {
+    animation: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .ling-ui-dialog-content,
+  .ling-ui-drawer-content {
+    border-color: CanvasText;
+    box-shadow: none;
+  }
+}

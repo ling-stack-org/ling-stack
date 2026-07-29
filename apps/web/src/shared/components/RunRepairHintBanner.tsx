@@ -1,6 +1,7 @@
 import { History, PlugZap, ShieldCheck } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import type { RunRepairHint, RunRepairTarget } from "../../lib/run-evidence.js";
+import { Button, InlineFeedback } from "../ui/index.js";
 
 export function RunRepairHintBanner({
   hint,
@@ -34,19 +35,20 @@ export function RunRepairHintBanner({
           : undefined;
 
   return (
-    <div className={`run-repair-hint ${hint.target}${compact ? " compact" : ""}`}>
-      <span className="run-repair-icon">{runRepairIcon(hint.target)}</span>
-      <span className="run-repair-copy">
-        <strong>{t(hint.title)}</strong>
-        <small>{t(hint.detail)}</small>
+    <InlineFeedback
+      className={`run-repair-hint ${hint.target}${compact ? " compact" : ""}`}
+      title={t(hint.title)}
+      tone={hint.target === "run" ? "danger" : "warning"}
+    >
+      <span className="run-repair-body">
+        <span className="run-repair-copy">{t(hint.detail)}</span>
+        {onAction ? (
+          <Button size="sm" variant="secondary" leadingIcon={runRepairIcon(hint.target)} onClick={onAction}>
+            {t(actionLabel)}
+          </Button>
+        ) : null}
       </span>
-      {onAction ? (
-        <button className="secondary-button compact-button" type="button" onClick={onAction}>
-          {runRepairIcon(hint.target)}
-          {t(actionLabel)}
-        </button>
-      ) : null}
-    </div>
+    </InlineFeedback>
   );
 }
 

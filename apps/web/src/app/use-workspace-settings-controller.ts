@@ -6,6 +6,7 @@ import { getEffectiveConfig } from "../api/config.js";
 import { updateWorkspaceSettings } from "../api/workspace-settings.js";
 import type {
   ChannelCreateFormState,
+  ErrorPresentationOptions,
   EffectiveConfigResponse,
   RunFormState,
   UpdateWorkspaceSettingsRequest,
@@ -13,12 +14,27 @@ import type {
 } from "../types.js";
 import { resolveAuthorizationMode, resolveWorkspaceAccessMode } from "../lib/conversation-authorization.js";
 import { clearSavedWorkspaceCwd, readSavedWorkspaceCwd } from "../lib/local-storage.js";
+import {
+  domainErrorMessage,
+  type FocusedDomainError,
+  type FocusedErrorRequest,
+  useFocusedDomainErrorOwner,
+} from "./use-focused-domain-error-owner.js";
+
+export type WorkspaceSettingsErrorAction = `patch:${string}` | "sync-interface";
+export type WorkspaceSettingsError = FocusedDomainError<"workspace-settings", WorkspaceSettingsErrorAction>;
 
 export interface WorkspaceSettingsController {
   readonly workspaceSettings: WorkspaceSettings | undefined;
   readonly effectiveConfig: EffectiveConfigResponse | undefined;
+  readonly errors: readonly WorkspaceSettingsError[];
+  readonly error: WorkspaceSettingsError | undefined;
+  readonly clearError: () => void;
   readonly updateWorkspaceCwd: (cwd: string) => void;
-  readonly patchWorkspaceSettings: (patch: UpdateWorkspaceSettingsRequest) => Promise<WorkspaceSettings | undefined>;
+  readonly patchWorkspaceSettings: (
+    patch: UpdateWorkspaceSettingsRequest,
+    options?: ErrorPresentationOptions,
+  ) => Promise<WorkspaceSettings | undefined>;
 }
 
 export function useWorkspaceSettingsController(input: {
@@ -31,7 +47,6 @@ export function useWorkspaceSettingsController(input: {
   readonly setThemePreference: (preference: ThemePreference) => void;
   readonly setChannelForm: Dispatch<SetStateAction<ChannelCreateFormState>>;
   readonly resetForCwd: (cwd: string) => void;
-  readonly setErrorMessage: (message: string) => void;
 }): WorkspaceSettingsController {
   const [workspaceSettings, setWorkspaceSettings] = useState<WorkspaceSettings | undefined>();
   const [effectiveConfig, setEffectiveConfig] = useState<EffectiveConfigResponse | undefined>();
@@ -39,6 +54,9 @@ export function useWorkspaceSettingsController(input: {
   const interfaceSettingsSyncRef = useRef<{ readonly cwd: string; readonly theme: ThemePreference; readonly locale: Locale } | undefined>();
   const currentLocaleRef = useRef(input.locale);
   const workspaceCwd = input.form.cwd.trim();
+  const errorOwner = useFocusedDomainErrorOwner<"workspace-settings", WorkspaceSettingsErrorAction>(
+    workspaceCwd || "workspace:unavailable",
+  );
 
   useEffect(() => {
     currentLocaleRef.current = input.locale;
@@ -62,12 +80,19 @@ export function useWorkspaceSettingsController(input: {
     }));
   }
 
-  async function patchWorkspaceSettings(patch: UpdateWorkspaceSettingsRequest): Promise<WorkspaceSettings | undefined> {
+  async function patchWorkspaceSettings(
+    patch: UpdateWorkspaceSettingsRequest,
+    options?: ErrorPresentationOptions,
+  ): Promise<WorkspaceSettings | undefined> {
     if (!workspaceCwd) {
       return undefined;
     }
+    const action = workspaceSettingsPatchAction(patch);
+    const request = errorOwner.begin("workspace-settings", workspaceCwd, action);
+    if (options?.errorOwner !== "caller") errorOwner.clear(request);
     try {
       const response = await updateWorkspaceSettings(workspaceCwd, patch);
+      if (!isCurrentMutation(request)) return response.settings;
       setWorkspaceSettings(response.settings);
       if ("defaultProviderPresetId" in patch) {
         input.setForm((current) => ({
@@ -88,11 +113,23 @@ export function useWorkspaceSettingsController(input: {
           ? { ...current, layers: { ...current.layers, workspaceSettings: response.settings } }
           : current,
       );
+      if (options?.errorOwner !== "caller") errorOwner.clear(request);
       return response.settings;
     } catch (error: unknown) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
+      if (options?.errorOwner === "caller") {
+        throw error;
+      }
+      if (isCurrentMutation(request)) {
+        errorOwner.report(request, { scope: "mutation", message: domainErrorMessage(error) });
+      }
       return undefined;
     }
+  }
+
+  function isCurrentMutation(
+    request: FocusedErrorRequest<"workspace-settings", WorkspaceSettingsErrorAction>,
+  ): boolean {
+    return errorOwner.isCurrent(request);
   }
 
   useEffect(() => {
@@ -250,8 +287,11 @@ export function useWorkspaceSettingsController(input: {
       return;
     }
     const timeout = globalThis.setTimeout(() => {
+      const request = errorOwner.begin("workspace-settings", workspaceCwd, "sync-interface");
+      errorOwner.clear(request);
       void updateWorkspaceSettings(workspaceCwd, { theme: input.themePreference, locale: input.locale })
         .then((response) => {
+          if (!isCurrentMutation(request)) return;
           setWorkspaceSettings(response.settings);
           setEffectiveConfig((current) =>
             current && current.cwd === workspaceCwd
@@ -261,8 +301,13 @@ export function useWorkspaceSettingsController(input: {
           interfaceSettingsSyncRef.current = { cwd: workspaceCwd, theme: input.themePreference, locale: input.locale };
           clearSavedThemePreference();
           clearSavedLocale();
+          errorOwner.clear(request);
         })
-        .catch((error: unknown) => input.setErrorMessage(error instanceof Error ? error.message : String(error)));
+        .catch((error: unknown) => {
+          if (isCurrentMutation(request)) {
+            errorOwner.report(request, { scope: "mutation", message: domainErrorMessage(error) });
+          }
+        });
     }, 250);
     return () => globalThis.clearTimeout(timeout);
   }, [input.daemonHealthy, input.locale, input.themePreference, workspaceCwd]);
@@ -270,9 +315,17 @@ export function useWorkspaceSettingsController(input: {
   return {
     workspaceSettings,
     effectiveConfig,
+    errors: errorOwner.errors() as readonly WorkspaceSettingsError[],
+    error: errorOwner.latest() as WorkspaceSettingsError | undefined,
+    clearError: errorOwner.clearAll,
     updateWorkspaceCwd,
     patchWorkspaceSettings,
   };
+}
+
+function workspaceSettingsPatchAction(patch: UpdateWorkspaceSettingsRequest): WorkspaceSettingsErrorAction {
+  const fields = Object.keys(patch).sort().join("+") || "empty";
+  return `patch:${fields}`;
 }
 
 function syncRunFormPermissionDefaults(current: RunFormState, settings: WorkspaceSettings): RunFormState {

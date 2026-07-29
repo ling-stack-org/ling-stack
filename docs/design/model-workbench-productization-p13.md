@@ -71,8 +71,10 @@ and last-check timestamp are not default-row content.
 - The contextual repair/default action remains a labeled button. Do not duplicate Check
   when Check is already the primary action, or Edit when Add API key already opens Edit.
 - More contains only Clear default, Disable, and Delete when applicable.
-- Rebalance the table toward actions at approximately `35 / 18 / 19 / 28` percent so the
-  action column is useful at both desktop acceptance widths.
+- Keep the Actions column at a fixed `184px`; align its header and action group to the right,
+  and let Model absorb the released width so long model names remain readable.
+- Do not add a heavy vertical divider before Actions. Column padding and row rhythm provide
+  enough separation at both desktop acceptance widths.
 
 ## Product State Model
 

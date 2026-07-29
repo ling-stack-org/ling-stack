@@ -1,0 +1,43 @@
+.runs-recording-dialog {
+  width: min(760px, calc(100vw - 32px));
+  max-height: min(820px, calc(100vh - 32px));
+}
+
+.runs-recording-body {
+  min-height: 0;
+  overflow: auto;
+}
+
+.runs-recording-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ling-space-5);
+  min-width: 0;
+}
+
+.runs-recording-wide {
+  grid-column: 1 / -1;
+}
+
+.runs-recording-tokens {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ling-space-3);
+  min-width: 0;
+}
+
+.runs-recording-tokens span {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 760px) {
+  .runs-recording-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .runs-recording-wide {
+    grid-column: auto;
+  }
+}

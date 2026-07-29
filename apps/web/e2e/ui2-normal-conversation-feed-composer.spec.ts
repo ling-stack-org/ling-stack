@@ -1,0 +1,466 @@
+import { expect, test, type Locator, type Page } from "@playwright/test";
+import { mkdir } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import { mockDaemon } from "./support/mock-daemon";
+import { expectMessageFrameContained } from "./support/message-frame-assertions";
+import { createBaseState, createChatProvider, cwd, type MockState } from "./support/mock-state";
+
+const evidenceDirectory = fileURLToPath(new URL(
+  "../../../docs/design/ui2.0升级/evidence/conversations/normal-conversation-feed-composer/",
+  import.meta.url,
+));
+const configuredAvatarDataUrl = `data:image/svg+xml;base64,${Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><circle cx="32" cy="32" r="32" fill="#0e7a63"/></svg>').toString("base64")}`;
+
+for (const fixture of [
+  { theme: "light" as const, width: 1440, height: 960 },
+  { theme: "dark" as const, width: 1280, height: 800 },
+]) {
+  test(`normal conversation feed owns history and active states at ${fixture.width}x${fixture.height} ${fixture.theme}`, async ({ page }) => {
+    await prepareSurface(page, fixture.theme, fixture.width, fixture.height);
+    const runtimeErrors = collectRuntimeErrors(page);
+    const state = createBaseState({ approvalStatus: "expired" });
+    state.userProfile = {
+      ...state.userProfile,
+      avatarDataUrl: fixture.theme === "light" ? configuredAvatarDataUrl : undefined,
+    };
+    installProviders(state);
+    const threadId = installFeedStateFixture(state);
+    await mockDaemon(page, state);
+    await page.goto("/");
+    await openConversation(page, "UI2 feed state matrix");
+
+    const conversation = page.getByLabel("Conversation page");
+    const feedFrame = conversation.locator(".normal-conversation-feed-frame");
+    const feed = conversation.getByLabel("Conversation messages", { exact: true });
+    const composerStack = conversation.locator(".normal-conversation-composer-stack");
+    const composer = conversation.getByLabel("New conversation composer");
+
+    await expect(feed.locator(".normal-conversation-message-row")).toHaveCount(40);
+    await expect(feed.getByText("Ling Agent is thinking...", { exact: true })).toHaveCount(2);
+    await expect(feed.locator('.normal-conversation-message-error[data-tone="danger"]')).toContainText("Provider timed out while generating the response.");
+    await expect(feed.locator(".conversation-attachment-chip")).toContainText("release-checklist.pdf");
+    await expect(feed.getByRole("button", { name: "Retry response" })).toBeVisible();
+    await expect(composer.getByRole("button", { name: "Stop" })).toBeVisible();
+
+    await expectAlignedColumns(feedFrame, composerStack);
+    await expect.poll(() => feed.evaluate((element) => getComputedStyle(element).overflowY)).toBe("auto");
+    await expect.poll(() => feedFrame.evaluate((element) => getComputedStyle(element).overflowY)).toBe("hidden");
+    await expect.poll(() => conversation.evaluate((element) => getComputedStyle(element).overflowY)).toBe("hidden");
+
+    const composerBefore = await composer.boundingBox();
+    await feed.evaluate((element) => {
+      element.scrollTop = 0;
+      element.dispatchEvent(new Event("scroll"));
+    });
+    const latest = conversation.getByRole("button", { name: "Jump to latest message" });
+    await expect(latest).toBeVisible();
+    expect(Math.abs(((await composer.boundingBox())?.y ?? 0) - (composerBefore?.y ?? 0))).toBeLessThanOrEqual(1);
+    await latest.click();
+    await expect.poll(() => feed.evaluate((element) =>
+      Math.max(0, element.scrollHeight - element.scrollTop - element.clientHeight)
+    )).toBeLessThanOrEqual(2);
+    await expect(latest).toHaveCount(0);
+
+    const ownMessage = feed.locator(".normal-conversation-message-row.local-user").filter({ hasText: "UI2 history prompt 20" });
+    const peerMessage = feed.locator(".normal-conversation-message-row.ai-teammate").last();
+    await expect(ownMessage).toHaveClass(/message-bubble-chat/);
+    await expect(ownMessage).toHaveClass(/message-bubble-own/);
+    await expect(peerMessage).toHaveClass(/message-bubble-chat/);
+    await expect(peerMessage).toHaveClass(/message-bubble-peer/);
+    const userAvatar = fixture.theme === "light"
+      ? ownMessage.locator(":scope > .user-profile-avatar")
+      : ownMessage.locator(":scope > .avatar-initial");
+    if (fixture.theme === "light") {
+      await expect(userAvatar).toHaveAttribute("src", configuredAvatarDataUrl);
+    } else {
+      await expect(userAvatar).toBeVisible();
+      await expect(ownMessage.locator(":scope > .user-profile-avatar")).toHaveCount(0);
+    }
+    const agentAvatar = peerMessage.locator(":scope > .normal-conversation-agent-avatar");
+    await expect(agentAvatar).toHaveAttribute("src", "/icons/ling-stack-gpt-image-2-icon.png");
+    await expectSquareAvatar(userAvatar);
+    await expectSquareAvatar(agentAvatar);
+    await expectAvatarAlignedWithFirstContentLine(ownMessage, userAvatar, "own");
+    await expectAvatarAlignedWithFirstContentLine(peerMessage, agentAvatar, "peer");
+    await expectMessageFrameContained(ownMessage);
+    await expectMessageFrameContained(peerMessage);
+
+    const composerTheme = await composer.evaluate((element) => {
+      const probe = document.createElement("span");
+      probe.style.color = getComputedStyle(document.documentElement).getPropertyValue("--ling-bg-composer");
+      document.body.append(probe);
+      const expected = getComputedStyle(probe).color;
+      probe.remove();
+      return {
+        actual: getComputedStyle(element).backgroundColor,
+        expected,
+        borderRadius: getComputedStyle(element).borderRadius,
+      };
+    });
+    expect(composerTheme.actual).toBe(composerTheme.expected);
+    expect(composerTheme.borderRadius).toBe("12px");
+    await expectNoDocumentOverflow(page);
+    await captureEvidence(page, `${fixture.width}x${fixture.height}-ling-${fixture.theme}-normal-feed-active-states.png`);
+    expect(state.threads.some((thread) => thread.id === threadId)).toBe(true);
+    expect(runtimeErrors).toEqual([]);
+  });
+}
+
+test("normal conversation composer uses Radix menus and preserves draft, upload, and sending state", async ({ page }) => {
+  await prepareSurface(page, "light", 1440, 960);
+  const runtimeErrors = collectRuntimeErrors(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  installProviders(state);
+  installStableConversationFixture(state);
+  state.conversationStreamDelayMs = 650;
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openConversation(page, "UI2 composer controls");
+
+  const conversation = page.getByLabel("Conversation page");
+  const composer = conversation.getByLabel("New conversation composer");
+  const input = composer.getByRole("textbox", { name: "Conversation message" });
+  const composerBeforeFocus = await composer.boundingBox();
+  await input.fill("Keep this draft while menus open");
+  const composerAfterFocus = await composer.boundingBox();
+  expect(Math.abs((composerAfterFocus?.width ?? 0) - (composerBeforeFocus?.width ?? 0))).toBeLessThanOrEqual(1);
+
+  const permissionTrigger = composer.getByRole("button", { name: /Selected permission preset/ });
+  await permissionTrigger.click();
+  const permissionMenu = page.locator('[data-ling-overlay="menu"]').filter({ has: page.getByRole("menuitemradio", { name: /Workspace write/ }) });
+  await expect(permissionMenu).toBeVisible();
+  await expect(permissionMenu.getByRole("menuitemradio")).toHaveCount(3);
+  await page.keyboard.press("Escape");
+  await expect(permissionMenu).toHaveCount(0);
+  await expect(permissionTrigger).toBeFocused();
+
+  const thinkingTrigger = composer.getByRole("button", { name: "Selected thinking mode Off" });
+  await thinkingTrigger.click();
+  const thinkingMenu = page.locator(".conversation-thinking-menu");
+  await expect(thinkingMenu).toHaveAttribute("data-ling-overlay", "menu");
+  await expect(thinkingMenu.getByRole("menuitemradio")).toHaveText(["Off", "Minimal", "Low", "Medium", "High", "XHigh"]);
+  await thinkingMenu.getByRole("menuitemradio", { name: "High", exact: true }).click();
+  await expect(composer.getByRole("button", { name: "Selected thinking mode High" })).toBeFocused();
+
+  const modelTrigger = composer.getByRole("button", { name: /Selected model gpt-5\.5/ });
+  await modelTrigger.click();
+  const modelMenu = page.locator(".conversation-model-menu");
+  await expect(modelMenu).toHaveAttribute("data-ling-overlay", "menu");
+  const modelSearch = modelMenu.getByRole("textbox", { name: "Search models" });
+  await expect(modelSearch).toBeFocused();
+  await expectInputContained(modelSearch, modelMenu.locator(".conversation-model-search"));
+  await captureEvidence(page, "1440x960-ling-light-normal-composer-model-menu.png");
+  await modelSearch.fill("sonnet");
+  await expect(modelMenu.getByRole("menuitemradio")).toHaveCount(1);
+  await modelMenu.getByRole("menuitemradio", { name: /claude-sonnet-4/ }).click();
+  await expect(composer.getByRole("button", { name: /Selected model claude-sonnet-4/ })).toBeFocused();
+
+  await composer.locator('input[type="file"]').setInputFiles({
+    name: "composer-evidence.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("UI 2.0 composer evidence", "utf8"),
+  });
+  const pendingAssets = composer.getByLabel("Pending message assets");
+  await expect(pendingAssets).toContainText("composer-evidence.txt");
+  await expect(input).toHaveAttribute("data-value", "Keep this draft while menus open");
+
+  await composer.getByRole("button", { name: "Send" }).click();
+  const send = composer.getByRole("button", { name: "Send" });
+  await expect(send).toBeDisabled();
+  await expect(send.locator(".ling-ui-spinner")).toHaveCount(1);
+  await expect(permissionTrigger).toBeDisabled();
+  await expect(conversation.getByText("Keep this draft while menus open", { exact: true })).toBeVisible({ timeout: 5_000 });
+  await expect(send.locator(".ling-ui-spinner")).toHaveCount(0, { timeout: 5_000 });
+  await expect(permissionTrigger).toBeEnabled();
+  await expect(send).toBeDisabled();
+  await expect(pendingAssets).toHaveCount(0);
+  await expectNoDocumentOverflow(page);
+  expect(runtimeErrors).toEqual([]);
+});
+
+test("normal conversation replacement retry keeps the original idempotency key", async ({ page }) => {
+  await prepareSurface(page, "dark", 1280, 800);
+  const state = createBaseState({ approvalStatus: "expired" });
+  installProviders(state);
+  installFeedStateFixture(state);
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openConversation(page, "UI2 feed state matrix");
+
+  const conversation = page.getByLabel("Conversation page");
+  const retry = conversation.getByRole("button", { name: "Retry response" });
+  await retry.click();
+  await expect.poll(() => state.lastConversationMessageEditRequest?.idempotencyKey).toBe("ui2-replacement-idempotency");
+  await expect(retry).toHaveCount(0);
+  await expect(conversation).toContainText("Ling Agent response: UI2 history prompt 17");
+});
+
+function installProviders(state: MockState): void {
+  const lastCheck = {
+    ok: true,
+    code: "ready",
+    message: "Provider is reachable.",
+    checkedAt: "2026-07-19T00:00:00.000Z",
+  };
+  state.providers = [
+    createChatProvider({
+      id: "provider_ui2_normal_primary",
+      displayName: "Local Relay",
+      model: "gpt-5.5",
+      thinkingModes: ["minimal", "low", "medium", "high", "xhigh"],
+      lastCheck,
+    }),
+    createChatProvider({
+      id: "provider_ui2_normal_sonnet",
+      displayName: "Sonnet",
+      providerId: "anthropic",
+      model: "claude-sonnet-4",
+      thinkingModes: ["low", "high"],
+      lastCheck,
+    }),
+  ];
+  state.workspaceSettings.defaultProviderPresetId = "provider_ui2_normal_primary";
+}
+
+function installFeedStateFixture(state: MockState): string {
+  const threadId = "thread_ui2_normal_feed_matrix";
+  const createdAt = "2026-07-19T03:00:00.000Z";
+  const turns = Array.from({ length: 20 }, (_, index) => {
+    const turnNumber = index + 1;
+    const turnId = `turn_ui2_normal_feed_${turnNumber}`;
+    const runId = `run_ui2_normal_feed_${turnNumber}`;
+    const timestamp = new Date(Date.UTC(2026, 6, 19, 3, index, 0)).toISOString();
+    const status = turnNumber === 18 ? "queued" : turnNumber === 19 ? "failed" : turnNumber === 20 ? "running" : "succeeded";
+    state.turnRunLinks.push({ turnId, runId, attemptNumber: 1, role: "primary", createdAt: timestamp });
+    state.eventsByRun[runId] = status === "failed" ? [{
+      id: `event_${runId}_failure`,
+      runId,
+      seq: 1,
+      ts: timestamp,
+      type: "assistant_text_delta",
+      data: { text: "Provider timed out while generating the response." },
+    }] : status === "running" ? [{
+      id: `event_${runId}_stream`,
+      runId,
+      seq: 1,
+      ts: timestamp,
+      type: "assistant_text_delta",
+      data: { text: "" },
+    }] : status === "queued" ? [] : [{
+      id: `event_${runId}_answer`,
+      runId,
+      seq: 1,
+      ts: timestamp,
+      type: "assistant_text_delta",
+      data: { text: `UI2 history response ${turnNumber}` },
+    }];
+    state.runs.unshift({
+      id: runId,
+      status,
+      cwd,
+      taskId: `task_ui2_normal_feed_${turnNumber}`,
+      providerPresetId: "provider_ui2_normal_primary",
+      providerName: "local-relay",
+      providerModel: "gpt-5.5",
+      taskSnapshot: { id: `task_ui2_normal_feed_${turnNumber}`, title: `UI2 feed run ${turnNumber}` },
+      providerSnapshot: {},
+      requestSnapshot: turnNumber === 17 ? { tools: ["edit"], thinkingLevel: "high" } : {},
+      eventLogPath: `.ling-stack/sessions/${runId}.jsonl`,
+      threadId,
+      turnId,
+      createdAt: timestamp,
+      startedAt: status === "queued" ? undefined : timestamp,
+      updatedAt: timestamp,
+      endedAt: status === "succeeded" || status === "failed" ? timestamp : undefined,
+    });
+    return {
+      id: turnId,
+      workspaceId: "workspace_default",
+      threadId,
+      kind: turnNumber === 1 ? "initial_request" : "manual_followup",
+      status: "succeeded",
+      title: `UI2 history prompt ${turnNumber}`,
+      userInstruction: `UI2 history prompt ${turnNumber}`,
+      sourceMessageId: `conversation-user:${turnId}`,
+      revision: 1,
+      ...(turnNumber === 17 ? {
+        pendingReplacement: {
+          supersessionId: "ui2-replacement-supersession",
+          idempotencyKey: "ui2-replacement-idempotency",
+          failureReason: "Replacement response was interrupted.",
+        },
+      } : {}),
+      activeRunId: status === "queued" || status === "running" ? runId : undefined,
+      lastRunId: runId,
+      createdByActor: "local-user",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      completedAt: status === "succeeded" || status === "failed" ? timestamp : undefined,
+    };
+  });
+  state.threads = [{
+    id: threadId,
+    workspaceId: "workspace_default",
+    kind: "conversation",
+    title: "UI2 feed state matrix",
+    objective: "Verify all normal conversation feed states.",
+    status: "running",
+    activeRunId: "run_ui2_normal_feed_20",
+    lastRunId: "run_ui2_normal_feed_20",
+    createdAt,
+    updatedAt: turns.at(-1)?.updatedAt ?? createdAt,
+  }];
+  state.turns = turns;
+  state.conversationAttachments = [{
+    id: "attachment_ui2_normal_feed",
+    workspaceId: "workspace_default",
+    threadId,
+    turnId: "turn_ui2_normal_feed_6",
+    kind: "document",
+    fileName: "release-checklist.pdf",
+    contentType: "application/pdf",
+    sizeBytes: 2048,
+    path: `conversations/${threadId}/release-checklist.pdf`,
+    createdAt: "2026-07-19T03:05:00.000Z",
+  }];
+  return threadId;
+}
+
+function installStableConversationFixture(state: MockState): string {
+  const threadId = "thread_ui2_normal_composer_controls";
+  const turnId = "turn_ui2_normal_composer_controls";
+  const runId = "run_ui2_normal_composer_controls";
+  const timestamp = "2026-07-19T04:00:00.000Z";
+  state.threads = [{
+    id: threadId,
+    workspaceId: "workspace_default",
+    kind: "conversation",
+    title: "UI2 composer controls",
+    objective: "Verify normal conversation composer controls.",
+    status: "succeeded",
+    lastRunId: runId,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  }];
+  state.turns = [{
+    id: turnId,
+    workspaceId: "workspace_default",
+    threadId,
+    kind: "initial_request",
+    status: "succeeded",
+    title: "UI2 composer controls",
+    userInstruction: "Open the composer controls.",
+    lastRunId: runId,
+    createdByActor: "local-user",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    completedAt: timestamp,
+  }];
+  state.turnRunLinks = [{ turnId, runId, attemptNumber: 1, role: "primary", createdAt: timestamp }];
+  state.runs.unshift({
+    id: runId,
+    status: "succeeded",
+    cwd,
+    taskId: "task_ui2_normal_composer_controls",
+    providerPresetId: "provider_ui2_normal_primary",
+    providerName: "local-relay",
+    providerModel: "gpt-5.5",
+    taskSnapshot: { id: "task_ui2_normal_composer_controls", title: "UI2 composer controls" },
+    providerSnapshot: {},
+    requestSnapshot: {},
+    eventLogPath: `.ling-stack/sessions/${runId}.jsonl`,
+    threadId,
+    turnId,
+    createdAt: timestamp,
+    startedAt: timestamp,
+    updatedAt: timestamp,
+    endedAt: timestamp,
+  });
+  state.eventsByRun[runId] = [{
+    id: `event_${runId}`,
+    runId,
+    seq: 1,
+    ts: timestamp,
+    type: "assistant_text_delta",
+    data: { text: "Composer controls are ready." },
+  }];
+  return threadId;
+}
+
+async function openConversation(page: Page, title: string): Promise<void> {
+  await page.getByLabel("Ling Stack navigation").locator(".sidebar-recent-row").filter({ hasText: title }).click();
+  await expect(page.getByLabel("Conversation page")).toBeVisible();
+}
+
+async function expectAlignedColumns(feed: Locator, composer: Locator): Promise<void> {
+  await expect.poll(async () => {
+    const feedBox = await feed.boundingBox();
+    const composerBox = await composer.boundingBox();
+    if (!feedBox || !composerBox) return false;
+    return Math.abs(feedBox.x - composerBox.x) <= 1 && Math.abs(feedBox.width - composerBox.width) <= 1;
+  }).toBe(true);
+}
+
+async function expectInputContained(input: Locator, field: Locator): Promise<void> {
+  const inputBox = await input.boundingBox();
+  const fieldBox = await field.boundingBox();
+  expect(inputBox).not.toBeNull();
+  expect(fieldBox).not.toBeNull();
+  expect(inputBox!.x).toBeGreaterThanOrEqual(fieldBox!.x - 1);
+  expect(inputBox!.x + inputBox!.width).toBeLessThanOrEqual(fieldBox!.x + fieldBox!.width + 1);
+  expect(inputBox!.y).toBeGreaterThanOrEqual(fieldBox!.y - 1);
+  expect(inputBox!.y + inputBox!.height).toBeLessThanOrEqual(fieldBox!.y + fieldBox!.height + 1);
+}
+
+async function expectSquareAvatar(avatar: Locator): Promise<void> {
+  await expect.poll(async () => {
+    const box = await avatar.boundingBox();
+    return box ? { width: box.width, height: box.height } : null;
+  }).toEqual({ width: 30, height: 30 });
+}
+
+async function expectAvatarAlignedWithFirstContentLine(
+  row: Locator,
+  avatar: Locator,
+  side: "own" | "peer",
+): Promise<void> {
+  const anchor = side === "own"
+    ? row.locator(":scope > .message-content > .message-body-shell")
+    : row.locator(":scope > .message-content > header");
+  await expect(anchor).toBeVisible();
+  const [avatarBox, anchorBox] = await Promise.all([avatar.boundingBox(), anchor.boundingBox()]);
+  expect(avatarBox).not.toBeNull();
+  expect(anchorBox).not.toBeNull();
+  expect(Math.abs((avatarBox?.y ?? 0) - (anchorBox?.y ?? 0))).toBeLessThanOrEqual(1);
+}
+
+async function prepareSurface(page: Page, theme: "light" | "dark", width: number, height: number): Promise<void> {
+  await page.setViewportSize({ width, height });
+  await page.addInitScript((themeId) => {
+    const selection = { mode: "fixed", themeId: `ling-${themeId}` };
+    localStorage.setItem("ling-stack.locale", "en-US");
+    localStorage.setItem("ling-stack.themeSelection", JSON.stringify(selection));
+    localStorage.setItem("ling-stack.themeBootstrapSelection", JSON.stringify(selection));
+    localStorage.setItem("ling-stack.themePreference", themeId);
+    localStorage.setItem("ling-stack.themeBootstrapPreference", themeId);
+  }, theme);
+}
+
+async function expectNoDocumentOverflow(page: Page): Promise<void> {
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+}
+
+async function captureEvidence(page: Page, filename: string): Promise<void> {
+  if (process.env.LING_CAPTURE_UI2_EVIDENCE !== "1") return;
+  await mkdir(evidenceDirectory, { recursive: true });
+  await page.screenshot({ animations: "disabled", fullPage: true, path: `${evidenceDirectory}${filename}` });
+}
+
+function collectRuntimeErrors(page: Page): string[] {
+  const errors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error" && !message.text().startsWith("Failed to load resource:")) errors.push(message.text());
+  });
+  page.on("pageerror", (error) => errors.push(error.message));
+  return errors;
+}

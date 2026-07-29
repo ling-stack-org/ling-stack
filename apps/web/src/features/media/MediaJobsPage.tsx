@@ -1,368 +1,150 @@
-import { useEffect, useState } from "react";
-import { CircleAlert, Loader2, PlugZap, Plus, RefreshCw } from "lucide-react";
+import { Button, InlineFeedback } from "../../shared/ui/index.js";
+import type { ApprovalRequest, MediaJob, MediaJobFormState, MediaOperation, ProviderPreset, RunArtifact } from "../../types.js";
+import {
+  readMediaJobsDomainBridge,
+  type MediaJobArtifactState,
+  type MediaJobArtifactsCompatMap,
+  type MediaJobsDomainActions,
+  type MediaJobsDomainState,
+  type MediaMutationResult,
+} from "../../domains/media/media-domain-types.js";
 import { useI18n } from "../../i18n.js";
-import { resolveMediaProviderRuntimeState } from "@ling-stack/core/provider-media-normalization";
-import {
-  canUseGenerationProviderForOperation,
-  providerHasGenerationCapability,
-  providerModelRouteLabel,
-  providerSupportsGenerationOperation,
-} from "../../lib/providers.js";
-import type {
-  MediaJob,
-  MediaJobFormState,
-  MediaOperation,
-  ProviderPreset,
-  RunArtifact,
-} from "../../types.js";
-import { MediaJobAdvancedFields } from "./MediaJobAdvancedFields.js";
-import { MediaJobDetailPanel } from "./MediaJobDetailPanel.js";
+import { MediaJobCreateDialog } from "./MediaJobCreateDialog.js";
+import { MediaJobInspector } from "./MediaJobInspector.js";
 import { MediaJobList } from "./MediaJobList.js";
-import {
-  CreateDialogShell,
-  DialogSection,
-  OperationEmptyState,
-  PageActionHeader,
-} from "../../shared/components/index.js";
-import {
-  mediaArtifactsForJob,
-  mediaOperationLabel,
-  summarizeMediaJobs,
-  type MediaJobStatusFilter,
-} from "./media-job-view-models.js";
-
-import { SelectControl } from "../../shared/components/SelectControl.js";
+import { MediaJobsHeader } from "./MediaJobsHeader.js";
 import type { MediaJobDisplayContextMap } from "./media-job-display-context.js";
+import type { MediaJobHostActions } from "./media-job-display-context.js";
+import { useMediaJobsPageController } from "./useMediaJobsPageController.js";
 
-export function MediaJobsPage({
-  cwd,
-  providers,
-  jobs,
-  artifactsByJob,
-  form,
-  selectedJobId,
-  isLoading,
-  runningJobId,
-  errorMessage,
-  onFormChange,
-  onRefresh,
-  onCreate,
-  onSelectJob,
-  onRun,
-  onOpenProviders,
-  jobContext = {},
-  embedded = false,
-}: {
+export interface MediaJobsPageProps {
   readonly cwd: string;
   readonly providers: readonly ProviderPreset[];
   readonly jobs: readonly MediaJob[];
-  readonly artifactsByJob: Record<string, readonly RunArtifact[]>;
+  readonly artifactsByJob: MediaJobArtifactsCompatMap;
   readonly form: MediaJobFormState;
   readonly selectedJobId: string;
   readonly isLoading: boolean;
   readonly runningJobId: string;
-  readonly errorMessage: string;
+  readonly approvals?: readonly ApprovalRequest[];
   readonly onFormChange: (form: MediaJobFormState) => void;
-  readonly onRefresh: () => void;
-  readonly onCreate: () => void;
+  readonly onRefresh: () => void | Promise<void>;
+  readonly onCreate: () => void | Promise<void | MediaMutationResult>;
   readonly onSelectJob: (jobId: string) => void;
-  readonly onRun: (jobId: string) => void | Promise<void>;
+  readonly onRun: (jobId: string) => void | Promise<void | MediaMutationResult>;
   readonly onOpenProviders: () => void;
+  readonly onOpenProviderRepair?: (providerPresetId: string | undefined, operation: MediaOperation) => void;
+  readonly onOpenApproval?: (approvalId: string) => void;
+  readonly onRefreshApprovals?: () => Promise<void>;
   readonly jobContext?: MediaJobDisplayContextMap;
-  readonly embedded?: boolean;
-}): JSX.Element {
+  readonly hostActions?: MediaJobHostActions;
+  readonly domainState?: MediaJobsDomainState;
+  readonly domainActions?: MediaJobsDomainActions;
+}
+
+export function MediaJobsPage(props: MediaJobsPageProps): JSX.Element {
   const { t } = useI18n();
-  const [isCreateOpen, setCreateOpen] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<MediaJobStatusFilter>("all");
-  const [startingJobId, setStartingJobId] = useState("");
-  const generationProviders = providers.filter(providerHasGenerationCapability);
-  const generationProvidersForOperation = generationProviders.filter((provider) => providerSupportsGenerationOperation(provider, form.operation));
-  const runnableProvidersForOperation = generationProvidersForOperation.filter((provider) => canUseGenerationProviderForOperation(provider, form.operation));
-  const selectedProvider = providers.find((provider) => provider.id === form.providerPresetId);
-  const providerSupportsOperation = Boolean(selectedProvider?.capabilities.includes(form.operation));
-  const selectedProviderCanRun = Boolean(selectedProvider && canUseGenerationProviderForOperation(selectedProvider, form.operation));
-  const selectedVideoGeneration = selectedProvider && form.operation === "video_generate"
-    ? resolveMediaProviderRuntimeState(selectedProvider, "video_generate").videoGeneration
-    : undefined;
-  const hasRunnableGenerationModel = runnableProvidersForOperation.length > 0;
-  const canCreate = Boolean(selectedProviderCanRun && form.prompt.trim());
-  const jobSummary = summarizeMediaJobs({ jobs, artifactsByJob, runningJobId });
-  const selectedJob = jobs.find((job) => job.id === selectedJobId) ?? jobs[0];
-  const selectedProviderForJob = selectedJob ? providers.find((provider) => provider.id === selectedJob.providerPresetId) : undefined;
-  const selectedJobArtifacts = selectedJob ? artifactsByJob[selectedJob.id] ?? [] : [];
-  const selectedMediaArtifacts = mediaArtifactsForJob(selectedJobArtifacts);
-
-  useEffect(() => {
-    if (!startingJobId) {
-      return;
-    }
-    const startingJob = jobs.find((job) => job.id === startingJobId);
-    if (startingJob?.status === "running") {
-      setStartingJobId("");
-    }
-  }, [jobs, startingJobId]);
-
-  function createGenerationTask(): void {
-    if (!canCreate) {
-      return;
-    }
-    onCreate();
-    setCreateOpen(false);
-  }
-
-  function openPrimaryAction(): void {
-    if (!hasRunnableGenerationModel) {
-      onOpenProviders();
-      return;
-    }
-    setCreateOpen(true);
-  }
-
-  async function runGenerationJob(jobId: string): Promise<void> {
-    setStartingJobId(jobId);
-    try {
-      await onRun(jobId);
-    } finally {
-      setStartingJobId((current) => current === jobId ? "" : current);
-    }
-  }
-
+  const bridge = readMediaJobsDomainBridge(props.artifactsByJob);
+  const state = props.domainState ?? bridge?.state ?? legacyState(props);
+  const actions = props.domainActions ?? bridge?.actions ?? legacyActions(props);
+  const controller = useMediaJobsPageController({
+    cwd: props.cwd,
+    state,
+    actions,
+    providers: props.providers,
+    approvals: props.approvals ?? [],
+    jobContext: props.jobContext ?? {},
+    hostActions: props.hostActions,
+    navigation: {
+      openApproval: props.onOpenApproval,
+      openProviderRepair: props.onOpenProviderRepair,
+      refreshApprovals: props.onRefreshApprovals,
+    },
+    onOpenProviders: props.onOpenProviders,
+  });
+  const initialLoading = state.loadPhase === "initial";
   return (
-    <div className={`media-jobs-page${embedded ? " embedded" : ""}`}>
-      {embedded ? (
-        <div className="media-jobs-embedded-toolbar">
-          <div>
-            <strong id="media-jobs-title">{t("Generation tasks")}</strong>
-            <span>{t("{taskCount} tasks · {generatingCount} generating · {attentionCount} need attention", {
-              taskCount: jobSummary.taskCount,
-              generatingCount: jobSummary.generatingCount,
-              attentionCount: jobSummary.attentionCount,
-            })}</span>
-          </div>
-          <span className="media-jobs-embedded-actions">
-            <button className="secondary-button compact-button media-refresh-button" type="button" onClick={onRefresh} disabled={isLoading} aria-label={t("Refresh")} title={t("Refresh")}>
-              {isLoading ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
-            </button>
-            <button className="primary-button compact-button" type="button" onClick={openPrimaryAction}>
-              {hasRunnableGenerationModel ? <Plus size={16} /> : <PlugZap size={16} />}
-              {hasRunnableGenerationModel ? t("Create generation task") : t("Configure generation model")}
-            </button>
-          </span>
-        </div>
-      ) : (
-        <PageActionHeader
-          className="media-jobs-page-header"
-          title={<span id="media-jobs-title">{t("Generation tasks")}</span>}
-          description={(
-            <>
-              {t("{modelCount} available generation models · {taskCount} tasks · {generatingCount} generating · {readyCount} ready · {attentionCount} need attention", {
-                modelCount: runnableProvidersForOperation.length,
-                taskCount: jobSummary.taskCount,
-                generatingCount: jobSummary.generatingCount,
-                readyCount: jobSummary.readyCount,
-                attentionCount: jobSummary.attentionCount,
-              })}
-            </>
-          )}
-          secondaryActions={(
-            <button className="secondary-button compact-button media-refresh-button" type="button" onClick={onRefresh} disabled={isLoading} aria-label={t("Refresh")}>
-              {isLoading ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
-            </button>
-          )}
-          primaryAction={(
-            <button
-              className="primary-button media-create-button"
-              type="button"
-              onClick={openPrimaryAction}
-              title={hasRunnableGenerationModel
-                ? t("Choose a generation model in the task dialog.")
-                : t("Open Model Workbench to configure an image or video generation model.")}
-            >
-              {hasRunnableGenerationModel ? <Plus size={16} /> : <PlugZap size={16} />}
-              {hasRunnableGenerationModel ? t("Create generation task") : t("Configure generation model")}
-            </button>
-          )}
-        />
-      )}
-
-      {errorMessage ? (
-        <div className="inline-error media-page-error">
-          <CircleAlert size={17} />
-          {errorMessage}
-        </div>
+    <section className="media-jobs-page" aria-labelledby="media-jobs-title" data-media-jobs-surface>
+      <MediaJobsHeader
+        {...controller.summary}
+        statusFilter={controller.statusFilter}
+        refreshing={state.loadPhase === "refreshing"}
+        hasRunnableModel={controller.runnableProviders.length > 0}
+        onFilterChange={controller.setStatusFilter}
+        onRefresh={() => void controller.refresh()}
+        onPrimaryAction={controller.openCreate}
+      />
+      {controller.loadError ? (
+        <InlineFeedback className="media-jobs-feedback" tone="danger" title={t("Could not load generation tasks")}>
+          <Button size="sm" onClick={() => void controller.refresh()}>{t("Retry")}</Button>
+        </InlineFeedback>
+      ) : controller.refreshError ? (
+        <InlineFeedback className="media-jobs-feedback" tone="warning" title={t("Could not refresh generation tasks. Showing the last loaded data.")}>
+          <Button size="sm" onClick={() => void controller.refresh()}>{t("Retry")}</Button>
+        </InlineFeedback>
       ) : null}
-
-      {!hasRunnableGenerationModel ? (
-        <OperationEmptyState
-          className="media-model-alert"
-          icon={<CircleAlert size={17} />}
-          title={t("No runnable generation model")}
-          description={t("当前没有可真实生成的模型，请先在模型工作台配置具备图片或视频能力的模型。")}
-        />
-      ) : null}
-
       <div className="media-jobs-layout">
-        <MediaJobList
-          cwd={cwd}
-          jobs={jobs}
-          providers={providers}
-          artifactsByJob={artifactsByJob}
-          selectedJobId={selectedJobId}
-          runningJobId={runningJobId}
-          startingJobId={startingJobId}
-          isLoading={isLoading}
-          statusFilter={statusFilter}
-          jobContext={jobContext}
-          onStatusFilterChange={setStatusFilter}
-          onSelectJob={onSelectJob}
-          onRun={(jobId) => void runGenerationJob(jobId)}
-        />
-
-        <MediaJobDetailPanel
-          cwd={cwd}
-          job={selectedJob}
-          providerName={selectedProviderForJob?.displayName ?? t("Unknown provider")}
-          artifacts={selectedMediaArtifacts}
-          isLoading={isLoading}
-          isRunning={Boolean(selectedJob && runningJobId === selectedJob.id)}
-          isStarting={Boolean(selectedJob && startingJobId === selectedJob.id)}
-          onCopy={() => {
-            if (selectedJob) {
-              void navigator.clipboard?.writeText(selectedJob.prompt);
-            }
-          }}
-          onOpenProviders={onOpenProviders}
-          onRun={() => {
-            if (selectedJob) {
-              void runGenerationJob(selectedJob.id);
-            }
-          }}
+        <div className="media-jobs-list-pane">
+          <MediaJobList
+            cwd={props.cwd}
+            projections={controller.visibleProjections}
+            rows={controller.rows}
+            selectedJobId={state.selectedMediaJobId}
+            statusFilter={controller.statusFilter}
+            initialLoading={initialLoading}
+            loadFailed={Boolean(controller.loadError)}
+            hasRunnableModel={controller.runnableProviders.length > 0}
+            onAction={(action, projection) => void controller.dispatchAction(action, projection)}
+            onCreate={controller.openCreate}
+            onSelect={controller.selectJob}
+            onShowAll={() => controller.setStatusFilter("all")}
+          />
+        </div>
+        <MediaJobInspector
+          cwd={props.cwd}
+          projection={controller.selectedProjection}
+          repair={controller.selectedRepair}
+          initialLoading={initialLoading}
+          copyError={controller.copyError}
+          onAction={(action, projection) => void controller.dispatchAction(action, projection)}
+          onRetryArtifacts={(jobId) => void controller.retryArtifacts(jobId)}
         />
       </div>
-
-      {isCreateOpen ? (
-        <CreateDialogShell
-          ariaLabel={t("Create generation task")}
-          title={t("Create generation task")}
-          description={t("Choose a model, write a prompt, then submit a generation task")}
-          closeLabel={t("Cancel")}
-          onClose={() => setCreateOpen(false)}
-          overlayClassName="media-create-overlay"
-          className="media-create-dialog"
-          bodyClassName="media-create-body"
-          footer={(
-            <>
-              <span className="media-create-footer-note">
-                <CircleAlert size={15} />
-                {t("This will create a generation task")}
-              </span>
-              <button className="secondary-button" type="button" onClick={() => setCreateOpen(false)}>
-                {t("Cancel")}
-              </button>
-              <button className="primary-button" type="button" onClick={createGenerationTask} disabled={isLoading || !canCreate}>
-                {isLoading ? <Loader2 className="spin" size={16} /> : <Plus size={16} />}
-                {t("Create generation task")}
-              </button>
-            </>
-          )}
-        >
-              <DialogSection title={t("Model and operation")} description={t("Choose what Ling should generate.")}>
-              <div className="media-job-form-toolbar" aria-label={t("Generation task controls")}>
-                <label className="field wide">
-                  <span>{t("Generation model")}</span>
-                  <SelectControl
-                    value={selectedProvider && providerSupportsOperation ? form.providerPresetId : ""}
-                    onChange={(event) => onFormChange({ ...form, providerPresetId: event.target.value })}
-                    disabled={generationProvidersForOperation.length === 0}
-                  >
-                    <option value="">{t("Select generation model")}</option>
-                    {generationProvidersForOperation.map((provider) => (
-                      <option key={provider.id} value={provider.id}>
-                        {providerModelRouteLabel(provider)}
-                      </option>
-                    ))}
-                  </SelectControl>
-                </label>
-
-                <label className="field wide">
-                  <span>{t("Operation")}</span>
-                  <SelectControl
-                    value={form.operation}
-                    onChange={(event) => {
-                      const operation = event.target.value as MediaOperation;
-                      const nextProvider = generationProviders.find((provider) => canUseGenerationProviderForOperation(provider, operation)) ??
-                        generationProviders.find((provider) => providerSupportsGenerationOperation(provider, operation));
-                      onFormChange({ ...form, operation, providerPresetId: nextProvider?.id ?? "" });
-                    }}
-                  >
-                    <option value="image_generate">{t("Image generate")}</option>
-                    <option value="image_edit">{t("Image edit")}</option>
-                    <option value="video_generate">{t("Video generate")}</option>
-                  </SelectControl>
-                </label>
-              </div>
-
-              {selectedProvider && !providerSupportsOperation ? (
-                <div className="provider-run-notice">
-                  <CircleAlert size={16} />
-                  <span>{t("{providerName} does not support {operation}.", { providerName: selectedProvider.displayName, operation: t(mediaOperationLabel(form.operation)) })}</span>
-                </div>
-              ) : null}
-
-              {selectedProvider && providerSupportsOperation && !selectedProviderCanRun ? (
-                <div className="provider-run-notice">
-                  <CircleAlert size={16} />
-                  <span>{t("当前没有可真实生成的模型，请先在模型工作台配置具备图片或视频能力的模型。")}</span>
-                </div>
-              ) : null}
-              </DialogSection>
-
-              <DialogSection title={t("Prompt")} description={t("Describe the output you expect.")}>
-              <label className="field wide media-job-prompt-composer">
-                <span>{t("Prompt")}</span>
-                <textarea
-                  value={form.prompt}
-                  rows={8}
-                  maxLength={2000}
-                  placeholder={t("Describe the scene, style, ratio, and intended use...")}
-                  onChange={(event) => onFormChange({ ...form, prompt: event.target.value })}
-                />
-                <small>{form.prompt.length} / 2000</small>
-              </label>
-              </DialogSection>
-
-              {form.operation === "video_generate" ? (
-                <>
-                  <DialogSection title={t("Video settings")} description={t("Choose the output frame and duration.")}>
-                    <MediaJobAdvancedFields form={form} onFormChange={onFormChange} videoGeneration={selectedVideoGeneration} videoFields="core" />
-                  </DialogSection>
-                  <DialogSection title={t("More settings")} description={t("Optional model controls")} collapsible className="media-create-advanced">
-                    <MediaJobAdvancedFields form={form} onFormChange={onFormChange} videoFields="watermark" />
-                  </DialogSection>
-                </>
-              ) : (
-                <DialogSection
-                  title={t("Advanced parameters")}
-                  description={t(mediaAdvancedSummary(form.operation))}
-                  collapsible
-                  defaultOpen
-                  className="media-create-advanced"
-                >
-                  <MediaJobAdvancedFields form={form} onFormChange={onFormChange} />
-                </DialogSection>
-              )}
-        </CreateDialogShell>
-      ) : null}
-    </div>
+      <MediaJobCreateDialog
+        open={controller.createOpen}
+        busy={state.createPhase === "submitting"}
+        form={state.form}
+        errors={controller.formErrors}
+        providers={controller.generationProviders}
+        serverError={Boolean(controller.createError)}
+        videoGeneration={controller.selectedRuntime?.videoGeneration}
+        onOpenChange={(open) => open ? controller.openCreate() : controller.closeCreate()}
+        onOperationChange={controller.changeOperation}
+        onPatch={controller.patchForm}
+        onSubmit={controller.submitCreate}
+      />
+    </section>
   );
 }
 
-function mediaAdvancedSummary(operation: MediaOperation): string {
-  if (operation === "video_generate") {
-    return "Ratio, duration, watermark";
-  }
-  if (operation === "image_edit") {
-    return "Source image and mask URL";
-  }
-  return "Size, count, seed, watermark";
+function legacyState(props: MediaJobsPageProps): MediaJobsDomainState {
+  const artifactsByJob = Object.fromEntries(Object.entries(props.artifactsByJob).map(([jobId, artifacts]) => [jobId, {
+    signature: artifacts.map((item) => item.id).join("\u001f"), phase: "ready", artifacts,
+  } satisfies MediaJobArtifactState]));
+  return {
+    mediaJobs: props.jobs, artifactsByJob, loadPhase: props.isLoading ? (props.jobs.length ? "refreshing" : "initial") : "idle",
+    createPhase: "idle", runningJobIds: new Set(props.runningJobId ? [props.runningJobId] : []),
+    selectedMediaJobId: props.selectedJobId, form: props.form, errors: [],
+  };
+}
+
+function legacyActions(props: MediaJobsPageProps): MediaJobsDomainActions {
+  return {
+    setMediaJobForm: (value) => props.onFormChange(typeof value === "function" ? value(props.form) : value),
+    setSelectedMediaJobId: (value) => props.onSelectJob(typeof value === "function" ? value(props.selectedJobId) : value),
+    refreshMediaJobs: async () => { await props.onRefresh(); },
+    createMediaJobFromForm: async () => { const result = await props.onCreate(); return result && typeof result === "object" ? result : { ok: false }; },
+    executeMediaJob: async (jobId) => { const result = await props.onRun(jobId); return result && typeof result === "object" ? result : { ok: false, jobId }; },
+    retryMediaJobArtifacts: async () => undefined, clearMediaError: () => undefined, resetForCwd: () => undefined,
+  };
 }

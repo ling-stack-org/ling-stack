@@ -59,8 +59,10 @@ readiness, and failed-run repair behavior.
      action for their states;
    - remove Edit, Check, and Enable from More, leaving only Clear default, Disable, and
      Delete when applicable;
-   - rebalance the four table columns to `35 / 18 / 19 / 28` without adding horizontal
-     overflow at `1280x800`.
+   - fix Actions at `184px`, right-align its header and action group, and let Model absorb
+     the remaining width without adding horizontal overflow at `1280x800`;
+   - remove the decorative divider before Actions while keeping Check, Edit, and More at
+     least `32px` and retaining low-frequency actions in More.
 
 ## API And Types
 
@@ -122,6 +124,8 @@ Browser acceptance on the live Vite dev server:
   and exposes routine Edit and Check icon actions without reopening technical details.
 - P13.1 reduces More to low-frequency and destructive actions while retaining one labeled
   state-specific action per row.
+- The follow-up table refinement fixes Actions at `184px`, right-aligns its label and controls,
+  removes the heavy left divider, and releases the remaining width to long model identities.
 
 Verification:
 

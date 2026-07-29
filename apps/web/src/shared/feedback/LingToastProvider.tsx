@@ -1,84 +1,64 @@
-import { Check, Info, X } from "lucide-react";
-import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ToastProvider,
+  ToastViewport,
+  useToast,
+  type ToastContextValue,
+  type ToastInput,
+  type ToastTone,
+} from "@ling-stack/ui-react";
+import { useEffect, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useI18n } from "../../i18n.js";
+import { useTheme } from "../../theme.js";
 
-export type LingToastTone = "success" | "info" | "warning" | "error";
-
-export interface LingToastInput {
+export type LingToastTone = ToastTone;
+export interface LingToastInput extends ToastInput {
   readonly message: string;
-  readonly tone?: LingToastTone;
-  readonly durationMs?: number;
-  readonly scope?: string;
 }
 
-interface LingToastItem extends Required<Omit<LingToastInput, "durationMs" | "scope">> {
-  readonly id: string;
-  readonly scope?: string;
-  readonly durationMs: number;
+export interface LingToastContextValue extends Omit<ToastContextValue, "showToast"> {
+  readonly showToast: (input: LingToastInput) => string;
 }
 
-interface LingToastContextValue {
-  readonly showToast: (input: LingToastInput) => void;
-  readonly dismissToast: (id: string) => void;
-}
-
-const LingToastContext = createContext<LingToastContextValue | undefined>(undefined);
-
-export function LingToastProvider({ children }: { readonly children: ReactNode }): JSX.Element {
+export function LingToastProvider({
+  children,
+  portalContainer,
+}: {
+  readonly children: ReactNode;
+  readonly portalContainer?: HTMLElement | null;
+}): JSX.Element {
   const { t } = useI18n();
-  const [toasts, setToasts] = useState<readonly LingToastItem[]>([]);
-  const timeoutsRef = useRef(new Map<string, number>());
-
-  const dismissToast = useCallback((id: string): void => {
-    const timeout = timeoutsRef.current.get(id);
-    if (timeout !== undefined) {
-      window.clearTimeout(timeout);
-      timeoutsRef.current.delete(id);
-    }
-    setToasts((current) => current.filter((toast) => toast.id !== id));
-  }, []);
-
-  const showToast = useCallback((input: LingToastInput): void => {
-    const id = input.scope ?? `toast_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const tone = input.tone ?? "success";
-    const durationMs = input.durationMs ?? (tone === "error" ? 6000 : 3000);
-    const toast: LingToastItem = { id, message: input.message, tone, durationMs, scope: input.scope };
-    const existingTimeout = timeoutsRef.current.get(id);
-    if (existingTimeout !== undefined) {
-      window.clearTimeout(existingTimeout);
-    }
-    setToasts((current) => [toast, ...current.filter((item) => item.id !== id)].slice(0, 3));
-    timeoutsRef.current.set(id, window.setTimeout(() => dismissToast(id), durationMs));
-  }, [dismissToast]);
-
-  useEffect(() => () => {
-    for (const timeout of timeoutsRef.current.values()) {
-      window.clearTimeout(timeout);
-    }
-    timeoutsRef.current.clear();
-  }, []);
-
-  const value = useMemo(() => ({ showToast, dismissToast }), [dismissToast, showToast]);
+  const viewport = <ToastViewport data-ling-overlay="toast-viewport" />;
   return (
-    <LingToastContext.Provider value={value}>
+    <ToastProvider closeLabel={t("Dismiss notification")} viewportLabel={t("Notifications")}>
       {children}
-      <div className="ling-toast-viewport" aria-live="polite" aria-relevant="additions">
-        {toasts.map((toast) => (
-          <div key={toast.id} className={`ling-toast ${toast.tone}`} role={toast.tone === "error" ? "alert" : "status"}>
-            <span className="ling-toast-icon" aria-hidden="true">{toast.tone === "success" ? <Check size={14} /> : <Info size={14} />}</span>
-            <span>{toast.message}</span>
-            <button type="button" onClick={() => dismissToast(toast.id)} aria-label={t("Dismiss notification")} title={t("Dismiss notification")}><X size={14} /></button>
-          </div>
-        ))}
-      </div>
-    </LingToastContext.Provider>
+      <ThemeStorageToastBridge />
+      {portalContainer ? createPortal(viewport, portalContainer) : viewport}
+    </ToastProvider>
   );
 }
 
 export function useLingToast(): LingToastContextValue {
-  const context = useContext(LingToastContext);
-  if (!context) {
-    throw new Error("useLingToast must be used within LingToastProvider");
-  }
-  return context;
+  return useToast() as LingToastContextValue;
+}
+
+function ThemeStorageToastBridge(): null {
+  const { t } = useI18n();
+  const { storageWarning } = useTheme();
+  const { showToast } = useToast();
+  useEffect(() => {
+    if (!storageWarning) return;
+    showToast({
+      message: storageWarning === "save-failed"
+        ? t("Theme preference could not be saved. The previous theme is still active.")
+        : storageWarning === "active-sync-failed"
+          ? t("Desktop could not confirm the active theme. Destructive theme actions remain blocked.")
+          : storageWarning === "cleanup-pending"
+            ? t("Desktop recovered the theme library, but some temporary files still need cleanup.")
+            : t("Installed themes could not be loaded. Ling is using a built-in fallback."),
+      scope: "theme:storage",
+      tone: "warning",
+    });
+  }, [showToast, storageWarning, t]);
+  return null;
 }

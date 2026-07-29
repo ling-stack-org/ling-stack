@@ -1,20 +1,4 @@
 import { type ReactNode, useState } from "react";
-import {
-  Archive,
-  ArrowLeft,
-  BookOpen,
-  Bot,
-  Box,
-  Brain,
-  Database,
-  GitBranch,
-  Palette,
-  Shield,
-  SlidersHorizontal,
-  UserCircle,
-  Wrench,
-  type LucideIcon,
-} from "lucide-react";
 import type { McpBusyAction } from "../../domains/mcp/use-mcp-domain.js";
 import { useI18n } from "../../i18n.js";
 import type {
@@ -27,13 +11,15 @@ import type {
   McpTool,
   PermissionPreset,
   ResponseLanguagePreference,
+  RunArtifact,
+  RunEventEnvelope,
   RunSession,
   SessionPermissionMode,
   StartupStatusResponse,
   UserProfile,
   WorkspaceAccessMode,
 } from "../../types.js";
-import { McpToolsPage } from "../mcp/McpToolsPage.js";
+import { McpToolsPage, type McpSettingsError } from "../mcp/McpToolsPage.js";
 import { ArchivedSettingsPanel } from "./ArchivedSettingsPanel.js";
 import { ExecutionPermissionsSettingsPanel } from "./ExecutionPermissionsSettingsPanel.js";
 import { ExternalWorkSettingsPanel } from "./ExternalWorkSettingsPanel.js";
@@ -41,116 +27,19 @@ import { StartupDiagnosticsSettingsPanel } from "./MaintenanceSettingsPanel.js";
 import { InterfacePreferencesSettingsPanel, PersonalSettingsPanel } from "./PersonalInterfaceSettingsPanel.js";
 import { PersonalizationSettingsPanel } from "./PersonalizationSettingsPanel.js";
 import { SettingsRunDiagnosticsPanel } from "./SettingsRunDiagnosticsPanel.js";
+import { SettingsShell, type SettingsContentState, type SettingsShellGroup } from "./SettingsShell.js";
+import { SettingsWorkspaceToolSurface } from "./SettingsWorkspaceToolSurface.js";
 import { SkillLibrarySettingsPanel } from "./SkillLibrarySettingsPanel.js";
+import {
+  isWorkspaceToolSection,
+  settingsSectionGroups,
+  workspaceToolViewToSectionId,
+  type SettingsSectionId,
+  type SettingsWorkspaceToolView,
+} from "./settings-shell-model.js";
 import { useArchivedSettingsController } from "./useArchivedSettingsController.js";
 
-export type SettingsSectionId =
-  | "model-workbench"
-  | "ai-teammates"
-  | "ai-councils"
-  | "approval-strategy"
-  | "personal-profile"
-  | "personalization"
-  | "interface-preferences"
-  | "external-work"
-  | "mcp-tools"
-  | "skill-library"
-  | "archived-items"
-  | "startup-diagnostics";
-
-type SettingsWorkspaceToolView = "" | "providers" | "teammates" | "councils";
-
-type SettingsSectionItem = {
-  readonly id: SettingsSectionId;
-  readonly label: string;
-  readonly pageTitle?: string;
-  readonly description?: string;
-  readonly icon: LucideIcon;
-};
-
-const settingsSectionGroups: readonly {
-  readonly heading?: string;
-  readonly items: readonly SettingsSectionItem[];
-}[] = [
-  {
-    heading: "Workspace tools",
-    items: [
-      {
-        id: "model-workbench",
-        label: "Model Workbench",
-        icon: Box,
-      },
-      {
-        id: "ai-teammates",
-        label: "Teammate Management",
-        icon: Bot,
-      },
-      {
-        id: "ai-councils",
-        pageTitle: "Council Workspace",
-        label: "Council Workspace",
-        icon: Brain,
-      },
-      {
-        id: "approval-strategy",
-        label: "Default authorization",
-        icon: Shield,
-      },
-    ],
-  },
-  {
-    heading: "Workspace",
-    items: [
-      {
-        id: "personal-profile",
-        label: "User profile",
-        icon: UserCircle,
-      },
-      {
-        id: "personalization",
-        label: "Personalization",
-        description: "Ling tone and skill generation policy",
-        icon: SlidersHorizontal,
-      },
-      {
-        id: "interface-preferences",
-        label: "Interface preferences",
-        icon: Palette,
-      },
-      {
-        id: "external-work",
-        label: "External work",
-        icon: GitBranch,
-      },
-      {
-        id: "mcp-tools",
-        label: "MCP tool servers",
-        icon: Wrench,
-      },
-      {
-        id: "skill-library",
-        label: "Skill library",
-        description: "Inspect reusable skill definitions, source health, and workspace skills.",
-        icon: BookOpen,
-      },
-    ],
-  },
-  {
-    heading: "Maintenance",
-    items: [
-      {
-        id: "archived-items",
-        label: "Archived items",
-        icon: Archive,
-      },
-      {
-        id: "startup-diagnostics",
-        label: "Startup and diagnostics",
-        icon: Database,
-      },
-    ],
-  },
-];
+export type { SettingsSectionId } from "./settings-shell-model.js";
 
 export function SettingsPage({
   cwd,
@@ -160,11 +49,13 @@ export function SettingsPage({
   workspaceResponseLanguage,
   selectedChannel,
   externalWorkStatus,
+  externalWorkError,
   mcpServers,
   mcpTools,
   mcpLoading,
   mcpBusyServerId,
   mcpBusyAction,
+  mcpError,
   initialSection,
   workspaceDefaultAuthorizationMode,
   workspaceDefaultWorkspaceAccessMode,
@@ -177,7 +68,10 @@ export function SettingsPage({
   externalWorkStatusAction,
   externalWorkSecretAction,
   externalWorkWorkflowAction,
-  errorMessage,
+  runArtifacts,
+  runEvents,
+  runsError,
+  selectedRun,
   onWorkspaceDefaultAuthorizationChange,
   onWorkspaceDefaultWorkspaceAccessChange,
   onWorkspaceResponseLanguageChange,
@@ -187,13 +81,13 @@ export function SettingsPage({
   onConfigureExternalWorkWorkflow,
   onConfigureExternalWorkSecret,
   onDeleteExternalWorkSecret,
-  onOpenExternalWorkRecords,
-  onOpenExternalWorkTriage,
   onOpenRunDiagnostics,
   onCloseRunDiagnostics,
+  onRefreshRunDiagnostics,
   onSelectRunDiagnostics,
   onOpenFullRunDiagnostics,
   onRefreshMcp,
+  onClearMcpError,
   onArchivedItemsChanged,
   onCreateMcpServer,
   onUpdateMcpServer,
@@ -219,11 +113,16 @@ export function SettingsPage({
   readonly workspaceResponseLanguage: ResponseLanguagePreference;
   readonly selectedChannel: Channel | undefined;
   readonly externalWorkStatus: ExternalWorkStatusResponse | undefined;
+  readonly externalWorkError?: {
+    readonly kind: "background" | "credential" | "poll" | "reconcile" | "status" | "triage" | "workflow";
+    readonly message: string;
+  };
   readonly mcpServers: readonly McpServer[];
   readonly mcpTools: readonly McpTool[];
   readonly mcpLoading: boolean;
   readonly mcpBusyServerId: string;
   readonly mcpBusyAction: McpBusyAction | undefined;
+  readonly mcpError?: McpSettingsError;
   readonly initialSection?: SettingsSectionId;
   readonly workspaceDefaultAuthorizationMode?: AuthorizationMode;
   readonly workspaceDefaultWorkspaceAccessMode?: WorkspaceAccessMode;
@@ -236,33 +135,36 @@ export function SettingsPage({
   readonly externalWorkStatusAction: "poll" | "reconcile" | "start" | "stop" | undefined;
   readonly externalWorkSecretAction: "configure" | "delete" | undefined;
   readonly externalWorkWorkflowAction: "configure" | undefined;
-  readonly errorMessage: string;
+  readonly runArtifacts: readonly RunArtifact[];
+  readonly runEvents: readonly RunEventEnvelope[];
+  readonly runsError: string;
+  readonly selectedRun: RunSession | undefined;
   readonly onWorkspaceDefaultAuthorizationChange: (mode: AuthorizationMode) => void;
   readonly onWorkspaceDefaultWorkspaceAccessChange: (mode: WorkspaceAccessMode) => void;
   readonly onWorkspaceResponseLanguageChange: (language: ResponseLanguagePreference) => void;
   readonly onRefreshStartup: () => void;
   readonly onRefreshExternalWork: () => void;
-  readonly onExternalWorkAction: (action: "poll" | "reconcile" | "start" | "stop") => void;
+  readonly onExternalWorkAction: (action: "poll" | "reconcile" | "start" | "stop") => Promise<boolean>;
   readonly onConfigureExternalWorkWorkflow: (input: {
     readonly sourceKind: "github" | "linear";
     readonly repository?: string;
     readonly projectSlug?: string;
-  }) => Promise<void>;
-  readonly onConfigureExternalWorkSecret: (token: string) => Promise<void>;
-  readonly onDeleteExternalWorkSecret: () => Promise<void>;
-  readonly onOpenExternalWorkRecords: () => void;
-  readonly onOpenExternalWorkTriage: () => void;
+  }) => Promise<boolean>;
+  readonly onConfigureExternalWorkSecret: (token: string) => Promise<boolean>;
+  readonly onDeleteExternalWorkSecret: () => Promise<boolean>;
   readonly onOpenRunDiagnostics: () => void;
   readonly onCloseRunDiagnostics: () => void;
+  readonly onRefreshRunDiagnostics: () => void;
   readonly onSelectRunDiagnostics: (runId: string) => void;
   readonly onOpenFullRunDiagnostics: (runId?: string) => void;
   readonly onRefreshMcp: () => void;
+  readonly onClearMcpError: () => void;
   readonly onArchivedItemsChanged?: () => void | Promise<void>;
   readonly onCreateMcpServer: (form: McpServerFormState) => Promise<void>;
   readonly onUpdateMcpServer: (serverId: string, form: McpServerFormState) => Promise<void>;
-  readonly onDeleteMcpServer: (serverId: string) => void;
-  readonly onCheckMcpServer: (serverId: string) => boolean | Promise<boolean> | void | Promise<void>;
-  readonly onSyncMcpTools: (serverId: string) => boolean | Promise<boolean> | void | Promise<void>;
+  readonly onDeleteMcpServer: (serverId: string) => Promise<boolean>;
+  readonly onCheckMcpServer: (serverId: string) => Promise<boolean>;
+  readonly onSyncMcpTools: (serverId: string) => Promise<boolean>;
   readonly onProfileChange?: (profile: UserProfile) => void;
   readonly onOpenProviders: () => void;
   readonly onOpenTeammates: () => void;
@@ -278,8 +180,11 @@ export function SettingsPage({
   const { t } = useI18n();
   const [activeSection, setActiveSection] = useState<SettingsSectionId>(initialSection ?? "personal-profile");
   const runDiagnosticsOpen = runDiagnosticsRunId !== undefined;
-  const workspaceToolDetailOpen = !runDiagnosticsOpen && workspaceToolDetail !== undefined && workspaceToolDetail !== null;
   const workspaceToolSection = workspaceToolViewToSectionId(workspaceToolView);
+  const activeWorkspaceToolView = workspaceToolView && workspaceToolSection && workspaceToolDetail !== undefined && workspaceToolDetail !== null
+    ? workspaceToolView
+    : undefined;
+  const workspaceToolDetailOpen = !runDiagnosticsOpen && activeWorkspaceToolView !== undefined;
   const visibleActiveSection = runDiagnosticsOpen
     ? "startup-diagnostics"
     : workspaceToolDetailOpen && workspaceToolSection
@@ -289,8 +194,33 @@ export function SettingsPage({
         : activeSection;
   const contentStackClassName = [
     "settings-content-stack",
-    !workspaceToolDetailOpen && !runDiagnosticsOpen ? `settings-content-stack--${visibleActiveSection}` : "",
+    workspaceToolDetailOpen
+      ? "settings-content-stack--workspace-tool"
+      : !runDiagnosticsOpen
+        ? `settings-content-stack--${visibleActiveSection}`
+        : "",
   ].filter(Boolean).join(" ");
+  const contentState: SettingsContentState = runDiagnosticsOpen
+    ? "run-diagnostics"
+    : workspaceToolDetailOpen
+      ? "workspace-tool"
+      : "section";
+  const shellGroups: readonly SettingsShellGroup[] = settingsSectionGroups.map((group) => ({
+    heading: t(group.heading),
+    items: group.items.map((item) => ({
+      id: item.id,
+      label: t(item.label),
+      title: t(item.pageTitle ?? item.label),
+      icon: item.icon,
+      hidden: item.pending === true,
+    })),
+  }));
+  const workspaceToolDefinition = workspaceToolSection
+    ? settingsSectionGroups.flatMap((group) => group.items).find((item) => item.id === workspaceToolSection)
+    : undefined;
+  const workspaceToolLabel = workspaceToolDefinition
+    ? t(workspaceToolDefinition.pageTitle ?? workspaceToolDefinition.label)
+    : "";
   const archivedController = useArchivedSettingsController({
     cwd,
     enabled: visibleActiveSection === "archived-items",
@@ -316,54 +246,38 @@ export function SettingsPage({
   };
 
   return (
-    <div className="settings-layout">
-      <nav className="settings-section-nav" aria-label={t("Settings sections")}>
-        {onBackToApplication ? (
-          <button className="settings-app-return-button" type="button" onClick={onBackToApplication}>
-            <ArrowLeft size={17} />
-            <span>{t("Back to app")}</span>
-          </button>
-        ) : null}
-        {settingsSectionGroups.map((group, groupIndex) => (
-          <div key={group.heading ?? `primary-${groupIndex}`} className="settings-section-group">
-            {group.heading ? <span className="settings-section-group-label">{t(group.heading)}</span> : null}
-            {group.items.map((item) => {
-              const SectionIcon = item.icon;
-              return (
-                <button
-                  key={item.id}
-                  className={visibleActiveSection === item.id ? "settings-section-item active" : "settings-section-item"}
-                  type="button"
-                  onClick={() => {
-                    selectSettingsSection(item.id);
-                  }}
-                  title={t(item.pageTitle ?? item.label)}
-                  aria-current={visibleActiveSection === item.id ? "page" : undefined}
-                >
-                  <SectionIcon className="settings-section-icon" size={16} strokeWidth={2} aria-hidden="true" />
-                  <span>{t(item.label)}</span>
-                </button>
-              );
-            })}
-          </div>
-        ))}
-      </nav>
-
-      <div className={contentStackClassName}>
+    <SettingsShell
+      activeSection={visibleActiveSection}
+      backLabel={t("Back to app")}
+      contentClassName={contentStackClassName}
+      contentLabel={t("Settings")}
+      contentState={contentState}
+      groups={shellGroups}
+      navigationLabel={t("Settings sections")}
+      onBack={onBackToApplication}
+      onSelectSection={selectSettingsSection}
+    >
         {runDiagnosticsOpen ? (
           <SettingsRunDiagnosticsPanel
+            artifacts={runArtifacts}
+            events={runEvents}
             runs={runs}
             selectedRunId={runDiagnosticsRunId ?? ""}
+            selectedRun={selectedRun}
             isLoading={runsLoading}
-            errorMessage={errorMessage}
-            onRefresh={onOpenRunDiagnostics}
+            errorMessage={runsError}
+            onRefresh={onRefreshRunDiagnostics}
             onSelectRun={onSelectRunDiagnostics}
             onOpenFullDiagnostics={onOpenFullRunDiagnostics}
             onClose={onCloseRunDiagnostics}
           />
         ) : null}
 
-        {workspaceToolDetailOpen ? workspaceToolDetail : null}
+        {workspaceToolDetailOpen && activeWorkspaceToolView ? (
+          <SettingsWorkspaceToolSurface label={workspaceToolLabel} view={activeWorkspaceToolView}>
+            {workspaceToolDetail}
+          </SettingsWorkspaceToolSurface>
+        ) : null}
 
         {visibleActiveSection === "personal-profile" && !workspaceToolDetailOpen ? (
           <PersonalSettingsPanel cwd={cwd} onProfileChange={onProfileChange} />
@@ -373,7 +287,6 @@ export function SettingsPage({
 
         {visibleActiveSection === "interface-preferences" && !workspaceToolDetailOpen ? (
           <InterfacePreferencesSettingsPanel
-            effectiveConfig={effectiveConfig}
             workspaceResponseLanguage={workspaceResponseLanguage}
             onWorkspaceResponseLanguageChange={onWorkspaceResponseLanguageChange}
           />
@@ -392,6 +305,7 @@ export function SettingsPage({
 
         {visibleActiveSection === "external-work" && !workspaceToolDetailOpen ? (
           <ExternalWorkSettingsPanel
+            error={externalWorkError}
             selectedChannel={selectedChannel}
             externalWorkStatus={externalWorkStatus}
             externalWorkStatusLoading={externalWorkStatusLoading}
@@ -403,29 +317,26 @@ export function SettingsPage({
             onConfigureExternalWorkWorkflow={onConfigureExternalWorkWorkflow}
             onConfigureExternalWorkSecret={onConfigureExternalWorkSecret}
             onDeleteExternalWorkSecret={onDeleteExternalWorkSecret}
-            onOpenExternalWorkRecords={onOpenExternalWorkRecords}
-            onOpenExternalWorkTriage={onOpenExternalWorkTriage}
           />
         ) : null}
 
         {visibleActiveSection === "mcp-tools" && !workspaceToolDetailOpen ? (
-          <div className="settings-section-stack">
-            <McpToolsPage
-              servers={mcpServers}
-              tools={mcpTools}
-              isLoading={mcpLoading}
-              busyServerId={mcpBusyServerId}
-              busyAction={mcpBusyAction}
-              errorMessage={errorMessage}
-              cwd={cwd}
-              onRefresh={onRefreshMcp}
-              onCreate={onCreateMcpServer}
-              onUpdate={onUpdateMcpServer}
-              onDelete={onDeleteMcpServer}
-              onCheck={onCheckMcpServer}
-              onSyncTools={onSyncMcpTools}
-            />
-          </div>
+          <McpToolsPage
+            servers={mcpServers}
+            tools={mcpTools}
+            isLoading={mcpLoading}
+            busyServerId={mcpBusyServerId}
+            busyAction={mcpBusyAction}
+            error={mcpError}
+            cwd={cwd}
+            onRefresh={onRefreshMcp}
+            onClearError={onClearMcpError}
+            onCreate={onCreateMcpServer}
+            onUpdate={onUpdateMcpServer}
+            onDelete={onDeleteMcpServer}
+            onCheck={onCheckMcpServer}
+            onSyncTools={onSyncMcpTools}
+          />
         ) : null}
 
         {visibleActiveSection === "skill-library" && !workspaceToolDetailOpen ? (
@@ -439,6 +350,7 @@ export function SettingsPage({
         {visibleActiveSection === "startup-diagnostics" && !workspaceToolDetailOpen && !runDiagnosticsOpen ? (
           <StartupDiagnosticsSettingsPanel
             cwd={cwd}
+            effectiveConfig={effectiveConfig}
             startupStatus={startupStatus}
             startupStatusLoading={startupStatusLoading}
             startupStatusAction={startupStatusAction}
@@ -447,24 +359,6 @@ export function SettingsPage({
             onOpenRunDiagnostics={onOpenRunDiagnostics}
           />
         ) : null}
-      </div>
-    </div>
+    </SettingsShell>
   );
-}
-
-function workspaceToolViewToSectionId(view: SettingsWorkspaceToolView | undefined): SettingsSectionId | undefined {
-  if (view === "providers") {
-    return "model-workbench";
-  }
-  if (view === "teammates") {
-    return "ai-teammates";
-  }
-  if (view === "councils") {
-    return "ai-councils";
-  }
-  return undefined;
-}
-
-function isWorkspaceToolSection(sectionId: SettingsSectionId): boolean {
-  return sectionId === "model-workbench" || sectionId === "ai-teammates" || sectionId === "ai-councils";
 }

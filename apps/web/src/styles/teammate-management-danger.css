@@ -1,0 +1,145 @@
+.teammate-danger-panel {
+  display: grid;
+  align-content: start;
+  gap: var(--ling-space-6);
+  min-width: 0;
+  min-height: 0;
+  padding: var(--ling-space-2);
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.teammate-danger-heading,
+.teammate-danger-heading > span {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.teammate-danger-heading {
+  justify-content: space-between;
+  gap: var(--ling-space-5);
+  min-height: var(--ling-control-md);
+  padding-bottom: var(--ling-space-4);
+  border-bottom: 1px solid var(--ling-border-default);
+}
+
+.teammate-danger-heading > span {
+  gap: var(--ling-space-3);
+}
+
+.teammate-danger-heading svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  color: var(--ling-text-muted);
+  stroke-width: 1.8;
+}
+
+.teammate-danger-heading h2 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-md);
+  line-height: var(--ling-line-md);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teammate-danger-actions {
+  display: grid;
+  gap: var(--ling-space-4);
+  min-width: 0;
+}
+
+.teammate-danger-action {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "copy action"
+    "feedback feedback";
+  align-items: center;
+  gap: var(--ling-space-4) var(--ling-space-6);
+  min-width: 0;
+  padding: var(--ling-space-6);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  background: var(--ling-bg-panel);
+}
+
+.teammate-danger-action[data-destructive="true"] {
+  border-color: var(--ling-status-danger-border);
+}
+
+.teammate-danger-action-copy {
+  grid-area: copy;
+  display: grid;
+  gap: var(--ling-space-2);
+  min-width: 0;
+}
+
+.teammate-danger-action-copy strong,
+.teammate-danger-action-copy small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.teammate-danger-action-copy strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+  line-height: var(--ling-line-sm);
+}
+
+.teammate-danger-action-copy small {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+.teammate-danger-action-button {
+  grid-area: action;
+  justify-self: end;
+}
+
+.teammate-danger-action-feedback {
+  grid-area: feedback;
+}
+
+.teammate-danger-protected {
+  max-width: 680px;
+}
+
+.teammate-danger-delete-body {
+  display: grid;
+  gap: var(--ling-space-5);
+}
+
+.teammate-danger-delete-body > p {
+  margin: 0;
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-sm);
+  line-height: var(--ling-line-sm);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 1320px) {
+  .teammate-danger-action {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "copy"
+      "feedback"
+      "action";
+  }
+
+  .teammate-danger-action-button {
+    justify-self: start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .teammate-danger-panel *,
+  .teammate-danger-delete-dialog * {
+    scroll-behavior: auto;
+  }
+}

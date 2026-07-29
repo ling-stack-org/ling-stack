@@ -1,207 +1,279 @@
-import { Bot, CheckCircle2, Image, Loader2, Save, Search, Settings, ShieldCheck, Upload } from "lucide-react";
+import { Camera, Check, Search, ShieldCheck, Trash2 } from "lucide-react";
+import { useRef, type RefObject } from "react";
 import { useI18n } from "../../i18n.js";
-import { StatusBadge } from "../../shared/components/index.js";
+import {
+  AvatarCropDialog,
+  Button,
+  DataRow,
+  Field,
+  IconButton,
+  InlineFeedback,
+  Input,
+  InspectorSection,
+  Select,
+  StatusIndicator,
+  Switch,
+  Textarea,
+} from "../../shared/ui/index.js";
 import type { AiTeammate, TeammatePersonaDraft } from "../../types.js";
 import { TeammateAvatarView } from "./TeammateAvatarView.js";
-
-import { SelectControl } from "../../shared/components/SelectControl.js";
-
-interface TeammateProfileSettingsForm {
-  readonly displayName: string;
-  readonly description: string;
-  readonly providerPresetId: string;
-  readonly status: AiTeammate["status"];
-  readonly pinned: boolean;
-  readonly hidden: boolean;
-  readonly systemPrompt: string;
-  readonly appendSystemPromptText: string;
-}
-
-interface PersonaImportForm {
-  readonly sourcePath: string;
-  readonly content: string;
-}
+import type { PersonaImportForm } from "./useTeammateProfileController.js";
+import type { TeammateSettingsForm } from "./teammate-workspace-utils.js";
 
 export function TeammateProfileTab({
+  avatarCropSource,
+  avatarTriggerRef,
   cwd,
   teammate,
   settingsForm,
   personaImportForm,
   personaDraft,
-  saveMessage,
+  profileError,
   isProtectedSystemTeammate,
   uploadingAvatar,
   importingPersona,
-  saving,
   onSettingsFormChange,
   onPersonaImportFormChange,
-  onUploadAvatarFile,
+  onSelectAvatarFile,
   onRemoveAvatar,
+  onCancelAvatarCrop,
+  onConfirmAvatarCrop,
   onPreviewPersonaImport,
   onApplyPersonaDraft,
-  onSaveSettings,
 }: {
+  readonly avatarCropSource?: string;
+  readonly avatarTriggerRef: RefObject<HTMLButtonElement>;
   readonly cwd: string;
   readonly teammate: AiTeammate;
-  readonly settingsForm: TeammateProfileSettingsForm;
+  readonly settingsForm: TeammateSettingsForm;
   readonly personaImportForm: PersonaImportForm;
-  readonly personaDraft: TeammatePersonaDraft | undefined;
-  readonly saveMessage: string;
+  readonly personaDraft?: TeammatePersonaDraft;
+  readonly profileError: string;
   readonly isProtectedSystemTeammate: boolean;
   readonly uploadingAvatar: boolean;
   readonly importingPersona: boolean;
-  readonly saving: boolean;
-  readonly onSettingsFormChange: (form: TeammateProfileSettingsForm) => void;
+  readonly onSettingsFormChange: (form: TeammateSettingsForm) => void;
   readonly onPersonaImportFormChange: (form: PersonaImportForm) => void;
-  readonly onUploadAvatarFile: (file: File | undefined) => void | Promise<void>;
+  readonly onSelectAvatarFile: (file?: File) => void | Promise<void>;
   readonly onRemoveAvatar: () => void | Promise<void>;
+  readonly onCancelAvatarCrop: () => void;
+  readonly onConfirmAvatarCrop: (dataUrl: string) => void | Promise<void>;
   readonly onPreviewPersonaImport: () => void | Promise<void>;
   readonly onApplyPersonaDraft: () => void | Promise<void>;
-  readonly onSaveSettings: () => void | Promise<void>;
 }): JSX.Element {
   const { t } = useI18n();
+  const avatarInputRef = useRef<HTMLInputElement>(null);
+  const status = teammateProfileStatus(settingsForm.status, isProtectedSystemTeammate, t);
+
   return (
-    <section className="teammate-settings-panel" aria-label={t("Teammate settings")}>
-      <div className="panel-title split">
-        <span>
-          <Settings size={16} />
-          <h2>{t("Settings")}</h2>
-        </span>
-        {saveMessage ? <small>{saveMessage}</small> : null}
-      </div>
+    <section className="teammate-profile-panel" aria-label={t("Teammate profile")}>
+      {profileError ? (
+        <InlineFeedback className="teammate-profile-error" title={t("Profile needs attention")} tone="danger">
+          {profileError}
+        </InlineFeedback>
+      ) : null}
+
       {isProtectedSystemTeammate ? (
-        <div className="provider-run-notice neutral">
-          <ShieldCheck size={16} />
-          <span>{t("Ling Agent is a protected built-in teammate. You can personalize its name, avatar, description, and additional instructions; lifecycle and permissions stay managed by Ling Stack.")}</span>
-        </div>
+        <InlineFeedback className="teammate-profile-protected" title={t("Protected teammate")} tone="neutral">
+          {t("Ling Agent keeps lifecycle and permissions managed by Ling Stack.")}
+        </InlineFeedback>
       ) : null}
-      <section className="teammate-avatar-settings" aria-label={t("Avatar")}>
-        <div className="teammate-avatar-preview compact-preview">
+
+      <div className="teammate-profile-identity">
+        <div className="teammate-profile-avatar" aria-label={t("Avatar")}>
           <TeammateAvatarView teammate={teammate} cwd={cwd} />
-          <span>{teammate.displayName}</span>
+          <IconButton
+            ref={avatarTriggerRef}
+            className="teammate-profile-avatar-change"
+            disabled={uploadingAvatar}
+            icon={Camera}
+            label={t("Change avatar")}
+            loading={uploadingAvatar}
+            onClick={() => avatarInputRef.current?.click()}
+          />
+          <input
+            data-ling-control-native="true"
+            ref={avatarInputRef}
+            className="teammate-profile-avatar-input"
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            aria-label={t("Upload avatar")}
+            onChange={(event) => {
+              const file = event.currentTarget.files?.[0];
+              event.currentTarget.value = "";
+              void onSelectAvatarFile(file);
+            }}
+          />
         </div>
-        <div className="teammate-avatar-actions">
-          <label className="secondary-button">
-            {uploadingAvatar ? <Loader2 className="spin" size={15} /> : <Upload size={15} />}
-            {t("Upload avatar")}
-            <input
-              type="file"
-              accept="image/png,image/jpeg,image/webp,image/gif"
-              onChange={(event) => {
-                const file = event.currentTarget.files?.[0];
-                event.currentTarget.value = "";
-                void onUploadAvatarFile(file);
-              }}
+        <div className="teammate-profile-identity-fields">
+          <Field label={t("Teammate name")}>
+            <Input
+              value={settingsForm.displayName}
+              onChange={(event) => onSettingsFormChange({ ...settingsForm, displayName: event.target.value })}
             />
-          </label>
-          <button className="secondary-button compact-button" type="button" onClick={() => void onRemoveAvatar()} disabled={uploadingAvatar || !teammate.avatarImageAttachmentId}>
-            <Image size={14} />
-            {t("Remove avatar")}
-          </button>
+          </Field>
+          <div className="teammate-profile-identity-status">
+            <StatusIndicator compact label={status.label} tone={status.tone} />
+            <IconButton
+              disabled={uploadingAvatar || !teammate.avatarImageAttachmentId}
+              icon={Trash2}
+              label={t("Remove avatar")}
+              onClick={() => void onRemoveAvatar()}
+            />
+          </div>
         </div>
-      </section>
+      </div>
+
       {!isProtectedSystemTeammate ? (
-        <section className="teammate-import-panel" aria-label={t("Persona import")}>
-          <div className="panel-title split">
-            <span>
-              <Upload size={15} />
-              <h3>{t("Persona import")}</h3>
-            </span>
-            {personaDraft ? <small>{t("Draft ready")}</small> : null}
-          </div>
-          <div className="teammate-task-create-grid">
-            <label className="field">
-              <span>{t("Source path")}</span>
-              <input value={personaImportForm.sourcePath} onChange={(event) => onPersonaImportFormChange({ ...personaImportForm, sourcePath: event.target.value })} placeholder="AGENTS.md" />
-            </label>
-            <label className="field wide">
-              <span>{t("Persona content")}</span>
-              <textarea rows={5} value={personaImportForm.content} onChange={(event) => onPersonaImportFormChange({ ...personaImportForm, content: event.target.value })} />
-            </label>
-          </div>
-          {personaDraft ? (
-            <div className="teammate-import-preview">
-              <article className="teammate-data-row">
-                <span>
-                  <strong>{personaDraft.displayName}</strong>
-                  <small>{personaDraft.description}</small>
-                </span>
-                <StatusBadge status={personaDraft.sourceKind} />
-              </article>
-              {personaDraft.warnings.map((warning, index) => (
-                <small key={`${warning}-${index}`} className="teammate-warning warning">
-                  {warning}
-                </small>
-              ))}
-            </div>
-          ) : null}
-          <div className="teammate-settings-actions">
-            <button className="secondary-button" type="button" onClick={() => void onPreviewPersonaImport()} disabled={importingPersona || !personaImportForm.content.trim()}>
-              {importingPersona ? <Loader2 className="spin" size={15} /> : <Search size={15} />}
-              {t("Preview draft")}
-            </button>
-            <button className="primary-button" type="button" onClick={() => void onApplyPersonaDraft()} disabled={importingPersona || !personaDraft}>
-              <CheckCircle2 size={15} />
-              {t("Apply persona draft")}
-            </button>
-          </div>
-        </section>
+        <div className="teammate-profile-lifecycle">
+          <Field label={t("Status")}>
+            <Select
+              value={settingsForm.status}
+              onChange={(event) => onSettingsFormChange({
+                ...settingsForm,
+                status: event.target.value as AiTeammate["status"],
+              })}
+            >
+              <option value="active">{t("active")}</option>
+              <option value="paused">{t("paused")}</option>
+              <option value="disabled">{t("disabled")}</option>
+            </Select>
+          </Field>
+          <Field label={t("Pinned in sidebar")}>
+            <Switch
+              checked={settingsForm.pinned}
+              onCheckedChange={(checked) => onSettingsFormChange({ ...settingsForm, pinned: checked })}
+            />
+          </Field>
+          <Field label={t("Hidden from sidebar")}>
+            <Switch
+              checked={settingsForm.hidden}
+              onCheckedChange={(checked) => onSettingsFormChange({ ...settingsForm, hidden: checked })}
+            />
+          </Field>
+        </div>
       ) : null}
-      <div className="teammate-settings-grid">
-        <label className="field">
-          <span>{t("Teammate name")}</span>
-          <input value={settingsForm.displayName} onChange={(event) => onSettingsFormChange({ ...settingsForm, displayName: event.target.value })} />
-        </label>
-        {!isProtectedSystemTeammate ? (
-          <>
-            <label className="field">
-              <span>{t("Status")}</span>
-              <SelectControl value={settingsForm.status} onChange={(event) => onSettingsFormChange({ ...settingsForm, status: event.target.value as AiTeammate["status"] })}>
-                <option value="active">{t("active")}</option>
-                <option value="paused">{t("paused")}</option>
-                <option value="disabled">{t("disabled")}</option>
-              </SelectControl>
-            </label>
-            <label className="teammate-toggle inline-toggle">
-              <input type="checkbox" checked={settingsForm.pinned} onChange={(event) => onSettingsFormChange({ ...settingsForm, pinned: event.target.checked })} />
-              <Bot size={15} />
-              <span>
-                <strong>{t("Pinned in sidebar")}</strong>
-                <small>{t("Keep this teammate near the top of the workspace roster.")}</small>
-              </span>
-            </label>
-            <label className="teammate-toggle inline-toggle">
-              <input type="checkbox" checked={settingsForm.hidden} onChange={(event) => onSettingsFormChange({ ...settingsForm, hidden: event.target.checked })} />
-              <Bot size={15} />
-              <span>
-                <strong>{t("Hidden from sidebar")}</strong>
-                <small>{t("The teammate remains durable and can be restored later.")}</small>
-              </span>
-            </label>
-          </>
-        ) : null}
-        <label className="field wide">
-          <span>{t("Description")}</span>
-          <textarea rows={3} value={settingsForm.description} onChange={(event) => onSettingsFormChange({ ...settingsForm, description: event.target.value })} />
-        </label>
-        {isProtectedSystemTeammate ? (
-          <label className="field wide">
-            <span>{t("Additional instructions")}</span>
-            <textarea rows={5} value={settingsForm.appendSystemPromptText} onChange={(event) => onSettingsFormChange({ ...settingsForm, appendSystemPromptText: event.target.value })} placeholder={t("Add user preferences for Ling Agent without changing its core behavior.")} />
-          </label>
-        ) : (
-          <label className="field wide">
-            <span>{t("System prompt")}</span>
-            <textarea rows={5} value={settingsForm.systemPrompt} onChange={(event) => onSettingsFormChange({ ...settingsForm, systemPrompt: event.target.value })} />
-          </label>
-        )}
-      </div>
-      <div className="teammate-settings-actions">
-        <button className="primary-button" type="button" onClick={() => void onSaveSettings()} disabled={saving}>
-          {saving ? <Loader2 className="spin" size={15} /> : <Save size={15} />}
-          {t("Save")}
-        </button>
-      </div>
+
+      <Field className="teammate-profile-description" label={t("Description")}>
+        <Textarea
+          rows={4}
+          value={settingsForm.description}
+          onChange={(event) => onSettingsFormChange({ ...settingsForm, description: event.target.value })}
+        />
+      </Field>
+
+      {isProtectedSystemTeammate ? (
+        <Field label={t("Additional instructions")}>
+          <Textarea
+            rows={6}
+            value={settingsForm.appendSystemPromptText}
+            placeholder={t("Add user preferences for Ling Agent without changing its core behavior.")}
+            onChange={(event) => onSettingsFormChange({
+              ...settingsForm,
+              appendSystemPromptText: event.target.value,
+            })}
+          />
+        </Field>
+      ) : (
+        <InspectorSection
+          className="teammate-profile-advanced"
+          title={t("Advanced profile")}
+          summary={t("System prompt and persona import")}
+        >
+          <div className="teammate-profile-advanced-body">
+            <Field label={t("System prompt")}>
+              <Textarea
+                rows={6}
+                value={settingsForm.systemPrompt}
+                onChange={(event) => onSettingsFormChange({ ...settingsForm, systemPrompt: event.target.value })}
+              />
+            </Field>
+
+            <section className="teammate-profile-persona" aria-label={t("Persona import")}>
+              <div className="teammate-profile-persona-heading">
+                <h3>{t("Persona import")}</h3>
+                {personaDraft ? <StatusIndicator compact label={t("Draft ready")} tone="info" /> : null}
+              </div>
+              <Field label={t("Source path")}>
+                <Input
+                  value={personaImportForm.sourcePath}
+                  placeholder="AGENTS.md"
+                  onChange={(event) => onPersonaImportFormChange({
+                    ...personaImportForm,
+                    sourcePath: event.target.value,
+                  })}
+                />
+              </Field>
+              <Field label={t("Persona content")}>
+                <Textarea
+                  rows={6}
+                  value={personaImportForm.content}
+                  onChange={(event) => onPersonaImportFormChange({
+                    ...personaImportForm,
+                    content: event.target.value,
+                  })}
+                />
+              </Field>
+              {personaDraft ? (
+                <div className="teammate-profile-persona-preview">
+                  <DataRow
+                    compact
+                    className="teammate-profile-persona-row"
+                    identity={<strong>{personaDraft.displayName}</strong>}
+                    summary={<span className="teammate-profile-persona-summary">{personaDraft.description}</span>}
+                    status={<StatusIndicator compact label={t(personaDraft.sourceKind)} tone="neutral" />}
+                  />
+                  {personaDraft.warnings.map((warning, index) => (
+                    <InlineFeedback key={`${warning}-${index}`} tone="warning">{warning}</InlineFeedback>
+                  ))}
+                </div>
+              ) : null}
+              <div className="teammate-profile-persona-actions">
+                <Button
+                  disabled={!personaImportForm.content.trim()}
+                  leadingIcon={<Search />}
+                  loading={importingPersona}
+                  loadingLabel={t("Loading")}
+                  size="sm"
+                  onClick={() => void onPreviewPersonaImport()}
+                >
+                  {t("Preview draft")}
+                </Button>
+                <Button
+                  disabled={!personaDraft}
+                  leadingIcon={<Check />}
+                  loading={importingPersona}
+                  loadingLabel={t("Saving")}
+                  size="sm"
+                  variant="primary"
+                  onClick={() => void onApplyPersonaDraft()}
+                >
+                  {t("Apply persona draft")}
+                </Button>
+              </div>
+            </section>
+          </div>
+        </InspectorSection>
+      )}
+
+      {avatarCropSource ? (
+        <AvatarCropDialog
+          sourceDataUrl={avatarCropSource}
+          onCancel={onCancelAvatarCrop}
+          onConfirm={onConfirmAvatarCrop}
+        />
+      ) : null}
     </section>
   );
+}
+
+function teammateProfileStatus(
+  status: AiTeammate["status"],
+  isProtected: boolean,
+  t: (key: string) => string,
+): { readonly label: string; readonly tone: "danger" | "neutral" | "success" | "warning" } {
+  if (isProtected) return { label: t("Protected teammate"), tone: "neutral" };
+  if (status === "active") return { label: t("active"), tone: "success" };
+  if (status === "paused") return { label: t("paused"), tone: "warning" };
+  return { label: t("disabled"), tone: "danger" };
 }

@@ -1,6 +1,7 @@
-import { ListChecks, Loader2, PanelBottom, PanelBottomClose, PanelRightClose, PanelRightOpen, RefreshCw, UserPlus } from "lucide-react";
+import { ListChecks, Loader2, PanelBottom, PanelBottomClose, PanelRightClose, PanelRightOpen, RefreshCw, Search, UserPlus } from "lucide-react";
 import type { ReactNode, Ref } from "react";
 import { CurrentSessionHeaderCapabilitySlot } from "../../shared/current-session/CurrentSessionHeaderCapability.js";
+import { Icon } from "../../shared/ui/index.js";
 import {
   WorkspaceToolbarIconButton,
   WorkspaceTopRightToolbar,
@@ -26,12 +27,20 @@ export interface ChannelHeaderToolbarProps {
   readonly onToggleProgress: () => void;
   readonly progressActive: boolean;
   readonly progressLabel: string;
+  readonly refreshDisabled: boolean;
+  readonly refreshLabel: string;
+  readonly refreshLoading: boolean;
+  readonly searchActive: boolean;
+  readonly searchDisabled: boolean;
+  readonly searchLabel: string;
   readonly settingsLoading: boolean;
   readonly settingsPageOpen: boolean;
   readonly settingsRefreshDisabled: boolean;
   readonly settingsRefreshLabel: string;
   readonly showEmptyTeammateAction: boolean;
   readonly teammateActionNode?: ReactNode;
+  readonly onRefresh: () => void;
+  readonly onToggleSearch: () => void;
 }
 
 export function ChannelHeaderToolbar({
@@ -54,58 +63,92 @@ export function ChannelHeaderToolbar({
   onToggleProgress,
   progressActive,
   progressLabel,
+  refreshDisabled,
+  refreshLabel,
+  refreshLoading,
+  searchActive,
+  searchDisabled,
+  searchLabel,
   settingsLoading,
   settingsPageOpen,
   settingsRefreshDisabled,
   settingsRefreshLabel,
   showEmptyTeammateAction,
   teammateActionNode,
+  onRefresh,
+  onToggleSearch,
 }: ChannelHeaderToolbarProps): JSX.Element {
+  const BottomPanelIcon = bottomPanelOpen ? PanelBottomClose : PanelBottom;
+  const DetailsIcon = detailsOpen ? PanelRightClose : PanelRightOpen;
+
   return (
     <WorkspaceTopRightToolbar className="channel-header-actions" ariaLabel={ariaLabel}>
       <CurrentSessionHeaderCapabilitySlot />
       {settingsPageOpen ? (
         <button className="secondary-button compact-button channel-settings-refresh-button" type="button" onClick={onRefreshSettings} disabled={settingsRefreshDisabled}>
-          {settingsLoading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
+          {settingsLoading ? <Loader2 className="spin" size={14} /> : <Icon icon={RefreshCw} size="xs" />}
           {settingsRefreshLabel}
         </button>
       ) : environmentPageOpen ? null : (
         <>
+          <WorkspaceToolbarIconButton
+            actionId="search"
+            active={searchActive}
+            className="channel-toolbar-search"
+            disabled={searchDisabled}
+            icon={Search}
+            label={searchLabel}
+            onClick={onToggleSearch}
+          />
+          <WorkspaceToolbarIconButton
+            actionId="refresh"
+            className="channel-toolbar-refresh"
+            disabled={refreshDisabled}
+            icon={RefreshCw}
+            label={refreshLabel}
+            loading={refreshLoading}
+            loadingLabel={refreshLabel}
+            onClick={onRefresh}
+          />
           {teammateActionNode}
           {governanceActionNode}
           {showEmptyTeammateAction ? (
             <WorkspaceToolbarIconButton
+              actionId="teammates"
               ref={emptyTeammateActionRef}
               active={emptyTeammateActionActive}
-              className="icon-button task-toolbar-teammates"
+              className="task-toolbar-teammates"
               disabled={emptyTeammateActionDisabled}
               aria-expanded={emptyTeammateActionActive}
-              icon={<UserPlus size={15} />}
+              icon={UserPlus}
               label={emptyTeammateActionLabel}
               onClick={onToggleEmptyTeammateAction}
             />
           ) : null}
           <WorkspaceToolbarIconButton
+            actionId="summary"
             active={progressActive}
-            className="icon-button task-toolbar-progress"
-            icon={<ListChecks size={15} />}
+            className="task-toolbar-progress"
+            icon={ListChecks}
             label={progressLabel}
             onClick={onToggleProgress}
           />
           <WorkspaceToolbarIconButton
+            actionId="terminal"
             active={bottomPanelOpen}
-            className="icon-button task-toolbar-bottom-panel"
+            className="task-toolbar-bottom-panel"
             disabled={bottomPanelDisabled}
             aria-expanded={bottomPanelOpen}
-            icon={bottomPanelOpen ? <PanelBottomClose size={15} /> : <PanelBottom size={15} />}
+            icon={BottomPanelIcon}
             label={bottomPanelLabel}
             onClick={onToggleBottomPanel}
           />
           <WorkspaceToolbarIconButton
+            actionId="details"
             active={detailsOpen}
-            className="icon-button task-toolbar-panel"
+            className="task-toolbar-panel"
             aria-expanded={detailsOpen}
-            icon={detailsOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
+            icon={DetailsIcon}
             label={detailsLabel}
             onClick={onToggleDetails}
           />

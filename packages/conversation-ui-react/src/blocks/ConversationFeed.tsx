@@ -1,10 +1,12 @@
-import { Fragment, type ReactNode } from "react";
+import { Fragment, type ReactNode, type Ref, type UIEventHandler } from "react";
 import { ConversationEmptyState } from "./ConversationEmptyState.js";
 
 export interface ConversationFeedProps<TItem> {
   readonly className?: string;
   readonly emptyClassName?: string;
   readonly ariaLabel?: string;
+  readonly rootRef?: Ref<HTMLDivElement>;
+  readonly onScroll?: UIEventHandler<HTMLDivElement>;
   readonly items: readonly TItem[];
   readonly loading?: boolean;
   readonly dayLabel?: string;
@@ -19,6 +21,8 @@ export function ConversationFeed<TItem>({
   className,
   emptyClassName,
   ariaLabel,
+  rootRef,
+  onScroll,
   items,
   loading = false,
   dayLabel,
@@ -31,7 +35,7 @@ export function ConversationFeed<TItem>({
   const rootClassName = [className ?? "conversation-feed", items.length === 0 ? "empty" : ""].filter(Boolean).join(" ");
 
   return (
-    <div className={rootClassName} aria-label={ariaLabel}>
+    <div ref={rootRef} className={rootClassName} aria-label={ariaLabel} onScroll={onScroll}>
       {dayLabel ? <div className="teammate-chat-day-separator conversation-day-separator">{dayLabel}</div> : null}
       {loading ? (
         <ConversationEmptyState className={emptyClassName} label={emptyLabel} loading />

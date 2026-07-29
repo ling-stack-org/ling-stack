@@ -1,0 +1,206 @@
+.settings-external-work {
+  display: grid;
+  min-width: 0;
+  gap: 0;
+}
+
+.settings-external-work-header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ling-space-5);
+  padding: 0 0 var(--ling-space-5);
+  border-bottom: 1px solid var(--ling-border-default);
+}
+
+.settings-external-work-header > span,
+.settings-external-work-identity {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: var(--ling-space-4);
+}
+
+.settings-external-work-header > span {
+  align-items: center;
+}
+
+.settings-external-work-header svg,
+.settings-external-work-identity > svg,
+.settings-external-work-identity > [aria-hidden="true"] > svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  color: var(--ling-text-muted);
+  stroke-width: 1.8;
+}
+
+.settings-external-work-header strong,
+.settings-external-work-section > h2 {
+  margin: 0;
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+  font-weight: 650;
+  line-height: var(--ling-line-sm);
+  letter-spacing: 0;
+}
+
+.settings-external-work-overall-row,
+.settings-external-work-row {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  padding-inline: 0;
+  background: transparent;
+}
+
+.settings-external-work-overall-row {
+  min-height: 64px;
+  border-bottom: 0;
+}
+
+.settings-external-work-identity > span {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
+.settings-external-work-identity strong,
+.settings-external-work-identity small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.settings-external-work-identity strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+  font-weight: 650;
+  line-height: var(--ling-line-sm);
+}
+
+.settings-external-work-identity small {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+.settings-external-work-section {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-4);
+  padding: var(--ling-space-7) 0;
+  border-top: 1px solid var(--ling-border-default);
+}
+
+.settings-external-work-section > h2 {
+  padding-bottom: var(--ling-space-1);
+}
+
+.settings-external-work-row-actions,
+.settings-external-work-operation-actions {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--ling-space-3);
+}
+
+.settings-external-work-operation-actions {
+  justify-content: flex-end;
+}
+
+.settings-external-work-form {
+  display: grid;
+  min-width: 0;
+  align-items: end;
+  gap: var(--ling-space-5);
+  padding: var(--ling-space-5) 0;
+}
+
+.settings-external-work-workflow-form {
+  grid-template-columns: minmax(112px, 0.3fr) minmax(240px, 1fr) auto;
+}
+
+.settings-external-work-credential-form {
+  grid-template-columns: minmax(260px, 1fr) auto auto;
+}
+
+.settings-external-work-form-action {
+  align-self: end;
+}
+
+.settings-external-work-details {
+  min-width: 0;
+}
+
+.settings-external-work-detail-list {
+  display: grid;
+  min-width: 0;
+  gap: 0;
+  margin: 0;
+}
+
+.settings-external-work-detail-list > div {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(112px, 0.28fr) minmax(0, 1fr);
+  gap: var(--ling-space-5);
+  padding: var(--ling-space-3) 0;
+  border-bottom: 1px solid var(--ling-border-default);
+}
+
+.settings-external-work-detail-list > div:last-child {
+  border-bottom: 0;
+}
+
+.settings-external-work-detail-list dt,
+.settings-external-work-detail-list dd {
+  min-width: 0;
+  margin: 0;
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+  overflow-wrap: anywhere;
+}
+
+.settings-external-work-detail-list dt {
+  color: var(--ling-text-muted);
+  font-weight: 600;
+}
+
+.settings-external-work-detail-list dd {
+  color: var(--ling-text-default);
+}
+
+.settings-external-work-summary-list,
+.settings-external-work-loading {
+  display: grid;
+  min-width: 0;
+}
+
+.settings-external-work-summary-list {
+  gap: 0;
+}
+
+.settings-external-work-summary-row:last-child {
+  border-bottom: 0;
+}
+
+.settings-external-work-loading {
+  gap: var(--ling-space-5);
+  padding: var(--ling-space-6) 0;
+}
+
+@media (max-width: 900px) {
+  .settings-external-work-workflow-form,
+  .settings-external-work-credential-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-external-work-form-action {
+    justify-self: start;
+  }
+
+  .settings-external-work-detail-list > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--ling-space-1);
+  }
+}

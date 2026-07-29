@@ -1,11 +1,18 @@
 import { Check, ChevronDown, Eye, LockKeyhole, Shield, ShieldCheck, SlidersHorizontal } from "lucide-react";
-import { useEffect, useRef, useState, type FocusEvent } from "react";
+import { useState } from "react";
 import {
-  conversationPermissionPresetRequiresConfirmation,
   defaultConversationPermissionPresetOptions,
   type ConversationPermissionPreset,
   type ConversationPermissionPresetOption,
 } from "@ling-stack/conversation-ui-core";
+import {
+  Button,
+  Menu,
+  MenuContent,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuTrigger,
+} from "@ling-stack/ui-react";
 
 const permissionPresetIcon = {
   read_only: Eye,
@@ -19,18 +26,14 @@ export interface ComposerPermissionMenuProps {
   readonly options?: readonly ConversationPermissionPresetOption[];
   readonly disabled?: boolean;
   readonly disabledReason?: string;
-  readonly confirmChange?: (preset: ConversationPermissionPreset) => boolean | Promise<boolean>;
   readonly selectedPermissionLabel?: string;
   readonly menuLabel?: string;
-  readonly fullAccessConfirmationMessage?: string;
   readonly onPresetChange: (preset: ConversationPermissionPreset) => void;
 }
 
 export function ComposerPermissionMenu({
-  confirmChange,
   disabled = false,
   disabledReason,
-  fullAccessConfirmationMessage = "Full access can allow broad local file, network, and tool access for the next run. Continue?",
   menuLabel = "Permission preset",
   onPresetChange,
   options = defaultConversationPermissionPresetOptions,
@@ -38,49 +41,12 @@ export function ComposerPermissionMenu({
   selectedPermissionLabel = "Selected permission preset {label}",
 }: ComposerPermissionMenuProps): JSX.Element {
   const [open, setOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement | null>(null);
   const ActiveIcon = disabled ? LockKeyhole : permissionPresetIcon[preset];
   const activeOption = findPermissionPresetOption(options, preset);
   const activeLabel = activeOption.label;
   const activeDescription = disabled && disabledReason ? disabledReason : activeOption.description;
 
-  useEffect(() => {
-    if (disabled) {
-      setOpen(false);
-    }
-  }, [disabled]);
-
-  useEffect(() => {
-    if (!open || typeof document === "undefined") {
-      return;
-    }
-    function handlePointerDown(event: PointerEvent): void {
-      const target = event.target as Node | null;
-      if (target && menuRef.current?.contains(target)) {
-        return;
-      }
-      setOpen(false);
-    }
-    function handleKeyDown(event: KeyboardEvent): void {
-      if (event.key === "Escape") {
-        setOpen(false);
-      }
-    }
-    document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [open]);
-
-  function handleBlur(event: FocusEvent<HTMLDivElement>): void {
-    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-      setOpen(false);
-    }
-  }
-
-  async function selectPreset(nextPreset: ConversationPermissionPreset): Promise<void> {
+  function selectPreset(nextPreset: ConversationPermissionPreset): void {
     if (disabled) {
       return;
     }
@@ -88,69 +54,62 @@ export function ComposerPermissionMenu({
       setOpen(false);
       return;
     }
-    if (conversationPermissionPresetRequiresConfirmation(nextPreset, options)) {
-      const confirmed = confirmChange
-        ? await confirmChange(nextPreset)
-        : typeof globalThis.confirm === "function"
-          ? globalThis.confirm(fullAccessConfirmationMessage)
-          : false;
-      if (!confirmed) {
-        setOpen(false);
-        return;
-      }
-    }
     onPresetChange(nextPreset);
     setOpen(false);
   }
 
   return (
-    <div
-      ref={menuRef}
-      className={disabled ? "conversation-authorization-menu disabled" : "conversation-authorization-menu"}
-      onBlur={handleBlur}
-    >
-      <button
-        className="conversation-tool-button conversation-authorization-trigger conversation-composer-tool-button"
-        type="button"
-        aria-label={selectedPermissionLabel.replace("{label}", activeLabel)}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-disabled={disabled}
-        disabled={disabled}
-        title={activeDescription}
-        onClick={() => {
-          if (!disabled) {
-            setOpen((currentOpen) => !currentOpen);
-          }
-        }}
+    <div className={disabled ? "conversation-authorization-menu disabled" : "conversation-authorization-menu"}>
+      <Menu
+        open={disabled ? false : open}
+        onOpenChange={(nextOpen) => setOpen(disabled ? false : nextOpen)}
       >
-        <ActiveIcon size={15} />
-        <span>{activeLabel}</span>
-        <ChevronDown className={open ? "expanded" : ""} size={13} />
-      </button>
-      {open ? (
-        <div className="conversation-authorization-popover conversation-composer-popover" role="menu" aria-label={menuLabel}>
+        <MenuTrigger asChild>
+          <Button
+            className="conversation-tool-button conversation-authorization-trigger conversation-composer-tool-button"
+            variant="ghost"
+            size="sm"
+            leadingIcon={<ActiveIcon size={15} />}
+            trailingIcon={<ChevronDown className={open ? "expanded" : ""} size={13} />}
+            aria-label={selectedPermissionLabel.replace("{label}", activeLabel)}
+            aria-disabled={disabled}
+            disabled={disabled}
+            title={activeDescription}
+          >
+            {activeLabel}
+          </Button>
+        </MenuTrigger>
+        <MenuContent
+          className="conversation-authorization-popover conversation-composer-popover"
+          side="top"
+          align="start"
+          sideOffset={8}
+          aria-label={menuLabel}
+        >
+          <MenuRadioGroup value={preset}>
           {options.map((option) => {
             const selected = option.preset === preset;
             const Icon = permissionPresetIcon[option.preset];
             return (
-              <button
+              <MenuRadioItem
                 key={option.preset}
                 className={selected ? "conversation-authorization-option selected" : "conversation-authorization-option"}
-                type="button"
-                role="menuitemradio"
-                aria-checked={selected}
+                value={option.preset}
                 title={option.description}
-                onClick={() => void selectPreset(option.preset)}
+                onSelect={(event) => {
+                  event.preventDefault();
+                  selectPreset(option.preset);
+                }}
               >
                 <Icon size={14} />
                 <span>{option.label}</span>
                 {selected ? <Check size={14} /> : null}
-              </button>
+              </MenuRadioItem>
             );
           })}
-        </div>
-      ) : null}
+          </MenuRadioGroup>
+        </MenuContent>
+      </Menu>
     </div>
   );
 }

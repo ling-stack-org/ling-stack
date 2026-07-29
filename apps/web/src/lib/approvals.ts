@@ -115,6 +115,41 @@ export function approvalOwnerLabels(approval: ApprovalRequest): readonly string[
   ].filter(Boolean);
 }
 
+export function approvalOwnerIdentity(approval: ApprovalRequest): string {
+  if (approval.mediaJobId) return `generation task ${approval.mediaJobId}`;
+  if (approval.runId) return `run ${approval.runId}`;
+  if (approval.taskId) return `task ${approval.taskId}`;
+  if (approval.workflowStepId) return `step ${approval.workflowStepId}`;
+  if (approval.channelId) return `channel ${approval.channelId}`;
+  return "workspace";
+}
+
+export interface RuntimePermissionDeltaProjection {
+  readonly kind: string;
+  readonly continuationMode: string;
+  readonly added: readonly string[];
+  readonly removed: readonly string[];
+  readonly unchanged: readonly string[];
+}
+
+export function projectRuntimePermissionDelta(approval: ApprovalRequest): RuntimePermissionDeltaProjection | undefined {
+  if (approval.actionType !== "runtime_permission_request") return undefined;
+  const requestedScope = readDataField(approval.payload, "requestedScope");
+  const currentScope = readDataField(approval.payload, "currentScope");
+  const continuation = readDataField(approval.payload, "proposedContinuation");
+  const requested = runtimePermissionScopeEntries(requestedScope);
+  const current = runtimePermissionScopeEntries(currentScope);
+  const requestedSet = new Set(requested);
+  const currentSet = new Set(current);
+  return {
+    kind: readDataString(approval.payload, "requestKind") || "-",
+    continuationMode: readRecordString(continuation, "mode") || "-",
+    added: requested.filter((entry) => !currentSet.has(entry)),
+    removed: current.filter((entry) => !requestedSet.has(entry)),
+    unchanged: requested.filter((entry) => currentSet.has(entry)),
+  };
+}
+
 export function upsertApproval(current: readonly ApprovalRequest[], next: ApprovalRequest): readonly ApprovalRequest[] {
   const existingIndex = current.findIndex((approval) => approval.id === next.id);
   if (existingIndex === -1) {
@@ -183,4 +218,39 @@ export function approvalPolicyToForm(policy: ApprovalPolicy): ApprovalPolicyForm
     },
     allowedWritePathsText: policy.allowedWritePaths.join("\n"),
   };
+}
+
+function runtimePermissionScopeEntries(value: unknown): readonly string[] {
+  if (!isRecord(value)) return [];
+  const kind = readRecordString(value, "kind");
+  if (kind === "core_tool") {
+    return readStringArray(value.tools).map((tool) => `tool ${tool}`);
+  }
+  if (kind === "write_scope") {
+    const operation = readRecordString(value, "operation") || "write";
+    return readStringArray(value.paths).map((path) => `${operation} ${path}`);
+  }
+  if (kind === "mcp_tool") {
+    return [`mcp ${readRecordString(value, "serverId") || "-"}/${readRecordString(value, "toolName") || "-"}`];
+  }
+  if (kind === "runner_capability") {
+    return [`runner ${readRecordString(value, "runnerId") || "-"}/${readRecordString(value, "capability") || "-"}`];
+  }
+  return kind ? [kind] : [];
+}
+
+function readRecordString(value: unknown, key: string): string {
+  if (!isRecord(value)) return "";
+  const field = value[key];
+  return typeof field === "string" ? field : "";
+}
+
+function readStringArray(value: unknown): readonly string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && item.length > 0)
+    : [];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

@@ -12,7 +12,11 @@ import {
 } from "lucide-react";
 import { useI18n, type Translate } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
+import { InlineFeedback, Select, useLingToast } from "../../shared/ui/index.js";
 import { RuntimeDiagnosticsPanel } from "./RuntimeDiagnosticsPanel.js";
+import { ChannelBriefEditor, type ChannelBriefDraft } from "./ChannelBriefEditor.js";
+import { ChannelProtocolResetDialog } from "./ChannelProtocolResetDialog.js";
+import { useChannelProtocolResetController } from "./useChannelProtocolResetController.js";
 import {
   WorkflowQueueCard,
 } from "./ChannelWorkflowProposalCards.js";
@@ -38,8 +42,6 @@ import type {
   UpdateChannelCollaborationProtocolRequest,
   WorkUnit,
 } from "../../types.js";
-
-import { SelectControl } from "../../shared/components/SelectControl.js";
 
 function teammateLabel(
   teammateId: string | undefined,
@@ -84,6 +86,7 @@ export function ChannelInspector({
   onModeChange,
   channel,
   protocol,
+  protocolError,
   teammates,
   autoRouteEnabled,
   brief,
@@ -99,6 +102,7 @@ export function ChannelInspector({
   contextSummaries,
   workflows,
   workflowSteps,
+  workflowErrors,
   artifactsByRun,
   runtimeDiagnostics,
   workUnits,
@@ -131,23 +135,12 @@ export function ChannelInspector({
   readonly onModeChange: (mode: ChannelInspectorMode) => void;
   readonly channel: Channel | undefined;
   readonly protocol: ChannelCollaborationProtocolResponse | undefined;
+  readonly protocolError?: string;
   readonly teammates: readonly ChannelMention[];
   readonly autoRouteEnabled: boolean;
   readonly brief: ChannelBrief | undefined;
-  readonly briefDraft: {
-    readonly objective: string;
-    readonly scope: string;
-    readonly acceptanceCriteria: string;
-    readonly openQuestions: string;
-    readonly risks: string;
-  };
-  readonly onBriefDraftChange: (draft: {
-    readonly objective: string;
-    readonly scope: string;
-    readonly acceptanceCriteria: string;
-    readonly openQuestions: string;
-    readonly risks: string;
-  }) => void;
+  readonly briefDraft: ChannelBriefDraft;
+  readonly onBriefDraftChange: (draft: ChannelBriefDraft) => void;
   readonly onSaveBrief: () => void;
   readonly onSaveProtocol: (input: UpdateChannelCollaborationProtocolRequest) => Promise<ChannelCollaborationProtocolResponse | undefined>;
   readonly onRevertProtocol: () => Promise<ChannelCollaborationProtocolResponse | undefined>;
@@ -158,6 +151,7 @@ export function ChannelInspector({
   readonly contextSummaries: readonly ChannelContextSummary[];
   readonly workflows: readonly ChannelWorkflow[];
   readonly workflowSteps: readonly ChannelWorkflowStep[];
+  readonly workflowErrors: Readonly<Record<string, string>>;
   readonly artifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
   readonly runtimeDiagnostics: RuntimeDiagnosticsResponse | undefined;
   readonly workUnits: readonly WorkUnit[];
@@ -214,37 +208,17 @@ export function ChannelInspector({
           channel={channel}
           protocol={protocol}
           autoRouteEnabled={autoRouteEnabled}
+          loadError={protocolError}
           onSave={onSaveProtocol}
           onRevert={onRevertProtocol}
         />
       ) : null}
       {mode === "brief" ? (
-        <div className="brief-editor">
-          <label className="field wide">
-            <span>{t("Objective")}</span>
-            <textarea rows={2} value={briefDraft.objective} onChange={(event) => onBriefDraftChange({ ...briefDraft, objective: event.target.value })} />
-          </label>
-          <label className="field wide">
-            <span>{t("Scope")}</span>
-            <textarea rows={2} value={briefDraft.scope} onChange={(event) => onBriefDraftChange({ ...briefDraft, scope: event.target.value })} />
-          </label>
-          <label className="field wide">
-            <span>{t("Acceptance criteria")}</span>
-            <textarea rows={3} value={briefDraft.acceptanceCriteria} onChange={(event) => onBriefDraftChange({ ...briefDraft, acceptanceCriteria: event.target.value })} />
-          </label>
-          <label className="field wide">
-            <span>{t("Open questions")}</span>
-            <textarea rows={2} value={briefDraft.openQuestions} onChange={(event) => onBriefDraftChange({ ...briefDraft, openQuestions: event.target.value })} />
-          </label>
-          <label className="field wide">
-            <span>{t("Risks")}</span>
-            <textarea rows={2} value={briefDraft.risks} onChange={(event) => onBriefDraftChange({ ...briefDraft, risks: event.target.value })} />
-          </label>
-          <button className="primary-button compact-button" type="button" onClick={onSaveBrief}>
-            <FileCheck2 size={14} />
-            {t("Save brief")}
-          </button>
-        </div>
+        <ChannelBriefEditor
+          draft={briefDraft}
+          onDraftChange={onBriefDraftChange}
+          onSave={onSaveBrief}
+        />
       ) : null}
       {mode === "routing" ? (
         <RoutingEvidenceIndex
@@ -338,6 +312,7 @@ export function ChannelInspector({
                 linkPreviews={linkPreviews}
                 runningWorkflowStepId={runningWorkflowStepId}
                 orchestrating={orchestratingWorkflowId === workflow.id}
+                operationErrors={workflowErrors}
                 onOrchestrateWorkflow={onOrchestrateWorkflow}
                 onCancelWorkflow={onCancelWorkflow}
                 onStartWorkflowStep={onStartWorkflowStep}
@@ -483,21 +458,27 @@ function ChannelProtocolEditor({
   channel,
   protocol,
   autoRouteEnabled,
+  loadError,
   onSave,
   onRevert,
 }: {
   readonly channel: Channel | undefined;
   readonly protocol: ChannelCollaborationProtocolResponse | undefined;
   readonly autoRouteEnabled: boolean;
+  readonly loadError?: string;
   readonly onSave: (input: UpdateChannelCollaborationProtocolRequest) => Promise<ChannelCollaborationProtocolResponse | undefined>;
   readonly onRevert: () => Promise<ChannelCollaborationProtocolResponse | undefined>;
 }): JSX.Element {
   const { t } = useI18n();
+  const { showToast } = useLingToast();
   const [draft, setDraft] = useState<ChannelProtocolDraft>(() => protocolDraftFromState(channel, protocol));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
   const baseDraft = useMemo(() => protocolDraftFromState(channel, protocol), [channel, protocol]);
+  const protocolReset = useChannelProtocolResetController({
+    channelId: channel?.id,
+    onReset: onRevert,
+  });
   const changed =
     draft.responseLanguage !== baseDraft.responseLanguage ||
     draft.autoReplyMode !== baseDraft.autoReplyMode;
@@ -505,7 +486,6 @@ function ChannelProtocolEditor({
   useEffect(() => {
     setDraft(baseDraft);
     setError("");
-    setNotice("");
   }, [baseDraft]);
 
   async function save(): Promise<void> {
@@ -520,32 +500,26 @@ function ChannelProtocolEditor({
       patch.autoReplyMode = draft.autoReplyMode;
     }
     if (Object.keys(patch).length === 0) {
-      setNotice(t("No protocol changes"));
+      if (channel) {
+        showToast({
+          message: t("No protocol changes"),
+          scope: `channel:${channel.id}:protocol`,
+          tone: "info",
+        });
+      }
       return;
     }
     setSaving(true);
     setError("");
-    setNotice("");
     try {
       await onSave(patch);
-      setNotice(t("Protocol updated"));
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function revert(): Promise<void> {
-    if (!window.confirm(t("Reset channel protocol?"))) {
-      return;
-    }
-    setSaving(true);
-    setError("");
-    setNotice("");
-    try {
-      await onRevert();
-      setNotice(t("Protocol reset"));
+      if (channel) {
+        showToast({
+          message: t("Protocol updated"),
+          scope: `channel:${channel.id}:protocol`,
+          tone: "success",
+        });
+      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -559,6 +533,12 @@ function ChannelProtocolEditor({
         <span><ShieldCheck size={15} /><strong>{t("Channel protocol")}</strong></span>
         <small>{protocol ? t("Updated {time}", { time: formatDateTime(protocol.protocol.updatedAt) }) : t("Not loaded")}</small>
       </div>
+      {loadError ? (
+        <InlineFeedback className="compact" tone="danger" role="alert">
+          <CircleAlert size={14} />
+          {loadError}
+        </InlineFeedback>
+      ) : null}
       {protocol ? (
         <div className="protocol-list">
           <div className="protocol-row compact">
@@ -569,7 +549,8 @@ function ChannelProtocolEditor({
           </div>
           <label className="field wide">
             <span>{t("AI response language")}</span>
-            <SelectControl
+            <Select
+              size="md"
               value={draft.responseLanguage}
               onChange={(event) => setDraft({ ...draft, responseLanguage: event.target.value as ChannelProtocolDraft["responseLanguage"] })}
               disabled={!channel || saving}
@@ -578,7 +559,7 @@ function ChannelProtocolEditor({
               <option value="follow_user">{t("Follow user")}</option>
               <option value="zh-CN">{t("Chinese")}</option>
               <option value="en-US">{t("English")}</option>
-            </SelectControl>
+            </Select>
           </label>
           <div className="task-strip-head">
             <span><Info size={15} /><strong>{t("Read-only protocol defaults")}</strong></span>
@@ -607,19 +588,26 @@ function ChannelProtocolEditor({
             </div>
           ) : null}
           {error ? (
-            <div className="inline-error compact">
+            <InlineFeedback className="compact" tone="danger" role="alert">
               <CircleAlert size={14} />
               {error}
-            </div>
+            </InlineFeedback>
           ) : null}
-          {notice ? <div className="inline-success compact">{notice}</div> : null}
           <div className="activity-action-row">
             <button className="primary-button compact-button" type="button" onClick={() => void save()} disabled={!channel || saving || !changed}>
               {saving ? <Loader2 className="spin" size={14} /> : <Check size={14} />}
               {t("Save protocol")}
             </button>
             <button className="secondary-button compact-button" type="button" onClick={() => setDraft(baseDraft)} disabled={saving || !changed}>{t("Cancel")}</button>
-            <button className="secondary-button compact-button danger" type="button" onClick={() => void revert()} disabled={!channel || saving}>{t("Reset")}</button>
+            <button
+              ref={protocolReset.triggerRef}
+              className="secondary-button compact-button danger"
+              type="button"
+              onClick={protocolReset.openDialog}
+              disabled={!channel || saving || protocolReset.busy}
+            >
+              {t("Reset")}
+            </button>
           </div>
         </div>
       ) : (
@@ -628,6 +616,14 @@ function ChannelProtocolEditor({
           <span>{t("Loading protocol...")}</span>
         </div>
       )}
+      <ChannelProtocolResetDialog
+        busy={protocolReset.busy}
+        error={protocolReset.error}
+        open={protocolReset.open}
+        returnFocusRef={protocolReset.triggerRef}
+        onConfirm={() => void protocolReset.confirm()}
+        onOpenChange={protocolReset.onOpenChange}
+      />
     </div>
   );
 }

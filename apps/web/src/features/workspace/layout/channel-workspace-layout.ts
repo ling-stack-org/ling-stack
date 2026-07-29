@@ -1,22 +1,7 @@
 export const channelRightDockMinWidth = 304;
 export const channelRightDockMaxViewportRatio = 0.5;
 export const channelRightDockMinChatWidth = 560;
-export const channelConversationTargetWidth = 800;
 export const channelRightDockResizeHandleWidth = 8;
-export const channelRightDockTransitionMs = 620;
-export const channelRightDockUnmountDelayMs = channelRightDockTransitionMs + 140;
-export const channelProgressPanelTrackWidth = 304;
-
-export interface ChannelWorkspaceLayoutDecisionInput {
-  readonly mainWidth: number;
-  readonly rightDockWidth: number;
-  readonly rightDockVisible: boolean;
-}
-
-export interface ChannelWorkspaceLayoutDecision {
-  readonly progressPopoverCanFitMainLayout: boolean;
-  readonly progressPopoverCanUseMainLayout: boolean;
-}
 
 export interface ChannelWorkspaceLayoutTargetInput {
   readonly rightDockExpanded: boolean;
@@ -48,23 +33,6 @@ export function clampChannelRightDockWidth(width: number, containerWidth: number
   const maxByViewport = Math.max(channelRightDockMinWidth, Math.floor(viewportWidth * channelRightDockMaxViewportRatio));
   const effectiveMax = Math.min(maxByViewport, maxByContainer);
   return Math.round(Math.max(channelRightDockMinWidth, Math.min(width, effectiveMax)));
-}
-
-export function resolveChannelWorkspaceLayoutDecision({
-  mainWidth,
-  rightDockVisible,
-  rightDockWidth,
-}: ChannelWorkspaceLayoutDecisionInput): ChannelWorkspaceLayoutDecision {
-  const effectiveRightDockWidth = rightDockVisible ? rightDockWidth : 0;
-  const effectiveResizeHandleWidth = rightDockVisible ? channelRightDockResizeHandleWidth : 0;
-  const progressPopoverCanFitMainLayout =
-    mainWidth - effectiveRightDockWidth - effectiveResizeHandleWidth - channelProgressPanelTrackWidth >= channelConversationTargetWidth;
-  const progressPopoverCanUseMainLayout = progressPopoverCanFitMainLayout;
-
-  return {
-    progressPopoverCanFitMainLayout,
-    progressPopoverCanUseMainLayout,
-  };
 }
 
 export function resolveChannelWorkspaceLayoutTargets({

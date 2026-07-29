@@ -1,0 +1,75 @@
+.cua-install-panel {
+  width: min(480px, calc(100vw - 16px));
+}
+
+.cua-install-panel[data-state="open"],
+.cua-install-panel[data-state="closed"] {
+  animation-duration: var(--ling-motion-instant);
+}
+
+.cua-install-body {
+  display: grid;
+  align-content: start;
+  gap: var(--ling-space-7);
+}
+
+.cua-install-section {
+  display: grid;
+  gap: var(--ling-space-5);
+}
+
+.cua-install-section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--ling-space-5);
+}
+
+.cua-install-section-head > span {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-2);
+}
+
+.cua-install-section-head strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+  line-height: var(--ling-line-sm);
+}
+
+.cua-install-section-head small {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+.cua-install-command {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  align-items: center;
+  gap: var(--ling-space-4);
+  min-width: 0;
+  padding: var(--ling-space-4);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  background: var(--ling-bg-subtle);
+}
+
+.cua-install-command code {
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  color: var(--ling-text-strong);
+  font-family: var(--ling-font-mono);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+  white-space: nowrap;
+}
+
+.cua-install-custom-path {
+  border-top: 1px solid var(--ling-border-default);
+}
+
+.cua-install-safety-note {
+  margin-top: var(--ling-space-2);
+}

@@ -1,0 +1,24 @@
+{
+  "filename": "1440x960-ling-dark-workflow-connection-error.png",
+  "capturedAt": "2026-07-23T02:01:13.300Z",
+  "viewport": {
+    "width": 1440,
+    "height": 960
+  },
+  "theme": "ling-dark",
+  "locale": "zh-CN",
+  "fixture": "production_workflow_connection_error",
+  "state": "workflow-connection-error",
+  "functionIds": [
+    "PROD-WORKFLOW-001"
+  ],
+  "sourceCommitOrWorktree": "0a0b80502715+worktree",
+  "consoleErrors": [],
+  "expectedConsoleErrors": [],
+  "pageErrors": [],
+  "documentOverflow": 0,
+  "ownerOverflow": 0,
+  "canvasPixel": null,
+  "mediaPixelHash": null,
+  "sha256": "2b7e1898f8ac535d8ea3361b10f0f178c7983549f25202386148d589225b12b6"
+}

@@ -1,0 +1,52 @@
+.workspace.workspace-plugins-surface {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+  background: var(--ling-bg-app);
+}
+
+.plugin-manager-page,
+.plugin-manager-page > .settings-plugin-manager {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.plugin-manager-page {
+  background: var(--ling-bg-app);
+}
+
+.plugin-manager-page > .settings-plugin-manager {
+  display: grid;
+  grid-template-rows: 64px 52px minmax(0, 1fr);
+  gap: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--ling-bg-panel);
+}
+
+.plugin-manager-page .plugin-manager-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ling-space-6);
+  min-width: 0;
+  padding: 0 var(--ling-space-7);
+  border-bottom: 1px solid var(--ling-border-default);
+}
+
+.plugin-manager-page .plugin-manager-header h2 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--ling-text-strong);
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 28px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

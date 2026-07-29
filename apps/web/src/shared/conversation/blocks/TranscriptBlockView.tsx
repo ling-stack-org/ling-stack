@@ -32,7 +32,11 @@ export function TranscriptBlockView({
   ].filter(Boolean).join(" ");
 
   return (
-    <section className={rootClassName} aria-label={transcriptBlockLabel(block.kind, t)}>
+    <section
+      className={rootClassName}
+      aria-label={transcriptBlockLabel(block.kind, t)}
+      data-conversation-transcript-block
+    >
       <button
         className="transcript-block-view-head"
         type="button"

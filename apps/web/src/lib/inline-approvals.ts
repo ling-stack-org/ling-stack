@@ -70,9 +70,13 @@ export function buildInlineApprovalViews(
   approvals: readonly ApprovalRequest[],
   context: InlineApprovalContext,
 ): InlineApprovalView[] {
-  return approvals
+  const uniqueApprovals = [...new Map(approvals.map((approval) => [approval.id, approval])).values()];
+  return uniqueApprovals
     .filter((approval) => isInlineApprovalEligible(approval, context))
-    .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+    .sort((left, right) => {
+      const riskDifference = approvalRiskRank(right.risk) - approvalRiskRank(left.risk);
+      return riskDifference || left.createdAt.localeCompare(right.createdAt);
+    })
     .map((approval) => ({
       approval,
       summary: inlineApprovalSummary(approval),
@@ -121,4 +125,8 @@ export function inlineApprovalOwnerLabel(approval: ApprovalRequest): string {
 
 function shortId(value: string): string {
   return value.length > 14 ? `${value.slice(0, 12)}...` : value;
+}
+
+function approvalRiskRank(risk: ApprovalRequest["risk"]): number {
+  return risk === "critical" ? 4 : risk === "high" ? 3 : risk === "medium" ? 2 : 1;
 }

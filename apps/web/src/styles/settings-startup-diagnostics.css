@@ -1,0 +1,398 @@
+.settings-startup-diagnostics,
+.settings-run-diagnostics-panel {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: var(--ling-space-6);
+}
+
+.settings-startup-header,
+.settings-run-diagnostics-toolbar {
+  display: grid;
+  min-width: 0;
+  align-items: center;
+  gap: var(--ling-space-5);
+  padding-bottom: var(--ling-space-5);
+  border-bottom: 1px solid var(--ling-border-default);
+}
+
+.settings-startup-header {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.settings-startup-identity,
+.settings-run-diagnostics-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--ling-space-4);
+}
+
+.settings-startup-identity > svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  color: var(--ling-text-muted);
+  stroke-width: 1.8;
+}
+
+.settings-startup-identity > span,
+.settings-run-diagnostics-heading {
+  min-width: 0;
+  display: grid;
+  gap: var(--ling-space-1);
+}
+
+.settings-startup-identity strong,
+.settings-run-diagnostics-heading strong,
+.settings-run-detail-header strong,
+.settings-startup-technical-section > h3,
+.settings-run-activity > h3 {
+  margin: 0;
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+  font-weight: 650;
+  letter-spacing: 0;
+  line-height: var(--ling-line-sm);
+}
+
+.settings-startup-identity small,
+.settings-run-diagnostics-heading small,
+.settings-run-detail-header small {
+  min-width: 0;
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+  overflow-wrap: anywhere;
+}
+
+.settings-startup-primary-state {
+  min-width: 0;
+}
+
+.settings-startup-actions,
+.settings-run-diagnostics-actions,
+.settings-run-detail-actions {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--ling-space-3);
+}
+
+.settings-startup-issues {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-3);
+}
+
+.settings-startup-more-issues {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+.settings-diagnostics-error-details code {
+  display: block;
+  min-width: 0;
+  padding: var(--ling-space-3);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-sm);
+  background: var(--ling-bg-subtle);
+  color: var(--ling-text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-sm);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.settings-startup-technical,
+.settings-run-technical-details {
+  min-width: 0;
+}
+
+.settings-startup-metadata,
+.settings-run-detail-metadata,
+.settings-run-raw-metadata,
+.settings-startup-diagnostic-detail dl {
+  display: grid;
+  min-width: 0;
+  margin: 0;
+}
+
+.settings-startup-metadata,
+.settings-run-detail-metadata {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: var(--ling-space-7);
+}
+
+.settings-startup-metadata > div,
+.settings-run-detail-metadata > div,
+.settings-run-raw-metadata > div,
+.settings-startup-diagnostic-detail dl > div {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(112px, 0.28fr) minmax(0, 1fr);
+  gap: var(--ling-space-5);
+  padding: var(--ling-space-3) 0;
+  border-bottom: 1px solid var(--ling-border-default);
+}
+
+.settings-startup-metadata dt,
+.settings-startup-metadata dd,
+.settings-run-detail-metadata dt,
+.settings-run-detail-metadata dd,
+.settings-run-raw-metadata dt,
+.settings-run-raw-metadata dd,
+.settings-startup-diagnostic-detail dt,
+.settings-startup-diagnostic-detail dd {
+  min-width: 0;
+  margin: 0;
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+  overflow-wrap: anywhere;
+}
+
+.settings-startup-metadata dt,
+.settings-run-detail-metadata dt,
+.settings-run-raw-metadata dt,
+.settings-startup-diagnostic-detail dt {
+  color: var(--ling-text-muted);
+  font-weight: 600;
+}
+
+.settings-startup-metadata dd,
+.settings-run-detail-metadata dd,
+.settings-run-raw-metadata dd,
+.settings-startup-diagnostic-detail dd {
+  color: var(--ling-text-default);
+}
+
+.settings-startup-technical-section,
+.settings-run-activity {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-3);
+  padding-top: var(--ling-space-6);
+}
+
+.settings-startup-phase-list,
+.settings-startup-diagnostic-list,
+.settings-run-activity-list,
+.settings-run-diagnostics-skeletons {
+  display: grid;
+  min-width: 0;
+}
+
+.settings-startup-phase-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 var(--ling-space-6);
+}
+
+.settings-startup-phase-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding-inline: 0;
+  background: transparent;
+}
+
+.settings-startup-phase-copy,
+.settings-run-row-copy {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
+.settings-startup-phase-copy strong,
+.settings-startup-phase-copy small,
+.settings-run-row-copy strong,
+.settings-run-row-copy small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-startup-phase-copy strong,
+.settings-run-row-copy strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+  font-weight: 650;
+  line-height: var(--ling-line-sm);
+}
+
+.settings-startup-phase-copy small,
+.settings-run-row-copy small {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+.settings-startup-diagnostic-list {
+  gap: var(--ling-space-5);
+}
+
+.settings-startup-diagnostic-detail {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-2);
+}
+
+.settings-startup-diagnostic-detail > strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+  line-height: var(--ling-line-sm);
+  overflow-wrap: anywhere;
+}
+
+.settings-run-diagnostics-toolbar {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.settings-run-diagnostics-layout {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(250px, 0.42fr) minmax(0, 1fr);
+  align-items: start;
+  gap: var(--ling-space-6);
+}
+
+.settings-run-diagnostics-list {
+  display: grid;
+  min-width: 0;
+  max-height: min(620px, calc(100dvh - 190px));
+  align-content: start;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  background: var(--ling-bg-panel);
+}
+
+.settings-run-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding-inline: var(--ling-space-5);
+  background: transparent;
+}
+
+.settings-run-row:last-child,
+.settings-run-diagnostics-skeletons .settings-run-row:last-child,
+.settings-run-activity-row:last-child {
+  border-bottom: 0;
+}
+
+.settings-run-diagnostics-detail {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: var(--ling-space-5);
+  padding: var(--ling-space-6);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  background: var(--ling-bg-panel);
+}
+
+.settings-run-detail-header {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--ling-space-5);
+}
+
+.settings-run-detail-header > span:first-child {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
+.settings-run-detail-metadata > div:nth-last-child(-n + 2) {
+  border-bottom: 0;
+}
+
+.settings-run-activity-list {
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+}
+
+.settings-run-activity-row {
+  grid-template-columns: minmax(0, 1fr) max-content;
+  background: transparent;
+}
+
+.settings-run-activity-row time {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--ling-line-xs);
+  white-space: nowrap;
+}
+
+.settings-run-activity-empty {
+  min-height: 46px;
+}
+
+.settings-run-detail-actions {
+  justify-content: flex-start;
+}
+
+@media (max-width: 1050px) {
+  .settings-startup-header {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .settings-startup-primary-state {
+    grid-column: 1;
+  }
+
+  .settings-startup-actions {
+    grid-row: 1 / span 2;
+    grid-column: 2;
+  }
+
+  .settings-run-diagnostics-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-run-diagnostics-list {
+    max-height: 280px;
+  }
+}
+
+@media (max-width: 820px) {
+  .settings-startup-header,
+  .settings-run-diagnostics-toolbar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-startup-primary-state,
+  .settings-startup-actions {
+    grid-row: auto;
+    grid-column: auto;
+  }
+
+  .settings-startup-actions,
+  .settings-run-diagnostics-actions {
+    justify-content: flex-start;
+  }
+
+  .settings-startup-phase-list,
+  .settings-startup-metadata,
+  .settings-run-detail-metadata {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-run-detail-metadata > div:nth-last-child(-n + 2) {
+    border-bottom: 1px solid var(--ling-border-default);
+  }
+
+  .settings-startup-metadata > div,
+  .settings-run-detail-metadata > div,
+  .settings-run-raw-metadata > div,
+  .settings-startup-diagnostic-detail dl > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--ling-space-1);
+  }
+}

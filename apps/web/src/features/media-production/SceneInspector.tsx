@@ -1,14 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
-import { CircleAlert, Copy, History, Play, RotateCw, Settings2, Trash2, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Copy, History, Play, Settings2, Trash2, X } from "lucide-react";
+import { useI18n } from "../../i18n.js";
+import { Button, Field, IconButton, InlineFeedback, Input, InspectorSection, StatusIndicator, Tabs, TabsContent, TabsList, TabsTrigger, Textarea } from "../../shared/ui/index.js";
 import type { MediaJob, MediaProject, MediaScene, MediaSceneRun, MediaWorkflowDefinitionDetail, ProviderPreset, RunArtifact } from "../../types.js";
-import { MediaArtifactPreview } from "../media/MediaArtifactPreview.js";
-import type { MediaProductionActions } from "./media-production-types.js";
+import type { MediaProductionActions, MediaProductionFailure } from "./media-production-types.js";
 import type { SceneReadiness } from "./media-production-view-models.js";
 import { SceneExecutionSettings } from "./SceneExecutionSettings.js";
-import { mediaJobFailureRecoveryView } from "../media/media-job-view-models.js";
-import { useI18n } from "../../i18n.js";
+import { SceneResultPanel } from "./SceneResultPanel.js";
+import { SceneRunHistory } from "./SceneRunHistory.js";
 
-type SceneInspectorView = "settings" | "result" | "history";
+type InspectorView = "settings" | "result" | "history";
+type TextField = "title" | "prompt";
 
 interface SceneInspectorProps {
   readonly cwd: string;
@@ -22,6 +24,7 @@ interface SceneInspectorProps {
   readonly imageArtifacts: readonly RunArtifact[];
   readonly readiness?: SceneReadiness;
   readonly busyAction: string;
+  readonly sceneUpdateBusy: boolean;
   readonly actions: MediaProductionActions;
   readonly onClose?: () => void;
   readonly onRequestDelete: (scene: MediaScene) => void;
@@ -29,256 +32,137 @@ interface SceneInspectorProps {
   readonly onOpenWorkflowLibrary: () => void;
 }
 
-export function SceneInspector({
-  cwd,
-  scene,
-  project,
-  sceneRuns,
-  providers,
-  workflows,
-  jobs,
-  artifactsByJob,
-  imageArtifacts,
-  readiness,
-  busyAction,
-  actions,
-  onClose,
-  onRequestDelete,
-  onConfigureVideoModel,
-  onOpenWorkflowLibrary,
-}: SceneInspectorProps): JSX.Element {
+export function SceneInspector(props: SceneInspectorProps): JSX.Element {
   const { t } = useI18n();
-  const [title, setTitle] = useState(scene?.title ?? "");
-  const [prompt, setPrompt] = useState(scene?.prompt ?? "");
-  const [view, setView] = useState<SceneInspectorView>("settings");
-  const orderedRuns = useMemo(() => scene
-    ? sceneRuns.filter((run) => run.sceneId === scene.id)
-    : [], [scene, sceneRuns]);
+  const [view, setView] = useState<InspectorView>("settings");
+  useEffect(() => setView("settings"), [props.scene?.id]);
+  if (!props.scene) return <aside className="scene-inspector" />;
+  const scene = props.scene;
+  const status = props.readiness ?? fallbackReadiness(scene);
 
-  useEffect(() => {
-    setTitle(scene?.title ?? "");
-    setPrompt(scene?.prompt ?? "");
-  }, [scene?.id, scene?.title, scene?.prompt]);
+  return (
+    <Tabs value={view} onValueChange={(value) => setView(value as InspectorView)} asChild>
+      <aside className="scene-inspector" aria-label={t("Media production views")} data-scene-id={scene.id}>
+        <div className="scene-inspector-head">
+          <div><h2>{scene.title}</h2><StatusIndicator compact label={t(status.labelKey, status.labelValues)} tone={statusTone(status)} title={t(status.reasonKey, status.reasonValues)} /></div>
+          <div className="scene-inspector-actions">
+            {props.onClose ? <IconButton icon={X} label={t("Close")} onClick={props.onClose} /> : null}
+            <IconButton icon={Copy} label={t("Duplicate")} loading={props.busyAction === `duplicate-scene:${scene.id}`} onClick={() => void props.actions.duplicateScene(scene.id)} />
+            <IconButton icon={Trash2} label={t("Delete")} variant="danger" loading={props.busyAction === `delete-scene:${scene.id}`} onClick={() => props.onRequestDelete(scene)} />
+          </div>
+        </div>
 
-  useEffect(() => setView("settings"), [scene?.id]);
+        <TabsList className="scene-inspector-tabs" aria-label={t("Media production views")}>
+          <TabsTrigger className={view === "settings" ? "active" : ""} value="settings"><Settings2 size={14} />{t("Settings")}</TabsTrigger>
+          <TabsTrigger className={view === "result" ? "active" : ""} value="result"><Play size={14} />{t("Generated result")}{status.currentArtifact || status.latestIssue ? <span className={`scene-inspector-tab-dot${status.latestIssue ? " attention" : ""}`} aria-hidden="true" /> : null}</TabsTrigger>
+          <TabsTrigger className={view === "history" ? "active" : ""} value="history"><History size={14} />{t("History")}{props.sceneRuns.length ? <small>{props.sceneRuns.filter((run) => run.sceneId === scene.id).length}</small> : null}</TabsTrigger>
+        </TabsList>
 
-  if (!scene) {
-    return (
-      <aside className="scene-inspector scene-inspector-empty">
-        <Play size={22} strokeWidth={1.6} />
-        <strong>选择一个场景</strong>
-        <span>在画布中选择分镜，编辑画面、模型和生成结果。</span>
+        <div className="scene-inspector-scroll">
+          <TabsContent value="settings"><SceneSettingsPanel {...props} scene={scene} /></TabsContent>
+          <TabsContent value="result"><SceneResultPanel cwd={props.cwd} readiness={props.readiness} artifactsByJob={props.artifactsByJob} /></TabsContent>
+          <TabsContent value="history"><SceneRunHistory scene={scene} runs={props.sceneRuns} jobs={props.jobs} artifactsByJob={props.artifactsByJob} actions={props.actions} /></TabsContent>
+        </div>
+        <SceneRunFooter scene={scene} readiness={props.readiness} busyAction={props.busyAction} actions={props.actions} />
       </aside>
-    );
-  }
-
-  const isSaving = busyAction.startsWith("update-scene:");
-  const canRun = Boolean(readiness?.canRun);
-  const hasCurrentResult = Boolean(readiness?.currentRun && readiness.currentJob?.status === "succeeded");
-  const isSubmitting = busyAction === `run-scene:${scene.id}`;
-  const latestRecoveryView = readiness?.latestJob && readiness.latestIssue
-    ? mediaJobFailureRecoveryView({
-        job: readiness.latestJob,
-        artifacts: artifactsByJob[readiness.latestJob.id] ?? [],
-        t,
-      })
-    : undefined;
-  const generationLabel = isSubmitting
-    ? "提交中"
-    : readiness?.isRegenerating ? "重新生成中"
-      : readiness?.state === "generating" ? "生成中"
-        : hasCurrentResult ? "重新生成" : "生成此场景";
-
-  return (
-    <aside className="scene-inspector" aria-label="场景检查器">
-      <div className="scene-inspector-head">
-        <div>
-          <h2>{scene.title}</h2>
-          <span className={`scene-readiness-badge ${readiness?.state ?? "needs_model"}`}>{readiness?.label ?? "待完善"}</span>
-        </div>
-        <div className="scene-inspector-actions">
-          {onClose ? <button type="button" className="icon-button" title="关闭场景检查器" aria-label="关闭场景检查器" onClick={onClose}><X size={16} /></button> : null}
-          <button type="button" className="icon-button" title="复制场景" aria-label="复制场景" onClick={() => void actions.duplicateScene(scene.id)} disabled={Boolean(busyAction)}>
-            <Copy size={16} />
-          </button>
-          <button type="button" className="icon-button danger" title="删除场景" aria-label="删除场景" onClick={() => onRequestDelete(scene)} disabled={Boolean(busyAction)}>
-            <Trash2 size={16} />
-          </button>
-        </div>
-      </div>
-
-      <nav className="scene-inspector-tabs" aria-label="场景信息">
-        <button className={view === "settings" ? "active" : ""} type="button" onClick={() => setView("settings")}><Settings2 size={14} /> 设置</button>
-        <button className={view === "result" ? "active" : ""} type="button" onClick={() => setView("result")}>
-          <Play size={14} /> 结果
-          {readiness?.currentArtifact || readiness?.latestIssue ? <span className={`scene-inspector-tab-dot${readiness.latestIssue ? " attention" : ""}`} aria-hidden="true" /> : null}
-        </button>
-        <button className={view === "history" ? "active" : ""} type="button" onClick={() => setView("history")}><History size={14} /> 历史{orderedRuns.length ? <small>{orderedRuns.length}</small> : null}</button>
-      </nav>
-
-      <div className="scene-inspector-scroll">
-        {view === "settings" ? (
-          <>
-            <label className="field">
-              <span>场景名称</span>
-              <input
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-                onBlur={() => title.trim() !== scene.title && void actions.updateScene(scene.id, { title: title.trim() || scene.title })}
-              />
-            </label>
-
-            <label className="field scene-prompt-field">
-              <span>画面提示</span>
-              <textarea
-                value={prompt}
-                onChange={(event) => setPrompt(event.target.value)}
-                onBlur={() => prompt !== scene.prompt && void actions.updateScene(scene.id, { prompt })}
-                placeholder="描述主体、动作、镜头和氛围"
-                rows={6}
-              />
-            </label>
-
-            <SceneExecutionSettings
-              cwd={cwd}
-              scene={scene}
-              project={project}
-              providers={providers}
-              workflows={workflows}
-              imageArtifacts={imageArtifacts}
-              isSaving={isSaving}
-              actions={actions}
-              onConfigureVideoModel={onConfigureVideoModel}
-              onOpenWorkflowLibrary={onOpenWorkflowLibrary}
-            />
-          </>
-        ) : view === "result" ? (
-          <SceneResultView cwd={cwd} readiness={readiness} recoveryView={latestRecoveryView} />
-        ) : (
-          <SceneRunHistory
-            scene={scene}
-            runs={orderedRuns}
-            jobs={jobs}
-            artifactsByJob={artifactsByJob}
-            busyAction={busyAction}
-            onSelectRun={(sceneRunId) => void actions.selectSceneRun(scene.id, sceneRunId)}
-            onCancelRun={(sceneRunId) => void actions.cancelSceneRun(sceneRunId)}
-          />
-        )}
-      </div>
-
-      <div className="scene-inspector-footer">
-        <button className="primary-button" type="button" onClick={() => void actions.runScene(scene.id)} disabled={!canRun || Boolean(busyAction)}>
-          {hasCurrentResult ? <RotateCw size={16} /> : <Play size={16} />}
-          {generationLabel}
-        </button>
-      </div>
-    </aside>
+    </Tabs>
   );
 }
 
-function SceneResultView({
-  cwd,
-  readiness,
-  recoveryView,
-}: {
-  readonly cwd: string;
-  readonly readiness?: SceneReadiness;
-  readonly recoveryView?: ReturnType<typeof mediaJobFailureRecoveryView>;
-}): JSX.Element {
-  return (
-    <div className="scene-result-view">
-      {readiness?.currentArtifact ? (
-        <section className="scene-inspector-section scene-current-result">
-          <div className="scene-inspector-section-head"><span className="field-label">当前结果</span><small>当前选用</small></div>
-          <MediaArtifactPreview artifact={readiness.currentArtifact} cwd={cwd} variant="scene" />
-        </section>
-      ) : (
-        <div className="scene-result-empty">
-          <Play size={22} strokeWidth={1.6} />
-          <strong>还没有生成结果</strong>
-          <span>完成场景设置后，可使用底部按钮生成第一个视频片段。</span>
-        </div>
-      )}
+function SceneSettingsPanel(props: SceneInspectorProps & { readonly scene: MediaScene }): JSX.Element {
+  const { t } = useI18n();
+  const [draft, setDraft] = useState({ title: props.scene.title, prompt: props.scene.prompt });
+  const [busy, setBusy] = useState<TextField>();
+  const [failure, setFailure] = useState<Partial<Record<TextField, MediaProductionFailure>>>({});
+  const targetRef = useRef(props.scene.id);
+  const authorityRef = useRef({ id: props.scene.id, title: props.scene.title, prompt: props.scene.prompt });
+  useEffect(() => {
+    const previous = authorityRef.current;
+    targetRef.current = props.scene.id;
+    if (previous.id !== props.scene.id) {
+      setDraft({ title: props.scene.title, prompt: props.scene.prompt });
+      setBusy(undefined);
+      setFailure({});
+    } else {
+      setDraft((current) => ({ title: current.title === previous.title ? props.scene.title : current.title, prompt: current.prompt === previous.prompt ? props.scene.prompt : current.prompt }));
+    }
+    authorityRef.current = { id: props.scene.id, title: props.scene.title, prompt: props.scene.prompt };
+  }, [props.scene.id, props.scene.prompt, props.scene.title]);
 
-      {recoveryView ? (
-        <div className="scene-latest-run-issue" role="status">
-          <CircleAlert size={16} aria-hidden="true" />
-          <span><strong>{recoveryView.title}</strong>{recoveryView.description}</span>
-          <details>
-            <summary>技术信息</summary>
-            <p>{recoveryView.rawDetails}</p>
-          </details>
-        </div>
-      ) : null}
-    </div>
-  );
+  const clear = (field: TextField): void => {
+    setFailure((current) => omitField(current, field));
+    props.actions.clearFailure("scene-update", props.scene.id);
+  };
+  const save = async (field: TextField, value: string): Promise<void> => {
+    if (busy === field || value === props.scene[field]) return;
+    const sceneId = props.scene.id;
+    setBusy(field);
+    clear(field);
+    const outcome = await props.actions.updateScene(sceneId, { [field]: value });
+    if (targetRef.current === sceneId) {
+      if (!outcome.ok) setFailure((current) => ({ ...current, [field]: outcome.failure }));
+      setBusy(undefined);
+    }
+  };
+  const retry = async (field: TextField, item: MediaProductionFailure): Promise<void> => {
+    if (busy === field) return;
+    const sceneId = props.scene.id;
+    setBusy(field);
+    const outcome = await props.actions.retryFailure(item);
+    if (targetRef.current === sceneId) {
+      setFailure((current) => outcome.ok ? omitField(current, field) : { ...current, [field]: outcome.failure });
+      setBusy(undefined);
+    }
+  };
+  const revert = (field: TextField, target: HTMLElement): void => {
+    setDraft((current) => ({ ...current, [field]: props.scene[field] }));
+    clear(field);
+    target.blur();
+  };
+
+  return <>
+    <Field className="field" label={t("Scene {number}", { number: props.scene.sortOrder + 1 })}>
+      <Input value={draft.title} disabled={props.sceneUpdateBusy || busy !== undefined} loading={busy === "title"} invalid={Boolean(failure.title)} onChange={(event) => { setDraft((current) => ({ ...current, title: event.target.value })); clear("title"); }} onKeyDown={(event) => { if (event.key === "Escape") revert("title", event.currentTarget); }} onBlur={() => void save("title", draft.title.trim() || props.scene.title)} />
+    </Field>
+    {failure.title ? <MutationFeedback failure={failure.title} busy={busy === "title"} onRetry={() => void retry("title", failure.title!)} onClear={() => clear("title")} /> : null}
+    <Field className="field scene-prompt-field" label={t("Prompt")}>
+      <Textarea value={draft.prompt} rows={6} disabled={props.sceneUpdateBusy || busy !== undefined} loading={busy === "prompt"} invalid={Boolean(failure.prompt)} onChange={(event) => { setDraft((current) => ({ ...current, prompt: event.target.value })); clear("prompt"); }} onKeyDown={(event) => { if (event.key === "Escape") revert("prompt", event.currentTarget); }} onBlur={() => void save("prompt", draft.prompt)} />
+    </Field>
+    {failure.prompt ? <MutationFeedback failure={failure.prompt} busy={busy === "prompt"} onRetry={() => void retry("prompt", failure.prompt!)} onClear={() => clear("prompt")} /> : null}
+    <SceneExecutionSettings cwd={props.cwd} scene={props.scene} project={props.project} providers={props.providers} workflows={props.workflows} imageArtifacts={props.imageArtifacts} sceneUpdateBusy={props.sceneUpdateBusy || busy !== undefined} actions={props.actions} onConfigureVideoModel={props.onConfigureVideoModel} onOpenWorkflowLibrary={props.onOpenWorkflowLibrary} />
+  </>;
 }
 
-function SceneRunHistory({
-  scene,
-  runs,
-  jobs,
-  artifactsByJob,
-  busyAction,
-  onSelectRun,
-  onCancelRun,
-}: {
-  readonly scene: MediaScene;
-  readonly runs: readonly MediaSceneRun[];
-  readonly jobs: readonly MediaJob[];
-  readonly artifactsByJob: Readonly<Record<string, readonly RunArtifact[]>>;
-  readonly busyAction: string;
-  readonly onSelectRun: (sceneRunId: string) => void;
-  readonly onCancelRun: (sceneRunId: string) => void;
-}): JSX.Element {
-  if (!runs.length) {
-    return <section className="scene-inspector-section"><span className="field-label">生成记录</span><p className="scene-inspector-hint">生成后可在这里选择要使用的片段。</p></section>;
-  }
-  const jobsById = new Map(jobs.map((job) => [job.id, job]));
-  return (
-    <section className="scene-inspector-section scene-run-history">
-      <span className="field-label">生成记录</span>
-      <div className="scene-run-list">
-        {runs.map((run) => {
-          const job = jobsById.get(run.mediaJobId);
-          const selected = scene.selectedMediaSceneRunId === run.id;
-          const result = job ? artifactsByJob[job.id]?.find((artifact) => artifact.type === "video" || artifact.type === "image") : undefined;
-          return (
-            <div className={`scene-run-row${selected ? " selected" : ""}`} key={run.id}>
-              <span>
-                <strong>{sceneRunStatusLabel(job?.status)}</strong>
-                <small>{sceneRunSourceLabel(run)} · {new Date(run.createdAt).toLocaleString("zh-CN", { hour: "2-digit", minute: "2-digit", month: "numeric", day: "numeric" })}</small>
-              </span>
-              {result ? <span className="scene-run-row-result">已有结果</span> : null}
-              {job?.status === "succeeded" ? (
-                <button type="button" className="secondary-button compact-button" disabled={selected || Boolean(busyAction)} onClick={() => onSelectRun(run.id)}>
-                  {selected ? "当前结果" : "设为当前"}
-                </button>
-              ) : job?.status === "queued" || job?.status === "running" || job?.status === "waiting_for_approval" ? (
-                <button type="button" className="secondary-button compact-button" disabled={Boolean(busyAction)} onClick={() => onCancelRun(run.id)}>取消</button>
-              ) : null}
-            </div>
-          );
-        })}
-      </div>
-    </section>
-  );
+function SceneRunFooter({ scene, readiness, busyAction, actions }: { readonly scene: MediaScene; readonly readiness?: SceneReadiness; readonly busyAction: string; readonly actions: MediaProductionActions }): JSX.Element {
+  const { t } = useI18n();
+  const [pending, setPending] = useState(false);
+  const [failure, setFailure] = useState<MediaProductionFailure>();
+  const pendingRef = useRef(false);
+  const sceneIdRef = useRef(scene.id);
+  useEffect(() => { sceneIdRef.current = scene.id; pendingRef.current = false; setPending(false); setFailure(undefined); }, [scene.id]);
+  const run = async (retry?: MediaProductionFailure): Promise<void> => {
+    if (pendingRef.current) return;
+    const sceneId = scene.id;
+    pendingRef.current = true;
+    setPending(true);
+    setFailure(undefined);
+    const outcome = retry ? await actions.retryFailure(retry) : await actions.runScene(sceneId);
+    if (sceneIdRef.current === sceneId && !outcome.ok) setFailure(outcome.failure);
+    pendingRef.current = false;
+    if (sceneIdRef.current === sceneId) setPending(false);
+  };
+  const loading = pending || busyAction === `run-scene:${scene.id}`;
+  return <div className="scene-inspector-footer">
+    {failure ? <MutationFeedback failure={failure} busy={loading} onRetry={() => void run(failure)} onClear={() => { actions.clearFailure(failure.owner, failure.subjectId); setFailure(undefined); }} /> : null}
+    <Button leadingIcon={<Play size={16} />} loading={loading} variant="primary" disabled={!readiness?.canRun} onClick={() => void run()}>{readiness?.latestIssue ? t("Retry") : t("Run")}</Button>
+  </div>;
 }
 
-function sceneRunStatusLabel(status: MediaJob["status"] | undefined): string {
-  if (status === "succeeded") return "生成完成";
-  if (status === "failed") return "生成失败";
-  if (status === "cancelled") return "已取消";
-  if (status === "waiting_for_approval") return "待确认";
-  if (status === "queued") return "排队中";
-  if (status === "running") return "生成中";
-  return "状态未知";
+function MutationFeedback({ failure, busy, onRetry, onClear }: { readonly failure: MediaProductionFailure; readonly busy: boolean; readonly onRetry: () => void; readonly onClear: () => void }): JSX.Element {
+  const { t } = useI18n();
+  return <InlineFeedback role="alert" title={t(failure.productMessageKey)} tone="danger"><span><Button size="sm" loading={busy} onClick={onRetry}>{t("Retry")}</Button><Button size="sm" variant="ghost" onClick={onClear}>{t("Clear")}</Button></span>{failure.technicalMessage ? <InspectorSection title={t("Technical details")}><p>{failure.technicalMessage}</p></InspectorSection> : null}</InlineFeedback>;
 }
 
-function sceneRunSourceLabel(run: MediaSceneRun): string {
-  const snapshot = run.executionSnapshot ?? run.providerSnapshot;
-  if (typeof snapshot.workflowName === "string" && snapshot.workflowName) return snapshot.workflowName;
-  if (typeof snapshot.displayName === "string" && snapshot.displayName) return snapshot.displayName;
-  return snapshot.kind === "workflow" ? "生产流程" : "视频模型";
-}
+function fallbackReadiness(scene: MediaScene): SceneReadiness { return { sceneId: scene.id, sceneTitle: scene.title, sortOrder: scene.sortOrder, state: "needs_model", status: "needs_model", labelKey: "Not ready", reasonKey: "Not ready", primaryAction: "none", label: "Not ready", reason: "Not ready", isRegenerating: false, latestIssue: false, canRun: false }; }
+function statusTone(readiness: SceneReadiness): "neutral" | "info" | "success" | "warning" { if (readiness.currentArtifact) return readiness.latestIssue ? "warning" : "success"; if (readiness.state === "generating") return "info"; return readiness.state === "needs_attention" ? "warning" : "neutral"; }
+function omitField<T>(value: T, field: keyof T): T { const next = { ...value }; delete next[field]; return next; }

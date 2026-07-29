@@ -818,6 +818,32 @@ test("auto-show preference can be disabled and explicit Show still overrides it"
   await coordinator.dispose();
 });
 
+test("Open task returns an actionable result without changing the Computer Use runtime", async () => {
+  const calls = [];
+  const client = new CountingProjectionClient(FAKE_COMPUTER_USE_PROJECTION);
+  const coordinator = createCoordinator({
+    client,
+    adapter: new FakeComputerUsePreviewPlatformAdapter(),
+    preferences: new MemoryPreferenceStore(),
+    windows: [],
+    openOwnerConversation: async (conversationId) => {
+      calls.push(conversationId);
+      return { accepted: false, reason: "computer_use_owner_window_unavailable" };
+    },
+  });
+  await coordinator.start();
+  coordinator.reportSelectedConversation(FAKE_COMPUTER_USE_PROJECTION.conversationId);
+  await flush();
+
+  assert.deepEqual(await coordinator.openOwnerConversation(), {
+    accepted: false,
+    reason: "computer_use_owner_window_unavailable",
+  });
+  assert.deepEqual(calls, [FAKE_COMPUTER_USE_PROJECTION.conversationId]);
+  assert.equal(client.stopCount, 0);
+  await coordinator.dispose();
+});
+
 test("disabling auto-show does not hide a preview that is already visible", async () => {
   const windows = [];
   const coordinator = createCoordinator({
@@ -3313,6 +3339,7 @@ function createCoordinator({
   now,
   displays,
   telemetry,
+  openOwnerConversation,
 }) {
   const displayList = displays ?? [{ id: "primary", primary: true, workArea: { x: 0, y: 0, width: 1440, height: 900 } }];
   let coordinator;
@@ -3340,6 +3367,7 @@ function createCoordinator({
       .sort((left, right) => left.distance - right.distance)[0].display,
     now: now ?? (() => new Date("2026-07-15T12:00:00.000Z")),
     ...(telemetry ? { telemetry } : {}),
+    ...(openOwnerConversation ? { openOwnerConversation } : {}),
     ...(setTimer ? { setTimer } : {}),
     ...(clearTimer ? { clearTimer } : {}),
   });

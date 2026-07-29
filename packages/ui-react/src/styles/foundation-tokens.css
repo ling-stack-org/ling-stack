@@ -1,0 +1,53 @@
+:root {
+  --ling-space-1: 2px;
+  --ling-space-2: 4px;
+  --ling-space-3: 6px;
+  --ling-space-4: 8px;
+  --ling-space-5: 12px;
+  --ling-space-6: 16px;
+  --ling-space-7: 20px;
+  --ling-space-8: 24px;
+  --ling-space-9: 32px;
+  --ling-radius-sm: 4px;
+  --ling-radius-md: 6px;
+  --ling-radius-lg: 8px;
+  --ling-radius-pill: 999px;
+  --ling-control-sm: 32px;
+  --ling-control-md: 36px;
+  --ling-control-lg: 40px;
+  --ling-font-xs: 12px;
+  --ling-font-sm: 13px;
+  --ling-font-md: 14px;
+  --ling-line-xs: 18px;
+  --ling-line-sm: 20px;
+  --ling-line-md: 22px;
+  --ling-motion-instant: 0ms;
+  --ling-motion-fast: 120ms;
+  --ling-motion-standard: 180ms;
+  --ling-motion-slow: 240ms;
+  --ling-motion-attention: 600ms;
+  --ling-motion-continuous-spin: 900ms;
+  --ling-motion-continuous-spin-reduced: 1800ms;
+  --ling-motion-continuous-shimmer: 1400ms;
+  --ling-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ling-ease-enter: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ling-ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --ling-ease-linear: linear;
+  --ling-z-menu: 70;
+  --ling-z-popover: 70;
+  --ling-z-dialog: 60;
+  --ling-z-toast: 80;
+  --ling-z-tooltip: 90;
+}
+
+.ling-ui-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

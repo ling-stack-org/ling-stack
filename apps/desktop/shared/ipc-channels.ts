@@ -1,9 +1,25 @@
+import type { DesktopThemePackageIpcChannelKey } from "./theme-package-capabilities.js";
+
+export const DESKTOP_THEME_PACKAGE_IPC_CHANNELS = {
+  themePackagesBootstrap: "ling-desktop:theme-packages:bootstrap",
+  themePackagesList: "ling-desktop:theme-packages:list",
+  themePackagesRead: "ling-desktop:theme-packages:read",
+  themePackagesInstall: "ling-desktop:theme-packages:install",
+  themePackagesReimport: "ling-desktop:theme-packages:reimport",
+  themePackagesDelete: "ling-desktop:theme-packages:delete",
+  themePackagesActiveSet: "ling-desktop:theme-packages:active-set",
+} as const satisfies Readonly<Record<DesktopThemePackageIpcChannelKey, string>>;
+
 export const DESKTOP_IPC_CHANNELS = {
   daemonStatus: "ling-desktop:daemon:status",
   daemonRestart: "ling-desktop:daemon:restart",
   navigationIntentGet: "ling-desktop:navigation:intent-get",
   navigationIntentChanged: "ling-desktop:navigation:intent-changed",
   navigationIntentAck: "ling-desktop:navigation:intent-ack",
+  desktopThemeReport: "ling-desktop:theme:report",
+  desktopThemeSnapshotGet: "ling-desktop:theme:snapshot-get",
+  desktopThemeSnapshotChanged: "ling-desktop:theme:snapshot-changed",
+  ...DESKTOP_THEME_PACKAGE_IPC_CHANNELS,
   computerUseReportLocale: "ling-desktop:computer-use:report-locale",
   computerUseReportSelectedDeckOwner: "ling-desktop:computer-use:report-selected-deck-owner",
   computerUseReportSelectedConversation: "ling-desktop:computer-use:report-selected-conversation",

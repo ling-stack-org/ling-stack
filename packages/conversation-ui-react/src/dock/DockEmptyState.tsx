@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { EmptyState } from "@ling-stack/ui-react";
 
 export interface DockEmptyStateProps {
   readonly className?: string;
@@ -14,10 +15,12 @@ export function DockEmptyState({
   description,
 }: DockEmptyStateProps): JSX.Element {
   return (
-    <div className={className}>
-      {icon ? <span className="right-dock-empty-icon">{icon}</span> : null}
-      <strong>{title}</strong>
-      {description ? <small>{description}</small> : null}
-    </div>
+    <EmptyState
+      className={className}
+      compact
+      icon={icon}
+      title={title}
+      description={description}
+    />
   );
 }

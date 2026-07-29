@@ -23,19 +23,16 @@ export function SkillLibraryNavigation({
         {
           id: "mine",
           label: "My skills",
-          description: "Manage skills created, imported, or synced into this workspace.",
           badge: `${currentUserCount}`,
         },
         {
           id: "evolution",
           label: "AI evolution",
-          description: "Review reusable skills and patterns discovered by Ling.",
           badge: `${evolutionCount}`,
         },
         {
           id: "builtin",
           label: "Built-in skills",
-          description: "Inspect Ling built-in skills and their current teammate bindings.",
           badge: `${builtinCount}`,
         },
       ]}

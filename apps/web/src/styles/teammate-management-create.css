@@ -1,0 +1,325 @@
+.teammate-create-overlay {
+  overflow: hidden;
+}
+
+.teammate-create-dialog {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(820px, calc(100vw - 40px));
+  max-height: min(820px, calc(100dvh - 40px));
+}
+
+.teammate-create-dialog[data-mode="custom_setup"],
+.teammate-create-dialog[data-mode="setup_progress"] {
+  width: min(700px, calc(100vw - 40px));
+}
+
+.teammate-create-body {
+  display: block;
+  min-height: 0;
+  padding-block: var(--ling-space-6);
+}
+
+.teammate-create-dialog .teammate-create-actions {
+  min-height: calc(var(--ling-control-sm) + (2 * var(--ling-space-5)));
+  margin: 0;
+}
+
+.teammate-create-actions .teammate-create-blocked {
+  min-width: 0;
+  margin-right: auto;
+  padding-block: var(--ling-space-2);
+}
+
+.teammate-create-role-step,
+.teammate-custom-setup,
+.teammate-create-progress {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-7);
+}
+
+.teammate-create-section {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-4);
+}
+
+.teammate-create-section + .teammate-create-section {
+  padding-top: var(--ling-space-6);
+  border-top: 1px solid var(--ling-border-default);
+}
+
+.teammate-create-section > h2 {
+  margin: 0;
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+  font-weight: 650;
+  line-height: var(--ling-line-sm);
+}
+
+.teammate-create-role-options {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ling-space-3);
+}
+
+.teammate-create-role-option {
+  --ling-button-label-display: block;
+  --ling-button-label-text-align: left;
+  width: 100%;
+  min-height: 64px;
+  height: auto;
+  justify-content: flex-start;
+  padding: var(--ling-space-4);
+  border-color: var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  background: var(--ling-bg-panel);
+  box-shadow: none;
+}
+
+.teammate-create-role-option > [data-ling-button-slot="label"] {
+  flex: 1 1 auto;
+}
+
+.teammate-create-role-option[aria-pressed="true"] {
+  border-color: var(--ling-border-focus);
+  background: var(--ling-bg-pressed);
+  box-shadow: inset 0 0 0 1px var(--ling-border-focus);
+}
+
+.teammate-create-role-copy {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
+.teammate-create-role-copy strong,
+.teammate-create-role-copy small {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teammate-create-role-copy strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+  font-weight: 650;
+  line-height: var(--ling-line-sm);
+}
+
+.teammate-create-role-copy small {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+.teammate-create-basic-fields,
+.teammate-custom-fields {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-4);
+}
+
+.teammate-create-basic-fields {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.teammate-custom-fields {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.teammate-custom-brief {
+  grid-column: 1 / -1;
+}
+
+.teammate-create-model-empty {
+  margin-top: var(--ling-space-2);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  background: var(--ling-bg-subtle);
+}
+
+.teammate-custom-back {
+  width: fit-content;
+  justify-self: start;
+}
+
+.teammate-custom-profile {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--ling-space-5);
+  padding: var(--ling-space-5);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  background: var(--ling-bg-subtle);
+}
+
+.teammate-custom-avatar {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--ling-space-4);
+}
+
+.teammate-custom-avatar-picker {
+  position: relative;
+  display: inline-grid;
+  width: 48px;
+  height: 48px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: var(--ling-radius-md);
+  cursor: pointer;
+}
+
+.teammate-custom-avatar-picker:focus-within {
+  outline: 2px solid var(--ling-border-focus);
+  outline-offset: 2px;
+}
+
+.teammate-custom-avatar-picker > img,
+.teammate-custom-avatar-picker > .avatar-initial {
+  width: 46px;
+  height: 46px;
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  object-fit: cover;
+  font-size: var(--ling-font-md);
+}
+
+.teammate-custom-avatar-picker > input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.teammate-custom-avatar-upload {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  display: inline-grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border: 1px solid var(--ling-border-default);
+  border-radius: 50%;
+  color: var(--ling-text-default);
+  background: var(--ling-bg-elevated);
+  box-shadow: var(--ling-shadow-medium);
+}
+
+.teammate-custom-avatar-upload > svg {
+  width: 12px;
+  height: 12px;
+  stroke-width: 1.8;
+}
+
+.teammate-custom-avatar-copy {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
+.teammate-custom-avatar-copy strong,
+.teammate-custom-avatar-copy small {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teammate-custom-avatar-copy strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+  line-height: var(--ling-line-sm);
+}
+
+.teammate-custom-avatar-copy small {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+.teammate-avatar-tone-list {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--ling-space-2);
+}
+
+.teammate-avatar-tone-option {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  padding: 2px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+
+.teammate-avatar-tone-option > .avatar-initial {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  font-size: 0;
+}
+
+.teammate-avatar-tone-option:hover,
+.teammate-avatar-tone-option:focus-visible,
+.teammate-avatar-tone-option[aria-pressed="true"] {
+  border-color: var(--ling-border-focus);
+  outline: 0;
+  background: var(--ling-bg-pressed);
+}
+
+.teammate-avatar-tone-option:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+@media (max-width: 900px) {
+  .teammate-create-role-options,
+  .teammate-create-basic-fields,
+  .teammate-custom-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .teammate-custom-brief {
+    grid-column: auto;
+  }
+}
+
+@media (max-height: 760px) and (min-width: 901px) {
+  .teammate-create-dialog {
+    max-height: calc(100dvh - 24px);
+  }
+
+  .teammate-create-body {
+    padding-block: var(--ling-space-5);
+  }
+
+  .teammate-create-role-step,
+  .teammate-custom-setup,
+  .teammate-create-progress {
+    gap: var(--ling-space-5);
+  }
+
+  .teammate-create-role-option {
+    min-height: 56px;
+    padding-block: var(--ling-space-3);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .teammate-create-role-option,
+  .teammate-avatar-tone-option {
+    transition-duration: var(--ling-motion-instant);
+  }
+}

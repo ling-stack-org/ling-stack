@@ -91,11 +91,10 @@ test("channel branch list shows real branches without default branch chrome", as
   await expect(navigation.getByRole("button", { name: "API cleanup" })).toBeVisible();
   await openArchivedItemsSettings(page);
 
-  page.once("dialog", async (dialog) => {
-    expect(dialog.message()).toContain("Delete branch Legacy split?");
-    await dialog.accept();
-  });
   await archivedPanel.locator(".archived-item-row").filter({ hasText: "Engineering / Legacy split" }).getByRole("button", { name: "Delete" }).click();
+  const deleteDialog = page.getByRole("dialog", { name: "Delete branch Engineering / Legacy split?" });
+  await expect(deleteDialog).toContainText("This cannot be undone");
+  await deleteDialog.getByRole("button", { name: "Delete branch", exact: true }).click();
   await expect.poll(() => mockBranchExists(state, "Legacy split")).toBe(false);
   await expect(archivedPanel).toContainText("No archived branches");
 
@@ -135,8 +134,8 @@ test("channel sidebar menu keeps create action without bulk archive", async ({ p
   await expect(navigation.getByRole("button", { name: "Engineering" })).toBeVisible();
   await expect(navigation.getByRole("button", { name: "Design" })).toBeVisible();
   await navigation.getByRole("button", { name: "Channel actions" }).click();
-  await expect(navigation.getByRole("menuitem", { name: "New channel" })).toBeVisible();
-  await expect(navigation.getByRole("menuitem", { name: "Archive all channels" })).toHaveCount(0);
+  await expect(page.getByRole("menuitem", { name: "New channel" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Archive all channels" })).toHaveCount(0);
   await expect.poll(() => mockChannelStatus(state, "Engineering")).toBe("active");
   await expect.poll(() => mockChannelStatus(state, "Design")).toBe("active");
   await expect(navigation.getByRole("button", { name: "Engineering" })).toBeVisible();

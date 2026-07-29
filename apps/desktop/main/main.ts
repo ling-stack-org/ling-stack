@@ -3,8 +3,10 @@ import {
   BrowserWindow,
   desktopCapturer,
   dialog,
+  nativeTheme,
   powerMonitor,
   screen,
+  shell,
   systemPreferences,
   webContents,
   type WebFrameMain,
@@ -54,14 +56,22 @@ import { DesktopDaemonLifecycle } from "./daemon-lifecycle.js";
 import { DesktopRuntime } from "./desktop-runtime.js";
 import {
   ensureDesktopDaemonWithStartupRecovery,
-  type DesktopDaemonStartupRecoveryPrompt,
 } from "./daemon-startup-recovery.js";
+import {
+  showIncompatibleDaemonRecoveryDialog,
+  showOwnedDaemonStartupFailureDialog,
+} from "./daemon-recovery-dialogs.js";
+import type { DesktopStartupFailurePrompt } from "./startup-failure-recovery.js";
 import { loadOrCreateDesktopBridgeToken } from "./bridge-token.js";
 import { registerDesktopIpc } from "./ipc.js";
+import { registerDesktopThemePackageIpc } from "./theme-packages/theme-package-ipc.js";
+import { DesktopThemePackageRepository } from "./theme-packages/theme-package-repository.js";
 import { DesktopNavigationIntentStore } from "./navigation-intent.js";
 import { openDesktopOwnerWindow } from "./owner-window.js";
 import { DesktopPreferenceStore } from "./preferences.js";
+import { DesktopRendererThemeStore } from "./renderer-theme-store.js";
 import { resolveDesktopResourcePaths } from "./resource-paths.js";
+import { resolveDesktopResourcesWithStartupRecovery } from "./resource-startup-recovery.js";
 import { sendToLiveDesktopWindow } from "./safe-window-send.js";
 import { establishDesktopSingleInstanceAuthority } from "./single-instance.js";
 import {
@@ -72,6 +82,8 @@ import {
 } from "./startup-lifecycle.js";
 import { createMainWindow } from "./window-factory.js";
 import type { DesktopDisplayWorkArea, DesktopRect } from "../shared/desktop-capabilities.js";
+import { builtInDesktopRendererThemeInput } from "../shared/renderer-theme.js";
+import { createDesktopThemePackageFirstPaintState } from "../shared/theme-package-first-paint.js";
 
 const daemonBaseUrl = process.env.LING_STACK_DAEMON_URL ?? "http://127.0.0.1:17891";
 let cuaDriverFeatureFlags: CuaDriverFeatureFlags | undefined;
@@ -141,9 +153,16 @@ let realCaptureSmokeProjectionClient: FakeComputerUseProjectionClient | undefine
 let smokeProjectionSource: "daemon" | "fake" = "fake";
 let desktopBridgeToken: string | undefined;
 let unregisterIpc: (() => void) | undefined;
+let unregisterThemePackageIpc: (() => void) | undefined;
 let desktopRuntime: DesktopRuntime | undefined;
 let computerUse: ComputerUsePreviewCoordinator | undefined;
 const desktopNavigationIntents = new DesktopNavigationIntentStore();
+const desktopRendererThemeStore = new DesktopRendererThemeStore(
+  builtInDesktopRendererThemeInput(nativeTheme.shouldUseDarkColors ? "dark" : "light"),
+);
+const desktopThemePackageRepository = new DesktopThemePackageRepository({
+  themesRoot: resolve(app.getPath("userData"), "themes"),
+});
 const startupLogPath = resolve(app.getPath("userData"), "desktop-startup.log");
 const desktopExitLifecycle = createDesktopExitLifecycle({
   shutdown,
@@ -267,7 +286,17 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
     mainWindow.show();
     return true;
   }
-  const resources = await resolveDesktopResourcePaths(app);
+  const resources = await resolveDesktopResourcesWithStartupRecovery({
+    resolveResources: () => resolveDesktopResourcePaths(app),
+    allowInteractiveRecovery: !smokeHeadless,
+    prompt: promptDesktopStartupFailure,
+    openDiagnostics: openDesktopStartupDiagnostics,
+  });
+  if (!resources) {
+    logStartup("resources.recovery_quit");
+    attempt.requestExit(0);
+    return false;
+  }
   if (!attempt.isCurrent()) {
     return false;
   }
@@ -376,7 +405,21 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
   const daemonStartup = await ensureDesktopDaemonWithStartupRecovery({
     daemon: desktopRuntime,
     allowInteractiveRecovery: !smokeHeadless,
-    prompt: promptForIncompatibleDaemon,
+    prompt: async (prompt) => {
+      const decision = await showIncompatibleDaemonRecoveryDialog({
+        locale: app.getLocale(),
+        prompt,
+        showMessageBox: (options) => dialog.showMessageBox(options),
+      });
+      logStartup("daemon.recovery_decision", {
+        baseUrl: prompt.baseUrl,
+        reason: prompt.reason,
+        decision,
+      });
+      return decision;
+    },
+    promptStartupFailure: promptDesktopStartupFailure,
+    openDiagnostics: openDesktopStartupDiagnostics,
   });
   if (!attempt.isCurrent()) {
     return false;
@@ -454,7 +497,7 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
       openOwnerConversation: async (conversationId) => {
         const intent = desktopNavigationIntents.requestOpenConversation(conversationId);
         if (!intent) {
-          return;
+          return { accepted: false, reason: "computer_use_owner_conversation_missing" };
         }
         const opened = await openDesktopOwnerWindow({
           openMainWindow,
@@ -462,7 +505,10 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
         });
         if (!opened) {
           desktopNavigationIntents.discard(intent.requestId);
+          logStartup("computer_use.owner_navigation_failed", { conversationId });
+          return { accepted: false, reason: "computer_use_owner_window_unavailable" };
         }
+        return { accepted: true };
       },
     });
     await computerUse.start();
@@ -478,11 +524,20 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
       );
     });
   }
+  const initializedThemePackages = await desktopThemePackageRepository.initialize();
+  if (!initializedThemePackages.ok) throw new Error("desktop_theme_packages_initialize_failed");
+  if (!unregisterThemePackageIpc) {
+    unregisterThemePackageIpc = registerDesktopThemePackageIpc({
+      repository: desktopThemePackageRepository,
+      getMainWindow: () => mainWindow ?? loadingMainWindow,
+    });
+  }
   unregisterIpc ??= registerDesktopIpc({
     runtime: desktopRuntime,
     computerUse,
     getMainWindow: () => mainWindow ?? loadingMainWindow,
     navigationIntents: desktopNavigationIntents,
+    themeStore: desktopRendererThemeStore,
     ...(fakeComputerUseMode || realCaptureSmokeMode || fixedComputerUseConversationId
       ? { fixedComputerUseConversationId: fixedComputerUseConversationId ?? smokeComputerUseProjection.conversationId }
       : {}),
@@ -490,7 +545,11 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
   let createdWindow: BrowserWindow | undefined;
   try {
     const loadedWindow = await createMainWindow({
+      backgroundColor: nativeTheme.shouldUseDarkColors ? "#111315" : "#f6f7f8",
       daemonBaseUrl,
+      themePackageFirstPaint: createDesktopThemePackageFirstPaintState(
+        initializedThemePackages.value,
+      ),
       webIndexPath: resources.webIndexPath,
       showWhenReady: !smokeHeadless,
       onWindowCreated: (window) => {
@@ -557,33 +616,6 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
   return true;
 }
 
-async function promptForIncompatibleDaemon(
-  input: DesktopDaemonStartupRecoveryPrompt,
-): Promise<"retry" | "quit"> {
-  const chinese = app.getLocale().toLowerCase().startsWith("zh");
-  const result = await dialog.showMessageBox({
-    type: "warning",
-    title: chinese ? "需要更新 Ling 本地服务" : "Ling local service needs an update",
-    message: chinese
-      ? "另一个 Ling daemon 正在使用本地端口，但与当前 Desktop 不兼容。"
-      : "Another Ling daemon is using the local port, but it is incompatible with this Desktop build.",
-    detail: chinese
-      ? `Ling 不会自动终止不属于 Desktop 的服务。请先保存其中正在运行的任务，退出或更新 ${input.baseUrl} 上的 daemon，然后点击“重试”。`
-      : `Ling will not terminate a service it did not start. Save any active work, stop or update the daemon at ${input.baseUrl}, then choose Retry.`,
-    buttons: chinese ? ["重试", "退出"] : ["Retry", "Quit"],
-    defaultId: 0,
-    cancelId: 1,
-    noLink: true,
-  });
-  const decision = result.response === 0 ? "retry" : "quit";
-  logStartup("daemon.recovery_decision", {
-    baseUrl: input.baseUrl,
-    reason: input.reason,
-    decision,
-  });
-  return decision;
-}
-
 function toDesktopDisplay(display: Electron.Display): DesktopDisplayWorkArea {
   return {
     id: String(display.id),
@@ -595,6 +627,27 @@ function toDesktopDisplay(display: Electron.Display): DesktopDisplayWorkArea {
     },
     primary: display.id === screen.getPrimaryDisplay().id,
   };
+}
+
+async function promptDesktopStartupFailure(prompt: DesktopStartupFailurePrompt) {
+  const decision = await showOwnedDaemonStartupFailureDialog({
+    locale: app.getLocale(),
+    prompt,
+    showMessageBox: (options) => dialog.showMessageBox(options),
+  });
+  logStartup("desktop.startup_failure_decision", {
+    ...(prompt.baseUrl ? { baseUrl: prompt.baseUrl } : {}),
+    reason: prompt.reason,
+    decision,
+  });
+  return decision;
+}
+
+async function openDesktopStartupDiagnostics(): Promise<void> {
+  const failure = await shell.openPath(dirname(startupLogPath));
+  if (failure) {
+    logStartup("desktop.open_diagnostics_failed", { failure });
+  }
 }
 
 function logStartup(event: string, details: Readonly<Record<string, unknown>> = {}): void {
@@ -1790,6 +1843,10 @@ async function shutdown(): Promise<void> {
 
   await attemptCleanup(() => windowsProviderSmokeCommandReader?.close());
   await attemptCleanup(() => macosTccRevocationCommandReader?.close());
+
+  const activeUnregisterThemePackageIpc = unregisterThemePackageIpc;
+  unregisterThemePackageIpc = undefined;
+  await attemptCleanup(() => activeUnregisterThemePackageIpc?.());
 
   const activeUnregisterIpc = unregisterIpc;
   unregisterIpc = undefined;

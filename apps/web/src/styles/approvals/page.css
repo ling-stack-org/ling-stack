@@ -1,0 +1,103 @@
+.approvals-ui2-page {
+  display: grid;
+  grid-template-rows: auto auto auto auto minmax(0, 1fr);
+  gap: var(--ling-space-3);
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.approvals-ui2-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ling-space-4);
+  min-width: 0;
+}
+
+.approvals-ui2-title,
+.approvals-ui2-title > span {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.approvals-ui2-title {
+  gap: var(--ling-space-3);
+}
+
+.approvals-ui2-title > span {
+  flex-wrap: wrap;
+  gap: var(--ling-space-2);
+}
+
+.approvals-ui2-title h2 {
+  margin: 0;
+  font-size: var(--ling-font-lg);
+  letter-spacing: 0;
+}
+
+.approvals-ui2-title small {
+  font-size: var(--ling-font-xs);
+}
+
+.approvals-ui2-page-feedback {
+  min-width: 0;
+}
+
+.approvals-ui2-layout {
+  display: grid;
+  grid-template-columns: minmax(320px, 1fr) minmax(320px, 380px);
+  gap: 0;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.approvals-ui2-run-repair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--ling-space-4);
+  min-width: 0;
+  padding: var(--ling-space-3);
+  border: 1px solid var(--ling-status-warning-border);
+  border-radius: var(--ling-radius-md);
+  color: var(--ling-text-default);
+  background: var(--ling-status-warning-bg);
+}
+
+.approvals-ui2-run-repair-copy,
+.approvals-ui2-run-repair-copy > span {
+  display: flex;
+  min-width: 0;
+}
+
+.approvals-ui2-run-repair-copy {
+  flex-direction: column;
+  gap: var(--ling-space-1);
+}
+
+.approvals-ui2-run-repair-copy small {
+  color: var(--ling-text-muted);
+}
+
+.approvals-ui2-run-repair-copy > span,
+.approvals-ui2-run-repair-status,
+.approvals-ui2-run-repair-actions {
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--ling-space-2);
+}
+
+.approvals-ui2-run-repair-status,
+.approvals-ui2-run-repair-actions {
+  display: flex;
+}
+
+@media (max-width: 1120px) {
+  .approvals-ui2-layout {
+    grid-template-columns: minmax(320px, 1fr) minmax(320px, 340px);
+  }
+}

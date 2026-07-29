@@ -1,0 +1,123 @@
+:root,
+:root[data-ui-theme="ling-light"],
+[data-ui-theme="ling-light"] {
+  color-scheme: light;
+  --ling-bg-app: #f6f7f8;
+  --ling-bg-panel: #ffffff;
+  --ling-bg-elevated: #ffffff;
+  --ling-bg-subtle: #f1f3f5;
+  --ling-bg-pressed: #e8ebee;
+  --ling-bg-overlay: rgb(18 20 23 / 36%);
+  --ling-bg-code: #f5f6f7;
+  --ling-bg-sidebar: #fbfcfd;
+  --ling-bg-composer: #ffffff;
+  --ling-text-strong: #121417;
+  --ling-text-default: #2b3036;
+  --ling-text-muted: #68707a;
+  --ling-text-soft: #7c858f;
+  --ling-text-inverse: #ffffff;
+  --ling-text-link: #315f8d;
+  --ling-border-default: #d9dde2;
+  --ling-border-strong: #b8bec6;
+  --ling-border-focus: #4f6f96;
+  --ling-action-accent: #17191c;
+  --ling-action-accent-hover: #2b2e32;
+  --ling-action-accent-pressed: #050607;
+  --ling-action-accent-fg: #ffffff;
+  --ling-action-selection: #dfe8f2;
+  --ling-status-neutral: #77808b;
+  --ling-status-success: #2f7654;
+  --ling-status-success-bg: #edf7f1;
+  --ling-status-success-border: #b9d9c7;
+  --ling-status-warning: #8a5d12;
+  --ling-status-warning-bg: #fff8e8;
+  --ling-status-warning-border: #e6d4a7;
+  --ling-status-danger: #a13e3b;
+  --ling-status-danger-bg: #fff3f2;
+  --ling-status-danger-border: #e7c0bd;
+  --ling-status-info: #466b91;
+  --ling-status-info-bg: #eef4fa;
+  --ling-status-info-border: #bfd0e1;
+  --ling-shadow-low: 0 1px 2px rgb(18 20 23 / 8%);
+  --ling-shadow-medium: 0 6px 18px rgb(18 20 23 / 12%);
+  --ling-shadow-overlay: 0 12px 32px rgb(18 20 23 / 16%);
+  --ling-native-selection: #cdddec;
+  --ling-native-scrollbar: #c4c9cf;
+  --ling-native-scrollbar-hover: #9ea5ad;
+  --ling-overlay-scrim: var(--ling-bg-overlay);
+  --ling-compact-window-bg: rgb(255 255 255 / 94%);
+  --ling-compact-window-elevated: rgb(255 255 255 / 97%);
+  --ling-compact-window-text: #171a1e;
+  --ling-compact-window-muted: #68707a;
+  --ling-compact-window-border: rgb(18 20 23 / 16%);
+  --ling-compact-window-focus: #4f6f96;
+  --ling-compact-window-shadow: 0 18px 52px rgb(18 20 23 / 24%);
+}
+
+:root[data-ui-theme="ling-dark"],
+:root[data-theme="dark"],
+[data-ui-theme="ling-dark"] {
+  color-scheme: dark;
+  --ling-bg-app: #111315;
+  --ling-bg-panel: #171a1d;
+  --ling-bg-elevated: #1d2024;
+  --ling-bg-subtle: #22262b;
+  --ling-bg-pressed: #2c3137;
+  --ling-bg-overlay: rgb(0 0 0 / 58%);
+  --ling-bg-code: #15181b;
+  --ling-bg-sidebar: #141618;
+  --ling-bg-composer: #191c20;
+  --ling-text-strong: #f4f5f6;
+  --ling-text-default: #d7dbe0;
+  --ling-text-muted: #9ba3ad;
+  --ling-text-soft: #89929d;
+  --ling-text-inverse: #111315;
+  --ling-text-link: #9fc2e6;
+  --ling-border-default: #353b42;
+  --ling-border-strong: #4b535d;
+  --ling-border-focus: #8aa8c7;
+  --ling-action-accent: #f0f2f4;
+  --ling-action-accent-hover: #ffffff;
+  --ling-action-accent-pressed: #d8dde2;
+  --ling-action-accent-fg: #151719;
+  --ling-action-selection: #2b3a49;
+  --ling-status-neutral: #9ca5af;
+  --ling-status-success: #79bd94;
+  --ling-status-success-bg: #1c2c23;
+  --ling-status-success-border: #365a45;
+  --ling-status-warning: #ddb45f;
+  --ling-status-warning-bg: #2c271b;
+  --ling-status-warning-border: #5f512f;
+  --ling-status-danger: #e48782;
+  --ling-status-danger-bg: #2d2020;
+  --ling-status-danger-border: #633c3a;
+  --ling-status-info: #8cb5df;
+  --ling-status-info-bg: #1d2935;
+  --ling-status-info-border: #3a5773;
+  --ling-shadow-low: 0 1px 2px rgb(0 0 0 / 30%);
+  --ling-shadow-medium: 0 8px 22px rgb(0 0 0 / 38%);
+  --ling-shadow-overlay: 0 12px 32px rgb(0 0 0 / 44%);
+  --ling-native-selection: #36506a;
+  --ling-native-scrollbar: #414850;
+  --ling-native-scrollbar-hover: #626c77;
+  --ling-overlay-scrim: var(--ling-bg-overlay);
+  --ling-compact-window-bg: rgb(17 19 21 / 94%);
+  --ling-compact-window-elevated: rgb(29 32 36 / 96%);
+  --ling-compact-window-text: #f4f5f6;
+  --ling-compact-window-muted: #a4acb5;
+  --ling-compact-window-border: rgb(255 255 255 / 16%);
+  --ling-compact-window-focus: #8aa8c7;
+  --ling-compact-window-shadow: 0 18px 52px rgb(0 0 0 / 48%);
+}
+
+::selection {
+  background: var(--ling-native-selection);
+}
+
+:root {
+  scrollbar-color: var(--ling-native-scrollbar) transparent;
+}
+
+:root:hover {
+  scrollbar-color: var(--ling-native-scrollbar-hover) transparent;
+}

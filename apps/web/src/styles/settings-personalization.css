@@ -1,0 +1,116 @@
+.settings-personalization {
+  display: grid;
+  min-width: 0;
+  gap: 0;
+  border-top: 1px solid var(--ling-border-default);
+}
+
+.settings-personalization-section {
+  display: grid;
+  gap: var(--ling-space-6);
+  min-width: 0;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--ling-border-default);
+}
+
+.settings-personalization-section-head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ling-space-5);
+}
+
+.settings-personalization-section-head > span {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--ling-space-4);
+}
+
+.settings-personalization-section-head svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  color: var(--ling-text-muted);
+  stroke-width: 1.8;
+}
+
+.settings-personalization-section-head h2 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-md);
+  font-weight: 720;
+  letter-spacing: 0;
+  line-height: var(--ling-line-md);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-personalization-feedback {
+  max-width: 720px;
+}
+
+.settings-personalization-loading {
+  display: grid;
+  gap: var(--ling-space-4);
+  min-width: 0;
+  min-height: 72px;
+  align-content: center;
+}
+
+.settings-personalization-tone-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.settings-personalization-tone-control {
+  max-width: 360px;
+}
+
+.settings-skill-governance {
+  display: grid;
+  gap: var(--ling-space-6);
+  min-width: 0;
+}
+
+.settings-skill-governance-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ling-space-5);
+  min-width: 0;
+}
+
+.settings-skill-governance-field {
+  min-width: 0;
+}
+
+.settings-personalization-governance-feedback {
+  max-width: 720px;
+}
+
+.settings-skill-governance-actions {
+  display: flex;
+  min-width: 0;
+  justify-content: flex-end;
+}
+
+@media (max-width: 1080px) {
+  .settings-personalization-tone-row {
+    display: block;
+  }
+
+  .settings-personalization-tone-control {
+    width: 100%;
+    max-width: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .settings-skill-governance-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

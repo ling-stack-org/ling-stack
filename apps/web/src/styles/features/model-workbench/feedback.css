@@ -1,0 +1,50 @@
+.provider-page-error,
+.provider-next-action,
+.provider-batch-result,
+.provider-operation-warning,
+.provider-run-repair {
+  flex: 0 0 auto;
+}
+
+.provider-run-repair-copy {
+  display: grid;
+  gap: var(--ling-space-2);
+}
+
+.provider-run-repair-copy code,
+.provider-run-repair-copy small {
+  overflow-wrap: anywhere;
+}
+
+.provider-run-repair-steps,
+.provider-run-repair-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--ling-space-4);
+  margin-top: var(--ling-space-3);
+}
+
+.provider-editor-check-feedback > div,
+.model-fetch-error > div {
+  display: grid;
+  gap: var(--ling-space-2);
+}
+
+.provider-editor-check-feedback span,
+.provider-editor-check-feedback small,
+.model-fetch-error {
+  overflow-wrap: anywhere;
+}
+
+.provider-editor-check-status {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+}
+
+.provider-editor-error,
+.provider-editor-warning,
+.provider-operation-warning {
+  min-width: 0;
+}

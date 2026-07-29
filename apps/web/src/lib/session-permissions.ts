@@ -103,15 +103,24 @@ export function workspaceAccessModeForPermissionPreset(preset: PermissionPreset 
   return "workspace_write";
 }
 
-export function conversationPermissionPresetMenuOptions(t: Translate): readonly ConversationPermissionPresetOption[] {
+export function conversationPermissionPresetMenuOptions(
+  t: Translate,
+  fullAccessConfirmed = false,
+): readonly ConversationPermissionPresetOption[] {
   return (["read_only", "workspace_collaboration", "full_access"] as const).map((preset) => ({
     preset,
-    label: preset === "read_only" ? t("Read only") : preset === "workspace_collaboration" ? t("Workspace write") : t("Full access"),
+    label: preset === "read_only"
+      ? t("Read only")
+      : preset === "workspace_collaboration"
+        ? t("Workspace write")
+        : fullAccessConfirmed
+          ? t("Full access · Confirmed for this conversation")
+          : t("Full access"),
     description: preset === "read_only"
       ? t("Read project files; editing and commands are blocked.")
       : preset === "workspace_collaboration"
         ? t("Edit files inside the current workspace; commands still ask for approval.")
-        : t("Access files outside the workspace; each run still requires explicit confirmation."),
+        : t("Access files outside the workspace; confirm once for the current conversation."),
   }));
 }
 

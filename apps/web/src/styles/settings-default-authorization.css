@@ -1,0 +1,55 @@
+.settings-default-authorization-section {
+  display: grid;
+  min-width: 0;
+  gap: 0;
+  border-top: 1px solid var(--ling-border-default);
+}
+
+.settings-authorization-row {
+  grid-template-columns: minmax(220px, 1fr) auto;
+  min-height: 72px;
+  padding-inline: 0;
+}
+
+.settings-authorization-copy {
+  display: grid;
+  gap: var(--ling-space-1);
+  min-width: 0;
+}
+
+.settings-authorization-copy strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+  font-weight: 680;
+  line-height: var(--ling-line-sm);
+}
+
+.settings-authorization-copy small {
+  max-width: 620px;
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+  overflow-wrap: anywhere;
+}
+
+.settings-authorization-segments {
+  justify-self: end;
+}
+
+.settings-write-path-add > .settings-write-path-control {
+  min-width: 0;
+  width: 100%;
+}
+
+@media (max-width: 1080px) {
+  .settings-authorization-row {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: var(--ling-space-4);
+  }
+
+  .settings-authorization-segments {
+    width: 100%;
+    justify-self: stretch;
+  }
+}

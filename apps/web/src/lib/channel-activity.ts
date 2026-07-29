@@ -1,5 +1,6 @@
 import type {
   ApprovalRequest,
+  ChannelAttachment,
   ChannelContextSummary,
   ChannelDecision,
   ChannelHandoff,
@@ -42,6 +43,7 @@ type ChannelActivityItemInput = ChannelActivityItem extends infer Item
 export function buildChannelActivityItems(input: {
   readonly channelId: string;
   readonly messages: readonly ChannelMessage[];
+  readonly attachments?: readonly ChannelAttachment[];
   readonly tasks: readonly Task[];
   readonly runs: readonly RunSession[];
   readonly approvals: readonly ApprovalRequest[];
@@ -55,6 +57,16 @@ export function buildChannelActivityItems(input: {
 }): readonly ChannelActivityItem[] {
   const channelTasks = deriveChannelTasks(input.channelId, input.tasks);
   const channelRuns = deriveChannelRuns(input.channelId, input.tasks, input.runs, input.extraRun);
+  const attachmentById = new Map((input.attachments ?? []).map((attachment) => [attachment.id, attachment]));
+  const attachmentsByMessageId = new Map<string, ChannelAttachment[]>();
+  for (const attachment of input.attachments ?? []) {
+    if (!attachment.messageId) {
+      continue;
+    }
+    const messageAttachments = attachmentsByMessageId.get(attachment.messageId) ?? [];
+    messageAttachments.push(attachment);
+    attachmentsByMessageId.set(attachment.messageId, messageAttachments);
+  }
   const taskById = new Map(channelTasks.map((task) => [task.id, task]));
   const runById = new Map(channelRuns.map((run) => [run.id, run]));
   const workflowIds = new Set(input.workflows.filter((workflow) => workflow.channelId === input.channelId).map((workflow) => workflow.id));
@@ -107,7 +119,10 @@ export function buildChannelActivityItems(input: {
   return [
     ...input.messages
       .filter((record) => record.channelId === input.channelId)
-      .map((record) => withActivityMetadata({ id: `message:${record.id}`, kind: "message" as const, createdAt: record.createdAt, record })),
+      .map((record) => withActivityMetadata(
+        { id: `message:${record.id}`, kind: "message" as const, createdAt: record.createdAt, record },
+        messageAttachmentSearchParts(record, attachmentById, attachmentsByMessageId),
+      )),
     ...input.decisions
       .filter((record) => record.channelId === input.channelId)
       .map((record) => withActivityMetadata({ id: `decision:${record.id}`, kind: "decision" as const, createdAt: record.createdAt, record })),
@@ -139,12 +154,15 @@ export function buildChannelActivityItems(input: {
   });
 }
 
-function withActivityMetadata<T extends ChannelActivityItemInput>(item: T): T & ChannelActivityMetadata {
+function withActivityMetadata<T extends ChannelActivityItemInput>(
+  item: T,
+  extraSearchParts: readonly string[] = [],
+): T & ChannelActivityMetadata {
   return {
     ...item,
     category: activityCategory(item),
     attention: activityAttention(item),
-    searchText: normalizeSearchText(activitySearchParts(item)),
+    searchText: normalizeSearchText([...activitySearchParts(item), ...extraSearchParts]),
   };
 }
 
@@ -207,7 +225,16 @@ function activityAttention(item: ChannelActivityItemInput): ChannelActivityAtten
 
 function activitySearchParts(item: ChannelActivityItemInput): readonly string[] {
   if (item.kind === "message") {
-    return [item.kind, item.record.kind, item.record.intent, item.record.authorId ?? "", item.record.body];
+    return [
+      item.kind,
+      item.record.kind,
+      item.record.intent,
+      item.record.authorId ?? "",
+      item.record.body,
+      item.record.linkedTaskId ?? "",
+      item.record.linkedRunId ?? "",
+      ...(item.record.fileRefs ?? []).flatMap((fileRef) => [fileRef.label ?? "", fileRef.path]),
+    ];
   }
   if (item.kind === "decision") {
     return [item.kind, item.record.status, item.record.title, item.record.decision, item.record.rationale, ...item.record.alternatives];
@@ -244,6 +271,28 @@ function activitySearchParts(item: ChannelActivityItemInput): readonly string[] 
     item.record.actor,
     item.record.reason ?? "",
   ];
+}
+
+function messageAttachmentSearchParts(
+  message: ChannelMessage,
+  attachmentById: ReadonlyMap<string, ChannelAttachment>,
+  attachmentsByMessageId: ReadonlyMap<string, readonly ChannelAttachment[]>,
+): readonly string[] {
+  const attachments = new Map<string, ChannelAttachment>();
+  for (const attachmentId of message.attachmentIds ?? []) {
+    const attachment = attachmentById.get(attachmentId);
+    if (attachment) {
+      attachments.set(attachment.id, attachment);
+    }
+  }
+  for (const attachment of attachmentsByMessageId.get(message.id) ?? []) {
+    attachments.set(attachment.id, attachment);
+  }
+  return [...attachments.values()].flatMap((attachment) => [
+    attachment.fileName,
+    attachment.path,
+    attachment.contentType,
+  ]);
 }
 
 function normalizeSearchText(parts: readonly string[]): string {

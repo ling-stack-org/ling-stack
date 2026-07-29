@@ -33,6 +33,7 @@ export interface LocalTeammateDraft {
 }
 
 export interface LocalTeammateCreateInput {
+  readonly draftId?: string;
   readonly templateId?: string;
   readonly displayName: string;
   readonly description: string;
@@ -44,6 +45,7 @@ export interface LocalTeammateCreateInput {
 }
 
 export type TeammateCreateMode = "role_select" | "custom_setup" | "setup_progress";
+export type TeammateUpdateAction = "update" | "profile-save" | "persona-apply" | "model-save";
 export type TeammateCreateSetupStep = "workspace" | "model" | "record" | "avatar" | "channels" | "memory" | "refresh";
 export type TeammateCreateStepState = "pending" | "running" | "success" | "failed" | "skipped";
 
@@ -59,5 +61,6 @@ export interface TeammateCreateResult {
   readonly ok: boolean;
   readonly teammateId?: string;
   readonly partial?: boolean;
+  readonly stale?: boolean;
   readonly message?: string;
 }

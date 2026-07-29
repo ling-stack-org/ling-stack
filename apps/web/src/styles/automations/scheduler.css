@@ -1,0 +1,56 @@
+.automation-ui2-scheduler {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--ling-space-5);
+  padding: var(--ling-space-4) var(--ling-space-8);
+  background: var(--ling-bg-subtle);
+}
+
+.automation-ui2-scheduler-icon {
+  display: inline-grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: var(--ling-radius-md);
+  color: var(--ling-text-muted);
+  background: var(--ling-bg-elevated);
+}
+
+.automation-ui2-scheduler-copy {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--ling-space-5);
+}
+
+.automation-ui2-scheduler-copy > span:last-child,
+.automation-ui2-scheduler-next {
+  overflow: hidden;
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.automation-ui2-scheduler-next {
+  max-width: 180px;
+}
+
+.automation-ui2-scheduler-error {
+  grid-column: 2 / -1;
+}
+
+@media (max-width: 900px) {
+  .automation-ui2-scheduler {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    padding-inline: var(--ling-space-6);
+  }
+
+  .automation-ui2-scheduler-next {
+    display: none;
+  }
+}

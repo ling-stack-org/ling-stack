@@ -84,9 +84,9 @@ async function readComposerGeometry(page: Page, selector: string): Promise<{ bac
 async function expectActionMenuItemAligned(menuItem: Locator, options: { readonly disabled?: boolean } = {}): Promise<void> {
   const alignment = await menuItem.evaluate((element) => {
     const buttonRect = element.getBoundingClientRect();
-    const iconRect = element.querySelector(".action-menu-item-icon svg")?.getBoundingClientRect();
-    const labelRect = element.querySelector(".action-menu-item-title > span:last-child")?.getBoundingClientRect();
-    const disabled = element instanceof HTMLButtonElement ? element.disabled : false;
+    const iconRect = element.querySelector(".ling-ui-menu-item-icon svg")?.getBoundingClientRect();
+    const labelRect = element.querySelector(".sidebar-section-menu-item-label")?.getBoundingClientRect();
+    const disabled = element.getAttribute("aria-disabled") === "true" || element.hasAttribute("data-disabled");
 
     return iconRect && labelRect
       ? {
@@ -107,8 +107,8 @@ async function expectActionMenuItemAligned(menuItem: Locator, options: { readonl
   expect(Math.abs(alignment.iconCenter - alignment.labelCenter)).toBeLessThanOrEqual(1);
   expect(Math.round(alignment.height)).toBeGreaterThanOrEqual(30);
   expect(Math.round(alignment.height)).toBeLessThanOrEqual(34);
-  expect(Math.round(alignment.iconWidth)).toBe(14);
-  expect(Math.round(alignment.iconHeight)).toBe(14);
+  expect(Math.round(alignment.iconWidth)).toBe(16);
+  expect(Math.round(alignment.iconHeight)).toBe(16);
   if (options.disabled !== undefined) {
     expect(alignment.disabled).toBe(options.disabled);
   }
@@ -140,7 +140,9 @@ test("sidebar selection is exclusive and conversation sections stay below primar
   const commandButtonWidth = await newConversationButton.evaluate((button) => Math.round(button.getBoundingClientRect().width));
   expect(commandButtonWidth).toBeGreaterThan(100);
   expect(commandButtonWidth).toBeLessThan(320);
-  await expect(primaryNav.getByRole("button")).toHaveText(["Inbox", "Media Production", "Work Board", "Plugin Manager", "Automations"]);
+  await expect(primaryNav.getByRole("button")).toHaveText(["Media Production", "Plugin Manager", "Automations"]);
+  await expect(primaryNav.getByRole("button", { name: "Inbox" })).toHaveCount(0);
+  await expect(primaryNav.getByRole("button", { name: "Work Board" })).toHaveCount(0);
   await expect(primaryNav.getByRole("button", { name: "AI Councils" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Workspace" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Tasks" })).toHaveCount(0);
@@ -149,8 +151,7 @@ test("sidebar selection is exclusive and conversation sections stay below primar
   await expect(navigation.getByRole("button", { name: "Recent conversations", exact: true })).toBeVisible();
   const teammateAvatarGeometry = await navigation.getByRole("button", { name: "Designer", exact: true }).evaluate((row) => {
     const avatar = row.querySelector<HTMLElement>(".teammate-avatar-image.compact");
-    const label = [...row.querySelectorAll<HTMLElement>("span")]
-      .find((span) => !span.classList.contains("avatar-initial") && !span.classList.contains("channel-mention") && !span.classList.contains("channel-unread"));
+    const label = row.querySelector<HTMLElement>('[data-ling-button-slot="label"]');
     const avatarRect = avatar?.getBoundingClientRect();
     const labelRect = label?.getBoundingClientRect();
     return {
@@ -185,6 +186,24 @@ test("sidebar selection is exclusive and conversation sections stay below primar
   await expect(selectedTeammateRow).toHaveCSS("background-color", "rgb(245, 245, 245)");
   expect(await selectedTeammateRow.evaluate((row) => getComputedStyle(row, "::before").content)).toBe("none");
   await expect(page.getByRole("heading", { name: "Designer", level: 1 })).toBeVisible();
+});
+
+test("app shell keeps offline data visible and reconnects from persistent feedback", async ({ page }) => {
+  await useEnglishLocale(page);
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.themePreference", "dark");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  await mockDaemon(page, state, { healthResponses: [false, false, true] });
+  await page.goto("/");
+
+  const feedback = page.getByRole("alert").filter({ hasText: "Local service is unavailable" });
+  await expect(feedback).toBeVisible();
+  await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "ling-dark");
+  await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
+  await expect(feedback).toContainText("Some information may be out of date");
+  await feedback.getByRole("button", { name: "Reconnect" }).click();
+  await expect(feedback).toHaveCount(0);
 });
 
 test("AI teammate without uploaded avatar uses the default avatar", async ({ page }) => {
@@ -410,10 +429,10 @@ test("recent conversations only show records created from the conversation home"
   await expect(assistantRow.locator(".conversation-work-cell")).toHaveCount(0);
   const assistantActions = assistantRow.locator(".normal-conversation-message-actions.message-action-bar");
   await expect(assistantActions).toHaveCount(1);
-  await expect(assistantActions.locator('[data-tooltip="Copy message"]')).toHaveCount(1);
-  await expect(assistantActions.locator('[data-tooltip="Like response"]')).toHaveCount(1);
-  await expect(assistantActions.locator('[data-tooltip="Dislike response"]')).toHaveCount(1);
-  await expect(assistantActions.locator('[data-tooltip="Reply in topic"]')).toHaveCount(0);
+  await expect(assistantActions.getByRole("button", { name: "Copy message", exact: true })).toHaveCount(1);
+  await expect(assistantActions.getByRole("button", { name: "Like response", exact: true })).toHaveCount(1);
+  await expect(assistantActions.getByRole("button", { name: "Dislike response", exact: true })).toHaveCount(1);
+  await expect(assistantActions.getByRole("button", { name: "Reply in topic", exact: true })).toHaveCount(0);
   await expect(assistantRow.locator(".message-reply-button")).toHaveCount(0);
   await expect(assistantRow.locator(".teammate-avatar-stack")).toHaveCount(0);
   await expect(assistantRow.locator(".source-icon-stack")).toHaveCount(0);
@@ -464,6 +483,7 @@ test("normal conversation full access confirms before creating the run", async (
 
   const confirmSheet = page.getByRole("dialog", { name: "Confirm full access" });
   await expect(confirmSheet).toBeVisible();
+  await expect(confirmSheet).toHaveClass(/ling-ui-dialog-content/u);
   await confirmSheet.getByRole("button", { name: "Cancel" }).last().click();
   await expect(confirmSheet).toHaveCount(0);
   expect(state.runs).toHaveLength(0);
@@ -706,6 +726,11 @@ test("latest normal conversation prompt edits in place and hides the superseded 
 });
 
 test("executed normal conversation renders one structured terminal report", async ({ page }) => {
+  const runtimeErrors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") runtimeErrors.push(`${message.text()} @ ${message.location().url || "unknown"}`);
+  });
+  page.on("pageerror", (error) => runtimeErrors.push(error.message));
   await page.setViewportSize({ width: 1000, height: 620 });
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "zh-CN");
@@ -907,6 +932,8 @@ test("executed normal conversation renders one structured terminal report", asyn
   await expect(assistantRow.getByText("旧的执行总结不应和结构化报告重复展示。")).toHaveCount(0);
   const report = assistantRow.locator(".terminal-report-block");
   await expect(report).toContainText("结构化终局报告已接入普通会话");
+  await expect.poll(() => report.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
   await expect(report.locator(".terminal-report-participants")).toHaveCount(0);
   await expect(report.locator(".terminal-report-summary")).not.toHaveAttribute("aria-expanded");
   await expect(report.locator(".terminal-report-toggle")).toHaveCount(0);
@@ -972,6 +999,7 @@ test("executed normal conversation renders one structured terminal report", asyn
   await expect(conversationDock).toContainText("apps/web/src/features/workspace/ConversationHome-1.tsx");
   await expect(conversationDock).toContainText("terminalReportWorkspacePreview");
   await expect(conversationDock.getByRole("button", { name: "打开方式" })).toBeVisible();
+  expect(runtimeErrors).toEqual([]);
 });
 
 test("persisted normal conversation without work evidence renders only the assistant reply", async ({ page }) => {
@@ -1140,7 +1168,7 @@ test("conversation home refreshes interface language and theme after workspace s
   await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   await expect(page.getByLabel("对话首页").getByRole("heading", { name: "Ling Stack，让工作更简单。", level: 1 })).toBeVisible();
-  await expect(navigation.getByRole("button", { name: "收件箱" })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "收件箱" })).toHaveCount(0);
 });
 
 test("sidebar text entries route to context-aware inspectors", async ({ page }) => {
@@ -1152,26 +1180,20 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
   const primaryNav = navigation.locator(".primary-nav");
   await expect(navigation.getByRole("button", { name: "Search or start" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Run", exact: true })).toHaveCount(0);
-  await expect(primaryNav.getByRole("button")).toHaveText(["Inbox", "Media Production", "Work Board", "Plugin Manager", "Automations"]);
+  await expect(primaryNav.getByRole("button")).toHaveText(["Media Production", "Plugin Manager", "Automations"]);
+  await expect(primaryNav.getByRole("button", { name: "Inbox" })).toHaveCount(0);
   await expect(primaryNav.getByRole("button", { name: "AI Councils" })).toHaveCount(0);
   await expect(primaryNav.getByRole("button", { name: "AI Teammates" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Settings" })).toBeVisible();
   await expect(navigation.getByRole("button", { name: "Profile" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Model Workbench" })).toHaveCount(0);
-  await expect(primaryNav.getByRole("button", { name: "Work Board" })).toBeVisible();
+  await expect(primaryNav.getByRole("button", { name: "Work Board" })).toHaveCount(0);
   await expect(primaryNav.getByRole("button", { name: "Plugin Manager" })).toBeVisible();
   await expect(page.getByLabel("Run context")).toHaveCount(0);
 
   await navigation.getByRole("button", { name: "New conversation" }).click();
   await expect(page.getByLabel("Conversation home")).toBeVisible();
   await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: [] });
-
-  await primaryNav.getByRole("button", { name: "Inbox" }).click();
-  await expect(page.locator(".approvals-panel").getByRole("heading", { name: "Inbox" })).toBeVisible();
-
-  await primaryNav.getByRole("button", { name: "Work Board" }).click();
-  await expect(page.locator(".work-board-page")).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
 
   await primaryNav.getByRole("button", { name: "Plugin Manager" }).click();
   await expect(page.locator(".plugin-manager-page .settings-plugin-manager")).toBeVisible();
@@ -1197,7 +1219,7 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
   await expect(settingsSections.getByRole("button", { name: /Interface preferences/ })).toBeVisible();
   await settingsSections.getByRole("button", { name: /^User profile$/ }).click();
   await expect(page.getByRole("heading", { name: "User profile", level: 1 })).toHaveCount(0);
-  await expect(page.locator(".profile-settings-identity-block")).toBeVisible();
+  await expect(page.locator('[data-profile-section="identity"]')).toBeVisible();
   await expect(page.getByRole("heading", { name: "Identity information" })).toHaveCount(0);
   await expect(page.getByLabel("Handle")).toHaveCount(0);
   await expect(page.getByLabel("Display name", { exact: true })).toHaveCount(0);
@@ -1214,7 +1236,8 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
   await page.getByRole("button", { name: "Back to app" }).click();
 
   await navigation.getByRole("button", { name: "Media Production" }).click();
-  await expect(page.locator(".media-production-page.showing-studio")).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Media production views" }))
+    .toBeVisible({ timeout: 15_000 });
   await expect(page.locator(".media-production-canvas-toolbar")).toContainText("Production studio");
   await expect(page.getByLabel("Run context")).toHaveCount(0);
 
@@ -1353,12 +1376,13 @@ test("conversation home model picker uses the model workbench default without ch
   await expect(home.getByRole("button", { name: "Selected model gemini-2.5-pro" })).toBeVisible();
   await expect(home.getByRole("button", { name: "Selected thinking mode Off" })).toBeVisible();
   await home.getByRole("button", { name: "Selected thinking mode Off" }).click();
-  await expect(page.getByRole("listbox", { name: "Thinking mode" }).getByRole("option")).toHaveText(["Off", "Minimal", "Low", "Medium", "High", "XHigh"]);
+  await expect(page.getByRole("menu", { name: "Thinking mode" }).getByRole("menuitemradio")).toHaveText(["Off", "Minimal", "Low", "Medium", "High", "XHigh"]);
   await page.keyboard.press("Escape");
 
   await home.getByRole("button", { name: "Selected model gemini-2.5-pro" }).click();
-  const modelMenu = page.getByRole("listbox", { name: "Model options" });
+  const modelMenu = page.locator(".conversation-model-menu");
   await expect(modelMenu).toBeVisible();
+  await expect(modelMenu).toHaveAttribute("role", "menu");
   await expect(modelMenu.locator(".conversation-model-option")).toHaveCount(4);
   await expect(modelMenu.locator(".conversation-model-option").first()).toContainText("gemini-2.5-pro");
   await expect(modelMenu.locator(".conversation-model-option").first()).toContainText("Default");
@@ -1381,7 +1405,7 @@ test("conversation home model picker uses the model workbench default without ch
   })).toBe(true);
   await modelSearch.fill("gpt-4o");
   await expect(modelMenu.locator(".conversation-model-option")).toHaveCount(1);
-  await modelMenu.getByRole("option", { name: /cliproxy-gpt-4o/ }).click();
+  await modelMenu.getByRole("menuitemradio", { name: /cliproxy-gpt-4o/ }).click();
   await expect(home.getByRole("button", { name: "Selected model cliproxy-gpt-4o" })).toBeVisible();
   await expect(home.getByRole("button", { name: /Selected thinking mode/ })).toHaveCount(0);
 
@@ -1389,10 +1413,10 @@ test("conversation home model picker uses the model workbench default without ch
   await modelSearch.fill("sonnet");
   await expect(modelMenu.locator(".conversation-model-option")).toHaveCount(1);
   await expect(modelMenu.locator(".conversation-model-option")).toContainText("claude-sonnet-4");
-  await modelMenu.getByRole("option", { name: /claude-sonnet-4/ }).click();
+  await modelMenu.getByRole("menuitemradio", { name: /claude-sonnet-4/ }).click();
   await expect(home.getByRole("button", { name: "Selected model claude-sonnet-4" })).toBeVisible();
   await home.getByRole("button", { name: "Selected thinking mode Off" }).click();
-  await page.getByRole("listbox", { name: "Thinking mode" }).getByRole("option", { name: "High", exact: true }).click();
+  await page.getByRole("menu", { name: "Thinking mode" }).getByRole("menuitemradio", { name: "High", exact: true }).click();
   await expect(home.getByRole("button", { name: "Selected thinking mode High" })).toBeVisible();
 
   await home.getByRole("textbox", { name: "Conversation message" }).fill("Use Sonnet for this conversation");
@@ -1410,7 +1434,7 @@ test("conversation home model picker uses the model workbench default without ch
   await expect(conversationPage.getByRole("button", { name: "Selected thinking mode High" })).toBeVisible();
 });
 
-test("settings keeps configuration tools embedded while promoted tools use global navigation", async ({ page }) => {
+test("settings keeps configuration tools embedded while Work Board stays hidden from global navigation", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [createChatProvider({
@@ -1457,7 +1481,7 @@ test("settings keeps configuration tools embedded while promoted tools use globa
 
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await page.getByRole("button", { name: "Back to app" }).click();
-  await navigation.getByRole("button", { name: "Work Board" }).click();
+  await navigation.getByRole("button", { name: "Plugin Manager" }).click();
   await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
-  await expect(page.locator(".work-board-page")).toBeVisible();
+  await expect(page.locator(".plugin-manager-page")).toBeVisible();
 });

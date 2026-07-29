@@ -8,6 +8,19 @@ import {
   parseControlPlaneRpcEventMessage,
 } from "../lib/control-plane.js";
 import type { ControlPlaneDomain, RunSession } from "../types.js";
+import {
+  domainErrorMessage,
+  type FocusedDomainError,
+  useFocusedDomainErrorOwner,
+} from "./use-focused-domain-error-owner.js";
+
+export type ControlPlaneInvalidationError = FocusedDomainError<"control-plane", string>;
+
+export interface ControlPlaneInvalidationController {
+  readonly errors: readonly ControlPlaneInvalidationError[];
+  readonly error: ControlPlaneInvalidationError | undefined;
+  readonly clearError: () => void;
+}
 
 export function useControlPlaneInvalidation(input: {
   readonly daemonBaseUrl: string;
@@ -17,7 +30,6 @@ export function useControlPlaneInvalidation(input: {
   readonly selectedChannelId: string;
   readonly channelRunsForArtifacts: readonly RunSession[];
   readonly setSkillLibraryRefreshToken: (update: (current: number) => number) => void;
-  readonly setErrorMessage: (message: string) => void;
   readonly refreshRuns: (cwd?: string) => Promise<void>;
   readonly refreshRuntimeState: (cwd?: string) => Promise<void>;
   readonly refreshApprovals: (cwd?: string, runId?: string) => Promise<void>;
@@ -30,7 +42,9 @@ export function useControlPlaneInvalidation(input: {
   readonly refreshChannelRunArtifacts: (cwd?: string, channelId?: string, channelRuns?: readonly RunSession[]) => Promise<void>;
   readonly refreshChannelExecutionActions: (cwd?: string, channelId?: string, channelRuns?: readonly RunSession[]) => Promise<void>;
   readonly refreshChannelActivity: () => Promise<void>;
-}): void {
+}): ControlPlaneInvalidationController {
+  const workspaceIdentity = input.workspaceCwd.trim() || "workspace:unavailable";
+  const errorOwner = useFocusedDomainErrorOwner<"control-plane", string>(workspaceIdentity);
   const invalidationRef = useRef<(domains: readonly ControlPlaneDomain[]) => void>(() => undefined);
   invalidationRef.current = (domains) => {
     const workspaceCwd = input.workspaceCwd;
@@ -38,47 +52,59 @@ export function useControlPlaneInvalidation(input: {
       return;
     }
     const changed = new Set(domains);
-    const refreshes: Promise<unknown>[] = [];
+    const trackRefresh = (domain: ControlPlaneDomain, action: string, refresh: Promise<unknown>): void => {
+      const request = errorOwner.begin("control-plane", workspaceCwd, `${domain}:${action}`);
+      errorOwner.clear(request);
+      void refresh.then(
+        () => errorOwner.clear(request),
+        (caught: unknown) => {
+          errorOwner.report(request, { scope: "stream", message: domainErrorMessage(caught) });
+        },
+      );
+    };
     if (changed.has("runs")) {
-      refreshes.push(input.refreshRuns(workspaceCwd));
+      trackRefresh("runs", "list", input.refreshRuns(workspaceCwd));
       if (input.selectedChannelId) {
-        refreshes.push(input.refreshChannelActivity());
-        refreshes.push(input.refreshRuntimeState(workspaceCwd));
-        refreshes.push(input.refreshChannelExecutionActions(workspaceCwd, input.selectedChannelId, input.channelRunsForArtifacts));
+        trackRefresh("runs", `channel-activity:${input.selectedChannelId}`, input.refreshChannelActivity());
+        trackRefresh("runs", "runtime", input.refreshRuntimeState(workspaceCwd));
+        trackRefresh(
+          "runs",
+          `channel-execution:${input.selectedChannelId}`,
+          input.refreshChannelExecutionActions(workspaceCwd, input.selectedChannelId, input.channelRunsForArtifacts),
+        );
       }
     }
     if (changed.has("work_units")) {
-      refreshes.push(input.refreshRuntimeState(workspaceCwd));
+      trackRefresh("work_units", "runtime", input.refreshRuntimeState(workspaceCwd));
     }
     if (changed.has("approvals")) {
-      refreshes.push(input.refreshApprovals(workspaceCwd));
-      refreshes.push(input.refreshApprovalPolicy());
+      trackRefresh("approvals", "list", input.refreshApprovals(workspaceCwd));
+      trackRefresh("approvals", "policy", input.refreshApprovalPolicy());
     }
     if (changed.has("providers")) {
-      refreshes.push(input.refreshProviders(workspaceCwd));
+      trackRefresh("providers", "list", input.refreshProviders(workspaceCwd));
     }
     if (changed.has("mcp")) {
-      refreshes.push(input.refreshMcp(workspaceCwd));
+      trackRefresh("mcp", "list", input.refreshMcp(workspaceCwd));
     }
     if (changed.has("runners")) {
-      refreshes.push(input.refreshRuntimeSettings());
+      trackRefresh("runners", "settings", input.refreshRuntimeSettings());
     }
     if (changed.has("teammates")) {
-      refreshes.push(input.refreshAiTeammates(workspaceCwd));
+      trackRefresh("teammates", "list", input.refreshAiTeammates(workspaceCwd));
     }
     if (changed.has("memory")) {
-      refreshes.push(input.refreshUsedMemoryAudit(workspaceCwd));
+      trackRefresh("memory", "audit", input.refreshUsedMemoryAudit(workspaceCwd));
     }
     if (changed.has("skills")) {
       input.setSkillLibraryRefreshToken((current) => current + 1);
     }
     if (changed.has("artifacts") && input.selectedChannelId) {
-      refreshes.push(input.refreshChannelRunArtifacts(workspaceCwd, input.selectedChannelId, input.channelRunsForArtifacts));
-    }
-    if (refreshes.length > 0) {
-      void Promise.all(refreshes).catch((error: unknown) => {
-        input.setErrorMessage(error instanceof Error ? error.message : String(error));
-      });
+      trackRefresh(
+        "artifacts",
+        `channel:${input.selectedChannelId}`,
+        input.refreshChannelRunArtifacts(workspaceCwd, input.selectedChannelId, input.channelRunsForArtifacts),
+      );
     }
   };
 
@@ -230,4 +256,10 @@ export function useControlPlaneInvalidation(input: {
     input.localWebSocketRpcEnabled,
     input.workspaceCwd,
   ]);
+
+  return {
+    errors: errorOwner.errors() as readonly ControlPlaneInvalidationError[],
+    error: errorOwner.latest() as ControlPlaneInvalidationError | undefined,
+    clearError: errorOwner.clearAll,
+  };
 }

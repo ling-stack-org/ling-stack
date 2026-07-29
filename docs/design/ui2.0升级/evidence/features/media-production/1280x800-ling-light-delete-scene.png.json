@@ -1,0 +1,24 @@
+{
+  "filename": "1280x800-ling-light-delete-scene.png",
+  "capturedAt": "2026-07-23T02:01:36.810Z",
+  "viewport": {
+    "width": 1280,
+    "height": 800
+  },
+  "theme": "ling-light",
+  "locale": "en-US",
+  "fixture": "production_delete_scene",
+  "state": "delete-scene",
+  "functionIds": [
+    "PROD-DELETE-001"
+  ],
+  "sourceCommitOrWorktree": "0a0b80502715+worktree",
+  "consoleErrors": [],
+  "expectedConsoleErrors": [],
+  "pageErrors": [],
+  "documentOverflow": 0,
+  "ownerOverflow": 0,
+  "canvasPixel": null,
+  "mediaPixelHash": null,
+  "sha256": "b85893068745b9ff28de3c3459eeea6d16f3b186637617f11a25c1ac15827ce1"
+}

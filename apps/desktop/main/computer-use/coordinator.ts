@@ -96,7 +96,9 @@ export interface ComputerUsePreviewCoordinatorOptions {
   readonly getDisplays: () => readonly DesktopDisplayWorkArea[];
   readonly getDisplayMatching: (bounds?: DesktopRect) => DesktopDisplayWorkArea;
   readonly onDisplaysChanged?: (listener: () => void) => () => void;
-  readonly openOwnerConversation?: (conversationId: string) => Promise<void> | void;
+  readonly openOwnerConversation?: (
+    conversationId: string,
+  ) => Promise<DesktopCommandResult> | DesktopCommandResult;
   readonly telemetry?: ComputerUsePreviewTelemetry;
   readonly now?: () => Date;
   readonly setTimer?: (callback: () => void, milliseconds: number) => ReturnType<typeof setTimeout>;
@@ -563,10 +565,18 @@ export class ComputerUsePreviewCoordinator {
     }
   }
 
-  async openOwnerConversation(): Promise<void> {
+  async openOwnerConversation(): Promise<DesktopCommandResult> {
     const projection = this.activeDeckProjection() ?? this.currentProjection;
-    if (projection) {
-      await this.options.openOwnerConversation?.(projection.conversationId);
+    if (!projection) {
+      return { accepted: false, reason: "computer_use_owner_conversation_missing" };
+    }
+    if (!this.options.openOwnerConversation) {
+      return { accepted: false, reason: "computer_use_owner_navigation_unavailable" };
+    }
+    try {
+      return await this.options.openOwnerConversation(projection.conversationId);
+    } catch {
+      return { accepted: false, reason: "computer_use_owner_navigation_failed" };
     }
   }
 

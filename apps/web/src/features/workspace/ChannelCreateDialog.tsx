@@ -1,16 +1,24 @@
 import { Check, ChevronDown, Folder, FolderOpen, Loader2, Plus, Search, UserPlus } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { selectWorkspaceDirectory } from "../../api/workspace-directory.js";
 import { useI18n } from "../../i18n.js";
 import { isMediaProvider, providerPreflightReady } from "../../lib/providers.js";
-import { CreateDialogShell, DialogSection } from "../../shared/components/index.js";
+import { DialogSection } from "../../shared/components/index.js";
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  Field,
+  Input,
+  Select,
+} from "../../shared/ui/index.js";
 import type { ChannelCreateFormState, ChannelFormState, ProviderPreset } from "../../types.js";
 import type { LocalTeammateDraft } from "../teammates/index.js";
 import { TeammateAvatarView } from "../teammates/TeammateAvatarView.js";
 import { LING_AGENT_AUTHOR_ID } from "./ChannelMessageRenderers.js";
 import { ChannelRuntimePolicyFields, ProviderPresetOptions } from "./WorkspaceControls.js";
-
-import { SelectControl } from "../../shared/components/SelectControl.js";
 
 export interface ChannelCreateProjectOption {
   readonly path: string;
@@ -39,14 +47,23 @@ export function ChannelCreateDialog({
   readonly creating: boolean;
   readonly errorMessage: string;
   readonly onFormChange: (form: ChannelCreateFormState) => void;
-  readonly onCreateChannel: () => void;
+  readonly onCreateChannel: () => void | Promise<void>;
   readonly onClose: () => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const [open, setOpen] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [projectSearch, setProjectSearch] = useState("");
   const [selectingProject, setSelectingProject] = useState(false);
   const [projectError, setProjectError] = useState("");
+  const closeRequestedRef = useRef(false);
+  const closeCommittedRef = useRef(false);
+  const returnFocusRef = useRef<HTMLElement | null>(
+    typeof document !== "undefined" && document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null,
+  );
   const taskReadyProviders = useMemo(
     () => providers.filter(providerPreflightReady),
     [providers],
@@ -60,6 +77,7 @@ export function ChannelCreateDialog({
     [teammates],
   );
   const selectedProjectPath = form.boundPath.trim() || cwd.trim();
+  const busy = creating || submitting;
   const selectedProjectLabel = selectedProjectPath ? projectLabelFromPath(selectedProjectPath) : t("Workspace default");
   const availableProjectOptions = useMemo(() => {
     const byPath = new Map<string, ChannelCreateProjectOption>();
@@ -136,34 +154,67 @@ export function ChannelCreateDialog({
     }
   }
 
+  async function submitChannel(): Promise<void> {
+    if (busy) return;
+    setSubmitting(true);
+    try {
+      await onCreateChannel();
+    } catch {
+      // The owner exposes the product error through errorMessage.
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function requestClose(): void {
+    if (busy || closeRequestedRef.current) return;
+    closeRequestedRef.current = true;
+    setOpen(false);
+  }
+
+  function commitClose(): void {
+    returnFocusRef.current?.focus({ preventScroll: true });
+    if (closeCommittedRef.current) return;
+    closeCommittedRef.current = true;
+    onClose();
+  }
+
   return (
-    <CreateDialogShell
-      ariaLabel={t("New channel")}
-      title={t("New channel")}
-      description={t("Name the channel, invite teammates, then create. Runtime defaults can be adjusted later.")}
-      closeLabel={t("Cancel")}
-      onClose={onClose}
-      className="channel-create-dialog channel-create-dialog-clean"
-      overlayClassName="channel-create-overlay"
-      bodyClassName="channel-create-body"
-      footer={(
-        <>
-          <button className="secondary-button compact-button" type="button" onClick={onClose}>
-            {t("Cancel")}
-          </button>
-          <button className="primary-button compact-button" type="button" onClick={onCreateChannel} disabled={creating}>
-            {creating ? <Loader2 className="spin" size={14} /> : <Plus size={14} />}
-            {creating ? t("Creating channel...") : t("Create channel")}
-          </button>
-        </>
-      )}
+    <Dialog
+      busy={busy}
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) requestClose();
+      }}
     >
+      <DialogContent
+        aria-label={t("New channel")}
+        aria-labelledby={undefined}
+        className="channel-create-dialog channel-create-dialog-clean"
+        overlayClassName="channel-create-overlay"
+        size="lg"
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          commitClose();
+        }}
+      >
+        <DialogHeader
+          closeLabel={t("Cancel")}
+          description={t("Name the channel, invite teammates, then create. Runtime defaults can be adjusted later.")}
+          title={<strong>{t("New channel")}</strong>}
+        />
+        <DialogBody className="channel-create-body">
           <DialogSection className="channel-create-section" title={t("Basic information")} description={t("This name appears in the sidebar and channel header.")}>
             <div className="channel-create-fields">
-              <label className="field wide">
-                <span>{t("Name")}</span>
-                <input value={form.name} onChange={(event) => onFormChange({ ...form, name: event.target.value })} autoFocus />
-              </label>
+              <Field className="field wide channel-create-name-field" label={t("Name")}>
+                <Input
+                  autoFocus
+                  className="channel-create-name-native"
+                  containerClassName="channel-create-name-input"
+                  value={form.name}
+                  onChange={(event) => onFormChange({ ...form, name: event.target.value })}
+                />
+              </Field>
               <div className="field wide channel-create-project-field">
                 <span>{t("Project directory")}</span>
                 <div className="channel-create-project-picker">
@@ -173,7 +224,7 @@ export function ChannelCreateDialog({
                     aria-label={t("Project directory")}
                     aria-haspopup="menu"
                     aria-expanded={projectMenuOpen}
-                    disabled={creating}
+                    disabled={busy}
                     onClick={() => {
                       setProjectError("");
                       setProjectMenuOpen((current) => !current);
@@ -188,15 +239,16 @@ export function ChannelCreateDialog({
                   </button>
                   {projectMenuOpen ? (
                     <div className="channel-create-project-menu" role="menu" aria-label={t("Project folder options")}>
-                      <label className="channel-create-project-search">
-                        <Search size={14} />
-                        <input
-                          value={projectSearch}
-                          onChange={(event) => setProjectSearch(event.target.value)}
-                          placeholder={t("Search projects")}
-                          aria-label={t("Search projects")}
-                        />
-                      </label>
+                      <Input
+                        aria-label={t("Search projects")}
+                        className="channel-create-project-search-native"
+                        containerClassName="channel-create-project-search"
+                        prefix={<Search size={14} />}
+                        size="sm"
+                        value={projectSearch}
+                        onChange={(event) => setProjectSearch(event.target.value)}
+                        placeholder={t("Search projects")}
+                      />
                       <div className="channel-create-project-options">
                         {visibleProjectOptions.length > 0 ? visibleProjectOptions.map((option) => {
                           const selected = option.path === selectedProjectPath;
@@ -292,14 +344,15 @@ export function ChannelCreateDialog({
               <div className="channel-create-fields">
                 <label className="field">
                   <span>{t("Base model")}</span>
-                  <SelectControl value={form.defaultProviderPresetId} onChange={(event) => onFormChange({ ...form, defaultProviderPresetId: event.target.value })} disabled={providersLoading || providers.length === 0}>
+                  <Select size="md" value={form.defaultProviderPresetId} onChange={(event) => onFormChange({ ...form, defaultProviderPresetId: event.target.value })} disabled={providersLoading || providers.length === 0}>
                     <option value="">{t("Select provider preset")}</option>
                     <ProviderPresetOptions runnableProviders={taskReadyProviders} blockedProviders={setupChatProviders} />
-                  </SelectControl>
+                  </Select>
                 </label>
                 <label className="field">
                   <span>{t("AI response language")}</span>
-                  <SelectControl
+                  <Select
+                    size="md"
                     value={form.responseLanguage}
                     onChange={(event) => onFormChange({ ...form, responseLanguage: event.target.value as ChannelFormState["responseLanguage"] })}
                   >
@@ -307,14 +360,25 @@ export function ChannelCreateDialog({
                     <option value="follow_user">{t("Follow user message")}</option>
                     <option value="zh-CN">{t("Chinese")}</option>
                     <option value="en-US">{t("English")}</option>
-                  </SelectControl>
+                  </Select>
                 </label>
               </div>
               <ChannelRuntimePolicyFields form={form} onChange={updateRuntimeForm} />
             </div>
           </DialogSection>
 
-    </CreateDialogShell>
+        </DialogBody>
+        <DialogFooter className="channel-create-dialog-footer">
+          <button className="secondary-button compact-button" type="button" onClick={requestClose} disabled={busy}>
+            {t("Cancel")}
+          </button>
+          <button className="primary-button compact-button" type="button" onClick={() => void submitChannel()} disabled={busy}>
+            {busy ? <Loader2 className="spin" size={14} /> : <Plus size={14} />}
+            {busy ? t("Creating channel...") : t("Create channel")}
+          </button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

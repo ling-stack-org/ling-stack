@@ -1,5 +1,6 @@
 import { formatDateTime } from "../../lib/formatting.js";
 import { Pencil } from "lucide-react";
+import { Button, InspectorSection, StatusIndicator } from "../../shared/ui/index.js";
 import type {
   SkillOptimizationPreview,
   SkillRegistryEntry,
@@ -7,13 +8,8 @@ import type {
   SkillSourceSnapshot,
 } from "../../types.js";
 import { approvalProfileText } from "../teammates/helpers.js";
-import {
-  SkillInspectorSection,
-  SkillSourceInspector,
-  SkillSourceStatus,
-  SkillStatePill,
-  SkillTokenList,
-} from "./SkillLibraryWidgets.js";
+import { SkillSourceStatus, SkillTokenList } from "./SkillLibraryPrimitives.js";
+import { SkillSourceInspector } from "./SkillSourceInspector.js";
 import type { SettingsTranslator } from "./skill-library-utils.js";
 import { skillRegistryState } from "./skill-library-utils.js";
 
@@ -23,10 +19,11 @@ export function SkillCompactInspector({
   sourceSnapshot,
   sourceHistory,
   artifacts,
+  sourceArtifactsLoading,
+  sourceError,
   optimizationPreview,
-  optimizationPreviewLoading,
   cwd,
-  saving,
+  busyAction,
   boundTeammates,
   editable = false,
   onEdit,
@@ -40,10 +37,11 @@ export function SkillCompactInspector({
   readonly sourceSnapshot: SkillSourceSnapshot | undefined;
   readonly sourceHistory: readonly SkillSourceSnapshot[];
   readonly artifacts: readonly SkillSourceArtifact[];
+  readonly sourceArtifactsLoading: boolean;
+  readonly sourceError: string;
   readonly optimizationPreview: SkillOptimizationPreview | undefined;
-  readonly optimizationPreviewLoading: boolean;
   readonly cwd: string;
-  readonly saving: boolean;
+  readonly busyAction: string;
   readonly boundTeammates: readonly string[];
   readonly editable?: boolean;
   readonly onEdit?: () => void;
@@ -61,7 +59,11 @@ export function SkillCompactInspector({
   return (
     <div className="settings-skill-compact-inspector">
       <div className="settings-skill-summary-card">
-        {showState ? <div className="settings-skill-detail-state"><SkillStatePill label={state.label} tone={state.tone} /></div> : null}
+        {showState ? (
+          <div className="settings-skill-detail-state">
+            <StatusIndicator compact label={state.label} tone={state.tone === "blocked" ? "danger" : "warning"} />
+          </div>
+        ) : null}
         <p>{skill.definition.summary}</p>
         <div className="settings-skill-summary-strip" aria-label={t("Skill capability summary")}>
           <span>
@@ -85,60 +87,68 @@ export function SkillCompactInspector({
         </div>
         {editable && onEdit ? (
           <div className="settings-skill-summary-edit-action">
-            <button className="secondary-button compact-button" type="button" onClick={onEdit} disabled={saving}>
-              <Pencil size={14} />
+            <Button size="sm" variant="secondary" leadingIcon={<Pencil size={14} />} onClick={onEdit} disabled={Boolean(busyAction)}>
               {t("Edit skill")}
-            </button>
+            </Button>
           </div>
         ) : null}
       </div>
 
-      <details className="settings-compact-details settings-skill-inspector-details">
-        <summary>{t("Requirements and policy")}</summary>
-        <SkillInspectorSection title={t("Required tools")}>
+      <InspectorSection
+        className="settings-skill-inspector-details"
+        title={t("Requirements and policy")}
+        summary={t("{count} requirements", { count: requiredToolCount + providerCapabilityCount })}
+      >
+        <section className="settings-skill-inspector-section">
+          <h3>{t("Required tools")}</h3>
           <SkillTokenList values={skill.definition.requiredTools} emptyLabel={t("No tools")} />
-        </SkillInspectorSection>
-        <SkillInspectorSection title={t("Approval profile")}>
+        </section>
+        <section className="settings-skill-inspector-section">
+          <h3>{t("Approval profile")}</h3>
           <p>{approvalProfileText(skill.definition.approvalProfile, t)}</p>
-        </SkillInspectorSection>
-        <SkillInspectorSection title={t("Provider capability")}>
+        </section>
+        <section className="settings-skill-inspector-section">
+          <h3>{t("Provider capability")}</h3>
           <SkillTokenList values={skill.definition.requiredProviderCapabilities} emptyLabel={t("No provider capability required")} />
           {providerCapabilityCount === 0 ? null : <small>{t("{count} provider capabilities required", { count: providerCapabilityCount })}</small>}
-        </SkillInspectorSection>
-        <SkillInspectorSection title={t("Bound teammates")}>
+        </section>
+        <section className="settings-skill-inspector-section">
+          <h3>{t("Bound teammates")}</h3>
           <SkillTokenList values={boundTeammates} emptyLabel={t("Unbound")} />
-        </SkillInspectorSection>
-      </details>
+        </section>
+      </InspectorSection>
 
-      <details className="settings-compact-details settings-skill-inspector-details">
-        <summary>{t("Prompt fragments")}: {promptFragmentCount}</summary>
-        <SkillInspectorSection title={t("Prompt fragments")}>
-          {promptFragmentCount > 0 ? (
-            <pre>{skill.definition.promptFragments.slice(0, 3).join("\n\n")}</pre>
-          ) : (
-            <p>{t("No prompt fragments")}</p>
-          )}
-        </SkillInspectorSection>
-      </details>
+      <InspectorSection className="settings-skill-inspector-details" title={t("Prompt fragments")} summary={String(promptFragmentCount)}>
+        {promptFragmentCount > 0 ? (
+          <pre>{skill.definition.promptFragments.slice(0, 3).join("\n\n")}</pre>
+        ) : (
+          <p>{t("No prompt fragments")}</p>
+        )}
+      </InspectorSection>
 
-      <details className="settings-compact-details settings-skill-inspector-details">
-        <summary>{t("Source and raw details")}</summary>
+      <InspectorSection
+        className="settings-skill-inspector-details"
+        title={t("Source and raw details")}
+        summary={sourceSnapshot ? t("Source-backed") : t("Metadata only")}
+      >
         <SkillSourceInspector
+          skillId={skill.id}
           snapshot={sourceSnapshot}
           history={sourceHistory}
           artifacts={artifacts}
+          sourceArtifactsLoading={sourceArtifactsLoading}
+          sourceError={sourceError}
           optimizationPreview={optimizationPreview}
-          optimizationPreviewLoading={optimizationPreviewLoading}
           showPreviewAction={Boolean(sourceSnapshot)}
           cwd={cwd}
-          saving={saving}
+          busyAction={busyAction}
           onPreviewOptimization={onPreviewOptimization}
           onArchive={onArchiveSource}
           onRollback={onRollbackSource}
           allowSourceMutations={!readOnly}
           t={t}
         />
-      </details>
+      </InspectorSection>
 
       <small className="settings-skill-updated-line">{t("Updated {time}", { time: formatDateTime(skill.updatedAt) })}</small>
     </div>

@@ -91,7 +91,7 @@
     0 7px 22px rgba(17, 17, 17, 0.05),
     inset 0 1px 0 rgba(255, 255, 255, 0.78);
   --material-blur: none;
-  --transition-fast: 140ms ease;
+  --transition-fast: var(--ling-motion-fast) var(--ling-ease-standard);
 }
 
 .sr-only {
@@ -211,10 +211,10 @@ button {
   cursor: pointer;
 }
 
-button,
-input,
-textarea,
-a {
+button:not([class*="ling-ui-"]),
+input:not([class*="ling-ui-"]),
+textarea:not([class*="ling-ui-"]),
+a:not([class*="ling-ui-"]) {
   transition:
     background-color var(--transition-fast),
     border-color var(--transition-fast),
@@ -223,12 +223,16 @@ a {
     opacity var(--transition-fast);
 }
 
-button:focus-visible,
-input:focus-visible,
-textarea:focus-visible,
-a:focus-visible {
+button:not([class*="ling-ui-"]):focus-visible,
+a:not([class*="ling-ui-"]):focus-visible {
   outline: 2px solid var(--accent-border);
   outline-offset: 2px;
+}
+
+input:not([class*="ling-ui-"]):focus-visible,
+textarea:not([class*="ling-ui-"]):focus-visible {
+  outline: 0;
+  box-shadow: inset 0 0 0 1px var(--accent-border);
 }
 
 ::selection {
@@ -268,64 +272,6 @@ a:focus-visible {
 .persistence-line {
   display: flex;
   align-items: center;
-}
-
-.language-switcher {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  height: 30px;
-  padding: 2px;
-  border: 1px solid var(--border);
-  background: var(--surface-panel-strong);
-}
-
-.language-switcher button {
-  min-width: 42px;
-  height: 24px;
-  padding: 0 8px;
-  border: 0;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.language-switcher button.active,
-.language-switcher button:hover {
-  background: var(--accent-soft);
-  color: var(--accent-strong);
-}
-
-.theme-switcher {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  height: 30px;
-  padding: 2px;
-  border: 1px solid var(--border);
-  background: var(--surface-panel-strong);
-}
-
-.theme-switcher button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  min-width: 34px;
-  height: 24px;
-  padding: 0 7px;
-  border: 0;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.theme-switcher button.active,
-.theme-switcher button:hover {
-  background: var(--accent-soft);
-  color: var(--accent-strong);
 }
 
 .health,

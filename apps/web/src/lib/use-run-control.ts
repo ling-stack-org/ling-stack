@@ -11,7 +11,8 @@ export function useRunControl(options: {
   readonly setRun: (run: RunSession | undefined) => void;
   readonly setEvents: (events: readonly RunEventEnvelope[]) => void;
   readonly setIsRunning: (isRunning: boolean) => void;
-  readonly setErrorMessage: (message: string) => void;
+  readonly clearError: () => void;
+  readonly reportError: (message: string) => void;
   readonly refreshRuns: (cwd: string) => Promise<void>;
   readonly refreshApprovals: (cwd: string, runId?: string) => Promise<void>;
   readonly refreshRuntimeState: (cwd: string, run?: RunSession) => Promise<void>;
@@ -34,7 +35,7 @@ export function useRunControl(options: {
     const cancelCwd = target ? options.readRunWorkspaceCwd(target, options.defaultCwd) : options.defaultCwd;
     setCancellingRunId(targetRunId);
     try {
-      options.setErrorMessage("");
+      options.clearError();
       if (target?.workUnitId) {
         const response = await cancelWorkUnit(cancelCwd, target.workUnitId);
         if (response.workUnit.linkedRunId) {
@@ -56,7 +57,7 @@ export function useRunControl(options: {
         options.refreshRuntimeState(cancelCwd, target),
       ]);
     } catch (error) {
-      options.setErrorMessage(error instanceof Error ? error.message : String(error));
+      options.reportError(error instanceof Error ? error.message : String(error));
     } finally {
       options.setIsRunning(false);
       setCancellingRunId("");

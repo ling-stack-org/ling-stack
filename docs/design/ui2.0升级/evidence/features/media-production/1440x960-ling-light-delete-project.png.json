@@ -1,0 +1,24 @@
+{
+  "filename": "1440x960-ling-light-delete-project.png",
+  "capturedAt": "2026-07-23T02:01:34.936Z",
+  "viewport": {
+    "width": 1440,
+    "height": 960
+  },
+  "theme": "ling-light",
+  "locale": "en-US",
+  "fixture": "production_delete_project",
+  "state": "delete-project",
+  "functionIds": [
+    "PROD-DELETE-001"
+  ],
+  "sourceCommitOrWorktree": "0a0b80502715+worktree",
+  "consoleErrors": [],
+  "expectedConsoleErrors": [],
+  "pageErrors": [],
+  "documentOverflow": 0,
+  "ownerOverflow": 0,
+  "canvasPixel": null,
+  "mediaPixelHash": null,
+  "sha256": "b874e486a7b5a0b35522a21eb409dbe4b270c8fccb99d2f3cd9182e83e2941d6"
+}

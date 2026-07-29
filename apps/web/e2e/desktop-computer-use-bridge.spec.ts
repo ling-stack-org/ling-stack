@@ -36,6 +36,13 @@ interface DesktopComputerUseTestHostLayout {
   readonly reportedAt: string;
 }
 
+interface DesktopThemeTestInput {
+  readonly themeId: string;
+  readonly colorScheme: "light" | "dark";
+  readonly presentationProfileId: string;
+  readonly variables: Readonly<Record<string, string>>;
+}
+
 interface DesktopComputerUseTestControl {
   emitNavigationIntent(intent: DesktopNavigationTestIntent): void;
   emit(summary: DesktopComputerUseTestSummary | undefined): void;
@@ -56,6 +63,7 @@ interface DesktopComputerUseTestControl {
     readonly pendingShowCount: number;
     readonly pendingStopCount: number;
     readonly reportedLocales: readonly ("en-US" | "zh-CN")[];
+    readonly reportedThemes: readonly DesktopThemeTestInput[];
     readonly selectedConversationId?: string;
     readonly selectedDeckOwner?: {
       readonly surfaceKind: "channel" | "normal_conversation" | "teammate_direct";
@@ -85,6 +93,7 @@ test.beforeEach(async ({ page }) => {
     } | undefined;
     let latestHostLayout: DesktopComputerUseTestHostLayout | undefined;
     const reportedLocales: Array<"en-US" | "zh-CN"> = [];
+    const reportedThemes: DesktopThemeTestInput[] = [];
     let subscribeCalls = 0;
     let unsubscribeCalls = 0;
     let autoShowResult: { readonly accepted: boolean; readonly reason?: string } = { accepted: true };
@@ -147,6 +156,7 @@ test.beforeEach(async ({ page }) => {
           pendingShowCount: pendingShows.length,
           pendingStopCount: pendingStops.length,
           reportedLocales: [...reportedLocales],
+          reportedThemes: [...reportedThemes],
           selectedConversationId,
           selectedDeckOwner,
           showCalls: [...showCalls],
@@ -162,6 +172,11 @@ test.beforeEach(async ({ page }) => {
       value: {
         platform: "macos",
         daemonBaseUrl: "http://127.0.0.1:17891",
+        appearance: {
+          reportTheme(theme: DesktopThemeTestInput) {
+            reportedThemes.push(theme);
+          },
+        },
         navigation: {
           async acknowledgeIntent(requestId: number) {
             navigationAckCalls.push(requestId);
@@ -259,15 +274,42 @@ test("reports initial and runtime locale changes through the narrow Desktop capa
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Interface preferences/ }).click();
-  await page.getByRole("button", { name: "中文" }).click();
+  await page.getByLabel("Product language").selectOption("zh-CN");
   await expect.poll(async () => (await desktopControlSnapshot(page)).latestLocale).toBe("zh-CN");
-  await page.getByRole("button", { name: "EN", exact: true }).click();
+  await page.getByLabel("产品语言").selectOption("en-US");
   await expect.poll(async () => (await desktopControlSnapshot(page)).latestLocale).toBe("en-US");
 
   const compacted = (await desktopControlSnapshot(page)).reportedLocales.filter(
     (locale, index, values) => index === 0 || values[index - 1] !== locale,
   );
   expect(compacted).toEqual(["en-US", "zh-CN", "en-US"]);
+});
+
+test("reports resolved theme changes through the narrow Desktop appearance capability", async ({ page }) => {
+  await expect.poll(async () => (await desktopControlSnapshot(page)).reportedThemes.at(-1)).toMatchObject({
+    themeId: "ling-light",
+    colorScheme: "light",
+    presentationProfileId: "ling-standard",
+    variables: {
+      "--ling-bg-app": "#f6f7f8",
+      "--ling-compact-window-bg": "#f6f7f8",
+      "--ling-compact-window-text": "#121417",
+    },
+  });
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Interface preferences/ }).click();
+  await page.getByRole("radiogroup", { name: "Theme packs" }).getByRole("radio", { name: /Ling Dark/ }).click();
+  await expect.poll(async () => (await desktopControlSnapshot(page)).reportedThemes.at(-1)).toMatchObject({
+    themeId: "ling-dark",
+    colorScheme: "dark",
+    presentationProfileId: "ling-standard",
+    variables: {
+      "--ling-bg-app": "#111315",
+      "--ling-compact-window-bg": "#111315",
+      "--ling-compact-window-text": "#f4f5f6",
+    },
+  });
 });
 
 test("keeps a session-only auto-show change and warns when Desktop cannot persist it", async ({ page }) => {
@@ -422,7 +464,7 @@ test("mounts the current Computer Use entry in channel, normal conversation, and
 
 test("keeps active and stopping states in the header with state-specific tone, then unmounts terminal summaries", async ({ page }) => {
   const controls = page.getByLabel("Computer Use preview controls");
-  const dot = controls.locator(".desktop-computer-use-control-dot");
+  const dot = controls.locator(".ling-ui-status-indicator-dot");
 
   await emitComputerUseSummary(page, { status: "starting", previewAvailable: false, visible: false });
   await expect(controls).toHaveAttribute("data-status", "starting");
@@ -495,7 +537,7 @@ test("remounts the header slot without duplicating the bridge subscription or lo
   await expect(channelControls.getByRole("button", { name: "Show" })).toBeEnabled();
 });
 
-test("keeps header controls inside a 640px viewport with 34px action targets", async ({ page }) => {
+test("keeps header controls inside a 640px viewport with 32px action targets", async ({ page }) => {
   await page.setViewportSize({ width: 640, height: 760 });
   await emitComputerUseSummary(page, { sessionId: "computer-use-narrow" });
   await expectNarrowHeaderControl(page, ".channel-header");
@@ -529,11 +571,18 @@ test("reports teammate-direct composer, summary, dock, and terminal obstacles", 
   const summary = page.locator(".teammate-private-summary-panel");
   await expect(summary).toHaveAttribute("data-computer-use-obstacle", "true");
   await expect(summary).toHaveAttribute("data-computer-use-obstacle-kind", "summary");
+  await expect(summary).toBeVisible();
+  await expect.poll(async () => {
+    const layout = (await desktopControlSnapshot(page)).latestHostLayout;
+    return layout?.obstacles.map((obstacle) => obstacle.kind) ?? [];
+  }).toContain("popover");
 
   await header.getByRole("button", { name: "Terminal" }).click();
   const terminal = page.locator(".teammate-private-bottom-terminal");
   await expect(terminal).toHaveAttribute("data-computer-use-obstacle", "true");
   await expect(terminal).toHaveAttribute("data-computer-use-obstacle-kind", "terminal");
+  await expect(summary).toBeVisible();
+  await expect(header.getByRole("button", { name: "Summary" })).toHaveAttribute("aria-pressed", "true");
 
   await expect.poll(async () => {
     const layout = (await desktopControlSnapshot(page)).latestHostLayout;
@@ -982,8 +1031,8 @@ async function expectNarrowHeaderControl(page: Page, headerSelector: string): Pr
   }));
   expect(actionSizes).toHaveLength(2);
   for (const size of actionSizes) {
-    expect(size.width).toBeGreaterThanOrEqual(34);
-    expect(size.height).toBeGreaterThanOrEqual(34);
+    expect(size.width).toBeGreaterThanOrEqual(32);
+    expect(size.height).toBeGreaterThanOrEqual(32);
   }
 }
 

@@ -2,8 +2,12 @@
 
 ## Status
 
-Design plan with current Web IA implemented for the top-level Review Queue and Work
-Board surfaces.
+**Global Work Board: pending development.**
+
+The existing derived Work Board page is retained for contextual validation and future
+iteration, but it is not currently exposed in primary navigation. Review Queue remains
+active. Historical implementation anchors below describe the retained prototype, not
+a generally released Work Board product.
 
 This document defines the detailed product and implementation plan for Review Queue,
 Global Work Board, and Channel Work Board. It is the external-work and multi-agent work

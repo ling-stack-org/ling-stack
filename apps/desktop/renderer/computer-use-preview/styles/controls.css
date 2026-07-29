@@ -1,0 +1,55 @@
+.preview-header {
+  position: absolute;
+  z-index: 4;
+  inset: 0 0 auto;
+  width: 100%;
+  border-bottom: 0;
+  background: linear-gradient(
+    color-mix(in srgb, var(--ling-compact-window-bg) 88%, transparent),
+    transparent
+  );
+  opacity: 1;
+  transition: opacity var(--ling-motion-fast) var(--ling-ease-standard);
+}
+
+.preview-controls {
+  -webkit-app-region: no-drag;
+  display: flex;
+  align-items: center;
+  gap: var(--ling-space-2);
+  opacity: 1;
+  pointer-events: auto;
+  transition: opacity var(--ling-motion-fast) var(--ling-ease-standard);
+}
+
+.preview-shell[data-state="live"] .preview-header,
+.preview-shell[data-state="live"] .preview-controls {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.preview-shell[data-state="live"]:hover .preview-header,
+.preview-shell[data-state="live"]:focus-within .preview-header,
+.preview-shell[data-state="live"]:hover .preview-controls,
+.preview-shell[data-state="live"]:focus-within .preview-controls,
+.preview-shell[data-menu-open="true"] .preview-header,
+.preview-shell[data-menu-open="true"] .preview-controls,
+.preview-shell[data-controls="persistent"] .preview-controls {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.preview-menu {
+  -webkit-app-region: no-drag;
+}
+
+.preview-menu .menu-item {
+  width: 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .preview-header,
+  .preview-controls {
+    transition-duration: var(--ling-motion-instant);
+  }
+}

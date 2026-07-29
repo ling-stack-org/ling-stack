@@ -1,0 +1,94 @@
+.ling-ui-switch {
+  position: relative;
+  box-sizing: border-box;
+  display: inline-block;
+  width: var(--ling-control-sm);
+  min-width: var(--ling-control-sm);
+  height: var(--ling-control-sm);
+  padding: 0;
+  border: 0;
+  border-radius: var(--ling-radius-md);
+  outline: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.ling-ui-switch::before {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  left: 0;
+  height: 18px;
+  border: 1px solid var(--ling-border-strong);
+  border-radius: 999px;
+  background: var(--ling-bg-subtle);
+  content: "";
+  transform: translateY(-50%);
+  transition:
+    background-color var(--ling-motion-fast) var(--ling-ease-standard),
+    border-color var(--ling-motion-fast) var(--ling-ease-standard),
+    opacity var(--ling-motion-fast) var(--ling-ease-standard);
+}
+
+.ling-ui-switch-thumb {
+  position: absolute;
+  top: 50%;
+  left: 2px;
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--ling-text-muted);
+  box-shadow: var(--ling-shadow-low);
+  transform: translate(0, -50%);
+  transition:
+    background-color var(--ling-motion-fast) var(--ling-ease-standard),
+    transform var(--ling-motion-fast) var(--ling-ease-standard);
+}
+
+.ling-ui-switch[data-state="checked"]::before {
+  border-color: var(--ling-action-accent);
+  background: var(--ling-action-accent);
+}
+
+.ling-ui-switch[data-state="checked"] .ling-ui-switch-thumb {
+  background: var(--ling-action-accent-fg);
+  transform: translate(14px, -50%);
+}
+
+.ling-ui-switch:hover:not(:disabled)::before {
+  border-color: var(--ling-border-focus);
+}
+
+.ling-ui-switch:focus-visible {
+  outline: 2px solid var(--ling-border-focus);
+  outline-offset: 1px;
+}
+
+.ling-ui-switch:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ling-ui-switch::before,
+  .ling-ui-switch-thumb {
+    transition-duration: var(--ling-motion-instant);
+  }
+}
+
+@media (forced-colors: active) {
+  .ling-ui-switch::before {
+    border-color: ButtonText;
+    background: ButtonFace;
+    forced-color-adjust: none;
+  }
+
+  .ling-ui-switch[data-state="checked"]::before {
+    background: Highlight;
+  }
+
+  .ling-ui-switch-thumb {
+    background: ButtonText;
+  }
+}

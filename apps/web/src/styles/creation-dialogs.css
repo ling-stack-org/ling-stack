@@ -1,61 +1,3 @@
-.create-dialog-shell {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 0;
-  padding: 0;
-  overflow: hidden;
-}
-
-.create-dialog-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 72px;
-  padding: 18px 28px 14px;
-  border-bottom: 1px solid var(--border);
-}
-
-.create-dialog-title-block {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-}
-
-.create-dialog-title-block strong {
-  color: var(--text-primary);
-  font-size: 18px;
-  font-weight: 760;
-  line-height: 24px;
-}
-
-.create-dialog-title-block p {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 18px;
-}
-
-.create-dialog-body {
-  min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-
-.create-dialog-actions {
-  position: sticky;
-  bottom: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  justify-content: flex-end;
-  margin: 0 -28px;
-  padding: 12px 28px 16px;
-  border-top: 1px solid var(--border);
-  background: linear-gradient(to top, var(--surface-panel-strong) 72%, color-mix(in srgb, var(--surface-panel-strong) 0%, transparent));
-}
-
 .dialog-section {
   display: grid;
   gap: 12px;
@@ -126,7 +68,7 @@
   border-right: 1.5px solid var(--text-secondary);
   border-bottom: 1.5px solid var(--text-secondary);
   transform: rotate(45deg);
-  transition: transform 140ms ease;
+  transition: transform var(--ling-motion-standard) var(--ling-ease-standard);
 }
 
 .dialog-section.collapsible[open] summary {
@@ -230,7 +172,10 @@
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
   background: var(--surface-panel-strong);
-  transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+  transition:
+    border-color var(--ling-motion-fast) var(--ling-ease-standard),
+    background-color var(--ling-motion-fast) var(--ling-ease-standard),
+    box-shadow var(--ling-motion-fast) var(--ling-ease-standard);
 }
 
 .channel-create-project-trigger:hover:not(:disabled),
@@ -318,9 +263,19 @@
 }
 
 .channel-create-project-search input {
+  height: 34px;
   min-height: 34px;
   padding: 0;
   border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.channel-create-project-search input:focus,
+.channel-create-project-search input:focus-visible {
+  border: 0;
+  outline: 0;
   background: transparent;
   box-shadow: none;
 }
@@ -389,7 +344,10 @@
   min-height: 52px;
   padding: 9px 10px;
   border-radius: 8px;
-  transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+  transition:
+    border-color var(--ling-motion-fast) var(--ling-ease-standard),
+    background-color var(--ling-motion-fast) var(--ling-ease-standard),
+    box-shadow var(--ling-motion-fast) var(--ling-ease-standard);
 }
 
 .channel-create-error {
@@ -440,7 +398,7 @@
   border-right: 1.5px solid var(--text-secondary);
   border-bottom: 1.5px solid var(--text-secondary);
   transform: rotate(45deg);
-  transition: transform 140ms ease;
+  transition: transform var(--ling-motion-standard) var(--ling-ease-standard);
 }
 
 .channel-create-advanced[open] summary {
@@ -466,10 +424,6 @@
 .teammate-create-dialog {
   width: min(920px, calc(100vw - 48px));
   max-height: min(820px, calc(100dvh - 40px));
-}
-
-.teammate-create-dialog .create-dialog-title-block strong {
-  color: var(--text-primary);
 }
 
 .teammate-create-dialog .teammate-create-body {
@@ -554,7 +508,6 @@
     width: min(100%, calc(100vw - 24px));
   }
 
-  .create-dialog-head,
   .channel-create-body,
   .teammate-create-dialog .teammate-create-body {
     padding-right: 18px;
@@ -565,12 +518,5 @@
   .channel-create-dialog-clean .channel-create-teammate-grid,
   .channel-create-advanced-body .runtime-policy-grid {
     grid-template-columns: 1fr;
-  }
-
-  .create-dialog-actions {
-    margin-right: -18px;
-    margin-left: -18px;
-    padding-right: 18px;
-    padding-left: 18px;
   }
 }

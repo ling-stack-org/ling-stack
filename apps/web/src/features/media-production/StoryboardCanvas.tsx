@@ -15,10 +15,28 @@ import {
   type ReactFlowInstance,
 } from "@xyflow/react";
 import { Clapperboard, ImageIcon, Play, Plus, Sparkles } from "lucide-react";
+import { Button, EmptyState, IconButton } from "../../shared/ui/index.js";
+import { useI18n, type Translate } from "../../i18n.js";
 import type { MediaScene } from "../../types.js";
 import type { StoryboardFocusRequest } from "./media-production-types.js";
 import type { SceneReadiness } from "./media-production-view-models.js";
-import { shouldShowStoryboardMiniMap, storyboardCanvasSafeArea } from "./media-production-layout.js";
+import {
+  projectStoryboardScenes,
+  storyboardFocusSceneIds,
+  type StoryboardSceneProjection,
+} from "./media-production-canvas-view-models.js";
+import {
+  shouldShowStoryboardMiniMap,
+  storyboardBoundsFitSafeArea,
+  storyboardCanvasSafeArea,
+  storyboardFitViewPadding,
+  storyboardFocusViewport,
+  storyboardLayoutBounds,
+  storyboardMotionDuration,
+  storyboardNodeHeight,
+  storyboardNodeWidth,
+  type StoryboardFitViewPadding,
+} from "./media-production-layout.js";
 
 interface StoryboardCanvasProps {
   readonly scenes: readonly MediaScene[];
@@ -39,18 +57,30 @@ interface StoryboardNodeData extends Record<string, unknown> {
   readonly order: number;
   readonly isSelected: boolean;
   readonly readiness?: SceneReadiness;
+  readonly promptLabel: string;
+  readonly durationLabel: string;
+  readonly statusLabel: string;
+  readonly previewLabel: string;
   readonly onSelect: (sceneId: string) => void;
   readonly onPreview: (sceneId: string) => void;
 }
 
 function StoryboardSceneNode({ data }: NodeProps<Node<StoryboardNodeData>>): JSX.Element {
   const { scene } = data;
+  const fixedSize = { width: storyboardNodeWidth, height: storyboardNodeHeight };
   return (
-    <div className={`storyboard-scene-node-frame${data.readiness?.currentArtifact ? " has-preview" : ""}`}>
+    <div
+      className={`storyboard-scene-node-frame${data.readiness?.currentArtifact ? " has-preview" : ""}`}
+      style={fixedSize}
+    >
       <Handle type="target" position={Position.Left} className="storyboard-node-handle" />
       <button
         type="button"
         className={`storyboard-scene-node${data.isSelected ? " selected" : ""}`}
+        aria-label={scene.title}
+        aria-pressed={data.isSelected}
+        title={scene.title}
+        style={{ ...fixedSize, minHeight: storyboardNodeHeight, maxHeight: storyboardNodeHeight }}
         onClick={(event) => {
           event.stopPropagation();
           data.onSelect(scene.id);
@@ -59,33 +89,34 @@ function StoryboardSceneNode({ data }: NodeProps<Node<StoryboardNodeData>>): JSX
         <span className="storyboard-scene-node-order">{String(data.order).padStart(2, "0")}</span>
         <span className="storyboard-scene-node-body">
           <strong>{scene.title}</strong>
-          <small>{scene.prompt.trim() || "等待填写画面提示"}</small>
+          <small>{data.promptLabel}</small>
           <span className="storyboard-scene-node-meta">
             <span>{scene.ratio}</span>
-            <span>{scene.durationSeconds} 秒</span>
-            {scene.referenceArtifactIds.length > 0 ? <ImageIcon size={12} aria-label="已关联参考图" /> : null}
-            <span className={`storyboard-node-status ${data.readiness?.state ?? "needs_model"}`}>{data.readiness?.label ?? "待完善"}</span>
+            <span>{data.durationLabel}</span>
+            {scene.referenceArtifactIds.length > 0 ? <ImageIcon aria-hidden="true" /> : null}
+            <span className={`storyboard-node-status ${data.readiness?.state ?? "needs_model"}`}>{data.statusLabel}</span>
           </span>
           {data.readiness?.workflow || data.readiness?.provider ? (
-            <span className="storyboard-scene-node-source">{data.readiness.workflow?.definition.name ?? data.readiness.provider?.displayName}</span>
+            <span className="storyboard-scene-node-source">
+              {data.readiness.workflow?.definition.name ?? data.readiness.provider?.displayName}
+            </span>
           ) : null}
         </span>
       </button>
       {data.readiness?.currentArtifact ? (
-        <button
-          type="button"
+        <IconButton
           className="storyboard-scene-preview nodrag nopan"
-          title="预览当前视频"
-          aria-label={`预览当前视频：${scene.title}`}
+          icon={Play}
+          label={data.previewLabel}
+          size="sm"
+          tooltip={data.previewLabel}
           onMouseDown={(event) => event.stopPropagation()}
           onClick={(event) => {
             event.preventDefault();
             event.stopPropagation();
             data.onPreview(scene.id);
           }}
-        >
-          <Play size={14} fill="currentColor" aria-hidden="true" />
-        </button>
+        />
       ) : null}
       <Handle type="source" position={Position.Right} className="storyboard-node-handle" />
     </div>
@@ -93,13 +124,6 @@ function StoryboardSceneNode({ data }: NodeProps<Node<StoryboardNodeData>>): JSX
 }
 
 const nodeTypes = { scene: StoryboardSceneNode };
-
-type StoryboardFitViewPadding = {
-  readonly top: `${number}px`;
-  readonly right: `${number}px`;
-  readonly bottom: `${number}px`;
-  readonly left: `${number}px`;
-};
 
 export function StoryboardCanvas({
   scenes,
@@ -114,9 +138,17 @@ export function StoryboardCanvas({
   onMoveScene,
   onCreateScene,
 }: StoryboardCanvasProps): JSX.Element {
+  const { t } = useI18n();
+  const reducedMotion = usePrefersReducedMotion();
+  const motionDuration = storyboardMotionDuration(reducedMotion, 220);
+  const projections = useMemo(
+    () => projectStoryboardScenes(scenes, readiness),
+    [readiness, scenes],
+  );
+  const orderedScenes = useMemo(() => projections.map((item) => item.scene), [projections]);
   const initialNodes = useMemo(
-    () => sceneNodes(scenes, selectedSceneId, readiness, onSelectScene, onPreviewResult),
-    [onPreviewResult, onSelectScene, readiness, scenes, selectedSceneId],
+    () => sceneNodes(projections, selectedSceneId, onSelectScene, onPreviewResult, t),
+    [onPreviewResult, onSelectScene, projections, selectedSceneId, t],
   );
   const [nodes, setNodes] = useState<Node<StoryboardNodeData>[]>(initialNodes);
   const flowInstance = useRef<ReactFlowInstance<Node<StoryboardNodeData>, Edge> | null>(null);
@@ -124,7 +156,7 @@ export function StoryboardCanvas({
   const lastFocusSequence = useRef(focusRequest.sequence);
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const miniMapVisible = shouldShowStoryboardMiniMap({
-    scenes,
+    scenes: orderedScenes,
     canvasWidth: canvasSize.width,
     canvasHeight: canvasSize.height,
     leftDockOpen,
@@ -141,68 +173,90 @@ export function StoryboardCanvas({
 
   useEffect(() => {
     const canvas = canvasElement.current;
-    if (!canvas) {
-      return;
-    }
+    if (!canvas) return;
     const updateSize = (): void => setCanvasSize({ width: canvas.clientWidth, height: canvas.clientHeight });
     updateSize();
     const observer = new ResizeObserver(updateSize);
     observer.observe(canvas);
     return () => observer.disconnect();
-  }, [scenes.length === 0]);
+  }, [orderedScenes.length === 0]);
 
   useEffect(() => {
     const focusChanged = focusRequest.sequence !== lastFocusSequence.current;
-    const visibleSceneIds = storyboardFocusSceneIds(scenes, focusRequest.sceneId);
+    const visibleSceneIds = storyboardFocusSceneIds(projections, focusRequest.sceneId);
     lastFocusSequence.current = focusRequest.sequence;
     let secondFrame = 0;
     const firstFrame = window.requestAnimationFrame(() => {
-      if (focusChanged && focusRequest.sceneId && focusScene(flowInstance.current, canvasElement.current, focusRequest.sceneId, visibleSceneIds, {
-        leftDockOpen,
-        rightDockOpen,
-        miniMapVisible,
-      })) {
+      if (focusChanged && focusRequest.sceneId && focusScene(
+        flowInstance.current,
+        canvasElement.current,
+        focusRequest.sceneId,
+        visibleSceneIds,
+        { leftDockOpen, rightDockOpen, miniMapVisible },
+        motionDuration,
+      )) {
         return;
       }
       secondFrame = window.requestAnimationFrame(() => {
         if (focusChanged && focusRequest.sceneId) {
-          focusScene(flowInstance.current, canvasElement.current, focusRequest.sceneId, visibleSceneIds, { leftDockOpen, rightDockOpen, miniMapVisible });
+          focusScene(
+            flowInstance.current,
+            canvasElement.current,
+            focusRequest.sceneId,
+            visibleSceneIds,
+            { leftDockOpen, rightDockOpen, miniMapVisible },
+            motionDuration,
+          );
         } else {
-          fitStoryboard(flowInstance.current, fitViewPadding);
+          fitStoryboard(flowInstance.current, fitViewPadding, motionDuration);
         }
       });
     });
     return () => {
       window.cancelAnimationFrame(firstFrame);
-      if (secondFrame) {
-        window.cancelAnimationFrame(secondFrame);
-      }
+      if (secondFrame) window.cancelAnimationFrame(secondFrame);
     };
-  }, [canvasSize.height, canvasSize.width, fitViewPadding, focusRequest.sceneId, focusRequest.sequence, leftDockOpen, miniMapVisible, rightDockOpen, scenes.length]);
+  }, [
+    canvasSize.height,
+    canvasSize.width,
+    fitViewPadding,
+    focusRequest.sceneId,
+    focusRequest.sequence,
+    leftDockOpen,
+    miniMapVisible,
+    motionDuration,
+    projections,
+    rightDockOpen,
+  ]);
 
-  const edges = useMemo<Edge[]>(() => scenes.slice(1).map((scene, index) => ({
-    id: `sequence:${scenes[index]?.id ?? "start"}:${scene.id}`,
-    source: scenes[index]?.id ?? "",
-    target: scene.id,
+  const edges = useMemo<Edge[]>(() => nodes.slice(1).map((node, index) => ({
+    id: `sequence:${nodes[index]?.id ?? "start"}:${node.id}`,
+    source: nodes[index]?.id ?? "",
+    target: node.id,
     type: "smoothstep",
     animated: false,
     selectable: false,
     focusable: false,
     className: "storyboard-sequence-edge",
-  })), [scenes]);
+  })), [nodes]);
 
   function handleNodesChange(changes: NodeChange<Node<StoryboardNodeData>>[]): void {
     setNodes((current) => applyNodeChanges(changes, current));
   }
 
-  if (scenes.length === 0) {
+  if (orderedScenes.length === 0) {
     return (
-      <div className="storyboard-empty-canvas">
-        <Clapperboard size={26} strokeWidth={1.7} />
-        <strong>从第一个场景开始</strong>
-        <span>每个场景独立生成，顺序由场景编号决定。</span>
-        <button className="primary-button compact-button" type="button" onClick={onCreateScene}><Plus size={15} /> 添加第一个场景</button>
-      </div>
+      <EmptyState
+        className="storyboard-empty-canvas"
+        icon={<Clapperboard />}
+        title={t("Start with the first scene")}
+        description={t("Add a scene, then define its visual and generation source.")}
+        action={(
+          <Button size="sm" variant="primary" leadingIcon={<Plus aria-hidden="true" />} onClick={onCreateScene}>
+            {t("Add scene")}
+          </Button>
+        )}
+      />
     );
   }
 
@@ -210,8 +264,10 @@ export function StoryboardCanvas({
     <div
       ref={canvasElement}
       className={`storyboard-canvas${leftDockOpen ? " has-left-dock" : ""}${rightDockOpen ? " has-right-dock" : ""}${miniMapVisible ? " has-minimap" : ""}`}
-      aria-label="分镜画布"
+      aria-label={t("Scenes")}
       data-minimap-visible={miniMapVisible ? "true" : "false"}
+      data-motion-duration={motionDuration}
+      data-scene-count={orderedScenes.length}
     >
       <ReactFlow
         nodes={nodes}
@@ -222,7 +278,7 @@ export function StoryboardCanvas({
         onNodeDragStop={(_, node) => onMoveScene(node.id, node.position)}
         onInit={(instance) => {
           flowInstance.current = instance;
-          window.requestAnimationFrame(() => fitStoryboard(instance, fitViewPadding));
+          window.requestAnimationFrame(() => fitStoryboard(instance, fitViewPadding, motionDuration));
         }}
         nodesDraggable={!isBusy}
         nodesConnectable={false}
@@ -233,10 +289,10 @@ export function StoryboardCanvas({
         maxZoom={1.8}
         proOptions={{ hideAttribution: true }}
       >
-        <Background gap={20} size={1} color="var(--border-subtle, #e7e7e7)" />
+        <Background gap={20} size={1} color="var(--ling-border-default)" />
         {miniMapVisible ? (
           <MiniMap
-            ariaLabel="分镜缩略图"
+            ariaLabel={t("Scenes")}
             pannable
             zoomable
             style={{ width: 180, height: 112 }}
@@ -255,10 +311,12 @@ export function StoryboardCanvas({
           fitViewOptions={{ padding: fitViewPadding, maxZoom: 1 }}
         />
       </ReactFlow>
-      {scenes.length > 1 ? <div className="storyboard-canvas-legend">
-        <Sparkles size={14} />
-        场景位置只用于排布，生成顺序以编号为准。
-      </div> : null}
+      {orderedScenes.length > 1 ? (
+        <div className="storyboard-canvas-legend">
+          <Sparkles aria-hidden="true" />
+          {t("Scenes follow production order")}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -273,97 +331,82 @@ function focusScene(
     readonly rightDockOpen: boolean;
     readonly miniMapVisible: boolean;
   },
+  duration: number,
 ): boolean {
-  if (!instance?.viewportInitialized || !canvas) {
-    return false;
-  }
+  if (!instance?.viewportInitialized || !canvas) return false;
   const node = instance.getNode(sceneId);
-  if (!node) {
-    return false;
-  }
+  if (!node) return false;
   const visibleNodes = visibleSceneIds.flatMap((id) => {
     const visibleNode = instance.getNode(id);
     return visibleNode ? [visibleNode] : [];
   });
-  if (visibleNodes.length > 1) {
-    void instance.fitView({
-      nodes: visibleNodes,
-      padding: storyboardFitViewPadding(layout),
-      maxZoom: Math.min(instance.getZoom(), 1),
-      duration: 250,
-    });
-    return true;
-  }
-  const width = node.measured?.width ?? node.width ?? 218;
-  const height = node.measured?.height ?? node.height ?? 104;
-  const zoom = instance.getZoom();
   const safeArea = storyboardCanvasSafeArea({
     width: canvas.clientWidth,
     height: canvas.clientHeight,
     ...layout,
   });
-  const targetX = safeArea.left + safeArea.width / 2;
-  const targetY = safeArea.top + safeArea.height / 2;
-  void instance.setViewport({
-    x: targetX - (node.position.x + width / 2) * zoom,
-    y: targetY - (node.position.y + height / 2) * zoom,
-    zoom,
-  }, { duration: 250 });
-  return true;
-}
-
-function storyboardFocusSceneIds(scenes: readonly MediaScene[], sceneId: string): readonly string[] {
-  const index = scenes.findIndex((scene) => scene.id === sceneId);
-  if (index < 0) {
-    return sceneId ? [sceneId] : [];
+  const visibleBounds = storyboardLayoutBounds(visibleNodes.map((visibleNode) => ({
+    position: visibleNode.position,
+    width: visibleNode.measured?.width ?? visibleNode.width ?? storyboardNodeWidth,
+    height: visibleNode.measured?.height ?? visibleNode.height ?? storyboardNodeHeight,
+  })));
+  if (visibleNodes.length > 1 && storyboardBoundsFitSafeArea({
+    bounds: visibleBounds,
+    safeArea,
+    minimumZoom: 0.25,
+  })) {
+    void instance.fitView({
+      nodes: visibleNodes,
+      padding: storyboardFitViewPadding(layout),
+      maxZoom: Math.min(instance.getZoom(), 1),
+      duration,
+    });
+    return true;
   }
-  return scenes.slice(Math.max(0, index - 1), Math.min(scenes.length, index + 2)).map((scene) => scene.id);
-}
-
-function storyboardFitViewPadding(layout: {
-  readonly leftDockOpen: boolean;
-  readonly rightDockOpen: boolean;
-  readonly miniMapVisible: boolean;
-}): StoryboardFitViewPadding {
-  const safeArea = storyboardCanvasSafeArea({ width: 0, height: 0, ...layout });
-  return {
-    top: `${safeArea.top}px` as const,
-    right: `${safeArea.right}px` as const,
-    bottom: `${safeArea.bottom}px` as const,
-    left: `${safeArea.left}px` as const,
-  };
+  const target = storyboardFocusViewport({
+    nodePosition: node.position,
+    nodeWidth: node.measured?.width ?? node.width ?? storyboardNodeWidth,
+    nodeHeight: node.measured?.height ?? node.height ?? storyboardNodeHeight,
+    zoom: instance.getZoom(),
+    safeArea,
+  });
+  void instance.setViewport(target, { duration });
+  return true;
 }
 
 function fitStoryboard(
   instance: ReactFlowInstance<Node<StoryboardNodeData>, Edge> | null,
   padding: StoryboardFitViewPadding,
+  duration: number,
 ): boolean {
-  if (!instance?.viewportInitialized) {
-    return false;
-  }
-  void instance.fitView({ padding, maxZoom: 1, duration: 220 });
+  if (!instance?.viewportInitialized) return false;
+  void instance.fitView({ padding, maxZoom: 1, duration });
   return true;
 }
 
 function sceneNodes(
-  scenes: readonly MediaScene[],
+  projections: readonly StoryboardSceneProjection[],
   selectedSceneId: string,
-  readiness: readonly SceneReadiness[],
   onSelectScene: (sceneId: string) => void,
   onPreviewResult: (sceneId: string) => void,
+  t: Translate,
 ): Node<StoryboardNodeData>[] {
-  const readinessByScene = new Map(readiness.map((item) => [item.sceneId, item]));
-  return scenes.map((scene, index) => ({
-    id: scene.id,
+  return projections.map((projection) => ({
+    id: projection.scene.id,
     type: "scene",
-    position: scene.canvasPosition,
-    width: 218,
-    height: 104,
+    position: projection.scene.canvasPosition,
+    width: storyboardNodeWidth,
+    height: storyboardNodeHeight,
+    style: { width: storyboardNodeWidth, height: storyboardNodeHeight },
     data: {
-      scene,
-      order: index + 1,
-      isSelected: scene.id === selectedSceneId,
-      readiness: readinessByScene.get(scene.id),
+      scene: projection.scene,
+      order: projection.order,
+      isSelected: projection.scene.id === selectedSceneId,
+      readiness: projection.readiness,
+      promptLabel: projection.scene.prompt.trim() || t("Needs setup"),
+      durationLabel: t("{count} seconds", { count: projection.scene.durationSeconds }),
+      statusLabel: t(projection.statusLabel.key, projection.statusLabel.values),
+      previewLabel: `${t("Preview")}: ${projection.scene.title}`,
       onSelect: onSelectScene,
       onPreview: onPreviewResult,
     },
@@ -379,4 +422,19 @@ function reconcileSceneNodes(
     const existing = currentById.get(node.id);
     return existing ? { ...existing, ...node, data: node.data, position: node.position } : node;
   });
+}
+
+function usePrefersReducedMotion(): boolean {
+  const [reducedMotion, setReducedMotion] = useState(
+    () => globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false,
+  );
+  useEffect(() => {
+    const query = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)");
+    if (!query) return undefined;
+    const update = (): void => setReducedMotion(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+  return reducedMotion;
 }

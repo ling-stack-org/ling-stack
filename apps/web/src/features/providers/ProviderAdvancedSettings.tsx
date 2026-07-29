@@ -1,7 +1,6 @@
 import { useI18n } from "../../i18n.js";
+import { Field, Input, InspectorSection, Select, Switch, Textarea } from "../../shared/ui/index.js";
 import type { ProviderFormState } from "../../types.js";
-
-import { SelectControl } from "../../shared/components/SelectControl.js";
 
 export function ProviderAdvancedSettings({
   form,
@@ -17,50 +16,46 @@ export function ProviderAdvancedSettings({
   readonly onFormChange: (form: ProviderFormState) => void;
 }): JSX.Element {
   const { t } = useI18n();
-
   return (
-    <details className="provider-editor-advanced">
-      <summary>{t("Advanced settings")}</summary>
+    <InspectorSection className="provider-editor-advanced" title={t("Advanced settings")}>
       <div className="provider-editor-advanced-body">
         {!isCustomProvider ? (
-          <div className="field-row provider-advanced-route-row">
-            <label className="field">
-              <span>{t("Provider name")}</span>
-              <input value={form.displayName} onChange={(event) => onFormChange({ ...form, displayName: event.target.value })} />
-            </label>
-            <label className="field">
-              <span>{t("Base URL")}</span>
-              <input value={form.baseUrl} onChange={(event) => onFormChange({ ...form, baseUrl: event.target.value })} />
-            </label>
+          <div className="provider-advanced-route-row">
+            <Field label={t("Provider name")}>
+              <Input value={form.displayName} onChange={(event) => onFormChange({ ...form, displayName: event.target.value })} />
+            </Field>
+            <Field label={t("Base URL")}>
+              <Input value={form.baseUrl} onChange={(event) => onFormChange({ ...form, baseUrl: event.target.value })} />
+            </Field>
           </div>
         ) : null}
-
         {form.api === "media-job" ? (
-          <div className="field provider-readonly-field">
+          <div className="provider-readonly-field">
             <span>{t("Runtime adapter")}</span>
             <strong>{t("Generation adapter")}</strong>
           </div>
         ) : !isCustomProvider ? (
-          <label className="field wide">
-            <span>{t("API protocol")}</span>
-            <SelectControl value={form.api} disabled={!canEditCustomProviderFields} onChange={(event) => {
-              const api = event.target.value as ProviderFormState["api"];
-              onFormChange({ ...form, api, providerTransport: api === "openai-codex-responses" ? form.providerTransport || "auto" : "" });
-            }}>
+          <Field label={t("API protocol")}>
+            <Select
+              value={form.api}
+              disabled={!canEditCustomProviderFields}
+              onChange={(event) => {
+                const api = event.target.value as ProviderFormState["api"];
+                onFormChange({ ...form, api, providerTransport: api === "openai-codex-responses" ? form.providerTransport || "auto" : "" });
+              }}
+            >
               <option value="openai-completions">{t("OpenAI completions")}</option>
               <option value="openai-responses">{t("OpenAI responses")}</option>
               <option value="openai-codex-responses">{t("OpenAI Codex Responses")}</option>
               <option value="anthropic-messages">{t("Anthropic messages")}</option>
               <option value="google-generative-ai">{t("Google generative AI")}</option>
               <option value="mistral-conversations">{t("Mistral conversations")}</option>
-            </SelectControl>
-          </label>
+            </Select>
+          </Field>
         ) : null}
-
         {form.api === "openai-codex-responses" ? (
-          <label className="field wide">
-            <span>{t("Transport")}</span>
-            <SelectControl
+          <Field label={t("Transport")}>
+            <Select
               value={form.providerTransport || "auto"}
               disabled={!canEditCustomProviderFields}
               onChange={(event) => onFormChange({ ...form, providerTransport: event.target.value as ProviderFormState["providerTransport"] })}
@@ -69,55 +64,42 @@ export function ProviderAdvancedSettings({
               <option value="websocket">{t("WebSocket")}</option>
               <option value="websocket-cached">{t("WebSocket cached")}</option>
               <option value="sse">{t("SSE")}</option>
-            </SelectControl>
-          </label>
+            </Select>
+          </Field>
         ) : null}
-
-        <label className="field wide provider-secret-headers-field">
-          <span>{t("Secret headers")}</span>
-          <textarea
+        <Field
+          className="provider-secret-headers-field"
+          label={t("Secret headers")}
+          description={t("One per line. Store env: or keychain: refs only, not secret values.")}
+        >
+          <Textarea
             rows={3}
             spellCheck={false}
             value={form.secretHeaderRefsText}
-            placeholder={"X-Api-Token: env:PROVIDER_TOKEN"}
+            placeholder="X-Api-Token: env:PROVIDER_TOKEN"
             onChange={(event) => onFormChange({ ...form, secretHeaderRefsText: event.target.value })}
           />
-          <small>{t("One per line. Store env: or keychain: refs only, not secret values.")}</small>
-        </label>
-
+        </Field>
         <div className="provider-advanced-grid">
-          <label className="field">
-            <span>{t("Context")}</span>
-            <input value={form.contextWindow} inputMode="numeric" placeholder={t("Auto")} onChange={(event) => onFormChange({ ...form, contextWindow: event.target.value })} />
-          </label>
-          <label className="field">
-            <span>{t("Max tokens")}</span>
-            <input value={form.maxTokens} inputMode="numeric" placeholder={t("Auto")} onChange={(event) => onFormChange({ ...form, maxTokens: event.target.value })} />
-          </label>
+          <Field label={t("Context")}><Input value={form.contextWindow} inputMode="numeric" placeholder={t("Auto")} onChange={(event) => onFormChange({ ...form, contextWindow: event.target.value })} /></Field>
+          <Field label={t("Max tokens")}><Input value={form.maxTokens} inputMode="numeric" placeholder={t("Auto")} onChange={(event) => onFormChange({ ...form, maxTokens: event.target.value })} /></Field>
         </div>
-
-        <label className="field wide">
-          <span>{t("Capabilities")}</span>
-          <input value={form.capabilitiesText} onChange={(event) => onFormChange({ ...form, capabilitiesText: event.target.value })} />
-        </label>
-
+        <Field label={t("Capabilities")}><Input value={form.capabilitiesText} onChange={(event) => onFormChange({ ...form, capabilitiesText: event.target.value })} /></Field>
         <div className="provider-toggle-row">
-          {editingProviderId ? (
-            <label className="settings-toggle">
-              <input type="checkbox" checked={form.enabled} onChange={(event) => onFormChange({ ...form, enabled: event.target.checked })} />
-              <span>{t("Enabled")}</span>
-            </label>
-          ) : null}
-          <label className="settings-toggle">
-            <input type="checkbox" checked={form.authHeader} onChange={(event) => onFormChange({ ...form, authHeader: event.target.checked })} />
-            <span>{t("Auth header")}</span>
-          </label>
-          <label className="settings-toggle">
-            <input type="checkbox" checked={form.reasoning} onChange={(event) => onFormChange({ ...form, reasoning: event.target.checked })} />
-            <span>{t("Reasoning")}</span>
-          </label>
+          {editingProviderId ? <Toggle label={t("Enabled")} checked={form.enabled} onChange={(checked) => onFormChange({ ...form, enabled: checked })} /> : null}
+          <Toggle label={t("Auth header")} checked={form.authHeader} onChange={(checked) => onFormChange({ ...form, authHeader: checked })} />
+          <Toggle label={t("Reasoning")} checked={form.reasoning} onChange={(checked) => onFormChange({ ...form, reasoning: checked })} />
         </div>
       </div>
-    </details>
+    </InspectorSection>
+  );
+}
+
+function Toggle({ label, checked, onChange }: { readonly label: string; readonly checked: boolean; readonly onChange: (checked: boolean) => void }): JSX.Element {
+  return (
+    <label className="provider-toggle-field">
+      <Switch aria-label={label} checked={checked} onCheckedChange={onChange} />
+      <span>{label}</span>
+    </label>
   );
 }

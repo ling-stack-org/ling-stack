@@ -1,0 +1,217 @@
+.app-shell.settings-fullscreen-shell,
+.app-shell.settings-fullscreen-shell.inspector-hidden,
+.app-shell.settings-fullscreen-shell.inspector-collapsed,
+.app-shell.settings-fullscreen-shell.channel-drawer-shell,
+.app-shell.settings-fullscreen-shell.channel-drawer-shell.inspector-hidden,
+.app-shell.settings-fullscreen-shell.channel-sidebar-collapsed.inspector-collapsed {
+  grid-template-areas: "workspace";
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.app-shell.settings-fullscreen-shell > .workspace.workspace-settings-surface {
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: var(--ling-bg-panel);
+}
+
+.settings-layout {
+  display: grid;
+  grid-template-columns: clamp(236px, 19.5vw, 282px) minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  min-height: 0;
+  margin: 0;
+  overflow: hidden;
+  background: var(--ling-bg-panel);
+}
+
+.app-shell.settings-fullscreen-shell .settings-layout {
+  height: 100dvh;
+  max-height: 100dvh;
+}
+
+.settings-section-nav {
+  display: grid;
+  align-content: start;
+  gap: var(--ling-space-6);
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding: var(--ling-space-7) var(--ling-space-5);
+  border-right: 1px solid var(--ling-border-default);
+  background: var(--ling-bg-sidebar);
+}
+
+.settings-app-return-button,
+.settings-section-item {
+  --ling-button-label-text-align: left;
+  width: 100%;
+  justify-content: flex-start;
+  gap: var(--ling-space-4);
+  padding-inline: 10px;
+  color: var(--ling-text-default);
+  font-weight: 600;
+}
+
+.settings-app-return-button {
+  color: var(--ling-text-muted);
+}
+
+.settings-app-return-button [data-ling-button-slot="label"],
+.settings-section-item [data-ling-button-slot="label"] {
+  flex: 1 1 auto;
+}
+
+.settings-app-return-button [data-ling-button-slot="leading"],
+.settings-section-item [data-ling-button-slot="leading"] {
+  width: 16px;
+  height: 16px;
+}
+
+.settings-section-group {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.settings-section-group-label {
+  display: block;
+  min-width: 0;
+  padding: 0 var(--ling-space-4);
+  overflow: hidden;
+  color: var(--ling-text-soft);
+  font-size: var(--ling-font-xs);
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 22px;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.settings-section-item {
+  position: relative;
+}
+
+.settings-section-item[aria-current="page"] {
+  color: var(--ling-text-strong);
+  background: var(--ling-bg-pressed);
+}
+
+.settings-section-item[aria-current="page"]::before {
+  position: absolute;
+  top: var(--ling-space-4);
+  bottom: var(--ling-space-4);
+  left: 0;
+  width: 3px;
+  border-radius: var(--ling-radius-pill);
+  background: var(--ling-action-accent);
+  content: "";
+}
+
+.settings-section-icon {
+  color: var(--ling-text-soft);
+  opacity: 0.9;
+}
+
+.settings-section-item:hover .settings-section-icon,
+.settings-section-item:focus-visible .settings-section-icon,
+.settings-section-item[aria-current="page"] .settings-section-icon {
+  color: currentColor;
+  opacity: 1;
+}
+
+.settings-content-stack {
+  display: grid;
+  grid-template-columns: minmax(0, min(1560px, 100%));
+  align-content: start;
+  justify-content: center;
+  gap: var(--ling-space-6);
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding: var(--ling-space-8) clamp(18px, 2.4vw, 36px) 30px;
+  background: var(--ling-bg-panel);
+  color: var(--ling-text-default);
+  font-size: var(--ling-font-sm);
+  line-height: var(--ling-line-sm);
+}
+
+.settings-content-stack > * {
+  width: 100%;
+  min-width: 0;
+}
+
+.settings-subnav-shell {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+@media (max-width: 760px) {
+  .settings-layout {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .app-shell.settings-fullscreen-shell .settings-layout {
+    height: 100dvh;
+  }
+
+  .settings-section-nav {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: var(--ling-space-4);
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 11px var(--ling-space-5);
+    border-right: 0;
+    border-bottom: 1px solid var(--ling-border-default);
+  }
+
+  .settings-section-group {
+    display: flex;
+    flex: 0 0 auto;
+    gap: var(--ling-space-3);
+  }
+
+  .settings-section-group-label {
+    display: none;
+  }
+
+  .settings-app-return-button,
+  .settings-section-item {
+    flex: 0 0 auto;
+    width: auto;
+  }
+
+  .settings-section-item[aria-current="page"]::before {
+    top: auto;
+    right: 10px;
+    bottom: 2px;
+    left: 10px;
+    width: auto;
+    height: 3px;
+  }
+
+  .settings-content-stack {
+    flex: 1 1 auto;
+    grid-template-columns: minmax(0, 1fr);
+    height: auto;
+    padding: 18px 14px 24px;
+  }
+}

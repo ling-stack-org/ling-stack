@@ -1,0 +1,128 @@
+.runtime-diagnostics-panel {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 10px;
+}
+
+.runtime-diagnostics-panel > * {
+  min-width: 0;
+}
+
+.runtime-diagnostics-panel .runtime-supervisor-meta,
+.runtime-diagnostics-panel .runtime-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  min-width: 0;
+}
+
+.runtime-diagnostics-panel .runtime-supervisor-meta > *,
+.runtime-diagnostics-panel .runtime-kpi-grid > div {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-panel);
+  box-shadow: none;
+}
+
+.runtime-diagnostics-panel .runtime-supervisor-meta > .meta-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: 3px;
+  min-width: 0;
+}
+
+.runtime-diagnostics-panel .runtime-supervisor-meta > .meta-row > span,
+.runtime-diagnostics-panel .runtime-supervisor-meta > .meta-row > strong {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-diagnostics-panel .runtime-kpi-grid > div {
+  display: grid;
+  gap: 3px;
+}
+
+.runtime-diagnostics-panel .runtime-kpi-grid span {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.runtime-diagnostics-panel .runtime-kpi-grid strong {
+  color: var(--text-strong);
+  font-size: 18px;
+}
+
+.runtime-diagnostics-list {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.runtime-diagnostics-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-panel);
+}
+
+.runtime-diagnostics-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.runtime-diagnostics-copy strong,
+.runtime-diagnostics-copy small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.runtime-diagnostics-copy strong {
+  color: var(--text-strong);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.runtime-diagnostics-copy small {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.runtime-diagnostics-copy .error-text {
+  color: var(--danger);
+}
+
+.runtime-diagnostics-status {
+  max-width: 168px;
+  align-self: start;
+}
+
+.runtime-diagnostics-actions {
+  display: flex;
+  min-height: 32px;
+  grid-column: 1 / -1;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.runtime-diagnostics-actions > .compact-button,
+.runtime-diagnostics-panel .task-strip-head > .compact-button {
+  min-width: 32px;
+  min-height: 32px;
+}

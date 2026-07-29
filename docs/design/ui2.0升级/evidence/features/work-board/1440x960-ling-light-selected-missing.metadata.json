@@ -1,0 +1,361 @@
+{
+  "file": "1440x960-ling-light-selected-missing.png",
+  "fixture": "selected work removed by authoritative refresh with explicit recovery actions",
+  "verification": "verified",
+  "matrix": "P11.1 / WB-08",
+  "capturedOn": "2026-07-23",
+  "url": "http://127.0.0.1:4203/",
+  "servedArtifact": "Vite source via Playwright webServer",
+  "viewport": {
+    "width": 1440,
+    "height": 960
+  },
+  "image": {
+    "width": 1440,
+    "height": 960,
+    "format": "PNG, 8-bit/color RGB"
+  },
+  "console": "pass",
+  "sha256": "1fdded3fbc5b8d6455f684c2cc60b864940af0c5d9489c94455bc6af7feb5aeb",
+  "selectorOwnership": {
+    "theme": "light",
+    "loadedFocusedStyleSheets": [
+      "channel.css",
+      "inspector.css",
+      "list.css",
+      "page.css",
+      "toolbar.css"
+    ],
+    "focusedMatches": [
+      {
+        "source": "page.css",
+        "selector": ".work-board-page",
+        "properties": [
+          "background-attachment",
+          "background-clip",
+          "background-color",
+          "background-image",
+          "background-origin",
+          "background-position-x",
+          "background-position-y",
+          "background-repeat",
+          "background-size",
+          "color",
+          "display",
+          "grid-template-rows",
+          "height",
+          "min-height",
+          "min-width",
+          "overflow-x",
+          "overflow-y",
+          "padding-bottom",
+          "padding-left",
+          "padding-right",
+          "padding-top",
+          "width"
+        ]
+      },
+      {
+        "source": "page.css",
+        "selector": ".work-board-header",
+        "properties": [
+          "align-items",
+          "border-bottom-color",
+          "border-bottom-style",
+          "border-bottom-width",
+          "column-gap",
+          "display",
+          "justify-content",
+          "min-height",
+          "padding-bottom",
+          "padding-left",
+          "padding-right",
+          "padding-top",
+          "row-gap"
+        ]
+      },
+      {
+        "source": "page.css",
+        "selector": ".work-board-header-copy",
+        "properties": [
+          "align-items",
+          "column-gap",
+          "display",
+          "min-width",
+          "row-gap"
+        ]
+      },
+      {
+        "source": "page.css",
+        "selector": ".work-board-header h1",
+        "properties": [
+          "color",
+          "flex-basis",
+          "flex-grow",
+          "flex-shrink",
+          "font-size",
+          "letter-spacing",
+          "line-height",
+          "margin-bottom",
+          "margin-left",
+          "margin-right",
+          "margin-top"
+        ]
+      },
+      {
+        "source": "page.css",
+        "selector": ".work-board-summary",
+        "properties": [
+          "align-items",
+          "color",
+          "column-gap",
+          "display",
+          "font-size",
+          "min-width",
+          "overflow-x",
+          "overflow-y",
+          "row-gap",
+          "text-wrap-mode",
+          "white-space-collapse"
+        ]
+      },
+      {
+        "source": "page.css",
+        "selector": ".work-board-summary > span:not([class])",
+        "properties": [
+          "overflow-x",
+          "overflow-y",
+          "text-overflow"
+        ]
+      },
+      {
+        "source": "page.css",
+        "selector": ".work-board-content",
+        "properties": [
+          "border-top-color",
+          "border-top-style",
+          "border-top-width",
+          "display",
+          "grid-template-columns",
+          "min-height",
+          "min-width",
+          "overflow-x",
+          "overflow-y"
+        ]
+      },
+      {
+        "source": "page.css",
+        "selector": ".work-board-list-scroll",
+        "properties": [
+          "min-height",
+          "min-width",
+          "overflow-x",
+          "overflow-y",
+          "overscroll-behavior-x",
+          "overscroll-behavior-y",
+          "padding-bottom",
+          "padding-left",
+          "padding-right",
+          "padding-top"
+        ]
+      },
+      {
+        "source": "toolbar.css",
+        "selector": ".work-board-toolbar",
+        "properties": [
+          "column-gap",
+          "display",
+          "min-width",
+          "overflow-x",
+          "overflow-y",
+          "padding-bottom",
+          "padding-left",
+          "padding-right",
+          "padding-top",
+          "row-gap"
+        ]
+      },
+      {
+        "source": "toolbar.css",
+        "selector": ".work-board-toolbar > [data-orientation=\"horizontal\"]",
+        "properties": [
+          "min-width",
+          "overflow-x",
+          "overflow-y",
+          "scrollbar-width"
+        ]
+      },
+      {
+        "source": "toolbar.css",
+        "selector": ".work-board-scope-tabs",
+        "properties": [
+          "min-width",
+          "width"
+        ]
+      },
+      {
+        "source": "toolbar.css",
+        "selector": ".work-board-toolbar-controls",
+        "properties": [
+          "align-items",
+          "column-gap",
+          "display",
+          "grid-template-columns",
+          "min-width",
+          "row-gap"
+        ]
+      },
+      {
+        "source": "toolbar.css",
+        "selector": ".work-board-search, .work-board-sort",
+        "properties": [
+          "min-width",
+          "width"
+        ]
+      },
+      {
+        "source": "toolbar.css",
+        "selector": ".work-board-filter-trigger",
+        "properties": [
+          "align-items",
+          "display",
+          "height",
+          "justify-items",
+          "position",
+          "width"
+        ]
+      },
+      {
+        "source": "list.css",
+        "selector": ".work-board-view-title",
+        "properties": [
+          "color",
+          "font-size",
+          "letter-spacing",
+          "line-height",
+          "margin-bottom",
+          "margin-left",
+          "margin-right",
+          "margin-top"
+        ]
+      },
+      {
+        "source": "list.css",
+        "selector": ".work-board-empty",
+        "properties": [
+          "min-height"
+        ]
+      },
+      {
+        "source": "inspector.css",
+        "selector": ".work-board-detail",
+        "properties": [
+          "align-content",
+          "background-attachment",
+          "background-clip",
+          "background-color",
+          "background-image",
+          "background-origin",
+          "background-position-x",
+          "background-position-y",
+          "background-repeat",
+          "background-size",
+          "border-left-color",
+          "border-left-style",
+          "border-left-width",
+          "column-gap",
+          "display",
+          "min-height",
+          "min-width",
+          "overflow-x",
+          "overflow-y",
+          "overscroll-behavior-x",
+          "overscroll-behavior-y",
+          "padding-bottom",
+          "padding-left",
+          "padding-right",
+          "padding-top",
+          "row-gap"
+        ]
+      },
+      {
+        "source": "inspector.css",
+        "selector": ".work-board-control-grid, .work-board-inline-actions",
+        "properties": [
+          "column-gap",
+          "display",
+          "grid-template-columns",
+          "row-gap"
+        ]
+      }
+    ],
+    "strictConsoleMatches": [],
+    "tokens": {
+      "panelBackground": "rgb(255, 255, 255)",
+      "subtleBackground": "rgb(241, 243, 245)",
+      "defaultBorder": "rgb(217, 221, 226)",
+      "defaultText": "rgb(43, 48, 54)",
+      "strongText": "rgb(18, 20, 23)"
+    },
+    "computed": {
+      "page": {
+        "backgroundColor": "rgb(255, 255, 255)",
+        "borderColor": "rgb(43, 48, 54)",
+        "borderLeftColor": "rgb(43, 48, 54)",
+        "color": "rgb(43, 48, 54)"
+      },
+      "heading": {
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "borderColor": "rgb(18, 20, 23)",
+        "borderLeftColor": "rgb(18, 20, 23)",
+        "color": "rgb(18, 20, 23)"
+      },
+      "inspector": {
+        "backgroundColor": "rgb(255, 255, 255)",
+        "borderColor": "rgb(43, 48, 54) rgb(43, 48, 54) rgb(43, 48, 54) rgb(217, 221, 226)",
+        "borderLeftColor": "rgb(217, 221, 226)",
+        "color": "rgb(43, 48, 54)"
+      },
+      "detailField": {
+        "backgroundColor": "",
+        "borderColor": "",
+        "borderLeftColor": "",
+        "color": ""
+      }
+    }
+  },
+  "document": {
+    "clientHeight": 960,
+    "clientWidth": 1440,
+    "scrollHeight": 960,
+    "scrollWidth": 1440
+  },
+  "documentOverflow": {
+    "horizontal": 0,
+    "vertical": 0
+  },
+  "inspector": {
+    "clientHeight": 779,
+    "clientWidth": 359,
+    "scrollHeight": 779,
+    "scrollWidth": 359
+  },
+  "list": {
+    "clientHeight": 779,
+    "clientWidth": 799,
+    "scrollHeight": 779,
+    "scrollWidth": 799
+  },
+  "channelProjection": null,
+  "locale": "en-US",
+  "reducedMotion": false,
+  "sourceActive": "true",
+  "sourceFreshness": "fresh",
+  "theme": "light",
+  "themeId": "ling-light",
+  "visibleWorkItemRows": 0,
+  "visibleChannelRows": 0,
+  "selectedWorkItem": null,
+  "emptyState": "No work yetWork from tasks, runs, approvals, and channels will appear here.",
+  "dialog": null
+}

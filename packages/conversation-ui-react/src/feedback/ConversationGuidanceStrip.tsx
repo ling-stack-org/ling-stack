@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Button, IconButton, Menu, MenuContent, MenuItem, MenuTrigger, Textarea } from "@ling-stack/ui-react";
 import { CornerDownLeft, FileText, Link2, Loader2, MessageSquareText, MoreHorizontal, Paperclip, PauseCircle, Pencil, Send, Square, Trash2, XCircle } from "lucide-react";
 
 export interface ConversationGuidanceItem {
@@ -65,7 +65,6 @@ export function ConversationGuidanceStrip({
   onRedirect,
   onStop,
 }: ConversationGuidanceStripProps): JSX.Element {
-  const [openMenuItemId, setOpenMenuItemId] = useState("");
   const showCompose = Boolean(
     typeof instruction === "string" &&
       instructionPlaceholder &&
@@ -86,25 +85,47 @@ export function ConversationGuidanceStrip({
       </div>
       {showCompose ? (
         <>
-          <textarea
+          <Textarea
+            className="conversation-guidance-input"
             value={instruction ?? ""}
             rows={2}
             placeholder={instructionPlaceholder ?? ""}
             onChange={(event) => onInstructionChange?.(event.target.value)}
           />
           <div className="conversation-guidance-actions">
-            <button className="secondary-button compact-button" type="button" disabled={stopDisabled || submitting === "stop"} onClick={onStop}>
-              {submitting === "stop" ? <Loader2 className="spin" size={14} /> : <Square size={14} />}
+            <Button
+              disabled={stopDisabled}
+              leadingIcon={<Square size={14} />}
+              loading={submitting === "stop"}
+              loadingLabel={stopLabel}
+              onClick={onStop}
+              size="sm"
+              variant="secondary"
+            >
               {stopLabel}
-            </button>
-            <button className="secondary-button compact-button" type="button" disabled={submitDisabled || submitting === "queue_followup"} onClick={onQueue}>
-              {submitting === "queue_followup" ? <Loader2 className="spin" size={14} /> : <Send size={14} />}
+            </Button>
+            <Button
+              disabled={submitDisabled}
+              leadingIcon={<Send size={14} />}
+              loading={submitting === "queue_followup"}
+              loadingLabel={queueLabel}
+              onClick={onQueue}
+              size="sm"
+              variant="secondary"
+            >
               {queueLabel}
-            </button>
-            <button className="primary-button compact-button" type="button" disabled={submitDisabled || submitting === "interrupt_redirect"} onClick={onRedirect}>
-              {submitting === "interrupt_redirect" ? <Loader2 className="spin" size={14} /> : <PauseCircle size={14} />}
+            </Button>
+            <Button
+              disabled={submitDisabled}
+              leadingIcon={<PauseCircle size={14} />}
+              loading={submitting === "interrupt_redirect"}
+              loadingLabel={redirectLabel}
+              onClick={onRedirect}
+              size="sm"
+              variant="primary"
+            >
               {redirectLabel}
-            </button>
+            </Button>
           </div>
         </>
       ) : null}
@@ -116,7 +137,6 @@ export function ConversationGuidanceStrip({
             const deleteDisabled = item.deleteDisabled ?? item.cancelDisabled;
             const hasPromoteAction = Boolean(item.onPromote || item.promoteLabel);
             const hasMoreMenu = Boolean(item.onEdit || item.onCloseQueue);
-            const menuOpen = openMenuItemId === item.id;
 
             return (
               <div key={item.id} className="conversation-guidance-row">
@@ -152,75 +172,57 @@ export function ConversationGuidanceStrip({
                 </span>
                 <span className="conversation-guidance-row-actions">
                   {hasPromoteAction ? (
-                    <button
-                      className="ghost-button compact-button icon-button"
-                      type="button"
+                    <IconButton
                       disabled={!item.onPromote || item.promoteDisabled || item.promoteLoading}
+                      icon={CornerDownLeft}
+                      label={item.promoteLabel ?? "Run this guidance now"}
+                      loading={item.promoteLoading}
+                      loadingLabel={item.promoteLabel ?? "Run this guidance now"}
                       onClick={() => item.onPromote?.()}
-                      aria-label={item.promoteLabel ?? "Run this guidance now"}
-                      title={item.promoteLabel ?? "Run this guidance now"}
-                    >
-                      {item.promoteLoading ? <Loader2 className="spin" size={14} /> : <CornerDownLeft size={14} />}
-                    </button>
+                      size="sm"
+                      variant="ghost"
+                    />
                   ) : null}
                   {deleteAction ? (
-                    <button
-                      className="ghost-button compact-button icon-button"
-                      type="button"
+                    <IconButton
                       disabled={deleteDisabled || item.deleteLoading}
+                      icon={Trash2}
+                      label={deleteLabel}
+                      loading={item.deleteLoading}
+                      loadingLabel={deleteLabel}
                       onClick={deleteAction}
-                      aria-label={deleteLabel}
-                      title={deleteLabel}
-                    >
-                      {item.deleteLoading ? <Loader2 className="spin" size={14} /> : <Trash2 size={14} />}
-                    </button>
+                      size="sm"
+                      variant="ghost"
+                    />
                   ) : null}
                   {hasMoreMenu ? (
-                    <span className="conversation-guidance-more">
-                      <button
-                        className="ghost-button compact-button icon-button"
-                        type="button"
-                        aria-expanded={menuOpen}
-                        aria-haspopup="menu"
-                        aria-label={item.moreLabel ?? "More guidance actions"}
-                        title={item.moreLabel ?? "More guidance actions"}
-                        onClick={() => setOpenMenuItemId(menuOpen ? "" : item.id)}
-                      >
-                        <MoreHorizontal size={14} />
-                      </button>
-                      {menuOpen ? (
-                        <span className="conversation-guidance-menu" role="menu">
-                          {item.onEdit ? (
-                            <button
-                              type="button"
-                              role="menuitem"
-                              disabled={item.editDisabled}
-                              onClick={() => {
-                                setOpenMenuItemId("");
-                                item.onEdit?.();
-                              }}
-                            >
-                              <Pencil size={14} />
-                              {item.editLabel ?? "Edit message"}
-                            </button>
-                          ) : null}
-                          {item.onCloseQueue ? (
-                            <button
-                              type="button"
-                              role="menuitem"
-                              disabled={item.closeQueueDisabled || item.closeQueueLoading}
-                              onClick={() => {
-                                setOpenMenuItemId("");
-                                item.onCloseQueue?.();
-                              }}
-                            >
-                              {item.closeQueueLoading ? <Loader2 className="spin" size={14} /> : <XCircle size={14} />}
-                              {item.closeQueueLabel ?? "Close queue"}
-                            </button>
-                          ) : null}
-                        </span>
-                      ) : null}
-                    </span>
+                    <Menu modal={false}>
+                      <MenuTrigger asChild>
+                        <IconButton
+                          icon={MoreHorizontal}
+                          label={item.moreLabel ?? "More guidance actions"}
+                          size="sm"
+                          variant="ghost"
+                        />
+                      </MenuTrigger>
+                      <MenuContent align="end" side="top">
+                        {item.onEdit ? (
+                          <MenuItem disabled={item.editDisabled} onSelect={() => item.onEdit?.()}>
+                            <Pencil size={14} />
+                            {item.editLabel ?? "Edit message"}
+                          </MenuItem>
+                        ) : null}
+                        {item.onCloseQueue ? (
+                          <MenuItem
+                            disabled={item.closeQueueDisabled || item.closeQueueLoading}
+                            onSelect={() => item.onCloseQueue?.()}
+                          >
+                            {item.closeQueueLoading ? <Loader2 className="spin" size={14} /> : <XCircle size={14} />}
+                            {item.closeQueueLabel ?? "Close queue"}
+                          </MenuItem>
+                        ) : null}
+                      </MenuContent>
+                    </Menu>
                   ) : null}
                 </span>
               </div>

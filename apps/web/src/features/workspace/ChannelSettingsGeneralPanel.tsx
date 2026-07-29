@@ -1,6 +1,12 @@
-import { Bell, BellOff, Box, Globe2, SquareTerminal, UserRound } from "lucide-react";
+import { Box, Globe2, SquareTerminal, UserRound } from "lucide-react";
 import { useI18n } from "../../i18n.js";
-import { SelectControl } from "../../shared/components/SelectControl.js";
+import {
+  DataRow,
+  Field,
+  SegmentedControl,
+  SegmentedControlItem,
+  Select,
+} from "../../shared/ui/index.js";
 import type { ChannelFormState, ProviderPreset } from "../../types.js";
 import { ChannelNameField } from "./ChannelNameField.js";
 import { ChannelExecutionModeSummary, ProviderPresetOptions } from "./WorkspaceControls.js";
@@ -42,49 +48,63 @@ export function ChannelSettingsGeneralPanel({
         </div>
 
         <div className="channel-settings-row-list">
-          <div className="channel-settings-row channel-settings-control-row">
-            <span className="channel-settings-row-icon" aria-hidden="true"><UserRound size={18} /></span>
-            <ChannelNameField
-              value={channelEditForm.name}
-              disabled={!selectedChannelId}
-              onSave={onSaveChannelName}
-            />
-          </div>
+          <DataRow
+            className="channel-settings-row channel-settings-control-row"
+            identity={<span className="channel-settings-row-icon" aria-hidden="true"><UserRound size={18} /></span>}
+            summary={(
+              <ChannelNameField
+                value={channelEditForm.name}
+                disabled={!selectedChannelId}
+                onSave={onSaveChannelName}
+              />
+            )}
+          />
 
-          <label className="channel-settings-row channel-settings-select-row">
-            <span className="channel-settings-row-icon" aria-hidden="true"><Box size={18} /></span>
-            <span className="channel-settings-row-label">{t("Channel run provider")}</span>
-            <SelectControl
-              aria-label={t("Channel run provider")}
-              value={channelEditForm.defaultProviderPresetId}
-              onChange={(event) => onChannelEditFormChange({ ...channelEditForm, defaultProviderPresetId: event.target.value })}
-              disabled={providersLoading || providers.length === 0 || !selectedChannelId}
-            >
-              <option value="">{t("Select provider preset")}</option>
-              <ProviderPresetOptions runnableProviders={taskReadyProviders} blockedProviders={setupChatProviders} />
-            </SelectControl>
-          </label>
+          <DataRow
+            className="channel-settings-row channel-settings-select-row"
+            identity={<span className="channel-settings-row-icon" aria-hidden="true"><Box size={18} /></span>}
+            summary={(
+              <Field label={t("Channel run provider")}>
+                <Select
+                  aria-label={t("Channel run provider")}
+                  value={channelEditForm.defaultProviderPresetId}
+                  onChange={(event) => onChannelEditFormChange({ ...channelEditForm, defaultProviderPresetId: event.target.value })}
+                  disabled={providersLoading || providers.length === 0 || !selectedChannelId}
+                  loading={providersLoading}
+                >
+                  <option value="">{t("Select provider preset")}</option>
+                  <ProviderPresetOptions runnableProviders={taskReadyProviders} blockedProviders={setupChatProviders} />
+                </Select>
+              </Field>
+            )}
+          />
 
-          <label className="channel-settings-row channel-settings-select-row">
-            <span className="channel-settings-row-icon" aria-hidden="true"><Globe2 size={18} /></span>
-            <span className="channel-settings-row-label">{t("AI response language")}</span>
-            <SelectControl
-              aria-label={t("AI response language")}
-              value={channelEditForm.responseLanguage}
-              onChange={(event) => onChannelEditFormChange({ ...channelEditForm, responseLanguage: event.target.value as ChannelFormState["responseLanguage"] })}
-              disabled={!selectedChannelId}
-            >
-              <option value="workspace">{t("Workspace default")}</option>
-              <option value="follow_user">{t("Follow user message")}</option>
-              <option value="zh-CN">{t("Chinese")}</option>
-              <option value="en-US">{t("English")}</option>
-            </SelectControl>
-          </label>
+          <DataRow
+            className="channel-settings-row channel-settings-select-row"
+            identity={<span className="channel-settings-row-icon" aria-hidden="true"><Globe2 size={18} /></span>}
+            summary={(
+              <Field label={t("AI response language")}>
+                <Select
+                  aria-label={t("AI response language")}
+                  value={channelEditForm.responseLanguage}
+                  onChange={(event) => onChannelEditFormChange({ ...channelEditForm, responseLanguage: event.target.value as ChannelFormState["responseLanguage"] })}
+                  disabled={!selectedChannelId}
+                >
+                  <option value="workspace">{t("Workspace default")}</option>
+                  <option value="follow_user">{t("Follow user message")}</option>
+                  <option value="zh-CN">{t("Chinese")}</option>
+                  <option value="en-US">{t("English")}</option>
+                </Select>
+              </Field>
+            )}
+          />
 
-          <div className="channel-settings-row channel-settings-runtime-row" aria-label={t("Channel runtime policy")}>
-            <span className="channel-settings-row-icon" aria-hidden="true"><SquareTerminal size={18} /></span>
-            <ChannelExecutionModeSummary />
-          </div>
+          <DataRow
+            className="channel-settings-row channel-settings-runtime-row"
+            aria-label={t("Channel runtime policy")}
+            identity={<span className="channel-settings-row-icon" aria-hidden="true"><SquareTerminal size={18} /></span>}
+            summary={<ChannelExecutionModeSummary />}
+          />
         </div>
       </section>
 
@@ -92,21 +112,30 @@ export function ChannelSettingsGeneralPanel({
         <div className="channel-settings-surface-heading">
           <strong>{t("Notifications")}</strong>
         </div>
-        <div className="channel-notification-options" role="radiogroup" aria-label={t("Channel notifications")}>
-          {channelNotificationLevels.map((level) => (
-            <button
-              key={level}
-              className={channelNotificationLevel === level ? "channel-notification-option active" : "channel-notification-option"}
-              type="button"
-              role="radio"
-              aria-checked={channelNotificationLevel === level}
-              onClick={() => onUpdateChannelNotificationLevel(level)}
-            >
-              {level === "muted" ? <BellOff size={15} /> : <Bell size={15} />}
-              <strong>{t(channelNotificationLevelLabel(level))}</strong>
-            </button>
-          ))}
-        </div>
+        <SegmentedControl
+          className="channel-notification-options"
+          aria-label={t("Channel notifications")}
+          role="radiogroup"
+          value={channelNotificationLevel}
+          onValueChange={(value) => onUpdateChannelNotificationLevel(value as ChannelNotificationLevel)}
+          size="sm"
+        >
+          {channelNotificationLevels.map((level) => {
+            const label = t(channelNotificationLevelLabel(level));
+            return (
+              <SegmentedControlItem
+                key={level}
+                className="channel-notification-option"
+                role="radio"
+                aria-checked={channelNotificationLevel === level}
+                title={label}
+                value={level}
+              >
+                <strong>{label}</strong>
+              </SegmentedControlItem>
+            );
+          })}
+        </SegmentedControl>
         <p className="channel-notification-description">{t(channelNotificationLevelDescription(channelNotificationLevel))}</p>
       </section>
     </div>

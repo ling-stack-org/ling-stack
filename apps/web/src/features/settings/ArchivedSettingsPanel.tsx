@@ -1,28 +1,22 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { CircleAlert, Loader2, RefreshCw, Search, Trash2, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { useI18n } from "../../i18n.js";
-import { formatDateTime } from "../../lib/formatting.js";
-import type { AiTeammate, Channel, ChannelBranch, LingThread } from "../../types.js";
-import { SettingsSubnav, type SettingsSubnavOption } from "./SettingsSubnav.js";
+import { ArchivedDeleteDialog } from "./ArchivedDeleteDialog.js";
+import { ArchivedErrorFeedback } from "./ArchivedErrorFeedback.js";
+import { ArchivedItemList } from "./ArchivedItemList.js";
+import { ArchivedItemsToolbar } from "./ArchivedItemsToolbar.js";
 import type { ArchivedSettingsControllerActions, ArchivedSettingsControllerState } from "./useArchivedSettingsController.js";
-
-type ArchivedCategoryId = "conversations" | "teammates" | "channels" | "branches";
-
-const archivedCategoryStorageKey = "ling-stack.settings.archived-category";
-const archivedCategoryIds: readonly ArchivedCategoryId[] = ["conversations", "teammates", "channels", "branches"];
-
-function readArchivedCategoryPreference(): ArchivedCategoryId {
-  try {
-    const saved = globalThis.localStorage?.getItem(archivedCategoryStorageKey);
-    return archivedCategoryIds.includes(saved as ArchivedCategoryId) ? saved as ArchivedCategoryId : "conversations";
-  } catch {
-    return "conversations";
-  }
-}
-
-function matchesArchivedSearch(value: string, query: string): boolean {
-  return value.toLocaleLowerCase().includes(query.toLocaleLowerCase());
-}
+import {
+  archivedCategoryCount,
+  archivedCategoryDefinitions,
+  createArchivedDeleteTarget,
+  createArchivedRows,
+  filterArchivedRows,
+  readArchivedCategoryPreference,
+  writeArchivedCategoryPreference,
+  type ArchivedCategoryId,
+  type ArchivedDeleteTarget,
+  type ArchivedItemRowViewModel,
+} from "./archived-items-view-models.js";
 
 export function ArchivedSettingsPanel({
   state,
@@ -34,345 +28,105 @@ export function ArchivedSettingsPanel({
   const { t } = useI18n();
   const [activeCategory, setActiveCategory] = useState<ArchivedCategoryId>(readArchivedCategoryPreference);
   const [searchQuery, setSearchQuery] = useState("");
-
-  const categoryOptions: readonly SettingsSubnavOption[] = [
-    { id: "conversations", label: "Conversations", badge: String(state.archivedConversations.length) },
-    { id: "teammates", label: "AI Teammates", badge: String(state.archivedTeammates.length) },
-    { id: "channels", label: "Channels", badge: String(state.archivedChannels.length) },
-    { id: "branches", label: "Branches", badge: String(state.archivedBranches.length) },
-  ];
-  const activeLabel = categoryOptions.find((option) => option.id === activeCategory)?.label ?? "Conversations";
-  const normalizedQuery = searchQuery.trim();
+  const [deleteTarget, setDeleteTarget] = useState<ArchivedDeleteTarget>();
+  const deleteReturnFocusRef = useRef<HTMLButtonElement | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const projectionInput = state;
+  const category = archivedCategoryDefinitions.find((item) => item.id === activeCategory) ?? archivedCategoryDefinitions[0];
+  const rows = filterArchivedRows(createArchivedRows(activeCategory, projectionInput), searchQuery, t);
+  const counts = Object.fromEntries(
+    archivedCategoryDefinitions.map((item) => [item.id, archivedCategoryCount(item.id, projectionInput)]),
+  ) as Record<ArchivedCategoryId, number>;
+  const deleteError = deleteTarget && state.actionError?.actionId === deleteTarget.actionId
+    ? state.actionError
+    : undefined;
+  const listActionError = state.actionError?.actionId.endsWith(":restore")
+    ? state.actionError
+    : undefined;
 
   useEffect(() => {
-    try {
-      globalThis.localStorage?.setItem(archivedCategoryStorageKey, activeCategory);
-    } catch {
-      // Local preference persistence is best-effort.
-    }
+    writeArchivedCategoryPreference(activeCategory);
   }, [activeCategory]);
 
-  const clearSearch = (): void => {
+  const changeCategory = (categoryId: ArchivedCategoryId): void => {
+    setActiveCategory(categoryId);
     setSearchQuery("");
+    setDeleteTarget(undefined);
+    actions.clearActionError();
   };
 
-  const changeCategory = (categoryId: string): void => {
-    if (!archivedCategoryIds.includes(categoryId as ArchivedCategoryId)) {
-      return;
+  const restore = async (row: ArchivedItemRowViewModel): Promise<void> => {
+    actions.clearActionError();
+    switch (row.source.kind) {
+      case "conversation": await actions.restoreConversation(row.source.item.id); break;
+      case "teammate": await actions.restoreTeammate(row.source.item.id); break;
+      case "channel": await actions.restoreChannel(row.source.item.id); break;
+      case "branch": await actions.restoreBranch(row.source.item); break;
     }
-    clearSearch();
-    setActiveCategory(categoryId as ArchivedCategoryId);
   };
 
-  const activeRows = activeCategory === "conversations"
-    ? state.archivedConversations
-      .filter((thread) => !normalizedQuery || matchesArchivedSearch(thread.title || t("Conversation"), normalizedQuery))
-      .map((thread) => (
-        <ArchivedConversationRow
-          key={thread.id}
-          thread={thread}
-          actionId={state.actionId}
-          onRestore={() => void actions.restoreConversation(thread.id)}
-          onDelete={() => {
-            const title = thread.title || t("Conversation");
-            if (window.confirm(`${t("Delete conversation {title}?", { title })}\n${t("This permanently deletes messages, attachments, goals, and plans. Historical runs remain but will no longer be linked to this conversation.")}`)) {
-              void actions.deleteConversation(thread);
-            }
-          }}
-        />
-      ))
-    : activeCategory === "teammates"
-      ? state.archivedTeammates
-        .filter((teammate) => !normalizedQuery || matchesArchivedSearch(teammate.displayName, normalizedQuery))
-        .map((teammate) => (
-          <ArchivedTeammateRow
-            key={teammate.id}
-            teammate={teammate}
-            actionId={state.actionId}
-            onRestore={() => void actions.restoreTeammate(teammate.id)}
-            onDelete={() => {
-              if (window.confirm(`${t("Delete AI teammate {name}?", { name: teammate.displayName })}\n${t("This permanently deletes private chat, attachments, avatar, memory, and private bindings. Channel and run history keep a deleted teammate reference.")}`)) {
-                void actions.deleteTeammate(teammate);
-              }
-            }}
-          />
-        ))
-      : activeCategory === "channels"
-        ? state.archivedChannels
-          .filter((channel) => !normalizedQuery || matchesArchivedSearch(channel.name, normalizedQuery))
-          .map((channel) => (
-            <ArchivedChannelRow
-              key={channel.id}
-              channel={channel}
-              actionId={state.actionId}
-              onRestore={() => void actions.restoreChannel(channel.id)}
-              onDelete={() => {
-                if (window.confirm(`${t("Delete channel")} ${channel.name}?\n${t("This cannot be undone")}`)) {
-                  void actions.deleteChannel(channel);
-                }
-              }}
-            />
-          ))
-        : state.archivedBranches
-          .filter((branch) => {
-            if (!normalizedQuery) {
-              return true;
-            }
-            const parent = state.archiveParentChannelById.get(branch.channelId);
-            return matchesArchivedSearch(parent ? `${parent.name} ${branch.name}` : branch.name, normalizedQuery);
-          })
-          .map((branch) => (
-            <ArchivedBranchRow
-              key={branch.id}
-              branch={branch}
-              parent={state.archiveParentChannelById.get(branch.channelId)}
-              actionId={state.actionId}
-              onRestore={() => void actions.restoreBranch(branch)}
-              onDelete={() => {
-                if (window.confirm(`${t("Delete branch")} ${branch.name}?\n${t("This cannot be undone")}`)) {
-                  void actions.deleteBranch(branch);
-                }
-              }}
-            />
-          ));
+  const openDelete = (row: ArchivedItemRowViewModel, trigger: HTMLButtonElement): void => {
+    deleteReturnFocusRef.current = trigger;
+    actions.clearActionError();
+    setDeleteTarget(createArchivedDeleteTarget(row));
+  };
 
-  const emptyLabel = normalizedQuery
-    ? t("No matching archived items")
-    : activeCategory === "conversations"
-      ? state.isLoading ? t("Loading archived conversations...") : t("No archived conversations")
-      : activeCategory === "teammates"
-        ? state.isLoading ? t("Loading archived teammates...") : t("No archived teammates")
-        : activeCategory === "channels"
-          ? state.isLoading ? t("Loading archived channels...") : t("No archived channels")
-          : state.isLoading ? t("Loading archived branches...") : t("No archived branches");
+  const closeDelete = (): void => {
+    if (state.actionId) return;
+    setDeleteTarget(undefined);
+    actions.clearActionError();
+  };
+
+  const confirmDelete = async (): Promise<boolean> => {
+    if (!deleteTarget) return false;
+    const deleted = deleteTarget.source.kind === "conversation"
+      ? await actions.deleteConversation(deleteTarget.source.item)
+      : deleteTarget.source.kind === "teammate"
+        ? await actions.deleteTeammate(deleteTarget.source.item)
+        : deleteTarget.source.kind === "channel"
+          ? await actions.deleteChannel(deleteTarget.source.item)
+          : await actions.deleteBranch(deleteTarget.source.item);
+    if (deleted) {
+      setDeleteTarget(undefined);
+      actions.clearActionError();
+    }
+    return deleted;
+  };
 
   return (
-    <section className="panel settings-panel archived-items-settings-panel" aria-label={t("Archived items")}>
-      {state.errorMessage ? (
-        <div className="inline-error">
-          <CircleAlert size={17} />
-          {state.errorMessage}
-        </div>
-      ) : null}
-
-      <div className="archived-items-toolbar">
-        <SettingsSubnav
-          label={t("Archived item categories")}
-          options={categoryOptions}
-          activeId={activeCategory}
-          onChange={changeCategory}
-        />
-        <div className="archived-items-search">
-          <Search size={15} />
-          <input
-            type="search"
-            value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                clearSearch();
-              }
-            }}
-            aria-label={t("Search archived items")}
-            placeholder={t("Search archived items")}
-          />
-          {searchQuery ? (
-            <button
-              className="ghost-icon-button compact-icon-button"
-              type="button"
-              onClick={clearSearch}
-              aria-label={t("Clear search")}
-              title={t("Clear search")}
-            >
-              <X size={14} />
-            </button>
-          ) : null}
-        </div>
-      </div>
-
-      <ArchivedItemList label={t(activeLabel)} emptyLabel={emptyLabel}>
-        {activeRows}
-      </ArchivedItemList>
+    <section
+      className="panel settings-panel archived-items-settings-panel"
+      data-ui2-archived-items=""
+      aria-label={t("Archived items")}
+    >
+      {state.loadError ? <ArchivedErrorFeedback className="archived-items-load-feedback" feedback={state.loadError} /> : null}
+      <ArchivedItemsToolbar
+        activeCategory={activeCategory}
+        counts={counts}
+        query={searchQuery}
+        searchInputRef={searchInputRef}
+        onCategoryChange={changeCategory}
+        onQueryChange={setSearchQuery}
+      />
+      <ArchivedItemList
+        actionError={listActionError}
+        actionId={state.actionId}
+        emptyLabel={searchQuery.trim() ? t("No matching archived items") : t(category.emptyLabelKey)}
+        isLoading={state.isLoading}
+        label={t(category.labelKey)}
+        rows={rows}
+        onDelete={openDelete}
+        onRestore={(row) => void restore(row)}
+      />
+      <ArchivedDeleteDialog
+        busy={Boolean(deleteTarget && state.actionId === deleteTarget.actionId)}
+        error={deleteError}
+        fallbackFocusRef={searchInputRef}
+        returnFocusRef={deleteReturnFocusRef}
+        target={deleteTarget}
+        onClose={closeDelete}
+        onConfirm={confirmDelete}
+      />
     </section>
-  );
-}
-
-function ArchivedConversationRow({
-  thread,
-  actionId,
-  onRestore,
-  onDelete,
-}: {
-  readonly thread: LingThread;
-  readonly actionId: string;
-  readonly onRestore: () => void;
-  readonly onDelete: () => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  const archivedAt = thread.archivedAt ?? thread.updatedAt;
-  return (
-    <div className="archived-item-row">
-      <div className="archived-item-main">
-        <strong>{thread.title || t("Conversation")}</strong>
-      </div>
-      <time className="archived-item-time" dateTime={archivedAt}>{formatDateTime(archivedAt)}</time>
-      <div className="archived-item-actions">
-        <button className="secondary-button compact-button" type="button" onClick={onRestore} disabled={actionId !== ""}>
-          {actionId === `conversation:${thread.id}:restore` ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
-          <span className="archived-action-label">{t("Restore")}</span>
-        </button>
-        <button
-          className="ghost-icon-button danger-ghost-button compact-icon-button archived-delete-action"
-          type="button"
-          onClick={onDelete}
-          disabled={actionId !== ""}
-          aria-label={t("Delete conversation")}
-          title={t("Delete conversation")}
-        >
-          {actionId === `conversation:${thread.id}:delete` ? <Loader2 className="spin" size={14} /> : <Trash2 size={14} />}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function ArchivedTeammateRow({
-  teammate,
-  actionId,
-  onRestore,
-  onDelete,
-}: {
-  readonly teammate: AiTeammate;
-  readonly actionId: string;
-  readonly onRestore: () => void;
-  readonly onDelete: () => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  const archivedAt = teammate.updatedAt;
-  return (
-    <div className="archived-item-row">
-      <div className="archived-item-main">
-        <strong>{teammate.displayName}</strong>
-      </div>
-      <time className="archived-item-time" dateTime={archivedAt}>{formatDateTime(archivedAt)}</time>
-      <div className="archived-item-actions">
-        <button className="secondary-button compact-button" type="button" onClick={onRestore} disabled={actionId !== ""}>
-          {actionId === `teammate:${teammate.id}:restore` ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
-          <span className="archived-action-label">{t("Restore")}</span>
-        </button>
-        <button
-          className="ghost-icon-button danger-ghost-button compact-icon-button archived-delete-action"
-          type="button"
-          onClick={onDelete}
-          disabled={actionId !== ""}
-          aria-label={t("Delete AI teammate")}
-          title={t("Delete AI teammate")}
-        >
-          {actionId === `teammate:${teammate.id}:delete` ? <Loader2 className="spin" size={14} /> : <Trash2 size={14} />}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function ArchivedChannelRow({
-  channel,
-  actionId,
-  onRestore,
-  onDelete,
-}: {
-  readonly channel: Channel;
-  readonly actionId: string;
-  readonly onRestore: () => void;
-  readonly onDelete: () => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  const archivedAt = channel.updatedAt;
-  return (
-    <div className="archived-item-row">
-      <div className="archived-item-main">
-        <strong>{channel.name}</strong>
-      </div>
-      <time className="archived-item-time" dateTime={archivedAt}>{formatDateTime(archivedAt)}</time>
-      <div className="archived-item-actions">
-        <button className="secondary-button compact-button" type="button" onClick={onRestore} disabled={actionId !== ""}>
-          {actionId === `channel:${channel.id}:restore` ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
-          <span className="archived-action-label">{t("Restore")}</span>
-        </button>
-        <button
-          className="ghost-icon-button danger-ghost-button compact-icon-button archived-delete-action"
-          type="button"
-          onClick={onDelete}
-          disabled={actionId !== ""}
-          aria-label={t("Delete channel")}
-          title={t("Delete channel")}
-        >
-          {actionId === `channel:${channel.id}:delete` ? <Loader2 className="spin" size={14} /> : <Trash2 size={14} />}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function ArchivedBranchRow({
-  branch,
-  parent,
-  actionId,
-  onRestore,
-  onDelete,
-}: {
-  readonly branch: ChannelBranch;
-  readonly parent: Channel | undefined;
-  readonly actionId: string;
-  readonly onRestore: () => void;
-  readonly onDelete: () => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  const parentArchived = parent?.status === "archived";
-  const archivedAt = branch.archivedAt ?? branch.updatedAt;
-  return (
-    <div className="archived-item-row">
-      <div className="archived-item-main">
-        <strong>{parent ? `${parent.name} / ${branch.name}` : branch.name}</strong>
-      </div>
-      <time className="archived-item-time" dateTime={archivedAt}>{formatDateTime(archivedAt)}</time>
-      <div className="archived-item-actions">
-        <button className="secondary-button compact-button" type="button" onClick={onRestore} disabled={actionId !== ""}>
-          {actionId === `branch:${branch.id}:restore` ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
-          <span className="archived-action-label">{parentArchived ? t("Restore both") : t("Restore")}</span>
-        </button>
-        <button
-          className="ghost-icon-button danger-ghost-button compact-icon-button archived-delete-action"
-          type="button"
-          onClick={onDelete}
-          disabled={actionId !== ""}
-          aria-label={t("Delete branch")}
-          title={t("Delete branch")}
-        >
-          {actionId === `branch:${branch.id}:delete` ? <Loader2 className="spin" size={14} /> : <Trash2 size={14} />}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function ArchivedItemList({
-  label,
-  emptyLabel,
-  children,
-}: {
-  readonly label: string;
-  readonly emptyLabel: string;
-  readonly children: ReactNode;
-}): JSX.Element {
-  const hasItems = Array.isArray(children) ? children.length > 0 : Boolean(children);
-  return (
-    <div className="archived-item-list" role="tabpanel" aria-label={label}>
-      {hasItems ? children : (
-        <div className="empty-state compact-empty archived-item-empty">
-          <span>{emptyLabel}</span>
-        </div>
-      )}
-    </div>
   );
 }

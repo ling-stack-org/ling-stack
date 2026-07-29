@@ -66,6 +66,7 @@ export function ImageCompareViewer({ current, compare }: ImageCompareViewerProps
           <label className="image-compare-slider-control">
             <span>{t("Slider")}</span>
             <input
+              data-ling-control-native="true"
               type="range"
               min={0}
               max={100}

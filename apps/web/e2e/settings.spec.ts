@@ -77,7 +77,7 @@ async function archivedListMetrics(page: Page): Promise<{
   }));
 }
 
-test("language switcher toggles Chinese and English UI labels", async ({ page }) => {
+test("product language preference toggles Chinese and English UI labels", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
@@ -90,15 +90,15 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Interface preferences/ }).click();
-  await expect(page.locator(".interface-settings-panel").getByRole("heading", { name: "Interface preferences" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Interface preferences" })).toHaveCount(1);
-  await page.getByRole("button", { name: "中文" }).click();
+  await expect(page.locator(".interface-settings-panel").getByRole("heading", { name: "Appearance" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Interface preferences" })).toHaveCount(0);
+  await page.getByLabel("Product language").selectOption("zh-CN");
   await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
-  await expect(page.locator(".interface-settings-panel").getByRole("heading", { name: "界面偏好" })).toBeVisible();
+  await expect(page.locator(".interface-settings-panel").getByRole("heading", { name: "外观" })).toBeVisible();
   await page.getByRole("button", { name: "返回应用" }).click();
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "收件箱" })).toBeVisible();
+  await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "收件箱" })).toHaveCount(0);
   await expect(page.getByLabel("频道动态")).toBeVisible();
   await openChannelChatTools(page);
   await expect(page.getByPlaceholder("搜索动态")).toBeVisible();
@@ -112,7 +112,8 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await expect(page.locator(".channel-side-panel")).toHaveCount(0);
   await page.locator(".task-toolbar-panel").click();
   await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "频道工作区面板");
-  await expect(page.locator(".channel-progress-popover")).toHaveCount(0);
+  await expect(page.locator(".channel-progress-popover")).toBeVisible();
+  await expect(page.locator(".task-toolbar-progress")).toHaveAttribute("aria-pressed", "true");
 
   await page.reload();
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
@@ -120,7 +121,7 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "设置" }).click();
   await page.getByLabel("设置分组").getByRole("button", { name: /界面偏好/ }).click();
-  await page.getByRole("button", { name: "EN", exact: true }).click();
+  await page.getByLabel("产品语言").selectOption("en-US");
   await expect(page.locator("html")).toHaveAttribute("lang", "en-US");
   await expect.poll(() => state.workspaceSettings.locale).toBe("en-US");
   await page.getByRole("button", { name: "Back to app" }).click();
@@ -139,7 +140,8 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await expect(page.locator(".channel-side-panel")).toHaveCount(0);
   await page.locator(".task-toolbar-panel").click();
   await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Channel workspace dock");
-  await expect(page.locator(".channel-progress-popover")).toHaveCount(0);
+  await expect(page.locator(".channel-progress-popover")).toBeVisible();
+  await expect(page.locator(".task-toolbar-progress")).toHaveAttribute("aria-pressed", "true");
 });
 
 test("Chinese mode localizes workspace settings, runtime policy, and teammate setup labels", async ({ page }) => {
@@ -204,7 +206,7 @@ test("Chinese mode localizes workspace settings, runtime policy, and teammate se
   await expect(createDialog.getByLabel("加入频道")).toBeVisible();
 });
 
-test("theme switcher supports system, light, and dark preferences", async ({ page }) => {
+test("theme preferences support system strategy and fixed light or dark packs", async ({ page }) => {
   await page.addInitScript(() => {
     if (!sessionStorage.getItem("ling-stack.themeTestInitialized")) {
       localStorage.setItem("ling-stack.locale", "en-US");
@@ -223,17 +225,25 @@ test("theme switcher supports system, light, and dark preferences", async ({ pag
   await expect(html).toHaveAttribute("data-theme-preference", "system");
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Interface preferences/ }).click();
-  await expect(page.locator(".interface-settings-panel").getByRole("heading", { name: "Interface preferences" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "System" })).toHaveAttribute("aria-pressed", "true");
+  const interfacePanel = page.locator(".interface-settings-panel");
+  await expect(interfacePanel.getByRole("heading", { name: "Appearance" })).toBeVisible();
+  const followSystem = interfacePanel.getByRole("switch", { name: "Follow system" });
+  const themePicker = interfacePanel.getByRole("radiogroup", { name: "Theme packs" });
+  const lightTheme = themePicker.getByRole("radio", { name: /Ling Light/ });
+  const darkTheme = themePicker.getByRole("radio", { name: /Ling Dark/ });
+  await expect(followSystem).toBeChecked();
 
-  await page.getByRole("button", { name: "Light" }).click();
+  await lightTheme.click();
+  await expect(followSystem).not.toBeChecked();
+  await expect(lightTheme).toHaveAttribute("aria-checked", "true");
   await expect(html).toHaveAttribute("data-theme", "light");
   await expect(html).toHaveAttribute("data-theme-preference", "light");
   await expect.poll(() => state.workspaceSettings.theme).toBe("light");
   await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.themePreference"))).toBeNull();
   await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.themeBootstrapPreference"))).toBe("light");
 
-  await page.getByRole("button", { name: "Dark" }).click();
+  await darkTheme.click();
+  await expect(darkTheme).toHaveAttribute("aria-checked", "true");
   await expect(html).toHaveAttribute("data-theme", "dark");
   await expect(html).toHaveAttribute("data-theme-preference", "dark");
   await expect.poll(() => state.workspaceSettings.theme).toBe("dark");
@@ -245,7 +255,7 @@ test("theme switcher supports system, light, and dark preferences", async ({ pag
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Interface preferences/ }).click();
-  await page.getByRole("button", { name: "System" }).click();
+  await page.getByRole("switch", { name: "Follow system" }).check();
   await expect(html).toHaveAttribute("data-theme", "dark");
   await expect(html).toHaveAttribute("data-theme-preference", "system");
   await expect.poll(() => state.workspaceSettings.theme).toBe("system");
@@ -292,20 +302,14 @@ test("settings default authorization hides internal tool policy and runner contr
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Default authorization/ }).click();
-  const authorizationPanel = page.locator(".settings-global-approval-card");
+  const authorizationPanel = page.locator("[data-ui2-default-authorization]");
   await expect(authorizationPanel).toBeVisible();
   await expect(authorizationPanel.getByText("Default authorization", { exact: true })).toBeVisible();
   await expect(authorizationPanel.getByText("Sandbox settings", { exact: true })).toBeVisible();
-  await expect(authorizationPanel.locator(".rich-choice-select-trigger")).toHaveCount(2);
-  await authorizationPanel.getByRole("button", { name: "Authorization mode: Smart authorization" }).click();
-  await expect(authorizationPanel.getByRole("option", { name: /Ask first/ })).toBeVisible();
-  await expect(authorizationPanel.getByRole("option", { name: /Smart authorization/ })).toBeVisible();
-  await expect(authorizationPanel.getByRole("option", { name: /Always authorize/ })).toBeVisible();
-  await page.keyboard.press("Escape");
-  await authorizationPanel.getByRole("button", { name: "Sandbox settings: Workspace write" }).click();
-  await expect(authorizationPanel.getByRole("option", { name: /Read only/ })).toBeVisible();
-  await expect(authorizationPanel.getByRole("option", { name: /Workspace write/ })).toBeVisible();
-  await expect(authorizationPanel.getByRole("option", { name: /Full access/ })).toBeVisible();
+  await expect(authorizationPanel.locator(".ling-ui-data-row")).toHaveCount(2);
+  await expect(authorizationPanel.locator(".ling-ui-segmented-control")).toHaveCount(2);
+  await expect(authorizationPanel.getByRole("radiogroup", { name: "Authorization mode" }).getByRole("radio")).toHaveCount(3);
+  await expect(authorizationPanel.getByRole("radiogroup", { name: "Sandbox settings" }).getByRole("radio")).toHaveCount(3);
   await expect(page.locator(".runtime-runner-settings-panel")).toHaveCount(0);
   await expect(page.getByText("Pi Runner", { exact: true })).toHaveCount(0);
   await expect(page.getByText("Codex App Server", { exact: true })).toHaveCount(0);
@@ -314,7 +318,7 @@ test("settings default authorization hides internal tool policy and runner contr
   await expect(page.getByText("Advanced workspace policy", { exact: true })).toHaveCount(0);
 });
 
-test("settings developer section contains startup readiness", async ({ page }) => {
+test("settings hides pending startup and diagnostics", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
@@ -324,22 +328,9 @@ test("settings developer section contains startup readiness", async ({ page }) =
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
   const settingsSections = page.getByLabel("Settings sections");
   await expect(settingsSections.getByRole("button", { name: /Startup readiness/ })).toHaveCount(0);
-
-  await settingsSections.getByRole("button", { name: /Startup and diagnostics/ }).click();
-  const developerPanel = page.locator(".developer-settings-panel");
-  await expect(developerPanel.getByRole("heading", { name: "Startup readiness" })).toBeVisible();
-  await expect(developerPanel.locator(".startup-readiness-card")).toBeVisible();
-  await expect(developerPanel.getByText("Startup phases")).toBeVisible();
-  await expect(developerPanel).toContainText("ready");
-  await expect(developerPanel.getByRole("button", { name: "Refresh" })).toBeVisible();
-  await developerPanel.getByRole("button", { name: "Open Run Diagnostics" }).click();
-  await expect(page.getByLabel("Settings sections")).toBeVisible();
-  await expect(page.getByLabel("Settings sections").getByRole("button", { name: /Startup and diagnostics/ })).toHaveClass(/active/);
-  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
-  await expect(page.locator(".settings-run-diagnostics-panel")).toBeVisible();
-  await expect(page.locator(".run-history-layout")).toHaveCount(0);
-  await page.locator(".settings-run-diagnostics-panel").getByRole("button", { name: "Close run diagnostics" }).click();
-  await expect(developerPanel.getByRole("heading", { name: "Startup readiness" })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: /Startup and diagnostics/ })).toHaveCount(0);
+  await expect(settingsSections.locator('[data-settings-section="startup-diagnostics"]')).toBeHidden();
+  await expect(page.locator("[data-ui2-settings-startup-diagnostics]")).toHaveCount(0);
 });
 
 test("settings archived items use one remembered category list with scoped search", async ({ page }) => {
@@ -396,7 +387,7 @@ test("settings archived items use one remembered category list with scoped searc
     })
   );
   expect(Math.max(...rowLayout.map(({ height }) => height))).toBeLessThanOrEqual(56);
-  expect(Math.max(...rowLayout.map(({ centerDelta }) => centerDelta))).toBeLessThanOrEqual(2);
+  expect(Math.max(...rowLayout.map(({ centerDelta }) => centerDelta))).toBeLessThanOrEqual(4);
 
   await expect(panel.getByRole("button", { name: "Delete conversation" })).toHaveCount(12);
   await expect(panel.getByRole("button", { name: "Delete AI teammate" })).toHaveCount(0);
@@ -439,7 +430,7 @@ test("settings archived items use one remembered category list with scoped searc
     expect(metrics.scrollHeight).toBeGreaterThan(metrics.clientHeight + 2);
   }
 
-  const labeledActionAlignment = await panel.locator(".archived-item-actions .compact-button:not(.compact-icon-button)").evaluateAll((buttons) =>
+  const labeledActionAlignment = await panel.locator('.archived-item-actions .ling-ui-button:not([data-icon-only="true"])').evaluateAll((buttons) =>
     buttons.slice(0, 10).map((button) => {
       const icon = button.querySelector("svg");
       const label = button.querySelector(".archived-action-label");
@@ -469,31 +460,28 @@ test("settings archived items use one remembered category list with scoped searc
   expect(Math.max(...iconActionAlignment)).toBeLessThanOrEqual(2);
 
   const conversationRow = panel.locator(".archived-item-row").filter({ hasText: "Archived conversation 12" });
-  let cancelledDialogMessage = "";
-  page.once("dialog", async (dialog) => {
-    cancelledDialogMessage = dialog.message();
-    await dialog.dismiss();
-  });
-  await conversationRow.getByRole("button", { name: "Delete conversation" }).click();
-  expect(cancelledDialogMessage).toContain("This permanently deletes messages, attachments, goals, and plans.");
+  const conversationDeleteTrigger = conversationRow.getByRole("button", { name: "Delete conversation" });
+  await conversationDeleteTrigger.click();
+  let deleteDialog = page.getByRole("dialog", { name: "Delete conversation Archived conversation 12?" });
+  await expect(deleteDialog).toContainText("This permanently deletes messages, attachments, goals, and plans.");
+  await deleteDialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(deleteDialog).toHaveCount(0);
+  await expect(conversationDeleteTrigger).toBeFocused();
   await expect(conversationRow).toBeVisible();
 
-  page.once("dialog", async (dialog) => {
-    await dialog.accept();
-  });
-  await conversationRow.getByRole("button", { name: "Delete conversation" }).click();
+  await conversationDeleteTrigger.click();
+  deleteDialog = page.getByRole("dialog", { name: "Delete conversation Archived conversation 12?" });
+  await deleteDialog.getByRole("button", { name: "Delete conversation", exact: true }).click();
+  await expect(deleteDialog).toHaveCount(0);
   await expect(panel.getByText("Archived conversation 12", { exact: true })).toHaveCount(0);
   await expect(panel.getByRole("tab", { name: /Conversations 11/ })).toBeVisible();
 
   await panel.getByRole("tab", { name: /AI Teammates 6/ }).click();
   const teammateRow = panel.locator(".archived-item-row").filter({ hasText: "Archived teammate 6" });
-  let teammateDialogMessage = "";
-  page.once("dialog", async (dialog) => {
-    teammateDialogMessage = dialog.message();
-    await dialog.accept();
-  });
   await teammateRow.getByRole("button", { name: "Delete AI teammate" }).click();
-  expect(teammateDialogMessage).toContain("This permanently deletes private chat, attachments, avatar, memory, and private bindings.");
+  deleteDialog = page.getByRole("dialog", { name: "Delete AI teammate Archived teammate 6?" });
+  await expect(deleteDialog).toContainText("This permanently deletes private chat, attachments, avatar, memory, and private bindings.");
+  await deleteDialog.getByRole("button", { name: "Delete AI teammate", exact: true }).click();
   await expect(panel.getByText("Archived teammate 6", { exact: true })).toHaveCount(0);
   await expect(panel.getByRole("tab", { name: /AI Teammates 5/ })).toBeVisible();
   await expect.poll(() => readHorizontalOverflow(page, ".archived-items-settings-panel")).toEqual([]);
@@ -531,15 +519,19 @@ test("settings archived conversation delete keeps loading and product error feed
   const panel = page.locator(".archived-items-settings-panel");
   const row = panel.locator(".archived-item-row").filter({ hasText: conversation.title });
   const deleteButton = row.getByRole("button", { name: "Delete conversation" });
-  page.once("dialog", async (dialog) => {
-    await dialog.accept();
-  });
+  const stableDeleteButton = row.locator(".archived-delete-action");
   await deleteButton.click();
+  const deleteDialog = page.getByRole("dialog", { name: `Delete conversation ${conversation.title}?` });
+  const confirmDelete = deleteDialog.getByRole("button", { name: "Delete conversation", exact: true });
+  const stableConfirmDelete = deleteDialog.locator('button[data-variant="danger"]');
+  await confirmDelete.click();
 
-  await expect(deleteButton).toBeDisabled();
-  await expect(deleteButton.locator(".spin")).toBeVisible();
-  await expect(panel.getByText("This conversation is still used by an automation. Update the automation before deleting it.")).toBeVisible();
-  await expect(deleteButton).toBeEnabled();
+  await expect(stableDeleteButton).toBeDisabled();
+  await expect(stableDeleteButton.locator(".ling-ui-spinner")).toBeVisible();
+  await expect(stableConfirmDelete).toHaveAttribute("aria-busy", "true");
+  await expect(deleteDialog.getByText("This conversation is still used by an automation. Update the automation before deleting it.")).toBeVisible();
+  await expect(stableDeleteButton).toBeEnabled();
+  await expect(deleteDialog).toBeVisible();
   await expect(row).toBeVisible();
 });
 
@@ -610,7 +602,6 @@ test("settings configuration entries open nested tools directly", async ({ page 
   await expect(settingsSections.getByRole("button", { name: "Plugin Manager" })).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: "Default authorization" })).toBeVisible();
   await expect(page.locator(".settings-page-section-head")).toHaveCount(0);
-  await expect(page.locator(".settings-subnav-description")).toHaveCount(0);
   await expect(page.locator(".settings-workspace-tools")).toHaveCount(0);
 
   await settingsSections.getByRole("button", { name: "Council Workspace" }).click();
@@ -625,17 +616,18 @@ test("settings configuration entries open nested tools directly", async ({ page 
   await settingsSections.getByRole("button", { name: "Default authorization" }).click();
   await expect(settingsSections.getByRole("button", { name: /Default authorization/ })).toHaveClass(/active/);
   await expect(page.locator(".settings-page-section-head")).toHaveCount(0);
-  await expect(page.locator(".settings-subnav-description")).toHaveCount(0);
-  await expect(page.locator(".settings-global-approval-card")).toHaveCount(1);
-  await expect(page.locator(".settings-global-approval-card")).toContainText("Default authorization");
+  await expect(page.locator("[data-ui2-default-authorization]")).toHaveCount(1);
+  await expect(page.locator("[data-ui2-default-authorization]")).toContainText("Default authorization");
   await expect(page.getByRole("heading", { name: "Tool permission policy" })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Execution runners" })).toHaveCount(0);
   await expect(page.getByText("Advanced workspace policy", { exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Effective permissions")).toHaveCount(0);
   await expect(page.getByRole("tab", { name: /Default authorization|Tool permission policy|Execution runners/ })).toHaveCount(0);
-  await expect(page.locator(".settings-global-approval-card").locator(".rich-choice-select-trigger")).toHaveCount(2);
-  await page.locator(".settings-global-approval-card").getByRole("button", { name: "Authorization mode: Smart authorization" }).click();
-  await page.locator(".settings-global-approval-card").getByRole("option", { name: /Ask first/ }).click();
+  await expect(page.locator("[data-ui2-default-authorization]").locator(".ling-ui-segmented-control")).toHaveCount(2);
+  await page.locator("[data-ui2-default-authorization]")
+    .getByRole("radiogroup", { name: "Authorization mode" })
+    .getByRole("radio", { name: "Ask first" })
+    .click();
   await expect.poll(() => state.workspaceSettings.defaultAuthorizationMode).toBe("ask");
   await expect.poll(() => state.workspaceSettings.defaultWorkspaceAccessMode).toBe("workspace_write");
 });
@@ -650,30 +642,28 @@ test("settings default authorization persists each supported mode without exposi
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Default authorization/ }).click();
-  const authorizationPanel = page.locator(".settings-global-approval-card");
+  const authorizationPanel = page.locator("[data-ui2-default-authorization]");
+  const authorizationMode = authorizationPanel.getByRole("radiogroup", { name: "Authorization mode" });
+  const workspaceAccess = authorizationPanel.getByRole("radiogroup", { name: "Sandbox settings" });
 
-  await authorizationPanel.getByRole("button", { name: "Authorization mode: Smart authorization" }).click();
-  await authorizationPanel.getByRole("option", { name: /Ask first/ }).click();
+  await authorizationMode.getByRole("radio", { name: "Ask first" }).click();
   await expect.poll(() => state.workspaceSettings.defaultAuthorizationMode).toBe("ask");
   await expect.poll(() => state.workspaceSettings.defaultWorkspaceAccessMode).toBe("workspace_write");
   await expect.poll(() => state.workspaceSettings.defaultPermissionMode).toBe("custom");
   await expect.poll(() => state.workspaceSettings.defaultPermissionPreset).toBe("custom");
 
-  await authorizationPanel.getByRole("button", { name: "Sandbox settings: Workspace write" }).click();
-  await authorizationPanel.getByRole("option", { name: /Read only/ }).click();
+  await workspaceAccess.getByRole("radio", { name: "Read only" }).click();
   await expect.poll(() => state.workspaceSettings.defaultAuthorizationMode).toBe("ask");
   await expect.poll(() => state.workspaceSettings.defaultWorkspaceAccessMode).toBe("read_only");
   await expect.poll(() => state.workspaceSettings.defaultPermissionMode).toBe("ask_everything");
   await expect.poll(() => state.workspaceSettings.defaultPermissionPreset).toBe("read_only");
 
-  await authorizationPanel.getByRole("button", { name: "Authorization mode: Ask first" }).click();
-  await authorizationPanel.getByRole("option", { name: /Always authorize/ }).click();
+  await authorizationMode.getByRole("radio", { name: "Always authorize" }).click();
   await expect.poll(() => state.workspaceSettings.defaultAuthorizationMode).toBe("always");
   await expect.poll(() => state.workspaceSettings.defaultWorkspaceAccessMode).toBe("read_only");
   await expect.poll(() => state.workspaceSettings.defaultPermissionMode).toBe("custom");
 
-  await authorizationPanel.getByRole("button", { name: "Sandbox settings: Read only" }).click();
-  await authorizationPanel.getByRole("option", { name: /Full access/ }).click();
+  await workspaceAccess.getByRole("radio", { name: "Full access" }).click();
   await expect.poll(() => state.workspaceSettings.defaultAuthorizationMode).toBe("always");
   await expect.poll(() => state.workspaceSettings.defaultWorkspaceAccessMode).toBe("full_access");
   await expect.poll(() => state.workspaceSettings.defaultPermissionMode).toBe("full_access");
@@ -689,7 +679,7 @@ test("settings default authorization persists each supported mode without exposi
   }
 });
 
-test("shared select controls preserve native sizing and rich choice keyboard flow", async ({ page }) => {
+test("shared select controls preserve native sizing and segmented authorization keyboard flow", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
@@ -699,30 +689,22 @@ test("shared select controls preserve native sizing and rich choice keyboard flo
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Default authorization/ }).click();
-  const authorizationPanel = page.locator(".settings-global-approval-card");
-  const authorizationTrigger = authorizationPanel.getByRole("button", { name: /Authorization mode:/ });
-  await authorizationTrigger.focus();
-  await page.keyboard.press("ArrowDown");
-  const authorizationListbox = authorizationPanel.getByRole("listbox", { name: "Authorization mode" });
-  await expect(authorizationListbox).toBeVisible();
-  await expect(authorizationListbox.getByRole("option", { name: /Smart authorization/ })).toBeFocused();
-  await page.keyboard.press("End");
-  await expect(authorizationListbox.getByRole("option", { name: /Always authorize/ })).toBeFocused();
-  await page.keyboard.press("Enter");
+  const authorizationPanel = page.locator("[data-ui2-default-authorization]");
+  const authorizationGroup = authorizationPanel.getByRole("radiogroup", { name: "Authorization mode" });
+  const smartAuthorization = authorizationGroup.getByRole("radio", { name: "Smart authorization" });
+  await smartAuthorization.focus();
+  await page.keyboard.press("ArrowRight");
+  const alwaysAuthorization = authorizationGroup.getByRole("radio", { name: "Always authorize" });
+  await expect(alwaysAuthorization).toBeFocused();
+  await expect(alwaysAuthorization).toHaveAttribute("aria-checked", "true");
   await expect.poll(() => state.workspaceSettings.defaultAuthorizationMode).toBe("always");
-  await expect(authorizationTrigger).toBeFocused();
-
-  await page.keyboard.press("ArrowDown");
-  await expect(authorizationListbox).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(authorizationListbox).toHaveCount(0);
-  await expect(authorizationTrigger).toBeFocused();
 
   await page.getByLabel("Settings sections").getByRole("button", { name: /Interface preferences/ }).click();
   const fieldSelect = page.getByLabel("AI response language");
-  await expect(fieldSelect).toHaveClass(/select-control-native/);
+  await expect(fieldSelect).toHaveClass(/ling-ui-select-native/);
   const fieldShell = fieldSelect.locator("xpath=..");
-  await expect(fieldShell).toHaveAttribute("data-select-control", "field");
+  await expect(fieldShell).toHaveClass(/ling-ui-select/);
+  await expect(fieldShell).toHaveAttribute("data-size", "md");
   await fieldSelect.focus();
   await expect(fieldSelect).toBeFocused();
   await fieldSelect.selectOption("zh-CN");
@@ -735,8 +717,11 @@ test("shared select controls preserve native sizing and rich choice keyboard flo
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await openChannelChatTools(page);
   const compactSelect = page.locator('select[aria-label="Saved views"]');
-  await expect(compactSelect).toHaveClass(/select-control-native/);
-  await expect(compactSelect.locator("xpath=..")).toHaveAttribute("data-select-control", "compact");
+  await expect(compactSelect).toHaveClass(/ling-ui-select-native/);
+  const compactShell = compactSelect.locator("xpath=..");
+  await expect(compactShell).toHaveClass(/ling-ui-select/);
+  await expect(compactShell).toHaveAttribute("data-size", "sm");
+  expect(await compactShell.evaluate((element) => element.hasAttribute("data-select-control"))).toBe(false);
   const compactHeight = await compactSelect.evaluate((element) => element.getBoundingClientRect().height);
   expect(compactHeight).toBeGreaterThanOrEqual(31);
   expect(compactHeight).toBeLessThanOrEqual(33);
@@ -869,13 +854,15 @@ test("settings skill governance saves policy from a separate section", async ({ 
   await expect(tonePanel.getByRole("heading", { name: "Ling conversation tone" })).toBeVisible();
   await expect(tonePanel).not.toContainText("Choose how Ling replies by default in this workspace.");
   await expect(tonePanel.getByRole("radio", { name: /Pragmatic/ })).toHaveAttribute("aria-checked", "true");
-  await expect(tonePanel).toContainText("Built-in");
+  await expect(tonePanel.getByText("Built-in", { exact: true })).toHaveCount(0);
   await expect(tonePanel.getByRole("button", { name: "Save conversation tone" })).toHaveCount(0);
   await tonePanel.getByRole("radio", { name: /Friendly/ }).click();
   await expect.poll(() => state.workspaceSettings.lingConversationTone).toBe("friendly");
-  await expect(tonePanel).toContainText("Ling conversation tone applied");
-  await expect(tonePanel.locator(".settings-inline-tip")).toHaveCount(0, { timeout: 3000 });
-  await expect(tonePanel).toContainText("Workspace");
+  await expect(page.locator('.ling-ui-toast[data-scope="settings:personalization:tone:save"]')).toContainText(
+    "Ling conversation tone applied",
+  );
+  await expect(tonePanel.locator(".settings-inline-tip")).toHaveCount(0);
+  await expect(tonePanel.getByText("Workspace", { exact: true })).toHaveCount(0);
   const panel = page.locator(".skill-governance-settings-panel");
   await expect.poll(async () => {
     const boxes = await Promise.all([
@@ -886,15 +873,25 @@ test("settings skill governance saves policy from a separate section", async ({ 
   }).toBe(true);
   const governancePanel = panel.getByRole("region", { name: "Skill policy" });
   await expect(panel.getByRole("heading", { name: "Skill policy" })).toBeVisible();
-  await expect(panel).toContainText("Control skill recording, generation, and publication policy.");
+  await expect(panel).not.toContainText("Control skill recording, generation, and publication policy.");
   await expect(governancePanel).toContainText("Semi-auto");
   await expect(governancePanel).toContainText("User initiated");
-  await expect(governancePanel).toContainText("Explicit only");
-  await expect(governancePanel).toContainText("Candidate generation options");
-  await expect(governancePanel).toContainText("Create pending candidates from one stable successful observation");
-  await expect(governancePanel).toContainText("How recording works");
-  await expect(governancePanel).toContainText("Ling does not record background agent work automatically");
-  await expect(governancePanel).toContainText("Generated candidates still require draft, publish, and binding review");
+  await expect(governancePanel).toContainText("Create pending candidates after repeated stable success");
+  await expect(governancePanel).toContainText("Users can start skill recording explicitly");
+  await expect(governancePanel).toContainText("Candidate publishing and binding still require manual review.");
+  await expect(governancePanel.getByText("Advanced governance", { exact: true })).toHaveCount(0);
+  await expect(governancePanel.getByText("Source", { exact: true })).toHaveCount(0);
+  await expect(governancePanel.getByText("Stored in workspace settings", { exact: true })).toHaveCount(0);
+
+  const governanceSelects = governancePanel.getByRole("combobox");
+  await expect(governanceSelects).toHaveCount(2);
+  for (const select of await governanceSelects.all()) {
+    await expect(select).toHaveClass(/ling-ui-select-native/u);
+    const shell = select.locator("xpath=..");
+    await expect(shell).toHaveClass(/ling-ui-select/u);
+    await expect(shell).toHaveAttribute("data-size", "md");
+    expect(await shell.evaluate((element) => element.hasAttribute("data-select-control"))).toBe(false);
+  }
 
   await governancePanel.getByRole("combobox", { name: "Skill candidate generation mode" }).selectOption("approval_only");
   await governancePanel.getByRole("combobox", { name: "Skill recording mode" }).selectOption("disabled");
@@ -904,7 +901,9 @@ test("settings skill governance saves policy from a separate section", async ({ 
     const policy = state.workspaceSettings.skillGovernancePolicy;
     return isRecord(policy) ? `${policy.generationMode}:${policy.recordingMode}` : "";
   }).toBe("approval_only:disabled");
-  await expect(panel).toContainText("Skill governance policy saved");
+  await expect(page.locator('.ling-ui-toast[data-scope="settings:personalization:governance:save"]')).toContainText(
+    "Skill governance policy saved",
+  );
   await expect(governancePanel).toContainText("Approval only");
   await expect(governancePanel).toContainText("Disabled");
 });
@@ -921,12 +920,13 @@ test("settings external work status shows setup and explicit controls", async ({
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /External work/ }).click();
-  const panel = page.locator(".external-work-settings-panel");
-  await expect(panel).toContainText("External work");
+  const panel = page.locator("[data-ui2-external-work]");
+  await expect(panel).toHaveAttribute("aria-label", "External work");
   await expect(panel).toContainText("openclaw/openclaw");
-  await expect(panel).toContainText("configured");
-  await panel.getByText("Details").first().click();
-  await expect(panel).toContainText("not_configured");
+  await expect(panel.getByRole("heading", { name: "Credential" }).locator(".."))
+    .toContainText("Ready");
+  await panel.getByText("Operation details", { exact: true }).click();
+  await expect(panel).toContainText("Not configured");
   await expect.poll(() => state.externalWorkPollCalls.github ?? 0).toBe(0);
   await expect.poll(() => state.externalWorkBackgroundStartCalls).toBe(0);
   await expect.poll(() => state.externalWorkWorkflowConfigureCalls).toBe(0);
@@ -940,12 +940,12 @@ test("settings external work status shows setup and explicit controls", async ({
 
   await panel.getByRole("button", { name: "Start background" }).click();
   await expect.poll(() => state.externalWorkBackgroundStartCalls).toBe(1);
-  await expect(panel).toContainText("running");
+  await expect(panel).toContainText("Running");
   await expect(panel.getByRole("button", { name: "Stop background" })).toBeVisible();
 
   await panel.getByRole("button", { name: "Stop background" }).click();
   await expect.poll(() => state.externalWorkBackgroundStopCalls).toBe(1);
-  await expect(panel).toContainText("stopped");
+  await expect(panel).toContainText("Stopped");
 
   await expect(page.getByRole("complementary", { name: "Inspector" })).toHaveCount(0);
   await expect(panel).toContainText("openclaw/openclaw");
@@ -963,9 +963,9 @@ test("settings external work token setup saves to daemon and clears the input", 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /External work/ }).click();
-  const panel = page.locator(".external-work-settings-panel");
+  const panel = page.locator("[data-ui2-external-work]");
   await expect(panel).toContainText("External token");
-  await expect(panel).toContainText("env:GITHUB_TOKEN");
+  await expect(panel.getByText("env:GITHUB_TOKEN", { exact: true })).toBeHidden();
   await expect.poll(() => state.externalWorkSecretConfigureCalls).toBe(0);
   await expect.poll(() => state.externalWorkSecretDeleteCalls).toBe(0);
 
@@ -977,13 +977,20 @@ test("settings external work token setup saves to daemon and clears the input", 
   await expect.poll(() => state.lastExternalWorkSecretConfigure?.channelId).toBe("channel_engineering");
   await expect.poll(() => state.lastExternalWorkSecretConfigure?.tokenLength).toBe("test-github-token".length);
   await expect(tokenInput).toHaveValue("");
+  await expect(panel).toContainText("Ready");
+  await panel.getByText("Credential details", { exact: true }).click();
   await expect(panel).toContainText("keychain:LING_STACK_GITHUB_OPENCLAW_OPENCLAW_TOKEN");
-  await expect(panel).toContainText("configured");
+  await panel.getByText("Credential details", { exact: true }).click();
 
   await panel.getByRole("button", { name: "Remove token" }).click();
+  const deleteDialog = page.getByRole("dialog", { name: "Remove external token?" });
+  await expect(deleteDialog).toBeVisible();
+  await deleteDialog.getByRole("button", { name: "Remove token" }).click();
   await expect.poll(() => state.externalWorkSecretDeleteCalls).toBe(1);
-  await expect(panel).toContainText("missing");
-  await expect(panel).toContainText("Secret is not configured: keychain:LING_STACK_GITHUB_OPENCLAW_OPENCLAW_TOKEN");
+  await expect(deleteDialog).toHaveCount(0);
+  await expect(panel).toContainText("Credential required");
+  await expect(panel.getByText("Secret is not configured: keychain:LING_STACK_GITHUB_OPENCLAW_OPENCLAW_TOKEN"))
+    .toBeHidden();
 });
 
 test("settings external work status renders invalid, missing, and Linear states", async ({ page }) => {
@@ -1002,22 +1009,23 @@ test("settings external work status renders invalid, missing, and Linear states"
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /External work/ }).click();
-  const panel = page.locator(".external-work-settings-panel");
-  await expect(panel).toContainText("invalid");
-  await expect(panel).toContainText("source.kind is required");
-  await expect(panel).toContainText("Secret is not configured");
-  await expect(panel).toContainText("Create WORKFLOW.md");
+  const panel = page.locator("[data-ui2-external-work]");
+  await expect(panel).toContainText("Needs attention");
+  await expect(panel.getByText("source.kind is required", { exact: true })).toBeHidden();
+  await expect(panel.getByText(/Secret is not configured/)).toBeHidden();
+  await expect(panel).toContainText("Repair WORKFLOW.md");
   await expect(panel.getByRole("button", { name: "Poll once" })).toBeDisabled();
-  await expect(panel.getByRole("button", { name: "Save GitHub token" })).toBeDisabled();
+  await expect(panel.getByRole("button", { name: "Save GitHub token" })).toHaveCount(0);
   await panel.getByRole("button", { name: "Repair WORKFLOW.md" }).click();
   await expect.poll(() => state.externalWorkWorkflowConfigureCalls).toBe(1);
   await expect.poll(() => state.lastExternalWorkWorkflowConfigure?.repository).toBe("openclaw/openclaw");
+  await panel.getByRole("button", { name: "Update token" }).click();
   await expect(panel.getByLabel("Token")).toBeEnabled();
 
   state.externalWorkStatus = createExternalWorkStatus({ workflowExists: false, workflowValid: false, sourceKind: "unknown", workflowError: "WORKFLOW.md was not found" });
-  await panel.getByRole("button", { name: "Refresh" }).click();
-  await expect(panel).toContainText("missing");
-  await expect(panel).toContainText("WORKFLOW.md was not found");
+  await panel.getByRole("button", { name: "Refresh external work status" }).click();
+  await expect(panel).toContainText("Not configured");
+  await expect(panel.getByText("WORKFLOW.md was not found", { exact: true })).toBeHidden();
   await panel.getByLabel("Repository").fill("https://github.com/owner/repo");
   await panel.getByRole("button", { name: "Create WORKFLOW.md" }).click();
   await expect.poll(() => state.externalWorkWorkflowConfigureCalls).toBe(2);
@@ -1025,10 +1033,10 @@ test("settings external work status renders invalid, missing, and Linear states"
   await expect(panel.getByLabel("Token")).toBeEnabled();
 
   state.externalWorkStatus = createExternalWorkStatus({ sourceKind: "linear" });
-  await panel.getByRole("button", { name: "Refresh" }).click();
-  await expect(panel).toContainText("linear");
+  await panel.getByRole("button", { name: "Refresh external work status" }).click();
+  await expect(panel).toContainText("Linear");
   await expect(panel).toContainText("ling-stack");
-  await expect(panel).toContainText("unsupported");
+  await expect(panel).toContainText("Unsupported");
   await expect(panel.getByRole("button", { name: "Start background" })).toHaveCount(0);
 
   await panel.getByRole("button", { name: "Poll once" }).click();

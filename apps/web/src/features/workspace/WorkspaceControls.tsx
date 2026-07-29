@@ -1,8 +1,7 @@
 import { useI18n } from "../../i18n.js";
 import { providerModelRouteLabel, providerRunBlockerLabel } from "../../lib/providers.js";
+import { Field, Select } from "../../shared/ui/index.js";
 import type { ChannelFormState, ProviderPreset } from "../../types.js";
-
-import { SelectControl } from "../../shared/components/SelectControl.js";
 
 export function ProviderPresetOptions({
   runnableProviders,
@@ -56,8 +55,8 @@ export function ChannelRuntimePolicyFields({
 export function ChannelExecutionModeSummary(): JSX.Element {
   const { t } = useI18n();
   return (
-    <div className="field wide runtime-policy-summary">
-      <span>{t("Execution mode")}</span>
+    <div className="runtime-policy-summary">
+      <span className="runtime-policy-summary-label">{t("Execution mode")}</span>
       <strong>{t("Smart scheduling")}</strong>
       <small>{t("Ling Agent decides when safe steps can run together. Writes, unknown tools, approvals, and resource locks stay protected.")}</small>
     </div>
@@ -83,16 +82,16 @@ export function ChannelWriteLockField({
   };
 
   return (
-    <label className="field wide">
-      <span>{t("Write lock")}</span>
-      <SelectControl
+    <Field className="channel-write-lock-field" label={t("Write lock")}>
+      <Select
+        aria-label={t("Write lock")}
         value={form.runtimePolicy.writeLockScope}
         onChange={(event) => updatePolicy({ writeLockScope: event.target.value as ChannelFormState["runtimePolicy"]["writeLockScope"] })}
       >
         <option value="boundPath">{t("boundPath")}</option>
         <option value="channel">{t("channel")}</option>
         <option value="workspace">{t("workspace")}</option>
-      </SelectControl>
-    </label>
+      </Select>
+    </Field>
   );
 }

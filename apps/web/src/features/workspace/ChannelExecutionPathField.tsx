@@ -1,7 +1,8 @@
-import { useEffect, useId, useState, type KeyboardEvent } from "react";
-import { Check, FolderOpen, Loader2 } from "lucide-react";
+import { useEffect, useState, type KeyboardEvent } from "react";
+import { Check, FolderOpen } from "lucide-react";
 import { selectWorkspaceDirectory } from "../../api/workspace-directory.js";
 import { useI18n } from "../../i18n.js";
+import { Field, IconButton, Input } from "../../shared/ui/index.js";
 
 export function ChannelExecutionPathField({
   value,
@@ -17,7 +18,6 @@ export function ChannelExecutionPathField({
   readonly onApply: (path: string) => Promise<void>;
 }): JSX.Element {
   const { t } = useI18n();
-  const inputId = useId();
   const [draftPath, setDraftPath] = useState(value);
   const [busyAction, setBusyAction] = useState<"apply" | "select" | "">("");
   const [errorMessage, setErrorMessage] = useState("");
@@ -75,43 +75,42 @@ export function ChannelExecutionPathField({
   }
 
   return (
-    <div className="field channel-path-field">
-      <span><label htmlFor={inputId}>{t("Execution path")}</label></span>
-      <span className="channel-execution-path-control">
-        <input
-          id={inputId}
-          aria-label={t("Execution path")}
-          aria-invalid={Boolean(errorMessage)}
-          value={draftPath}
-          onChange={(event) => {
-            setDraftPath(event.target.value);
-            setErrorMessage("");
-          }}
-          onKeyDown={onInputKeyDown}
-          disabled={disabled || Boolean(busyAction)}
-        />
-        <button
-          className="icon-button channel-settings-field-action"
-          type="button"
-          aria-label={t("Change directory")}
-          title={t("Change directory")}
-          onClick={() => void selectDirectory()}
-          disabled={disabled || Boolean(busyAction)}
-        >
-          {busyAction === "select" ? <Loader2 className="spin" size={15} /> : <FolderOpen size={15} />}
-        </button>
-        <button
-          className="icon-button channel-settings-field-action"
-          type="button"
-          aria-label={t("Save")}
-          title={t("Save")}
-          onClick={() => void applyPath(draftPath)}
-          disabled={disabled || Boolean(busyAction) || !canApply}
-        >
-          {busyAction === "apply" ? <Loader2 className="spin" size={15} /> : <Check size={15} />}
-        </button>
-      </span>
-      {errorMessage ? <small className="channel-execution-path-error danger-text" role="alert">{errorMessage}</small> : null}
-    </div>
+    <Field className="channel-path-field" label={t("Execution path")} error={errorMessage || undefined}>
+      <Input
+        aria-label={t("Execution path")}
+        value={draftPath}
+        onChange={(event) => {
+          setDraftPath(event.target.value);
+          setErrorMessage("");
+        }}
+        onKeyDown={onInputKeyDown}
+        disabled={disabled || Boolean(busyAction)}
+        invalid={Boolean(errorMessage)}
+        suffix={(
+          <span className="channel-settings-field-actions">
+            <IconButton
+              className="channel-settings-field-action"
+              icon={FolderOpen}
+              label={t("Change directory")}
+              loading={busyAction === "select"}
+              loadingLabel={t("Change directory")}
+              onClick={() => void selectDirectory()}
+              disabled={disabled || Boolean(busyAction)}
+              size="sm"
+            />
+            <IconButton
+              className="channel-settings-field-action"
+              icon={Check}
+              label={t("Save")}
+              loading={busyAction === "apply"}
+              loadingLabel={t("Save")}
+              onClick={() => void applyPath(draftPath)}
+              disabled={disabled || Boolean(busyAction) || !canApply}
+              size="sm"
+            />
+          </span>
+        )}
+      />
+    </Field>
   );
 }

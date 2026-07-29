@@ -1,0 +1,279 @@
+.conversation-summary-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-lg);
+  background: var(--ling-bg-panel);
+}
+
+.conversation-summary-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-pill);
+  background: var(--ling-bg-app);
+  color: var(--ling-text-muted);
+}
+
+.conversation-summary-body {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.conversation-summary-body > header,
+.conversation-summary-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.conversation-summary-body > header > strong {
+  min-width: 0;
+  color: var(--ling-text-strong);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.conversation-summary-copy {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.conversation-summary-copy > p {
+  margin: 0;
+}
+
+.conversation-summary-meta > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 22px;
+  padding: 2px 6px;
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  background: var(--ling-bg-app);
+}
+
+.conversation-summary-meta small {
+  color: var(--ling-text-muted);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.conversation-summary-meta strong {
+  color: var(--ling-text-strong);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.attention-queue {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.channel-progress-popover {
+  position: absolute;
+  top: 62px;
+  right: var(--channel-progress-popover-right, 18px);
+  z-index: var(--ling-z-popover);
+  width: var(--channel-progress-popover-width);
+  max-height: min(720px, calc(100dvh - 86px));
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-lg);
+  background: var(--ling-bg-panel);
+  box-shadow: var(--ling-shadow-overlay);
+  opacity: 1;
+  transform: translate3d(0, 0, 0) scale(1);
+  transform-origin: top right;
+  visibility: visible;
+  transition:
+    opacity var(--channel-right-dock-motion-duration) var(--channel-right-dock-motion-ease),
+    transform var(--channel-right-dock-motion-duration) var(--channel-right-dock-motion-ease),
+    visibility var(--ling-motion-instant) var(--ling-ease-linear) var(--ling-motion-instant);
+  will-change: opacity, transform;
+}
+
+.channel-progress-popover.is-popover-collapsed {
+  opacity: 0;
+  pointer-events: none;
+  transform: translate3d(0, -4px, 0) scale(0.98);
+  visibility: hidden;
+  transition:
+    opacity var(--channel-right-dock-motion-duration) var(--channel-right-dock-motion-ease),
+    transform var(--channel-right-dock-motion-duration) var(--channel-right-dock-motion-ease),
+    visibility var(--ling-motion-instant) var(--ling-ease-linear) var(--channel-right-dock-motion-duration);
+}
+
+.attention-environment-section,
+.attention-context-section,
+.attention-progress-preview {
+  display: grid;
+  gap: 9px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--ling-border-default);
+}
+
+.attention-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 28px;
+}
+
+.attention-environment-section + .attention-context-section,
+.attention-environment-section + .attention-progress-preview,
+.attention-context-section + .attention-progress-preview {
+  margin-top: 0;
+}
+
+.attention-section-head strong,
+.attention-progress-head strong {
+  color: var(--ling-text-default);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.attention-environment-list,
+.attention-context-list,
+.attention-progress-list {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.attention-environment-row,
+.attention-context-row,
+.attention-progress-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+  min-width: 0;
+  width: 100%;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--ling-text-muted);
+  text-align: left;
+}
+
+.attention-environment-row.interactive,
+.attention-context-row.interactive,
+.attention-progress-row.interactive {
+  cursor: pointer;
+}
+
+.attention-environment-row.interactive:hover,
+.attention-environment-row.interactive:focus-visible,
+.attention-context-row.interactive:hover,
+.attention-context-row.interactive:focus-visible,
+.attention-progress-row.interactive:hover,
+.attention-progress-row.interactive:focus-visible {
+  color: var(--ling-text-default);
+}
+
+.attention-row-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  color: var(--ling-text-muted);
+}
+
+.attention-row-icon svg,
+.attention-progress-list svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 2.4;
+}
+
+.attention-row-icon.success {
+  color: var(--ling-status-success);
+}
+
+.attention-row-icon.info,
+.attention-row-icon.running,
+.attention-row-icon.waiting {
+  color: var(--ling-action-accent);
+}
+
+.attention-row-icon.blocked {
+  color: var(--ling-status-warning);
+}
+
+.attention-row-icon.failed {
+  color: var(--ling-status-danger);
+}
+
+.attention-environment-copy,
+.attention-context-copy,
+.attention-progress-copy {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.attention-environment-copy small,
+.attention-context-copy small,
+.attention-progress-copy small,
+.attention-progress-list small {
+  overflow: hidden;
+  color: var(--ling-text-muted);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attention-context-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--ling-text-muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.attention-environment-copy strong,
+.attention-context-copy strong,
+.attention-progress-copy strong {
+  overflow: hidden;
+  color: var(--ling-text-default);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attention-progress-toggle {
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--ling-motion-fast) var(--ling-ease-standard);
+}
+
+.channel-progress-popover:hover .attention-progress-toggle,
+.attention-progress-toggle[aria-expanded="false"] {
+  opacity: 1;
+  pointer-events: auto;
+}

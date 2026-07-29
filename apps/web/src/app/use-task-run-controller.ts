@@ -88,7 +88,12 @@ export function useTaskRunController(input: {
   readonly setChannelEditForm: Dispatch<SetStateAction<ChannelFormState>>;
   readonly setChannelWorkflows: Dispatch<SetStateAction<readonly ChannelWorkflow[]>>;
   readonly setChannelWorkflowSteps: Dispatch<SetStateAction<readonly ChannelWorkflowStep[]>>;
-  readonly setErrorMessage: (message: string) => void;
+  readonly reportTaskError: (identity: string, message: string) => void;
+  readonly clearTaskError: (identity: string) => void;
+  readonly reportWorkflowError: (identity: string, message: string) => void;
+  readonly clearWorkflowError: (identity: string) => void;
+  readonly reportWorkspaceError: (identity: string, message: string) => void;
+  readonly clearWorkspaceError: (identity: string) => void;
   readonly t: (value: string, values?: Record<string, string | number>) => string;
   readonly patchWorkspaceSettings: (patch: UpdateWorkspaceSettingsRequest) => Promise<WorkspaceSettings | undefined>;
   readonly buildRerunRequest: RunCommands["buildRerunRequest"];
@@ -127,39 +132,39 @@ export function useTaskRunController(input: {
 
   async function removeTask(taskId: string): Promise<void> {
     try {
-      input.setErrorMessage("");
+      input.clearTaskError(taskId);
       await input.deleteTask(input.form.cwd.trim(), taskId);
       if (input.selectedTaskId === taskId) {
         input.setSelectedTaskId("");
       }
       await input.refreshTasks();
     } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
+      input.reportTaskError(taskId, error instanceof Error ? error.message : String(error));
     }
   }
 
   async function moveTaskToReview(taskId: string): Promise<void> {
     try {
-      input.setErrorMessage("");
+      input.clearTaskError(taskId);
       await input.updateTaskStatus(input.form.cwd.trim(), taskId, "review");
       await input.refreshTasks();
     } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
+      input.reportTaskError(taskId, error instanceof Error ? error.message : String(error));
     }
   }
 
   async function saveTaskEdit(taskId: string): Promise<Task | undefined> {
     if (!input.taskEditForm.title.trim()) {
-      input.setErrorMessage("请输入 task title");
+      input.reportTaskError(taskId, "请输入 task title");
       return undefined;
     }
     if (!input.taskEditForm.prompt.trim()) {
-      input.setErrorMessage("请输入 task prompt");
+      input.reportTaskError(taskId, "请输入 task prompt");
       return undefined;
     }
 
     try {
-      input.setErrorMessage("");
+      input.clearTaskError(taskId);
       const response = await input.updateTask(input.form.cwd.trim(), taskId, {
         ...input.taskEditForm,
         title: input.taskEditForm.title.trim(),
@@ -168,7 +173,7 @@ export function useTaskRunController(input: {
       await input.refreshTasks();
       return response.task;
     } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
+      input.reportTaskError(taskId, error instanceof Error ? error.message : String(error));
       return undefined;
     }
   }
@@ -178,28 +183,29 @@ export function useTaskRunController(input: {
     request: Parameters<WorkspaceCommands["updateChannelExecutionProposal"]>[2],
   ): Promise<ChannelExecutionProposal | undefined> {
     try {
+      input.clearWorkflowError(proposal.id);
       const response = await input.updateChannelExecutionProposal(input.form.cwd.trim(), proposal.id, request);
       input.upsertChannelExecutionProposal(response.proposal);
       return response.proposal;
     } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
+      input.reportWorkflowError(proposal.id, error instanceof Error ? error.message : String(error));
       return undefined;
     }
   }
 
   async function blockChannelExecutionProposal(proposal: ChannelExecutionProposal, message: string): Promise<void> {
-    input.setErrorMessage(message);
+    input.reportWorkflowError(proposal.id, message);
     await markChannelExecutionProposal(proposal, { status: "blocked", errorMessage: message });
   }
 
   async function confirmChannelExecutionProposal(proposal: ChannelExecutionProposal): Promise<void> {
     const workspaceCwd = input.form.cwd.trim();
     if (!workspaceCwd) {
-      input.setErrorMessage(input.t("Local workspace is not ready."));
+      input.reportWorkflowError(proposal.id, input.t("Local workspace is not ready."));
       return;
     }
     try {
-      input.setErrorMessage("");
+      input.clearWorkflowError(proposal.id);
       const response = await input.confirmChannelExecutionProposalWorkflow(workspaceCwd, proposal.id);
       input.upsertChannelExecutionProposal(response.proposal);
       input.setChannelWorkflows((current) => [response.workflow, ...current.filter((workflow) => workflow.id !== response.workflow.id)]);
@@ -212,7 +218,7 @@ export function useTaskRunController(input: {
       ]);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      input.setErrorMessage(message);
+      input.reportWorkflowError(proposal.id, message);
       await blockChannelExecutionProposal(proposal, message);
     }
   }
@@ -231,23 +237,24 @@ export function useTaskRunController(input: {
     const action = options.action ?? "run";
     input.setActiveTaskRunAction({ taskId: task.id, action });
     try {
+      input.clearTaskError(task.id);
       const channel = input.channels.find((item) => item.id === task.channelId);
       if (!channel) {
-        input.setErrorMessage(input.t("Task channel not found."));
+        input.reportTaskError(task.id, input.t("Task channel not found."));
         return false;
       }
       if (channel.status !== "active") {
-        input.setErrorMessage(input.t("Channel is {status}; resume it before starting a new run.", { status: input.t(channel.status) }));
+        input.reportTaskError(task.id, input.t("Channel is {status}; resume it before starting a new run.", { status: input.t(channel.status) }));
         return false;
       }
       const providerPresetId = options.providerPresetIdOverride || resolveTaskRunProviderPresetId(channel);
       if (!providerPresetId) {
-        input.setErrorMessage(input.t("No provider preset is selected for this task run."));
+        input.reportTaskError(task.id, input.t("No provider preset is selected for this task run."));
         return false;
       }
       const provider = input.providers.find((item) => item.id === providerPresetId);
       if (!provider || !canUseProviderForRun(provider)) {
-        input.setErrorMessage(provider
+        input.reportTaskError(task.id, provider
           ? input.t("Provider preset is not runnable: {reason}", { reason: providerRunBlockerLabel(provider, input.t) })
           : input.t("Provider preset not found"));
         return false;
@@ -255,7 +262,7 @@ export function useTaskRunController(input: {
       if (!options.skipPreflight) {
         const blocker = providerRunPreflightBlocker(provider, input.t);
         if (blocker) {
-          input.setErrorMessage(blocker);
+          input.reportTaskError(task.id, blocker);
           return false;
         }
       }
@@ -286,7 +293,7 @@ export function useTaskRunController(input: {
     const providerPresetId = resolveTaskRunProviderPresetId(channel);
     const provider = providerPresetId ? input.providers.find((item) => item.id === providerPresetId) : undefined;
     if (!provider) {
-      input.setErrorMessage(providerPresetId ? input.t("Provider preset not found") : input.t("No provider preset is selected for this task run."));
+      input.reportTaskError(task.id, providerPresetId ? input.t("Provider preset not found") : input.t("No provider preset is selected for this task run."));
       input.setActiveTaskRunAction(undefined);
       return false;
     }
@@ -318,11 +325,13 @@ export function useTaskRunController(input: {
   }
 
   async function rerunRun(sourceRun: RunSession): Promise<void> {
+    const feedbackIdentity = sourceRun.taskId || sourceRun.id;
     try {
+      input.clearTaskError(feedbackIdentity);
       const workspaceCwd = readRunWorkspaceCwd(sourceRun, input.form.cwd.trim());
       await input.runWithRequest(input.buildRerunRequest(sourceRun), workspaceCwd);
     } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
+      input.reportTaskError(feedbackIdentity, error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -364,10 +373,11 @@ export function useTaskRunController(input: {
       input.selectedChannelId === selectedChannel.id ? { ...current, defaultProviderPresetId: provider.id } : current
     );
     try {
+      input.clearWorkspaceError(selectedChannel.id);
       await input.updateChannel(workspaceCwd, selectedChannel.id, nextChannelForm);
       await input.refreshChannels(workspaceCwd);
     } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
+      input.reportWorkspaceError(selectedChannel.id, error instanceof Error ? error.message : String(error));
       await input.refreshChannels(workspaceCwd);
     }
   }
@@ -403,10 +413,11 @@ export function useTaskRunController(input: {
       input.selectedChannelId === selectedChannel.id ? { ...current, defaultProviderPresetId: "" } : current
     );
     try {
+      input.clearWorkspaceError(selectedChannel.id);
       await input.updateChannel(input.form.cwd.trim(), selectedChannel.id, clearedChannelForm);
       await input.refreshChannels();
     } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
+      input.reportWorkspaceError(selectedChannel.id, error instanceof Error ? error.message : String(error));
       await input.refreshChannels();
     }
   }

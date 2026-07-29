@@ -1,5 +1,4 @@
 import type {
-  ApprovalRequest,
   AiTeammate,
   ChannelContextSummary,
   ChannelDecision,
@@ -12,8 +11,6 @@ import type {
   Task,
 } from "../types.js";
 import type { LocalTeammateDraft } from "../features/teammates/index.js";
-import type { SidebarNotification } from "../features/navigation/SidebarNavigation.js";
-import { effectiveApprovalStatus } from "../lib/approvals.js";
 import { deriveChannelTasks } from "../lib/channel-artifacts.js";
 import type { ViewId } from "./view-types.js";
 
@@ -57,7 +54,11 @@ export function splitTextLines(value: string): string[] {
     .filter(Boolean);
 }
 
-export function aiTeammateToLocalDraft(teammate: AiTeammate, providers: readonly ProviderPreset[]): LocalTeammateDraft {
+export function aiTeammateToLocalDraft(
+  teammate: AiTeammate,
+  providers: readonly ProviderPreset[],
+  channelIds: readonly string[] = [],
+): LocalTeammateDraft {
   const provider = teammate.providerPresetId ? providers.find((item) => item.id === teammate.providerPresetId) : undefined;
   return {
     id: teammate.id,
@@ -80,51 +81,13 @@ export function aiTeammateToLocalDraft(teammate: AiTeammate, providers: readonly
     approvalProfile: teammate.approvalProfile,
     status: teammate.status,
     modelLabel: provider ? `${provider.displayName} / ${provider.model}` : "No model selected",
-    channelIds: [],
+    channelIds,
     pinned: teammate.pinned,
     hidden: teammate.hidden,
     disabled: teammate.status === "disabled",
     createdAt: teammate.createdAt,
     updatedAt: teammate.updatedAt,
   };
-}
-
-export function buildSidebarChannelNotifications(
-  approvals: readonly ApprovalRequest[],
-  runs: readonly RunSession[],
-  tasks: readonly Task[],
-  selectedChannelId: string,
-  channelUnreadById: Readonly<Record<string, ChannelUnreadState>>,
-  notificationLevels: Readonly<Record<string, string>>,
-): Readonly<Record<string, SidebarNotification>> {
-  const runById = new Map(runs.map((item) => [item.id, item]));
-  const taskById = new Map(tasks.map((item) => [item.id, item]));
-  const unread = new Set<string>();
-
-  for (const approval of approvals) {
-    if (effectiveApprovalStatus(approval) !== "pending") {
-      continue;
-    }
-    const channelId = approval.channelId
-      ?? (approval.runId ? runById.get(approval.runId)?.channelId : undefined)
-      ?? (approval.taskId ? taskById.get(approval.taskId)?.channelId : undefined);
-    if (channelId && channelId !== selectedChannelId) {
-      unread.add(channelId);
-    }
-  }
-
-  for (const [channelId, state] of Object.entries(channelUnreadById)) {
-    const notificationLevel = readChannelNotificationLevel(notificationLevels[channelId]);
-    const shouldNotify = state.unread && (
-      notificationLevel === "all" ||
-      (notificationLevel === "mentions" && state.mentioned)
-    );
-    if (shouldNotify && channelId !== selectedChannelId) {
-      unread.add(channelId);
-    }
-  }
-
-  return Object.fromEntries([...unread].map((channelId) => [channelId, { unread: true }]));
 }
 
 export interface ChannelUnreadState {
@@ -150,10 +113,6 @@ export function buildChannelUnreadState(
   };
 }
 
-function readChannelNotificationLevel(value: string | undefined): "all" | "mentions" | "muted" {
-  return value === "all" || value === "muted" ? value : "mentions";
-}
-
 export function latestChannelMessageTimestamp(messages: readonly ChannelMessage[]): string {
   return messages.reduce((latest, message) => message.updatedAt > latest ? message.updatedAt : latest, "");
 }
@@ -171,26 +130,6 @@ export function upsertChannelMessages(
     byId.set(message.id, message);
   }
   return order.map((id) => byId.get(id)!);
-}
-
-export function buildSidebarTeammateNotifications(
-  approvals: readonly ApprovalRequest[],
-  tasks: readonly Task[],
-): Readonly<Record<string, SidebarNotification>> {
-  const taskById = new Map(tasks.map((item) => [item.id, item]));
-  const counts = new Map<string, number>();
-
-  for (const approval of approvals) {
-    if (effectiveApprovalStatus(approval) !== "pending" || !approval.taskId) {
-      continue;
-    }
-    const assigneeTeammateId = taskById.get(approval.taskId)?.assigneeTeammateId;
-    if (assigneeTeammateId) {
-      counts.set(assigneeTeammateId, (counts.get(assigneeTeammateId) ?? 0) + 1);
-    }
-  }
-
-  return Object.fromEntries([...counts.entries()].map(([teammateId, count]) => [teammateId, { count }]));
 }
 
 export function mergeWorkflowSteps(

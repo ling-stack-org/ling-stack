@@ -1,0 +1,24 @@
+{
+  "filename": "1440x960-ling-light-project-loaded.png",
+  "capturedAt": "2026-07-23T02:00:35.641Z",
+  "viewport": {
+    "width": 1440,
+    "height": 960
+  },
+  "theme": "ling-light",
+  "locale": "en-US",
+  "fixture": "production_loaded",
+  "state": "project-loaded",
+  "functionIds": [
+    "PROD-PROJECT-001"
+  ],
+  "sourceCommitOrWorktree": "0a0b80502715+worktree",
+  "consoleErrors": [],
+  "expectedConsoleErrors": [],
+  "pageErrors": [],
+  "documentOverflow": 0,
+  "ownerOverflow": 0,
+  "canvasPixel": null,
+  "mediaPixelHash": null,
+  "sha256": "09e9cecac939c9b001a48a05c4489e3ec4a7edff269fd60a5eacb91a4b4974dc"
+}

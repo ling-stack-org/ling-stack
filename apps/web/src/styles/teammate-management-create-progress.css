@@ -1,0 +1,135 @@
+.teammate-create-progress-summary {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--ling-space-5);
+  padding: var(--ling-space-6);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  background: var(--ling-bg-subtle);
+}
+
+.teammate-create-progress-symbol {
+  display: inline-grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--ling-status-info);
+  background: var(--ling-status-info-bg);
+}
+
+.teammate-create-progress-symbol[data-state="success"] {
+  color: var(--ling-status-success);
+  background: var(--ling-status-success-bg);
+}
+
+.teammate-create-progress-symbol[data-state="partial"] {
+  color: var(--ling-status-warning);
+  background: var(--ling-status-warning-bg);
+}
+
+.teammate-create-progress-symbol[data-state="failed"] {
+  color: var(--ling-status-danger);
+  background: var(--ling-status-danger-bg);
+}
+
+.teammate-create-progress-symbol > svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 1.8;
+}
+
+.teammate-create-progress-copy {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-2);
+}
+
+.teammate-create-progress-copy > p {
+  margin: 0;
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+  overflow-wrap: anywhere;
+}
+
+.teammate-create-step-list {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.teammate-create-step {
+  display: grid;
+  min-width: 0;
+  min-height: 48px;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--ling-space-4);
+  padding: var(--ling-space-3) var(--ling-space-4);
+  border-bottom: 1px solid var(--ling-border-default);
+}
+
+.teammate-create-step-icon {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--ling-text-muted);
+  background: var(--ling-bg-subtle);
+}
+
+.teammate-create-step[data-state="running"] .teammate-create-step-icon {
+  color: var(--ling-status-info);
+  background: var(--ling-status-info-bg);
+}
+
+.teammate-create-step[data-state="success"] .teammate-create-step-icon,
+.teammate-create-step[data-state="skipped"] .teammate-create-step-icon {
+  color: var(--ling-status-success);
+  background: var(--ling-status-success-bg);
+}
+
+.teammate-create-step[data-state="failed"] .teammate-create-step-icon {
+  color: var(--ling-status-danger);
+  background: var(--ling-status-danger-bg);
+}
+
+.teammate-create-step-icon svg {
+  width: 14px;
+  height: 14px;
+  stroke-width: 1.8;
+}
+
+.teammate-create-step-copy {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
+.teammate-create-step-copy strong,
+.teammate-create-step-copy small {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teammate-create-step-copy strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+  font-weight: 650;
+  line-height: var(--ling-line-sm);
+}
+
+.teammate-create-step-copy small {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}

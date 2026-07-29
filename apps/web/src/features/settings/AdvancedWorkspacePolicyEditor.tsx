@@ -2,6 +2,7 @@ import { Check, ChevronDown, Loader2, Plus, Save, X } from "lucide-react";
 import { useState, type FormEvent, type KeyboardEvent } from "react";
 import { useI18n } from "../../i18n.js";
 import { approvalPolicyToForm, defaultApprovalPolicyForm } from "../../lib/approvals.js";
+import { Input } from "../../shared/ui/index.js";
 import type { ApprovalPolicy, ApprovalPolicyFormState, ApprovalToolDecision, ToolName } from "../../types.js";
 import {
   addAllowedWritePath,
@@ -166,8 +167,9 @@ export function AdvancedWorkspacePolicyEditor({
 
         {isAddingPath ? (
           <form className="settings-write-path-add" onSubmit={submitPath}>
-            <input
+            <Input
               autoFocus
+              containerClassName="settings-write-path-control"
               value={pathDraft}
               aria-label={t("Write path")}
               placeholder={t("Enter a workspace-relative or absolute path")}

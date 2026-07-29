@@ -1,0 +1,24 @@
+{
+  "filename": "1280x800-ling-dark-preview-open-task.png",
+  "capturedAt": "2026-07-23T02:01:33.003Z",
+  "viewport": {
+    "width": 1280,
+    "height": 800
+  },
+  "theme": "ling-dark",
+  "locale": "zh-CN",
+  "fixture": "production_preview_open_task",
+  "state": "preview-open-task",
+  "functionIds": [
+    "PROD-PREVIEW-001"
+  ],
+  "sourceCommitOrWorktree": "0a0b80502715+worktree",
+  "consoleErrors": [],
+  "expectedConsoleErrors": [],
+  "pageErrors": [],
+  "documentOverflow": 0,
+  "ownerOverflow": 0,
+  "canvasPixel": null,
+  "mediaPixelHash": "14ac747e656588d2580c3debd83e31af1a76b3b67ea5c42ed390dda47a8d5ebf",
+  "sha256": "3e47466a4e1a20f3512f375debba8d25844486954ebc2f5aa8e325231007a813"
+}

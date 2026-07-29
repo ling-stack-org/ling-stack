@@ -1,0 +1,24 @@
+{
+  "filename": "1280x800-ling-dark-workflow-test.png",
+  "capturedAt": "2026-07-23T02:01:15.105Z",
+  "viewport": {
+    "width": 1280,
+    "height": 800
+  },
+  "theme": "ling-dark",
+  "locale": "zh-CN",
+  "fixture": "production_workflow_test",
+  "state": "workflow-test",
+  "functionIds": [
+    "PROD-WORKFLOW-001"
+  ],
+  "sourceCommitOrWorktree": "0a0b80502715+worktree",
+  "consoleErrors": [],
+  "expectedConsoleErrors": [],
+  "pageErrors": [],
+  "documentOverflow": 0,
+  "ownerOverflow": 0,
+  "canvasPixel": null,
+  "mediaPixelHash": null,
+  "sha256": "e3a4fdfd5591467eecdfc745f09c58881495c5c6fab98bf6417e1e3056226694"
+}

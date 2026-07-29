@@ -1,28 +1,31 @@
-import { Loader2, RefreshCw, ShieldCheck } from "lucide-react";
+import { ShieldCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 import { getEffectiveConfig } from "../../api.js";
 import { updateWorkspaceSettings } from "../../api/workspace-settings.js";
 import { useI18n } from "../../i18n.js";
+import { InlineFeedback, Skeleton, useLingToast } from "../../shared/ui/index.js";
 import type { EffectiveConfigResponse, SkillGovernancePolicy } from "../../types.js";
 import { defaultSkillGovernancePolicy, SkillGovernanceSettingsPanel } from "./SkillGovernanceSettingsPanel.js";
 
 export function SkillGovernanceSettingsSection({ cwd }: { readonly cwd: string }): JSX.Element {
   const { t } = useI18n();
+  const { showToast } = useLingToast();
   const [effectiveConfig, setEffectiveConfig] = useState<EffectiveConfigResponse | undefined>();
   const [skillGovernanceDraft, setSkillGovernanceDraft] = useState<SkillGovernancePolicy>(defaultSkillGovernancePolicy);
   const [loading, setLoading] = useState(false);
+  const [loadAttempted, setLoadAttempted] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
-    void refresh(false);
+    void refresh();
   }, [cwd]);
 
-  async function refresh(showMessage = true): Promise<void> {
+  async function refresh(): Promise<void> {
     const workspaceCwd = cwd.trim();
     if (!workspaceCwd) {
       setError(t("Workspace path is required."));
+      setLoadAttempted(true);
       return;
     }
     setLoading(true);
@@ -31,11 +34,11 @@ export function SkillGovernanceSettingsSection({ cwd }: { readonly cwd: string }
       const nextConfig = await getEffectiveConfig(workspaceCwd);
       setEffectiveConfig(nextConfig);
       setSkillGovernanceDraft(nextConfig.values.skillGovernancePolicy?.value ?? defaultSkillGovernancePolicy);
-      setMessage(showMessage ? t("Skill governance policy refreshed") : "");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
       setLoading(false);
+      setLoadAttempted(true);
     }
   }
 
@@ -47,7 +50,6 @@ export function SkillGovernanceSettingsSection({ cwd }: { readonly cwd: string }
     setSaving(true);
     try {
       setError("");
-      setMessage("");
       if (effectiveConfig && !effectiveConfig.values.skillGovernancePolicy) {
         setError(t("Skill governance policy is not supported by this daemon."));
         return;
@@ -56,7 +58,11 @@ export function SkillGovernanceSettingsSection({ cwd }: { readonly cwd: string }
       const nextConfig = await getEffectiveConfig(workspaceCwd);
       setEffectiveConfig(nextConfig);
       setSkillGovernanceDraft(nextConfig.values.skillGovernancePolicy?.value ?? defaultSkillGovernancePolicy);
-      setMessage(t("Skill governance policy saved"));
+      showToast({
+        message: t("Skill governance policy saved"),
+        scope: "settings:personalization:governance:save",
+        tone: "success",
+      });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -64,36 +70,51 @@ export function SkillGovernanceSettingsSection({ cwd }: { readonly cwd: string }
     }
   }
 
+  const initialLoading = !loadAttempted || (loading && !effectiveConfig);
+  const policy = effectiveConfig?.values.skillGovernancePolicy?.value;
+  const supported = Boolean(effectiveConfig?.values.skillGovernancePolicy);
+  const dirty = policy ? !skillGovernancePoliciesEqual(skillGovernanceDraft, policy) : false;
+  const state = initialLoading ? "loading" : error ? "error" : supported ? "loaded" : "unsupported";
+
   return (
-    <section className="panel settings-panel skill-governance-settings-panel" aria-labelledby="skill-governance-settings-title">
-      <div className="panel-title split">
+    <section
+      className="skill-governance-settings-panel settings-personalization-section"
+      data-personalization-governance="true"
+      data-governance-state={state}
+      aria-labelledby="skill-governance-settings-title"
+    >
+      <div className="settings-personalization-section-head">
         <span>
           <ShieldCheck size={18} />
           <h2 id="skill-governance-settings-title">{t("Skill policy")}</h2>
         </span>
-        <button className="secondary-button compact-button" type="button" onClick={() => void refresh(true)} disabled={loading}>
-          {loading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
-          {t("Refresh")}
-        </button>
       </div>
 
-      <p className="settings-panel-copy">
-        {t("Control skill recording, generation, and publication policy.")}
-      </p>
-
-      {error ? <div className="inline-error">{error}</div> : null}
-      {message ? <div className="settings-inline-success">{message}</div> : null}
-
-      <SkillGovernanceSettingsPanel
-        policy={skillGovernanceDraft}
-        source={effectiveConfig?.values.skillGovernancePolicy?.source}
-        path={effectiveConfig?.values.skillGovernancePolicy?.path}
-        supported={effectiveConfig === undefined || effectiveConfig.values.skillGovernancePolicy !== undefined}
-        saving={saving || loading}
-        onChange={setSkillGovernanceDraft}
-        onSave={() => void saveSkillGovernancePolicy()}
-        t={t}
-      />
+      {error ? <InlineFeedback className="settings-personalization-feedback" tone="danger">{error}</InlineFeedback> : null}
+      {initialLoading ? (
+        <div className="settings-personalization-loading" aria-label={t("Loading")} aria-busy="true">
+          <Skeleton width="58%" />
+          <Skeleton height={72} shape="block" />
+        </div>
+      ) : effectiveConfig ? (
+        <SkillGovernanceSettingsPanel
+          dirty={dirty}
+          policy={skillGovernanceDraft}
+          supported={supported}
+          saving={saving || loading}
+          onChange={setSkillGovernanceDraft}
+          onSave={() => void saveSkillGovernancePolicy()}
+          t={t}
+        />
+      ) : null}
     </section>
   );
+}
+
+function skillGovernancePoliciesEqual(left: SkillGovernancePolicy, right: SkillGovernancePolicy): boolean {
+  return left.generationMode === right.generationMode
+    && left.recordingMode === right.recordingMode
+    && left.invocationMode === right.invocationMode
+    && left.publishMode === right.publishMode
+    && left.bindMode === right.bindMode;
 }

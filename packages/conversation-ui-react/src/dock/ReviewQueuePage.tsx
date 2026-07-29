@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { DockReviewGroup, DockReviewItem } from "@ling-stack/conversation-ui-core";
+import { Button, SegmentedControl, SegmentedControlItem } from "@ling-stack/ui-react";
 import { DockEmptyState } from "./DockEmptyState.js";
 
 export type DockReviewFilter = DockReviewGroup | "all" | "needs_action";
@@ -92,20 +93,26 @@ export function ReviewQueuePage({
     <div className={rootClassName}>
       <section className="right-dock-review-list-pane">
         {showFilterRow ? (
-          <div className="right-dock-filter-row" role="tablist" aria-label="Review filters">
+          <SegmentedControl
+            className="right-dock-filter-row"
+            role="tablist"
+            aria-label="Review filters"
+            value={activeFilter}
+            onValueChange={(value) => onFilterChange(value as DockReviewFilter)}
+            size="sm"
+          >
             {filters.map((filter) => (
-              <button
+              <SegmentedControlItem
                 key={filter.id}
-                className={filter.id === activeFilter ? "right-dock-filter active" : "right-dock-filter"}
-                type="button"
+                className="right-dock-filter"
                 role="tab"
                 aria-selected={filter.id === activeFilter}
-                onClick={() => onFilterChange(filter.id)}
+                value={filter.id}
               >
                 {filter.label}
-              </button>
+              </SegmentedControlItem>
             ))}
-          </div>
+          </SegmentedControl>
         ) : null}
         {showStatusSummary && items.length > 0 ? (
           <div className="right-dock-review-status-card">
@@ -139,7 +146,7 @@ export function ReviewQueuePage({
               }
               return (
                 <div key={item.id} className="right-dock-review-accordion-item">
-                  <button
+                  <Button
                     className={[
                       "right-dock-row",
                       "right-dock-review-row",
@@ -147,7 +154,9 @@ export function ReviewQueuePage({
                       `right-dock-row-severity-${item.severity}`,
                       `status-${item.status}`,
                     ].filter(Boolean).join(" ")}
-                    type="button"
+                    leadingIcon={<span className="right-dock-row-dot" aria-hidden="true" />}
+                    size="md"
+                    variant="ghost"
                     title={reviewRowTitle(item)}
                     aria-current={selected ? "true" : undefined}
                     aria-expanded={renderItemDetail ? selected : undefined}
@@ -160,7 +169,6 @@ export function ReviewQueuePage({
                     }}
                     disabled={!renderItemDetail && !onOpenItem}
                   >
-                    <span className="right-dock-row-dot" aria-hidden="true" />
                     <span className="right-dock-row-copy">
                       <strong>{item.title}</strong>
                       <small>{item.pathLabel ?? item.reason}</small>
@@ -175,7 +183,7 @@ export function ReviewQueuePage({
                         {reviewActionLabel(item)}
                       </span>
                     )}
-                  </button>
+                  </Button>
                 </div>
               );
             })}
@@ -199,12 +207,12 @@ export function ReviewQueuePage({
                 <small>{blockerCount} {blockerLabel}</small>
               </span>
               <span className="right-dock-review-action-buttons">
-                <button type="button" disabled={!onClearReviewPacket} onClick={() => onClearReviewPacket?.()}>
+                <Button size="sm" disabled={!onClearReviewPacket} onClick={() => onClearReviewPacket?.()}>
                   {clearReviewLabel}
-                </button>
-                <button type="button" className="primary" disabled={!onSendReviewPacket || pendingItems.length === 0} onClick={() => onSendReviewPacket?.(pendingItems)}>
+                </Button>
+                <Button variant="primary" size="sm" disabled={!onSendReviewPacket || pendingItems.length === 0} onClick={() => onSendReviewPacket?.(pendingItems)}>
                   {sendReviewLabel}
-                </button>
+                </Button>
               </span>
             </footer>
           ) : null}

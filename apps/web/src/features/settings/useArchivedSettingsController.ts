@@ -15,8 +15,17 @@ import {
   unarchiveLingThread,
   updateAiTeammate,
 } from "../../api.js";
-import { useI18n } from "../../i18n.js";
+import { useI18n, type Translate } from "../../i18n.js";
 import type { AiTeammate, Channel, ChannelBranch, LingThread } from "../../types.js";
+
+export interface ArchivedSettingsFeedback {
+  readonly message: string;
+  readonly details?: string;
+}
+
+export interface ArchivedSettingsActionError extends ArchivedSettingsFeedback {
+  readonly actionId: string;
+}
 
 export interface ArchivedSettingsControllerState {
   readonly archivedChannels: readonly Channel[];
@@ -26,20 +35,22 @@ export interface ArchivedSettingsControllerState {
   readonly archivedConversations: readonly LingThread[];
   readonly archivedTeammates: readonly AiTeammate[];
   readonly isLoading: boolean;
-  readonly errorMessage: string;
+  readonly loadError?: ArchivedSettingsFeedback;
+  readonly actionError?: ArchivedSettingsActionError;
   readonly actionId: string;
 }
 
 export interface ArchivedSettingsControllerActions {
-  readonly refresh: () => Promise<void>;
-  readonly restoreChannel: (channelId: string) => Promise<void>;
-  readonly deleteChannel: (channel: Channel) => Promise<void>;
-  readonly restoreBranch: (branch: ChannelBranch) => Promise<void>;
-  readonly deleteBranch: (branch: ChannelBranch) => Promise<void>;
-  readonly restoreConversation: (threadId: string) => Promise<void>;
-  readonly deleteConversation: (thread: LingThread) => Promise<void>;
-  readonly restoreTeammate: (teammateId: string) => Promise<void>;
-  readonly deleteTeammate: (teammate: AiTeammate) => Promise<void>;
+  readonly refresh: () => Promise<boolean>;
+  readonly clearActionError: () => void;
+  readonly restoreChannel: (channelId: string) => Promise<boolean>;
+  readonly deleteChannel: (channel: Channel) => Promise<boolean>;
+  readonly restoreBranch: (branch: ChannelBranch) => Promise<boolean>;
+  readonly deleteBranch: (branch: ChannelBranch) => Promise<boolean>;
+  readonly restoreConversation: (threadId: string) => Promise<boolean>;
+  readonly deleteConversation: (thread: LingThread) => Promise<boolean>;
+  readonly restoreTeammate: (teammateId: string) => Promise<boolean>;
+  readonly deleteTeammate: (teammate: AiTeammate) => Promise<boolean>;
 }
 
 export function useArchivedSettingsController({
@@ -61,20 +72,22 @@ export function useArchivedSettingsController({
   const [archivedConversations, setArchivedConversations] = useState<readonly LingThread[]>([]);
   const [archivedTeammates, setArchivedTeammates] = useState<readonly AiTeammate[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState("");
+  const [loadError, setLoadError] = useState<ArchivedSettingsFeedback>();
+  const [actionError, setActionError] = useState<ArchivedSettingsActionError>();
   const [actionId, setActionId] = useState("");
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (): Promise<boolean> => {
     if (!cwd.trim()) {
       setArchivedChannels([]);
       setArchiveParentChannels([]);
       setArchivedBranches([]);
       setArchivedConversations([]);
       setArchivedTeammates([]);
-      return;
+      setLoadError(undefined);
+      return true;
     }
     setIsLoading(true);
-    setErrorMessage("");
+    setLoadError(undefined);
     try {
       const [activeChannelsResponse, archivedChannelsResponse, archivedConversationResponse, teammateResponse] = await Promise.all([
         listChannels(cwd, { archived: false, limit: 500 }),
@@ -98,12 +111,14 @@ export function useArchivedSettingsController({
           .filter((teammate) => teammate.hidden && teammate.status !== "disabled")
           .sort(sortByUpdatedAtDesc),
       );
+      return true;
     } catch (caught) {
-      setErrorMessage(caught instanceof Error ? caught.message : String(caught));
+      setLoadError(createLoadFeedback(caught, t));
+      return false;
     } finally {
       setIsLoading(false);
     }
-  }, [cwd]);
+  }, [cwd, t]);
 
   useEffect(() => {
     if (enabled) {
@@ -116,87 +131,97 @@ export function useArchivedSettingsController({
     [archiveParentChannels],
   );
 
-  const runAction = useCallback(async (nextActionId: string, action: () => Promise<void>) => {
+  const clearActionError = useCallback(() => {
+    setActionError(undefined);
+  }, []);
+
+  const runAction = useCallback(async (
+    nextActionId: string,
+    actionKind: "restore" | "delete",
+    action: () => Promise<void>,
+  ): Promise<boolean> => {
     setActionId(nextActionId);
-    setErrorMessage("");
+    setActionError(undefined);
     try {
       await action();
+      return true;
     } catch (caught) {
-      setErrorMessage(archivedDeleteErrorMessage(caught, t));
+      setActionError({ actionId: nextActionId, ...createActionFeedback(caught, actionKind, t) });
+      return false;
     } finally {
       setActionId("");
     }
   }, [t]);
 
+  const finishMutation = useCallback(async (): Promise<void> => {
+    const refreshed = await refresh();
+    await onChanged?.();
+    if (!refreshed) {
+      throw new Error(t("The archived item changed, but the list could not be refreshed. Reopen Settings and try again."));
+    }
+  }, [onChanged, refresh, t]);
+
   const restoreChannel = useCallback(async (channelId: string) => {
-    await runAction(`channel:${channelId}:restore`, async () => {
+    return await runAction(`channel:${channelId}:restore`, "restore", async () => {
       await patchChannel(cwd, channelId, { status: "active" });
-      await refresh();
-      await onChanged?.();
+      await finishMutation();
     });
-  }, [cwd, onChanged, refresh, runAction]);
+  }, [cwd, finishMutation, runAction]);
 
   const removeChannel = useCallback(async (channel: Channel) => {
-    await runAction(`channel:${channel.id}:delete`, async () => {
+    return await runAction(`channel:${channel.id}:delete`, "delete", async () => {
       await deleteChannel(cwd, channel.id);
-      await refresh();
-      await onChanged?.();
+      await finishMutation();
     });
-  }, [cwd, onChanged, refresh, runAction]);
+  }, [cwd, finishMutation, runAction]);
 
   const restoreBranch = useCallback(async (branch: ChannelBranch) => {
     const parent = archiveParentChannelById.get(branch.channelId);
-    await runAction(`branch:${branch.id}:restore`, async () => {
+    return await runAction(`branch:${branch.id}:restore`, "restore", async () => {
       if (parent?.status === "archived") {
         await patchChannel(cwd, branch.channelId, { status: "active" });
       }
       await updateChannelBranch(cwd, branch.channelId, branch.id, { status: "active" });
-      await refresh();
-      await onChanged?.();
+      await finishMutation();
     });
-  }, [archiveParentChannelById, cwd, onChanged, refresh, runAction]);
+  }, [archiveParentChannelById, cwd, finishMutation, runAction]);
 
   const removeBranch = useCallback(async (branch: ChannelBranch) => {
-    await runAction(`branch:${branch.id}:delete`, async () => {
+    return await runAction(`branch:${branch.id}:delete`, "delete", async () => {
       await deleteChannelBranch(cwd, branch.channelId, branch.id);
-      await refresh();
-      await onChanged?.();
+      await finishMutation();
     });
-  }, [cwd, onChanged, refresh, runAction]);
+  }, [cwd, finishMutation, runAction]);
 
   const restoreConversation = useCallback(async (threadId: string) => {
-    await runAction(`conversation:${threadId}:restore`, async () => {
+    return await runAction(`conversation:${threadId}:restore`, "restore", async () => {
       await unarchiveLingThread(cwd, threadId, {
         idempotencyKey: `settings-conversation-restore:${threadId}`,
       });
-      await refresh();
-      await onChanged?.();
+      await finishMutation();
     });
-  }, [cwd, onChanged, refresh, runAction]);
+  }, [cwd, finishMutation, runAction]);
 
   const removeConversation = useCallback(async (thread: LingThread) => {
-    await runAction(`conversation:${thread.id}:delete`, async () => {
+    return await runAction(`conversation:${thread.id}:delete`, "delete", async () => {
       await hardDeleteLingThread(cwd, thread.id, "settings_archived_items_delete");
-      await refresh();
-      await onChanged?.();
+      await finishMutation();
     });
-  }, [cwd, onChanged, refresh, runAction]);
+  }, [cwd, finishMutation, runAction]);
 
   const restoreTeammate = useCallback(async (teammateId: string) => {
-    await runAction(`teammate:${teammateId}:restore`, async () => {
+    return await runAction(`teammate:${teammateId}:restore`, "restore", async () => {
       await updateAiTeammate(cwd, teammateId, { hidden: false });
-      await refresh();
-      await onChanged?.();
+      await finishMutation();
     });
-  }, [cwd, onChanged, refresh, runAction]);
+  }, [cwd, finishMutation, runAction]);
 
   const removeTeammate = useCallback(async (teammate: AiTeammate) => {
-    await runAction(`teammate:${teammate.id}:delete`, async () => {
+    return await runAction(`teammate:${teammate.id}:delete`, "delete", async () => {
       await hardDeleteAiTeammate(cwd, teammate.id, "settings_archived_items_delete");
-      await refresh();
-      await onChanged?.();
+      await finishMutation();
     });
-  }, [cwd, onChanged, refresh, runAction]);
+  }, [cwd, finishMutation, runAction]);
 
   return {
     state: {
@@ -207,11 +232,13 @@ export function useArchivedSettingsController({
       archivedConversations,
       archivedTeammates,
       isLoading,
-      errorMessage,
+      loadError,
+      actionError,
       actionId,
     },
     actions: {
       refresh,
+      clearActionError,
       restoreChannel,
       deleteChannel: removeChannel,
       restoreBranch,
@@ -224,21 +251,44 @@ export function useArchivedSettingsController({
   };
 }
 
-function archivedDeleteErrorMessage(caught: unknown, t: (key: string) => string): string {
-  const message = caught instanceof Error ? caught.message : String(caught);
+function createLoadFeedback(caught: unknown, t: Translate): ArchivedSettingsFeedback {
+  return {
+    message: t("Archived items could not be loaded. Review details and try again."),
+    details: errorMessage(caught),
+  };
+}
+
+function createActionFeedback(
+  caught: unknown,
+  actionKind: "restore" | "delete",
+  t: Translate,
+): ArchivedSettingsFeedback {
+  const message = errorMessage(caught);
   if (message.includes("targeted by automation")) {
-    return t("This conversation is still used by an automation. Update the automation before deleting it.");
+    return { message: t("This conversation is still used by an automation. Update the automation before deleting it.") };
   }
   if (message.includes("active work") || message.includes("active turn")) {
-    return t("This conversation still has active work and cannot be deleted.");
+    return { message: t("This conversation still has active work and cannot be deleted.") };
   }
   if (message.includes("must be archived") || message.includes("Only conversation threads")) {
-    return t("Only archived conversations can be deleted.");
+    return { message: t("Only archived conversations can be deleted.") };
   }
   if (message.includes("Ling Agent cannot be deleted")) {
-    return t("Ling Agent cannot be deleted.");
+    return { message: t("Ling Agent cannot be deleted.") };
   }
-  return message;
+  if (message === t("The archived item changed, but the list could not be refreshed. Reopen Settings and try again.")) {
+    return { message };
+  }
+  return {
+    message: actionKind === "delete"
+      ? t("The archived item could not be deleted. Review details and try again.")
+      : t("The archived item could not be restored. Review details and try again."),
+    details: message,
+  };
+}
+
+function errorMessage(caught: unknown): string {
+  return caught instanceof Error ? caught.message : String(caught);
 }
 
 function sortByUpdatedAtDesc<T extends { readonly updatedAt: string }>(left: T, right: T): number {

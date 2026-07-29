@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expectMessageFrameContained } from "./support/message-frame-assertions";
 import { mockDaemon, type MockExecutionAction } from "./support/mock-daemon";
 import {
   createBaseState,
@@ -184,12 +185,12 @@ test("AI teammates page creates a durable teammate and opens its private workspa
 
   const navigation = page.getByLabel("Ling Stack navigation");
   await openSidebarSectionMenu(page, "Teammate actions");
-  await expect(navigation.getByRole("menuitem", { name: /New AI teammate/ })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: /New AI teammate/ })).toBeVisible();
   await expect(navigation.getByText("Choose a role and model. You can adjust details before creating.")).toHaveCount(0);
-  await expect(navigation.getByRole("menuitem", { name: /Quick create default teammate/ })).toHaveCount(0);
-  await expect(navigation.getByRole("menuitem", { name: /More configuration/ })).toHaveCount(0);
-  await expect(navigation.getByRole("menuitem", { name: "New teammate" })).toHaveCount(0);
-  await navigation.getByRole("menuitem", { name: /New AI teammate/ }).click();
+  await expect(page.getByRole("menuitem", { name: /Quick create default teammate/ })).toHaveCount(0);
+  await expect(page.getByRole("menuitem", { name: /More configuration/ })).toHaveCount(0);
+  await expect(page.getByRole("menuitem", { name: "New teammate" })).toHaveCount(0);
+  await page.getByRole("menuitem", { name: /New AI teammate/ }).click();
   await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
   await expect(page.getByLabel("Settings sections")).toHaveCount(0);
   await expect(page.locator(".teammate-create-overlay")).toBeVisible();
@@ -285,21 +286,21 @@ test("AI teammates page creates a durable teammate and opens its private workspa
     const menuRect = menuTrigger?.getBoundingClientRect();
     return {
       rowOverflow: row.scrollWidth - row.clientWidth,
-      modelBeforeChannel: modelRect && channelRect ? modelRect.right <= channelRect.left : false,
+      modelAboveMetadata: modelRect && channelRect ? modelRect.bottom <= channelRect.top + 1 : false,
       channelBeforeUpdated: channelRect && updatedRect ? channelRect.right <= updatedRect.left : false,
       actionBeforeMenu: primaryRect && menuRect ? primaryRect.right <= menuRect.left : false,
     };
   });
   expect(lingEngineerRowLayout.rowOverflow).toBeLessThanOrEqual(1);
-  expect(lingEngineerRowLayout.modelBeforeChannel).toBe(true);
+  expect(lingEngineerRowLayout.modelAboveMetadata).toBe(true);
   expect(lingEngineerRowLayout.channelBeforeUpdated).toBe(true);
   expect(lingEngineerRowLayout.actionBeforeMenu).toBe(true);
   await expect(page.getByLabel("Workflow")).toHaveCount(0);
   await expect(page.locator(".teammate-detail-panel")).toHaveCount(0);
 
   await lingEngineerRow.getByLabel("Teammate actions").click();
-  await expect(lingEngineerRow.getByRole("menuitem", { name: "Delete" })).toBeVisible();
-  await lingEngineerRow.getByRole("menuitem", { name: "Delete" }).click();
+  await expect(page.getByRole("menuitem", { name: "Delete" })).toBeVisible();
+  await page.getByRole("menuitem", { name: "Delete" }).click();
   await expect.poll(() => {
     const teammate = state.aiTeammates.find((item) => isRecord(item) && item.displayName === "Ling Engineer");
     return isRecord(teammate) ? `${String(teammate.status)}:${String(teammate.hidden)}` : "missing";
@@ -326,9 +327,9 @@ test("sidebar new teammate action supports custom setup with verified progress",
   const navigation = page.getByLabel("Ling Stack navigation");
   const initialTeammateCount = state.aiTeammates.length;
   await openSidebarSectionMenu(page, "Teammate actions");
-  await expect(navigation.getByRole("menuitem", { name: /New AI teammate/ })).toBeVisible();
-  await expect(navigation.getByRole("menuitem", { name: /Quick create default teammate/ })).toHaveCount(0);
-  await navigation.getByRole("menuitem", { name: /New AI teammate/ }).click();
+  await expect(page.getByRole("menuitem", { name: /New AI teammate/ })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: /Quick create default teammate/ })).toHaveCount(0);
+  await page.getByRole("menuitem", { name: /New AI teammate/ }).click();
 
   const creator = page.getByRole("dialog", { name: "Create AI teammate" });
   await expect(creator).toBeVisible();
@@ -396,7 +397,7 @@ test("custom teammate model check failure stops before teammate creation", async
 
   const initialTeammateCount = state.aiTeammates.length;
   await openSidebarSectionMenu(page, "Teammate actions");
-  await page.getByLabel("Ling Stack navigation").getByRole("menuitem", { name: /New AI teammate/ }).click();
+  await page.getByRole("menuitem", { name: /New AI teammate/ }).click();
   const creator = page.getByRole("dialog", { name: "Create AI teammate" });
   await creator.getByRole("button", { name: /Start from blank/ }).click();
   await creator.getByLabel("Teammate name").fill("Blocked Custom");
@@ -423,11 +424,11 @@ test("sidebar teammate create offers model workbench when no ready model exists"
 
   const navigation = page.getByLabel("Ling Stack navigation");
   await openSidebarSectionMenu(page, "Teammate actions");
-  await expect(navigation.getByRole("menuitem", { name: /Quick create default teammate/ })).toHaveCount(0);
-  await expect(navigation.getByRole("menuitem", { name: /New AI teammate/ })).toHaveCount(0);
-  await expect(navigation.getByRole("menuitem", { name: /Configure model/ })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: /Quick create default teammate/ })).toHaveCount(0);
+  await expect(page.getByRole("menuitem", { name: /New AI teammate/ })).toHaveCount(0);
+  await expect(page.getByRole("menuitem", { name: /Configure model/ })).toBeVisible();
   await expect(navigation.getByText("Configure a ready chat model before creating.")).toHaveCount(0);
-  await navigation.getByRole("menuitem", { name: /Configure model/ }).click();
+  await page.getByRole("menuitem", { name: /Configure model/ }).click();
 
   await expect(page.getByLabel("Settings sections")).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
@@ -530,6 +531,7 @@ test("Ling Agent private chat renders workspace governance digest without source
   const digestRow = page.locator(".teammate-message-row.system").filter({ hasText: "Workspace review digest" });
   await expect(digestRow).toBeVisible();
   await expect(digestRow).toHaveClass(/message-bubble-system/);
+  await expectMessageFrameContained(digestRow);
   await expect(digestRow).toContainText("Memory Review");
   await expect(digestRow).not.toContainText("Workspace governance body must not be copied");
 });
@@ -822,7 +824,7 @@ test("AI teammates page links council management to Council Workspace", async ({
 
   const navigation = page.getByLabel("Ling Stack navigation");
   await openSidebarSectionMenu(page, "Teammate actions");
-  await navigation.getByRole("menuitem", { name: /New AI teammate/ }).click();
+  await page.getByRole("menuitem", { name: /New AI teammate/ }).click();
   await page.getByRole("dialog", { name: "Create AI teammate" }).getByRole("button", { name: "Cancel" }).last().click();
   await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
   await expect(page.getByLabel("Settings sections")).toHaveCount(0);
@@ -859,7 +861,7 @@ test("AI teammates page links council management to Council Workspace", async ({
   await expect(page.getByRole("heading", { name: "Council Workspace", level: 1 })).toHaveCount(0);
   await expect(page.getByLabel("Settings sections").getByRole("button", { name: "Council Workspace" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
-  await expect(page.getByLabel("Council members")).toContainText("Ling Engineer");
+  await expect(page.getByRole("region", { name: "Council members" })).toContainText("Ling Engineer");
   await page.getByLabel("Settings sections").getByRole("button", { name: "Teammate Management" }).click();
   await expect(page.getByLabel("Settings sections").getByRole("button", { name: "Teammate Management" })).toHaveClass(/active/);
   expect(state.aiCouncilMembers).toHaveLength(1);
@@ -888,16 +890,21 @@ test("AI teammate sidebar menu keeps create action without bulk archive", async 
   await expect(navigation.getByRole("button", { name: "Ling Engineer" })).toBeVisible();
   await expect(navigation.getByRole("button", { name: "Ling Designer" })).toBeVisible();
   await openSidebarSectionMenu(page, "Teammate actions");
-  await expect(navigation.getByRole("menuitem", { name: /New AI teammate/ })).toBeVisible();
-  await expect(navigation.getByRole("menuitem", { name: /Quick create default teammate/ })).toHaveCount(0);
-  await expect(navigation.getByRole("menuitem", { name: /More configuration/ })).toHaveCount(0);
-  await expect(navigation.getByRole("menuitem", { name: "Archive all chats" })).toHaveCount(0);
+  await expect(page.getByRole("menuitem", { name: /New AI teammate/ })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: /Quick create default teammate/ })).toHaveCount(0);
+  await expect(page.getByRole("menuitem", { name: /More configuration/ })).toHaveCount(0);
+  await expect(page.getByRole("menuitem", { name: "Archive all chats" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Ling Engineer" })).toBeVisible();
   await expect(navigation.getByRole("button", { name: "Ling Designer" })).toBeVisible();
   await expect.poll(() => state.aiTeammates.length).toBe(2);
 });
 
 test("AI teammate private workspace sends blocked chat replies and persists settings", async ({ page }) => {
+  const runtimeErrors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") runtimeErrors.push(`${message.text()} @ ${message.location().url || "unknown"}`);
+  });
+  page.on("pageerror", (error) => runtimeErrors.push(error.message));
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
     localStorage.setItem("ling-stack.themePreference", "dark");
@@ -1190,6 +1197,8 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(linkedRunPrivateRow.getByText("Private acceptance criteria summary.")).toHaveCount(0);
   const privateTerminalReport = linkedRunPrivateRow.locator(".terminal-report-block");
   await expect(privateTerminalReport).toBeVisible();
+  await expect.poll(() => privateTerminalReport.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
   await expect(privateTerminalReport.locator(".terminal-report-summary")).not.toHaveAttribute("aria-expanded");
   await expect(privateTerminalReport.locator(".terminal-report-toggle")).toHaveCount(0);
   await expect(privateTerminalReport).toContainText("Refined private acceptance criteria");
@@ -1248,10 +1257,10 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await page.getByRole("button", { name: "Close terminal panel" }).click();
   await page.getByRole("button", { name: "Show details" }).click();
   await expect(privateDock).toContainText("Workspace tools");
-  await page.getByRole("button", { name: "Activity" }).click();
+  await page.getByRole("button", { name: "Context" }).click();
   await expect(page.getByLabel("Conversation context")).toBeVisible();
   const privateContextDarkSurfaces = await page.evaluate(() => {
-    const selectors = [".teammate-context-panel", ".teammate-context-row"];
+    const selectors = [".teammate-private-context-page", ".teammate-private-context-page .ling-ui-data-row"];
     return selectors.flatMap((selector) =>
       Array.from(document.querySelectorAll(selector)).map((element) => {
         const color = getComputedStyle(element).backgroundColor.match(/\d+/g)?.slice(0, 3).map(Number) ?? [];
@@ -1282,7 +1291,7 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
 
   const privateComposer = page.locator(".teammate-direct-composer");
   await privateComposer.getByRole("button", { name: /Selected permission preset Workspace write/ }).click();
-  await privateComposer.getByRole("menuitemradio", { name: /Read only/ }).click();
+  await page.getByRole("menuitemradio", { name: /Read only/ }).click();
   await page.getByPlaceholder("Message this AI teammate privately").fill("Please refine the private workspace acceptance criteria.");
   await page.getByPlaceholder("Message this AI teammate privately").press("Enter");
   await expect.poll(() => state.lastTeammateDirectMessageRequest?.authorizationMode).toBe("smart");
@@ -1296,20 +1305,20 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(privateMessageRow.locator(".status-badge")).toHaveCount(0);
   await expect(privateMessageRow.getByRole("link", { name: "private-notes.md" })).toHaveAttribute("href", /\/attachments\/tpatt_1\/content/);
   const privateActions = privateMessageRow.locator(".teammate-message-actions.message-action-bar");
-  await expect(privateActions.locator('[data-tooltip="Copy message"]')).toHaveCount(1);
-  await expect(privateActions.locator('[data-tooltip="Create task"]')).toHaveCount(1);
-  await expect(privateActions.locator('[data-tooltip="Like response"]')).toHaveCount(0);
-  await expect(privateActions.locator('[data-tooltip="Dislike response"]')).toHaveCount(0);
-  await expect(privateActions.locator('[data-tooltip="Reply in topic"]')).toHaveCount(0);
+  await expect(privateActions.getByRole("button", { name: "Copy message", exact: true })).toHaveCount(1);
+  await expect(privateActions.getByRole("button", { name: "Create task", exact: true })).toHaveCount(1);
+  await expect(privateActions.getByRole("button", { name: "Like response", exact: true })).toHaveCount(0);
+  await expect(privateActions.getByRole("button", { name: "Dislike response", exact: true })).toHaveCount(0);
+  await expect(privateActions.getByRole("button", { name: "Reply in topic", exact: true })).toHaveCount(0);
   const blockedPrivateRow = page.locator(".teammate-message-row.ai-teammate").filter({ hasText: "AI teammate is blocked: No provider preset is selected for this teammate." });
   await expect(blockedPrivateRow).toHaveClass(/message-bubble-chat-blocked/);
   await expect(blockedPrivateRow).toHaveClass(/message-bubble-peer/);
   await expect(blockedPrivateRow.locator(".status-badge")).toHaveCount(0);
   const blockedPrivateActions = blockedPrivateRow.locator(".teammate-message-actions.message-action-bar");
-  await expect(blockedPrivateActions.locator('[data-tooltip="Copy message"]')).toHaveCount(1);
-  await expect(blockedPrivateActions.locator('[data-tooltip="Like response"]')).toHaveCount(1);
-  await expect(blockedPrivateActions.locator('[data-tooltip="Dislike response"]')).toHaveCount(1);
-  await expect(blockedPrivateActions.locator('[data-tooltip="Reply in topic"]')).toHaveCount(0);
+  await expect(blockedPrivateActions.getByRole("button", { name: "Copy message", exact: true })).toHaveCount(1);
+  await expect(blockedPrivateActions.getByRole("button", { name: "Like response", exact: true })).toHaveCount(1);
+  await expect(blockedPrivateActions.getByRole("button", { name: "Dislike response", exact: true })).toHaveCount(1);
+  await expect(blockedPrivateActions.getByRole("button", { name: "Reply in topic", exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Conversation context").getByText("Private acceptance memory")).toBeVisible();
   await expect.poll(() => state.teammateDirectMessages.length).toBe(4);
   await expect.poll(() => {
@@ -1341,7 +1350,7 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect.poll(() => state.teammateChannelMemberships.some((item) =>
     isRecord(item) && item.teammateId === teammateId && item.channelId === "channel_design"
   )).toBe(true);
-  await expect(designRow.getByRole("button", { name: "Set default" })).toHaveCount(0);
+  await expect(designRow.getByRole("button", { name: "Set default" })).toBeEnabled();
   await expect.poll(() => {
     const membership = state.teammateChannelMemberships.find((item) =>
       isRecord(item) && item.teammateId === teammateId && item.channelId === "channel_design"
@@ -1355,15 +1364,16 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   )).toBe(false);
 
   await settingsSections.getByRole("button", { name: /Skills/ }).click();
-  const skillsPanel = page.locator(".teammate-skills-panel");
+  const skillsPanel = page.locator("[data-ui2-teammate-skills]");
   await expect(skillsPanel).toContainText("Implementation");
-  const codeReviewSkillRow = skillsPanel.getByRole("row", { name: /Code Review/ });
-  await expect(codeReviewSkillRow).toContainText("Source-backed");
-  await codeReviewSkillRow.getByRole("button", { name: "Details" }).click();
-  await expect(skillsPanel.locator(".teammate-skill-inspector")).toContainText("skill_source_review_mock");
-  await expect(skillsPanel.locator(".teammate-skill-inspector")).toContainText("sha256:review-mock");
+  const codeReviewSkillRow = skillsPanel.locator('[data-skill-id="review"]');
+  await codeReviewSkillRow.getByRole("button", { name: "View skill details" }).click();
+  const skillDetail = page.getByRole("dialog", { name: "Skill detail" });
+  await skillDetail.getByText("Source and raw details", { exact: true }).click();
+  await expect(skillDetail).toContainText("skill_source_review_mock");
+  await expect(skillDetail).toContainText("sha256:review-mock");
   const skillsDarkSurfaces = await page.evaluate(() => {
-    const selectors = [".teammate-skill-table-wrap", ".teammate-skill-inspector"];
+    const selectors = [".teammate-skill-list", ".teammate-skill-detail-drawer"];
     return selectors.flatMap((selector) =>
       Array.from(document.querySelectorAll(selector)).map((element) => {
         const color = getComputedStyle(element).backgroundColor.match(/\d+/g)?.slice(0, 3).map(Number) ?? [];
@@ -1378,17 +1388,19 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   for (const surface of skillsDarkSurfaces) {
     expect(surface.maxChannel, `${surface.selector} should stay on dark console tokens`).toBeLessThanOrEqual(45);
   }
-  await skillsPanel.getByPlaceholder("Search Skill or blocked reason").fill("Engineering Plan Review");
-  const engineeringReviewRow = skillsPanel.getByRole("row", { name: /Engineering Plan Review/ });
-  await expect(engineeringReviewRow).toContainText("Available skill");
+  await page.keyboard.press("Escape");
+  await expect(skillDetail).toHaveCount(0);
+  await skillsPanel.getByPlaceholder("Search skills or tools").fill("Engineering Plan Review");
+  const engineeringReviewRow = skillsPanel.locator('[data-skill-id="plan-eng-review"]');
+  await expect(engineeringReviewRow).toContainText("Bindable");
   await engineeringReviewRow.getByRole("button", { name: "Bind" }).click();
   await expect.poll(() => state.teammateSkillBindings.some((item) =>
     isRecord(item) && item.teammateId === teammateId && item.skillId === "plan-eng-review" && item.enabled === true
   )).toBe(true);
-  await expect(skillsPanel).toContainText("Skills updated");
-  await skillsPanel.getByPlaceholder("Search Skill or blocked reason").fill("");
-  const implementationRow = skillsPanel.getByRole("row", { name: /Implementation implement/ });
-  await expect(implementationRow.getByRole("button", { name: "Delete" })).toHaveCount(0);
+  await expect(page.getByText("Skill enabled for teammate", { exact: true })).toBeVisible();
+  await skillsPanel.getByPlaceholder("Search skills or tools").fill("");
+  const implementationRow = skillsPanel.locator('[data-skill-id="implement"]');
+  await expect(implementationRow.getByRole("button", { name: /More actions/ })).toHaveCount(0);
   await implementationRow.getByRole("button", { name: "Disable" }).click();
   await expect.poll(() => {
     const binding = state.teammateSkillBindings.find((item) =>
@@ -1396,23 +1408,25 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
     );
     return isRecord(binding) ? binding.enabled : undefined;
   }).toBe(false);
-  await skillsPanel.getByRole("button", { name: "Import" }).click();
-  await skillsPanel.getByLabel("Draft name").fill("Custom QA Pack");
-  await skillsPanel.getByLabel("Source path").fill("skills/custom-qa/SKILL.md");
-  await skillsPanel.getByLabel("Skill content").fill([
+  await skillsPanel.getByRole("button", { name: "Import skill" }).click();
+  const skillImportDialog = page.getByRole("dialog", { name: "Import skill" });
+  await skillImportDialog.getByLabel("Draft name").fill("Custom QA Pack");
+  await skillImportDialog.getByLabel("Source path").fill("skills/custom-qa/SKILL.md");
+  await skillImportDialog.getByLabel("Skill content").fill([
     "# Custom QA Drill",
     "id: custom-qa-drill",
     "summary: Run a focused QA pass for private workspace changes.",
     "Keep approval and secret instructions as review-only text.",
   ].join("\n"));
-  await skillsPanel.getByRole("button", { name: "Preview draft" }).click();
-  await expect(skillsPanel).toContainText("custom-qa-drill");
-  await expect(skillsPanel).toContainText("Permission-like instruction");
-  await skillsPanel.getByRole("button", { name: "Publish to registry" }).click();
+  await skillImportDialog.getByRole("button", { name: "Preview draft" }).click();
+  await expect(skillImportDialog).toContainText("custom-qa-drill");
+  await expect(skillImportDialog).toContainText("Permission-like instruction");
+  await skillImportDialog.getByRole("button", { name: "Publish to registry" }).click();
   await expect.poll(() => state.skillRegistryEntries.some((item) =>
     isRecord(item) && item.id === "custom-qa-drill" && item.reviewStatus === "published"
   )).toBe(true);
-  await expect(skillsPanel).toContainText("Published 1 skills");
+  await expect(page.getByText("Published 1 skill", { exact: true })).toBeVisible();
+  await skillsPanel.getByText("Advanced binding", { exact: true }).click();
   const skillIdInput = skillsPanel.getByLabel("Skill id");
   await skillIdInput.fill("custom-qa-drill");
   await skillIdInput.press("Enter");
@@ -1422,14 +1436,18 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
     );
     return isRecord(binding) ? [binding.source, binding.enabled] : undefined;
   }).toEqual(["user", true]);
-  const customSkillRow = skillsPanel.getByRole("row", { name: /Custom QA Drill/ });
+  let customSkillRow = skillsPanel.locator('[data-skill-id="custom-qa-drill"]');
   await expect(customSkillRow).toContainText("User skill");
-  await customSkillRow.getByRole("button", { name: "Delete" }).click();
+  await customSkillRow.getByRole("button", { name: "More actions for Custom QA Drill" }).click();
+  await page.getByRole("menuitem", { name: "Remove from teammate" }).click();
   await expect.poll(() => state.teammateSkillBindings.some((item) =>
     isRecord(item) && item.teammateId === teammateId && item.skillId === "custom-qa-drill"
   )).toBe(false);
+  customSkillRow = skillsPanel.locator('[data-skill-id="custom-qa-drill"]');
   await expect(customSkillRow).toContainText("Registry skill");
-  await customSkillRow.getByRole("button", { name: "Archive" }).click();
+  await customSkillRow.getByRole("button", { name: "More actions for Custom QA Drill" }).click();
+  await page.getByRole("menuitem", { name: "Archive skill" }).click();
+  await page.getByRole("dialog", { name: "Archive skill?" }).getByRole("button", { name: "Archive skill" }).click();
   await expect.poll(() => state.skillRegistryEntries.some((item) =>
     isRecord(item) && item.id === "custom-qa-drill" && item.reviewStatus === "archived"
   )).toBe(true);
@@ -1438,12 +1456,13 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(page.getByText("Private chat summary")).toBeVisible();
 
   await settingsSections.getByRole("button", { name: /Profile/ }).click();
-  const profilePanel = page.getByLabel("Teammate settings");
+  const profilePanel = page.getByLabel("Teammate profile");
   await profilePanel.getByLabel("Teammate name").fill("Renamed Engineer");
   await profilePanel.getByLabel("Description").fill("Updated teammate description from settings.");
+  await profilePanel.getByText("Advanced profile", { exact: true }).click();
   await profilePanel.getByLabel("System prompt").fill("Updated teammate system prompt from settings.");
   await page.getByLabel("Single agent settings").getByRole("button", { name: "Save" }).click();
-  await expect(page.getByText("Saved")).toBeVisible();
+  await expect(page.getByText("Teammate profile saved", { exact: true })).toBeVisible();
   await expect(page.getByLabel("Single agent settings").getByRole("heading", { name: "Renamed Engineer settings", level: 2 })).toBeVisible();
   await expect.poll(() => {
     const teammate = state.aiTeammates.find((item) => isRecord(item) && item.id === teammateId);
@@ -1461,12 +1480,12 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   });
 
   await settingsSections.getByRole("button", { name: /Model/ }).click();
-  const modelPanel = page.locator(".teammate-model-panel");
-  await modelPanel.getByLabel("Provider").selectOption("provider_alt");
-  await expect(modelPanel.locator(".teammate-config-card")).toContainText("Model Shuttle");
-  await expect(modelPanel.locator(".teammate-config-card")).toContainText("qwen-plus");
-  await modelPanel.getByRole("button", { name: "Save" }).click();
-  await expect(page.getByText("Saved")).toBeVisible();
+  const modelPanel = page.getByLabel("Model assignment");
+  await modelPanel.getByLabel("Assigned model").selectOption("provider_alt");
+  await expect(modelPanel.getByLabel("Model summary")).toContainText("Model Shuttle");
+  await expect(modelPanel.getByLabel("Model summary")).toContainText("qwen-plus");
+  await page.getByLabel("Single agent settings").getByRole("button", { name: "Save model" }).click();
+  await expect(page.getByText("Teammate model saved", { exact: true })).toBeVisible();
   await expect.poll(() => {
     const teammate = state.aiTeammates.find((item) => isRecord(item) && item.id === teammateId);
     return isRecord(teammate) ? teammate.providerPresetId : undefined;
@@ -1474,9 +1493,8 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
 
   await page.getByRole("button", { name: "Back to private chat" }).click();
   await expect(page.getByRole("heading", { name: "Renamed Engineer", level: 1 })).toBeVisible();
-  const privateComposer = page.locator(".teammate-direct-composer");
   await privateComposer.getByRole("button", { name: /Selected permission preset/ }).click();
-  await privateComposer.getByRole("menuitemradio", { name: /Read-only/ }).click();
+  await page.getByRole("menuitemradio", { name: /Read only/ }).click();
   await page.getByPlaceholder("Message this AI teammate privately").fill("Use the newly saved model.");
   await page.getByPlaceholder("Message this AI teammate privately").press("Enter");
   await expect(page.getByLabel("Private chat", { exact: true }).getByText("Private reply: I will refine this into a scoped task.")).toBeVisible();
@@ -1495,6 +1513,7 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(page.getByLabel("Private chat", { exact: true }).getByText("AI teammate is blocked: No provider preset is selected for this teammate.")).toBeVisible();
 
   await openPrivateChatSettings(page);
+  await page.getByLabel("Teammate profile").getByText("Advanced profile", { exact: true }).click();
   const personaPanel = page.getByLabel("Persona import");
   await personaPanel.getByLabel("Source path").fill("AGENTS.md");
   await personaPanel.getByLabel("Persona content").fill([
@@ -1512,11 +1531,14 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   }).toEqual(["Imported QA Persona", [], ["read", "grep", "find", "ls"], { mode: "standard", risk: "medium" }]);
   await expect(page.getByLabel("Single agent settings").getByRole("heading", { name: "Imported QA Persona settings", level: 2 })).toBeVisible();
 
-  await page.getByLabel("Avatar").locator("input[type=file]").setInputFiles({
+  await page.getByLabel("Upload avatar").setInputFiles({
     name: "avatar.png",
     mimeType: "image/png",
-    buffer: Buffer.from("png"),
+    buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=", "base64"),
   });
+  const cropDialog = page.getByRole("dialog", { name: "Adjust avatar" });
+  await expect(cropDialog).toBeVisible();
+  await cropDialog.getByRole("button", { name: "Use avatar" }).click();
   await expect.poll(() => {
     const teammate = state.aiTeammates.find((item) => isRecord(item) && item.id === teammateId);
     return isRecord(teammate) ? teammate.avatarImageAttachmentId : undefined;
@@ -1549,12 +1571,11 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(page.getByLabel("Ling Stack navigation").locator(".sidebar-row-shell.selected .teammate-avatar-image-default")).toBeVisible();
 
   await page.getByLabel("Settings sections").getByRole("button", { name: "Danger zone" }).click();
-  await page.getByPlaceholder("Reason").fill("owner request");
-  page.once("dialog", (dialog) => {
-    expect(dialog.message()).toContain("Hard delete this teammate");
-    void dialog.accept();
-  });
   await page.getByRole("button", { name: "Hard delete" }).click();
+  const hardDeleteDialog = page.getByRole("dialog", { name: "Hard delete private data" });
+  await expect(hardDeleteDialog).toBeVisible();
+  await hardDeleteDialog.getByLabel("Reason").fill("owner request");
+  await hardDeleteDialog.getByRole("button", { name: "Hard delete" }).click();
   await expect.poll(() => state.retentionTombstones.length).toBe(1);
   await expect.poll(() => state.aiTeammates.some((item) => isRecord(item) && item.id === teammateId)).toBe(false);
   await expect.poll(() => state.teammatePrivateAttachments.some((item) => isRecord(item) && item.teammateId === teammateId)).toBe(false);
@@ -1567,6 +1588,7 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   const deletedHistoryMessage = page.locator(".message-group").filter({ hasText: "Historical channel reply from a teammate that will be deleted." });
   await expect(deletedHistoryMessage).toContainText("Deleted teammate");
   await expect(deletedHistoryMessage).not.toContainText(teammateId);
+  expect(runtimeErrors).toEqual([]);
 });
 
 test("AI teammate memory tab imports Markdown as review candidates", async ({ page }) => {
@@ -1602,26 +1624,29 @@ test("AI teammate memory tab imports Markdown as review candidates", async ({ pa
   await page.getByLabel("Settings sections").getByRole("button", { name: /Memory/ }).click();
 
   const memoryPanel = page.locator(".teammate-memory-panel");
-  await expect(memoryPanel.getByRole("heading", { name: "Memory" })).toBeVisible();
-  await expect(memoryPanel.getByText("Markdown transfer")).toBeVisible();
+  await expect(memoryPanel.getByRole("heading", { name: "Memory", exact: true })).toBeVisible();
+  await expect(memoryPanel.getByRole("heading", { name: "Workspace memory governance" })).toBeVisible();
 
   const downloadPromise = page.waitForEvent("download");
   await memoryPanel.getByRole("button", { name: "Export" }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/memory-export-workspace_default-/);
-  await expect(memoryPanel).toContainText("Downloaded 1 memories");
+  await expect(page.getByText("Exported 1 memories; secret-adjacent content stayed excluded", { exact: true })).toBeVisible();
 
-  await memoryPanel.getByLabel("Source label").fill("web-import.md");
-  await memoryPanel.getByPlaceholder("Paste a Ling memory Markdown export").fill(markdownImportFixture());
-  await memoryPanel.getByRole("button", { name: "Preview import" }).click();
+  await memoryPanel.getByRole("button", { name: "Import" }).click();
+  const importDialog = page.getByRole("dialog", { name: "Import memory" });
+  await importDialog.getByLabel("Source label").fill("web-import.md");
+  await importDialog.getByRole("textbox", { name: "Markdown" }).fill(markdownImportFixture());
+  await expect(importDialog.getByRole("button", { name: "Import candidates" })).toBeDisabled();
+  await importDialog.getByRole("button", { name: "Preview import" }).click();
 
-  await expect(memoryPanel).toContainText("Preview ready: 1 candidates");
-  const preview = memoryPanel.locator(".teammate-memory-import-preview");
-  await expect(preview.locator("span").filter({ hasText: "Candidates" }).locator("strong")).toHaveText("1");
-  await expect(preview.locator("span").filter({ hasText: "Skipped" }).locator("strong")).toHaveText("0");
-  await expect(preview.locator("span").filter({ hasText: "Warnings" }).locator("strong")).toHaveText("2");
-  await expect(memoryPanel).toContainText("retrievalProviderId was not imported.");
-  await expect(memoryPanel).toContainText('Original reviewState "active" was imported as candidate.');
+  const preview = importDialog.getByLabel("Import preview summary");
+  await expect(preview).toContainText("1 candidates");
+  await expect(preview).toContainText("0 skipped");
+  await expect(preview).toContainText("2 warnings");
+  await importDialog.getByText("Import warnings and skipped items", { exact: true }).click();
+  await expect(importDialog).toContainText("retrievalProviderId was not imported.");
+  await expect(importDialog).toContainText('Original reviewState "active" was imported as candidate.');
   await expect.poll(() => state.memoryMarkdownImportCalls).toEqual([
     {
       dryRun: true,
@@ -1632,8 +1657,9 @@ test("AI teammate memory tab imports Markdown as review candidates", async ({ pa
   ]);
   await expect.poll(() => state.memoryObjects.map((item) => isRecord(item) ? item.title : undefined)).not.toContain("Web import preview memory");
 
-  await memoryPanel.getByRole("button", { name: "Import candidates" }).click();
-  await expect(memoryPanel).toContainText("Imported 1 candidates");
+  await importDialog.getByRole("button", { name: "Import candidates" }).click();
+  await expect(importDialog).toHaveCount(0);
+  await expect(page.getByText("Imported 1 candidates", { exact: true })).toBeVisible();
   await expect.poll(() => state.memoryMarkdownImportCalls.map((call) => call.dryRun)).toEqual([true, false]);
   await expect.poll(() => {
     const imported = state.memoryObjects.find((item) => isRecord(item) && item.title === "Web import preview memory");
@@ -1651,7 +1677,7 @@ test("AI teammate memory tab imports Markdown as review candidates", async ({ pa
     retrievalProviderId: undefined,
     sourceRefs: ["manual", "import"],
   });
-  await expect(memoryPanel.locator(".teammate-memory-review-card").filter({ hasText: "Web import preview memory" })).toBeVisible();
+  await expect(memoryPanel.locator('[data-memory-id^="memory_imported_"]').filter({ hasText: "Web import preview memory" })).toBeVisible();
 });
 
 test("AI teammate settings save status and visibility fields", async ({ page }) => {
@@ -1667,12 +1693,12 @@ test("AI teammate settings save status and visibility fields", async ({ page }) 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Ling Engineer" }).click();
   await openPrivateChatSettings(page);
   await page.getByLabel("Settings sections").getByRole("button", { name: /Profile/ }).click();
-  const profilePanel = page.getByLabel("Teammate settings");
+  const profilePanel = page.getByLabel("Teammate profile");
   await profilePanel.getByLabel("Status").selectOption("paused");
   await profilePanel.getByLabel("Pinned in sidebar").setChecked(false);
   await profilePanel.getByLabel("Hidden from sidebar").setChecked(true);
   await page.getByLabel("Single agent settings").getByRole("button", { name: "Save" }).click();
-  await expect(page.getByText("Saved")).toBeVisible();
+  await expect(page.locator('[data-ling-overlay="toast"]').filter({ hasText: "Teammate profile saved" })).toBeVisible();
 
   await expect.poll(() => {
     const teammate = state.aiTeammates.find((item) => isRecord(item) && item.id === teammateId);
@@ -1918,9 +1944,9 @@ test("AI teammate private chat exposes direct reply guidance and stop controls",
   await expect(guidance.getByRole("button", { name: "立即执行这条引导" })).toBeEnabled();
   await expect(guidance.getByRole("button", { name: "删除排队引导" })).toBeEnabled();
   await guidance.getByRole("button", { name: "更多引导操作" }).click();
-  await expect(guidance.getByRole("menuitem", { name: "编辑消息" })).toBeVisible();
-  await expect(guidance.getByRole("menuitem", { name: "关闭排队" })).toBeVisible();
-  await guidance.getByRole("menuitem", { name: "编辑消息" }).click();
+  await expect(page.getByRole("menuitem", { name: "编辑消息" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "关闭排队" })).toBeVisible();
+  await page.getByRole("menuitem", { name: "编辑消息" }).click();
   await expect(privateInput).toHaveAttribute("data-value", "Continue with only risks after this reply.");
   await expect.poll(() => state.teammateDirectInterventions[0]?.status).toBe("cancelled");
 
@@ -1944,7 +1970,7 @@ test("AI teammate private chat exposes direct reply guidance and stop controls",
   ]);
   const closeOnlyRow = guidanceAfterCancel.locator(".conversation-guidance-row").filter({ hasText: "Close only this queued guidance." });
   await closeOnlyRow.getByRole("button", { name: "更多引导操作" }).click();
-  await closeOnlyRow.getByRole("menuitem", { name: "关闭排队" }).click();
+  await page.getByRole("menuitem", { name: "关闭排队" }).click();
   await expect.poll(() => {
     const closed = state.teammateDirectInterventions.find((item) => item.instruction === "Close only this queued guidance.");
     const kept = state.teammateDirectInterventions.find((item) => item.instruction === "Keep this queued guidance.");

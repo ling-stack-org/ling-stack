@@ -1,4 +1,5 @@
 import type { DockEvidenceGroupView } from "@ling-stack/conversation-ui-core";
+import { Button } from "@ling-stack/ui-react";
 import { DockEmptyState } from "./DockEmptyState.js";
 
 export interface EvidencePageProps {
@@ -24,10 +25,11 @@ export function EvidencePage({
         <section className="right-dock-section" key={group.id} aria-label={group.label}>
           <h3>{group.label}</h3>
           {group.items.map((item) => (
-            <button
+            <Button
               key={item.id}
               className={["right-dock-row", "right-dock-evidence-row", item.status ? `status-${item.status}` : ""].filter(Boolean).join(" ")}
-              type="button"
+              size="md"
+              variant="ghost"
               onClick={() => onOpenItem?.(item.id)}
               disabled={!onOpenItem}
             >
@@ -40,7 +42,7 @@ export function EvidencePage({
                 {item.sourceLabel ? <small>{item.sourceLabel}</small> : null}
                 {item.timestampLabel ? <small>{item.timestampLabel}</small> : null}
               </span>
-            </button>
+            </Button>
           ))}
         </section>
       ))}

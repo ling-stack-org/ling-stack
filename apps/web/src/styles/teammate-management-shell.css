@@ -1,0 +1,59 @@
+.workspace.workspace-teammates-surface {
+  display: grid;
+  height: calc(100vh - 52px);
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  padding: 0;
+  color: var(--ling-text-default);
+  background: var(--ling-bg-panel);
+}
+
+.app-shell .workspace.workspace-teammates-surface {
+  overflow: hidden;
+}
+
+.workspace-teammates-surface .workspace-head {
+  margin-bottom: 14px;
+}
+
+.teammates-page {
+  display: grid;
+  height: 100%;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: var(--ling-space-5);
+  overflow: hidden;
+  background: var(--ling-bg-panel);
+}
+
+.teammates-page.settings-return-mode {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.teammates-page-header {
+  display: flex;
+  min-height: 80px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 24px 32px 22px;
+  border-bottom: 1px solid var(--ling-border-default);
+  background: var(--ling-bg-panel);
+}
+
+.teammates-page-header h1 {
+  margin: 0;
+  color: var(--ling-text-strong);
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 34px;
+  letter-spacing: 0;
+}
+
+.teammates-page-header p {
+  margin: 6px 0 0;
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-md);
+  line-height: var(--ling-line-sm);
+}

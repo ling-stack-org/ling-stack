@@ -74,8 +74,16 @@ const initialSnapshot = {
 };
 
 let snapshot = { ...initialSnapshot };
+let themeSnapshot = {
+  revision: 1,
+  themeId: "ling-light",
+  colorScheme: "light",
+  presentationProfileId: "ling-standard",
+  variables: {},
+};
 let calls = [];
 const snapshotListeners = new Set();
+const themeSnapshotListeners = new Set();
 const releaseListeners = new Set();
 const commandBehaviors = new Map();
 const pendingCommands = new Map();
@@ -100,6 +108,7 @@ function command(name, args = []) {
 }
 
 contextBridge.exposeInMainWorld("lingComputerUsePreview", {
+  getThemeSnapshot: () => Promise.resolve(themeSnapshot),
   getSnapshot: () => Promise.resolve(snapshot),
   activatePage: (pageId) => command("activatePage", [pageId]),
   closePage: (pageId) => command("closePage", [pageId]),
@@ -110,10 +119,7 @@ contextBridge.exposeInMainWorld("lingComputerUsePreview", {
     record("hide");
     return Promise.resolve();
   },
-  openOwnerConversation: () => {
-    record("openOwnerConversation");
-    return Promise.resolve();
-  },
+  openOwnerConversation: () => command("openOwnerConversation"),
   requestStop: () => command("requestStop"),
   openScreenPermissionSettings: () => {
     record("openScreenPermissionSettings");
@@ -131,6 +137,10 @@ contextBridge.exposeInMainWorld("lingComputerUsePreview", {
   onSnapshotChanged: (listener) => {
     snapshotListeners.add(listener);
     return () => snapshotListeners.delete(listener);
+  },
+  onThemeSnapshotChanged: (listener) => {
+    themeSnapshotListeners.add(listener);
+    return () => themeSnapshotListeners.delete(listener);
   },
 });
 
@@ -219,6 +229,12 @@ contextBridge.exposeInMainWorld("lingPreviewTestHarness", {
     snapshot = { ...snapshot, ...overrides };
     for (const listener of snapshotListeners) {
       listener(snapshot);
+    }
+  },
+  pushThemeSnapshot: (nextThemeSnapshot) => {
+    themeSnapshot = { ...nextThemeSnapshot };
+    for (const listener of themeSnapshotListeners) {
+      listener(themeSnapshot);
     }
   },
   emitReleaseMedia: async (request) => {

@@ -1,0 +1,644 @@
+{
+  "schemaVersion": 1,
+  "release": "T13-K-C UI 2.0 Web representative release gate",
+  "status": "captured",
+  "expectedScenarioIds": [
+    "web-release-shell",
+    "web-release-channel",
+    "web-release-normal-conversation",
+    "web-release-teammate-chat",
+    "web-release-settings-imported-theme",
+    "web-release-model-workbench",
+    "web-release-plugin-manager",
+    "web-release-automations",
+    "web-release-media-jobs",
+    "web-release-work-board",
+    "web-release-runs",
+    "web-release-approvals"
+  ],
+  "servedArtifact": "Vite source via Playwright webServer",
+  "captureCommand": "LING_CAPTURE_UI2_EVIDENCE=1 LING_PLAYWRIGHT_PORT=4260 corepack pnpm --filter @ling-stack/web exec playwright test e2e/ui2-web-release-gate.spec.ts --workers=1",
+  "generatedAt": "2026-07-23T04:08:11.331Z",
+  "source": {
+    "commit": "0a0b80502715d0333342422e6dc8cedd2cd77b14",
+    "branch": "codex/ui2-desktop-coverage-foundation",
+    "dirty": true,
+    "worktreeStatusSha256": "ea578861633515fe8705adeff34c7f1585811bec85681965b69f7f2386d2ba8b",
+    "identifier": "0a0b80502715+worktree-ea5788616335"
+  },
+  "scenarios": [
+    {
+      "status": "captured",
+      "stableId": "web-release-shell",
+      "label": "AppShell and global navigation",
+      "functionIds": [
+        "SHELL-NAV-001"
+      ],
+      "fixture": "base-ready-shell",
+      "trigger": {
+        "summary": "Open the application root",
+        "steps": [
+          "Navigate to /",
+          "Focus Work Board in global navigation"
+        ]
+      },
+      "url": "http://127.0.0.1:4260/",
+      "viewport": {
+        "width": 1440,
+        "height": 960
+      },
+      "theme": "ling-light",
+      "locale": "en-US",
+      "keyboard": {
+        "exercised": true,
+        "checks": [
+          "Global navigation action accepts keyboard focus"
+        ]
+      },
+      "reducedMotion": "no-preference",
+      "consoleErrors": [],
+      "pageErrors": [],
+      "overflow": [],
+      "png": {
+        "file": "web-release-shell.png",
+        "width": 1440,
+        "height": 960,
+        "sha256": "cba31b944cad7ace5c97b562d4cfe69d4922e7e492f1c74dd7c455f2d6ab794b"
+      },
+      "sidecarFile": "web-release-shell.json",
+      "servedArtifact": "Vite source via Playwright webServer",
+      "captureCommand": "LING_CAPTURE_UI2_EVIDENCE=1 LING_PLAYWRIGHT_PORT=4260 corepack pnpm --filter @ling-stack/web exec playwright test e2e/ui2-web-release-gate.spec.ts --workers=1",
+      "source": {
+        "commit": "0a0b80502715d0333342422e6dc8cedd2cd77b14",
+        "branch": "codex/ui2-desktop-coverage-foundation",
+        "dirty": true,
+        "worktreeStatusSha256": "ea578861633515fe8705adeff34c7f1585811bec85681965b69f7f2386d2ba8b",
+        "identifier": "0a0b80502715+worktree-ea5788616335"
+      },
+      "capturedAt": "2026-07-23T04:07:59.341Z"
+    },
+    {
+      "status": "captured",
+      "stableId": "web-release-channel",
+      "label": "Channel workspace",
+      "functionIds": [
+        "CHANNEL-HEADER-001"
+      ],
+      "fixture": "engineering-channel-ready",
+      "trigger": {
+        "summary": "Open Engineering channel",
+        "steps": [
+          "Navigate to /",
+          "Activate Engineering",
+          "Focus Summary"
+        ]
+      },
+      "url": "http://127.0.0.1:4260/",
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "theme": "ling-dark",
+      "locale": "en-US",
+      "keyboard": {
+        "exercised": true,
+        "checks": [
+          "Channel Summary action accepts keyboard focus"
+        ]
+      },
+      "reducedMotion": "reduce",
+      "consoleErrors": [],
+      "pageErrors": [],
+      "overflow": [],
+      "png": {
+        "file": "web-release-channel.png",
+        "width": 1280,
+        "height": 800,
+        "sha256": "8c4ac3dfbb3f221515d0341f9ba5a3fbe1e479500824c07fddaeef2e89453af0"
+      },
+      "sidecarFile": "web-release-channel.json",
+      "servedArtifact": "Vite source via Playwright webServer",
+      "captureCommand": "LING_CAPTURE_UI2_EVIDENCE=1 LING_PLAYWRIGHT_PORT=4260 corepack pnpm --filter @ling-stack/web exec playwright test e2e/ui2-web-release-gate.spec.ts --workers=1",
+      "source": {
+        "commit": "0a0b80502715d0333342422e6dc8cedd2cd77b14",
+        "branch": "codex/ui2-desktop-coverage-foundation",
+        "dirty": true,
+        "worktreeStatusSha256": "ea578861633515fe8705adeff34c7f1585811bec85681965b69f7f2386d2ba8b",
+        "identifier": "0a0b80502715+worktree-ea5788616335"
+      },
+      "capturedAt": "2026-07-23T04:08:00.187Z"
+    },
+    {
+      "status": "captured",
+      "stableId": "web-release-normal-conversation",
+      "label": "Normal conversation",
+      "functionIds": [
+        "CONV-NORMAL-HEADER-001"
+      ],
+      "fixture": "release-normal-conversation",
+      "trigger": {
+        "summary": "Open a recent conversation",
+        "steps": [
+          "Navigate to /",
+          "Activate Release readiness conversation",
+          "Focus Search"
+        ]
+      },
+      "url": "http://127.0.0.1:4260/",
+      "viewport": {
+        "width": 1440,
+        "height": 960
+      },
+      "theme": "ling-light",
+      "locale": "en-US",
+      "keyboard": {
+        "exercised": true,
+        "checks": [
+          "Conversation Search action accepts keyboard focus"
+        ]
+      },
+      "reducedMotion": "no-preference",
+      "consoleErrors": [],
+      "pageErrors": [],
+      "overflow": [],
+      "png": {
+        "file": "web-release-normal-conversation.png",
+        "width": 1440,
+        "height": 960,
+        "sha256": "852f550c11f2393f833ccb376c80dd89bb4d86bc5c3e968c61b4fae68f4ac217"
+      },
+      "sidecarFile": "web-release-normal-conversation.json",
+      "servedArtifact": "Vite source via Playwright webServer",
+      "captureCommand": "LING_CAPTURE_UI2_EVIDENCE=1 LING_PLAYWRIGHT_PORT=4260 corepack pnpm --filter @ling-stack/web exec playwright test e2e/ui2-web-release-gate.spec.ts --workers=1",
+      "source": {
+        "commit": "0a0b80502715d0333342422e6dc8cedd2cd77b14",
+        "branch": "codex/ui2-desktop-coverage-foundation",
+        "dirty": true,
+        "worktreeStatusSha256": "ea578861633515fe8705adeff34c7f1585811bec85681965b69f7f2386d2ba8b",
+        "identifier": "0a0b80502715+worktree-ea5788616335"
+      },
+      "capturedAt": "2026-07-23T04:08:01.660Z"
+    },
+    {
+      "status": "captured",
+      "stableId": "web-release-teammate-chat",
+      "label": "AI teammate private chat",
+      "functionIds": [
+        "CONV-TEAMMATE-HEADER-001"
+      ],
+      "fixture": "release-teammate-chat",
+      "trigger": {
+        "summary": "Open Release Teammate private chat",
+        "steps": [
+          "Navigate to /",
+          "Activate Release Teammate",
+          "Focus Search"
+        ]
+      },
+      "url": "http://127.0.0.1:4260/",
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "theme": "ling-dark",
+      "locale": "en-US",
+      "keyboard": {
+        "exercised": true,
+        "checks": [
+          "Private-chat Search action accepts keyboard focus"
+        ]
+      },
+      "reducedMotion": "reduce",
+      "consoleErrors": [],
+      "pageErrors": [],
+      "overflow": [],
+      "png": {
+        "file": "web-release-teammate-chat.png",
+        "width": 1280,
+        "height": 800,
+        "sha256": "a77812fcbfec96565306f1b25046fb25fb54e2708c9221864729b5663c9bd25d"
+      },
+      "sidecarFile": "web-release-teammate-chat.json",
+      "servedArtifact": "Vite source via Playwright webServer",
+      "captureCommand": "LING_CAPTURE_UI2_EVIDENCE=1 LING_PLAYWRIGHT_PORT=4260 corepack pnpm --filter @ling-stack/web exec playwright test e2e/ui2-web-release-gate.spec.ts --workers=1",
+      "source": {
+        "commit": "0a0b80502715d0333342422e6dc8cedd2cd77b14",
+        "branch": "codex/ui2-desktop-coverage-foundation",
+        "dirty": true,
+        "worktreeStatusSha256": "ea578861633515fe8705adeff34c7f1585811bec85681965b69f7f2386d2ba8b",
+        "identifier": "0a0b80502715+worktree-ea5788616335"
+      },
+      "capturedAt": "2026-07-23T04:08:02.338Z"
+    },
+    {
+      "status": "captured",
+      "stableId": "web-release-settings-imported-theme",
+      "label": "Settings with imported Quiet Ocean theme",
+      "functionIds": [
+        "UI-THEME-PICKER-001"
+      ],
+      "fixture": "imported-quiet-ocean",
+      "trigger": {
+        "summary": "Open Interface preferences after loading an imported theme",
+        "steps": [
+          "Seed Quiet Ocean through the existing fixture",
+          "Reload",
+          "Open Settings",
+          "Open Interface preferences"
+        ]
+      },
+      "url": "http://127.0.0.1:4260/",
+      "viewport": {
+        "width": 1440,
+        "height": 960
+      },
+      "theme": "imported:quiet-ocean",
+      "locale": "en-US",
+      "keyboard": {
+        "exercised": true,
+        "checks": [
+          "Imported theme radio accepts keyboard focus"
+        ]
+      },
+      "reducedMotion": "no-preference",
+      "consoleErrors": [],
+      "pageErrors": [],
+      "overflow": [],
+      "png": {
+        "file": "web-release-settings-imported-theme.png",
+        "width": 1440,
+        "height": 960,
+        "sha256": "12a1b1c6d8077775c621b028855a34f35bca1b6a9f7e583bbe4842de19dcba75"
+      },
+      "sidecarFile": "web-release-settings-imported-theme.json",
+      "servedArtifact": "Vite source via Playwright webServer",
+      "captureCommand": "LING_CAPTURE_UI2_EVIDENCE=1 LING_PLAYWRIGHT_PORT=4260 corepack pnpm --filter @ling-stack/web exec playwright test e2e/ui2-web-release-gate.spec.ts --workers=1",
+      "source": {
+        "commit": "0a0b80502715d0333342422e6dc8cedd2cd77b14",
+        "branch": "codex/ui2-desktop-coverage-foundation",
+        "dirty": true,
+        "worktreeStatusSha256": "ea578861633515fe8705adeff34c7f1585811bec85681965b69f7f2386d2ba8b",
+        "identifier": "0a0b80502715+worktree-ea5788616335"
+      },
+      "capturedAt": "2026-07-23T04:08:04.277Z"
+    },
+    {
+      "status": "captured",
+      "stableId": "web-release-model-workbench",
+      "label": "Model Workbench",
+      "functionIds": [
+        "MODEL-LIST-001"
+      ],
+      "fixture": "ready-chat-model",
+      "trigger": {
+        "summary": "Open Model Workbench from Settings",
+        "steps": [
+          "Open Settings",
+          "Activate Model Workbench",
+          "Focus the model row Edit action"
+        ]
+      },
+      "url": "http://127.0.0.1:4260/",
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "theme": "ling-dark",
+      "locale": "en-US",
+      "keyboard": {
+        "exercised": true,
+        "checks": [
+          "Model row Edit action accepts keyboard focus"
+        ]
+      },
+      "reducedMotion": "reduce",
+      "consoleErrors": [],
+      "pageErrors": [],
+      "overflow": [],
+      "png": {
+        "file": "web-release-model-workbench.png",
+        "width": 1280,
+        "height": 800,
+        "sha256": "8d99d1bab916f1aac24b896d1bad5d2a4cfa8ea20e4fe35ce1c5682286902aff"
+      },
+      "sidecarFile": "web-release-model-workbench.json",
+      "servedArtifact": "Vite source via Playwright webServer",
+      "captureCommand": "LING_CAPTURE_UI2_EVIDENCE=1 LING_PLAYWRIGHT_PORT=4260 corepack pnpm --filter @ling-stack/web exec playwright test e2e/ui2-web-release-gate.spec.ts --workers=1",
+      "source": {
+        "commit": "0a0b80502715d0333342422e6dc8cedd2cd77b14",
+        "branch": "codex/ui2-desktop-coverage-foundation",
+        "dirty": true,
+        "worktreeStatusSha256": "ea578861633515fe8705adeff34c7f1585811bec85681965b69f7f2386d2ba8b",
+        "identifier": "0a0b80502715+worktree-ea5788616335"
+      },
+      "capturedAt": "2026-07-23T04:08:04.939Z"
+    },
+    {
+      "status": "captured",
+      "stableId": "web-release-plugin-manager",
+      "label": "Plugin Manager",
+      "functionIds": [
+        "PLUGIN-LIST-001"
+      ],
+      "fixture": "managed-plugin-catalog",
+      "trigger": {
+        "summary": "Open Plugin Manager from the primary navigation",
+        "steps": [
+          "Open Engineering",
+          "Activate Plugin Manager",
+          "Focus the first row action"
+        ]
+      },
+      "url": "http://127.0.0.1:4260/",
+      "viewport": {
+        "width": 1440,
+        "height": 960
+      },
+      "theme": "ling-light",
+      "locale": "en-US",
+      "keyboard": {
+        "exercised": true,
+        "checks": [
+          "Plugin row action accepts keyboard focus"
+        ]
+      },
+      "reducedMotion": "no-preference",
+      "consoleErrors": [],
+      "pageErrors": [],
+      "overflow": [],
+      "png": {
+        "file": "web-release-plugin-manager.png",
+        "width": 1440,
+        "height": 960,
+        "sha256": "e6b45633d76d3c3cc15081006af14428aa67974ef6b199cca09b40feefdc636c"
+      },
+      "sidecarFile": "web-release-plugin-manager.json",
+      "servedArtifact": "Vite source via Playwright webServer",
+      "captureCommand": "LING_CAPTURE_UI2_EVIDENCE=1 LING_PLAYWRIGHT_PORT=4260 corepack pnpm --filter @ling-stack/web exec playwright test e2e/ui2-web-release-gate.spec.ts --workers=1",
+      "source": {
+        "commit": "0a0b80502715d0333342422e6dc8cedd2cd77b14",
+        "branch": "codex/ui2-desktop-coverage-foundation",
+        "dirty": true,
+        "worktreeStatusSha256": "ea578861633515fe8705adeff34c7f1585811bec85681965b69f7f2386d2ba8b",
+        "identifier": "0a0b80502715+worktree-ea5788616335"
+      },
+      "capturedAt": "2026-07-23T04:08:06.447Z"
+    },
+    {
+      "status": "captured",
+      "stableId": "web-release-automations",
+      "label": "Automations",
+      "functionIds": [
+        "AUTO-LIST-001"
+      ],
+      "fixture": "release-automation-ready",
+      "trigger": {
+        "summary": "Open Automations",
+        "steps": [
+          "Navigate to /",
+          "Activate Automations",
+          "Focus Release automation row"
+        ]
+      },
+      "url": "http://127.0.0.1:4260/",
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "theme": "ling-dark",
+      "locale": "en-US",
+      "keyboard": {
+        "exercised": true,
+        "checks": [
+          "Automation row accepts keyboard focus"
+        ]
+      },
+      "reducedMotion": "reduce",
+      "consoleErrors": [],
+      "pageErrors": [],
+      "overflow": [],
+      "png": {
+        "file": "web-release-automations.png",
+        "width": 1280,
+        "height": 800,
+        "sha256": "e1e695c6fd9cca77c7b00db3b40cd79708ea4d0acf1b68e50883497d4baf679e"
+      },
+      "sidecarFile": "web-release-automations.json",
+      "servedArtifact": "Vite source via Playwright webServer",
+      "captureCommand": "LING_CAPTURE_UI2_EVIDENCE=1 LING_PLAYWRIGHT_PORT=4260 corepack pnpm --filter @ling-stack/web exec playwright test e2e/ui2-web-release-gate.spec.ts --workers=1",
+      "source": {
+        "commit": "0a0b80502715d0333342422e6dc8cedd2cd77b14",
+        "branch": "codex/ui2-desktop-coverage-foundation",
+        "dirty": true,
+        "worktreeStatusSha256": "ea578861633515fe8705adeff34c7f1585811bec85681965b69f7f2386d2ba8b",
+        "identifier": "0a0b80502715+worktree-ea5788616335"
+      },
+      "capturedAt": "2026-07-23T04:08:07.047Z"
+    },
+    {
+      "status": "captured",
+      "stableId": "web-release-media-jobs",
+      "label": "Media generation jobs",
+      "functionIds": [
+        "MEDIA-JOB-LIST-001"
+      ],
+      "fixture": "media-mixed-release",
+      "trigger": {
+        "summary": "Open Generation tasks from Media Production",
+        "steps": [
+          "Activate Media Production",
+          "Switch to Generation tasks",
+          "Focus the first job row"
+        ]
+      },
+      "url": "http://127.0.0.1:4260/",
+      "viewport": {
+        "width": 1440,
+        "height": 960
+      },
+      "theme": "ling-light",
+      "locale": "en-US",
+      "keyboard": {
+        "exercised": true,
+        "checks": [
+          "Media job row accepts keyboard focus"
+        ]
+      },
+      "reducedMotion": "no-preference",
+      "consoleErrors": [],
+      "pageErrors": [],
+      "overflow": [],
+      "png": {
+        "file": "web-release-media-jobs.png",
+        "width": 1440,
+        "height": 960,
+        "sha256": "de2a321f0ba636e3fbc7d7fb38876745bc1019b948b333e3ea80668ed56e7642"
+      },
+      "sidecarFile": "web-release-media-jobs.json",
+      "servedArtifact": "Vite source via Playwright webServer",
+      "captureCommand": "LING_CAPTURE_UI2_EVIDENCE=1 LING_PLAYWRIGHT_PORT=4260 corepack pnpm --filter @ling-stack/web exec playwright test e2e/ui2-web-release-gate.spec.ts --workers=1",
+      "source": {
+        "commit": "0a0b80502715d0333342422e6dc8cedd2cd77b14",
+        "branch": "codex/ui2-desktop-coverage-foundation",
+        "dirty": true,
+        "worktreeStatusSha256": "ea578861633515fe8705adeff34c7f1585811bec85681965b69f7f2386d2ba8b",
+        "identifier": "0a0b80502715+worktree-ea5788616335"
+      },
+      "capturedAt": "2026-07-23T04:08:08.646Z"
+    },
+    {
+      "status": "captured",
+      "stableId": "web-release-work-board",
+      "label": "Work Board",
+      "functionIds": [
+        "BOARD-LIST-001"
+      ],
+      "fixture": "release-work-item-ready",
+      "trigger": {
+        "summary": "Open Work Board",
+        "steps": [
+          "Navigate to /",
+          "Activate Work Board",
+          "Focus the release work item"
+        ]
+      },
+      "url": "http://127.0.0.1:4260/",
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "theme": "ling-dark",
+      "locale": "en-US",
+      "keyboard": {
+        "exercised": true,
+        "checks": [
+          "Work item row accepts keyboard focus"
+        ]
+      },
+      "reducedMotion": "reduce",
+      "consoleErrors": [],
+      "pageErrors": [],
+      "overflow": [],
+      "png": {
+        "file": "web-release-work-board.png",
+        "width": 1280,
+        "height": 800,
+        "sha256": "cd0fe611a6161e78125645c64ae8a35f8aab6a2445504b13fe338310509e35ac"
+      },
+      "sidecarFile": "web-release-work-board.json",
+      "servedArtifact": "Vite source via Playwright webServer",
+      "captureCommand": "LING_CAPTURE_UI2_EVIDENCE=1 LING_PLAYWRIGHT_PORT=4260 corepack pnpm --filter @ling-stack/web exec playwright test e2e/ui2-web-release-gate.spec.ts --workers=1",
+      "source": {
+        "commit": "0a0b80502715d0333342422e6dc8cedd2cd77b14",
+        "branch": "codex/ui2-desktop-coverage-foundation",
+        "dirty": true,
+        "worktreeStatusSha256": "ea578861633515fe8705adeff34c7f1585811bec85681965b69f7f2386d2ba8b",
+        "identifier": "0a0b80502715+worktree-ea5788616335"
+      },
+      "capturedAt": "2026-07-23T04:08:09.181Z"
+    },
+    {
+      "status": "captured",
+      "stableId": "web-release-runs",
+      "label": "Runs history and detail",
+      "functionIds": [
+        "RUN-HISTORY-001"
+      ],
+      "fixture": "runs-threads-release",
+      "trigger": {
+        "summary": "Open full Run Diagnostics",
+        "steps": [
+          "Open Startup and diagnostics",
+          "Open Run Diagnostics",
+          "Open full diagnostics in app",
+          "Focus a history row"
+        ]
+      },
+      "url": "http://127.0.0.1:4260/",
+      "viewport": {
+        "width": 1440,
+        "height": 960
+      },
+      "theme": "ling-light",
+      "locale": "en-US",
+      "keyboard": {
+        "exercised": true,
+        "checks": [
+          "Run history row accepts keyboard focus"
+        ]
+      },
+      "reducedMotion": "no-preference",
+      "consoleErrors": [],
+      "pageErrors": [],
+      "overflow": [],
+      "png": {
+        "file": "web-release-runs.png",
+        "width": 1440,
+        "height": 960,
+        "sha256": "a5e434824e3a863b614626332b6ecbe0305cbeaabec5a4c0f7dd31a2156f3803"
+      },
+      "sidecarFile": "web-release-runs.json",
+      "servedArtifact": "Vite source via Playwright webServer",
+      "captureCommand": "LING_CAPTURE_UI2_EVIDENCE=1 LING_PLAYWRIGHT_PORT=4260 corepack pnpm --filter @ling-stack/web exec playwright test e2e/ui2-web-release-gate.spec.ts --workers=1",
+      "source": {
+        "commit": "0a0b80502715d0333342422e6dc8cedd2cd77b14",
+        "branch": "codex/ui2-desktop-coverage-foundation",
+        "dirty": true,
+        "worktreeStatusSha256": "ea578861633515fe8705adeff34c7f1585811bec85681965b69f7f2386d2ba8b",
+        "identifier": "0a0b80502715+worktree-ea5788616335"
+      },
+      "capturedAt": "2026-07-23T04:08:10.819Z"
+    },
+    {
+      "status": "captured",
+      "stableId": "web-release-approvals",
+      "label": "Approval inbox",
+      "functionIds": [
+        "APPROVAL-LIST-001"
+      ],
+      "fixture": "pending-approval-release",
+      "trigger": {
+        "summary": "Open Inbox",
+        "steps": [
+          "Navigate to /",
+          "Activate Inbox",
+          "Focus a pending approval row"
+        ]
+      },
+      "url": "http://127.0.0.1:4260/",
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "theme": "ling-dark",
+      "locale": "en-US",
+      "keyboard": {
+        "exercised": true,
+        "checks": [
+          "Approval row accepts keyboard focus"
+        ]
+      },
+      "reducedMotion": "reduce",
+      "consoleErrors": [],
+      "pageErrors": [],
+      "overflow": [],
+      "png": {
+        "file": "web-release-approvals.png",
+        "width": 1280,
+        "height": 800,
+        "sha256": "c87ae186611a4379885a14a0790a5387588e7e86ab6577c00eef4cec25ab58a4"
+      },
+      "sidecarFile": "web-release-approvals.json",
+      "servedArtifact": "Vite source via Playwright webServer",
+      "captureCommand": "LING_CAPTURE_UI2_EVIDENCE=1 LING_PLAYWRIGHT_PORT=4260 corepack pnpm --filter @ling-stack/web exec playwright test e2e/ui2-web-release-gate.spec.ts --workers=1",
+      "source": {
+        "commit": "0a0b80502715d0333342422e6dc8cedd2cd77b14",
+        "branch": "codex/ui2-desktop-coverage-foundation",
+        "dirty": true,
+        "worktreeStatusSha256": "ea578861633515fe8705adeff34c7f1585811bec85681965b69f7f2386d2ba8b",
+        "identifier": "0a0b80502715+worktree-ea5788616335"
+      },
+      "capturedAt": "2026-07-23T04:08:11.331Z"
+    }
+  ]
+}

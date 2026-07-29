@@ -1,5 +1,13 @@
-import { CircleAlert, Command, FolderOpen, GitBranch, Loader2, LockKeyhole, RefreshCw } from "lucide-react";
+import { Command, FolderOpen, GitBranch, LockKeyhole, RefreshCw } from "lucide-react";
 import { useI18n } from "../../i18n.js";
+import {
+  Button,
+  DataRow,
+  Field,
+  InlineFeedback,
+  Input,
+  StatusIndicator,
+} from "../../shared/ui/index.js";
 import type { ChannelFormState, ChannelWorkspaceBinding, ChannelWorkspaceMode } from "../../types.js";
 import { ChannelExecutionPathField } from "./ChannelExecutionPathField.js";
 import { ChannelWriteLockField } from "./WorkspaceControls.js";
@@ -14,7 +22,6 @@ export function ChannelSettingsWorkspacePanel({
   selectedChannelExecutionPath,
   channelWorkspaceBusyAction,
   channelWorkspaceExternalPath,
-  channelWorkspaceNotice,
   channelWorkspaceError,
   onChannelWorkspaceExternalPathChange,
   onCreateManagedChannelWorktree,
@@ -31,7 +38,6 @@ export function ChannelSettingsWorkspacePanel({
   readonly selectedChannelExecutionPath: string;
   readonly channelWorkspaceBusyAction: string;
   readonly channelWorkspaceExternalPath: string;
-  readonly channelWorkspaceNotice: string;
   readonly channelWorkspaceError: string;
   readonly onChannelWorkspaceExternalPathChange: (value: string) => void;
   readonly onCreateManagedChannelWorktree: () => void;
@@ -48,21 +54,25 @@ export function ChannelSettingsWorkspacePanel({
       </div>
 
       <div className="channel-settings-row-list">
-        <div className="channel-settings-row channel-settings-control-row">
-          <span className="channel-settings-row-icon" aria-hidden="true"><FolderOpen size={18} /></span>
-          <ChannelExecutionPathField
-            value={channelEditForm.boundPath}
-            pickerCwd={cwd}
-            disabled={!selectedChannelId || Boolean(channelWorkspaceBusyAction)}
-            forceApply={Boolean(selectedChannelWorkspace && selectedChannelWorkspace.mode !== "local")}
-            onApply={onChangeChannelWorkspacePath}
-          />
-        </div>
+        <DataRow
+          className="channel-settings-row channel-settings-control-row"
+          identity={<span className="channel-settings-row-icon" aria-hidden="true"><FolderOpen size={18} /></span>}
+          summary={(
+            <ChannelExecutionPathField
+              value={channelEditForm.boundPath}
+              pickerCwd={cwd}
+              disabled={!selectedChannelId || Boolean(channelWorkspaceBusyAction)}
+              forceApply={Boolean(selectedChannelWorkspace && selectedChannelWorkspace.mode !== "local")}
+              onApply={onChangeChannelWorkspacePath}
+            />
+          )}
+        />
 
-        <div className="channel-settings-row channel-settings-control-row">
-          <span className="channel-settings-row-icon" aria-hidden="true"><LockKeyhole size={18} /></span>
-          <ChannelWriteLockField form={channelEditForm} onChange={onChannelEditFormChange} />
-        </div>
+        <DataRow
+          className="channel-settings-row channel-settings-control-row"
+          identity={<span className="channel-settings-row-icon" aria-hidden="true"><LockKeyhole size={18} /></span>}
+          summary={<ChannelWriteLockField form={channelEditForm} onChange={onChannelEditFormChange} />}
+        />
       </div>
 
       {selectedChannelWorkspace ? (
@@ -72,54 +82,93 @@ export function ChannelSettingsWorkspacePanel({
               {channelWorkspaceModeIcon(selectedChannelWorkspace.mode, 15)}
               <strong>{t("Current workspace")}</strong>
             </span>
+            <StatusIndicator
+              compact
+              label={t(channelWorkspaceModeLabel(selectedChannelWorkspace.mode))}
+              tone={selectedChannelWorkspace.errorMessage ? "danger" : "neutral"}
+            />
           </div>
           <div className="channel-workspace-summary">
-            <strong>{t(channelWorkspaceModeLabel(selectedChannelWorkspace.mode))}</strong>
             <small title={selectedChannelExecutionPath}>{shortWorkspacePath(selectedChannelExecutionPath, cwd)}</small>
             {selectedChannelWorkspace.errorMessage ? <small className="danger-text">{selectedChannelWorkspace.errorMessage}</small> : null}
           </div>
           <div className="channel-workspace-actions">
-            <button className="secondary-button compact-button" type="button" onClick={onCreateManagedChannelWorktree} disabled={!selectedChannelId || Boolean(channelWorkspaceBusyAction)}>
-              {channelWorkspaceBusyAction === "create-worktree" ? <Loader2 className="spin" size={14} /> : <GitBranch size={14} />}
+            <Button
+              leadingIcon={<GitBranch size={14} />}
+              loading={channelWorkspaceBusyAction === "create-worktree"}
+              loadingLabel={t("Create worktree")}
+              size="sm"
+              onClick={onCreateManagedChannelWorktree}
+              disabled={!selectedChannelId || Boolean(channelWorkspaceBusyAction)}
+            >
               {t("Create worktree")}
-            </button>
-            <button className="secondary-button compact-button" type="button" onClick={onRefreshChannelWorkspace} disabled={!selectedChannelId || Boolean(channelWorkspaceBusyAction)}>
-              {channelWorkspaceBusyAction === "refresh" ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
+            </Button>
+            <Button
+              leadingIcon={<RefreshCw size={14} />}
+              loading={channelWorkspaceBusyAction === "refresh"}
+              loadingLabel={t("Refresh status")}
+              size="sm"
+              onClick={onRefreshChannelWorkspace}
+              disabled={!selectedChannelId || Boolean(channelWorkspaceBusyAction)}
+            >
               {t("Refresh status")}
-            </button>
-            <button className="secondary-button compact-button" type="button" onClick={onOpenChannelWorkspacePath} disabled={!selectedChannelExecutionPath || Boolean(channelWorkspaceBusyAction)}>
-              {channelWorkspaceBusyAction === "open" ? <Loader2 className="spin" size={14} /> : <FolderOpen size={14} />}
+            </Button>
+            <Button
+              leadingIcon={<FolderOpen size={14} />}
+              loading={channelWorkspaceBusyAction === "open"}
+              loadingLabel={t("Open path")}
+              size="sm"
+              onClick={onOpenChannelWorkspacePath}
+              disabled={!selectedChannelExecutionPath || Boolean(channelWorkspaceBusyAction)}
+            >
               {t("Open path")}
-            </button>
+            </Button>
           </div>
           <div className="channel-workspace-actions">
-            <button className="secondary-button compact-button" type="button" onClick={() => onHandoffChannelWorkspace("local")} disabled={!selectedChannelId || Boolean(channelWorkspaceBusyAction) || selectedChannelWorkspace.mode === "local"}>
-              {channelWorkspaceBusyAction === "handoff-local" ? <Loader2 className="spin" size={14} /> : <Command size={14} />}
+            <Button
+              leadingIcon={<Command size={14} />}
+              loading={channelWorkspaceBusyAction === "handoff-local"}
+              loadingLabel={t("Hand off to Local")}
+              size="sm"
+              onClick={() => onHandoffChannelWorkspace("local")}
+              disabled={!selectedChannelId || Boolean(channelWorkspaceBusyAction) || selectedChannelWorkspace.mode === "local"}
+            >
               {t("Hand off to Local")}
-            </button>
-            <button className="secondary-button compact-button" type="button" onClick={() => onHandoffChannelWorkspace("managed_worktree")} disabled={!selectedChannelId || Boolean(channelWorkspaceBusyAction) || !selectedChannelWorkspace.worktreePath}>
-              {channelWorkspaceBusyAction === "handoff-managed_worktree" ? <Loader2 className="spin" size={14} /> : <GitBranch size={14} />}
+            </Button>
+            <Button
+              leadingIcon={<GitBranch size={14} />}
+              loading={channelWorkspaceBusyAction === "handoff-managed_worktree"}
+              loadingLabel={t("Hand off to Worktree")}
+              size="sm"
+              onClick={() => onHandoffChannelWorkspace("managed_worktree")}
+              disabled={!selectedChannelId || Boolean(channelWorkspaceBusyAction) || !selectedChannelWorkspace.worktreePath}
+            >
               {t("Hand off to Worktree")}
-            </button>
+            </Button>
           </div>
           <div className="channel-workspace-external-row">
-            <input
-              value={channelWorkspaceExternalPath}
-              onChange={(event) => onChannelWorkspaceExternalPathChange(event.target.value)}
-              placeholder={t("External workspace path")}
-              disabled={!selectedChannelId || Boolean(channelWorkspaceBusyAction)}
-            />
-            <button className="secondary-button compact-button" type="button" onClick={() => onHandoffChannelWorkspace("external_path")} disabled={!selectedChannelId || Boolean(channelWorkspaceBusyAction) || !channelWorkspaceExternalPath.trim()}>
-              {channelWorkspaceBusyAction === "handoff-external_path" ? <Loader2 className="spin" size={14} /> : <FolderOpen size={14} />}
+            <Field label={t("External workspace path")}>
+              <Input
+                aria-label={t("External workspace path")}
+                value={channelWorkspaceExternalPath}
+                onChange={(event) => onChannelWorkspaceExternalPathChange(event.target.value)}
+                placeholder={t("External workspace path")}
+                disabled={!selectedChannelId || Boolean(channelWorkspaceBusyAction)}
+              />
+            </Field>
+            <Button
+              leadingIcon={<FolderOpen size={14} />}
+              loading={channelWorkspaceBusyAction === "handoff-external_path"}
+              loadingLabel={t("Hand off to External")}
+              size="sm"
+              onClick={() => onHandoffChannelWorkspace("external_path")}
+              disabled={!selectedChannelId || Boolean(channelWorkspaceBusyAction) || !channelWorkspaceExternalPath.trim()}
+            >
               {t("Hand off to External")}
-            </button>
+            </Button>
           </div>
-          {channelWorkspaceNotice ? <div className="inline-success compact">{channelWorkspaceNotice}</div> : null}
           {channelWorkspaceError ? (
-            <div className="inline-error compact">
-              <CircleAlert size={14} />
-              {channelWorkspaceError}
-            </div>
+            <InlineFeedback tone="danger">{channelWorkspaceError}</InlineFeedback>
           ) : null}
         </section>
       ) : null}

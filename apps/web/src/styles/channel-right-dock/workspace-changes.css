@@ -1,0 +1,257 @@
+.workspace-change-review-page,
+.workspace-change-review-body,
+.workspace-change-review-diffs,
+.workspace-change-file-section,
+.workspace-change-file-copy,
+.workspace-change-file-tree,
+.workspace-change-file-tree section {
+  display: grid;
+  min-width: 0;
+}
+
+.workspace-change-review-page {
+  align-content: start;
+  gap: var(--ling-space-3);
+}
+
+.workspace-change-review-toolbar {
+  position: sticky;
+  z-index: 6;
+  top: calc(-1 * var(--ling-space-4));
+  display: flex;
+  min-width: 0;
+  min-height: 40px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ling-space-4);
+  padding-block: var(--ling-space-3);
+  border-bottom: 1px solid var(--ling-border-default);
+  background: var(--ling-bg-panel);
+}
+
+.workspace-change-review-summary {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
+.workspace-change-review-summary strong,
+.workspace-change-review-summary small,
+.workspace-change-file-copy strong,
+.workspace-change-file-copy small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-change-review-summary strong,
+.workspace-change-file-copy strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-xs);
+  font-weight: 650;
+}
+
+.workspace-change-review-summary small,
+.workspace-change-file-copy small,
+.workspace-change-file-badges > small {
+  color: var(--ling-text-muted);
+  font-size: 10px;
+}
+
+.workspace-change-review-summary small,
+.workspace-change-review-tools,
+.workspace-change-file-badges,
+.workspace-change-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ling-space-2);
+}
+
+.workspace-change-review-summary .add,
+.workspace-change-stats .add { color: var(--ling-status-success); }
+
+.workspace-change-review-summary .delete,
+.workspace-change-stats .delete { color: var(--ling-status-danger); }
+
+.workspace-change-review-tools,
+.workspace-change-file-badges {
+  flex: 0 0 auto;
+}
+
+.workspace-change-review-body > * {
+  grid-area: 1 / 1;
+}
+
+.workspace-change-review-diffs {
+  align-content: start;
+  gap: var(--ling-space-5);
+}
+
+.workspace-change-review-state {
+  display: grid;
+  min-height: 180px;
+  place-items: center;
+  align-content: center;
+  gap: var(--ling-space-3);
+  padding: var(--ling-space-7);
+  color: var(--ling-text-muted);
+  text-align: center;
+}
+
+.workspace-change-review-state.error { color: var(--ling-status-danger); }
+
+.workspace-change-file-section {
+  overflow: visible;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 240px;
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  background: var(--ling-bg-panel);
+  scroll-margin-top: 52px;
+}
+
+.workspace-change-file-section.selected {
+  border-color: var(--ling-border-focus);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ling-border-focus) 16%, transparent);
+}
+
+.workspace-change-file-section > header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 42px;
+  align-items: center;
+  gap: var(--ling-space-3);
+  padding-right: var(--ling-space-3);
+  border-bottom: 1px solid var(--ling-border-default);
+}
+
+.workspace-change-file-section.collapsed > header { border-bottom: 0; }
+
+.workspace-change-file-toggle {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  align-items: center;
+  gap: var(--ling-space-3);
+  padding: var(--ling-space-3) 0 var(--ling-space-3) var(--ling-space-4);
+  border: 0;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.workspace-change-file-toggle:hover { background: var(--ling-bg-subtle); }
+
+.workspace-change-file-toggle:focus-visible {
+  outline: 2px solid var(--ling-border-focus);
+  outline-offset: -2px;
+}
+
+.workspace-change-file-copy { gap: var(--ling-space-1); }
+
+.workspace-change-file-badges > small {
+  padding: 2px var(--ling-space-2);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-sm);
+}
+
+.workspace-change-stats {
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+}
+
+.workspace-change-file-section .diff-viewer {
+  max-height: min(520px, 58vh);
+  border-radius: 0 0 var(--ling-radius-md) var(--ling-radius-md);
+}
+
+.workspace-change-file-empty {
+  padding: var(--ling-space-7) var(--ling-space-4);
+  color: var(--ling-text-muted);
+  font-size: 11px;
+  text-align: center;
+}
+
+.workspace-change-file-navigator {
+  position: sticky;
+  z-index: 5;
+  top: 42px;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  width: min(280px, 82%);
+  max-height: min(620px, calc(100vh - 170px));
+  justify-self: end;
+  align-self: start;
+  gap: var(--ling-space-3);
+  padding: var(--ling-space-4);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md) 0 0 var(--ling-radius-md);
+  background: var(--ling-bg-elevated);
+  box-shadow: var(--ling-shadow-overlay);
+}
+
+.workspace-change-file-navigator-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ling-space-3);
+}
+
+.workspace-change-file-navigator-head strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-xs);
+}
+
+.workspace-change-file-tree {
+  min-height: 0;
+  align-content: start;
+  gap: var(--ling-space-3);
+  overflow: auto;
+}
+
+.workspace-change-file-tree section { gap: var(--ling-space-1); }
+
+.workspace-change-file-tree section > small {
+  padding: var(--ling-space-1) var(--ling-space-2);
+  color: var(--ling-text-muted);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.workspace-change-file-tree button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  min-height: 30px;
+  align-items: center;
+  gap: var(--ling-space-2);
+  padding: var(--ling-space-2);
+  border: 0;
+  border-radius: var(--ling-radius-sm);
+  color: var(--ling-text-muted);
+  background: transparent;
+  text-align: left;
+}
+
+.workspace-change-file-tree button:hover,
+.workspace-change-file-tree button.selected {
+  color: var(--ling-text-strong);
+  background: var(--ling-bg-subtle);
+}
+
+.workspace-change-file-tree button > span:nth-child(2) {
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .workspace-change-file-badges > small {
+    display: none;
+  }
+}

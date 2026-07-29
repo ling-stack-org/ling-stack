@@ -1,0 +1,301 @@
+[data-conversation-composer] .conversation-composer-input-zone {
+  position: relative;
+  display: grid;
+  min-height: 76px;
+  align-content: start;
+  gap: var(--ling-space-3);
+}
+
+[data-conversation-composer] .mention-picker-popover {
+  position: absolute;
+  right: var(--ling-space-4);
+  bottom: calc(100% + var(--ling-space-3));
+  left: var(--ling-space-4);
+  z-index: 20;
+  display: grid;
+  max-height: 220px;
+  gap: var(--ling-space-2);
+  padding: var(--ling-space-3);
+  overflow: auto;
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  color: var(--ling-text-default);
+  background: var(--ling-bg-elevated);
+  box-shadow: var(--ling-shadow-overlay);
+}
+
+[data-conversation-composer] .mention-suggestion {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ling-space-5);
+  padding: 0 var(--ling-space-4);
+  border: 1px solid transparent;
+  border-radius: var(--ling-radius-sm);
+  color: var(--ling-text-default);
+  background: transparent;
+  font-size: var(--ling-font-xs);
+  font-weight: 700;
+  text-align: left;
+}
+
+[data-conversation-composer] .mention-suggestion small {
+  color: var(--ling-text-muted);
+  font-size: 10px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+[data-conversation-composer] .mention-suggestion.active,
+[data-conversation-composer] .mention-suggestion:hover:not(.empty),
+[data-conversation-composer] .mention-suggestion:focus-visible:not(.empty) {
+  border-color: var(--ling-border-focus);
+  color: var(--ling-text-strong);
+  background: var(--ling-bg-subtle);
+  outline: none;
+}
+
+[data-conversation-composer] .mention-suggestion.empty {
+  min-height: 36px;
+  justify-content: center;
+  border-color: var(--ling-border-default);
+  border-style: dashed;
+  color: var(--ling-text-muted);
+  background: var(--ling-bg-subtle);
+  text-align: center;
+  cursor: default;
+}
+
+[data-conversation-composer] .mention-suggestion.command span {
+  font-family: var(--font-mono);
+  font-size: var(--ling-font-xs);
+}
+
+[data-conversation-composer] .composer-drop-hint {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: var(--ling-space-3);
+  border: 1px dashed var(--ling-border-focus);
+  border-radius: var(--ling-radius-md);
+  color: var(--ling-text-strong);
+  background: color-mix(in srgb, var(--ling-bg-elevated) 84%, var(--ling-action-selection));
+  font-size: var(--ling-font-xs);
+  font-weight: 700;
+  pointer-events: none;
+}
+
+[data-conversation-composer] .composer-attach-button {
+  display: inline-grid;
+  width: var(--ling-control-sm);
+  min-width: var(--ling-control-sm);
+  height: var(--ling-control-sm);
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--ling-radius-md);
+  color: var(--ling-text-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+[data-conversation-composer] .composer-attach-button:hover,
+[data-conversation-composer] .composer-attach-button:focus-within {
+  border-color: var(--ling-border-default);
+  color: var(--ling-text-strong);
+  background: var(--ling-bg-subtle);
+}
+
+[data-conversation-composer] .composer-attach-button[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+[data-conversation-composer] .pending-assets.composer-preview-strip {
+  display: flex;
+  min-width: 0;
+  align-items: stretch;
+  flex-wrap: wrap;
+  gap: var(--ling-space-4);
+  padding: var(--ling-space-1) var(--ling-space-1) var(--ling-space-2);
+}
+
+[data-conversation-composer] .composer-preview-card {
+  position: relative;
+  display: grid;
+  width: min(244px, 100%);
+  min-height: 54px;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--ling-space-4);
+  padding: 5px 28px 5px 5px;
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  color: var(--ling-text-default);
+  background: var(--ling-bg-panel);
+}
+
+[data-conversation-composer] .composer-preview-card.image {
+  grid-template-columns: 50px minmax(0, 1fr);
+}
+
+[data-conversation-composer] .composer-preview-thumbnail {
+  width: 50px;
+  height: 50px;
+  border-radius: var(--ling-radius-sm);
+  background: var(--ling-bg-subtle);
+  object-fit: cover;
+}
+
+[data-conversation-composer] .composer-preview-file-icon {
+  display: inline-grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-sm);
+  color: var(--ling-text-muted);
+  background: var(--ling-bg-elevated);
+}
+
+[data-conversation-composer] .composer-preview-body {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
+[data-conversation-composer] .composer-preview-body strong,
+[data-conversation-composer] .composer-preview-body small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[data-conversation-composer] .composer-preview-body strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-xs);
+  font-weight: 700;
+}
+
+[data-conversation-composer] .composer-preview-body small {
+  color: var(--ling-text-muted);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+[data-conversation-composer] .composer-preview-state-icon {
+  position: absolute;
+  right: var(--ling-space-4);
+  bottom: 7px;
+  color: var(--ling-text-muted);
+}
+
+[data-conversation-composer] .composer-preview-remove {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  display: inline-grid;
+  width: var(--conversation-composer-preview-remove-size, 20px);
+  min-width: var(--conversation-composer-preview-remove-size, 20px);
+  height: var(--conversation-composer-preview-remove-size, 20px);
+  min-height: var(--conversation-composer-preview-remove-size, 20px);
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ling-radius-pill);
+  color: var(--ling-text-muted);
+  background: color-mix(in srgb, var(--ling-bg-elevated) 84%, transparent);
+}
+
+[data-conversation-composer] .composer-preview-remove:hover,
+[data-conversation-composer] .composer-preview-remove:focus-visible {
+  color: var(--ling-text-strong);
+  background: var(--ling-bg-pressed);
+}
+
+[data-conversation-composer] .composer-preview-card.uploading {
+  border-color: var(--ling-status-warning-border);
+  color: var(--ling-status-warning);
+  background: var(--ling-status-warning-bg);
+}
+
+[data-conversation-composer] .composer-preview-card.failed,
+[data-conversation-composer] .composer-preview-card.blocked {
+  border-color: var(--ling-status-danger-border);
+  color: var(--ling-status-danger);
+  background: var(--ling-status-danger-bg);
+}
+
+[data-conversation-composer] .composer-preview-card.uploading .composer-preview-body strong,
+[data-conversation-composer] .composer-preview-card.uploading .composer-preview-body small,
+[data-conversation-composer] .composer-preview-card.failed .composer-preview-body strong,
+[data-conversation-composer] .composer-preview-card.failed .composer-preview-body small,
+[data-conversation-composer] .composer-preview-card.blocked .composer-preview-body strong,
+[data-conversation-composer] .composer-preview-card.blocked .composer-preview-body small,
+[data-conversation-composer] .composer-preview-card.uploading .composer-preview-file-icon,
+[data-conversation-composer] .composer-preview-card.failed .composer-preview-file-icon,
+[data-conversation-composer] .composer-preview-card.blocked .composer-preview-file-icon,
+[data-conversation-composer] .composer-preview-card.uploading .composer-preview-remove,
+[data-conversation-composer] .composer-preview-card.failed .composer-preview-remove,
+[data-conversation-composer] .composer-preview-card.blocked .composer-preview-remove,
+[data-conversation-composer] .composer-preview-card.uploading .composer-preview-state-icon {
+  color: currentColor;
+}
+
+[data-conversation-composer] .composer-structured-token.file-reference {
+  display: inline-flex;
+  max-width: min(100%, 360px);
+  min-height: 30px;
+  align-self: center;
+  align-items: center;
+  gap: var(--ling-space-3);
+  padding: 5px 7px;
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-pill);
+  color: var(--ling-text-default);
+  background: var(--ling-bg-panel);
+  font-size: var(--ling-font-xs);
+  font-weight: 700;
+}
+
+[data-conversation-composer] .composer-structured-token.file-reference svg {
+  flex: 0 0 auto;
+  color: var(--ling-text-muted);
+}
+
+[data-conversation-composer] .composer-structured-token.file-reference strong,
+[data-conversation-composer] .composer-structured-token.file-reference small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[data-conversation-composer] .composer-structured-token.file-reference small {
+  color: var(--ling-text-muted);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+[data-conversation-composer] .composer-structured-token.file-reference button {
+  display: inline-grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ling-radius-pill);
+  color: currentColor;
+  background: transparent;
+}
+
+[data-conversation-composer] .composer-structured-token.file-reference button:hover,
+[data-conversation-composer] .composer-structured-token.file-reference button:focus-visible {
+  background: var(--ling-bg-pressed);
+}

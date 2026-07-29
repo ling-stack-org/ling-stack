@@ -1,0 +1,146 @@
+.message-action-bar {
+  --conversation-action-hit-area: var(--ling-control-sm, 32px);
+  display: inline-flex;
+  width: fit-content;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--ling-space-1);
+}
+
+.message-action-bar-hover-focus {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(calc(var(--ling-space-1) * -1));
+  transition:
+    opacity var(--ling-motion-fast) var(--ling-ease-standard),
+    transform var(--ling-motion-fast) var(--ling-ease-standard);
+}
+
+[data-conversation-message-row]:hover .message-action-bar-hover-focus,
+[data-conversation-message-row]:focus-within .message-action-bar-hover-focus,
+.message-action-bar-always,
+.message-action-bar-critical {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.message-action-bar-tooltip-trigger {
+  display: inline-grid;
+  width: var(--conversation-action-hit-area);
+  min-width: var(--conversation-action-hit-area);
+  height: var(--conversation-action-hit-area);
+  min-height: var(--conversation-action-hit-area);
+  place-items: center;
+}
+
+.message-action-bar-action {
+  appearance: none;
+  box-sizing: border-box;
+  display: inline-flex;
+  width: var(--conversation-action-hit-area);
+  min-width: var(--conversation-action-hit-area);
+  height: var(--conversation-action-hit-area);
+  min-height: var(--conversation-action-hit-area);
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--ling-radius-md);
+  color: var(--conversation-text-muted, var(--ling-text-muted));
+  background: transparent;
+  box-shadow: none;
+  font: inherit;
+  line-height: 1;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    color var(--ling-motion-fast) var(--ling-ease-standard),
+    background-color var(--ling-motion-fast) var(--ling-ease-standard),
+    border-color var(--ling-motion-fast) var(--ling-ease-standard),
+    opacity var(--ling-motion-fast) var(--ling-ease-standard);
+}
+
+.message-action-bar-action:hover:not(:disabled, [aria-disabled="true"]),
+.message-action-bar-action:focus-visible,
+.message-action-bar-action.selected {
+  border-color: var(--conversation-border, var(--ling-border-default));
+  color: var(--conversation-text-strong, var(--ling-text-strong));
+  background: var(--ling-bg-subtle);
+}
+
+.message-action-bar-action:focus-visible {
+  outline: 2px solid var(--conversation-focus-ring, var(--ling-border-focus));
+  outline-offset: 1px;
+}
+
+.message-action-bar-action.danger {
+  color: var(--ling-status-danger);
+}
+
+.message-action-bar-action.danger:hover:not(:disabled, [aria-disabled="true"]),
+.message-action-bar-action.danger:focus-visible,
+.message-action-bar-action.danger.selected {
+  border-color: var(--ling-status-danger-border);
+  color: var(--ling-status-danger);
+  background: var(--ling-status-danger-bg);
+}
+
+.message-action-bar-action:disabled,
+.message-action-bar-action[aria-disabled="true"],
+.message-action-bar-action.loading {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+.message-action-bar-action[aria-disabled="true"] {
+  pointer-events: none;
+}
+
+.message-action-bar-action > svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  stroke-width: 1.8;
+}
+
+.message-action-bar-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.message-action-bar-spinner {
+  animation: ling-conversation-action-spin 900ms var(--ling-ease-linear) infinite;
+}
+
+@keyframes ling-conversation-action-spin {
+  to { transform: rotate(1turn); }
+}
+
+@media (hover: none), (pointer: coarse) {
+  .message-action-bar-hover-focus {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .message-action-bar-hover-focus,
+  .message-action-bar-action {
+    transition-duration: var(--ling-motion-instant);
+  }
+
+  .message-action-bar-spinner {
+    animation: none;
+  }
+}

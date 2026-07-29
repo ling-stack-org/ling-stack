@@ -8,6 +8,7 @@ import { createDaemonServer } from "../dist/index.js";
 
 test("channel team patterns API creates and lists inspect-only patterns", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-team-patterns-api-"));
+  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
   const store = createSqliteRunStore(cwd);
   const channel = store.createChannel({ name: "Patterns Channel", boundPath: cwd }, "2026-06-26T00:00:00.000Z");
   store.close();
@@ -27,7 +28,7 @@ test("channel team patterns API creates and lists inspect-only patterns", async 
       createdBy: "ai-draft",
       provisionalEffect: "attention_ordering",
       provisionalRationale: "Only changes suggested observer ordering.",
-      expiresAt: "2026-07-26T00:00:00.000Z",
+      expiresAt,
     });
 
     assert.equal(created.status, 201);

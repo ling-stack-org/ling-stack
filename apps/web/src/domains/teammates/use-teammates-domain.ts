@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   checkProvider,
   createAiTeammate,
@@ -13,6 +13,7 @@ import {
   uploadTeammateAvatar,
 } from "../../api.js";
 import type { DomainController, DomainError } from "../../app/domain-controller.js";
+import { useLatestKeyedRequestGuard, useLatestRequestGuard } from "../../lib/use-latest-request.js";
 import type {
   AiTeammate,
   CreateAiTeammateRequest,
@@ -20,8 +21,20 @@ import type {
   UpdateAiTeammateRequest,
 } from "../../types.js";
 import type { TeammateCreateProgressEvent, TeammateCreateResult, TeammateCreateSetupStep } from "../../features/teammates/types.js";
+import {
+  latestTeammateListError,
+  teammateActionErrorMessages,
+  latestTeammateChannelRelationErrorByChannelId,
+  teammateChannelRelationIdentity,
+  useTeammateErrorController,
+  type TeammateChannelRelationError,
+  type TeammateChannelRelationAction,
+  type TeammateMutationAction,
+  type TeammateScopedError,
+} from "./use-teammate-error-controller.js";
 
 export interface TeammateCreateInput {
+  readonly draftId?: string;
   readonly templateId?: string;
   readonly displayName: string;
   readonly description: string;
@@ -54,6 +67,10 @@ export interface TeammatesState {
   readonly teammateChannelMembershipsByTeammate: Readonly<Record<string, readonly TeammateChannelMembership[]>>;
   readonly teammateChannelMembershipsLoading: boolean;
   readonly channelTeammateSavingId: string;
+  readonly errors: readonly TeammateScopedError[];
+  readonly listErrorMessage: string;
+  readonly actionErrorMessagesByTeammateId: Readonly<Record<string, string>>;
+  readonly channelRelationErrorByChannelId: Readonly<Record<string, TeammateChannelRelationError>>;
 }
 
 export interface TeammatesActions {
@@ -62,12 +79,15 @@ export interface TeammatesActions {
   readonly addAiTeammate: (input: TeammateCreateInput, onProgress?: (event: TeammateCreateProgressEvent) => void) => Promise<TeammateCreateResult>;
   readonly removeAiTeammate: (teammateId: string) => Promise<void>;
   readonly hardDeleteAiTeammateAndRefresh: (teammateId: string, reason?: string) => Promise<void>;
-  readonly updateAiTeammateSettings: (teammateId: string, input: UpdateAiTeammateRequest) => Promise<AiTeammate>;
+  readonly updateAiTeammateSettings: (
+    teammateId: string,
+    input: UpdateAiTeammateRequest,
+    action?: TeammateMutationAction,
+  ) => Promise<AiTeammate>;
   readonly upsertAiTeammate: (teammate: AiTeammate) => void;
   readonly toggleAiTeammatePinned: (teammateId: string) => Promise<void>;
   readonly toggleAiTeammateHidden: (teammateId: string) => Promise<void>;
   readonly archiveAiTeammate: (teammateId: string) => Promise<void>;
-  readonly archiveAllVisibleTeammateChats: () => Promise<void>;
   readonly addChannelTeammate: (channelId: string, teammateId: string) => Promise<void>;
   readonly removeChannelTeammate: (channelId: string, teammateId: string) => Promise<void>;
   readonly setDefaultChannelTeammate: (channelId: string, teammateId: string) => Promise<void>;
@@ -79,7 +99,6 @@ export type TeammatesController = DomainController<TeammatesState, TeammatesActi
 export function useTeammatesDomain(input: {
   readonly cwd: string;
   readonly builtinTeammateTemplates: readonly BuiltinTeammateTemplate[];
-  readonly setErrorMessage: (message: string) => void;
   readonly t: (value: string, values?: Record<string, string | number>) => string;
   readonly closeTeammateIfActive: (teammateId: string) => void;
   readonly refreshChannels: (cwd?: string) => Promise<void>;
@@ -89,16 +108,51 @@ export function useTeammatesDomain(input: {
   const [teammateChannelMembershipsByTeammate, setTeammateChannelMembershipsByTeammate] = useState<Readonly<Record<string, readonly TeammateChannelMembership[]>>>({});
   const [teammateChannelMembershipsLoading, setTeammateChannelMembershipsLoading] = useState(false);
   const [channelTeammateSavingId, setChannelTeammateSavingId] = useState("");
-  const [error, setError] = useState<DomainError | undefined>();
+  const errorController = useTeammateErrorController();
+  const listRequestGuard = useLatestRequestGuard();
+  const membershipRequestGuard = useLatestRequestGuard();
+  const mutationRequestGuard = useLatestKeyedRequestGuard();
+  const channelRelationRequestGuard = useLatestKeyedRequestGuard();
+  const createRequestGuard = useLatestKeyedRequestGuard();
+  const workspaceEpochRef = useRef(0);
+  const cwdRef = useRef(input.cwd.trim());
+  const aiTeammatesRef = useRef(aiTeammates);
+  const teammateChannelMembershipsRef = useRef(teammateChannelMembershipsByTeammate);
+  const activeCreateIdentityRef = useRef("");
+  cwdRef.current = input.cwd.trim();
+  aiTeammatesRef.current = aiTeammates;
+  teammateChannelMembershipsRef.current = teammateChannelMembershipsByTeammate;
+
+  function isCurrentMutationRequest(
+    cwd: string,
+    workspaceEpoch: number,
+    requestIdentity: string,
+    requestToken: number,
+  ): boolean {
+    return cwdRef.current === cwd && workspaceEpochRef.current === workspaceEpoch &&
+      mutationRequestGuard.isCurrent(requestIdentity, requestToken);
+  }
 
   async function addAiTeammate(
     createInput: TeammateCreateInput,
     onProgress: (event: TeammateCreateProgressEvent) => void = () => undefined,
   ): Promise<TeammateCreateResult> {
-    const emit = (event: TeammateCreateProgressEvent): void => onProgress(event);
     const cwd = input.cwd.trim();
+    const draftIdentity = createInput.draftId?.trim() || "legacy-draft";
+    const requestIdentity = JSON.stringify([cwd, draftIdentity]);
+    const requestToken = createRequestGuard.next(requestIdentity);
+    const workspaceEpoch = workspaceEpochRef.current;
+    activeCreateIdentityRef.current = draftIdentity;
+    const isCurrent = (): boolean => (
+      activeCreateIdentityRef.current === draftIdentity &&
+      cwdRef.current === cwd &&
+      workspaceEpochRef.current === workspaceEpoch &&
+      createRequestGuard.isCurrent(requestIdentity, requestToken)
+    );
+    const emit = (event: TeammateCreateProgressEvent): void => {
+      if (isCurrent()) onProgress(event);
+    };
     if (!cwd) {
-      input.setErrorMessage("本地工作区未就绪");
       emit({ step: "workspace", state: "failed", message: input.t("Workspace is not ready.") });
       return { ok: false, message: input.t("Workspace is not ready.") };
     }
@@ -108,7 +162,6 @@ export function useTeammatesDomain(input: {
 
     if (!createInput.providerPresetId) {
       const message = input.t("Choose a model before creating.");
-      input.setErrorMessage(message);
       emit({ step: "model", state: "failed", message });
       return { ok: false, message };
     }
@@ -141,14 +194,11 @@ export function useTeammatesDomain(input: {
 
     setAiTeammatesLoading(true);
     try {
-      input.setErrorMessage("");
-      setError(undefined);
-
       emit({ step: "model", state: "running", message: input.t("Checking model") });
       const providerCheck = await checkProvider(cwd, createInput.providerPresetId);
+      if (!isCurrent()) return staleCreateResult();
       if (!providerCheck.ok) {
         const message = input.t("Model check failed. Repair this model in Model Workbench.");
-        input.setErrorMessage(providerCheck.message || message);
         emit({ step: "model", state: "failed", message: providerCheck.message || message });
         return { ok: false, message: providerCheck.message || message };
       }
@@ -156,6 +206,7 @@ export function useTeammatesDomain(input: {
 
       emit({ step: "record", state: "running", message: input.t("Creating teammate") });
       const response = await createAiTeammate(cwd, payload);
+      if (!isCurrent()) return staleCreateResult();
       const teammateId = response.teammate.id;
       if (template && template.defaultSkillIds.length > 0) {
         await replaceTeammateSkills(
@@ -163,6 +214,7 @@ export function useTeammatesDomain(input: {
           teammateId,
           template.defaultSkillIds.map((skillId) => ({ skillId, source: "template", enabled: true })),
         );
+        if (!isCurrent()) return staleCreateResult();
       }
       emit({ step: "record", state: "success", teammateId, message: input.t("Teammate created") });
 
@@ -172,8 +224,10 @@ export function useTeammatesDomain(input: {
         emit({ step: "avatar", state: "running", teammateId, message: input.t("Uploading avatar") });
         try {
           await uploadTeammateAvatar(cwd, teammateId, createInput.avatarFile);
+          if (!isCurrent()) return staleCreateResult();
           emit({ step: "avatar", state: "success", teammateId, message: input.t("Avatar uploaded") });
         } catch (caught) {
+          if (!isCurrent()) return staleCreateResult();
           partial = true;
           partialMessage = caught instanceof Error ? caught.message : String(caught);
           emit({ step: "avatar", state: "failed", teammateId, partial: true, message: partialMessage || input.t("Avatar setup needs attention") });
@@ -190,8 +244,10 @@ export function useTeammatesDomain(input: {
             teammateId,
             createInput.channelIds.map((channelId, index) => ({ channelId, isDefault: index === 0 })),
           );
+          if (!isCurrent()) return staleCreateResult();
           emit({ step: "channels", state: "success", teammateId, message: input.t("Channel joined") });
         } catch (caught) {
+          if (!isCurrent()) return staleCreateResult();
           partial = true;
           partialMessage = caught instanceof Error ? caught.message : String(caught);
           emit({ step: "channels", state: "failed", teammateId, partial: true, message: partialMessage || input.t("Channel setup needs attention") });
@@ -203,8 +259,10 @@ export function useTeammatesDomain(input: {
       emit({ step: "memory", state: "running", teammateId, message: input.t("Preparing memory") });
       try {
         await listTeammateMemoryScopes(cwd, teammateId);
+        if (!isCurrent()) return staleCreateResult();
         emit({ step: "memory", state: "success", teammateId, message: input.t("Memory ready") });
       } catch (caught) {
+        if (!isCurrent()) return staleCreateResult();
         partial = true;
         partialMessage ||= caught instanceof Error ? caught.message : String(caught);
         emit({ step: "memory", state: "failed", teammateId, partial: true, message: partialMessage || input.t("Memory setup needs attention") });
@@ -213,8 +271,10 @@ export function useTeammatesDomain(input: {
       emit({ step: "refresh", state: "running", teammateId, message: input.t("Refreshing workspace") });
       try {
         await refreshAiTeammates(cwd);
+        if (!isCurrent()) return staleCreateResult();
         emit({ step: "refresh", state: "success", teammateId, partial, message: partial ? input.t("Teammate created with setup warnings") : input.t("Teammate ready") });
       } catch (caught) {
+        if (!isCurrent()) return staleCreateResult();
         partial = true;
         partialMessage ||= caught instanceof Error ? caught.message : String(caught);
         emit({ step: "refresh", state: "failed", teammateId, partial: true, message: partialMessage || input.t("Refresh failed. Open teammate management to review.") });
@@ -227,133 +287,121 @@ export function useTeammatesDomain(input: {
         message: partial ? partialMessage || input.t("Teammate created with setup warnings") : input.t("Teammate ready"),
       };
     } catch (caught) {
+      if (!isCurrent()) return staleCreateResult();
       const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "mutation", message });
-      input.setErrorMessage(message);
       emit({ step: inferFailedCreateStep(message), state: "failed", message });
       return { ok: false, message };
     } finally {
-      setAiTeammatesLoading(false);
+      if (isCurrent()) setAiTeammatesLoading(false);
     }
   }
 
   async function removeAiTeammate(teammateId: string): Promise<void> {
     const cwd = input.cwd.trim();
     if (!cwd) {
-      return;
+      const message = "本地工作区未就绪";
+      errorController.report({ surface: "teammate", identity: teammateId, action: "disable", scope: "validation" }, message);
+      throw new Error(message);
     }
+    const requestIdentity = teammateMutationIdentity(cwd, teammateId, "disable");
+    const requestToken = mutationRequestGuard.next(requestIdentity);
+    const workspaceEpoch = workspaceEpochRef.current;
+    errorController.clear("teammate", teammateId, "disable");
     try {
-      input.setErrorMessage("");
-      setError(undefined);
       await disableAiTeammate(cwd, teammateId);
+      if (!isCurrentMutationRequest(cwd, workspaceEpoch, requestIdentity, requestToken)) return;
       await refreshAiTeammates(cwd);
+      if (!isCurrentMutationRequest(cwd, workspaceEpoch, requestIdentity, requestToken)) return;
       input.closeTeammateIfActive(teammateId);
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "mutation", message });
-      input.setErrorMessage(message);
+      if (isCurrentMutationRequest(cwd, workspaceEpoch, requestIdentity, requestToken)) {
+        errorController.report({ surface: "teammate", identity: teammateId, action: "disable", scope: "mutation" }, caught);
+      }
+      throw caught;
     }
   }
 
   async function hardDeleteAiTeammateAndRefresh(teammateId: string, reason?: string): Promise<void> {
     const cwd = input.cwd.trim();
     if (!cwd) {
-      return;
+      const message = "本地工作区未就绪";
+      errorController.report({ surface: "teammate", identity: teammateId, action: "hard-delete", scope: "validation" }, message);
+      throw new Error(message);
     }
+    const requestIdentity = teammateMutationIdentity(cwd, teammateId, "hard-delete");
+    const requestToken = mutationRequestGuard.next(requestIdentity);
+    const workspaceEpoch = workspaceEpochRef.current;
+    errorController.clear("teammate", teammateId, "hard-delete");
     try {
-      input.setErrorMessage("");
-      setError(undefined);
       await hardDeleteAiTeammate(cwd, teammateId, reason);
+      if (!isCurrentMutationRequest(cwd, workspaceEpoch, requestIdentity, requestToken)) return;
       await refreshAiTeammates(cwd);
+      if (!isCurrentMutationRequest(cwd, workspaceEpoch, requestIdentity, requestToken)) return;
       input.closeTeammateIfActive(teammateId);
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "mutation", message });
-      input.setErrorMessage(message);
+      if (isCurrentMutationRequest(cwd, workspaceEpoch, requestIdentity, requestToken)) {
+        errorController.report({ surface: "teammate", identity: teammateId, action: "hard-delete", scope: "mutation" }, caught);
+      }
+      throw caught;
     }
   }
 
-  async function updateAiTeammateSettings(teammateId: string, updateInput: UpdateAiTeammateRequest): Promise<AiTeammate> {
+  async function updateAiTeammateSettings(
+    teammateId: string,
+    updateInput: UpdateAiTeammateRequest,
+    action: TeammateMutationAction = "update",
+  ): Promise<AiTeammate> {
     const cwd = input.cwd.trim();
     if (!cwd) {
-      input.setErrorMessage("本地工作区未就绪");
-      throw new Error("本地工作区未就绪");
+      const message = "本地工作区未就绪";
+      errorController.report({ surface: "teammate", identity: teammateId, action, scope: "validation" }, message);
+      throw new Error(message);
     }
+    const requestIdentity = teammateMutationIdentity(cwd, teammateId, action);
+    const requestToken = mutationRequestGuard.next(requestIdentity);
+    const workspaceEpoch = workspaceEpochRef.current;
     setAiTeammatesLoading(true);
+    errorController.clear("teammate", teammateId, action);
     try {
-      input.setErrorMessage("");
-      setError(undefined);
       const response = await updateAiTeammate(cwd, teammateId, updateInput);
-      setAiTeammates((current) => upsertAiTeammate(current, response.teammate));
-      void refreshAiTeammates(cwd);
+      if (isCurrentMutationRequest(cwd, workspaceEpoch, requestIdentity, requestToken)) {
+        setAiTeammates((current) => upsertAiTeammate(current, response.teammate));
+        void refreshAiTeammates(cwd);
+      }
       return response.teammate;
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "mutation", message });
-      input.setErrorMessage(message);
+      if (isCurrentMutationRequest(cwd, workspaceEpoch, requestIdentity, requestToken)) {
+        errorController.report({ surface: "teammate", identity: teammateId, action, scope: "mutation" }, caught);
+      }
       throw caught;
     } finally {
-      setAiTeammatesLoading(false);
+      if (isCurrentMutationRequest(cwd, workspaceEpoch, requestIdentity, requestToken)) {
+        setAiTeammatesLoading(false);
+      }
     }
   }
 
   async function toggleAiTeammatePinned(teammateId: string): Promise<void> {
-    const teammate = aiTeammates.find((item) => item.id === teammateId);
+    const teammate = aiTeammatesRef.current.find((item) => item.id === teammateId);
     if (teammate) {
-      await updateAiTeammateSettings(teammateId, { pinned: !teammate.pinned });
+      await updateAiTeammateSettings(teammateId, { pinned: !teammate.pinned }, "pin");
     }
   }
 
   async function toggleAiTeammateHidden(teammateId: string): Promise<void> {
-    const teammate = aiTeammates.find((item) => item.id === teammateId);
+    const teammate = aiTeammatesRef.current.find((item) => item.id === teammateId);
     if (teammate) {
-      await updateAiTeammateSettings(teammateId, { hidden: !teammate.hidden });
+      await updateAiTeammateSettings(teammateId, { hidden: !teammate.hidden }, "visibility");
     }
   }
 
   async function archiveAiTeammate(teammateId: string): Promise<void> {
-    const teammate = aiTeammates.find((item) => item.id === teammateId);
+    const teammate = aiTeammatesRef.current.find((item) => item.id === teammateId);
     if (!teammate || teammate.hidden || teammate.status === "disabled") {
       return;
     }
-    await updateAiTeammateSettings(teammateId, { hidden: true });
+    await updateAiTeammateSettings(teammateId, { hidden: true }, "archive");
     input.closeTeammateIfActive(teammateId);
-  }
-
-  async function archiveAllVisibleTeammateChats(): Promise<void> {
-    const cwd = input.cwd.trim();
-    const visibleTeammates = aiTeammates.filter((teammate) => !teammate.hidden && teammate.status !== "disabled");
-    if (!cwd || visibleTeammates.length === 0) {
-      return;
-    }
-    const confirmed = globalThis.confirm(input.t("Archive all chats? This hides all visible AI teammate chats without deleting messages."));
-    if (!confirmed) {
-      return;
-    }
-    const archivedTeammateIds = new Set(visibleTeammates.map((teammate) => teammate.id));
-    setAiTeammatesLoading(true);
-    try {
-      input.setErrorMessage("");
-      setError(undefined);
-      const responses = await Promise.all(
-        visibleTeammates.map((teammate) => updateAiTeammate(cwd, teammate.id, { hidden: true })),
-      );
-      setAiTeammates((current) => current.map((teammate) =>
-        archivedTeammateIds.has(teammate.id)
-          ? { ...teammate, hidden: true, updatedAt: responses.find((response) => response.teammate.id === teammate.id)?.teammate.updatedAt ?? teammate.updatedAt }
-          : teammate,
-      ));
-      for (const teammate of visibleTeammates) {
-        input.closeTeammateIfActive(teammate.id);
-      }
-      await refreshAiTeammates(cwd);
-    } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "mutation", message });
-      input.setErrorMessage(message);
-    } finally {
-      setAiTeammatesLoading(false);
-    }
   }
 
   function upsertAiTeammateAction(teammate: AiTeammate): void {
@@ -364,49 +412,75 @@ export function useTeammatesDomain(input: {
     if (!cwd) {
       setAiTeammates([]);
       setTeammateChannelMembershipsByTeammate({});
+      aiTeammatesRef.current = [];
+      teammateChannelMembershipsRef.current = {};
+      errorController.clear("list", "workspace");
       return;
     }
 
+    const requestToken = listRequestGuard.next();
+    const workspaceEpoch = workspaceEpochRef.current;
     setAiTeammatesLoading(true);
+    errorController.clear("list", "workspace", "load");
     try {
-      input.setErrorMessage("");
-      setError(undefined);
       const response = await listAiTeammates(cwd);
+      if (!isCurrentListRequest(cwd, workspaceEpoch, requestToken)) return;
+      aiTeammatesRef.current = response.teammates;
       setAiTeammates(response.teammates);
       await refreshTeammateChannelMemberships(cwd, response.teammates);
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "load", message });
-      input.setErrorMessage(message);
+      if (isCurrentListRequest(cwd, workspaceEpoch, requestToken)) {
+        errorController.report({ surface: "list", identity: "workspace", action: "load", scope: "load" }, caught);
+      }
     } finally {
-      setAiTeammatesLoading(false);
+      if (isCurrentListRequest(cwd, workspaceEpoch, requestToken)) setAiTeammatesLoading(false);
     }
+  }
+
+  function isCurrentListRequest(cwd: string, workspaceEpoch: number, requestToken: number): boolean {
+    return cwdRef.current === cwd && workspaceEpochRef.current === workspaceEpoch &&
+      listRequestGuard.isCurrent(requestToken);
   }
 
   async function refreshTeammateChannelMemberships(
     cwd = input.cwd.trim(),
-    teammates = aiTeammates,
+    teammates = aiTeammatesRef.current,
   ): Promise<void> {
     if (!cwd || teammates.length === 0) {
+      teammateChannelMembershipsRef.current = {};
       setTeammateChannelMembershipsByTeammate({});
+      errorController.clear("list", "workspace", "load-memberships");
       return;
     }
 
+    const requestToken = membershipRequestGuard.next();
+    const workspaceEpoch = workspaceEpochRef.current;
     setTeammateChannelMembershipsLoading(true);
+    errorController.clear("list", "workspace", "load-memberships");
     try {
       const responses = await Promise.all(
         teammates.map((teammate) => listTeammateChannels(cwd, teammate.id)),
       );
-      setTeammateChannelMembershipsByTeammate(Object.fromEntries(
+      if (!isCurrentMembershipRequest(cwd, workspaceEpoch, requestToken)) return;
+      const memberships = Object.fromEntries(
         responses.map((response) => [response.teammateId, response.memberships]),
-      ));
+      );
+      teammateChannelMembershipsRef.current = memberships;
+      setTeammateChannelMembershipsByTeammate(memberships);
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "load", message });
-      input.setErrorMessage(message);
+      if (isCurrentMembershipRequest(cwd, workspaceEpoch, requestToken)) {
+        errorController.report({ surface: "list", identity: "workspace", action: "load-memberships", scope: "load" }, caught);
+      }
     } finally {
-      setTeammateChannelMembershipsLoading(false);
+      if (isCurrentMembershipRequest(cwd, workspaceEpoch, requestToken)) {
+        setTeammateChannelMembershipsLoading(false);
+      }
     }
+  }
+
+  function isCurrentMembershipRequest(cwd: string, workspaceEpoch: number, requestToken: number): boolean {
+    return cwdRef.current === cwd && workspaceEpochRef.current === workspaceEpoch &&
+      membershipRequestGuard.isCurrent(requestToken);
   }
 
   async function addChannelTeammate(channelId: string, teammateId: string): Promise<void> {
@@ -418,7 +492,7 @@ export function useTeammatesDomain(input: {
     await saveTeammateChannelMemberships(teammateId, [
       ...current,
       { channelId, isDefault: false },
-    ]);
+    ], channelId, "add");
   }
 
   async function removeChannelTeammate(channelId: string, teammateId: string): Promise<void> {
@@ -427,7 +501,7 @@ export function useTeammatesDomain(input: {
     }
     const next = readTeammateChannelMembershipPayload(teammateId)
       .filter((membership) => membership.channelId !== channelId);
-    await saveTeammateChannelMemberships(teammateId, next);
+    await saveTeammateChannelMemberships(teammateId, next, channelId, "remove");
   }
 
   async function setDefaultChannelTeammate(channelId: string, teammateId: string): Promise<void> {
@@ -443,11 +517,11 @@ export function useTeammatesDomain(input: {
     if (!hasMembership) {
       next.push({ channelId, isDefault: true });
     }
-    await saveTeammateChannelMemberships(teammateId, next);
+    await saveTeammateChannelMemberships(teammateId, next, channelId, "set-default");
   }
 
   function readTeammateChannelMembershipPayload(teammateId: string): { readonly channelId: string; readonly isDefault?: boolean }[] {
-    return (teammateChannelMembershipsByTeammate[teammateId] ?? []).map((membership) => ({
+    return (teammateChannelMembershipsRef.current[teammateId] ?? []).map((membership) => ({
       channelId: membership.channelId,
       isDefault: membership.isDefault,
     }));
@@ -456,41 +530,82 @@ export function useTeammatesDomain(input: {
   async function saveTeammateChannelMemberships(
     teammateId: string,
     memberships: readonly { readonly channelId: string; readonly isDefault?: boolean }[],
+    channelId: string,
+    action: TeammateChannelRelationAction,
   ): Promise<void> {
     const cwd = input.cwd.trim();
+    const relationshipIdentity = teammateChannelRelationIdentity(channelId, teammateId);
     if (!cwd) {
-      input.setErrorMessage("请输入 workspace path");
-      return;
+      const message = "请输入 workspace path";
+      errorController.report({ surface: "channel-relation", identity: relationshipIdentity, action, scope: "validation" }, message);
+      throw new Error(message);
     }
 
+    const requestIdentity = JSON.stringify([cwd, relationshipIdentity, action]);
+    const requestToken = channelRelationRequestGuard.next(requestIdentity);
+    const workspaceEpoch = workspaceEpochRef.current;
     setChannelTeammateSavingId(teammateId);
+    errorController.clear("channel-relation", relationshipIdentity, action);
     try {
-      input.setErrorMessage("");
-      setError(undefined);
       const response = await replaceTeammateChannels(cwd, teammateId, memberships);
+      if (!isCurrentChannelRelationRequest(cwd, workspaceEpoch, requestIdentity, requestToken)) return;
+      const nextMemberships = {
+        ...teammateChannelMembershipsRef.current,
+        [teammateId]: response.memberships,
+      };
+      teammateChannelMembershipsRef.current = nextMemberships;
       setTeammateChannelMembershipsByTeammate((current) => ({
         ...current,
         [teammateId]: response.memberships,
       }));
       await input.refreshChannels(cwd);
+      if (isCurrentChannelRelationRequest(cwd, workspaceEpoch, requestIdentity, requestToken)) {
+        errorController.clear("channel-relation", relationshipIdentity, action);
+      }
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "mutation", message });
-      input.setErrorMessage(message);
+      if (isCurrentChannelRelationRequest(cwd, workspaceEpoch, requestIdentity, requestToken)) {
+        errorController.report({ surface: "channel-relation", identity: relationshipIdentity, action, scope: "mutation" }, caught);
+      }
       throw caught;
     } finally {
-      setChannelTeammateSavingId("");
+      if (isCurrentChannelRelationRequest(cwd, workspaceEpoch, requestIdentity, requestToken)) {
+        setChannelTeammateSavingId("");
+      }
     }
   }
 
+  function isCurrentChannelRelationRequest(
+    cwd: string,
+    workspaceEpoch: number,
+    requestIdentity: string,
+    requestToken: number,
+  ): boolean {
+    return cwdRef.current === cwd && workspaceEpochRef.current === workspaceEpoch &&
+      channelRelationRequestGuard.isCurrent(requestIdentity, requestToken);
+  }
+
   function resetForCwd(): void {
+    workspaceEpochRef.current += 1;
+    listRequestGuard.next();
+    membershipRequestGuard.next();
+    mutationRequestGuard.reset();
+    channelRelationRequestGuard.reset();
+    createRequestGuard.reset();
+    activeCreateIdentityRef.current = "";
+    aiTeammatesRef.current = [];
+    teammateChannelMembershipsRef.current = {};
     setAiTeammates([]);
     setAiTeammatesLoading(false);
     setTeammateChannelMembershipsByTeammate({});
     setTeammateChannelMembershipsLoading(false);
     setChannelTeammateSavingId("");
-    setError(undefined);
+    errorController.reset();
   }
+
+  const listError = latestTeammateListError(errorController.entries);
+  const actionErrorMessagesByTeammateId = teammateActionErrorMessages(errorController.entries);
+  const channelRelationErrorByChannelId = latestTeammateChannelRelationErrorByChannelId(errorController.entries);
+  const error: DomainError | undefined = listError ? { scope: "load", message: listError.message } : undefined;
 
   return {
     state: {
@@ -499,6 +614,10 @@ export function useTeammatesDomain(input: {
       teammateChannelMembershipsByTeammate,
       teammateChannelMembershipsLoading,
       channelTeammateSavingId,
+      errors: errorController.entries,
+      listErrorMessage: listError?.message ?? "",
+      actionErrorMessagesByTeammateId,
+      channelRelationErrorByChannelId,
     },
     actions: {
       refreshAiTeammates,
@@ -511,7 +630,6 @@ export function useTeammatesDomain(input: {
       toggleAiTeammatePinned,
       toggleAiTeammateHidden,
       archiveAiTeammate,
-      archiveAllVisibleTeammateChats,
       addChannelTeammate,
       removeChannelTeammate,
       setDefaultChannelTeammate,
@@ -520,8 +638,18 @@ export function useTeammatesDomain(input: {
     refresh: refreshAiTeammates,
     isLoading: aiTeammatesLoading || teammateChannelMembershipsLoading,
     error,
-    clearError: () => setError(undefined),
+    clearError: () => {
+      if (listError) errorController.clear(listError.surface, listError.identity, listError.action);
+    },
   };
+}
+
+function staleCreateResult(): TeammateCreateResult {
+  return { ok: false, stale: true };
+}
+
+function teammateMutationIdentity(cwd: string, teammateId: string, action: TeammateMutationAction): string {
+  return JSON.stringify([cwd, teammateId, action]);
 }
 
 function inferFailedCreateStep(message: string): TeammateCreateSetupStep {
