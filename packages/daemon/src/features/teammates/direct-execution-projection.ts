@@ -24,6 +24,7 @@ export function createTeammateDirectRunProjection(input: {
   let runId: string | undefined;
   let errorMessage: string | undefined;
   const textDeltas: string[] = [];
+  let visibleText = "";
   const closeListeners: (() => void)[] = [];
   if (input.signal) {
     input.signal.addEventListener("abort", () => {
@@ -74,13 +75,21 @@ export function createTeammateDirectRunProjection(input: {
         return;
       }
       textDeltas.push(delta);
+      const nextVisibleText = projectTeammateDirectReplyText(textDeltas.join(""));
+      if (nextVisibleText === visibleText) {
+        return;
+      }
+      const visibleDelta = nextVisibleText.startsWith(visibleText)
+        ? nextVisibleText.slice(visibleText.length)
+        : nextVisibleText;
+      visibleText = nextVisibleText;
       const updated = input.store.updateTeammateDirectMessageRuntime(
         input.pendingMessageId,
-        { body: textDeltas.join(""), status: "pending", errorMessage: null },
+        { body: visibleText, status: "pending", errorMessage: null },
         envelope.ts,
       );
       if (updated) {
-        input.stream?.onDelta(updated, delta);
+        input.stream?.onDelta(updated, visibleDelta);
       }
     },
     writeError(_statusCode, body) {
@@ -90,10 +99,42 @@ export function createTeammateDirectRunProjection(input: {
   };
   return {
     sink,
-    text: () => textDeltas.join(""),
+    text: () => projectTeammateDirectReplyText(textDeltas.join("")),
     runId: () => runId,
     error: () => errorMessage,
   };
+}
+
+const DIRECT_RECEIPT_HEAD = String.raw`(?:(?:好的|好)[，,\s]*)?(?:已)?收到(?:了)?`;
+const DIRECT_RECEIPT_ECHO = String.raw`(?:[：:,，]\s*[^。\r\n！？!?]{0,80})?`;
+const DIRECT_RECEIPT_END = String.raw`[。！？!?]`;
+const directReceiptLinePattern = new RegExp(
+  String.raw`^${DIRECT_RECEIPT_HEAD}${DIRECT_RECEIPT_ECHO}${DIRECT_RECEIPT_END}?[\t ]*(?:\r?\n)+`,
+  "u",
+);
+const directReceiptSentencePattern = new RegExp(
+  String.raw`^${DIRECT_RECEIPT_HEAD}${DIRECT_RECEIPT_ECHO}${DIRECT_RECEIPT_END}[\t ]*(?=\S)`,
+  "u",
+);
+const directReceiptOnlyPattern = new RegExp(
+  String.raw`^${DIRECT_RECEIPT_HEAD}${DIRECT_RECEIPT_ECHO}${DIRECT_RECEIPT_END}?\s*$`,
+  "u",
+);
+const partialDirectReceiptPattern = new RegExp(
+  String.raw`^(?:好|好的|好的[，,\s]*|已|已收|收|收到(?:了)?(?:[：:,，]\s*[^。\r\n！？!?]{0,80})?)$`,
+  "u",
+);
+
+export function projectTeammateDirectReplyText(value: string): string {
+  const source = value.trimStart();
+  const leadingReceipt = directReceiptLinePattern.exec(source) ?? directReceiptSentencePattern.exec(source);
+  if (leadingReceipt) {
+    return source.slice(leadingReceipt[0].length).trimStart();
+  }
+  if (directReceiptOnlyPattern.test(source) || partialDirectReceiptPattern.test(source)) {
+    return "";
+  }
+  return value;
 }
 
 function readRunId(value: unknown): string | undefined {

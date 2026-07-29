@@ -89,7 +89,7 @@
 }
 
 .channel-left-drawer .avatar-initial {
-  border: 1px solid var(--border);
+  border: 0;
   background: var(--surface-panel-strong);
   color: var(--text);
   font-size: 11px;
@@ -455,13 +455,15 @@
   transform: rotate(-90deg);
 }
 
+.channel-left-drawer .sidebar-section-list:not([hidden]) {
+  display: grid;
+}
+
 .channel-left-drawer .sidebar-section-list,
 .channel-left-drawer .sidebar-section:first-of-type .sidebar-section-list,
 .channel-left-drawer .sidebar-section:last-of-type .sidebar-section-list {
-  display: grid;
   gap: 2px;
   min-height: 0;
-  overflow: visible;
   padding-right: 0;
 }
 

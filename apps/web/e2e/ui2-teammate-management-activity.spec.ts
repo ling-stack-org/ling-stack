@@ -29,6 +29,8 @@ test("Recent activity exposes all five product kinds and only Run rows navigate"
 
   const activity = await openActivity(page);
   await expect(activity.locator("[data-activity-id]")).toHaveCount(5);
+  await expect(activity.locator(".teammate-activity-list")).toHaveCSS("border-top-width", "1px");
+  await expect(activity.locator(".teammate-activity-kind-icon").first()).toHaveCSS("border-top-width", "0px");
   await expect(activity).toContainText("Private message");
   await expect(activity).toContainText("Prepare release checklist");
   await expect(activity).toContainText("Release verification");

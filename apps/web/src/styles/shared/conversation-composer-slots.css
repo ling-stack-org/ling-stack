@@ -157,7 +157,7 @@
   width: 36px;
   height: 36px;
   place-items: center;
-  border: 1px solid var(--ling-border-default);
+  border: 0;
   border-radius: var(--ling-radius-sm);
   color: var(--ling-text-muted);
   background: var(--ling-bg-elevated);

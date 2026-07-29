@@ -102,7 +102,7 @@ test("MP-16 image preview retries only content, downloads safely, and preserves 
   expect(errors).toEqual([]);
 });
 
-test("MP-16 video preview exposes controls and metadata loading without autoplay", async ({ page }) => {
+test("MP-16 video preview requests autoplay while preserving controls", async ({ page }) => {
   const errors = collectBrowserErrors(page);
   const state = previewState("video");
   const control = previewControl();
@@ -115,9 +115,9 @@ test("MP-16 video preview exposes controls and metadata loading without autoplay
   const video = dialog.locator("video");
   await expect(video).toBeVisible();
   await expect(video).toHaveAttribute("controls", "");
-  await expect(video).toHaveAttribute("preload", "metadata");
-  await expect(video).not.toHaveAttribute("autoplay");
-  expect(await video.evaluate((element) => (element as HTMLVideoElement).autoplay)).toBe(false);
+  await expect(video).toHaveAttribute("preload", "auto");
+  await expect(video).toHaveAttribute("autoplay", "");
+  expect(await video.evaluate((element) => (element as HTMLVideoElement).autoplay)).toBe(true);
   await expect(video.locator("xpath=..")).toHaveAttribute("data-media-preview-state", "ready");
   await expectNeutralEffectChain(video);
   await dialog.getByRole("button", { name: "Close preview" }).click();

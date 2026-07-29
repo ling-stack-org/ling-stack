@@ -496,11 +496,12 @@ Exit gate：TOOLBAR/CANVAS focused 全绿；Canvas stage dock前后 width/height
 2. settings迁 shared Field/Input/Textarea/Select/Button/Checkbox；direct/workflow fields互斥，blocker有精确 repair callback。
 3. view model返回 key+values/status/action，不返回中文 sentence；日期按 active locale。
 4. title/prompt/reference/workflow field的 draft、save、failure按 target scene/field所有；切 scene恢复权威值。
-5. current result、latest issue、history status只显示一个主状态；raw failure默认折叠。
-6. run/cancel/select历史使用 S0 structured outcome/scoped busy；旧结果在 regeneration/failure期间保留。
+5. prompt 的 Run 是显式 commit boundary：读取当前可见 draft，复用或等待 blur save，按 `scene PATCH success -> scene run POST` 串行执行；save failure 保留 draft 且禁止 POST。
+6. `needs_prompt` 时 Run 保持可达；空值点击只触发 shared Field error 和 Textarea focus，不创建 Scene Run/Media Job。其他真实 blocker 与运行中 single-flight 规则不变。
+7. current result、latest issue、history status只显示一个主状态；raw failure默认折叠。
+8. run/cancel/select历史使用 S0 structured outcome/scoped busy；旧结果在 regeneration/failure期间保留。
 
-Exit gate：INSPECTOR/SCENE/RUN focused 全绿；direct/workflow source drift、dirty/failure/retry、result/history、cancel/select
-single-flight通过；关闭/打开 Inspector不改 selection/Canvas geometry。
+Exit gate：INSPECTOR/SCENE/RUN focused 全绿；direct/workflow source drift、dirty/failure/retry、prompt 不失焦直接运行、空 prompt 聚焦且零 POST、result/history、cancel/select single-flight通过；关闭/打开 Inspector不改 selection/Canvas geometry。
 
 ### 6.4 S3 Workflow
 
@@ -518,7 +519,7 @@ focus return、draft retention、old cwd response、connection delete确认全�
 ### 6.5 S4 Project run/Preview/P10.1 bridge
 
 1. ProjectRunReview使用 shared Dialog；0 ready无 submit，mixed request只含 ready sceneIds；失败留 Dialog。
-2. Preview使用 shared Dialog + existing `MediaArtifactPreview`；video controls/preload metadata/no autoplay。
+2. Preview 使用 shared Dialog + existing `MediaArtifactPreview`；用户点击 Preview 后 video 保留 controls、静音 autoplay，图片不自动播放。
 3. content retry只重载 Artifact；不运行 scene、不改变 current run/scene selection。
 4. Download使用 existing Artifact content URL；失败保留browser fallback，不向外部URL转发provider auth。
 5. Open task先关闭preview、切 `view="jobs"`、调用S0薄 `onOpenMediaJob(currentJob.id)`；Reuse settings继续由P10.1拥有。
@@ -618,7 +619,7 @@ Static rules：
 | `MP-13-workflow-import` | WORKFLOW | >5MB/bad JSON/validation/mapping/import fail/success | draft retention；busy dismiss blocked；Toast scope |
 | `MP-14-workflow-test` | WORKFLOW/RUN | queued/running/fail/success/activate/archive | no percent；existing job truth；repair/action precedence |
 | `MP-15-project-run` | RUN/TOOLBAR | 0 ready、mixed、submit fail/success/double click | request sceneIds exact；Dialog owner/focus |
-| `MP-16-preview` | PREVIEW | image/video/load error/retry/download/close | no autoplay；content retry only；selection stable；pixel style |
+| `MP-16-preview` | PREVIEW | image/video/load error/retry/download/close | explicit-click muted autoplay；controls retained；content retry only；selection stable；pixel style |
 | `MP-17-open-task` | PREVIEW/TOOLBAR | preview current job -> tasks -> reuse | selected Media Job；P10.1 Reuse可达；no Media Jobs source change |
 | `MP-18-cross-cutting` | all 9 IDs | 2x2 themes/viewports、zh/en、keyboard/reduce | console/pageerror=0；overflow=0；IDs/evidence ledger complete |
 

@@ -77,9 +77,9 @@ test("teammate runtime status and queued guidance stay contained in dark reduced
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Ling Engineer" }).click();
-  const status = page.locator(".teammate-chat-status-row");
-  await expect(status).toBeVisible();
-  await expect(status).toContainText(/Model ready|Model needs setup/u);
+  const modelWarning = page.locator(".teammate-chat-header").getByRole("button", { name: "Model needs setup" });
+  await expect(modelWarning).toBeVisible();
+  await expect(page.locator(".teammate-chat-status-row")).toHaveCount(0);
 
   const guidance = page.getByLabel("Private guidance");
   const row = guidance.locator(".conversation-guidance-row");
@@ -100,9 +100,11 @@ test("teammate runtime status and queued guidance stay contained in dark reduced
   await expect(more).toBeFocused();
 
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-  await expectContained(status, page.locator(".teammate-chat-header"));
+  await expectContained(modelWarning, page.locator(".teammate-chat-header"));
   await expectContained(row, guidance);
   await expectNoDocumentOverflow(page);
+  await modelWarning.click();
+  await expect(page.getByLabel("Model assignment")).toBeVisible();
   expect(runtimeErrors).toEqual([]);
 });
 

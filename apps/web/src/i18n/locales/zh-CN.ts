@@ -5684,6 +5684,7 @@ export const zhCN = {
   "Add a scene, then define its visual and generation source.": "先添加场景，再设置画面和生成来源。",
   "Could not create a scene.": "无法创建场景。",
   "Could not save this scene.": "无法保存此场景。",
+  "Enter a prompt before running.": "请输入提示词。",
   "Could not save this scene position.": "无法保存此场景的位置。",
   "Could not duplicate this scene.": "无法复制此场景。",
   "Could not reorder these scenes.": "无法调整这些场景的顺序。",

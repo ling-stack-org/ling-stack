@@ -15,7 +15,7 @@
   justify-content: center;
   width: 28px;
   height: 28px;
-  border: 1px solid var(--ling-border-default);
+  border: 0;
   border-radius: var(--ling-radius-pill);
   background: var(--ling-bg-app);
   color: var(--ling-text-muted);

@@ -85,6 +85,6 @@
 - Provider 与 ComfyUI 的首次成功 Scene Run 自动设为当前结果；后续成功、失败和取消保留原选择。
 - `SceneReadiness` 同时携带当前 run/job/artifact、最新 run/job、重新生成标记和最近问题，卡片不会在重新生成时退回“可生成”。
 - 场景检查器在已有结果时使用“重新生成”，并在最近一次重试失败时保留播放器和中文错误提示。
-- 画布节点增加固定预览按钮，弹窗复用真实 artifact 播放器且无 autoplay；点击预览不改变节点选择。
+- 画布节点增加固定预览按钮；点击后弹窗复用真实 artifact 播放器，视频静音 autoplay 并保留 controls，且不改变节点选择。
 - 生成任务状态或 artifact 签名变化时，工作区静默刷新当前项目，及时读取 daemon 自动写入的首次结果选择。
 - 原布局阶段“不改运行语义”的 Hard Stop 只约束当时的布局切片；本 follow-up 由独立批准的结果生命周期计划授权，仍未新增 HTTP route 或 SQLite schema。

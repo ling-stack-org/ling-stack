@@ -3976,6 +3976,7 @@ export const enUS = {
     "Could not delete this media project.": "Could not delete this media project.",
     "Choose a workspace before creating a media project.": "Choose a workspace before creating a media project.",
     "Enter a project name before saving.": "Enter a project name before saving.",
+    "Enter a prompt before running.": "Enter a prompt before running.",
     "This media project is no longer selected.": "This media project is no longer selected.",
     "Projects and scenes": "Projects and scenes",
     "Project": "Project",

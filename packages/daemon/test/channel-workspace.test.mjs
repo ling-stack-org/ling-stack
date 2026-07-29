@@ -10195,6 +10195,52 @@ test("teammate direct message stream emits ready delta and done events", async (
   }
 });
 
+test("teammate direct replies hide leading receipt echoes while preserving the answer", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-private-receipt-echo-"));
+  await ensureGitRepo(cwd);
+  const runner = {
+    runs: [],
+    async runTask(options) {
+      this.runs.push(options);
+      const chunks = ["收", "到：111。\n", "如果这是排队号或引导码，可以查看现场大屏确认进度。"];
+      for (const text of chunks) {
+        options.onEvent?.({ type: "assistant_text_delta", text });
+      }
+      return {
+        taskId: options.task.id,
+        messages: [chunks.join("")],
+        events: [],
+      };
+    },
+  };
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const teammateId = "teammate_builtin_engineer";
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+    });
+
+    const response = await fetch(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages/stream?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body: "111", providerPresetId: provider.id }),
+    });
+    assert.equal(response.status, 200);
+    const events = parseSseEvents(await response.text());
+    const visibleBodies = events
+      .filter((event) => event.event === "delta" || event.event === "done")
+      .map((event) => event.event === "done" ? event.data.aiReply.body : event.data.body);
+    assert.equal(visibleBodies.some((body) => body.includes("收到：111")), false);
+    assert.equal(events.find((event) => event.event === "done").data.aiReply.body, "如果这是排队号或引导码，可以查看现场大屏确认进度。");
+    assert.match(runner.runs[0].systemPrompt, /Do not start with a receipt acknowledgement or echo the user's message/);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("teammate direct execution creates a supervised run and projects tool events", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-private-supervised-run-"));
   await ensureGitRepo(cwd);
