@@ -20,7 +20,7 @@
   width: 28px;
   height: 28px;
   place-items: center;
-  border: 1px solid var(--ling-border-default);
+  border: 0;
   border-radius: var(--ling-radius-pill);
   color: var(--ling-text-muted);
   background: var(--ling-bg-panel);

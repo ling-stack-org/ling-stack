@@ -371,6 +371,13 @@ async function renderScenario(page: Page, scenario: EvidenceCase, runtime: Scena
     }
     case "preview-video": {
       const video = await openPreview(page, "video");
+      await expect(video).toHaveJSProperty("autoplay", true);
+      await expect(video).toHaveJSProperty("muted", true);
+      await expect(video).toHaveJSProperty("controls", true);
+      await expect.poll(() => video.evaluate((element) => {
+        const media = element as HTMLVideoElement;
+        return media.currentTime > 0 || media.ended;
+      })).toBe(true);
       return { owner: page.locator('[data-media-production-dialog="scene-result-preview"]'), media: video };
     }
     case "preview-open-task": {

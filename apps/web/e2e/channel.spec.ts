@@ -2415,6 +2415,10 @@ test("channel settings can add and remove teammates without preferred specialist
   )).toBe(true);
   const engineerChip = manager.locator(".channel-teammate-chip").filter({ hasText: "Ling Engineer" });
   await expect(engineerChip).toBeVisible();
+  await expect(engineerChip).toHaveCSS("border-top-width", "1px");
+  const engineerAvatar = engineerChip.locator(".teammate-avatar-image");
+  await expect(engineerAvatar).toHaveCSS("border-top-width", "0px");
+  await expect(engineerAvatar).toHaveCSS("box-shadow", "none");
   await expect(engineerChip.getByRole("button", { name: "Remove from channel" })).toHaveCount(1);
   await expect(engineerChip.getByRole("button", { name: "Ling Engineer" })).toHaveCount(0);
   await expect(engineerChip).not.toHaveClass(/default/);

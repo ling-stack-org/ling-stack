@@ -43,6 +43,8 @@ test("Join, Leave, and Set default preserve the full membership payload with row
   const engineering = channelRow(channels, "channel_engineering");
   const design = channelRow(channels, "channel_design");
   const research = channelRow(channels, "channel_research");
+  await expect(channels.locator("[data-ui2-teammate-channels-list]")).toHaveCSS("border-top-width", "1px");
+  await expect(engineering.locator(".teammate-channel-icon")).toHaveCSS("border-top-width", "0px");
   await expect(engineering).toContainText("Default channel");
   await expect(design).toContainText("Joined channel");
   await expect(research).toContainText("Not joined");

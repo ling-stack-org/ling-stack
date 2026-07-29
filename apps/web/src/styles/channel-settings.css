@@ -403,7 +403,7 @@
   width: 28px;
   height: 28px;
   place-items: center;
-  border: 1px solid var(--ling-border-default);
+  border: 0;
   border-radius: var(--ling-radius-md);
   color: var(--ling-text-default);
   background: var(--ling-bg-subtle);

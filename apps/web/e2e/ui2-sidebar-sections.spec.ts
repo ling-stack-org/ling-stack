@@ -32,8 +32,19 @@ test("Sidebar sections preserve geometry while channels and teammates load", asy
   const channelsToggle = navigation.getByRole("button", { name: "Channels" });
   const channelContent = navigation.locator('[data-sidebar-section="channels"] [data-ling-collapsible-content]');
   await expect(channelContent).toHaveCSS("animation-name", "none");
+  await channelContent.evaluate((element) => {
+    element.dataset.closeAnimationStarts = "0";
+    element.addEventListener("animationstart", (event) => {
+      if (event.animationName !== "ling-ui-collapsible-close") return;
+      element.dataset.closeAnimationStarts = String(Number(element.dataset.closeAnimationStarts ?? "0") + 1);
+    });
+  });
   await channelsToggle.click();
   await expect(channelsToggle).toHaveAttribute("aria-expanded", "false");
+  await expect(channelContent).toHaveCSS("overflow-y", "hidden");
+  await expect(channelContent).toHaveAttribute("hidden", "");
+  await expect(channelContent).toHaveCSS("display", "none");
+  await expect(channelContent).toHaveAttribute("data-close-animation-starts", "1");
   await channelsToggle.click();
   await expect(channelsToggle).toHaveAttribute("aria-expanded", "true");
   await expect(channelContent).toHaveCSS("animation-name", "ling-ui-collapsible-open");

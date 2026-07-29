@@ -103,68 +103,34 @@
   min-width: max-content;
 }
 
-.teammate-chat-status-row {
+.teammate-chat-alert-row {
   grid-column: 2;
   grid-row: 1;
   display: flex;
   align-items: center;
   flex-wrap: nowrap;
-  gap: 4px;
+  gap: 6px;
   min-width: 0;
-  padding-left: 0;
   overflow: hidden;
 }
 
-.teammate-chat-status-row.conversation-status-strip {
-  display: flex;
-  align-items: center;
-  flex-wrap: nowrap;
-  gap: 6px;
-  min-height: 28px;
-  padding: 0;
-  overflow: hidden;
-  border: 0;
-  background: transparent;
-}
-
-.teammate-chat-status-row .conversation-status-main {
-  display: flex;
-  align-items: center;
-  flex-wrap: nowrap;
-  gap: 6px;
-  min-width: 0;
-}
-
-.teammate-chat-status-row .conversation-status-title {
+.teammate-chat-model-warning.ling-ui-button {
   flex: 0 1 auto;
-  flex-wrap: nowrap;
-  min-height: 18px;
+  min-width: 0;
+  height: 28px;
+  min-height: 28px;
+  padding: 0 8px;
   overflow: hidden;
-}
-
-.teammate-chat-status-row .conversation-status-title strong {
-  font-size: 10px;
-  line-height: 12px;
+  border-color: var(--ling-status-warning-border);
+  color: var(--ling-status-warning);
+  background: var(--ling-status-warning-bg);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .teammate-chat-lifecycle-status {
   flex: 0 1 auto;
   max-width: 96px;
-}
-
-.teammate-chat-status-row .conversation-status-meta {
-  flex: 1 1 auto;
-  flex-wrap: nowrap;
-  gap: 4px;
-  overflow: hidden;
-}
-
-.teammate-chat-status-row .conversation-status-meta > span {
-  min-height: 18px;
-  padding: 0 6px;
-  border-color: var(--ling-border-default);
-  border-radius: var(--ling-radius-sm);
-  background: var(--ling-bg-panel);
 }
 
 .teammate-chat-header .teammate-chat-search {
@@ -183,7 +149,7 @@
   background: transparent;
 }
 
-.teammate-chat-header.searching .teammate-chat-status-row {
+.teammate-chat-header.searching .teammate-chat-alert-row {
   display: none;
 }
 

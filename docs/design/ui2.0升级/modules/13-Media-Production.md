@@ -235,7 +235,8 @@ Escape、outside click、portal、scroll lock 和 focus return；feature 不注�
 | no-scenes | project detail success 且 scenes `[]` | Canvas 与 outline 各一个一致 EmptyState | Add first scene | success select/open Inspector |
 | loaded-unselected | scenes 非空但无有效 selection | 第一 scene 由 detail commit 规则选中 | select scene | 进入 selected |
 | selected | scene id 存在 | outline、node、Inspector 单一选中 | edit/duplicate/reorder/move/delete/run | selection 不受 Dock 开关影响 |
-| local-dirty | title/prompt/field 改动未提交 | Field 显示 draft，不改其他 scene | blur/explicit select 提交；Esc 恢复字段值 | save success/failure |
+| local-dirty | title/prompt/field 改动未提交 | Field 显示 draft，不改其他 scene | blur/explicit select 提交；Run 先提交当前 prompt 再运行；Esc 恢复字段值 | save success/failure；prompt save failure 不运行 |
+| prompt-empty | 当前可见 prompt trim 后为空 | Run 保持可点击；Field 暂无持久错误墙 | 点击 Run 后显示 Field error 并聚焦 prompt | 输入后清除；不创建 Scene Run/Media Job |
 | save-busy/failure | update scene in flight/fail | 只锁目标 Field/scene；failure 贴 owner | Retry/Clear/revert | success authoritative patch + Toast |
 | create/duplicate-busy | action in flight | 只锁触发按钮与目标 duplicate | 其他 scene 可选 | success load detail + select new scene |
 | reorder-busy/failure | order request | 只锁排序 controls；Canvas position 不变 | preview/Inspector 可用 | success authoritative order；failure 恢复旧 order |
@@ -324,7 +325,7 @@ Escape、outside click、portal、scroll lock 和 focus return；feature 不注�
 | closed | no Dialog | open from node/result/history | trigger retained | no selection change |
 | loading | shared Dialog frame + Spinner/Skeleton | Close | Escape/outside allowed | stable frame geometry |
 | image ready | contain image、metadata-neutral UI | Download、Open task、Reuse settings via existing task view | close returns trigger | decoded media pixel hash theme-equal |
-| video ready | `<video controls preload="metadata">`，不 autoplay | Play、Download、Open task | close stops playback/returns focus | no CSS filter/opacity/blend |
+| video ready | 用户点击 Preview 后 `<video controls autoplay muted playsinline>` | Pause/Play、取消静音、Download、Open task | close stops playback/returns focus | no CSS filter/opacity/blend |
 | content error | InlineFeedback “Preview unavailable” | Retry、Download fallback、Open task | error retained until retry/close | broken bytes不伪装 ready |
 | retry busy | frame-only busy | Close remains available | does not run scene | one content request |
 | open task/reuse | switch to Generation tasks and select current job | existing P10.1 Reuse settings | preview closes after navigation | 不复制 Media Jobs form |

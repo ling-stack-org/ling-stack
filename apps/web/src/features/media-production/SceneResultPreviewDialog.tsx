@@ -42,7 +42,7 @@ export function SceneResultPreviewDialog({
         <DialogHeader closeLabel={t("Close preview")} title={t("Preview")} description={scene.title} />
         <DialogBody className="scene-result-preview-body">
           <div className="scene-result-preview-frame">
-            <MediaArtifactPreview artifact={artifact} cwd={cwd} mode="scene" autoPlay={false} />
+            <MediaArtifactPreview artifact={artifact} cwd={cwd} mode="scene" autoPlay={artifact.type === "video"} />
           </div>
         </DialogBody>
         <DialogFooter>

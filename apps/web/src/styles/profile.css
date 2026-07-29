@@ -309,7 +309,7 @@
   place-items: center;
   width: 28px;
   height: 28px;
-  border: 1px solid var(--border);
+  border: 0;
   border-radius: var(--radius-md);
   background: var(--surface-panel-strong);
   color: var(--text-muted);
