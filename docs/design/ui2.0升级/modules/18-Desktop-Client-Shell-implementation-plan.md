@@ -363,13 +363,18 @@ Ling PID `2215`，native window ID `98320`，logical bounds 初始为
 | Home expanded drag | content fallback `rect={x:240,y:0,w:1200,h:28}` / `drag`；screenshot `(800,18)->(960,18)` | `x:144 -> 264`，`y/w/h` unchanged | passed，`+120pt`；background rung reported `background_unavailable`，then foreground rung moved and restored focus |
 | Sidebar collapse control | physical click；shell gained `channel-sidebar-collapsed` | bounds unchanged at `{144,35,1440,920}` | passed，control action succeeded without window movement |
 | Home collapsed drag | fallback `rect={x:76,y:0,w:1364,h:28}` / `drag`；same safe drag path | `x:144 -> 264`，`y/w/h` unchanged | passed，`+120pt` |
-| Settings traffic clearance | traffic exclusion `76x28` / `no-drag` / `pointer-events:none`；Back `rect={x:76,y:20,w:192,h:32}` / `no-drag` | bounds unchanged | passed，Back closed Settings；background input was observed dropped, foreground retry succeeded |
+| Settings traffic clearance (historical #402 candidate) | traffic exclusion `76x28` / `no-drag` / `pointer-events:none`；Back `rect={x:76,y:20,w:192,h:32}` / `no-drag` | bounds unchanged | passed before the spacing follow-up；Back closed Settings；background input was observed dropped, foreground retry succeeded |
 | Real Dialog overlay | New channel Dialog and full scrim both computed `no-drag`；scrim physical click at screenshot `(133,16)` | bounds unchanged | passed，scrim received the click and dismissed the Dialog |
 | finally restore | Sidebar expanded，Settings/Dialog closed | `{144,35,1440,920} -> {144,35,1440,920}` | passed，position and size exactly restored |
 
 Focused automation：Web lint/typecheck/build passed；`macos-titlebar.spec.ts --repeat-each=2` passed
 `14/14`；workspace geometry passed `1/1`；Desktop typecheck/build and main-window/resource contracts passed
 `7/7`；`git diff --check` passed。以上 automation 与 T6 均在同步 #401 后的 `e1954051` base 上重跑。
+
+2026-07-29 Settings spacing follow-up：macOS host 模拟下持久断言 Back `y=32`（28px titlebar +
+4px safe gap），focused Playwright `2/2`、Web lint/build 与 `git diff --check` passed。上表 `y=20`
+只记录 #402 packaged candidate 的历史 native T6；本次局部 CSS follow-up 尚未重跑 packaged native T6，
+下一次安装包验收必须用 `y=32` 替换该历史坐标。
 
 Honest boundary：该 evidence 只验证 packaged macOS arm64 主窗口 drag/no-drag contract。它不外推
 macOS x64 或 Windows，不代替公证、release signing、重启/升级和整体 Desktop release gate；本次候选包是
