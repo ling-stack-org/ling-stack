@@ -1,5 +1,4 @@
 import {
-  useEffect,
   useRef,
   useState,
   type FormEvent,
@@ -148,17 +147,6 @@ export function SidebarNavigation({
     branchesByChannel.set(channel.id, channelBranches.filter((branch) => branch.channelId === channel.id && branch.status !== "archived"));
   }
 
-  useEffect(() => {
-    if (!collapsedTooltipsEnabled) {
-      return;
-    }
-    setCollapsedSections({
-      channels: false,
-      teammates: false,
-      recent: false,
-    });
-  }, [collapsedTooltipsEnabled]);
-
   function openBranchDraft(channelId: string): void {
     setBranchDraftChannelId(channelId);
     setBranchDraftName("");
@@ -169,6 +157,13 @@ export function SidebarNavigation({
       ...current,
       [sectionId]: !current[sectionId],
     }));
+  }
+
+  function activateRailSection(sectionId: SidebarSectionId): void {
+    setCollapsedSections((current) => current[sectionId]
+      ? { ...current, [sectionId]: false }
+      : current);
+    onChannelDrawerOpenChange?.(true);
   }
 
   async function submitBranchDraft(event: FormEvent<HTMLFormElement>, channelId: string): Promise<void> {
@@ -225,8 +220,10 @@ export function SidebarNavigation({
         stale={stale}
         staleLabel={t("Stale")}
         collapsed={collapsedSections.channels}
+        railActive={activeSidebarTarget.startsWith("channel:")}
         railCollapsed={collapsedTooltipsEnabled}
-        railCollapsedPreview={renderChannelRailPreview(channels)}
+        railIcon={Hash}
+        onRailActivate={activateRailSection}
         onToggleCollapsed={toggleSection}
         menuLabel={t("Channel actions")}
         menuOpen={openSectionMenu === "channels"}
@@ -368,8 +365,10 @@ export function SidebarNavigation({
         stale={stale}
         staleLabel={t("Stale")}
         collapsed={collapsedSections.teammates}
+        railActive={activeSidebarTarget.startsWith("teammate:")}
         railCollapsed={collapsedTooltipsEnabled}
-        railCollapsedPreview={renderTeammateRailPreview(visibleTeammates, cwd)}
+        railIcon={Bot}
+        onRailActivate={activateRailSection}
         onToggleCollapsed={toggleSection}
         menuLabel={t("AI teammate actions")}
         menuOpen={openSectionMenu === "teammates"}
@@ -443,8 +442,10 @@ export function SidebarNavigation({
         stale={stale}
         staleLabel={t("Stale")}
         collapsed={collapsedSections.recent}
+        railActive={activeSidebarTarget === "workspace" && selectedRecentConversationId.length > 0}
         railCollapsed={collapsedTooltipsEnabled}
-        railCollapsedPreview={renderRecentRailPreview(recentConversations)}
+        railIcon={MessageSquare}
+        onRailActivate={activateRailSection}
         onToggleCollapsed={toggleSection}
         menuLabel={t("Recent conversation actions")}
         menuOpen={openSectionMenu === "recent"}
@@ -591,53 +592,4 @@ function renderSidebarNotification(
 
 function sidebarNotificationId(notification: SidebarNotification | undefined): string | undefined {
   return notification?.primaryStatus ?? (notification?.unread ? "unread" : undefined);
-}
-
-function renderChannelRailPreview(channels: readonly Channel[]): JSX.Element {
-  const visibleChannels = channels.slice(0, 4);
-  const previewChannels = visibleChannels.length > 0 ? visibleChannels : [];
-  const extraCount = channels.length - visibleChannels.length;
-  return (
-    <span className="sidebar-rail-stack" aria-hidden="true">
-      {previewChannels.length > 0 ? previewChannels.map((channel) => {
-        const channelAvatar = channelAvatarMeta(channel);
-        return (
-          <span key={channel.id} className={`sidebar-channel-avatar ${channelAvatar.tone}`}>
-            {channelAvatar.label}
-          </span>
-        );
-      }) : <span className="sidebar-rail-stack-icon"><Hash size={14} /></span>}
-      {extraCount > 0 ? <span className="sidebar-rail-stack-more">+{extraCount}</span> : null}
-    </span>
-  );
-}
-
-function renderTeammateRailPreview(teammates: readonly AiTeammate[], cwd: string): JSX.Element {
-  const visibleTeammates = teammates.slice(0, 5);
-  const extraCount = teammates.length - visibleTeammates.length;
-  return (
-    <span className="sidebar-rail-stack" aria-hidden="true">
-      {visibleTeammates.length > 0 ? visibleTeammates.map((teammate) => (
-        <span key={teammate.id} className="sidebar-rail-stack-avatar">
-          <TeammateAvatarView teammate={teammate} cwd={cwd} compact />
-        </span>
-      )) : <span className="sidebar-rail-stack-icon"><Bot size={14} /></span>}
-      {extraCount > 0 ? <span className="sidebar-rail-stack-more">+{extraCount}</span> : null}
-    </span>
-  );
-}
-
-function renderRecentRailPreview(conversations: readonly SidebarRecentConversation[]): JSX.Element {
-  const visibleConversations = conversations.slice(0, 3);
-  const extraCount = conversations.length - visibleConversations.length;
-  return (
-    <span className="sidebar-rail-stack" aria-hidden="true">
-      {(visibleConversations.length > 0 ? visibleConversations : [{ id: "empty" }]).map((conversation) => (
-        <span key={conversation.id} className="sidebar-rail-stack-icon">
-          <MessageSquare size={15} />
-        </span>
-      ))}
-      {extraCount > 0 ? <span className="sidebar-rail-stack-more">+{extraCount}</span> : null}
-    </span>
-  );
 }

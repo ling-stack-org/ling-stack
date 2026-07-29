@@ -1,10 +1,11 @@
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, type LucideIcon } from "lucide-react";
 import type { ReactNode, Ref } from "react";
 import {
   Button,
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
+  IconButton,
   Skeleton,
   Spinner,
   StatusIndicator,
@@ -24,9 +25,11 @@ export function SidebarSection({
   menuOpen,
   menuTriggerRef,
   onMenuOpenChange,
+  onRailActivate,
   onToggleCollapsed,
+  railActive = false,
   railCollapsed = false,
-  railCollapsedPreview,
+  railIcon,
   sectionId,
   stale = false,
   staleLabel,
@@ -42,9 +45,11 @@ export function SidebarSection({
   readonly menuOpen?: boolean;
   readonly menuTriggerRef?: Ref<HTMLButtonElement>;
   readonly onMenuOpenChange?: (open: boolean) => void;
+  readonly onRailActivate: (sectionId: SidebarSectionId) => void;
   readonly onToggleCollapsed: (sectionId: SidebarSectionId) => void;
+  readonly railActive?: boolean;
   readonly railCollapsed?: boolean;
-  readonly railCollapsedPreview?: ReactNode;
+  readonly railIcon: LucideIcon;
   readonly sectionId: SidebarSectionId;
   readonly stale?: boolean;
   readonly staleLabel: string;
@@ -56,6 +61,35 @@ export function SidebarSection({
     railCollapsed ? "rail-collapsed" : "",
     collapsed ? "collapsed" : "expanded",
   ].filter(Boolean).join(" ");
+
+  if (railCollapsed) {
+    return (
+      <section className={sectionClassName} data-sidebar-section={sectionId}>
+        <span className="sidebar-rail-launcher-shell">
+          <IconButton
+            className="sidebar-rail-launcher"
+            data-sidebar-rail-launcher={sectionId}
+            icon={railIcon}
+            label={title}
+            onClick={() => onRailActivate(sectionId)}
+            pressed={railActive}
+          />
+          {loading ? (
+            <Spinner className="sidebar-rail-launcher-status" label={loadingLabel} size="sm" />
+          ) : stale ? (
+            <StatusIndicator
+              aria-label={`${title}: ${staleLabel}`}
+              className="sidebar-rail-launcher-status"
+              compact
+              label={staleLabel}
+              role="status"
+              tone="warning"
+            />
+          ) : null}
+        </span>
+      </section>
+    );
+  }
 
   return (
     <Collapsible asChild open={!collapsed} onOpenChange={() => onToggleCollapsed(sectionId)}>
@@ -100,10 +134,7 @@ export function SidebarSection({
             />
           ) : null}
         </div>
-        <div className={railCollapsed ? "sidebar-rail-section-body" : "sidebar-section-body"}>
-          {railCollapsed && railCollapsedPreview ? (
-            <div className="sidebar-rail-preview" aria-hidden={!collapsed}>{railCollapsedPreview}</div>
-          ) : null}
+        <div className="sidebar-section-body">
           <CollapsibleContent className="sidebar-section-list">
             {children}
           </CollapsibleContent>

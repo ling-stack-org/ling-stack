@@ -44,7 +44,7 @@ test("UI 2.0 Sidebar object rows keep compact identity and actions in the expand
   expect(runtimeErrors).toEqual([]);
 });
 
-test("UI 2.0 Sidebar compact rail preserves identity, tooltip, and stable geometry in dark theme", async ({ page }) => {
+test("UI 2.0 Sidebar compact rail keeps object rows behind a section launcher in dark theme", async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page);
   await prepareSurface(page, "dark", 1280, 800);
   await mockDaemon(page, createSidebarState());
@@ -56,21 +56,24 @@ test("UI 2.0 Sidebar compact rail preserves identity, tooltip, and stable geomet
   await page.getByRole("button", { name: "Hide navigation" }).click();
   await expect.poll(async () => Math.round((await navigation.boundingBox())?.width ?? 0)).toBe(48);
 
-  const channel = navigation.getByRole("button", { name: "Engineering" });
-  const channelAvatar = channel.locator(".sidebar-channel-avatar");
-  await expect(channel.locator('[data-ling-button-slot="label"]')).toHaveCSS("display", "none");
-  await expect(channelAvatar).toHaveCSS("display", "grid");
-  await expect.poll(async () => Math.round((await channelAvatar.boundingBox())?.width ?? 0)).toBe(26);
+  await expect(navigation.locator(".sidebar-row-shell")).toHaveCount(0);
+  await expect(navigation.getByRole("button", { name: "Engineering", exact: true })).toHaveCount(0);
+  const channel = navigation.getByRole("button", { name: "Channels", exact: true });
+  await expect(channel).toHaveAttribute("data-sidebar-rail-launcher", "channels");
+  await expect(channel).toHaveAttribute("aria-pressed", "true");
   await expectHitArea(channel, 36);
   await expect(navigation.getByRole("button", { name: "Archive channel" })).toBeHidden();
 
   await channel.hover();
   const tooltip = page.getByRole("tooltip");
-  await expect(tooltip).toHaveText("Engineering");
+  await expect(tooltip).toHaveText("Channels");
   await expect.poll(async () => Math.round((await tooltip.boundingBox())?.x ?? 0)).toBeGreaterThan(45);
+  await channel.click();
+  await expect.poll(async () => Math.round((await navigation.boundingBox())?.width ?? 0)).toBe(240);
+  await expect(navigation.getByRole("button", { name: "Engineering", exact: true })).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await expectNoHorizontalOverflow(page.locator("html"));
-  await captureEvidence(page, "1280x800-ling-dark-collapsed-tooltip.png");
+  await captureEvidence(page, "1280x800-ling-dark-launcher-expanded.png");
   expect(runtimeErrors).toEqual([]);
 });
 

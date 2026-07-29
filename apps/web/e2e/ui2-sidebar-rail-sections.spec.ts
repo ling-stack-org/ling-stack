@@ -17,7 +17,7 @@ const evidenceDirectory = fileURLToPath(new URL(
 
 const sectionNames = ["Channels", "AI Teammates", "Recent conversations"] as const;
 
-test("Sidebar dense compact rail contains all section previews and keeps Settings fixed", async ({ page }) => {
+test("Sidebar dense compact rail renders three fixed launchers and keeps Settings fixed", async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page);
   await prepareSurface(page, "light", 1440, 960);
   await mockDaemon(page, createRailState({ dense: true }));
@@ -29,34 +29,19 @@ test("Sidebar dense compact rail contains all section previews and keeps Setting
   await page.getByRole("button", { name: "Hide navigation" }).click();
   await expectWidth(navigation, 48);
 
+  const launchers = navigation.locator(".sidebar-rail-launcher");
+  await expect(launchers).toHaveCount(3);
   for (const name of sectionNames) {
-    await expect(navigation.getByRole("button", { name })).toHaveAttribute("aria-expanded", "true");
+    const launcher = navigation.getByRole("button", { name, exact: true });
+    await expect(launcher).toBeVisible();
+    await expect(launcher).not.toHaveAttribute("aria-expanded", /.+/u);
+    await expectInside(navigation, launcher);
   }
-  await captureEvidence(page, "1440x960-ling-light-compact-dense-identities.png");
-
-  for (const name of sectionNames) {
-    const toggle = navigation.getByRole("button", { name });
-    await toggle.scrollIntoViewIfNeeded();
-    await toggle.click();
-    await expect(toggle).toHaveAttribute("aria-expanded", "false");
-  }
-
-  const previews = navigation.locator(".sidebar-rail-preview");
-  await expect(previews).toHaveCount(3);
-  for (const preview of await previews.all()) {
-    await expect(preview).toBeVisible();
-    await expect(preview.locator(".sidebar-rail-stack")).toBeVisible();
-    await expectInside(navigation, preview);
-  }
-  await expect(navigation.locator(".sidebar-rail-stack-more")).toHaveCount(3);
-  await expectNoVisibleMatches(navigation, [
-    ".sidebar-section-heading",
-    ".sidebar-recent-copy",
-    ".config-button-label",
-    ".sidebar-row-tools",
-    ".sidebar-branch-list",
-    ".sidebar-branch-create-form",
-  ]);
+  await expect(navigation.locator(".sidebar-row, .sidebar-row-shell")).toHaveCount(0);
+  await expect(navigation.locator(".sidebar-rail-preview, .sidebar-rail-stack")).toHaveCount(0);
+  await expect(navigation.getByRole("button", { name: "Engineering", exact: true })).toHaveCount(0);
+  await expect(navigation.getByRole("button", { name: "Rail Designer 1", exact: true })).toHaveCount(0);
+  await expect(navigation.getByRole("button", { name: "Open recent conversation 1" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Channel actions" })).toBeHidden();
   await expect(navigation.getByRole("button", { name: "AI teammate actions" })).toBeHidden();
   await expect(navigation.getByRole("button", { name: "Recent conversation actions" })).toBeHidden();
@@ -66,12 +51,17 @@ test("Sidebar dense compact rail contains all section previews and keeps Setting
   await expectInside(navigation, settings);
   expect(await settings.evaluate((element) => element.closest(".sidebar-scroll-region") === null)).toBe(true);
   await expectSingleScrollOwner(navigation, scrollRegion);
+  const railScrollMetrics = await scrollRegion.evaluate((element) => ({
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight,
+  }));
+  expect(railScrollMetrics.scrollHeight).toBeLessThanOrEqual(railScrollMetrics.clientHeight + 1);
   await expectNoHorizontalOverflow(page.locator("html"));
-  await captureEvidence(page, "1440x960-ling-light-compact-dense-previews.png");
+  await captureEvidence(page, "1440x960-ling-light-compact-launchers.png");
   expect(runtimeErrors).toEqual([]);
 });
 
-test("Sidebar dark compact identities expose one portal tooltip without action leakage", async ({ page }) => {
+test("Sidebar dark compact launchers expose one portal tooltip without object action leakage", async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page);
   await prepareSurface(page, "dark", 1280, 800);
   await mockDaemon(page, createRailState());
@@ -81,14 +71,10 @@ test("Sidebar dark compact identities expose one portal tooltip without action l
   await page.getByRole("button", { name: "Hide navigation" }).click();
   await expectWidth(navigation, 48);
 
-  const identities = [
-    { locator: navigation.getByRole("button", { name: "Engineering", exact: true }), tooltip: "Engineering" },
-    { locator: navigation.getByRole("button", { name: "Rail Designer 1", exact: true }), tooltip: "Rail Designer 1" },
-    {
-      locator: navigation.getByRole("button", { name: "Open recent conversation 1" }),
-      tooltip: "Rail conversation 3",
-    },
-  ] as const;
+  const identities = sectionNames.map((name) => ({
+    locator: navigation.getByRole("button", { name, exact: true }),
+    tooltip: name,
+  }));
 
   for (const [index, identity] of identities.entries()) {
     await identity.locator.scrollIntoViewIfNeeded();
@@ -99,7 +85,7 @@ test("Sidebar dark compact identities expose one portal tooltip without action l
       await expect(identity.locator).toBeFocused();
     }
     await expectPortalTooltip(page, identity.tooltip);
-    await captureEvidence(page, `1280x800-ling-dark-compact-${index + 1}-tooltip.png`);
+    await captureEvidence(page, `1280x800-ling-dark-launcher-${index + 1}-tooltip.png`);
   }
 
   await expect(page.getByRole("menu")).toHaveCount(0);
@@ -114,7 +100,7 @@ test("Sidebar dark compact identities expose one portal tooltip without action l
   expect(runtimeErrors).toEqual([]);
 });
 
-test("Sidebar section disclosure preserves the rail-selected state after returning to 240px", async ({ page }) => {
+test("Sidebar launcher opens its section and preserves other expanded-state disclosures", async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page);
   await prepareSurface(page, "light", 1280, 800);
   await mockDaemon(page, createRailState());
@@ -122,44 +108,26 @@ test("Sidebar section disclosure preserves the rail-selected state after returni
 
   const navigation = page.getByLabel("Ling Stack navigation");
   const channels = navigation.getByRole("button", { name: "Channels" });
+  const teammates = navigation.getByRole("button", { name: "AI Teammates" });
   await channels.click();
   await expect(channels).toHaveAttribute("aria-expanded", "false");
-  await channels.click();
-  await expect(channels).toHaveAttribute("aria-expanded", "true");
+  await teammates.click();
+  await expect(teammates).toHaveAttribute("aria-expanded", "false");
 
   await page.getByRole("button", { name: "Hide navigation" }).click();
   await expectWidth(navigation, 48);
-  for (const name of sectionNames) {
-    await expect(navigation.getByRole("button", { name })).toHaveAttribute("aria-expanded", "true");
-  }
-
-  const teammates = navigation.getByRole("button", { name: "AI Teammates" });
-  const recent = navigation.getByRole("button", { name: "Recent conversations" });
-  await teammates.click();
-  await recent.click();
-  await expect(teammates).toHaveAttribute("aria-expanded", "false");
-  await expect(recent).toHaveAttribute("aria-expanded", "false");
-  await expect(navigation.locator('[data-sidebar-section="teammates"] .sidebar-rail-preview')).toBeVisible();
-  await expect(navigation.locator('[data-sidebar-section="recent"] .sidebar-rail-preview')).toBeVisible();
-  await expect(navigation.locator('[data-sidebar-section="channels"] .sidebar-rail-preview')).toBeHidden();
-  await captureEvidence(page, "1280x800-ling-light-compact-section-previews.png");
-
-  await page.getByRole("button", { name: "Show navigation" }).click();
+  await expect(navigation.locator(".sidebar-rail-launcher")).toHaveCount(3);
+  await expect(navigation.locator(".sidebar-section-list")).toHaveCount(0);
+  await navigation.getByRole("button", { name: "Channels", exact: true }).click();
   await expectWidth(navigation, 240);
-  await expect(channels).toHaveAttribute("aria-expanded", "true");
-  await expect(teammates).toHaveAttribute("aria-expanded", "false");
-  await expect(recent).toHaveAttribute("aria-expanded", "false");
-  await expect(navigation.locator(".sidebar-rail-preview")).toHaveCount(0);
+  await expect(navigation.getByRole("button", { name: "Channels" })).toHaveAttribute("aria-expanded", "true");
+  await expect(navigation.getByRole("button", { name: "AI Teammates" })).toHaveAttribute("aria-expanded", "false");
+  await expect(navigation.getByRole("button", { name: "Recent conversations" })).toHaveAttribute("aria-expanded", "true");
   await expect(navigation.getByRole("button", { name: "Rail Designer 1", exact: true })).toBeHidden();
-  await expect(navigation.getByRole("button", { name: "Open recent conversation 1" })).toBeHidden();
-  await expect(navigation.getByRole("button", { name: "Engineering", exact: true })).toBeVisible();
-
-  await teammates.click();
-  await recent.click();
-  await expect(navigation.getByRole("button", { name: "Rail Designer 1", exact: true })).toBeVisible();
   await expect(navigation.getByRole("button", { name: "Open recent conversation 1" })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Engineering", exact: true })).toBeVisible();
   await expectNoHorizontalOverflow(page.locator("html"));
-  await captureEvidence(page, "1280x800-ling-light-expanded-restored-sections.png");
+  await captureEvidence(page, "1280x800-ling-light-launcher-opens-channels.png");
   expect(runtimeErrors).toEqual([]);
 });
 
@@ -172,18 +140,15 @@ test("Sidebar keeps 900 and 901px rail geometry stable during a reduced-motion r
 
   const shell = page.locator(".app-shell");
   const navigation = page.getByLabel("Ling Stack navigation");
-  const channelContent = navigation.locator(
-    '[data-sidebar-section="channels"] .sidebar-rail-section-body > .sidebar-section-list',
-  );
   await expectShellGeometry(page, shell, navigation, 900, 48);
   await expectReducedMotion(navigation);
-  await expectReducedMotion(channelContent);
-  await captureEvidence(page, "900x800-ling-dark-compact-boundary.png");
+  await expectReducedMotion(navigation.locator(".sidebar-rail-launcher").first());
+  await captureEvidence(page, "900x800-ling-dark-compact-launcher-boundary.png");
 
   await page.setViewportSize({ width: 901, height: 800 });
   await page.getByRole("button", { name: "Show navigation" }).click();
   await expectShellGeometry(page, shell, navigation, 901, 240);
-  await captureEvidence(page, "901x800-ling-dark-expanded-boundary.png");
+  await captureEvidence(page, "901x800-ling-dark-expanded-after-launcher-round-trip.png");
 
   await page.getByRole("button", { name: "Hide navigation" }).click();
   await page.getByRole("button", { name: "Show navigation" }).click();
@@ -282,19 +247,6 @@ async function expectInside(parent: Locator, child: Locator): Promise<void> {
   expect(childBox!.y).toBeGreaterThanOrEqual(parentBox!.y - 1);
   expect(childBox!.x + childBox!.width).toBeLessThanOrEqual(parentBox!.x + parentBox!.width + 1);
   expect(childBox!.y + childBox!.height).toBeLessThanOrEqual(parentBox!.y + parentBox!.height + 1);
-}
-
-async function expectNoVisibleMatches(scope: Locator, selectors: readonly string[]): Promise<void> {
-  const visibleMatches = await scope.evaluate((element, selectorList) => selectorList.flatMap((selector) => (
-    [...element.querySelectorAll<HTMLElement>(selector)]
-      .filter((candidate) => {
-        const styles = getComputedStyle(candidate);
-        const box = candidate.getBoundingClientRect();
-        return styles.display !== "none" && styles.visibility !== "hidden" && box.width > 0 && box.height > 0;
-      })
-      .map((candidate) => `${selector}:${candidate.className}`)
-  )), selectors);
-  expect(visibleMatches).toEqual([]);
 }
 
 async function expectSingleScrollOwner(navigation: Locator, expectedOwner: Locator): Promise<void> {
