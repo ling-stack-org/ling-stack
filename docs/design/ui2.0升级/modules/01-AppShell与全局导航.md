@@ -186,6 +186,12 @@ Function ID 可到 `verified`；Electron 最小窗口和 Windows DPI 仍在 Desk
 逐模块清理，不随 P4.7 假装完成。Windows DPI、forced colors 和 native chrome 继续由 Desktop 发布
 矩阵验收。
 
+Desktop main-window drag 由 focused `DesktopWindowChrome` boundary 接入。AppShell 只挂载该 boundary，
+不传 Feature 或 Home 状态；`DesktopWindowChrome` 从 preload capability 自判 host，headerless Home
+fallback 由 CSS `:has()` 与真实 Header 自动互斥。真实 Header 只通过稳定 data marker 声明语义，
+`macos-titlebar.css` 独占平台 hit testing。不得把 Feature selector/no-drag 清单或窗口坐标逻辑追加回
+AppShell。
+
 ## Tests
 
 `app.spec.ts`、`app-shell-selectors.spec.ts`、`workspace.spec.ts`、`dark-mode.spec.ts`、

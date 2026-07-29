@@ -47,10 +47,16 @@ export function SettingsShell({
       data-ui2-settings-shell="true"
       data-settings-active-section={activeSection}
     >
-      <nav className="settings-section-nav" data-settings-shell-navigation="true" aria-label={navigationLabel}>
+      <nav
+        className="settings-section-nav"
+        data-desktop-window-drag-region="true"
+        data-settings-shell-navigation="true"
+        aria-label={navigationLabel}
+      >
         {onBack ? (
           <Button
             className="settings-app-return-button"
+            data-desktop-window-traffic-light-clearance="true"
             leadingIcon={<ArrowLeft />}
             size="sm"
             variant="ghost"

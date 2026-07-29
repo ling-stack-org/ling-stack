@@ -16,14 +16,17 @@ export function PageActionHeader({
   readonly className?: string;
 }): JSX.Element {
   return (
-    <header className={["page-action-header", className].filter(Boolean).join(" ")}>
+    <header
+      className={["page-action-header", className].filter(Boolean).join(" ")}
+      data-desktop-window-drag-region="true"
+    >
       <div className="page-action-header-copy">
         <h1>{title}</h1>
         {description ? <p>{description}</p> : null}
         {meta ? <div className="page-action-header-meta">{meta}</div> : null}
       </div>
       {primaryAction || secondaryActions ? (
-        <div className="page-action-header-actions">
+        <div className="page-action-header-actions" data-desktop-window-no-drag="true">
           {secondaryActions}
           {primaryAction}
         </div>

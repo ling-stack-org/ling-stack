@@ -112,7 +112,7 @@ export function AiTeammatesPage({
 
   if (!skillPack || templates.length === 0) {
     return (
-      <div className="empty-state">
+      <div className="empty-state" data-desktop-window-drag-region="true">
         <Bot />
         <span>{t("No teammate templates available")}</span>
       </div>
@@ -122,7 +122,7 @@ export function AiTeammatesPage({
   return (
     <div className={settingsToolMode ? "teammates-page settings-return-mode" : "teammates-page"}>
       {!settingsToolMode ? (
-        <header className="teammates-page-header">
+        <header className="teammates-page-header" data-desktop-window-drag-region="true">
           <div>
             <h1>{t("AI Teammates")}</h1>
             <p>{t("{count} configured", { count: activeLocalTeammates.length })}</p>

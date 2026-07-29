@@ -1,9 +1,22 @@
 .app-shell.desktop-macos {
   --desktop-window-titlebar-height: 28px;
-  --desktop-window-drag-layer: var(--ling-z-dialog);
+  --desktop-window-traffic-light-width: 76px;
+  --desktop-window-chrome-layer: 2;
   position: relative;
   height: 100vh;
   min-height: 0;
+}
+
+.app-shell.desktop-macos::after {
+  -webkit-app-region: no-drag;
+  position: absolute;
+  z-index: calc(var(--desktop-window-chrome-layer) + 1);
+  top: 0;
+  left: 0;
+  width: var(--desktop-window-traffic-light-width);
+  height: var(--desktop-window-titlebar-height);
+  pointer-events: none;
+  content: "";
 }
 
 @supports (height: 100dvh) {
@@ -12,19 +25,45 @@
   }
 }
 
-.desktop-window-drag-region {
+.desktop-window-chrome {
+  display: contents;
+}
+
+.app-shell.desktop-macos .desktop-window-chrome-region {
   -webkit-app-region: drag;
   -webkit-user-select: none;
   position: absolute;
-  z-index: var(--desktop-window-drag-layer);
-  inset: 0 auto auto 76px;
-  width: calc(var(--sidebar-expanded-width) - 76px);
+  z-index: var(--desktop-window-chrome-layer);
+  top: 0;
   height: var(--desktop-window-titlebar-height);
   background: transparent;
   user-select: none;
 }
 
-.app-shell.desktop-macos.channel-sidebar-collapsed > .desktop-window-drag-region {
+.app-shell.desktop-macos .desktop-window-chrome-region[data-desktop-window-drag-owner="sidebar"] {
+  left: var(--desktop-window-traffic-light-width);
+  width: calc(var(--sidebar-expanded-width) - var(--desktop-window-traffic-light-width));
+}
+
+.app-shell.desktop-macos .desktop-window-chrome-region[data-desktop-window-drag-owner="content-fallback"] {
+  right: 0;
+  left: var(--sidebar-expanded-width);
+}
+
+.app-shell.desktop-macos.channel-sidebar-collapsed
+  .desktop-window-chrome-region[data-desktop-window-drag-owner="sidebar"],
+.app-shell.desktop-macos.settings-fullscreen-shell
+  .desktop-window-chrome-region[data-desktop-window-drag-owner="sidebar"] {
+  display: none;
+}
+
+.app-shell.desktop-macos.channel-sidebar-collapsed
+  .desktop-window-chrome-region[data-desktop-window-drag-owner="content-fallback"] {
+  left: max(var(--desktop-window-traffic-light-width), var(--sidebar-collapsed-width));
+}
+
+.app-shell.desktop-macos:has(> .workspace [data-desktop-window-drag-region="true"])
+  .desktop-window-chrome-region[data-desktop-window-drag-owner="content-fallback"] {
   display: none;
 }
 
@@ -32,21 +71,66 @@
   margin-top: var(--desktop-window-titlebar-height);
 }
 
-.app-shell.desktop-macos :is(
-  .normal-conversation-header,
-  .teammate-chat-header,
-  .teammate-settings-header
-) {
+.app-shell.desktop-macos [data-desktop-window-drag-region="true"] {
   -webkit-app-region: drag;
   -webkit-user-select: none;
   user-select: none;
 }
 
-.app-shell.desktop-macos :is(
-  .normal-conversation-header,
-  .teammate-chat-header,
-  .teammate-settings-header
-) :is(button, a, input, textarea, select, [role="button"], [role="link"]) {
+.app-shell.desktop-macos [data-desktop-window-no-drag="true"],
+.app-shell.desktop-macos [data-desktop-window-drag-region="true"] :is(
+  button,
+  a,
+  input,
+  textarea,
+  select,
+  summary,
+  label,
+  [contenteditable="true"],
+  [contenteditable="plaintext-only"],
+  [role="button"],
+  [role="dialog"],
+  [role="link"],
+  [role="menu"],
+  [role="menuitem"],
+  [role="tab"],
+  [role="toolbar"],
+  [role="slider"],
+  [role="checkbox"],
+  [role="radio"],
+  [role="switch"],
+  [role="combobox"],
+  [role="option"],
+  [role="listbox"],
+  [data-desktop-window-no-drag="true"]
+) {
+  -webkit-app-region: no-drag;
+}
+
+.app-shell.desktop-macos [data-desktop-window-drag-region="true"] :is(
+  input,
+  textarea,
+  [contenteditable="true"],
+  [contenteditable="plaintext-only"]
+) {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.app-shell.desktop-macos.settings-fullscreen-shell
+  [data-desktop-window-traffic-light-clearance="true"] {
+  --desktop-settings-return-offset: calc(
+    var(--desktop-window-traffic-light-width) - var(--ling-space-5)
+  );
+  width: calc(100% - var(--desktop-settings-return-offset));
+  margin-left: var(--desktop-settings-return-offset);
+}
+
+body:has(.app-shell.desktop-macos) :is(
+  [data-ling-overlay],
+  [data-ling-overlay-scrim],
+  [data-desktop-window-no-drag="true"]
+) {
   -webkit-app-region: no-drag;
 }
 
