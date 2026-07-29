@@ -99,6 +99,7 @@ import { DesktopComputerUseBridge } from "./DesktopComputerUseBridge.js";
 import { AppPresentationSurfaceBridge } from "./AppPresentationSurfaceBridge.js";
 import { AppConnectionStatus } from "./AppConnectionStatus.js";
 import { AppShellOverlayBoundary } from "./AppShellOverlayBoundary.js";
+import { DesktopWindowChrome } from "./DesktopWindowChrome.js";
 import { FullAccessConfirmationDialog } from "./FullAccessConfirmationDialog.js";
 import { useConversationDomain } from "../domains/conversations/use-conversation-domain.js";
 import { useExternalWorkDomain } from "../domains/external-work/use-external-work-domain.js";
@@ -2221,12 +2222,9 @@ export function AppShell(): JSX.Element {
         ? "channel"
         : "normal_conversation"
     : undefined;
-
   return (
     <AppShellOverlayBoundary className={shellClassName}>
-      {desktopPlatform === "macos" ? (
-        <div className="desktop-window-drag-region" aria-hidden="true" />
-      ) : null}
+      <DesktopWindowChrome />
       <AppPresentationSurfaceBridge
         activeView={activeView}
         hasSelectedChannel={Boolean(selectedChannelId)}
@@ -2623,7 +2621,7 @@ export function AppShell(): JSX.Element {
             ) : (
               <>
                 {activeView === "providers" || activeView === "plugins" || activeView === "automations" || activeView === "profile" || activeView === "media" || activeView === "teammates" || activeView === "councils" || activeView === "settings" ? null : (
-                  <div className="workspace-head">
+                  <div className="workspace-head" data-desktop-window-drag-region="true">
                     <div>
                       <h1>{selectedAiTeammate ? selectedAiTeammate.displayName : t(viewTitle(activeView))}</h1>
                       <p>{selectedAiTeammate ? selectedAiTeammate.description : t(viewDescription(activeView))}</p>

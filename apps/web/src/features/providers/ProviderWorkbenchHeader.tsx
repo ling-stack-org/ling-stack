@@ -34,7 +34,10 @@ export function ProviderWorkbenchHeader({
 }): JSX.Element {
   const { t } = useI18n();
   return (
-    <header className={settingsToolMode ? "provider-workbench-header settings-return-mode" : "provider-workbench-header"}>
+    <header
+      className={settingsToolMode ? "provider-workbench-header settings-return-mode" : "provider-workbench-header"}
+      data-desktop-window-drag-region="true"
+    >
       {!settingsToolMode ? (
         <div className="provider-workbench-title-block">
           <h1 id="provider-workbench-title">{t("Model Workbench")}</h1>

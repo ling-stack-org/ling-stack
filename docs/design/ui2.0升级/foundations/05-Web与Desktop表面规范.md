@@ -64,6 +64,8 @@ Computer Use PiP 属于 utility BrowserWindow。主题只影响窗口 chrome、�
 - 验收覆盖 macOS arm64/x64、Windows x64，以及 100%、125%、150%、200% display scale。
 - 窗口拖动、resize、snap、display change 和 obstacle avoidance 由 Desktop window adapter
   处理，组件 CSS 不推断屏幕坐标。
+- shared main-window CSS 只定义 renderer hit zone：macOS Header/confirmed-empty region 声明 drag，
+  交互后代声明 no-drag；真实窗口坐标、显示器和移动结果仍由 Electron/native adapter 负责。
 - Windows high contrast、macOS reduced transparency 和 reduced motion 都必须有不丢失行动的
   fallback；不允许只在 macOS 截图正确。
 

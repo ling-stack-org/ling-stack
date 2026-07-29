@@ -53,6 +53,7 @@ export function NormalConversationHeader({
   return (
     <header
       className={searchOpen ? "normal-conversation-header searching" : "normal-conversation-header"}
+      data-desktop-window-drag-region="true"
       data-ui2-normal-conversation-header="true"
     >
       <div className="normal-conversation-identity">

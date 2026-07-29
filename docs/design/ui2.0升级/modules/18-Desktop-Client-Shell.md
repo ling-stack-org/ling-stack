@@ -21,6 +21,7 @@ DESKTOP-SHELL-MAIN-WINDOW-001 Main BrowserWindow and shared Web UI
 DESKTOP-SHELL-RECOVERY-001     Incompatible daemon Retry/Quit dialog
 DESKTOP-SHELL-THEME-001        First-paint Theme Pack and Profile sync
 DESKTOP-SHELL-WINDOW-001       macOS/Windows chrome and resize behavior
+DESKTOP-SHELL-MAIN-WINDOW-DRAG-001 Integrated macOS main-window drag contract
 DESKTOP-SHELL-EXTERNAL-001     External links, file picker and OS surfaces
 DESKTOP-CUA-NAVIGATION-001     PiP Open task handoff to owner conversation
 DESKTOP-CUA-HOST-LAYOUT-001    Main-window obstacle reporting for PiP placement
@@ -41,7 +42,10 @@ apps/desktop/main/daemon-recovery-dialogs.ts
 apps/desktop/main/resource-paths.ts
 apps/desktop/preload/main-window.ts
 apps/desktop/shared/desktop-capabilities.ts
+apps/web/src/app/DesktopWindowChrome.tsx
+apps/web/src/app/AppShell.tsx
 apps/web/src/app/DesktopComputerUseBridge.tsx
+apps/web/src/styles/app/macos-titlebar.css
 ```
 
 Current main window:
@@ -54,6 +58,13 @@ Current main window:
 - uses a separate native error recovery for child exit、timeout、missing resources and spawn failure；
 - exposes a narrow preload capability bridge；
 - blocks renderer navigation and opens approved HTTP(S) links externally。
+
+The pre-implementation `hiddenInset` BrowserWindow was correct, but its renderer drag contract covered only
+the expanded Sidebar top area and three Feature Header class selectors。`DESKTOP-SHELL-MAIN-WINDOW-DRAG-001`
+closes that gap with shared Header markers、Home/Sidebar fallback regions、a traffic-light exclusion and portal
+overlay subtraction，without changing BrowserWindow options or adding visible chrome。Detailed ownership、
+geometry and tests are defined in
+[Main Window Integrated Chrome 详细设计与实现计划](18-Desktop-Client-Shell-implementation-plan.md)。
 
 ## Ownership
 
@@ -171,8 +182,22 @@ Native Window Chrome
 - Desktop capability controls enter only through typed slots；they do not alter normal browser UI。
 - macOS traffic-light inset must not overlap Sidebar navigation or the first toolbar control。
 - Windows system title bar must not duplicate an in-app fake title bar。
-- draggable regions belong to Desktop shell CSS，not Feature headers。
+- draggable behavior belongs to Desktop shell CSS；Feature/shared Header 只暴露稳定
+  `data-desktop-window-drag-region` / `data-desktop-window-no-drag` 语义，Settings Back 通过
+  `data-desktop-window-traffic-light-clearance` 暴露唯一 native safe-area exception；Feature 不写平台 selector。
 - window resize must preserve AppShell responsive constraints and never create horizontal page scroll。
+
+### Main Window Integrated Chrome
+
+- macOS main BrowserWindow 使用 28px transparent hit zones；不恢复旧 Toolbar，不新增 workspace top padding。
+- confirmed-empty Sidebar/Home rectangle 由 focused `DesktopWindowChrome` 提供；真实 Header 作为 drag
+  ancestor，交互后代统一 carve out 为 `no-drag`。
+- 不允许把高 z-index 透明 sibling layer 铺过 Header controls；底层 sibling 的 `no-drag` 不能可靠恢复点击。
+- Sidebar collapsed 时只移除 Sidebar strip，不能移除 Home 或 active Header drag target。
+- Settings fullscreen、Media、Channel、普通对话、AI 队友私聊/设置和所有顶级 View 必须有稳定 owner。
+- Web、Windows main window 和 PiP 不挂载该 chrome；Windows 继续 native title bar。
+- Dialog、Drawer、Menu、Popover、Toast、Tooltip 和 scrim 必须始终高于 chrome 并保持 pointer/focus ownership。
+- chrome 没有独立 Show/Hide/Close 行动；随 macOS AppShell mount/unmount，route/theme/Sidebar state 不重建它。
 
 ## Theme Bootstrap
 
@@ -216,6 +241,8 @@ Native Window Chrome
 - first launch、cold mounted-DMG launch、renderer reload、main window reopen；
 - fixed theme、System theme、invalid bootstrap、artwork missing；
 - minimum/default/large window、Retina/DPI scale、multi-display move；
+- Sidebar expanded/collapsed、headerless Home、Channel/Normal/Teammate headers、Settings fullscreen、Media canvas；
+- drag background、no-drag control、Dialog/Drawer/Popover occlusion、renderer reload；
 - external link denied/allowed、permission settings unavailable；
 - macOS reduced transparency、Windows high contrast/forced colors；
 - main renderer crash and bounded recovery。
@@ -241,6 +268,9 @@ Native Window Chrome
 - `daemon-startup-recovery.test.mjs`：Retry/Quit、foreign/incompatible daemon、四类 startup failure、
   no unauthorized kill；`resource-startup-recovery.test.mjs` 覆盖资源重试、诊断和 headless fail-closed。
 - `window-factory.test` or equivalent：size、title bar、navigation denial、bootstrap background。
+- `macos-titlebar.spec.ts`：Home、Conversation、Channel、Settings、Media 和代表性 shared Header
+  drag marker、Sidebar expanded/collapsed、no-drag controls、真实 Dialog/Menu overlay ownership and zero layout shift。
+- packaged macOS coordinate smoke：drag 前后 `BrowserWindow` bounds 改变，no-drag action 不误移动，finally 复位。
 - `app.spec.ts` / `desktop-computer-use-bridge.spec.ts`：shared Web placement and browser/Desktop parity。
 - macOS screenshot：minimum/default/large，Ling Light/Dark，traffic-light clearance。
 - Windows screenshot：100/125/150/200% DPI，native title bar，high contrast。
@@ -252,6 +282,8 @@ Native Window Chrome
 - `main` BrowserWindow does not flash the wrong theme before React hydration。
 - incompatible daemon prompt is understandable，safe and keyboard accessible。
 - macOS/Windows platform chrome does not cover navigation or actions。
+- macOS Home、collapsed Sidebar 和所有顶级 Header 都保留真实可拖区域；交互控件保持可点击/输入。
+- Web/Windows 不出现 shell-owned drag DOM；Windows native title bar behavior unchanged。
 - fixed/System/generated themes use the same registry contract as Web。
 - no feature imports Electron or reads raw IPC channels。
 - no new major behavior is appended to the existing oversized `main.ts`。

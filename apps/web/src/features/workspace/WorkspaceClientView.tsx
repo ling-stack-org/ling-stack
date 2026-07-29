@@ -3969,6 +3969,7 @@ export function WorkspaceClientView({
           channelUtilityPageOpen ? "settings-page-header" : "",
           channelHeader.searchOpen && !channelUtilityPageOpen ? "channel-header-searching" : "",
         ].filter(Boolean).join(" ")}
+        data-desktop-window-drag-region="true"
       >
         <div className="channel-title-area">
           {channelSettingsPageOpen ? (

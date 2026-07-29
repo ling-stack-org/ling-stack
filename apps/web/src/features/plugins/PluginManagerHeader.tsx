@@ -22,7 +22,10 @@ export function PluginManagerHeader({
 }): JSX.Element {
   return (
     <>
-      <header className="plugin-manager-header settings-plugin-manager-head">
+      <header
+        className="plugin-manager-header settings-plugin-manager-head"
+        data-desktop-window-drag-region="true"
+      >
         <h2 id="plugin-manager-title">{t("Plugin Manager")}</h2>
         <Button
           className="plugin-add-button"

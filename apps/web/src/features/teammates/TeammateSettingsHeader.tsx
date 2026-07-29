@@ -31,7 +31,11 @@ export function TeammateSettingsHeader({
 }): JSX.Element {
   const { t } = useI18n();
   return (
-    <header className="teammate-settings-header" aria-label={t("Single agent settings")}>
+    <header
+      className="teammate-settings-header"
+      aria-label={t("Single agent settings")}
+      data-desktop-window-drag-region="true"
+    >
       <Button className="teammate-settings-back" leadingIcon={<ArrowLeft />} size="sm" variant="ghost" onClick={onBack}>
         {t("Back to private chat")}
       </Button>

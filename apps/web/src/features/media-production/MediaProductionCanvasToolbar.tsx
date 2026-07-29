@@ -42,7 +42,11 @@ export function MediaProductionCanvasToolbar({
     runBusy: busy,
   });
   return (
-    <nav className="media-production-canvas-toolbar" aria-label={t("Media production views")}>
+    <nav
+      className="media-production-canvas-toolbar"
+      aria-label={t("Media production views")}
+      data-desktop-window-drag-region="true"
+    >
       <Button
         className="media-production-project-trigger"
         size="sm"
