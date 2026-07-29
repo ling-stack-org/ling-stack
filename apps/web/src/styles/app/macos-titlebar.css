@@ -71,6 +71,12 @@
   margin-top: var(--desktop-window-titlebar-height);
 }
 
+.app-shell.desktop-macos [data-desktop-window-drag-region="true"]:has(
+  > [data-desktop-window-traffic-light-clearance="true"]
+) {
+  padding-top: calc(var(--desktop-window-titlebar-height) + var(--ling-space-2));
+}
+
 .app-shell.desktop-macos [data-desktop-window-drag-region="true"] {
   -webkit-app-region: drag;
   -webkit-user-select: none;
