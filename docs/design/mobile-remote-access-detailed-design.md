@@ -1,7 +1,7 @@
 # Mobile Remote Access Detailed Design
 
-Status: proposed; security and protocol design ready for implementation
-Date: 2026-07-19
+Status: Slice 1 channel protocol implemented; generic V1 conversation projection amendment pending
+Date: 2026-07-31
 Parent: [Ling Mobile Remote Access](mobile-remote-access.md)
 
 ## Purpose
@@ -10,7 +10,7 @@ This document defines the Remote Gateway security boundary, pairing ceremony, de
 identity, protocol envelopes, remote capability allowlist, durable idempotency, event
 resume behavior, storage, and validation requirements.
 
-The design assumes that remote channel content is sensitive and that an attacker may:
+The design assumes that remote conversation content is sensitive and that an attacker may:
 
 - be another authenticated member of the same tailnet;
 - observe, delay, reorder, duplicate, or reconnect network traffic;
@@ -60,11 +60,25 @@ Therefore Remote Access must not:
    never persisted in plaintext.
 9. Remote commands are allowlisted, expiring, ordered, and durably idempotent.
 10. The client never supplies `cwd` or any local filesystem path.
-11. The Gateway maps opaque workspace/channel ids to a locally approved allowlist.
+11. The Gateway maps opaque workspace/conversation ids to a locally approved allowlist.
 12. Revocation invalidates the device epoch, closes sockets, and blocks old signatures.
 13. Outbound projections omit raw daemon events, secrets, absolute paths, raw tool output,
     stdout/stderr, and artifact bytes.
 14. Protocol downgrade, unknown frame type, invalid field, and oversized input fail closed.
+
+## 2026-07-31 Conversation Scope Amendment
+
+The initial Slice 1 protocol and the detailed command examples below are channel-specific.
+The Mobile V1 product scope now includes channels, normal conversations, and
+teammate-direct conversations through one unified index/detail UI. The existing
+`channel.*` DTOs remain accurate descriptions of implemented Slice 1 and must not be
+silently reinterpreted as generic conversations.
+
+Before live Mobile V1 integration, this document and `packages/contracts/src/remote-access.ts`
+must add a reviewed, versioned conversation projection and authorization policy covering
+all three kinds. That extension must keep the same opaque-id, explicit-allowlist,
+redaction, ordering, idempotency, and low-authority guarantees. The UI contract is defined
+in [Mobile Conversation UI 2.0 Detailed Design](mobile-conversation-ui2-detailed-design.md).
 
 ## Network Topology
 

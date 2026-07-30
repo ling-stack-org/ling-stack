@@ -1,15 +1,15 @@
 # Mobile Remote Access Implementation Plan
 
-Status: Slice 1 repository implementation complete; iOS physical-device secure-key gate
-passed; Android and Tailscale gates pending; final merge blocked on UI 2.0 integration
-review
-Date: 2026-07-19
+Status: Slice 1 repository implementation complete; UI 2.0 baseline synchronized and
+Mobile conversation UI designed; Android, protocol expansion, and Tailscale gates pending
+Date: 2026-07-31
 Base: current `origin/main` architecture at design start
 
 Related documents:
 
 - [Ling Mobile Remote Access](mobile-remote-access.md)
 - [Mobile Remote Access Detailed Design](mobile-remote-access-detailed-design.md)
+- [Mobile Conversation UI 2.0 Detailed Design](mobile-conversation-ui2-detailed-design.md)
 - [Platform Architecture](platform-architecture.md)
 - [Ling Framework](ling-framework.md)
 - [Channel Message Streaming](channel-message-streaming.md)
@@ -17,10 +17,11 @@ Related documents:
 ## Outcome
 
 Deliver an opt-in local Remote Gateway and first-party iOS/Android client that let one
-paired phone read and send text in approved Ling channels over an encrypted tailnet path.
+paired phone read and send text in approved Ling channels, normal conversations, and
+teammate-direct conversations over an encrypted tailnet path.
 The PC daemon remains authoritative. The implementation must not expose the existing
-daemon router, accept remote filesystem paths, or merge to `main` before UI 2.0 and Mobile
-shared-boundary review is complete.
+daemon router, accept remote filesystem paths, or merge to `main` before the Mobile shared
+boundary and security review is complete.
 
 ## Locked Decisions
 
@@ -29,10 +30,11 @@ shared-boundary review is complete.
 - V0 networking uses Tailscale Serve to a loopback-only Gateway listener.
 - Remote Gateway runs in the daemon process on a separate listener and receives a narrow
   service facade; it never mounts the general daemon router.
-- V0 permits channel read and plain-text send plus redacted run/approval summaries.
-- Mobile text is tagged `sourceSurface=mobile` and capped at `channel_comment`: a
+- V1 permits synchronized list/open/read and plain-text send for channels, normal
+  conversations, and teammate-direct conversations.
+- Mobile text is tagged `sourceSurface=mobile` and capped at `conversation_comment`: a
   tool-disabled conversational reply is allowed, but workflow/proposal auto-start is not.
-- V0 excludes approval decisions, run control, attachments, files, terminal, settings,
+- V1 excludes approval and run surfaces, attachments, files, terminal, settings,
   providers, tools, secrets, and Computer Use.
 - One PC has one active phone and one authenticated session.
 - Production authentication uses a hardware/OS-keystore P-256 device key and fresh
@@ -40,16 +42,17 @@ shared-boundary review is complete.
 - Message retry safety is backed by a durable daemon receipt transaction, not Gateway
   memory.
 - Mobile imports no `apps/web` or `conversation-ui-react` code.
-- Final visual convergence happens after UI 2.0 lands.
+- Final visual convergence follows
+  [Mobile Conversation UI 2.0 Detailed Design](mobile-conversation-ui2-detailed-design.md).
 
 ## What Already Exists
 
 | Existing capability | Reuse decision |
 | --- | --- |
-| Daemon-owned channels, messages, runs, approvals, and SQLite state | Keep as sole authority. |
-| Channel message creation and AI routing | Extract a shared daemon application service; do not copy the route handler. |
-| Shared channel/transcript/run/approval DTOs in `packages/contracts` | Reuse, then add isolated remote-access DTOs. |
-| Control-plane sequence/replay/redaction concepts | Reuse for safe summary domains; add channel transcript projection. |
+| Daemon-owned conversations, messages, runs, approvals, and SQLite state | Keep as sole authority. |
+| Conversation message creation and AI routing | Extract shared daemon application services; do not copy route handlers. |
+| Shared conversation/transcript DTOs in `packages/contracts` | Reuse, then add isolated remote-access DTOs. |
+| Control-plane sequence/replay/redaction concepts | Reuse ordering concepts only; V1 UI does not project run/approval surfaces. |
 | `packages/conversation-ui-core` pure policies/view models | Reuse behind `MobileConversationAdapter`. |
 | `packages/api-client` transport conventions and error model | Reuse patterns or small extracted primitives only; do not expose the broad client from Mobile. |
 | Desktop daemon lifecycle | Extend later to display/operate Gateway state; keep the first management path in CLI. |
@@ -66,9 +69,14 @@ apps/mobile/
   app/ or src/navigation/
   src/features/pairing/
   src/features/connection/
-  src/features/channels/
-  src/features/conversation/
+  src/features/conversations/
+    domain/
+    data/
+    screens/
+    components/
+    state/
     MobileConversationAdapter.ts
+  src/theme/
   src/platform/secure-device-key/
   src/platform/notifications/
   test/
@@ -147,7 +155,7 @@ responsibilities must stay separate:
   compile against both sides;
 - secure key access is a mobile platform adapter;
 - reconnect/sync state is UI-independent;
-- Gateway routing/auth is not mixed into channel business logic;
+- Gateway routing/auth is not mixed into conversation business logic;
 - message idempotency is durable store behavior;
 - native rendering remains app-local until there are two native consumers.
 
@@ -367,25 +375,22 @@ corepack pnpm --filter @ling-stack/cli test
 git diff --check
 ```
 
-## Slice 4: Remote Projection, Snapshot, and Delta Stream
+## Slice 4: Remote Conversation Projection, Snapshot, and Delta Stream
 
 Scope:
 
-- define a sanitized remote workspace/channel summary;
-- project a bounded channel transcript snapshot from daemon-owned state;
+- define a sanitized remote conversation index spanning channel, normal-conversation, and
+  teammate-direct summaries;
+- project a bounded conversation transcript snapshot from daemon-owned state;
 - implement a subscribe-before-read barrier: register/buffer a new stream generation,
   capture its sequence watermark, build a consistent snapshot, then flush buffered events
   above the watermark before live delivery;
 - add monotonic stream sequence, bounded replay, acknowledgement, queue limits, and
   `resync_required` behavior;
-- reuse existing control-plane redaction/replay concepts for high-level run/approval
-  summaries without exposing raw control-plane payloads;
 - omit raw details, paths, stdout/stderr, tool payloads, and artifact bytes;
-- resolve every run/approval summary back to an allowed channel; withhold summaries with
-  missing or ambiguous provenance;
 - add subscription cleanup on socket close/session replacement/revoke;
 - prove a daemon restart or stale cursor converges via snapshot.
-- prove a channel mutation committed between listener registration and snapshot completion
+- prove a conversation mutation committed between listener registration and snapshot completion
   is present after sync (snapshot, buffered delta, or idempotently both) and never lost;
 - force resync when stream generation changes after restart or buffer overflow.
 
@@ -393,10 +398,8 @@ Performance budgets to measure:
 
 - auth plus initial summary should not require loading every workspace record;
 - snapshots are bounded by item count and serialized byte size;
-- run/approval provenance is resolved in batched queries or a precomputed projection, not
-  one store lookup per event;
 - slow clients cannot grow an unbounded event queue;
-- a large channel is chunked or truncated with an explicit older-page cursor;
+- a large conversation is chunked or truncated with an explicit older-page cursor;
 - background mobile connections use heartbeat/idle values compatible with battery limits;
 - Mobile renders bounded/virtualized transcript pages and never materializes unbounded raw
   event history.
@@ -441,20 +444,23 @@ git diff --check
 Checkpoint: this slice can run in parallel with Gateway work after protocol fixtures are
 locked. Both sides consume the same fixture corpus from `remote-protocol`.
 
-## Slice 6: Mobile Shell and Mock Conversation
+## Slice 6: Mobile Conversation Shell and Mock Data
 
 Scope:
 
 - create `apps/mobile` with isolated React Native/Expo dependencies and native development
   builds;
-- implement pair scanner/manual code fallback, local confirmation waiting, connection
-  status, channel list, conversation, composer, settings/device status, and revoke/unpair
-  screens;
+- keep the existing pair/revoke security flow separate from the conversation shell;
+- implement the two-page navigation stack: unified conversation index and shared
+  conversation detail;
+- cover channel, normal-conversation, and teammate-direct fixtures in the same native
+  list/detail components;
+- implement connection state as an inline status strip rather than a third primary page;
 - implement the production secure-device-key adapter from Slice 1;
 - use `RemoteLingClient` through app state hooks; screens never own protocol logic;
 - create `MobileConversationAdapter` from remote semantic DTOs to
   `conversation-ui-core` view models;
-- build native message/work-cell/composer components locally with semantic tokens;
+- build native message/composer components locally with UI 2.0 semantic tokens;
 - use fixture snapshots/deltas until Slice 7 connects to a real Gateway;
 - keep notification previews content-free by default.
 
@@ -469,20 +475,23 @@ The command must return no source matches except an explicit negative-test fixtu
 
 UI 2.0 boundary:
 
-- do not attempt final spacing, color, typography, work-cell layout, or composer parity;
+- follow `mobile-conversation-ui2-detailed-design.md` for hierarchy, states, tokens,
+  accessibility, and component boundaries;
 - do not extract `conversation-ui-native` in this slice;
 - do not copy the current Web projector or CSS;
-- keep the adapter and semantic token mapping small enough to replace after UI 2.0.
+- keep the adapter and semantic token mapping app-local until a second native consumer
+  exists;
+- do not add work cells, approvals, run control, attachments, files, terminal, settings,
+  or Computer Use to the V1 conversation shell.
 
 ## Slice 7: Live End-to-End Integration
 
 Scope:
 
 - pair a real phone with a real PC through Tailscale Serve;
-- list locally allowed channels;
+- list locally allowed channels, normal conversations, and teammate-direct conversations;
 - open snapshot and consume live deltas from PC-originated and mobile-originated messages;
 - send plain text with durable command receipts;
-- show redacted run and approval summaries;
 - test Wi-Fi/cellular changes, background/foreground, PC sleep/wake, daemon restart,
   Tailscale direct/relay paths, revoke online/offline, and second-device rejection;
 - add safe diagnostics for user-visible connection errors.
@@ -508,8 +517,9 @@ This is a release-blocking E2E/integration test, not a manual-only scenario.
 
 ## Slice 8: UI 2.0 Convergence Checkpoint
 
-Do not start this slice until the UI 2.0 owner says the relevant shared contracts and
-visual direction are stable enough to review.
+Start condition met on 2026-07-31: UI 2.0 is on `main`, and this isolated branch was
+rebased onto that baseline. The remaining work is implementation and joint review, not
+visual-direction discovery.
 
 Steps:
 
@@ -517,9 +527,9 @@ Steps:
 2. review changed exports/types in `packages/contracts` and
    `packages/conversation-ui-core` with both owners;
 3. update `MobileConversationAdapter` only where semantic models changed;
-4. map stable UI 2.0 semantic tokens to native tokens without importing Web CSS;
-5. align mobile message, operation/work-cell, status, approval-summary, and composer
-   hierarchy;
+4. implement the typed native token map defined by the Mobile Conversation UI 2.0 design
+   without importing Web CSS;
+5. align the conversation index, message rows, status strip, and plain-text composer;
 6. regenerate `pnpm-lock.yaml` once from the integrated package graph; never hand-merge
    two generated lockfile versions;
 7. run Mobile plus Web/Desktop regression builds;
@@ -568,7 +578,7 @@ AUTHENTICATION
   `-- session replacement/revoke ----------- [INTEGRATION + E2E]
 
 COMMAND
-  |-- allowed channel.send_text ------------- [INTEGRATION + E2E]
+  |-- allowed conversation.send_text -------- [INTEGRATION + E2E]
   |-- unknown capability/cwd/path injection - [INTEGRATION]
   |-- duplicate same payload --------------- [STORE + E2E]
   |-- duplicate changed payload ------------ [STORE + INTEGRATION]
@@ -603,14 +613,13 @@ CONVERSATIONAL REPLY
 | Second device connects | Integration | Reject pairing or replace same paired session only | Existing pairing remains active |
 | Owner revokes | Integration/E2E | Epoch bump, close socket, clear mobile state | Pairing required |
 | Slow mobile consumer | Perf/integration | Bounded queue, force resync | Brief syncing state |
-| Invalid workspace/channel | Integration | Allowlist rejection without path disclosure | Access unavailable |
+| Invalid workspace/conversation | Integration | Allowlist rejection without path disclosure | Access unavailable |
 | Gateway is reached directly on loopback | Integration | Proxy headers ignored; device auth still required | Authentication required |
 | Mobile process is killed with an old cursor | Native/E2E | Clear cursor and force snapshot | Brief syncing state |
-| Run/approval has no allowed channel provenance | Projection test | Withhold event | No cross-channel metadata leak |
-| Mobile text tries to trigger a workflow/tool | Policy/integration | `channel_comment` ceiling blocks it | Conversational reply or explicit blocked state |
+| Mobile text tries to trigger a workflow/tool | Policy/integration | `conversation_comment` ceiling blocks it | Conversational reply or explicit blocked state |
 | Remote projection sees raw sensitive field | Redaction regression | Drop field/fail safe serialization | Safe incomplete detail, never raw payload |
 
-No listed V0 failure may be silent while leaving the UI labeled `online`.
+No listed V1 failure may be silent while leaving the UI labeled `online`.
 
 ## Parallel Worktree Strategy
 
@@ -682,7 +691,8 @@ Real-device/security acceptance cannot be replaced by those commands.
 
 The implementation is eligible for a PR only when:
 
-- UI 2.0 has landed or its owner has explicitly confirmed the shared boundary is stable;
+- UI 2.0 has landed and the Mobile branch remains synchronized with its reviewed shared
+  boundary;
 - this branch is synchronized with the latest `main`;
 - no remote code path mounts, proxies, or exposes the general daemon router;
 - daemon stays loopback-only and Gateway startup fails on unsafe binding;
@@ -709,9 +719,8 @@ The implementation is eligible for a PR only when:
 
 ## Unresolved Decisions
 
-No unresolved decision blocks Slices 0 through 7.
-
-Exact dependency versions, UI 2.0 native visual mapping, and whether to split the branch
-if it becomes long-lived are integration-time choices with explicit gates above. A failed
-native-key spike is not permission to weaken authentication; it changes the mobile project
-scaffold before feature implementation continues.
+No unresolved UI decision blocks the Mobile conversation shell. Live integration is
+blocked on a reviewed generic remote-conversation projection because the implemented
+Slice 1 protocol is channel-specific. Android hardware-backed key evidence and Tailscale
+transport evidence remain release gates. A failed native-key gate is not permission to
+weaken authentication.

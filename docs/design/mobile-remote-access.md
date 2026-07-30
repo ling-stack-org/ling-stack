@@ -1,12 +1,13 @@
 # Ling Mobile Remote Access
 
 Status: proposed; architecture locked for isolated implementation, not approved for `main`
-Date: 2026-07-19
+Date: 2026-07-31
 
 Related documents:
 
 - [Mobile Remote Access Detailed Design](mobile-remote-access-detailed-design.md)
 - [Mobile Remote Access Implementation Plan](mobile-remote-access-implementation-plan.md)
+- [Mobile Conversation UI 2.0 Detailed Design](mobile-conversation-ui2-detailed-design.md)
 - [Contracts and API Client](contracts-api-client.md)
 - [Platform Architecture](platform-architecture.md)
 - [Ling Framework](ling-framework.md)
@@ -35,13 +36,14 @@ V0 enforces a one-device trust relationship for each PC Gateway:
 - revocation closes active sessions and prevents reconnecting;
 - replayed authentication frames and commands are rejected.
 
-This branch may implement protocol, Gateway, client state, and a native mobile shell while
-UI 2.0 is in progress. Final mobile conversation visuals and any shared visual token work
-wait until UI 2.0 is merged and this branch has been synchronized with the new `main`.
+UI 2.0 has landed, and the isolated Mobile branch has been synchronized with that baseline.
+The native conversation design is now locked for a narrow V1 that synchronizes channels,
+normal conversations, and teammate-direct conversations. Shared visual values are mapped
+through app-local native tokens; Web DOM/CSS components remain outside Mobile.
 
 ## Why This Shape
 
-The user goal is remote channel communication, not a second independent Ling runtime.
+The user goal is remote conversation continuity, not a second independent Ling runtime.
 Keeping execution on the PC preserves the existing workspace, tools, credentials,
 approvals, and session history. The phone becomes another trusted surface over the same
 daemon-owned state.
@@ -73,13 +75,14 @@ boundary, not a host-binding change to the current daemon server.
 ## Goals
 
 - Pair one mobile app installation with one local Ling PC.
-- List locally authorized channels without exposing arbitrary workspace paths.
-- Open a channel, load a sanitized transcript snapshot, and receive ordered updates.
-- Send a message or follow-up into the existing channel owner.
+- List locally authorized channels, normal conversations, and teammate-direct
+  conversations without exposing arbitrary workspace paths.
+- Open any authorized conversation, load a sanitized transcript snapshot, and receive
+  ordered updates.
+- Send a plain-text message or follow-up into the existing conversation owner.
 - Keep Mobile-originated text at a channel-comment/conversational-reply ceiling; it must not
   auto-start workflows, execution proposals, or tool-backed runs in V0.
-- Show redacted run/approval summaries only when their provenance resolves to an allowed
-  channel, without adding remote execution controls.
+- Keep execution/run/approval surfaces out of the Mobile V1 UI.
 - Survive backgrounding, network changes, and reconnects without duplicating commands.
 - Let the PC revoke the phone immediately.
 - Reuse semantic contracts and headless conversation logic from the monorepo.
@@ -91,7 +94,7 @@ boundary, not a host-binding change to the current daemon server.
 - No direct exposure of `17891`, `/rpc/stream`, or the broad daemon API.
 - No arbitrary `cwd`, file path, shell, provider, MCP, settings, or secret endpoints.
 - No remote permission-preset escalation.
-- No remote approval decision in V0; pending approvals may be displayed read-only.
+- No remote approval, run-status, or execution-control surface in V1.
 - No file upload/download, raw artifact content, terminal attachment, or Computer Use
   control.
 - No browser/PWA remote client; the device-key boundary is first-party mobile only.
@@ -162,13 +165,13 @@ plane for peer discovery and may use an encrypted relay for difficult networks.
 
 ## Mobile App and Reuse
 
-`apps/mobile` should use React Native with an Expo development build unless the secure-key
-spike proves a native CLI project is required. Exact Expo and React versions are selected
-when implementation starts, because UI 2.0 may change the repository's React baseline.
+`apps/mobile` uses React Native with an Expo development build and a native secure-key
+module. The current baseline is Expo 57, React Native 0.86, and React 19; UI 2.0 Web
+packages remain on their existing ReactDOM boundary.
 
 Safe reuse:
 
-- `@ling-stack/contracts` for channel/transcript/remote DTOs;
+- `@ling-stack/contracts` for conversation/transcript/remote DTOs;
 - `@ling-stack/remote-protocol` for validated frames and signing input;
 - `@ling-stack/remote-client` for connection and synchronization state;
 - `@ling-stack/conversation-ui-core` for pure policy and view-model helpers.
@@ -184,7 +187,7 @@ Do not reuse directly:
 The mobile conversation surface owns a narrow adapter:
 
 ```text
-RemoteChannelSnapshot / RemoteTranscriptEvent
+RemoteConversationSnapshot / RemoteConversationEvent
                   |
                   v
 MobileConversationAdapter
@@ -201,17 +204,17 @@ or view-model shapes.
 
 ## V0 Capability Surface
 
-| Capability | V0 | Later |
+| Capability | V1 | Later |
 | --- | --- | --- |
 | Pair/revoke one phone | Yes | Multiple devices and PC switching |
-| Channel list/open | Yes | Search, filters, channel administration |
+| Channel, normal conversation, and teammate-direct list/open | Yes | Search, creation, rename, archive, administration |
 | Snapshot and live transcript | Yes | Raw detail and full artifact exploration |
 | Send message/follow-up | Yes | Attachments and rich composer commands |
 | Conversational AI reply | Yes, tools/workflow auto-start disabled | Explicitly reviewed remote task capability |
-| Observe run status | Yes | Full execution inspector |
-| Cancel active run | No | Separate opt-in control design after V0 security review |
-| See pending approvals | Read-only | Approve/deny with biometric and local opt-in |
-| Notifications | Connection/run completion baseline | Rich approval and mention actions |
+| Observe run status | No | Separate execution inspector after V1 |
+| Cancel active run | No | Separate opt-in control design after V1 security review |
+| See pending approvals | No | Read-only summary or approve/deny after separate review |
+| Notifications | Connection plumbing only | Message/mention actions after separate design |
 | Offline queue | No | Explicitly designed bounded queue |
 | Computer Use | No | Separate high-risk design |
 
@@ -263,7 +266,7 @@ The two workstreams can proceed in parallel under these ownership rules:
 | Headless conversation model | `packages/conversation-ui-core` | Both owners approve |
 | Lockfile | One owner regenerates after final sync | Never manually merge competing lockfile edits |
 
-Rules for this branch before UI 2.0 lands:
+Rules for the synchronized Mobile branch:
 
 - do not modify `apps/web`;
 - do not move or rename `conversation-ui-react` components;
@@ -272,7 +275,7 @@ Rules for this branch before UI 2.0 lands:
 - keep remote protocol types in a dedicated file to reduce contract merge conflicts;
 - record any desired core change as a small, separately reviewable commit.
 
-Final integration gate after UI 2.0 lands:
+Final integration gate after the UI 2.0 design sync:
 
 1. synchronize this branch with the latest `main`;
 2. review every `contracts` and `conversation-ui-core` overlap with the UI 2.0 owner;
@@ -340,7 +343,7 @@ create two diverging product models during UI 2.0.
 - Cloud history synchronization or offline delivery.
 - Public Internet port forwarding documentation.
 - Remote file browser, shell, terminal, secrets, provider settings, or Computer Use.
-- A shared cross-platform visual component library before UI 2.0 stabilizes.
+- A shared cross-platform visual component library before a second native consumer exists.
 - A complete Desktop settings design in this first branch slice.
 
 ## Acceptance Criteria
@@ -353,9 +356,9 @@ create two diverging product models during UI 2.0.
 - Exactly one paired device can authenticate; a second device fails closed.
 - Revocation terminates the active connection and blocks reconnect.
 - Duplicate challenges, frames, and commands are rejected or idempotently replayed.
-- The phone can list/open a channel, follow live transcript state, and send a message
-  through existing daemon authority without gaining a general run-control capability or
-  tool-backed workflow execution.
+- The phone can list/open authorized channels, normal conversations, and teammate-direct
+  conversations, follow live transcript state, and send a message through existing daemon
+  authority without gaining run-control or tool-backed workflow execution.
 - Network interruption and resume do not duplicate a message or lose authoritative state.
 - `apps/mobile` imports no code from `apps/web` or `conversation-ui-react`.
 - Shared Web and Desktop builds remain green after the final UI 2.0 synchronization.
@@ -364,13 +367,7 @@ create two diverging product models during UI 2.0.
 
 ## Unresolved Decisions
 
-No product or architecture decision blocks protocol/Gateway/mobile-shell preparation.
-
-The following decisions are deliberately deferred to the final integration checkpoint:
-
-- the exact Expo/React Native version after the UI 2.0 React baseline is known;
-- the final mobile visual tokens and component appearance;
-- whether remote approval actions enter the next release after the read/send V0 passes a
-  security review;
-- whether a long-running branch should be split into a protocol/Gateway PR and a later
-  visual-integration PR if UI 2.0 takes long enough to create material drift.
+No product or UI decision blocks the two-page Mobile V1 implementation. Before live
+integration, the channel-specific remote protocol must be expanded and reviewed for the
+three conversation kinds described in the Mobile Conversation UI 2.0 design. Android
+hardware-backed key evidence remains a release gate, not a UI-design blocker.
