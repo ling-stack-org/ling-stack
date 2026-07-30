@@ -22,10 +22,22 @@
   transition: opacity var(--ling-motion-fast) var(--ling-ease-standard);
 }
 
+.preview-status-indicators {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--ling-space-2);
+}
+
 .preview-shell[data-state="live"] .preview-header,
 .preview-shell[data-state="live"] .preview-controls {
   opacity: 0;
   pointer-events: none;
+}
+
+.preview-shell[data-locked-control] .preview-header {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .preview-shell[data-state="live"]:hover .preview-header,

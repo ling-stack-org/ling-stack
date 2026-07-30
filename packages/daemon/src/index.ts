@@ -247,6 +247,7 @@ export function createDaemonServer(
     workspaceCwd: resolvedConfig.defaultWorkspaceCwd,
     leaseRegistry: cuaDriverDesktopBridgeAuthority.leaseRegistry,
     clientPool: cuaDriverClientPool,
+    ...(lockedComputerControl ? { lockedControlRegistry: lockedComputerControl } : {}),
   });
   const backgroundSchedulers = new ExternalWorkBackgroundSchedulerRegistry(storeRegistry, secretResolver, externalWorkFetch);
   const activeRuns = new ActiveRunRegistry();

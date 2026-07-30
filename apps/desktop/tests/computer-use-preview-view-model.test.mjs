@@ -41,6 +41,19 @@ test("view model keeps live controls hover-only and exposes actionable menu item
   assert.equal(permission.ariaLive, "assertive");
 });
 
+test("locked-control state promotes Stop and revoke to an obvious primary action", () => {
+  const locked = createComputerUsePreviewViewModel(snapshot({
+    lockedControl: {
+      phase: "active_locked",
+      expiresAt: "2026-07-31T10:15:00.000Z",
+    },
+  }));
+  assert.deepEqual(locked.primaryActions.map((action) => action.id), ["open", "stop", "hide"]);
+  assert.equal(locked.primaryActions.find((action) => action.id === "stop")?.label, "Stop and revoke");
+  assert.equal(locked.primaryActions.find((action) => action.id === "stop")?.danger, true);
+  assert.equal(locked.menuActions.some((action) => action.id === "stop"), false);
+});
+
 test("view model exposes structured pending and failed Stop feedback", () => {
   const pending = createComputerUsePreviewViewModel(snapshot(), { stopCommandState: "pending" });
   assert.equal(pending.state, "stopping");

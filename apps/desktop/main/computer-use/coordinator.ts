@@ -18,6 +18,7 @@ import type {
 import { DEFAULT_COMPUTER_USE_PREVIEW_LOCALE } from "../../shared/desktop-capabilities.js";
 import { DESKTOP_IPC_CHANNELS } from "../../shared/ipc-channels.js";
 import type { DesktopPreferenceStore, DesktopPreferences } from "../preferences.js";
+import type { LockedControlPolicyCoordinatorSnapshot } from "../locked-computer-control/policy-coordinator.js";
 import {
   chooseComputerUsePreviewBounds,
   createComputerUsePreviewCornerCandidates,
@@ -171,6 +172,7 @@ export class ComputerUsePreviewCoordinator {
   private disposing = false;
   private disposed = false;
   private disposePromise: Promise<void> | undefined;
+  private lockedControlStatus: ComputerUsePipRendererSnapshot["lockedControl"] | undefined;
 
   constructor(private readonly options: ComputerUsePreviewCoordinatorOptions) {
     this.now = options.now ?? (() => new Date());
@@ -373,6 +375,20 @@ export class ComputerUsePreviewCoordinator {
 
   getRendererSnapshot(): ComputerUsePipRendererSnapshot | undefined {
     return this.snapshot ? this.decorateSnapshotWithDeck(this.snapshot) : undefined;
+  }
+
+  reportLockedControlState(snapshot: LockedControlPolicyCoordinatorSnapshot): void {
+    const phase = snapshot.phase;
+    this.lockedControlStatus = phase === "armed"
+      || phase === "attesting"
+      || phase === "active_locked"
+      ? {
+          phase,
+          ...(snapshot.expiresAt ? { expiresAt: snapshot.expiresAt } : {}),
+          ...(snapshot.reason ? { reason: snapshot.reason } : {}),
+        }
+      : undefined;
+    this.sendSnapshot();
   }
 
   getDeckState(): ComputerUsePipDeckState | undefined {
@@ -2414,7 +2430,15 @@ export class ComputerUsePreviewCoordinator {
   private decorateSnapshotWithDeck(
     snapshot: ComputerUsePipRendererSnapshot,
   ): ComputerUsePipRendererSnapshot {
-    const { deck: _previousDeck, ...baseSnapshot } = snapshot;
+    const {
+      deck: _previousDeck,
+      lockedControl: _previousLockedControl,
+      ...undecoratedSnapshot
+    } = snapshot;
+    const baseSnapshot: ComputerUsePipRendererSnapshot = {
+      ...undecoratedSnapshot,
+      ...(this.lockedControlStatus ? { lockedControl: this.lockedControlStatus } : {}),
+    };
     const state = this.deckState;
     if (!state?.activePageId) {
       return baseSnapshot;

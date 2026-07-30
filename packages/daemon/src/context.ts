@@ -49,6 +49,14 @@ export interface McpBroker {
     readonly workspaceCwd: string;
     readonly platform: NodeJS.Platform;
     readonly hasCurrentLease: () => boolean;
+    readonly assertLockedApprovalAllowed?: (input: {
+      readonly serverId: string;
+      readonly runId: string;
+      readonly computerUseSessionId: string;
+      readonly toolId: string;
+      readonly toolCallId: string;
+      readonly defaultApproval: "allow" | "ask" | "deny";
+    }) => void;
   };
   checkServer(
     server: McpServer,
@@ -77,6 +85,13 @@ export interface McpBrokerOptions {
   readonly signal?: AbortSignal;
   /** Synchronous authorization fence run after transport completion. */
   readonly assertResultCurrent?: () => void;
+  readonly lockedControlExecution?: {
+    readonly runId: string;
+    readonly computerUseSessionId: string;
+    readonly toolCallId: string;
+    readonly defaultApproval: "allow" | "ask" | "deny";
+    readonly approvalId?: string;
+  };
 }
 
 export interface ExternalSecretStore extends SecretResolver {

@@ -34,6 +34,8 @@ export function registerDesktopIpc(input: {
     | "onStatusChanged"
     | "requestComputerControlPermissions"
     | "openComputerControlPermissionSettings"
+    | "authorizeLockedComputerControl"
+    | "revokeLockedComputerControl"
   >;
   readonly computerUse: ComputerUsePreviewCoordinator;
   readonly getMainWindow: () => BrowserWindow | undefined;
@@ -132,6 +134,14 @@ export function registerDesktopIpc(input: {
     }
     return input.runtime.openComputerControlPermissionSettings(permission);
   });
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.computerControlAuthorizeLocked, async (event) =>
+    isMainWindowSender(event)
+      ? input.runtime.authorizeLockedComputerControl()
+      : { accepted: false, reason: "unauthorized_sender" });
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.computerControlRevokeLocked, async (event) =>
+    isMainWindowSender(event)
+      ? input.runtime.revokeLockedComputerControl()
+      : { accepted: false, reason: "unauthorized_sender" });
   desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.computerUsePreviewSnapshotGet, (event) =>
     input.computerUse.ownsPreviewWebContents(event.sender.id)
       ? input.computerUse.getRendererSnapshot()
@@ -237,11 +247,13 @@ export function registerDesktopIpc(input: {
       : typeof sessionId === "string" ? input.computerUse.hide(sessionId) : { accepted: false, reason: "bad_session_id" });
   desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.computerUseStop, async (event, sessionId: unknown) => {
     if (isPreviewSender(event)) {
+      await input.runtime.revokeLockedComputerControl().catch(() => undefined);
       return input.computerUse.stopCurrent();
     }
     if (!isMainWindowSender(event)) {
       return { accepted: false, reason: "unauthorized_sender" };
     }
+    await input.runtime.revokeLockedComputerControl().catch(() => undefined);
     return typeof sessionId === "string" ? input.computerUse.stop(sessionId) : input.computerUse.stopCurrent();
   });
   desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.computerUseOpenOwnerConversation, async (event) => {

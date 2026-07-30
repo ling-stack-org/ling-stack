@@ -19,6 +19,11 @@ import {
   isLockedControlIdentityResultV1,
   isPositiveLockedComputerControlAttestationV1,
 } from "@ling-stack/contracts";
+import {
+  CUA_DRIVER_LOCKED_ALLOWED_TOOL_IDS_SHA256,
+  CUA_DRIVER_LOCKED_TOOL_POLICY_REVISION,
+  lockedCuaDriverToolDecision,
+} from "../plugins/presets.js";
 
 export const LOCKED_CONTROL_PREPARED_TTL_MS = 30_000;
 export const LOCKED_CONTROL_ATTESTATION_FRESHNESS_MS = 3_000;
@@ -26,6 +31,29 @@ export const LOCKED_CONTROL_ATTESTATION_FRESHNESS_MS = 3_000;
 export interface LockedControlRegistrySnapshot {
   readonly revision: number;
   readonly projection: LockedComputerControlProjectionV1;
+}
+
+export interface LockedControlActionContext {
+  readonly leaseGeneration: number;
+  readonly workspaceCwd?: string;
+  readonly runId?: string;
+  readonly computerUseSessionId?: string;
+  readonly toolId: string;
+  readonly toolCallId: string;
+  readonly defaultApproval: "allow" | "ask" | "deny";
+  readonly approvalId?: string;
+}
+
+export interface LockedControlActionFence {
+  readonly mode: "unlocked" | "locked";
+  assertCurrent(): void;
+}
+
+export class LockedControlActionDeniedError extends Error {
+  constructor(readonly reason: LockedControlReasonCode) {
+    super(reason);
+    this.name = "LockedControlActionDeniedError";
+  }
 }
 
 export interface LockedControlAuthorizationIntentInput {
@@ -129,6 +157,7 @@ export class LockedComputerControlRegistry {
   private prepared: PreparedGrant | undefined;
   private live: LiveGrant | undefined;
   private deadline: { cancel(): void } | undefined;
+  private readonly restrictedGenerations = new Set<number>();
 
   constructor(private readonly options: LockedControlRegistryOptions) {
     if (!isLockedComputerControlPolicyV1(options.policy)
@@ -377,6 +406,12 @@ export class LockedComputerControlRegistry {
     if (previous && attestation.sequence <= previous.sequence) {
       return this.denied("locked_control_authority_rotated");
     }
+    this.restrictedGenerations.add(attestation.providerGeneration);
+    while (this.restrictedGenerations.size > 16) {
+      const oldest = this.restrictedGenerations.values().next().value as number | undefined;
+      if (oldest === undefined) break;
+      this.restrictedGenerations.delete(oldest);
+    }
     const firstEntry = !previous;
     if (firstEntry) {
       const auditId = this.createId();
@@ -447,6 +482,81 @@ export class LockedComputerControlRegistry {
     );
   }
 
+  /**
+   * Captures a pre-dispatch fence for a Cua Driver call.
+   * Normal unlocked generations keep their existing behavior. A generation
+   * proven to be locked must satisfy the grant, attestation, reviewed allowlist,
+   * run scope and approval intersection before dispatch and again after result.
+   */
+  captureActionFence(input: LockedControlActionContext): LockedControlActionFence {
+    this.expireDue();
+    if (!Number.isSafeInteger(input.leaseGeneration) || input.leaseGeneration <= 0
+      || !isText(input.toolId) || !isText(input.toolCallId)) {
+      throw new LockedControlActionDeniedError("locked_control_session_mismatch");
+    }
+    const live = this.live;
+    if (!live) {
+      if (this.restrictedGenerations.has(input.leaseGeneration)) {
+        this.denyAction(input, "locked_control_authority_rotated");
+      }
+      return Object.freeze({ mode: "unlocked" as const, assertCurrent() {} });
+    }
+    if (input.leaseGeneration <= live.grant.authorizedNormalGeneration) {
+      return Object.freeze({ mode: "unlocked" as const, assertCurrent() {} });
+    }
+
+    const attestation = live.attestation;
+    if (!attestation
+      || input.leaseGeneration !== attestation.providerGeneration
+      || !this.isCurrentPositiveAttestation({
+        grantId: live.grant.grantId,
+        platform: live.grant.platform,
+        lockEpoch: live.grant.authorizedLockEpoch,
+        sessionBindingDigest: live.grant.osSessionBindingDigest,
+        providerGeneration: input.leaseGeneration,
+        sequence: attestation.sequence,
+      })) {
+      this.denyAction(input, "locked_control_session_mismatch", live.grant);
+    }
+    if (this.projection.phase === "paused") {
+      this.denyAction(input, this.projection.reason ?? "locked_control_approval_required", live.grant);
+    }
+    if (this.policy.lockedToolPolicyRevision !== CUA_DRIVER_LOCKED_TOOL_POLICY_REVISION
+      || this.policy.allowedLockedToolIdsSha256 !== CUA_DRIVER_LOCKED_ALLOWED_TOOL_IDS_SHA256
+      || live.grant.allowedLockedToolIdsDigest !== CUA_DRIVER_LOCKED_ALLOWED_TOOL_IDS_SHA256) {
+      this.denyAction(input, "locked_control_disabled_by_policy", live.grant);
+    }
+    if (input.workspaceCwd !== live.grant.workspaceCwd
+      || input.runId !== live.grant.runId
+      || input.computerUseSessionId !== live.grant.computerUseSessionId) {
+      this.denyAction(input, "locked_control_no_active_run", live.grant);
+    }
+    if (lockedCuaDriverToolDecision(input.toolId) !== "allow_to_existing_approval") {
+      this.denyAction(input, "locked_control_disabled_by_policy", live.grant);
+    }
+    if (input.defaultApproval !== "allow") {
+      this.pause("locked_control_approval_required");
+      this.denyAction(input, "locked_control_approval_required", live.grant);
+    }
+
+    const fence = Object.freeze({
+      grantId: live.grant.grantId,
+      platform: live.grant.platform,
+      lockEpoch: live.grant.authorizedLockEpoch,
+      sessionBindingDigest: live.grant.osSessionBindingDigest,
+      providerGeneration: input.leaseGeneration,
+      attestationSequence: attestation.sequence,
+      workspaceCwd: live.grant.workspaceCwd,
+      runId: live.grant.runId,
+      computerUseSessionId: live.grant.computerUseSessionId,
+      toolId: input.toolId,
+    });
+    return Object.freeze({
+      mode: "locked" as const,
+      assertCurrent: () => this.assertActionFenceCurrent(fence),
+    });
+  }
+
   pause(reason: "locked_control_approval_required"): LockedControlMutationResult {
     this.expireDue();
     if (!this.live || !this.live.attestation || this.projection.phase !== "active_locked") {
@@ -467,6 +577,7 @@ export class LockedComputerControlRegistry {
     this.intent = undefined;
     this.prepared = undefined;
     this.live = undefined;
+    this.restrictedGenerations.clear();
   }
 
   private authorizationEligibility(input: LockedControlAuthorizationIntentInput): LockedControlReasonCode | undefined {
@@ -541,6 +652,69 @@ export class LockedComputerControlRegistry {
       }
     }
     return { accepted: true, snapshot: this.currentSnapshot() };
+  }
+
+  private assertActionFenceCurrent(fence: {
+    readonly grantId: string;
+    readonly platform: LockedComputerControlPlatform;
+    readonly lockEpoch: number;
+    readonly sessionBindingDigest: string;
+    readonly providerGeneration: number;
+    readonly attestationSequence: number;
+    readonly workspaceCwd: string;
+    readonly runId: string;
+    readonly computerUseSessionId: string;
+    readonly toolId: string;
+  }): void {
+    this.expireDue();
+    const live = this.live;
+    if (!live
+      || this.projection.phase !== "active_locked"
+      || live.grant.workspaceCwd !== fence.workspaceCwd
+      || live.grant.runId !== fence.runId
+      || live.grant.computerUseSessionId !== fence.computerUseSessionId
+      || live.grant.allowedLockedToolIdsDigest !== CUA_DRIVER_LOCKED_ALLOWED_TOOL_IDS_SHA256
+      || lockedCuaDriverToolDecision(fence.toolId) !== "allow_to_existing_approval"
+      || !this.isCurrentPositiveAttestation({
+        grantId: fence.grantId,
+        platform: fence.platform,
+        lockEpoch: fence.lockEpoch,
+        sessionBindingDigest: fence.sessionBindingDigest,
+        providerGeneration: fence.providerGeneration,
+        sequence: fence.attestationSequence,
+      })) {
+      throw new LockedControlActionDeniedError("locked_control_authority_rotated");
+    }
+  }
+
+  private denyAction(
+    input: LockedControlActionContext,
+    reason: LockedControlReasonCode,
+    grant = this.live?.grant,
+  ): never {
+    try {
+      this.options.appendAudit({
+        schemaVersion: 1,
+        auditId: this.createId(),
+        event: "locked_control_action_denied",
+        platform: grant?.platform ?? this.capability.platform,
+        occurredAt: this.now().toISOString(),
+        ...(grant?.workspaceCwd || input.workspaceCwd
+          ? { workspaceCwd: grant?.workspaceCwd ?? input.workspaceCwd }
+          : {}),
+        ...(grant?.runId || input.runId ? { runId: grant?.runId ?? input.runId } : {}),
+        ...(grant?.computerUseSessionId || input.computerUseSessionId
+          ? { computerUseSessionId: grant?.computerUseSessionId ?? input.computerUseSessionId }
+          : {}),
+        reason,
+        toolId: input.toolId,
+        toolCallId: input.toolCallId,
+        ...(input.approvalId ? { approvalId: input.approvalId } : {}),
+      });
+    } catch {
+      throw new LockedControlActionDeniedError("locked_control_audit_unavailable");
+    }
+    throw new LockedControlActionDeniedError(reason);
   }
 
   private rescheduleDeadline(): void {

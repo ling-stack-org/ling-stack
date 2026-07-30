@@ -9,6 +9,9 @@ import {
   LOCKED_CONTROL_PREPARED_TTL_MS,
   LockedComputerControlRegistry,
 } from "../dist/features/computer-use/locked-control-registry.js";
+import {
+  CUA_DRIVER_LOCKED_ALLOWED_TOOL_IDS_SHA256,
+} from "../dist/features/plugins/presets.js";
 
 const digestA = "a".repeat(64);
 const digestB = "b".repeat(64);
@@ -22,7 +25,7 @@ const enabledPolicy = {
   consumeOnUnlock: true,
   suspendRevokes: true,
   lockedToolPolicyRevision: "locked-cua-tools-v1",
-  allowedLockedToolIdsSha256: digestB,
+  allowedLockedToolIdsSha256: CUA_DRIVER_LOCKED_ALLOWED_TOOL_IDS_SHA256,
 };
 
 const disabledPolicy = { ...enabledPolicy, mode: "disabled" };
@@ -57,7 +60,7 @@ const authority = {
   authorizedNormalGeneration: 3,
   osSessionBindingDigest: digestA,
   authorizedLockEpoch: 2,
-  allowedLockedToolIdsDigest: digestB,
+  allowedLockedToolIdsDigest: CUA_DRIVER_LOCKED_ALLOWED_TOOL_IDS_SHA256,
 };
 
 const identity = {
@@ -352,3 +355,83 @@ test("revocation clears memory before a durable audit retry can fail", () => {
   assert.equal(fx.registry.snapshot().projection.phase, "off");
   assert.equal(fx.registry.snapshot().projection.reason, "locked_control_suspend");
 });
+
+test("normal generation behavior is unchanged while a grant is only armed", () => {
+  const fx = fixture();
+  arm(fx);
+  const fence = fx.registry.captureActionFence(actionContext({
+    leaseGeneration: authority.authorizedNormalGeneration,
+    toolId: "future_normal_tool",
+    defaultApproval: "deny",
+  }));
+  assert.equal(fence.mode, "unlocked");
+  assert.doesNotThrow(() => fence.assertCurrent());
+});
+
+test("locked action fence intersects attestation, allowlist, run scope and approval", () => {
+  const fx = fixture();
+  const grant = arm(fx);
+  fx.registry.acceptAttestation(attestation(grant));
+
+  const fence = fx.registry.captureActionFence(actionContext({ toolId: "health_report" }));
+  assert.equal(fence.mode, "locked");
+  assert.doesNotThrow(() => fence.assertCurrent());
+
+  assert.throws(
+    () => fx.registry.captureActionFence(actionContext({ toolId: "future_provider_tool" })),
+    (error) => error.reason === "locked_control_disabled_by_policy",
+  );
+  assert.equal(fx.audits.at(-1).event, "locked_control_action_denied");
+  assert.equal(fx.audits.at(-1).toolId, "future_provider_tool");
+});
+
+test("approval-required locked action pauses with a stable reason before provider dispatch", () => {
+  const fx = fixture();
+  const grant = arm(fx);
+  fx.registry.acceptAttestation(attestation(grant));
+  assert.throws(
+    () => fx.registry.captureActionFence(actionContext({
+      toolId: "click",
+      defaultApproval: "ask",
+      approvalId: "approval-1",
+    })),
+    (error) => error.reason === "locked_control_approval_required",
+  );
+  assert.equal(fx.registry.snapshot().projection.phase, "paused");
+  assert.equal(fx.registry.snapshot().projection.reason, "locked_control_approval_required");
+  assert.equal(fx.audits.at(-1).approvalId, "approval-1");
+});
+
+test("locked action fence rejects mismatched scope, stale result and retired restricted generation", () => {
+  const scopeFx = fixture();
+  const scopeGrant = arm(scopeFx);
+  scopeFx.registry.acceptAttestation(attestation(scopeGrant));
+  assert.throws(
+    () => scopeFx.registry.captureActionFence(actionContext({ runId: "run-other" })),
+    (error) => error.reason === "locked_control_no_active_run",
+  );
+
+  const staleFx = fixture();
+  const staleGrant = arm(staleFx);
+  staleFx.registry.acceptAttestation(attestation(staleGrant));
+  const fence = staleFx.registry.captureActionFence(actionContext());
+  staleFx.advance(LOCKED_CONTROL_ATTESTATION_FRESHNESS_MS + 1);
+  assert.throws(() => fence.assertCurrent(), (error) => error.reason === "locked_control_authority_rotated");
+  assert.throws(
+    () => staleFx.registry.captureActionFence(actionContext()),
+    (error) => error.reason === "locked_control_authority_rotated",
+  );
+});
+
+function actionContext(overrides = {}) {
+  return {
+    leaseGeneration: 4,
+    workspaceCwd: "/workspace",
+    runId: "run-1",
+    computerUseSessionId: "session-1",
+    toolId: "health_report",
+    toolCallId: "tool-call-1",
+    defaultApproval: "allow",
+    ...overrides,
+  };
+}

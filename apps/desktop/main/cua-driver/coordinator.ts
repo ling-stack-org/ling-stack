@@ -271,6 +271,11 @@ export class CuaDriverDesktopCoordinator {
     return this.host;
   }
 
+  /** Synchronous admission fence used before the locked-control policy queue awaits. */
+  closeCallGateForSecurityBoundary(reason: string): void {
+    this.proxy?.closeCallGate(reason);
+  }
+
   /** Host lock/suspend fence. Retains requested intent while retiring this generation. */
   suspendForSystem(reason: string): Promise<void> {
     if (this.stopped || !this.requestedEnabled) {
