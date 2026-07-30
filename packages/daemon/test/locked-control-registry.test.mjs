@@ -162,11 +162,20 @@ function attestation(grant, overrides = {}) {
 
 test("disabled packaged policy cannot begin authorization", () => {
   const fx = fixture({ policy: disabledPolicy });
-  const result = fx.registry.beginAuthorization(intentInput);
+  const evaluated = fx.registry.evaluateCapability(capability, "fixture-build");
+  assert.equal(evaluated.accepted, true);
+  assert.equal(evaluated.snapshot.projection.capability, "disabled_by_build");
+  assert.equal(evaluated.snapshot.projection.reason, "locked_control_disabled_by_build");
+  const result = fx.registry.beginAuthorization({
+    ...intentInput,
+    expectedRevision: evaluated.snapshot.revision,
+  });
   assert.equal(result.accepted, false);
   assert.equal(result.reason, "locked_control_disabled_by_build");
   assert.equal(result.snapshot.projection.phase, "off");
-  assert.equal(fx.audits.length, 0);
+  assert.deepEqual(fx.audits.map((event) => event.event), [
+    "locked_control_capability_evaluated",
+  ]);
 });
 
 test("prepare, durable commit and attestation form one revisioned authority", () => {

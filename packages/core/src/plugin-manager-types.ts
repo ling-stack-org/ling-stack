@@ -25,6 +25,20 @@ export type CuaDriverProviderState =
 export type CuaDriverIntegrityCoverage = "standard" | "uiaccess";
 export type CuaDriverLimitation = "elevated_pixel_input" | "uwp_send_input";
 
+export interface LockedComputerControlProjectionV1 {
+  readonly schemaVersion: 1;
+  readonly capability: "disabled_by_build" | "probe_required" | "unsupported" | "supported_restricted";
+  readonly phase: "off" | "verifying" | "armed" | "active_locked" | "paused";
+  readonly reason?: string;
+  readonly grantId?: string;
+  readonly runId?: string;
+  readonly computerUseSessionId?: string;
+  readonly issuedAt?: string;
+  readonly expiresAt?: string;
+  readonly lockedSince?: string;
+  readonly auditId?: string;
+}
+
 export interface ManagedPluginSetupGuide {
   readonly documentationUrl: string;
   readonly installCommand: string;
@@ -70,6 +84,7 @@ export interface ManagedPluginSetupView {
     readonly integrityCoverage: CuaDriverIntegrityCoverage | "unknown";
     readonly uiaHelper: "not_required" | "ready" | "unavailable" | "invalid";
   };
+  readonly lockedControl?: LockedComputerControlProjectionV1;
   readonly externalOverride?: {
     readonly command: string;
     readonly explicit: true;

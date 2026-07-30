@@ -50,6 +50,7 @@ export function buildCuaDriverSetupView(input: {
     readonly bridge?: "available" | "missing" | "incompatible";
     readonly permissions?: ManagedPluginSetupView["permissions"];
     readonly windowsReadiness?: ManagedPluginSetupView["windowsReadiness"];
+    readonly lockedControl?: ManagedPluginSetupView["lockedControl"];
     readonly externalOverride?: {
       readonly command: string;
       readonly explicit: true;
@@ -86,6 +87,7 @@ export function buildCuaDriverSetupView(input: {
       bridge: input.projection.bridge,
       permissions: input.projection.permissions,
       windowsReadiness: input.projection.windowsReadiness,
+      lockedControl: input.projection.lockedControl,
     };
   }
 
@@ -121,6 +123,7 @@ export function buildCuaDriverSetupView(input: {
     bridge: input.projection.bridge,
     permissions: input.projection.permissions,
     windowsReadiness: input.projection.windowsReadiness,
+    lockedControl: input.projection.lockedControl,
     externalOverride: input.projection.externalOverride,
   };
 }

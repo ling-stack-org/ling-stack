@@ -142,7 +142,7 @@ export class LockedComputerControlRegistry {
     this.monotonicNowMs = options.monotonicNowMs ?? (() => performance.now());
     this.createId = options.createId ?? randomUUID;
     this.scheduleDeadline = options.scheduleDeadline ?? defaultScheduleDeadline;
-    this.projection = offProjection(options.capability);
+    this.projection = offProjection(options.capability, undefined, this.policy);
   }
 
   snapshot(): LockedControlRegistrySnapshot {
@@ -173,7 +173,7 @@ export class LockedComputerControlRegistry {
       ...(reason ? { reason } : {}),
     });
     this.capability = capability;
-    this.transition(offProjection(capability));
+    this.transition(offProjection(capability, undefined, this.policy));
     return { accepted: true, snapshot: this.currentSnapshot() };
   }
 
@@ -298,7 +298,7 @@ export class LockedComputerControlRegistry {
     const remainingWallMs = Date.parse(prepared.grant.expiresAt) - wallNow.getTime();
     if (remainingWallMs <= 0) {
       this.clearPending();
-      this.transition(offProjection(this.capability, "locked_control_grant_expired"));
+      this.transition(offProjection(this.capability, "locked_control_grant_expired", this.policy));
       return this.denied("locked_control_grant_expired");
     }
     const auditId = this.createId();
@@ -496,7 +496,7 @@ export class LockedComputerControlRegistry {
     const monotonicNow = this.monotonicNowMs();
     if (this.prepared && monotonicNow >= this.prepared.expiresMonotonicMs) {
       this.clearPending();
-      this.transition(offProjection(this.capability, "locked_control_commit_unconfirmed"));
+      this.transition(offProjection(this.capability, "locked_control_commit_unconfirmed", this.policy));
     }
     if (this.live && (
       monotonicNow >= this.live.expiresMonotonicMs
@@ -515,7 +515,7 @@ export class LockedComputerControlRegistry {
     this.intent = undefined;
     this.prepared = undefined;
     this.live = undefined;
-    this.transition(offProjection(this.capability, reason));
+    this.transition(offProjection(this.capability, reason, this.policy));
     this.rescheduleDeadline();
     if (grant) {
       const now = this.now().toISOString();
@@ -599,13 +599,26 @@ export class LockedComputerControlRegistry {
 
 function offProjection(
   capability: LockedComputerControlCapabilityV1,
-  reason = capability.state === "supported_restricted" ? undefined : capability.reason,
+  reason: LockedControlReasonCode | undefined,
+  policy: LockedComputerControlPolicyV1,
 ): LockedComputerControlProjectionV1 {
+  if (policy.mode !== "task_grant_required") {
+    return {
+      schemaVersion: 1,
+      capability: "disabled_by_build",
+      phase: "off",
+      reason: policy.mode === "disabled"
+        ? "locked_control_disabled_by_build"
+        : "locked_control_disabled_by_policy",
+    };
+  }
+  const effectiveReason = reason
+    ?? (capability.state === "supported_restricted" ? undefined : capability.reason);
   return {
     schemaVersion: 1,
     capability: capability.state,
     phase: "off",
-    ...(reason ? { reason } : {}),
+    ...(effectiveReason ? { reason: effectiveReason } : {}),
   };
 }
 

@@ -109,6 +109,30 @@ test("Cua Driver setup projection blocks unsupported platforms without probing t
   });
 });
 
+test("bundled Cua Driver setup carries the canonical locked-control projection", () => {
+  const lockedControl = {
+    schemaVersion: 1,
+    capability: "disabled_by_build",
+    phase: "off",
+    reason: "locked_control_disabled_by_build",
+  };
+  const setup = buildCuaDriverSetupView({
+    store: {},
+    now: "2026-07-31T00:00:00.000Z",
+    platform: "darwin",
+    projection: {
+      schemaVersion: 2,
+      distribution: "bundled_embedded",
+      providerState: "included",
+      requestedEnabled: false,
+      effectiveEnabled: false,
+      lockedControl,
+    },
+  });
+  assert.deepEqual(setup.lockedControl, lockedControl);
+  assert.equal(setup.distribution, "bundled_embedded");
+});
+
 test("Cua Driver detection includes system and user macOS app bundles", () => {
   assert.deepEqual(defaultCuaDriverCommandCandidates("/Users/test").slice(-4), [
     "/Applications/CuaDriver.app/Contents/MacOS/cua-driver",
