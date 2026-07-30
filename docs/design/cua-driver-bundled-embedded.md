@@ -97,9 +97,12 @@ The page has five sections:
 3. **Control preview**: the existing PiP auto-show preference moves from Interface
    Preferences. It controls only preview presentation and never enables or disables native
    control.
-4. **Privacy**: control while the screen is locked is fixed Off in V1. This is a read-only
-   safety rule, not a user preference. Per-application allowlists are not shown until Ling
-   has an enforceable application boundary.
+4. **Privacy**: control while the screen is locked remains fixed Off for the bundled V1
+   release. A governed, task-scoped follow-up is defined in
+   [Governed Locked Computer Control](locked-computer-control-policy.md) and stays disabled
+   until a platform passes its identity, audit, feasibility and security release gates.
+   Per-application allowlists are not shown until Ling has an enforceable application
+   boundary.
 5. **Advanced**: provider display version, Ling build revision, platform, integrity result,
    last check and known Windows limitations. Last check comes from provider health, not the
    time the Catalog response was assembled. Integrity remains Unknown until Desktop's
@@ -750,9 +753,11 @@ Migration rules:
   launch, input, configuration mutation, recording, and replay remain approval-gated.
 - A bundled provider is not automatically enabled, assigned to teammates, or granted
   macOS permissions.
-- V1 never controls a locked computer. Lock/suspend/session invalidation closes the call
-  gate, revokes the current generation and retains requested intent for a fresh post-unlock
-  readiness pass.
+- Bundled V1 never controls a locked computer. Lock/suspend/session invalidation closes the
+  call gate, revokes the current generation and retains requested intent for a fresh
+  post-unlock readiness pass. The optional follow-up cannot replace this behavior until the
+  per-platform gates in [Governed Locked Computer Control](locked-computer-control-policy.md)
+  pass; failure or unknown capability always preserves this baseline.
 - The Ling-managed embedded path never invokes or exposes updater/install operations,
   performs background provider downloads, or falls back to unreviewed `PATH` entries.
   Upstream `0.8.3` still contains a standalone CLI updater; direct generic-shell execution

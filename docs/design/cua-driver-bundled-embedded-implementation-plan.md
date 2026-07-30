@@ -291,8 +291,12 @@ creating parallel systems:
   bypass around approvals/audit.
 - Deleting canonical Cua plugin/MCP records, globally filtering shared domains, or changing
   teammate binding/tool ids.
-- A user-configurable locked-computer switch or per-application allowlist in V1. Locked
-  control is fixed Off; application-level enforcement needs a separate design.
+- A user-configurable locked-computer switch or per-application allowlist in this bundled V1
+  plan. Locked control remains fixed Off here. Its governed task-scoped follow-up now has a
+  separate [design](locked-computer-control-policy.md),
+  [detailed design](locked-computer-control-detailed-design.md) and
+  [implementation plan](locked-computer-control-implementation-plan.md); general
+  application-level enforcement remains deferred.
 - Rebuilding the Computer Use PiP preference or presentation coordinator.
 - Importing or mutating external Cua Driver config/state.
 - Our team generating or approving Windows real-machine PASS evidence; Windows colleagues
