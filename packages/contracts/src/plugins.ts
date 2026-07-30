@@ -11,6 +11,7 @@ import type {
   CuaDriverProviderState,
   CuaDriverWindowsReadinessSnapshot,
 } from "./cua-driver-bundled.js";
+import type { LockedComputerControlProjectionV1 } from "./locked-computer-control.js";
 
 export type ManagedPluginSourceKind = "built-in" | "bundled" | "trusted-local-preset";
 
@@ -59,6 +60,8 @@ export interface ManagedPluginSetupView {
   readonly permissions?: CuaDriverPermissionSnapshot;
   readonly windowsReadiness?: CuaDriverWindowsReadinessSnapshot;
   readonly externalOverride?: CuaDriverExternalOverride;
+  /** Optional V1 projection. Older Desktop/daemon pairs ignore it and remain fixed Off. */
+  readonly lockedControl?: LockedComputerControlProjectionV1;
 }
 
 /**
@@ -73,6 +76,7 @@ export interface CuaDriverSetupView extends ManagedPluginSetupView {
   readonly requestedEnabled: boolean;
   readonly effectiveEnabled: boolean;
   readonly limitations: readonly CuaDriverLimitation[];
+  readonly lockedControl?: LockedComputerControlProjectionV1;
 }
 
 export type ManagedPluginContributionKind =
