@@ -14,16 +14,100 @@
   grid-template-columns: minmax(0, 1fr) minmax(320px, 0.36fr);
 }
 
+.settings-skill-table-scroll-area {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  max-height: var(--skill-library-content-max-height);
+}
+
 .settings-skill-table-wrap {
   width: 100%;
   min-width: 0;
   min-height: 0;
   max-height: var(--skill-library-content-max-height);
+  overflow-x: hidden;
+  overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-gutter: stable;
+  scrollbar-width: none;
+}
+
+.settings-skill-table-wrap::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.settings-skill-table-wrap::-webkit-scrollbar-track,
+.settings-skill-table-wrap::-webkit-scrollbar-thumb,
+.settings-skill-table-wrap::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.settings-skill-overlay-scrollbar {
+  position: absolute;
+  z-index: 2;
+  top: 4px;
+  right: 2px;
+  bottom: 4px;
+  width: 8px;
+  border-radius: 999px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--ling-motion-fast) var(--ling-ease-standard);
+}
+
+.settings-skill-overlay-scrollbar[data-overflow="false"] {
+  display: none;
+}
+
+.settings-skill-overlay-scrollbar-thumb {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 8px;
+  min-height: 32px;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: var(--ling-native-scrollbar);
+  background-clip: padding-box;
+  cursor: grab;
+  pointer-events: none;
+  touch-action: none;
+  user-select: none;
+}
+
+.settings-skill-table-scroll-area:hover .settings-skill-overlay-scrollbar[data-overflow="true"],
+.settings-skill-table-scroll-area:focus-within .settings-skill-overlay-scrollbar[data-overflow="true"],
+.settings-skill-table-wrap[data-scrolling="true"] + .settings-skill-overlay-scrollbar[data-overflow="true"],
+.settings-skill-overlay-scrollbar[data-dragging="true"] {
+  opacity: 1;
+}
+
+.settings-skill-table-scroll-area:hover .settings-skill-overlay-scrollbar-thumb,
+.settings-skill-table-scroll-area:focus-within .settings-skill-overlay-scrollbar-thumb,
+.settings-skill-table-wrap[data-scrolling="true"] + .settings-skill-overlay-scrollbar .settings-skill-overlay-scrollbar-thumb,
+.settings-skill-overlay-scrollbar[data-dragging="true"] .settings-skill-overlay-scrollbar-thumb {
+  pointer-events: auto;
+}
+
+.settings-skill-overlay-scrollbar-thumb:hover {
+  background: var(--ling-native-scrollbar-hover);
+  background-clip: padding-box;
+}
+
+.settings-skill-overlay-scrollbar-thumb:active {
+  cursor: grabbing;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-skill-overlay-scrollbar {
+    transition-duration: var(--ling-motion-instant);
+  }
 }
 
 .settings-skill-table {
+  width: calc(100% + var(--skill-library-native-scrollbar-gutter, 0px));
   min-width: min(680px, 100%);
   table-layout: fixed;
 }
@@ -48,7 +132,7 @@
 .settings-skill-table--evolved th:nth-child(5),
 .settings-skill-table--evolved td:nth-child(5) {
   width: 78px;
-  padding-inline: var(--ling-space-2);
+  padding-inline: var(--ling-space-2) 10px;
   text-align: right;
 }
 

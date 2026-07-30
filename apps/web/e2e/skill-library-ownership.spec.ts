@@ -341,6 +341,34 @@ test("skill library keeps a large user list inside its own scroll region", async
   expect(geometry.tableOverflowY).toBe("auto");
   expect(geometry.tableScrollHeight).toBeGreaterThan(geometry.tableClientHeight);
   expect(geometry.drawerCount).toBe(0);
+  const tableWrap = page.locator(".settings-skill-table-wrap");
+  const overlayScrollbar = page.locator(".settings-skill-overlay-scrollbar");
+  await expect(overlayScrollbar).toHaveAttribute("data-overflow", "true");
+  const overflowGeometry = await tableWrap.evaluate((container) => {
+    const table = container.querySelector("table");
+    const containerRect = container.getBoundingClientRect();
+    const style = getComputedStyle(container);
+    const borderRight = Number.parseFloat(style.borderRightWidth);
+    return {
+      backgroundGap: table
+        ? Math.max(0, (containerRect.right - borderRight) - table.getBoundingClientRect().right)
+        : Number.POSITIVE_INFINITY,
+      measuredGutter: container.offsetWidth
+        - container.clientWidth
+        - Number.parseFloat(style.borderLeftWidth)
+        - borderRight,
+      compensatedGutter: Number.parseFloat(style.getPropertyValue("--skill-library-native-scrollbar-gutter")),
+    };
+  });
+  expect(overflowGeometry.backgroundGap).toBeLessThanOrEqual(1);
+  expect(overflowGeometry.compensatedGutter).toBeCloseTo(Math.max(0, overflowGeometry.measuredGutter), 5);
+  await expect(overlayScrollbar).toHaveCSS("opacity", "0");
+  await tableWrap.evaluate((element) => { element.scrollTop = 120; });
+  await expect(tableWrap).toHaveAttribute("data-scrolling", "true");
+  await expect(overlayScrollbar).toHaveCSS("opacity", "1");
+  await expect(tableWrap).not.toHaveAttribute("data-scrolling", "true", { timeout: 2_000 });
+  await tableWrap.locator("tbody tr").first().focus();
+  await expect(overlayScrollbar).toHaveCSS("opacity", "1");
   await expect.poll(() => readHorizontalOverflow(page, ".settings-skill-library-body, .settings-skill-table-wrap, .settings-skill-detail-drawer")).toEqual([]);
 });
 

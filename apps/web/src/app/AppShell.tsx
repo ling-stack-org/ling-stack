@@ -101,6 +101,7 @@ import { AppConnectionStatus } from "./AppConnectionStatus.js";
 import { AppShellOverlayBoundary } from "./AppShellOverlayBoundary.js";
 import { DesktopWindowChrome } from "./DesktopWindowChrome.js";
 import { FullAccessConfirmationDialog } from "./FullAccessConfirmationDialog.js";
+import { FirstRunDialog, useFirstRunController } from "../features/first-run/index.js";
 import { useConversationDomain } from "../domains/conversations/use-conversation-domain.js";
 import { useExternalWorkDomain } from "../domains/external-work/use-external-work-domain.js";
 import { useMediaDomain } from "../domains/media/use-media-domain.js";
@@ -124,6 +125,7 @@ import {
 import { defaultTools } from "../lib/tools.js";
 import {
   canUseConversationProvider,
+  providerPreflightReady,
   providerModelRouteLabel,
   sortProvidersForWorkbench,
 } from "../lib/providers.js";
@@ -510,6 +512,7 @@ export function AppShell(): JSX.Element {
   const {
     providers,
     providerTemplates,
+    providersLoaded,
     providersLoading,
     providerForm,
     editingProviderId,
@@ -1050,6 +1053,13 @@ export function AppShell(): JSX.Element {
     [conversationChatProviders, defaultConversationProviderPresetId, providerTemplates],
   );
   const defaultConversationProvider = conversationModelOptions.find((option) => option.id === defaultConversationProviderPresetId);
+  const firstRunController = useFirstRunController({
+    daemonHealthy,
+    hasReadyProvider: conversationChatProviders.some(providerPreflightReady),
+    providersLoaded,
+    workspaceCwd: form.cwd,
+    onOpenModelWorkbench: () => openSettingsWorkspaceTool("providers"),
+  });
   const defaultConversationProviderLabel = defaultConversationProvider
     ? defaultConversationProvider.label
     : t("No chat model selected");
@@ -3163,6 +3173,7 @@ export function AppShell(): JSX.Element {
           onOpenProviders={() => openSettingsWorkspaceTool("providers")}
         />
       ) : null}
+      <FirstRunDialog controller={firstRunController} />
       <FullAccessConfirmationDialog
         open={fullAccessConfirmation.open}
         returnFocusTarget={fullAccessConfirmation.returnFocusTarget}

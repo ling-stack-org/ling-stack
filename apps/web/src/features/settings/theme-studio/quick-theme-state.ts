@@ -42,6 +42,7 @@ export interface QuickThemeState {
 }
 
 export type QuickThemeAction =
+  | { readonly type: "draft-restored"; readonly state: QuickThemeState }
   | { readonly type: "source-started"; readonly operationId: number }
   | {
       readonly type: "source-ready";
@@ -82,6 +83,8 @@ export function createQuickThemeState(input: {
 
 export function quickThemeReducer(state: QuickThemeState, action: QuickThemeAction): QuickThemeState {
   switch (action.type) {
+    case "draft-restored":
+      return freezeState(action.state);
     case "source-started":
       return freezeState({
         ...state,
@@ -143,6 +146,32 @@ export function quickThemeReducer(state: QuickThemeState, action: QuickThemeActi
     case "issue-cleared":
       return freezeState({ ...state, issue: undefined, stage: editableStage(state) });
   }
+}
+
+export function restoreQuickThemeState(input: {
+  readonly analysis?: ThemeImageAnalysis;
+  readonly artworkIntensity: QuickThemeState["artworkIntensity"];
+  readonly colorScheme: LingColorScheme;
+  readonly draftId: string;
+  readonly name: string;
+  readonly presentationProfileId: LingPresentationProfileId;
+  readonly revision: number;
+  readonly source?: QuickThemeSourceState;
+  readonly themeId: string;
+}): QuickThemeState {
+  return freezeState({
+    analysis: input.analysis,
+    artworkIntensity: input.artworkIntensity,
+    colorScheme: input.colorScheme,
+    draftId: input.draftId,
+    name: input.name,
+    operationId: 0,
+    presentationProfileId: input.presentationProfileId,
+    revision: input.revision,
+    source: input.source,
+    stage: input.source ? "draft-ready" : "empty",
+    themeId: input.themeId,
+  });
 }
 
 function invalidateCompiled(

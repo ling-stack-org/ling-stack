@@ -8,7 +8,6 @@ import {
   Table,
   TableBody,
   TableCell,
-  TableContainer,
   TableHead,
   TableHeaderCell,
   TableRow,
@@ -20,6 +19,7 @@ import {
   type SettingsTranslator,
   type TeammateSkillBindingSummary,
 } from "./skill-library-utils.js";
+import { SkillLibraryOverlayScrollArea } from "./SkillLibraryOverlayScrollArea.js";
 
 export function SkillLibraryTable({
   variant,
@@ -56,7 +56,7 @@ export function SkillLibraryTable({
   }
 
   return (
-    <TableContainer className="settings-skill-table-wrap settings-skill-table-wrap--compact">
+    <SkillLibraryOverlayScrollArea>
       <Table className={`settings-skill-table settings-skill-table--compact settings-skill-table--${variant}`}>
         <TableHead>
           <TableRow>
@@ -137,7 +137,7 @@ export function SkillLibraryTable({
           })}
         </TableBody>
       </Table>
-    </TableContainer>
+    </SkillLibraryOverlayScrollArea>
   );
 }
 

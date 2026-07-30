@@ -6822,12 +6822,21 @@ export async function mockDaemon(
     readonly collaborationCardsUnsupported?: boolean;
     readonly healthResponseDelayMs?: number;
     readonly healthResponses?: boolean[];
+    readonly firstRunPreference?: "completed" | "unset";
   } = {},
 ): Promise<void> {
   await mkdir(cwd, { recursive: true });
-  await page.addInitScript(() => {
+  await page.addInitScript((firstRunPreference) => {
     Object.defineProperty(window, "WebSocket", { value: undefined, configurable: true });
-  });
+    if (firstRunPreference === "completed") {
+      localStorage.setItem("ling-first-run:v1", JSON.stringify({
+        version: 1,
+        status: "completed",
+        workspaceIdentity: "/tmp/ling-stack-workspace",
+        updatedAt: "2026-07-30T00:00:00.000Z",
+      }));
+    }
+  }, options.firstRunPreference ?? "completed");
   await page.route("http://127.0.0.1:17891/**", async (route) => {
     await handleDaemonRoute(route, state, options);
   });
@@ -6859,6 +6868,7 @@ export async function handleDaemonRoute(
     readonly collaborationCardsUnsupported?: boolean;
     readonly healthResponseDelayMs?: number;
     readonly healthResponses?: boolean[];
+    readonly firstRunPreference?: "completed" | "unset";
   },
 ): Promise<void> {
   const request = route.request();

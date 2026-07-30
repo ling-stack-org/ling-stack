@@ -16,6 +16,7 @@
 @import "./styles/settings-content-chrome.css";
 @import "./styles/settings-interface-preferences.css";
 @import "./styles/settings-theme-packages.css";
+@import "./styles/settings-theme-studio.css";
 @import "./styles/settings-external-work.css";
 @import "./styles/settings-mcp-tools.css";
 @import "./styles/settings-skill-library.css";
@@ -102,6 +103,7 @@
 @import "./styles/app/current-session-capability.css";
 @import "./styles/app/connection-status.css";
 @import "./styles/app/full-access-confirmation.css";
+@import "./styles/first-run.css";
 @import "./styles/app/app-shell-overlay-size.css";
 @import "./styles/app/sidebar-ui2.css";
 @import "./styles/app/macos-titlebar.css";
