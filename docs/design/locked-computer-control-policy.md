@@ -28,6 +28,7 @@ Implementation and evidence status:
 | Desktop serialized policy coordinator and authority rotation | Implemented; restricted generation launcher stays disabled |
 | Settings authorization/revoke/countdown and PiP visibility | Implemented; production UI resolves to disabled |
 | macOS native helper | Source and Apple Silicon build/content-free session probe implemented; attended locked capture/input proof not run |
+| macOS internal package | DMG/ZIP rebuilt with embedded `ling-cua-driver`; App/provider strict signature, Team ID, bundle ID, hardened runtime and fixed-Off metadata verified locally |
 | Windows native helper | Source, build/sign command and denial handoff implemented; Windows compilation and real-machine acceptance handed off |
 | Per-OS-emission provider fence | Not implemented; current fence is mutating tool-call scoped |
 | Product enablement | Off on both platforms |

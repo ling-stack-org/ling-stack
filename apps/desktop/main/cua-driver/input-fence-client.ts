@@ -67,6 +67,7 @@ export function fenceCuaDriverInput(
   return new Promise<CuaDriverInputFenceAcknowledgement>((resolveFence, rejectFence) => {
     let settled = false;
     let responseBytes = Buffer.alloc(0);
+    let deadline: NodeJS.Timeout | undefined;
     const socket = createConnection({ host: "127.0.0.1", port: configuration.port });
     const finish = (
       result: { readonly acknowledgement: CuaDriverInputFenceAcknowledgement }
@@ -74,11 +75,19 @@ export function fenceCuaDriverInput(
     ): void => {
       if (settled) return;
       settled = true;
+      if (deadline) clearTimeout(deadline);
       socket.destroy();
       if ("acknowledgement" in result) resolveFence(result.acknowledgement);
       else rejectFence(result.error);
     };
-    socket.setTimeout(timeoutMs, () => finish({ error: new CuaDriverInputFenceError("timeout") }));
+    // net.Socket timeouts measure inactivity and are reset by every received
+    // chunk. The security contract is an absolute connect + drain + parse
+    // deadline, so a provider cannot extend it by trickling response bytes.
+    deadline = setTimeout(
+      () => finish({ error: new CuaDriverInputFenceError("timeout") }),
+      timeoutMs,
+    );
+    deadline.unref?.();
     socket.once("connect", () => {
       socket.write(`${JSON.stringify({
         protocolVersion: CUA_DRIVER_INPUT_FENCE_PROTOCOL_VERSION,

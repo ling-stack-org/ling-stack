@@ -240,7 +240,8 @@ surface.
 ### Requirements
 
 - Resolve active workspace/run/Computer Use session on the daemon; do not trust renderer
-  scope ids.
+  scope ids. Because Settings has no task selector, require exactly one active session and
+  fail closed when the scope is absent or ambiguous.
 - Accept grant/attestation only through the authenticated Desktop bridge tuple.
 - Keep bearer authority in memory; persist metadata audit and terminal projection only.
 - Normalize non-terminal persisted state to Off on restart.
@@ -458,14 +459,27 @@ IMPLEMENTED AUTOMATION                                OPEN RELEASE EVIDENCE
 [x] Desktop authorize/revoke/lock race state machine [ ] loginwindow exclusion on packaged app
 [x] daemon bridge auth/revision/TTL/audit recovery    [ ] per-OS-emission epoch fence
 [x] pre/post provider grant/attestation/tool fence    [ ] disposable target no-post-fence input
-[x] Settings view model/countdown/commands            [ ] signed macOS package/OS matrix
+[x] Settings view model/countdown/commands            [ ] macOS locked-control OS matrix
 [x] PiP armed/attesting/active projection             [ ] Windows helper compile/sign on Windows
 [x] helper crash/malformed/negative proof handling    [ ] Winlogon/UAC/WTS/Session-0 handoff run
 [x] macOS helper compile + content-free session probe [ ] Windows-team real-machine verdict
+[x] internal macOS DMG/ZIP + provider signing checks
 
 The implemented tests prove fail-closed state and wiring. They do not prove positive locked
 control. Only the open native/package rows may close that release boundary.
 ```
+
+Current fixed-Off macOS package evidence (2026-07-31):
+
+- `Ling-Stack-0.0.0-macos-arm64.dmg` and `.zip` build successfully with the embedded
+  `ling-cua-driver`;
+- `codesign --verify --deep --strict` passes for the App and strict verification passes for
+  the provider; both report Team ID `ZH5RAD8573`;
+- provider identifier is `com.lingstack.desktop.cua-driver` and hardened runtime is enabled;
+- packaged authority is `test_signed_internal` / `internal`, and the provider seal is
+  `productionEligible=false` with `managed-internal` test authority;
+- packaged Desktop code still publishes `disabled_by_build`; the native locked-control
+  helper is not staged while its positive feasibility and per-emission fence gates are open.
 
 ## Performance acceptance
 
@@ -531,7 +545,7 @@ Lane D (Web UI) waits for stable projection from Slice 1/3
 | LCC-05 | Partial/blocking | P0 | Desktop state machine and whole-tool fence implemented; per-emission fence/restricted start open | LCC-04 plus positive native adapter | 2–3.5 days | 1–1.5 days |
 | LCC-06 | Implemented while Off | P0 | Enforce grant/attestation/allowlist/approval before and after provider calls | LCC-04, LCC-05 | 1–2 days | 0.5–1 day |
 | LCC-07 | Implemented | P1 | Implement Privacy projection, confirmation, countdown and external visibility | LCC-01, LCC-04 | 1.5–2.5 days | 0.5–1 day |
-| LCC-08 | Partial | P0 | Core unit/race/privacy automation implemented; packaged native/E2E rows open | LCC-04–07 plus passing native lane | 2–3 days | 1–1.5 days |
+| LCC-08 | Partial | P0 | Core unit/race/privacy automation and fixed-Off macOS package checks implemented; positive packaged native/E2E rows open | LCC-04–07 plus passing native lane | 2–3 days | 1–1.5 days |
 | LCC-09A | Open | P0 | Run macOS full-matrix packaged acceptance | positive macOS LCC-00, completed per-emission fence | 1–2 days | 0.5–1 day plus attended runs |
 | LCC-09B | Windows-owned execution | P0 | Execute signed Windows handoff and record Windows-team verdict | Windows machine/certificate, completed per-emission fence | 1–2 days plus Windows owner | 0.5–1 day plus attended runs |
 

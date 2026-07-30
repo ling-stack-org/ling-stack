@@ -15,6 +15,11 @@ Current implementation boundary (2026-07-31):
   summary; Windows helper source plus build/sign/denial handoff is present but not compiled
   or accepted on this macOS host;
 - both helpers intentionally return negative locked capture/input attestation;
+- the fixed-Off internal macOS DMG/ZIP has been rebuilt and locally verified with the
+  embedded `ling-cua-driver`, strict App/provider signatures, matching Team ID, provider
+  bundle identifier, hardened runtime and non-production package authority. The dormant
+  locked-control helper remains a build/probe artifact until positive platform gates permit
+  product staging;
 - provider patch `0005-ling-provider-input-fence-v1.patch` holds one epoch permit around a
   complete mutating MCP tool invocation. It does not yet fence each underlying CGEvent,
   `SendInput`, UIA mutation or multi-step emission;
@@ -321,8 +326,9 @@ directly in `powerMonitor` listeners, IPC handlers or provider callbacks.
 ## Authorization flow
 
 1. Renderer requests authorization with no supplied TTL, user id, run id or platform facts.
-2. Daemon resolves the current workspace, active run and active Computer Use session and
-   creates an expiring pending intent. The intent is not executable authority.
+2. Daemon resolves exactly one active run/Computer Use session in the current workspace and
+   creates an expiring pending intent. Zero or multiple active sessions fail closed because
+   Settings has no task selector. The intent is not executable authority.
 3. Desktop sender-checks the request and snapshots current package policy, intent revision,
    bridge tuple, provider generation, lock epoch, OS session binding and capability.
 4. Desktop opens the OS-owned identity prompt only while the session is unlocked and active.
@@ -678,7 +684,8 @@ content-free desktop/session identity, not interaction with the credential surfa
 1. **Implemented:** contracts and inert capability projection with packaged policy
    `disabled`.
 2. **Partially implemented:** native helper/probe scaffolding; attended positive feasibility
-   remains open on both platforms.
+   remains open on both platforms. The helper is deliberately not staged into fixed-Off
+   product packages.
 3. **Implemented:** identity/coordinator/daemon enforcement/audit scaffolding while the
    product flag remains Off.
 4. **Implemented:** UI disabled/eligible states and external PiP visibility; production

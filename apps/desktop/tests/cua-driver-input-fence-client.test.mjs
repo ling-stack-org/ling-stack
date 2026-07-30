@@ -72,11 +72,15 @@ test("input-fence client rejects stale, expanded and undrained acknowledgements"
   }
 });
 
-test("input-fence hard deadline fails closed", async () => {
+test("input-fence hard deadline is absolute even when the provider trickles bytes", async () => {
   const sockets = new Set();
   const server = createServer((socket) => {
     sockets.add(socket);
-    socket.once("close", () => sockets.delete(socket));
+    const trickle = setInterval(() => socket.write(" "), 5);
+    socket.once("close", () => {
+      clearInterval(trickle);
+      sockets.delete(socket);
+    });
   });
   const port = await listen(server);
   try {

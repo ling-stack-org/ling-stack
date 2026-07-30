@@ -154,8 +154,11 @@ export async function handleLockedControlRendererRoute(
   const body = readRecord(await readOptionalJsonBody(request, context.config.maxBodyBytes));
   if (url.pathname.endsWith("/authorize")) {
     assertOnlyKeys(body, ["expectedRevision", "requestId"]);
-    const active = context.computerUsePreviews.list(cwd).find((projection) =>
+    const activeScopes = context.computerUsePreviews.list(cwd).filter((projection) =>
       projection.runId && !isTerminalComputerUseStatus(projection.status));
+    // Settings has no task selector. Ambiguous concurrent sessions must fail
+    // closed instead of arming whichever projection happens to sort first.
+    const active = activeScopes.length === 1 ? activeScopes[0] : undefined;
     const result = registry.beginAuthorization({
       requestId: readText(body.requestId),
       expectedRevision: readRevision(body.expectedRevision),

@@ -126,6 +126,7 @@ async function invokeJsonHelper(
     };
     signal.addEventListener("abort", abort, { once: true });
     child.once("error", (error) => settle(() => reject(error)));
+    child.stdin.once("error", (error) => settle(() => reject(error)));
     child.stdout.on("data", (chunk: Buffer) => {
       stdout = Buffer.concat([stdout, chunk]);
       if (stdout.byteLength > LOCKED_CONTROL_NATIVE_HELPER_MAX_OUTPUT_BYTES) {

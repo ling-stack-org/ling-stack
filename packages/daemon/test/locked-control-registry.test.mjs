@@ -6,6 +6,7 @@ import {
 } from "../../contracts/dist/index.js";
 import {
   LOCKED_CONTROL_ATTESTATION_FRESHNESS_MS,
+  LOCKED_CONTROL_INTENT_TTL_MS,
   LOCKED_CONTROL_PREPARED_TTL_MS,
   LockedComputerControlRegistry,
 } from "../dist/features/computer-use/locked-control-registry.js";
@@ -71,7 +72,7 @@ const identity = {
   verifiedAt: "2099-01-01T00:00:00.000Z",
 };
 
-function fixture({ policy = enabledPolicy, appendAudit } = {}) {
+function fixture({ policy = enabledPolicy, appendAudit, scheduleAuditRetry } = {}) {
   let wallMs = baseWallMs;
   let monotonicMs = 1_000;
   let id = 0;
@@ -100,6 +101,7 @@ function fixture({ policy = enabledPolicy, appendAudit } = {}) {
       scheduled.push(task);
       return { cancel: () => { task.cancelled = true; } };
     },
+    ...(scheduleAuditRetry ? { scheduleAuditRetry } : {}),
   });
 
   function advance(milliseconds) {
@@ -230,6 +232,37 @@ test("request id and projection revision make authorization single-owner", () =>
   assert.equal(stale.reason, "locked_control_commit_unconfirmed");
 });
 
+test("authorization intent expires and negative identity is durably audited without a grant", () => {
+  const expiryFx = fixture();
+  expiryFx.registry.beginAuthorization(intentInput);
+  expiryFx.advance(LOCKED_CONTROL_INTENT_TTL_MS + 1);
+  assert.equal(expiryFx.registry.snapshot().projection.phase, "off");
+  assert.equal(expiryFx.registry.snapshot().projection.reason, "locked_control_commit_unconfirmed");
+
+  const cancelledFx = fixture();
+  cancelledFx.registry.beginAuthorization(intentInput);
+  const cancelled = cancelledFx.registry.prepare({
+    requestId: "request-1",
+    expectedRevision: 1,
+    identity: {
+      schemaVersion: 1,
+      requestId: "request-1",
+      status: "cancelled",
+      method: "device_owner_authentication",
+      reason: "locked_control_identity_cancelled",
+    },
+    authority,
+  });
+  assert.equal(cancelled.accepted, false);
+  assert.equal(cancelled.reason, "locked_control_identity_cancelled");
+  assert.equal(cancelled.snapshot.projection.phase, "off");
+  assert.deepEqual(cancelledFx.audits.map((event) => event.event), [
+    "locked_control_authorization_requested",
+    "locked_control_identity_resolved",
+  ]);
+  assert.equal(cancelledFx.audits.at(-1).reason, "locked_control_identity_cancelled");
+});
+
 test("audit failures cannot create partial executable authority", () => {
   let writes = 0;
   const fx = fixture({
@@ -354,6 +387,37 @@ test("revocation clears memory before a durable audit retry can fail", () => {
   assert.equal(result.accepted, true);
   assert.equal(fx.registry.snapshot().projection.phase, "off");
   assert.equal(fx.registry.snapshot().projection.reason, "locked_control_suspend");
+});
+
+test("revocation retries the same content-free durable audit event within a fixed bound", () => {
+  const retries = [];
+  const revocationAttempts = [];
+  const fx = fixture({
+    appendAudit(event) {
+      if (event.event !== "locked_control_grant_revoked") return;
+      revocationAttempts.push(event);
+      if (revocationAttempts.length < 3) throw new Error("disk unavailable");
+    },
+    scheduleAuditRetry(callback, delayMs) {
+      const task = { callback, delayMs, cancelled: false };
+      retries.push(task);
+      return { cancel: () => { task.cancelled = true; } };
+    },
+  });
+  arm(fx);
+  const result = fx.registry.revoke("locked_control_suspend", false);
+  assert.equal(result.accepted, true);
+  assert.equal(fx.registry.snapshot().projection.phase, "off");
+  assert.equal(revocationAttempts.length, 1);
+  assert.deepEqual(retries.map((task) => task.delayMs), [100]);
+
+  retries.shift().callback();
+  assert.deepEqual(retries.map((task) => task.delayMs), [500]);
+  retries.shift().callback();
+  assert.equal(retries.length, 0);
+  assert.equal(revocationAttempts.length, 3);
+  assert.equal(new Set(revocationAttempts.map((event) => event.auditId)).size, 1);
+  assert.equal(new Set(revocationAttempts.map((event) => event.occurredAt)).size, 1);
 });
 
 test("normal generation behavior is unchanged while a grant is only armed", () => {

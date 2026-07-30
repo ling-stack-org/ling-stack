@@ -127,6 +127,12 @@ test("capability accepts every state but only positive proof may be supported", 
   }), false, "unsupported cannot carry an all-positive proof");
   assert.equal(isLockedComputerControlCapabilityV1({
     ...capability,
+    state: "probe_required",
+    reason: "locked_control_platform_unsupported",
+    canInjectSameUserDesktopWhileLocked: false,
+  }), false, "capability reason must match its state");
+  assert.equal(isLockedComputerControlCapabilityV1({
+    ...capability,
     observedAt: "2026-07-31T00:00:00Z",
   }), false, "timestamps must be canonical UTC milliseconds");
   assert.equal(isLockedComputerControlCapabilityV1({ ...capability, rawNativeError: "secret" }), false);
@@ -243,6 +249,12 @@ test("projection accepts reachable states and rejects impossible authority", () 
   }), false, "negative capability requires reason");
   assert.equal(isLockedComputerControlProjectionV1({
     schemaVersion: 1,
+    capability: "disabled_by_build",
+    phase: "off",
+    reason: "locked_control_probe_required",
+  }), false, "negative capability projection requires its canonical reason");
+  assert.equal(isLockedComputerControlProjectionV1({
+    schemaVersion: 1,
     capability: "probe_required",
     phase: "armed",
     reason: "locked_control_probe_required",
@@ -266,6 +278,15 @@ test("audit events enforce closed content-free event payloads", () => {
     assert.equal(isLockedComputerControlAuditEventV1(event), true, event.event);
   }
   assert.equal(isLockedComputerControlAuditEventV1({ ...events[0], screenshotBase64: "forbidden" }), false);
+  assert.equal(isLockedComputerControlAuditEventV1({
+    ...events[0],
+    capability: "probe_required",
+    reason: "locked_control_platform_unsupported",
+  }), false, "capability audit reason must match its state");
+  assert.equal(isLockedComputerControlAuditEventV1({
+    ...events[4],
+    inputReady: false,
+  }), false, "entered audit requires every positive proof");
   assert.equal(isLockedComputerControlAuditEventV1({
     ...events[2],
     identityStatus: "failed",

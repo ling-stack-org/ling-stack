@@ -26,7 +26,9 @@ import {
 } from "../plugins/presets.js";
 
 export const LOCKED_CONTROL_PREPARED_TTL_MS = 30_000;
+export const LOCKED_CONTROL_INTENT_TTL_MS = 120_000;
 export const LOCKED_CONTROL_ATTESTATION_FRESHNESS_MS = 3_000;
+const LOCKED_CONTROL_AUDIT_RETRY_DELAYS_MS = [100, 500, 2_000] as const;
 
 export interface LockedControlRegistrySnapshot {
   readonly revision: number;
@@ -121,6 +123,7 @@ export interface LockedControlRegistryOptions {
   readonly monotonicNowMs?: () => number;
   readonly createId?: () => string;
   readonly scheduleDeadline?: (callback: () => void, delayMs: number) => { cancel(): void };
+  readonly scheduleAuditRetry?: (callback: () => void, delayMs: number) => { cancel(): void };
 }
 
 interface AuthorizationIntent {
@@ -129,6 +132,7 @@ interface AuthorizationIntent {
   readonly runId: string;
   readonly computerUseSessionId: string;
   readonly auditId: string;
+  readonly expiresMonotonicMs: number;
 }
 
 interface PreparedGrant {
@@ -144,6 +148,12 @@ interface LiveGrant {
   attestationAcceptedMonotonicMs?: number;
 }
 
+interface PendingAuditRetry {
+  readonly event: LockedComputerControlAuditEventV1;
+  readonly attempt: number;
+  timer?: { cancel(): void };
+}
+
 export class LockedComputerControlRegistry {
   private readonly policy: LockedComputerControlPolicyV1;
   private capability: LockedComputerControlCapabilityV1;
@@ -151,6 +161,7 @@ export class LockedComputerControlRegistry {
   private readonly monotonicNowMs: () => number;
   private readonly createId: () => string;
   private readonly scheduleDeadline: NonNullable<LockedControlRegistryOptions["scheduleDeadline"]>;
+  private readonly scheduleAuditRetry: NonNullable<LockedControlRegistryOptions["scheduleAuditRetry"]>;
   private revision = 0;
   private projection: LockedComputerControlProjectionV1;
   private intent: AuthorizationIntent | undefined;
@@ -158,6 +169,7 @@ export class LockedComputerControlRegistry {
   private live: LiveGrant | undefined;
   private deadline: { cancel(): void } | undefined;
   private readonly restrictedGenerations = new Set<number>();
+  private readonly pendingAuditRetries = new Map<string, PendingAuditRetry>();
 
   constructor(private readonly options: LockedControlRegistryOptions) {
     if (!isLockedComputerControlPolicyV1(options.policy)
@@ -171,6 +183,7 @@ export class LockedComputerControlRegistry {
     this.monotonicNowMs = options.monotonicNowMs ?? (() => performance.now());
     this.createId = options.createId ?? randomUUID;
     this.scheduleDeadline = options.scheduleDeadline ?? defaultScheduleDeadline;
+    this.scheduleAuditRetry = options.scheduleAuditRetry ?? defaultScheduleDeadline;
     this.projection = offProjection(options.capability, undefined, this.policy);
   }
 
@@ -239,6 +252,7 @@ export class LockedComputerControlRegistry {
       runId: input.runId,
       computerUseSessionId: input.computerUseSessionId,
       auditId,
+      expiresMonotonicMs: this.monotonicNowMs() + LOCKED_CONTROL_INTENT_TTL_MS,
     };
     this.transition({
       schemaVersion: 1,
@@ -246,6 +260,7 @@ export class LockedComputerControlRegistry {
       phase: "verifying",
       auditId,
     });
+    this.rescheduleDeadline();
     return { accepted: true, snapshot: this.currentSnapshot() };
   }
 
@@ -257,9 +272,16 @@ export class LockedComputerControlRegistry {
     }
     if (!isLockedControlIdentityResultV1(input.identity)
       || input.identity.requestId !== input.requestId
-      || input.identity.status !== "verified"
       || input.identity.method !== identityMethodForPlatform(input.authority.platform)) {
       return this.prepareDenied("locked_control_identity_failed");
+    }
+    this.appendIdentityAudit(intent, input.identity);
+    if (input.identity.status !== "verified") {
+      const reason = input.identity.reason ?? "locked_control_identity_failed";
+      this.clearPending();
+      this.transition(offProjection(this.capability, reason, this.policy));
+      this.rescheduleDeadline();
+      return this.prepareDenied(reason);
     }
     if (!this.options.isScopeActive(intent)
       || input.authority.platform !== this.capability.platform
@@ -290,18 +312,6 @@ export class LockedComputerControlRegistry {
     if (!isLockedComputerControlGrantV1(grant, this.policy.maxGrantTtlSeconds)) {
       return this.prepareDenied("locked_control_disabled_by_policy");
     }
-    this.options.appendAudit({
-      schemaVersion: 1,
-      auditId: this.createId(),
-      event: "locked_control_identity_resolved",
-      platform: grant.platform,
-      occurredAt: issuedAt.toISOString(),
-      workspaceCwd: grant.workspaceCwd,
-      runId: grant.runId,
-      computerUseSessionId: grant.computerUseSessionId,
-      identityStatus: "verified",
-      identityMethod: input.identity.method,
-    });
     this.prepared = {
       requestId: input.requestId,
       grant,
@@ -578,6 +588,8 @@ export class LockedComputerControlRegistry {
     this.prepared = undefined;
     this.live = undefined;
     this.restrictedGenerations.clear();
+    for (const retry of this.pendingAuditRetries.values()) retry.timer?.cancel();
+    this.pendingAuditRetries.clear();
   }
 
   private authorizationEligibility(input: LockedControlAuthorizationIntentInput): LockedControlReasonCode | undefined {
@@ -605,6 +617,10 @@ export class LockedComputerControlRegistry {
 
   private expireDue(): void {
     const monotonicNow = this.monotonicNowMs();
+    if (this.intent && monotonicNow >= this.intent.expiresMonotonicMs) {
+      this.clearPending();
+      this.transition(offProjection(this.capability, "locked_control_commit_unconfirmed", this.policy));
+    }
     if (this.prepared && monotonicNow >= this.prepared.expiresMonotonicMs) {
       this.clearPending();
       this.transition(offProjection(this.capability, "locked_control_commit_unconfirmed", this.policy));
@@ -630,26 +646,21 @@ export class LockedComputerControlRegistry {
     this.rescheduleDeadline();
     if (grant) {
       const now = this.now().toISOString();
-      try {
-        this.options.appendAudit({
-          schemaVersion: 1,
-          auditId: this.createId(),
-          event: "locked_control_grant_revoked",
-          platform: grant.platform,
-          occurredAt: now,
-          workspaceCwd: grant.workspaceCwd,
-          runId: grant.runId,
-          computerUseSessionId: grant.computerUseSessionId,
-          grantId: grant.grantId,
-          trigger: reason,
-          reason,
-          acknowledged,
-          terminalAt: now,
-        });
-      } catch {
-        // Memory authority is already gone. Durable reconciliation is allowed to retry,
-        // but an audit failure must never resurrect or extend a grant.
-      }
+      this.appendRevocationAudit({
+        schemaVersion: 1,
+        auditId: this.createId(),
+        event: "locked_control_grant_revoked",
+        platform: grant.platform,
+        occurredAt: now,
+        workspaceCwd: grant.workspaceCwd,
+        runId: grant.runId,
+        computerUseSessionId: grant.computerUseSessionId,
+        grantId: grant.grantId,
+        trigger: reason,
+        reason,
+        acknowledged,
+        terminalAt: now,
+      });
     }
     return { accepted: true, snapshot: this.currentSnapshot() };
   }
@@ -717,10 +728,60 @@ export class LockedComputerControlRegistry {
     throw new LockedControlActionDeniedError(reason);
   }
 
+  /** Memory authority is already closed before this bounded durability retry begins. */
+  private appendRevocationAudit(event: LockedComputerControlAuditEventV1): void {
+    try {
+      this.options.appendAudit(event);
+    } catch {
+      this.scheduleRevocationAuditRetry(event, 0);
+    }
+  }
+
+  private appendIdentityAudit(
+    intent: AuthorizationIntent,
+    identity: LockedControlIdentityResultV1,
+  ): void {
+    this.options.appendAudit({
+      schemaVersion: 1,
+      auditId: this.createId(),
+      event: "locked_control_identity_resolved",
+      platform: this.capability.platform,
+      occurredAt: this.now().toISOString(),
+      workspaceCwd: intent.workspaceCwd,
+      runId: intent.runId,
+      computerUseSessionId: intent.computerUseSessionId,
+      identityStatus: identity.status,
+      identityMethod: identity.method,
+      ...(identity.reason ? { reason: identity.reason } : {}),
+    });
+  }
+
+  private scheduleRevocationAuditRetry(
+    event: LockedComputerControlAuditEventV1,
+    attempt: number,
+  ): void {
+    const delayMs = LOCKED_CONTROL_AUDIT_RETRY_DELAYS_MS[attempt];
+    if (delayMs === undefined || this.pendingAuditRetries.has(event.auditId)) return;
+    const retry: PendingAuditRetry = { event, attempt };
+    this.pendingAuditRetries.set(event.auditId, retry);
+    const timer = this.scheduleAuditRetry(() => {
+      if (this.pendingAuditRetries.get(event.auditId) !== retry) return;
+      this.pendingAuditRetries.delete(event.auditId);
+      try {
+        this.options.appendAudit(event);
+      } catch {
+        this.scheduleRevocationAuditRetry(event, attempt + 1);
+      }
+    }, delayMs);
+    if (this.pendingAuditRetries.get(event.auditId) === retry) retry.timer = timer;
+    else timer.cancel();
+  }
+
   private rescheduleDeadline(): void {
     this.deadline?.cancel();
     this.deadline = undefined;
     const candidates = [
+      this.intent?.expiresMonotonicMs,
       this.prepared?.expiresMonotonicMs,
       this.live?.expiresMonotonicMs,
       this.live?.attestationAcceptedMonotonicMs === undefined

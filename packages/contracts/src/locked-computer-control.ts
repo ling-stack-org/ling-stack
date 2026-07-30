@@ -303,6 +303,15 @@ const AUDIT_EVENT_KEYS: Readonly<Record<LockedComputerControlAuditEventKind, rea
   locked_control_recovered_unlocked: ["previousGeneration", "nextGeneration", "result"],
 };
 
+const UNSUPPORTED_CAPABILITY_REASONS: ReadonlySet<LockedControlReasonCode> = new Set([
+  "locked_control_platform_unsupported",
+  "locked_control_session_mismatch",
+  "locked_control_secure_surface",
+  "locked_control_capture_unavailable",
+  "locked_control_input_unavailable",
+  "locked_control_user_switched",
+]);
+
 export function isLockedControlReasonCode(value: unknown): value is LockedControlReasonCode {
   return typeof value === "string"
     && (LOCKED_COMPUTER_CONTROL_REASON_CODES as readonly string[]).includes(value);
@@ -344,7 +353,7 @@ export function isLockedComputerControlCapabilityV1(
     && value.secureSurfaceExcluded === true;
   return value.state === "supported_restricted"
     ? allProofs && value.reason === undefined
-    : !allProofs && isLockedControlReasonCode(value.reason);
+    : !allProofs && isCapabilityStateReasonTuple(value.state, value.reason);
 }
 
 export function isLockedControlIdentityResultV1(
@@ -451,7 +460,9 @@ export function isLockedComputerControlProjectionV1(
   ].every((item) => item === undefined);
 
   if (value.capability !== "supported_restricted") {
-    return value.phase === "off" && hasNoGrantFields && isLockedControlReasonCode(value.reason);
+    return value.phase === "off"
+      && hasNoGrantFields
+      && isCapabilityStateReasonTuple(value.capability, value.reason);
   }
   switch (value.phase) {
     case "off":
@@ -494,9 +505,7 @@ export function isLockedComputerControlAuditEventV1(
       return isCapabilityState(value.capability)
         && isBoundedText(value.adapterVersion)
         && isBoundedText(value.buildId)
-        && (value.capability === "supported_restricted"
-          ? value.reason === undefined
-          : isLockedControlReasonCode(value.reason));
+        && isCapabilityStateReasonTuple(value.capability, value.reason);
     case "locked_control_authorization_requested":
       return isBoundedText(value.intentId)
         && isBoundedText(value.runId)
@@ -523,6 +532,11 @@ export function isLockedComputerControlAuditEventV1(
           "sameUserSession", "userDesktopTargeted", "captureReady", "inputReady",
           "secureSurfaceExcluded",
         ])
+        && value.sameUserSession === true
+        && value.userDesktopTargeted === true
+        && value.captureReady === true
+        && value.inputReady === true
+        && value.secureSurfaceExcluded === true
         && value.reason === undefined;
     case "locked_control_action_denied":
       return isBoundedText(value.toolId)
@@ -574,6 +588,16 @@ function isPlatform(value: unknown): value is LockedComputerControlPlatform {
 
 function isCapabilityState(value: unknown): value is LockedCapabilityState {
   return (LOCKED_COMPUTER_CONTROL_CAPABILITY_STATES as readonly unknown[]).includes(value);
+}
+
+function isCapabilityStateReasonTuple(
+  state: LockedCapabilityState,
+  reason: unknown,
+): boolean {
+  if (state === "supported_restricted") return reason === undefined;
+  if (state === "disabled_by_build") return reason === "locked_control_disabled_by_build";
+  if (state === "probe_required") return reason === "locked_control_probe_required";
+  return UNSUPPORTED_CAPABILITY_REASONS.has(reason as LockedControlReasonCode);
 }
 
 function isAuditEventKind(value: unknown): value is LockedComputerControlAuditEventKind {

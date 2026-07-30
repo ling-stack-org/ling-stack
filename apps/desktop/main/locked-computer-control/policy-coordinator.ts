@@ -120,9 +120,9 @@ export class LockedComputerControlPolicyCoordinator {
 
   /** Call directly from the native/Electron lock listener before awaiting. */
   handleLock(): Promise<void> {
-    this.advanceBoundaryRevision();
+    const boundaryRevision = this.advanceBoundaryRevision();
     this.options.runtime.closeCallGate("locked_control_session_mismatch");
-    return this.enqueue(() => this.handleLockInternal());
+    return this.enqueue(() => this.handleLockInternal(boundaryRevision));
   }
 
   /** Unlock always consumes the grant and starts a fresh normal generation. */
@@ -202,6 +202,16 @@ export class LockedComputerControlPolicyCoordinator {
     this.transition("verifying");
     const identity = await this.options.identityVerifier.verify(requestId);
     if (identity.status !== "verified") {
+      await this.options.daemon.prepare({
+        requestId,
+        expectedRevision: begun.snapshot.revision,
+        identity,
+        authority: grantAuthorityFromRuntime(
+          authority,
+          this.lockEpoch + 1,
+          this.options.policy.allowedLockedToolIdsSha256,
+        ),
+      }).catch(() => undefined);
       await this.revokeInMemoryFirst(identity.reason ?? "locked_control_identity_failed", authority, false);
       return { accepted: false, reason: identity.reason ?? "locked_control_identity_failed" };
     }
@@ -213,18 +223,11 @@ export class LockedComputerControlPolicyCoordinator {
       await this.revokeInMemoryFirst("locked_control_authority_rotated", afterIdentity, false);
       return { accepted: false, reason: "locked_control_authority_rotated" };
     }
-    const grantAuthority: LockedControlDaemonGrantAuthority = {
-      platform: afterIdentity.platform,
-      desktopInstanceId: afterIdentity.desktopInstanceId,
-      desktopInstanceEpoch: afterIdentity.desktopInstanceEpoch,
-      daemonAuthorityEpoch: afterIdentity.daemonAuthorityEpoch,
-      bridgeConnectionId: afterIdentity.bridgeConnectionId,
-      workspaceCwd: afterIdentity.workspaceCwd,
-      authorizedNormalGeneration: afterIdentity.normalGeneration,
-      authorizedLockEpoch: this.lockEpoch + 1,
-      osSessionBindingDigest: afterIdentity.sessionBindingDigest,
-      allowedLockedToolIdsDigest: this.options.policy.allowedLockedToolIdsSha256,
-    };
+    const grantAuthority = grantAuthorityFromRuntime(
+      afterIdentity,
+      this.lockEpoch + 1,
+      this.options.policy.allowedLockedToolIdsSha256,
+    );
     const prepared = await this.options.daemon.prepare({
       requestId,
       expectedRevision: begun.snapshot.revision,
@@ -266,7 +269,7 @@ export class LockedComputerControlPolicyCoordinator {
     return { accepted: true };
   }
 
-  private async handleLockInternal(): Promise<void> {
+  private async handleLockInternal(boundaryRevision: number): Promise<void> {
     if (this.lockEpoch >= Number.MAX_SAFE_INTEGER) {
       await this.revokeInMemoryFirst("locked_control_authority_rotated", this.safeReadAuthority(), false);
       return;
@@ -281,6 +284,10 @@ export class LockedComputerControlPolicyCoordinator {
       await this.options.runtime.retireNormalForLock("locked_control_session_mismatch");
     } catch {
       await this.revokeInMemoryFirst("locked_control_input_fence_timeout", authority, false);
+      return;
+    }
+    if (!this.isBoundaryCurrent(boundaryRevision)) {
+      await this.revokeInMemoryFirst("locked_control_authority_rotated", authority, false);
       return;
     }
     if (!grantCurrent || !grant || !authority) {
@@ -300,6 +307,10 @@ export class LockedComputerControlPolicyCoordinator {
       reservedProviderGeneration: generation,
       sequence: ++this.attestationSequence,
     });
+    if (!this.isBoundaryCurrent(boundaryRevision)) {
+      await this.revokeInMemoryFirst("locked_control_authority_rotated", authority, false);
+      return;
+    }
     if (!attested.ok) {
       await this.revokeInMemoryFirst(attested.reason, authority, false);
       return;
@@ -308,12 +319,21 @@ export class LockedComputerControlPolicyCoordinator {
       authority,
       attestation: attested.attestation,
     });
+    if (!this.isBoundaryCurrent(boundaryRevision)) {
+      await this.revokeInMemoryFirst("locked_control_authority_rotated", authority, false);
+      return;
+    }
     if (!published.accepted) {
       await this.revokeInMemoryFirst(published.reason, authority, false);
       return;
     }
     try {
       await this.options.runtime.startLockedGeneration({ generation, grant });
+      if (!this.isBoundaryCurrent(boundaryRevision)) {
+        await this.options.runtime.stopLockedGeneration("locked_control_authority_rotated").catch(() => undefined);
+        await this.revokeInMemoryFirst("locked_control_authority_rotated", authority, false);
+        return;
+      }
       this.transition("active_locked");
     } catch {
       await this.revokeInMemoryFirst("locked_control_input_unavailable", authority, false);
@@ -413,12 +433,17 @@ export class LockedComputerControlPolicyCoordinator {
     this.grantDeadlineMonotonicMs = undefined;
   }
 
-  private advanceBoundaryRevision(): void {
+  private isBoundaryCurrent(boundaryRevision: number): boolean {
+    return !this.stopped && boundaryRevision === this.boundaryRevision;
+  }
+
+  private advanceBoundaryRevision(): number {
     if (this.boundaryRevision >= Number.MAX_SAFE_INTEGER) {
       this.boundaryRevision = Number.MAX_SAFE_INTEGER;
-      return;
+      return this.boundaryRevision;
     }
     this.boundaryRevision += 1;
+    return this.boundaryRevision;
   }
 }
 
@@ -438,6 +463,28 @@ function sameAuthority(
     && left.lockEpoch === right.lockEpoch
     && left.sessionBindingDigest === right.sessionBindingDigest,
   );
+}
+
+function grantAuthorityFromRuntime(
+  authority: LockedControlRuntimeAuthority,
+  authorizedLockEpoch: number,
+  allowedLockedToolIdsDigest: string,
+): LockedControlDaemonGrantAuthority {
+  if (!authority.sessionBindingDigest) {
+    throw new Error("locked_control_native_session_binding_unavailable");
+  }
+  return {
+    platform: authority.platform,
+    desktopInstanceId: authority.desktopInstanceId,
+    desktopInstanceEpoch: authority.desktopInstanceEpoch,
+    daemonAuthorityEpoch: authority.daemonAuthorityEpoch,
+    bridgeConnectionId: authority.bridgeConnectionId,
+    workspaceCwd: authority.workspaceCwd,
+    authorizedNormalGeneration: authority.normalGeneration,
+    authorizedLockEpoch,
+    osSessionBindingDigest: authority.sessionBindingDigest,
+    allowedLockedToolIdsDigest,
+  };
 }
 
 function isRuntimeAuthority(value: LockedControlRuntimeAuthority): boolean {

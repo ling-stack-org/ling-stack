@@ -111,6 +111,30 @@ test("disabled packaged policy cannot open identity UI or contact mutation route
   await fx.coordinator.shutdown();
 });
 
+test("cancelled identity is reported for durable audit before local revocation", async () => {
+  const fx = fixture({
+    identityVerifier: {
+      async verify(requestId) {
+        return {
+          schemaVersion: 1,
+          requestId,
+          status: "cancelled",
+          method: "device_owner_authentication",
+          reason: "locked_control_identity_cancelled",
+        };
+      },
+    },
+  });
+  assert.deepEqual(await fx.coordinator.authorizeCurrentTask(), {
+    accepted: false,
+    reason: "locked_control_identity_cancelled",
+  });
+  assert.equal(fx.daemonCalls.prepare, 1);
+  assert.equal(fx.daemonCalls.commit, 0);
+  assert.equal(fx.daemonCalls.revoke, 1);
+  await fx.coordinator.shutdown();
+});
+
 test("failed input-fence retirement revokes and never starts a locked generation", async () => {
   const fx = fixture({ retireFails: true });
   assert.equal((await fx.coordinator.authorizeCurrentTask()).accepted, true);
@@ -122,7 +146,35 @@ test("failed input-fence retirement revokes and never starts a locked generation
   await fx.coordinator.shutdown();
 });
 
-function fixture({ policy = enabledPolicy, identityVerifier, retireFails = false } = {}) {
+test("unlock during locked attestation invalidates the late result before generation start", async () => {
+  const attestationStarted = deferred();
+  const releaseAttestation = deferred();
+  const fx = fixture({
+    attestor: {
+      async attest(input) {
+        fx.order.push(`attest:${input.reservedProviderGeneration}`);
+        attestationStarted.resolve();
+        await releaseAttestation.promise;
+        return positiveAttestation(input);
+      },
+    },
+  });
+  assert.equal((await fx.coordinator.authorizeCurrentTask()).accepted, true);
+  const locking = fx.coordinator.handleLock();
+  await attestationStarted.promise;
+  const unlocking = fx.coordinator.handleUnlock();
+  releaseAttestation.resolve();
+
+  await locking;
+  await unlocking;
+  assert.equal(fx.order.some((value) => value.startsWith("start:")), false);
+  assert.equal(fx.coordinator.snapshot().phase, "off");
+  assert.equal(fx.coordinator.snapshot().reason, "locked_control_grant_consumed");
+  assert.ok(fx.order.includes("resume"));
+  await fx.coordinator.shutdown();
+});
+
+function fixture({ policy = enabledPolicy, identityVerifier, attestor, retireFails = false } = {}) {
   const order = [];
   const daemonCalls = { snapshot: 0, begin: 0, prepare: 0, commit: 0, attest: 0, revoke: 0 };
   const authority = {
@@ -238,33 +290,37 @@ function fixture({ policy = enabledPolicy, identityVerifier, retireFails = false
         };
       },
     },
-    attestor: {
+    attestor: attestor ?? {
       async attest(input) {
         order.push(`attest:${input.reservedProviderGeneration}`);
-        return {
-          ok: true,
-          attestation: {
-            schemaVersion: 1,
-            grantId: grant.grantId,
-            platform: "darwin",
-            lockEpoch: 1,
-            sessionBindingDigest: digestA,
-            sameUserSession: true,
-            userDesktopTargeted: true,
-            captureReady: true,
-            inputReady: true,
-            secureSurfaceExcluded: true,
-            providerGeneration: input.reservedProviderGeneration,
-            sequence: input.sequence,
-            observedAt: new Date().toISOString(),
-          },
-        };
+        return positiveAttestation(input);
       },
     },
     runtime,
     createRequestId: () => "request-1",
   });
   return { coordinator, order, daemonCalls };
+}
+
+function positiveAttestation(input) {
+  return {
+    ok: true,
+    attestation: {
+      schemaVersion: 1,
+      grantId: "grant-1",
+      platform: "darwin",
+      lockEpoch: 1,
+      sessionBindingDigest: digestA,
+      sameUserSession: true,
+      userDesktopTargeted: true,
+      captureReady: true,
+      inputReady: true,
+      secureSurfaceExcluded: true,
+      providerGeneration: input.reservedProviderGeneration,
+      sequence: input.sequence,
+      observedAt: new Date().toISOString(),
+    },
+  };
 }
 
 function deferred() {
