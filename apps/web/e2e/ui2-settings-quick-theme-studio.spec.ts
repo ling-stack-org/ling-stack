@@ -90,6 +90,19 @@ test("Quick Theme Studio keeps the canvas readable at 1280x800 in dark mode", as
   await page.getByLabel("Settings sections").getByRole("button", { name: /Interface preferences/ }).click();
   await page.getByRole("button", { name: "Create theme" }).click();
   const studio = page.locator("[data-ui2-theme-studio]");
+  const progressLabels = await studio.locator(".settings-theme-studio-progress li > span").evaluateAll((labels) => (
+    labels.map((label) => {
+      const style = getComputedStyle(label);
+      return {
+        height: label.getBoundingClientRect().height,
+        lineHeight: Number.parseFloat(style.lineHeight),
+        whiteSpace: style.whiteSpace,
+      };
+    })
+  ));
+  expect(progressLabels.every((label) => (
+    label.whiteSpace === "nowrap" && label.height <= label.lineHeight + 1
+  ))).toBe(true);
   const fileInput = studio.locator('input[type="file"]');
   await expect(fileInput).toBeEnabled();
   await fileInput.setInputFiles({

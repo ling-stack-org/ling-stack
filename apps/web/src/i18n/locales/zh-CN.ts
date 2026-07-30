@@ -5865,6 +5865,7 @@ export const zhCN = {
   "Choose an image and generate a preview. The image stays on this device.": "选择图片并生成预览，图片始终保留在当前设备。",
   "Preview will appear here": "预览将在这里显示",
   "Theme creation progress": "主题创建进度",
+  "Colors": "配色",
   "Theme installed and applied": "主题已安装并应用",
   "Theme installed": "主题已安装",
   "Generated locally. No model or network request.": "全程在本地生成，不调用模型或网络。",

@@ -1,7 +1,7 @@
 # P7C.2 Quick Theme Studio Implementation Plan
 
-Status: `D3=A selected / Web production Quick verified` on 2026-07-30. Desktop native generated-theme
-publication remains outside this Web-first slice.
+Status: `D3=A selected / Web production Quick verified` on 2026-07-30. Quick v1 is explicitly Web-only;
+Desktop native generated-theme publication remains a separate future capability and is not exposed by this slice.
 
 This plan implements the offline Quick mode only. Generate and Advanced remain P7C.3/P7C.4. P7C.1
 Web Theme Pack Management is verified and becomes the install/selection regression baseline.
@@ -506,5 +506,6 @@ P7C.2 may reach Web `verified` only when:
 - Selected App/Settings/Dark regression was `44/46`; the two failures are pre-existing stale Skill Governance
   assertions requiring grey helper copy already removed from current product code. No touched file participates in
   either failure.
-- Desktop native generated-theme install and restart remain open; Desktop does not expose the Web-only Create
-  action, so it cannot lead users into a publication path that will fail.
+- Quick v1 has a deliberate Web-only publication boundary. Desktop does not expose the Create action and cannot
+  enter a publication path its reviewed `.ling-theme` repository does not support. Native generated-theme install
+  and restart require a separate contract that preserves `local-generated` ownership.

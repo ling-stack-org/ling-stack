@@ -59,9 +59,16 @@
   font-size: var(--ling-font-xs);
 }
 
+.settings-theme-studio-progress li > span {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .settings-theme-studio-progress li::after {
-  width: 100%;
+  width: auto;
+  min-width: var(--ling-space-3);
   height: 1px;
+  flex: 1 1 auto;
   margin-left: var(--ling-space-2);
   background: var(--ling-border-default);
   content: "";

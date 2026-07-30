@@ -17,4 +17,5 @@ mock daemon boundary.
 - Quick preview contains no runtime artwork image.
 - Installed Quick manifest uses `ling-standard`, has `generation.mode=quick`, omits `artwork`, and stores
   zero installed image assets.
-- Desktop native generated-theme persistence remains outside this Web-first evidence.
+- Quick v1 is explicitly Web-only. Desktop keeps Create hidden because its reviewed `.ling-theme` repository does
+  not yet preserve `local-generated` ownership; native publication remains a separate future contract.
