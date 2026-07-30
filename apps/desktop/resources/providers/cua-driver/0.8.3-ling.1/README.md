@@ -9,15 +9,15 @@ commit, tree, Cargo lock, license, patch hashes and native toolchain before it
 creates an output directory. Only native CI may later supply repeated-build
 pre-sign digests and promote a platform record in a separate reviewed change.
 
-The four committed patches route managed state, expose content-free live
-readiness, own host/stdio/Job Object lifetime and return structured standard-tier
-capability errors. Native repeated-build and behavioral evidence is still
+The five committed patches route managed state, expose content-free live
+readiness, own host/stdio/Job Object lifetime, return structured standard-tier
+capability errors and add a one-way provider input-fence control thread. Native repeated-build and behavioral evidence is still
 required; until that evidence is attached, the output is an audit candidate,
 not a packaged Ling resource.
 
 The locked upstream commit is not globally clean under Rust 1.97.1 `cargo fmt`
 (unrelated untouched files produce a large baseline diff). The build therefore
-runs locked `rustfmt --check` over the seven newly introduced Rust files listed
+runs locked `rustfmt --check` over the eight newly introduced Rust files listed
 in `series.json`, and separately compiles/tests every selected Cargo package.
 Modified upstream files remain bounded by exact patch/touched-path digests rather
 than being rewritten solely to erase unrelated baseline formatting drift.

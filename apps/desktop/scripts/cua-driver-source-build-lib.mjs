@@ -20,6 +20,7 @@ export const PROVIDER_RESOURCE_ROOT = resolve(
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/u;
 const LOCKED_NEW_RUST_FILES = [
+  "libs/cua-driver/rust/crates/cua-driver-core/src/input_fence.rs",
   "libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed.rs",
   "libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed_readiness.rs",
   "libs/cua-driver/rust/crates/cua-driver/src/ling_managed_lifetime.rs",
@@ -279,7 +280,7 @@ export async function verifyProviderInputs(resourceRoot = PROVIDER_RESOURCE_ROOT
     Array.isArray(series.remainingRuntimeWork) && series.remainingRuntimeWork.length === 0,
     "runtime-integrated patch series cannot leave runtime work unlisted",
   );
-  assert(Array.isArray(series.patches) && series.patches.length === 4, "expected four patches");
+  assert(Array.isArray(series.patches) && series.patches.length === 5, "expected five patches");
   assertDeepEqual(
     series.patches.map(({ id, file }) => ({ id, file })),
     [
@@ -287,6 +288,7 @@ export async function verifyProviderInputs(resourceRoot = PROVIDER_RESOURCE_ROOT
       { id: "ling-managed-readiness-v1", file: "0002-ling-managed-readiness-v1.patch" },
       { id: "ling-managed-lifetime-v1", file: "0003-ling-managed-lifetime-v1.patch" },
       { id: "ling-windows-capability-errors-v1", file: "0004-ling-windows-capability-errors-v1.patch" },
+      { id: "ling-provider-input-fence-v1", file: "0005-ling-provider-input-fence-v1.patch" },
     ],
     "patch order and identity",
   );
@@ -506,6 +508,11 @@ function verifySourceBuildInputs(value) {
     "contentObserved",
     "defaultIntegrityCoverage",
     "hostProcessIdEnvironmentVariable",
+    "inputEpochEnvironmentVariable",
+    "inputFenceAdmission",
+    "inputFencePortEnvironmentVariable",
+    "inputFenceProtocolVersion",
+    "inputFenceTokenEnvironmentVariable",
     "healthProbeSkip",
     "killOnJobCloseRequired",
     "leaseGenerationEnvironmentVariable",
@@ -524,6 +531,11 @@ function verifySourceBuildInputs(value) {
     "uiaHelperActivation",
   ], "source-build runtime");
   assert(value.runtime.contentObserved === false, "managed readiness must remain content-free");
+  assert(value.runtime.inputFencePortEnvironmentVariable === "CUA_DRIVER_INPUT_FENCE_PORT", "input fence port env changed");
+  assert(value.runtime.inputFenceTokenEnvironmentVariable === "CUA_DRIVER_INPUT_FENCE_TOKEN", "input fence token env changed");
+  assert(value.runtime.inputEpochEnvironmentVariable === "CUA_DRIVER_INPUT_EPOCH", "input epoch env changed");
+  assert(value.runtime.inputFenceProtocolVersion === 1, "input fence protocol changed");
+  assert(value.runtime.inputFenceAdmission === "mutating_tool_call_v1", "input fence admission changed");
   assert(value.runtime.killOnJobCloseRequired === true, "managed Windows lifetime must require KILL_ON_JOB_CLOSE");
   assertDeepEqual(value.runtime.managedDeniedTools, ["check_for_update"], "managed denied updater tools");
   assertDeepEqual(value.runtime.healthProbeSkip, [

@@ -43,7 +43,7 @@
         ],
         "patchSet": {
           "id": "ling-managed-embedded-v1",
-          "sha256": "87b6b71942bc93d33ba293ffcc67e245aefd43a416bbf9e5516e2dbc1de43936",
+          "sha256": "edb89636dab1f7d2b9db85bcfa88d2979f8c25f5d14bb2af83033a3ca9f1822c",
           "patches": [
             {
               "id": "ling-embedded-state-home-v1",
@@ -60,10 +60,15 @@
             {
               "id": "ling-windows-capability-errors-v1",
               "sha256": "2184241e1612f411f6d4db7a9edcf451fe8d85298c0130de2c71cc4cabc945e8"
+            },
+            {
+              "id": "ling-provider-input-fence-v1",
+              "sha256": "f741cab1c74c86b2e2f983d9e867d7c555c6f96696b67ac091e340daa076d2db"
             }
           ],
           "touchedPaths": [
             "libs/cua-driver/rust/crates/cua-driver-core/Cargo.toml",
+            "libs/cua-driver/rust/crates/cua-driver-core/src/input_fence.rs",
             "libs/cua-driver/rust/crates/cua-driver-core/src/lib.rs",
             "libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed.rs",
             "libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed_readiness.rs",
@@ -143,6 +148,11 @@
           "com.lingstack.desktop"
         ],
         "stateHomeEnvironmentVariable": "CUA_DRIVER_STATE_HOME",
+        "inputFencePortEnvironmentVariable": "CUA_DRIVER_INPUT_FENCE_PORT",
+        "inputFenceTokenEnvironmentVariable": "CUA_DRIVER_INPUT_FENCE_TOKEN",
+        "inputEpochEnvironmentVariable": "CUA_DRIVER_INPUT_EPOCH",
+        "inputFenceProtocolVersion": 1,
+        "inputFenceAdmission": "mutating_tool_call_v1",
         "stateSchemaVersion": 1,
         "stateHomeRequiredInEmbeddedMode": true,
         "telemetryEnabled": false,

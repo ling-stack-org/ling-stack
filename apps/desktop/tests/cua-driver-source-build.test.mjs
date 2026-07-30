@@ -122,6 +122,7 @@ test("provider lock is the exact V2 contract and remains fail-closed", async () 
     await readFile(join(PROVIDER_RESOURCE_ROOT, inputs.patchSet.manifest), "utf8"),
   );
   assert.deepEqual(series.rustfmtPaths, [
+    "libs/cua-driver/rust/crates/cua-driver-core/src/input_fence.rs",
     "libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed.rs",
     "libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed_readiness.rs",
     "libs/cua-driver/rust/crates/cua-driver/src/ling_managed_lifetime.rs",

@@ -115,6 +115,13 @@ function validatePlatformLock(value, platform, architecture, requireReleaseEvide
     || value.runtime.stateSchemaVersion !== 1) {
     fail("provider_lock_state_contract_missing");
   }
+  if (value.runtime.inputFencePortEnvironmentVariable !== "CUA_DRIVER_INPUT_FENCE_PORT"
+    || value.runtime.inputFenceTokenEnvironmentVariable !== "CUA_DRIVER_INPUT_FENCE_TOKEN"
+    || value.runtime.inputEpochEnvironmentVariable !== "CUA_DRIVER_INPUT_EPOCH"
+    || value.runtime.inputFenceProtocolVersion !== 1
+    || value.runtime.inputFenceAdmission !== "mutating_tool_call_v1") {
+    fail("provider_lock_input_fence_contract_missing");
+  }
   if (value.compatibility.serverInitializeProtocolVersion !== "2025-06-18"
     || value.compatibility.clientInitializeProtocolVersion !== "2025-11-25") {
     fail("provider_lock_protocol_mismatch");
