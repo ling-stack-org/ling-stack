@@ -80,6 +80,12 @@ all three kinds. That extension must keep the same opaque-id, explicit-allowlist
 redaction, ordering, idempotency, and low-authority guarantees. The UI contract is defined
 in [Mobile Conversation UI 2.0 Detailed Design](mobile-conversation-ui2-detailed-design.md).
 
+The same UI design adds a minimal synced user profile. Any live implementation requires
+separate `profile.read` and `profile.update` capabilities limited to display name and a
+bounded validated avatar payload. Those commands cannot accept local paths or expose
+profile analytics. Mobile appearance is stored on the phone and does not require a remote
+settings capability or permission to mutate the PC theme.
+
 ## Network Topology
 
 V0 uses this topology:

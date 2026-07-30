@@ -34,8 +34,10 @@ boundary and security review is complete.
   conversations, and teammate-direct conversations.
 - Mobile text is tagged `sourceSurface=mobile` and capped at `conversation_comment`: a
   tool-disabled conversational reply is allowed, but workflow/proposal auto-start is not.
-- V1 excludes approval and run surfaces, attachments, files, terminal, settings,
+- V1 excludes approval and run surfaces, attachments, files, terminal, broad settings,
   providers, tools, secrets, and Computer Use.
+- V1 includes a minimal `My` page for synced user identity, device-local appearance,
+  paired-PC status, and confirmed unpair; it does not expose the PC settings center.
 - One PC has one active phone and one authenticated session.
 - Production authentication uses a hardware/OS-keystore P-256 device key and fresh
   challenge-response; there is no long-lived bearer token.
@@ -69,6 +71,7 @@ apps/mobile/
   app/ or src/navigation/
   src/features/pairing/
   src/features/connection/
+  src/features/profile/
   src/features/conversations/
     domain/
     data/
@@ -80,6 +83,12 @@ apps/mobile/
   src/platform/secure-device-key/
   src/platform/notifications/
   test/
+
+apps/web/src/features/settings/mobile-access/
+  MobileAccessSettingsPage.tsx
+  MobilePairingQrPanel.tsx
+  MobilePairingConfirmationPanel.tsx
+  PairedMobileDevicePanel.tsx
 
 packages/contracts/src/
   remote-access.ts
@@ -355,6 +364,8 @@ Scope:
   compression, strict schemas, and generic remote auth errors;
 - add safe security audit events and redacted diagnostics;
 - add CLI `enable/status/pair/revoke/disable` commands;
+- add the UI 2.0 PC companion surface under `Settings -> Device -> Mobile Access` for
+  enable, QR generation, candidate confirmation/rejection, paired status, and revoke;
 - add a Tailscale Serve setup/status check without automatically changing the user's
   tailnet configuration.
 
@@ -451,11 +462,15 @@ Scope:
 - create `apps/mobile` with isolated React Native/Expo dependencies and native development
   builds;
 - keep the existing pair/revoke security flow separate from the conversation shell;
+- implement unpaired welcome, QR scanner, PC-confirmation wait, rejection,
+  expiry, accepted, and initial-sync screens;
 - implement the two-page navigation stack: unified conversation index and shared
   conversation detail;
 - cover channel, normal-conversation, and teammate-direct fixtures in the same native
   list/detail components;
 - implement connection state as an inline status strip rather than a third primary page;
+- add a top-right user-avatar entry to one minimal `My` page containing personal identity,
+  Mobile appearance, paired-PC status, and confirmed unpair;
 - implement the production secure-device-key adapter from Slice 1;
 - use `RemoteLingClient` through app state hooks; screens never own protocol logic;
 - create `MobileConversationAdapter` from remote semantic DTOs to
@@ -481,8 +496,12 @@ UI 2.0 boundary:
 - do not copy the current Web projector or CSS;
 - keep the adapter and semantic token mapping app-local until a second native consumer
   exists;
-- do not add work cells, approvals, run control, attachments, files, terminal, settings,
-  or Computer Use to the V1 conversation shell.
+- do not add work cells, approvals, run control, attachments, files, terminal, broad PC
+  settings, or Computer Use to the V1 conversation shell.
+- do not copy PC Token/activity analytics, language/response settings, theme studio,
+  theme import/create, or arbitrary theme packages into Mobile;
+- profile updates are dedicated allowlisted commands; Mobile theme selection is local and
+  cannot change the PC theme.
 
 ## Slice 7: Live End-to-End Integration
 
@@ -713,6 +732,7 @@ The implementation is eligible for a PR only when:
 - Remote approval decisions or run cancellation.
 - File/attachment/artifact transfer.
 - Terminal, shell, Computer Use, provider/tool/permission/settings control.
+- PC theme creation/import, remote PC-theme mutation, or user activity/Token analytics.
 - Multiple phones, multiple PCs, Ling accounts, cloud relay, or offline mutation queue.
 - A shared native component package before a second native consumer exists.
 - Public port-forwarding support.

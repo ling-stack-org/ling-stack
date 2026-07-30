@@ -75,14 +75,20 @@ boundary, not a host-binding change to the current daemon server.
 ## Goals
 
 - Pair one mobile app installation with one local Ling PC.
+- Show secure QR pairing only while unpaired; launch a paired app directly into
+  synchronized conversations.
+- Place PC-side enable, QR generation, local confirmation, paired-device status, and revoke
+  under `Settings -> Device -> Mobile Access`, never inside a conversation.
 - List locally authorized channels, normal conversations, and teammate-direct
   conversations without exposing arbitrary workspace paths.
 - Open any authorized conversation, load a sanitized transcript snapshot, and receive
   ordered updates.
 - Send a plain-text message or follow-up into the existing conversation owner.
-- Keep Mobile-originated text at a channel-comment/conversational-reply ceiling; it must not
-  auto-start workflows, execution proposals, or tool-backed runs in V0.
+- Keep Mobile-originated text at a conversation-comment/conversational-reply ceiling; it
+  must not auto-start workflows, execution proposals, or tool-backed runs in V1.
 - Keep execution/run/approval surfaces out of the Mobile V1 UI.
+- Reuse the PC user-profile identity and appearance vocabulary through a minimal `My`
+  page; Mobile appearance remains device-local.
 - Survive backgrounding, network changes, and reconnects without duplicating commands.
 - Let the PC revoke the phone immediately.
 - Reuse semantic contracts and headless conversation logic from the monorepo.
@@ -92,7 +98,7 @@ boundary, not a host-binding change to the current daemon server.
 
 - No Ling-hosted account, cloud database, or mandatory Ling relay.
 - No direct exposure of `17891`, `/rpc/stream`, or the broad daemon API.
-- No arbitrary `cwd`, file path, shell, provider, MCP, settings, or secret endpoints.
+- No arbitrary `cwd`, file path, shell, provider, MCP, broad settings, or secret endpoints.
 - No remote permission-preset escalation.
 - No remote approval, run-status, or execution-control surface in V1.
 - No file upload/download, raw artifact content, terminal attachment, or Computer Use
@@ -100,6 +106,8 @@ boundary, not a host-binding change to the current daemon server.
 - No browser/PWA remote client; the device-key boundary is first-party mobile only.
 - No multi-PC or multi-phone account model.
 - No attempt to share Web DOM components with React Native.
+- No PC theme creation/import, arbitrary theme-package transfer, Token/activity analytics,
+  or remote mutation of the PC theme from Mobile.
 
 ## Architecture
 
@@ -207,6 +215,7 @@ or view-model shapes.
 | Capability | V1 | Later |
 | --- | --- | --- |
 | Pair/revoke one phone | Yes | Multiple devices and PC switching |
+| Secure QR pairing and PC confirmation | Yes | Separately threat-modeled manual/account discovery |
 | Channel, normal conversation, and teammate-direct list/open | Yes | Search, creation, rename, archive, administration |
 | Snapshot and live transcript | Yes | Raw detail and full artifact exploration |
 | Send message/follow-up | Yes | Attachments and rich composer commands |
@@ -215,6 +224,8 @@ or view-model shapes.
 | Cancel active run | No | Separate opt-in control design after V1 security review |
 | See pending approvals | No | Read-only summary or approve/deny after separate review |
 | Notifications | Connection plumbing only | Message/mention actions after separate design |
+| User profile | Read/update display name and bounded avatar | Activity/Token/skill analytics |
+| Mobile appearance | Follow system, Ling Light, Ling Dark | Sanitized mobile-compatible PC theme packs |
 | Offline queue | No | Explicitly designed bounded queue |
 | Computer Use | No | Separate high-risk design |
 
@@ -268,7 +279,8 @@ The two workstreams can proceed in parallel under these ownership rules:
 
 Rules for the synchronized Mobile branch:
 
-- do not modify `apps/web`;
+- limit `apps/web` changes to the new UI 2.0 `Mobile Access` settings surface and shell
+  registration; do not modify or copy Web conversation components;
 - do not move or rename `conversation-ui-react` components;
 - keep native visual tokens inside `apps/mobile`;
 - use fixtures and a mobile adapter rather than the current Web projector;
@@ -359,6 +371,12 @@ create two diverging product models during UI 2.0.
 - The phone can list/open authorized channels, normal conversations, and teammate-direct
   conversations, follow live transcript state, and send a message through existing daemon
   authority without gaining run-control or tool-backed workflow execution.
+- An unpaired/revoked app displays the secure pairing flow; a paired app launches directly
+  into conversations and exposes profile/appearance through the top-right avatar.
+- PC settings can generate a fresh expiring QR, confirm/reject one candidate, and inspect
+  or revoke the paired phone without exposing pairing controls in conversation UI.
+- Mobile profile updates are limited to display name and a bounded validated avatar;
+  appearance changes are local to the phone and never mutate PC theme state.
 - Network interruption and resume do not duplicate a message or lose authoritative state.
 - `apps/mobile` imports no code from `apps/web` or `conversation-ui-react`.
 - Shared Web and Desktop builds remain green after the final UI 2.0 synchronization.

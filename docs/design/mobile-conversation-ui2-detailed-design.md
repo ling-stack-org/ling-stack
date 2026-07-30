@@ -17,9 +17,11 @@ The mobile product does not create three separate feature areas. It has one conv
 index and one shared conversation detail surface. Conversation kind changes identity,
 participants, subtitle, and message attribution, but not the navigation or composer model.
 
-V1 supports reading synchronized history, receiving live updates, unread state, retaining
-an unsent local draft, and sending plain text while connected. The PC daemon remains the
-authority for message identity, ordering, execution, teammate identity, and retention.
+V1 supports secure first-time pairing, reading synchronized history, receiving live
+updates, unread state, retaining an unsent local draft, sending plain text while connected,
+and a minimal personal surface for the synced user identity and Mobile appearance. The PC
+daemon remains the authority for message identity, ordering, execution, teammate identity,
+user profile, and retention.
 
 ## Product Principles
 
@@ -33,13 +35,23 @@ authority for message identity, ordering, execution, teammate identity, and rete
    identity language, and headless policies; implement native React Native components.
 5. **Subtract by default.** V1 has no remote task controls, approval actions, attachments,
    file browser, terminal, settings workspace, or Computer Use surface.
+6. **Pairing is the application gate.** An unpaired app presents a dedicated secure
+   pairing flow; a paired app launches directly into conversations.
 
 ## Information Architecture
 
 ```text
 App launch
   |
-  +-- authenticated and paired ------------------------------+
+  +-- no pairing
+  |      |
+  |      v
+  |   Pairing welcome -> QR scanner -> Waiting for PC confirmation
+  |                                      |
+  |                                      v
+  |                                Initial conversation sync
+  |                                      |
+  +-- authenticated and paired ----------+-------------------+
   |                                                          |
   |                                                          v
   |                                                Conversation index
@@ -54,13 +66,95 @@ App launch
   |                                                - Synced transcript
   |                                                - Plain-text composer
   |
+  |                                                          |
+  |                                                          +-- avatar -> My
+  |                                                                       - Profile
+  |                                                                       - Appearance
+  |                                                                       - Paired PC
+  |
   +-- reconnecting/offline -> index with honest sync state and cached rows
   |
-  +-- revoked/unpaired ----> existing secure pairing flow, outside this UI slice
+  +-- revoked/unpaired ----> Screen 0 secure pairing
 ```
 
-There is no bottom tab bar in V1. The app is a two-level navigation stack. A persistent
-tab bar would spend scarce screen space on features that do not exist yet.
+There is no bottom tab bar in V1. Conversations remain a two-level navigation stack. The
+top-right user avatar opens `My` as a modal stack page. A persistent tab bar would spend
+scarce screen space on features that do not exist yet.
+
+## Screen 0: Secure Pairing
+
+Pairing is shown only when the app has no valid pairing record. It is not a button mixed
+into the conversation index, because there is no meaningful conversation state before a
+PC is trusted.
+
+### Pairing Welcome
+
+The user sees, in order:
+
+1. Ling identity and `连接你的 Ling`.
+2. One sentence explaining that the phone continues PC conversations securely.
+3. Primary action `扫描 PC 配对码`.
+4. A short security note: one phone, local PC confirmation, private key never leaves the
+   device.
+
+```text
++--------------------------------------+
+|                                      |
+|                 L                    |
+|                                      |
+|           连接你的 Ling               |
+|   扫描 PC 上的配对码，同步已有会话。    |
+|                                      |
+|        [  扫描 PC 配对码  ]            |
+|                                      |
+|  在 PC：设置 → 移动端访问 → 开始配对    |
+|                                      |
+|  一台 PC 仅绑定一部手机。私钥不会离开   |
+|  当前设备，绑定还需要在 PC 上确认。      |
++--------------------------------------+
+```
+
+### Pairing State Flow
+
+| State | What the user sees | Action |
+| --- | --- | --- |
+| Camera permission unknown | Native permission explanation before the system prompt. | `继续`. |
+| Camera denied | Why scanning needs camera access. | `打开系统设置`. |
+| Scanning | Edge-to-edge camera, quiet frame guide, cancel button. | Point at the PC QR. |
+| Invalid/expired QR | `配对码无效或已过期`; no endpoint detail is exposed. | Scan the refreshed PC code. |
+| Candidate recognized | PC display name plus short verification phrase. | Continue automatically to PC confirmation. |
+| Awaiting PC confirmation | `请在 <PC name> 上确认这部手机`; expiry countdown and cancel. | Confirm locally on PC. |
+| Rejected | `PC 拒绝了绑定`; local candidate state is cleared. | Scan the rotated code. |
+| Accepted | Gateway identity verified, device key persisted, initial sync begins. | Enter conversations automatically. |
+| Initial sync | Conversation-index skeleton with `正在同步 PC 会话…`. | None. |
+
+After a successful pairing, future launches skip this flow and enter the conversation
+index. Revocation, local unpair, invalid device epoch, or deleted secure key returns to the
+pairing welcome after clearing cached conversation content.
+
+### Required PC Companion Surface
+
+The QR does not appear in a conversation. PC owns pairing under:
+
+```text
+Settings -> Device -> Mobile Access
+```
+
+This adds one `Mobile Access` row beside the existing device settings. Its page has five
+states:
+
+| PC state | PC UI |
+| --- | --- |
+| Disabled | Explain the local Gateway and show `启用移动端访问`. |
+| Enabled, unpaired | Show status/reachability and primary action `生成配对码`. |
+| Pairing window open | Show QR, PC name, five-minute countdown, and `取消配对`. |
+| Candidate waiting | Replace passive QR emphasis with phone name/platform and the short verification phrase; require explicit `确认绑定` or `拒绝`. |
+| Paired | Show phone name, platform, paired/last-connected time, status, and destructive `撤销绑定`. No QR remains visible. |
+
+The phone owns `扫描 PC 配对码`; the PC owns `生成配对码` and final confirmation. Pairing
+always begins from a fresh local PC action, and a rejected/expired attempt rotates the QR.
+This PC surface is required for the Mobile flow even though it is not part of the Mobile
+screen set.
 
 ## Screen 1: Conversation Index
 
@@ -68,9 +162,11 @@ tab bar would spend scarce screen space on features that do not exist yet.
 
 The user sees, in order:
 
-1. **Title and synchronization truth**: `会话` plus `已同步`, `正在连接`, or `离线`.
+1. **Title and synchronization truth**: `会话` plus PC name and `已同步`, `正在连接`,
+   or `离线`.
 2. **Conversation-kind filter**: `全部`, `频道`, `会话`, `私聊`.
 3. **A single activity-sorted list** spanning all three conversation kinds.
+4. **User avatar**: a 44 pt top-right button that opens `My`.
 
 Search, creation, editing, sorting controls, workspace selection, and administration are
 not present in V1.
@@ -236,7 +332,69 @@ The UI uses one shared state vocabulary:
 | `protocol_error` | `需要更新 Ling` | Danger; no fallback to the broad daemon API. |
 
 Connection state is a status strip, not a third primary page. Pairing remains a separate
-security flow already defined by Mobile Remote Access and is outside this visual slice.
+security flow and is fully specified above.
+
+## Screen 3: My
+
+`My` opens from the conversation-index avatar and deliberately reuses only two PC settings
+concepts: user profile and interface preferences. It is one scrollable phone page, not a
+copy of the PC settings sidebar.
+
+### Personal Profile
+
+- Show the synced avatar, display name, and read-only `@handle`.
+- Allow display-name editing with the same 80-character limit as PC.
+- Allow choosing/cropping a photo for the user avatar with a strict image MIME/byte limit.
+- Save through a dedicated allowlisted profile command; never send a local file path.
+- A successful update becomes authoritative on PC and returns through the normal profile
+  projection so all three conversation kinds use the same identity.
+- Do not show PC Token statistics, activity heatmaps, run history, skill counts, or other
+  analytics on Mobile.
+
+### Interface Preferences
+
+Mobile reuses the PC appearance vocabulary but owns a device-local selection:
+
+| Option | Behavior |
+| --- | --- |
+| `跟随系统` | Default. Ling Light for light system appearance and Ling Dark for dark. |
+| `Ling Light` | Fix the Mobile app to the built-in light native token map. |
+| `Ling Dark` | Fix the Mobile app to the built-in dark native token map. |
+
+Changing Mobile appearance does not remotely change the PC theme. PC theme creation,
+imports, arbitrary theme packages, Quick Theme Studio, product language, and AI response
+language stay on PC in V1. A later release may accept sanitized mobile-compatible semantic
+token snapshots; Mobile must never execute CSS, font files, scripts, or arbitrary theme
+package assets received from the PC.
+
+### Paired PC
+
+- Show PC display name, last synchronized time, and current connection state.
+- `取消绑定` is a destructive text action at the bottom, behind a confirmation sheet.
+- Confirming revokes the active Mobile session when reachable, deletes the local device
+  key and cached conversations, and returns to Screen 0.
+- If the PC is unreachable, local credentials/data are still cleared; the PC-side device
+  remains blocked by its normal epoch/revocation policy before another pairing is accepted.
+
+```text
++--------------------------------------+
+| <              我的                  |
+|                                      |
+|       [头像]  Tianxiao               |
+|               @local-user            |
+|          [编辑个人资料]               |
+|--------------------------------------|
+| 界面偏好                              |
+| 跟随系统                         [开] |
+| 主题                  Ling Light  >  |
+|--------------------------------------|
+| 已绑定的 PC                           |
+| 我的 Mac                    已连接    |
+| 上次同步：刚刚                         |
+|                                      |
+|              取消绑定                 |
++--------------------------------------+
+```
 
 ## UI 2.0 Native Token Mapping
 
@@ -284,6 +442,11 @@ Native layout scale:
 apps/mobile/src/
   navigation/
     MobileConversationNavigator.tsx
+  features/pairing/
+    screens/
+      PairingWelcomeScreen.tsx
+      PairingScannerScreen.tsx
+      PairingConfirmationScreen.tsx
   features/conversations/
     domain/
       conversation-types.ts
@@ -305,6 +468,11 @@ apps/mobile/src/
       useConversationIndex.ts
       useConversationDetail.ts
       useConversationDrafts.ts
+  features/profile/
+    MyScreen.tsx
+    ProfileIdentitySection.tsx
+    AppearancePreferenceSection.tsx
+    PairedPcSection.tsx
   theme/
     mobile-theme.ts
     mobile-theme-provider.tsx
@@ -317,6 +485,8 @@ Responsibilities stay separated:
 - `MobileConversationAdapter` maps validated remote projections to view models;
 - `conversation-ui-core` supplies compatible DOM-free parsing and policies;
 - protocol validation, reconnection, ordering, and command receipts remain outside UI;
+- pairing screens consume a pairing state machine and never parse QR wire data directly;
+- profile edits use a dedicated allowlisted adapter, separate from conversation commands;
 - native theme values are app-local until a second native consumer exists.
 
 ## Required Remote Projection Evolution
@@ -355,6 +525,12 @@ The exact contract belongs in the protocol design slice. It must preserve:
 - a server-owned authority ceiling that prevents Mobile text from starting tools or
   workflows regardless of conversation kind.
 
+The minimal personal surface also requires explicit `profile.read` and `profile.update`
+capabilities. `profile.update` accepts only display name and a bounded validated avatar
+payload; it cannot read files, paths, analytics, runs, skills, settings, or arbitrary
+profile storage. Mobile appearance remains local and requires no Remote Gateway setting
+mutation.
+
 ## Accessibility and Platform Behavior
 
 - All interactive targets are at least 44 x 44 pt.
@@ -377,20 +553,27 @@ The exact contract belongs in the protocol design slice. It must preserve:
 
 | Step | User action | Expected feeling | Design support |
 | --- | --- | --- | --- |
-| 1 | Opens Ling Mobile away from the PC | Oriented | Recent conversations appear immediately with honest sync status. |
-| 2 | Scans channel, normal, and direct conversations | In control | One list, clear type identity, activity order, unread counts. |
-| 3 | Opens a conversation | Continuous with PC | Same transcript identity and ordering, phone-native hierarchy. |
-| 4 | Sends plain text | Confident | Durable send state and no hidden workflow/tool escalation. |
-| 5 | Loses connectivity | Not misled | Cached content remains readable but visibly stale; draft is preserved. |
-| 6 | Reconnects | Reassured | Snapshot recovery removes ambiguity and avoids duplicate messages. |
+| 1 | Opens an unpaired app | Secure | One obvious scan action and a clear PC-local confirmation promise. |
+| 2 | Completes PC confirmation | Reassured | Gateway identity verification and initial sync precede conversation access. |
+| 3 | Opens a paired app away from the PC | Oriented | Recent conversations appear immediately with honest sync status. |
+| 4 | Scans channel, normal, and direct conversations | In control | One list, clear type identity, activity order, unread counts. |
+| 5 | Opens a conversation | Continuous with PC | Same transcript identity and ordering, phone-native hierarchy. |
+| 6 | Sends plain text | Confident | Durable send state and no hidden workflow/tool escalation. |
+| 7 | Loses and regains connectivity | Not misled | Cached content is visibly stale; snapshot recovery avoids duplicates. |
+| 8 | Opens the avatar | Familiar | Identity and Mobile appearance are together without exposing the PC settings center. |
 
 ## NOT in Scope
 
 - Conversation creation, rename, archive, delete, pinning, search, or administration.
-- Attachments, voice, camera, rich composer commands, model/provider/permission controls.
+- Conversation attachments, voice/camera capture, rich composer commands, and
+  model/provider/permission controls.
+- Manual low-entropy pairing codes until a separate protocol and threat model are approved.
 - Remote approvals, run control, tasks, work cells, files, terminal, artifacts, or
   Computer Use.
 - Teammate profile editing, memory, activity inspector, channels tab, or private files.
+- PC Token/activity analytics, theme creation/import, arbitrary theme packages, language,
+  personalization, or broad settings management.
+- Changing the PC theme from Mobile; Mobile appearance is device-local in V1.
 - Workspace selection or exposure of local filesystem paths.
 - Push-notification design beyond content-free connection plumbing.
 - Tablet, split-view, landscape multi-column, watch, or desktop-native layouts.
@@ -409,6 +592,14 @@ The exact contract belongs in the protocol design slice. It must preserve:
 - Light and dark themes map from UI 2.0 semantic values through typed native tokens.
 - Fixtures cover three conversation kinds plus loading, empty, partial, offline,
   reconnecting, send-failed, and revoked states.
+- Unpaired, scanning, awaiting-confirmation, rejected, expired, accepted, and initial-sync
+  states have explicit screens and recovery paths.
+- A paired app launches directly to conversations; an unpaired/revoked app launches to
+  secure pairing.
+- The conversation-index avatar opens `My`; the page contains only profile identity,
+  Mobile appearance, paired-PC status, and local unpair.
+- Mobile profile edits are narrow allowlisted commands; Mobile appearance never mutates
+  the PC theme.
 - The live implementation does not ship until the channel-only protocol has a reviewed
   generic conversation projection and authorization policy.
 
@@ -443,6 +634,18 @@ The exact contract belongs in the protocol design slice. It must preserve:
   - Files: `packages/remote-client/`, daemon remote-access modules, Mobile adapter/hooks.
   - Verify: PC-originated/mobile-originated sync, sleep/wake, reconnect, resync, revoke,
     and duplicate-command E2E scenarios.
+- [ ] **T7 (P1)** — Pairing UI — implement welcome, QR scanner, local-confirmation
+  wait, rejection/expiry, accepted, initial-sync, and return-to-pairing recovery states,
+  plus the required PC Mobile Access settings surface.
+  - Files: `apps/mobile/src/features/pairing/`,
+    `apps/web/src/features/settings/mobile-access/`, settings shell registration.
+  - Verify: permissions, invalid/expired QR, rotated QR, PC reject/accept, revoke, missing
+    secure key, and accessibility fixtures.
+- [ ] **T8 (P2)** — Minimal personal surface — implement synced profile identity, local
+  appearance preference, paired-PC status, and confirmed unpair.
+  - Files: `apps/mobile/src/features/profile/`, Remote profile projection/commands.
+  - Verify: profile limits, avatar payload validation, PC round-trip, theme persistence,
+    local-only theme behavior, and credential/cache clearing after unpair.
 
 ## Design Review Result
 
