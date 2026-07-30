@@ -98,7 +98,7 @@
             "libs/cua-driver/rust/crates/platform-windows/src/tools/impl_.rs"
           ]
         },
-        "binarySha256BeforeSigning": "12ca08fec08c9540e6ec6a9de5ab079f27e09de55a6f0b8184279fb003cdddb0"
+        "binarySha256BeforeSigning": "44b0eecbf60ffc8d01350a85347f77febc84f71778d2eabe465f161cb328db30"
       },
       "binary": {
         "architectures": [

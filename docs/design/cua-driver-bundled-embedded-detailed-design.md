@@ -1002,7 +1002,7 @@ optimization. A later self-hosted replay showed that Apple ld's arm64 parallel s
 can still produce two runtime-byte identities across clean invocations even when load
 commands and normalized Swift archives are identical. The source-build contract therefore
 pins the reviewed canonical arm64 identity
-`af7a2f9bfabe98704bafca0f2c7f6e2ae4e9f53fe6653d5cd8cea44fc25e103d`
+`e79f3c696c623aaa18074f44d668416018525c8b1ffb8d262bf1fd77e1ade99a`
 and permits at most 32 clean root-package relinks. Each rejected candidate is discarded before any write or
 codesign operation. Exhaustion fails the source build and therefore cannot upload,
 promote, sign or package a candidate. Changing the identity or attempt bound requires a

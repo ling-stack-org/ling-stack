@@ -282,7 +282,7 @@ function validatePatchSet(value) {
     || value.id !== "ling-managed-embedded-v1"
     || !isSha256(value.sha256)
     || !Array.isArray(value.patches)
-    || value.patches.length !== 4
+    || value.patches.length !== 5
     || !Array.isArray(value.touchedPaths)
     || value.touchedPaths.length === 0) {
     fail("provider_lock_patch_set_invalid");
@@ -292,6 +292,7 @@ function validatePatchSet(value) {
     "ling-managed-readiness-v1",
     "ling-managed-lifetime-v1",
     "ling-windows-capability-errors-v1",
+    "ling-provider-input-fence-v1",
   ];
   for (let index = 0; index < expected.length; index += 1) {
     const patch = value.patches[index];
