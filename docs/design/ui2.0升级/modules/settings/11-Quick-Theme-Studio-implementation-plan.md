@@ -1,6 +1,7 @@
 # P7C.2 Quick Theme Studio Implementation Plan
 
-Status: `decision-independent substrate verified / D3 decision-gated` on 2026-07-20.
+Status: `D3=A selected / Web production Quick verified` on 2026-07-30. Desktop native generated-theme
+publication remains outside this Web-first slice.
 
 This plan implements the offline Quick mode only. Generate and Advanced remain P7C.3/P7C.4. P7C.1
 Web Theme Pack Management is verified and becomes the install/selection regression baseline.
@@ -55,18 +56,20 @@ Already implemented:
 - a pure Quick reducer with revisioned stale-operation suppression and dependency-scoped invalidation.
 - package-owned `ThemeStudioPreviewFixture` with synthetic Home/Conversation/Settings/Dialog surfaces,
   fixed desktop viewport contracts and exact CSS transform scaling;
+- a production Settings entry, nested Quick surface, controller, Preview controls, install/install-and-use
+  actions and draft restoration;
+- a Web token-only generated-theme publication adapter that uses the committed package result directly
+  and never performs a second repository read;
+- abortable replacement analysis, stale-operation suppression and disabled inputs while draft restoration
+  owns the initial state;
 - Shared Field, Input, Select, SegmentedControl, Tabs, Button, Dialog, Menu, Toast,
   InlineFeedback, InspectorSection and ThemePreviewFixture primitives.
 
 Not implemented:
 
 - local content-risk detection for readable text, Logo/watermark or UI chrome;
-- a Theme Studio nested Settings surface or `Create theme` production entry;
-- a Quick controller and production React surface;
-- production Preview panel controls that connect surface/viewport selection to the shared fixture;
 - generated artwork bytes in the installed package repository;
 - a runtime artwork URL resolver or AppShell presentation artwork layer;
-- Web generated-theme publish/rollback tests;
 - Desktop native Theme Pack/draft repository, which remains a separate explicit TODO.
 
 The current `AppPresentationSurfaceBridge` resolves only route policy attributes. It does not render
@@ -83,6 +86,8 @@ the image can be displayed safely or restored after refresh.
 - Quick and P7C.1 import remain separate product flows. A `.ling-theme` file is not accepted by Quick.
 - Generate/Advanced controls are not exposed until their real adapters exist.
 - No Logo change, arbitrary CSS/JS/HTML/SVG/font/remote URL, Feature selector or DOM/layout payload.
+- D3 is locked to option A: the selected image is draft-only input for palette and semantic-token
+  derivation. Quick never publishes or renders it as runtime artwork.
 
 ## 5. D3 Decision Gate: Quick Runtime Artwork Safety
 
@@ -96,11 +101,11 @@ those risk values and must not receive fabricated `false` values.
 | B - explicit clean-background attestation | Require source class, rights and no-text/Logo/UI confirmation; publish the normalized image as generated runtime artwork | Delivers full visual result offline, but content safety depends on the user's declaration |
 | C - mandatory vision review | Run a configured vision-capable model before artwork publication | Stronger automated review, but Quick is no longer offline or model-free |
 
-Selected option: `pending user decision`.
+Selected option: `A - token-only from image`, approved by the product owner on 2026-07-30.
 
-Decision-independent image validation, decode/sample, draft storage, reducer and shared multi-surface
-Preview fixture work is complete. No production `Create theme` entry, install action or runtime artwork
-publication may land until D3 is selected and this plan is updated.
+The production Quick flow may now land. It must call the Compiler without an `artwork` input, force
+`ling-standard`, publish a manifest with no `manifest.artwork`, and keep the source Blob only in the
+local draft repository. Installed theme storage must contain no source or normalized image asset.
 
 ## 6. Product Entry And Shell
 
@@ -143,8 +148,7 @@ Quick theme
   Local image                                      FileButton / Drop zone
   Theme name                                       Input
   Color scheme                                     Segmented Light | Dark
-  Presentation                                     Select
-  Artwork intensity                                Segmented, only if D3=B/C
+  Presentation                                     Fixed to Standard for Quick v1
   Generate preview                                 Primary Button
 
 Preview
@@ -177,8 +181,8 @@ The Web adapter performs:
 6. read RGBA pixels and call package `analyzeThemeImage()`;
 7. compute SHA-256 for stable source revision;
 8. create/revoke a preview object URL owned by the controller;
-9. if D3=B/C, normalize runtime artwork to an approved PNG/WebP Blob before publication;
-10. clear source metadata and never persist the original filename as an asset path.
+9. never normalize or publish runtime artwork in Quick v1;
+10. clear source metadata at publication and never persist the filename or source Blob as an installed asset.
 
 The adapter exposes structured product issue codes. Browser decoder text and DOMException details stay
 in collapsed diagnostics and are not used as primary copy.
@@ -186,8 +190,8 @@ in collapsed diagnostics and are not used as primary copy.
 ## 9. Deterministic Defaults
 
 - Suggested scheme: `dark` when average luminance `<0.38`; otherwise `light`. The user can override it.
-- Suggested Profile: use `analysis.recommendedProfileId` only when the selected D3 option permits
-  runtime artwork; otherwise default to `ling-standard`.
+- Presentation Profile is always `ling-standard` in Quick v1. The analysis recommendation is draft
+  evidence only and cannot alter runtime presentation.
 - Palette background: first dominant color; accent: `analysis.accentCandidate`.
 - Presentation intensity defaults to `balanced`; decoration set defaults to `none`.
 - Focus and safe area come from analysis and are clamped to `0..1`.
@@ -311,7 +315,7 @@ Validate -> Analyze -> Compile -> Verify -> Ready
   selection with persistent local feedback.
 - Delete draft success may use Toast; dirty/leave confirmation remains a Dialog.
 
-## 14. Publish Boundary By D3
+## 14. Publish Boundary For Selected D3=A
 
 Common rules:
 
@@ -321,20 +325,20 @@ Common rules:
 - Install and apply remain separate transactions.
 - Failure restores Registry, stored package/assets and visible theme.
 
-D3=A publication:
+D3=A publication is the only permitted Quick v1 path:
 
 - install generated manifest and optional isolated Preview only;
 - omit `manifest.artwork` and runtime source bytes;
 - force or confirm a token-compatible Profile before Ready.
 
-D3=B publication:
+D3=B is not selected and must remain absent:
 
 - require clean-wallpaper source class, rights confirmation and explicit no-text/Logo/watermark/UI
   attestation before Compile/Ready;
 - persist normalized generated artwork and manifest in one transaction;
 - retain the attestation result as non-secret generation metadata, not a safety guarantee label.
 
-D3=C publication:
+D3=C is not selected and must remain absent:
 
 - requires a separate vision-review adapter and privacy/cost confirmation;
 - cannot be implemented as Quick under the current offline contract without changing product copy and
@@ -378,13 +382,13 @@ apps/web/src/styles/
 
 Decision-independent substrate:
 
-1. Done: record this audit, D3 and Function IDs in all matrices.
+1. Done: record this audit, selected D3=A and Function IDs in all matrices.
 2. Done: add Web image issue/types and sniff/decode/sample/hash adapter with browser tests.
 3. Done: upgrade IndexedDB owner to v3 and add atomic draft metadata/assets repository with v1/v2 migration tests.
 4. Done: add pure Quick reducer/invalidation tests.
 5. Done: add package-owned multi-surface preview fixture, focused CSS, package tests and real Vite geometry checks.
 
-After D3 is selected:
+After D3=A was selected:
 
 6. Update section 14 to one authoritative publication contract.
 7. Add generated-theme publication/runtime artwork adapter required by that option.
@@ -463,7 +467,7 @@ PNG SHA-256. Browser evidence remains Web-only and cannot close Desktop native p
 
 P7C.2 may reach Web `verified` only when:
 
-- D3 is selected and no implementation fabricates artwork content-risk values;
+- D3=A is selected; Quick never constructs artwork content-risk values because it never publishes artwork;
 - Quick performs zero model/provider/daemon/network requests;
 - valid local image analysis and deterministic Compiler output are proven;
 - invalid/corrupt/oversized inputs never enter draft publication or Registry;
@@ -488,3 +492,19 @@ P7C.2 may reach Web `verified` only when:
 - Do not put Canvas/IndexedDB/Blob logic in React components or `theme.tsx`.
 - Do not add AppShell, route, ViewId, SettingsSectionId, daemon API or database changes.
 - Do not modify Logo, Generate, Advanced or Desktop native repository in this slice.
+
+## 20. 2026-07-30 Web Verification
+
+- Production Settings entry, local controller, token-only compiler guard, generated publication adapter,
+  multi-surface preview, install/install-and-use and draft restoration are implemented.
+- Focused production E2E `2/2`, First Run companion E2E `4/4`, Quick substrate `4/4`, Web unit `13/13`,
+  Web typecheck, lint, i18n and `git diff --check` passed.
+- Installed manifests were inspected in IndexedDB: `generation.mode=quick`, Profile `ling-standard`, no
+  `manifest.artwork`, and zero `theme-assets` records for the generated theme.
+- Four real-renderer screenshots cover 1440x960 Light and 1280x800 Dark under
+  `evidence/features/quick-theme-first-run/`.
+- Selected App/Settings/Dark regression was `44/46`; the two failures are pre-existing stale Skill Governance
+  assertions requiring grey helper copy already removed from current product code. No touched file participates in
+  either failure.
+- Desktop native generated-theme install and restart remain open; Desktop does not expose the Web-only Create
+  action, so it cannot lead users into a publication path that will fail.

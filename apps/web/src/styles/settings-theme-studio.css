@@ -1,0 +1,282 @@
+.settings-theme-studio {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-5);
+}
+
+.settings-theme-studio-header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--ling-space-4);
+  padding-bottom: var(--ling-space-4);
+  border-bottom: 1px solid var(--ling-border-default);
+}
+
+.settings-theme-studio-header > span {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
+.settings-theme-studio-header strong,
+.settings-theme-studio-input h2,
+.settings-theme-studio-preview h2 {
+  margin: 0;
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+  line-height: var(--ling-line-sm);
+  letter-spacing: 0;
+}
+
+.settings-theme-studio-header small,
+.settings-theme-studio-input header small,
+.settings-theme-studio-preview header small,
+.settings-theme-studio-source-row small,
+.settings-theme-studio-dropzone-empty small,
+.settings-theme-studio-standard-row small,
+.settings-theme-studio-actions > span {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
+.settings-theme-studio-progress {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--ling-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.settings-theme-studio-progress li {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--ling-space-2);
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+}
+
+.settings-theme-studio-progress li::after {
+  width: 100%;
+  height: 1px;
+  margin-left: var(--ling-space-2);
+  background: var(--ling-border-default);
+  content: "";
+}
+
+.settings-theme-studio-progress li:last-child::after {
+  display: none;
+}
+
+.settings-theme-studio-progress svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+.settings-theme-studio-progress li[data-complete="true"],
+.settings-theme-studio-progress li[aria-current="step"] {
+  color: var(--ling-text-strong);
+}
+
+.settings-theme-studio-workspace {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+  gap: var(--ling-space-6);
+  align-items: start;
+}
+
+.settings-theme-studio-input,
+.settings-theme-studio-preview {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-5);
+}
+
+.settings-theme-studio-input > header,
+.settings-theme-studio-preview > header {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--ling-space-4);
+}
+
+.settings-theme-studio-input > header > span:first-child,
+.settings-theme-studio-preview > header > span:first-child {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
+.settings-theme-studio-local-note,
+.settings-theme-studio-preview > header > span:last-child {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  white-space: nowrap;
+}
+
+.settings-theme-studio-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.settings-theme-studio-dropzone {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  min-height: 116px;
+  align-items: center;
+  padding: var(--ling-space-5);
+  border: 1px dashed var(--ling-border-strong);
+  border-radius: var(--ling-radius-md);
+  background: var(--ling-bg-subtle);
+}
+
+.settings-theme-studio-dropzone[data-has-source="true"] {
+  min-height: 78px;
+  border-style: solid;
+  background: transparent;
+}
+
+.settings-theme-studio-dropzone-empty {
+  display: grid;
+  justify-items: center;
+  gap: var(--ling-space-3);
+  text-align: center;
+}
+
+.settings-theme-studio-dropzone-empty > svg {
+  width: 22px;
+  height: 22px;
+  color: var(--ling-text-muted);
+}
+
+.settings-theme-studio-dropzone-empty > span,
+.settings-theme-studio-standard-row > span {
+  display: grid;
+  gap: var(--ling-space-1);
+}
+
+.settings-theme-studio-source-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 48px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--ling-space-3);
+}
+
+.settings-theme-studio-source-row > img,
+.settings-theme-studio-source-row > svg {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--ling-radius-sm);
+  object-fit: cover;
+}
+
+.settings-theme-studio-source-row > span {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
+.settings-theme-studio-source-row strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-theme-studio-field-group,
+.settings-theme-studio-standard-row {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-2);
+}
+
+.settings-theme-studio-field-group > span,
+.settings-theme-studio-standard-row strong {
+  color: var(--ling-text-default);
+  font-size: var(--ling-font-sm);
+  font-weight: 650;
+}
+
+.settings-theme-studio-preview-controls {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ling-space-4);
+}
+
+.settings-theme-studio-preview-stage {
+  min-width: 0;
+  min-height: 392px;
+  max-height: min(58dvh, 620px);
+  overflow: auto;
+  padding: var(--ling-space-4);
+  border-radius: var(--ling-radius-md);
+  background: var(--ling-bg-subtle);
+}
+
+.settings-theme-studio-preview-stage > .ling-ui-empty-state {
+  min-height: 360px;
+}
+
+.settings-theme-studio-actions {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--ling-space-3);
+  padding-top: var(--ling-space-4);
+  border-top: 1px solid var(--ling-border-default);
+  background: var(--ling-bg-app);
+}
+
+.settings-theme-studio-actions > span {
+  min-width: 0;
+  margin-right: auto;
+}
+
+@supports not (height: 1dvh) {
+  .settings-theme-studio-preview-stage {
+    max-height: min(58vh, 620px);
+  }
+}
+
+@media (max-width: 1100px) {
+  .settings-theme-studio-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-theme-studio-preview {
+    grid-row: 1;
+  }
+}
+
+@media (max-width: 760px) {
+  .settings-theme-studio-preview-controls,
+  .settings-theme-studio-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .settings-theme-studio-actions > span {
+    margin-right: 0;
+  }
+
+  .settings-theme-studio-source-row {
+    grid-template-columns: 48px minmax(0, 1fr);
+  }
+}

@@ -30,6 +30,10 @@ import {
   type StoredWebThemePackage,
 } from "./shared/ui/theme/package/index.js";
 import {
+  publishWebGeneratedThemeManifest,
+  webGeneratedThemeDescriptor,
+} from "./shared/ui/theme/studio/index.js";
+import {
   createThemePackageRepository,
   type ThemePackageRepositoryDescriptor,
   type ThemePackageRepositoryPort,
@@ -59,6 +63,7 @@ export interface ThemeContextValue {
   readonly selection: ThemeSelection;
   readonly resolved: ResolvedThemeState;
   readonly repositoryReady: boolean;
+  readonly generatedThemePublishingSupported: boolean;
   readonly themes: readonly RegisteredTheme[];
   readonly themePackageRepairs: readonly ThemePackageRepairItem[];
   readonly storageWarning?: ThemeStorageWarning;
@@ -81,6 +86,7 @@ const ThemeContext = createContext<ThemeContextValue>({
   selection: DEFAULT_THEME_SELECTION,
   resolved: fallbackResolved,
   repositoryReady: false,
+  generatedThemePublishingSupported: false,
   themes: fallbackRegistry.list(),
   themePackageRepairs: [],
   setPreference: () => undefined,
@@ -313,10 +319,21 @@ export function ThemeProvider({ children }: { readonly children: ReactNode }): J
     if (manifest.source !== "local-import" && manifest.source !== "local-generated") {
       throw new Error("Only local theme manifests can be installed.");
     }
+    if (manifest.source === "local-generated" && registryRef.current.get(manifest.id)) {
+      throw new Error("This generated theme is already installed.");
+    }
     const result = registryRef.current.install(manifest, manifest.source);
     if (!result.ok || !result.theme) throw new Error(result.issues?.[0]?.message ?? "Theme manifest is invalid.");
     try {
-      await putStoredThemeManifest(result.theme.manifest);
+      if (result.theme.manifest.source === "local-generated") {
+        const stored = await publishWebGeneratedThemeManifest(result.theme.manifest);
+        repositoryDescriptorsRef.current.set(
+          result.theme.manifest.id,
+          webGeneratedThemeDescriptor(stored),
+        );
+      } else {
+        await putStoredThemeManifest(result.theme.manifest);
+      }
     } catch (error) {
       registryRef.current.uninstall(result.theme.manifest.id);
       throw error;
@@ -458,6 +475,7 @@ export function ThemeProvider({ children }: { readonly children: ReactNode }): J
     selection,
     resolved,
     repositoryReady,
+    generatedThemePublishingSupported: repositoryRef.current!.kind === "web",
     themes: registryRef.current.list(),
     themePackageRepairs,
     storageWarning,

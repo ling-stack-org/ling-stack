@@ -1,4 +1,4 @@
-import { Monitor, Palette, Upload } from "lucide-react";
+import { Monitor, Palette, Sparkles, Upload } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 import { useI18n, type Translate } from "../../i18n.js";
 import { useTheme } from "../../theme.js";
@@ -18,11 +18,12 @@ import { ThemePackageRepairList } from "./theme-packages/ThemePackageRepairList.
 import { ThemePreviewDialog } from "./theme-packages/ThemePreviewDialog.js";
 import { useThemePackageController } from "./theme-packages/useThemePackageController.js";
 
-export function InterfaceThemeSettings(): JSX.Element {
+export function InterfaceThemeSettings({ onCreateTheme }: { readonly onCreateTheme: () => void }): JSX.Element {
   const { t } = useI18n();
   const {
     resolved,
     repositoryReady,
+    generatedThemePublishingSupported,
     selection,
     setFixedTheme,
     setFollowSystem,
@@ -139,6 +140,17 @@ export function InterfaceThemeSettings(): JSX.Element {
         onReimport={packageController.openRepairReimport}
       />
       <div className="settings-theme-package-toolbar">
+        {generatedThemePublishingSupported ? (
+          <Button
+            disabled={!repositoryReady}
+            leadingIcon={<Sparkles aria-hidden="true" />}
+            size="sm"
+            variant="secondary"
+            onClick={onCreateTheme}
+          >
+            {t("Create theme")}
+          </Button>
+        ) : null}
         <Button
           ref={importButtonRef}
           disabled={!repositoryReady}

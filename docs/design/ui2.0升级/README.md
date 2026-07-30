@@ -10,7 +10,8 @@ package tests 和 static/build gates 通过；P9-EF 新增 changed-state 以 `8/
 Channel、Normal Conversation 和 AI 队友私聊的 UI 2.0 会话切片已全部关闭。
 `P7B.4 Startup + Run Diagnostics` 当前产品状态已于 2026-07-28 调整为待开发，Settings 导航入口隐藏；
 既有组件和验证证据仅作为保留实现的历史记录，后续重新开放前必须重新完成产品与视觉验收。
-`First Run 新入口` 是未决产品能力，不阻塞现有可达 Web UI 2.0 closeout；
+`First Run 新入口` 已于 2026-07-30 按柔性引导完成 Web 验收：未配置时自动出现、可跳过、跨刷新记忆，
+并复用模型工作台修复入口；
 `P7A.1 Settings Shell foundation`、`P7A.2 Settings Profile`、
 `P7A.3 Default Authorization + Personalization`、P7A.4 当前可达的 Interface Preferences 与
 `P7A.5 External Work`、`P7B.1 MCP Tool Servers` 与 `P7B.2 Skill Library` 已验证关闭。Skill Library
@@ -25,10 +26,9 @@ focused evidence `7/7` 和六张实页证据已闭环，现为 `verified`。原�
 定位和长列表 toolbar/table 叠压。`P7C.1 Web Theme Pack Management` 也已按 D1=A token+preview、
 D2=A Web-first 完成：package `45/45`、focused `5/5`、selected `83/83`、六张原尺寸证据及
 metadata 均通过，现为 `verified`。Desktop app-data/typed IPC/packaged restart 仍是独立明确待办，
-P7C.2 Quick Theme Studio 的 entry audit、图片验证/分析、IndexedDB v3 草稿、纯 reducer
-和 package-owned 四 surface/五 viewport Preview substrate 已完成，package `50/50`、focused `4/4`、
-Theme 联合 `15/15`。`Quick Theme Studio D3` 是未决产品能力，不阻塞现有可达 Web UI 2.0 closeout；生产
-controller/UI/publish 不提前接线。
+P7C.2 Quick Theme Studio 已选择 D3=A 并完成 Web token-only 生产入口：图片仅用于本地配色/token，
+manifest 不含 artwork，installed assets 为 0；production `2/2`、substrate `4/4`、Web unit `13/13` 和
+四张 Light/Dark 双尺寸证据通过。Desktop native generated-theme publication 仍由独立跨平台门管理。
 P8.1 AI Teammate Management 已不是当前执行入口：List/Search 已以 focused `4/4`、selected `30/30`
 和四张证据关闭；Default roles/Create 又以 shared Dialog/Form/Feedback、focused `5/5`、selected `35/35`
 和五张证据关闭；Profile/Avatar 又以 shared crop、protected policy、folded persona、scoped feedback、
@@ -298,8 +298,8 @@ Runs/Threads P11.2、Approvals P11.3 和 Profile P11.4 也已完成 Web 回归�
   lint/typecheck/i18n/build/diff check 全绿；两张 Runtime 重采图与正式 evidence SHA-256 完全一致。
 - Function ID 仍为 `173/32/31/14=250`；P4 只提升 U13 cleanup，总进度为 `93.4%`。
 - 下一批为 P5 Settings Subnav/Overlay 真实可达合同与账本 closeout；P3-Y 保持独立决策门；
-  `Quick Theme Studio D3`、`First Run 新入口`、`Skill Source Sync` 属于未决产品能力，不阻塞现有可达 Web UI 2.0
-  closeout；Desktop 平台门继续独立。
+  当时的 `Quick Theme Studio D3`、`First Run 新入口`、`Skill Source Sync` 属于未决产品能力；其中前两项已在
+  2026-07-30 后续 Web 切片关闭，Desktop 平台门继续独立。
 
 ### P5 Settings reachability closeout（2026-07-26）
 
@@ -489,10 +489,11 @@ Windows 11 x64 与完整 release evidence 未关闭前，Icon/Motion 均不提�
 
 ### Reachable Web Closeout Boundary
 
-以下五项统一登记为**未决产品能力，不阻塞现有可达 Web UI 2.0 closeout**：
+P9-EF closeout 时以下五项曾统一登记为未决能力；2026-07-30 后续独立切片已关闭前两项，历史 P9-EF
+分母保持不变：
 
-- `Quick Theme Studio D3`
-- `First Run 新入口`
+- `Quick Theme Studio D3`：D3=A，verified / Web；Desktop native publication open
+- `First Run 新入口`：柔性引导，verified / Web
 - `Teammate MCP A/A/A`
 - `Skill Source Sync`
 - `Council Runtime`

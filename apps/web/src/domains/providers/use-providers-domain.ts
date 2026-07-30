@@ -42,6 +42,7 @@ import type {
 export interface ProvidersState {
   readonly providers: readonly ProviderPreset[];
   readonly providerTemplates: readonly ProviderTemplate[];
+  readonly providersLoaded: boolean;
   readonly providersLoading: boolean;
   readonly providerForm: ProviderFormState;
   readonly editingProviderId: string;
@@ -99,6 +100,7 @@ export function useProvidersDomain(input: {
 }): ProvidersController {
   const [providers, setProviders] = useState<readonly ProviderPreset[]>([]);
   const [providerTemplates, setProviderTemplates] = useState<readonly ProviderTemplate[]>([]);
+  const [providersLoaded, setProvidersLoaded] = useState(false);
   const [providersLoading, setProvidersLoading] = useState(false);
   const [providerForm, setProviderForm] = useState<ProviderFormState>(defaultProviderForm);
   const [editingProviderId, setEditingProviderId] = useState("");
@@ -119,6 +121,7 @@ export function useProvidersDomain(input: {
     if (!cwd) {
       setProviders([]);
       setProviderListError(undefined);
+      setProvidersLoaded(true);
       return;
     }
 
@@ -131,6 +134,7 @@ export function useProvidersDomain(input: {
       setProviderListError(readProviderDomainError("load", caught));
     } finally {
       setProvidersLoading(false);
+      setProvidersLoaded(true);
     }
   }
 
@@ -492,6 +496,7 @@ export function useProvidersDomain(input: {
 
   function resetForCwd(): void {
     setProviders([]);
+    setProvidersLoaded(false);
     setProvidersLoading(false);
     setProviderForm(defaultProviderForm);
     setEditingProviderId("");
@@ -512,6 +517,7 @@ export function useProvidersDomain(input: {
     state: {
       providers,
       providerTemplates,
+      providersLoaded,
       providersLoading,
       providerForm,
       editingProviderId,
