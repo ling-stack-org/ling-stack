@@ -250,7 +250,7 @@ test("Computer Use HTTP projection and Stop wait for runtime acknowledgement", a
     assert.equal(handshake.status, 200);
     const handshakeBody = await handshake.json();
     assert.equal(handshakeBody.protocolVersion, 1);
-    assert.deepEqual(handshakeBody.capabilities, ["preview-source", "cua-driver-lease-v1"]);
+    assert.deepEqual(handshakeBody.capabilities, ["preview-source", "cua-driver-lease-v1", "cua-driver-readiness-details-v1"]);
     assert.equal(handshakeBody.bridgeTokenAccepted, true);
     assert.equal(handshakeBody.routeTokenAccepted, false);
     assert.equal(handshakeBody.defaultWorkspaceCwd, cwd);
@@ -762,7 +762,7 @@ test("Computer Use desktop bridge handshake proves workspace and scoped route au
     assert.equal(response.status, 200);
     const body = await response.json();
     assert.equal(body.protocolVersion, 1);
-    assert.deepEqual(body.capabilities, ["preview-source", "cua-driver-lease-v1"]);
+    assert.deepEqual(body.capabilities, ["preview-source", "cua-driver-lease-v1", "cua-driver-readiness-details-v1"]);
     assert.equal(body.bridgeTokenAccepted, true);
     assert.equal(body.routeTokenAccepted, true);
     assert.equal(body.defaultWorkspaceCwd, cwd);

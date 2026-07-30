@@ -15,12 +15,14 @@ import {
 } from "../../api.js";
 import type { DomainController, DomainError } from "../../app/domain-controller.js";
 import type { ManagedPluginCreateRequest, ManagedPluginView } from "../../types.js";
+import { PluginActionRequestFence, pluginActionKey } from "./plugin-action-fence.js";
+export { PluginActionRequestFence, pluginActionKey } from "./plugin-action-fence.js";
 
 export type PluginBusyAction = "create" | "apply" | "check" | "connect" | "enable" | "disable" | "validate" | "install" | "uninstall" | "refresh-package" | "runtime-preview";
 
 export const PLUGIN_DRAFT_ID = "draft";
 
-export type PluginActionOwner = "create" | "detected-connect" | "row" | "detail" | "guide" | "uninstall";
+export type PluginActionOwner = "create" | "detected-connect" | "row" | "detail" | "guide" | "uninstall" | "computer-control";
 
 export interface PluginActionRequest {
   readonly owner: PluginActionOwner;
@@ -87,7 +89,7 @@ export function usePluginsDomain(input: {
   const [pluginActionErrors, setPluginActionErrors] = useState<readonly PluginActionError[]>([]);
   const [error, setError] = useState<DomainError | undefined>();
   const autoConnectInFlightRef = useRef<Promise<ManagedPluginView | undefined> | undefined>();
-  const latestActionRequestsRef = useRef(new Map<string, string>());
+  const actionFenceRef = useRef(new PluginActionRequestFence());
   const loadRequestIdRef = useRef(0);
   const internalRequestIdRef = useRef(0);
   const clearPluginActionErrors = useCallback((filter: PluginActionErrorFilter): void => {
@@ -265,10 +267,11 @@ export function usePluginsDomain(input: {
     cwdOverride?: string,
   ): Promise<T | undefined> {
     const pending = { pluginId, action, ...request } satisfies PluginPendingAction;
-    const key = pluginActionKey(pending);
-    latestActionRequestsRef.current.set(key, request.requestId);
+    actionFenceRef.current.begin(pending);
     setPluginPendingActions((current) => upsertPendingAction(current, pending));
-    clearPluginActionErrors({ pluginId, action, owner: request.owner });
+    clearPluginActionErrors(request.owner === "computer-control" && isActivationFamilyAction(action)
+      ? { pluginId, owner: request.owner }
+      : { pluginId, action, owner: request.owner });
     const workspaceCwd = (cwdOverride ?? input.cwd).trim();
     if (!workspaceCwd) {
       recordPluginActionError(pending, input.translate("Local workspace is not ready."));
@@ -284,7 +287,9 @@ export function usePluginsDomain(input: {
         input.notify({ ...pending, tone: "error", message: outcome.errorMessage });
         return undefined;
       }
-      clearPluginActionErrors({ pluginId, action });
+      clearPluginActionErrors(request.owner === "computer-control" && isActivationFamilyAction(action)
+        ? { pluginId, owner: request.owner }
+        : { pluginId, action });
       if (outcome.successMessage) {
         input.notify({
           ...pending,
@@ -306,12 +311,12 @@ export function usePluginsDomain(input: {
   }
 
   function isLatestPluginAction(action: PluginPendingAction): boolean {
-    return latestActionRequestsRef.current.get(pluginActionKey(action)) === action.requestId;
+    return actionFenceRef.current.isLatest(action);
   }
 
   function finishPluginAction(action: PluginPendingAction): void {
     if (!isLatestPluginAction(action)) return;
-    latestActionRequestsRef.current.delete(pluginActionKey(action));
+    actionFenceRef.current.finish(action);
     setPluginPendingActions((current) => current.filter((candidate) => candidate.requestId !== action.requestId));
   }
 
@@ -331,7 +336,7 @@ export function usePluginsDomain(input: {
     setPluginActionErrors([]);
     setError(undefined);
     autoConnectInFlightRef.current = undefined;
-    latestActionRequestsRef.current.clear();
+    actionFenceRef.current.clear();
     loadRequestIdRef.current += 1;
   }
 
@@ -373,8 +378,8 @@ interface PluginOperationOutcome<T> {
   readonly noticePluginId?: string;
 }
 
-function pluginActionKey(action: Pick<PluginPendingAction, "pluginId" | "action" | "owner">): string {
-  return `${action.pluginId}:${action.action}:${action.owner}`;
+function isActivationFamilyAction(action: PluginBusyAction): boolean {
+  return action === "enable" || action === "disable" || action === "check";
 }
 
 function upsertPendingAction(

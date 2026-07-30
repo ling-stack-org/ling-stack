@@ -5,7 +5,6 @@ import type { ResponseLanguagePreference, UserProfile } from "../../types.js";
 import { ProfilePage } from "../profile/ProfilePage.js";
 
 import { Field, Select } from "../../shared/ui/index.js";
-import { DesktopComputerUsePreference } from "./DesktopComputerUsePreference.js";
 import { InterfaceThemeSettings } from "./InterfaceThemeSettings.js";
 import { ThemeStudioSurface } from "./theme-studio/ThemeStudioSurface.js";
 
@@ -71,7 +70,6 @@ export function InterfacePreferencesSettingsPanel({
           </Field>
         </div>
       </section>
-      <DesktopComputerUsePreference />
     </div>
   );
 }

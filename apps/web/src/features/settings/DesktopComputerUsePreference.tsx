@@ -3,7 +3,11 @@ import { MonitorUp } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useI18n } from "../../i18n.js";
 
-export function DesktopComputerUsePreference(): JSX.Element | null {
+export function DesktopComputerUsePreference({
+  sectionTitle = "Desktop",
+}: {
+  readonly sectionTitle?: string;
+} = {}): JSX.Element | null {
   const { t } = useI18n();
   const desktopComputerUse = typeof window === "undefined" ? undefined : window.lingDesktop?.computerUse;
   const [enabled, setEnabled] = useState(true);
@@ -79,7 +83,7 @@ export function DesktopComputerUsePreference(): JSX.Element | null {
     >
       <header className="settings-interface-section-header">
         <MonitorUp aria-hidden="true" />
-        <h2 id="settings-interface-desktop-title">{t("Desktop")}</h2>
+        <h2 id="settings-interface-desktop-title">{t(sectionTitle)}</h2>
       </header>
       <div className="desktop-computer-use-preference">
         <DataRow

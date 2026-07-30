@@ -6,6 +6,10 @@ import type {
   CuaDriverFeatureFlags,
 } from "@ling-stack/contracts";
 import type { DesktopDaemonStatus } from "../shared/desktop-capabilities.js";
+import type {
+  ComputerControlPermissionKind,
+  DesktopCommandResult,
+} from "../shared/desktop-capabilities.js";
 import {
   CuaDriverDesktopCoordinator,
   type CuaDriverCoordinatorSnapshot,
@@ -54,6 +58,8 @@ export interface DesktopRuntimeCuaDriverCoordinator {
    */
   enable(): Promise<CuaDriverCoordinatorSnapshot>;
   restart?(reason?: string): Promise<CuaDriverCoordinatorSnapshot>;
+  suspendForSystem?(reason: string): Promise<void>;
+  resumeForSystem?(): Promise<void>;
   shutdown(): Promise<void>;
 }
 
@@ -90,6 +96,11 @@ export interface DesktopRuntimeOptions {
   readonly coordinatorFactory?: DesktopRuntimeCuaDriverCoordinatorFactory;
   readonly availabilityClient?: CuaDriverAvailabilityClient;
   readonly onDiagnostic?: (event: string, details?: Readonly<Record<string, unknown>>) => void;
+  readonly openExternal?: (url: string) => Promise<void>;
+  readonly powerMonitor?: {
+    on(event: "lock-screen" | "suspend" | "unlock-screen" | "resume", listener: () => void): unknown;
+    off(event: "lock-screen" | "suspend" | "unlock-screen" | "resume", listener: () => void): unknown;
+  };
 }
 
 /**
@@ -115,6 +126,7 @@ export class DesktopRuntime {
   private stopDaemonStatusObserver: (() => void) | undefined;
   private shutdownRequested = false;
   private shutdownPromise: Promise<void> | undefined;
+  private stopPowerMonitor: (() => void) | undefined;
 
   constructor(private readonly options: DesktopRuntimeOptions) {
     this.platform = options.platform ?? process.platform;
@@ -134,6 +146,9 @@ export class DesktopRuntime {
       this.stopDaemonStatusObserver = options.daemon.onStatusChanged((status) => {
         this.handleDaemonStatusChanged(status);
       });
+      if (options.packaged === true && options.platformOwner && options.powerMonitor) {
+        this.stopPowerMonitor = this.observePowerMonitor(options.powerMonitor);
+      }
     }
   }
 
@@ -143,6 +158,58 @@ export class DesktopRuntime {
 
   get cuaDriverCoordinator(): DesktopRuntimeCuaDriverCoordinator | undefined {
     return this.coordinatorValue;
+  }
+
+  get computerControlPlatform(): "macos" | "windows" | undefined {
+    if (
+      this.options.packaged !== true
+      || !this.options.platformOwner
+      || !desktopBundledCuaDriverGateEnabled(this.featureFlags, this.platform)
+    ) {
+      return undefined;
+    }
+    return this.platform === "darwin" ? "macos" : this.platform === "win32" ? "windows" : undefined;
+  }
+
+  async requestComputerControlPermissions(): Promise<DesktopCommandResult> {
+    if (this.computerControlPlatform === "windows") {
+      return { accepted: false, reason: "unsupported_platform_action" };
+    }
+    if (this.computerControlPlatform !== "macos" || !this.options.platformOwner?.requestPermissions) {
+      return { accepted: false, reason: "computer_control_unavailable" };
+    }
+    try {
+      await this.options.platformOwner.requestPermissions();
+      await this.refreshCuaDriverPlatform("darwin_permission_request");
+      return { accepted: true };
+    } catch (error) {
+      return {
+        accepted: false,
+        reason: error instanceof Error ? error.message : "permission_request_failed",
+      };
+    }
+  }
+
+  async openComputerControlPermissionSettings(
+    permission: ComputerControlPermissionKind,
+  ): Promise<DesktopCommandResult> {
+    if (this.computerControlPlatform !== "macos") {
+      return { accepted: false, reason: "unsupported_platform_action" };
+    }
+    const url = permission === "accessibility"
+      ? "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+      : "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
+    try {
+      const openExternal = this.options.openExternal
+        ?? (async (target: string) => (await import("electron")).shell.openExternal(target).then(() => undefined));
+      await openExternal(url);
+      return { accepted: true };
+    } catch (error) {
+      return {
+        accepted: false,
+        reason: error instanceof Error ? error.message : "permission_settings_failed",
+      };
+    }
   }
 
   onStatusChanged(listener: (status: DesktopDaemonStatus) => void): () => void {
@@ -242,6 +309,35 @@ export class DesktopRuntime {
     });
   }
 
+  suspendComputerControlForSystem(reason: string): Promise<void> {
+    if (this.shutdownRequested) return Promise.resolve();
+    return this.enqueue(async () => {
+      const coordinator = this.coordinatorValue;
+      if (!coordinator) return;
+      if (coordinator.suspendForSystem) {
+        await coordinator.suspendForSystem(reason);
+      } else {
+        await this.shutdownCoordinator(reason);
+      }
+    });
+  }
+
+  resumeComputerControlForSystem(): Promise<void> {
+    if (this.shutdownRequested) return Promise.resolve();
+    return this.enqueue(async () => {
+      const coordinator = this.coordinatorValue;
+      if (!coordinator) {
+        await this.reconcileCoordinator();
+        return;
+      }
+      if (coordinator.resumeForSystem) {
+        await coordinator.resumeForSystem();
+      } else {
+        await this.reconcileCoordinator();
+      }
+    });
+  }
+
   /**
    * Cleanup is serialized and best-effort-complete: provider/coordinator first,
    * then the Desktop-owned daemon even when the earlier cleanup rejects.
@@ -252,6 +348,7 @@ export class DesktopRuntime {
     }
     this.shutdownRequested = true;
     this.stopObservingDaemonStatus();
+    this.stopObservingPowerMonitor();
     const pending = this.enqueue(async () => {
       let firstError: unknown;
       const attempt = async (operation: () => void | Promise<void>): Promise<void> => {
@@ -358,6 +455,7 @@ export class DesktopRuntime {
         daemonAuthorityEpoch: authority.daemonAuthorityEpoch,
         workspaceCwd: authority.workspaceCwd,
         platform,
+        readinessDetailsV1: authority.readinessDetailsV1,
         ...(platformMetadata.integrityCoverage
           ? { integrityCoverage: platformMetadata.integrityCoverage }
           : {}),
@@ -390,6 +488,7 @@ export class DesktopRuntime {
       featureFlags: this.featureFlags,
       packaged: this.options.packaged,
       requireReleaseEvidence: this.options.requireReleaseEvidence,
+      readinessDetailsV1: authority.readinessDetailsV1,
       platformBinding,
       availabilityPublisher,
       telemetry: createCuaDriverTelemetry({
@@ -544,6 +643,41 @@ export class DesktopRuntime {
     }
   }
 
+  private observePowerMonitor(monitor: NonNullable<DesktopRuntimeOptions["powerMonitor"]>): () => void {
+    const onLock = (): void => {
+      void this.suspendComputerControlForSystem("system_lock").catch(() => undefined);
+    };
+    const onSuspend = (): void => {
+      void this.suspendComputerControlForSystem("system_suspend").catch(() => undefined);
+    };
+    const onRecovery = (): void => {
+      void this.resumeComputerControlForSystem().catch(() => undefined);
+    };
+    monitor.on("lock-screen", onLock);
+    monitor.on("suspend", onSuspend);
+    monitor.on("unlock-screen", onRecovery);
+    monitor.on("resume", onRecovery);
+    return () => {
+      monitor.off("lock-screen", onLock);
+      monitor.off("suspend", onSuspend);
+      monitor.off("unlock-screen", onRecovery);
+      monitor.off("resume", onRecovery);
+    };
+  }
+
+  private stopObservingPowerMonitor(): void {
+    const stop = this.stopPowerMonitor;
+    this.stopPowerMonitor = undefined;
+    if (!stop) return;
+    try {
+      stop();
+    } catch (error) {
+      this.options.onDiagnostic?.("desktop_runtime.cua_driver_power_monitor_stop_failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   private assertCanStart(): void {
     if (this.shutdownRequested) {
       throw new DesktopRuntimeError("shutdown_requested");
@@ -570,7 +704,8 @@ function sameAuthorityTuple(
     && left.daemonAuthorityEpoch === right.daemonAuthorityEpoch
     && left.bridgeConnectionId === right.bridgeConnectionId
     && left.desktopInstanceEpoch === right.desktopInstanceEpoch
-    && left.workspaceCwd === right.workspaceCwd,
+    && left.workspaceCwd === right.workspaceCwd
+    && left.readinessDetailsV1 === right.readinessDetailsV1,
   );
 }
 

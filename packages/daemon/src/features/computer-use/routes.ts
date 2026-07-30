@@ -10,6 +10,7 @@ import type {
 import {
   COMPUTER_USE_ROUTE_TOKEN_HEADER,
   CUA_DRIVER_LEASE_V1_CAPABILITY,
+  CUA_DRIVER_READINESS_DETAILS_V1_CAPABILITY,
   isTerminalComputerUseStatus,
 } from "@ling-stack/contracts";
 import type { DaemonContext } from "../../context.js";
@@ -79,7 +80,11 @@ export async function handleComputerUseRoute(
       const authority = context.cuaDriverDesktopBridgeAuthority.issueAuthenticatedHandshake();
       const handshake: CuaDriverDesktopBridgeHandshakeResponseV1 = {
         protocolVersion: 1,
-        capabilities: ["preview-source", CUA_DRIVER_LEASE_V1_CAPABILITY],
+        capabilities: [
+          "preview-source",
+          CUA_DRIVER_LEASE_V1_CAPABILITY,
+          CUA_DRIVER_READINESS_DETAILS_V1_CAPABILITY,
+        ],
         bridgeTokenAccepted: true,
         routeTokenAccepted: configuredTokenMatches(
           context.computerUseRouteToken,

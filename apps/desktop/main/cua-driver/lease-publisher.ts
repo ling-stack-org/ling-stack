@@ -1,4 +1,7 @@
 import type {
+  CuaDriverIntegrityStatus,
+  CuaDriverPermissionSnapshot,
+  CuaDriverWindowsReadinessSnapshot,
   DesktopCuaDriverLeaseRevokeV1,
   DesktopCuaDriverLeaseV1,
 } from "@ling-stack/contracts";
@@ -108,6 +111,12 @@ export interface CuaDriverLeasePublisherOptions {
   readonly onLeaseLost?: (error: unknown) => void;
 }
 
+export interface CuaDriverLeaseReadinessDetails {
+  readonly integrity?: CuaDriverIntegrityStatus;
+  readonly permissions?: CuaDriverPermissionSnapshot;
+  readonly windowsReadiness?: CuaDriverWindowsReadinessSnapshot;
+}
+
 export class CuaDriverLeasePublisher {
   private readonly ttlMs: number;
   private readonly renewIntervalMs: number;
@@ -121,6 +130,7 @@ export class CuaDriverLeasePublisher {
   private abortController = new AbortController();
   private lastLeaseValue: DesktopCuaDriverLeaseV1 | undefined;
   private operationEpoch = 0;
+  private readinessDetails: CuaDriverLeaseReadinessDetails = Object.freeze({});
 
   constructor(private readonly options: CuaDriverLeasePublisherOptions) {
     this.ttlMs = boundedPositive(options.ttlMs, 15_000, CUA_DRIVER_LEASE_MAX_TTL_MS);
@@ -134,6 +144,19 @@ export class CuaDriverLeasePublisher {
 
   get lastLease(): DesktopCuaDriverLeaseV1 | undefined {
     return this.lastLeaseValue;
+  }
+
+  publishReadinessDetails(
+    details: CuaDriverLeaseReadinessDetails,
+  ): Promise<DesktopCuaDriverLeaseV1> {
+    if (this.closed) {
+      return Promise.reject(new CuaDriverLeasePublisherError("lease_publisher_closed"));
+    }
+    this.readinessDetails = Object.freeze({ ...details });
+    const currentPublish = this.publishPromise;
+    return currentPublish
+      ? currentPublish.then(() => this.publish())
+      : this.publish();
   }
 
   publish(): Promise<DesktopCuaDriverLeaseV1> {
@@ -175,6 +198,7 @@ export class CuaDriverLeasePublisher {
     }
     const lease: DesktopCuaDriverLeaseV1 = {
       ...this.options.lease,
+      ...this.readinessDetails,
       expiresAt: new Date(now.getTime() + this.ttlMs).toISOString(),
     };
     if (!isDesktopCuaDriverLeaseV1(lease)) {

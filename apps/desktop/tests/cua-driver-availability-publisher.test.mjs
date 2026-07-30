@@ -82,6 +82,28 @@ test("availability report preserves every non-ready state and exact Win32 metada
   );
 });
 
+test("readiness details are emitted only after daemon capability negotiation", () => {
+  const snapshot = {
+    lifecycle: "failed",
+    providerState: "permission_required",
+    generation: 2,
+    integrity: "verified",
+    permissions: {
+      accessibility: "unknown",
+      screenRecording: "denied",
+    },
+  };
+  const oldDaemon = createAvailabilityReport(darwinAuthority(), snapshot, 1);
+  const negotiated = createAvailabilityReport({
+    ...darwinAuthority(),
+    readinessDetailsV1: true,
+  }, snapshot, 1);
+  assert.equal(oldDaemon.integrity, undefined);
+  assert.equal(oldDaemon.permissions, undefined);
+  assert.equal(negotiated.integrity, "verified");
+  assert.deepEqual(negotiated.permissions, snapshot.permissions);
+});
+
 test("publisher serializes same-generation reports with monotonic sequence", async () => {
   const releases = [];
   const reports = [];
@@ -284,6 +306,7 @@ function darwinAuthority() {
     daemonAuthorityEpoch: "authority-a",
     workspaceCwd: "/workspace",
     platform: "darwin",
+    readinessDetailsV1: false,
     limitations: [],
   };
 }

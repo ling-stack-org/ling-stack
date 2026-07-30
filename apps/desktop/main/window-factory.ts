@@ -7,6 +7,7 @@ export interface MainWindowFactoryInput {
   readonly backgroundColor?: string;
   readonly daemonBaseUrl: string;
   readonly themePackageFirstPaint: DesktopThemePackageFirstPaintState;
+  readonly computerControlPlatform?: "macos" | "windows";
   readonly webIndexPath: string;
   readonly createWindow?: (options: BrowserWindowConstructorOptions) => BrowserWindow;
   readonly openExternal?: (url: string) => Promise<void> | void;
@@ -15,7 +16,7 @@ export interface MainWindowFactoryInput {
 }
 
 export function buildMainWindowOptions(
-  input: Pick<MainWindowFactoryInput, "backgroundColor" | "daemonBaseUrl" | "themePackageFirstPaint">,
+  input: Pick<MainWindowFactoryInput, "backgroundColor" | "daemonBaseUrl" | "themePackageFirstPaint" | "computerControlPlatform">,
   platform: NodeJS.Platform = process.platform,
 ): BrowserWindowConstructorOptions {
   return {
@@ -34,6 +35,9 @@ export function buildMainWindowOptions(
       additionalArguments: [
         `--ling-daemon-base-url=${input.daemonBaseUrl}`,
         encodeDesktopThemePackageFirstPaintArgument(input.themePackageFirstPaint),
+        ...(input.computerControlPlatform
+          ? [`--ling-computer-control-platform=${input.computerControlPlatform}`]
+          : []),
       ],
     },
   };

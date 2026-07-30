@@ -53,6 +53,34 @@ test("main window options freeze the shared geometry and platform chrome contrac
   );
 });
 
+test("main window forwards Computer Control authority only when the packaged runtime supplies it", () => {
+  const macOptions = buildMainWindowOptions({
+    daemonBaseUrl,
+    themePackageFirstPaint,
+    computerControlPlatform: "macos",
+  }, "darwin");
+  const windowsOptions = buildMainWindowOptions({
+    daemonBaseUrl,
+    themePackageFirstPaint,
+    computerControlPlatform: "windows",
+  }, "win32");
+
+  assert.equal(
+    macOptions.webPreferences?.additionalArguments?.at(-1),
+    "--ling-computer-control-platform=macos",
+  );
+  assert.equal(
+    windowsOptions.webPreferences?.additionalArguments?.at(-1),
+    "--ling-computer-control-platform=windows",
+  );
+  assert.equal(
+    buildMainWindowOptions({ daemonBaseUrl, themePackageFirstPaint }, "darwin")
+      .webPreferences?.additionalArguments?.some((argument) =>
+        argument.startsWith("--ling-computer-control-platform=")),
+    false,
+  );
+});
+
 test("main window stays hidden until ready and denies all renderer navigation", async () => {
   const harness = createWindowHarness();
   const created = [];

@@ -5,7 +5,10 @@ import { dirname, resolve } from "node:path";
 import test from "node:test";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
-import { DESKTOP_THEME_PACKAGE_IPC_CHANNELS } from "../dist/shared/ipc-channels.js";
+import {
+  DESKTOP_IPC_CHANNELS,
+  DESKTOP_THEME_PACKAGE_IPC_CHANNELS,
+} from "../dist/shared/ipc-channels.js";
 import { encodeDesktopThemePackageFirstPaintArgument } from "../dist/shared/theme-package-first-paint.js";
 
 const firstPaintState = Object.freeze({
@@ -166,6 +169,67 @@ test("main-window preload drops malformed Theme Package first-paint arguments", 
     "--ling-theme-package-first-paint=%7B%22repositoryRevision%22%3A0%7D",
   ]);
   assert.equal("firstPaint" in exposed.themePackages, false);
+});
+
+test("main-window preload exposes Computer Control only for a validated packaged platform argument", async () => {
+  const calls = [];
+  const ipcRenderer = {
+    invoke: async (channel, ...args) => {
+      calls.push([channel, ...args]);
+      return { accepted: true };
+    },
+    send: () => undefined,
+    on: () => undefined,
+    off: () => undefined,
+  };
+  let macCapabilities;
+  await executePreload({
+    contextBridge: {
+      exposeInMainWorld: (_name, value) => {
+        macCapabilities = value;
+      },
+    },
+    ipcRenderer,
+  }, [
+    "electron",
+    "app",
+    "--ling-daemon-base-url=http://127.0.0.1:17891",
+    encodeDesktopThemePackageFirstPaintArgument(firstPaintState),
+    "--ling-computer-control-platform=macos",
+  ]);
+
+  assert.deepEqual(JSON.parse(JSON.stringify({
+    packagedBundledCapable: macCapabilities.computerControl.packagedBundledCapable,
+    platform: macCapabilities.computerControl.platform,
+  })), {
+    packagedBundledCapable: true,
+    platform: "macos",
+  });
+  await macCapabilities.computerControl.requestPermissions();
+  await macCapabilities.computerControl.openPermissionSettings("screen_recording");
+  assert.deepEqual(calls, [
+    [DESKTOP_IPC_CHANNELS.computerControlRequestPermissions],
+    [DESKTOP_IPC_CHANNELS.computerControlOpenPermissionSettings, "screen_recording"],
+  ]);
+
+  for (const platformArgument of [undefined, "linux", "macos-extra"]) {
+    let capabilities;
+    await executePreload({
+      contextBridge: {
+        exposeInMainWorld: (_name, value) => {
+          capabilities = value;
+        },
+      },
+      ipcRenderer,
+    }, [
+      "electron",
+      "app",
+      "--ling-daemon-base-url=http://127.0.0.1:17891",
+      encodeDesktopThemePackageFirstPaintArgument(firstPaintState),
+      ...(platformArgument ? [`--ling-computer-control-platform=${platformArgument}`] : []),
+    ]);
+    assert.equal(capabilities.computerControl, undefined);
+  }
 });
 
 async function executePreload(electronMock, argv = [

@@ -4,7 +4,10 @@ import type {
   CuaDriverArchitecture,
   CuaDriverFeatureFlags,
   CuaDriverIntegrityCoverage,
+  CuaDriverIntegrityStatus,
   CuaDriverLimitation,
+  CuaDriverPermissionSnapshot,
+  CuaDriverWindowsReadinessSnapshot,
   CuaDriverProviderState,
   DesktopCuaDriverLeaseV1,
 } from "@ling-stack/contracts";
@@ -81,6 +84,9 @@ export interface CuaDriverCoordinatorSnapshot {
   readonly pid?: number;
   readonly reason?: string;
   readonly integrityCoverage?: CuaDriverIntegrityCoverage;
+  readonly integrity?: CuaDriverIntegrityStatus;
+  readonly permissions?: CuaDriverPermissionSnapshot;
+  readonly windowsReadiness?: CuaDriverWindowsReadinessSnapshot;
   readonly limitations?: readonly CuaDriverLimitation[];
   readonly artifacts?: {
     readonly lockDigest: string;
@@ -101,6 +107,8 @@ export interface CuaDriverCoordinatorOptions {
   readonly featureFlags?: CuaDriverFeatureFlags;
   readonly packaged?: boolean;
   readonly requireReleaseEvidence?: boolean;
+  /** Negotiated with the daemon; old daemons must not receive detail fields. */
+  readonly readinessDetailsV1?: boolean;
   /** Preferred production composition boundary for one coherent OS adapter. */
   readonly platformBinding?: CuaDriverPlatformBinding;
   /** Fixture-only fine-grained injection; cannot be mixed with platformBinding. */
@@ -260,6 +268,25 @@ export class CuaDriverDesktopCoordinator {
 
   get providerHost(): CuaDriverProviderHost | undefined {
     return this.host;
+  }
+
+  /** Host lock/suspend fence. Retains requested intent while retiring this generation. */
+  suspendForSystem(reason: string): Promise<void> {
+    if (this.stopped || !this.requestedEnabled) {
+      return Promise.resolve();
+    }
+    this.scheduleWindowsSessionSuspension(reason, this.generation);
+    return this.sessionTransitionPromise ?? Promise.resolve();
+  }
+
+  /** Recovery hint only; a fresh generation must still pass complete readiness. */
+  resumeForSystem(): Promise<void> {
+    if (this.stopped || !this.requestedEnabled || !this.windowsSessionSuspended) {
+      return Promise.resolve();
+    }
+    this.windowsSessionResumeHintPending = true;
+    this.resumeWindowsSessionIfHinted();
+    return this.sessionTransitionPromise ?? Promise.resolve();
   }
 
   /** Validate, bind and publish one generation. Child spawn remains lazy until initialize. */
@@ -577,6 +604,7 @@ export class CuaDriverDesktopCoordinator {
               },
             } : {}),
             ...(readiness.reason ? { reason: readiness.reason } : {}),
+            ...readinessSnapshotDetails(readiness),
           });
           if (!readiness.ready) {
             if (readiness.providerState === "interactive_session_required") {
@@ -590,6 +618,15 @@ export class CuaDriverDesktopCoordinator {
           const readiness = await this.readinessController.check(readinessContext());
           if (this.host?.generation !== generation) {
             throw new Error("cua_driver_readiness_generation_stale");
+          }
+          if (this.options.readinessDetailsV1) {
+            await publisher.publishReadinessDetails({
+              integrity: "verified",
+              ...(readiness.permissions ? { permissions: readiness.permissions } : {}),
+              ...(readiness.windowsReadiness
+                ? { windowsReadiness: readiness.windowsReadiness }
+                : {}),
+            });
           }
           const readinessAction = classifyCuaDriverInitialReadiness(readiness);
           if (readinessAction !== "open_call_gate") {
@@ -608,6 +645,7 @@ export class CuaDriverDesktopCoordinator {
                 },
               } : {}),
               ...(readiness.reason ? { reason: readiness.reason } : {}),
+              ...readinessSnapshotDetails(readiness),
             });
             if (readiness.providerState === "interactive_session_required") {
               this.scheduleWindowsSessionSuspension(readiness.reason ?? "windows_interactive_session_required", generation);
@@ -631,6 +669,7 @@ export class CuaDriverDesktopCoordinator {
                 ...(this.artifacts.catalogDigest ? { providerCatalogDigest: this.artifacts.catalogDigest } : {}),
               },
             } : {}),
+            ...readinessSnapshotDetails(readiness),
           });
           return { callGate: "open" as const };
         },
@@ -660,6 +699,7 @@ export class CuaDriverDesktopCoordinator {
           : this.options.platform === "win32"
             ? { integrityCoverage: "standard" as const }
             : {}),
+        ...(this.options.readinessDetailsV1 ? { integrity: "verified" as const } : {}),
       };
       const leaseClient = this.options.leaseClient ?? new HttpCuaDriverLeaseClient({
         daemonBaseUrl: this.options.daemonBaseUrl,
@@ -841,8 +881,7 @@ export class CuaDriverDesktopCoordinator {
 
   private scheduleWindowsSessionSuspension(reason: string, generation: number): void {
     if (
-      this.options.platform !== "win32"
-      || !this.requestedEnabled
+      !this.requestedEnabled
       || this.stopped
       || this.host?.generation !== generation
     ) {
@@ -914,8 +953,7 @@ export class CuaDriverDesktopCoordinator {
 
   private handleWindowsSessionRecoveryHint(hint: CuaDriverWindowsSessionRecoveryHint): void {
     if (
-      this.options.platform !== "win32"
-      || (hint.kind !== "unlock" && hint.kind !== "session_active")
+      (hint.kind !== "unlock" && hint.kind !== "session_active")
       || !this.windowsSessionSuspended
       || !this.requestedEnabled
       || this.stopped
@@ -1104,8 +1142,15 @@ export class CuaDriverDesktopCoordinator {
   }
 
   private publishSnapshot(input: Omit<CuaDriverCoordinatorSnapshot, "generation"> & { readonly generation?: number }): CuaDriverCoordinatorSnapshot {
+    const integrity: CuaDriverIntegrityStatus = input.integrity
+      ?? (input.providerState === "corrupt"
+        ? "failed"
+        : this.artifacts
+          ? "verified"
+          : "unknown");
     const snapshot: CuaDriverCoordinatorSnapshot = {
       ...input,
+      ...(this.options.readinessDetailsV1 ? { integrity } : {}),
       ...(this.platformMetadata?.integrityCoverage
         ? { integrityCoverage: this.platformMetadata.integrityCoverage }
         : {}),
@@ -1129,6 +1174,15 @@ export class CuaDriverDesktopCoordinator {
     });
     return snapshot;
   }
+}
+
+function readinessSnapshotDetails(
+  readiness: CuaDriverReadinessResult,
+): Pick<CuaDriverCoordinatorSnapshot, "permissions" | "windowsReadiness"> {
+  return {
+    ...(readiness.permissions ? { permissions: readiness.permissions } : {}),
+    ...(readiness.windowsReadiness ? { windowsReadiness: readiness.windowsReadiness } : {}),
+  };
 }
 
 export type CuaDriverInitialReadinessAction =

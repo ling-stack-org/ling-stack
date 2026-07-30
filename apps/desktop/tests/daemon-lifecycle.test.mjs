@@ -205,6 +205,7 @@ test("bundled gate accepts the typed handshake guard and freezes its authority t
     bridgeConnectionId: "connection-a",
     desktopInstanceEpoch: 7,
     workspaceCwd: canonicalWorkspace(defaultWorkspaceCwd),
+    readinessDetailsV1: true,
   });
   assert.equal(Object.isFrozen(authority), true);
   await lifecycle.ensureStarted();
@@ -652,6 +653,7 @@ test("restart authority wins when an older in-flight ensure handshake resolves l
     bridgeConnectionId: "connection-2",
     desktopInstanceEpoch: 2,
     workspaceCwd: canonicalWorkspace(defaultWorkspaceCwd),
+    readinessDetailsV1: true,
   });
   assert.equal(handshakeCount, 2);
   await lifecycle.stopOwnedDaemon();
@@ -1127,7 +1129,7 @@ function bundledDarwinFeatureFlags() {
 function typedHandshake(defaultWorkspaceCwd, authority) {
   return {
     protocolVersion: 1,
-    capabilities: ["preview-source", "cua-driver-lease-v1"],
+    capabilities: ["preview-source", "cua-driver-lease-v1", "cua-driver-readiness-details-v1"],
     bridgeTokenAccepted: true,
     routeTokenAccepted: true,
     defaultWorkspaceCwd: canonicalWorkspace(defaultWorkspaceCwd),

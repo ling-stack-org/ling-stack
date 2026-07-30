@@ -1,0 +1,144 @@
+.computer-control-settings {
+  display: grid;
+  gap: 18px;
+  width: min(100%, 920px);
+  padding: 4px 0 28px;
+}
+
+.computer-control-page-header,
+.computer-control-status-copy,
+.computer-control-section-header,
+.computer-control-row-copy,
+.computer-control-readiness-copy {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.computer-control-page-header h1,
+.computer-control-section h2,
+.computer-control-page-header p,
+.computer-control-section p {
+  margin: 0;
+}
+
+.computer-control-page-header p,
+.computer-control-section p,
+.computer-control-row-copy small,
+.computer-control-readiness-copy small {
+  color: var(--ling-text-muted);
+}
+
+.computer-control-page-icon,
+.computer-control-section-icon,
+.computer-control-section-header > span {
+  display: inline-grid;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  place-items: center;
+  border: 1px solid var(--ling-border-default);
+  border-radius: 10px;
+  background: var(--ling-bg-elevated);
+  color: var(--ling-text-link);
+}
+
+.computer-control-section {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--ling-border-default);
+  border-radius: 14px;
+  background: var(--ling-bg-panel);
+}
+
+.computer-control-status-card {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.computer-control-status-card > .ling-ui-button,
+.computer-control-status-card > .ling-ui-inline-feedback {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+
+.computer-control-status-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.computer-control-eyebrow {
+  color: var(--ling-text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.computer-control-section-header {
+  align-items: center;
+}
+
+.computer-control-section-header > span {
+  width: 30px;
+  height: 30px;
+  flex-basis: 30px;
+}
+
+.computer-control-readiness-list {
+  display: grid;
+  gap: 2px;
+}
+
+.computer-control-readiness-row,
+.computer-control-section .ling-ui-data-row {
+  min-height: 58px;
+}
+
+.computer-control-row-copy,
+.computer-control-readiness-copy {
+  flex-direction: column;
+  gap: 3px;
+}
+
+.computer-control-advanced-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 18px;
+  margin: 0;
+}
+
+.computer-control-advanced-grid > div {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--ling-border-default);
+}
+
+.computer-control-advanced-grid dt {
+  color: var(--ling-text-muted);
+  font-size: 12px;
+}
+
+.computer-control-advanced-grid dd {
+  margin: 4px 0 0;
+  font-weight: 600;
+}
+
+.computer-control-limitations {
+  display: grid;
+  gap: 8px;
+}
+
+.computer-control-limitations > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+@media (max-width: 760px) {
+  .computer-control-status-card,
+  .computer-control-advanced-grid {
+    grid-template-columns: 1fr;
+  }
+}

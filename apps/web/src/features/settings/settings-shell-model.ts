@@ -7,6 +7,7 @@ import {
   Database,
   GitBranch,
   Palette,
+  MonitorCog,
   Shield,
   SlidersHorizontal,
   UserCircle,
@@ -22,6 +23,7 @@ export type SettingsSectionId =
   | "personal-profile"
   | "personalization"
   | "interface-preferences"
+  | "computer-control"
   | "external-work"
   | "mcp-tools"
   | "skill-library"
@@ -45,6 +47,12 @@ export interface SettingsSectionGroupDefinition {
 }
 
 export const settingsSectionGroups: readonly SettingsSectionGroupDefinition[] = [
+  {
+    heading: "Device",
+    items: [
+      { id: "computer-control", label: "Computer Control", icon: MonitorCog },
+    ],
+  },
   {
     heading: "Workspace tools",
     items: [

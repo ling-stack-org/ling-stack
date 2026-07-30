@@ -97,6 +97,15 @@ test("Windows initial readiness uses the active stdio child and records its resp
   const result = await controller.check(context);
   assert.equal(result.ready, true);
   assert.equal(result.readinessSequence, 7);
+  assert.deepEqual(result.windowsReadiness, {
+    interactiveSession: "ready",
+    wgcApi: "supported",
+    d3d11: "available",
+    uiaRuntime: "available",
+    contentObserved: false,
+    integrityCoverage: "standard",
+    uiaHelper: "not_required",
+  });
   assert.deepEqual(request, {
     method: "ling/managed_readiness",
     params: { schemaVersion: 1, childInstanceNonce: context.childInstanceNonce, leaseGeneration: 5 },
@@ -125,6 +134,7 @@ test("Windows Session 0 initial readiness is valid but requires an interactive s
   assert.equal(result.ready, false);
   assert.equal(result.providerState, "interactive_session_required");
   assert.equal(result.reason, "windows_interactive_session_required");
+  assert.equal(result.windowsReadiness.interactiveSession, "session_zero");
 });
 
 test("Windows cross-session readiness change projects interactive-session recovery", async () => {

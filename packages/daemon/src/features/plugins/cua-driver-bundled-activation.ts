@@ -521,6 +521,11 @@ export class BundledCuaDriverActivationService {
               ...(currentLease.integrityCoverage
                 ? { integrityCoverage: currentLease.integrityCoverage }
                 : {}),
+              ...(currentLease.integrity ? { integrity: currentLease.integrity } : {}),
+              ...(currentLease.permissions ? { permissions: currentLease.permissions } : {}),
+              ...(currentLease.windowsReadiness
+                ? { windowsReadiness: currentLease.windowsReadiness }
+                : {}),
               ...(currentLease.platform === "win32" && currentLease.integrityCoverage === "standard"
                 ? { limitations: ["elevated_pixel_input", "uwp_send_input"] as const }
                 : {}),
@@ -793,6 +798,11 @@ function desktopAvailabilityProjection(
     platform: availability.platform,
     ...(availability.integrityCoverage
       ? { integrityCoverage: availability.integrityCoverage }
+      : {}),
+    ...(availability.integrity ? { integrity: availability.integrity } : {}),
+    ...(availability.permissions ? { permissions: availability.permissions } : {}),
+    ...(availability.windowsReadiness
+      ? { windowsReadiness: availability.windowsReadiness }
       : {}),
     ...(availability.limitations
       ? { limitations: availability.limitations }

@@ -10,6 +10,7 @@ import {
   type ComputerUseHostObstacleKind,
   type ComputerUsePipDeckOwner,
   type ComputerUsePreviewReleaseMediaAck,
+  type ComputerControlPermissionKind,
   type DesktopRect,
 } from "../shared/desktop-capabilities.js";
 import { DESKTOP_IPC_CHANNELS } from "../shared/ipc-channels.js";
@@ -26,7 +27,14 @@ const MAX_HOST_LAYOUT_AGE_MS = 5 * 60 * 1_000;
 const MAX_HOST_LAYOUT_FUTURE_SKEW_MS = 60 * 1_000;
 
 export function registerDesktopIpc(input: {
-  readonly runtime: Pick<DesktopRuntime, "status" | "restart" | "onStatusChanged">;
+  readonly runtime: Pick<
+    DesktopRuntime,
+    | "status"
+    | "restart"
+    | "onStatusChanged"
+    | "requestComputerControlPermissions"
+    | "openComputerControlPermissionSettings"
+  >;
   readonly computerUse: ComputerUsePreviewCoordinator;
   readonly getMainWindow: () => BrowserWindow | undefined;
   readonly navigationIntents?: DesktopNavigationIntentStore;
@@ -113,6 +121,16 @@ export function registerDesktopIpc(input: {
       return { accepted: false, reason: "unauthorized_or_invalid_auto_show" };
     }
     return input.computerUse.setAutoShow(enabled);
+  });
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.computerControlRequestPermissions, async (event) =>
+    isMainWindowSender(event)
+      ? input.runtime.requestComputerControlPermissions()
+      : { accepted: false, reason: "unauthorized_sender" });
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.computerControlOpenPermissionSettings, async (event, permission: unknown) => {
+    if (!isMainWindowSender(event) || !isComputerControlPermissionKind(permission)) {
+      return { accepted: false, reason: "unauthorized_or_invalid_permission" };
+    }
+    return input.runtime.openComputerControlPermissionSettings(permission);
   });
   desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.computerUsePreviewSnapshotGet, (event) =>
     input.computerUse.ownsPreviewWebContents(event.sender.id)
@@ -517,4 +535,8 @@ function isFiniteNumber(value: unknown): value is number {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isComputerControlPermissionKind(value: unknown): value is ComputerControlPermissionKind {
+  return value === "accessibility" || value === "screen_recording";
 }

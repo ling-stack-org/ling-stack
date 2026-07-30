@@ -10,6 +10,16 @@ test("catalog projection keeps the complete Windows standard coverage tuple", ()
     providerCatalogDigest: "b".repeat(64),
     integrityCoverage: "standard",
     limitations: ["elevated_pixel_input", "uwp_send_input"],
+    integrity: "verified",
+    windowsReadiness: {
+      interactiveSession: "ready",
+      wgcApi: "supported",
+      d3d11: "available",
+      uiaRuntime: "available",
+      contentObserved: false,
+      integrityCoverage: "standard",
+      uiaHelper: "not_required",
+    },
   }, "win32"), {
     providerVersion: "0.8.3",
     providerDistributionRevision: "ling.1",
@@ -17,6 +27,16 @@ test("catalog projection keeps the complete Windows standard coverage tuple", ()
     providerCatalogDigest: "b".repeat(64),
     integrityCoverage: "standard",
     limitations: ["elevated_pixel_input", "uwp_send_input"],
+    integrity: "verified",
+    windowsReadiness: {
+      interactiveSession: "ready",
+      wgcApi: "supported",
+      d3d11: "available",
+      uiaRuntime: "available",
+      contentObserved: false,
+      integrityCoverage: "standard",
+      uiaHelper: "not_required",
+    },
   });
 });
 

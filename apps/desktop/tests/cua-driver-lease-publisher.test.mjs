@@ -68,6 +68,33 @@ test("revoke fences an in-flight publication and prevents stale renewal", async 
   assert.equal(calls.at(-1).type, "revoke");
 });
 
+test("negotiated readiness details republish the same generation without changing authority", async () => {
+  const leases = [];
+  const publisher = new CuaDriverLeasePublisher({
+    client: {
+      async publish(lease) { leases.push(lease); },
+      async revoke() {},
+    },
+    lease: leaseTemplate(),
+    ttlMs: 30_000,
+    renewIntervalMs: 20_000,
+  });
+  await publisher.publish();
+  await publisher.publishReadinessDetails({
+    integrity: "verified",
+    permissions: {
+      accessibility: "granted",
+      screenRecording: "granted",
+      capturable: true,
+    },
+  });
+  assert.equal(leases.length, 2);
+  assert.equal(leases[0].generation, leases[1].generation);
+  assert.equal(leases[1].integrity, "verified");
+  assert.equal(leases[1].permissions.capturable, true);
+  await publisher.revoke();
+});
+
 test("HTTP lease client requires loopback and sends bridge token plus workspace-bound route", async () => {
   const requests = [];
   const client = new HttpCuaDriverLeaseClient({
