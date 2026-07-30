@@ -110,6 +110,15 @@ export interface DesktopCommandResult {
   readonly reason?: string;
 }
 
+export type ComputerControlPermissionKind = "accessibility" | "screen_recording";
+
+export interface ComputerControlDesktopCapability {
+  readonly packagedBundledCapable: true;
+  readonly platform: "macos" | "windows";
+  requestPermissions(): Promise<DesktopCommandResult>;
+  openPermissionSettings(permission: ComputerControlPermissionKind): Promise<DesktopCommandResult>;
+}
+
 export interface DesktopNavigationIntent {
   readonly kind: "open_conversation";
   readonly requestId: number;
@@ -177,6 +186,8 @@ export interface LingDesktopCapabilities {
     getStatus(): Promise<DesktopDaemonStatus>;
     restart(): Promise<DesktopDaemonStatus>;
   };
+  /** Present only when this packaged host carries bundled provider authority. */
+  readonly computerControl?: ComputerControlDesktopCapability;
   readonly computerUse: {
     reportLocale(locale: ComputerUsePreviewLocale): void;
     reportSelectedDeckOwner(owner?: ComputerUsePipDeckOwner): void;

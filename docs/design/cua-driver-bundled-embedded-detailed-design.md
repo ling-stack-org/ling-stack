@@ -2,6 +2,38 @@
 
 ## Status
 
+### Computer Control settings contract (2026-07-30)
+
+The final bundled product surface is **Settings > Device > Computer Control**. This
+supersedes the earlier renderer decision that kept the canonical Cua Driver row visible in
+Plugin Manager. The earlier row/view model remains useful implementation substrate, but in
+`bundled_embedded` mode it is consumed by the new page and filtered from ordinary Plugin
+Manager and MCP Settings presentation.
+
+The internal topology is unchanged:
+
+```text
+Desktop packaged capability (static eligibility only)
+  -> Desktop readiness / authenticated lease / child lifetime
+  -> daemon Cua Driver V2 setup projection (only dynamic state source)
+  -> Computer Control controller and pure view model
+  -> Settings > Device > Computer Control
+```
+
+The new surface must not:
+
+- create a Computer Control database table or a third enablement API;
+- let the renderer start or stop `ling-cua-driver` directly;
+- globally remove `trusted-local:cua-driver` or `mcp_cua_driver` from shared domains;
+- infer macOS permissions or Windows readiness from OS name, error copy or stale local UI;
+- expose provider paths, MCP endpoints, install/uninstall or independent update controls.
+
+The implementation reuses canonical plugin `enable`, `check` and `disable` transactions.
+`requestedEnabled` owns the switch; `effectiveEnabled` controls tool eligibility only.
+Permission/readiness facts travel through the authenticated Desktop lease/availability
+path into the existing setup projection. The renderer receives no direct readiness
+snapshot from IPC.
+
 ### Active internal package profile (2026-07-24)
 
 The internal package uses one shared artifact-layout contract:
@@ -74,17 +106,16 @@ pinned to the committed trust root and real verifier. The review-only promotion 
 now independently reverifies native candidates A/B, rereads bounded immutable snapshots,
 requires identical stable artifact maps and emits separate macOS/Windows proposal artifacts
 with `MANUAL_REVIEW_REQUIRED`; it never mutates the committed lock or source inputs.
-The Plugin Manager renderer now maps the V2 bundled provider state through a dedicated pure
-view model. The canonical `trusted-local:cua-driver` row remains the only visible row, the
-historical package shell stays hidden, requested intent and effective readiness remain
-separate, and bundled repair states cannot open the external install drawer. A committed
-enable intent that is waiting for Desktop returns `202 Accepted`, so the renderer consumes
-the new `requestedEnabled=true`, `effectiveEnabled=false` projection instead of losing it
-behind an error transport. Bundled projections carrying any `external_*` provider state
-normalize to an invalid fail-closed state and never enter legacy auto-connect. Provider
-revision `ling.1` is shown as `0.8.3 (Ling build 1)`. macOS and Windows state copy,
-Windows standard-tier limitations, English/Chinese copy and renderer E2E coverage are
-implemented; packaged clean-host product smoke remains a later release gate.
+The existing Plugin Manager renderer maps the V2 bundled provider state through a dedicated
+pure view model. That work remains the compatibility baseline for status semantics, but the
+canonical `trusted-local:cua-driver` row is no longer visible in bundled packaged UI. The
+Computer Control page consumes the same requested/effective projection and repair states.
+A committed enable intent that is waiting for Desktop returns `202 Accepted`, so the switch
+continues to render `requestedEnabled=true`, `effectiveEnabled=false` instead of losing the
+intent behind an error transport. Bundled projections carrying any `external_*` provider
+state normalize to an invalid fail-closed state and never enter legacy auto-connect.
+Provider revision `ling.1` is shown as `0.8.3 (Ling build 1)`. The old row remains visible
+only for `external_local`; packaged clean-host product smoke remains a later release gate.
 Complete output-parent
 staging/cleanup mutation sections use a cross-process native parent lease; temp-root
 parent/root identities bind security and
@@ -121,6 +152,12 @@ The staged delivery plan is
   mismatch.
 - Preserve the current external provider flow for standalone/dev use without silently
   selecting it in packaged Desktop.
+- Present bundled Computer Control as one first-class Settings capability, not as a user-
+  installed plugin or generic MCP server.
+- Preserve canonical plugin/MCP records for execution policy while hiding them only from
+  the two generic management surfaces.
+- Keep V1 locked-computer control disabled and make page/window/PiP close semantics
+  independent from activation.
 - Produce a deterministic Windows acceptance handoff even though Windows colleagues own
   real-machine execution and sign-off.
 
@@ -132,8 +169,8 @@ The staged delivery plan is
 | Provider distribution | The Ling-carried platform binaries built from upstream `cua-driver-rs-v0.8.3` plus the locked managed-embedding patch series |
 | Embedded host | The Electron main process inside the tier-appropriate Ling Desktop package |
 | Provider host | Desktop module that owns the platform process group and stdio MCP connection |
-| macOS provider | Thin arm64 Mach-O `cua-driver` launched directly in upstream embedded mode |
-| Windows main provider | x64 `cua-driver.exe` launched directly in upstream embedded mode in the Desktop session |
+| macOS provider | Thin arm64 Mach-O distributed as `ling-cua-driver`, launched directly in upstream embedded mode |
+| Windows main provider | x64 PE distributed as `ling-cua-driver.exe`, launched directly in upstream embedded mode in the Desktop session |
 | Windows UIAccess helper | Future x64 `cua-driver-uia.exe` secure-path artifact; audit-only in V1 and unusable unless signing, installer, ShellExecute, PID, routing and live UIAccess gates pass |
 | Private helper payload | The versioned provider resource carried and installed only by Ling Setup; it is not a second Windows product, service, PATH command, Start-menu app or independently updated component |
 | Signing tier | Windows artifact trust class: `unsigned_dev`, `test_signed_internal` or `production_signed` |
@@ -151,6 +188,11 @@ plugin id:       trusted-local:cua-driver
 logical MCP id:  mcp_cua_driver
 Ling bundle id:  com.lingstack.desktop
 ```
+
+`trusted-local:cua-driver` and `mcp_cua_driver` are stable internal identities in bundled
+mode, not labels shown to a normal user. The bundled user-facing capability name is
+Computer Control. `external_local` continues to expose the legacy identities for developer
+diagnosis and explicit external setup.
 
 The historical `bundled:cua-driver` package id remains hidden compatibility data. Its
 package version must never be presented as the native provider version.
@@ -219,9 +261,9 @@ apps/desktop/
       telemetry.ts              # bounded Desktop diagnostics
   resources/
     providers/cua-driver/0.8.3-ling.1/
-      darwin/{cua-driver,provider-seal.json}
+      darwin/{ling-cua-driver,provider-seal.json}
       win32-x64/provider-integrity.cat  # signed tiers only
-      win32-x64/payload/{cua-driver.exe,provider-seal.json}
+      win32-x64/payload/{ling-cua-driver.exe,provider-seal.json}
       provider-lock.json
       LICENSE.md
       THIRD_PARTY_NOTICES.md
@@ -237,11 +279,29 @@ packages/daemon/
   src/features/mcp/
     transport-factory.ts        # lease -> Streamable HTTP transport
     lease-client-pool.ts        # one long-lived MCP client per lease generation
+
+apps/web/
+  src/domains/computer-control/
+    computer-control-view-model.ts      # pure setup/busy/error -> product state mapping
+    use-computer-control-controller.ts  # composes canonical plugin actions; owns no copy
+  src/features/settings/computer-control/
+    ComputerControlSettingsPage.tsx     # page sections and accessible actions
+    ComputerControlStatusDetails.tsx    # platform readiness and advanced read-only details
+  src/features/settings/
+    settings-shell-model.ts             # Device group and capability-gated section
+    DesktopComputerUsePreference.tsx    # reused PiP preference, moved in page ownership
+
+apps/desktop/
+  shared/desktop-capabilities.ts        # static eligibility + narrow permission commands
+  main/ipc.ts                           # main-window sender validation only
 ```
 
 The final filenames can follow nearby repository conventions, but responsibilities must
 not collapse into `apps/desktop/main/main.ts`, daemon routes, or the Web Plugin Manager
-component.
+component. `SettingsPage.tsx` only assembles the new page; it does not own the view-model
+state machine. `usePluginsDomain()` remains the mutation/data owner, and the Computer
+Control controller supplies a dedicated `computer-control` action owner so pending/error
+state cannot collide with a hidden Plugin Manager row.
 
 ## Provider Lock
 
@@ -570,7 +630,7 @@ can be used only for development and cannot satisfy packaged TCC or public relea
 Windows signing is a three-tier discriminated contract:
 
 The tier-governed tuple is exactly the Ling NSIS installer, installed Ling main PE,
-trusted uninstaller, private `cua-driver.exe`, and `provider-integrity.cat` for signed
+trusted uninstaller, private `ling-cua-driver.exe`, and `provider-integrity.cat` for signed
 tiers. The private provider payload allowlist permits no other member. Electron/Chromium
 vendor DLLs and native resources outside that payload remain under the existing Electron
 Builder package/signing policy; this design does not silently enable `signDlls` or require
@@ -1143,12 +1203,12 @@ providers/
       LICENSE.md
       THIRD_PARTY_NOTICES.md
       darwin/
-        cua-driver
+        ling-cua-driver
         provider-seal.json
       win32-x64/
         provider-integrity.cat  # signed tiers only; absent for unsigned_dev
         payload/
-          cua-driver.exe
+          ling-cua-driver.exe
           provider-seal.json
 ```
 
@@ -1319,11 +1379,11 @@ The accepted process trees are:
 ```text
 macOS LaunchServices / user session
   -> Ling Stack.app Electron main
-       -> packaged cua-driver mcp --embedded
+       -> packaged ling-cua-driver mcp --embedded
 
 Windows interactive user session
   -> Ling Stack.exe Electron main
-       -> packaged cua-driver.exe mcp --embedded
+       -> packaged ling-cua-driver.exe mcp --embedded
        -. optional future full tier .-> signed secure-path cua-driver-uia.exe
 ```
 
@@ -1362,7 +1422,7 @@ Node FFI or N-API addon. The bounded one-shot command remains build, preflight a
 acceptance evidence only:
 
 ```text
-cua-driver.exe diagnostics --managed-readiness --json
+ling-cua-driver.exe diagnostics --managed-readiness --json
 ```
 
 Its process identity can never make the runtime ready. After the long-lived child
@@ -1513,7 +1573,7 @@ Desktop therefore owns a transport proxy for one logical daemon session:
 daemon StreamableHTTPClientTransport
   -> 127.0.0.1:<ephemeral>/mcp
   -> Desktop MCP proxy
-  -> cua-driver stdin/stdout
+  -> ling-cua-driver stdin/stdout
 ```
 
 Proxy rules:
@@ -1895,9 +1955,51 @@ General rules:
   release; the current design assumes a non-App-Sandbox host.
 
 The shared Web surface reaches the host permission controller only through a narrow typed
-Desktop preload capability, for example `computerUse.requestHostPermissions()`. The
-capability returns normalized permission state only. Browser/standalone surfaces do not
-receive this method and show `desktop_unavailable` or the external fallback instead.
+Desktop preload capability:
+
+```ts
+interface ComputerControlDesktopCapability {
+  readonly packagedBundledCapable: true;
+  readonly platform: "macos" | "windows";
+  requestPermissions(): Promise<DesktopCommandResult>;
+  openPermissionSettings(
+    permission: "accessibility" | "screen_recording",
+  ): Promise<DesktopCommandResult>;
+}
+
+interface LingDesktopCapabilities {
+  // Present only on a supported packaged host carrying bundled capability authority.
+  readonly computerControl?: ComputerControlDesktopCapability;
+}
+```
+
+Both commands are accepted only from the main window sender. `requestPermissions()` on
+macOS calls the
+process-wide `DarwinCuaDriverPermissionController.requestHostPermissions()` single-flight
+operation. On Windows it returns `accepted=false` with
+`reason="unsupported_platform_action"`; the Windows page never renders the action. The IPC
+result reports only whether the command was accepted. It does not return permission or
+readiness state. After the request, Desktop rotates/rechecks the provider generation and
+publishes through the authenticated readiness path; Web refreshes the canonical daemon
+projection. `openPermissionSettings()` opens only the requested macOS System Settings
+repair surface and follows the same sender rule. Browser/standalone surfaces do not receive
+this capability.
+
+Turning the product switch On never calls either permission command. It records requested
+intent through the daemon and renders `permission_required`. The user must then click
+Grant access or Open System Settings. This two-step consent boundary prevents an enable
+toggle, app startup or restored preference from unexpectedly raising OS prompts.
+
+The IPC must not reuse the PiP preview sender allowance. Preview may continue opening its
+screen-capture repair surface, but only the main Settings window may request the complete
+Computer Control permission sequence. Repeated clicks join the existing single-flight
+promise instead of opening parallel OS prompts.
+
+macOS lock/suspend invalidation follows the same fail-closed rule already required on
+Windows: close the call gate, revoke the current lease, stop that generation and retain
+requested intent. A post-unlock hint may start recovery, but only a fresh permission,
+capturability and generation-fenced activation pass restores tools. V1 exposes no
+`allowWhileLocked` preference.
 
 ### Windows interactive session and integrity
 
@@ -2164,6 +2266,73 @@ type CuaDriverLimitation =
   | "uwp_send_input";
 ```
 
+The optional `permissions`, `windowsReadiness` and `integrity` fields exist in the public
+setup type but are not populated by the current bundled Catalog reader. The current authenticated Desktop
+availability and lease records carry only the aggregate state, reason, integrity coverage
+and limitations. The Computer Control page must not ship per-item status until this path is
+completed:
+
+```text
+platform readiness result
+  -> generation-fenced coordinator snapshot
+  -> authenticated non-ready availability OR ready lease
+  -> daemon activation health details
+  -> validated Catalog setup projection
+  -> pure Web view model
+```
+
+The transport extension is capability-negotiated as
+`cua-driver-readiness-details-v1`. New daemon code accepts old reports without details;
+Desktop sends the optional fields only when the daemon handshake advertises that
+capability. This preserves the reused-daemon boundary while avoiding a separate Web
+readiness endpoint.
+
+The implementation must close every negotiation hop, not only add optional contract fields:
+
+1. daemon handshake advertises `cua-driver-readiness-details-v1`;
+2. Desktop daemon lifecycle retains the negotiated capability instead of discarding the
+   handshake capability array after extracting the authority tuple;
+3. Desktop omits detail fields for an older daemon that did not advertise the capability;
+4. a new daemon accepts both old reports without details and negotiated reports with
+   details;
+5. `packages/contracts/src/plugins.ts` and the mirrored Web-facing wire types in
+   `packages/core/src/plugin-manager-types.ts` change together;
+6. availability/lease validators keep their exact platform tuple and reject unknown extra
+   keys, cross-platform detail or stale authority.
+
+The platform tuple is strict:
+
+- Darwin reports `permissions` and no `windowsReadiness`;
+- Win32 reports `windowsReadiness` and no `permissions`;
+- either platform may report `integrity` only from the Desktop's validated packaged-artifact
+  result: `verified`, `failed` or `unknown`;
+- non-ready detail travels on authenticated Desktop availability;
+- ready detail travels on the generation lease and is copied into the successful
+  activation health snapshot;
+- stale generation/sequence/authority details are rejected with the same fences as the
+  aggregate provider state;
+- an unavailable probe produces `unknown`, never a guessed grant, denial, session or API
+  result.
+
+Exact platform mapping:
+
+- Darwin Accessibility `true` maps to `granted`; `false` maps to `unknown` because
+  Electron cannot distinguish not-determined from prior denial. Screen Recording uses the
+  exact host media-access status for `granted`, `denied`, `prompt` or `unknown` and reports
+  live `capturable` separately.
+- Windows `hostSessionId===0` or `providerSessionId===0` maps to `session_zero`;
+  `inputDesktop==="locked"` maps to `locked`; only matching non-zero sessions plus
+  `default_unlocked` maps to `ready`; every other tuple maps to `unknown`.
+- Windows WGC, D3D11 and UIA values map directly from the validated active-child response;
+  `contentObserved` is always `false`, the initial integrity coverage is `standard`, and
+  `uiaHelper` is `not_required` for the standard package.
+
+Electron can distinguish Screen Recording statuses more precisely than Accessibility.
+Where the host API cannot distinguish not-determined from a prior denial, the projection
+uses `unknown` rather than fabricating `prompt` or `denied`. UI copy may say "Needs access"
+from aggregate `permission_required`, but the individual row remains Unknown until the
+host reports a supported value.
+
 Legacy mapping is deterministic:
 
 | Provider state | Legacy `state` |
@@ -2190,28 +2359,256 @@ The external install guide is returned only for `external_local` plus
 `external_missing`. A damaged bundled component directs the user to update or reinstall
 Ling, never to run the Cua public installer.
 
-## Visible State Matrix
+## Computer Control Controller And Presentation Boundary
+
+The controller is an adapter over existing domains, not a new store:
+
+```ts
+interface ComputerControlController {
+  readonly surfaceMode:
+    | "computer_control"
+    | "legacy_external"
+    | "hidden_bundled"
+    | "none";
+  readonly plugin?: ManagedPluginView;
+  readonly view: ComputerControlViewModel;
+  refresh(): Promise<void>;
+  setRequestedEnabled(enabled: boolean): Promise<void>;
+  recheck(): Promise<void>;
+  requestPermissions(): Promise<void>;
+  openPermissionSettings(
+    permission: "accessibility" | "screen_recording",
+  ): Promise<void>;
+}
+```
+
+The pure view model is a closed union so loading and contract failures do not invent
+product state in JSX:
+
+```ts
+type ComputerControlPrimaryAction =
+  | Readonly<{ kind: "none" }>
+  | Readonly<{ kind: "retry" }>
+  | Readonly<{ kind: "request_permissions" }>
+  | Readonly<{
+      kind: "open_permission_settings";
+      permission: "accessibility" | "screen_recording";
+    }>
+  | Readonly<{ kind: "open_desktop" }>
+  | Readonly<{ kind: "update_ling" }>
+  | Readonly<{ kind: "reinstall_ling" }>;
+
+type ComputerControlStatusRow = Readonly<{
+  id: string;
+  label: string;
+  value: "ready" | "attention" | "unavailable" | "unknown";
+  detail?: string;
+}>;
+
+type ComputerControlViewModel =
+  | Readonly<{
+      kind: "hidden";
+    }>
+  | Readonly<{
+      kind: "loading";
+      checked: false;
+      switchDisabled: true;
+      primaryAction: Readonly<{ kind: "none" }>;
+    }>
+  | Readonly<{
+      kind: "error";
+      error: "load_failed" | "plugin_missing" | "projection_invalid";
+      checked: false;
+      switchDisabled: true;
+      primaryAction: Readonly<{ kind: "retry" }>;
+    }>
+  | Readonly<{
+      kind: "bundled";
+      phase:
+        | "off"
+        | "starting"
+        | "waiting_desktop"
+        | "waiting_permission"
+        | "waiting_session"
+        | "repair"
+        | "ready"
+        | "incompatible"
+        | "corrupt";
+      providerState: CuaDriverProviderState;
+      checked: boolean;              // exactly setup.requestedEnabled
+      effectiveEnabled: boolean;      // status/tool eligibility, never switch truth
+      switchDisabled: boolean;        // current computer-control mutation only
+      busyAction?: "enable" | "check" | "disable" | "request_permissions";
+      primaryAction: ComputerControlPrimaryAction;
+      statusRows: readonly ComputerControlStatusRow[];
+      limitations: readonly CuaDriverLimitation[];
+      displayVersion?: string;
+      lastCheckedAt?: string;
+      integrity: "verified" | "failed" | "unknown";
+      errorMessage?: string;
+    }>;
+```
+
+`hidden` is returned for `legacy_external`, `hidden_bundled` and `none`. `loading` is used
+while the canonical plugin projection is pending and the packaged hint selects
+`computer_control`. A packaged capability with a missing or malformed canonical projection
+is an explicit `error`; it never silently selects an external binary. A valid explicit
+`external_local` projection is not an error: the shared surface selector atomically chooses
+the legacy entry and returns `hidden` for this page. `bundled` requires
+`distribution="bundled_embedded"`, schema V2, boolean requested/effective fields and a
+coherent provider state.
+
+Product-phase and primary-action mapping is deterministic:
+
+| Setup tuple | Phase | Switch | Primary action |
+| --- | --- | --- | --- |
+| `included`, requested Off | `off` | Off, enabled | None |
+| `included`, requested On | `starting` | On, enabled | Retry after bounded wait |
+| `desktop_unavailable`, requested On | `waiting_desktop` | On, enabled | Open/restart Desktop or Retry |
+| `permission_required`, permission `prompt` | `waiting_permission` | On, enabled | Grant access |
+| `permission_required`, permission `denied` | `waiting_permission` | On, enabled | Open the matching System Settings page |
+| `permission_required`, detail absent/`unknown` | `waiting_permission` | On, enabled | Grant access or Retry; never guess a grant state |
+| `interactive_session_required`, requested On | `waiting_session` | On, enabled | Unlock/return to desktop, then Retry |
+| `platform_unavailable`, requested On | `repair` | On, enabled | Retry; show platform repair copy |
+| `ready`, requested/effective On | `ready` | On, enabled | None; Recheck is secondary |
+| `incompatible` | `incompatible` | Requested value, enabled | Update Ling |
+| `corrupt` | `corrupt` | Requested value, enabled | Reinstall Ling |
+
+An active `enable`, `disable`, `check` or permission command temporarily disables only its
+own controls. It does not change `checked` until a new canonical projection arrives. The
+Off switch remains available in every waiting/repair state when no mutation is pending.
+
+Rules:
+
+1. Static Desktop capability says only that this supported packaged host can carry the
+   bundled provider. The resolved surface mode also reads canonical distribution. A valid
+   `external_local` projection atomically selects the legacy surface; loading/error uses the
+   packaged hint and keeps the Computer Control skeleton/error visible.
+2. `plugin` is selected by canonical id from `usePluginsDomain()`. Setup, health and
+   actions remain daemon-owned.
+3. `setRequestedEnabled(true)` calls the existing managed-plugin enable route;
+   `false` calls disable. `recheck()` calls the existing check route.
+4. Plugin mutation owner `computer-control` isolates busy/error state. The switch is
+   disabled while its current owner/action is pending, and checked only from the latest
+   returned `requestedEnabled` projection.
+5. A `202 Accepted` enable response with `requestedEnabled=true` is success. The page
+   stays On and renders the daemon's permission/session/waiting state.
+6. Permission IPC success means only that Desktop accepted the explicit command. The
+   controller then refreshes/checks the canonical plugin; it never promotes a local IPC
+   snapshot to ready.
+7. Existing plugin request keys include the action, so they do **not** fence Enable against
+   Disable. For owner `computer-control`, `enable`, `disable` and `check` must share one
+   activation-family key and one monotonic latest-request sequence. A stale completion may
+   return to its caller but cannot upsert plugin state, replace pending/error UI or overwrite
+   a newer On/Off/On result. Disabling the switch while busy is UX, not the correctness
+   fence.
+
+Presentation filters are scoped to the owning pages:
+
+```text
+resolveCuaDriverSurfaceMode(capability, canonicalPlugin)
+  = valid external_local projection                         -> legacy_external
+  = valid bundled projection + packagedBundledCapable       -> computer_control
+  = valid bundled projection + no Desktop capability        -> hidden_bundled
+  = unresolved projection + packagedBundledCapable          -> computer_control
+  = otherwise                                               -> none
+
+Plugin Manager props
+  = hide canonical Cua when surfaceMode is computer_control or hidden_bundled
+
+MCP Settings props
+  = all servers/tools except serverId == mcp_cua_driver
+    when surfaceMode is computer_control or hidden_bundled
+
+Computer Control navigation/page
+  = show only when surfaceMode == computer_control
+
+shared plugin domain / shared MCP domain / teammate bindings / runner catalog
+  = unfiltered
+```
+
+All three presentations consume this one selector; none reimplements the condition. A
+pure Web client that observes a bundled daemon projection resolves `hidden_bundled`: no
+Desktop-only navigation, but also no internal generic management row. The
+packaged hint is checked while projection is unresolved so loading/error/plugin-missing
+states cannot flash a managed row. Once a valid projection arrives it wins:
+`external_local` atomically hides Computer Control and restores the legacy rows;
+`bundled_embedded` keeps the new page. An impossible or malformed tuple is
+`projection_invalid` and remains fail-closed on the bundled surface. In ordinary Web/dev
+mode the packaged hint is absent; an external projection keeps the legacy entry, while a
+bundled projection activates only the hidden-internal filter.
+
+Filtering must also update each page's counts, empty states, selected detail, busy marker
+and page-owned error/feedback. A hidden server/plugin must not leak through a stale selected
+row or error banner. The underlying domain error/pending records remain intact for other
+owners and diagnostics. Filtering must not happen inside
+`usePluginsDomain()` or `useMcpDomain()`: teammate authorization and runtime execution need
+the full server/tool set. Teammate recovery copy follows the same selector:
+`computer_control` links to Computer Control, `hidden_bundled` asks the user to open Ling
+Desktop, and `legacy_external` links to the legacy Plugin/MCP repair surface.
+
+The Settings shell adds a `Device` group containing `computer-control` only when the shared
+selector returns `computer_control`. During unresolved loading/error, the packaged hint
+keeps that mode stable so the user can see Retry and diagnostics. A valid
+`external_local` projection changes the selector to `legacy_external`, atomically removes
+the item and restores the legacy entries. If the active/deep-linked section disappears,
+Settings falls back to its default section. The shell never derives navigation from
+dynamic permission/readiness state.
+
+## Computer Control Visible State Matrix
 
 | Condition | Provider state | Legacy state | Enabled tools | User action |
 | --- | --- | --- | --- | --- |
-| Valid packaged artifact, plugin disabled | `included` | `connected` | None | Enable |
+| Valid packaged artifact, requested Off | `included` | `connected` | None | Turn on |
+| Requested On, Desktop still starting | `included` | `connected` | None | Wait / Retry / Turn off |
 | Desktop lease missing | `desktop_unavailable` | `connected` | None | Open/restart Desktop |
 | Version/protocol mismatch | `incompatible` | `connected` | None | Update/reinstall Ling |
 | Signature/hash/path invalid | `corrupt` | `connected` | None | Reinstall Ling |
-| AX or screen grant missing | `permission_required` | `connected` | None | Review permissions |
-| Windows Session 0, locked or non-interactive desktop | `interactive_session_required` | `connected` | None | Return to interactive desktop / restart Ling |
+| AX or screen grant missing | `permission_required` | `connected` | None | Grant access / open System Settings |
+| macOS/Windows host locked or Windows Session 0/non-interactive | `interactive_session_required` | `connected` | None | Unlock / return to interactive desktop / Retry |
 | Windows standard UIA runtime or WGC/D3D capability probe fails | `platform_unavailable` | `connected` | None | Restart/update Ling or Windows; inspect support bundle |
 | Windows trusted integrity verifier missing or blocked | `platform_unavailable` | `connected` | None | Update/repair Windows policy or Ling; inspect support bundle |
-| Windows standard tier is ready | `ready` | `ready` | Policy-filtered standard catalog | Disable; detail shows `integrityCoverage=standard` and both limitations |
-| Artifact, lease, health, and platform readiness pass | `ready` | `ready` | Policy-filtered catalog | Disable |
+| Windows standard tier is ready | `ready` | `ready` | Policy-filtered standard catalog | Turn off / Recheck; show declared limitations |
+| Artifact, lease, health, and platform readiness pass | `ready` | `ready` | Policy-filtered catalog | Turn off / Recheck |
 | Explicit external command missing | `external_missing` | `missing` | None | External install guide/path |
 | External command found but not connected | `external_detected` | `detected` | None | Automatic connect / retry detection |
 | Explicit external command connected but disabled | `external_connected` | `connected` | None | Enable override |
 | Linux or another unsupported packaged platform | `unsupported` | `unsupported` | None | None |
 
+The first eleven bundled rows are rendered only by Computer Control Settings. The final four
+external/unsupported rows remain legacy Plugin Manager behavior and do not open the new
+page.
+
+### Page sections and accessible behavior
+
+1. **Header/status card**: Computer Control title, requested-state switch, state label,
+   short explanation and at most one primary repair action. Toggle and Retry have distinct
+   accessible names and pending announcements.
+2. **System readiness**: platform-specific rows. macOS shows Accessibility, Screen
+   Recording and live capturability when known. Windows shows interactive session, WGC,
+   D3D11, UIA runtime, standard integrity coverage and the elevated/UWP limitations.
+3. **Control preview**: renders the existing `DesktopComputerUsePreference`; it is removed
+   from Interface Preferences but can keep its current file/API.
+4. **Privacy**: a disabled, unchecked "Allow control while locked" row labeled "Always off
+   in this version". It has no persisted preference or mutation handler.
+5. **Advanced details**: version, Ling distribution revision, platform, integrity, last
+   check and limitations. "Last checked" comes only from `plugin.health.checkedAt`; the
+   setup `checkedAt` is Catalog projection time and must never be shown as a verification
+   time. Missing health is Unknown. Integrity is populated only by the authenticated
+   Desktop artifact-verification -> availability/lease -> health -> Catalog path; until
+   that field exists it is Unknown and must not be inferred from provider state, version or
+   digest presence. IDs, endpoint, token, state root and executable paths are never rendered.
+
+Loading uses a stable skeleton. Load failure keeps the page and exposes Retry. A page
+unmount cancels only renderer requests; it does not call disable, close the daemon client or
+stop the provider. PiP auto-show failure is scoped to its preference row and cannot change
+Computer Control activation.
+
 ## Disable, Quit, Crash, And Restart
 
 ### Disable
+
+The Computer Control Off switch is the only normal UI action that reaches this path.
 
 1. Through one `commitCuaDriverActivation()` transaction, clear durable
    requested-enabled intent, replace tools/status with disabled state, and clear the
@@ -2227,6 +2624,20 @@ Ling, never to run the Cua public installer.
 
 Do not stop the provider process group while the Desktop application remains running and the plugin is
 enabled. Provider lifetime follows the app process, not BrowserWindow visibility.
+
+Leaving Settings, closing the main window and hiding the PiP preview are three presentation
+actions. None calls the activation disable route. PiP Close releases only its preview
+surface; PiP Stop Computer Use continues to use the audited session stop path and still
+does not rewrite the global Computer Control preference.
+
+### Lock, suspend or interactive-session loss
+
+Close the provider proxy call gate before asynchronous cleanup, revoke the current lease,
+atomically hide tools/effective flags and stop the current generation. Keep
+`requestedEnabled=true`. Windows projects `interactive_session_required` from its WTS and
+input-desktop evidence; macOS uses the same provider state for host lock/suspend recovery.
+Unlock/resume is only a hint to create generation G+1. It must never reopen generation G or
+restore tools from cached readiness.
 
 ### Desktop quit
 
@@ -2676,11 +3087,16 @@ cleanup.
 
 ### Product and compatibility
 
-- packaged macOS and Windows show bundled provider states, not the install drawer;
+- packaged macOS and Windows show bundled provider states in Computer Control Settings,
+  not Plugin Manager, MCP Settings or the install drawer;
 - Windows distinguishes interactive-session failure, standard integrity coverage and full
   UIAccess readiness without claiming unsupported targets;
 - standalone/dev external mode keeps missing/detected/connected/ready and install guide;
 - historical plugin records do not produce duplicate rows or MCP resources;
+- canonical bundled plugin/MCP identities remain available to teammate bindings, approvals,
+  runtime tools and audit even though the two generic management pages filter them;
+- pure Web/Linux and unsupported deep links hide/fall back from Computer Control;
+- locked-screen control is fixed Off and page/window/PiP close never clears requested intent;
 - GUI mutation tools remain approval-gated;
 - Windows verifier/runner/schema changes remain compatible with externally produced
   acceptance evidence and never synthesize a local PASS.
@@ -2698,6 +3114,9 @@ The cross-platform implementation is complete only after:
 - the Desktop-owned process and lease architecture passes with a reused daemon;
 - both platform adapters, setup states, package assertions and acceptance handoff artifacts
   are implemented and statically verified;
+- bundled Plugin Manager/MCP Settings rows are hidden only at presentation, the Computer
+  Control page reuses canonical activation, platform detail round-trips without inference,
+  and locked-screen suspension is enforced on both platforms;
 - the Windows signing ladder derives tier/channel from actual artifacts, rejects every
   invalid combination, and the final Setup payload contains and runs the private helper;
 - a real `test_signed_internal + internal` Windows candidate passes automated native,
@@ -2740,6 +3159,9 @@ No product or architecture choice remains open for the standard-capability inter
   integrity tier on Windows;
 - update and rollback unit: signed Ling Desktop release;
 - external provider: explicit fallback only;
+- product surface: bundled mode uses Settings > Device > Computer Control; Plugin Manager
+  and MCP Settings hide only their bundled presentation while retaining internal records;
+- privacy: V1 locked-computer control is fixed Off; per-application policy is deferred;
 - Windows: bundled x64 main provider in standard Medium-IL mode; real-machine acceptance
   is owned by the Windows team.
 

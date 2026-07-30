@@ -12,6 +12,10 @@ import {
   type CuaDriverLeaseRegistry,
 } from "./cua-driver-lease.js";
 import { hasPersistedBundledCuaDriverProjection } from "./cua-driver-runtime-mode.js";
+import {
+  CUA_DRIVER_MCP_SERVER_ID,
+  createBundledCuaDriverLogicalMcpServerInput,
+} from "./presets.js";
 
 /**
  * Process-wide composition owner for durable activation projection and the
@@ -54,10 +58,25 @@ export class CuaDriverDaemonActivationCoordinator {
     ) {
       return;
     }
+    const now = this.now();
+    if (
+      this.options.enabled !== false
+      && store.getMcpServer(CUA_DRIVER_MCP_SERVER_ID)
+      && !hasPersistedBundledCuaDriverProjection(store)
+    ) {
+      const migrated = store.updateMcpServer(
+        CUA_DRIVER_MCP_SERVER_ID,
+        createBundledCuaDriverLogicalMcpServerInput(),
+        now,
+      );
+      if (!migrated) {
+        throw new Error("cua_driver_startup_projection_migration_failed");
+      }
+    }
     const reset = this.options.activationService.resetForDaemonStart({
       store,
       descriptor: this.options.descriptor,
-      now: this.now(),
+      now,
     });
     if (!reset.committed) {
       throw new Error("cua_driver_startup_reset_stale");

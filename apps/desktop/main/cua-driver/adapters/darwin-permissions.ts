@@ -1,3 +1,4 @@
+import type { CuaDriverPermissionSnapshot } from "@ling-stack/contracts";
 import type {
   CuaDriverReadinessContext,
   CuaDriverReadinessController,
@@ -9,6 +10,7 @@ export const DEFAULT_DARWIN_PERMISSION_POLL_MS = 1_000;
 export interface DarwinHostPermissionSnapshot {
   readonly accessibility: boolean;
   readonly screenRecording: boolean;
+  readonly screenRecordingStatus?: "granted" | "denied" | "prompt" | "unknown";
 }
 
 export interface DarwinHostPermissionPort {
@@ -243,10 +245,20 @@ export class DarwinCuaDriverReadinessController implements CuaDriverReadinessCon
       return notReady(context, "platform_unavailable", "darwin_host_attribution_invalid");
     }
     if (!host.accessibility || !parsed.accessibility) {
-      return notReady(context, "permission_required", "darwin_accessibility_permission_required");
+      return notReady(
+        context,
+        "permission_required",
+        "darwin_accessibility_permission_required",
+        permissionDetails(host),
+      );
     }
     if (!host.screenRecording || !parsed.screen_recording) {
-      return notReady(context, "permission_required", "darwin_screen_recording_permission_required");
+      return notReady(
+        context,
+        "permission_required",
+        "darwin_screen_recording_permission_required",
+        permissionDetails(host),
+      );
     }
     let hostScreenCapturable: boolean;
     try {
@@ -255,16 +267,27 @@ export class DarwinCuaDriverReadinessController implements CuaDriverReadinessCon
       return notReady(context, "platform_unavailable", "darwin_live_screen_capture_probe_unavailable");
     }
     if (!hostScreenCapturable) {
-      return notReady(context, "permission_required", "darwin_host_screen_recording_not_capturable");
+      return notReady(
+        context,
+        "permission_required",
+        "darwin_host_screen_recording_not_capturable",
+        permissionDetails(host, false),
+      );
     }
     if (!parsed.screen_recording_capturable) {
-      return notReady(context, "permission_required", "darwin_screen_recording_not_capturable");
+      return notReady(
+        context,
+        "permission_required",
+        "darwin_screen_recording_not_capturable",
+        permissionDetails(host, hostScreenCapturable),
+      );
     }
     return {
       generation: context.generation,
       childInstanceNonce: context.childInstanceNonce,
       ready: true,
       providerState: "ready",
+      permissions: permissionDetails(host, true),
     };
   }
 
@@ -319,6 +342,7 @@ function notReady(
   context: CuaDriverReadinessContext,
   providerState: "permission_required" | "platform_unavailable",
   reason: string,
+  permissions?: CuaDriverPermissionSnapshot,
 ): CuaDriverReadinessResult {
   return {
     generation: context.generation,
@@ -326,6 +350,7 @@ function notReady(
     ready: false,
     providerState,
     reason,
+    ...(permissions ? { permissions } : {}),
   };
 }
 
@@ -333,15 +358,24 @@ function normalizePermissionSnapshot(value: DarwinHostPermissionSnapshot): Darwi
   if (!value || typeof value.accessibility !== "boolean" || typeof value.screenRecording !== "boolean") {
     throw new DarwinCuaDriverPermissionError("unavailable");
   }
+  if (value.screenRecordingStatus !== undefined
+    && value.screenRecordingStatus !== "granted"
+    && value.screenRecordingStatus !== "denied"
+    && value.screenRecordingStatus !== "prompt"
+    && value.screenRecordingStatus !== "unknown") {
+    throw new DarwinCuaDriverPermissionError("unavailable");
+  }
   return Object.freeze({
     accessibility: value.accessibility,
     screenRecording: value.screenRecording,
+    ...(value.screenRecordingStatus ? { screenRecordingStatus: value.screenRecordingStatus } : {}),
   });
 }
 
 function samePermissionSnapshot(left: DarwinHostPermissionSnapshot, right: DarwinHostPermissionSnapshot): boolean {
   return left.accessibility === right.accessibility
-    && left.screenRecording === right.screenRecording;
+    && left.screenRecording === right.screenRecording
+    && left.screenRecordingStatus === right.screenRecordingStatus;
 }
 
 function boundedPollInterval(value: number | undefined): number {
@@ -367,9 +401,13 @@ function createDefaultPermissionScheduler(): DarwinPermissionMonitorScheduler {
 const defaultDarwinHostPermissionPort: DarwinHostPermissionPort = Object.freeze({
   async read() {
     const electron = await loadDarwinElectron();
+    const screenRecordingStatus = mapElectronMediaAccessStatus(
+      electron.systemPreferences.getMediaAccessStatus("screen"),
+    );
     return {
       accessibility: electron.systemPreferences.isTrustedAccessibilityClient(false),
-      screenRecording: electron.systemPreferences.getMediaAccessStatus("screen") === "granted",
+      screenRecording: screenRecordingStatus === "granted",
+      screenRecordingStatus,
     };
   },
   async probeLiveScreenCapture() {
@@ -394,6 +432,34 @@ const defaultDarwinHostPermissionPort: DarwinHostPermissionPort = Object.freeze(
     });
   },
 });
+
+function permissionDetails(
+  host: DarwinHostPermissionSnapshot,
+  capturable?: boolean,
+): CuaDriverPermissionSnapshot {
+  return Object.freeze({
+    accessibility: host.accessibility ? "granted" : "unknown",
+    screenRecording: host.screenRecordingStatus
+      ?? (host.screenRecording ? "granted" : "unknown"),
+    ...(capturable === undefined ? {} : { capturable }),
+  });
+}
+
+function mapElectronMediaAccessStatus(
+  status: string,
+): CuaDriverPermissionSnapshot["screenRecording"] {
+  switch (status) {
+    case "granted":
+      return "granted";
+    case "denied":
+    case "restricted":
+      return "denied";
+    case "not-determined":
+      return "prompt";
+    default:
+      return "unknown";
+  }
+}
 
 async function loadDarwinElectron(): Promise<typeof import("electron")> {
   if (process.platform !== "darwin") {

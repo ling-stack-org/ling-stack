@@ -48,4 +48,6 @@ export const DESKTOP_IPC_CHANNELS = {
   computerUsePreviewSourceEnded: "ling-desktop:computer-use:preview-source-ended",
   computerUsePreviewSourceFailed: "ling-desktop:computer-use:preview-source-failed",
   computerUsePreviewHide: "ling-desktop:computer-use:preview-hide",
+  computerControlRequestPermissions: "ling-desktop:computer-control:request-permissions",
+  computerControlOpenPermissionSettings: "ling-desktop:computer-control:open-permission-settings",
 } as const;

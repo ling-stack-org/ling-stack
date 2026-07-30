@@ -394,6 +394,7 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
         userDataPath: app.getPath("userData"),
         featureFlags,
         packaged: app.isPackaged,
+        powerMonitor,
         ...(platformOwner ? { platformOwner } : {}),
         onDiagnostic: logStartup,
       });
@@ -550,6 +551,9 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
       themePackageFirstPaint: createDesktopThemePackageFirstPaintState(
         initializedThemePackages.value,
       ),
+      ...(desktopRuntime.computerControlPlatform
+        ? { computerControlPlatform: desktopRuntime.computerControlPlatform }
+        : {}),
       webIndexPath: resources.webIndexPath,
       showWhenReady: !smokeHeadless,
       onWindowCreated: (window) => {

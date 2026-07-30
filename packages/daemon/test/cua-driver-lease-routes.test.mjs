@@ -204,7 +204,7 @@ test("authenticated handshakes keep one daemon authority and issue monotonic uni
     first = await handshake(firstDaemon);
     const second = await handshake(firstDaemon);
     assert.equal(first.protocolVersion, 1);
-    assert.deepEqual(first.capabilities, ["preview-source", "cua-driver-lease-v1"]);
+    assert.deepEqual(first.capabilities, ["preview-source", "cua-driver-lease-v1", "cua-driver-readiness-details-v1"]);
     assert.equal("workspaceCwd" in first, false);
     assert.equal(first.daemonAuthorityEpoch, second.daemonAuthorityEpoch);
     assert.equal(first.desktopInstanceEpoch, 1);

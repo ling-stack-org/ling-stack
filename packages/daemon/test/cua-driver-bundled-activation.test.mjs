@@ -938,6 +938,33 @@ test("a current Desktop permission wait bypasses MCP checks even when a lease ex
   }
 });
 
+for (const providerState of ["included", "desktop_unavailable"]) {
+  test(`a current lease advances through the Desktop ${providerState} startup projection`, async () => {
+    const fixture = await activationFixture({
+      desktopAvailability: availability({ providerState }),
+    });
+    try {
+      assert.equal(fixture.registry.publish(lease()).accepted, true);
+
+      const result = await fixture.service.enable({ store: fixture.store, descriptor, now });
+
+      assert.equal(result.statusCode, 200);
+      assert.equal(result.health.details.providerState, "ready");
+      assert.equal(fixture.connects.length, 1, "the lazy Desktop lease must be initialized");
+      assert.equal(fixture.checkCalls, 1);
+      assert.equal(fixture.healthCalls, 1);
+      assert.equal(fixture.listCalls, 1);
+      assert.equal(fixture.store.getManagedPlugin(pluginId).enabled, true);
+      assert.deepEqual(
+        fixture.store.listMcpTools({ serverId }).map((tool) => tool.rawName),
+        ["list_windows"],
+      );
+    } finally {
+      await fixture.close();
+    }
+  });
+}
+
 test("bundled activation filters updater tools and overrides every provider-supplied approval hint", async () => {
   const fixture = await activationFixture({
     tools: [

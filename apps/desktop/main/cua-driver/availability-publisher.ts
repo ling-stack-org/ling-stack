@@ -2,7 +2,10 @@ import type {
   BundledCuaDriverPlatform,
   CuaDriverDesktopAvailabilityState,
   CuaDriverIntegrityCoverage,
+  CuaDriverIntegrityStatus,
   CuaDriverLimitation,
+  CuaDriverPermissionSnapshot,
+  CuaDriverWindowsReadinessSnapshot,
   DesktopCuaDriverAvailabilityV1,
 } from "@ling-stack/contracts";
 import { isDesktopCuaDriverAvailabilityV1 } from "@ling-stack/contracts";
@@ -31,6 +34,7 @@ export interface CuaDriverAvailabilityAuthority {
   readonly daemonAuthorityEpoch: string;
   readonly workspaceCwd: string;
   readonly platform: Exclude<BundledCuaDriverPlatform, "unsupported">;
+  readonly readinessDetailsV1: boolean;
   readonly integrityCoverage?: CuaDriverIntegrityCoverage;
   readonly limitations?: readonly CuaDriverLimitation[];
 }
@@ -169,6 +173,15 @@ export function createAvailabilityReport(
     ...(normalizeReason(snapshot.reason) ? { reason: normalizeReason(snapshot.reason) } : {}),
     ...(authority.integrityCoverage
       ? { integrityCoverage: authority.integrityCoverage }
+      : {}),
+    ...(authority.readinessDetailsV1 && snapshot.integrity
+      ? { integrity: snapshot.integrity satisfies CuaDriverIntegrityStatus }
+      : {}),
+    ...(authority.readinessDetailsV1 && snapshot.permissions
+      ? { permissions: snapshot.permissions satisfies CuaDriverPermissionSnapshot }
+      : {}),
+    ...(authority.readinessDetailsV1 && snapshot.windowsReadiness
+      ? { windowsReadiness: snapshot.windowsReadiness satisfies CuaDriverWindowsReadinessSnapshot }
       : {}),
     ...(authority.limitations
       ? { limitations: Object.freeze([...authority.limitations]) }

@@ -6,6 +6,7 @@ import {
   CUA_DRIVER_SETUP_SCHEMA_VERSION,
   CUA_DRIVER_LEASE_MAX_TTL_MS,
   CUA_DRIVER_LEASE_V1_CAPABILITY,
+  CUA_DRIVER_READINESS_DETAILS_V1_CAPABILITY,
   cuaDriverProxyTokenMaterialV1,
   cuaDriverWorkspaceBindingMaterialV1,
   DEFAULT_CUA_DRIVER_FEATURE_FLAGS,
@@ -54,6 +55,7 @@ test("Cua Driver schema versions and packaged feature gates are frozen", () => {
   assert.equal(CUA_DRIVER_PROVIDER_LOCK_SCHEMA_VERSION, 2);
   assert.equal(DESKTOP_CUA_DRIVER_LEASE_SCHEMA_VERSION, 1);
   assert.equal(CUA_DRIVER_LEASE_MAX_TTL_MS, 120_000);
+  assert.equal(CUA_DRIVER_READINESS_DETAILS_V1_CAPABILITY, "cua-driver-readiness-details-v1");
   assert.deepEqual(DEFAULT_CUA_DRIVER_FEATURE_FLAGS, {
     bundledEmbedded: { darwin: false, win32: false },
     packagedProvider: { darwin: false, win32: false },
@@ -144,6 +146,24 @@ test("Desktop Cua Driver lease guard requires versioned loopback and digest iden
     integrityCoverage: "standard",
   };
   assert.equal(isDesktopCuaDriverLeaseV1(lease), true);
+  assert.equal(isDesktopCuaDriverLeaseV1({
+    ...lease,
+    integrity: "verified",
+    windowsReadiness: {
+      interactiveSession: "session_zero",
+      wgcApi: "supported",
+      d3d11: "available",
+      uiaRuntime: "available",
+      contentObserved: false,
+      integrityCoverage: "standard",
+      uiaHelper: "not_required",
+    },
+  }), true);
+  assert.equal(isDesktopCuaDriverLeaseV1({ ...lease, unexpectedDetail: true }), false);
+  assert.equal(isDesktopCuaDriverLeaseV1({ ...lease, permissions: {
+    accessibility: "granted",
+    screenRecording: "granted",
+  } }), false, "Windows cannot carry the Darwin permission tuple");
   assert.equal(isDesktopCuaDriverLeaseV1({ ...lease, schemaVersion: 2 }), false);
   assert.equal(isDesktopCuaDriverLeaseV1({ ...lease, endpoint: "http://example.com/mcp" }), false);
   assert.equal(isDesktopCuaDriverLeaseV1({
@@ -202,6 +222,19 @@ test("Desktop availability is non-authoritative and platform metadata is exact",
     limitations: ["elevated_pixel_input", "uwp_send_input"],
   };
   assert.equal(isDesktopCuaDriverAvailabilityV1(report), true);
+  assert.equal(isDesktopCuaDriverAvailabilityV1({
+    ...report,
+    integrity: "verified",
+    windowsReadiness: {
+      interactiveSession: "locked",
+      wgcApi: "supported",
+      d3d11: "available",
+      uiaRuntime: "available",
+      contentObserved: false,
+      integrityCoverage: "standard",
+      uiaHelper: "not_required",
+    },
+  }), true);
   assert.equal(isDesktopCuaDriverAvailabilityV1({ ...report, providerState: "ready" }), false);
   assert.equal(isDesktopCuaDriverAvailabilityV1({ ...report, rawProviderPayload: "secret" }), false);
   assert.equal(isDesktopCuaDriverAvailabilityV1({ ...report, sequence: 0 }), false);

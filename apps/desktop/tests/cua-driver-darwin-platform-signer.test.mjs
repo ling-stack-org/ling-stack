@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
@@ -40,6 +41,17 @@ test("Darwin signer normalizes one designated requirement and locks entitlements
     sha256Bytes(canonicalJson(DARWIN_PROVIDER_ENTITLEMENTS)),
     "5c301f02f6b64d3feb13c1b0f29f4135174132b33a828b85264aee8b8a5ac7ac",
   );
+});
+
+test("Darwin signer ships the exact provider entitlement file consumed by Electron Builder", async () => {
+  const plist = await readFile(
+    new URL("../build/entitlements.cua-driver.plist", import.meta.url),
+    "utf8",
+  );
+  const keys = [...plist.matchAll(/<key>([^<]+)<\/key>/gu)].map((match) => match[1]);
+  assert.deepEqual(keys, Object.keys(DARWIN_PROVIDER_ENTITLEMENTS));
+  assert.equal((plist.match(/<true\/>/gu) ?? []).length, keys.length);
+  assert.equal(/<false\/>|<string>|<array>|<data>/u.test(plist), false);
 });
 
 test("Darwin signer rejects incomplete or ad-hoc identity output", () => {

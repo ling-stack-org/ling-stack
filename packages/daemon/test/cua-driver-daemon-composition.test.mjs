@@ -45,6 +45,31 @@ test("bundled daemon resets persisted effective state before listening", {
   }
 });
 
+test("gate-on startup migrates a retained external Cua record to the inert bundled placeholder", {
+  skip: !supportedPlatform,
+}, async () => {
+  const fixture = await daemonFixture({ seedExternal: true });
+  try {
+    const before = fixture.store.getMcpServer("mcp_cua_driver");
+    assert.equal(before.transport.type, "stdio");
+    assert.equal(before.transport.command, "/tmp/ling-external-cua-driver");
+
+    await fixture.daemon.start();
+
+    const migrated = fixture.store.getMcpServer("mcp_cua_driver");
+    assert.equal(migrated.transport.type, "streamable-http");
+    assert.equal(
+      migrated.transport.url,
+      "http://127.0.0.1/.ling/cua-driver-bundled-lease",
+    );
+    assert.equal(migrated.enabled, false);
+    assert.equal(fixture.store.listMcpTools({ serverId: migrated.id }).length, 0);
+    assert.ok(fixture.store.getCuaDriverActivationState("trusted-local:cua-driver"));
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("startup reset failure rejects before the daemon binds its port", {
   skip: !supportedPlatform,
 }, async () => {
@@ -1106,6 +1131,9 @@ async function daemonFixture(input = {}) {
   const store = createSqliteRunStore(cwd);
   if (input.seedReady) {
     seedReadyState(store);
+  }
+  if (input.seedExternal) {
+    seedExternalReadyState(store);
   }
   const stats = { connects: [], closes: 0 };
   const daemon = createDaemonServer(

@@ -1,5 +1,7 @@
 import type {
+  CuaDriverPermissionSnapshot,
   CuaDriverProviderState,
+  CuaDriverWindowsReadinessSnapshot,
   WindowsManagedReadinessChangedV1,
   WindowsManagedReadinessV1,
 } from "@ling-stack/contracts";
@@ -26,6 +28,8 @@ export interface CuaDriverReadinessResult {
   readonly readinessSequence?: number;
   readonly integrityCoverage?: "standard" | "uiaccess";
   readonly limitations?: readonly string[];
+  readonly permissions?: CuaDriverPermissionSnapshot;
+  readonly windowsReadiness?: CuaDriverWindowsReadinessSnapshot;
 }
 
 export interface CuaDriverReadinessController {
@@ -202,6 +206,15 @@ function mapWindowsReadinessResult(
     && message.uiaRuntime === "available"
     && message.d3d11 === "available"
     && message.wgcApi === "supported";
+  const interactiveSession: CuaDriverWindowsReadinessSnapshot["interactiveSession"] =
+    message.hostSessionId === 0 || message.providerSessionId === 0
+      ? "session_zero"
+      : message.inputDesktop === "locked"
+        ? "locked"
+        : message.hostSessionId === message.providerSessionId
+          && message.inputDesktop === "default_unlocked"
+          ? "ready"
+          : "unknown";
   return {
     generation: context.generation,
     childInstanceNonce: context.childInstanceNonce,
@@ -217,6 +230,15 @@ function mapWindowsReadinessResult(
             : "windows_managed_readiness_not_ready"),
     integrityCoverage: "standard",
     limitations: ["elevated_pixel_input", "uwp_send_input"],
+    windowsReadiness: {
+      interactiveSession,
+      wgcApi: message.wgcApi,
+      d3d11: message.d3d11,
+      uiaRuntime: message.uiaRuntime,
+      contentObserved: false,
+      integrityCoverage: "standard",
+      uiaHelper: "not_required",
+    },
   };
 }
 

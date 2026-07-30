@@ -176,7 +176,14 @@ function sameAvailability(
     && left.providerState === right.providerState
     && left.reason === right.reason
     && left.integrityCoverage === right.integrityCoverage
+    && left.integrity === right.integrity
+    && sameJsonValue(left.permissions, right.permissions)
+    && sameJsonValue(left.windowsReadiness, right.windowsReadiness)
     && sameStringArray(left.limitations, right.limitations);
+}
+
+function sameJsonValue(left: unknown, right: unknown): boolean {
+  return left === right || JSON.stringify(left) === JSON.stringify(right);
 }
 
 function sameStringArray(
