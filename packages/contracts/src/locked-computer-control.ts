@@ -360,13 +360,16 @@ export function isLockedControlIdentityResultV1(
   if (value.status === "verified") {
     return isCanonicalTimestamp(value.verifiedAt) && value.reason === undefined;
   }
-  const expectedReason: Record<Exclude<LockedControlIdentityStatus, "verified">, LockedControlReasonCode> = {
-    cancelled: "locked_control_identity_cancelled",
-    failed: "locked_control_identity_failed",
-    unavailable: "locked_control_identity_unavailable",
-  };
-  const failureStatus = value.status as Exclude<LockedControlIdentityStatus, "verified">;
-  return value.verifiedAt === undefined && value.reason === expectedReason[failureStatus];
+  if (value.verifiedAt !== undefined) {
+    return false;
+  }
+  if (value.status === "cancelled") {
+    return value.reason === "locked_control_identity_cancelled";
+  }
+  if (value.status === "unavailable") {
+    return value.reason === "locked_control_identity_unavailable";
+  }
+  return value.status === "failed" && IDENTITY_FAILURE_REASONS.has(value.reason as LockedControlReasonCode);
 }
 
 export function isLockedComputerControlGrantV1(
@@ -503,9 +506,7 @@ export function isLockedComputerControlAuditEventV1(
     case "locked_control_identity_resolved":
       return (LOCKED_COMPUTER_CONTROL_IDENTITY_STATUSES as readonly unknown[]).includes(value.identityStatus)
         && (value.identityMethod === "device_owner_authentication" || value.identityMethod === "windows_user_consent")
-        && (value.identityStatus === "verified"
-          ? value.reason === undefined
-          : isLockedControlReasonCode(value.reason));
+        && isIdentityStatusReasonTuple(value.identityStatus, value.reason);
     case "locked_control_grant_armed":
       return isBoundedText(value.grantId)
         && isBoundedText(value.runId)
@@ -577,6 +578,28 @@ function isCapabilityState(value: unknown): value is LockedCapabilityState {
 
 function isAuditEventKind(value: unknown): value is LockedComputerControlAuditEventKind {
   return (LOCKED_COMPUTER_CONTROL_AUDIT_EVENT_KINDS as readonly unknown[]).includes(value);
+}
+
+const IDENTITY_FAILURE_REASONS: ReadonlySet<LockedControlReasonCode> = new Set([
+  "locked_control_identity_failed",
+  "locked_control_no_active_run",
+  "locked_control_session_mismatch",
+  "locked_control_authority_rotated",
+  "locked_control_suspend",
+  "locked_control_user_switched",
+]);
+
+function isIdentityStatusReasonTuple(status: unknown, reason: unknown): boolean {
+  if (status === "verified") {
+    return reason === undefined;
+  }
+  if (status === "cancelled") {
+    return reason === "locked_control_identity_cancelled";
+  }
+  if (status === "unavailable") {
+    return reason === "locked_control_identity_unavailable";
+  }
+  return status === "failed" && IDENTITY_FAILURE_REASONS.has(reason as LockedControlReasonCode);
 }
 
 function isPositiveInteger(value: unknown): value is number {

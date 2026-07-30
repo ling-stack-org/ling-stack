@@ -157,6 +157,15 @@ test("identity result requires exact success and failure fields", () => {
     status: "failed",
     reason: "locked_control_identity_cancelled",
   }), false);
+  for (const reason of [
+    "locked_control_no_active_run",
+    "locked_control_session_mismatch",
+    "locked_control_authority_rotated",
+    "locked_control_suspend",
+    "locked_control_user_switched",
+  ]) {
+    assert.equal(isLockedControlIdentityResultV1({ ...base, status: "failed", reason }), true);
+  }
   assert.equal(isLockedControlIdentityResultV1({
     ...base,
     status: "cancelled",
