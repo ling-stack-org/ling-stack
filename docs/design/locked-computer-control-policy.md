@@ -2,16 +2,35 @@
 
 ## Status
 
-Proposed follow-up to the bundled Computer Control V1 design. The current shipped safety
-baseline remains authoritative until every release gate in this document passes:
+Implemented as a fail-closed product foundation; **not enabled on macOS or Windows**. The
+shared contracts, Desktop coordinator, daemon grant/audit enforcement, Settings/PiP
+projection and native-helper scaffolding now exist, but both packaged policies remain Off.
+The current shipped safety baseline remains authoritative until every release gate in this
+document passes:
 
 - locking, suspending or losing the interactive session closes the call gate;
 - the current provider generation and lease are revoked;
 - requested Computer Control intent is retained only for a fresh post-unlock readiness pass;
 - **Allow control while locked** remains visible but disabled in Settings.
 
-This design does not declare locked control available on either platform. It defines the
-policy and proof required before a platform can expose it.
+The native helpers deliberately return negative locked attestation. In addition, the current
+provider patch fences one complete mutating tool invocation rather than checking the epoch at
+each low-level OS input emission. That is useful fail-closed groundwork, but it does not meet
+the no-post-fence-input proof required for enablement. This document therefore does not
+declare locked control available on either platform.
+
+Implementation and evidence status:
+
+| Boundary | Current result |
+| --- | --- |
+| Contracts, validators and packaged disabled policy | Implemented |
+| Daemon grant registry, durable metadata audit and pre/post-call policy | Implemented behind fixed Off capability |
+| Desktop serialized policy coordinator and authority rotation | Implemented; restricted generation launcher stays disabled |
+| Settings authorization/revoke/countdown and PiP visibility | Implemented; production UI resolves to disabled |
+| macOS native helper | Source and Apple Silicon build/content-free session probe implemented; attended locked capture/input proof not run |
+| Windows native helper | Source, build/sign command and denial handoff implemented; Windows compilation and real-machine acceptance handed off |
+| Per-OS-emission provider fence | Not implemented; current fence is mutating tool-call scoped |
+| Product enablement | Off on both platforms |
 
 ## Decision
 

@@ -3,9 +3,24 @@
 ## Status and source of truth
 
 This document details [Governed Locked Computer Control](locked-computer-control-policy.md).
-It is a gated follow-up to the current bundled Computer Control V1 baseline. Until a
-platform passes the feasibility and release gates, runtime behavior remains lock = close
+The fail-closed cross-layer foundation is implemented, but platform enablement is not. Until
+a platform passes the feasibility and release gates, runtime behavior remains lock = close
 gate, revoke lease/generation, stop provider generation, and recover only after unlock.
+
+Current implementation boundary (2026-07-31):
+
+- shared contracts, daemon policy/registry/routes/audit, Desktop policy coordination,
+  Settings/PiP presentation and provider-call pre/post fences are implemented;
+- macOS native helper source compiles on Apple Silicon and emits only a content-free session
+  summary; Windows helper source plus build/sign/denial handoff is present but not compiled
+  or accepted on this macOS host;
+- both helpers intentionally return negative locked capture/input attestation;
+- provider patch `0005-ling-provider-input-fence-v1.patch` holds one epoch permit around a
+  complete mutating MCP tool invocation. It does not yet fence each underlying CGEvent,
+  `SendInput`, UIA mutation or multi-step emission;
+- `DesktopRuntime` publishes `disabled_by_build`, supplies no executable session digest and
+  refuses to start a restricted generation. These are deliberate safety gates, not missing
+  UI wiring.
 
 ## Goals
 
@@ -44,10 +59,12 @@ apps/desktop/main
     policy-coordinator.ts           serial state machine and grant lifetime
     identity-verifier.ts            platform-neutral interface
     capability-attestor.ts          platform-neutral probe interface
-    audit-publisher.ts              authenticated daemon projection client
-    adapters/darwin-*.ts            LocalAuthentication + session proof
-    adapters/win32-*.ts             UserConsentVerifier + WTS/input desktop proof
-  desktop-runtime.ts                delegates OS events; no policy logic
+    daemon-client.ts                authenticated daemon projection/audit client
+    native-bridge.ts                closed native identity/attestation contracts
+    native-helper-bridge.ts         bounded child-process JSON bridge and session parser
+    feasibility-probe.ts            non-promotional development evidence validator
+  scripts/native/                   LocalAuthentication and UserConsentVerifier/WTS helpers
+  desktop-runtime.ts                fixed-Off composition and OS-event delegation
   cua-driver/coordinator.ts         generation mode and restricted lease only
 
 packages/daemon/src/features/computer-use
@@ -352,15 +369,19 @@ arrive within the budget, Ling kills the owned provider generation and records a
 unacknowledged transition. Safety wins over preserving the call result.
 
 Closing the daemon gate is not enough for a request already inside `host.exchange()`. The
-Ling provider patch therefore adds a Desktop-owned, one-way input-fence control channel
+release target therefore requires a Desktop-owned, one-way input-fence control channel
 served by a thread independent from the MCP executor. Every low-level CGEvent/SkyLight,
-`SendInput`, UIA mutation and each step of a multi-event sequence acquires the current input
-epoch immediately around the OS emission. On lock, the native observer fences the epoch and
-acknowledges only after no old-epoch emission is active. The Desktop then performs the
-normal generation transition. If the fence acknowledgement misses its small hard deadline,
-Desktop uses retained-handle immediate termination (`SIGKILL`/Job Object termination) and
-does not wait for the normal graceful provider shutdown window. A fenced or terminated
-generation can never reopen input.
+`SendInput`, UIA mutation and each step of a multi-event sequence must acquire/check the
+current input epoch immediately around the OS emission. On lock, the native observer fences
+the epoch and acknowledges only after no old-epoch emission is active. If acknowledgement
+misses its small hard deadline, Desktop uses retained-handle immediate termination
+(`SIGKILL`/Job Object termination) rather than the normal graceful provider shutdown window.
+
+The implemented patch currently closes admission and holds a permit around the complete
+mutating tool call in `registry.invoke()`. Its acknowledgement proves that those tool calls
+have returned, not that every underlying OS emission independently checked the epoch. Until
+that lower-level fence and disposable-target test exist, the restricted generation launcher
+must remain disabled even if native feasibility later looks positive.
 
 Acceptance uses a disposable native target with an event log to assert that no input from
 the old epoch occurs after the lock fence is acknowledged, including click/type/drag/replay
@@ -436,6 +457,10 @@ Responsibilities:
 The feasibility probe is a development/acceptance executable or native-helper command. It
 does not ship as an end-user unlock mechanism and must not automate credentials.
 
+Current Darwin helper status: `LocalAuthentication`, console/Aqua session digest and
+lock-state summary are implemented. Attestation remains deliberately negative; the helper
+is not wired into a promotable product capability or packaged acceptance claim.
+
 ### Win32 adapter
 
 Responsibilities:
@@ -452,6 +477,13 @@ Responsibilities:
 
 The Windows implementation and automated fixtures are part of this plan; signed
 real-machine acceptance is handed to the Windows team.
+
+Current Win32 helper status: `UserConsentVerifier`, WTS state, logon-session digest and input
+desktop checks are implemented in source. The build script can apply a real Authenticode
+certificate when supplied; it never fabricates one. The content-free denial harness and
+commands live in
+[`docs/release/locked-computer-control-windows-handoff.md`](../release/locked-computer-control-windows-handoff.md).
+Attestation remains deliberately negative and Windows PASS is not claimed.
 
 ## IPC and routes
 
@@ -643,13 +675,18 @@ content-free desktop/session identity, not interaction with the credential surfa
 
 ## Migration, rollout and rollback
 
-1. Land contracts and inert capability projection with packaged policy `disabled`.
-2. Land platform probes behind per-platform development flags.
-3. Land identity, coordinator, daemon enforcement and audit while product flag remains Off.
-4. Land UI disabled/eligible states; only fixture builds can expose authorization.
-5. Enable macOS internal acceptance only after its evidence passes.
-6. Produce Windows code and handoff bundle; Windows stays Off until Windows-team acceptance.
-7. Public release remains a separate product decision.
+1. **Implemented:** contracts and inert capability projection with packaged policy
+   `disabled`.
+2. **Partially implemented:** native helper/probe scaffolding; attended positive feasibility
+   remains open on both platforms.
+3. **Implemented:** identity/coordinator/daemon enforcement/audit scaffolding while the
+   product flag remains Off.
+4. **Implemented:** UI disabled/eligible states and external PiP visibility; production
+   builds still resolve to disabled.
+5. **Open:** implement per-OS-emission fencing and run macOS attended packaged acceptance.
+6. **Handoff ready, execution open:** Windows code/build/sign/denial bundle exists; Windows
+   stays Off until Windows-team compile and real-machine acceptance.
+7. **Open:** public release remains a separate product decision after every platform gate.
 
 Rollback flips the per-platform locked-control package/feature gate Off. Runtime immediately
 revokes any grant and returns to the already-shipped lock-suspend path; it does not need a

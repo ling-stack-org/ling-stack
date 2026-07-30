@@ -2,9 +2,24 @@
 
 ## Status
 
-Ready for implementation sequencing, but not ready to enable. This plan covers macOS and
-Windows code. macOS packaged acceptance is performed locally; Windows real-machine
-acceptance and final Windows verdict are performed by the Windows team.
+Implementation foundation complete; native enablement gates remain open. This plan covers
+macOS and Windows code. macOS packaged acceptance is performed locally; Windows compilation,
+real-machine acceptance and final Windows verdict are performed by the Windows team.
+
+The current branch has implemented the shared contracts, fail-closed platform adapters,
+Desktop coordinator, daemon registry/audit/routes, pre/post-provider policy checks,
+Settings/PiP presentation and native-helper scaffolding. Product builds still publish
+`disabled_by_build`, do not provide an executable locked generation, and do not restore a
+grant after restart.
+
+Two release-blocking facts remain:
+
+1. both native helpers deliberately emit negative locked capture/input attestation because
+   attended same-user locked feasibility has not been proven;
+2. provider patch `0005-ling-provider-input-fence-v1.patch` fences a complete mutating tool
+   invocation, not each low-level OS input emission required by the design.
+
+These gaps are why the feature remains Off, not reasons to weaken the platform boundary.
 
 The current production-safe behavior remains in force until a platform finishes every
 release gate:
@@ -96,9 +111,9 @@ per-platform release flag or current fixed-Off baseline
 ```
 
 Slice 0 is a per-platform hard evidence gate. Contracts/disabled UI may be developed with
-fixtures in parallel, but a failed platform stops only its native runtime and acceptance
-lane. If both fail, stop after the inert contracts/disabled evidence; no product runtime
-implementation may reinterpret failure as support.
+fixtures in parallel, and dormant enforcement scaffolding may land while every executable
+entry remains fixed Off. A failed platform stops its positive native runtime and acceptance
+lane. No scaffold may reinterpret failure as support or start a restricted generation.
 
 ## Slice 0 — Native feasibility probes
 
@@ -438,33 +453,18 @@ Add short maintained ASCII diagrams to:
 ## Test coverage map
 
 ```text
-CODE PATHS                                              USER / OS FLOWS
-[+] contracts/locked-computer-control                   [+] Privacy Settings
-  +-- [PLANNED ***] valid state matrix                    +-- [PLANNED E2E] disabled reasons
-  +-- [PLANNED ***] malformed/impossible input            +-- [PLANNED E2E] authorize + cancel
-  +-- [PLANNED ***] old/new compatibility                  +-- [PLANNED E2E] authorize + armed
-                                                          +-- [PLANNED E2E] close/reopen/revoke
-[+] Desktop policy coordinator                          [+] OS transition
-  +-- [PLANNED ***] authorize/recheck/CAS                 +-- [PLANNED E2E] lock -> restricted
-  +-- [PLANNED ***] every state/revoke trigger             +-- [PLANNED E2E] unlock -> consumed
-  +-- [PLANNED ***] stale/duplicate native events          +-- [PLANNED E2E] suspend -> revoked
-  +-- [PLANNED ***] bounded drain/kill                     +-- [PLANNED E2E] user/session switch deny
+IMPLEMENTED AUTOMATION                                OPEN RELEASE EVIDENCE
+[x] contracts validators and impossible states       [ ] attended macOS locked capture/input
+[x] Desktop authorize/revoke/lock race state machine [ ] loginwindow exclusion on packaged app
+[x] daemon bridge auth/revision/TTL/audit recovery    [ ] per-OS-emission epoch fence
+[x] pre/post provider grant/attestation/tool fence    [ ] disposable target no-post-fence input
+[x] Settings view model/countdown/commands            [ ] signed macOS package/OS matrix
+[x] PiP armed/attesting/active projection             [ ] Windows helper compile/sign on Windows
+[x] helper crash/malformed/negative proof handling    [ ] Winlogon/UAC/WTS/Session-0 handoff run
+[x] macOS helper compile + content-free session probe [ ] Windows-team real-machine verdict
 
-[+] platform adapters                                  [+] Safety boundaries
-  +-- [PLANNED NATIVE] macOS identity/session             +-- [PLANNED E2E] loginwindow excluded
-  +-- [PLANNED NATIVE] Win identity/WTS/desktop            +-- [PLANNED E2E] Winlogon/UAC excluded
-  +-- [PLANNED NATIVE] unknown/failure/timeouts             +-- [PLANNED E2E] Session 0 denied
-
-[+] daemon registry/enforcement                        [+] Active task
-  +-- [PLANNED ***] bridge auth/revision/TTL              +-- [PLANNED E2E] existing approval allow
-  +-- [PLANNED ***] pre/post-call stale fence              +-- [PLANNED E2E] approval pauses locked
-  +-- [PLANNED ***] audit success/failure                  +-- [PLANNED E2E] Stop/revoke always works
-  +-- [PLANNED ***] restart normalization                  +-- [PLANNED E2E] late result discarded
-
-COVERAGE TARGET: every planned branch has unit/native coverage; the four cross-layer
-security journeys require packaged E2E acceptance. No prompt/LLM eval change is involved.
-
-Legend: *** behavior + edge + error | E2E cross-layer | NATIVE OS-backed adapter
+The implemented tests prove fail-closed state and wiring. They do not prove positive locked
+control. Only the open native/package rows may close that release boundary.
 ```
 
 ## Performance acceptance
@@ -483,7 +483,9 @@ Legend: *** behavior + edge + error | E2E cross-layer | NATIVE OS-backed adapter
 
 1. **Lock race with an in-flight input.** Mitigation: close gate, independent provider-local
    input epoch fence, immediate termination on missing acknowledgement, generation rotation,
-   disposable-target no-post-fence-input test and post-result fence.
+   disposable-target no-post-fence-input test and post-result fence. Current status: gate,
+   whole-tool permit, termination and post-result fences exist; per-OS-emission checks and
+   the disposable-target proof remain open, so enablement is blocked.
 2. **OS prompt returns after scope changed.** Mitigation: snapshot/recheck authority, run,
    session and provider revision before installing the grant.
 3. **Platform can report lock but not prove target desktop.** Mitigation: capability remains
@@ -519,30 +521,31 @@ Lane D (Web UI) waits for stable projection from Slice 1/3
 
 ## Implementation tasks
 
-| ID | Priority | Task | Depends on | Human estimate | CC-assisted estimate |
-| --- | --- | --- | --- | --- | --- |
-| LCC-00 | P0 | Build macOS and Windows feasibility probes; record non-release per-platform results | None | 2–4 days | 1–2 days |
-| LCC-01 | P0 | Add contracts, validators, packaged disabled policy and compatibility fixtures | LCC-00 interface findings | 1–1.5 days | 3–5 hours |
-| LCC-02 | P0 | Implement macOS local identity/session adapter | macOS `feasible_candidate`, LCC-01 | 1–2 days | 0.5–1 day |
-| LCC-03 | P0 | Implement Windows identity/WTS/input-desktop adapter and handoff fixtures | Windows `feasible_candidate`, LCC-01 | 1.5–2.5 days | 0.5–1 day |
-| LCC-04 | P0 | Add daemon memory grant registry, authenticated routes and durable metadata audit | LCC-01 | 1.5–2.5 days | 0.5–1 day |
-| LCC-05 | P0 | Add Desktop serialized state machine, provider input fence and generation rotation | LCC-04 plus at least one passing LCC-02/LCC-03 adapter | 2–3.5 days | 1–1.5 days |
-| LCC-06 | P0 | Enforce grant/attestation/allowlist/approval before and after provider calls | LCC-04, LCC-05 | 1–2 days | 0.5–1 day |
-| LCC-07 | P1 | Implement Privacy projection, confirmation, countdown and external visibility | LCC-01, LCC-04 | 1.5–2.5 days | 0.5–1 day |
-| LCC-08 | P0 | Complete core race/E2E/privacy/rollback automation plus each passing native lane | LCC-04–07 plus passing LCC-02/LCC-03 only | 2–3 days | 1–1.5 days |
-| LCC-09A | P0 | Run macOS full-matrix packaged acceptance | macOS `feasible_candidate`, LCC-08 macOS lane | 1–2 days | 0.5–1 day plus attended runs |
-| LCC-09B | P0 | Prepare Windows signed handoff for Windows-team acceptance | Windows `feasible_candidate`, LCC-08 Windows lane | 1–2 days plus Windows owner | 0.5–1 day plus attended runs |
+| ID | Status | Priority | Task | Depends on | Human estimate | CC-assisted estimate |
+| --- | --- | --- | --- | --- | --- | --- |
+| LCC-00 | Partial | P0 | Build macOS and Windows feasibility helpers; positive attended proof still open | None | 2–4 days | 1–2 days |
+| LCC-01 | Implemented | P0 | Add contracts, validators, packaged disabled policy and compatibility fixtures | LCC-00 interface findings | 1–1.5 days | 3–5 hours |
+| LCC-02 | Partial | P0 | macOS identity/session helper and bridge exist; positive feasibility/package wiring open | LCC-01 | 1–2 days | 0.5–1 day |
+| LCC-03 | Handoff ready | P0 | Windows identity/WTS/input-desktop source and denial handoff; Windows execution open | LCC-01 | 1.5–2.5 days | 0.5–1 day |
+| LCC-04 | Implemented | P0 | Add daemon memory grant registry, authenticated routes and durable metadata audit | LCC-01 | 1.5–2.5 days | 0.5–1 day |
+| LCC-05 | Partial/blocking | P0 | Desktop state machine and whole-tool fence implemented; per-emission fence/restricted start open | LCC-04 plus positive native adapter | 2–3.5 days | 1–1.5 days |
+| LCC-06 | Implemented while Off | P0 | Enforce grant/attestation/allowlist/approval before and after provider calls | LCC-04, LCC-05 | 1–2 days | 0.5–1 day |
+| LCC-07 | Implemented | P1 | Implement Privacy projection, confirmation, countdown and external visibility | LCC-01, LCC-04 | 1.5–2.5 days | 0.5–1 day |
+| LCC-08 | Partial | P0 | Core unit/race/privacy automation implemented; packaged native/E2E rows open | LCC-04–07 plus passing native lane | 2–3 days | 1–1.5 days |
+| LCC-09A | Open | P0 | Run macOS full-matrix packaged acceptance | positive macOS LCC-00, completed per-emission fence | 1–2 days | 0.5–1 day plus attended runs |
+| LCC-09B | Windows-owned execution | P0 | Execute signed Windows handoff and record Windows-team verdict | Windows machine/certificate, completed per-emission fence | 1–2 days plus Windows owner | 0.5–1 day plus attended runs |
 
-### Overall estimate
+### Remaining estimate after this implementation slice
 
-- CC-assisted coding and local macOS verification: approximately **5–8 working days** if
-  the macOS feasibility probe passes quickly.
-- Conventional human engineering: approximately **12–20 engineer-days**, with native and
-  daemon lanes parallelized.
-- Windows elapsed completion is not predictable until a Windows colleague runs the signed
-  real-machine probe and acceptance suite.
+- Per-OS-emission provider fence plus disposable-target regression: approximately **1–2
+  engineering days**, depending on the upstream input backend split.
+- macOS attended feasibility and packaged acceptance: **0.5–1 day per declared OS cell**
+  after the fence exists; a negative result stops enablement.
+- Windows compile/sign/denial handoff: **0.5 day of Windows-owner time**; positive feasibility
+  and full acceptance are not predictable until the Windows colleague runs them.
+- Public-release signing/notarization and policy promotion remain a separate release task.
 - If a platform probe fails, stop that platform after disabled-state/handoff evidence; do
-  not spend the remaining estimate trying to bypass the OS boundary.
+  not bypass the OS boundary.
 
 ## Definition of done
 
