@@ -79,6 +79,7 @@ export type LockedControlPrepareResult =
     };
 
 export interface LockedControlRegistryOptions {
+  readonly workspaceCwd: string;
   readonly policy: LockedComputerControlPolicyV1;
   readonly capability: LockedComputerControlCapabilityV1;
   readonly isScopeActive: (input: {
@@ -131,7 +132,8 @@ export class LockedComputerControlRegistry {
 
   constructor(private readonly options: LockedControlRegistryOptions) {
     if (!isLockedComputerControlPolicyV1(options.policy)
-      || !isLockedComputerControlCapabilityV1(options.capability)) {
+      || !isLockedComputerControlCapabilityV1(options.capability)
+      || !isText(options.workspaceCwd, 4096)) {
       throw new Error("locked_control_registry_policy_invalid");
     }
     this.policy = options.policy;
@@ -164,6 +166,7 @@ export class LockedComputerControlRegistry {
       event: "locked_control_capability_evaluated",
       platform: capability.platform,
       occurredAt: this.now().toISOString(),
+      workspaceCwd: this.options.workspaceCwd,
       capability: capability.state,
       adapterVersion: capability.adapterVersion,
       buildId,
@@ -477,6 +480,7 @@ export class LockedComputerControlRegistry {
     }
     if (!isText(input.requestId)
       || !isText(input.workspaceCwd, 4096)
+      || input.workspaceCwd !== this.options.workspaceCwd
       || !isText(input.runId)
       || !isText(input.computerUseSessionId)
       || !this.options.isScopeActive(input)) {

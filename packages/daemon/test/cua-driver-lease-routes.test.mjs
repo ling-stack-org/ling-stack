@@ -11,13 +11,16 @@ const BRIDGE_TOKEN_HEADER = "X-Ling-Desktop-Bridge-Token";
 
 test("issuing a new handshake synchronously clears the previous registry lease", () => {
   const connectionIds = ["connection-1", "connection-2"];
+  let authorityRotations = 0;
   const authority = new CuaDriverDesktopBridgeAuthority({
     workspaceCwd: "/tmp/ling-cua-authority",
     daemonAuthorityEpoch: "daemon-authority",
     createConnectionId: () => connectionIds.shift(),
     now: () => "2026-07-19T00:00:00.000Z",
+    onAuthorityRotated: () => { authorityRotations += 1; },
   });
   const first = authority.issueAuthenticatedHandshake();
+  assert.equal(authorityRotations, 0);
   const firstLease = lease(
     { ...first, defaultWorkspaceCwd: authority.workspaceCwd },
     { expiresAt: "2026-07-19T00:01:00.000Z" },
@@ -40,6 +43,7 @@ test("issuing a new handshake synchronously clears the previous registry lease",
   }).reason, "stale_sequence");
 
   const second = authority.issueAuthenticatedHandshake();
+  assert.equal(authorityRotations, 1);
   assert.equal(second.desktopInstanceEpoch, 2);
   assert.equal(second.bridgeConnectionId, "connection-2");
   assert.equal(authority.leaseRegistry.getCurrent(), undefined);

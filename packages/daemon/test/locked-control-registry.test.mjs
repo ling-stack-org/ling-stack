@@ -75,6 +75,7 @@ function fixture({ policy = enabledPolicy, appendAudit } = {}) {
   const audits = [];
   const scheduled = [];
   const registry = new LockedComputerControlRegistry({
+    workspaceCwd: "/workspace",
     policy,
     capability,
     isScopeActive: (input) => input.workspaceCwd === "/workspace"

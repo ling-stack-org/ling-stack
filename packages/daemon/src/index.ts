@@ -10,6 +10,7 @@ import { createPiRunner, getPiRunnerExtension } from "@ling-stack/runner-pi";
 import {
   listBuiltinProviderExtensions,
 } from "@ling-stack/providers";
+import { isTerminalComputerUseStatus } from "@ling-stack/contracts";
 import {
   createLingExtensionRegistry,
   type ChannelSourceExtensionMetadata,
@@ -48,6 +49,13 @@ import { StartupStateRegistry } from "./startup/state.js";
 import { warmDefaultWorkspaceStartup } from "./startup/warmup.js";
 import { ComputerUseProjectionRegistry } from "./features/computer-use/registry.js";
 import { CuaDriverDesktopBridgeAuthority } from "./features/computer-use/desktop-bridge-authority.js";
+import { createLockedControlAuditPublisher } from "./features/computer-use/locked-control-audit.js";
+import { LockedComputerControlRegistry } from "./features/computer-use/locked-control-registry.js";
+import {
+  createDisabledLockedControlCapability,
+  createPackagedLockedControlPolicy,
+  lockedControlPlatformForNode,
+} from "./features/computer-use/locked-control-policy.js";
 import { bundledEmbeddedCuaDriverGateEnabled } from "./features/plugins/cua-driver-feature-gates.js";
 import {
   CuaDriverClientPool,
@@ -182,13 +190,42 @@ export function createDaemonServer(
     },
   });
   let cuaDriverActivationCoordinator: CuaDriverDaemonActivationCoordinator | undefined;
+  let lockedComputerControl: LockedComputerControlRegistry | undefined;
   const cuaDriverDesktopBridgeAuthority = new CuaDriverDesktopBridgeAuthority({
     workspaceCwd: resolvedConfig.defaultWorkspaceCwd,
     scheduleDeadline: dependencies.cuaDriverLeaseScheduleDeadline,
     onLeaseReplaced: (_previous, next) => {
       cuaDriverActivationCoordinator?.handleLeaseChanged(next);
     },
+    onAuthorityRotated: () => {
+      lockedComputerControl?.revoke("locked_control_authority_rotated", false);
+    },
   });
+  const lockedControlPlatform = lockedControlPlatformForNode();
+  if (lockedControlPlatform) {
+    const lockedControlAudit = createLockedControlAuditPublisher({
+      storeRegistry,
+      controlPlaneEvents,
+    });
+    lockedComputerControl = new LockedComputerControlRegistry({
+      workspaceCwd: resolvedConfig.defaultWorkspaceCwd,
+      policy: createPackagedLockedControlPolicy("disabled"),
+      capability: createDisabledLockedControlCapability(lockedControlPlatform),
+      isScopeActive: ({ workspaceCwd, runId, computerUseSessionId }) => {
+        const store = storeRegistry.findStoreForRun(runId, workspaceCwd);
+        const run = store?.getRun(runId);
+        const projection = computerUsePreviews.get(workspaceCwd, computerUseSessionId);
+        return Boolean(
+          run
+          && (run.status === "running" || run.status === "waiting_for_approval")
+          && projection
+          && !isTerminalComputerUseStatus(projection.status),
+        );
+      },
+      isAuthorityCurrent: (identity) => cuaDriverDesktopBridgeAuthority.isCurrentHandshake(identity),
+      appendAudit: (event) => lockedControlAudit.append(event),
+    });
+  }
   const cuaDriverActivationService = new BundledCuaDriverActivationService({
     leaseRegistry: cuaDriverDesktopBridgeAuthority.leaseRegistry,
     clientPool: cuaDriverClientPool,
@@ -270,6 +307,7 @@ export function createDaemonServer(
     startupOptionalWarmups,
     computerUsePreviews,
     cuaDriverDesktopBridgeAuthority,
+    lockedComputerControl,
     cuaDriverActivationService,
     cuaDriverActivationCoordinator,
     computerUseStop: dependencies.computerUseStop,
@@ -353,6 +391,7 @@ export function createDaemonServer(
         controlPlaneEvents.closeAll();
         computerUsePreviews.closeAll();
         cuaDriverDesktopBridgeAuthority.clear();
+        lockedComputerControl?.close();
         rpcWebSocketServer.close();
         server.close((error) => {
           if (error) {

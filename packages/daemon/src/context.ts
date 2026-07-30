@@ -24,6 +24,7 @@ import type {
   ComputerUseProjectionRegistryOptions,
 } from "./features/computer-use/registry.js";
 import type { CuaDriverDesktopBridgeAuthority } from "./features/computer-use/desktop-bridge-authority.js";
+import type { LockedComputerControlRegistry } from "./features/computer-use/locked-control-registry.js";
 import type { ActiveDirectReplyRegistry } from "./features/teammates/direct-reply-active-registry.js";
 import type { ActiveRunRegistry } from "./runtime/active-runs.js";
 import type { RunStoreFactory } from "./runtime/store-registry.js";
@@ -151,6 +152,7 @@ export interface DaemonContext {
   readonly startupOptionalWarmups: StartupOptionalWarmupCoordinator;
   readonly computerUsePreviews: ComputerUseProjectionRegistry;
   readonly cuaDriverDesktopBridgeAuthority: CuaDriverDesktopBridgeAuthority;
+  readonly lockedComputerControl?: LockedComputerControlRegistry;
   readonly cuaDriverActivationService: BundledCuaDriverActivationService;
   readonly cuaDriverActivationCoordinator: CuaDriverDaemonActivationCoordinator;
   readonly computerUseStop?: DaemonDependencies["computerUseStop"];

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { accessSync, constants as fsConstants, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, extname, isAbsolute, join, posix, resolve } from "node:path";
@@ -78,6 +79,68 @@ const cuaDriverBundledReviewedTools = new Set([
   "type_text",
   "zoom",
 ]);
+
+export const CUA_DRIVER_LOCKED_TOOL_POLICY_REVISION = "locked-cua-tools-v1" as const;
+
+export const CUA_DRIVER_LOCKED_ALLOWED_TOOL_IDS = Object.freeze([
+  "bring_to_front",
+  "check_permissions",
+  "click",
+  "double_click",
+  "drag",
+  "end_session",
+  "get_accessibility_tree",
+  "get_cursor_position",
+  "get_desktop_state",
+  "get_screen_size",
+  "get_window_state",
+  "health_report",
+  "hotkey",
+  "list_apps",
+  "list_windows",
+  "move_cursor",
+  "page",
+  "press_key",
+  "right_click",
+  "scroll",
+  "set_value",
+  "start_session",
+  "type_text",
+] as const);
+
+export const CUA_DRIVER_LOCKED_DENIED_TOOL_IDS = Object.freeze([
+  "check_for_update",
+  "get_agent_cursor_state",
+  "get_config",
+  "get_recording_state",
+  "install_ffmpeg",
+  "kill_app",
+  "launch_app",
+  "replay_trajectory",
+  "set_agent_cursor_enabled",
+  "set_agent_cursor_motion",
+  "set_agent_cursor_style",
+  "set_config",
+  "start_recording",
+  "stop_recording",
+  "zoom",
+] as const);
+
+const cuaDriverLockedAllowedTools: ReadonlySet<string> = new Set(CUA_DRIVER_LOCKED_ALLOWED_TOOL_IDS);
+const cuaDriverLockedDeniedTools: ReadonlySet<string> = new Set(CUA_DRIVER_LOCKED_DENIED_TOOL_IDS);
+
+export const CUA_DRIVER_LOCKED_ALLOWED_TOOL_IDS_SHA256 = createHash("sha256")
+  .update(JSON.stringify(CUA_DRIVER_LOCKED_ALLOWED_TOOL_IDS), "utf8")
+  .digest("hex");
+
+export type CuaDriverLockedToolDecision = "allow_to_existing_approval" | "deny";
+
+/** Unknown and future provider tools fail closed while the session is locked. */
+export function lockedCuaDriverToolDecision(toolId: string): CuaDriverLockedToolDecision {
+  return cuaDriverLockedAllowedTools.has(toolId) && !cuaDriverLockedDeniedTools.has(toolId)
+    ? "allow_to_existing_approval"
+    : "deny";
+}
 
 export class BundledCuaDriverToolPolicyError extends Error {
   constructor(readonly unsupportedTools: readonly string[]) {
