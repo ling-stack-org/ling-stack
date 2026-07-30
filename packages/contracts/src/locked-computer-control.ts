@@ -374,7 +374,7 @@ export function isLockedControlIdentityResultV1(
 
 export function isLockedComputerControlGrantV1(
   value: unknown,
-  maxTtlSeconds = LOCKED_COMPUTER_CONTROL_MAX_GRANT_TTL_SECONDS,
+  maxTtlSeconds: number = LOCKED_COMPUTER_CONTROL_MAX_GRANT_TTL_SECONDS,
 ): value is LockedComputerControlGrantV1 {
   if (!isRecordWithOnlyKeys(value, GRANT_KEYS)
     || value.schemaVersion !== 1
