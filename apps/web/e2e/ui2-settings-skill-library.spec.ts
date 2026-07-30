@@ -30,6 +30,19 @@ test("Skill Library keeps loading, no-result, shared controls, and editor geomet
   listGate.resolve();
   const row = panel.locator('[data-skill-id="ui2-long-skill"]');
   await expect(row).toBeVisible();
+  const compactTable = panel.locator(".settings-skill-table-wrap");
+  const compactGeometry = await compactTable.evaluate((container) => {
+    const table = container.querySelector("table");
+    const containerRect = container.getBoundingClientRect();
+    const borderRight = Number.parseFloat(getComputedStyle(container).borderRightWidth);
+    return {
+      backgroundGap: table ? Math.abs((containerRect.right - borderRight) - table.getBoundingClientRect().right) : Number.POSITIVE_INFINITY,
+      scrollbarGutter: getComputedStyle(container).scrollbarGutter,
+    };
+  });
+  expect(compactGeometry.scrollbarGutter).toBe("auto");
+  expect(compactGeometry.backgroundGap).toBeLessThanOrEqual(1);
+  await expect(panel.locator(".settings-skill-overlay-scrollbar")).toHaveAttribute("data-overflow", "false");
   await expect(panel.locator(".settings-skill-search")).toHaveClass(/\bling-ui-input\b/);
   await expect(panel.locator(".settings-skill-sort")).toHaveClass(/\bling-ui-select\b/);
   await expect(panel.getByRole("button", { name: "Import skill" })).toHaveAttribute("data-variant", "secondary");
