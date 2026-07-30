@@ -5,6 +5,12 @@ import type { Writable, Readable } from "node:stream";
 import type { CuaDriverStateRoot } from "./state-root.js";
 import type { CuaDriverTelemetrySink } from "./telemetry.js";
 import { createCuaDriverTelemetry, redactCuaDriverDiagnostic } from "./telemetry.js";
+import {
+  createCuaDriverInputFenceConfiguration,
+  fenceCuaDriverInput,
+  type CuaDriverInputFenceAcknowledgement,
+  type CuaDriverInputFenceConfiguration,
+} from "./input-fence-client.js";
 
 export const CUA_DRIVER_MCP_ARGS = [
   "mcp",
@@ -113,6 +119,8 @@ export interface CuaDriverProviderProcessLifecycle {
     readonly environment: NodeJS.ProcessEnv;
   }): ChildProcess;
   terminate(child: ChildProcess): Promise<void>;
+  /** Bypass graceful shutdown after a missed security-boundary acknowledgement. */
+  terminateImmediately?(child: ChildProcess): Promise<void>;
   assertNoResidue?(input: { readonly pid: number | undefined; readonly generation: number }): Promise<void>;
 }
 
@@ -172,7 +180,9 @@ export class CuaDriverProviderHost {
   private startAbortController: AbortController | undefined;
   private startEpoch = 0;
   private stopPromise: Promise<void> | undefined;
+  private immediateStopPromise: Promise<void> | undefined;
   private terminal = false;
+  private inputFenceConfiguration: CuaDriverInputFenceConfiguration | undefined;
   private initializeSeen = false;
   private stdoutBuffer = Buffer.alloc(0);
   private stderrBytes = 0;
@@ -344,6 +354,33 @@ export class CuaDriverProviderHost {
     return pending;
   }
 
+  /** Fence the exact live generation. An unspawned generation has no input to drain. */
+  async fenceInput(timeoutMs?: number): Promise<CuaDriverInputFenceAcknowledgement | undefined> {
+    const child = this.child;
+    if (!child || child.exitCode !== null || child.signalCode !== null) {
+      return undefined;
+    }
+    const configuration = this.inputFenceConfiguration;
+    if (!configuration) {
+      throw new CuaDriverProviderHostError("child_terminal", "provider_input_fence_unavailable");
+    }
+    return fenceCuaDriverInput(configuration, timeoutMs);
+  }
+
+  /**
+   * Security-boundary termination. This path never waits for stdin EOF or the
+   * normal graceful shutdown window before killing the retained child.
+   */
+  terminateImmediately(reason = "security_boundary"): Promise<void> {
+    if (this.immediateStopPromise) return this.immediateStopPromise;
+    const pending = this.terminateImmediatelyInternal(reason);
+    this.immediateStopPromise = pending;
+    void pending.finally(() => {
+      if (this.immediateStopPromise === pending) this.immediateStopPromise = undefined;
+    }).catch(() => undefined);
+    return pending;
+  }
+
   private async startInternal(startEpoch: number, signal: AbortSignal): Promise<void> {
     this.stateValue = "starting";
     let preparedSpawn: CuaDriverPreparedProviderSpawn | undefined;
@@ -382,12 +419,16 @@ export class CuaDriverProviderHost {
       throw new CuaDriverProviderHostError("pre_spawn_validation_failed");
     }
     this.assertStartCurrent(startEpoch, signal);
+    const inputFenceConfiguration = await createCuaDriverInputFenceConfiguration(this.generation);
+    this.assertStartCurrent(startEpoch, signal);
+    this.inputFenceConfiguration = inputFenceConfiguration;
     const environment = createManagedProviderEnvironment({
       baseEnvironment: this.options.baseEnvironment ?? process.env,
       stateRoot: this.options.stateRoot,
       hostProcessId: this.options.hostProcessId ?? process.pid,
       generation: this.generation,
       childInstanceNonce: this.childInstanceNonce,
+      inputFence: inputFenceConfiguration,
     });
     let child: ChildProcess;
     try {
@@ -679,6 +720,7 @@ export class CuaDriverProviderHost {
     this.terminal = true;
     this.stateValue = failed ? "failed" : "stopped";
     this.child = undefined;
+    this.inputFenceConfiguration = undefined;
     this.resolveExit?.();
     this.resolveExit = undefined;
     this.telemetry.emit(failed ? "error" : "info", "cua_driver.host.stopped", {
@@ -686,6 +728,53 @@ export class CuaDriverProviderHost {
       pid: pid ?? null,
       reason,
     });
+  }
+
+  private async terminateImmediatelyInternal(reason: string): Promise<void> {
+    this.stateValue = "stopping";
+    this.startEpoch += 1;
+    this.startAbortController?.abort();
+    const child = this.child;
+    const pid = child?.pid;
+    if (!child || child.exitCode !== null || child.signalCode !== null) {
+      this.terminal = true;
+      this.child = undefined;
+      this.inputFenceConfiguration = undefined;
+      this.stateValue = "failed";
+      this.rejectPending(new CuaDriverProviderHostError("child_terminal"));
+      return;
+    }
+    this.rejectPending(new CuaDriverProviderHostError("child_terminal"));
+    this.terminal = true;
+    try {
+      if (this.lifecycle.terminateImmediately) {
+        await this.lifecycle.terminateImmediately(child);
+      } else if (!child.kill("SIGKILL")) {
+        throw new CuaDriverProviderHostError("child_terminal", "provider_immediate_termination_rejected");
+      }
+      const terminated = child.exitCode !== null
+        || child.signalCode !== null
+        || await waitForPromise(this.exitPromise, 250);
+      if (!terminated) {
+        throw new CuaDriverProviderHostError("child_terminal", "provider_immediate_termination_unconfirmed");
+      }
+      await this.lifecycle.assertNoResidue?.({ pid, generation: this.generation });
+      this.child = undefined;
+      this.inputFenceConfiguration = undefined;
+      this.resolveExit?.();
+      this.resolveExit = undefined;
+      this.stateValue = "failed";
+      this.telemetry.emit("error", "cua_driver.host.immediately_terminated", {
+        generation: this.generation,
+        pid: pid ?? null,
+        reason,
+      });
+    } catch (error) {
+      // Keep the retained handle available for a later cleanup attempt.
+      this.terminal = false;
+      this.stateValue = "failed";
+      throw error;
+    }
   }
 
   private rejectPending(error: Error): void {
@@ -740,6 +829,7 @@ export function createManagedProviderEnvironment(input: {
   readonly hostProcessId: number;
   readonly generation: number;
   readonly childInstanceNonce: string;
+  readonly inputFence: CuaDriverInputFenceConfiguration;
 }): NodeJS.ProcessEnv {
   const environment: NodeJS.ProcessEnv = {};
   // Keep only OS/user-session variables needed by native application APIs.
@@ -775,6 +865,9 @@ export function createManagedProviderEnvironment(input: {
     CUA_DRIVER_HOST_PID: String(input.hostProcessId),
     CUA_DRIVER_CHILD_INSTANCE_NONCE: input.childInstanceNonce,
     CUA_DRIVER_LEASE_GENERATION: String(input.generation),
+    CUA_DRIVER_INPUT_FENCE_PORT: String(input.inputFence.port),
+    CUA_DRIVER_INPUT_FENCE_TOKEN: input.inputFence.token,
+    CUA_DRIVER_INPUT_EPOCH: String(input.inputFence.epoch),
     CUA_DRIVER_STATE_HOME: input.stateRoot.rootPath,
     CUA_DRIVER_TELEMETRY_HOME: input.stateRoot.telemetryPath,
     CUA_DRIVER_RS_TELEMETRY_ENABLED: "false",
@@ -958,5 +1051,10 @@ const defaultProviderLifecycle: CuaDriverProviderProcessLifecycle = {
       return;
     }
     child.kill("SIGTERM");
+  },
+  async terminateImmediately(child) {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGKILL");
+    }
   },
 };

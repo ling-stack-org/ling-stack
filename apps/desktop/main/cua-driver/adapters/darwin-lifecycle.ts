@@ -96,6 +96,14 @@ export function createDarwinCuaDriverProcessLifecycle(options: {
         throw new DarwinCuaDriverLifecycleError("terminate_failed");
       }
     },
+    async terminateImmediately(child: ChildProcess) {
+      if (child.exitCode !== null || child.signalCode !== null) {
+        return;
+      }
+      if (!child.kill("SIGKILL")) {
+        throw new DarwinCuaDriverLifecycleError("terminate_failed");
+      }
+    },
   });
 }
 
