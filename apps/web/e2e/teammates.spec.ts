@@ -1478,18 +1478,20 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(page.getByLabel("Private chat", { exact: true }).getByText("AI teammate is blocked: No provider preset is selected for this teammate.")).toBeVisible();
 
   await openPrivateChatSettings(page);
-  await page.getByLabel("Teammate profile").getByText("Advanced profile", { exact: true }).click();
-  const personaPanel = page.getByLabel("Persona import");
-  await personaPanel.getByLabel("Source path").fill("AGENTS.md");
-  await personaPanel.getByLabel("Persona content").fill([
+  const teammateProfile = page.getByLabel("Teammate profile");
+  await teammateProfile.getByText("Advanced profile", { exact: true }).click();
+  await teammateProfile.getByRole("button", { name: "Import role profile" }).click();
+  const personaPanel = page.getByRole("dialog", { name: "Import role profile" });
+  await personaPanel.getByRole("radio", { name: "Paste content" }).click();
+  await personaPanel.getByLabel("Role profile content").fill([
     "# Imported QA Persona",
     "Review private workspace changes carefully.",
     "Do not grant tools, approvals, secrets, or external send permissions.",
   ].join("\n"));
-  await personaPanel.getByRole("button", { name: "Preview draft" }).click();
-  await expect(personaPanel.getByText("Draft ready")).toBeVisible();
+  await personaPanel.getByRole("button", { name: "Check content" }).click();
+  await expect(personaPanel.getByLabel("Role profile preview")).toBeVisible();
   await expect(personaPanel.getByText("Permission-like persona text was ignored for authority changes.")).toBeVisible();
-  await personaPanel.getByRole("button", { name: "Apply persona draft" }).click();
+  await personaPanel.getByRole("button", { name: "Apply to profile" }).click();
   await expect.poll(() => {
     const teammate = state.aiTeammates.find((item) => isRecord(item) && item.id === teammateId);
     return isRecord(teammate) ? [teammate.displayName, teammate.appendSystemPrompt, teammate.allowedTools, teammate.approvalProfile] : undefined;
@@ -1528,7 +1530,8 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Imported QA Persona" }).click();
   await openPrivateChatSettings(page);
 
-  await page.getByRole("button", { name: "Remove avatar" }).click();
+  await page.getByLabel("Teammate profile").getByRole("button", { name: "Avatar options" }).click();
+  await page.getByRole("menuitem", { name: "Restore default avatar" }).click();
   await expect.poll(() => {
     const teammate = state.aiTeammates.find((item) => isRecord(item) && item.id === teammateId);
     return isRecord(teammate) ? teammate.avatarImageAttachmentId : "missing";
@@ -1573,8 +1576,7 @@ test("AI teammate settings save status and visibility fields", async ({ page }) 
   await page.getByLabel("Settings sections").getByRole("button", { name: /Profile/ }).click();
   const profilePanel = page.getByLabel("Teammate profile");
   await profilePanel.getByLabel("Status").selectOption("paused");
-  await profilePanel.getByLabel("Pinned in sidebar").setChecked(false);
-  await profilePanel.getByLabel("Hidden from sidebar").setChecked(true);
+  await profilePanel.getByLabel("Sidebar display").selectOption("hidden");
   await page.getByLabel("Single agent settings").getByRole("button", { name: "Save" }).click();
   await expect(page.locator('[data-ling-overlay="toast"]').filter({ hasText: "Teammate profile saved" })).toBeVisible();
 

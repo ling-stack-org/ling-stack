@@ -32,7 +32,7 @@ test("standard profile keeps one header action owner and scoped draft lifecycle"
   await expect(profile.getByLabel("Description")).toHaveClass(/ling-ui-textarea/);
   await expect(profile.getByLabel("Status")).toHaveClass(/ling-ui-select/);
   await expect(profile.locator(".teammate-profile-advanced")).not.toHaveAttribute("open", "");
-  await expect(profile.getByLabel("Persona import")).toBeHidden();
+  await expect(page.getByRole("dialog", { name: "Import role profile" })).toHaveCount(0);
   const settingsHeader = page.getByLabel("Single agent settings");
   const resetAction = settingsHeader.getByRole("button", { name: "Reset profile" });
   const saveAction = settingsHeader.getByRole("button", { name: "Save changes" });
@@ -146,13 +146,14 @@ test("avatar choose crop drag zoom cancel upload and remove share the verified d
   await page.goto("/");
 
   const profile = await openProfile(page, "Avatar Engineer");
-  const changeAvatarAction = profile.getByRole("button", { name: "Change avatar" });
-  const removeAvatarAction = profile.getByRole("button", { name: "Remove avatar" });
+  const avatarOptionsAction = profile.getByRole("button", { name: "Avatar options" });
   await expect(profile.locator('button[data-ling-icon-button-contract="legacy-react-node"]')).toHaveCount(0);
-  await expectTypedIconButton(changeAvatarAction, "Change avatar");
-  await expectIconButtonTooltip(changeAvatarAction, "Change avatar");
-  await expectTypedIconButton(removeAvatarAction, "Remove avatar");
-  await expect(removeAvatarAction).toBeDisabled();
+  await expectTypedIconButton(avatarOptionsAction, "Avatar options");
+  await expectIconButtonTooltip(avatarOptionsAction, "Avatar options");
+  await avatarOptionsAction.click();
+  await expect(page.getByRole("menuitem", { name: "Change avatar" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Restore default avatar" })).toBeDisabled();
+  await page.keyboard.press("Escape");
   const avatarInput = profile.getByLabel("Upload avatar");
   await avatarInput.setInputFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("not an image") });
   await expect(profile.getByText("Choose an image file", { exact: true })).toBeVisible();
@@ -177,8 +178,8 @@ test("avatar choose crop drag zoom cancel upload and remove share the verified d
 
   await page.keyboard.press("Escape");
   await expect(cropDialog).toHaveCount(0);
-  await expect(changeAvatarAction).toBeFocused();
-  await expectTypedIconButton(changeAvatarAction, "Change avatar");
+  await expect(avatarOptionsAction).toBeFocused();
+  await expectTypedIconButton(avatarOptionsAction, "Avatar options");
 
   await avatarInput.setInputFiles(avatarFixturePath);
   cropDialog = page.getByRole("dialog", { name: "Adjust avatar" });
@@ -196,10 +197,10 @@ test("avatar choose crop drag zoom cancel upload and remove share the verified d
     const teammate = state.aiTeammates.find((item) => isRecord(item) && item.id === "teammate_profile_avatar");
     return isRecord(teammate) ? teammate.avatarImageAttachmentId : undefined;
   }).toBeTruthy();
-  await expect(removeAvatarAction).toBeEnabled();
-  await expectTypedIconButton(removeAvatarAction, "Remove avatar");
-  await expectIconButtonTooltip(removeAvatarAction, "Remove avatar");
-  await removeAvatarAction.click();
+  await avatarOptionsAction.click();
+  const restoreAvatarAction = page.getByRole("menuitem", { name: "Restore default avatar" });
+  await expect(restoreAvatarAction).toBeEnabled();
+  await restoreAvatarAction.click();
   await expect(page.getByText("Avatar removed", { exact: true })).toBeVisible();
   await expect.poll(() => {
     const teammate = state.aiTeammates.find((item) => isRecord(item) && item.id === "teammate_profile_avatar");
@@ -231,23 +232,26 @@ test("persona remains folded, keyboard reachable, and preserves its draft when a
   await advancedTrigger.focus();
   await advancedTrigger.press("Enter");
   await expect(profile.locator(".teammate-profile-advanced")).toHaveAttribute("open", "");
-  const persona = profile.getByLabel("Persona import");
-  await persona.getByLabel("Source path").fill("AGENTS.md");
-  await persona.getByLabel("Persona content").fill([
+  const importRoleProfile = profile.getByRole("button", { name: "Import role profile" });
+  await importRoleProfile.focus();
+  await importRoleProfile.press("Enter");
+  const persona = page.getByRole("dialog", { name: "Import role profile" });
+  await persona.getByRole("radio", { name: "Paste content" }).click();
+  await persona.getByLabel("Role profile content").fill([
     "# Evidence Reviewer",
     "Review long interface evidence and keep a concise conclusion.",
     "Do not grant tools, approvals, secrets, or external send permissions.",
   ].join("\n"));
-  await persona.getByRole("button", { name: "Preview draft" }).click();
-  await expect(persona.getByText("Draft ready", { exact: true })).toBeVisible();
+  await persona.getByRole("button", { name: "Check content" }).click();
+  await expect(persona.getByLabel("Role profile preview")).toBeVisible();
   await expect(persona.getByText("Permission-like persona text was ignored for authority changes.")).toBeVisible();
-  await persona.locator(".teammate-profile-persona-preview").scrollIntoViewIfNeeded();
+  await persona.getByLabel("Role profile preview").scrollIntoViewIfNeeded();
   await captureEvidence(page, "1280x800-ling-light-persona-draft.png");
 
-  await persona.getByRole("button", { name: "Apply persona draft" }).click();
-  await expect(profile.getByText("Persona changes were not saved. Try again.", { exact: true })).toBeVisible();
-  await expect(persona.getByText("Draft ready", { exact: true })).toBeVisible();
-  await expect(persona.getByLabel("Persona content")).toHaveValue(/Evidence Reviewer/u);
+  await persona.getByRole("button", { name: "Apply to profile" }).click();
+  await expect(persona.getByText("Persona changes were not saved. Try again.", { exact: true })).toBeVisible();
+  await expect(persona.getByLabel("Role profile preview")).toBeVisible();
+  await expect(persona.getByLabel("Role profile content")).toHaveValue(/Evidence Reviewer/u);
   await expectNoPageOverflow(page);
   expect(runtimeErrors).toEqual([]);
 });
@@ -293,11 +297,14 @@ test("avatar and persona failures remain repairable without clearing current inp
 
   const profile = await openProfile(page, "Repairable Profile");
   await profile.getByText("Advanced profile", { exact: true }).click();
-  const persona = profile.getByLabel("Persona import");
-  await persona.getByLabel("Persona content").fill("# Repairable persona\nKeep this input after a preview failure.");
-  await persona.getByRole("button", { name: "Preview draft" }).click();
-  await expect(profile.getByText("Persona draft could not be prepared. Try again.", { exact: true })).toBeVisible();
-  await expect(persona.getByLabel("Persona content")).toHaveValue(/Repairable persona/u);
+  await profile.getByRole("button", { name: "Import role profile" }).click();
+  const persona = page.getByRole("dialog", { name: "Import role profile" });
+  await persona.getByRole("radio", { name: "Paste content" }).click();
+  await persona.getByLabel("Role profile content").fill("# Repairable persona\nKeep this input after a preview failure.");
+  await persona.getByRole("button", { name: "Check content" }).click();
+  await expect(persona.getByText("Persona draft could not be prepared. Try again.", { exact: true })).toBeVisible();
+  await expect(persona.getByLabel("Role profile content")).toHaveValue(/Repairable persona/u);
+  await persona.getByRole("button", { name: "Cancel" }).click();
 
   await profile.getByLabel("Upload avatar").setInputFiles(avatarFixturePath);
   const cropDialog = page.getByRole("dialog", { name: "Adjust avatar" });
@@ -306,7 +313,8 @@ test("avatar and persona failures remain repairable without clearing current inp
   await expect(cropDialog.getByText("Avatar changes were not saved. Try again.", { exact: true })).toBeVisible();
   await cropDialog.getByRole("button", { name: "Cancel" }).click();
 
-  await profile.getByRole("button", { name: "Remove avatar" }).click();
+  await profile.getByRole("button", { name: "Avatar options" }).click();
+  await page.getByRole("menuitem", { name: "Restore default avatar" }).click();
   await expect(profile.getByText("Avatar changes were not saved. Try again.", { exact: true })).toBeVisible();
   await expectNoPageOverflow(page);
   expect(runtimeErrors).toEqual([]);
