@@ -76,6 +76,7 @@ export function parseCreateAiTeammateInput(value: unknown): CreateAiTeammateInpu
     description: readStringAllowEmpty(value, "description"),
     avatarTone: readOptionalString(value, "avatarTone"),
     avatarImageAttachmentId: readOptionalString(value, "avatarImageAttachmentId"),
+    modelBindingMode: "fixed",
     providerPresetId: readOptionalString(value, "providerPresetId"),
     runnerId: readOptionalString(value, "runnerId"),
     systemPrompt: readOptionalString(value, "systemPrompt"),
@@ -101,6 +102,7 @@ export function parseAiTeammateUpdateInput(value: unknown): AiTeammateUpdateInpu
     description: readOptionalString(value, "description"),
     avatarTone: readNullableString(value, "avatarTone"),
     avatarImageAttachmentId: readNullableString(value, "avatarImageAttachmentId"),
+    modelBindingMode: readOptionalAiTeammateModelBindingMode(value, "modelBindingMode"),
     providerPresetId: readNullableString(value, "providerPresetId"),
     runnerId: readNullableString(value, "runnerId"),
     systemPrompt: readNullableString(value, "systemPrompt"),
@@ -356,6 +358,20 @@ function validateAiTeammateInput(input: AiTeammateUpdateInput): void {
   if (input.allowedTools !== undefined && input.allowedTools.length === 0) {
     throw new Error("allowedTools must contain at least one tool");
   }
+}
+
+function readOptionalAiTeammateModelBindingMode(
+  record: Record<string, unknown>,
+  key: string,
+): AiTeammateUpdateInput["modelBindingMode"] {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value !== "workspace_default" && value !== "fixed") {
+    throw new Error(`${key} must be workspace_default or fixed`);
+  }
+  return value;
 }
 
 function readOptionalRunTools(record: Record<string, unknown>, key: string): RunTool[] | undefined {

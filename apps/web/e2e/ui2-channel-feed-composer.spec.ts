@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { mockDaemon } from "./support/mock-daemon";
+import { expectCompactMutedComposerControl } from "./support/composer-control-assertions";
 import { createBaseState, createChatProvider } from "./support/mock-state";
 import { expectMessageFrameContained } from "./support/message-frame-assertions";
 import { openEngineeringChannel } from "./support/test-helpers";
@@ -120,6 +121,7 @@ for (const viewport of [
     expect(Math.abs(((await composer.boundingBox())?.y ?? 0) - composerY)).toBeLessThanOrEqual(1);
 
     const permissionButton = composer.getByRole("button", { name: /Selected permission preset/ });
+    await expectCompactMutedComposerControl(permissionButton);
     await permissionButton.click();
     const permissionMenu = page.locator('[data-ling-overlay="menu"]');
     await expect(permissionMenu).toBeVisible();

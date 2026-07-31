@@ -1,5 +1,8 @@
 # P8.1i AI Teammate Tasks Evidence
 
+> Historical evidence: the Tasks Settings tab documented here was removed by product decision on 2026-07-30.
+> Private-message task creation remains supported and is covered by `teammates.spec.ts`.
+
 ## Scope
 
 - Captured: 2026-07-21, Asia/Shanghai.

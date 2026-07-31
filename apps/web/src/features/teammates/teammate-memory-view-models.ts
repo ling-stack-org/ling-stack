@@ -8,7 +8,6 @@ import type {
   MemoryObject,
   MemoryPromotionInboxItem,
   MemoryReviewAction,
-  MemoryReviewMode,
   MemoryReviewPolicy,
   TeammateMemoryScope,
   UsedMemoryEvent,
@@ -62,7 +61,6 @@ export interface TeammateMemoryViewModel {
   readonly healthTone: MemoryStatusTone;
   readonly reviewRows: readonly TeammateMemoryReviewRow[];
   readonly scopeRows: readonly TeammateMemoryScopeRow[];
-  readonly summaryLabel: string;
 }
 
 export const emptyMemoryReviewEditForm: MemoryReviewEditForm = {
@@ -84,7 +82,6 @@ export function buildTeammateMemoryViewModel(input: {
       healthTone: "neutral",
       reviewRows: [],
       scopeRows: [],
-      summaryLabel: t("Loading memory"),
     };
   }
   const channelsById = new Map(channels.map((channel) => [channel.id, channel]));
@@ -110,10 +107,6 @@ export function buildTeammateMemoryViewModel(input: {
       tone: scope.enabled ? "success" : "warning",
       statusLabel: t(scope.enabled ? "Active" : "Paused"),
     })),
-    summaryLabel: t("{scopes} scopes · {reviews} to review", {
-      scopes: snapshot.scopes.length,
-      reviews: snapshot.inbox.length,
-    }),
   };
 }
 
@@ -141,14 +134,6 @@ export function memoryHealthFindingTitle(kind: MemoryHealthFinding["kind"]): str
     case "authority_changing_claim": return "Authority-changing claim";
     case "stale_candidate": return "Stale candidate";
     case "high_review_backlog": return "High review backlog";
-  }
-}
-
-export function memoryReviewModeDescription(mode: MemoryReviewMode): string {
-  switch (mode) {
-    case "conservative": return "Most extracted memories stay candidates until reviewed.";
-    case "balanced": return "Low-risk same-scope memories can become active; high-impact items still need review.";
-    case "fast": return "Same-scope memories auto-activate more often; cross-scope and sensitive items still need review.";
   }
 }
 

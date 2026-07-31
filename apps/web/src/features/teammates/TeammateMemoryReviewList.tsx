@@ -23,11 +23,10 @@ export function TeammateMemoryReviewList({
   return (
     <section className="teammate-memory-review-section" aria-labelledby="teammate-memory-review-title">
       <div className="teammate-memory-section-heading compact">
-        <div>
-          <h4 id="teammate-memory-review-title">{t("Review inbox")}</h4>
-          <p>{t("Candidates from the whole Workspace appear here, not only this teammate.")}</p>
-        </div>
-        <StatusIndicator compact label={t("{count} pending", { count: rows.length })} tone={rows.length ? "warning" : "neutral"} />
+        <h4 id="teammate-memory-review-title">{t("Review inbox")}</h4>
+        {rows.length > 0 ? (
+          <StatusIndicator compact label={t("{count} pending", { count: rows.length })} tone="warning" />
+        ) : null}
       </div>
       {error ? <InlineFeedback tone="danger">{error}</InlineFeedback> : null}
       {rows.length === 0 ? (

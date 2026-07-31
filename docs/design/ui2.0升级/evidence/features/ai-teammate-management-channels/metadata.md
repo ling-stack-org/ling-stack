@@ -62,3 +62,26 @@ No visual defect requiring a production-code change was found in this archive.
 - `TeammateWorkspace.tsx` remains a 1,760-line architecture-debt composition owner. Channels logic is extracted, but
   future Tabs must not add major state or UI logic back into it.
 - This closeout does not close teammate MCP or Danger, Council Channels, or packaged Desktop platform evidence.
+
+## 2026-07-31 Archived-Channel Omission Evidence
+
+The evidence above remains the historical 2026-07-22 closeout. The six existing filenames were recaptured after the
+teammate relationship editor stopped displaying archived Channels. Their original hashes above are therefore obsolete
+for the files currently on disk.
+
+Archived Channels are absent from rows, totals, search results and filter options. Existing archived memberships remain
+in the normalized full-replacement payload when another Channel is joined, left or made default; this prevents a
+presentation-only change from deleting historical relationships.
+
+| File | Current SHA-256 |
+|---|---|
+| `1440x960-ling-light-membership-actions.png` | `0c4e91fbf98bf0110cb6c38503a53873e9742e8a5ac2226169077bcbaa93cba2` |
+| `1280x800-ling-dark-lifecycle-zh-CN.png` | `10870e633276d23b95b547aea8596f3a39db09324b93156920b330b99f6faca2` |
+| `1440x960-ling-dark-retained-refresh-error.png` | `d000c99b38cc5c985b5dbb32f8f9d605709ca9fc208547b401b83fe98110e2b0` |
+| `1280x800-ling-light-search-no-result.png` | `8b70856701990571adc87b0524ed0fa8e1ca5e5e37aff68c07c48a1eb4e376bb` |
+| `1280x800-ling-dark-row-mutation-failure.png` | `178e4e58acd8bbae2e48d7b437d04da8c668ccc096df5bde50b0c5fb801ef5b0` |
+| `1440x960-ling-light-protected-100-row-scroll.png` | `5b579668bef4acf0e085e66badcdab92c01d3b72b96de93194c76a46d945d9d0` |
+
+Focused Channels passed `7/7`; Web typecheck and UI2 lint passed. The Light `1440x960` and Dark `1280x800` captures
+were reviewed at original resolution with no root overflow, console error or action collision. No API, contract,
+database, Channel lifecycle or membership persistence semantic changed.

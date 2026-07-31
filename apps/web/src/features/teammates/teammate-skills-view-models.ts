@@ -1,27 +1,35 @@
 import type { SkillDefinition } from "@ling-stack/core/skill-types";
 import type {
   EffectiveTeammateSkill,
-  SkillImportDraft,
   SkillRegistryEntry,
   SkillSourceSnapshot,
   TeammateSkillBinding,
 } from "../../types.js";
 
-export type SkillBindingFilter = "all" | "bound" | "executable" | "blocked" | "available";
-export type SkillPrimaryAction = "bind" | "disable" | "enable";
+export type SkillBindingFilter = "all" | "using" | "unused" | "attention";
 export type SkillStatusTone = "danger" | "info" | "neutral" | "success" | "warning";
 
 type Translate = (key: string, values?: Readonly<Record<string, string | number>>) => string;
+
+const visibleToolLabelKeys: Readonly<Record<string, string>> = {
+  read: "Read files",
+  grep: "Search file contents",
+  find: "Find files",
+  ls: "List folders",
+  bash: "Run commands",
+  edit: "Edit files",
+  write: "Write files",
+};
 
 export interface TeammateSkillRowModel {
   readonly id: string;
   readonly skill: SkillDefinition | undefined;
   readonly binding: TeammateSkillBinding | undefined;
   readonly effectiveSkill: EffectiveTeammateSkill | undefined;
-  readonly registryEntry: SkillRegistryEntry | undefined;
   readonly sourceSnapshot: SkillSourceSnapshot | undefined;
   readonly displayName: string;
   readonly summary: string;
+  readonly searchableToolLabels: readonly string[];
   readonly sourceLabel: string;
   readonly sourceState: {
     readonly attention: boolean;
@@ -32,17 +40,7 @@ export interface TeammateSkillRowModel {
     readonly label: string;
     readonly tone: SkillStatusTone;
   };
-  readonly primaryAction: SkillPrimaryAction;
-  readonly canArchive: boolean;
   readonly canRemove: boolean;
-  readonly blockedLabel: string;
-  readonly toolCount: number;
-}
-
-export interface TeammateSkillStats {
-  readonly attention: number;
-  readonly bound: number;
-  readonly executable: number;
 }
 
 export function buildTeammateSkillRows({
@@ -79,25 +77,22 @@ export function buildTeammateSkillRows({
     const effectiveSkill = effectiveById.get(id);
     const registryEntry = registryById.get(id);
     const sourceSnapshot = sourceById.get(id);
-    const sourceState = projectSkillSourceState(sourceSnapshot, t);
-    const status = projectSkillStatus(skill, binding, effectiveSkill, t);
     return {
       id,
       skill,
       binding,
       effectiveSkill,
-      registryEntry,
       sourceSnapshot,
       displayName: skill ? t(skill.name) : id,
       summary: skill ? t(skill.summary) : t("This binding points to a Skill that is no longer available."),
+      searchableToolLabels: skill?.requiredTools.flatMap((tool) => {
+        const labelKey = visibleToolLabelKeys[tool];
+        return labelKey ? [t(labelKey)] : [];
+      }) ?? [],
       sourceLabel: projectSkillSourceLabel(binding, registryEntry, t),
-      sourceState,
-      status,
-      primaryAction: !binding ? "bind" : binding.enabled ? "disable" : "enable",
-      canArchive: !binding && Boolean(registryEntry) && registryEntry?.source !== "builtin",
+      sourceState: projectSkillSourceState(sourceSnapshot, t),
+      status: projectSkillStatus(skill, binding, effectiveSkill, t),
       canRemove: binding?.source === "user",
-      blockedLabel: effectiveSkill?.blockedReasons.map((reason) => t(reason.code)).join(", ") ?? "",
-      toolCount: skill?.requiredTools.length ?? 0,
     };
   });
 }
@@ -110,12 +105,15 @@ export function filterTeammateSkillRows(
   const normalizedQuery = searchQuery.trim().toLowerCase();
   return rows
     .filter((row) => {
-      if (filter === "bound" && !row.binding?.enabled) return false;
-      if (filter === "executable" && !row.effectiveSkill?.executable) return false;
-      if (filter === "blocked" && (!row.binding?.enabled || row.effectiveSkill?.executable)) return false;
-      if (filter === "available" && row.binding) return false;
+      const enabled = Boolean(row.binding?.enabled);
+      if (filter === "using" && !enabled) return false;
+      if (filter === "unused" && enabled) return false;
+      if (filter === "attention" && !teammateSkillNeedsAttention(row)) return false;
       if (!normalizedQuery) return true;
-      return skillSearchText(row).includes(normalizedQuery);
+      return [row.displayName, row.summary, ...row.searchableToolLabels]
+        .join(" ")
+        .toLowerCase()
+        .includes(normalizedQuery);
     })
     .sort((left, right) => {
       const leftRank = left.binding?.enabled ? 0 : left.binding ? 1 : 2;
@@ -125,31 +123,15 @@ export function filterTeammateSkillRows(
     });
 }
 
-export function summarizeTeammateSkills(rows: readonly TeammateSkillRowModel[]): TeammateSkillStats {
-  return {
-    bound: rows.filter((row) => Boolean(row.binding)).length,
-    executable: rows.filter((row) => row.effectiveSkill?.executable).length,
-    attention: rows.filter((row) => row.status.tone === "danger" || row.status.tone === "warning" || row.sourceState.attention).length,
-  };
+export function teammateSkillNeedsAttention(row: TeammateSkillRowModel): boolean {
+  return row.status.tone === "danger" || row.status.tone === "warning" || row.sourceState.attention;
 }
 
 export function teammateSkillFilterLabel(filter: SkillBindingFilter, t: Translate): string {
-  if (filter === "bound") return t("Bound");
-  if (filter === "executable") return t("Executable");
-  if (filter === "blocked") return t("Blocked");
-  if (filter === "available") return t("Bindable");
-  return t("All");
-}
-
-export function teammateSkillActionLabel(action: SkillPrimaryAction, t: Translate): string {
-  if (action === "disable") return t("Disable");
-  if (action === "enable") return t("Enable");
-  return t("Bind");
-}
-
-export function importDraftHasErrors(draft: SkillImportDraft): boolean {
-  return draft.warnings.some((warning) => warning.severity === "error") ||
-    draft.definitions.some((item) => item.warnings?.some((warning) => warning.severity === "error"));
+  if (filter === "using") return t("In use");
+  if (filter === "unused") return t("Not in use");
+  if (filter === "attention") return t("Needs attention");
+  return t("All skills");
 }
 
 function projectSkillStatus(
@@ -185,21 +167,6 @@ function projectSkillSourceState(
     return { attention: true, label: t("Source needs attention"), tone: "warning" };
   }
   return { attention: false, label: t("Source-backed"), tone: "success" };
-}
-
-function skillSearchText(row: TeammateSkillRowModel): string {
-  return [
-    row.id,
-    row.displayName,
-    row.summary,
-    ...(row.skill?.requiredTools ?? []),
-    ...(row.skill?.requiredProviderCapabilities ?? []),
-    row.sourceSnapshot?.sourcePath ?? "",
-    row.sourceSnapshot?.upstreamSkillPath ?? "",
-    row.sourceSnapshot?.sourceChecksum ?? "",
-    ...(row.sourceSnapshot?.warnings.map((warning) => `${warning.code} ${warning.message}`) ?? []),
-    ...(row.effectiveSkill?.blockedReasons.map((reason) => `${reason.code} ${reason.message} ${(reason.missing ?? []).join(" ")}`) ?? []),
-  ].join(" ").toLowerCase();
 }
 
 function selectAuthoritativeSourceSnapshots(

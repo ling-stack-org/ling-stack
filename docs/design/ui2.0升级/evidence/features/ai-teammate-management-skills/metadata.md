@@ -76,3 +76,25 @@ Every focused scenario asserts an empty browser error console and document `scro
   must continue extracting focused controllers/components before adding major behavior.
 - `TEAMMATE-MCP-001` remains a separate decision-gated slice. Theme Studio D3 and
   `DESKTOP-THEME-PACK-PERSISTENCE-001` remain unrelated open work and are not claimed here.
+
+## 2026-07-31 Replacement Evidence
+
+The capture and verification record above remains historical evidence for the former Registry-heavy Skills Tab. It no
+longer describes the reachable default layer. The current section manages only whether the selected teammate uses a
+Skill. Import, manual Skill ID binding and Registry archive returned to the Skill Library owner.
+
+The current list contains `Skill / Description / Use`, searches only user-visible names, descriptions and tool labels,
+and opens details from the row. Healthy Skills have no status label. Missing, blocked or source-invalid entries alone
+show `Needs attention`. Unlink remains available in the detail Drawer; source identifiers, checksum and path stay in
+folded technical information. The list uses natural height and a shared overlay scrollbar only after content exceeds
+the remaining Settings viewport. The list, rather than the outer Settings content, owns long-content scrolling.
+
+| File | Viewport / Theme | Current state | SHA-256 |
+|---|---|---|---|
+| `1440x960-ling-light-binding-list-and-detail.png` | 1440x960 / `ling-light`, en-US | compact binding list, immediate use Switch and row-owned detail Drawer | `8ab35240c5684138be75cc83191815d2678263d4f55e3685a922b0a405d0498c` |
+| `1280x800-ling-dark-attention-detail.png` | 1280x800 / `ling-dark`, en-US | exceptional Skill state and user-facing blocker detail | `7d9aa1173bc882caa031007441cfeacb0d9e509693e02496c5d2d6fc8cee9cbc` |
+| `1280x800-ling-dark-overlay-scroll-zh-CN.png` | 1280x800 / `ling-dark`, zh-CN | natural-height list capped by the remaining viewport and internally scrolled without outer-page overflow | `957274d9d57c3c92b55ddd96244a430be0ac93165708650bd0e49e8482eb1395` |
+
+All current PNGs were reviewed at original resolution. The complete teammate-management matrix passed `48/48`, and
+Web typecheck, lint, i18n and unit tests passed. Skill Registry ownership, binding replacement and runtime selection
+semantics did not change.

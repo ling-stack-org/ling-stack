@@ -12,7 +12,7 @@ import type {
 } from "../../types.js";
 import { resolveAuthorizationMode, resolveWorkspaceAccessMode } from "../../lib/conversation-authorization.js";
 
-const canonicalTools = ["read", "grep", "find", "ls", "bash", "edit", "write"] as const satisfies readonly ToolName[];
+export const teammateCapabilityTools = ["read", "grep", "find", "ls", "bash", "edit", "write"] as const satisfies readonly ToolName[];
 
 const toolLabelKeys: Readonly<Record<ToolName, string>> = {
   read: "Read files",
@@ -49,7 +49,6 @@ export type TeammatePermissionTone = "neutral" | "info" | "warning" | "danger" |
 export interface TeammatePermissionToolViewModel {
   readonly id: ToolName;
   readonly labelKey: string;
-  readonly impactLabelKey: string;
 }
 
 export interface TeammatePermissionRequirementViewModel {
@@ -105,13 +104,10 @@ export function buildTeammatePermissionsViewModel(input: {
     input.teammate.systemRole === "ling_agent",
   );
   const allowed = new Set(input.teammate.allowedTools);
-  const tools = canonicalTools
-    .filter((tool) => allowed.has(tool))
-    .map((tool): TeammatePermissionToolViewModel => ({
-      id: tool,
-      labelKey: toolLabelKeys[tool],
-      impactLabelKey: isReadOnlyTool(tool) ? "Read-only capability" : "Workspace-changing capability",
-    }));
+  const allTools = teammateCapabilityTools
+    .map((tool): TeammatePermissionToolViewModel => ({ id: tool, labelKey: toolLabelKeys[tool] }));
+  const tools = allTools
+    .filter((tool) => allowed.has(tool.id));
   const approval = approvalProjection(input.teammate.approvalProfile.mode, input.teammate.approvalProfile.risk);
   const authorizationMode = resolveAuthorizationMode(
     input.defaultAuthorizationMode,
@@ -133,7 +129,7 @@ export function buildTeammatePermissionsViewModel(input: {
         approvalProfile: input.teammate.approvalProfile,
       }).snapshot
     : undefined;
-  const workspaceToolDecisions = tools.flatMap((tool): TeammatePermissionDecisionViewModel[] => {
+  const workspaceToolDecisions = allTools.flatMap((tool): TeammatePermissionDecisionViewModel[] => {
     const decision = effectivePolicy?.toolDecisions[tool.id];
     return decision ? [{
       ...tool,
@@ -151,9 +147,9 @@ export function buildTeammatePermissionsViewModel(input: {
     statusLabelKey: managed ? "Managed by Ling Stack" : "Read-only permission summary",
     statusTone: managed ? "info" : "neutral",
     toolCount: tools.length,
-    totalToolCount: canonicalTools.length,
+    totalToolCount: teammateCapabilityTools.length,
     tools,
-    rawToolIds: canonicalTools.filter((tool) => allowed.has(tool)),
+    rawToolIds: teammateCapabilityTools.filter((tool) => allowed.has(tool)),
     approval,
     requiredTools: (input.teammate.approvalProfile.requiredForTools ?? []).map((tool) => ({
       id: tool,
@@ -170,7 +166,9 @@ export function buildTeammatePermissionsViewModel(input: {
       accessLabelKey: workspaceAccessLabelKey(workspaceAccessMode),
       accessTone: workspaceAccessMode === "full_access" ? "warning" : workspaceAccessMode === "workspace_write" ? "info" : "neutral",
       toolDecisions: workspaceToolDecisions,
-      deniedToolLabelKeys: workspaceToolDecisions.filter((tool) => tool.decision === "deny").map((tool) => tool.labelKey),
+      deniedToolLabelKeys: workspaceToolDecisions
+        .filter((tool) => allowed.has(tool.id) && tool.decision === "deny")
+        .map((tool) => tool.labelKey),
       decisionCounts,
     },
   };
@@ -226,8 +224,4 @@ function decisionProjection(decision: ApprovalToolDecision): Pick<
     return { decisionLabelKey: "Workspace approval required", decisionTone: "info" };
   }
   return { decisionLabelKey: "Allowed by workspace", decisionTone: "neutral" };
-}
-
-function isReadOnlyTool(tool: ToolName): boolean {
-  return tool === "read" || tool === "grep" || tool === "find" || tool === "ls";
 }

@@ -51,6 +51,7 @@ export type AiTeammateRoleKey =
 export type AiTeammateStatus = "active" | "paused" | "disabled";
 export type AiTeammateKind = "ai_teammate" | "system_teammate";
 export type AiTeammateSystemRole = "ling_agent";
+export type AiTeammateModelBindingMode = "workspace_default" | "fixed";
 export type AiTeammateEditableField =
   | "displayName"
   | "description"
@@ -71,6 +72,7 @@ export interface AiTeammate {
   readonly description: string;
   readonly avatarTone?: string;
   readonly avatarImageAttachmentId?: string;
+  readonly modelBindingMode: AiTeammateModelBindingMode;
   readonly providerPresetId?: string;
   readonly runnerId?: string;
   readonly systemPrompt?: string;
@@ -91,7 +93,7 @@ export interface CreateAiTeammateRequest {
   readonly description: string;
   readonly avatarTone?: string;
   readonly avatarImageAttachmentId?: string;
-  readonly providerPresetId?: string;
+  readonly providerPresetId: string;
   readonly runnerId?: string;
   readonly systemPrompt?: string;
   readonly appendSystemPrompt?: readonly string[];
@@ -109,6 +111,7 @@ export interface UpdateAiTeammateRequest {
   readonly description?: string;
   readonly avatarTone?: string | null;
   readonly avatarImageAttachmentId?: string | null;
+  readonly modelBindingMode?: AiTeammateModelBindingMode;
   readonly providerPresetId?: string | null;
   readonly runnerId?: string | null;
   readonly systemPrompt?: string | null;

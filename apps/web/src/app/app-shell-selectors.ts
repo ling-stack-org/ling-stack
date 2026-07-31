@@ -58,8 +58,14 @@ export function aiTeammateToLocalDraft(
   teammate: AiTeammate,
   providers: readonly ProviderPreset[],
   channelIds: readonly string[] = [],
+  workspaceDefaultProviderPresetId?: string,
 ): LocalTeammateDraft {
-  const provider = teammate.providerPresetId ? providers.find((item) => item.id === teammate.providerPresetId) : undefined;
+  const effectiveProviderPresetId = teammate.modelBindingMode === "workspace_default"
+    ? workspaceDefaultProviderPresetId
+    : teammate.providerPresetId;
+  const provider = effectiveProviderPresetId
+    ? providers.find((item) => item.id === effectiveProviderPresetId)
+    : undefined;
   return {
     id: teammate.id,
     workspaceId: teammate.workspaceId,
@@ -73,14 +79,20 @@ export function aiTeammateToLocalDraft(
     description: teammate.description,
     avatarTone: teammate.avatarTone,
     avatarImageAttachmentId: teammate.avatarImageAttachmentId,
+    modelBindingMode: teammate.modelBindingMode,
     providerPresetId: teammate.providerPresetId,
+    effectiveProviderPresetId,
     runnerId: teammate.runnerId,
     systemPrompt: teammate.systemPrompt,
     appendSystemPrompt: teammate.appendSystemPrompt,
     allowedTools: teammate.allowedTools,
     approvalProfile: teammate.approvalProfile,
     status: teammate.status,
-    modelLabel: provider ? `${provider.displayName} / ${provider.model}` : "No model selected",
+    modelLabel: provider
+      ? `${provider.displayName} / ${provider.model}`
+      : teammate.modelBindingMode === "workspace_default"
+        ? "Workspace default is not configured"
+        : "No model selected",
     channelIds,
     pinned: teammate.pinned,
     hidden: teammate.hidden,

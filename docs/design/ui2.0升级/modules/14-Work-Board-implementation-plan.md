@@ -163,7 +163,7 @@ export type WorkBoardNavigationOutcome =
 | P11.1b | LIST/ROW/DETAIL | source projection、view-model、controller、race guards | a |
 | P11.1c | LIST/ROW/EMPTY/GUIDE | Header/Toolbar/List/shared primitives | b |
 | P11.1d | DETAIL/OPEN | Inspector、actions、fail Dialog、navigation/feedback | b |
-| P11.1e | ROW/LIST | Channel projection 与 Teammate Tasks regression | c/d |
+| P11.1e | ROW/LIST | Channel projection 与私聊消息转任务 regression | c/d |
 | P11.1f | all | focused CSS/i18n/a11y/motion | c/d/e |
 | P11.1g | all | E2E、browser、screenshots、metadata、global docs closeout | all |
 
@@ -179,7 +179,7 @@ export type WorkBoardNavigationOutcome =
 | `WB-03` | presentation controller、open intent、selection/race/focus | useWorkBoardController | WB-01/02 | 否 | 完成 | selection/keyboard/focus + requestId + refresh focus restore E2E | 13% |
 | `WB-04` | Header、Toolbar、List、Empty/Guide、shared migration | focused components | WB-02/03 | 是，与 WB-05 文件不交叉 | 完成 | list/filter/empty/keyboard E2E | 14% |
 | `WB-05` | Inspector、linked objects、mutation、Dialog、feedback/navigation | focused components + durable domain | WB-01/02/03 | 是，与 WB-04 文件不交叉 | partial | action/outcome/focus 已验；Dialog 仍直接显示 technicalMessage | 17% |
-| `WB-06` | Channel Board、Teammate Tasks/Inbox/Runs regression adapters | channel/teammate/AppShell thin wiring | WB-04/05 | 否 | 完成 | Channel bounded projection + legacy regression + AppShell thin wiring | 7% |
+| `WB-06` | Channel Board、私聊消息转任务/Inbox/Runs regression adapters | channel/teammate/AppShell thin wiring | WB-04/05 | 否 | 完成 | Channel bounded projection + legacy regression + AppShell thin wiring | 7% |
 | `WB-07` | focused CSS、i18n、theme、a11y、motion、overflow | styles/work-board + locale | WB-04/05/06 | 部分 | 完成 | `check:i18n` + Light/Dark/reduced-motion/overflow | 7% |
 | `WB-08` | full gates、双尺寸截图、metadata、覆盖矩阵/status closeout | E2E/evidence/docs | all | 否 | 模块内完成 | 8/8 verified evidence；全局矩阵由全局 owner 登记 | 7% |
 
@@ -499,16 +499,15 @@ AppShell 只把 outcome callback 传入 controller。
 - compact Header、loading/empty、内部滚动；不显示 global scopes/filter/Inspector；
 - 不建立新 store，不改变 channel tools panel/nav。
 
-### 10.2 Teammate Tasks
+### 10.2 Private-message task creation
 
 Regression-only assertions：
 
-- 只显示 selected teammate 最近 100 条；
-- only active membership channels；
-- form/message create 不生成 Run；
-- `currentRunId` 打开 Runs；无 run 打开精确 Work Board task；
+- 私聊设置不显示 Tasks/Activity；
+- message create 只使用 active membership channels，且不生成 Run；
+- 创建成功通过 Toast 打开精确 Work Board task；
 - Work Board refresh 后能看到新任务；
-- Teammate Tasks controller 的 request/identity/stale guard 不回退。
+- message-scoped busy/error 和 teammate identity guard 不回退。
 
 ### 10.3 Approvals/Runs/Threads
 
@@ -646,7 +645,7 @@ corepack pnpm --filter @ling-stack/web test:e2e -- \
   app.spec.ts \
   approvals.spec.ts \
   runtime.spec.ts \
-  ui2-teammate-management-tasks.spec.ts \
+  teammates.spec.ts \
   channel.spec.ts \
   dark-mode.spec.ts
 ```
@@ -735,7 +734,7 @@ LING_PLAYWRIGHT_PORT=4192 corepack pnpm --filter @ling-stack/web test:e2e -- app
 
 - 合同六个 Function ID 全部有真实 trigger、all reachable states、focused E2E 和原尺寸 evidence；
 - global source 是 workspace projection，不依赖 selected channel；
-- Work Board 是完整协调 owner，Teammate Tasks/Channel Board 保持 bounded projection，无 auto-run；
+- Work Board 是完整协调 owner；私聊消息创建入口和 Channel Board 不建立第二份任务管理页面，且无 auto-run；
 - DataRow/Status/Inspector/Button/Input/Select/Popover/Dialog/Feedback 全部消费 UI2 shared primitives；
 - 一个主状态、一个主行动、scoped busy、retained stale、竞态和 feedback 生命周期全部通过；
 - raw diagnostics 默认折叠且绝不暴露 claim token/secret；

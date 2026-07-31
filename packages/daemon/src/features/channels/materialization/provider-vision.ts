@@ -100,7 +100,6 @@ function resolveImageVisionProvider(input: CreateProviderBackedImageVisionSummar
   const candidateIds = [
     input.requestedProviderPresetId,
     input.channel?.defaultProviderPresetId,
-    ...input.store.listProviderPresets({ enabled: true }).map((preset) => preset.id),
   ].filter((id): id is string => Boolean(id));
   for (const providerPresetId of [...new Set(candidateIds)]) {
     const preset = input.store.getProviderPreset(providerPresetId);

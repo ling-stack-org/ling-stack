@@ -1,6 +1,10 @@
 # AI Teammates and Skills
 
 > Model update: [Skill Capability Model And Library Simplification](skill-capability-model-and-library-simplification.md) supersedes skill-stage fields and stage UI. Workflow steps still retain phases; teammate-bound skills do not.
+>
+> Model ownership update: [Conversation Model Binding And Creation Validation](conversation-model-binding-and-creation-validation.md)
+> supersedes optional-model creation semantics. Built-ins follow an explicit default binding;
+> user-created teammates require a fixed runnable chat model.
 
 Ling Stack needs a skills layer before it can safely support multi-agent work.
 

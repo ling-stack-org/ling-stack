@@ -18,6 +18,7 @@ import { pdfExtractorV1 } from "../dist/features/channels/materialization/extrac
 import { attachmentMaterializationFingerprint, linkPreviewMaterializationFingerprint } from "../dist/features/channels/materialization/fingerprints.js";
 import { materializeInlineChannelInputs } from "../dist/features/channels/materialization/inline.js";
 import { materializeInlineTeammateDirectInputs } from "../dist/features/teammates/direct-materialization.js";
+import { prepareChannelCreateBody } from "./conversation-model-test-fixture.mjs";
 import { ensureGitRepo, ensureGitRepoForChannelPost } from "./git-test-helpers.mjs";
 
 const require = createRequire(import.meta.url);
@@ -2975,6 +2976,7 @@ test("mentions_only creates a blocked Ling Agent reply when the channel has no r
   const daemon = await startDaemonForTest(runner);
   try {
     const channel = await createChannel(daemon.url, cwd);
+    simulateLegacyChannelWithoutModel(cwd, channel.id);
 
     const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
       body: "这个频道自动回复怎么设计？",
@@ -3551,6 +3553,7 @@ test("single-step file creation becomes direct workflow with bounded write tools
       autoReplyMode: "default_teammate",
       allowedTools: ["read", "grep", "find", "ls", "write"],
     })).channel;
+    await setWorkspaceDefaultProvider(daemon.url, cwd, channel.defaultProviderPresetId);
 
     const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
       body: `在 ${cwd} 下创建 README.md`,
@@ -4634,6 +4637,7 @@ test("single-step file creation starts with task-scoped write when channel lacks
       autoReplyMode: "mentions_only",
       allowedTools: ["read", "grep", "find", "ls"],
     })).channel;
+    await setWorkspaceDefaultProvider(daemon.url, cwd, channel.defaultProviderPresetId);
 
     const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
       body: `在 ${cwd} 下创建 README.md`,
@@ -4678,6 +4682,7 @@ test("single-step file edit inherits target path from recent workflow context", 
       autoReplyMode: "default_teammate",
       allowedTools: ["read", "grep", "find", "ls", "write", "edit"],
     })).channel;
+    await setWorkspaceDefaultProvider(daemon.url, cwd, channel.defaultProviderPresetId);
 
     const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
       body: `在 ${cwd} 下创建 README.md`,
@@ -4725,6 +4730,7 @@ test("single-step file edit normalizes Users path without leading slash", async 
       autoReplyMode: "default_teammate",
       allowedTools: ["read", "grep", "find", "ls", "edit"],
     })).channel;
+    await setWorkspaceDefaultProvider(daemon.url, cwd, channel.defaultProviderPresetId);
 
     const edited = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
       body: "Users/tianxiao/ling-stack-test 下面，在 README.md 中添加一句测试语句",
@@ -4792,15 +4798,18 @@ test("single-step test request becomes direct workflow with bounded bash tools",
       autoReplyMode: "mentions_only",
       allowedTools: ["read", "grep", "find", "ls", "bash"],
     })).channel;
+    await setWorkspaceDefaultProvider(daemon.url, cwd, channel.defaultProviderPresetId);
 
     const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
       body: "开始执行测试",
     });
 
-    assert.equal(created.aiReply, undefined);
+    assertCoordinatorWorkflowStartReply(created);
+    assert.equal(created.autoStartedWorkflow.workflowSteps.length, 1);
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(proposals.proposals.length, 1);
-    assert.equal(proposals.proposals[0].status, "draft");
+    assert.equal(proposals.proposals[0].status, "accepted");
+    assert.equal(proposals.proposals[0].linkedWorkflowId, created.autoStartedWorkflow.workflow.id);
     assert.equal(proposals.proposals[0].assigneeTeammateId, "teammate_builtin_qa");
     assert.deepEqual(proposals.proposals[0].requiredTools, ["bash"]);
     assert.match(proposals.proposals[0].riskSummary, /bash/);
@@ -5323,6 +5332,7 @@ test("default_teammate creates a blocked Ling Agent reply when the channel has n
       autoReplyMode: "default_teammate",
       allowedTools: ["read"],
     })).channel;
+    simulateLegacyChannelWithoutModel(cwd, channel.id);
 
     const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
       body: "这个问题谁来回复？",
@@ -5403,11 +5413,12 @@ test("auto_route is rejected by channel create and update while the feature flag
       boundPath: cwd,
       autoReplyMode: "auto_route",
     };
-    await ensureGitRepoForChannelPost(createUrl, createBody);
+    const preparedCreateBody = await prepareChannelCreateBody(createUrl, createBody);
+    await ensureGitRepoForChannelPost(createUrl, preparedCreateBody);
     const createResponse = await fetch(createUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(createBody),
+      body: JSON.stringify(preparedCreateBody),
     });
     assert.equal(createResponse.status, 400);
     assert.equal((await createResponse.json()).error, "auto_route_disabled");
@@ -6147,6 +6158,7 @@ test("channel handoff workflows start steps, create tasks, and expose blockers",
       expectedOutput: "Run",
       createdBy: "local-user",
     });
+    simulateLegacyChannelWithoutModel(cwd, first.id);
     const blockedWorkflow = await postJson(`${daemon.url}/handoffs/${encodeURIComponent(secondHandoff.handoff.id)}/workflow?cwd=${encodeURIComponent(cwd)}`, {
       createdBy: "local-user",
     });
@@ -7950,6 +7962,7 @@ test("workflow step retry starts a blocked step after configuration is repaired"
   const daemon = await startDaemonForTest(runner);
   try {
     const channel = await createWorkflowTestChannel(daemon.url, cwd, "Retry workflow");
+    simulateLegacyChannelWithoutModel(cwd, channel.id);
     const compiled = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workflows?cwd=${encodeURIComponent(cwd)}`, {
       templateId: "autoplan-lite",
       objective: "Retry a blocked workflow step.",
@@ -7997,7 +8010,8 @@ test("channel link preview blocks localhost targets instead of fetching them", a
 
 test("AI teammate private workspace endpoints persist roster, setup, private messages, and activity", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ai-teammate-api-"));
-  let daemon = await startDaemonForTest();
+  const runner = new RecordingRunner();
+  let daemon = await startDaemonForTest(runner);
   try {
     const seeded = await getJson(`${daemon.url}/teammates?cwd=${encodeURIComponent(cwd)}&includeHidden=true&includeDisabled=true`);
     assert.ok(seeded.teammates.some((item) => item.id === "teammate_builtin_engineer"));
@@ -8007,6 +8021,8 @@ test("AI teammate private workspace endpoints persist roster, setup, private mes
       roleKey: "custom",
       displayName: "Private Reviewer",
       description: "Reviews private workspace notes.",
+      modelBindingMode: "fixed",
+      providerPresetId: channel.defaultProviderPresetId,
       allowedTools: ["read"],
       approvalProfile: { mode: "none" },
       status: "active",
@@ -8087,8 +8103,8 @@ test("AI teammate private workspace endpoints persist roster, setup, private mes
     assert.equal(message.message.status, "ready");
     assert.deepEqual(message.message.linkPreviewIds, [linkPreview.linkPreview.id]);
     assert.equal(message.message.fileRefs[0].path, "README.md");
-    assert.equal(message.aiReply.status, "blocked");
-    assert.match(message.aiReply.errorMessage, /provider preset/i);
+    assert.equal(message.aiReply.status, "ready");
+    assert.equal(message.aiReply.body, "Designer reply");
 
     const listedMessages = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages?cwd=${encodeURIComponent(cwd)}`);
     assert.deepEqual(listedMessages.messages.map((item) => item.id), [message.message.id, message.aiReply.id]);
@@ -8098,7 +8114,7 @@ test("AI teammate private workspace endpoints persist roster, setup, private mes
     assert.ok(activity.items.some((item) => item.kind === "task" && item.sourceId === task.id));
 
     await daemon.close();
-    daemon = await startDaemonForTest();
+    daemon = await startDaemonForTest(runner);
 
     const restartedRoster = await getJson(`${daemon.url}/teammates?cwd=${encodeURIComponent(cwd)}&includeHidden=true&includeDisabled=true`);
     assert.ok(restartedRoster.teammates.some((item) => item.id === teammateId && item.displayName === "Private Reviewer"));
@@ -8131,6 +8147,7 @@ test("AI teammate private reply waits for startup provider refresh instead of us
       authHeader: true,
       apiKey: "local-relay-secret",
     })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
     const teammateId = "teammate_builtin_engineer";
     await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
       providerPresetId: provider.id,
@@ -8511,14 +8528,16 @@ test("channel creation uses local workspace binding when cwd is not a Git reposi
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-worktree-nongit-"));
   const daemon = await startDaemonForTest();
   try {
-    const response = await fetch(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+    const createUrl = `${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`;
+    const createBody = await prepareChannelCreateBody(createUrl, {
+      name: "Engineering",
+      boundPath: cwd,
+      allowedTools: ["read"],
+    });
+    const response = await fetch(createUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: "Engineering",
-        boundPath: cwd,
-        allowedTools: ["read"],
-      }),
+      body: JSON.stringify(createBody),
     });
     assert.equal(response.status, 201);
     const body = await response.json();
@@ -11452,6 +11471,13 @@ async function createChannel(baseUrl, cwd) {
   })).channel;
 }
 
+async function setWorkspaceDefaultProvider(baseUrl, cwd, providerPresetId) {
+  assert.ok(providerPresetId, "workspace default test setup requires a channel model");
+  await patchJson(`${baseUrl}/workspace-settings?cwd=${encodeURIComponent(cwd)}`, {
+    defaultProviderPresetId: providerPresetId,
+  });
+}
+
 async function createWorkflowTestChannel(baseUrl, cwd, name) {
   return (await postJson(`${baseUrl}/channels?cwd=${encodeURIComponent(cwd)}`, {
     name,
@@ -11502,6 +11528,15 @@ async function createStaticChatProvider(baseUrl, cwd, overrides = {}) {
     enabled: true,
     ...overrides,
   });
+}
+
+function simulateLegacyChannelWithoutModel(cwd, channelId) {
+  const store = createSqliteRunStore(cwd);
+  try {
+    store.updateChannel(channelId, { defaultProviderPresetId: null }, new Date().toISOString());
+  } finally {
+    store.close();
+  }
 }
 
 async function startMockOpenAICompatibleServer(options = {}) {
@@ -11772,11 +11807,12 @@ async function approveWorkflowStepGate(baseUrl, cwd, workflowId, templateStepId)
 }
 
 async function postJson(url, body) {
-  await ensureGitRepoForChannelPost(url, body);
+  const preparedBody = await prepareChannelCreateBody(url, body);
+  await ensureGitRepoForChannelPost(url, preparedBody);
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify(preparedBody),
   });
   if (!response.ok) {
     assert.fail(`${response.status} ${response.statusText}: ${await response.text()}`);

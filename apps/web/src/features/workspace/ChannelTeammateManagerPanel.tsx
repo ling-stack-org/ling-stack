@@ -12,10 +12,12 @@ import {
 } from "../../shared/ui/index.js";
 import { TeammateAvatarView } from "../teammates/TeammateAvatarView.js";
 import type { LocalTeammateDraft } from "../teammates/index.js";
+import { isLingAgentTeammate } from "./ChannelCouncilSettingsPanel.js";
 
 export interface ChannelTeammateManagerPanelProps {
   readonly cwd: string;
   readonly selectedChannelId: string;
+  readonly lingAgentModelLabel: string;
   readonly channelTeammateMembershipsLoading: boolean;
   readonly channelTeammates: readonly { readonly teammate: LocalTeammateDraft }[];
   readonly localTeammates: readonly LocalTeammateDraft[];
@@ -37,6 +39,7 @@ export interface ChannelTeammateRelationFeedback {
 export function ChannelTeammateManagerPanel({
   cwd,
   selectedChannelId,
+  lingAgentModelLabel,
   channelTeammateMembershipsLoading,
   channelTeammates,
   localTeammates,
@@ -87,6 +90,12 @@ export function ChannelTeammateManagerPanel({
         <div className="channel-teammate-list" role="list">
           {channelTeammates.map(({ teammate }) => {
             const saving = channelTeammateSavingId === teammate.id;
+            const lingAgent = isLingAgentTeammate(teammate);
+            const followsWorkspaceDefault = !lingAgent && teammate.modelBindingMode === "workspace_default";
+            const effectiveModelLabel = lingAgent
+              ? lingAgentModelLabel || t("Unavailable")
+              : t(teammate.modelLabel || "No model selected");
+            const modelBinding = lingAgent ? "ling-agent" : followsWorkspaceDefault ? "workspace-default" : "fixed";
             return (
               <DataRow
                 key={teammate.id}
@@ -98,6 +107,19 @@ export function ChannelTeammateManagerPanel({
                   <span className="channel-teammate-chip-main">
                     <TeammateAvatarView teammate={teammate} cwd={cwd} compact />
                     <strong>{teammate.displayName}</strong>
+                  </span>
+                )}
+                summary={(
+                  <span
+                    className="channel-teammate-model-source"
+                    data-teammate-model-binding={modelBinding}
+                    title={effectiveModelLabel}
+                  >
+                    {lingAgent
+                      ? t("Ling Agent model · {model}", { model: effectiveModelLabel })
+                      : followsWorkspaceDefault
+                        ? t("Workspace default · {model}", { model: effectiveModelLabel })
+                        : t("Fixed model · {model}", { model: effectiveModelLabel })}
                   </span>
                 )}
                 actions={(

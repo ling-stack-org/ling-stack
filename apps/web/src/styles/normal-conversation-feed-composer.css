@@ -185,13 +185,21 @@
   max-width: 210px;
 }
 
+[data-conversation-composer][data-surface="normal_conversation"] .conversation-thinking-button,
+[data-conversation-composer][data-surface="normal_conversation"] .conversation-model-trigger {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  font-weight: 500;
+  line-height: var(--ling-line-xs);
+}
+
 .conversation-thinking-button.off,
 .conversation-model-trigger {
   color: var(--ling-text-muted);
 }
 
 .conversation-thinking-button.active {
-  color: var(--ling-text-strong);
+  color: var(--ling-text-muted);
   background: var(--ling-bg-subtle);
 }
 

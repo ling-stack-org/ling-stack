@@ -33,6 +33,23 @@ test("DELETE /providers/:id blocks channel references and preserves local secret
       defaultProviderPresetId: provider.id,
     }, "2026-06-30T00:00:00.000Z");
 
+    const disableBlocked = await requestJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}?cwd=${encodeURIComponent(cwd)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: false }),
+    });
+    assert.equal(disableBlocked.status, 409);
+    assert.equal(disableBlocked.body.error, "provider_update_blocked");
+    assert.equal(disableBlocked.body.blockers[0].kind, "channel_default_provider");
+
+    const secretRemovalBlocked = await requestJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}?cwd=${encodeURIComponent(cwd)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clearApiKey: true }),
+    });
+    assert.equal(secretRemovalBlocked.status, 409);
+    assert.equal(secretRemovalBlocked.body.error, "provider_update_blocked");
+
     const blocked = await requestJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}?cwd=${encodeURIComponent(cwd)}`, {
       method: "DELETE",
     });

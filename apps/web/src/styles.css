@@ -5,6 +5,7 @@
 @import "./styles/page-shells.css";
 @import "./styles/operation-states.css";
 @import "./styles/shared/artifact-row.css";
+@import "./styles/shared/overlay-scroll-area.css";
 @import "./styles/workspace.css";
 @import "./styles/conversation-home.css";
 @import "./styles/runs.css";
@@ -84,8 +85,6 @@
 @import "./styles/teammate-management-model.css";
 @import "./styles/teammate-management-permissions.css";
 @import "./styles/teammate-management-channels.css";
-@import "./styles/teammate-management-tasks.css";
-@import "./styles/teammate-management-activity.css";
 @import "./styles/teammate-management-skills.css";
 @import "./styles/teammate-management-memory.css";
 @import "./styles/teammate-management-memory-overlays.css";

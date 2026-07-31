@@ -13,6 +13,12 @@ Related docs:
 - [Runtime, Provider, and Secrets Inheritance](runtime-provider-secrets-inheritance.md)
 - [Secrets and Keychain](secrets-keychain.md)
 - [Provider Generation Runtime Resolver](provider-generation-runtime.md)
+- [Conversation Model Binding And Creation Validation](conversation-model-binding-and-creation-validation.md)
+
+2026-07-30 lifecycle update: the first successfully checked chat provider becomes the
+workspace default only when no default exists. Later provider saves do not change it.
+Deletion and disablement must respect workspace-default, active-channel and fixed-teammate
+references; archived channels are repaired on restore rather than blocking deletion.
 
 This design follows `session-persistence`. Session persistence keeps a redacted request snapshot for direct `/runs` calls. Provider presets replace repeated inline provider JSON with reusable, user-facing configurations.
 

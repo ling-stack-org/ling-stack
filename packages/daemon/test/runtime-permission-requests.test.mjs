@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { test } from "node:test";
 import { createDaemonServer } from "../dist/index.js";
+import { prepareChannelCreateBody } from "./conversation-model-test-fixture.mjs";
 import { ensureGitRepoForChannelPost } from "./git-test-helpers.mjs";
 
 test("runtime permission requests resolve through durable approvals and return continuation grants", async () => {
@@ -231,11 +232,12 @@ async function getJson(url) {
 }
 
 async function postJson(url, body) {
-  await ensureGitRepoForChannelPost(url, body);
+  const preparedBody = await prepareChannelCreateBody(url, body);
+  await ensureGitRepoForChannelPost(url, preparedBody);
   const response = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify(preparedBody),
   });
   const json = await response.json();
   if (response.status < 200 || response.status >= 300) {

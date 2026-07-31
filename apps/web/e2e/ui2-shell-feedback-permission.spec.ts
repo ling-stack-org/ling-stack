@@ -98,6 +98,40 @@ test("full access confirmation preserves draft, focus, and permission evidence",
   expect(runtimeErrors).toEqual([]);
 });
 
+test("new conversation metadata controls stay quiet and compact without a configured model", async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page);
+  await prepareSurface(page, "light", 1440, 960);
+  await page.addInitScript(() => localStorage.setItem("ling-stack.locale", "zh-CN"));
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [];
+  state.workspaceSettings.defaultProviderPresetId = undefined;
+  await mockDaemon(page, state, { healthResponses: [true] });
+  await page.goto("/");
+
+  const home = page.getByLabel("对话首页");
+  const permission = home.locator(".conversation-authorization-trigger");
+  const model = home.locator(".conversation-model-trigger");
+  const shortcut = home.getByRole("button", { name: "创建 Team" });
+  await expect(permission).toBeVisible();
+  await expect(model).toBeVisible();
+  await expect(permission).toContainText("工作区写入");
+  await expect(model).toContainText("未选择聊天模型");
+
+  const [permissionStyle, modelStyle, shortcutFontSize] = await Promise.all([
+    quietControlStyle(permission),
+    quietControlStyle(model),
+    shortcut.evaluate((element) => getComputedStyle(element).fontSize),
+  ]);
+  expect(permissionStyle).toEqual(modelStyle);
+  expect(permissionStyle.color).toBe(permissionStyle.expectedMutedColor);
+  expect(permissionStyle.fontSize).toBe("12px");
+  expect(permissionStyle.fontWeight).toBe("500");
+  expect(Number.parseFloat(permissionStyle.fontSize)).toBeLessThan(Number.parseFloat(shortcutFontSize));
+  await expectNoPageOverflow(page);
+  await captureEvidence(page, "1440x960-ling-light-quiet-composer-metadata.png");
+  expect(runtimeErrors).toEqual([]);
+});
+
 function createFullAccessState(): MockState {
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [createChatProvider({ id: "provider_full_access_ui2", displayName: "Local Relay", model: "gpt-5.5" })];
@@ -126,6 +160,28 @@ async function prepareSurface(page: Page, theme: "dark" | "light", width: number
 
 async function numericZIndex(locator: Locator): Promise<number> {
   return locator.evaluate((element) => Number.parseInt(getComputedStyle(element).zIndex, 10));
+}
+
+async function quietControlStyle(locator: Locator): Promise<{
+  readonly color: string;
+  readonly expectedMutedColor: string;
+  readonly fontSize: string;
+  readonly fontWeight: string;
+}> {
+  return locator.evaluate((element) => {
+    const probe = document.createElement("span");
+    probe.style.color = getComputedStyle(document.documentElement).getPropertyValue("--ling-text-muted");
+    document.body.append(probe);
+    const expectedMutedColor = getComputedStyle(probe).color;
+    probe.remove();
+    const style = getComputedStyle(element);
+    return {
+      color: style.color,
+      expectedMutedColor,
+      fontSize: style.fontSize,
+      fontWeight: style.fontWeight,
+    };
+  });
 }
 
 async function expectNoPageOverflow(page: Page): Promise<void> {

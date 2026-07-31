@@ -37,6 +37,7 @@ for (const fixture of [
     const composer = page.locator(".teammate-direct-composer");
     await expect(header).toBeVisible();
     await expect(identity).toContainText("Ling Research Engineer");
+    await expect(identity.locator(".teammate-pack-label")).toHaveCount(0);
     await expect(header.locator(".teammate-chat-alert-row")).toHaveCount(0);
     await expect(header).not.toContainText("Model ready");
     await expect(header).not.toContainText("Memory on");
@@ -47,6 +48,22 @@ for (const fixture of [
     expect(Math.round((await header.boundingBox())?.height ?? 0)).toBe(48);
     await expectAlignedConversationColumns(feed, composer);
     await expectHeaderSlotsDoNotOverlap(identity, toolbar);
+    await expectCompactIdentityActions(identity);
+
+    const more = identity.getByRole("button", { name: "More private chat views" });
+    await more.click();
+    await page.getByRole("menuitem", { name: "Settings" }).click();
+    const teammateSettings = page.locator("[data-ui2-teammate-settings='true']");
+    const settingsNavigation = page.getByLabel("Settings sections");
+    await expect(teammateSettings).toBeVisible();
+    await expect(settingsNavigation).toBeVisible();
+    await expect(settingsNavigation.getByRole("button", { name: "Profile", exact: true })).toHaveAttribute("aria-current", "page");
+    await expect(page.getByLabel("Single agent settings").getByRole("heading", { name: "Teammate settings" })).toBeVisible();
+    await expect(page.locator(".teammate-settings-summary-panel")).toHaveCount(0);
+    await expectChannelStyleSettingsShell(teammateSettings, settingsNavigation);
+    await captureEvidence(page, `${fixture.width}x${fixture.height}-ling-${fixture.theme}-teammate-settings.png`);
+    await page.getByLabel("Single agent settings").getByRole("button", { name: "Back to private chat" }).click();
+    await expect(header).toBeVisible();
 
     await toolbar.getByRole("button", { name: "Summary" }).click();
     const summary = page.locator(".teammate-chat-summary-popover");
@@ -106,7 +123,9 @@ for (const fixture of [
     await searchTrigger.click();
     await header.getByRole("textbox", { name: "Search private messages" }).fill("private-architecture.pdf");
     await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Review Partner" }).click();
-    await expect(page.locator("[data-ui2-teammate-chat-header='true']")).toContainText("Review Partner");
+    const reviewPartnerHeader = page.locator("[data-ui2-teammate-chat-header='true']");
+    await expect(reviewPartnerHeader).toContainText("Review Partner");
+    await expectCompactIdentityActions(reviewPartnerHeader.locator(".teammate-workspace-identity"));
     await expect(page.getByRole("search", { name: "Search private messages" })).toHaveCount(0);
     await expect(page.getByLabel("Private chat actions").getByRole("button", { name: /^Private attachments:/u })).toHaveCount(0);
 
@@ -135,6 +154,88 @@ for (const fixture of [
     expect(runtimeErrors).toEqual([]);
   });
 }
+
+test("private chat more menu renames the teammate and explicitly opens context", async ({ page }) => {
+  await prepareSurface(page, "dark", 1280, 800);
+  const runtimeErrors = collectRuntimeErrors(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  const teammateId = installTeammateHeaderFixture(state);
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: /Ling Research Engineer/ }).click();
+
+  const header = page.locator("[data-ui2-teammate-chat-header='true']");
+  const more = header.getByRole("button", { name: "More private chat views" });
+  await more.click();
+  await expect(page.getByRole("menuitem")).toHaveText(["Settings", "Rename teammate", "Context"]);
+  await captureEvidence(page, "1280x800-ling-dark-teammate-more-menu.png");
+
+  await page.getByRole("menuitem", { name: "Context" }).click();
+  await expect(page.getByRole("menuitem")).toHaveCount(0);
+  const dock = page.getByLabel("Private chat workspace dock");
+  await expect(dock).toBeVisible();
+  await expect(dock.locator('[data-ui2-dock-page="context"]')).toBeVisible();
+
+  await more.click();
+  await page.getByRole("menuitem", { name: "Context" }).click();
+  await expect(page.getByRole("menuitem")).toHaveCount(0);
+  await expect(dock).toBeVisible();
+  await expect(dock.locator('[data-ui2-dock-page="context"]')).toBeVisible();
+  await dock.getByRole("button", { name: "Close" }).click();
+  await expect(dock).toHaveCount(0);
+
+  await more.click();
+  await page.getByRole("menuitem", { name: "Rename teammate" }).click();
+  const dialog = page.getByRole("dialog", { name: "Rename teammate" });
+  const nameInput = dialog.getByRole("textbox", { name: "Teammate name" });
+  await expect(nameInput).toHaveValue("Ling Research Engineer with a deliberately long identity for containment");
+  await expect(dialog.getByRole("button", { name: "Confirm" })).toBeDisabled();
+  await captureEvidence(page, "1280x800-ling-dark-teammate-rename-dialog.png");
+
+  await nameInput.fill("Renamed Research Partner");
+  const renameRequest = page.waitForRequest((request) => (
+    request.method() === "PATCH" && new URL(request.url()).pathname === `/teammates/${teammateId}`
+  ));
+  await dialog.getByRole("button", { name: "Confirm" }).click();
+  const renameBody = await (await renameRequest).postDataJSON() as Record<string, unknown>;
+  expect(renameBody).toEqual({ displayName: "Renamed Research Partner" });
+  await expect(dialog).toHaveCount(0);
+  await expect(more).toBeFocused();
+  await expect(header.getByRole("heading", { name: "Renamed Research Partner", level: 1 })).toBeVisible();
+  await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Renamed Research Partner" })).toBeVisible();
+  await expect(page.getByText("Teammate renamed", { exact: true })).toBeVisible();
+  expect(state.aiTeammates.find((candidate) => candidate.id === teammateId)?.displayName).toBe("Renamed Research Partner");
+  await expectNoDocumentOverflow(page);
+  expect(runtimeErrors).toEqual([]);
+});
+
+test("teammate rename failure keeps the edited name and productized error", async ({ page }) => {
+  await prepareSurface(page, "light", 1440, 960);
+  const runtimeErrors = collectRuntimeErrors(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  installTeammateHeaderFixture(state);
+  await mockDaemon(page, state, { failTeammateProfileUpdates: true });
+  await page.goto("/");
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: /Ling Research Engineer/ }).click();
+
+  const header = page.locator("[data-ui2-teammate-chat-header='true']");
+  await header.getByRole("button", { name: "More private chat views" }).click();
+  await page.getByRole("menuitem", { name: "Rename teammate" }).click();
+  const dialog = page.getByRole("dialog", { name: "Rename teammate" });
+  const nameInput = dialog.getByRole("textbox", { name: "Teammate name" });
+  await nameInput.fill("Name Preserved After Failure");
+  await dialog.getByRole("button", { name: "Confirm" }).click();
+
+  await expect(dialog.getByRole("alert")).toHaveText("Teammate name was not changed. Try again.");
+  await expect(nameInput).toHaveValue("Name Preserved After Failure");
+  await expect(dialog).not.toContainText("Teammate profile update is unavailable.");
+  await expect(dialog.getByRole("button", { name: "Confirm" })).toBeEnabled();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(header.getByRole("button", { name: "More private chat views" })).toBeFocused();
+  await expectNoDocumentOverflow(page);
+  expect(runtimeErrors).toEqual([]);
+});
 
 function installTeammateHeaderFixture(state: MockState): string {
   const teammateId = "teammate_ui2_header";
@@ -244,6 +345,34 @@ async function expectHeaderSlotsDoNotOverlap(identity: Locator, toolbar: Locator
   expect(identityBox).not.toBeNull();
   expect(toolbarBox).not.toBeNull();
   expect(identityBox!.x + identityBox!.width).toBeLessThanOrEqual(toolbarBox!.x - 8);
+}
+
+async function expectCompactIdentityActions(identity: Locator): Promise<void> {
+  const nameBox = await identity.locator("h1").boundingBox();
+  const menuBox = await identity.getByRole("button", { name: "More private chat views" }).boundingBox();
+  expect(nameBox).not.toBeNull();
+  expect(menuBox).not.toBeNull();
+  const gap = menuBox!.x - (nameBox!.x + nameBox!.width);
+  expect(gap).toBeGreaterThanOrEqual(4);
+  expect(gap).toBeLessThanOrEqual(8);
+}
+
+async function expectChannelStyleSettingsShell(settings: Locator, navigation: Locator): Promise<void> {
+  const headerBox = await settings.getByLabel("Single agent settings").boundingBox();
+  const navigationBox = await navigation.boundingBox();
+  const content = settings.locator(".teammate-settings-tab-content");
+  const contentBox = await content.boundingBox();
+  const firstTabBox = await navigation.locator(".teammate-settings-nav-item").first().boundingBox();
+  const lastTabBox = await navigation.locator(".teammate-settings-nav-item").last().boundingBox();
+  expect(headerBox).not.toBeNull();
+  expect(navigationBox).not.toBeNull();
+  expect(contentBox).not.toBeNull();
+  expect(firstTabBox).not.toBeNull();
+  expect(lastTabBox).not.toBeNull();
+  expect(Math.round(headerBox!.height)).toBe(58);
+  expect(Math.abs(firstTabBox!.y - lastTabBox!.y)).toBeLessThanOrEqual(1);
+  expect(contentBox!.y).toBeGreaterThanOrEqual(navigationBox!.y + navigationBox!.height - 1);
+  await expect(content).toHaveCSS("overflow-y", "auto");
 }
 
 async function expectSearchContained(search: Locator, header: Locator): Promise<void> {

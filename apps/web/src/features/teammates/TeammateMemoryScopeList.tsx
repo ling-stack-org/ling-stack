@@ -14,10 +14,7 @@ export function TeammateMemoryScopeList({
   return (
     <section className="teammate-memory-section" aria-labelledby="teammate-memory-scopes-title">
       <div className="teammate-memory-section-heading">
-        <div>
-          <h3 id="teammate-memory-scopes-title">{t("Teammate scopes")}</h3>
-          <p>{t("Private and channel memory boundaries for this teammate.")}</p>
-        </div>
+        <h3 id="teammate-memory-scopes-title">{t("Teammate scopes")}</h3>
       </div>
       {rows.length === 0 ? (
         <EmptyState compact icon={<Brain />} title={t("Memory scopes are being prepared")} />
@@ -30,7 +27,12 @@ export function TeammateMemoryScopeList({
               compact
               role="listitem"
               data-memory-scope-id={row.scope.id}
-              identity={<span className="teammate-memory-row-copy"><strong>{row.title}</strong><small>{row.summary}</small></span>}
+              identity={(
+                <span className="teammate-memory-row-copy">
+                  <strong>{row.title}</strong>
+                  {row.scope.channelId ? <small>{row.summary}</small> : null}
+                </span>
+              )}
               status={<StatusIndicator compact label={row.statusLabel} tone={row.tone} />}
               actions={(
                 <IconButton

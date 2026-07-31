@@ -1,7 +1,15 @@
 import type { CSSProperties, Ref } from "react";
-import { TriangleAlert } from "lucide-react";
+import { MoreHorizontal, PanelRightOpen, PencilLine, SlidersHorizontal, TriangleAlert } from "lucide-react";
 import { useI18n } from "../../i18n.js";
-import { Button, StatusIndicator } from "../../shared/ui/index.js";
+import {
+  Button,
+  IconButton,
+  Menu,
+  MenuContent,
+  MenuItem,
+  MenuTrigger,
+  StatusIndicator,
+} from "../../shared/ui/index.js";
 import type { AiTeammate } from "../../types.js";
 import {
   ConversationSummaryPopover,
@@ -32,13 +40,16 @@ export function TeammateChatHeader({
   terminalOpen,
   terminalDisabled,
   detailsOpen,
+  moreButtonRef,
   onToggleSearch,
   onCloseSearch,
   onSearchQueryChange,
   onClearSearch,
   onRefresh,
   onOpenAttachments,
-  onOpenModelSettings,
+  onOpenSettings,
+  onOpenRename,
+  onOpenContext,
   onToggleSummary,
   onCloseSummary,
   onToggleTerminal,
@@ -63,13 +74,16 @@ export function TeammateChatHeader({
   readonly terminalOpen: boolean;
   readonly terminalDisabled?: boolean;
   readonly detailsOpen: boolean;
+  readonly moreButtonRef: Ref<HTMLButtonElement>;
   readonly onToggleSearch: () => void;
   readonly onCloseSearch: () => void;
   readonly onSearchQueryChange: (value: string) => void;
   readonly onClearSearch: () => void;
   readonly onRefresh: () => void | Promise<void>;
   readonly onOpenAttachments: () => void;
-  readonly onOpenModelSettings: () => void;
+  readonly onOpenSettings: (section: "profile" | "model") => void;
+  readonly onOpenRename: () => void;
+  readonly onOpenContext: () => void;
   readonly onToggleSummary: () => void;
   readonly onCloseSummary: () => void;
   readonly onToggleTerminal: () => void;
@@ -90,9 +104,33 @@ export function TeammateChatHeader({
     >
       <div className="teammate-workspace-identity">
         <TeammateAvatarView teammate={teammate} cwd={cwd} />
-        <div>
-          <span className="teammate-pack-label">{t(`role.${teammate.roleKey}`)}</span>
+        <div className="teammate-chat-identity-copy">
           <h1>{teammate.displayName}</h1>
+          <Menu modal={false}>
+            <MenuTrigger asChild>
+              <IconButton
+                ref={moreButtonRef}
+                className="teammate-chat-more-button"
+                icon={MoreHorizontal}
+                label={t("More private chat views")}
+                tooltip=""
+              />
+            </MenuTrigger>
+            <MenuContent align="start" className="teammate-chat-more-menu">
+              <MenuItem onSelect={() => onOpenSettings("profile")}>
+                <span className="ling-ui-menu-item-icon" aria-hidden="true"><SlidersHorizontal /></span>
+                <span>{t("Settings")}</span>
+              </MenuItem>
+              <MenuItem onSelect={onOpenRename}>
+                <span className="ling-ui-menu-item-icon" aria-hidden="true"><PencilLine /></span>
+                <span>{t("Rename teammate")}</span>
+              </MenuItem>
+              <MenuItem onSelect={onOpenContext}>
+                <span className="ling-ui-menu-item-icon" aria-hidden="true"><PanelRightOpen /></span>
+                <span>{t("Context")}</span>
+              </MenuItem>
+            </MenuContent>
+          </Menu>
           <p>{t("Private conversation only visible between you and {name}", { name: teammate.displayName })}</p>
         </div>
       </div>
@@ -141,7 +179,7 @@ export function TeammateChatHeader({
               leadingIcon={<TriangleAlert size={14} />}
               size="sm"
               variant="ghost"
-              onClick={onOpenModelSettings}
+              onClick={() => onOpenSettings("model")}
             >
               {t("Model needs setup")}
             </Button>

@@ -1720,6 +1720,7 @@ test("provider local API keys are edited from sqlite without leaking in provider
       baseUrl: `${openai.url}/v1`,
       authHeader: true,
       apiKey: "local-secret-one",
+      skipInitialCheck: true,
     });
     const providerId = created.provider.id;
     assert.equal(created.provider.apiKeyRef, `local:${providerId}`);
@@ -3004,6 +3005,7 @@ test("provider preset run requires successful daemon preflight", async () => {
     const created = await createStaticChatProvider(daemon.url, cwd, {
       displayName: "GLM Static",
       providerId: "glm-static",
+      skipInitialCheck: true,
     });
     const providerId = created.provider.id;
 
@@ -3040,6 +3042,7 @@ test("failed provider checks block daemon preset runs unless skipped", async () 
       providerId: "broken-relay",
       api: "openai-completions",
       baseUrl: "http://127.0.0.1:9/v1",
+      skipInitialCheck: true,
     });
     const providerId = created.provider.id;
     const checkResult = await postJson(`${daemon.url}/providers/${encodeURIComponent(providerId)}/check?cwd=${encodeURIComponent(cwd)}`, {});
@@ -4462,7 +4465,8 @@ function providerRunBody(cwd, taskId, providerPresetId, overrides = {}) {
 }
 
 async function createStaticChatProvider(baseUrl, cwd, overrides = {}) {
-  return await postJson(`${baseUrl}/providers?cwd=${encodeURIComponent(cwd)}`, {
+  const { skipInitialCheck = false, ...providerOverrides } = overrides;
+  const created = await postJson(`${baseUrl}/providers?cwd=${encodeURIComponent(cwd)}`, {
     kind: "glm",
     displayName: "Static Chat",
     providerId: "static-chat",
@@ -4472,8 +4476,12 @@ async function createStaticChatProvider(baseUrl, cwd, overrides = {}) {
     input: ["text"],
     authHeader: false,
     enabled: true,
-    ...overrides,
+    ...providerOverrides,
   });
+  if (!skipInitialCheck) {
+    await postJson(`${baseUrl}/providers/${encodeURIComponent(created.provider.id)}/check?cwd=${encodeURIComponent(cwd)}`, {});
+  }
+  return created;
 }
 
 async function createMediaProvider(baseUrl, cwd, overrides = {}) {
@@ -4696,9 +4704,11 @@ async function patchPolicy(baseUrl, cwd, body) {
 }
 
 async function createPlanModeThread(baseUrl, cwd) {
+  const provider = await createStaticChatProvider(baseUrl, cwd);
   const channel = await postJson(`${baseUrl}/channels?cwd=${encodeURIComponent(cwd)}`, {
     name: "Plan Mode Test",
     boundPath: cwd,
+    defaultProviderPresetId: provider.provider.id,
   });
   const created = await postJson(`${baseUrl}/threads?cwd=${encodeURIComponent(cwd)}`, {
     kind: "channel_discussion",
