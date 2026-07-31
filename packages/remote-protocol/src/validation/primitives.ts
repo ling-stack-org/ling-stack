@@ -53,6 +53,17 @@ export function expectString(
   return value;
 }
 
+export function expectAvatarDataUrl(value: unknown, path: string): string {
+  const dataUrl = expectString(value, path, {
+    minBytes: 1,
+    maxBytes: REMOTE_PROTOCOL_LIMITS.maxAvatarDataUrlBytes,
+  });
+  if (!/^data:image\/(?:png|jpeg|webp);base64,(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(dataUrl)) {
+    throw new RemoteProtocolError("invalid_field", "Expected a bounded PNG, JPEG, or WebP data URL", path);
+  }
+  return dataUrl;
+}
+
 export function expectIdentifier(value: unknown, path: string): string {
   const identifier = expectString(value, path, {
     minBytes: 1,

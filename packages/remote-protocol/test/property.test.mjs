@@ -68,7 +68,7 @@ test("generated valid frame key permutations preserve one parsed value", () => {
   const nowMs = Date.parse("2026-07-19T10:00:00.000Z");
   const frame = {
     version: 1,
-    type: "channel.send_text",
+    type: "conversation.send_text",
     messageId: "frame-property-1",
     gatewayId: "gateway-1",
     sessionId: "session-1",
@@ -78,8 +78,10 @@ test("generated valid frame key permutations preserve one parsed value", () => {
     payload: {
       commandId: "command-1",
       workspaceId: "workspace-1",
-      channelId: "channel-1",
+      conversationId: "conversation-1",
       body: "来自 property test 的消息",
+      issuedAt: "2026-07-19T10:00:00.000Z",
+      retryUntil: "2026-07-19T10:30:00.000Z",
     },
   };
 
@@ -94,7 +96,7 @@ test("generated frame boundary mutations always fail closed", () => {
   const nowMs = Date.parse("2026-07-19T10:00:00.000Z");
   const frame = {
     version: 1,
-    type: "channel.send_text",
+    type: "conversation.send_text",
     messageId: "frame-property-1",
     gatewayId: "gateway-1",
     sessionId: "session-1",
@@ -104,8 +106,10 @@ test("generated frame boundary mutations always fail closed", () => {
     payload: {
       commandId: "command-1",
       workspaceId: "workspace-1",
-      channelId: "channel-1",
+      conversationId: "conversation-1",
       body: "safe",
+      issuedAt: "2026-07-19T10:00:00.000Z",
+      retryUntil: "2026-07-19T10:30:00.000Z",
     },
   };
   const mutations = [
@@ -119,6 +123,7 @@ test("generated frame boundary mutations always fail closed", () => {
     (candidate) => { candidate.expiresAt = "2026-07-19T10:01:01.000Z"; },
     (candidate) => { candidate.payload.workspaceId = "/tmp/workspace"; },
     (candidate) => { candidate.payload.body = "x".repeat(32 * 1024 + 1); },
+    (candidate) => { candidate.payload.retryUntil = "2026-07-20T10:00:01.000Z"; },
   ];
 
   for (let iteration = 0; iteration < 500; iteration += 1) {

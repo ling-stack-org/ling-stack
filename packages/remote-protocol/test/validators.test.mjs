@@ -41,7 +41,7 @@ const pairingQr = {
 
 const validClientFrame = {
   version: 1,
-  type: "channel.send_text",
+  type: "conversation.send_text",
   messageId: "frame-1",
   gatewayId: "gateway-1",
   sessionId: "session-1",
@@ -51,8 +51,10 @@ const validClientFrame = {
   payload: {
     commandId: "command-1",
     workspaceId: "workspace-1",
-    channelId: "channel-1",
+    conversationId: "conversation-1",
     body: "手机端消息",
+    issuedAt: now,
+    retryUntil: "2026-07-19T11:00:00.000Z",
   },
 };
 
@@ -213,8 +215,8 @@ test("client frames enforce expiry, text and pre-parse frame limits", () => {
 test("duplicate JSON member names fail before JSON.parse can overwrite them", () => {
   const serialized = JSON.stringify(validClientFrame);
   const duplicateType = serialized.replace(
-    '"type":"channel.send_text"',
-    '"type":"file.read","type":"channel.send_text"',
+    '"type":"conversation.send_text"',
+    '"type":"file.read","type":"conversation.send_text"',
   );
   const duplicateBody = serialized.replace(
     '"body":"手机端消息"',
@@ -246,6 +248,7 @@ test("server frames reject client sequencing and duplicated stream fields in pay
     occurredAt: now,
     payload: {
       workspaceId: "workspace-1",
+      workspaceBindingId: "binding-1",
       displayName: "Ling Workspace",
       policyVersion: 1,
     },
@@ -258,7 +261,7 @@ test("server frames reject client sequencing and duplicated stream fields in pay
   })), /unknown field/);
 });
 
-test("session policy allows only least-privilege V0 capability subsets with channel read", () => {
+test("session policy allows only least-privilege V1 capability subsets with conversation read", () => {
   const frame = {
     version: 1,
     type: "session.ready",
@@ -276,9 +279,10 @@ test("session policy allows only least-privilege V0 capability subsets with chan
       policy: {
         version: 1,
         workspaceId: "workspace-1",
+        workspaceBindingId: "binding-1",
         policyVersion: 1,
-        channelAccess: { mode: "all_in_workspace" },
-        capabilities: ["channel.read"],
+        conversationAccess: { mode: "all_in_workspace", kinds: ["channel", "conversation", "teammate_direct"] },
+        capabilities: ["conversation.read"],
       },
       connectedAt: now,
     },
@@ -287,12 +291,12 @@ test("session policy allows only least-privilege V0 capability subsets with chan
   assert.throws(() => parseRemoteServerFrameV1(JSON.stringify({
     ...frame,
     payload: { ...frame.payload, policy: { ...frame.payload.policy, capabilities: [] } },
-  })), /must retain channel.read/);
+  })), /must retain conversation.read/);
   assert.throws(() => parseRemoteServerFrameV1(JSON.stringify({
     ...frame,
     payload: {
       ...frame.payload,
-      policy: { ...frame.payload.policy, capabilities: ["channel.read", "file.read"] },
+      policy: { ...frame.payload.policy, capabilities: ["conversation.read", "file.read"] },
     },
   })), /protocol allowlist/);
 });
@@ -312,8 +316,8 @@ test("command completion result discriminator must match its command type", () =
     occurredAt: now,
     payload: {
       commandId: "command-1",
-      commandType: "channel.send_text",
-      result: { kind: "message_created", messageId: "message-1" },
+      commandType: "conversation.send_text",
+      result: { kind: "message_created", conversationId: "conversation-1", messageId: "message-1" },
       completedAt: now,
     },
   };
@@ -347,7 +351,7 @@ test("stream acknowledgements are transport control and never create lifecycle e
   }), { nowMs }), /unknown field/);
 });
 
-test("channel snapshots reject cross-workspace and duplicate projected entities", () => {
+test("conversation snapshots reject cross-workspace and duplicate projected entities", () => {
   const base = {
     version: 1,
     messageId: "snapshot-frame-1",
@@ -359,57 +363,123 @@ test("channel snapshots reject cross-workspace and duplicate projected entities"
     serverSeq: 1,
     occurredAt: now,
   };
-  const channel = {
+  const conversation = {
     workspaceId: "workspace-1",
-    channelId: "channel-1",
-    name: "频道一",
+    conversationId: "conversation-1",
+    kind: "channel",
+    title: "频道一",
+    identity: { kind: "channel", label: "频道一" },
     status: "active",
+    activitySeq: 3,
+    unreadCount: 1,
+    mentioned: true,
     updatedAt: now,
+  };
+  const normalConversation = {
+    ...conversation,
+    conversationId: "conversation-2",
+    kind: "conversation",
+    title: "与 Ling 对话",
+    identity: { kind: "ling", label: "Ling" },
+    unreadCount: 0,
+    mentioned: false,
+  };
+  const teammateDirect = {
+    ...conversation,
+    conversationId: "conversation-3",
+    kind: "teammate_direct",
+    title: "Noah",
+    identity: { kind: "teammate", label: "Noah", subtitle: "系统架构师" },
   };
   const listFrame = {
     ...base,
-    type: "channel.list_snapshot",
-    payload: { workspaceId: "workspace-1", channels: [channel], generatedAt: now },
+    type: "conversation.list_snapshot",
+    payload: {
+      workspaceId: "workspace-1",
+      workspaceBindingId: "binding-1",
+      conversations: [conversation, normalConversation, teammateDirect],
+      generatedAt: now,
+    },
   };
   assert.deepEqual(parseRemoteServerFrameV1(JSON.stringify(listFrame)), listFrame);
   assert.throws(() => parseRemoteServerFrameV1(JSON.stringify({
     ...listFrame,
     payload: {
       ...listFrame.payload,
-      channels: [{ ...channel, workspaceId: "workspace-other" }],
+      conversations: [{ ...conversation, workspaceId: "workspace-other" }],
     },
   })), /outside the snapshot workspace/);
   assert.throws(() => parseRemoteServerFrameV1(JSON.stringify({
     ...listFrame,
-    payload: { ...listFrame.payload, channels: [channel, channel] },
-  })), /duplicate channel/);
+    payload: { ...listFrame.payload, conversations: [conversation, conversation] },
+  })), /duplicate/);
 
   const message = {
     messageId: "message-1",
     workspaceId: "workspace-1",
-    channelId: "channel-1",
-    kind: "message",
-    authorType: "local-user",
+    conversationId: "conversation-1",
+    role: "local_user",
+    authorLabel: "我",
     body: "hello",
     status: "ready",
     revision: 1,
+    activitySeq: 3,
     createdAt: now,
     updatedAt: now,
   };
   const snapshotFrame = {
     ...base,
-    type: "channel.snapshot",
+    type: "conversation.snapshot",
     payload: {
       snapshotId: "snapshot-1",
       barrierSeq: 1,
-      workspace: { workspaceId: "workspace-1", displayName: "Workspace", policyVersion: 1 },
-      channel,
+      workspace: {
+        workspaceId: "workspace-1",
+        workspaceBindingId: "binding-1",
+        displayName: "Workspace",
+        policyVersion: 1,
+      },
+      conversation,
+      readState: {
+        workspaceId: "workspace-1",
+        conversationId: "conversation-1",
+        readThroughActivitySeq: 2,
+        unreadCount: 1,
+        mentioned: true,
+        updatedAt: now,
+      },
       messages: [message, message],
-      hasMore: false,
+      hasMoreOlder: false,
       generatedAt: now,
     },
   };
   assert.throws(() => parseRemoteServerFrameV1(JSON.stringify(snapshotFrame)), /duplicate message/);
+});
+
+test("profile update permits only display name and bounded image data", () => {
+  const update = {
+    ...validClientFrame,
+    type: "profile.update",
+    payload: {
+      commandId: "profile-command-1",
+      workspaceId: "workspace-1",
+      displayName: "Tianxiao",
+      avatarDataUrl: "data:image/png;base64,iVBORw==",
+    },
+  };
+  assert.deepEqual(parseRemoteClientFrameV1(JSON.stringify(update), { nowMs }), update);
+  assert.throws(() => parseRemoteClientFrameV1(JSON.stringify({
+    ...update,
+    payload: { commandId: "profile-command-1", workspaceId: "workspace-1" },
+  }), { nowMs }), /editable field/);
+  assert.throws(() => parseRemoteClientFrameV1(JSON.stringify({
+    ...update,
+    payload: { ...update.payload, handle: "forbidden" },
+  }), { nowMs }), /unknown field/);
+  assert.throws(() => parseRemoteClientFrameV1(JSON.stringify({
+    ...update,
+    payload: { ...update.payload, avatarDataUrl: "file:///tmp/avatar.png" },
+  }), { nowMs }), /data URL/);
 });
 
 test("sequence and acknowledgement decisions are deterministic", () => {

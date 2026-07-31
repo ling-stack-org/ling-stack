@@ -127,13 +127,15 @@
     "input": {
       "gatewayId": "gateway-fixture-1",
       "deviceEpoch": 7,
-      "commandKind": "channel.send_text",
+      "commandKind": "conversation.send_text",
       "workspaceId": "workspace-fixture-1",
-      "channelId": "channel-fixture-1",
+      "conversationId": "conversation-fixture-1",
       "body": "来自手机的安全消息",
+      "issuedAt": "2026-07-19T10:00:00.000Z",
+      "retryUntil": "2026-07-19T11:00:00.000Z",
       "remotePolicyVersion": 1
     },
-    "hashInputBytesBase64Url": "bGluZy1yZW1vdGUtY29tbWFuZC12MQB7ImJvZHkiOiLmnaXoh6rmiYvmnLrnmoTlronlhajmtojmga8iLCJjaGFubmVsSWQiOiJjaGFubmVsLWZpeHR1cmUtMSIsImNvbW1hbmRLaW5kIjoiY2hhbm5lbC5zZW5kX3RleHQiLCJkZXZpY2VFcG9jaCI6NywiZ2F0ZXdheUlkIjoiZ2F0ZXdheS1maXh0dXJlLTEiLCJyZW1vdGVQb2xpY3lWZXJzaW9uIjoxLCJ3b3Jrc3BhY2VJZCI6IndvcmtzcGFjZS1maXh0dXJlLTEifQ",
-    "hashBase64Url": "b42qVjk5m0sY3pcmu_RjRD695Wt4wR9l2iqkpaAAxK8"
+    "hashInputBytesBase64Url": "bGluZy1yZW1vdGUtY29tbWFuZC12MQB7ImJvZHkiOiLmnaXoh6rmiYvmnLrnmoTlronlhajmtojmga8iLCJjb21tYW5kS2luZCI6ImNvbnZlcnNhdGlvbi5zZW5kX3RleHQiLCJjb252ZXJzYXRpb25JZCI6ImNvbnZlcnNhdGlvbi1maXh0dXJlLTEiLCJkZXZpY2VFcG9jaCI6NywiZ2F0ZXdheUlkIjoiZ2F0ZXdheS1maXh0dXJlLTEiLCJpc3N1ZWRBdCI6IjIwMjYtMDctMTlUMTA6MDA6MDAuMDAwWiIsInJlbW90ZVBvbGljeVZlcnNpb24iOjEsInJldHJ5VW50aWwiOiIyMDI2LTA3LTE5VDExOjAwOjAwLjAwMFoiLCJ3b3Jrc3BhY2VJZCI6IndvcmtzcGFjZS1maXh0dXJlLTEifQ",
+    "hashBase64Url": "bEWd1JnpuJCGL7ewPUdtgFLDJrmmm2r9l968Rt8vvfY"
   }
 }

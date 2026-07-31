@@ -93,10 +93,12 @@ export interface RemoteAuthProofSigningInputV1 {
 export interface RemoteCommandHashInputV1 {
   readonly gatewayId: string;
   readonly deviceEpoch: number;
-  readonly commandKind: "channel.send_text";
+  readonly commandKind: "conversation.send_text";
   readonly workspaceId: string;
-  readonly channelId: string;
+  readonly conversationId: string;
   readonly body: string;
+  readonly issuedAt: string;
+  readonly retryUntil: string;
   readonly remotePolicyVersion: number;
 }
 
@@ -291,10 +293,12 @@ export function commandHashInput(
   return {
     gatewayId,
     deviceEpoch,
-    commandKind: "channel.send_text",
+    commandKind: "conversation.send_text",
     workspaceId: command.workspaceId,
-    channelId: command.channelId,
+    conversationId: command.conversationId,
     body: command.body,
+    issuedAt: command.issuedAt,
+    retryUntil: command.retryUntil,
     remotePolicyVersion,
   };
 }

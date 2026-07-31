@@ -179,10 +179,12 @@ test("resume and durable command hash fixtures are stable and semantic", async (
   for (const [field, value] of Object.entries({
     gatewayId: "gateway-other",
     deviceEpoch: 8,
-    commandKind: "channel.other",
+    commandKind: "conversation.other",
     workspaceId: "workspace-other",
-    channelId: "channel-other",
+    conversationId: "conversation-other",
     body: "changed",
+    issuedAt: "2026-07-19T10:00:01.000Z",
+    retryUntil: "2026-07-19T10:59:59.000Z",
     remotePolicyVersion: 2,
   })) {
     assert.notEqual(

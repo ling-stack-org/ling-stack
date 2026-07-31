@@ -1,12 +1,14 @@
 import {
+  REMOTE_CONVERSATION_KINDS_V1,
   REMOTE_PROTOCOL_LIMITS,
-  type RemoteApprovalSummaryV1,
-  type RemoteChannelListSnapshotV1,
-  type RemoteChannelSnapshotV1,
-  type RemoteChannelSummaryV1,
-  type RemoteRunSummaryV1,
-  type RemoteTranscriptDeltaV1,
-  type RemoteTranscriptMessageV1,
+  type RemoteConversationDeltaV1,
+  type RemoteConversationIdentityV1,
+  type RemoteConversationListSnapshotV1,
+  type RemoteConversationMessageV1,
+  type RemoteConversationReadStateV1,
+  type RemoteConversationSnapshotV1,
+  type RemoteConversationSummaryV1,
+  type RemoteUserProfileV1,
   type RemoteWorkspaceSummaryV1,
 } from "@ling-stack/contracts";
 
@@ -14,6 +16,7 @@ import { RemoteProtocolError } from "../errors.js";
 import {
   assertStrictKeys,
   expectArray,
+  expectAvatarDataUrl,
   expectBoolean,
   expectEnum,
   expectIdentifier,
@@ -23,19 +26,17 @@ import {
   expectString,
 } from "./primitives.js";
 
-const CHANNEL_STATUSES = ["active", "paused", "archived"] as const;
-const MESSAGE_KINDS = ["message", "ai_reply", "system"] as const;
-const MESSAGE_AUTHORS = ["local-user", "ai-teammate", "system"] as const;
-const MESSAGE_STATUSES = ["pending", "ready", "blocked", "failed"] as const;
-const RUN_STATUSES = ["queued", "running", "waiting_for_approval", "succeeded", "failed", "cancelled"] as const;
-const APPROVAL_STATUSES = ["pending", "approved", "denied", "expired", "cancelled"] as const;
-const APPROVAL_RISKS = ["low", "medium", "high", "critical"] as const;
+const IDENTITY_KINDS = ["channel", "ling", "teammate"] as const;
+const CONVERSATION_STATUSES = ["active", "archived"] as const;
+const MESSAGE_ROLES = ["local_user", "assistant", "teammate", "system"] as const;
+const MESSAGE_STATUSES = ["pending", "streaming", "ready", "blocked", "failed"] as const;
 
 export function validateWorkspaceSummary(value: unknown, path: string): RemoteWorkspaceSummaryV1 {
   const record = expectRecord(value, path);
-  assertStrictKeys(record, ["workspaceId", "displayName", "policyVersion"], [], path);
+  assertStrictKeys(record, ["workspaceId", "workspaceBindingId", "displayName", "policyVersion"], [], path);
   return {
     workspaceId: expectIdentifier(record.workspaceId, `${path}.workspaceId`),
+    workspaceBindingId: expectIdentifier(record.workspaceBindingId, `${path}.workspaceBindingId`),
     displayName: expectString(record.displayName, `${path}.displayName`, {
       minBytes: 1,
       maxBytes: REMOTE_PROTOCOL_LIMITS.maxDisplayNameBytes,
@@ -44,93 +45,199 @@ export function validateWorkspaceSummary(value: unknown, path: string): RemoteWo
   };
 }
 
-function validateChannelSummary(value: unknown, path: string): RemoteChannelSummaryV1 {
+function validateConversationIdentity(value: unknown, path: string): RemoteConversationIdentityV1 {
   const record = expectRecord(value, path);
-  assertStrictKeys(record, ["workspaceId", "channelId", "name", "status", "updatedAt"], [], path);
+  assertStrictKeys(record, ["kind", "label"], ["subtitle", "avatarDataUrl"], path);
   return {
-    workspaceId: expectIdentifier(record.workspaceId, `${path}.workspaceId`),
-    channelId: expectIdentifier(record.channelId, `${path}.channelId`),
-    name: expectString(record.name, `${path}.name`, {
+    kind: expectEnum(record.kind, IDENTITY_KINDS, `${path}.kind`),
+    label: expectString(record.label, `${path}.label`, {
       minBytes: 1,
       maxBytes: REMOTE_PROTOCOL_LIMITS.maxDisplayNameBytes,
     }),
-    status: expectEnum(record.status, CHANNEL_STATUSES, `${path}.status`),
+    ...(record.subtitle === undefined ? {} : {
+      subtitle: expectString(record.subtitle, `${path}.subtitle`, {
+        maxBytes: REMOTE_PROTOCOL_LIMITS.maxDisplayNameBytes,
+      }),
+    }),
+    ...(record.avatarDataUrl === undefined ? {} : {
+      avatarDataUrl: expectAvatarDataUrl(record.avatarDataUrl, `${path}.avatarDataUrl`),
+    }),
+  };
+}
+
+export function validateConversationSummary(value: unknown, path: string): RemoteConversationSummaryV1 {
+  const record = expectRecord(value, path);
+  assertStrictKeys(
+    record,
+    [
+      "workspaceId",
+      "conversationId",
+      "kind",
+      "title",
+      "identity",
+      "status",
+      "activitySeq",
+      "unreadCount",
+      "mentioned",
+      "updatedAt",
+    ],
+    ["subtitle", "memberCount", "latestPreview", "latestMessageAt"],
+    path,
+  );
+  return {
+    workspaceId: expectIdentifier(record.workspaceId, `${path}.workspaceId`),
+    conversationId: expectIdentifier(record.conversationId, `${path}.conversationId`),
+    kind: expectEnum(record.kind, REMOTE_CONVERSATION_KINDS_V1, `${path}.kind`),
+    title: expectString(record.title, `${path}.title`, {
+      minBytes: 1,
+      maxBytes: REMOTE_PROTOCOL_LIMITS.maxDisplayNameBytes,
+    }),
+    ...(record.subtitle === undefined ? {} : {
+      subtitle: expectString(record.subtitle, `${path}.subtitle`, {
+        maxBytes: REMOTE_PROTOCOL_LIMITS.maxDisplayNameBytes,
+      }),
+    }),
+    identity: validateConversationIdentity(record.identity, `${path}.identity`),
+    status: expectEnum(record.status, CONVERSATION_STATUSES, `${path}.status`),
+    ...(record.memberCount === undefined ? {} : {
+      memberCount: expectSafeInteger(record.memberCount, `${path}.memberCount`, { minimum: 0 }),
+    }),
+    ...(record.latestPreview === undefined ? {} : {
+      latestPreview: expectString(record.latestPreview, `${path}.latestPreview`, {
+        maxBytes: REMOTE_PROTOCOL_LIMITS.maxSafeMessageBytes,
+      }),
+    }),
+    ...(record.latestMessageAt === undefined ? {} : {
+      latestMessageAt: expectRfc3339(record.latestMessageAt, `${path}.latestMessageAt`),
+    }),
+    activitySeq: expectSafeInteger(record.activitySeq, `${path}.activitySeq`, { minimum: 0 }),
+    unreadCount: expectSafeInteger(record.unreadCount, `${path}.unreadCount`, { minimum: 0 }),
+    mentioned: expectBoolean(record.mentioned, `${path}.mentioned`),
     updatedAt: expectRfc3339(record.updatedAt, `${path}.updatedAt`),
   };
 }
 
-function validateTranscriptMessage(value: unknown, path: string): RemoteTranscriptMessageV1 {
+export function validateConversationMessage(value: unknown, path: string): RemoteConversationMessageV1 {
   const record = expectRecord(value, path);
   assertStrictKeys(
     record,
-    ["messageId", "workspaceId", "channelId", "kind", "authorType", "body", "status", "revision", "createdAt", "updatedAt"],
-    [],
+    [
+      "messageId",
+      "workspaceId",
+      "conversationId",
+      "role",
+      "authorLabel",
+      "body",
+      "status",
+      "revision",
+      "activitySeq",
+      "createdAt",
+      "updatedAt",
+    ],
+    ["authorId", "authorAvatarDataUrl"],
     path,
   );
   return {
     messageId: expectIdentifier(record.messageId, `${path}.messageId`),
     workspaceId: expectIdentifier(record.workspaceId, `${path}.workspaceId`),
-    channelId: expectIdentifier(record.channelId, `${path}.channelId`),
-    kind: expectEnum(record.kind, MESSAGE_KINDS, `${path}.kind`),
-    authorType: expectEnum(record.authorType, MESSAGE_AUTHORS, `${path}.authorType`),
+    conversationId: expectIdentifier(record.conversationId, `${path}.conversationId`),
+    role: expectEnum(record.role, MESSAGE_ROLES, `${path}.role`),
+    ...(record.authorId === undefined ? {} : { authorId: expectIdentifier(record.authorId, `${path}.authorId`) }),
+    authorLabel: expectString(record.authorLabel, `${path}.authorLabel`, {
+      minBytes: 1,
+      maxBytes: REMOTE_PROTOCOL_LIMITS.maxDisplayNameBytes,
+    }),
+    ...(record.authorAvatarDataUrl === undefined ? {} : {
+      authorAvatarDataUrl: expectAvatarDataUrl(record.authorAvatarDataUrl, `${path}.authorAvatarDataUrl`),
+    }),
     body: expectString(record.body, `${path}.body`, { maxBytes: REMOTE_PROTOCOL_LIMITS.maxTextBodyBytes }),
     status: expectEnum(record.status, MESSAGE_STATUSES, `${path}.status`),
     revision: expectSafeInteger(record.revision, `${path}.revision`, { minimum: 0 }),
+    activitySeq: expectSafeInteger(record.activitySeq, `${path}.activitySeq`, { minimum: 0 }),
     createdAt: expectRfc3339(record.createdAt, `${path}.createdAt`),
     updatedAt: expectRfc3339(record.updatedAt, `${path}.updatedAt`),
   };
 }
 
-export function validateChannelListSnapshot(value: unknown, path: string): RemoteChannelListSnapshotV1 {
+export function validateConversationReadState(value: unknown, path: string): RemoteConversationReadStateV1 {
   const record = expectRecord(value, path);
-  assertStrictKeys(record, ["workspaceId", "channels", "generatedAt"], [], path);
+  assertStrictKeys(
+    record,
+    ["workspaceId", "conversationId", "readThroughActivitySeq", "unreadCount", "mentioned", "updatedAt"],
+    [],
+    path,
+  );
+  return {
+    workspaceId: expectIdentifier(record.workspaceId, `${path}.workspaceId`),
+    conversationId: expectIdentifier(record.conversationId, `${path}.conversationId`),
+    readThroughActivitySeq: expectSafeInteger(record.readThroughActivitySeq, `${path}.readThroughActivitySeq`, { minimum: 0 }),
+    unreadCount: expectSafeInteger(record.unreadCount, `${path}.unreadCount`, { minimum: 0 }),
+    mentioned: expectBoolean(record.mentioned, `${path}.mentioned`),
+    updatedAt: expectRfc3339(record.updatedAt, `${path}.updatedAt`),
+  };
+}
+
+export function validateConversationListSnapshot(value: unknown, path: string): RemoteConversationListSnapshotV1 {
+  const record = expectRecord(value, path);
+  assertStrictKeys(record, ["workspaceId", "workspaceBindingId", "conversations", "generatedAt"], [], path);
   const workspaceId = expectIdentifier(record.workspaceId, `${path}.workspaceId`);
-  const channels = expectArray(record.channels, `${path}.channels`, validateChannelSummary, {
-    maxItems: REMOTE_PROTOCOL_LIMITS.maxChannelsPerSnapshot,
+  const conversations = expectArray(record.conversations, `${path}.conversations`, validateConversationSummary, {
+    maxItems: REMOTE_PROTOCOL_LIMITS.maxConversationsPerSnapshot,
   });
-  const channelIds = new Set<string>();
-  channels.forEach((channel, index) => {
-    if (channel.workspaceId !== workspaceId) {
-      throw new RemoteProtocolError("invalid_field", "Channel list item is outside the snapshot workspace", `${path}.channels[${index}]`);
+  const conversationIds = new Set<string>();
+  conversations.forEach((conversation, index) => {
+    if (conversation.workspaceId !== workspaceId) {
+      throw new RemoteProtocolError("invalid_field", "Conversation is outside the snapshot workspace", `${path}.conversations[${index}]`);
     }
-    if (channelIds.has(channel.channelId)) {
-      throw new RemoteProtocolError("invalid_field", "Channel list contains a duplicate channel", `${path}.channels[${index}].channelId`);
+    if (conversationIds.has(conversation.conversationId)) {
+      throw new RemoteProtocolError("invalid_field", "Conversation list contains a duplicate", `${path}.conversations[${index}].conversationId`);
     }
-    channelIds.add(channel.channelId);
+    conversationIds.add(conversation.conversationId);
   });
   return {
     workspaceId,
-    channels,
+    workspaceBindingId: expectIdentifier(record.workspaceBindingId, `${path}.workspaceBindingId`),
+    conversations,
     generatedAt: expectRfc3339(record.generatedAt, `${path}.generatedAt`),
   };
 }
 
-export function validateChannelSnapshot(value: unknown, path: string): RemoteChannelSnapshotV1 {
+export function validateConversationSnapshot(value: unknown, path: string): RemoteConversationSnapshotV1 {
   const record = expectRecord(value, path);
   assertStrictKeys(
     record,
-    ["snapshotId", "barrierSeq", "workspace", "channel", "messages", "hasMore", "generatedAt"],
-    [],
+    ["snapshotId", "barrierSeq", "workspace", "conversation", "readState", "messages", "hasMoreOlder", "generatedAt"],
+    ["olderPageCursor"],
     path,
   );
-  const snapshot: RemoteChannelSnapshotV1 = {
+  const snapshot: RemoteConversationSnapshotV1 = {
     snapshotId: expectIdentifier(record.snapshotId, `${path}.snapshotId`),
     barrierSeq: expectSafeInteger(record.barrierSeq, `${path}.barrierSeq`, { minimum: 0 }),
     workspace: validateWorkspaceSummary(record.workspace, `${path}.workspace`),
-    channel: validateChannelSummary(record.channel, `${path}.channel`),
-    messages: expectArray(record.messages, `${path}.messages`, validateTranscriptMessage, {
+    conversation: validateConversationSummary(record.conversation, `${path}.conversation`),
+    readState: validateConversationReadState(record.readState, `${path}.readState`),
+    messages: expectArray(record.messages, `${path}.messages`, validateConversationMessage, {
       maxItems: REMOTE_PROTOCOL_LIMITS.maxMessagesPerSnapshot,
     }),
-    hasMore: expectBoolean(record.hasMore, `${path}.hasMore`),
+    hasMoreOlder: expectBoolean(record.hasMoreOlder, `${path}.hasMoreOlder`),
+    ...(record.olderPageCursor === undefined ? {} : {
+      olderPageCursor: expectIdentifier(record.olderPageCursor, `${path}.olderPageCursor`),
+    }),
     generatedAt: expectRfc3339(record.generatedAt, `${path}.generatedAt`),
   };
-  if (snapshot.workspace.workspaceId !== snapshot.channel.workspaceId) {
-    throw new RemoteProtocolError("invalid_field", "Snapshot workspace and channel bindings differ", path);
+  const { workspaceId } = snapshot.workspace;
+  const { conversationId } = snapshot.conversation;
+  if (
+    snapshot.conversation.workspaceId !== workspaceId
+    || snapshot.readState.workspaceId !== workspaceId
+    || snapshot.readState.conversationId !== conversationId
+  ) {
+    throw new RemoteProtocolError("invalid_field", "Snapshot workspace or conversation bindings differ", path);
   }
   const messageIds = new Set<string>();
   for (const [index, message] of snapshot.messages.entries()) {
-    if (message.workspaceId !== snapshot.workspace.workspaceId || message.channelId !== snapshot.channel.channelId) {
-      throw new RemoteProtocolError("invalid_field", "Snapshot message is outside the selected channel", `${path}.messages[${index}]`);
+    if (message.workspaceId !== workspaceId || message.conversationId !== conversationId) {
+      throw new RemoteProtocolError("invalid_field", "Snapshot message is outside the selected conversation", `${path}.messages[${index}]`);
     }
     if (messageIds.has(message.messageId)) {
       throw new RemoteProtocolError("invalid_field", "Snapshot contains a duplicate message", `${path}.messages[${index}].messageId`);
@@ -140,73 +247,69 @@ export function validateChannelSnapshot(value: unknown, path: string): RemoteCha
   return snapshot;
 }
 
-export function validateTranscriptDelta(value: unknown, path: string): RemoteTranscriptDeltaV1 {
+export function validateConversationDelta(value: unknown, path: string): RemoteConversationDeltaV1 {
   const record = expectRecord(value, path);
-  const operation = expectEnum(record.operation, ["upsert", "remove"] as const, `${path}.operation`);
-  if (operation === "upsert") {
-    assertStrictKeys(record, ["workspaceId", "channelId", "operation", "message"], [], path);
-    const workspaceId = expectIdentifier(record.workspaceId, `${path}.workspaceId`);
-    const channelId = expectIdentifier(record.channelId, `${path}.channelId`);
-    const message = validateTranscriptMessage(record.message, `${path}.message`);
-    if (message.workspaceId !== workspaceId || message.channelId !== channelId) {
-      throw new RemoteProtocolError("invalid_field", "Delta message is outside the selected channel", `${path}.message`);
+  const operation = expectEnum(record.operation, [
+    "conversation_upsert",
+    "conversation_remove",
+    "message_upsert",
+    "message_remove",
+    "read_state",
+  ] as const, `${path}.operation`);
+  switch (operation) {
+    case "conversation_upsert":
+      assertStrictKeys(record, ["operation", "conversation"], [], path);
+      return { operation, conversation: validateConversationSummary(record.conversation, `${path}.conversation`) };
+    case "conversation_remove":
+      assertStrictKeys(record, ["operation", "workspaceId", "conversationId", "activitySeq"], [], path);
+      return {
+        operation,
+        workspaceId: expectIdentifier(record.workspaceId, `${path}.workspaceId`),
+        conversationId: expectIdentifier(record.conversationId, `${path}.conversationId`),
+        activitySeq: expectSafeInteger(record.activitySeq, `${path}.activitySeq`, { minimum: 0 }),
+      };
+    case "message_upsert": {
+      assertStrictKeys(record, ["operation", "workspaceId", "conversationId", "message"], [], path);
+      const workspaceId = expectIdentifier(record.workspaceId, `${path}.workspaceId`);
+      const conversationId = expectIdentifier(record.conversationId, `${path}.conversationId`);
+      const message = validateConversationMessage(record.message, `${path}.message`);
+      if (message.workspaceId !== workspaceId || message.conversationId !== conversationId) {
+        throw new RemoteProtocolError("invalid_field", "Delta message binding differs", `${path}.message`);
+      }
+      return { operation, workspaceId, conversationId, message };
     }
-    return { workspaceId, channelId, operation, message };
+    case "message_remove":
+      assertStrictKeys(record, ["operation", "workspaceId", "conversationId", "messageId", "revision", "activitySeq"], [], path);
+      return {
+        operation,
+        workspaceId: expectIdentifier(record.workspaceId, `${path}.workspaceId`),
+        conversationId: expectIdentifier(record.conversationId, `${path}.conversationId`),
+        messageId: expectIdentifier(record.messageId, `${path}.messageId`),
+        revision: expectSafeInteger(record.revision, `${path}.revision`, { minimum: 0 }),
+        activitySeq: expectSafeInteger(record.activitySeq, `${path}.activitySeq`, { minimum: 0 }),
+      };
+    case "read_state":
+      assertStrictKeys(record, ["operation", "readState"], [], path);
+      return { operation, readState: validateConversationReadState(record.readState, `${path}.readState`) };
   }
-  assertStrictKeys(record, ["workspaceId", "channelId", "operation", "messageId", "revision"], [], path);
-  return {
-    workspaceId: expectIdentifier(record.workspaceId, `${path}.workspaceId`),
-    channelId: expectIdentifier(record.channelId, `${path}.channelId`),
-    operation,
-    messageId: expectIdentifier(record.messageId, `${path}.messageId`),
-    revision: expectSafeInteger(record.revision, `${path}.revision`, { minimum: 0 }),
-  };
 }
 
-export function validateRunSummary(value: unknown, path: string): RemoteRunSummaryV1 {
+export function validateUserProfile(value: unknown, path: string): RemoteUserProfileV1 {
   const record = expectRecord(value, path);
-  assertStrictKeys(
-    record,
-    ["workspaceId", "channelId", "runId", "status", "createdAt", "updatedAt"],
-    ["operationLabel", "terminalAt", "errorCode"],
-    path,
-  );
+  assertStrictKeys(record, ["workspaceId", "displayName", "revision", "updatedAt"], ["handle", "avatarDataUrl"], path);
   return {
     workspaceId: expectIdentifier(record.workspaceId, `${path}.workspaceId`),
-    channelId: expectIdentifier(record.channelId, `${path}.channelId`),
-    runId: expectIdentifier(record.runId, `${path}.runId`),
-    status: expectEnum(record.status, RUN_STATUSES, `${path}.status`),
-    ...(record.operationLabel === undefined ? {} : {
-      operationLabel: expectString(record.operationLabel, `${path}.operationLabel`, {
-        maxBytes: REMOTE_PROTOCOL_LIMITS.maxDisplayNameBytes,
-      }),
-    }),
-    createdAt: expectRfc3339(record.createdAt, `${path}.createdAt`),
-    updatedAt: expectRfc3339(record.updatedAt, `${path}.updatedAt`),
-    ...(record.terminalAt === undefined ? {} : { terminalAt: expectRfc3339(record.terminalAt, `${path}.terminalAt`) }),
-    ...(record.errorCode === undefined ? {} : { errorCode: expectIdentifier(record.errorCode, `${path}.errorCode`) }),
-  };
-}
-
-export function validateApprovalSummary(value: unknown, path: string): RemoteApprovalSummaryV1 {
-  const record = expectRecord(value, path);
-  assertStrictKeys(
-    record,
-    ["workspaceId", "channelId", "approvalId", "status", "risk", "title", "createdAt"],
-    ["expiresAt"],
-    path,
-  );
-  return {
-    workspaceId: expectIdentifier(record.workspaceId, `${path}.workspaceId`),
-    channelId: expectIdentifier(record.channelId, `${path}.channelId`),
-    approvalId: expectIdentifier(record.approvalId, `${path}.approvalId`),
-    status: expectEnum(record.status, APPROVAL_STATUSES, `${path}.status`),
-    risk: expectEnum(record.risk, APPROVAL_RISKS, `${path}.risk`),
-    title: expectString(record.title, `${path}.title`, {
+    displayName: expectString(record.displayName, `${path}.displayName`, {
       minBytes: 1,
       maxBytes: REMOTE_PROTOCOL_LIMITS.maxDisplayNameBytes,
     }),
-    createdAt: expectRfc3339(record.createdAt, `${path}.createdAt`),
-    ...(record.expiresAt === undefined ? {} : { expiresAt: expectRfc3339(record.expiresAt, `${path}.expiresAt`) }),
+    ...(record.handle === undefined ? {} : {
+      handle: expectString(record.handle, `${path}.handle`, { maxBytes: REMOTE_PROTOCOL_LIMITS.maxDisplayNameBytes }),
+    }),
+    ...(record.avatarDataUrl === undefined ? {} : {
+      avatarDataUrl: expectAvatarDataUrl(record.avatarDataUrl, `${path}.avatarDataUrl`),
+    }),
+    revision: expectSafeInteger(record.revision, `${path}.revision`, { minimum: 0 }),
+    updatedAt: expectRfc3339(record.updatedAt, `${path}.updatedAt`),
   };
 }

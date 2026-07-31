@@ -13,16 +13,16 @@ import {
   type RemoteServerEventTypeV1,
   type RemoteSessionReadyV1,
   type RemoteStreamResyncRequiredV1,
+  type RemoteWorkspaceBindingChangedV1,
 } from "@ling-stack/contracts";
 
 import { RemoteProtocolError } from "../errors.js";
 import { validatePolicySummary } from "./policy.js";
 import {
-  validateApprovalSummary,
-  validateChannelListSnapshot,
-  validateChannelSnapshot,
-  validateRunSummary,
-  validateTranscriptDelta,
+  validateConversationDelta,
+  validateConversationListSnapshot,
+  validateConversationSnapshot,
+  validateUserProfile,
   validateWorkspaceSummary,
 } from "./projections.js";
 import {
@@ -33,6 +33,7 @@ import {
   expectLiteral,
   expectRecord,
   expectRfc3339,
+  expectSafeInteger,
   expectString,
 } from "./primitives.js";
 
@@ -43,9 +44,12 @@ function validateCommandResult(value: unknown, path: string): RemoteCommandResul
     "subscribed",
     "unsubscribed",
     "snapshot_requested",
-    "channel_list_requested",
-    "channel_opened",
+    "conversation_list_requested",
+    "conversation_opened",
     "message_created",
+    "conversation_marked_read",
+    "profile_read_requested",
+    "profile_updated",
   ] as const, `${path}.kind`);
   switch (kind) {
     case "pong":
@@ -56,15 +60,30 @@ function validateCommandResult(value: unknown, path: string): RemoteCommandResul
       return { kind, snapshotRequired: expectBoolean(record.snapshotRequired, `${path}.snapshotRequired`) };
     case "unsubscribed":
     case "snapshot_requested":
-    case "channel_list_requested":
+    case "conversation_list_requested":
+    case "profile_read_requested":
       assertStrictKeys(record, ["kind"], [], path);
       return { kind };
-    case "channel_opened":
-      assertStrictKeys(record, ["kind", "channelId"], [], path);
-      return { kind, channelId: expectIdentifier(record.channelId, `${path}.channelId`) };
+    case "conversation_opened":
+      assertStrictKeys(record, ["kind", "conversationId"], [], path);
+      return { kind, conversationId: expectIdentifier(record.conversationId, `${path}.conversationId`) };
     case "message_created":
-      assertStrictKeys(record, ["kind", "messageId"], [], path);
-      return { kind, messageId: expectIdentifier(record.messageId, `${path}.messageId`) };
+      assertStrictKeys(record, ["kind", "conversationId", "messageId"], [], path);
+      return {
+        kind,
+        conversationId: expectIdentifier(record.conversationId, `${path}.conversationId`),
+        messageId: expectIdentifier(record.messageId, `${path}.messageId`),
+      };
+    case "conversation_marked_read":
+      assertStrictKeys(record, ["kind", "conversationId", "readThroughActivitySeq"], [], path);
+      return {
+        kind,
+        conversationId: expectIdentifier(record.conversationId, `${path}.conversationId`),
+        readThroughActivitySeq: expectSafeInteger(record.readThroughActivitySeq, `${path}.readThroughActivitySeq`, { minimum: 0 }),
+      };
+    case "profile_updated":
+      assertStrictKeys(record, ["kind", "revision"], [], path);
+      return { kind, revision: expectSafeInteger(record.revision, `${path}.revision`, { minimum: 0 }) };
   }
 }
 
@@ -102,21 +121,25 @@ function validateCommandAccepted(value: unknown, path: string): RemoteCommandAcc
   };
 }
 
+const EXPECTED_RESULT_KINDS: Record<RemoteLifecycleCommandTypeV1, RemoteCommandResultV1["kind"]> = {
+  "session.ping": "pong",
+  "stream.subscribe": "subscribed",
+  "stream.unsubscribe": "unsubscribed",
+  "snapshot.request": "snapshot_requested",
+  "conversation.list": "conversation_list_requested",
+  "conversation.open": "conversation_opened",
+  "conversation.send_text": "message_created",
+  "conversation.mark_read": "conversation_marked_read",
+  "profile.read": "profile_read_requested",
+  "profile.update": "profile_updated",
+};
+
 function validateCommandCompleted(value: unknown, path: string): RemoteCommandCompletedV1 {
   const record = expectRecord(value, path);
   assertStrictKeys(record, ["commandId", "commandType", "result", "completedAt"], [], path);
   const commandType = expectEnum(record.commandType, REMOTE_LIFECYCLE_COMMAND_TYPES_V1, `${path}.commandType`);
   const result = validateCommandResult(record.result, `${path}.result`);
-  const expectedResultKinds: Record<RemoteLifecycleCommandTypeV1, RemoteCommandResultV1["kind"]> = {
-    "session.ping": "pong",
-    "stream.subscribe": "subscribed",
-    "stream.unsubscribe": "unsubscribed",
-    "snapshot.request": "snapshot_requested",
-    "channel.list": "channel_list_requested",
-    "channel.open": "channel_opened",
-    "channel.send_text": "message_created",
-  };
-  if (result.kind !== expectedResultKinds[commandType]) {
+  if (result.kind !== EXPECTED_RESULT_KINDS[commandType]) {
     throw new RemoteProtocolError("invalid_field", "Command result does not match command type", `${path}.result.kind`);
   }
   return {
@@ -162,6 +185,18 @@ function validateSecurityRevoked(value: unknown, path: string): RemoteSecurityRe
   };
 }
 
+function validateBindingChanged(value: unknown, path: string): RemoteWorkspaceBindingChangedV1 {
+  const record = expectRecord(value, path);
+  assertStrictKeys(record, ["previousWorkspaceBindingId", "changedAt"], ["nextWorkspaceBindingId"], path);
+  return {
+    previousWorkspaceBindingId: expectIdentifier(record.previousWorkspaceBindingId, `${path}.previousWorkspaceBindingId`),
+    ...(record.nextWorkspaceBindingId === undefined ? {} : {
+      nextWorkspaceBindingId: expectIdentifier(record.nextWorkspaceBindingId, `${path}.nextWorkspaceBindingId`),
+    }),
+    changedAt: expectRfc3339(record.changedAt, `${path}.changedAt`),
+  };
+}
+
 export function validateServerPayload<TType extends RemoteServerEventTypeV1>(
   type: TType,
   value: unknown,
@@ -175,20 +210,17 @@ export function validateServerPayload<TType extends RemoteServerEventTypeV1>(
     case "workspace.summary":
       payload = validateWorkspaceSummary(value, path);
       break;
-    case "channel.list_snapshot":
-      payload = validateChannelListSnapshot(value, path);
+    case "conversation.list_snapshot":
+      payload = validateConversationListSnapshot(value, path);
       break;
-    case "channel.snapshot":
-      payload = validateChannelSnapshot(value, path);
+    case "conversation.snapshot":
+      payload = validateConversationSnapshot(value, path);
       break;
-    case "transcript.delta":
-      payload = validateTranscriptDelta(value, path);
+    case "conversation.delta":
+      payload = validateConversationDelta(value, path);
       break;
-    case "run.summary":
-      payload = validateRunSummary(value, path);
-      break;
-    case "approval.summary":
-      payload = validateApprovalSummary(value, path);
+    case "profile.snapshot":
+      payload = validateUserProfile(value, path);
       break;
     case "command.accepted":
       payload = validateCommandAccepted(value, path);
@@ -204,6 +236,9 @@ export function validateServerPayload<TType extends RemoteServerEventTypeV1>(
       break;
     case "security.revoked":
       payload = validateSecurityRevoked(value, path);
+      break;
+    case "workspace.binding_changed":
+      payload = validateBindingChanged(value, path);
       break;
   }
   return payload as RemoteServerEventPayloadMapV1[TType];
