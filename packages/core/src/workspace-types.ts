@@ -981,6 +981,8 @@ export interface TeammateDirectMessage {
 }
 
 export interface CreateTeammateDirectMessageInput {
+  /** Server-owned callers may preallocate an id for durable dispatch idempotency. */
+  readonly id?: string;
   readonly threadId: string;
   readonly teammateId: string;
   readonly authorType: TeammateDirectMessageAuthorType;

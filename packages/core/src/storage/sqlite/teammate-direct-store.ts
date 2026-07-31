@@ -190,7 +190,7 @@ export class SqliteTeammateDirectStore {
     }
 
     const message: TeammateDirectMessage = {
-      id: createTeammateDirectMessageId(),
+      id: input.id ?? createTeammateDirectMessageId(),
       workspaceId: DEFAULT_WORKSPACE_ID,
       threadId: input.threadId,
       teammateId: input.teammateId,

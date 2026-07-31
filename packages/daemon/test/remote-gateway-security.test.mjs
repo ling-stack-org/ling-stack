@@ -220,7 +220,7 @@ test("management API uses strict Origin, capability, and CSRF while remote liste
     assert.notEqual(enabled.headers.get("access-control-allow-origin"), "*");
     const enabledBody = await enabled.json();
     assert.deepEqual(enabledBody.listener, { host: "127.0.0.1", port: remotePort, listening: true });
-    assert.equal(enabledBody.sendEnabled, false);
+    assert.equal(enabledBody.sendEnabled, true);
 
     const remoteHealth = await fetch(`http://127.0.0.1:${remotePort}/v1/health`);
     assert.equal(remoteHealth.status, 200);
@@ -260,6 +260,7 @@ test("authenticated WebSocket receives snapshots and fails closed on unavailable
     storeFactory: () => store,
     remoteAccessStateDir: stateDir,
     remoteAccessManagementCapability: capability,
+    remoteReplyDispatcher: null,
   });
   let socket;
   try {

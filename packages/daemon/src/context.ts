@@ -146,7 +146,8 @@ export interface DaemonDependencies {
   readonly computerUseTargetOwnershipTimeoutMs?: number;
   readonly remoteAccessManagementCapability?: string;
   readonly remoteAccessStateDir?: string;
-  readonly remoteReplyDispatcher?: RemoteReplyDispatcher;
+  /** Pass null only for fail-closed embedding/tests that intentionally disable Mobile send. */
+  readonly remoteReplyDispatcher?: RemoteReplyDispatcher | null;
 }
 
 export interface DaemonContext {

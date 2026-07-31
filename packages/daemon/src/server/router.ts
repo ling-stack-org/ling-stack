@@ -147,6 +147,7 @@ import {
   parseGovernanceNotificationRoute,
 } from "../features/governance-notifications/routes.js";
 import { handleConversationAttachmentsCollection, handleConversationDetail, handleConversationStream, startConversationReplacementRun } from "../features/conversations/routes.js";
+import { startDetachedRunAndResolveReady } from "../features/runs/detached.js";
 import { handleConversationMessageEdit } from "../features/conversations/message-edits.js";
 import { dispatchMediaJobExecution, handleRunMediaJob, syncMediaJobForApprovalDecision, type RunMediaJobHooks } from "../features/media/executor.js";
 import { handleMediaJobRoute, handleMediaJobsCollection } from "../features/media/routes.js";
@@ -2511,22 +2512,4 @@ function createBlockedTeammateDirectReply(
     },
     new Date().toISOString(),
   );
-}
-
-async function startDetachedRunAndResolveReady(
-  startRun: (onRunReady: (runId: string) => void) => Promise<string | undefined>,
-): Promise<string | undefined> {
-  let settled = false;
-  return await new Promise<string | undefined>((resolve) => {
-    const settle = (runId: string | undefined): void => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      resolve(runId);
-    };
-    void startRun((runId) => settle(runId))
-      .then((runId) => settle(runId))
-      .catch(() => settle(undefined));
-  });
 }

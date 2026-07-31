@@ -71,6 +71,7 @@ import { CuaDriverDaemonActivationCoordinator } from "./features/plugins/cua-dri
 import { createCuaDriverGenerationBroker } from "./features/plugins/cua-driver-generation-broker.js";
 import { createCuaDriverDescriptor } from "./features/plugins/presets.js";
 import { RemoteAccessController } from "./features/remote-access/controller.js";
+import { DefaultRemoteReplyDispatcher } from "./features/remote-access/default-reply-dispatcher.js";
 
 export { defaultDaemonConfig } from "./config.js";
 export type { DaemonConfig, ResolvedDaemonConfig } from "./config.js";
@@ -295,6 +296,21 @@ export function createDaemonServer(
     ?? process.env.LING_MOBILE_ACCESS_MANAGEMENT_CAPABILITY
     ?? randomBytes(32).toString("base64url");
   const defaultStoragePaths = resolveStoragePaths(resolvedConfig.defaultWorkspaceCwd);
+  const remoteReplyDispatcher = dependencies.remoteReplyDispatcher === null
+    ? undefined
+    : dependencies.remoteReplyDispatcher ?? new DefaultRemoteReplyDispatcher({
+      store: storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd),
+      storeRegistry,
+      runnerRegistry,
+      activeRuns,
+      runtimeSupervisor,
+      secretResolver,
+      mcpBroker,
+      providerStartupRefresh,
+      controlPlaneEvents,
+      startupState,
+      computerUsePreviews,
+    });
   const remoteAccess = new RemoteAccessController({
     store: storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd),
     stateDir: dependencies.remoteAccessStateDir ?? defaultStoragePaths.user.stateDir,
@@ -302,7 +318,7 @@ export function createDaemonServer(
     workspaceDisplayName: defaultStoragePaths.workspace.identity.displayName,
     managementCapability: remoteAccessManagementCapability,
     managementAllowedOrigins: resolvedConfig.remoteAccess.managementAllowedOrigins,
-    dispatcher: dependencies.remoteReplyDispatcher,
+    dispatcher: remoteReplyDispatcher,
   });
   const context: DaemonContext = {
     config: resolvedConfig,

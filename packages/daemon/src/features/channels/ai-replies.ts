@@ -48,6 +48,8 @@ export async function createAiChannelReply(input: {
   readonly webResolveHostAddresses?: (hostname: string) => Promise<readonly string[]>;
   readonly teamObserverBusEnabled?: boolean;
   readonly completionMode?: "background" | "inline";
+  readonly replyMessageId?: string;
+  readonly disableWebEvidence?: boolean;
   readonly stream?: {
     readonly onReady: (message: ChannelMessage) => void;
     readonly onDelta: (message: ChannelMessage, delta: string) => void;
@@ -55,6 +57,12 @@ export async function createAiChannelReply(input: {
     readonly onBlocked: (message: ChannelMessage) => void;
   };
 }): Promise<ChannelMessage> {
+  if (input.replyMessageId) {
+    const existing = input.store.getChannelMessage(input.replyMessageId);
+    if (existing) {
+      return existing;
+    }
+  }
   const now = new Date().toISOString();
   const teammateId =
     input.teammateId ??
@@ -72,6 +80,7 @@ export async function createAiChannelReply(input: {
   });
   const pending = input.store.createChannelMessage(
     {
+      ...(input.replyMessageId ? { id: input.replyMessageId } : {}),
       channelId: input.channel.id,
       threadId: input.sourceMessage.threadId ?? input.sourceMessage.id,
       kind: "ai_reply",
@@ -139,6 +148,7 @@ async function completeAiChannelReply(input: {
   readonly webFetch?: typeof globalThis.fetch;
   readonly webResolveHostAddresses?: (hostname: string) => Promise<readonly string[]>;
   readonly teamObserverBusEnabled?: boolean;
+  readonly disableWebEvidence?: boolean;
   readonly pending: ChannelMessage;
   readonly supervised: ReturnType<typeof startRuntimeWorkUnit>;
   readonly teammate: ReturnType<typeof resolveAiTeammateReference>;
@@ -234,18 +244,20 @@ async function completeAiChannelReply(input: {
       canonicalTeammateId: input.canonicalTeammateId,
       visibleParticipantTeammateIds: input.visibleParticipantTeammateIds,
     });
-    const webContext = await buildChannelWebContext({
-      store: input.store,
-      providerPresetId: input.providerPresetId,
-      sourceMessage: input.sourceMessage,
-      turnEnvelope,
-      secretResolver: input.secretResolver,
-      fetch: input.webFetch,
-      resolveHostAddresses: input.webResolveHostAddresses,
-      onProgress: (progress) => {
-        recordChannelWebEvidenceProgress(input, progress);
-      },
-    });
+    const webContext = input.disableWebEvidence
+      ? { status: "not_applicable" as const }
+      : await buildChannelWebContext({
+        store: input.store,
+        providerPresetId: input.providerPresetId,
+        sourceMessage: input.sourceMessage,
+        turnEnvelope,
+        secretResolver: input.secretResolver,
+        fetch: input.webFetch,
+        resolveHostAddresses: input.webResolveHostAddresses,
+        onProgress: (progress) => {
+          recordChannelWebEvidenceProgress(input, progress);
+        },
+      });
     recordMessageWebEvidenceEvent({
       store: input.store,
       workUnitId: input.supervised.workUnit.id,

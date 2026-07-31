@@ -5,6 +5,7 @@ import {
   type LingThread,
   type PermissionConfirmation,
   type PermissionPreset,
+  type RunTool,
   type RunStore,
   type SkillOptimizationMode,
   type TeammateDirectMessage,
@@ -36,6 +37,8 @@ export function resolveTeammateDirectExecutionContext(input: {
   readonly requestedSkillId?: string;
   readonly skillOptimizationMode?: SkillOptimizationMode;
   readonly continuationReason?: "queue_followup" | "interrupt_redirect";
+  readonly toolsOverride?: readonly RunTool[];
+  readonly idempotencyKeyOverride?: string;
 }): TeammateDirectExecutionContext {
   const now = new Date().toISOString();
   const thread = ensureTeammateDirectLingThread(input.store, input.teammate, input.directThread, now);
@@ -54,7 +57,7 @@ export function resolveTeammateDirectExecutionContext(input: {
       createdByActor: input.sourceMessage.authorType === "system" ? "system" : "local-user",
       requestedSkillId: input.requestedSkillId,
       skillOptimizationMode: input.skillOptimizationMode,
-      tools: input.teammate.allowedTools,
+      tools: input.toolsOverride ?? input.teammate.allowedTools,
       approvalProfile: input.teammate.approvalProfile,
       authorizationMode: input.authorizationMode,
       workspaceAccessMode: input.workspaceAccessMode,
@@ -67,7 +70,7 @@ export function resolveTeammateDirectExecutionContext(input: {
       directWorkspaceBinding: input.workspace.binding,
       directWorkspaceSnapshot: input.workspace.snapshot,
       continuationReason: input.continuationReason,
-      idempotencyKey: `teammate_direct_run:${input.sourceMessage.id}:${input.replyMessage.id}`,
+      idempotencyKey: input.idempotencyKeyOverride ?? `teammate_direct_run:${input.sourceMessage.id}:${input.replyMessage.id}`,
       task: {
         id: input.sourceMessage.id,
         title: `Private chat with ${input.teammate.displayName}`,

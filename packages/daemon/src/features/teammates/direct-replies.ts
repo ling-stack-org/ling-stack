@@ -3,6 +3,7 @@ import type {
   AuthorizationMode,
   PermissionConfirmation,
   PermissionPreset,
+  RunTool,
   RunSession,
   RunStore,
   SecretResolver,
@@ -63,6 +64,11 @@ export async function createAiTeammateDirectReply(input: {
   readonly webFetch?: typeof globalThis.fetch;
   readonly webResolveHostAddresses?: (hostname: string) => Promise<readonly string[]>;
   readonly signal?: AbortSignal;
+  readonly replyMessageId?: string;
+  readonly toolsOverride?: readonly RunTool[];
+  readonly disableWebEvidence?: boolean;
+  readonly systemPromptAppend?: string;
+  readonly idempotencyKeyOverride?: string;
   readonly onWorkUnitStarted?: (handle: {
     readonly workUnitId: string;
     readonly messageId: string;
@@ -71,10 +77,17 @@ export async function createAiTeammateDirectReply(input: {
   }) => void;
   readonly stream?: TeammateDirectReplyStream;
 }): Promise<TeammateDirectMessage> {
+  if (input.replyMessageId) {
+    const existing = input.store.getTeammateDirectMessage(input.replyMessageId);
+    if (existing) {
+      return existing;
+    }
+  }
   const providerPresetId = input.providerPresetId ?? input.teammate.providerPresetId;
   const now = new Date().toISOString();
   const pending = input.store.createTeammateDirectMessage(
     {
+      ...(input.replyMessageId ? { id: input.replyMessageId } : {}),
       threadId: input.thread.id,
       teammateId: input.teammate.id,
       authorType: "ai-teammate",
@@ -158,23 +171,28 @@ export async function createAiTeammateDirectReply(input: {
       memoryDropped: renderedMemory.dropped,
       now,
     });
-    const webContext = await buildWebEvidenceContext({
-      providerPreset: input.store.getProviderPreset(providerPresetId!),
-      webSearchProviderPresets: input.store.listProviderPresets({ enabled: true }),
-      providerStore: input.store,
-      sourceText: input.sourceMessage.body,
-      secretResolver: input.secretResolver,
-      fetch: input.webFetch,
-      resolveHostAddresses: input.webResolveHostAddresses,
-      promptHeader: "Ling web context:",
-      promptInstruction: "Use this web context only as cited evidence for the current private reply. Do not claim access to web pages beyond the included results.",
-      allowPublicSearchFallback: false,
-      onProgress: (progress) => {
-        webProgressEvents.push(progress);
-        updateDirectWebEvidenceProgress(input.store, input.sourceMessage, pending, input.stream, progress);
-      },
-    });
-    const systemPrompt = buildDirectSystemPrompt(input.teammate, renderedMemory.prompt, input.continuationReason);
+    const webContext: WebEvidenceContext = input.disableWebEvidence
+      ? { status: "not_applicable" }
+      : await buildWebEvidenceContext({
+        providerPreset: input.store.getProviderPreset(providerPresetId!),
+        webSearchProviderPresets: input.store.listProviderPresets({ enabled: true }),
+        providerStore: input.store,
+        sourceText: input.sourceMessage.body,
+        secretResolver: input.secretResolver,
+        fetch: input.webFetch,
+        resolveHostAddresses: input.webResolveHostAddresses,
+        promptHeader: "Ling web context:",
+        promptInstruction: "Use this web context only as cited evidence for the current private reply. Do not claim access to web pages beyond the included results.",
+        allowPublicSearchFallback: false,
+        onProgress: (progress) => {
+          webProgressEvents.push(progress);
+          updateDirectWebEvidenceProgress(input.store, input.sourceMessage, pending, input.stream, progress);
+        },
+      });
+    const systemPrompt = [
+      buildDirectSystemPrompt(input.teammate, renderedMemory.prompt, input.continuationReason),
+      input.systemPromptAppend,
+    ].filter((line): line is string => Boolean(line?.trim())).join("\n");
     const execution = resolveTeammateDirectExecutionContext({
       store: input.store,
       teammate: input.teammate,
@@ -192,6 +210,8 @@ export async function createAiTeammateDirectReply(input: {
       requestedSkillId: input.requestedSkillId,
       skillOptimizationMode: input.skillOptimizationMode,
       continuationReason: input.continuationReason,
+      toolsOverride: input.toolsOverride,
+      idempotencyKeyOverride: input.idempotencyKeyOverride,
     });
     const projection = createTeammateDirectRunProjection({
       store: input.store,
