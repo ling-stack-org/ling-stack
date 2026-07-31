@@ -7,6 +7,7 @@ import {
 } from "@ling-stack/remote-protocol";
 
 import LingSecureDeviceKey from "../../../modules/ling-secure-device-key";
+import type { RemoteEntropy } from "@ling-stack/remote-client";
 import type { SecureDeviceKeyAdapter, SecureDeviceKeyInfo } from "./types";
 
 function validateKeyId(keyId: string): void {
@@ -50,5 +51,21 @@ export const nativeSecureDeviceKeyAdapter: SecureDeviceKeyAdapter = {
   async delete(keyId): Promise<void> {
     validateKeyId(keyId);
     await LingSecureDeviceKey.delete(keyId);
+  },
+};
+
+export const nativeSecureEntropy: RemoteEntropy = {
+  async randomBytes(length): Promise<Uint8Array> {
+    if (!Number.isInteger(length) || length < 16 || length > 256) {
+      throw new Error("invalid_secure_random_length");
+    }
+    return decodeBase64Url(await LingSecureDeviceKey.randomBytes(length));
+  },
+
+  async randomId(prefix): Promise<string> {
+    if (!/^[a-z][a-z0-9_]{0,31}$/u.test(prefix)) {
+      throw new Error("invalid_secure_random_prefix");
+    }
+    return `${prefix}_${await LingSecureDeviceKey.randomBytes(16)}`;
   },
 };

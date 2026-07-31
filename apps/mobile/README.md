@@ -1,7 +1,9 @@
 # Ling Mobile
 
-This directory currently contains the Slice 1 secure-device-key development build. It is
-not the final Mobile UI.
+This directory contains the iPhone-first Ling Mobile V1 conversation client. Unpaired
+devices enter the secure QR flow; paired devices synchronize the PC conversation index,
+channel/normal/teammate-direct transcripts, profile, and device-local appearance. Android
+keeps compiling from the same Expo source but remains outside the current release gate.
 
 The app-local Expo module exposes only four operations: generate/load a key, sign bytes,
 verify a signature, and delete the key. It has no private-key export API. Canonical JSON

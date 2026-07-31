@@ -26,6 +26,7 @@ export interface NativeSecureDeviceKeySignature {
 }
 
 export interface NativeSecureDeviceKeyModule {
+  readonly randomBytes: (length: number) => Promise<string>;
   readonly generateOrLoad: (keyId: string) => Promise<NativeSecureDeviceKeyInfo>;
   readonly sign: (keyId: string, messageBase64Url: string) => Promise<NativeSecureDeviceKeySignature>;
   readonly verify: (

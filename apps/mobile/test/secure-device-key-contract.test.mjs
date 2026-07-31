@@ -61,7 +61,7 @@ test("real-device fixture covers pinning, fixed signatures and key lifecycle", a
 test("Mobile scripts build workspace dependencies and target native platforms only", async () => {
   const manifest = JSON.parse(await readFile(files.manifest, "utf8"));
   const appConfig = JSON.parse(await readFile(files.appConfig, "utf8"));
-  assert.match(manifest.scripts["build:deps"], /remote-protocol build/);
+  assert.match(manifest.scripts["build:deps"], /remote-client build/);
   assert.equal(manifest.scripts.prestart, "corepack pnpm run build:deps");
   assert.equal(manifest.scripts.preios, "corepack pnpm run build:deps");
   assert.equal(manifest.scripts.preandroid, "corepack pnpm run build:deps");

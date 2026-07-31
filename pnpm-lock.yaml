@@ -87,6 +87,9 @@ importers:
       '@ling-stack/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@ling-stack/remote-client':
+        specifier: workspace:*
+        version: link:../../packages/remote-client
       '@ling-stack/remote-protocol':
         specifier: workspace:*
         version: link:../../packages/remote-protocol
