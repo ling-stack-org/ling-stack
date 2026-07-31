@@ -8,6 +8,7 @@ import {
   GitBranch,
   Palette,
   MonitorCog,
+  Smartphone,
   Shield,
   SlidersHorizontal,
   UserCircle,
@@ -24,6 +25,7 @@ export type SettingsSectionId =
   | "personalization"
   | "interface-preferences"
   | "computer-control"
+  | "mobile-access"
   | "external-work"
   | "mcp-tools"
   | "skill-library"
@@ -51,6 +53,7 @@ export const settingsSectionGroups: readonly SettingsSectionGroupDefinition[] = 
     heading: "Device",
     items: [
       { id: "computer-control", label: "Computer Control", icon: MonitorCog },
+      { id: "mobile-access", label: "Mobile Access", icon: Smartphone },
     ],
   },
   {

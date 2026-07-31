@@ -41,6 +41,7 @@ import {
 } from "./settings-shell-model.js";
 import { useArchivedSettingsController } from "./useArchivedSettingsController.js";
 import { ComputerControlSettingsPage } from "./computer-control/ComputerControlSettingsPage.js";
+import { MobileAccessSettingsPage } from "./mobile-access/MobileAccessSettingsPage.js";
 
 export type { SettingsSectionId } from "./settings-shell-model.js";
 
@@ -185,11 +186,17 @@ export function SettingsPage({
   const { t } = useI18n();
   const [activeSection, setActiveSection] = useState<SettingsSectionId>(initialSection ?? "personal-profile");
   const computerControlVisible = computerControl.surfaceMode === "computer_control";
+  const mobileAccessVisible = Boolean(window.lingDesktop?.mobileAccess);
   useEffect(() => {
     if (!computerControlVisible && activeSection === "computer-control") {
       setActiveSection("personal-profile");
     }
   }, [activeSection, computerControlVisible]);
+  useEffect(() => {
+    if (!mobileAccessVisible && activeSection === "mobile-access") {
+      setActiveSection("personal-profile");
+    }
+  }, [activeSection, mobileAccessVisible]);
   const runDiagnosticsOpen = runDiagnosticsRunId !== undefined;
   const workspaceToolSection = workspaceToolViewToSectionId(workspaceToolView);
   const activeWorkspaceToolView = workspaceToolView && workspaceToolSection && workspaceToolDetail !== undefined && workspaceToolDetail !== null
@@ -204,6 +211,8 @@ export function SettingsPage({
         ? "personal-profile"
         : activeSection === "computer-control" && !computerControlVisible
           ? "personal-profile"
+          : activeSection === "mobile-access" && !mobileAccessVisible
+            ? "personal-profile"
           : activeSection;
   const contentStackClassName = [
     "settings-content-stack",
@@ -227,6 +236,7 @@ export function SettingsPage({
       icon: item.icon,
       hidden: item.pending === true,
       ...(item.id === "computer-control" ? { hidden: !computerControlVisible } : {}),
+      ...(item.id === "mobile-access" ? { hidden: !mobileAccessVisible } : {}),
     })),
   }));
   const workspaceToolDefinition = workspaceToolSection
@@ -316,6 +326,8 @@ export function SettingsPage({
         {visibleActiveSection === "computer-control" && !workspaceToolDetailOpen ? (
           <ComputerControlSettingsPage controller={computerControl} />
         ) : null}
+
+        {visibleActiveSection === "mobile-access" && !workspaceToolDetailOpen ? <MobileAccessSettingsPage /> : null}
 
         {visibleActiveSection === "approval-strategy" && !workspaceToolDetailOpen ? (
           <ExecutionPermissionsSettingsPanel

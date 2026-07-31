@@ -15,6 +15,7 @@ import {
   desktopBundledCuaDriverGateEnabled,
   resolveDesktopCuaDriverFeatureFlags,
 } from "./cua-driver/feature-gates.js";
+import { deriveMobileAccessManagementCapability } from "./mobile-access/authority.js";
 
 const DEFAULT_DAEMON_STARTUP_TIMEOUT_MS = 20_000;
 
@@ -221,6 +222,7 @@ export class DesktopDaemonLifecycle {
             ? {
                 LING_DESKTOP_BRIDGE_TOKEN: this.options.desktopBridgeToken,
                 LING_COMPUTER_USE_ROUTE_TOKEN: this.options.desktopBridgeToken,
+                LING_MOBILE_ACCESS_MANAGEMENT_CAPABILITY: deriveMobileAccessManagementCapability(this.options.desktopBridgeToken),
               }
             : {}),
         },

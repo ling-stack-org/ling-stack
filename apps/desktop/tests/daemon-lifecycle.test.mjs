@@ -975,6 +975,11 @@ test("Desktop passes its bridge token to an owned daemon and verifies the same p
   assert.equal(status.ownedByDesktop, true);
   assert.equal(spawnInputs[0].env.LING_DESKTOP_BRIDGE_TOKEN, "owned-bridge-token");
   assert.equal(spawnInputs[0].env.LING_COMPUTER_USE_ROUTE_TOKEN, "owned-bridge-token");
+  assert.equal(typeof spawnInputs[0].env.LING_MOBILE_ACCESS_MANAGEMENT_CAPABILITY, "string");
+  assert.notEqual(
+    spawnInputs[0].env.LING_MOBILE_ACCESS_MANAGEMENT_CAPABILITY,
+    "owned-bridge-token",
+  );
   await lifecycle.stopOwnedDaemon();
 });
 

@@ -16,6 +16,7 @@
 @import "./styles/settings-content-chrome.css";
 @import "./styles/settings-interface-preferences.css";
 @import "./styles/settings-computer-control.css";
+@import "./styles/settings-mobile-access.css";
 @import "./styles/settings-theme-packages.css";
 @import "./styles/settings-theme-studio.css";
 @import "./styles/settings-external-work.css";
