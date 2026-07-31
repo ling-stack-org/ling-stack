@@ -127,6 +127,7 @@ export function ComputerUsePreviewApp({
       controlsVisibility={viewModel.controlsPersistent ? "persistent" : "hover-focus"}
       data-controls={viewModel.controlsPersistent ? "persistent" : "hover"}
       data-menu-open={menuOpen ? "true" : undefined}
+      data-locked-control={snapshot.lockedControl?.phase}
       data-open-command={openCommandState}
       data-page-deck={pageDeck?.showChrome ? "visible" : "single"}
       data-page-thumbnail-bytes={thumbnails.bytes}
@@ -156,15 +157,23 @@ export function ComputerUsePreviewApp({
           )}
           className="preview-header"
           status={(
-            <StatusIndicator
-              aria-label={t("previewAccessibleLabel", {
-                target: snapshot.targetLabel,
-                status: viewModel.label,
-              })}
-              id={PREVIEW_ACCESSIBLE_NAME_ID}
-              label={viewModel.label}
-              tone={viewModel.tone}
-            />
+            <div className="preview-status-indicators">
+              <StatusIndicator
+                aria-label={t("previewAccessibleLabel", {
+                  target: snapshot.targetLabel,
+                  status: viewModel.label,
+                })}
+                id={PREVIEW_ACCESSIBLE_NAME_ID}
+                label={viewModel.label}
+                tone={viewModel.tone}
+              />
+              {snapshot.lockedControl ? (
+                <StatusIndicator
+                  label={t(lockedControlMessageKey(snapshot.lockedControl.phase))}
+                  tone={snapshot.lockedControl.phase === "active_locked" ? "warning" : "neutral"}
+                />
+              ) : null}
+            </div>
           )}
           title={snapshot.targetLabel}
         />
@@ -202,6 +211,15 @@ export function ComputerUsePreviewApp({
       visualState={viewModel.state}
     />
   );
+}
+
+function lockedControlMessageKey(
+  phase: NonNullable<import("../../shared/desktop-capabilities.js").ComputerUsePipRendererSnapshot["lockedControl"]>["phase"],
+): "lockedControlArmedLabel" | "lockedControlAttestingLabel" | "lockedControlActiveLabel" | "lockedControlPausedLabel" {
+  if (phase === "armed") return "lockedControlArmedLabel";
+  if (phase === "attesting") return "lockedControlAttestingLabel";
+  if (phase === "active_locked") return "lockedControlActiveLabel";
+  return "lockedControlPausedLabel";
 }
 
 function PreviewActionButton({

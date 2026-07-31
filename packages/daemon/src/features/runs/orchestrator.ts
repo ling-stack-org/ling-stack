@@ -593,6 +593,7 @@ export async function executeRunRequest(
       ...runnerRequest,
       onMcpToolCall: mcpTools.length > 0
         ? createMcpToolCallHandler(store, secretResolver, mcpBroker, mcpTools, {
+            runId: run.id,
             onStart: computerUseProducer
               ? (input) => {
                   computerUseProducer?.markProviderCallStarted(input);
@@ -976,6 +977,14 @@ export async function executeRunRequest(
       onApprovalRequired: async (request) => {
         const definition = mcpTools.find((tool) => tool.registeredName === request.toolName);
         if (definition) {
+          mcpBroker.cuaDriverRuntimeAuthority?.assertLockedApprovalAllowed?.({
+            serverId: definition.serverId,
+            runId: run.id,
+            computerUseSessionId: `computer_use_${run.id}`,
+            toolId: definition.rawName,
+            toolCallId: request.toolCallId,
+            defaultApproval: request.defaultApproval ?? definition.defaultApproval,
+          });
           try {
             computerUseProducer?.beginProviderIntent({ request, definition });
           } catch {

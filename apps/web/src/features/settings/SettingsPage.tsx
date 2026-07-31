@@ -1,4 +1,6 @@
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
+import type { ComputerControlController } from "../../domains/computer-control/use-computer-control-controller.js";
+import { shouldHideCuaDriverInternalRows, CUA_DRIVER_MCP_SERVER_ID } from "../../domains/computer-control/computer-control-surface.js";
 import type { McpBusyAction } from "../../domains/mcp/use-mcp-domain.js";
 import { useI18n } from "../../i18n.js";
 import type {
@@ -38,11 +40,13 @@ import {
   type SettingsWorkspaceToolView,
 } from "./settings-shell-model.js";
 import { useArchivedSettingsController } from "./useArchivedSettingsController.js";
+import { ComputerControlSettingsPage } from "./computer-control/ComputerControlSettingsPage.js";
 
 export type { SettingsSectionId } from "./settings-shell-model.js";
 
 export function SettingsPage({
   cwd,
+  computerControl,
   skillLibraryRefreshToken,
   effectiveConfig,
   startupStatus,
@@ -107,6 +111,7 @@ export function SettingsPage({
   onBackToApplication,
 }: {
   readonly cwd: string;
+  readonly computerControl: ComputerControlController;
   readonly skillLibraryRefreshToken: number;
   readonly effectiveConfig: EffectiveConfigResponse | undefined;
   readonly startupStatus: StartupStatusResponse | undefined;
@@ -179,6 +184,12 @@ export function SettingsPage({
 }): JSX.Element {
   const { t } = useI18n();
   const [activeSection, setActiveSection] = useState<SettingsSectionId>(initialSection ?? "personal-profile");
+  const computerControlVisible = computerControl.surfaceMode === "computer_control";
+  useEffect(() => {
+    if (!computerControlVisible && activeSection === "computer-control") {
+      setActiveSection("personal-profile");
+    }
+  }, [activeSection, computerControlVisible]);
   const runDiagnosticsOpen = runDiagnosticsRunId !== undefined;
   const workspaceToolSection = workspaceToolViewToSectionId(workspaceToolView);
   const activeWorkspaceToolView = workspaceToolView && workspaceToolSection && workspaceToolDetail !== undefined && workspaceToolDetail !== null
@@ -191,7 +202,9 @@ export function SettingsPage({
       ? workspaceToolSection
       : isWorkspaceToolSection(activeSection)
         ? "personal-profile"
-        : activeSection;
+        : activeSection === "computer-control" && !computerControlVisible
+          ? "personal-profile"
+          : activeSection;
   const contentStackClassName = [
     "settings-content-stack",
     workspaceToolDetailOpen
@@ -213,6 +226,7 @@ export function SettingsPage({
       title: t(item.pageTitle ?? item.label),
       icon: item.icon,
       hidden: item.pending === true,
+      ...(item.id === "computer-control" ? { hidden: !computerControlVisible } : {}),
     })),
   }));
   const workspaceToolDefinition = workspaceToolSection
@@ -226,6 +240,13 @@ export function SettingsPage({
     enabled: visibleActiveSection === "archived-items",
     onChanged: onArchivedItemsChanged,
   });
+  const hideCuaInternals = shouldHideCuaDriverInternalRows(computerControl.surfaceMode);
+  const visibleMcpServers = hideCuaInternals
+    ? mcpServers.filter((server) => server.id !== CUA_DRIVER_MCP_SERVER_ID)
+    : mcpServers;
+  const visibleMcpTools = hideCuaInternals
+    ? mcpTools.filter((tool) => tool.serverId !== CUA_DRIVER_MCP_SERVER_ID)
+    : mcpTools;
 
   const selectSettingsSection = (sectionId: SettingsSectionId): void => {
     setActiveSection(sectionId);
@@ -292,6 +313,10 @@ export function SettingsPage({
           />
         ) : null}
 
+        {visibleActiveSection === "computer-control" && !workspaceToolDetailOpen ? (
+          <ComputerControlSettingsPage controller={computerControl} />
+        ) : null}
+
         {visibleActiveSection === "approval-strategy" && !workspaceToolDetailOpen ? (
           <ExecutionPermissionsSettingsPanel
             workspaceDefaultAuthorizationMode={workspaceDefaultAuthorizationMode}
@@ -322,12 +347,12 @@ export function SettingsPage({
 
         {visibleActiveSection === "mcp-tools" && !workspaceToolDetailOpen ? (
           <McpToolsPage
-            servers={mcpServers}
-            tools={mcpTools}
+            servers={visibleMcpServers}
+            tools={visibleMcpTools}
             isLoading={mcpLoading}
-            busyServerId={mcpBusyServerId}
-            busyAction={mcpBusyAction}
-            error={mcpError}
+            busyServerId={hideCuaInternals && mcpBusyServerId === CUA_DRIVER_MCP_SERVER_ID ? "" : mcpBusyServerId}
+            busyAction={hideCuaInternals && mcpBusyServerId === CUA_DRIVER_MCP_SERVER_ID ? undefined : mcpBusyAction}
+            error={hideCuaInternals && mcpBusyServerId === CUA_DRIVER_MCP_SERVER_ID ? undefined : mcpError}
             cwd={cwd}
             onRefresh={onRefreshMcp}
             onClearError={onClearMcpError}

@@ -39,6 +39,8 @@ export interface CuaDriverDesktopPlatformOwner {
   start(): Promise<void>;
   /** Idempotently releases observers after every coordinator has stopped. */
   dispose(): Promise<void>;
+  /** Explicit user action only; never invoked by activation or startup. */
+  requestPermissions?(): Promise<void>;
 }
 
 interface CreateCuaDriverDesktopPlatformOwnerBaseOptions {
@@ -164,6 +166,10 @@ class DarwinCuaDriverDesktopPlatformOwner implements CuaDriverDesktopPlatformOwn
       this.adapter.dispose();
     });
     return this.disposePromise;
+  }
+
+  async requestPermissions(): Promise<void> {
+    await this.adapter.permissionController.requestHostPermissions();
   }
 }
 

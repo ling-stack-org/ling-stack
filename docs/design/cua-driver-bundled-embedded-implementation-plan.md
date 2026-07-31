@@ -4,6 +4,57 @@
 
 Implementation in progress.
 
+### Active Computer Control surface migration (2026-07-30)
+
+The bundled runtime keeps its canonical plugin and MCP identities, but the packaged product
+surface moves from the ordinary Plugin Manager row to
+**Settings > Device > Computer Control**. This slice is not implemented yet.
+
+Scope:
+
+1. add a capability-gated Computer Control settings section for packaged macOS and Windows;
+2. reuse the canonical `trusted-local:cua-driver` setup projection and enable/check/disable
+   routes; do not add a new state store or lifecycle API;
+3. hide the bundled canonical row from Plugin Manager and hide `mcp_cua_driver` from MCP
+   Settings presentation only;
+4. preserve the full records in shared plugin/MCP domains, teammate bindings, runner tools,
+   approvals and audit;
+5. move the existing PiP auto-show preference from Interface Preferences into the new page;
+6. carry exact macOS permission and Windows readiness details through the authenticated
+   Desktop lease/availability projection, including handshake capability negotiation,
+   integrity authority and mirrored contract types;
+7. add main-window-only Desktop request/open-permission-settings commands for macOS and a
+   fail-closed locked-screen rule on both platforms;
+8. keep `external_local` and pure Web/standalone behavior unchanged.
+
+Expected implementation time is **2-3 engineering days**, excluding Windows colleague
+real-machine acceptance:
+
+| Workstream | Estimate | Exit condition |
+| --- | ---: | --- |
+| Contracts, Desktop permission/lock boundary, daemon detail projection | 1-1.5 days | exact platform details round-trip; no renderer inference |
+| Web controller, page, navigation and scoped presentation filters | 0.75-1 day | unique bundled entry; external mode unchanged |
+| Unit, Renderer E2E, Desktop IPC and daemon regression tests | 0.5-0.75 day | hiding does not remove tools/bindings; lifecycle semantics pass |
+
+The work can begin locally without GitHub Actions. macOS typecheck, unit/Renderer tests and
+packaged smoke run locally. Windows code and cross-platform fixtures are implemented now;
+Windows installed-Setup and real session/readiness acceptance remains the Windows team's
+handoff responsibility.
+
+Implementation order:
+
+```text
+P0  Freeze view model + readiness-detail contract
+  -> P1  Desktop IPC/readiness projection and daemon Catalog mapping
+  -> P2  Settings page/controller + PiP preference move
+  -> P3  Scoped Plugin/MCP presentation filters + teammate recovery copy
+  -> P4  macOS local acceptance + Windows handoff tests
+```
+
+P1 and the presentational half of P2 may proceed in parallel after P0. P3 depends on the
+canonical bundled-distribution selector from P2 so filtering cannot accidentally affect
+`external_local`.
+
 ### Active execution plan (2026-07-24)
 
 This plan replaces the audit-grade promotion/evidence path for the internal alpha:
@@ -120,12 +171,12 @@ Current implementation baseline:
   successful Windows hosted native-helper compilation, `Global` parent-mutex/private-DACL/
   `WAIT_ABANDONED`, owned-process runtime execution and real-machine validation remain
   open.
-- Slice 7/T9 is complete at the renderer/contract boundary. One canonical Cua Driver row
-  now consumes V2 provider states, keeps requested and effective enablement distinct, hides
-  external installation guidance for bundled distributions, projects Windows standard
-  coverage/limitations, and includes English/Chinese pure view-model plus Renderer E2E
-  coverage. Packaged clean-host product smoke remains coupled to payload/signing/Setup
-  closure in later slices.
+- Slice 7/T9 is complete as a legacy renderer/contract foundation. Its pure state mapping
+  keeps requested and effective enablement distinct, hides external installation guidance
+  for bundled distributions, projects Windows standard coverage/limitations, and includes
+  English/Chinese tests. The new Computer Control slice reuses those semantics, hides the
+  bundled row from Plugin Manager and makes Settings the packaged product entry. Packaged
+  clean-host product smoke remains coupled to payload/signing/Setup closure in later slices.
 - Slice 8/T10 is implemented at the local contract/handoff boundary. Candidate manifest v4,
   release policy v3, review/build attestation v2, internal/release verifiers, immutable cell
   reports, matrix finalizer and the two-phase candidate/handoff producer move as one atomic
@@ -187,7 +238,7 @@ Authenticode throughout the installed Ling tuple, and may close only
 After the required slices land:
 
 - packaged macOS and Windows Desktop contain the locked `0.8.3 (Ling build 1)` provider;
-- `Ling Stack Setup.exe` installs Windows `cua-driver.exe` only as a versioned private Ling
+- `Ling Stack Setup.exe` installs Windows `ling-cua-driver.exe` only as a versioned private Ling
   resource, with no second product registration, PATH entry, Start-menu item, service,
   uninstaller or updater;
 - normal users do not download or separately update Cua Driver;
@@ -196,6 +247,12 @@ After the required slices land:
 - macOS projects Ling-owned TCC readiness;
 - Windows projects content-free interactive-session readiness and a ready
   `standard` integrity tier with explicit capability limitations;
+- packaged bundled mode exposes one Computer Control Settings page and does not show Cua
+  Driver as an ordinary plugin or MCP server;
+- the page switch follows requested intent, platform details follow the authenticated
+  daemon projection, and the PiP preference remains presentation-only;
+- closing Settings/window/PiP does not disable control, while lock/session invalidation
+  always revokes effective tools and requires a fresh generation;
 - standalone/dev mode retains the existing explicit external-provider path;
 - Windows colleagues receive a deterministic test-signed installed-candidate acceptance
   package and, later, a separately generated production-candidate package.
@@ -217,6 +274,10 @@ creating parallel systems:
 | macOS release-evidence schemas and signed-candidate finalizers | Extend with provider lock/seal and embedded TCC identity rather than inventing a second evidence framework |
 | Windows provider verifier, candidate manifest, PowerShell runner and acceptance report | Change input from separately installed upstream asset to bundled source-built candidate; reuse external reviewer/build-attestor promotion and trusted system verification tools, while replacing PID-only cleanup with retained-handle plus Rust Job Object ownership |
 | Electron-builder macOS/NSIS packaging and bundled-resource assertions | Add versioned provider resources and platform signing order; keep one Ling release/rollback tuple |
+| V2 Cua setup projection and one-row pure view model | Reuse state semantics and requested/effective mapping; move bundled presentation to Computer Control Settings |
+| `usePluginsDomain()` pending/error owner fence | Add `computer-control` owner; do not create a second mutation controller or fetch loop |
+| `DesktopComputerUsePreference` | Reuse unchanged behavior under Computer Control; remove only its Interface Preferences placement |
+| Desktop main-window sender validation and Darwin permission controller | Add narrow request/open-settings commands; return accepted/reason only and refresh daemon projection |
 
 ## NOT In Scope
 
@@ -228,6 +289,15 @@ creating parallel systems:
 - Changing the whole Windows Desktop installer to per-machine solely for UIAccess.
 - A renderer-to-provider API, a second daemon, a second Computer Use state machine or a
   bypass around approvals/audit.
+- Deleting canonical Cua plugin/MCP records, globally filtering shared domains, or changing
+  teammate binding/tool ids.
+- A user-configurable locked-computer switch or per-application allowlist. Non-visual tasks
+  continue while Computer Control pauses and recovers through a fresh generation, as defined
+  by the separate [design](locked-computer-control-policy.md),
+  [detailed design](locked-computer-control-detailed-design.md) and
+  [implementation plan](locked-computer-control-implementation-plan.md); general
+  application-level enforcement remains deferred.
+- Rebuilding the Computer Use PiP preference or presentation coordinator.
 - Importing or mutating external Cua Driver config/state.
 - Our team generating or approving Windows real-machine PASS evidence; Windows colleagues
   own that acceptance.
@@ -268,6 +338,21 @@ single activation CAS commits tools + effective enabled flags
    |
    v
 normal calls: daemon policy -> pooled client -> Desktop proxy -> bundled provider
+
+Settings read/write:
+  static packaged hint + canonical distribution ------> one shared surface-mode selector
+  selector == computer_control -----------------------> show Device > Computer Control
+  selector == legacy_external ------------------------> restore legacy Plugin/MCP entries
+  selector == hidden_bundled -------------------------> show neither Desktop page nor generic rows
+  usePluginsDomain canonical Cua projection ----------> pure Computer Control view model
+  switch On/Off or Retry ------------------------------> existing plugin activation routes
+  explicit macOS permission click --------------------> sender-checked Desktop command
+  Desktop readiness -> lease/availability -> daemon --> refreshed setup projection
+
+Presentation only:
+  Plugin Manager -------------------------------------> filter bundled canonical Cua row
+  MCP Settings ---------------------------------------> filter mcp_cua_driver server/tools
+  teammate/runtime/approval/audit --------------------> retain complete data
 ```
 
 Files that should carry short inline versions of this diagram during implementation:
@@ -280,7 +365,11 @@ Files that should carry short inline versions of this diagram during implementat
 ## Non-Negotiable Boundaries
 
 - Keep product ids `trusted-local:cua-driver` and `mcp_cua_driver` stable.
+- Treat those ids as internal in bundled mode; hide them only in Plugin Manager/MCP
+  Settings presentation and never in shared data domains.
 - Keep requested enablement separate from effective enablement.
+- Bind the Computer Control switch to `requestedEnabled`; waiting permission/session states
+  remain visually On while effective tools are unavailable.
 - Persisted plugin, contribution and MCP `enabled` flags remain false until one final
   generation-fenced activation commit.
 - One Desktop lease generation owns one initialized daemon MCP client and one provider
@@ -294,6 +383,11 @@ Files that should carry short inline versions of this diagram during implementat
 - Windows normal activation is content-free. Real WGC/UIA/input probes use a test-owned
   target only in Windows acceptance.
 - The Windows standard user package contains no `cua-driver-uia.exe`.
+- Readiness detail comes only through generation-fenced authenticated Desktop reports. IPC
+  permission commands return no authoritative state and Web never probes the OS.
+- Leaving Settings, closing/hiding the main window and hiding/closing PiP do not clear
+  activation intent. Explicit Off does. Lock/suspend/session loss always hides tools and
+  rotates the generation before recovery.
 - `bundled_embedded`, `standard`/`uiaccess`, and Windows signing tier are independent
   dimensions. The only allowed signing pairs are `unsigned_dev + development`,
   `test_signed_internal + internal`, and `production_signed + production`.
@@ -431,8 +525,9 @@ Changes:
   `KILL_ON_JOB_CLOSE` lifetime ownership, WTS/input-desktop invalidation and structured
   UIAccess capability errors;
 - lock Rust/Cargo, Xcode/macOS SDK and MSVC/Windows SDK inputs;
-- build a thin macOS arm64 `cua-driver` and Windows x64 `cua-driver.exe` for shipped
-  packages;
+- build upstream macOS arm64 `cua-driver` and Windows x64 `cua-driver.exe` outputs, then
+  create the first Ling-owned distribution copies as `ling-cua-driver` and
+  `ling-cua-driver.exe`; only the Ling names enter shipped packages;
 - emit the Windows clean pre-sign payload digest separately from every tier-specific final
   artifact digest so test and production signatures never share a candidate identity;
 - build `cua-driver-uia.exe` only as a non-shipping CI audit output so upstream drift is
@@ -647,7 +742,7 @@ Goal: implement the already-approved macOS embedded path.
 
 Changes:
 
-- direct `cua-driver mcp --embedded --host-bundle-id com.lingstack.desktop` spawn with
+- direct `ling-cua-driver mcp --embedded --host-bundle-id com.lingstack.desktop` spawn with
   matching locked environment values;
 - host-owned Accessibility and Screen Recording controller;
 - post-grant child restart and live capturability check;
@@ -672,10 +767,10 @@ Goal: bundle Windows without changing the existing Ling per-user/asInvoker insta
 
 Changes:
 
-- validate the final tier-appropriate `cua-driver.exe`, seal/catalog contract and exact
+- validate the final tier-appropriate `ling-cua-driver.exe`, seal/catalog contract and exact
   package membership; internal/production signed tiers require the catalog, development
   explicitly omits it, and the standard package always contains no `cua-driver-uia.exe`;
-- directly spawn `cua-driver.exe mcp --embedded --host-bundle-id com.lingstack.desktop`
+- directly spawn `ling-cua-driver.exe mcp --embedded --host-bundle-id com.lingstack.desktop`
   in the Desktop interactive session with matching locked environment values;
 - keep one-shot diagnostics as preflight evidence only; after initialize call
   `ling/managed_readiness` over the active child session and verify retained PID,
@@ -895,13 +990,14 @@ Exit criteria:
 Estimated engineering time: Slice 6 plus Slice 6A remains 4–7 days, with release-signing
 service availability required only for later `production_signed` promotion.
 
-### Slice 7 — Plugin Manager And Product States
+### Slice 7 — Legacy Product-State Foundation (complete)
 
-Goal: expose one honest cross-platform Cua Driver surface.
+Goal: freeze one honest cross-platform Cua state mapping before moving its bundled product
+entry.
 
 Changes:
 
-- show one canonical Cua Driver row;
+- implement one canonical Cua Driver row as the initial renderer substrate;
 - packaged Desktop hides the external installation drawer;
 - macOS shows included/permission/ready/corrupt/incompatible states;
 - Windows shows included/interactive-session/platform-unavailable/ready/corrupt/
@@ -918,6 +1014,70 @@ Exit criteria:
 - disable and Desktop quit are visibly and behaviorally distinct.
 
 Estimated engineering time: 2–4 days.
+
+### Slice 7A — Computer Control Settings And Internal-Row Hiding
+
+Goal: make Computer Control a first-class bundled capability without deleting the plugin/
+MCP machinery that executes it.
+
+Changes:
+
+- add `computer-control` under a capability-gated Settings `Device` group;
+- build a pure view model for every valid provider/requested/effective tuple, mutation busy
+  overlay and recoverable error;
+- add a controller that selects the canonical plugin and reuses existing enable/check/
+  disable actions with owner `computer-control`;
+- make owner `computer-control` use one monotonic activation-family request key across
+  enable/check/disable; the current action-specific key cannot fence cross-action response
+  reordering;
+- keep the switch checked from `requestedEnabled`, including `202 Accepted` waiting states;
+- move `DesktopComputerUsePreference` presentation from Interface Preferences into the
+  Control preview section;
+- add macOS permission, Windows readiness, Privacy and Advanced sections;
+- display Last checked only from plugin health and integrity only from authenticated
+  Desktop verification projection; show Unknown instead of using Catalog projection time
+  or inferring from state/version/digests;
+- extend generation-fenced readiness results, coordinator snapshot, authenticated
+  availability/lease, activation health and Catalog parsing so existing setup fields carry
+  platform details without Web inference;
+- advertise and retain negotiated `cua-driver-readiness-details-v1`; omit details for old
+  daemons, accept absent details on new daemons, and update both contracts and the mirrored
+  core plugin-manager wire types;
+- map Darwin Accessibility false to Unknown, map exact Screen Recording status, map Windows
+  Session 0/lock/default-session plus WGC/D3D/UIA values explicitly, and keep
+  `contentObserved=false`, standard coverage and `uiaHelper=not_required`;
+- expose optional `window.lingDesktop.computerControl` only on supported packaged hosts;
+  its `requestPermissions()` and `openPermissionSettings(kind)` commands accept the main
+  window only, return accepted/reason, then rotate/check/refresh the daemon projection;
+- enforce lock/suspend/session invalidation on both platforms and show locked control as a
+  fixed-Off V1 privacy rule;
+- compute one four-mode selector: external -> `legacy_external`; bundled plus Desktop
+  capability -> `computer_control`; bundled without Desktop capability ->
+  `hidden_bundled`; unresolved projection uses the packaged hint or `none`;
+- filter the canonical plugin only in `PluginManagerPage` props and filter
+  `mcp_cua_driver` only in MCP Settings props/counts when that selector chooses
+  `computer_control` or `hidden_bundled`;
+- leave `usePluginsDomain`, `useMcpDomain`, teammate bindings, runner catalogs, approvals
+  and audit unfiltered;
+- preserve legacy Plugin Manager/MCP presentation for `external_local`;
+- omit navigation on pure Web/Linux/external-only hosts and safely fall back from stale
+  deep links.
+
+Exit criteria:
+
+- bundled packaged Desktop has one visible product entry and no ordinary Cua Plugin/MCP
+  management row;
+- external mode remains byte-for-byte equivalent at the API/domain boundary and retains
+  its legacy UI;
+- permission/readiness rows show authenticated values or Unknown, never inferred truth;
+- disable, page close, window hide/close, PiP hide/close, Desktop quit and lock/unlock each
+  pass their distinct lifecycle assertions;
+- hiding the management rows does not remove teammate tool authorization, approval or
+  audit behavior;
+- macOS local Desktop/Renderer acceptance passes; Windows fixtures pass locally and the
+  installed Setup flow is ready for colleague validation.
+
+Estimated engineering time: 2-3 days. Windows colleague acceptance is separate.
 
 ### Slice 8 — CI, Evidence Schemas And Windows Handoff
 
@@ -1099,7 +1259,7 @@ Dependency and conflict view:
 | Daemon activation | daemon plugins, MCP broker | Shared supervisor lease shape |
 | macOS adapter | Desktop main, macOS release evidence | Shared supervisor + source build |
 | Windows adapter | Desktop main, Windows acceptance | Shared supervisor + source build |
-| Product states | Web Plugin Manager, i18n | Contracts scaffold; final E2E waits for daemon/platform states |
+| Computer Control product surface | Web Settings, scoped Plugin/MCP presentation, i18n | Contracts scaffold; final E2E waits for daemon/platform details |
 | Package staging | Desktop package resources, migration | Source build + active adapters |
 | Signing closure | Desktop hooks, release workflows | Signing feasibility + source build + active adapters + staging |
 | Evidence scaffold | Windows schemas | Contracts |
@@ -1112,7 +1272,8 @@ Lane B: Contracts -> shared supervisor -> daemon activation.
 Lane C: Contracts -> source build -> macOS and Windows adapters in parallel -> package
 staging -> signing closure.
 
-Lane D: Contracts -> UI scaffold; final E2E waits for Lane B/C state semantics.
+Lane D: Contracts -> Computer Control UI scaffold and scoped filters; final E2E waits for
+Lane B/C state semantics and readiness-detail projection.
 
 Lane E: Contracts -> evidence schema scaffold; runner/finalizer/handoff waits for Windows
 adapter plus signing closure.
@@ -1129,6 +1290,14 @@ shared coordinator before parallel platform work.
 | Generation G finishes after G+1 | delayed initialize/health/list race | compare-and-swap before every write | no stale status or tool flash |
 | New daemon serves a snapshot before Desktop reconnect | startup ordering plus two-connection Store fixture | pre-route startup transaction advances epoch, empties tools, projects status from intent and clears effective flags | `desktop_unavailable` if requested, otherwise `included`; no stale tools |
 | User disables during activation | disable at each await boundary plus crash injection | first atomically commit intent/tools/status/effective flags disabled, then drain/cancel/stop idempotently | disabled; no tools remain |
+| Enable returns waiting state and UI binds switch to effective flag | view-model truth-table plus `202 Accepted` Renderer E2E | bind checked state to `requestedEnabled`; effective remains tool eligibility only | switch stays On with permission/session repair copy |
+| Bundled row is hidden by globally filtering plugin/MCP domains | teammate binding, approval, tool-call and audit regressions | filter only props for Plugin Manager and MCP Settings | management rows hidden; tools/bindings still work |
+| Desktop permission IPC response is treated as ready | permission accepted-but-not-granted fixture | IPC returns accepted/reason only; refresh authenticated daemon projection | remains Waiting until a fresh generation passes |
+| Stale permission/readiness detail arrives after generation rotation | delayed availability/lease detail fixture | authority/generation/sequence fence rejects the whole state/detail tuple | no stale Granted/Ready flash |
+| User leaves Settings or closes/hides the main/PiP window | Renderer/Desktop lifecycle E2E | unmount and presentation actions do not call disable | control intent/runtime unchanged |
+| macOS host locks or suspends after ready | power/session event plus pre-call fixture | close gate, revoke lease, stop G, retain intent, require fresh G+1 | locked/waiting, then recover after unlock |
+| Enable/Disable/Enable responses complete out of order | cross-action delayed mutation test | one `computer-control` activation-family sequence rejects stale upserts and feedback | final switch/projection matches newest intent |
+| Catalog GET time is shown as Last checked or state implies integrity | stale/missing health plus unprojected-integrity fixtures | use `plugin.health.checkedAt`; accept only authenticated integrity field | Unknown until actual health/verification evidence exists |
 | State root escapes through symlink/reparse point | macOS symlink and Windows junction fixtures | reject before provider start | `corrupt`; no external state mutation |
 | Windows launches in Session 0/locked desktop | session/input-desktop fixtures plus Windows host evidence | fail closed before tool sync | `interactive_session_required` |
 | Windows locks, disconnects or switches input desktop after ready | WTS/heartbeat/pre-call fixtures plus automated Windows integration | close call gate, revoke lease/client, atomically hide tools, stop G, retain intent, probe fresh G+1 after unlock | `interactive_session_required`, then recover |
@@ -1220,18 +1389,28 @@ WINDOWS SIGNING LADDER
 RUNTIME
   + valid enable -> ready + capability metadata ...... daemon + Desktop integration
   + permission/session/capability not ready .......... platform fixture + host evidence
+  + permission/Windows detail round-trip ............. contract + availability/lease + Catalog tests
+  + permission IPC main-window sender only ........... Desktop IPC + Darwin single-flight tests
+  + old/new daemon detail capability negotiation ..... handshake + lifecycle + wire compatibility tests
   + active-child PID/nonce/integrity/Job Object ....... Rust + Desktop integration
   + daemon boot before Desktop reconnect ............. SQLite startup transaction + API race
-  + ready -> lock/revoke -> fresh unlock generation ... Windows integration + deterministic races
+  + ready -> lock/revoke -> fresh unlock generation ... macOS/Windows integration + deterministic races
   + activation/disable two-writer CAS rollback ....... SQLite integration
   + disable/crash/restart/generation race ............ deterministic fake integration
   + hard Desktop kill / stdout EOF + grandchild ...... Job Object process integration
   + external override and rollback ................... daemon/Web E2E
 
 USER FLOWS
-  + packaged first enable ............................ Web/Desktop E2E
+  + bundled navigation visible; Web/Linux hidden ..... Settings shell/deep-link E2E
+  + packaged Off -> On -> waiting -> ready -> Off .... Web/Desktop E2E
   + macOS permission repair .......................... signed clean-host acceptance
   + Windows standard limitation copy/error ........... Web E2E + Windows acceptance
+  + bundled absent from Plugin/MCP settings .......... Renderer E2E + retained-domain regressions
+  + external_local keeps legacy rows ................. Plugin/MCP Renderer E2E
+  + PiP preference moved, behavior unchanged ......... Interface/Computer Control E2E
+  + page/window/PiP close does not disable ........... Renderer/Desktop lifecycle E2E
+  + On -> Off -> On out-of-order responses ........... domain/controller deterministic race test
+  + Last checked/integrity Unknown vs verified ....... view-model + Catalog projection tests
   + Windows test-owned WGC/UIA/input target ........... Windows acceptance
   + automated Win32 + installable/removable MSIX ..... automated Windows CI
   + reinstall/update/rollback repair ................. release acceptance
@@ -1263,8 +1442,9 @@ Prefer small independently reviewable PRs:
 7. Windows standard adapter plus automated native gates;
 8. package staging/migration;
 9. signing closure;
-10. Plugin Manager states;
-11. CI/evidence cells/finalizer/handoff.
+10. legacy product-state foundation;
+11. Computer Control Settings and bundled Plugin/MCP presentation migration;
+12. CI/evidence cells/finalizer/handoff.
 
 Keep the packaged feature gate off until source build, platform package assertions and
 runtime fail-closed tests for that platform are all merged. macOS and Windows gates may
@@ -1309,7 +1489,11 @@ The required implementation is done when:
 - macOS and Windows standard adapters fail closed on their platform readiness rules;
 - Windows active-child identity, Job Object ownership and lock/revoke/fresh-generation
   recovery pass automated Windows gates before colleague handoff;
-- Plugin Manager and migration show one canonical provider;
+- bundled migration shows one Computer Control Settings capability, hides the canonical
+  Cua row/server only from generic management pages, and preserves external mode plus
+  internal tool/binding/approval/audit records;
+- exact macOS permission/Windows readiness details round-trip through authenticated
+  projection, the switch follows requested intent, and both platforms suspend on lock;
 - package/signing pipelines produce deterministic tier-aware provider seals and Windows
   signed catalogs, with no UIAccess helper in the standard package;
 - `Ling Stack Setup.exe` installs and launches the exact private helper path without any
@@ -1418,7 +1602,7 @@ elevated/UWP pixel-input parity.
     owned-process runtime still have no successful Windows hosted-runner evidence and
     require hosted plus real-machine validation.
 - [x] **T9 (P2, human: ~2–4 days / Codex: ~4–8 h)** — Update the one-row Plugin Manager
-  states, copy, i18n and E2E coverage.
+  state foundation, copy, i18n and E2E coverage.
   - The daemon Catalog requested/effective projection and bundled action semantics now feed
     a dedicated renderer view model. State copy, bundled-only repair guidance, Windows
     standard limitations, bilingual strings, pure mapper tests and Renderer E2E have
@@ -1436,18 +1620,58 @@ elevated/UWP pixel-input parity.
     `releaseReady=false`; production verification rejects the internal tuple. Hosted
     PowerShell/runtime execution and Windows-team VM acceptance remain external evidence,
     so T10 intentionally stays unchecked.
+- [ ] **T11 (P1, human: ~1–1.5 days / Codex: ~4–6 h)** — Carry exact platform readiness
+  details through Desktop generation state, capability-negotiated availability/lease,
+  daemon handshake/lifecycle, mirrored contracts, health and Catalog; project authenticated
+  integrity, add optional main-window-only macOS request/open-settings IPC, exact platform
+  mappings and cross-platform lock suspension.
+  - Primary files: `packages/contracts/src/cua-driver-bundled.ts`,
+    `packages/contracts/src/plugins.ts`, `packages/core/src/plugin-manager-types.ts`,
+    `packages/daemon/src/features/computer-use/routes.ts`,
+    `apps/desktop/main/daemon-lifecycle.ts`, Desktop Cua readiness/coordinator/publishers,
+    daemon bundled activation/Catalog projection and `apps/desktop/main/ipc.ts`.
+  - Verify with Cua contract, availability publisher, coordinator, Darwin adapter, Win32
+    adapter, daemon activation/Catalog and Desktop IPC suites. Unknown probe values must
+    remain unknown and stale generation details must fail closed.
+- [ ] **T12 (P1, human: ~1 day / Codex: ~4–6 h)** — Add Settings > Device > Computer
+  Control, the requested-intent controller/view model, platform status/Privacy/Advanced
+  sections and move the existing PiP preference presentation.
+  - Resolve navigation and both generic-page filters through one four-mode static-hint +
+    canonical-distribution selector; keep dynamic readiness from the plugin projection and
+    all mutation busy/error state under owner `computer-control`; add one cross-action
+    activation-family sequence and source Last checked only from plugin health.
+  - Primary files: Web computer-control domain/settings modules,
+    `settings-shell-model.ts`, `SettingsPage.tsx`, `AppShell.tsx`,
+    `use-plugins-domain.ts`, `PersonalInterfaceSettingsPanel.tsx` and the existing
+    `DesktopComputerUsePreference.tsx`.
+- [ ] **T13 (P1, human: ~0.5–0.75 day / Codex: ~3–5 h)** — Hide bundled Cua only from
+  Plugin Manager/MCP Settings presentation, preserve `external_local`, update teammate
+  recovery copy and add regression/E2E coverage for hidden rows, retained tools/bindings,
+  deep-link fallback and close/disable/lock semantics.
+  - Primary tests: Web view-model tests and Computer Control/Plugin/MCP/teammate Settings
+    E2E, Desktop IPC/readiness/lock tests, daemon contracts/activation/Catalog tests.
+  - macOS local acceptance is owned here; Windows cross-platform/native fixtures land here,
+    while installed Setup acceptance remains with the Windows colleague handoff.
 
 ## GSTACK REVIEW REPORT
+
+This table preserves the existing bundled runtime/release review history. The 2026-07-30
+Computer Control surface migration was checked against the current docs and code contracts
+in this design update. Three P1 gaps were found and folded into T11-T13: cross-action
+activation fencing, health-time/integrity authority, and negotiated readiness-detail
+compatibility. No additional `/plan-design-review` run is claimed here, and implementation
+is still pending.
 
 | Review | Trigger | Why | Runs | Status | Findings |
 | --- | --- | --- | ---: | --- | --- |
 | CEO Review | `/plan-ceo-review` | Scope and strategy | 0 | Not run | Not required for this architecture-only expansion |
 | Codex Review | `/codex review` | Independent second opinion | 0 | Not run | Two independent engineering subreviews were used instead |
 | Eng Review | `/plan-eng-review` | Architecture, tests and performance | 2 | CLEAR | 9 signing-ladder/evidence gaps found and folded in; 0 critical gaps remain |
-| Design Review | `/plan-design-review` | UI/UX gaps | 0 | Not run | No new visual system; state semantics are specified |
+| Design Review | `/plan-design-review` | UI/UX gaps | 0 | Not run | Computer Control functional/visual contract is specified; live visual review remains an implementation check |
 | DX Review | `/plan-devex-review` | Developer experience | 0 | Not run | Handoff and verification commands are in scope of implementation |
 
-**VERDICT:** ENG CLEARED — signing ladder, internal/production evidence split and test
-matrix are ready to implement behind independent macOS and Windows platform gates.
+**VERDICT:** Prior embedded-runtime ENG review remains CLEAR. The Computer Control surface,
+state, consent, visibility and test contracts are ready to implement; live visual review
+and Windows installed-Setup acceptance remain implementation/acceptance checks.
 
 NO UNRESOLVED DECISIONS

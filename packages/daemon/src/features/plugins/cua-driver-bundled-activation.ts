@@ -237,6 +237,11 @@ export class BundledCuaDriverActivationService {
     }
 
     const desktopAvailability = this.options.getDesktopAvailability?.();
+    // A repair state retires the live lease and must remain an accepted wait.
+    // `included` and `desktop_unavailable` are different: Desktop publishes a
+    // lazy lease before the provider child exists, and MCP initialize is what
+    // starts that child. When such a lease is current, activation must proceed
+    // or Desktop and daemon would wait on each other forever.
     if (desktopAvailability && isDesktopAvailabilityWaitState(desktopAvailability.providerState)) {
       const projection = desktopAvailabilityProjection(true, desktopAvailability);
       const health = input.store.getManagedPluginHealthSnapshot(input.descriptor.id)
@@ -521,6 +526,11 @@ export class BundledCuaDriverActivationService {
               ...(currentLease.integrityCoverage
                 ? { integrityCoverage: currentLease.integrityCoverage }
                 : {}),
+              ...(currentLease.integrity ? { integrity: currentLease.integrity } : {}),
+              ...(currentLease.permissions ? { permissions: currentLease.permissions } : {}),
+              ...(currentLease.windowsReadiness
+                ? { windowsReadiness: currentLease.windowsReadiness }
+                : {}),
               ...(currentLease.platform === "win32" && currentLease.integrityCoverage === "standard"
                 ? { limitations: ["elevated_pixel_input", "uwp_send_input"] as const }
                 : {}),
@@ -793,6 +803,11 @@ function desktopAvailabilityProjection(
     platform: availability.platform,
     ...(availability.integrityCoverage
       ? { integrityCoverage: availability.integrityCoverage }
+      : {}),
+    ...(availability.integrity ? { integrity: availability.integrity } : {}),
+    ...(availability.permissions ? { permissions: availability.permissions } : {}),
+    ...(availability.windowsReadiness
+      ? { windowsReadiness: availability.windowsReadiness }
       : {}),
     ...(availability.limitations
       ? { limitations: availability.limitations }

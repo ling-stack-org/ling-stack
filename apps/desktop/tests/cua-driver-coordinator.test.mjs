@@ -9,6 +9,7 @@ import {
   CuaDriverPlatformIdentityVerificationError,
   CuaDriverProviderSealError,
 } from "../dist/main/cua-driver/provider-seal.js";
+import { CuaDriverInputFenceError } from "../dist/main/cua-driver/input-fence-client.js";
 import { DEFAULT_CUA_DRIVER_FEATURE_FLAGS } from "@ling-stack/contracts";
 
 test("coordinator keeps bundled gate closed and never falls through to PATH/external provider", async () => {
@@ -49,6 +50,83 @@ test("coordinator keeps bundled gate closed and never falls through to PATH/exte
   assert.equal(snapshot.providerState, "included");
   assert.equal(spawnCount, 0);
   assert.equal(leaseCount, 0);
+  await coordinator.shutdown();
+});
+
+test("a session boundary raised before host composition remains latched through enable", async () => {
+  const coordinator = createCoordinator();
+  const enableStarted = deferred();
+  const releaseEnable = deferred();
+  let disableCount = 0;
+  coordinator.enableInternal = async () => {
+    coordinator.generation = 1;
+    enableStarted.resolve();
+    await releaseEnable.promise;
+    coordinator.host = { generation: 1, async stop() {} };
+    coordinator.proxy = { closeCallGate() {}, async close() {} };
+    coordinator.leasePublisher = { async revoke() {} };
+    return coordinator.publishSnapshot({
+      lifecycle: "active",
+      providerState: "desktop_unavailable",
+      generation: 1,
+    });
+  };
+  coordinator.beginDisable = async () => {
+    disableCount += 1;
+    coordinator.host = undefined;
+    coordinator.proxy = undefined;
+    coordinator.leasePublisher = undefined;
+    coordinator.publishSnapshot({
+      lifecycle: "disabled",
+      providerState: "included",
+      generation: 1,
+      reason: "system_lock",
+    });
+  };
+
+  const enabling = coordinator.enable();
+  await enableStarted.promise;
+  await coordinator.suspendForSystem("system_lock");
+  assert.equal(coordinator.windowsSessionSuspended, true);
+  assert.deepEqual(coordinator.pendingWindowsSessionSuspension, {
+    reason: "system_lock",
+    generation: 1,
+  });
+
+  releaseEnable.resolve();
+  await enabling;
+  await waitFor(() => disableCount === 1 && coordinator.sessionTransitionPromise === undefined);
+  assert.equal(coordinator.windowsSessionSuspended, true);
+  assert.equal(coordinator.snapshot.providerState, "interactive_session_required");
+  assert.equal(coordinator.providerHost, undefined);
+  await coordinator.shutdown();
+});
+
+test("retiring an enable-time candidate fences input before partial cleanup", async () => {
+  const coordinator = createCoordinator();
+  const order = [];
+  coordinator.windowsSessionSuspended = true;
+  coordinator.windowsSessionSuspensionReason = "system_lock";
+  coordinator.generation = 2;
+  coordinator.host = {
+    generation: 2,
+    async fenceInput() { order.push("fence"); },
+    async stop() { order.push("host.stop"); },
+  };
+  coordinator.proxy = {
+    closeCallGate() {},
+    async close() { order.push("proxy.close"); },
+  };
+  coordinator.leasePublisher = {
+    async revoke() { order.push("lease.revoke"); },
+  };
+
+  const snapshot = await coordinator.retainSuspendedGeneration(2);
+
+  assert.equal(order[0], "fence");
+  assert.deepEqual(new Set(order.slice(1)), new Set(["lease.revoke", "proxy.close", "host.stop"]));
+  assert.equal(snapshot.providerState, "interactive_session_required");
+  assert.equal(coordinator.providerHost, undefined);
   await coordinator.shutdown();
 });
 
@@ -349,6 +427,66 @@ test("a fresh-generation terminal event queued during recovery is not lost", asy
   assert.equal(coordinator.providerHost.generation, 3);
   await coordinator.disable("fixture_cleanup");
   assert.deepEqual(stoppedGenerations, [1, 2, 3]);
+});
+
+test("session suspension closes the call gate before fencing and retiring the generation", async () => {
+  const order = [];
+  const coordinator = createWindowsCoordinator({ subscribe() { return () => {}; } });
+  coordinator.requestedEnabled = true;
+  coordinator.generation = 4;
+  coordinator.leasePublisher = { async revoke() { order.push("revoke"); } };
+  coordinator.proxy = {
+    closeCallGate() { order.push("gate"); },
+    async close() { order.push("proxy-close"); },
+  };
+  coordinator.host = {
+    generation: 4,
+    async fenceInput() { order.push("fence"); },
+    async terminateImmediately() { order.push("kill"); },
+    async stop() { order.push("stop"); },
+  };
+  coordinator.snapshotValue = { lifecycle: "active", providerState: "ready", generation: 4 };
+
+  coordinator.scheduleWindowsSessionSuspension("system_lock", 4);
+  await waitFor(() => coordinator.sessionTransitionPromise === undefined);
+
+  assert.deepEqual(order, ["gate", "fence", "gate", "revoke", "proxy-close", "stop"]);
+  assert.equal(coordinator.snapshot.lifecycle, "included");
+  await coordinator.shutdown();
+});
+
+test("missed input-fence acknowledgement kills before normal generation cleanup", async () => {
+  const order = [];
+  const coordinator = createWindowsCoordinator({ subscribe() { return () => {}; } });
+  coordinator.requestedEnabled = true;
+  coordinator.generation = 7;
+  coordinator.leasePublisher = { async revoke() { order.push("revoke"); } };
+  coordinator.proxy = {
+    closeCallGate(reason) { order.push(`gate:${reason}`); },
+    async close() { order.push("proxy-close"); },
+  };
+  coordinator.host = {
+    generation: 7,
+    async fenceInput() {
+      order.push("fence");
+      throw new CuaDriverInputFenceError("timeout");
+    },
+    async terminateImmediately(reason) { order.push(`kill:${reason}`); },
+    async stop() { order.push("stop"); },
+  };
+  coordinator.snapshotValue = { lifecycle: "active", providerState: "ready", generation: 7 };
+
+  coordinator.scheduleWindowsSessionSuspension("system_lock", 7);
+  await waitFor(() => coordinator.sessionTransitionPromise === undefined);
+
+  assert.deepEqual(order.slice(0, 4), [
+    "gate:system_lock",
+    "fence",
+    "gate:locked_control_input_fence_timeout",
+    "kill:locked_control_input_fence_timeout",
+  ]);
+  assert.ok(order.indexOf("kill:locked_control_input_fence_timeout") < order.indexOf("stop"));
+  await coordinator.shutdown();
 });
 
 test("Windows interactive-session suspension waits for a host hint without consuming crash retries", async () => {

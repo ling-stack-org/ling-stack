@@ -641,7 +641,15 @@ export async function routeRequest(
   }
 
   if (url.pathname === "/plugins") {
-    await handlePluginsCollection(request, response, config, storeRegistry, extensionRegistry, mcpBroker);
+    await handlePluginsCollection(
+      request,
+      response,
+      config,
+      storeRegistry,
+      extensionRegistry,
+      mcpBroker,
+      context.lockedComputerControl,
+    );
     return;
   }
 

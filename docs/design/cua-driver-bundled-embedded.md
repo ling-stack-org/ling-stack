@@ -2,6 +2,129 @@
 
 ## Status
 
+### Computer Control product surface (2026-07-30)
+
+This update supersedes the earlier decision that the canonical Cua Driver row is the
+normal packaged-Desktop entry point. The runtime identities do not change, but the product
+surface does:
+
+- `trusted-local:cua-driver` remains the canonical plugin id used by activation, health,
+  approvals, teammate bindings and audit;
+- `mcp_cua_driver` remains the logical MCP server id used by tool discovery and execution;
+- when `distribution="bundled_embedded"`, neither identity is shown in the ordinary Plugin
+  Manager or MCP tool-server settings;
+- packaged macOS and Windows Desktop expose one user-facing entry instead:
+  **Settings > Device > Computer Control**;
+- `external_local` remains a development and standalone compatibility mode and continues
+  to use the existing Plugin Manager and MCP surfaces.
+
+The hiding rule is presentation-only. The daemon Catalog, activation routes, MCP tools,
+approval records, teammate bindings and audit data remain complete. Deleting or filtering
+the underlying records would make the new settings page a second source of truth and would
+break existing execution policy.
+
+```text
+Settings > Device > Computer Control
+  -> canonical trusted-local:cua-driver projection
+  -> requested/effective activation transaction
+  -> Desktop-owned readiness, lease and child lifetime
+  -> hidden mcp_cua_driver execution resource
+  -> existing approvals, teammate bindings and audit
+```
+
+#### Public Codex reference and boundary
+
+This product split follows the public Codex architecture at fixed commit
+[`88ec932e`](https://github.com/openai/codex/commit/88ec932e96e4d18c5701664e726b1c8b18454af1):
+
+- Computer Use is a first-class stable feature rather than a generic MCP preference
+  ([feature definition](https://github.com/openai/codex/blob/88ec932e96e4d18c5701664e726b1c8b18454af1/codex-rs/features/src/lib.rs#L1220-L1225));
+- Codex internally carries `computer-use@openai-bundled`
+  ([bundled discovery](https://github.com/openai/codex/blob/88ec932e96e4d18c5701664e726b1c8b18454af1/codex-rs/core-plugins/src/discoverable.rs#L17-L48));
+- the public TUI removes the `openai-bundled` marketplace from the ordinary plugin list
+  ([filter and test](https://github.com/openai/codex/blob/88ec932e96e4d18c5701664e726b1c8b18454af1/codex-rs/tui/src/app/background_requests.rs#L994-L1000));
+- locked-computer use is governed by a separate policy and is not implied by plugin
+  installation
+  ([requirements contract](https://github.com/openai/codex/blob/88ec932e96e4d18c5701664e726b1c8b18454af1/codex-rs/config/src/config_requirements.rs#L745-L754)).
+
+The Codex Desktop Settings implementation shown in product screenshots is not in that
+public repository. Ling may use the product hierarchy and visual reference, but must not
+claim that the Desktop component itself is open source or copy a private API contract.
+
+#### Product visibility
+
+| Runtime condition | Computer Control settings | Plugin Manager | MCP settings |
+| --- | --- | --- | --- |
+| Packaged Desktop, `bundled_embedded` | Show | Hide canonical Cua row | Hide `mcp_cua_driver` server and its tools |
+| Bundled projection loading or failed to load | Keep entry visible; show loading/error and Retry | Keep hidden once packaged capability is authoritative | Keep hidden once packaged capability is authoritative |
+| macOS permission missing | Show repair state | Hide | Hide |
+| Windows session/readiness unavailable | Show repair state | Hide | Hide |
+| User disabled Computer Control | Show as Off | Hide | Hide |
+| `external_local` development/standalone mode or explicit developer override | Hide the new entry | Keep existing row and install flow | Keep existing server/tool flow |
+| Pure Web, Linux or Desktop without a packaged capability | Hide; deep links fall back to Settings home | Hide bundled internal row; other entries unchanged | Hide bundled internal server/tools; other entries unchanged |
+
+Desktop exposes only a static `packagedBundledCapable` hint and supported platform to the
+renderer. The App shell resolves one surface mode from that hint and the canonical setup
+projection:
+
+```text
+setup external_local                       -> legacy_external
+setup bundled + packaged Desktop capability -> computer_control
+setup bundled + no Desktop capability       -> hidden_bundled
+setup loading/error + packaged hint         -> computer_control loading/error
+no setup + no packaged hint                 -> none
+```
+
+`computer_control` shows the new page and hides generic rows; `legacy_external` shows only
+the legacy rows; `hidden_bundled` shows neither surface; `none` adds nothing. The
+projection wins once available, so an explicit developer override atomically switches back
+to the legacy entry and cannot produce two management surfaces. A pure Web client that can
+observe a bundled daemon projection receives `hidden_bundled`: it does not expose an
+unusable Computer Control page or leak the internal provider into generic management.
+During loading/error, the packaged hint prevents a one-frame flash of the internal
+Plugin/MCP rows. Dynamic enabled, health, permission and readiness state still comes only
+from the daemon projection; the hint never claims that the provider is ready.
+
+#### Page structure
+
+The page has five sections:
+
+1. **Computer Control**: requested-state switch, current state, concise recovery action and
+   Retry. The switch is checked from `requestedEnabled`, never `effectiveEnabled`.
+2. **System readiness**: macOS Accessibility and Screen Recording, or Windows interactive
+   session, WGC, D3D11, UIA and declared integrity coverage. Unknown values are shown as
+   unknown; the Web UI must not infer platform truth.
+3. **Control preview**: the existing PiP auto-show preference moves from Interface
+   Preferences. It controls only preview presentation and never enables or disables native
+   control.
+4. **Lock behavior**: non-visual tasks continue while the computer is locked, but Computer
+   Control closes its gate and retires the current provider generation. Settings explains
+   the fixed pause-and-resume behavior defined in
+   [Lock-Aware Task Continuation](locked-computer-control-policy.md); there is no locked-control
+   Switch. Per-application allowlists are not shown until Ling has an enforceable application
+   boundary.
+5. **Advanced**: provider display version, Ling build revision, platform, integrity result,
+   last check and known Windows limitations. Last check comes from provider health, not the
+   time the Catalog response was assembled. Integrity remains Unknown until Desktop's
+   authenticated verification result reaches the canonical projection; it is never inferred
+   from state or version. The page does not expose install commands, MCP URL, binary path,
+   uninstall or an independent updater.
+
+#### Show, hide, disable and close semantics
+
+| User or OS action | Settings page | Requested intent | Effective tools | Provider process |
+| --- | --- | --- | --- | --- |
+| Leave or close Settings | Hidden with the rest of Settings | Unchanged | Unchanged | Unchanged |
+| Hide or close the Ling window while the app remains alive | Unavailable with the window | Unchanged | Unchanged while the interactive session remains valid | Continues under Desktop lifetime |
+| Turn the Computer Control switch Off | Remains visible and shows Off | Cleared | Hidden atomically | Drained and stopped |
+| Quit Ling Desktop | Closed | Persisted | Hidden when the lease expires/revokes | Stopped with Desktop |
+| Lock, suspend, disconnect or switch the interactive session | May be hidden by the OS | Retained | Hidden immediately | Current generation is revoked and stopped |
+| Unlock or return to the interactive session | Shows recovery/Ready after refresh | Retained | Restored only after a fresh generation passes readiness | Fresh generation only |
+
+Closing a page or window is therefore never treated as consent to stop an active Computer
+Use capability. Only the explicit Off switch clears requested intent. Conversely, PiP
+Hide/Close affects only the preview window and never changes Computer Control activation.
+
 ### Product-build simplification (2026-07-24)
 
 This update supersedes the earlier audit-grade source-build promotion and Windows evidence
@@ -91,12 +214,11 @@ prove independent runner/build-invocation provenance. Each native build job uplo
 evidence first; a dependent same-platform job downloads that immutable artifact, reruns the
 fixed verifier and uploads a separate proposal artifact. This closes the CI serialization
 boundary without treating the proposal job as independent build provenance.
-The canonical Plugin Manager row now consumes the V2 bundled setup projection directly.
-It renders included, Desktop/permission/session/platform recovery, ready, incompatible and
-corrupt states without exposing the external installation drawer. Windows standard-tier
-coverage and the elevated/UWP limitations are localized details on that same row. Gate-off
-and `external_local` responses continue through the legacy missing/detected/connected/ready
-UI unchanged.
+The V2 bundled setup projection already supplies the state required by the Computer Control
+page. Its earlier canonical Plugin Manager renderer is now a compatibility implementation,
+not the final packaged-Desktop surface. Bundled mode hides that row and consumes the same
+projection in Settings; gate-off and `external_local` responses continue through the legacy
+missing/detected/connected/ready UI unchanged.
 Production staging authority is fixed to the committed lock/resource root and real
 source-build verifier; trust overrides exist only inside the test factory. The native helper
 preflights before payload creation,
@@ -236,9 +358,9 @@ Desktop-owned MCP bridge.
 
 On macOS, Desktop uses the upstream embedded stdio contract so Accessibility and Screen
 Recording are attributed to `Ling Stack.app`. On Windows, Desktop uses the same embedded
-stdio mode for the main `cua-driver.exe`, verifies that it is running in the same
+stdio mode for the shipped main `ling-cua-driver.exe`, verifies that it is running in the same
 interactive user session, and fails closed in Session 0 or on a non-interactive desktop.
-The initial Windows user package contains only the main `cua-driver.exe`. The upstream
+The initial Windows user package contains only the main `ling-cua-driver.exe`. The upstream
 `cua-driver-uia.exe` output is retained as a source-build/audit artifact, not copied into
 the per-user package. It becomes a separately signed secure-path capability only if the
 future UIAccess slice defines its installer, launch, routing, and shutdown contract.
@@ -248,7 +370,7 @@ This replaces the packaged Desktop default of finding a separately installed
 download, install, or upgrade a second provider before standard Computer Use works.
 
 On Windows, `Ling Stack Setup.exe` remains the only installer. It carries the versioned
-`cua-driver.exe` as a private Ling application resource and extracts it beneath Ling's
+`ling-cua-driver.exe` as a private Ling application resource and extracts it beneath Ling's
 installed `resources/providers/.../payload/` tree. Cua Driver is not registered as a
 second product, added to `PATH`, exposed through a Start-menu entry, installed as a
 Windows service, or given an independent uninstaller or updater.
@@ -285,12 +407,13 @@ Use the official Cua Driver embedded contract introduced in the Rust provider:
 ```text
 CUA_DRIVER_EMBEDDED=1
 CUA_DRIVER_HOST_BUNDLE_ID=com.lingstack.desktop
-cua-driver mcp --embedded --host-bundle-id com.lingstack.desktop
+ling-cua-driver mcp --embedded --host-bundle-id com.lingstack.desktop
 ```
 
-The exact argv is locked on both platforms. The matching environment values are also set
-explicitly and must agree with the flags; changing either form requires a provider-lock
-update and compatibility rerun.
+The executable token above is the Ling distribution name; the upstream source/build output
+remains `cua-driver` / `cua-driver.exe`. The exact argv is locked on both platforms. The
+matching environment values are also set explicitly and must agree with the flags; changing
+either form requires a provider-lock update and compatibility rerun.
 
 The provider must be spawned directly by the Electron main process. It must not be
 launched through `open`, `NSWorkspace`, a separately installed `CuaDriver.app`, or the
@@ -306,8 +429,8 @@ flowchart LR
   User[User enables Computer Use] --> Web[Shared Web UI]
   Web --> Daemon[Ling daemon and approval policy]
   Desktop[Ling Desktop Electron main] --> Adapter{Platform provider adapter}
-  Adapter -->|macOS embedded stdio| Driver[Bundled cua-driver]
-  Adapter -->|Windows embedded stdio| DriverWin[Bundled cua-driver.exe]
+  Adapter -->|macOS embedded stdio| Driver[Bundled ling-cua-driver]
+  Adapter -->|Windows embedded stdio| DriverWin[Bundled ling-cua-driver.exe]
   Adapter -.->|optional signed secure-path worker| UIA[cua-driver-uia.exe]
   Desktop --> Proxy[Authenticated MCP proxy]
   Driver <-->|stdio MCP| Proxy
@@ -356,9 +479,13 @@ an explicit `standard` integrity-coverage state instead of claiming full UIAcces
 ### First use
 
 1. Ling Desktop already contains the reviewed provider.
-2. The user explicitly enables Computer Use or starts a flow that requires it.
-3. On macOS, Ling explains why Accessibility and Screen Recording are required.
-4. macOS permission prompts name Ling Stack, not Cua Driver.
+2. The user opens **Settings > Device > Computer Control** and explicitly turns it on, or
+   an authorized flow links to that page when the capability is Off. Turning it on records
+   intent only and never opens an OS permission prompt.
+3. On macOS, Ling explains why Accessibility and Screen Recording are required and the
+   user separately clicks **Grant access**.
+4. Only that explicit Grant access action may trigger macOS permission prompts. They name
+   Ling Stack, not Cua Driver.
 5. On Windows, Ling verifies an interactive session, unlocked input desktop, WGC/UIA
    readiness, and the active integrity-coverage level; it does not show a permission
    prompt that Windows does not have.
@@ -374,21 +501,21 @@ chooses Enable but macOS permissions are still missing, Ling remembers that inte
 keeping provider tools unavailable. After the user grants access and Desktop restarts the
 child, activation resumes without a second Enable click.
 
-### Plugin Manager states
+### Computer Control settings states
 
 Packaged Desktop uses provider states rather than installation states:
 
 | State | User-facing meaning | Primary action |
 | --- | --- | --- |
-| `included` | Cua Driver is included with this Ling version | Enable |
-| `permission_required` | Ling needs macOS privacy grants | Review permissions |
-| `interactive_session_required` | Windows provider is not attached to an unlocked interactive desktop | Return to the user desktop / restart Ling |
+| `included` | Computer Control is included with this Ling version and is Off or waiting to start | Turn on / Retry |
+| `permission_required` | Ling needs macOS privacy grants | Grant access / Open System Settings |
+| `interactive_session_required` | Ling is not attached to an unlocked interactive desktop | Unlock or return to the user desktop / Retry |
 | `platform_unavailable` | Windows standard UIA or WGC/D3D readiness probe failed | Restart/update Ling or Windows; inspect support bundle |
-| `ready` | Provider and platform readiness checks pass | Disable |
+| `ready` | Computer Control is On and platform readiness checks pass | Turn off / Recheck |
 | `incompatible` | Packaged version or protocol is not accepted | Update or reinstall Ling |
 | `corrupt` | Packaged artifact failed integrity/signature checks | Reinstall Ling |
 | `desktop_unavailable` | The current surface is not connected to a capable Desktop host | Open Ling Desktop |
-| `external override` badge | A developer explicitly selected another executable | Review override / restore bundled |
+| `external override` | Development mode selected another executable | Use the legacy Plugin Manager entry |
 
 Windows standard-tier readiness still reports `providerState=ready`. The setup detail
 adds `integrityCoverage="standard"` and structured limitations
@@ -397,6 +524,12 @@ second non-ready provider state.
 
 The external installation drawer remains valid only for standalone/dev fallback. It must
 not be the default repair action for a damaged packaged Desktop provider on either OS.
+
+The switch remains visually On during `permission_required`,
+`interactive_session_required`, `platform_unavailable` and `desktop_unavailable` when
+`requestedEnabled=true`. These are waiting or repair states, not evidence that the user's
+intent was lost. Temporary request busy/error UI may overlay the state, but it must never
+replace the daemon projection with a second local state machine.
 
 ## Distribution And Version Policy
 
@@ -511,7 +644,7 @@ The Electron main process must:
 
 - request or surface Accessibility access as the host;
 - trigger and inspect Screen Recording access as the host;
-- spawn `cua-driver` directly with embedded mode enabled;
+- spawn `ling-cua-driver` directly with embedded mode enabled;
 - restart the child after a grant is added, removed, or changed because TCC answers are
   cached per process;
 - require `check_permissions.source.attribution` to report `host` as a runtime sanity
@@ -533,7 +666,7 @@ UIAccess worker.
 
 The Electron main process must:
 
-- spawn `cua-driver.exe` directly in the same interactive user session;
+- spawn `ling-cua-driver.exe` directly in the same interactive user session;
 - reject Session 0, a locked/non-default input desktop, or a provider whose session id
   differs from the Desktop host;
 - after MCP initialize, request locked no-content managed readiness from that same active
@@ -582,9 +715,10 @@ main window:
 
 ## Compatibility And Migration
 
-The product-visible plugin id remains `trusted-local:cua-driver` for the first migration
+The canonical internal plugin id remains `trusted-local:cua-driver` for the first migration
 slice even though packaged Desktop now prefers an embedded distribution. Renaming the id
-would create unnecessary SQLite, API, saved-binding, and UI migration risk.
+would create unnecessary SQLite, API, saved-binding, approval and audit migration risk.
+In bundled mode the id is not product-visible; the user-facing name is Computer Control.
 
 The fixed logical MCP server id remains `mcp_cua_driver`. Its runtime source is selected
 by an explicit distribution mode:
@@ -601,6 +735,10 @@ Migration rules:
   over the bundled provider;
 - external selection requires an explicit developer override and is visibly labeled;
 - disabling or removing the override returns to the packaged provider;
+- bundled mode filters the canonical Cua row only at Plugin Manager presentation and
+  filters `mcp_cua_driver` only at MCP Settings presentation; shared domains, teammate
+  binding lists, runtime tool catalogs, approvals and audit retain the records;
+- external mode preserves the legacy Plugin Manager and MCP settings entries;
 - historical `bundled:cua-driver` shell records remain hidden compatibility data and do
   not create a second product row.
 
@@ -615,6 +753,11 @@ Migration rules:
   launch, input, configuration mutation, recording, and replay remain approval-gated.
 - A bundled provider is not automatically enabled, assigned to teammates, or granted
   macOS permissions.
+- Bundled V1 never controls a locked computer. Lock/suspend/session invalidation closes the
+  call gate, revokes the current generation and retains requested intent for a fresh
+  post-unlock readiness pass. This fixed behavior is defined by
+  [Lock-Aware Task Continuation](locked-computer-control-policy.md); changing it requires a
+  new product and security design.
 - The Ling-managed embedded path never invokes or exposes updater/install operations,
   performs background provider downloads, or falls back to unreviewed `PATH` entries.
   Upstream `0.8.3` still contains a standalone CLI updater; direct generic-shell execution
@@ -693,7 +836,7 @@ Desktop plus its reviewed provider.
   the covered seal binds the provider lock.
 - Bundled config read/write and restart touch only the versioned Ling state root; existing
   external macOS home and Windows profile Cua state remain byte-identical.
-- macOS prompts and Settings rows identify Ling Stack only.
+- macOS prompts and Computer Control settings identify Ling Stack only.
 - Missing, denied, granted, revoked, and post-grant restart states are visible and
   recoverable without reinstalling Cua Driver.
 - The daemon can be Desktop-owned or compatibly reused and still reaches the same
@@ -709,12 +852,20 @@ Desktop plus its reviewed provider.
 - Every claimed macOS 13, 14, 15, and 26 architecture cell passes signed installed-app
   AX, capture, background input, cursor, restart, and cleanup acceptance. The provider's
   SkyLight SPI dependency is disclosed and no support is inferred from `minos` alone.
-- The external installation flow remains usable for standalone/dev mode and is never
-  shown as the normal packaged Desktop path.
+- Bundled Cua Driver is absent from ordinary Plugin Manager and MCP Settings presentation,
+  while its MCP tools, teammate bindings, approval path and audit records remain usable.
+- The external installation flow remains usable for standalone/dev mode and is never shown
+  as the normal packaged Desktop path.
+- Pure Web, Linux and external-only Desktop do not show the Computer Control navigation;
+  unsupported deep links fall back safely to Settings home.
+- Turning the page or window visibility off never disables Computer Control; only the
+  explicit Off switch clears requested intent. Locking the computer always suspends
+  effective capability and requires a fresh generation after unlock.
 - `Ling Stack Setup.exe` is the only Windows installer and the installed Electron process
   spawns the exact private versioned provider path; no second product, PATH entry, service,
   independent updater/uninstaller or runner-temp provider satisfies this criterion.
-- Windows x64 standard packages contain the locked source-built `cua-driver.exe`,
+- Windows x64 standard packages contain the locked source-built and Ling-renamed
+  `ling-cua-driver.exe`,
   license/notices, and no runtime downloader, public installer, or UIAccess helper. Signed
   internal/production tiers also contain the signed resource catalog; the explicit
   `unsigned_dev + development` package omits it. CI retains the UIAccess build only as
@@ -758,7 +909,10 @@ Desktop plus its reviewed provider.
 
 There is no unresolved architecture decision for the internal standard-capability alpha.
 The selected pin is `0.8.3`, both platform providers are Desktop-owned, updates are tied
-to Ling releases, and external resolution is an explicit fallback.
+to Ling releases, external resolution is an explicit fallback, bundled identities are
+hidden from ordinary Plugin/MCP settings, and the unique product entry is
+Settings > Device > Computer Control. Pure Web/Linux hide that entry and V1 locked-screen
+control is fixed Off.
 
 Public distribution remains a release decision: require a stable upstream provider or a
 recorded prerelease exception backed by the signed clean-host acceptance matrix.

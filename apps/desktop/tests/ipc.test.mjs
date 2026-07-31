@@ -80,6 +80,10 @@ test("Desktop IPC scopes privileged actions and strictly validates preview media
         return { state: "connected", baseUrl: "http://127.0.0.1:1", ownedByDesktop: true };
       },
       onStatusChanged: () => () => {},
+      revokeLockedComputerControl: async () => {
+        calls.push(["revokeLockedControl"]);
+        return { accepted: true };
+      },
     },
     computerUse,
     getMainWindow: () => ({ webContents: { id: 11 } }),
@@ -363,7 +367,9 @@ test("Desktop IPC scopes privileged actions and strictly validates preview media
   });
   assert.deepEqual(calls, [
     ["runtimeRestart"],
+    ["revokeLockedControl"],
     ["stop", "session-main"],
+    ["revokeLockedControl"],
     ["stopCurrent"],
     ["hideCurrent"],
     ["closeCurrent"],
@@ -496,6 +502,96 @@ test("Desktop IPC scopes privileged actions and strictly validates preview media
     const normalizedReportedAt = Date.parse(hostLayouts.at(-1).reportedAt);
     assert.ok(normalizedReportedAt >= before && normalizedReportedAt <= after);
   }
+
+  unregister();
+});
+
+test("Desktop IPC exposes computer-control permission commands only to the main window", async () => {
+  const ipc = new FakeIpcMain();
+  const calls = [];
+  let permissionRequestResult = { accepted: true };
+  const unregister = registerDesktopIpc({
+    ipcMainImpl: ipc,
+    runtime: {
+      status: { state: "connected", baseUrl: "http://127.0.0.1:1", ownedByDesktop: true },
+      onStatusChanged: () => () => {},
+      requestComputerControlPermissions: async () => {
+        calls.push(["requestPermissions"]);
+        return permissionRequestResult;
+      },
+      openComputerControlPermissionSettings: async (permission) => {
+        calls.push(["openPermissionSettings", permission]);
+        return { accepted: true };
+      },
+      revokeLockedComputerControl: async () => {
+        return { accepted: true };
+      },
+    },
+    computerUse: {
+      ownsPreviewWebContents: (id) => id === 22,
+    },
+    getMainWindow: () => ({ webContents: { id: 11 } }),
+  });
+  const mainEvent = { sender: { id: 11 } };
+  const previewEvent = { sender: { id: 22 } };
+  const foreignEvent = { sender: { id: 33 } };
+
+  assert.deepEqual(
+    await ipc.invoke(DESKTOP_IPC_CHANNELS.computerControlRequestPermissions, mainEvent),
+    { accepted: true },
+  );
+  assert.deepEqual(
+    await ipc.invoke(
+      DESKTOP_IPC_CHANNELS.computerControlOpenPermissionSettings,
+      mainEvent,
+      "accessibility",
+    ),
+    { accepted: true },
+  );
+  assert.deepEqual(
+    await ipc.invoke(
+      DESKTOP_IPC_CHANNELS.computerControlOpenPermissionSettings,
+      mainEvent,
+      "screen_recording",
+    ),
+    { accepted: true },
+  );
+  assert.deepEqual(
+    await ipc.invoke(DESKTOP_IPC_CHANNELS.computerControlRequestPermissions, previewEvent),
+    { accepted: false, reason: "unauthorized_sender" },
+  );
+  assert.deepEqual(
+    await ipc.invoke(DESKTOP_IPC_CHANNELS.computerControlRequestPermissions, foreignEvent),
+    { accepted: false, reason: "unauthorized_sender" },
+  );
+  assert.deepEqual(
+    await ipc.invoke(
+      DESKTOP_IPC_CHANNELS.computerControlOpenPermissionSettings,
+      previewEvent,
+      "accessibility",
+    ),
+    { accepted: false, reason: "unauthorized_or_invalid_permission" },
+  );
+  assert.deepEqual(
+    await ipc.invoke(
+      DESKTOP_IPC_CHANNELS.computerControlOpenPermissionSettings,
+      mainEvent,
+      "arbitrary_renderer_value",
+    ),
+    { accepted: false, reason: "unauthorized_or_invalid_permission" },
+  );
+  assert.deepEqual(calls, [
+    ["requestPermissions"],
+    ["openPermissionSettings", "accessibility"],
+    ["openPermissionSettings", "screen_recording"],
+  ]);
+
+  permissionRequestResult = { accepted: false, reason: "unsupported_platform_action" };
+  assert.deepEqual(
+    await ipc.invoke(DESKTOP_IPC_CHANNELS.computerControlRequestPermissions, mainEvent),
+    { accepted: false, reason: "unsupported_platform_action" },
+    "the Windows runtime result must pass through without creating a renderer-side fallback",
+  );
 
   unregister();
 });

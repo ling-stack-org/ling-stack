@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "platform": "darwin",
+  "result": "unsupported",
+  "reason": "locked_control_input_unavailable",
+  "sameUserSessionBound": true,
+  "captureReadyWhileLocked": true,
+  "inputAcknowledgedWhileLocked": false,
+  "secureSurfaceExcluded": true,
+  "providerIntegrationMode": "embedded-stdio",
+  "providerVersion": "0.8.3",
+  "distributionRevision": "ling.1",
+  "helperSha256": "0ff6f477d862a897b79a656208f05f554142b97a7234f86c3a625f9b55290edc",
+  "providerSha256": "a694bd3348fa93a8c598df8cddcb26e0aaaea7e894fbc13d2f17e63302a0e8ab",
+  "adapterVersion": "darwin-attended-probe-v2",
+  "osVersion": "26.5.2",
+  "observedAt": "2026-07-31T04:35:50.246Z"
+}

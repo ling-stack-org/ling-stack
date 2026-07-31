@@ -31,22 +31,31 @@ test("managed provider environment is narrow, generation-bound and disables upda
     hostProcessId: 42,
     generation: 7,
     childInstanceNonce: "a".repeat(32),
+    inputFence: { port: 41234, token: "b".repeat(64), epoch: 7 },
   });
   assert.deepEqual(environment, {
     HOME: "/Users/fixture",
     LANG: "en_US.UTF-8",
+    ...(process.platform === "darwin" ? { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" } : {}),
     CUA_DRIVER_EMBEDDED: "1",
     CUA_DRIVER_LING_MANAGED: "1",
     CUA_DRIVER_HOST_BUNDLE_ID: "com.lingstack.desktop",
     CUA_DRIVER_HOST_PID: "42",
     CUA_DRIVER_CHILD_INSTANCE_NONCE: "a".repeat(32),
     CUA_DRIVER_LEASE_GENERATION: "7",
+    CUA_DRIVER_INPUT_FENCE_PORT: "41234",
+    CUA_DRIVER_INPUT_FENCE_TOKEN: "b".repeat(64),
+    CUA_DRIVER_INPUT_EPOCH: "7",
     CUA_DRIVER_STATE_HOME: stateRoot.rootPath,
     CUA_DRIVER_TELEMETRY_HOME: stateRoot.telemetryPath,
     CUA_DRIVER_RS_TELEMETRY_ENABLED: "false",
     CUA_DRIVER_RS_UPDATE_CHECK: "false",
   });
-  assert.equal(environment.PATH, undefined);
+  assert.equal(
+    environment.PATH,
+    process.platform === "darwin" ? "/usr/bin:/bin:/usr/sbin:/sbin" : undefined,
+  );
+  assert.notEqual(environment.PATH, "/tmp/hostile-path");
   assert.equal(environment.LING_DESKTOP_BRIDGE_TOKEN, undefined);
   assert.equal(environment.OPENAI_API_KEY, undefined);
 });
@@ -379,6 +388,41 @@ test("stop deadline fails closed when retained-handle termination cannot end the
     ? Promise.resolve()
     : new Promise((resolve) => child.once("exit", resolve))));
   await host.stop("late_exit_cleanup");
+  assert.equal(host.state, "failed");
+});
+
+test("security-boundary termination bypasses graceful shutdown and confirms retained-child exit", async () => {
+  let gracefulCount = 0;
+  let immediateCount = 0;
+  let residueChecks = 0;
+  const host = new CuaDriverProviderHost({
+    executablePath: "/private/ling/cua-driver",
+    stateRoot,
+    generation: 9,
+    platform: "darwin",
+    lifecycle: {
+      lifetimeBoundary: "test-fixture",
+      spawn(input) {
+        return spawn(process.execPath, ["-e", "process.stdin.resume(); setInterval(() => {}, 1000)"], {
+          stdio: ["pipe", "pipe", "pipe"],
+          env: input.environment,
+        });
+      },
+      async terminate() { gracefulCount += 1; },
+      async terminateImmediately(child) {
+        immediateCount += 1;
+        child.kill("SIGKILL");
+      },
+      async assertNoResidue() { residueChecks += 1; },
+    },
+  });
+
+  await host.start();
+  await host.terminateImmediately("locked_control_input_fence_timeout");
+
+  assert.equal(gracefulCount, 0);
+  assert.equal(immediateCount, 1);
+  assert.equal(residueChecks, 1);
   assert.equal(host.state, "failed");
 });
 

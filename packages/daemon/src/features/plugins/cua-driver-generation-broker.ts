@@ -9,6 +9,7 @@ import { createMcpAuthStatus, createMcpStatusSnapshot } from "../mcp/status.js";
 import type { CuaDriverClientPool } from "./cua-driver-client-pool.js";
 import type { CuaDriverLeaseMcpClient } from "./cua-driver-lease-client.js";
 import type { CuaDriverLeaseRegistry } from "./cua-driver-lease.js";
+import type { LockedComputerControlRegistry } from "../computer-use/locked-control-registry.js";
 import { CUA_DRIVER_MCP_SERVER_ID } from "./presets.js";
 
 export type CuaDriverGenerationBrokerErrorCode =
@@ -34,6 +35,7 @@ export function createCuaDriverGenerationBroker(input: {
   readonly workspaceCwd: string;
   readonly leaseRegistry: CuaDriverLeaseRegistry;
   readonly clientPool: CuaDriverClientPool<CuaDriverLeaseMcpClient>;
+  readonly lockedControlRegistry?: LockedComputerControlRegistry;
 }): McpBroker {
   const useBundledClient = (server: McpServer): boolean =>
     input.bundledEnabled && server.id === CUA_DRIVER_MCP_SERVER_ID;
@@ -44,6 +46,20 @@ export function createCuaDriverGenerationBroker(input: {
       workspaceCwd: input.workspaceCwd,
       platform: process.platform,
       hasCurrentLease: () => Boolean(input.leaseRegistry.getCurrent()),
+      assertLockedApprovalAllowed: (context) => {
+        if (context.serverId !== CUA_DRIVER_MCP_SERVER_ID) return;
+        const lease = input.leaseRegistry.getCurrent();
+        if (!lease || !input.lockedControlRegistry) return;
+        input.lockedControlRegistry.captureActionFence({
+          leaseGeneration: lease.generation,
+          workspaceCwd: input.workspaceCwd,
+          runId: context.runId,
+          computerUseSessionId: context.computerUseSessionId,
+          toolId: context.toolId,
+          toolCallId: context.toolCallId,
+          defaultApproval: context.defaultApproval,
+        });
+      },
     },
     async checkServer(
       server: McpServer,
@@ -164,6 +180,19 @@ export function createCuaDriverGenerationBroker(input: {
       if (!lease) {
         throw new CuaDriverGenerationBrokerError("cua_desktop_lease_unavailable");
       }
+      assertCurrentLease(input.leaseRegistry, lease);
+      options.assertResultCurrent?.();
+      const execution = options.lockedControlExecution;
+      const actionFence = input.lockedControlRegistry?.captureActionFence({
+        leaseGeneration: lease.generation,
+        workspaceCwd: options.workspaceCwd,
+        runId: execution?.runId,
+        computerUseSessionId: execution?.computerUseSessionId,
+        toolId: toolName,
+        toolCallId: execution?.toolCallId ?? `daemon:${toolName}`,
+        defaultApproval: execution?.defaultApproval ?? "deny",
+        ...(execution?.approvalId ? { approvalId: execution.approvalId } : {}),
+      });
       let handle: Awaited<ReturnType<typeof input.clientPool.acquire>>;
       try {
         handle = await input.clientPool.acquire(lease);
@@ -181,6 +210,7 @@ export function createCuaDriverGenerationBroker(input: {
         options.signal?.throwIfAborted();
         assertCurrentLease(input.leaseRegistry, lease);
         options.assertResultCurrent?.();
+        actionFence?.assertCurrent();
         return result;
       } catch (error) {
         rethrowGenerationError(error, input.leaseRegistry, lease);

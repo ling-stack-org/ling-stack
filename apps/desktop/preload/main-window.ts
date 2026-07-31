@@ -5,6 +5,7 @@ import type {
   ComputerUsePreviewLocale,
   ComputerUsePreviewPreferences,
   ComputerUsePreviewSummary,
+  ComputerControlPermissionKind,
   DesktopNavigationIntent,
   LingDesktopCapabilities,
 } from "../shared/desktop-capabilities.js";
@@ -26,6 +27,9 @@ const daemonBaseUrl = process.argv
   .find((argument) => argument.startsWith("--ling-daemon-base-url="))
   ?.slice("--ling-daemon-base-url=".length) ?? "http://127.0.0.1:17891";
 const themePackageFirstPaint = parseDesktopThemePackageFirstPaintArgument(process.argv);
+const computerControlPlatform = process.argv
+  .find((argument) => argument.startsWith("--ling-computer-control-platform="))
+  ?.slice("--ling-computer-control-platform=".length);
 
 const capabilities: LingDesktopCapabilities = {
   platform: desktopPlatform(),
@@ -97,6 +101,22 @@ const capabilities: LingDesktopCapabilities = {
     getStatus: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.daemonStatus),
     restart: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.daemonRestart),
   },
+  ...(computerControlPlatform === "macos" || computerControlPlatform === "windows"
+    ? {
+        computerControl: {
+          packagedBundledCapable: true as const,
+          platform: computerControlPlatform,
+          requestPermissions: () => ipcRenderer.invoke(
+            DESKTOP_IPC_CHANNELS.computerControlRequestPermissions,
+          ),
+          openPermissionSettings: (permission: ComputerControlPermissionKind) =>
+            ipcRenderer.invoke(
+              DESKTOP_IPC_CHANNELS.computerControlOpenPermissionSettings,
+              permission,
+            ),
+        },
+      }
+    : {}),
   computerUse: {
     reportLocale: (locale: ComputerUsePreviewLocale) => {
       ipcRenderer.send(DESKTOP_IPC_CHANNELS.computerUseReportLocale, locale);

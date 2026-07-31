@@ -107,6 +107,11 @@ import { useExternalWorkDomain } from "../domains/external-work/use-external-wor
 import { useMediaDomain } from "../domains/media/use-media-domain.js";
 import { useMcpDomain } from "../domains/mcp/use-mcp-domain.js";
 import { usePluginsDomain } from "../domains/plugins/use-plugins-domain.js";
+import { useComputerControlController } from "../domains/computer-control/use-computer-control-controller.js";
+import {
+  CUA_DRIVER_PLUGIN_ID,
+  shouldHideCuaDriverInternalRows,
+} from "../domains/computer-control/computer-control-surface.js";
 import { useProvidersDomain } from "../domains/providers/use-providers-domain.js";
 import type { ProviderSetupIntent } from "../features/providers/provider-workbench-view-models.js";
 import { useRuntimeDomain } from "../domains/runtime/use-runtime-domain.js";
@@ -669,6 +674,7 @@ export function AppShell(): JSX.Element {
       scope: `plugin:${notice.pluginId}:${notice.action}:${notice.owner}`,
     }),
   });
+  const computerControl = useComputerControlController({ plugins: pluginsDomain });
   const {
     plugins,
     pluginsLoading,
@@ -692,6 +698,16 @@ export function AppShell(): JSX.Element {
     clearPluginActionErrors,
     resetForCwd: resetPluginsForCwd,
   } = pluginsDomain.actions;
+  const hideCuaDriverInternalRows = shouldHideCuaDriverInternalRows(computerControl.surfaceMode);
+  const pluginManagerPlugins = hideCuaDriverInternalRows
+    ? plugins.filter((plugin) => plugin.id !== CUA_DRIVER_PLUGIN_ID)
+    : plugins;
+  const pluginManagerPendingActions = hideCuaDriverInternalRows
+    ? pluginPendingActions.filter((action) => action.pluginId !== CUA_DRIVER_PLUGIN_ID)
+    : pluginPendingActions;
+  const pluginManagerActionErrors = hideCuaDriverInternalRows
+    ? pluginActionErrors.filter((action) => action.pluginId !== CUA_DRIVER_PLUGIN_ID)
+    : pluginActionErrors;
   const externalWorkDomain = useExternalWorkDomain({
     cwd: form.cwd.trim(),
     selectedChannelId,
@@ -2876,11 +2892,11 @@ export function AppShell(): JSX.Element {
                   />
                 ) : activeView === "plugins" ? (
                   <PluginManagerPage
-                    plugins={plugins}
+                    plugins={pluginManagerPlugins}
                     isLoading={pluginsLoading}
                     loadError={pluginsLoadError}
-                    pendingActions={pluginPendingActions}
-                    actionErrors={pluginActionErrors}
+                    pendingActions={pluginManagerPendingActions}
+                    actionErrors={pluginManagerActionErrors}
                     onRefresh={() => void refreshPlugins()}
                     onCreate={createPlugin}
                     onApplyPreset={applyPluginPreset}
@@ -2998,6 +3014,7 @@ export function AppShell(): JSX.Element {
                 ) : activeView === "settings" ? (
                   <SettingsPage
                     cwd={form.cwd}
+                    computerControl={computerControl}
                     skillLibraryRefreshToken={skillLibraryRefreshToken}
                     effectiveConfig={effectiveConfig}
                     startupStatus={startupStatus}

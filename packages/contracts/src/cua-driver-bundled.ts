@@ -13,6 +13,8 @@ export const DESKTOP_CUA_DRIVER_LEASE_SCHEMA_VERSION = 1 as const;
 export const CUA_DRIVER_PROVIDER_VERSION = "0.8.3" as const;
 export const CUA_DRIVER_DISTRIBUTION_REVISION = "ling.1" as const;
 export const CUA_DRIVER_LEASE_V1_CAPABILITY = "cua-driver-lease-v1" as const;
+export const CUA_DRIVER_READINESS_DETAILS_V1_CAPABILITY =
+  "cua-driver-readiness-details-v1" as const;
 
 export const CUA_DRIVER_PROVIDER_STATES = [
   "included",
@@ -425,6 +427,11 @@ export interface DarwinBundledCuaDriverLockV1 {
   readonly runtime: {
     readonly args: readonly ["mcp", "--embedded", "--host-bundle-id", "com.lingstack.desktop"];
     readonly stateHomeEnvironmentVariable: "CUA_DRIVER_STATE_HOME";
+    readonly inputFencePortEnvironmentVariable: "CUA_DRIVER_INPUT_FENCE_PORT";
+    readonly inputFenceTokenEnvironmentVariable: "CUA_DRIVER_INPUT_FENCE_TOKEN";
+    readonly inputEpochEnvironmentVariable: "CUA_DRIVER_INPUT_EPOCH";
+    readonly inputFenceProtocolVersion: 1;
+    readonly inputFenceAdmission: "mutating_tool_call_v1";
     readonly stateSchemaVersion: 1;
     readonly stateHomeRequiredInEmbeddedMode: true;
     readonly telemetryEnabled: false;
@@ -495,6 +502,11 @@ export interface WindowsBundledCuaDriverLockV1 {
     readonly requiredSession: "interactive-user";
     readonly rejectSessionZero: true;
     readonly stateHomeEnvironmentVariable: "CUA_DRIVER_STATE_HOME";
+    readonly inputFencePortEnvironmentVariable: "CUA_DRIVER_INPUT_FENCE_PORT";
+    readonly inputFenceTokenEnvironmentVariable: "CUA_DRIVER_INPUT_FENCE_TOKEN";
+    readonly inputEpochEnvironmentVariable: "CUA_DRIVER_INPUT_EPOCH";
+    readonly inputFenceProtocolVersion: 1;
+    readonly inputFenceAdmission: "mutating_tool_call_v1";
     readonly stateSchemaVersion: 1;
     readonly telemetryEnabled: false;
     readonly startupUpdateCheckEnabled: false;
@@ -554,7 +566,35 @@ export interface DesktopCuaDriverLeaseV1 {
   readonly platform: BundledCuaDriverPlatform;
   readonly architecture: CuaDriverArchitecture;
   readonly integrityCoverage?: CuaDriverIntegrityCoverage;
+  readonly integrity?: CuaDriverIntegrityStatus;
+  readonly permissions?: CuaDriverPermissionSnapshot;
+  readonly windowsReadiness?: CuaDriverWindowsReadinessSnapshot;
 }
+
+const DESKTOP_CUA_DRIVER_LEASE_KEYS = new Set([
+  "schemaVersion",
+  "providerId",
+  "desktopInstanceId",
+  "desktopInstanceEpoch",
+  "bridgeConnectionId",
+  "generation",
+  "daemonAuthorityEpoch",
+  "workspaceCwd",
+  "endpoint",
+  "providerVersion",
+  "distributionRevision",
+  "integrationMode",
+  "expiresAt",
+  "lockDigest",
+  "providerSealDigest",
+  "providerCatalogDigest",
+  "platform",
+  "architecture",
+  "integrityCoverage",
+  "integrity",
+  "permissions",
+  "windowsReadiness",
+]);
 
 /** Maximum authority window accepted by both the Desktop publisher and daemon. */
 export const CUA_DRIVER_LEASE_MAX_TTL_MS = 120_000 as const;
@@ -605,13 +645,13 @@ export function isDesktopCuaDriverLeaseV1(value: unknown): value is DesktopCuaDr
   if (!isUnknownRecord(value)) {
     return false;
   }
+  const keysValid = Object.keys(value).every((key) => DESKTOP_CUA_DRIVER_LEASE_KEYS.has(key));
   const platformArchitectureValid = value.platform === "darwin"
     ? value.architecture === "arm64"
     : value.platform === "win32" && value.architecture === "x86_64";
-  const platformIntegrityValid = value.platform === "darwin"
-    ? value.integrityCoverage === undefined
-    : value.platform === "win32" && value.integrityCoverage === "standard";
+  const platformDetailsValid = isCuaDriverPlatformDetailsTuple(value);
   return value.schemaVersion === 1
+    && keysValid
     && value.providerId === "cua-driver"
     && hasText(value.desktopInstanceId)
     && isPositiveSafeInteger(value.desktopInstanceEpoch)
@@ -628,7 +668,7 @@ export function isDesktopCuaDriverLeaseV1(value: unknown): value is DesktopCuaDr
     && isSha256(value.providerSealDigest)
     && (value.providerCatalogDigest === undefined || isSha256(value.providerCatalogDigest))
     && platformArchitectureValid
-    && platformIntegrityValid;
+    && platformDetailsValid;
 }
 
 export const CUA_DRIVER_DESKTOP_AVAILABILITY_STATES = [
@@ -658,6 +698,9 @@ const CUA_DRIVER_DESKTOP_AVAILABILITY_KEYS = new Set([
   "providerState",
   "reason",
   "integrityCoverage",
+  "integrity",
+  "permissions",
+  "windowsReadiness",
   "limitations",
 ]);
 
@@ -682,6 +725,9 @@ export interface DesktopCuaDriverAvailabilityV1 {
   readonly providerState: CuaDriverDesktopAvailabilityState;
   readonly reason?: string;
   readonly integrityCoverage?: CuaDriverIntegrityCoverage;
+  readonly integrity?: CuaDriverIntegrityStatus;
+  readonly permissions?: CuaDriverPermissionSnapshot;
+  readonly windowsReadiness?: CuaDriverWindowsReadinessSnapshot;
   readonly limitations?: readonly CuaDriverLimitation[];
 }
 
@@ -711,15 +757,14 @@ export function isDesktopCuaDriverAvailabilityV1(
     )
     && new Set(limitations).size === limitations.length
   );
-  const metadataValid = value.platform === "darwin"
-    ? value.integrityCoverage === undefined
-      && (limitations === undefined || limitations.length === 0)
-    : value.platform === "win32"
-      && value.integrityCoverage === "standard"
+  const metadataValid = isCuaDriverPlatformDetailsTuple(value)
+    && (value.platform === "darwin"
+      ? limitations === undefined || limitations.length === 0
+      : value.platform === "win32"
       && limitations !== undefined
       && limitations.length === 2
       && limitations.includes("elevated_pixel_input")
-      && limitations.includes("uwp_send_input");
+      && limitations.includes("uwp_send_input"));
   return value.schemaVersion === 1
     && keysValid
     && value.providerId === "cua-driver"
@@ -873,6 +918,81 @@ export function cuaDriverWorkspaceBindingMaterialV1(workspaceCwd: string): strin
 
 function isUnknownRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isCuaDriverPlatformDetailsTuple(
+  value: Readonly<Record<string, unknown>>,
+): boolean {
+  const integrityValid = value.integrity === undefined
+    || value.integrity === "verified"
+    || value.integrity === "failed"
+    || value.integrity === "unknown";
+  if (!integrityValid) {
+    return false;
+  }
+  if (value.platform === "darwin") {
+    return value.integrityCoverage === undefined
+      && value.windowsReadiness === undefined
+      && (value.permissions === undefined || isCuaDriverPermissionSnapshot(value.permissions));
+  }
+  if (value.platform === "win32") {
+    return value.integrityCoverage === "standard"
+      && value.permissions === undefined
+      && (value.windowsReadiness === undefined
+        || isCuaDriverWindowsReadinessSnapshot(value.windowsReadiness));
+  }
+  return false;
+}
+
+function isCuaDriverPermissionSnapshot(value: unknown): value is CuaDriverPermissionSnapshot {
+  if (!isUnknownRecord(value)) {
+    return false;
+  }
+  const keys = Object.keys(value);
+  return keys.every((key) => key === "accessibility" || key === "screenRecording" || key === "capturable")
+    && isPermissionStatus(value.accessibility)
+    && isPermissionStatus(value.screenRecording)
+    && (value.capturable === undefined || typeof value.capturable === "boolean");
+}
+
+function isPermissionStatus(value: unknown): boolean {
+  return value === "granted" || value === "denied" || value === "prompt" || value === "unknown";
+}
+
+function isCuaDriverWindowsReadinessSnapshot(
+  value: unknown,
+): value is CuaDriverWindowsReadinessSnapshot {
+  if (!isUnknownRecord(value)) {
+    return false;
+  }
+  const allowedKeys = new Set([
+    "interactiveSession",
+    "wgcApi",
+    "d3d11",
+    "uiaRuntime",
+    "contentObserved",
+    "integrityCoverage",
+    "uiaHelper",
+  ]);
+  return Object.keys(value).every((key) => allowedKeys.has(key))
+    && (value.interactiveSession === "ready"
+      || value.interactiveSession === "session_zero"
+      || value.interactiveSession === "locked"
+      || value.interactiveSession === "unknown")
+    && (value.wgcApi === "supported"
+      || value.wgcApi === "unsupported"
+      || value.wgcApi === "unavailable"
+      || value.wgcApi === "unknown")
+    && (value.d3d11 === "available" || value.d3d11 === "unavailable" || value.d3d11 === "unknown")
+    && (value.uiaRuntime === "available" || value.uiaRuntime === "unavailable" || value.uiaRuntime === "unknown")
+    && value.contentObserved === false
+    && (value.integrityCoverage === "standard"
+      || value.integrityCoverage === "uiaccess"
+      || value.integrityCoverage === "unknown")
+    && (value.uiaHelper === "not_required"
+      || value.uiaHelper === "ready"
+      || value.uiaHelper === "unavailable"
+      || value.uiaHelper === "invalid");
 }
 
 function hasText(value: unknown): value is string {

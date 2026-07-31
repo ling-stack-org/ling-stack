@@ -4,11 +4,34 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import {
+  CUA_DRIVER_LOCKED_ALLOWED_TOOL_IDS,
+  CUA_DRIVER_LOCKED_ALLOWED_TOOL_IDS_SHA256,
+  CUA_DRIVER_LOCKED_DENIED_TOOL_IDS,
+  CUA_DRIVER_LOCKED_TOOL_POLICY_REVISION,
   createCuaDriverDescriptor,
   defaultCuaDriverCommandCandidates,
   isCuaDriverPlatformSupported,
   resolveCuaDriverCommand,
+  lockedCuaDriverToolDecision,
 } from "../dist/features/plugins/presets.js";
+
+test("locked Cua policy is one exact reviewed partition with a stable digest", () => {
+  assert.equal(CUA_DRIVER_LOCKED_TOOL_POLICY_REVISION, "locked-cua-tools-v1");
+  assert.match(CUA_DRIVER_LOCKED_ALLOWED_TOOL_IDS_SHA256, /^[a-f0-9]{64}$/u);
+  assert.equal(new Set(CUA_DRIVER_LOCKED_ALLOWED_TOOL_IDS).size, CUA_DRIVER_LOCKED_ALLOWED_TOOL_IDS.length);
+  assert.equal(new Set(CUA_DRIVER_LOCKED_DENIED_TOOL_IDS).size, CUA_DRIVER_LOCKED_DENIED_TOOL_IDS.length);
+  assert.equal(
+    CUA_DRIVER_LOCKED_ALLOWED_TOOL_IDS.some((toolId) => CUA_DRIVER_LOCKED_DENIED_TOOL_IDS.includes(toolId)),
+    false,
+  );
+  for (const toolId of CUA_DRIVER_LOCKED_ALLOWED_TOOL_IDS) {
+    assert.equal(lockedCuaDriverToolDecision(toolId), "allow_to_existing_approval", toolId);
+  }
+  for (const toolId of CUA_DRIVER_LOCKED_DENIED_TOOL_IDS) {
+    assert.equal(lockedCuaDriverToolDecision(toolId), "deny", toolId);
+  }
+  assert.equal(lockedCuaDriverToolDecision("future_provider_tool"), "deny");
+});
 
 test("Cua Driver preset advertises the selected macOS and Windows provider boundary", () => {
   const descriptor = createCuaDriverDescriptor();

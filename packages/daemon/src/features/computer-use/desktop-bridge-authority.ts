@@ -22,6 +22,7 @@ export interface CuaDriverDesktopBridgeAuthorityOptions {
     previous: DesktopCuaDriverLease,
     next?: DesktopCuaDriverLease,
   ) => void;
+  readonly onAuthorityRotated?: () => void;
 }
 
 type LeaseHandshakeIdentity = Pick<
@@ -46,6 +47,7 @@ export class CuaDriverDesktopBridgeAuthority {
   readonly leaseRegistry: CuaDriverLeaseRegistry;
 
   private readonly createConnectionId: () => string;
+  private readonly onAuthorityRotated?: () => void;
   private desktopInstanceEpoch = 0;
   private currentAuthority: (CuaDriverLeaseHandshakeAuthorityV1 & {
     readonly workspaceCwd: string;
@@ -56,6 +58,7 @@ export class CuaDriverDesktopBridgeAuthority {
     this.workspaceCwd = options.workspaceCwd;
     this.daemonAuthorityEpoch = options.daemonAuthorityEpoch ?? randomUUID();
     this.createConnectionId = options.createConnectionId ?? randomUUID;
+    this.onAuthorityRotated = options.onAuthorityRotated;
     this.leaseRegistry = new CuaDriverLeaseRegistry({
       daemonAuthorityEpoch: this.daemonAuthorityEpoch,
       workspaceCwd: this.workspaceCwd,
@@ -72,6 +75,9 @@ export class CuaDriverDesktopBridgeAuthority {
     const bridgeConnectionId = this.createConnectionId();
     if (!bridgeConnectionId.trim()) {
       throw new Error("cua_driver_bridge_connection_id_invalid");
+    }
+    if (this.currentAuthority) {
+      this.onAuthorityRotated?.();
     }
     const authority = Object.freeze({
       daemonAuthorityEpoch: this.daemonAuthorityEpoch,
@@ -155,6 +161,9 @@ export class CuaDriverDesktopBridgeAuthority {
   }
 
   clear(): void {
+    if (this.currentAuthority) {
+      this.onAuthorityRotated?.();
+    }
     this.currentAuthority = undefined;
     this.currentAvailability = undefined;
     this.leaseRegistry.clear();
@@ -176,7 +185,14 @@ function sameAvailability(
     && left.providerState === right.providerState
     && left.reason === right.reason
     && left.integrityCoverage === right.integrityCoverage
+    && left.integrity === right.integrity
+    && sameJsonValue(left.permissions, right.permissions)
+    && sameJsonValue(left.windowsReadiness, right.windowsReadiness)
     && sameStringArray(left.limitations, right.limitations);
+}
+
+function sameJsonValue(left: unknown, right: unknown): boolean {
+  return left === right || JSON.stringify(left) === JSON.stringify(right);
 }
 
 function sameStringArray(

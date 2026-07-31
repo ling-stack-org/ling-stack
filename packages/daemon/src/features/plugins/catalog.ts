@@ -14,6 +14,7 @@ import type {
   CuaDriverProviderState,
 } from "@ling-stack/core";
 import { isCuaDriverProviderState } from "@ling-stack/contracts";
+import type { LockedComputerControlProjectionV1 } from "@ling-stack/contracts";
 import type { McpBroker } from "../../context.js";
 import {
   CUA_DRIVER_PLUGIN_ID,
@@ -53,6 +54,7 @@ export function listManagedPluginViews(input: {
     readonly bundledEmbedded: { readonly darwin: boolean; readonly win32: boolean };
     readonly packagedProvider: { readonly darwin: boolean; readonly win32: boolean };
   };
+  readonly lockedControlProjection?: LockedComputerControlProjectionV1;
 }): readonly ManagedPluginView[] {
   const descriptors = buildDescriptorMap(input.extensionRegistry, input.store);
   const records = new Map(input.store.listManagedPlugins({ limit: 500 }).map((record) => [record.id, record]));
@@ -69,6 +71,7 @@ export function listManagedPluginViews(input: {
       now: input.now,
       cuaDriverRuntimeAuthority: input.cuaDriverRuntimeAuthority,
       cuaDriverFeatureFlags: input.cuaDriverFeatureFlags,
+      lockedControlProjection: input.lockedControlProjection,
     }));
   return views
     .filter((view) => input.includeHidden || view.id !== BUNDLED_CUA_DRIVER_PLUGIN_ID)
@@ -87,6 +90,7 @@ export function getManagedPluginView(input: {
     readonly bundledEmbedded: { readonly darwin: boolean; readonly win32: boolean };
     readonly packagedProvider: { readonly darwin: boolean; readonly win32: boolean };
   };
+  readonly lockedControlProjection?: LockedComputerControlProjectionV1;
 }): ManagedPluginView | undefined {
   return listManagedPluginViews({ ...input, includeHidden: true }).find((plugin) => plugin.id === input.pluginId);
 }
@@ -202,6 +206,7 @@ function createManagedPluginView(input: {
     readonly bundledEmbedded: { readonly darwin: boolean; readonly win32: boolean };
     readonly packagedProvider: { readonly darwin: boolean; readonly win32: boolean };
   };
+  readonly lockedControlProjection?: LockedComputerControlProjectionV1;
 }): ManagedPluginView {
   const blocked = getDescriptorBlocker(input.descriptor);
   const cuaDriverServer = input.descriptor.id === CUA_DRIVER_PLUGIN_ID
@@ -255,6 +260,9 @@ function createManagedPluginView(input: {
                 requestedEnabled,
                 effectiveEnabled,
                 ...bundledSetupMetadata,
+                ...(input.lockedControlProjection
+                  ? { lockedControl: input.lockedControlProjection }
+                  : {}),
               },
             }
           : {}),

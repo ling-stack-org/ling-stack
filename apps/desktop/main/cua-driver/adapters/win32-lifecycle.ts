@@ -113,5 +113,21 @@ export function createWin32CuaDriverProcessLifecycle(options: {
         // Let provider-host.ts observe the retained child until its deadline.
       }
     },
+    async terminateImmediately(child: ChildProcess) {
+      if (child.exitCode !== null || child.signalCode !== null) {
+        return;
+      }
+      try {
+        // Node maps SIGKILL to TerminateProcess on Windows. Terminating the
+        // retained root closes its KILL_ON_JOB_CLOSE Job Object and therefore
+        // tears down the provider descendants as one owned generation.
+        if (!child.kill("SIGKILL")) {
+          throw new Win32CuaDriverLifecycleError("terminate_failed");
+        }
+      } catch (error) {
+        if (error instanceof Win32CuaDriverLifecycleError) throw error;
+        throw new Win32CuaDriverLifecycleError("terminate_failed");
+      }
+    },
   });
 }

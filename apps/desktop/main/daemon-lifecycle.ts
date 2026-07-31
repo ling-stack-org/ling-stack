@@ -4,6 +4,7 @@ import { access, mkdir } from "node:fs/promises";
 import { connect } from "node:net";
 import { resolve as resolvePath } from "node:path";
 import {
+  CUA_DRIVER_READINESS_DETAILS_V1_CAPABILITY,
   isCuaDriverDesktopBridgeHandshakeResponseV1,
   type CuaDriverFeatureFlags,
   type CuaDriverLeaseHandshakeAuthorityV1,
@@ -31,6 +32,7 @@ type DaemonPortProbeResult = "free" | "occupied";
 export type DesktopDaemonCuaDriverAuthorityTuple = Readonly<
   CuaDriverLeaseHandshakeAuthorityV1 & {
     readonly workspaceCwd: string;
+    readonly readinessDetailsV1: boolean;
   }
 >;
 
@@ -556,6 +558,9 @@ export class DesktopDaemonLifecycle {
             bridgeConnectionId: compatibility.bridgeConnectionId,
             desktopInstanceEpoch: compatibility.desktopInstanceEpoch,
             workspaceCwd: compatibility.defaultWorkspaceCwd,
+            readinessDetailsV1: compatibility.capabilities.includes(
+              CUA_DRIVER_READINESS_DETAILS_V1_CAPABILITY,
+            ),
           });
         }
         return "compatible";

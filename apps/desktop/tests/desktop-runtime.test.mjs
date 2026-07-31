@@ -723,6 +723,263 @@ test("Win32 composition maps x64 to the shared x86_64 contract and uses the inje
   assert.equal(runtime.cuaDriverCoordinator.enableCalls, 1);
 });
 
+test("packaged Computer Control permission commands stay platform-scoped", async () => {
+  const macDaemon = fakeDaemon(authority("connection-macos-permissions", 1));
+  const macCalls = [];
+  const macCoordinator = fakeCoordinator();
+  const macRuntime = createRuntime(macDaemon, {
+    packaged: true,
+    platformBinding: undefined,
+    platformOwner: {
+      platform: "darwin",
+      binding: fakePlatformBinding(),
+      async start() {},
+      async dispose() {},
+      async requestPermissions() {
+        macCalls.push("requestPermissions");
+      },
+    },
+    openExternal: async (url) => {
+      macCalls.push(url);
+    },
+    coordinatorFactory: () => macCoordinator,
+  });
+
+  assert.equal(macRuntime.computerControlPlatform, "macos");
+  assert.deepEqual(await macRuntime.requestComputerControlPermissions(), { accepted: true });
+  assert.deepEqual(
+    await macRuntime.openComputerControlPermissionSettings("accessibility"),
+    { accepted: true },
+  );
+  assert.deepEqual(
+    await macRuntime.openComputerControlPermissionSettings("screen_recording"),
+    { accepted: true },
+  );
+  assert.deepEqual(macCalls, [
+    "requestPermissions",
+    "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+    "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+  ]);
+  assert.equal(macCoordinator.enableCalls, 1);
+  await macRuntime.shutdown();
+
+  const windowsRuntime = createRuntime(fakeDaemon(authority("connection-windows-permissions", 1)), {
+    platform: "win32",
+    architecture: "x64",
+    featureFlags: bundledWin32FeatureFlags(),
+    packaged: true,
+    platformBinding: undefined,
+    platformOwner: {
+      platform: "win32",
+      binding: { ...fakePlatformBinding(), platform: "win32" },
+      async start() {},
+      async dispose() {},
+    },
+  });
+
+  assert.equal(windowsRuntime.computerControlPlatform, "windows");
+  assert.deepEqual(
+    await windowsRuntime.requestComputerControlPermissions(),
+    { accepted: false, reason: "unsupported_platform_action" },
+  );
+  assert.deepEqual(
+    await windowsRuntime.openComputerControlPermissionSettings("accessibility"),
+    { accepted: false, reason: "unsupported_platform_action" },
+  );
+  await windowsRuntime.shutdown();
+});
+
+test("packaged Desktop runtime suspends computer control across lock and sleep and removes power listeners on shutdown", async () => {
+  const daemon = fakeDaemon(authority("connection-power-monitor", 1));
+  const powerMonitor = fakePowerMonitor();
+  const lifecycleEvents = [];
+  const coordinator = {
+    ...fakeCoordinator(() => lifecycleEvents.push("coordinator.shutdown")),
+    async suspendForSystem(reason) {
+      lifecycleEvents.push(`suspend:${reason}`);
+    },
+    async resumeForSystem() {
+      lifecycleEvents.push("resume");
+    },
+  };
+  const binding = fakePlatformBinding();
+  const platformOwner = {
+    platform: "darwin",
+    binding,
+    async start() {},
+    async dispose() {
+      lifecycleEvents.push("owner.dispose");
+    },
+  };
+  const runtime = createRuntime(daemon, {
+    packaged: true,
+    platformBinding: undefined,
+    platformOwner,
+    powerMonitor,
+    coordinatorFactory: () => coordinator,
+  });
+
+  assert.deepEqual(powerMonitor.observedEvents(), [
+    "lock-screen",
+    "resume",
+    "suspend",
+    "unlock-screen",
+  ]);
+  await runtime.ensureStarted();
+
+  powerMonitor.emit("lock-screen");
+  await flushAsyncWork();
+  powerMonitor.emit("suspend");
+  await flushAsyncWork();
+  powerMonitor.emit("unlock-screen");
+  await flushAsyncWork();
+  powerMonitor.emit("resume");
+  await flushAsyncWork();
+
+  powerMonitor.emit("lock-screen");
+  await flushAsyncWork();
+  powerMonitor.emit("suspend");
+  await flushAsyncWork();
+  powerMonitor.emit("resume");
+  await flushAsyncWork();
+  assert.equal(
+    lifecycleEvents.filter((event) => event === "resume").length,
+    1,
+    "system resume while the session remains locked must keep Computer Control paused",
+  );
+  powerMonitor.emit("unlock-screen");
+  await flushAsyncWork();
+
+  assert.deepEqual(lifecycleEvents, [
+    "suspend:system_lock",
+    "suspend:system_suspend",
+    "resume",
+    "suspend:system_lock",
+    "suspend:system_suspend",
+    "resume",
+  ]);
+  assert.equal(daemon.ensureStartedCalls, 1, "lock and sleep must not restart the task daemon");
+  assert.equal(daemon.stopCalls, 0, "lock and sleep pause only Computer Control, not running tasks");
+
+  await runtime.shutdown();
+  assert.equal(daemon.stopCalls, 1, "the daemon stops only when Desktop itself shuts down");
+  assert.deepEqual(powerMonitor.observedEvents(), []);
+  assert.deepEqual(lifecycleEvents, [
+    "suspend:system_lock",
+    "suspend:system_suspend",
+    "resume",
+    "suspend:system_lock",
+    "suspend:system_suspend",
+    "resume",
+    "coordinator.shutdown",
+    "owner.dispose",
+  ]);
+
+  powerMonitor.emit("lock-screen");
+  powerMonitor.emit("resume");
+  await flushAsyncWork();
+  assert.equal(lifecycleEvents.length, 8, "detached listeners must not enqueue work after shutdown");
+});
+
+test("a lock received during provider enable is reasserted after enable completes", async () => {
+  const daemon = fakeDaemon(authority("connection-enable-lock", 1));
+  const powerMonitor = fakePowerMonitor();
+  const enableStarted = deferred();
+  const releaseEnable = deferred();
+  const events = [];
+  const coordinator = {
+    ...fakeCoordinator(undefined, {
+      enable: async () => {
+        events.push("enable.begin");
+        enableStarted.resolve();
+        await releaseEnable.promise;
+        events.push("enable.end");
+        return availabilitySnapshot();
+      },
+    }),
+    closeCallGateForSecurityBoundary(reason) {
+      events.push(`gate:${reason}`);
+    },
+    async suspendForSystem(reason) {
+      events.push(`suspend:${reason}`);
+    },
+  };
+  const runtime = createRuntime(daemon, {
+    packaged: true,
+    platformBinding: undefined,
+    platformOwner: {
+      platform: "darwin",
+      binding: fakePlatformBinding(),
+      async start() {},
+      async dispose() {},
+    },
+    powerMonitor,
+    coordinatorFactory: () => coordinator,
+  });
+
+  const starting = runtime.ensureStarted();
+  await enableStarted.promise;
+  powerMonitor.emit("lock-screen");
+  await flushAsyncWork();
+  releaseEnable.resolve();
+  await starting;
+
+  assert.deepEqual(events, [
+    "enable.begin",
+    "gate:locked_control_session_mismatch",
+    "suspend:system_lock",
+    "enable.end",
+    "gate:system_lock",
+    "suspend:system_lock",
+  ]);
+  assert.equal(daemon.stopCalls, 0, "the task daemon remains alive while control is paused");
+  await runtime.shutdown();
+});
+
+test("a lock received before provider composition still blocks a later resume hint", async () => {
+  const daemon = fakeDaemon(authority("connection-precomposition-lock", 1));
+  const powerMonitor = fakePowerMonitor();
+  const events = [];
+  const coordinator = {
+    ...fakeCoordinator(),
+    closeCallGateForSecurityBoundary(reason) {
+      events.push(`gate:${reason}`);
+    },
+    async suspendForSystem(reason) {
+      events.push(`suspend:${reason}`);
+    },
+    async resumeForSystem() {
+      events.push("resume");
+    },
+  };
+  const runtime = createRuntime(daemon, {
+    packaged: true,
+    platformBinding: undefined,
+    platformOwner: {
+      platform: "darwin",
+      binding: fakePlatformBinding(),
+      async start() {},
+      async dispose() {},
+    },
+    powerMonitor,
+    coordinatorFactory: () => coordinator,
+  });
+
+  powerMonitor.emit("lock-screen");
+  await flushAsyncWork();
+  await runtime.ensureStarted();
+  powerMonitor.emit("suspend");
+  await flushAsyncWork();
+  powerMonitor.emit("resume");
+  await flushAsyncWork();
+  assert.equal(events.includes("resume"), false);
+
+  powerMonitor.emit("unlock-screen");
+  await flushAsyncWork();
+  assert.equal(events.filter((event) => event === "resume").length, 1);
+  await runtime.shutdown();
+});
+
 test("shutdown continues to the owned daemon after coordinator cleanup fails", async () => {
   const events = [];
   const cleanupError = new Error("coordinator cleanup failed");
@@ -1006,6 +1263,32 @@ function fakeCoordinator(onShutdown, options = {}) {
   };
 }
 
+function fakePowerMonitor() {
+  const listeners = new Map();
+  return {
+    on(event, listener) {
+      const eventListeners = listeners.get(event) ?? new Set();
+      eventListeners.add(listener);
+      listeners.set(event, eventListeners);
+    },
+    off(event, listener) {
+      const eventListeners = listeners.get(event);
+      eventListeners?.delete(listener);
+      if (eventListeners?.size === 0) listeners.delete(event);
+    },
+    emit(event) {
+      for (const listener of listeners.get(event) ?? []) listener();
+    },
+    observedEvents() {
+      return [...listeners.keys()].sort();
+    },
+  };
+}
+
+function flushAsyncWork() {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
 function availabilitySnapshot() {
   return {
     lifecycle: "active",
@@ -1020,6 +1303,7 @@ function authority(bridgeConnectionId, desktopInstanceEpoch) {
     bridgeConnectionId,
     desktopInstanceEpoch,
     workspaceCwd,
+    readinessDetailsV1: false,
   });
 }
 

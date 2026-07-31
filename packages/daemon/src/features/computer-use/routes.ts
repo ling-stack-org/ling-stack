@@ -10,6 +10,7 @@ import type {
 import {
   COMPUTER_USE_ROUTE_TOKEN_HEADER,
   CUA_DRIVER_LEASE_V1_CAPABILITY,
+  CUA_DRIVER_READINESS_DETAILS_V1_CAPABILITY,
   isTerminalComputerUseStatus,
 } from "@ling-stack/contracts";
 import type { DaemonContext } from "../../context.js";
@@ -28,6 +29,10 @@ import {
   configuredTokenMatches,
   desktopBridgeTokenStatus,
 } from "./desktop-bridge-auth.js";
+import {
+  handleLockedControlDesktopRoute,
+  handleLockedControlProjectionRoute,
+} from "./locked-control-routes.js";
 
 const STOP_ACK_TIMEOUT_MS = 10_000;
 const PRIVATE_SOURCE_OWNERSHIP_TIMEOUT_MS = 1_500;
@@ -79,7 +84,11 @@ export async function handleComputerUseRoute(
       const authority = context.cuaDriverDesktopBridgeAuthority.issueAuthenticatedHandshake();
       const handshake: CuaDriverDesktopBridgeHandshakeResponseV1 = {
         protocolVersion: 1,
-        capabilities: ["preview-source", CUA_DRIVER_LEASE_V1_CAPABILITY],
+        capabilities: [
+          "preview-source",
+          CUA_DRIVER_LEASE_V1_CAPABILITY,
+          CUA_DRIVER_READINESS_DETAILS_V1_CAPABILITY,
+        ],
         bridgeTokenAccepted: true,
         routeTokenAccepted: configuredTokenMatches(
           context.computerUseRouteToken,
@@ -94,6 +103,10 @@ export async function handleComputerUseRoute(
 
     if (url.pathname === PROVIDER_TARGET_VERIFY_PATH) {
       await handleProviderTargetVerification(request, response, url, context);
+      return true;
+    }
+
+    if (await handleLockedControlDesktopRoute(request, response, url, context)) {
       return true;
     }
 
@@ -121,6 +134,10 @@ export async function handleComputerUseRoute(
         );
         return true;
       }
+    }
+
+    if (await handleLockedControlProjectionRoute(request, response, url, context)) {
+      return true;
     }
 
     if (url.pathname === "/computer-use/sessions") {

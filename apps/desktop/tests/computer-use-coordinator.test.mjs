@@ -91,6 +91,45 @@ test("locale changes update renderer copy without reopening the window or source
   await coordinator.dispose();
 });
 
+test("locked-control fixtures decorate the live PiP snapshot and clear at safe phases", async () => {
+  const client = new CountingProjectionClient(FAKE_COMPUTER_USE_PROJECTION);
+  const adapter = new FakeComputerUsePreviewPlatformAdapter();
+  const windows = [];
+  const coordinator = createCoordinator({
+    client,
+    adapter,
+    preferences: new MemoryPreferenceStore(),
+    windows,
+  });
+  await coordinator.start();
+  coordinator.reportSelectedConversation(FAKE_COMPUTER_USE_PROJECTION.conversationId);
+  await flush();
+  coordinator.reportFrameReady(FAKE_COMPUTER_USE_PROJECTION.sessionId, 1);
+
+  for (const phase of ["armed", "attesting", "active_locked"]) {
+    coordinator.reportLockedControlState({
+      phase,
+      expiresAt: "2026-07-15T12:15:00.000Z",
+    });
+    assert.deepEqual(coordinator.getRendererSnapshot().lockedControl, {
+      phase,
+      expiresAt: "2026-07-15T12:15:00.000Z",
+    });
+    assert.deepEqual(windows[0].messages.at(-1).args[0].lockedControl, {
+      phase,
+      expiresAt: "2026-07-15T12:15:00.000Z",
+    });
+  }
+
+  for (const phase of ["paused", "expired", "off"]) {
+    coordinator.reportLockedControlState({ phase, reason: "locked_control_user_revoked" });
+    assert.equal(coordinator.getRendererSnapshot().lockedControl, undefined);
+    assert.equal(windows[0].messages.at(-1).args[0].lockedControl, undefined);
+  }
+
+  await coordinator.dispose();
+});
+
 test("dispose while the initial projection list is pending prevents a late subscription", async () => {
   const client = new DeferredListProjectionClient(FAKE_COMPUTER_USE_PROJECTION);
   const adapter = new FakeComputerUsePreviewPlatformAdapter();

@@ -342,6 +342,11 @@ test("Darwin readiness requires cached host grants, a host live probe and provid
     childInstanceNonce: "darwin-child-instance-nonce-0001",
     ready: true,
     providerState: "ready",
+    permissions: {
+      accessibility: "granted",
+      screenRecording: "granted",
+      capturable: true,
+    },
   });
   assert.equal(fixture.calls.read, 1);
   assert.equal(fixture.calls.liveProbe, 1);
@@ -376,6 +381,21 @@ test("Darwin readiness maps host and provider permission failures without prompt
       assert.equal(fixture.calls.requestScreenRecording, 0);
     });
   }
+});
+
+test("Darwin readiness preserves exact screen status while accessibility false remains unknown", async () => {
+  const fixture = createReadinessFixture({
+    host: {
+      accessibility: false,
+      screenRecording: false,
+      screenRecordingStatus: "denied",
+    },
+  });
+  const result = await fixture.readiness.check(fixture.context);
+  assert.deepEqual(result.permissions, {
+    accessibility: "unknown",
+    screenRecording: "denied",
+  });
 });
 
 test("Darwin readiness rejects malformed or falsely attributed provider responses", async (t) => {
