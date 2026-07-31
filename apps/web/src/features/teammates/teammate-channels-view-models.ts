@@ -1,6 +1,6 @@
 import type { Channel, TeammateChannelMembership } from "../../types.js";
 
-export type TeammateChannelFilter = "all" | "active" | "paused" | "archived";
+export type TeammateChannelFilter = "all" | "active" | "paused";
 export type TeammateChannelAction = "join" | "leave" | "set-default";
 
 export interface TeammateChannelRowActionViewModel {
@@ -28,7 +28,6 @@ export interface TeammateChannelStats {
   readonly joined: number;
   readonly active: number;
   readonly paused: number;
-  readonly archived: number;
 }
 
 export type TeammateChannelMembershipPayload = readonly {
@@ -53,7 +52,6 @@ export function mergeTeammateChannelCatalog(
 export function channelFilterLabelKey(filter: TeammateChannelFilter): string {
   if (filter === "active") return "Active channels";
   if (filter === "paused") return "Paused channels";
-  if (filter === "archived") return "Archived channels";
   return "All channels";
 }
 
@@ -63,7 +61,7 @@ export function buildTeammateChannelRows(input: {
   readonly protectedTeammate: boolean;
 }): readonly TeammateChannelRowViewModel[] {
   const membershipByChannelId = new Map(input.memberships.map((membership) => [membership.channelId, membership]));
-  return input.channels.map((channel) => {
+  return input.channels.filter((channel) => channel.status !== "archived").map((channel) => {
     const membership = membershipByChannelId.get(channel.id);
     const joined = input.protectedTeammate || Boolean(membership);
     const isDefault = !input.protectedTeammate && Boolean(membership?.isDefault);
@@ -105,8 +103,7 @@ export function summarizeTeammateChannels(rows: readonly TeammateChannelRowViewM
     joined: stats.joined + (row.joined ? 1 : 0),
     active: stats.active + (row.channel.status === "active" ? 1 : 0),
     paused: stats.paused + (row.channel.status === "paused" ? 1 : 0),
-    archived: stats.archived + (row.channel.status === "archived" ? 1 : 0),
-  }), { total: 0, joined: 0, active: 0, paused: 0, archived: 0 });
+  }), { total: 0, joined: 0, active: 0, paused: 0 });
 }
 
 export function deriveTeammateChannelMutationPayload(input: {

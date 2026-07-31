@@ -154,7 +154,7 @@ export function TeammateCreateDrawer({
     onOpenProviders();
   }
 
-  function buildCreateInput(): LocalTeammateCreateInput {
+  function buildCreateInput(providerPresetId: string): LocalTeammateCreateInput {
     return {
       draftId: draftIdentityRef.current,
       templateId: selectedTemplate?.id,
@@ -162,15 +162,15 @@ export function TeammateCreateDrawer({
       description: previewDescription,
       avatarTone: selectedTemplate ? undefined : avatarTone,
       avatarFile: selectedTemplate ? undefined : avatarFile,
-      providerPresetId: selectedProvider?.id,
+      providerPresetId,
       modelLabel: selectedProvider ? `${selectedProvider.displayName} / ${selectedProvider.model}` : t("No model selected"),
       channelIds: selectedChannelIds,
     };
   }
 
   async function createTeammateDraft(): Promise<void> {
-    if (!canCreateTeammate || setupBusy) return;
-    const createInput = buildCreateInput();
+    if (!canCreateTeammate || setupBusy || !selectedProvider) return;
+    const createInput = buildCreateInput(selectedProvider.id);
     const draftIdentity = createInput.draftId ?? "";
     const requestRevision = ++createRequestRevisionRef.current;
     setSetupInput(createInput);
@@ -212,7 +212,7 @@ export function TeammateCreateDrawer({
     if (!setupInput || setupBusy) return;
     setDraftName(setupInput.displayName);
     setDraftDescription(setupInput.description);
-    setSelectedProviderId(setupInput.providerPresetId ?? "");
+    setSelectedProviderId(setupInput.providerPresetId);
     setSelectedChannelIds(setupInput.channelIds);
     setAvatarTone(isAvatarTone(setupInput.avatarTone) ? setupInput.avatarTone : "violet");
     setAvatarFile(setupInput.templateId ? undefined : setupInput.avatarFile);

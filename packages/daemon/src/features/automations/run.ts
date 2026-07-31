@@ -289,7 +289,7 @@ export function buildAutomationRunRequest(input: {
 }): RunRequest {
   const channel = input.automation.channelId ? input.store.getChannel(input.automation.channelId) : undefined;
   const cwd = resolveAutomationCwd(input.cwd, input.automation, channel?.boundPath);
-  const providerPresetId = resolveAutomationProviderPresetId(input.store, input.automation, channel?.defaultProviderPresetId);
+  const providerPresetId = resolveAutomationProviderPresetId(input.automation, channel?.defaultProviderPresetId);
   return {
     cwd,
     workspaceCwd: input.cwd,
@@ -417,16 +417,12 @@ function readSnapshotStringArray(record: Record<string, unknown>, key: string): 
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
-function resolveAutomationProviderPresetId(store: RunStore, automation: AutomationDefinition, channelDefaultProviderPresetId: string | undefined): string {
+function resolveAutomationProviderPresetId(automation: AutomationDefinition, channelDefaultProviderPresetId: string | undefined): string {
   const providerPresetId = automation.executionPolicy.providerPresetId ?? channelDefaultProviderPresetId;
   if (providerPresetId) {
     return providerPresetId;
   }
-  const fallback = store.listProviderPresets({ enabled: true }).find((preset) => preset.api !== "media-job" && preset.capabilities.includes("chat"));
-  if (!fallback) {
-    throw new HttpError(400, "provider_required", "Automation run requires a provider preset.");
-  }
-  return fallback.id;
+  throw new HttpError(400, "provider_required", "Automation run requires a provider preset.");
 }
 
 function createAutomationIdempotencyKey(automationId: string, triggerType: AutomationRun["triggerType"], scheduledFor: string | undefined): string {

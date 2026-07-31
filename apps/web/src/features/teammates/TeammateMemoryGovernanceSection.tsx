@@ -6,11 +6,9 @@ import {
   InlineFeedback,
   InspectorSection,
   Select,
-  StatusIndicator,
   Switch,
 } from "../../shared/ui/index.js";
 import type { MemoryReviewMode } from "../../types.js";
-import { memoryReviewModeDescription } from "./teammate-memory-view-models.js";
 import { TeammateMemoryReviewList } from "./TeammateMemoryReviewList.js";
 import type { TeammateMemoryController } from "./useTeammateMemoryController.js";
 
@@ -24,18 +22,13 @@ export function TeammateMemoryGovernanceSection({
   return (
     <section className="teammate-memory-section teammate-memory-governance" aria-labelledby="teammate-memory-governance-title">
       <div className="teammate-memory-section-heading">
-        <div>
-          <h3 id="teammate-memory-governance-title">{t("Workspace memory governance")}</h3>
-          <p>{t("Policy and inbox changes apply to the whole Workspace, not only this teammate.")}</p>
-        </div>
-        <StatusIndicator compact label={t("Workspace policy")} tone="info" />
+        <h3 id="teammate-memory-governance-title">{t("Workspace memory governance")}</h3>
       </div>
 
       <div className="teammate-memory-policy-row">
         <Field
           className="teammate-memory-policy-field"
           label={t("Memory review mode")}
-          description={t(memoryReviewModeDescription(policy?.mode ?? "balanced"))}
           error={controller.policyError || undefined}
         >
           <Select

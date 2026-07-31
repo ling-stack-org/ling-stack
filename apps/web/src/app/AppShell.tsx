@@ -264,6 +264,8 @@ export function AppShell(): JSX.Element {
   const [teammateCreateOpen, setTeammateCreateOpen] = useState(false);
   const workspaceTimelineLoadRef = useRef("");
   const channelEditFormSyncKeyRef = useRef("");
+  const workspaceDefaultProviderPresetIdRef = useRef<string>();
+  const workspaceDefaultProviderAssignmentPendingRef = useRef("");
   useEffect(() => {
     if (narrowViewport) setChannelSidebarOpen(false);
   }, [narrowViewport]);
@@ -513,6 +515,20 @@ export function AppShell(): JSX.Element {
       }
     },
     clearProviderUsage,
+    onRunnableChatProviderReady: async (provider) => {
+      if (workspaceDefaultProviderPresetIdRef.current || workspaceDefaultProviderAssignmentPendingRef.current) return;
+      workspaceDefaultProviderAssignmentPendingRef.current = provider.id;
+      try {
+        const updatedSettings = await patchWorkspaceSettings({ defaultProviderPresetId: provider.id });
+        if (updatedSettings?.defaultProviderPresetId === provider.id) {
+          workspaceDefaultProviderPresetIdRef.current = provider.id;
+        }
+      } finally {
+        if (workspaceDefaultProviderAssignmentPendingRef.current === provider.id) {
+          workspaceDefaultProviderAssignmentPendingRef.current = "";
+        }
+      }
+    },
   });
   const {
     providers,
@@ -849,6 +865,7 @@ export function AppShell(): JSX.Element {
       setStartupStatusAction(undefined);
     },
   });
+  workspaceDefaultProviderPresetIdRef.current = workspaceSettings?.defaultProviderPresetId;
   const currentFullAccessPolicyRevision = useMemo(() => fullAccessPolicyRevision({
     defaultAuthorizationMode: workspaceSettings?.defaultAuthorizationMode ?? form.authorizationMode,
     defaultWorkspaceAccessMode: workspaceSettings?.defaultWorkspaceAccessMode ?? form.workspaceAccessMode,
@@ -1113,8 +1130,9 @@ export function AppShell(): JSX.Element {
       teammate,
       providers,
       teammateChannelMembershipsByTeammate[teammate.id]?.map((membership) => membership.channelId) ?? [],
+      workspaceSettings?.defaultProviderPresetId,
     )),
-    [aiTeammates, providers, teammateChannelMembershipsByTeammate],
+    [aiTeammates, providers, teammateChannelMembershipsByTeammate, workspaceSettings?.defaultProviderPresetId],
   );
   const teammateCreateModelReady = useMemo(
     () => Boolean(selectDefaultTeammateProvider(providers, workspaceDefaultProviderPresetId)),
@@ -1223,7 +1241,6 @@ export function AppShell(): JSX.Element {
     removeTask,
     moveTaskToReview,
     saveTaskEdit,
-    resolveChannelMessageProviderPresetId,
     markChannelExecutionProposal,
     confirmChannelExecutionProposal,
     cancelChannelExecutionProposal,
@@ -1619,7 +1636,6 @@ export function AppShell(): JSX.Element {
     t,
     addChannelTeammate,
     setDefaultChannelTeammate,
-    resolveChannelMessageProviderPresetId,
     refreshChannels,
     refreshTasks,
     refreshChannelExecutionProposals,
@@ -2304,14 +2320,17 @@ export function AppShell(): JSX.Element {
         onSelectChannel={(channelId) => {
           clearSettingsWorkspaceToolView();
           selectWorkspaceChannel(channelId);
+          if (narrowViewport) setChannelSidebarOpen(false);
         }}
         onSelectChannelBranch={(channelId, branchId) => {
           clearSettingsWorkspaceToolView();
           selectWorkspaceChannelBranch(channelId, branchId);
+          if (narrowViewport) setChannelSidebarOpen(false);
         }}
         onSelectTeammate={(teammateId) => {
           clearSettingsWorkspaceToolView();
           selectAiTeammate(teammateId);
+          if (narrowViewport) setChannelSidebarOpen(false);
         }}
         onSelectRecentConversation={selectRecentConversation}
         channelDrawer
@@ -2661,6 +2680,7 @@ export function AppShell(): JSX.Element {
                 teammate={selectedAiTeammate}
                 userProfile={userProfile}
                 providers={providers}
+                workspaceDefaultProviderPresetId={workspaceSettings?.defaultProviderPresetId}
                 channels={channels}
                 runs={runs}
                 skillPack={builtinSkillPack}
@@ -2669,6 +2689,8 @@ export function AppShell(): JSX.Element {
                 onDisableTeammate={removeAiTeammate}
                 onHardDeleteTeammate={hardDeleteAiTeammateAndRefresh}
                 onOpenProviders={() => openSettingsWorkspaceTool("providers")}
+                onOpenSkillLibrary={() => openSettingsSection("skill-library")}
+                onOpenAuthorizationSettings={() => openSettingsSection("approval-strategy")}
                 onRefreshTeammates={() => refreshAiTeammates(form.cwd.trim())}
                 onRefreshChannels={() => refreshChannels()}
                 onTaskCreated={(task) => {
@@ -2685,7 +2707,6 @@ export function AppShell(): JSX.Element {
                 defaultAuthorizationMode={workspaceSettings?.defaultAuthorizationMode}
                 defaultWorkspaceAccessMode={workspaceSettings?.defaultWorkspaceAccessMode}
                 workspaceDefaultsAvailable={workspaceSettings !== undefined}
-                onOpenAuthorizationSettings={() => openSettingsSection("approval-strategy")}
                 onDirectConversationChange={setDesktopTeammateConversationId}
                 fullAccessConfirmed={fullAccessConfirmation.isConfirmed(teammateConversationFullAccessScope)}
                 onConfirmFullAccess={() => fullAccessConfirmation.request(teammateConversationFullAccessScope)}
@@ -3163,6 +3184,7 @@ export function AppShell(): JSX.Element {
           projectOptions={buildChannelCreateProjectOptions(form.cwd, channels)}
           providers={providers}
           providersLoading={providersLoading}
+          defaultProviderId={workspaceDefaultProviderPresetId}
           teammates={localTeammates}
           creating={channelsLoading}
           errorMessage={channelFeedback.message("create-dialog", "draft") ?? ""}
@@ -3171,6 +3193,7 @@ export function AppShell(): JSX.Element {
             setChannelForm(nextForm);
           }}
           onCreateChannel={saveChannel}
+          onOpenProviders={() => openSettingsWorkspaceTool("providers")}
           onClose={() => {
             channelFeedback.clear("create-dialog", "draft");
             setChannelCreateOpen(false);

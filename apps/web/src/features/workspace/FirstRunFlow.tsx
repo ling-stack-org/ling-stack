@@ -334,7 +334,7 @@ function buildFirstRunChannelProviderStep(
   if (!channel) {
     return {
       id: "channel-provider",
-      label: t("Channel provider"),
+      label: t("Ling Agent model"),
       detail: t("Create or select a channel first."),
       status: "pending",
     };
@@ -342,17 +342,17 @@ function buildFirstRunChannelProviderStep(
   if (channelHasReadyDefault) {
     return {
       id: "channel-provider",
-      label: t("Channel provider"),
-      detail: t("Selected channel has a preflight-ready default provider."),
+      label: t("Ling Agent model"),
+      detail: t("Selected channel has a checked Ling Agent model."),
       status: "ready",
     };
   }
   return {
     id: "channel-provider",
-    label: t("Channel provider"),
-    detail: readyProvider ? t("Set {providerName} as the channel default.", { providerName: readyProvider.displayName }) : t("Repair a provider before setting the channel default."),
+    label: t("Ling Agent model"),
+    detail: readyProvider ? t("Use {providerName} for Ling Agent in this channel.", { providerName: readyProvider.displayName }) : t("Repair a model before assigning Ling Agent."),
     status: "attention",
-    actionLabel: t("Set provider"),
+    actionLabel: t("Set Ling Agent model"),
     onAction: readyProvider ? () => onSetChannelProvider(channel.id, readyProvider.id) : undefined,
     disabled: !readyProvider,
   };

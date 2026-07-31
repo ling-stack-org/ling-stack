@@ -382,6 +382,16 @@
   gap: var(--ling-space-3);
 }
 
+.channel-teammate-model-source {
+  min-width: 0;
+  max-width: 320px;
+  overflow: hidden;
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .channel-teammate-select {
   min-width: min(260px, 100%);
 }

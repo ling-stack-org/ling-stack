@@ -165,7 +165,7 @@ test("Chinese mode localizes workspace settings, runtime policy, and teammate se
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
   await page.getByRole("button", { name: "更多频道视图" }).click();
   await page.getByRole("menuitem", { name: "设置" }).click();
-  await expect(page.getByLabel("频道管理")).toContainText("运行模型");
+  await expect(page.getByLabel("频道管理")).toContainText("Ling Agent 模型");
   await expect(page.getByLabel("频道运行策略")).toBeVisible();
   await expect(page.getByLabel("频道管理").getByRole("button", { name: "创建频道" })).toHaveCount(0);
 

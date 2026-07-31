@@ -231,6 +231,7 @@ import { InlineApprovalStrip } from "../approvals/InlineApprovalStrip.js";
 import type { ApprovalResolution } from "../approvals/types.js";
 import type { LocalTeammateDraft } from "../teammates/index.js";
 import { ChannelTeamMetricsPanel } from "./ChannelTeamMetricsPanel.js";
+import { channelLingAgentModelLabel } from "./channel-model-view-models.js";
 import {
   ChannelTeammateManagerPanel,
   ChannelSettingsPanels,
@@ -4233,6 +4234,7 @@ export function WorkspaceClientView({
           <ChannelTeammateManagerPanel
             cwd={cwd}
             selectedChannelId={selectedChannelId}
+            lingAgentModelLabel={channelLingAgentModelLabel(channelEditForm.defaultProviderPresetId, providers)}
             channelTeammateMembershipsLoading={channelTeammateMembershipsLoading}
             channelTeammates={channelTeammates}
             localTeammates={localTeammates}

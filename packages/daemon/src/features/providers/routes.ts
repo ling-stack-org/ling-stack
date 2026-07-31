@@ -25,8 +25,10 @@ import { listProviderModels } from "./models.js";
 import { checkProviderPreset } from "./preflight.js";
 import {
   formatProviderDeleteBlockedMessage,
+  formatProviderReferenceBlockedMessage,
   inspectProviderReferences,
 } from "./reference-inspector.js";
+import { providerReferenceGuardAction } from "./provider-reference-guard.js";
 import {
   parseProviderModelListRequest,
   parseProviderModelImportRequest,
@@ -621,6 +623,17 @@ export async function handleProviderItem(
         return;
       }
       assertKeychainSecretRef(secretRef);
+      if (preset.apiKeyRef === secretRef) {
+        const inspection = inspectProviderReferences(store, route.providerId);
+        if (!inspection.canDelete) {
+          writeJson(response, 409, {
+            error: "provider_secret_delete_blocked",
+            message: formatProviderReferenceBlockedMessage(inspection, "credential removed"),
+            blockers: inspection.blockers,
+          });
+          return;
+        }
+      }
       const status = externalSecretStore.deleteSecret(secretRef, "provider_api_key");
       if (status.errorCode === "secret_access_denied" || status.errorCode === "secret_store_unavailable" || status.errorCode === "invalid_secret_ref") {
         writeJson(response, providerSecretStatusHttpStatus(status.errorCode), {
@@ -668,6 +681,23 @@ export async function handleProviderItem(
         providerUpdateWithSecretRef(route.providerId, input),
       );
       validateProviderPresetUpdate(preset, updateInput);
+      const guardAction = providerReferenceGuardAction(preset, updateInput);
+      if (guardAction) {
+        const inspection = inspectProviderReferences(store, route.providerId);
+        if (!inspection.canDelete) {
+          const action = guardAction === "disable"
+            ? "disabled"
+            : guardAction === "remove_secret"
+              ? "credential removed"
+              : "changed";
+          writeJson(response, 409, {
+            error: "provider_update_blocked",
+            message: formatProviderReferenceBlockedMessage(inspection, action),
+            blockers: inspection.blockers,
+          });
+          return;
+        }
+      }
       const now = new Date().toISOString();
       const updated = store.updateProviderPreset(route.providerId, updateInput, now);
       if (!updated) {

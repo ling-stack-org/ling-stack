@@ -50,13 +50,16 @@ export function deriveTeammateManagementList(input: {
   const templateById = new Map(input.templates.map((template) => [template.id, template]));
   const activeTeammates = input.teammates.filter((teammate) => !teammate.disabled);
   const rows = activeTeammates.map((draft): TeammateManagementRowViewModel => {
-    const provider = draft.providerPresetId ? providerById.get(draft.providerPresetId) : undefined;
+    const providerPresetId = draft.effectiveProviderPresetId ?? draft.providerPresetId;
+    const provider = providerPresetId ? providerById.get(providerPresetId) : undefined;
     const ready = Boolean(provider && providerPreflightReady(provider));
     const channelNames = draft.channelIds
       .map((channelId) => channelById.get(channelId))
       .filter((name): name is string => Boolean(name));
     const template = draft.templateId ? templateById.get(draft.templateId) : undefined;
-    const modelLabelKey = draft.modelLabel === "No model selected" ? "No model selected" : undefined;
+    const modelLabelKey = draft.modelLabel === "No model selected" || draft.modelLabel === "Workspace default is not configured"
+      ? draft.modelLabel
+      : undefined;
     const status = !ready
       ? { className: "warning" as const, id: "needs-model" as const, labelKey: "Needs model" as const, tone: "warning" as const }
       : draft.hidden

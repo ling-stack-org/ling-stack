@@ -73,3 +73,21 @@ capture run.
 - `TeammateWorkspace.tsx` is still 1739 lines and remains architecture debt, although this slice reduced it and placed
   all new Danger behavior in focused owners below 200 lines.
 - Packaged Electron macOS/Windows screenshots remain a separate release gate and are not inferred from Web evidence.
+
+## 2026-07-31 Replacement Evidence
+
+The standalone Danger navigation Tab documented above is no longer reachable. For ordinary teammates, the same
+disable and hard-delete behavior now appears at the bottom of Profile under `Manage teammate`; protected Ling Agent
+continues to hide both mutations. This is a composition change only and does not alter lifecycle or deletion semantics.
+
+The following two existing filenames were intentionally recaptured for the current composition. Their 2026-07-22
+hashes in the historical matrix are therefore obsolete for these files; the other four historical screenshots were
+not overwritten and remain records of the retired Tab states.
+
+| File | Current state | Viewport / locale / theme | Current SHA-256 |
+|---|---|---|---|
+| `1440x960-ling-light-danger-default.png` | Profile with the compact `Manage teammate` section | 1440x960 / en-US / `ling-light` | `ac2e36e567dd4539f40991ecc48666b6e03fcc772afce66767c4a7ad07d7b847` |
+| `1440x960-ling-light-delete-dialog-focus.png` | shared hard-delete Dialog opened from Profile | 1440x960 / en-US / `ling-light` | `64704543df87a56a3cf87e65047ee83760bd7283523e0c841c0133aee6b69e1e` |
+
+Both replacement PNGs were reviewed at original resolution. The complete teammate-management matrix passed `48/48`;
+the existing disable/delete controllers, confirmation payload and protected-teammate guards remain covered.

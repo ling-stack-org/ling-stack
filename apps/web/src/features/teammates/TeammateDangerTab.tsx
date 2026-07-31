@@ -1,10 +1,6 @@
 import { ArchiveX, Trash2 } from "lucide-react";
 import { useI18n } from "../../i18n.js";
-import {
-  Button,
-  InlineFeedback,
-  StatusIndicator,
-} from "../../shared/ui/index.js";
+import { Button, InlineFeedback } from "../../shared/ui/index.js";
 import type { AiTeammate } from "../../types.js";
 import "../../styles/teammate-management-danger.css";
 import { TeammateHardDeleteDialog } from "./TeammateHardDeleteDialog.js";
@@ -20,30 +16,23 @@ export function TeammateDangerTab({
   const { t } = useI18n();
   const { viewModel } = controller;
 
+  if (viewModel.protectedTeammate) return <></>;
+
   return (
     <section
       className="teammate-danger-panel"
       data-protected={viewModel.protectedTeammate || undefined}
       data-ui2-teammate-danger="true"
-      aria-label={t("Danger zone")}
+      aria-label={t("Manage teammate")}
     >
       <header className="teammate-danger-heading">
         <span>
           <Trash2 aria-hidden="true" />
-          <h2>{t("Danger zone")}</h2>
+          <h2>{t("Manage teammate")}</h2>
         </span>
-        <StatusIndicator
-          label={t(viewModel.protectedTeammate ? "Read only" : "Private data boundary")}
-          tone={viewModel.protectedTeammate ? "info" : "warning"}
-        />
       </header>
 
-      {viewModel.protectedTeammate ? (
-        <InlineFeedback className="teammate-danger-protected" tone="info" title={t("Protected teammate")}>
-          {t(viewModel.protectedDescriptionKey)}
-        </InlineFeedback>
-      ) : (
-        <div className="teammate-danger-actions">
+      <div className="teammate-danger-actions">
           <article className="teammate-danger-action">
             <span className="teammate-danger-action-copy">
               <strong>{t("Disable teammate")}</strong>
@@ -88,12 +77,9 @@ export function TeammateDangerTab({
               {t("Hard delete")}
             </Button>
           </article>
-        </div>
-      )}
+      </div>
 
-      {!viewModel.protectedTeammate ? (
-        <TeammateHardDeleteDialog controller={controller} teammate={teammate} />
-      ) : null}
+      <TeammateHardDeleteDialog controller={controller} teammate={teammate} />
     </section>
   );
 }

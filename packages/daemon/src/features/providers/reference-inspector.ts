@@ -116,15 +116,22 @@ export function inspectProviderReferences(
 }
 
 export function formatProviderDeleteBlockedMessage(inspection: ProviderReferenceInspection): string {
+  return formatProviderReferenceBlockedMessage(inspection, "deleted");
+}
+
+export function formatProviderReferenceBlockedMessage(
+  inspection: ProviderReferenceInspection,
+  action: "deleted" | "disabled" | "changed" | "credential removed",
+): string {
   if (inspection.blockers.length === 0) {
-    return "Provider can be deleted.";
+    return "Provider has no blocking references.";
   }
   const preview = inspection.blockers
     .slice(0, 4)
     .map((blocker) => blockerSummary(blocker))
     .join(", ");
   const remaining = inspection.blockers.length > 4 ? ` and ${inspection.blockers.length - 4} more` : "";
-  return `Provider is still used by ${inspection.blockers.length} item(s): ${preview}${remaining}. Disable it or clear those references before deleting.`;
+  return `Provider is still used by ${inspection.blockers.length} item(s): ${preview}${remaining}. Choose replacement models or clear those references before it can be ${action}.`;
 }
 
 function channelBlocker(channel: Channel): ProviderReferenceBlocker {

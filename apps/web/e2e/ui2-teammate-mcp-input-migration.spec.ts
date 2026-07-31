@@ -11,215 +11,181 @@ import {
 } from "./support/mock-state";
 
 const evidenceDirectory = fileURLToPath(new URL(
-  "../../../docs/design/ui2.0升级/evidence/features/raw-text-controls/first-wave/",
+  "../../../docs/design/ui2.0升级/evidence/features/ai-teammate-management-permissions/",
   import.meta.url,
 ));
 const captureEvidence = process.env.LING_CAPTURE_UI2_EVIDENCE === "1";
 
-test.describe("T12.1c-C Teammate MCP input migration", () => {
-  test("Ling Light 1440 keeps Search, filters, authorization, and busy state intact", async ({ page }) => {
+test.describe("Teammate external-tool controls", () => {
+  test("Light keeps search, filtering, draft save, and Drawer focus productized", async ({ page }) => {
     await prepareSurface(page, { height: 960, theme: "light", width: 1440 });
     const runtime = watchRuntime(page);
-    const state = createMcpState();
+    const state = createExternalToolsState();
+    state.teammateMcpBindings = [{
+      teammateId: "teammate_external_tools",
+      serverId: "external_repository",
+      mode: "selected",
+      selectedToolNames: ["search_repositories"],
+      approvalOverrides: {},
+      enabled: true,
+      createdAt: "2026-07-31T00:00:00.000Z",
+      updatedAt: "2026-07-31T00:00:00.000Z",
+    }];
     await mockDaemon(page, state);
     await page.goto("/");
 
-    const panel = await openTeammateMcpSettings(page);
-    const assignmentStatus = panel.locator(".teammate-mcp-assignment-status");
-    await expect(assignmentStatus).toHaveAttribute("data-tone", "neutral");
-    await expect(assignmentStatus).toContainText("Explicit assignment only");
-    await expect(panel.locator(".teammate-mcp-save-status")).toHaveCount(0);
-    const repository = mcpServer(panel, "Repository MCP");
-    await repository.getByRole("button", { name: "Show tools" }).click();
+    const panel = await openExternalTools(page);
+    const repository = serviceRow(panel, "Repository service");
+    await expect(repository).toContainText("Available");
+    await expect(repository).toContainText("1 allowed");
+    await expect(panel).not.toContainText(/server id|transport|credential|search_repositories/iu);
+    await expect(panel.getByRole("button", { name: "Save changes" })).toHaveCount(0);
 
-    const search = repository.getByRole("searchbox", { name: "Search tools" });
+    const manage = repository.getByRole("button", { name: "Manage Repository service" });
+    await manage.click();
+    const drawer = page.getByRole("dialog", { name: "Repository service" });
+    await expect(drawer).toBeVisible();
+    await expect(drawer).not.toContainText(/MCP|server id|transport|search_repositories/iu);
+
+    const search = drawer.getByRole("searchbox", { name: "Search tools" });
     await expect(search).toHaveAttribute("data-ling-input-native", "true");
-    await search.focus();
-    await expect(search).toBeFocused();
-    await expectFocusedInputContained(search);
-
     await search.fill("Create issue");
-    await expect(repository.locator(".teammate-mcp-tool-row")).toHaveCount(1);
-    await expect(repository.getByLabel("Create issue")).toBeVisible();
-
-    await search.fill("definitely-no-matching-tool");
-    await expect(repository.getByText("No tools match filters", { exact: true })).toBeVisible();
-    await expect(repository.locator(".teammate-mcp-tool-row")).toHaveCount(0);
-
+    await expect(drawer.getByLabel("Create issue")).toBeVisible();
+    await expect(drawer.getByLabel("Search repositories")).toHaveCount(0);
     await search.fill("");
-    await repository.getByLabel("Search repositories").check();
-    await expect(repository).toContainText("1 authorized");
-    await repository.getByRole("button", { name: "Authorized", exact: true }).click();
-    await expect(repository.locator(".teammate-mcp-tool-row")).toHaveCount(1);
-    await expect(repository.getByLabel("Search repositories")).toBeChecked();
-    await repository.getByRole("button", { name: "All", exact: true }).click();
+
+    const filter = drawer.getByRole("combobox", { name: "Capability filter" });
+    await filter.selectOption("authorized");
+    await expect(drawer.getByLabel("Search repositories")).toBeChecked();
+    await expect(drawer.getByLabel("Create issue")).toHaveCount(0);
+    await filter.selectOption("all");
+    await drawer.getByText("Search repositories", { exact: true }).click();
+    await drawer.getByText("Create issue", { exact: true }).click();
+    await page.keyboard.press("Escape");
+    await expect(drawer).toHaveCount(0);
+    await expect(manage).toBeFocused();
+    await captureEvidenceSurface(page, "1440x960-ling-light-external-tools-list.png");
 
     let releaseSave: (() => void) | undefined;
-    const saveGate = new Promise<void>((resolve) => {
-      releaseSave = resolve;
-    });
-    await page.route("**/teammates/teammate_ui2_mcp_input/mcp?*", async (route) => {
-      if (route.request().method() === "PUT") {
-        await saveGate;
-      }
+    const saveGate = new Promise<void>((resolve) => { releaseSave = resolve; });
+    await page.route("**/teammates/teammate_external_tools/mcp?*", async (route) => {
+      if (route.request().method() === "PUT") await saveGate;
       await route.fallback();
     });
-    const save = panel.getByRole("button", { name: "Update authorization" });
+    const save = page.getByRole("button", { name: /Save changes/ });
     await save.click();
     await expect(save).toBeDisabled();
-    await expect(repository.getByLabel("Search repositories")).toBeDisabled();
-    await expect(search).toBeEnabled();
-    await search.fill("issue");
-    await expect(repository.getByLabel("Create issue")).toBeVisible();
-    await expect(assignmentStatus).toContainText("Explicit assignment only");
-    await captureEvidenceSurface(page, "1440x960-ling-light-teammate-mcp-search-busy.png");
+    await expect(save).toHaveAttribute("aria-busy", "true");
     releaseSave?.();
-    const saveToast = page.locator(
-      '[data-ling-overlay="toast"][data-scope="teammate:teammate_ui2_mcp_input:mcp"]',
-    );
-    await expect(saveToast).toHaveCount(1);
-    await expect(saveToast).toContainText("Saved");
-    await expect(page.locator('[data-ling-overlay="toast"]')).toHaveCount(1);
-    await expect(panel.locator(".teammate-mcp-save-status")).toHaveCount(0);
-    await expect(panel.locator(".teammate-mcp-save-error")).toHaveCount(0);
-    await expect(panel).not.toContainText("Saved");
-    await search.fill("");
-    await expect(repository.getByLabel("Search repositories")).toBeEnabled();
-    await expect.poll(() => state.teammateMcpBindings[0]?.selectedToolNames).toContain("search_repositories");
 
-    await expectToolTreeScrollBoundary(repository);
+    await expect(page.locator(
+      '[data-ling-overlay="toast"][data-scope="teammate:teammate_external_tools:mcp"]',
+    )).toContainText("External tools saved");
+    await expect.poll(() => state.teammateMcpBindings.find((binding) => (
+      binding.teammateId === "teammate_external_tools"
+      && binding.serverId === "external_repository"
+    ))?.selectedToolNames).toEqual(["create_issue"]);
     await expectNoHorizontalOverflow(panel);
     await expectNoDocumentOverflow(page);
     expect(runtime).toEqual({ consoleErrors: [], pageErrors: [] });
   });
 
-  test("Ling Dark 1280 preserves per-server Search state, disabled tools, and reduced motion", async ({ page }) => {
+  test("Dark prevents new grants on a disabled service and hides the section when no service exists", async ({ page }) => {
     await prepareSurface(page, { height: 800, reducedMotion: "reduce", theme: "dark", width: 1280 });
     const runtime = watchRuntime(page);
-    await mockDaemon(page, createMcpState());
+    const state = createExternalToolsState();
+    state.mcpServers = [createMockMcpServer({
+      id: "external_disabled",
+      displayName: "Deployment service",
+      enabled: false,
+      serverKey: "deployment-service",
+      status: "disabled",
+    })];
+    state.mcpTools = [createMockMcpTool({
+      id: "external_disabled_deploy",
+      serverId: "external_disabled",
+      name: "deploy_application",
+      sideEffectLevel: "deploy",
+      title: "Deploy application",
+    })];
+    await mockDaemon(page, state);
     await page.goto("/");
 
-    const panel = await openTeammateMcpSettings(page);
-    const repository = mcpServer(panel, "Repository MCP");
-    const disabled = mcpServer(panel, "Disabled deploy MCP");
-    await repository.getByRole("button", { name: "Show tools" }).click();
-    await disabled.getByRole("button", { name: "Show tools" }).click();
+    const panel = await openExternalTools(page);
+    const disabled = serviceRow(panel, "Deployment service");
+    await expect(disabled).toContainText("Not enabled");
+    await disabled.getByRole("button", { name: "Manage Deployment service" }).click();
+    const drawer = page.getByRole("dialog", { name: "Deployment service" });
+    await expect(drawer.getByLabel("Deploy application")).toBeDisabled();
+    await expect(drawer).not.toContainText(/Select all|MCP/iu);
+    await captureEvidenceSurface(page, "1280x800-ling-dark-external-tools-drawer.png");
+    await page.keyboard.press("Escape");
 
-    const repositorySearch = repository.getByRole("searchbox", { name: "Search tools" });
-    const disabledSearch = disabled.getByRole("searchbox", { name: "Search tools" });
-    await repositorySearch.fill("repository");
-    await disabledSearch.fill("deploy");
-    await repository.getByRole("button", { name: "Hide tools" }).click();
-    await repository.getByRole("button", { name: "Show tools" }).click();
-    await expect(repositorySearch).toHaveValue("repository");
-    await expect(disabledSearch).toHaveValue("deploy");
-
-    await disabledSearch.focus();
-    await expect(disabledSearch).toBeFocused();
-    await expectFocusedInputContained(disabledSearch);
-    await expectReducedMotion(disabledSearch);
-    await expect(disabled.getByLabel("Deploy application")).toBeDisabled();
-    await expect(disabled.getByRole("button", { name: "Select all current MCP" })).toBeDisabled();
-    await expect(disabledSearch).toBeEnabled();
-
-    await disabledSearch.fill("missing-disabled-tool");
-    await expect(disabled.getByText("No tools match filters", { exact: true })).toBeVisible();
-    await disabledSearch.fill("");
-    await disabled.getByRole("button", { name: "Write or external actions" }).click();
-    await expect(disabled.getByLabel("Deploy application")).toBeVisible();
-    await expect(disabled.getByLabel("Read deployment status")).toHaveCount(0);
-    await disabledSearch.focus();
-    await expectServerRowsSeparated(panel);
-    await captureEvidenceSurface(page, "1280x800-ling-dark-teammate-mcp-disabled-filter.png");
-
-    await expect.poll(() => page.evaluate(() => matchMedia("(prefers-reduced-motion: reduce)").matches)).toBe(true);
-    await expectToolTreeScrollBoundary(repository);
-    await expectNoHorizontalOverflow(panel);
+    state.mcpServers = [];
+    state.mcpTools = [];
+    await page.reload();
+    await openToolsAndPermissions(page);
+    await expect(page.getByRole("region", { name: "External tools", exact: true })).toHaveCount(0);
+    await expect(page.getByLabel("Tools and permissions")).toBeVisible();
     await expectNoDocumentOverflow(page);
     expect(runtime).toEqual({ consoleErrors: [], pageErrors: [] });
   });
 });
 
-function createMcpState(): MockState {
+function createExternalToolsState(): MockState {
   const state = createBaseState({ approvalStatus: "expired" });
   state.aiTeammates = [createMockTeammate({
-    id: "teammate_ui2_mcp_input",
-    displayName: "MCP Input Migration Teammate",
+    id: "teammate_external_tools",
+    displayName: "External Tools Teammate",
   })];
-  state.mcpServers = [
-    createMockMcpServer({
-      id: "mcp_repository_input",
-      displayName: "Repository MCP",
-      serverKey: "repository-input",
-    }),
-    createMockMcpServer({
-      id: "mcp_disabled_deploy_input",
-      displayName: "Disabled deploy MCP",
-      enabled: false,
-      serverKey: "disabled-deploy-input",
-      status: "disabled",
-    }),
-  ];
+  state.mcpServers = [createMockMcpServer({
+    id: "external_repository",
+    displayName: "Repository service",
+    serverKey: "repository-service",
+  })];
   state.mcpTools = [
     createMockMcpTool({
-      id: "mcp_repository_search",
-      serverId: "mcp_repository_input",
+      id: "external_repository_search",
+      serverId: "external_repository",
       name: "search_repositories",
       title: "Search repositories",
     }),
     createMockMcpTool({
-      id: "mcp_repository_issue",
-      serverId: "mcp_repository_input",
+      id: "external_repository_issue",
+      serverId: "external_repository",
       name: "create_issue",
       sideEffectLevel: "write",
       title: "Create issue",
-    }),
-    ...Array.from({ length: 34 }, (_, index) => createMockMcpTool({
-      description: `Inspect repository metadata ${index + 1}`,
-      id: `mcp_repository_extra_${index + 1}`,
-      name: `repository_metadata_tool_${index + 1}`,
-      serverId: "mcp_repository_input",
-      title: `Repository metadata ${index + 1}`,
-    })),
-    createMockMcpTool({
-      id: "mcp_disabled_deploy",
-      serverId: "mcp_disabled_deploy_input",
-      name: "deploy_application",
-      sideEffectLevel: "deploy",
-      title: "Deploy application",
-    }),
-    createMockMcpTool({
-      id: "mcp_disabled_status",
-      serverId: "mcp_disabled_deploy_input",
-      name: "read_deployment_status",
-      sideEffectLevel: "read",
-      title: "Read deployment status",
     }),
   ];
   return state;
 }
 
-async function openTeammateMcpSettings(page: Page): Promise<Locator> {
+async function openExternalTools(page: Page): Promise<Locator> {
+  await openToolsAndPermissions(page);
+  const panel = page.getByRole("region", { name: "External tools", exact: true });
+  await expect(panel).toBeVisible();
+  return panel;
+}
+
+async function openToolsAndPermissions(page: Page): Promise<void> {
   await page.getByLabel("Ling Stack navigation").getByRole("button", {
     exact: true,
-    name: "MCP Input Migration Teammate",
+    name: "External Tools Teammate",
   }).click();
   const header = page.locator("[data-ui2-teammate-chat-header='true']");
   await expect(header).toBeVisible();
   await header.getByRole("button", { name: "Show details" }).click();
   const dock = page.getByRole("complementary", { name: "Private chat workspace dock" });
-  await expect(dock).toBeVisible();
-  await dock.getByRole("button", { name: "Settings" }).click();
-  const settings = page.getByLabel("Settings sections");
-  await expect(settings).toBeVisible();
-  await settings.getByRole("button", { name: "MCP", exact: true }).click();
-  const panel = page.getByLabel("MCP tool authorization");
-  await expect(panel).toBeVisible();
-  return panel;
+  await dock.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByLabel("Settings sections").getByRole("button", {
+    name: "Tools and permissions",
+    exact: true,
+  }).click();
 }
 
-function mcpServer(panel: Locator, name: string): Locator {
-  return panel.locator(".teammate-mcp-server-row").filter({ hasText: name });
+function serviceRow(panel: Locator, name: string): Locator {
+  return panel.locator(".teammate-external-tool-row").filter({ hasText: name });
 }
 
 async function prepareSurface(page: Page, input: {
@@ -243,91 +209,14 @@ async function prepareSurface(page: Page, input: {
   }, { theme: input.theme });
 }
 
-async function expectFocusedInputContained(input: Locator): Promise<void> {
-  const geometry = await input.evaluate((element) => {
-    const owner = element.parentElement;
-    const inputRect = element.getBoundingClientRect();
-    const ownerRect = owner?.getBoundingClientRect();
-    return {
-      inputBottom: inputRect.bottom,
-      inputHeight: inputRect.height,
-      inputTop: inputRect.top,
-      ownerBottom: ownerRect?.bottom ?? 0,
-      ownerHeight: ownerRect?.height ?? 0,
-      ownerTop: ownerRect?.top ?? 0,
-      ownerWidthOverflow: owner ? owner.scrollWidth - owner.clientWidth : Number.POSITIVE_INFINITY,
-    };
-  });
-  expect(geometry.ownerHeight).toBe(32);
-  expect(geometry.inputHeight).toBeLessThanOrEqual(geometry.ownerHeight);
-  expect(geometry.inputTop).toBeGreaterThanOrEqual(geometry.ownerTop - 0.5);
-  expect(geometry.inputBottom).toBeLessThanOrEqual(geometry.ownerBottom + 0.5);
-  expect(geometry.ownerWidthOverflow).toBeLessThanOrEqual(1);
-}
-
-async function expectReducedMotion(input: Locator): Promise<void> {
-  const durations = await input.evaluate((element) => {
-    const owner = element.parentElement;
-    return owner ? getComputedStyle(owner).transitionDuration
-      .split(",")
-      .map((duration) => Number.parseFloat(duration)) : [Number.POSITIVE_INFINITY];
-  });
-  expect(durations.every((duration) => duration === 0)).toBe(true);
-}
-
-async function expectToolTreeScrollBoundary(server: Locator): Promise<void> {
-  const toolList = server.locator(".teammate-mcp-tool-list");
-  await expect(toolList).toBeVisible();
-  const metrics = await toolList.evaluate((element) => ({
-    clientHeight: element.clientHeight,
-    overflowY: getComputedStyle(element).overflowY,
-    scrollHeight: element.scrollHeight,
-  }));
-  expect(metrics.overflowY).toBe("auto");
-  expect(metrics.scrollHeight).toBeGreaterThan(metrics.clientHeight + 1);
-}
-
-async function expectServerRowsSeparated(panel: Locator): Promise<void> {
-  const geometry = await panel.locator(".teammate-mcp-server-row").evaluateAll((rows) => rows.map((row) => {
-    const rowRect = row.getBoundingClientRect();
-    const treeRect = row.querySelector<HTMLElement>(".teammate-mcp-tool-tree")?.getBoundingClientRect();
-    const titleRect = row.querySelector<HTMLElement>(".teammate-mcp-server-title")?.getBoundingClientRect();
-    const summaryRect = row.querySelector<HTMLElement>(".teammate-mcp-server-summary")?.getBoundingClientRect();
-    const headerCollision = Boolean(titleRect && summaryRect
-      && titleRect.left < summaryRect.right
-      && titleRect.right > summaryRect.left
-      && titleRect.top < summaryRect.bottom
-      && titleRect.bottom > summaryRect.top);
-    return {
-      bottom: rowRect.bottom,
-      headerCollision,
-      top: rowRect.top,
-      treeBottom: treeRect?.bottom ?? rowRect.bottom,
-      treeTop: treeRect?.top ?? rowRect.top,
-    };
-  }));
-  expect(geometry.length).toBeGreaterThanOrEqual(2);
-  for (let index = 0; index < geometry.length - 1; index += 1) {
-    expect(geometry[index].headerCollision).toBe(false);
-    expect(geometry[index].bottom).toBeLessThanOrEqual(geometry[index + 1].top + 0.5);
-    expect(geometry[index].treeTop).toBeGreaterThanOrEqual(geometry[index].top - 0.5);
-    expect(geometry[index].treeBottom).toBeLessThanOrEqual(geometry[index].bottom + 0.5);
-  }
-  expect(geometry.at(-1)?.headerCollision).toBe(false);
-}
-
 async function expectNoHorizontalOverflow(locator: Locator): Promise<void> {
-  const overflow = await locator.evaluate((element) => element.scrollWidth - element.clientWidth);
-  expect(overflow).toBeLessThanOrEqual(1);
+  expect(await locator.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
 }
 
 async function expectNoDocumentOverflow(page: Page): Promise<void> {
-  const overflow = await page.evaluate(() => ({
-    body: document.body.scrollWidth - document.body.clientWidth,
-    document: document.documentElement.scrollWidth - document.documentElement.clientWidth,
-  }));
-  expect(overflow.body).toBeLessThanOrEqual(1);
-  expect(overflow.document).toBeLessThanOrEqual(1);
+  expect(await page.evaluate(() => (
+    document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1
+  ))).toBe(true);
 }
 
 function watchRuntime(page: Page): { consoleErrors: string[]; pageErrors: string[] } {

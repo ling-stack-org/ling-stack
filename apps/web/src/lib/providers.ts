@@ -656,7 +656,7 @@ export function taskProviderReadinessMessage(provider: ProviderPreset | undefine
 
 export function taskProviderReadinessGuidance(provider: ProviderPreset | undefined, t?: ProviderTranslate): string {
   if (!provider) {
-    return translateProviderText(t, "Select a provider preset or set one as the channel default.");
+    return translateProviderText(t, "Select a provider preset or use the channel Ling Agent model.");
   }
   if (!canUseProviderForRun(provider)) {
     return providerNeedsSecret(provider) && !provider.apiKeyConfigured

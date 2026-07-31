@@ -4,6 +4,7 @@ import {
   buildChannelTeamRuntimePlan,
   createBuiltinAiTeammateId,
   deriveAgentLifecycleState,
+  resolveEffectiveTeammateProviderPresetId,
   type AgentAvailabilityState,
   type AgentCapabilityManifest,
   type AiTeammate,
@@ -137,7 +138,12 @@ function deriveLifecycleForCandidate(
   now: string,
 ): { readonly availabilityState: AgentAvailabilityState; readonly qualityState: ReturnType<typeof deriveAgentLifecycleState>["qualityState"] } {
   const capabilityScope = capabilityManifest.capabilityScopes[0] ?? "general";
-  const providerPresetId = teammate.providerPresetId ?? channelDefaultProviderPresetId;
+  const providerPresetId = resolveEffectiveTeammateProviderPresetId({
+    teammate,
+    surface: "channel",
+    workspaceDefaultProviderPresetId: store.getWorkspaceSettings().defaultProviderPresetId,
+    channelDefaultProviderPresetId,
+  });
   const availabilityIncidents = uniqueAvailabilityIncidents([
     ...store.listAvailabilityIncidents({
       agentId: teammate.id,

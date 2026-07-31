@@ -480,7 +480,7 @@ export async function routeRequest(
   }
 
   if (url.pathname === "/channels") {
-    await handleChannelsCollection(request, response, config, storeRegistry);
+    await handleChannelsCollection(request, response, config, storeRegistry, secretResolver);
     return;
   }
 
@@ -531,7 +531,7 @@ export async function routeRequest(
   }
 
   if (url.pathname === "/teammates") {
-    await handleTeammatesCollection(request, response, config, storeRegistry);
+    await handleTeammatesCollection(request, response, config, storeRegistry, secretResolver);
     return;
   }
 
@@ -2059,7 +2059,7 @@ export async function routeRequest(
       await handleChannelEffectiveCouncil(request, response, config, storeRegistry, channelRoute.channelId);
       return;
     }
-    await handleChannelItem(request, response, config, storeRegistry, channelRoute.channelId);
+    await handleChannelItem(request, response, config, storeRegistry, channelRoute.channelId, secretResolver);
     return;
   }
 
@@ -2117,7 +2117,7 @@ export async function routeRequest(
   const teammateRoute = parseTeammateRoute(url.pathname);
   if (teammateRoute) {
     if (!teammateRoute.action) {
-      await handleTeammateItem(request, response, config, storeRegistry, teammateRoute.teammateId);
+      await handleTeammateItem(request, response, config, storeRegistry, teammateRoute.teammateId, secretResolver);
       return;
     }
     if (teammateRoute.action === "channels") {

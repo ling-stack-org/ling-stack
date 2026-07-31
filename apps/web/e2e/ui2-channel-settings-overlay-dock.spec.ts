@@ -3,7 +3,7 @@ import type { ProposedPlanArtifact, WorkspaceChangesResponse } from "@ling-stack
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { mockDaemon } from "./support/mock-daemon";
-import { createBaseState, type MockState } from "./support/mock-state";
+import { createBaseState, createChatProvider, createMockTeammate, isRecord, type MockState } from "./support/mock-state";
 import { openChannelChatTools, openEngineeringChannel } from "./support/test-helpers";
 
 const evidenceDirectory = fileURLToPath(new URL(
@@ -51,6 +51,75 @@ test("channel settings uses shared tabs and stable section boundaries", async ({
   }))).toBe(true);
   await expectNoDocumentOverflow(page);
   await captureEvidence(page, "1440x960-ling-light-channel-settings-general.png");
+  expect(runtimeErrors).toEqual([]);
+});
+
+test("channel settings changes only the Ling Agent model and keeps teammate model ownership", async ({ page }) => {
+  await prepareSurface(page, "light", 1440, 960);
+  const runtimeErrors = collectRuntimeErrors(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  const readyCheck = { ok: true, message: "Ready", checkedAt: "2026-07-30T00:00:00.000Z" };
+  state.providers = [
+    createChatProvider({ id: "provider_workspace", displayName: "Workspace Relay", model: "gpt-workspace", lastCheck: readyCheck }),
+    createChatProvider({ id: "provider_ling", displayName: "Ling Relay", model: "gpt-ling", lastCheck: readyCheck }),
+    createChatProvider({ id: "provider_ling_next", displayName: "Next Ling Relay", model: "gpt-ling-next", lastCheck: readyCheck }),
+    createChatProvider({ id: "provider_fixed", displayName: "Fixed Relay", model: "gpt-fixed", lastCheck: readyCheck }),
+  ];
+  state.workspaceSettings.defaultProviderPresetId = "provider_workspace";
+  state.channels = state.channels.map((channel) => isRecord(channel)
+    ? { ...channel, defaultProviderPresetId: "provider_ling" }
+    : channel);
+  state.aiTeammates = [
+    createMockTeammate({
+      id: "ling_agent",
+      kind: "system_teammate",
+      systemRole: "ling_agent",
+      protectedProfile: true,
+      displayName: "Ling Agent",
+      modelBindingMode: "workspace_default",
+    }),
+    createMockTeammate({
+      id: "teammate_builtin_engineer",
+      displayName: "Workspace Engineer",
+      modelBindingMode: "workspace_default",
+    }),
+    createMockTeammate({
+      id: "teammate_custom_fixed",
+      displayName: "Fixed Reviewer",
+      modelBindingMode: "fixed",
+      providerPresetId: "provider_fixed",
+    }),
+  ];
+  state.teammateChannelMemberships = state.aiTeammates.map((teammate, index) => ({
+    teammateId: String(teammate.id),
+    channelId: "channel_engineering",
+    isDefault: index === 0,
+    createdAt: "2026-07-30T00:00:00.000Z",
+    updatedAt: "2026-07-30T00:00:00.000Z",
+  }));
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openChannelSettings(page);
+
+  const settings = page.getByRole("region", { name: "Channel settings" });
+  const lingAgentModel = settings.getByRole("combobox", { name: "Ling Agent model" });
+  await expect(lingAgentModel).toHaveValue("provider_ling");
+  await lingAgentModel.selectOption("provider_ling_next");
+  await expect.poll(() => {
+    const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
+    return isRecord(channel) ? channel.defaultProviderPresetId : undefined;
+  }).toBe("provider_ling_next");
+
+  await page.getByRole("tablist", { name: "Channel settings navigation" }).getByRole("tab", { name: "Members" }).click();
+  const lingRow = settings.locator(".channel-teammate-chip").filter({ hasText: "Ling Agent" });
+  const workspaceRow = settings.locator(".channel-teammate-chip").filter({ hasText: "Workspace Engineer" });
+  const fixedRow = settings.locator(".channel-teammate-chip").filter({ hasText: "Fixed Reviewer" });
+  await expect(lingRow).toContainText("Ling Agent model · Next Ling Relay / gpt-ling-next");
+  await expect(workspaceRow).toContainText("Workspace default · Workspace Relay / gpt-workspace");
+  await expect(fixedRow).toContainText("Fixed model · Fixed Relay / gpt-fixed");
+  await expect(settings.locator(".channel-teammate-chip").getByRole("combobox")).toHaveCount(0);
+  expect(state.aiTeammates.map((teammate) => teammate.providerPresetId)).toEqual([undefined, undefined, "provider_fixed"]);
+  await expectNoDocumentOverflow(page);
   expect(runtimeErrors).toEqual([]);
 });
 

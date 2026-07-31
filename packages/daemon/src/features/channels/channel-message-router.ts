@@ -9,6 +9,7 @@ import type {
   RunStore,
   SecretResolver,
 } from "@ling-stack/core";
+import { resolveEffectiveTeammateProviderPresetId } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import { extractAssistantText } from "../../shared/assistant-text.js";
@@ -356,14 +357,16 @@ function isChannelMember(store: RunStore, teammateId: string, channelId: string)
 }
 
 function resolveRunnableProviderPresetId(input: ChannelMessageRouteInput, teammate: AiTeammate | undefined): string | undefined {
-  const candidateIds = [
-    input.requestedProviderPresetId,
-    teammate?.providerPresetId,
-    input.channel.defaultProviderPresetId,
-    ...input.store.listProviderPresets({ enabled: true })
-      .filter((preset) => preset.capabilities.includes("chat") && preset.api !== "media-job")
-      .map((preset) => preset.id),
-  ].filter((id): id is string => Boolean(id));
+  const resolvedProviderPresetId = teammate
+    ? resolveEffectiveTeammateProviderPresetId({
+        teammate,
+        surface: "channel",
+        requestedProviderPresetId: input.requestedProviderPresetId,
+        workspaceDefaultProviderPresetId: input.store.getWorkspaceSettings().defaultProviderPresetId,
+        channelDefaultProviderPresetId: input.channel.defaultProviderPresetId,
+      })
+    : input.channel.defaultProviderPresetId;
+  const candidateIds = resolvedProviderPresetId ? [resolvedProviderPresetId] : [];
   for (const providerPresetId of [...new Set(candidateIds)]) {
     try {
       resolveProviderForRun(input.store, {

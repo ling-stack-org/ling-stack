@@ -3,8 +3,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { test } from "node:test";
+import { createSqliteRunStore } from "@ling-stack/core";
 import { createDaemonServer } from "../dist/index.js";
 import { computeNextRunAt, computeNextRunAtFromRRule } from "../dist/features/automations/scheduler.js";
+import { prepareChannelCreateBody } from "./conversation-model-test-fixture.mjs";
 import { ensureGitRepoForChannelPost } from "./git-test-helpers.mjs";
 
 test("automation API creates templates, previews context, runs once, deduplicates, and blocks disabled or archived definitions", async () => {
@@ -25,6 +27,7 @@ test("automation API creates templates, previews context, runs once, deduplicate
       kind: "daily_brief",
       title: "Daily Brief",
       channelId: channel.id,
+      trigger: { type: "manual" },
     });
     assert.equal(daily.automation.kind, "daily_brief");
     assert.equal(daily.automation.status, "enabled");
@@ -35,6 +38,7 @@ test("automation API creates templates, previews context, runs once, deduplicate
       kind: "weekly_review",
       title: "Weekly Review",
       channelId: channel.id,
+      trigger: { type: "manual" },
     });
     assert.equal(weekly.automation.kind, "weekly_review");
 
@@ -345,6 +349,7 @@ test("automation scheduler records readable errors when a scheduled automation c
   const daemon = await startDaemonForTest(runner);
   try {
     const channel = (await createChannel(daemon.url, cwd)).channel;
+    simulateLegacyChannelWithoutModel(cwd, channel.id);
     const scheduled = await postJson(`${daemon.url}/automations?cwd=${encodeURIComponent(cwd)}`, {
       kind: "daily_brief",
       title: "Providerless Interval Brief",
@@ -411,7 +416,11 @@ class RecordingRunner {
 }
 
 async function startDaemonForTest(runner) {
-  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0 }, { runner });
+  const daemon = createDaemonServer({
+    host: "127.0.0.1",
+    port: 0,
+    channels: { terminalReports: false },
+  }, { runner });
   await daemon.start();
   const address = daemon.server.address();
   assert.ok(address && typeof address === "object");
@@ -446,6 +455,15 @@ async function createStaticChatProvider(baseUrl, cwd, overrides = {}) {
   });
 }
 
+function simulateLegacyChannelWithoutModel(cwd, channelId) {
+  const store = createSqliteRunStore(cwd);
+  try {
+    store.updateChannel(channelId, { defaultProviderPresetId: null }, new Date().toISOString());
+  } finally {
+    store.close();
+  }
+}
+
 async function getJson(url) {
   const response = await fetch(url);
   if (!response.ok) {
@@ -463,11 +481,12 @@ async function getText(url) {
 }
 
 async function postJson(url, body) {
-  await ensureGitRepoForChannelPost(url, body);
+  const preparedBody = await prepareChannelCreateBody(url, body);
+  await ensureGitRepoForChannelPost(url, preparedBody);
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify(preparedBody),
   });
   if (!response.ok) {
     assert.fail(`${response.status} ${response.statusText}: ${await response.text()}`);

@@ -16,7 +16,9 @@ export interface LocalTeammateDraft {
   readonly description: string;
   readonly avatarTone?: string;
   readonly avatarImageAttachmentId?: string;
+  readonly modelBindingMode?: AiTeammate["modelBindingMode"];
   readonly providerPresetId?: string;
+  readonly effectiveProviderPresetId?: string;
   readonly runnerId?: string;
   readonly systemPrompt?: string;
   readonly appendSystemPrompt: readonly string[];
@@ -39,13 +41,13 @@ export interface LocalTeammateCreateInput {
   readonly description: string;
   readonly avatarTone?: string;
   readonly avatarFile?: File;
-  readonly providerPresetId?: string;
+  readonly providerPresetId: string;
   readonly modelLabel: string;
   readonly channelIds: readonly string[];
 }
 
 export type TeammateCreateMode = "role_select" | "custom_setup" | "setup_progress";
-export type TeammateUpdateAction = "update" | "profile-save" | "persona-apply" | "model-save";
+export type TeammateUpdateAction = "update" | "rename" | "profile-save" | "persona-apply" | "model-save" | "permissions-save";
 export type TeammateCreateSetupStep = "workspace" | "model" | "record" | "avatar" | "channels" | "memory" | "refresh";
 export type TeammateCreateStepState = "pending" | "running" | "success" | "failed" | "skipped";
 

@@ -1,9 +1,10 @@
 import type { Translate } from "../../i18n.js";
 import { providerSecretReady } from "../../lib/providers.js";
-import type { ProviderPreset } from "../../types.js";
+import type { AiTeammateModelBindingMode, ProviderPreset } from "../../types.js";
+
+export const workspaceDefaultModelOptionValue = "__workspace_default__";
 
 export type TeammateModelPrimaryState =
-  | "managed"
   | "unassigned"
   | "missing"
   | "disabled"
@@ -25,6 +26,8 @@ export interface TeammateModelFeedback {
 }
 
 export interface TeammateModelViewModel {
+  readonly bindingMode: AiTeammateModelBindingMode;
+  readonly canFollowWorkspaceDefault: boolean;
   readonly emptyInventory: boolean;
   readonly feedback?: TeammateModelFeedback;
   readonly isProtected: boolean;
@@ -34,45 +37,43 @@ export interface TeammateModelViewModel {
   readonly primaryState: TeammateModelPrimaryState;
   readonly primaryTone: "danger" | "info" | "neutral" | "success" | "warning";
   readonly providerLabel: string;
+  readonly selectionValue: string;
   readonly selectedProvider?: ProviderPreset;
-  readonly selectedProviderId: string;
 }
 
 export function buildTeammateModelViewModel({
+  canFollowWorkspaceDefault,
   isProtected,
+  modelBindingMode,
   providers,
   selectedProviderId,
+  workspaceDefaultProviderPresetId,
   t,
 }: {
+  readonly canFollowWorkspaceDefault: boolean;
   readonly isProtected: boolean;
+  readonly modelBindingMode: AiTeammateModelBindingMode;
   readonly providers: readonly ProviderPreset[];
   readonly selectedProviderId: string;
+  readonly workspaceDefaultProviderPresetId?: string;
   readonly t: Translate;
 }): TeammateModelViewModel {
-  if (isProtected) {
-    return {
-      emptyInventory: false,
-      feedback: {
-        detail: t("Ling Agent uses the model selected by its active channel or workspace."),
-        tone: "neutral",
-      },
-      isProtected: true,
-      modelLabel: t("Automatic"),
-      options: [],
-      primaryLabel: t("Managed by Ling Stack"),
-      primaryState: "managed",
-      primaryTone: "info",
-      providerLabel: t("Channel or workspace"),
-      selectedProviderId: "",
-    };
-  }
-
-  const selectedProvider = selectedProviderId
-    ? providers.find((provider) => provider.id === selectedProviderId)
+  const effectiveBindingMode = isProtected ? "workspace_default" : modelBindingMode;
+  const effectiveProviderId = effectiveBindingMode === "workspace_default"
+    ? workspaceDefaultProviderPresetId ?? ""
+    : selectedProviderId;
+  const selectedProvider = effectiveProviderId
+    ? providers.find((provider) => provider.id === effectiveProviderId)
     : undefined;
-  const primaryState = resolvePrimaryState(selectedProviderId, selectedProvider);
-  const copy = primaryStateCopy(primaryState, providers.length === 0, t);
-  const missingOption = selectedProviderId && !selectedProvider
+  const primaryState = resolvePrimaryState(effectiveProviderId, selectedProvider);
+  const copy = primaryStateCopy(
+    primaryState,
+    providers.length === 0,
+    effectiveBindingMode,
+    selectedProvider,
+    t,
+  );
+  const missingOption = effectiveBindingMode === "fixed" && selectedProviderId && !selectedProvider
     ? [{
         disabled: true,
         id: selectedProviderId,
@@ -80,6 +81,11 @@ export function buildTeammateModelViewModel({
       }]
     : [];
   const options = [
+    ...(canFollowWorkspaceDefault ? [{
+      disabled: false,
+      id: workspaceDefaultModelOptionValue,
+      label: workspaceDefaultOptionLabel(workspaceDefaultProviderPresetId, providers, t),
+    }] : []),
     ...missingOption,
     ...providers.map((provider): TeammateModelOption => {
       const identity = `${provider.displayName} / ${provider.model}`;
@@ -102,18 +108,39 @@ export function buildTeammateModelViewModel({
   ];
 
   return {
-    emptyInventory: providers.length === 0 && !selectedProviderId,
+    bindingMode: effectiveBindingMode,
+    canFollowWorkspaceDefault,
+    emptyInventory: !isProtected && providers.length === 0 && !canFollowWorkspaceDefault,
     feedback: copy.feedback,
-    isProtected: false,
-    modelLabel: selectedProvider?.model ?? (selectedProviderId ? t("Unavailable") : "-"),
-    options,
+    isProtected,
+    modelLabel: selectedProvider?.model ?? (effectiveProviderId ? t("Unavailable") : "-"),
+    options: isProtected ? [] : options,
     primaryLabel: copy.label,
     primaryState,
     primaryTone: copy.tone,
-    providerLabel: selectedProvider?.displayName ?? (selectedProviderId ? t("Unavailable") : t("None")),
+    providerLabel: selectedProvider?.displayName ?? (effectiveProviderId ? t("Unavailable") : t("None")),
+    selectionValue: effectiveBindingMode === "workspace_default"
+      ? workspaceDefaultModelOptionValue
+      : selectedProviderId,
     selectedProvider,
-    selectedProviderId,
   };
+}
+
+function workspaceDefaultOptionLabel(
+  workspaceDefaultProviderPresetId: string | undefined,
+  providers: readonly ProviderPreset[],
+  t: Translate,
+): string {
+  if (!workspaceDefaultProviderPresetId) {
+    return t("Use workspace default (not configured)");
+  }
+  const provider = providers.find((item) => item.id === workspaceDefaultProviderPresetId);
+  if (!provider) {
+    return t("Use workspace default (unavailable)");
+  }
+  return t("Use workspace default (current: {model})", {
+    model: `${provider.displayName} / ${provider.model}`,
+  });
 }
 
 function resolvePrimaryState(
@@ -137,6 +164,8 @@ function isChatProvider(provider: ProviderPreset): boolean {
 function primaryStateCopy(
   state: TeammateModelPrimaryState,
   emptyInventory: boolean,
+  bindingMode: AiTeammateModelBindingMode,
+  provider: ProviderPreset | undefined,
   t: Translate,
 ): {
   readonly feedback?: TeammateModelFeedback;
@@ -144,18 +173,18 @@ function primaryStateCopy(
   readonly tone: TeammateModelViewModel["primaryTone"];
 } {
   switch (state) {
-    case "managed":
-      return { label: t("Managed by Ling Stack"), tone: "info" };
     case "unassigned":
       return {
-        label: t("No model selected"),
+        label: bindingMode === "workspace_default" ? t("Workspace default is not configured") : t("No model selected"),
         tone: "warning",
-        ...(emptyInventory ? {} : {
-          feedback: {
-            detail: t("Choose a configured chat model, or open Model Workbench to add one."),
-            tone: "warning" as const,
-          },
-        }),
+        feedback: {
+          detail: bindingMode === "workspace_default"
+            ? t("Set a workspace default chat model in Model Workbench.")
+            : emptyInventory
+              ? t("Configure a chat model in Model Workbench before assigning one.")
+              : t("Choose a configured chat model, or open Model Workbench to add one."),
+          tone: "warning" as const,
+        },
       };
     case "missing":
       return {
@@ -212,6 +241,11 @@ function primaryStateCopy(
         tone: "danger",
       };
     case "ready":
-      return { label: t("Ready for replies"), tone: "success" };
+      return {
+        label: bindingMode === "workspace_default"
+          ? t("Workspace default · {model}", { model: provider?.model ?? "-" })
+          : t("Fixed model · {model}", { model: provider?.model ?? "-" }),
+        tone: "success",
+      };
   }
 }

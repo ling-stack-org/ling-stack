@@ -9,6 +9,7 @@ import {
   type RunStore,
   type WorkflowGraph,
   type WorkflowGraphNode,
+  resolveEffectiveTeammateProviderPresetId,
 } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
@@ -184,12 +185,16 @@ function resolveProposalParticipants(
     if (!teammateCanWorkInEffectiveChannel(store, channel, teammate.id)) {
       throw new HttpError(400, "proposal_teammate_not_in_channel", `${teammate.displayName} is not available in this channel. Add it to the channel or edit the proposal before starting.`);
     }
+    const providerPresetId = resolveEffectiveTeammateProviderPresetId({
+      teammate,
+      surface: "channel",
+      workspaceDefaultProviderPresetId: store.getWorkspaceSettings().defaultProviderPresetId,
+      channelDefaultProviderPresetId: channel.defaultProviderPresetId,
+    });
     return {
       step,
       teammate,
-      ...((teammate.providerPresetId ?? channel.defaultProviderPresetId)
-        ? { providerPresetId: teammate.providerPresetId ?? channel.defaultProviderPresetId }
-        : {}),
+      ...(providerPresetId ? { providerPresetId } : {}),
     };
   });
 }

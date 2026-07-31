@@ -82,6 +82,7 @@ export * from "./conversation-revision-types.js";
 export * from "./effective-skills.js";
 export * from "./mcp-types.js";
 export * from "./workspace-types.js";
+export * from "./teammate-model-binding.js";
 export * from "./patch/index.js";
 export * from "./runtime-permissions.js";
 export * from "./exec/unified-exec-types.js";

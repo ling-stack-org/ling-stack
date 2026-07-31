@@ -70,3 +70,49 @@ surfaces use tokens and do not introduce hard-coded white, black or status color
   major behavior.
 - No API, contract, database, route, policy precedence or protected-teammate mutation behavior changed.
 - `TEAMMATE-TASKS-001` and Council A were confirmed separately and are not claimed by this evidence package.
+
+## 2026-07-31 Replacement Evidence
+
+The capture and verification record above remains historical evidence for the former read-only Permissions Tab. It no
+longer describes the reachable product surface. The current ordinary-teammate navigation combines permissions and MCP
+authorization under `Tools and permissions`; protected Ling Agent does not expose this editable section.
+
+The current teammate may enable or disable its own supported tools and choose its additional high-risk confirmation
+level. The existing teammate update contract remains the only persistence owner. Workspace policy is still the
+authoritative ceiling: a teammate cannot override a Workspace deny, and only an actual Workspace restriction exposes a
+scoped repair action. Healthy state has no jump to global Settings. MCP authorization is composed into the same section
+only when at least one Server exists.
+
+| File | Viewport / Theme | Current state | SHA-256 |
+|---|---|---|---|
+| `1440x960-ling-light-editable-tools-permissions.png` | 1440x960 / `ling-light`, en-US | editable current-teammate capabilities, additional confirmation level, no redundant technical disclosure and saved Toast | `7259ec819941160f37f636c69f35662f4a0b64e18bd26c11c0cf5bc4f5d7c801` |
+| `1280x800-ling-dark-workspace-deny-zh-CN.png` | 1280x800 / `ling-dark`, zh-CN | Workspace deny remains authoritative and provides the only scoped repair route | `e3b6ea7c5fc53103a1f28f1848eb8c233cde502b93d637a0b910e177e3968ddb` |
+
+Both current PNGs were reviewed at original resolution. The complete teammate-management matrix passed `48/48`, MCP
+input/status regression passed `7/7`, and Web typecheck, lint, i18n and unit tests passed. No daemon route, contract,
+SQLite schema or permission-precedence rule changed.
+
+The screenshots above are recaptured whenever the focused evidence test runs. The current permission surface omits the
+former `Technical information` disclosure entirely; raw tool ids, required actions and per-tool Workspace decision
+rows are no longer a user-facing layer.
+
+The disclosure-removal recapture passed the focused Permissions suite `4/4`, Web typecheck, lint, i18n and
+`git diff --check`. The wider teammate-management `48/48` result above remains the immediately preceding integration
+baseline and was not repeated after this layout-only removal.
+
+## 2026-07-31 External Tools Replacement Evidence
+
+The former teammate MCP tree is replaced by the user-facing `External tools` section inside `Tools and permissions`.
+The default layer shows only service name, productized availability, allowed capability count and Manage. A shared
+right Drawer owns capability selection; raw names, server ids, transport, secret state, bulk future-tool authorization
+and connection-layer descriptions remain absent. Existing teammate MCP bindings and Run filtering remain authoritative.
+
+| File | Viewport / Theme | Current state | SHA-256 |
+|---|---|---|---|
+| `1440x960-ling-light-external-tools-list.png` | 1440x960 / `ling-light`, en-US | compact service list, one allowed capability, Header-owned save and restored keyboard focus | `d02bdd2ae02daf8387013f7e6a4bb81396b9b688beb7ac581c8522ad11ac5d91` |
+| `1280x800-ling-dark-external-tools-drawer.png` | 1280x800 / `ling-dark`, en-US, reduced motion | disabled service, natural-height capability list and no new-grant control | `f2d9d2eca8fa0ecade682c3ca1990b33893941380a1674e47147f9de35707edd` |
+
+Both PNGs were reviewed at original resolution. The focused external-tool plus MCP integration matrix passes `7/7`,
+legacy-writer regression passes `8/8`, and Web typecheck, lint, i18n plus `git diff --check` pass. Browser assertions
+cover Drawer Escape/focus restoration, search/filter, selected payloads, disabled-service revocation, productized
+failure copy, stale identity ownership, Light/Dark overflow and empty-service suppression.

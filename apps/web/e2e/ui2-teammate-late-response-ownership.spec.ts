@@ -284,9 +284,11 @@ test("avatar profile and persona requests settle independently", async ({ page }
   await profileStarted.promise;
 
   await profile.getByText("Advanced profile", { exact: true }).click();
-  const persona = profile.getByLabel("Persona import");
-  await persona.getByLabel("Persona content").fill("# Concurrent persona\nKeep every async owner independent.");
-  const preview = persona.getByRole("button", { name: "Preview draft" });
+  await profile.getByRole("button", { name: "Import role profile" }).click();
+  const persona = page.getByRole("dialog", { name: "Import role profile" });
+  await persona.getByRole("radio", { name: "Paste content" }).click();
+  await persona.getByLabel("Role profile content").fill("# Concurrent persona\nKeep every async owner independent.");
+  const preview = persona.getByRole("button", { name: "Check content" });
   await preview.click();
   await personaStarted.promise;
 
@@ -308,12 +310,13 @@ test("avatar profile and persona requests settle independently", async ({ page }
   releaseAvatar.resolve();
   await avatarResponse;
   await expect(cropDialog).toHaveCount(0);
-  await expect(save).not.toHaveAttribute("aria-busy", "true");
   await expect(preview).not.toHaveAttribute("aria-busy", "true");
   await expect(page.getByText("Teammate profile saved", { exact: true })).toBeVisible();
-  await expect(persona.getByText("Draft ready", { exact: true })).toBeVisible();
+  await expect(persona.getByLabel("Role profile preview")).toBeVisible();
   await expect(page.getByText("Avatar updated", { exact: true })).toBeVisible();
-  await expect(profile.getByRole("button", { name: "Change avatar" })).not.toHaveAttribute("aria-busy", "true");
+  await persona.getByRole("button", { name: "Cancel" }).click();
+  await expect(save).not.toHaveAttribute("aria-busy", "true");
+  await expect(profile.getByRole("button", { name: "Avatar options" })).not.toHaveAttribute("aria-busy", "true");
   expect(runtimeErrors).toEqual([]);
 });
 

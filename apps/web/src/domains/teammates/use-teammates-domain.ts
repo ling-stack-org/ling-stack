@@ -40,7 +40,7 @@ export interface TeammateCreateInput {
   readonly description: string;
   readonly avatarTone?: string;
   readonly avatarFile?: File;
-  readonly providerPresetId?: string;
+  readonly providerPresetId: string;
   readonly modelLabel: string;
   readonly channelIds: readonly string[];
 }
@@ -160,7 +160,7 @@ export function useTeammatesDomain(input: {
     emit({ step: "workspace", state: "running" });
     emit({ step: "workspace", state: "success", message: input.t("Workspace ready") });
 
-    if (!createInput.providerPresetId) {
+    if (!createInput.providerPresetId.trim()) {
       const message = input.t("Choose a model before creating.");
       emit({ step: "model", state: "failed", message });
       return { ok: false, message };

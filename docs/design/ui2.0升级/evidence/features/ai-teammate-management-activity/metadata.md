@@ -1,5 +1,8 @@
 # P8.1k AI Teammate Recent Activity Evidence
 
+> Historical evidence: the Activity Settings tab documented here was removed by product decision on 2026-07-30.
+> The private-chat Dock activity projection remains supported.
+
 ## Scope
 
 - Captured: 2026-07-22, Asia/Shanghai.

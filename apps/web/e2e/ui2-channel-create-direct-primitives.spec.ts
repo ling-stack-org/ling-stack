@@ -106,9 +106,9 @@ test("Channel Create direct Dialog closes once through Escape and outside click 
   await trigger.click();
   let dialog = page.getByRole("dialog", { name: "New channel" });
   await expectDirectDialogRows(dialog);
+  await expectSharedSelect(dialog.getByRole("combobox", { name: "Ling Agent model" }), "md");
   await expect(dialog.locator(".create-dialog-shell, .create-dialog-body, .create-dialog-actions")).toHaveCount(0);
   await dialog.getByText("Advanced settings", { exact: true }).click();
-  await expectSharedSelect(dialog.getByRole("combobox", { name: "Base model" }), "md");
   await expectSharedSelect(dialog.getByRole("combobox", { name: "AI response language" }), "md");
 
   await page.keyboard.press("Escape");
@@ -120,6 +120,28 @@ test("Channel Create direct Dialog closes once through Escape and outside click 
   await page.locator(".ling-ui-dialog-overlay").click({ position: { x: 4, y: 4 } });
   await expect(dialog).toHaveCount(0);
   await expect(trigger).toBeFocused();
+  expect(runtimeErrors).toEqual([]);
+});
+
+test("Channel Create blocks new users without a runnable model and offers one recovery action", async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page);
+  await prepareSurface(page, "light", 1440, 960);
+  const state = createChannelCreateState();
+  state.providers = [];
+  delete state.workspaceSettings.defaultProviderPresetId;
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "No channel yet" }).click();
+  const dialog = page.getByRole("dialog", { name: "New channel" });
+  await expect(dialog.getByRole("combobox", { name: "Ling Agent model" })).toBeDisabled();
+  await expect(dialog.getByRole("button", { name: "Create channel" })).toBeDisabled();
+  await expect(dialog.getByText("Choose a model before creating.", { exact: true })).toBeVisible();
+  const recovery = dialog.getByRole("button", { name: "Open Model Workbench" });
+  await expect(recovery).toHaveCount(1);
+  await recovery.click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByLabel("Settings sections").getByRole("button", { name: "Model Workbench" })).toHaveClass(/active/u);
   expect(runtimeErrors).toEqual([]);
 });
 
@@ -142,8 +164,20 @@ test("Channel Create keeps project, provider, language, payload, and busy dismis
   await dialog.getByRole("menuitemradio").first().click();
 
   await dialog.getByText("Advanced settings", { exact: true }).click();
-  const provider = dialog.getByRole("combobox", { name: "Base model" });
+  const provider = dialog.getByRole("combobox", { name: "Ling Agent model" });
   const language = dialog.getByRole("combobox", { name: "AI response language" });
+  const writeLock = dialog.getByRole("combobox", { name: "Write lock" });
+  const advancedLayout = await Promise.all([
+    language.boundingBox(),
+    writeLock.boundingBox(),
+    dialog.locator(".channel-create-advanced-body > .runtime-policy-summary").boundingBox(),
+  ]);
+  expect(advancedLayout.every(Boolean)).toBe(true);
+  expect(Math.abs((advancedLayout[0]?.y ?? 0) - (advancedLayout[1]?.y ?? 0))).toBeLessThanOrEqual(1);
+  expect(advancedLayout[2]?.y ?? 0).toBeGreaterThan(
+    Math.max((advancedLayout[0]?.y ?? 0) + (advancedLayout[0]?.height ?? 0), (advancedLayout[1]?.y ?? 0) + (advancedLayout[1]?.height ?? 0)),
+  );
+  expect(advancedLayout[2]?.width ?? 0).toBeGreaterThan((advancedLayout[0]?.width ?? 0) * 1.8);
   await provider.selectOption("provider_channel_create_direct");
   await language.selectOption("en-US");
   await dialog.getByRole("button", { name: "Create channel" }).click();
