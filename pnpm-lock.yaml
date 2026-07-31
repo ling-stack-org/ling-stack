@@ -333,6 +333,15 @@ importers:
         specifier: workspace:*
         version: link:../plugin-sdk
 
+  packages/remote-client:
+    dependencies:
+      '@ling-stack/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@ling-stack/remote-protocol':
+        specifier: workspace:*
+        version: link:../remote-protocol
+
   packages/remote-protocol:
     dependencies:
       '@ling-stack/contracts':
