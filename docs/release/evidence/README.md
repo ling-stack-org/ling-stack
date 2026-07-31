@@ -189,6 +189,19 @@ acknowledgement only; it does not replace a real provider run or the clean-host 
 capture-indicator, accessibility, signing, notarization, or distribution gates. Producer
 failures use `macos-acceptance-failure.schema.json` and are diagnostic only.
 
+## Locked Computer Control feasibility evidence
+
+`locked-control-darwin-26.5.2-arm64-unsupported.json` is the content-free result of the
+attended disposable-target probe for the repository-fixed embedded Cua Driver 0.8.3 Ling
+build 1. It binds the exact helper/provider hashes and records that same-session continuity,
+exact-window capture and secure-surface exclusion passed while both process/window-scoped AX
+and background pixel input failed to produce a target-app acknowledgement after lock. It is
+non-promotional evidence: the macOS platform cell remains Off with
+`locked_control_input_unavailable`. It contains no screenshot, window content, account name,
+keystroke, password, biometric result or raw session identifier. A future upstream input
+backend change requires a new adapter version and a fresh attended probe; this negative
+artifact must not be edited into a positive result.
+
 Windows report consumers must use the asynchronous `validateWindowsAcceptanceReport()`
 entrypoint, which rehashes every referenced file and verifies the release harness scripts
 against the candidate commit's Git blobs using a caller-fixed trusted Git executable. The

@@ -1,20 +1,24 @@
-# Windows Locked Computer Control Handoff
+# Windows Locked-Surface Denial Evidence Handoff
+
+> **Historical security evidence, not a feature-enablement plan.** The current product
+> policy is [Lock-Aware Task Continuation](../design/locked-computer-control-policy.md): tasks
+> continue, Computer Control pauses, and a fresh normal generation may recover only after
+> unlock. Windows acceptance no longer needs to prove positive locked input.
 
 ## Verdict boundary
 
-This handoff delivers the Windows x64 native helper source, deterministic build/signing
+This handoff retains the Windows x64 native helper source, deterministic build/signing
 command and content-free WTS/Winlogon/UAC/Session-0 denial probes. It does **not** enable
 locked Computer Control and it does not authorize the macOS owner or CI to report Windows
-PASS.
+real-machine acceptance.
 
 The current helper deliberately returns negative capture/input/secure-surface attestation.
 The product policy therefore remains `disabled_by_build`. A successful run below means only
 that the current fail-closed boundary was observed on that Windows machine.
 
 Windows acceptance ownership remains with the Windows team. Do not convert any handoff
-report to `supported_restricted` until a later helper proves attended same-user capture and
-input, secure-surface exclusion, per-OS-emission fencing, signed packaging and the complete
-release matrix.
+report to `supported_restricted`; the retained reports are negative boundary evidence only.
+A future positive locked-control proposal must begin with a new product/security design.
 
 ## Prerequisites
 

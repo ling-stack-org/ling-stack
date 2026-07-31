@@ -53,6 +53,83 @@ test("coordinator keeps bundled gate closed and never falls through to PATH/exte
   await coordinator.shutdown();
 });
 
+test("a session boundary raised before host composition remains latched through enable", async () => {
+  const coordinator = createCoordinator();
+  const enableStarted = deferred();
+  const releaseEnable = deferred();
+  let disableCount = 0;
+  coordinator.enableInternal = async () => {
+    coordinator.generation = 1;
+    enableStarted.resolve();
+    await releaseEnable.promise;
+    coordinator.host = { generation: 1, async stop() {} };
+    coordinator.proxy = { closeCallGate() {}, async close() {} };
+    coordinator.leasePublisher = { async revoke() {} };
+    return coordinator.publishSnapshot({
+      lifecycle: "active",
+      providerState: "desktop_unavailable",
+      generation: 1,
+    });
+  };
+  coordinator.beginDisable = async () => {
+    disableCount += 1;
+    coordinator.host = undefined;
+    coordinator.proxy = undefined;
+    coordinator.leasePublisher = undefined;
+    coordinator.publishSnapshot({
+      lifecycle: "disabled",
+      providerState: "included",
+      generation: 1,
+      reason: "system_lock",
+    });
+  };
+
+  const enabling = coordinator.enable();
+  await enableStarted.promise;
+  await coordinator.suspendForSystem("system_lock");
+  assert.equal(coordinator.windowsSessionSuspended, true);
+  assert.deepEqual(coordinator.pendingWindowsSessionSuspension, {
+    reason: "system_lock",
+    generation: 1,
+  });
+
+  releaseEnable.resolve();
+  await enabling;
+  await waitFor(() => disableCount === 1 && coordinator.sessionTransitionPromise === undefined);
+  assert.equal(coordinator.windowsSessionSuspended, true);
+  assert.equal(coordinator.snapshot.providerState, "interactive_session_required");
+  assert.equal(coordinator.providerHost, undefined);
+  await coordinator.shutdown();
+});
+
+test("retiring an enable-time candidate fences input before partial cleanup", async () => {
+  const coordinator = createCoordinator();
+  const order = [];
+  coordinator.windowsSessionSuspended = true;
+  coordinator.windowsSessionSuspensionReason = "system_lock";
+  coordinator.generation = 2;
+  coordinator.host = {
+    generation: 2,
+    async fenceInput() { order.push("fence"); },
+    async stop() { order.push("host.stop"); },
+  };
+  coordinator.proxy = {
+    closeCallGate() {},
+    async close() { order.push("proxy.close"); },
+  };
+  coordinator.leasePublisher = {
+    async revoke() { order.push("lease.revoke"); },
+  };
+
+  const snapshot = await coordinator.retainSuspendedGeneration(2);
+
+  assert.equal(order[0], "fence");
+  assert.deepEqual(new Set(order.slice(1)), new Set(["lease.revoke", "proxy.close", "host.stop"]));
+  assert.equal(snapshot.providerState, "interactive_session_required");
+  assert.equal(coordinator.providerHost, undefined);
+  await coordinator.shutdown();
+});
+
 test("pre-spawn failure classification separates unavailable verification from invalid bytes", () => {
   assert.equal(
     classifyCuaDriverPreSpawnFailure(new CuaDriverPlatformIdentityVerificationError("unavailable")),

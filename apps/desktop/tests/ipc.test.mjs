@@ -523,12 +523,7 @@ test("Desktop IPC exposes computer-control permission commands only to the main 
         calls.push(["openPermissionSettings", permission]);
         return { accepted: true };
       },
-      authorizeLockedComputerControl: async () => {
-        calls.push(["authorizeLockedControl"]);
-        return { accepted: false, reason: "locked_control_disabled_by_build" };
-      },
       revokeLockedComputerControl: async () => {
-        calls.push(["revokeLockedControl"]);
         return { accepted: true };
       },
     },
@@ -562,35 +557,11 @@ test("Desktop IPC exposes computer-control permission commands only to the main 
     { accepted: true },
   );
   assert.deepEqual(
-    await ipc.invoke(DESKTOP_IPC_CHANNELS.computerControlAuthorizeLocked, mainEvent),
-    { accepted: false, reason: "locked_control_disabled_by_build" },
-  );
-  assert.deepEqual(
-    await ipc.invoke(DESKTOP_IPC_CHANNELS.computerControlRevokeLocked, mainEvent),
-    { accepted: true },
-  );
-  assert.deepEqual(
     await ipc.invoke(DESKTOP_IPC_CHANNELS.computerControlRequestPermissions, previewEvent),
     { accepted: false, reason: "unauthorized_sender" },
   );
   assert.deepEqual(
     await ipc.invoke(DESKTOP_IPC_CHANNELS.computerControlRequestPermissions, foreignEvent),
-    { accepted: false, reason: "unauthorized_sender" },
-  );
-  assert.deepEqual(
-    await ipc.invoke(DESKTOP_IPC_CHANNELS.computerControlAuthorizeLocked, previewEvent),
-    { accepted: false, reason: "unauthorized_sender" },
-  );
-  assert.deepEqual(
-    await ipc.invoke(DESKTOP_IPC_CHANNELS.computerControlAuthorizeLocked, foreignEvent),
-    { accepted: false, reason: "unauthorized_sender" },
-  );
-  assert.deepEqual(
-    await ipc.invoke(DESKTOP_IPC_CHANNELS.computerControlRevokeLocked, previewEvent),
-    { accepted: false, reason: "unauthorized_sender" },
-  );
-  assert.deepEqual(
-    await ipc.invoke(DESKTOP_IPC_CHANNELS.computerControlRevokeLocked, foreignEvent),
     { accepted: false, reason: "unauthorized_sender" },
   );
   assert.deepEqual(
@@ -613,8 +584,6 @@ test("Desktop IPC exposes computer-control permission commands only to the main 
     ["requestPermissions"],
     ["openPermissionSettings", "accessibility"],
     ["openPermissionSettings", "screen_recording"],
-    ["authorizeLockedControl"],
-    ["revokeLockedControl"],
   ]);
 
   permissionRequestResult = { accepted: false, reason: "unsupported_platform_action" };

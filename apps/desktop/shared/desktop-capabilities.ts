@@ -117,8 +117,6 @@ export interface ComputerControlDesktopCapability {
   readonly platform: "macos" | "windows";
   requestPermissions(): Promise<DesktopCommandResult>;
   openPermissionSettings(permission: ComputerControlPermissionKind): Promise<DesktopCommandResult>;
-  authorizeLockedControl(): Promise<DesktopCommandResult>;
-  revokeLockedControl(): Promise<DesktopCommandResult>;
 }
 
 export interface DesktopNavigationIntent {

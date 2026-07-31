@@ -79,12 +79,19 @@ private func readSession() -> SessionSnapshot? {
           !consoleUser.isEmpty else {
         return nil
     }
-    let session = CGSessionCopyCurrentDictionary() as? [String: Any] ?? [:]
-    let onConsole = session["kCGSessionOnConsoleKey"] as? Bool ?? false
-    let locked = session["CGSSessionScreenIsLocked"] as? Bool ?? true
-    let sessionIdentifier = session["kCGSSessionIDKey"].map(String.init(describing:)) ?? "unknown"
+    guard let session = CGSessionCopyCurrentDictionary() as? [String: Any],
+          let onConsole = session["kCGSSessionOnConsoleKey"] as? Bool,
+          let auditSessionIdentifier = session["kCGSSessionAuditIDKey"],
+          let sessionUUID = session["CGSSessionUniqueSessionUUID"] as? String,
+          !sessionUUID.isEmpty else {
+        return nil
+    }
+    // On macOS the lock key is present with true while locked and omitted while
+    // unlocked. Missing session identity remains fail-closed above; a missing
+    // lock flag on a valid active Aqua session therefore means unlocked.
+    let locked = session["CGSSessionScreenIsLocked"] as? Bool ?? false
     let active = onConsole && consoleUser != "loginwindow"
-    let material = "ling-locked-control-session-v1|\(uid)|\(gid)|\(consoleUser)|\(sessionIdentifier)"
+    let material = "ling-locked-control-session-v1|\(uid)|\(gid)|\(consoleUser)|\(auditSessionIdentifier)|\(sessionUUID)"
     let digest = SHA256.hash(data: Data(material.utf8)).map { String(format: "%02x", $0) }.joined()
     return SessionSnapshot(digest: digest, active: active, locked: locked)
 }

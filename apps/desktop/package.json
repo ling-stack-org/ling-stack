@@ -31,6 +31,8 @@
     "test:cua-driver-package-staging": "node --test tests/cua-driver-package-staging.test.mjs",
     "test:signing-feasibility": "node --test tests/cua-driver-signing-feasibility.test.mjs",
     "build:locked-control-helper:mac": "node scripts/build-locked-control-native-helper.mjs --platform=darwin",
+    "build:locked-control-probe:mac": "node scripts/build-locked-control-darwin-probe.mjs",
+    "probe:locked-control:mac": "node scripts/run-locked-control-darwin-probe.mjs",
     "build:locked-control-helper:win": "powershell -ExecutionPolicy Bypass -File scripts/build-locked-control-native-helper.ps1",
     "test:locked-control-helper:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-locked-control-win32-handoff.ps1",
     "package:signing-feasibility": "node tests/run-cua-driver-signing-builder-fixture.mjs",

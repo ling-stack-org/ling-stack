@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
@@ -43,6 +44,18 @@ test("feasibility evidence is closed and content-free", () => {
     result: "unsupported",
     reason: "locked_control_platform_unsupported",
   }), false, "unsupported cannot carry an all-positive proof");
+});
+
+test("retained macOS 26.5.2 evidence records stable input unavailability", async () => {
+  const retained = JSON.parse(await readFile(new URL(
+    "../../../docs/release/evidence/locked-control-darwin-26.5.2-arm64-unsupported.json",
+    import.meta.url,
+  ), "utf8"));
+  assert.equal(isLockedControlFeasibilityEvidenceV1(retained), true);
+  assert.equal(retained.result, "unsupported");
+  assert.equal(retained.reason, "locked_control_input_unavailable");
+  assert.equal(retained.captureReadyWhileLocked, true);
+  assert.equal(retained.inputAcknowledgedWhileLocked, false);
 });
 
 test("packaged build policy keeps the native probe inert by default", async () => {

@@ -68,6 +68,22 @@ export async function handleLockedControlDesktopRoute(
     }
     return writePrivateResult(response, registry.evaluateCapability(capability, body.buildId));
   }
+  if (action === "authorize") {
+    assertOnlyKeys(body, ["authority", "expectedRevision", "requestId"]);
+    const cwd = authority.workspaceCwd;
+    const activeScopes = context.computerUsePreviews.list(cwd).filter((projection) =>
+      projection.runId && !isTerminalComputerUseStatus(projection.status));
+    // The private Desktop owner has no task selector. Ambiguous concurrent
+    // sessions must fail closed instead of arming an arbitrary projection.
+    const active = activeScopes.length === 1 ? activeScopes[0] : undefined;
+    return writePrivateResult(response, registry.beginAuthorization({
+      requestId: readText(body.requestId),
+      expectedRevision: readRevision(body.expectedRevision),
+      workspaceCwd: cwd,
+      runId: active?.runId ?? "missing-active-run",
+      computerUseSessionId: active?.sessionId ?? "missing-active-session",
+    }));
+  }
   if (action === "prepare") {
     assertOnlyKeys(body, ["authority", "expectedRevision", "identity", "requestId", "requestedTtlSeconds"]);
     const identity = body.identity;
@@ -117,18 +133,14 @@ export async function handleLockedControlDesktopRoute(
   return true;
 }
 
-/** Renderer-safe projection and intent surface. No OS or Desktop facts are accepted. */
-export async function handleLockedControlRendererRoute(
+/** Read-only projection surface. Renderer mutation routes intentionally do not exist. */
+export async function handleLockedControlProjectionRoute(
   request: IncomingMessage,
   response: ServerResponse,
   url: URL,
   context: DaemonContext,
 ): Promise<boolean> {
-  if (url.pathname !== LOCKED_CONTROL_ROOT
-    && url.pathname !== `${LOCKED_CONTROL_ROOT}/authorize`
-    && url.pathname !== `${LOCKED_CONTROL_ROOT}/revoke`) {
-    return false;
-  }
+  if (url.pathname !== LOCKED_CONTROL_ROOT) return false;
   const registry = context.lockedComputerControl;
   if (!registry) {
     writeJson(response, 503, { error: "locked_control_unavailable" });
@@ -139,44 +151,11 @@ export async function handleLockedControlRendererRoute(
     writeJson(response, 409, { error: "locked_control_workspace_mismatch" });
     return true;
   }
-  if (url.pathname === LOCKED_CONTROL_ROOT) {
-    if (request.method !== "GET") {
-      writeJson(response, 405, { error: "method_not_allowed" });
-      return true;
-    }
-    writeJson(response, 200, registry.snapshot());
-    return true;
-  }
-  if (request.method !== "POST") {
+  if (request.method !== "GET") {
     writeJson(response, 405, { error: "method_not_allowed" });
     return true;
   }
-  const body = readRecord(await readOptionalJsonBody(request, context.config.maxBodyBytes));
-  if (url.pathname.endsWith("/authorize")) {
-    assertOnlyKeys(body, ["expectedRevision", "requestId"]);
-    const activeScopes = context.computerUsePreviews.list(cwd).filter((projection) =>
-      projection.runId && !isTerminalComputerUseStatus(projection.status));
-    // Settings has no task selector. Ambiguous concurrent sessions must fail
-    // closed instead of arming whichever projection happens to sort first.
-    const active = activeScopes.length === 1 ? activeScopes[0] : undefined;
-    const result = registry.beginAuthorization({
-      requestId: readText(body.requestId),
-      expectedRevision: readRevision(body.expectedRevision),
-      workspaceCwd: cwd,
-      runId: active?.runId ?? "missing-active-run",
-      computerUseSessionId: active?.sessionId ?? "missing-active-session",
-    });
-    writeJson(response, result.accepted ? 202 : 409, result);
-    return true;
-  }
-  assertOnlyKeys(body, ["expectedRevision", "requestId"]);
-  readText(body.requestId);
-  const expectedRevision = readRevision(body.expectedRevision);
-  const current = registry.snapshot();
-  const result = expectedRevision === current.revision
-    ? registry.revoke("locked_control_grant_consumed", true)
-    : { accepted: false as const, reason: "locked_control_authority_rotated" as const, snapshot: current };
-  writeJson(response, result.accepted ? 200 : 409, result);
+  writeJson(response, 200, registry.snapshot());
   return true;
 }
 

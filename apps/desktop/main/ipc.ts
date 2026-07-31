@@ -34,7 +34,6 @@ export function registerDesktopIpc(input: {
     | "onStatusChanged"
     | "requestComputerControlPermissions"
     | "openComputerControlPermissionSettings"
-    | "authorizeLockedComputerControl"
     | "revokeLockedComputerControl"
   >;
   readonly computerUse: ComputerUsePreviewCoordinator;
@@ -134,14 +133,6 @@ export function registerDesktopIpc(input: {
     }
     return input.runtime.openComputerControlPermissionSettings(permission);
   });
-  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.computerControlAuthorizeLocked, async (event) =>
-    isMainWindowSender(event)
-      ? input.runtime.authorizeLockedComputerControl()
-      : { accepted: false, reason: "unauthorized_sender" });
-  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.computerControlRevokeLocked, async (event) =>
-    isMainWindowSender(event)
-      ? input.runtime.revokeLockedComputerControl()
-      : { accepted: false, reason: "unauthorized_sender" });
   desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.computerUsePreviewSnapshotGet, (event) =>
     input.computerUse.ownsPreviewWebContents(event.sender.id)
       ? input.computerUse.getRendererSnapshot()

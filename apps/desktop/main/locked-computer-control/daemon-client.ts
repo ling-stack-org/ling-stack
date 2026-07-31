@@ -52,7 +52,11 @@ export type LockedControlDaemonPrepareResult =
 
 export interface LockedControlDaemonClient {
   snapshot(): Promise<LockedControlDaemonSnapshot>;
-  beginAuthorization(input: { readonly requestId: string; readonly expectedRevision: number }): Promise<LockedControlDaemonMutationResult>;
+  beginAuthorization(input: {
+    readonly requestId: string;
+    readonly expectedRevision: number;
+    readonly authority: LockedControlDaemonHandshakeAuthority;
+  }): Promise<LockedControlDaemonMutationResult>;
   prepare(input: {
     readonly requestId: string;
     readonly expectedRevision: number;
@@ -80,9 +84,7 @@ export interface LockedControlDaemonClient {
     readonly buildId: string;
   }): Promise<LockedControlDaemonMutationResult>;
   revoke(input: {
-    readonly authority?: LockedControlDaemonHandshakeAuthority;
-    readonly requestId?: string;
-    readonly expectedRevision?: number;
+    readonly authority: LockedControlDaemonHandshakeAuthority;
     readonly reason?: LockedControlReasonCode;
     readonly acknowledged?: boolean;
   }): Promise<LockedControlDaemonMutationResult>;
@@ -105,8 +107,8 @@ export function createLockedControlDaemonClient(options: {
   const fetchImpl = options.fetch ?? globalThis.fetch;
   const routeToken = options.routeToken ?? options.bridgeToken;
   const base = new URL(options.daemonBaseUrl);
-  const rendererUrl = (suffix = ""): URL => {
-    const url = new URL(`/computer-use/locked-control${suffix}`, base);
+  const projectionUrl = (): URL => {
+    const url = new URL("/computer-use/locked-control", base);
     url.searchParams.set("cwd", options.workspaceCwd);
     return url;
   };
@@ -114,12 +116,11 @@ export function createLockedControlDaemonClient(options: {
     `/computer-use/locked-control/desktop/${action}`,
     base,
   );
-  const rendererRequest = (suffix: string, body?: unknown): Promise<unknown> => requestJson(
+  const projectionRequest = (): Promise<unknown> => requestJson(
     fetchImpl,
-    rendererUrl(suffix),
+    projectionUrl(),
     routeToken,
     "X-Ling-Computer-Use-Token",
-    body,
   );
   const desktopRequest = (action: string, body: unknown): Promise<unknown> => requestJson(
     fetchImpl,
@@ -131,10 +132,13 @@ export function createLockedControlDaemonClient(options: {
 
   const client: LockedControlDaemonClient = {
     async snapshot() {
-      return parseSnapshot(await rendererRequest(""));
+      return parseSnapshot(await projectionRequest());
     },
     async beginAuthorization(input) {
-      return parseMutation(await rendererRequest("/authorize", input));
+      return parseMutation(await desktopRequest("authorize", {
+        ...input,
+        authority: handshakeAuthorityBody(input.authority),
+      }));
     },
     async prepare(input) {
       const value = await desktopRequest("prepare", {
@@ -178,19 +182,10 @@ export function createLockedControlDaemonClient(options: {
       }));
     },
     async revoke(input) {
-      if (input.authority) {
-        return parseMutation(await desktopRequest("revoke", {
-          authority: handshakeAuthorityBody(input.authority),
-          ...(input.reason ? { reason: input.reason } : {}),
-          ...(input.acknowledged === undefined ? {} : { acknowledged: input.acknowledged }),
-        }));
-      }
-      if (!input.requestId || input.expectedRevision === undefined) {
-        throw new LockedControlDaemonClientError("request_failed");
-      }
-      return parseMutation(await rendererRequest("/revoke", {
-        requestId: input.requestId,
-        expectedRevision: input.expectedRevision,
+      return parseMutation(await desktopRequest("revoke", {
+        authority: handshakeAuthorityBody(input.authority),
+        ...(input.reason ? { reason: input.reason } : {}),
+        ...(input.acknowledged === undefined ? {} : { acknowledged: input.acknowledged }),
       }));
     },
   };
