@@ -517,6 +517,12 @@ export class SqliteAiCouncilStore {
         created_at,
         updated_at
       ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+      ON CONFLICT(council_id, teammate_id) DO UPDATE SET
+        slot_key = excluded.slot_key,
+        label = excluded.label,
+        position = excluded.position,
+        enabled = excluded.enabled,
+        updated_at = excluded.updated_at
     `);
     for (const [index, templateId] of DEVELOPMENT_COUNCIL_MEMBER_TEMPLATE_IDS.entries()) {
       const teammateId = createBuiltinAiTeammateId(templateId);

@@ -144,6 +144,14 @@ export class SqliteRemoteAccessStore {
       clauses.push("workspace_id = ?");
       params.push(options.workspaceId);
     }
+    if (options.conversationKind) {
+      clauses.push("conversation_kind = ?");
+      params.push(options.conversationKind);
+    }
+    if (options.conversationId) {
+      clauses.push("conversation_id = ?");
+      params.push(options.conversationId);
+    }
     if (options.statuses && options.statuses.length > 0) {
       const statuses = [...new Set(options.statuses)];
       clauses.push(`status IN (${statuses.map(() => "?").join(", ")})`);
@@ -218,6 +226,14 @@ export class SqliteRemoteAccessStore {
       clauses.push("workspace_id = ?");
       params.push(options.workspaceId);
     }
+    if (options.conversationKind) {
+      clauses.push("conversation_kind = ?");
+      params.push(options.conversationKind);
+    }
+    if (options.conversationId) {
+      clauses.push("conversation_id = ?");
+      params.push(options.conversationId);
+    }
     if (options.unprocessedOnly) {
       clauses.push("processed_at IS NULL");
     }
@@ -250,7 +266,7 @@ export class SqliteRemoteAccessStore {
     input: Omit<MarkConversationReadInput, "throughActivitySeq">,
     now: string,
   ): ConversationReadState {
-    this.assertConversationExists(input.workspaceId, input.conversationKind, input.conversationId);
+    this.assertConversationExists(input.workspaceId, input.conversationKind, input.conversationId, true);
     const row = this.context.database.prepare(`
       SELECT read_through_activity_seq, updated_at
       FROM conversation_read_states
@@ -271,7 +287,7 @@ export class SqliteRemoteAccessStore {
     }
     this.context.database.exec("BEGIN IMMEDIATE");
     try {
-      this.assertConversationExists(input.workspaceId, input.conversationKind, input.conversationId);
+      this.assertConversationExists(input.workspaceId, input.conversationKind, input.conversationId, true);
       const latestActivitySeq = this.getLatestConversationActivitySeq(input);
       const requestedCursor = Math.min(input.throughActivitySeq, latestActivitySeq);
       this.context.database.prepare(`
@@ -355,12 +371,14 @@ export class SqliteRemoteAccessStore {
     workspaceId: string,
     conversationKind: RemoteConversationKind,
     conversationId: string,
+    allowInactive = false,
   ): void {
     let row: unknown;
     if (conversationKind === "channel") {
-      row = this.context.database.prepare(
-        "SELECT 1 AS found FROM channels WHERE workspace_id = ? AND id = ?",
-      ).get(workspaceId, conversationId);
+      row = this.context.database.prepare(`
+        SELECT 1 AS found FROM channels
+        WHERE workspace_id = ? AND id = ? ${allowInactive ? "" : "AND status <> 'archived'"}
+      `).get(workspaceId, conversationId);
     } else if (conversationKind === "teammate_direct") {
       row = this.context.database.prepare(
         "SELECT 1 AS found FROM teammate_direct_threads WHERE workspace_id = ? AND id = ?",
@@ -368,7 +386,8 @@ export class SqliteRemoteAccessStore {
     } else {
       row = this.context.database.prepare(`
         SELECT 1 AS found FROM ling_threads
-        WHERE workspace_id = ? AND id = ? AND kind = 'conversation' AND archived_at IS NULL
+        WHERE workspace_id = ? AND id = ? AND kind = 'conversation'
+          ${allowInactive ? "" : "AND archived_at IS NULL AND status <> 'archived'"}
       `).get(workspaceId, conversationId);
     }
     if (!row) {

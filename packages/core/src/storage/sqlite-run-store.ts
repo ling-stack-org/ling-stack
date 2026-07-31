@@ -2229,6 +2229,12 @@ export class SqliteRunStore implements RunStore {
     return this.teammateDirect.getOrCreateTeammateDirectThread(teammateId, now);
   }
 
+  listTeammateDirectThreads(
+    options?: import("../workspace-types.js").ListTeammateDirectThreadsOptions,
+  ): TeammateDirectThread[] {
+    return this.teammateDirect.listTeammateDirectThreads(options);
+  }
+
   updateTeammateDirectThreadWorkspace(threadId: string, workspaceBinding: DirectWorkspaceBinding | null, now: string): TeammateDirectThread | undefined {
     return this.teammateDirect.updateTeammateDirectThreadWorkspace(threadId, workspaceBinding, now);
   }
@@ -3352,7 +3358,7 @@ export class SqliteRunStore implements RunStore {
 
   private recordMigration(version: number, name: string): void {
     this.database
-      .prepare("INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)")
+      .prepare("INSERT OR IGNORE INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)")
       .run(version, name, new Date().toISOString());
   }
 

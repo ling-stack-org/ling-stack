@@ -202,6 +202,7 @@ import type {
   ListTeammateDirectLinkPreviewsOptions,
   ListTeammateDirectReplyInterventionsOptions,
   ListTeammateDirectMessagesOptions,
+  ListTeammateDirectThreadsOptions,
   ListTasksOptions,
   ReplaceAiCouncilMemberInput,
   ReplaceTeammateChannelMembershipInput,
@@ -1591,6 +1592,7 @@ export interface RunStore {
   resolveGovernanceNotificationByDedupeKey(workspaceId: string, dedupeKey: string, now: string): GovernanceNotification | undefined;
   getGovernanceNotificationSummary(workspaceId?: string, generatedAt?: string): GovernanceNotificationSummary;
   getOrCreateTeammateDirectThread(teammateId: string, now: string): TeammateDirectThread;
+  listTeammateDirectThreads(options?: ListTeammateDirectThreadsOptions): TeammateDirectThread[];
   updateTeammateDirectThreadWorkspace(threadId: string, workspaceBinding: DirectWorkspaceBinding | null, now: string): TeammateDirectThread | undefined;
   listTeammateDirectMessages(options: ListTeammateDirectMessagesOptions): TeammateDirectMessage[];
   listTeammateDirectMessagesPage(options: ListTeammateDirectMessagesOptions): TeammateDirectMessageListPage;
@@ -2103,6 +2105,7 @@ export type TeammateStoreFacet = RunStoreFacet<
   | "listTeammateMemoryScopes"
   | "replaceTeammateMemoryScopes"
   | "getOrCreateTeammateDirectThread"
+  | "listTeammateDirectThreads"
   | "updateTeammateDirectThreadWorkspace"
   | "listTeammateDirectMessages"
   | "listTeammateDirectMessagesPage"

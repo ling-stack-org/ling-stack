@@ -94,6 +94,8 @@ export interface RemoteProjectionOutboxRecord {
 
 export interface ListRemoteProjectionOutboxOptions {
   readonly workspaceId?: string;
+  readonly conversationKind?: RemoteConversationKind;
+  readonly conversationId?: string;
   readonly afterActivitySeq?: number;
   readonly unprocessedOnly?: boolean;
   readonly limit?: number;
@@ -140,6 +142,8 @@ export interface MarkConversationReadInput {
 
 export interface ListRemoteDispatchIntentsOptions {
   readonly workspaceId?: string;
+  readonly conversationKind?: RemoteConversationKind;
+  readonly conversationId?: string;
   readonly statuses?: readonly RemoteDispatchIntentStatus[];
   readonly limit?: number;
 }

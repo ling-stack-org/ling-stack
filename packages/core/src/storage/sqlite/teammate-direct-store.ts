@@ -14,6 +14,7 @@ import {
   type DirectWorkspaceBinding,
   type ListTeammateDirectLinkPreviewsOptions,
   type ListTeammateDirectMessagesOptions,
+  type ListTeammateDirectThreadsOptions,
   type ListTeammateDirectReplyInterventionsOptions,
   type ListTeammatePrivateAttachmentsOptions,
   type TeammateDirectLinkPreview,
@@ -91,6 +92,20 @@ export class SqliteTeammateDirectStore {
       .run(thread.id, thread.workspaceId, thread.teammateId, thread.title, null, thread.createdAt, thread.updatedAt);
 
     return thread;
+  }
+
+  listTeammateDirectThreads(options: ListTeammateDirectThreadsOptions = {}): TeammateDirectThread[] {
+    const clauses = ["workspace_id = ?"];
+    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID];
+    if (options.teammateId) {
+      clauses.push("teammate_id = ?");
+      params.push(options.teammateId);
+    }
+    params.push(Math.min(Math.max(options.limit ?? 100, 1), 500));
+    return this.context.database
+      .prepare(`${teammateDirectThreadSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY updated_at DESC, id DESC LIMIT ?`)
+      .all(...params)
+      .map((row) => mapTeammateDirectThread(row as Record<string, SQLOutputValue>));
   }
 
   updateTeammateDirectThreadWorkspace(threadId: string, workspaceBinding: DirectWorkspaceBinding | null, now: string): TeammateDirectThread | undefined {

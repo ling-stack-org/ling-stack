@@ -942,6 +942,11 @@ export interface TeammateDirectThread {
   readonly updatedAt: string;
 }
 
+export interface ListTeammateDirectThreadsOptions {
+  readonly teammateId?: string;
+  readonly limit?: number;
+}
+
 export type TeammateDirectMessageStatus = "pending" | "ready" | "blocked" | "failed" | "cancelled";
 
 export type TeammateDirectMessageAuthorType = "local-user" | "ai-teammate" | "system";
