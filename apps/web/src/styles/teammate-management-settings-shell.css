@@ -1,48 +1,51 @@
 .teammate-workspace.settings-mode {
   display: grid;
-  grid-template-columns: 176px minmax(0, 1fr) clamp(232px, 22vw, 280px);
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 0;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 58px 49px minmax(0, 1fr);
   height: 100%;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
   border: 0;
   border-radius: 0;
-  background: var(--ling-bg-panel);
+  background: var(--ling-bg-canvas);
 }
 
 .teammate-settings-header {
   position: relative;
-  grid-column: 1 / -1;
+  grid-column: 1;
   grid-row: 1;
+  box-sizing: border-box;
   display: grid;
-  grid-template-columns: minmax(148px, auto) minmax(0, 1fr) minmax(148px, auto);
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: var(--ling-space-4);
+  gap: var(--ling-space-5);
   min-width: 0;
-  min-height: 52px;
-  padding: var(--ling-space-3) var(--ling-space-5);
+  height: 58px;
+  min-height: 58px;
+  padding: 0 22px;
   overflow: hidden;
   border-bottom: 1px solid var(--ling-border-default);
   background: var(--ling-bg-panel);
 }
 
-.teammate-settings-back {
-  width: fit-content;
-  max-width: 100%;
-  justify-self: start;
+.teammate-settings-header-line {
+  min-width: 0;
+  overflow: hidden;
 }
 
-.teammate-settings-header h2 {
+.teammate-settings-header-title {
+  min-width: 0;
+}
+
+.teammate-settings-header-title h2 {
   min-width: 0;
   margin: 0;
   overflow: hidden;
   color: var(--ling-text-strong);
-  font-size: var(--ling-font-sm);
-  font-weight: 700;
-  line-height: var(--ling-line-sm);
-  text-align: center;
+  font-size: 15px;
+  font-weight: 720;
+  line-height: 20px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -59,212 +62,174 @@
 .teammate-settings-nav {
   grid-column: 1;
   grid-row: 2;
-  display: grid;
-  align-content: start;
-  gap: var(--ling-space-1);
   min-width: 0;
   min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
-  padding: var(--ling-space-4);
-  border-right: 1px solid var(--ling-border-default);
-  background: var(--ling-bg-sidebar);
+}
+
+.teammate-settings-tabs {
+  box-sizing: border-box;
+  max-width: 1180px;
 }
 
 .teammate-settings-nav-item {
-  --ling-button-label-display: grid;
-  --ling-button-label-text-align: left;
+  position: relative;
   width: 100%;
-  justify-content: stretch;
-  padding-inline: var(--ling-space-4);
-  border-color: transparent;
+  height: 48px;
+  min-height: 48px;
+  justify-content: center;
+  padding: 0 var(--ling-space-4);
+  border: 0;
+  border-radius: 0;
   color: var(--ling-text-muted);
   background: transparent;
   box-shadow: none;
 }
 
-.teammate-settings-nav-item > [data-ling-button-slot="label"] {
-  min-width: 0;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--ling-space-3);
+.teammate-settings-nav-item::after {
+  position: absolute;
+  right: var(--ling-space-3);
+  bottom: 0;
+  left: var(--ling-space-3);
+  height: 2px;
+  background: var(--ling-text-strong);
+  content: "";
+  opacity: 0;
+  transform: scaleX(0.72);
+  transition:
+    opacity var(--ling-motion-fast) var(--ling-ease-standard),
+    transform var(--ling-motion-fast) var(--ling-ease-standard);
 }
 
-.teammate-settings-nav-item > [data-ling-button-slot="label"] > span:first-child {
-  overflow: hidden;
-  min-width: 0;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.teammate-settings-nav-item:hover {
+  color: var(--ling-text-strong);
+  background: var(--ling-bg-subtle);
 }
 
 .teammate-settings-nav-item[aria-current="page"] {
   color: var(--ling-text-strong);
-  background: var(--ling-bg-pressed);
+  background: var(--ling-bg-panel);
+}
+
+.teammate-settings-nav-item[aria-current="page"]::after {
+  opacity: 1;
+  transform: scaleX(1);
 }
 
 .teammate-settings-nav-item[data-danger="true"] {
-  margin-top: var(--ling-space-5);
   color: var(--ling-status-danger);
 }
 
-.teammate-settings-nav-count {
-  min-width: 22px;
-  justify-content: center;
+.teammate-settings-nav-item[data-danger="true"]::after {
+  background: var(--ling-status-danger);
 }
 
-.teammate-workspace.settings-mode > .teammate-list-panel,
-.teammate-workspace.settings-mode > .teammate-mcp-panel,
-.teammate-workspace.settings-mode > .teammate-profile-panel,
-.teammate-workspace.settings-mode > .teammate-model-panel,
-.teammate-workspace.settings-mode > .teammate-permissions-panel,
-.teammate-workspace.settings-mode > .teammate-tasks-panel,
-.teammate-workspace.settings-mode > .teammate-skills-panel {
-  grid-column: 2;
-  grid-row: 2;
-  min-width: 0;
-  min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
-  border: 0;
-  border-radius: 0;
-  background: var(--ling-bg-panel);
-  box-shadow: none;
-}
-
-.teammate-workspace.settings-mode > .teammate-list-panel {
-  padding: var(--ling-space-6);
-}
-
-.teammate-workspace.settings-mode > .teammate-skills-panel,
-.teammate-workspace.settings-mode > .teammate-tasks-panel {
-  overflow: hidden;
-}
-
-.teammate-workspace.settings-mode > .teammate-mcp-panel {
-  overflow: hidden;
-  background: transparent;
-}
-
-.teammate-workspace.settings-mode > .inline-error,
-.teammate-workspace.settings-mode > .client-empty-state {
-  grid-column: 2;
-  grid-row: 2;
-  z-index: 1;
-  align-self: start;
-  margin: var(--ling-space-5);
-}
-
-.teammate-settings-summary-panel {
-  grid-column: 3;
-  grid-row: 2;
-  display: grid;
-  align-content: start;
-  gap: var(--ling-space-5);
-  min-width: 0;
-  min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
-  padding: var(--ling-space-5);
-  border-left: 1px solid var(--ling-border-default);
-  background: var(--ling-bg-subtle);
-}
-
-.teammate-settings-summary-panel section {
-  display: grid;
-  min-width: 0;
-  gap: var(--ling-space-4);
-}
-
-.teammate-settings-summary-heading {
+.teammate-settings-tab-label {
   display: inline-flex;
   min-width: 0;
   align-items: center;
-  gap: var(--ling-space-3);
-  color: var(--ling-text-muted);
+  gap: var(--ling-space-2);
 }
 
-.teammate-settings-summary-heading h3 {
+.teammate-settings-tab-label > span:first-child {
   min-width: 0;
-  margin: 0;
   overflow: hidden;
-  color: var(--ling-text-strong);
-  font-size: var(--ling-font-sm);
-  font-weight: 700;
-  line-height: var(--ling-line-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.teammate-summary-list {
+.teammate-settings-nav-count {
+  min-width: 20px;
+  justify-content: center;
+}
+
+.teammate-settings-tab-content {
+  grid-column: 1;
+  grid-row: 3;
+  min-width: 0;
+  min-height: 0;
+  padding: var(--ling-space-7) var(--ling-space-6) var(--ling-space-8);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--ling-bg-canvas);
+}
+
+.teammate-settings-tab-content > .teammate-profile-panel,
+.teammate-settings-tab-content > .teammate-model-panel,
+.teammate-settings-tab-content > .teammate-permissions-panel,
+.teammate-settings-tab-content > .teammate-channels-panel,
+.teammate-settings-tab-content > .teammate-memory-panel,
+.teammate-settings-tab-content > .teammate-skills-panel,
+.teammate-settings-tab-content > .teammate-mcp-panel,
+.teammate-settings-tab-content > .teammate-danger-panel {
+  box-sizing: border-box;
+  margin: 0 auto;
+  padding: 0;
+}
+
+.teammate-settings-tab-content > .teammate-skills-panel,
+.teammate-settings-tab-content > .teammate-mcp-panel {
+  width: min(980px, 100%);
+}
+
+.teammate-settings-tab-content > .teammate-danger-panel {
+  width: min(820px, 100%);
+}
+
+.teammate-profile-settings-stack,
+.teammate-tools-permissions-panel {
   display: grid;
+  box-sizing: border-box;
+  width: min(100%, 880px);
   min-width: 0;
-  overflow: hidden;
-  border: 1px solid var(--ling-border-default);
-  border-radius: var(--ling-radius-md);
-  background: var(--ling-bg-panel);
+  align-content: start;
+  gap: var(--ling-space-8);
+  margin: 0 auto;
 }
 
-.teammate-summary-row {
-  min-width: 0;
-  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
-  gap: var(--ling-space-3);
-  padding-inline: var(--ling-space-4);
-  border-bottom: 1px solid var(--ling-border-default);
+.teammate-tools-permissions-panel {
+  width: min(100%, 900px);
 }
 
-.teammate-summary-row:last-child {
-  border-bottom: 0;
+.teammate-profile-settings-stack > .teammate-profile-panel,
+.teammate-profile-settings-stack > .teammate-danger-panel,
+.teammate-tools-permissions-panel > .teammate-permissions-panel,
+.teammate-tools-permissions-panel > .teammate-mcp-panel {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+  padding: 0;
 }
 
-.teammate-summary-label,
-.teammate-summary-value {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  font-size: var(--ling-font-xs);
-  line-height: var(--ling-line-xs);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.teammate-profile-settings-stack > .teammate-danger-panel,
+.teammate-tools-permissions-panel > .teammate-mcp-panel {
+  padding-top: var(--ling-space-8);
+  border-top: 1px solid var(--ling-border-default);
 }
 
-.teammate-summary-label {
-  color: var(--ling-text-muted);
+.teammate-settings-tab-content > .inline-error,
+.teammate-settings-tab-content > .client-empty-state {
+  width: min(760px, 100%);
+  margin: 0 auto var(--ling-space-5);
 }
 
-.teammate-summary-value {
-  color: var(--ling-text-strong);
-  font-weight: 650;
-  text-align: right;
-}
-
-@media (max-width: 1100px) {
-  .teammate-workspace.settings-mode {
-    grid-template-columns: 164px minmax(0, 1fr) 232px;
-  }
-
+@media (max-width: 760px) {
   .teammate-settings-header {
-    grid-template-columns: minmax(136px, auto) minmax(0, 1fr) minmax(136px, auto);
+    gap: var(--ling-space-3);
     padding-inline: var(--ling-space-4);
   }
 
-  .teammate-workspace.settings-mode > .teammate-list-panel,
-  .teammate-workspace.settings-mode > .teammate-profile-panel,
-  .teammate-workspace.settings-mode > .teammate-model-panel,
-  .teammate-workspace.settings-mode > .teammate-permissions-panel,
-  .teammate-workspace.settings-mode > .teammate-tasks-panel,
-  .teammate-workspace.settings-mode > .teammate-skills-panel {
-    padding: var(--ling-space-5);
+  .teammate-settings-header-title small {
+    max-width: 30vw;
+  }
+
+  .teammate-settings-tab-content {
+    padding-inline: var(--ling-space-5);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .teammate-workspace.settings-mode {
-    scroll-behavior: auto;
+  .teammate-settings-nav-item::after {
+    transition: none;
   }
 }

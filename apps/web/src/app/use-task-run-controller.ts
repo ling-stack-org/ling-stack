@@ -37,7 +37,6 @@ export interface TaskRunController {
   readonly removeTask: (taskId: string) => Promise<void>;
   readonly moveTaskToReview: (taskId: string) => Promise<void>;
   readonly saveTaskEdit: (taskId: string) => Promise<Task | undefined>;
-  readonly resolveChannelMessageProviderPresetId: (channel: Channel | undefined, teammateId: string | undefined) => string;
   readonly markChannelExecutionProposal: (
     proposal: ChannelExecutionProposal,
     request: Parameters<WorkspaceCommands["updateChannelExecutionProposal"]>[2],
@@ -116,11 +115,6 @@ export function useTaskRunController(input: {
 }): TaskRunController {
   function resolveTaskRunProviderPresetId(channel: Channel | undefined): string {
     return input.taskRunProviderId || channel?.defaultProviderPresetId || input.form.providerPresetId || input.providers.find(providerPreflightReady)?.id || "";
-  }
-
-  function resolveChannelMessageProviderPresetId(channel: Channel | undefined, teammateId: string | undefined): string {
-    const teammateProviderPresetId = findAiTeammateByReference(teammateId)?.providerPresetId;
-    return teammateProviderPresetId || input.taskRunProviderId || channel?.defaultProviderPresetId || input.form.providerPresetId || input.providers.find(providerPreflightReady)?.id || "";
   }
 
   function findAiTeammateByReference(teammateId: string | undefined): AiTeammate | undefined {
@@ -426,7 +420,6 @@ export function useTaskRunController(input: {
     removeTask,
     moveTaskToReview,
     saveTaskEdit,
-    resolveChannelMessageProviderPresetId,
     markChannelExecutionProposal,
     confirmChannelExecutionProposal,
     cancelChannelExecutionProposal,

@@ -64,9 +64,9 @@ export function ChannelSettingsGeneralPanel({
             className="channel-settings-row channel-settings-select-row"
             identity={<span className="channel-settings-row-icon" aria-hidden="true"><Box size={18} /></span>}
             summary={(
-              <Field label={t("Channel run provider")}>
+              <Field label={t("Ling Agent model")}>
                 <Select
-                  aria-label={t("Channel run provider")}
+                  aria-label={t("Ling Agent model")}
                   value={channelEditForm.defaultProviderPresetId}
                   onChange={(event) => onChannelEditFormChange({ ...channelEditForm, defaultProviderPresetId: event.target.value })}
                   disabled={providersLoading || providers.length === 0 || !selectedChannelId}

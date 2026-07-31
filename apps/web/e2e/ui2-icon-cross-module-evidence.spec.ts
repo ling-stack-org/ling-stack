@@ -37,10 +37,10 @@ for (const theme of themes) {
 
     const teammateProfile = await openTeammateProfile(page);
     const resetProfile = page.getByLabel("Single agent settings").getByRole("button", { name: "Reset profile" });
-    const changeTeammateAvatar = teammateProfile.getByRole("button", { name: "Change avatar" });
+    const changeTeammateAvatar = teammateProfile.getByRole("button", { name: "Avatar options" });
     await expectStandardIconButton(resetProfile, "Reset profile");
     await expect(resetProfile).toBeDisabled();
-    await expectStandardIconButton(changeTeammateAvatar, "Change avatar");
+    await expectStandardIconButton(changeTeammateAvatar, "Avatar options");
     await expect(teammateProfile.locator('button[data-ling-icon-button-contract="legacy-react-node"]')).toHaveCount(0);
     await expectNoOverflow(page, teammateProfile);
     await captureIfEnabled(page, `${theme.width}x${theme.height}-ling-${theme.id}-ai-teammate-profile.png`);

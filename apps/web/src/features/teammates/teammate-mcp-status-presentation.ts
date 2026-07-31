@@ -11,25 +11,19 @@ export interface TeammateMcpServerStatusPresentation {
     | "needs-check"
     | "ready";
   readonly labelKey:
-    | "Check needed"
+    | "Available"
     | "Checking"
-    | "Credential migration required"
-    | "Credential needs attention"
-    | "Disabled"
-    | "Ready"
+    | "Setup required"
+    | "Not enabled"
     | "Unavailable";
   readonly tone: StatusTone;
 }
 
 export interface TeammateMcpToolEffectPresentation {
   readonly labelKey:
-    | "Credential"
-    | "Deploy"
-    | "External action"
-    | "No side effects"
-    | "Read"
-    | "Write"
-    | "Write network";
+    | "Confirm before use"
+    | "High risk"
+    | "Low risk";
   readonly tone: BadgeTone;
 }
 
@@ -38,14 +32,14 @@ export function teammateMcpServerStatusPresentation(server: McpServer): Teammate
   const authKind = snapshot?.authStatus.kind;
 
   if (!server.enabled || server.status.kind === "disabled" || snapshot?.status === "disabled") {
-    return { id: "disabled", labelKey: "Disabled", tone: "neutral" };
+    return { id: "disabled", labelKey: "Not enabled", tone: "neutral" };
   }
   if (
     server.legacySecretMigrationRequired
     || authKind === "migration_required"
     || snapshot?.status === "migration_required"
   ) {
-    return { id: "migration", labelKey: "Credential migration required", tone: "warning" };
+    return { id: "migration", labelKey: "Setup required", tone: "warning" };
   }
   if (
     authKind === "missing"
@@ -54,7 +48,7 @@ export function teammateMcpServerStatusPresentation(server: McpServer): Teammate
     || authKind === "invalid_ref"
     || server.secretStatuses.some((status) => !status.configured)
   ) {
-    return { id: "auth-blocked", labelKey: "Credential needs attention", tone: "warning" };
+    return { id: "auth-blocked", labelKey: "Setup required", tone: "warning" };
   }
   if (server.status.kind === "checking") {
     return { id: "checking", labelKey: "Checking", tone: "info" };
@@ -63,19 +57,19 @@ export function teammateMcpServerStatusPresentation(server: McpServer): Teammate
     return { id: "failed", labelKey: "Unavailable", tone: "danger" };
   }
   if (server.status.kind === "ready" || snapshot?.status === "ready") {
-    return { id: "ready", labelKey: "Ready", tone: "success" };
+    return { id: "ready", labelKey: "Available", tone: "success" };
   }
-  return { id: "needs-check", labelKey: "Check needed", tone: "neutral" };
+  return { id: "needs-check", labelKey: "Setup required", tone: "neutral" };
 }
 
 export function teammateMcpToolEffectPresentation(
   sideEffectLevel: McpTool["sideEffectLevel"],
 ): TeammateMcpToolEffectPresentation {
-  if (sideEffectLevel === "none") return { labelKey: "No side effects", tone: "neutral" };
-  if (sideEffectLevel === "read") return { labelKey: "Read", tone: "neutral" };
-  if (sideEffectLevel === "write") return { labelKey: "Write", tone: "warning" };
-  if (sideEffectLevel === "write-network") return { labelKey: "Write network", tone: "warning" };
-  if (sideEffectLevel === "external") return { labelKey: "External action", tone: "warning" };
-  if (sideEffectLevel === "credential") return { labelKey: "Credential", tone: "danger" };
-  return { labelKey: "Deploy", tone: "danger" };
+  if (sideEffectLevel === "none" || sideEffectLevel === "read") {
+    return { labelKey: "Low risk", tone: "neutral" };
+  }
+  if (sideEffectLevel === "credential" || sideEffectLevel === "deploy") {
+    return { labelKey: "High risk", tone: "danger" };
+  }
+  return { labelKey: "Confirm before use", tone: "warning" };
 }

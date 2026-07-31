@@ -548,6 +548,7 @@ export const LING_AGENT_ID = "ling_agent";
 
 export type AiTeammateKind = "ai_teammate" | "system_teammate";
 export type AiTeammateSystemRole = "ling_agent";
+export type AiTeammateModelBindingMode = "workspace_default" | "fixed";
 export type AiTeammateEditableField =
   | "displayName"
   | "description"
@@ -591,6 +592,7 @@ export function createLingAgentSystemTeammate(now: string, overrides: Partial<Pi
     description: overrides.description ?? "Built-in coordinator for channels, private chat, tasks, permissions, and specialist collaboration.",
     avatarTone: overrides.avatarTone ?? "violet",
     avatarImageAttachmentId: overrides.avatarImageAttachmentId,
+    modelBindingMode: "workspace_default",
     systemPrompt: LING_AGENT_SYSTEM_PROMPT,
     appendSystemPrompt: overrides.appendSystemPrompt ?? [],
     allowedTools: lingAgentAllowedTools,
@@ -620,6 +622,7 @@ export interface AiTeammate {
   readonly description: string;
   readonly avatarTone?: string;
   readonly avatarImageAttachmentId?: string;
+  readonly modelBindingMode: AiTeammateModelBindingMode;
   readonly providerPresetId?: string;
   readonly runnerId?: string;
   readonly systemPrompt?: string;
@@ -641,6 +644,7 @@ export interface CreateAiTeammateInput {
   readonly description: string;
   readonly avatarTone?: string;
   readonly avatarImageAttachmentId?: string;
+  readonly modelBindingMode?: AiTeammateModelBindingMode;
   readonly providerPresetId?: string;
   readonly runnerId?: string;
   readonly systemPrompt?: string;
@@ -659,6 +663,7 @@ export interface AiTeammateUpdateInput {
   readonly description?: string;
   readonly avatarTone?: string | null;
   readonly avatarImageAttachmentId?: string | null;
+  readonly modelBindingMode?: AiTeammateModelBindingMode;
   readonly providerPresetId?: string | null;
   readonly runnerId?: string | null;
   readonly systemPrompt?: string | null;

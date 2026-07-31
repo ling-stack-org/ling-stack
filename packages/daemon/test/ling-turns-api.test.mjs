@@ -9,6 +9,7 @@ import { createSqliteRunStore, lingThreadKinds as coreLingThreadKinds } from "@l
 import { createDaemonServer } from "../dist/index.js";
 import { maybeQueueGoalContinuation } from "../dist/features/runs/interventions.js";
 import { syncLingThreadForTerminalRun } from "../dist/features/runs/threads.js";
+import { prepareChannelCreateBody } from "./conversation-model-test-fixture.mjs";
 import { ensureGitRepoForChannelPost } from "./git-test-helpers.mjs";
 
 test("Ling thread kind runtime constants stay in sync across packages", () => {
@@ -1588,11 +1589,12 @@ async function getJsonAllowError(url) {
 }
 
 async function postJson(url, body) {
-  await ensureGitRepoForChannelPost(url, body);
+  const preparedBody = await prepareChannelCreateBody(url, body);
+  await ensureGitRepoForChannelPost(url, preparedBody);
   const response = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify(preparedBody),
   });
   return await readJsonResponse(response);
 }

@@ -1,16 +1,17 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type {
-  AiTeammate,
-  ChannelMessageFileRef,
-  RunStore,
-  SecretResolver,
-  TeammateDirectMessage,
-  TeammateDirectReplyIntervention,
-  TeammateDirectReplyInterventionMessagePayload,
-  TeammateDirectReplyInterventionMode,
-  TeammateDirectThread,
-  WorkUnit,
-  WorkUnitStatus,
+import {
+  resolveEffectiveTeammateProviderPresetId,
+  type AiTeammate,
+  type ChannelMessageFileRef,
+  type RunStore,
+  type SecretResolver,
+  type TeammateDirectMessage,
+  type TeammateDirectReplyIntervention,
+  type TeammateDirectReplyInterventionMessagePayload,
+  type TeammateDirectReplyInterventionMode,
+  type TeammateDirectThread,
+  type WorkUnit,
+  type WorkUnitStatus,
 } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
@@ -278,10 +279,15 @@ export class DirectReplyControlService {
       );
       const abortController = new AbortController();
       let continuationWorkUnitId: string | undefined;
+      const providerPresetId = resolveEffectiveTeammateProviderPresetId({
+        teammate: input.teammate,
+        surface: "private",
+        workspaceDefaultProviderPresetId: input.store.getWorkspaceSettings().defaultProviderPresetId,
+      });
       await this.dependencies.providerStartupRefresh.refreshBeforeRun({
         cwd: input.store.paths.cwd,
         store: input.store,
-        providerPresetId: input.teammate.providerPresetId,
+        providerPresetId,
       });
       const reply = await createAiTeammateDirectReply({
         startRun: this.dependencies.startRun,
@@ -289,7 +295,7 @@ export class DirectReplyControlService {
         teammate: input.teammate,
         thread: workspace.workspace.thread,
         sourceMessage: guidance,
-        providerPresetId: input.teammate.providerPresetId,
+        providerPresetId,
         continuationReason: starting.mode,
         workspace: workspace.workspace,
         secretResolver: this.dependencies.secretResolver,

@@ -11,6 +11,7 @@ import {
   cwd,
   defaultRuntimePolicy,
   isRecord,
+  type MockState,
 } from "./support/mock-state";
 import {
   channelEventFilterToggle,
@@ -59,6 +60,17 @@ async function useEnglishLocale(page: Page): Promise<void> {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
+}
+
+function configureReadyConversationModel(state: MockState): void {
+  const provider = createChatProvider({
+    lastCheck: { ok: true, message: "Ready", checkedAt: "2026-07-30T00:00:00.000Z" },
+  });
+  state.providers = [provider];
+  state.workspaceSettings.defaultProviderPresetId = "provider_local";
+  state.channels = state.channels.map((channel) => isRecord(channel)
+    ? { ...channel, defaultProviderPresetId: channel.defaultProviderPresetId ?? "provider_local" }
+    : channel);
 }
 
 async function expectConversationReviewSurface(page: Page): Promise<void> {
@@ -1637,6 +1649,7 @@ test("channel drawer does not flash legacy create labels in section headers", as
 test("empty channel drawer opens the new channel dialog", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "pending" });
+  configureReadyConversationModel(state);
   state.channels = [];
   state.channelBranches = [];
   state.tasks = [];
@@ -1662,6 +1675,7 @@ test("empty channel drawer opens the new channel dialog", async ({ page }) => {
 test("new channel dialog selects a project folder before create", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "pending" });
+  configureReadyConversationModel(state);
   await mockDaemon(page, state);
   await page.goto("/");
 
@@ -1695,6 +1709,7 @@ test("new channel dialog selects a project folder before create", async ({ page 
 test("new channel dialog shows create failures inline", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "pending" });
+  configureReadyConversationModel(state);
   state.failNextChannelCreate = {
     error: "channel_create_failed",
     message: "Channel creation failed.",
@@ -1865,6 +1880,7 @@ test("wide channel progress popover does not resize the conversation", async ({ 
 test("channel runtime policy is visible while preferred specialist controls stay hidden", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "pending" });
+  configureReadyConversationModel(state);
   state.aiTeammates = [
     createMockTeammate({ id: "engineer", displayName: "Ling Engineer" }),
     createMockTeammate({ id: "designer", roleKey: "designer", displayName: "Ling Designer" }),
@@ -1936,10 +1952,10 @@ test("channel runtime policy is visible while preferred specialist controls stay
   await expect(createChannelPanel.getByLabel("Preferred specialist")).toHaveCount(0);
   await expect(createChannelPanel).not.toContainText("Preferred specialist");
   await expect(createChannelPanel.getByText("Invite teammates", { exact: true })).toBeVisible();
-  await expect(createChannelPanel.getByLabel("Base model")).toBeHidden();
+  await expect(createChannelPanel.getByLabel("Ling Agent model")).toBeVisible();
   await createChannelPanel.getByLabel("Name").fill("Release");
   await createChannelPanel.getByText("Advanced settings").click();
-  await expect(createChannelPanel.getByLabel("Base model")).toBeVisible();
+  await expect(createChannelPanel.getByLabel("Ling Agent model")).toBeVisible();
   await expect(createChannelPanel.getByLabel("Status")).toHaveCount(0);
   await expect(createChannelPanel).not.toContainText("Queue on conflict");
   await expect(createChannelPanel.getByLabel("Max runs")).toHaveCount(0);
@@ -1985,6 +2001,7 @@ test("channel runtime policy is visible while preferred specialist controls stay
 test("channel reply routing mode is not exposed in ordinary settings", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "pending" });
+  configureReadyConversationModel(state);
   state.aiTeammates = [
     createMockTeammate({ id: "engineer", displayName: "Ling Engineer" }),
     createMockTeammate({ id: "designer", roleKey: "designer", displayName: "Ling Designer" }),
@@ -2054,6 +2071,7 @@ test("multi-role channel messages create workflow proposals instead of AI replie
   await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
 
   await expect.poll(() => state.lastChannelMessageRequest?.requestAiReply).toBe(false);
+  expect(state.lastChannelMessageRequest).not.toHaveProperty("providerPresetId");
   await expect.poll(() => state.channelExecutionProposals.length).toBe(1);
   await expect.poll(() => state.channelMessages.filter((message) => isRecord(message) && message.kind === "ai_reply").length).toBe(0);
   const proposal = page.getByLabel("Task confirmation");

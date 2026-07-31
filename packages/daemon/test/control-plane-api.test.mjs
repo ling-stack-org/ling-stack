@@ -896,10 +896,24 @@ test("teammate binding mutations append compact control-plane events", async () 
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-control-plane-teammate-events-"));
   const daemon = await startDaemonForTest();
   try {
+    const provider = (await postJson(`${daemon.url}/providers?cwd=${encodeURIComponent(cwd)}`, {
+      kind: "glm",
+      displayName: "Control Plane Chat",
+      providerId: "control-plane-chat",
+      model: "control-plane-chat",
+      api: "google-generative-ai",
+      capabilities: ["chat"],
+      input: ["text"],
+      authHeader: false,
+      enabled: true,
+    })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`, {});
     const created = await postJson(`${daemon.url}/teammates?cwd=${encodeURIComponent(cwd)}`, {
       roleKey: "engineer",
       displayName: "Control Plane Teammate",
       description: "Teammate private notes must not be copied into events.",
+      modelBindingMode: "fixed",
+      providerPresetId: provider.id,
       allowedTools: ["read"],
       approvalProfile: { mode: "none" },
       status: "active",

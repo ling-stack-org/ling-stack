@@ -523,8 +523,9 @@ test("lease MCP listTools enforces one total deadline across every page", async 
   });
   const client = await factory.connect(lease(), new AbortController().signal);
   const server = { ...activationServer(), toolTimeoutSec: 1 };
+  const keepAlive = setTimeout(() => {}, 2_000);
 
-  const result = await client.listTools(server, now);
+  const result = await client.listTools(server, now).finally(() => clearTimeout(keepAlive));
 
   assert.equal(result.statusSnapshot.status, "failed");
   assert.equal(result.statusSnapshot.errorCode, "cua_driver_tool_sync_failed");

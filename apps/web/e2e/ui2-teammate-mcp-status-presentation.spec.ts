@@ -18,294 +18,212 @@ import {
   cwd,
 } from "./support/mock-state";
 
-test("Teammate MCP presentation keeps frozen server and side-effect semantics", () => {
-  const fixture = createMcpStatusFixture();
+test("external-tool presentation maps technical runtime states to product language", () => {
+  const fixture = createStatusFixture();
   const expectedServerStates = [
-    ["mcp_status_unknown", "needs-check", "Check needed", "neutral"],
-    ["mcp_status_checking", "checking", "Checking", "info"],
-    ["mcp_status_ready", "ready", "Ready", "success"],
-    ["mcp_status_failed", "failed", "Unavailable", "danger"],
-    ["mcp_status_disabled", "disabled", "Disabled", "neutral"],
-    ["mcp_status_migration", "migration", "Credential migration required", "warning"],
-    ["mcp_status_auth", "auth-blocked", "Credential needs attention", "warning"],
+    ["status_unknown", "needs-check", "Setup required", "neutral"],
+    ["status_checking", "checking", "Checking", "info"],
+    ["status_ready", "ready", "Available", "success"],
+    ["status_failed", "failed", "Unavailable", "danger"],
+    ["status_disabled", "disabled", "Not enabled", "neutral"],
+    ["status_migration", "migration", "Setup required", "warning"],
+    ["status_auth", "auth-blocked", "Setup required", "warning"],
   ] as const;
-  expect(expectedServerStates.map(([id]) => teammateMcpServerStatusPresentation(serverById(fixture.publicServers, id)))).toEqual(
-    expectedServerStates.map(([, id, labelKey, tone]) => ({ id, labelKey, tone })),
-  );
+  expect(expectedServerStates.map(([id]) => (
+    teammateMcpServerStatusPresentation(serverById(fixture.publicServers, id))
+  ))).toEqual(expectedServerStates.map(([, id, labelKey, tone]) => ({ id, labelKey, tone })));
 
   const expectedEffects: ReadonlyArray<readonly [McpToolSideEffectLevel, string, string]> = [
-    ["none", "No side effects", "neutral"],
-    ["read", "Read", "neutral"],
-    ["write", "Write", "warning"],
-    ["write-network", "Write network", "warning"],
-    ["external", "External action", "warning"],
-    ["credential", "Credential", "danger"],
-    ["deploy", "Deploy", "danger"],
+    ["none", "Low risk", "neutral"],
+    ["read", "Low risk", "neutral"],
+    ["write", "Confirm before use", "warning"],
+    ["write-network", "Confirm before use", "warning"],
+    ["external", "Confirm before use", "warning"],
+    ["credential", "High risk", "danger"],
+    ["deploy", "High risk", "danger"],
   ];
   expect(expectedEffects.map(([effect]) => teammateMcpToolEffectPresentation(effect))).toEqual(
     expectedEffects.map(([, labelKey, tone]) => ({ labelKey, tone })),
   );
 });
 
-test("Ling Light renders all Teammate MCP states and seven side-effect badges without legacy roots", async ({ page }) => {
+test("Light shows compact service states and risk groups without technical diagnostics", async ({ page }) => {
   await prepareSurface(page, "light", 1440, 960);
-  const runtimeErrors = collectRuntimeErrors(page);
-  const fixture = createMcpStatusFixture();
-  await installMcpStatusFixture(page, fixture);
+  const runtime = watchRuntime(page);
+  const fixture = createStatusFixture();
+  await installStatusFixture(page, fixture);
   await page.goto("/");
 
-  const panel = await openTeammateMcpSettings(page);
+  const panel = await openExternalTools(page);
   const expectedRows = [
-    ["Unchecked MCP", "Check needed", "neutral"],
-    ["Checking MCP", "Checking", "info"],
-    ["Ready MCP", "Ready", "success"],
-    ["Failed MCP", "Unavailable", "danger"],
-    ["Disabled MCP", "Disabled", "neutral"],
-    ["Legacy credential MCP", "Credential migration required", "warning"],
-    ["Credential attention MCP with an intentionally long server identity for overflow containment", "Credential needs attention", "warning"],
+    ["Unchecked service", "Setup required", "neutral"],
+    ["Checking service", "Checking", "info"],
+    ["Ready service", "Available", "success"],
+    ["Failed service", "Unavailable", "danger"],
+    ["Disabled service", "Not enabled", "neutral"],
+    ["Legacy service", "Setup required", "warning"],
+    ["Account service with an intentionally long display name for overflow containment", "Setup required", "warning"],
   ] as const;
   for (const [name, label, tone] of expectedRows) {
-    const row = mcpServer(panel, name);
-    const status = row.locator(".teammate-mcp-server-status");
-    await expect(status).toHaveCount(1);
-    await expect(status).toHaveAttribute("data-tone", tone);
-    await expect(status).toContainText(label);
-    await expect(row.locator(".teammate-mcp-count-badge")).toHaveCount(2);
-    await expect(row.locator(".teammate-mcp-count-badge").first()).toHaveAttribute("data-tone", "neutral");
-    await expect(row.locator(".teammate-mcp-count-badge").first()).toHaveAttribute("data-variant", "outline");
+    const row = serviceRow(panel, name);
+    await expect(row.locator(".teammate-mcp-server-status")).toHaveAttribute("data-tone", tone);
+    await expect(row.locator(".teammate-mcp-server-status")).toContainText(label);
   }
-  await expect(panel.locator(".status-badge")).toHaveCount(0);
-  await expect(panel).not.toContainText(/needs_check|auth_blocked|write_network/iu);
+  await expect(panel).not.toContainText(/credential|migration|required ref|server id|transport|status_unknown/iu);
 
-  const ready = mcpServer(panel, "Ready MCP");
-  await ready.getByRole("button", { name: "Show tools" }).click();
-  const expectedEffects = [
-    ["No side effects", "neutral"],
-    ["Read", "neutral"],
-    ["Write", "warning"],
-    ["Write network", "warning"],
-    ["External action", "warning"],
-    ["Credential", "danger"],
-    ["Deploy", "danger"],
-  ] as const;
-  const effectBadges = ready.locator(".teammate-mcp-effect");
-  await expect(effectBadges).toHaveCount(7);
-  for (const [index, [label, tone]] of expectedEffects.entries()) {
-    const effect = effectBadges.nth(index);
-    await expect(effect).toHaveText(label);
-    await expect(effect).toHaveAttribute("data-tone", tone);
-    await expect(effect).toHaveAttribute("data-variant", "outline");
-  }
+  await serviceRow(panel, "Ready service").getByRole("button", { name: "Manage Ready service" }).click();
+  const drawer = page.getByRole("dialog", { name: "Ready service" });
+  const badges = drawer.locator(".teammate-mcp-effect");
+  await expect(badges).toHaveCount(7);
+  await expect(badges.filter({ hasText: "Low risk" })).toHaveCount(2);
+  await expect(badges.filter({ hasText: "Confirm before use" })).toHaveCount(3);
+  await expect(badges.filter({ hasText: "High risk" })).toHaveCount(2);
+  await expect(drawer).not.toContainText(/none_effect_tool|write_network_effect_tool|credential_effect_tool/iu);
+  await page.keyboard.press("Escape");
 
-  const disabled = mcpServer(panel, "Disabled MCP");
-  await disabled.getByRole("button", { name: "Show tools" }).click();
-  await expect(disabled.getByLabel("Disabled read tool")).toBeDisabled();
-  await expect(disabled.getByRole("button", { name: "Select all current MCP" })).toBeDisabled();
+  const disabledManage = serviceRow(panel, "Disabled service").getByRole("button", { name: "Manage Disabled service" });
+  await disabledManage.click();
+  const disabledDrawer = page.getByRole("dialog", { name: "Disabled service" });
+  await expect(disabledDrawer.getByLabel("Disabled read capability")).toBeChecked();
+  await expect(disabledDrawer.getByLabel("Disabled read capability")).toBeEnabled();
+  await disabledDrawer.getByText("Disabled read capability", { exact: true }).click();
+  await expect(disabledDrawer.getByLabel("Disabled write capability")).toBeDisabled();
+  await page.keyboard.press("Escape");
   await expectNoHorizontalOverflow(panel);
   await expectNoDocumentOverflow(page);
-  expect(runtimeErrors).toEqual([]);
+  expect(runtime).toEqual({ consoleErrors: [], pageErrors: [] });
 });
 
-test("Ling Dark keeps Teammate MCP loading, disabled controls, and long content contained", async ({ page }) => {
+test("save failure remains productized and a stale save cannot notify the next teammate", async ({ page }) => {
   await prepareSurface(page, "dark", 1280, 800);
-  const runtimeErrors = collectRuntimeErrors(page);
-  const fixture = createMcpStatusFixture();
-  await installMcpStatusFixture(page, fixture);
-  let releaseSave = (): void => undefined;
-  const saveGate = new Promise<void>((resolve) => { releaseSave = resolve; });
-  await page.route("**/teammates/teammate_ui2_mcp_status/mcp?*", async (route) => {
-    if (route.request().method() === "PUT") await saveGate;
-    await route.fallback();
-  });
-  await page.goto("/");
-
-  const panel = await openTeammateMcpSettings(page);
-  const assignmentStatus = panel.locator(".teammate-mcp-assignment-status");
-  await expect(assignmentStatus).toHaveAttribute("data-tone", "neutral");
-  await expect(assignmentStatus).toContainText("Explicit assignment only");
-  await expect(panel.locator(".teammate-mcp-save-status")).toHaveCount(0);
-  const ready = mcpServer(panel, "Ready MCP");
-  await ready.getByRole("button", { name: "Show tools" }).click();
-  await ready.getByLabel("Read effect tool").check();
-  const save = panel.getByRole("button", { name: /Update.*authorization/ });
-  await save.click();
-  await expect(save).toBeDisabled();
-  await expect(save).toHaveAttribute("aria-busy", "true");
-  await expect(save.locator(".spin")).toHaveCount(1);
-  await expect(assignmentStatus).toContainText("Explicit assignment only");
-  await expect(panel).not.toContainText("Saving...");
-  await expect(ready.getByLabel("Read effect tool")).toBeDisabled();
-  releaseSave();
-  const successToast = page.locator('[data-ling-overlay="toast"][data-scope="teammate:teammate_ui2_mcp_status:mcp"]');
-  await expect(successToast).toContainText("Saved");
-  await expect(panel).not.toContainText("Saved");
-  await expect(save).toHaveAttribute("aria-busy", "false");
-  await expect(successToast).toHaveCount(0, { timeout: 5_000 });
-
-  const longRow = mcpServer(panel, "Credential attention MCP");
-  const titleMetrics = await longRow.locator(".teammate-mcp-server-title strong").evaluate((element) => ({
-    clientWidth: element.clientWidth,
-    scrollWidth: element.scrollWidth,
+  const runtime = watchRuntime(page);
+  const fixture = createStatusFixture();
+  fixture.state.aiTeammates.push(createMockTeammate({
+    id: "teammate_external_tools_next",
+    displayName: "Next Teammate",
   }));
-  expect(titleMetrics.scrollWidth).toBeGreaterThanOrEqual(titleMetrics.clientWidth);
-  await expect(longRow.locator(".teammate-mcp-server-status")).toHaveAttribute("data-tone", "warning");
-  await expectNoHorizontalOverflow(panel);
-  await expectNoDocumentOverflow(page);
-  expect(runtimeErrors).toEqual([]);
-});
-
-test("MCP save failure stays in the tab until bindings change or a retry begins", async ({ page }) => {
-  await prepareSurface(page, "dark", 1280, 800);
-  const runtimeErrors = collectRuntimeErrors(page);
-  const fixture = createMcpStatusFixture();
-  await installMcpStatusFixture(page, fixture);
+  await installStatusFixture(page, fixture);
   let saveAttempt = 0;
-  let releaseRetry = (): void => undefined;
-  const retryGate = new Promise<void>((resolve) => { releaseRetry = resolve; });
-  await page.route("**/teammates/teammate_ui2_mcp_status/mcp?*", async (route) => {
+  let releaseDelayedSave = (): void => undefined;
+  const delayedSave = new Promise<void>((resolve) => { releaseDelayedSave = resolve; });
+  await page.route("**/teammates/teammate_external_tools_status/mcp?*", async (route) => {
     if (route.request().method() !== "PUT") {
       await route.fallback();
       return;
     }
     saveAttempt += 1;
-    if (saveAttempt <= 2) {
-      await route.fulfill({ status: 503, json: { error: "mcp_save_failed", message: "Synthetic MCP save failure" } });
+    if (saveAttempt === 1) {
+      await route.fulfill({
+        status: 503,
+        json: { error: "raw_mcp_failure", message: "Synthetic raw provider failure" },
+      });
       return;
     }
-    await retryGate;
+    await delayedSave;
     await route.fallback();
   });
   await page.goto("/");
 
-  const panel = await openTeammateMcpSettings(page);
-  const save = panel.getByRole("button", { name: /Update.*authorization/ });
+  const panel = await openExternalTools(page);
+  await serviceRow(panel, "Ready service").getByRole("button", { name: "Manage Ready service" }).click();
+  const drawer = page.getByRole("dialog", { name: "Ready service" });
+  await drawer.getByText("Read capability", { exact: true }).click();
+  await page.keyboard.press("Escape");
+  const save = page.getByRole("button", { name: /Save changes/ });
   await save.click();
   const failure = panel.locator(".teammate-mcp-save-error");
-  await expect(failure).toContainText("Synthetic MCP save failure");
-  await page.waitForTimeout(3_200);
-  await expect(failure).toContainText("Synthetic MCP save failure");
-  await expect(page.locator('[data-ling-overlay="toast"][data-scope="teammate:teammate_ui2_mcp_status:mcp"]')).toHaveCount(0);
+  await expect(failure).toContainText("External tool settings were not saved. Try again.");
+  await expect(failure).not.toContainText(/raw_mcp_failure|provider/iu);
 
-  const ready = mcpServer(panel, "Ready MCP");
-  await ready.getByRole("button", { name: "Show tools" }).click();
-  await ready.getByLabel("Read effect tool").check();
-  await expect(failure).toHaveCount(0);
-
-  await save.click();
-  await expect(failure).toContainText("Synthetic MCP save failure");
   await save.click();
   await expect(save).toBeDisabled();
-  await expect(save).toHaveAttribute("aria-busy", "true");
-  await expect(failure).toHaveCount(0);
-  releaseRetry();
-  await expect(page.locator('[data-ling-overlay="toast"][data-scope="teammate:teammate_ui2_mcp_status:mcp"]')).toContainText("Saved");
-  await expectNoHorizontalOverflow(panel);
+  await page.getByLabel("Ling Stack navigation").getByRole("button", {
+    name: "Next Teammate",
+    exact: true,
+  }).click();
+  releaseDelayedSave();
+  await page.waitForTimeout(300);
+  await expect(page.locator(
+    '[data-ling-overlay="toast"][data-scope="teammate:teammate_external_tools_status:mcp"]',
+  )).toHaveCount(0);
+  await expect(page.locator("[data-ui2-teammate-chat-header='true'] h1")).toHaveText("Next Teammate");
   await expectNoDocumentOverflow(page);
-  expect(runtimeErrors).toEqual([]);
+  expect(runtime).toEqual({ consoleErrors: [], pageErrors: [] });
 });
 
-test("a delayed MCP save cannot update or notify after the selected teammate changes", async ({ page }) => {
-  await prepareSurface(page, "light", 1440, 960);
-  const runtimeErrors = collectRuntimeErrors(page);
-  const fixture = createMcpStatusFixture();
-  fixture.state.aiTeammates.push(createMockTeammate({
-    id: "teammate_ui2_mcp_current",
-    displayName: "Current MCP Teammate",
-  }));
-  await installMcpStatusFixture(page, fixture);
-  let releaseOldSave = (): void => undefined;
-  const oldSaveGate = new Promise<void>((resolve) => { releaseOldSave = resolve; });
-  await page.route("**/teammates/teammate_ui2_mcp_status/mcp?*", async (route) => {
-    if (route.request().method() === "PUT") await oldSaveGate;
-    await route.fallback();
-  });
-  await page.goto("/");
-
-  const oldPanel = await openTeammateMcpSettings(page);
-  await oldPanel.getByRole("button", { name: /Update.*authorization/ }).click();
-  await expect(oldPanel.getByRole("button", { name: /Update.*authorization/ })).toBeDisabled();
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Current MCP Teammate", exact: true }).click();
-  await expect(page.locator("[data-ui2-teammate-chat-header='true'] h1")).toHaveText("Current MCP Teammate");
-  releaseOldSave();
-  await page.waitForTimeout(400);
-  await expect(page.locator('[data-ling-overlay="toast"][data-scope="teammate:teammate_ui2_mcp_status:mcp"]')).toHaveCount(0);
-
-  const currentPanel = await openTeammateMcpSettings(page, "Current MCP Teammate");
-  const ready = mcpServer(currentPanel, "Ready MCP");
-  await ready.getByRole("button", { name: "Show tools" }).click();
-  await expect(ready.getByLabel("No side effects effect tool")).not.toBeChecked();
-  await expect(currentPanel.locator(".teammate-mcp-save-error")).toHaveCount(0);
-  await expectNoHorizontalOverflow(currentPanel);
-  await expectNoDocumentOverflow(page);
-  expect(runtimeErrors).toEqual([]);
-});
-
-interface McpStatusFixture {
+interface StatusFixture {
   readonly publicServers: readonly McpServer[];
   readonly state: MockState;
 }
 
-function createMcpStatusFixture(): McpStatusFixture {
+function createStatusFixture(): StatusFixture {
   const state = createBaseState({ approvalStatus: "expired" });
   state.aiTeammates = [createMockTeammate({
-    id: "teammate_ui2_mcp_status",
-    displayName: "MCP Status Teammate",
+    id: "teammate_external_tools_status",
+    displayName: "External Tool Status Teammate",
   })];
   const mockServers: MockMcpServer[] = [
-    createMockMcpServer({ id: "mcp_status_unknown", displayName: "Unchecked MCP", serverKey: "status-unknown", status: "unknown", lastCheck: undefined }),
-    createMockMcpServer({ id: "mcp_status_checking", displayName: "Checking MCP", serverKey: "status-checking", status: "unknown", lastCheck: undefined }),
-    createMockMcpServer({ id: "mcp_status_ready", displayName: "Ready MCP", serverKey: "status-ready", status: "ready" }),
-    createMockMcpServer({ id: "mcp_status_failed", displayName: "Failed MCP", serverKey: "status-failed", status: "failed", lastCheck: { ok: false, message: "Unavailable", checkedAt: "2026-07-24T00:00:00.000Z" } }),
-    createMockMcpServer({ id: "mcp_status_disabled", displayName: "Disabled MCP", serverKey: "status-disabled", enabled: false, status: "disabled" }),
-    createMockMcpServer({ id: "mcp_status_migration", displayName: "Legacy credential MCP", serverKey: "status-migration", status: "unknown", lastCheck: undefined }),
-    createMockMcpServer({ id: "mcp_status_auth", displayName: "Credential attention MCP with an intentionally long server identity for overflow containment", serverKey: "status-auth", status: "unknown", lastCheck: undefined }),
+    createMockMcpServer({ id: "status_unknown", displayName: "Unchecked service", serverKey: "status-unknown", status: "unknown", lastCheck: undefined }),
+    createMockMcpServer({ id: "status_checking", displayName: "Checking service", serverKey: "status-checking", status: "unknown", lastCheck: undefined }),
+    createMockMcpServer({ id: "status_ready", displayName: "Ready service", serverKey: "status-ready", status: "ready" }),
+    createMockMcpServer({ id: "status_failed", displayName: "Failed service", serverKey: "status-failed", status: "failed", lastCheck: { ok: false, message: "Unavailable", checkedAt: "2026-07-31T00:00:00.000Z" } }),
+    createMockMcpServer({ id: "status_disabled", displayName: "Disabled service", serverKey: "status-disabled", enabled: false, status: "disabled" }),
+    createMockMcpServer({ id: "status_migration", displayName: "Legacy service", serverKey: "status-migration", status: "unknown", lastCheck: undefined }),
+    createMockMcpServer({ id: "status_auth", displayName: "Account service with an intentionally long display name for overflow containment", serverKey: "status-auth", status: "unknown", lastCheck: undefined }),
   ];
   state.mcpServers = mockServers;
   const effectLevels: readonly McpToolSideEffectLevel[] = ["none", "read", "write", "write-network", "external", "credential", "deploy"];
   state.mcpTools = [
     ...effectLevels.map((sideEffectLevel) => createMockMcpTool({
-      id: `mcp_effect_${sideEffectLevel}`,
-      serverId: "mcp_status_ready",
+      id: `effect_${sideEffectLevel}`,
+      serverId: "status_ready",
       name: `${sideEffectLevel.replace("-", "_")}_effect_tool`,
       sideEffectLevel,
-      title: `${effectTitle(sideEffectLevel)} effect tool`,
+      title: effectTitle(sideEffectLevel),
     })),
-    createMockMcpTool({
-      id: "mcp_disabled_read_tool",
-      serverId: "mcp_status_disabled",
-      name: "disabled_read_tool",
-      sideEffectLevel: "read",
-      title: "Disabled read tool",
-    }),
+    createMockMcpTool({ id: "disabled_read", serverId: "status_disabled", name: "disabled_read", sideEffectLevel: "read", title: "Disabled read capability" }),
+    createMockMcpTool({ id: "disabled_write", serverId: "status_disabled", name: "disabled_write", sideEffectLevel: "write", title: "Disabled write capability" }),
   ];
-  state.teammateMcpBindings = [{
-    teammateId: "teammate_ui2_mcp_status",
-    serverId: "mcp_status_ready",
-    mode: "selected",
-    selectedToolNames: ["none_effect_tool"],
-    approvalOverrides: {},
-    enabled: true,
-    createdAt: "2026-07-24T00:00:00.000Z",
-    updatedAt: "2026-07-24T00:00:00.000Z",
-  }];
+  state.teammateMcpBindings = [
+    {
+      teammateId: "teammate_external_tools_status",
+      serverId: "status_ready",
+      mode: "selected",
+      selectedToolNames: ["none_effect_tool"],
+      approvalOverrides: {},
+      enabled: true,
+      createdAt: "2026-07-31T00:00:00.000Z",
+      updatedAt: "2026-07-31T00:00:00.000Z",
+    },
+    {
+      teammateId: "teammate_external_tools_status",
+      serverId: "status_disabled",
+      mode: "selected",
+      selectedToolNames: ["disabled_read"],
+      approvalOverrides: {},
+      enabled: true,
+      createdAt: "2026-07-31T00:00:00.000Z",
+      updatedAt: "2026-07-31T00:00:00.000Z",
+    },
+  ];
 
   const publicServers = mockServers.map((server) => toPublicMockMcpServer(server, state) as unknown as McpServer);
   return {
     state,
     publicServers: publicServers.map((server) => {
-      if (server.id === "mcp_status_checking") return { ...server, status: { kind: "checking" } };
-      if (server.id === "mcp_status_migration") return { ...server, legacySecretMigrationRequired: true };
-      if (server.id === "mcp_status_auth") {
+      if (server.id === "status_checking") return { ...server, status: { kind: "checking" } };
+      if (server.id === "status_migration") return { ...server, legacySecretMigrationRequired: true };
+      if (server.id === "status_auth") {
         return {
           ...server,
-          secretStatuses: [{ ref: "env:MISSING_MCP_TOKEN", kind: "env", configured: false, errorCode: "secret_not_configured" }],
+          secretStatuses: [{ ref: "env:MISSING", kind: "env", configured: false, errorCode: "secret_not_configured" }],
           statusSnapshot: {
             serverId: server.id,
-            checkedAt: "2026-07-24T00:00:00.000Z",
-            expiresAt: "2026-07-24T00:05:00.000Z",
+            checkedAt: "2026-07-31T00:00:00.000Z",
+            expiresAt: "2026-07-31T00:05:00.000Z",
             status: "failed",
-            missingSecretRefs: ["env:MISSING_MCP_TOKEN"],
-            authStatus: { kind: "missing", refs: ["env:MISSING_MCP_TOKEN"], missingRefs: ["env:MISSING_MCP_TOKEN"] },
+            missingSecretRefs: ["env:MISSING"],
+            authStatus: { kind: "missing", refs: ["env:MISSING"], missingRefs: ["env:MISSING"] },
           },
         };
       }
@@ -314,48 +232,53 @@ function createMcpStatusFixture(): McpStatusFixture {
   };
 }
 
-async function installMcpStatusFixture(page: Page, fixture: McpStatusFixture): Promise<void> {
+async function installStatusFixture(page: Page, fixture: StatusFixture): Promise<void> {
   await mockDaemon(page, fixture.state);
   await page.route(/\/mcp\/servers(?:\?.*)?$/u, async (route) => {
-    if (route.request().method() !== "GET") {
-      await route.fallback();
+    if (route.request().method() === "GET") {
+      await route.fulfill({ json: { cwd, servers: fixture.publicServers } });
       return;
     }
-    await route.fulfill({ json: { cwd, servers: fixture.publicServers } });
+    await route.fallback();
   });
 }
 
-async function openTeammateMcpSettings(page: Page, teammateName = "MCP Status Teammate"): Promise<Locator> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: teammateName, exact: true }).click();
+async function openExternalTools(page: Page): Promise<Locator> {
+  await page.getByLabel("Ling Stack navigation").getByRole("button", {
+    name: "External Tool Status Teammate",
+    exact: true,
+  }).click();
   const header = page.locator("[data-ui2-teammate-chat-header='true']");
-  await expect(header).toBeVisible();
   await header.getByRole("button", { name: "Show details" }).click();
-  const dock = page.getByRole("complementary", { name: "Private chat workspace dock" });
-  await dock.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: "MCP", exact: true }).click();
-  const panel = page.getByLabel("MCP tool authorization");
+  await page.getByRole("complementary", { name: "Private chat workspace dock" })
+    .getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByLabel("Settings sections").getByRole("button", {
+    name: "Tools and permissions",
+    exact: true,
+  }).click();
+  const panel = page.getByRole("region", { name: "External tools", exact: true });
   await expect(panel).toBeVisible();
   return panel;
 }
 
-function mcpServer(panel: Locator, name: string): Locator {
-  return panel.locator(".teammate-mcp-server-row").filter({ hasText: name });
+function serviceRow(panel: Locator, name: string): Locator {
+  return panel.locator(".teammate-external-tool-row").filter({ hasText: name });
 }
 
 function serverById(servers: readonly McpServer[], id: string): McpServer {
   const server = servers.find((item) => item.id === id);
-  if (!server) throw new Error(`Missing MCP server fixture: ${id}`);
+  if (!server) throw new Error(`Missing external service fixture: ${id}`);
   return server;
 }
 
 function effectTitle(effect: McpToolSideEffectLevel): string {
-  if (effect === "none") return "No side effects";
-  if (effect === "read") return "Read";
-  if (effect === "write") return "Write";
-  if (effect === "write-network") return "Write network";
-  if (effect === "external") return "External action";
-  if (effect === "credential") return "Credential";
-  return "Deploy";
+  if (effect === "none") return "No-change capability";
+  if (effect === "read") return "Read capability";
+  if (effect === "write") return "Write capability";
+  if (effect === "write-network") return "Network capability";
+  if (effect === "external") return "External action capability";
+  if (effect === "credential") return "Account capability";
+  return "Deploy capability";
 }
 
 async function prepareSurface(page: Page, theme: "dark" | "light", width: number, height: number): Promise<void> {
@@ -372,19 +295,22 @@ async function prepareSurface(page: Page, theme: "dark" | "light", width: number
 }
 
 async function expectNoHorizontalOverflow(locator: Locator): Promise<void> {
-  const overflow = await locator.evaluate((element) => element.scrollWidth - element.clientWidth);
-  expect(overflow).toBeLessThanOrEqual(1);
+  expect(await locator.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
 }
 
 async function expectNoDocumentOverflow(page: Page): Promise<void> {
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
+  expect(await page.evaluate(() => (
+    document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1
+  ))).toBe(true);
 }
 
-function collectRuntimeErrors(page: Page): string[] {
-  const errors: string[] = [];
+function watchRuntime(page: Page): { consoleErrors: string[]; pageErrors: string[] } {
+  const runtime = { consoleErrors: [] as string[], pageErrors: [] as string[] };
   page.on("console", (message) => {
-    if (message.type() === "error" && !message.text().startsWith("Failed to load resource:")) errors.push(message.text());
+    if (message.type() === "error" && !message.text().startsWith("Failed to load resource:")) {
+      runtime.consoleErrors.push(message.text());
+    }
   });
-  page.on("pageerror", (error) => errors.push(error.message));
-  return errors;
+  page.on("pageerror", (error) => runtime.pageErrors.push(error.message));
+  return runtime;
 }

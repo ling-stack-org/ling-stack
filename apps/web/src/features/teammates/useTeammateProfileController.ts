@@ -32,13 +32,15 @@ export interface TeammateProfileController {
   readonly avatarCropSource?: string;
   readonly avatarTriggerRef: RefObject<HTMLButtonElement>;
   readonly importingPersona: boolean;
+  readonly personaBusyAction: "" | "apply" | "preview";
   readonly personaDraft?: TeammatePersonaDraft;
+  readonly personaError: string;
   readonly personaImportForm: PersonaImportForm;
   readonly profileDirty: boolean;
   readonly profileError: string;
   readonly savingProfile: boolean;
   readonly uploadingAvatar: boolean;
-  readonly applyPersonaDraft: () => Promise<void>;
+  readonly applyPersonaDraft: () => Promise<boolean>;
   readonly cancelAvatarCrop: () => void;
   readonly confirmAvatarCrop: (dataUrl: string) => Promise<void>;
   readonly previewPersonaImport: () => Promise<void>;
@@ -46,7 +48,7 @@ export interface TeammateProfileController {
   readonly resetProfile: () => void;
   readonly saveProfile: () => Promise<void>;
   readonly selectAvatarFile: (file?: File) => Promise<void>;
-  readonly setPersonaImportForm: Dispatch<SetStateAction<PersonaImportForm>>;
+  readonly setPersonaImportForm: (form: PersonaImportForm) => void;
 }
 
 export function useTeammateProfileController({
@@ -83,17 +85,19 @@ export function useTeammateProfileController({
   const [avatarCropSource, setAvatarCropSource] = useState<string>();
   const [personaImportForm, setPersonaImportForm] = useState<PersonaImportForm>({ sourcePath: "", content: "" });
   const [personaDraft, setPersonaDraft] = useState<TeammatePersonaDraft>();
-  const [importingPersona, setImportingPersona] = useState(false);
+  const [personaBusyAction, setPersonaBusyAction] = useState<"" | "apply" | "preview">("");
+  const importingPersona = Boolean(personaBusyAction);
   const [savingProfile, setSavingProfile] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
-  const profileError = requestOwner.latestError?.message ?? "";
+  const personaError = requestOwner.latestError?.action === "persona" ? requestOwner.latestError.message : "";
+  const profileError = requestOwner.latestError?.action === "persona" ? "" : requestOwner.latestError?.message ?? "";
   const profileDirty = isProfileDirty(teammate, settingsForm, isProtectedSystemTeammate);
 
   useEffect(() => {
     setAvatarCropSource(undefined);
     setPersonaImportForm({ sourcePath: "", content: "" });
     setPersonaDraft(undefined);
-    setImportingPersona(false);
+    setPersonaBusyAction("");
     setSavingProfile(false);
     setUploadingAvatar(false);
   }, [teammate.id]);
@@ -213,6 +217,7 @@ export function useTeammateProfileController({
       if (!requestOwner.isActionCurrent(operation)) return;
       setSettingsForm((current) => ({
         ...teammateToSettingsForm(updated),
+        modelBindingMode: current.modelBindingMode,
         providerPresetId: current.providerPresetId,
       }));
       onTeammateUpdated?.(updated);
@@ -237,7 +242,7 @@ export function useTeammateProfileController({
     }
     const operation = requestOwner.begin("persona");
     if (!requestOwner.isActionCurrent(operation)) return;
-    setImportingPersona(true);
+    setPersonaBusyAction("preview");
     try {
       const response = await createTeammatePersonaDraft(cwd.trim(), teammate.id, {
         content: personaImportForm.content,
@@ -249,15 +254,15 @@ export function useTeammateProfileController({
     } catch {
       requestOwner.reportError(operation, t("Persona draft could not be prepared. Try again."));
     } finally {
-      if (requestOwner.isActionCurrent(operation)) setImportingPersona(false);
+      if (requestOwner.isActionCurrent(operation)) setPersonaBusyAction("");
     }
   }
 
-  async function applyPersonaDraft(): Promise<void> {
-    if (!personaDraft || importingPersona || isProtectedSystemTeammate) return;
+  async function applyPersonaDraft(): Promise<boolean> {
+    if (!personaDraft || importingPersona || isProtectedSystemTeammate) return false;
     const operation = requestOwner.begin("persona");
-    if (!requestOwner.isActionCurrent(operation)) return;
-    setImportingPersona(true);
+    if (!requestOwner.isActionCurrent(operation)) return false;
+    setPersonaBusyAction("apply");
     try {
       const updated = await onUpdateTeammate(teammate.id, {
         displayName: personaDraft.displayName.trim() || teammate.displayName,
@@ -265,9 +270,10 @@ export function useTeammateProfileController({
         systemPrompt: personaDraft.systemPrompt.trim() || null,
         appendSystemPrompt: personaDraft.appendSystemPrompt,
       }, "persona-apply");
-      if (!requestOwner.isActionCurrent(operation)) return;
+      if (!requestOwner.isActionCurrent(operation)) return false;
       setSettingsForm((current) => ({
         ...teammateToSettingsForm(updated),
+        modelBindingMode: current.modelBindingMode,
         providerPresetId: current.providerPresetId,
       }));
       onTeammateUpdated?.(updated);
@@ -279,18 +285,28 @@ export function useTeammateProfileController({
         scope: `teammate:profile:${operation.teammateId}:persona`,
         tone: "success",
       });
+      return true;
     } catch {
       requestOwner.reportError(operation, t("Persona changes were not saved. Try again."));
+      return false;
     } finally {
-      if (requestOwner.isActionCurrent(operation)) setImportingPersona(false);
+      if (requestOwner.isActionCurrent(operation)) setPersonaBusyAction("");
     }
+  }
+
+  function updatePersonaImportForm(form: PersonaImportForm): void {
+    setPersonaImportForm(form);
+    setPersonaDraft(undefined);
+    requestOwner.clearActionError("persona");
   }
 
   return {
     avatarCropSource,
     avatarTriggerRef,
     importingPersona,
+    personaBusyAction,
     personaDraft,
+    personaError,
     personaImportForm,
     profileDirty,
     profileError,
@@ -304,7 +320,7 @@ export function useTeammateProfileController({
     resetProfile,
     saveProfile,
     selectAvatarFile,
-    setPersonaImportForm,
+    setPersonaImportForm: updatePersonaImportForm,
   };
 }
 

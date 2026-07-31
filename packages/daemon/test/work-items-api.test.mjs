@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { test } from "node:test";
 import { createSqliteRunStore } from "@ling-stack/core";
 import { createDaemonServer } from "../dist/index.js";
+import { prepareChannelCreateBody } from "./conversation-model-test-fixture.mjs";
 import { ensureGitRepoForChannelPost } from "./git-test-helpers.mjs";
 
 test("work item API lists, routes, claims, heartbeats, releases, completes, and fails durable items", async () => {
@@ -174,11 +175,12 @@ async function getJson(url) {
 }
 
 async function postJson(url, body) {
-  await ensureGitRepoForChannelPost(url, body);
+  const preparedBody = await prepareChannelCreateBody(url, body);
+  await ensureGitRepoForChannelPost(url, preparedBody);
   const response = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify(preparedBody),
   });
   return await readJsonResponse(response);
 }

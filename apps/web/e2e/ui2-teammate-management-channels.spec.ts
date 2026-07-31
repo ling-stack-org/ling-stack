@@ -43,6 +43,8 @@ test("Join, Leave, and Set default preserve the full membership payload with row
   const engineering = channelRow(channels, "channel_engineering");
   const design = channelRow(channels, "channel_design");
   const research = channelRow(channels, "channel_research");
+  await expect(channels.locator('[data-channel-id="channel_archived"]')).toHaveCount(0);
+  await expect(channels).toContainText("2 of 4 channels joined");
   await expect(channels.locator("[data-ui2-teammate-channels-list]")).toHaveCSS("border-top-width", "1px");
   await expect(engineering.locator(".teammate-channel-icon")).toHaveCSS("border-top-width", "0px");
   await expect(engineering).toContainText("Default channel");
@@ -89,7 +91,7 @@ test("Join, Leave, and Set default preserve the full membership payload with row
   expect(runtimeErrors).toEqual([]);
 });
 
-test("paused and archived reasons stay explicit in compact Chinese reduced-motion layout", async ({ page }) => {
+test("paused channels stay actionable while archived channels stay out of the compact Chinese layout", async ({ page }) => {
   await prepareSurface(page, { theme: "dark", width: 1280, height: 800, locale: "zh-CN", reducedMotion: "reduce" });
   const runtimeErrors = collectRuntimeErrors(page);
   const state = createChannelsState("频道关系系统审阅队友（用于验证长名称和受限频道操作）");
@@ -104,13 +106,13 @@ test("paused and archived reasons stay explicit in compact Chinese reduced-motio
 
   const channels = await openChannels(page, "频道关系系统审阅队友（用于验证长名称和受限频道操作）", true);
   const paused = channelRow(channels, "channel_paused");
-  const archived = channelRow(channels, "channel_archived");
   const pausedJoin = paused.getByRole("button", { name: "加入" });
   await expect(pausedJoin).toBeDisabled();
   await expect(pausedJoin).toHaveAttribute("title", "已暂停频道不能加入或设为默认。");
   await expect(paused).toContainText("已暂停频道不能加入或设为默认。");
-  await expect(archived.getByRole("button", { name: "退出" })).toBeEnabled();
-  await expect(archived).toContainText("已归档频道只允许解除现有关系。");
+  await expect(channels.locator('[data-channel-id="channel_archived"]')).toHaveCount(0);
+  await expect(channels.getByRole("option", { name: "已归档频道" })).toHaveCount(0);
+  await expect(channels).toContainText("已加入 2 / 4 个频道");
 
   const search = channels.getByRole("searchbox", { name: "搜索频道" });
   await search.focus();
@@ -348,7 +350,7 @@ test("protected Ling Agent exposes exactly 100 read-only rows inside one bounded
   await expect(list.locator("[data-channel-id]")).toHaveCount(100);
   await expect(list.getByText("Always joined", { exact: true })).toHaveCount(100);
   await expect(list.getByRole("button", { name: /Join|Leave|Set default/u })).toHaveCount(0);
-  await expect(page.getByLabel("Configuration summary").locator(".teammate-summary-row").filter({ hasText: "Channels" })).toContainText("100");
+  await expect(page.getByLabel("Settings sections").getByRole("button", { name: /^Channels/u })).toContainText("100");
   expect(putCount).toBe(0);
   const scrollState = await list.evaluate((element) => ({
     clientHeight: element.clientHeight,

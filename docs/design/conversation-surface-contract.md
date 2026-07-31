@@ -23,6 +23,27 @@ Related docs:
 - [Conversation Shared Capabilities](conversation-shared-capabilities.md)
 - [Conversation Shared Capabilities Detailed Design](conversation-shared-capabilities-detailed-design.md)
 - [Conversation Shared Capabilities Implementation Plan](conversation-shared-capabilities-implementation-plan.md)
+- [Conversation Model Binding And Creation Validation](conversation-model-binding-and-creation-validation.md)
+- [Conversation Model Binding And Creation Validation Implementation Plan](conversation-model-binding-and-creation-validation-implementation-plan.md)
+
+2026-07-30 model ownership update: private chat still has no composer model picker. A
+user-created teammate uses its fixed model; a built-in teammate explicitly follows the
+workspace default in private chat. This is a declared binding mode, not runtime fallback.
+
+2026-07-30 settings-entry update: channel and teammate-private headers both keep a
+persistent title-adjacent More menu. Settings must remain reachable when the effective
+model is healthy. A model warning may deep-link to the Model section, but it is a repair
+shortcut rather than the only settings entry.
+
+2026-07-30 teammate identity update: the private-chat header keeps only avatar, teammate
+name, and the title-adjacent More menu. Role translation belongs to teammate details and
+must not occupy a persistent middle slot or push the More menu away from a short name.
+
+2026-07-30 settings-shell parity update: channel and teammate-private settings use the
+same shell grammar: a 58px back/title/subtitle header, a horizontal settings navigation,
+and one bounded scrolling content region. Teammate settings must not retain the former
+left navigation or a permanent configuration-summary sidebar. Teammate-specific fields
+and current-tab save ownership remain unchanged.
 
 ## Purpose
 
@@ -215,8 +236,14 @@ Summary:
 
 Normal conversation can select model and authorization. Teammate private chat can select
 authorization but cannot change model from the composer; the effective private model is
-owned by teammate/provider settings and may be shown read-only. Channel hides model
-selection because channel teammates own configured provider/model settings.
+owned by teammate settings and may be shown read-only in the composer. The persistent
+private-chat Settings entry opens the full teammate settings surface, where editable
+teammates may switch binding mode or fixed model.
+
+Channel keeps model selection out of the composer. Channel Settings owns one `Ling Agent
+model` for Ling Agent replies and channel-owned routing. Other built-in teammates continue
+to follow the workspace model, while fixed teammates keep their own model. Channel
+membership does not create a per-channel teammate-model override.
 
 Authorization is not hidden on channel. Channel, normal conversation, and teammate
 private chat all show the same four permission presets: `read_only`,

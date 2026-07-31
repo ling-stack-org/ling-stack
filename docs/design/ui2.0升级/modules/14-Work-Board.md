@@ -46,7 +46,7 @@ Work Board 不是：
 |---|---|---|---|
 | Work Board projection | `buildWorkItemViews`、durable `work_items` 与 P11 controller | 合并、去重、筛选、排序、选择、显示下一步 | 创建第二份持久化 ledger |
 | Task | workspace Task API/store/state machine | 显示任务、打开精确任务、显示关联 Run/Approval | 复制 Task CRUD、直接改 Task 状态、自动运行 |
-| Teammate Tasks | `TeammateTasksTab` 的最近 100 条单队友投影 | 创建后路由到 Work Board；无 `currentRunId` 时打开精确 `task:<id>` | 宣称完整任务库、持有第二份 Task store、自动运行 |
+| Private-message task creation | 私聊消息行动与 `useTeammateTasksController` | 创建后通过 Toast 路由到 Work Board；任务列表仍由 Work Board 统一管理 | 恢复单队友 Tasks 设置页、持有第二份 Task store、自动运行 |
 | Channel Work Board | 全局 Work Board 的 `channelId` 过滤投影 | 在频道工具面板显示活跃工作并复用相同 WorkItem mutation | 建立 per-channel ledger 或不同状态规则 |
 | Runs | Runs domain、Run History/Diagnostics | 显示 run-derived 状态并显式打开 Run | Retry、Cancel、Timeline、events、artifacts 诊断复制到 Board |
 | Threads | Threads domain、Thread Page | 通过 Run 页面间接进入 Thread | 伪造 direct Thread target；当前 WorkItem contract 没有 `threadId` |
@@ -55,7 +55,7 @@ Work Board 不是：
 | External work | External Work domain | 对现有 external work 显式 route 到频道 | 执行外部 mutation、自动创建 Run、路由不支持的 manual item |
 
 “Work Board 是权威任务 owner”指完整 workspace 协调表面由 Work Board 承担；底层 Task 记录仍由
-Task domain 权威持久化。Teammate Tasks 和 Channel Work Board 都是有边界的投影，不拥有新的 Task store。
+Task domain 权威持久化。私聊消息创建入口和 Channel Work Board 都不拥有新的 Task store。
 
 ## 3. 当前真实入口与调用链
 
@@ -76,17 +76,16 @@ SidebarPrimaryNavigation
 当前 `ViewId` 已包含 `work_board`，Sidebar 的 `Kanban` 入口已经存在。P11 不新增路由、不把 Work Board
 放回 Settings，也不增加第二个导航入口。
 
-### 3.2 Teammate Tasks 路由
+### 3.2 私聊消息创建任务路由
 
 ```text
-TeammateTasksTab row
-  -> currentRunId ? controller.onOpenTask(run) : controller.onOpenTask(task)
-  -> AppShell.onOpenRun / onOpenTaskInWorkBoard
-  -> 有 currentRunId：openRunFromWorkspace -> Runs
-  -> 无 currentRunId：openTaskInWorkBoard
-     -> scope = terminal ? history : global
-     -> itemId = "task:<task.id>"
-     -> GlobalWorkBoardPage 精确选择
+Private message action
+  -> useTeammateTasksController.createFromMessage
+  -> createTask (no auto-run)
+  -> success Toast / View task
+  -> AppShell.onOpenTaskInWorkBoard
+  -> itemId = "task:<task.id>"
+  -> GlobalWorkBoardPage 精确选择
 ```
 
 私聊消息和 Tasks 表单仍可调用现有 `createTask`，但创建成功只更新 projection 并打开 Work Board；
@@ -615,7 +614,7 @@ claim/heartbeat/release/complete/fail 和 route external work。无界历史不�
 - 六个 scope、Search、六类 Filter、三种 Sort、所有 empty/no-result/stale/error 可达；
 - 十种 WorkItem 状态与 durable claim/blocker/action matrix 只显示一个主状态和一个主行动；
 - Approval、Run、Task、Channel 导航精确，Thread 边界不伪造；
-- Teammate Tasks/Channel Board 仍是 bounded projection，创建不自动运行；
+- 私聊消息创建入口/Channel Board 保持轻量边界，创建不自动运行；
 - request/selection/cwd/mutation races 有 focused E2E；
 - `GlobalWorkBoardPage.tsx < 800`，所有新增 production owner `<400`；
 - CSS focused split、无硬编码颜色、无 `!important`、无 private keyframe、无 package-private selector；

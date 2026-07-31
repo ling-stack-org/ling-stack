@@ -1,82 +1,25 @@
 .teammate-skills-panel {
+  --teammate-skills-max-height: min(80vh, calc(100vh - 260px));
   container-type: inline-size;
-  display: flex;
+  display: grid;
+  width: min(100%, 980px);
   min-width: 0;
-  min-height: 0;
-  flex-direction: column;
-  gap: var(--ling-space-5);
-  padding: var(--ling-space-6);
-  overflow: hidden;
-}
-
-.teammate-skills-heading {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: space-between;
+  align-content: start;
+  justify-self: center;
   gap: var(--ling-space-4);
+  padding: var(--ling-space-6);
 }
 
-.teammate-skills-heading > div {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  gap: var(--ling-space-3);
-  color: var(--ling-text-muted);
-}
-
-.teammate-skills-heading h2 {
-  min-width: 0;
-  margin: 0;
-  overflow: hidden;
-  color: var(--ling-text-strong);
-  font-size: var(--ling-font-md);
-  font-weight: 700;
-  line-height: var(--ling-line-md);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.teammate-skill-summary {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: var(--ling-space-6);
-  padding-block: var(--ling-space-3);
-  border-top: 1px solid var(--ling-border-default);
-  border-bottom: 1px solid var(--ling-border-default);
-}
-
-.teammate-skill-summary > span {
-  display: inline-flex;
-  min-width: 0;
-  align-items: baseline;
-  gap: var(--ling-space-2);
-}
-
-.teammate-skill-summary strong {
-  color: var(--ling-text-strong);
-  font-size: var(--ling-font-md);
-  line-height: var(--ling-line-md);
-}
-
-.teammate-skill-summary small {
-  overflow: hidden;
-  color: var(--ling-text-muted);
-  font-size: var(--ling-font-xs);
-  line-height: var(--ling-line-xs);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.teammate-skill-summary > span[data-tone="warning"] strong {
-  color: var(--ling-status-warning);
+@supports (height: 1dvh) {
+  .teammate-skills-panel {
+    --teammate-skills-max-height: min(80dvh, calc(100dvh - 260px));
+  }
 }
 
 .teammate-skill-toolbar {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(0, 1fr) minmax(132px, 160px) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(148px, 176px);
   align-items: center;
   gap: var(--ling-space-3);
 }
@@ -85,112 +28,116 @@
 .teammate-skill-filter,
 .teammate-skills-feedback,
 .teammate-skills-empty,
-.teammate-skill-list,
-.teammate-skill-advanced-binding {
+.teammate-skill-list-shell,
+.teammate-skill-scroll-area,
+.teammate-skill-list {
   min-width: 0;
 }
 
-.teammate-skill-list {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
+.teammate-skills-empty {
   border: 1px solid var(--ling-border-default);
   border-radius: var(--ling-radius-md);
   background: var(--ling-bg-panel);
 }
 
-.teammate-skills-empty {
-  flex: 1 1 auto;
+.teammate-skill-list-shell {
+  overflow: hidden;
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  background: var(--ling-bg-panel);
+}
+
+.teammate-skill-list-header,
+.teammate-management-skill-row {
+  grid-template-columns: minmax(160px, 0.72fr) minmax(220px, 1.28fr) 72px;
+  gap: var(--ling-space-4);
+}
+
+.teammate-skill-list-header {
+  display: grid;
+  min-height: 36px;
+  align-items: center;
+  padding: 0 10px 0 var(--ling-space-5);
+  border-bottom: 1px solid var(--ling-border-default);
+  color: var(--ling-text-muted);
+  background: var(--ling-bg-subtle);
+  font-size: var(--ling-font-xs);
+  font-weight: 600;
+  line-height: var(--ling-line-xs);
+}
+
+.teammate-skill-list-header > :last-child {
+  text-align: right;
+}
+
+.teammate-skill-scroll-area,
+.teammate-skill-list {
+  max-height: var(--teammate-skills-max-height);
 }
 
 .teammate-management-skill-row {
-  grid-template-columns: minmax(160px, 1.45fr) minmax(104px, 0.7fr) minmax(104px, auto) auto auto;
-  gap: var(--ling-space-4);
+  padding-right: 10px;
 }
 
 .teammate-management-skill-row:last-child {
   border-bottom: 0;
 }
 
-.teammate-skill-row-identity,
-.teammate-skill-row-summary,
-.teammate-skill-row-status {
-  display: grid;
+.teammate-skill-row-title {
+  display: flex;
   min-width: 0;
-  gap: var(--ling-space-1);
+  align-items: center;
+  gap: var(--ling-space-2);
 }
 
-.teammate-skill-row-identity strong,
-.teammate-skill-row-identity small,
-.teammate-skill-row-summary span,
-.teammate-skill-row-summary small,
-.teammate-skill-row-status small {
+.teammate-skill-row-title strong,
+.teammate-skill-row-description {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.teammate-skill-row-identity strong {
+.teammate-skill-row-title strong {
   color: var(--ling-text-strong);
   font-size: var(--ling-font-sm);
   line-height: var(--ling-line-sm);
 }
 
-.teammate-skill-row-identity small,
-.teammate-skill-row-summary,
-.teammate-skill-row-status small {
+.teammate-skill-attention-badge {
+  flex: 0 0 auto;
+}
+
+.teammate-skill-row-description {
+  display: block;
   color: var(--ling-text-muted);
   font-size: var(--ling-font-xs);
   line-height: var(--ling-line-xs);
 }
 
-.teammate-skill-row-status {
-  justify-items: start;
-}
-
-.teammate-skill-row-status small {
-  color: var(--ling-status-warning);
-}
-
-.teammate-skill-row-actions {
+.teammate-skill-row-use {
   display: inline-flex;
   min-width: 0;
-  align-items: center;
   justify-content: flex-end;
-  gap: var(--ling-space-2);
 }
 
-.teammate-skill-advanced-binding {
-  margin-top: calc(-1 * var(--ling-space-2));
-}
-
-.teammate-skill-advanced-binding-body {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
-  gap: var(--ling-space-3);
-}
-
-.teammate-skill-detail-drawer,
-.teammate-skill-import-dialog,
-.teammate-skill-archive-dialog {
-  min-width: 0;
-}
-
-.teammate-skill-detail-status {
+.teammate-skill-detail-use {
   display: flex;
   min-width: 0;
+  min-height: var(--ling-control-md);
   align-items: center;
   justify-content: space-between;
-  flex-wrap: wrap;
-  gap: var(--ling-space-3);
+  gap: var(--ling-space-4);
   padding-bottom: var(--ling-space-5);
   border-bottom: 1px solid var(--ling-border-default);
+}
+
+.teammate-skill-detail-use strong,
+.teammate-skill-detail-section h3,
+.teammate-skill-detail-value > strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+  line-height: var(--ling-line-sm);
 }
 
 .teammate-skill-detail-section {
@@ -201,24 +148,8 @@
   border-bottom: 1px solid var(--ling-border-default);
 }
 
-.teammate-skill-detail-section h3,
-.teammate-skill-detail-section p {
-  margin: 0;
-}
-
 .teammate-skill-detail-section h3 {
-  color: var(--ling-text-strong);
-  font-size: var(--ling-font-sm);
-  line-height: var(--ling-line-sm);
-}
-
-.teammate-skill-detail-section p,
-.teammate-skill-detail-value > span,
-.teammate-skill-detail-value > code {
-  color: var(--ling-text-muted);
-  font-size: var(--ling-font-sm);
-  line-height: var(--ling-line-sm);
-  overflow-wrap: anywhere;
+  margin: 0;
 }
 
 .teammate-skill-detail-reasons,
@@ -233,25 +164,21 @@
   margin-top: var(--ling-space-5);
 }
 
-.teammate-skill-detail-value > strong {
-  color: var(--ling-text-strong);
-  font-size: var(--ling-font-xs);
-  line-height: var(--ling-line-xs);
+.teammate-skill-detail-value > span,
+.teammate-skill-detail-value > code {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-sm);
+  line-height: var(--ling-line-sm);
+  overflow-wrap: anywhere;
 }
 
-.teammate-skill-detail-value pre {
-  max-height: 160px;
-  margin: 0;
-  padding: var(--ling-space-4);
-  overflow: auto;
-  border: 1px solid var(--ling-border-default);
-  border-radius: var(--ling-radius-sm);
-  color: var(--ling-text-default);
-  background: var(--ling-bg-subtle);
-  font-size: var(--ling-font-xs);
-  line-height: var(--ling-line-sm);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+.teammate-skill-detail-status {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--ling-space-3);
+  margin-bottom: var(--ling-space-4);
 }
 
 .teammate-skill-detail-tokens {
@@ -285,99 +212,16 @@
   white-space: nowrap;
 }
 
-.teammate-skill-import-fields {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--ling-space-5);
-}
-
-.teammate-skill-import-path,
-.teammate-skill-import-content {
-  grid-column: 1 / -1;
-}
-
-.teammate-skill-import-preview,
-.teammate-skill-import-definitions,
-.teammate-skill-import-warnings {
-  display: grid;
-  min-width: 0;
-  gap: var(--ling-space-3);
-}
-
-.teammate-skill-import-preview {
-  margin-top: var(--ling-space-6);
-  padding-top: var(--ling-space-5);
-  border-top: 1px solid var(--ling-border-default);
-}
-
-.teammate-skill-import-preview-heading {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--ling-space-4);
-}
-
-.teammate-skill-import-preview-heading h3 {
-  margin: 0;
-  color: var(--ling-text-strong);
-  font-size: var(--ling-font-sm);
-  line-height: var(--ling-line-sm);
-}
-
-.teammate-skill-import-definitions {
-  overflow: hidden;
-  border: 1px solid var(--ling-border-default);
-  border-radius: var(--ling-radius-md);
-}
-
-.teammate-skill-import-definition-identity {
-  display: grid;
-  min-width: 0;
-  gap: var(--ling-space-1);
-}
-
-.teammate-skill-import-definition-identity strong,
-.teammate-skill-import-definition-identity small {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.teammate-skill-import-definition-identity small {
-  color: var(--ling-text-muted);
-  font-size: var(--ling-font-xs);
-}
-
 @container (max-width: 680px) {
-  .teammate-skill-toolbar {
-    grid-template-columns: minmax(0, 1fr) minmax(116px, 136px);
-  }
-
-  .teammate-skill-toolbar > :last-child {
-    grid-column: 1 / -1;
-    justify-self: end;
-  }
-
+  .teammate-skill-list-header,
   .teammate-management-skill-row {
-    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-columns: minmax(140px, 0.78fr) minmax(180px, 1.22fr) 64px;
     gap: var(--ling-space-3);
-  }
-
-  .teammate-skill-row-summary {
-    display: none;
-  }
-
-  .teammate-skill-row-actions {
-    grid-column: 2 / -1;
   }
 }
 
 @media (max-width: 1100px) {
   .teammate-skills-panel {
-    gap: var(--ling-space-4);
     padding: var(--ling-space-5);
   }
 }

@@ -15,6 +15,7 @@ import { ChannelCouncilSettingsPanel } from "./ChannelCouncilSettingsPanel.js";
 import { ChannelSettingsGeneralPanel, type ChannelNotificationLevel } from "./ChannelSettingsGeneralPanel.js";
 import { ChannelSettingsNavigation, type ChannelSettingsSection } from "./ChannelSettingsNavigation.js";
 import { ChannelSettingsWorkspacePanel } from "./ChannelSettingsWorkspacePanel.js";
+import { channelLingAgentModelLabel } from "./channel-model-view-models.js";
 import {
   ChannelTeammateManagerPanel,
   type ChannelTeammateRelationFeedback,
@@ -203,6 +204,7 @@ export function ChannelSettingsPanels({
           <ChannelTeammateManagerPanel
             cwd={cwd}
             selectedChannelId={selectedChannelId}
+            lingAgentModelLabel={channelLingAgentModelLabel(channelEditForm.defaultProviderPresetId, providers)}
             channelTeammateMembershipsLoading={channelTeammateMembershipsLoading}
             channelTeammates={channelTeammates}
             localTeammates={localTeammates}

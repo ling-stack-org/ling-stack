@@ -18,15 +18,22 @@ export function TeammateMemoryTab({
 }): JSX.Element {
   const { t } = useI18n();
   const snapshot = controller.snapshot;
+  const showHealth = Boolean(snapshot && (
+    snapshot.health.findings.length > 0 ||
+    snapshot.health.summary.reviewBacklog > 0 ||
+    snapshot.health.summary.verifyBeforeUse > 0
+  ));
   return (
     <section className="teammate-memory-panel" data-ui2-teammate-memory="true" aria-label={t("Memory")}>
       <header className="teammate-memory-heading">
         <div>
           <Brain aria-hidden="true" />
-          <div><h2>{t("Memory")}</h2><p>{controller.viewModel.summaryLabel}</p></div>
+          <h2>{t("Memory")}</h2>
         </div>
         <span className="teammate-memory-heading-actions">
-          {snapshot ? <StatusIndicator compact label={controller.viewModel.healthLabel} tone={controller.viewModel.healthTone} /> : null}
+          {snapshot && controller.viewModel.healthTone !== "success" ? (
+            <StatusIndicator compact label={controller.viewModel.healthLabel} tone={controller.viewModel.healthTone} />
+          ) : null}
           <IconButton
             icon={RefreshCw}
             label={t("Refresh memory")}
@@ -62,12 +69,14 @@ export function TeammateMemoryTab({
       ) : snapshot ? (
         <div className="teammate-memory-content">
           <TeammateMemoryScopeList rows={controller.viewModel.scopeRows} onOpenDetail={controller.openMemoryDetail} />
-          <TeammateMemoryHealthSection
-            health={snapshot.health}
-            healthLabel={controller.viewModel.healthLabel}
-            healthTone={controller.viewModel.healthTone}
-            onOpenDetail={controller.openMemoryDetail}
-          />
+          {showHealth ? (
+            <TeammateMemoryHealthSection
+              health={snapshot.health}
+              healthLabel={controller.viewModel.healthLabel}
+              healthTone={controller.viewModel.healthTone}
+              onOpenDetail={controller.openMemoryDetail}
+            />
+          ) : null}
           <TeammateMemoryGovernanceSection controller={controller} />
         </div>
       ) : null}

@@ -416,9 +416,21 @@
   padding: 0 12px 12px;
 }
 
-.channel-create-advanced-body .runtime-policy-grid {
+.channel-create-advanced-controls {
+  display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  align-items: start;
+  gap: 12px;
+}
+
+.channel-create-advanced-controls .field {
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.channel-create-advanced-body > .runtime-policy-summary {
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
 }
 
 .teammate-create-dialog {
@@ -516,7 +528,7 @@
 
   .channel-create-fields,
   .channel-create-dialog-clean .channel-create-teammate-grid,
-  .channel-create-advanced-body .runtime-policy-grid {
+  .channel-create-advanced-controls {
     grid-template-columns: 1fr;
   }
 }

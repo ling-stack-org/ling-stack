@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { mockDaemon } from "./support/mock-daemon";
+import { expectCompactMutedComposerControl } from "./support/composer-control-assertions";
 import { expectMessageFrameContained } from "./support/message-frame-assertions";
 import { createBaseState, createChatProvider, createMockTeammate, cwd, type MockState } from "./support/mock-state";
 
@@ -130,6 +131,7 @@ test("AI teammate composer preserves slash, permission, attachment, and send beh
   await expect(composer).toHaveClass(/conversation-composer/);
 
   const permission = composer.getByRole("button", { name: /Selected permission preset/ });
+  await expectCompactMutedComposerControl(permission);
   await permission.click();
   const permissionMenu = page.locator('[data-ling-overlay="menu"]').filter({ has: page.getByRole("menuitemradio", { name: /Read only/ }) });
   await expect(permissionMenu).toBeVisible();

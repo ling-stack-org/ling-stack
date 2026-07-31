@@ -1,15 +1,16 @@
-import type {
-  AiTeammate,
-  AuthorizationMode,
-  PermissionConfirmation,
-  PermissionPreset,
-  RunSession,
-  RunStore,
-  SecretResolver,
-  SkillOptimizationMode,
-  TeammateDirectMessage,
-  TeammateDirectThread,
-  WorkspaceAccessMode,
+import {
+  resolveEffectiveTeammateProviderPresetId,
+  type AiTeammate,
+  type AuthorizationMode,
+  type PermissionConfirmation,
+  type PermissionPreset,
+  type RunSession,
+  type RunStore,
+  type SecretResolver,
+  type SkillOptimizationMode,
+  type TeammateDirectMessage,
+  type TeammateDirectThread,
+  type WorkspaceAccessMode,
 } from "@ling-stack/core";
 import { buildPrivateChatContextView } from "../channels/context-processing/private-chat.js";
 import { renderChannelContextView } from "../channels/context-processing/render.js";
@@ -71,7 +72,12 @@ export async function createAiTeammateDirectReply(input: {
   }) => void;
   readonly stream?: TeammateDirectReplyStream;
 }): Promise<TeammateDirectMessage> {
-  const providerPresetId = input.providerPresetId ?? input.teammate.providerPresetId;
+  const providerPresetId = resolveEffectiveTeammateProviderPresetId({
+    teammate: input.teammate,
+    surface: "private",
+    requestedProviderPresetId: input.providerPresetId,
+    workspaceDefaultProviderPresetId: input.store.getWorkspaceSettings().defaultProviderPresetId,
+  });
   const now = new Date().toISOString();
   const pending = input.store.createTeammateDirectMessage(
     {
@@ -269,7 +275,9 @@ function directExecutionBlockedReason(
     return `Teammate status is ${teammate.status}.`;
   }
   if (!providerPresetId) {
-    return "No provider preset is selected for this teammate.";
+    return teammate.modelBindingMode === "workspace_default"
+      ? "No workspace default model is configured for this built-in teammate."
+      : "No fixed model is selected for this teammate.";
   }
   if (!workspace) {
     return "Private workspace is not ready.";
