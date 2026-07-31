@@ -156,10 +156,9 @@ The staged delivery plan is
   installed plugin or generic MCP server.
 - Preserve canonical plugin/MCP records for execution policy while hiding them only from
   the two generic management surfaces.
-- Keep V1 locked-computer control disabled and make page/window/PiP close semantics
-  independent from activation. The governed follow-up is specified separately in
-  [Governed Locked Computer Control Detailed Design](locked-computer-control-detailed-design.md)
-  and cannot enable a platform before its native proof and release gates pass.
+- Keep locked-computer control unavailable and make page/window/PiP close semantics
+  independent from activation. The fixed task-continues/control-pauses boundary is specified
+  in [Lock-Aware Task Continuation Detailed Design](locked-computer-control-detailed-design.md).
 - Produce a deterministic Windows acceptance handoff even though Windows colleagues own
   real-machine execution and sign-off.
 
@@ -2591,11 +2590,10 @@ page.
    D3D11, UIA runtime, standard integrity coverage and the elevated/UWP limitations.
 3. **Control preview**: renders the existing `DesktopComputerUsePreference`; it is removed
    from Interface Preferences but can keep its current file/API.
-4. **Privacy**: for bundled V1, a disabled, unchecked "Allow control while locked" row
-   labeled "Always off in this version". It has no persisted preference or mutation
-   handler. The task-scoped identity/grant projection planned in
-   [Governed Locked Computer Control Detailed Design](locked-computer-control-detailed-design.md)
-   may replace this row only behind an accepted per-platform release gate.
+4. **Lock behavior**: three informational rows state that tasks continue, Computer Control
+   pauses and a fresh readiness cycle restores control after unlock. The component has no
+   Switch, persisted preference or mutation handler; see
+   [Lock-Aware Task Continuation Detailed Design](locked-computer-control-detailed-design.md).
 5. **Advanced details**: version, Ling distribution revision, platform, integrity, last
    check and limitations. "Last checked" comes only from `plugin.health.checkedAt`; the
    setup `checkedAt` is Catalog projection time and must never be shown as a verification
@@ -3168,9 +3166,10 @@ No product or architecture choice remains open for the standard-capability inter
 - external provider: explicit fallback only;
 - product surface: bundled mode uses Settings > Device > Computer Control; Plugin Manager
   and MCP Settings hide only their bundled presentation while retaining internal records;
-- privacy: V1 locked-computer control is fixed Off; the governed task-scoped follow-up is
-  defined in [Governed Locked Computer Control](locked-computer-control-policy.md), while
-  general per-application policy remains deferred;
+- privacy: locked-computer control is unavailable; tasks continue while native control
+  pauses and recovers according to
+  [Lock-Aware Task Continuation](locked-computer-control-policy.md), while general
+  per-application policy remains deferred;
 - Windows: bundled x64 main provider in standard Medium-IL mode; real-machine acceptance
   is owned by the Windows team.
 

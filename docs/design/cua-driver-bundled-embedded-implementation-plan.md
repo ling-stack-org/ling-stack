@@ -291,9 +291,9 @@ creating parallel systems:
   bypass around approvals/audit.
 - Deleting canonical Cua plugin/MCP records, globally filtering shared domains, or changing
   teammate binding/tool ids.
-- A user-configurable locked-computer switch or per-application allowlist in this bundled V1
-  plan. Locked control remains fixed Off here. Its governed task-scoped follow-up now has a
-  separate [design](locked-computer-control-policy.md),
+- A user-configurable locked-computer switch or per-application allowlist. Non-visual tasks
+  continue while Computer Control pauses and recovers through a fresh generation, as defined
+  by the separate [design](locked-computer-control-policy.md),
   [detailed design](locked-computer-control-detailed-design.md) and
   [implementation plan](locked-computer-control-implementation-plan.md); general
   application-level enforcement remains deferred.

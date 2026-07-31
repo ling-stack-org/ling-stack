@@ -31,7 +31,7 @@ import {
 } from "./desktop-bridge-auth.js";
 import {
   handleLockedControlDesktopRoute,
-  handleLockedControlRendererRoute,
+  handleLockedControlProjectionRoute,
 } from "./locked-control-routes.js";
 
 const STOP_ACK_TIMEOUT_MS = 10_000;
@@ -136,7 +136,7 @@ export async function handleComputerUseRoute(
       }
     }
 
-    if (await handleLockedControlRendererRoute(request, response, url, context)) {
+    if (await handleLockedControlProjectionRoute(request, response, url, context)) {
       return true;
     }
 

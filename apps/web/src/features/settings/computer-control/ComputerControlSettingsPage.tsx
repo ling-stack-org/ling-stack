@@ -5,7 +5,7 @@ import { useI18n } from "../../../i18n.js";
 import { Badge, Button, InlineFeedback, Skeleton, Switch } from "../../../shared/ui/index.js";
 import { DesktopComputerUsePreference } from "../DesktopComputerUsePreference.js";
 import { ComputerControlStatusDetails } from "./ComputerControlStatusDetails.js";
-import { LockedComputerControlSection } from "./LockedComputerControlSection.js";
+import { LockAwareComputerControlSection } from "./LockAwareComputerControlSection.js";
 
 export function ComputerControlSettingsPage({
   controller,
@@ -71,7 +71,7 @@ export function ComputerControlSettingsPage({
 
       <DesktopComputerUsePreference sectionTitle="Control preview" />
 
-      <LockedComputerControlSection controller={controller} />
+      <LockAwareComputerControlSection />
 
       <section className="computer-control-section" aria-labelledby="computer-control-advanced-title">
         <SectionHeader icon={<Cpu />} title={t("Advanced details")} id="computer-control-advanced-title" />

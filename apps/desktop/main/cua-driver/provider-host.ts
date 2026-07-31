@@ -859,6 +859,12 @@ export function createManagedProviderEnvironment(input: {
   }
   return {
     ...environment,
+    // Upstream 0.8.3 invokes the macOS system `screencapture` binary by
+    // basename. Never inherit the caller's PATH; expose only immutable system
+    // locations so window capture works without creating a PATH-hijack seam.
+    ...(process.platform === "darwin"
+      ? { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" }
+      : {}),
     CUA_DRIVER_EMBEDDED: "1",
     CUA_DRIVER_LING_MANAGED: "1",
     CUA_DRIVER_HOST_BUNDLE_ID: "com.lingstack.desktop",

@@ -836,19 +836,40 @@ test("packaged Desktop runtime suspends computer control across lock and sleep a
   powerMonitor.emit("resume");
   await flushAsyncWork();
 
+  powerMonitor.emit("lock-screen");
+  await flushAsyncWork();
+  powerMonitor.emit("suspend");
+  await flushAsyncWork();
+  powerMonitor.emit("resume");
+  await flushAsyncWork();
+  assert.equal(
+    lifecycleEvents.filter((event) => event === "resume").length,
+    1,
+    "system resume while the session remains locked must keep Computer Control paused",
+  );
+  powerMonitor.emit("unlock-screen");
+  await flushAsyncWork();
+
   assert.deepEqual(lifecycleEvents, [
     "suspend:system_lock",
     "suspend:system_suspend",
     "resume",
+    "suspend:system_lock",
+    "suspend:system_suspend",
     "resume",
   ]);
+  assert.equal(daemon.ensureStartedCalls, 1, "lock and sleep must not restart the task daemon");
+  assert.equal(daemon.stopCalls, 0, "lock and sleep pause only Computer Control, not running tasks");
 
   await runtime.shutdown();
+  assert.equal(daemon.stopCalls, 1, "the daemon stops only when Desktop itself shuts down");
   assert.deepEqual(powerMonitor.observedEvents(), []);
   assert.deepEqual(lifecycleEvents, [
     "suspend:system_lock",
     "suspend:system_suspend",
     "resume",
+    "suspend:system_lock",
+    "suspend:system_suspend",
     "resume",
     "coordinator.shutdown",
     "owner.dispose",
@@ -857,7 +878,106 @@ test("packaged Desktop runtime suspends computer control across lock and sleep a
   powerMonitor.emit("lock-screen");
   powerMonitor.emit("resume");
   await flushAsyncWork();
-  assert.equal(lifecycleEvents.length, 6, "detached listeners must not enqueue work after shutdown");
+  assert.equal(lifecycleEvents.length, 8, "detached listeners must not enqueue work after shutdown");
+});
+
+test("a lock received during provider enable is reasserted after enable completes", async () => {
+  const daemon = fakeDaemon(authority("connection-enable-lock", 1));
+  const powerMonitor = fakePowerMonitor();
+  const enableStarted = deferred();
+  const releaseEnable = deferred();
+  const events = [];
+  const coordinator = {
+    ...fakeCoordinator(undefined, {
+      enable: async () => {
+        events.push("enable.begin");
+        enableStarted.resolve();
+        await releaseEnable.promise;
+        events.push("enable.end");
+        return availabilitySnapshot();
+      },
+    }),
+    closeCallGateForSecurityBoundary(reason) {
+      events.push(`gate:${reason}`);
+    },
+    async suspendForSystem(reason) {
+      events.push(`suspend:${reason}`);
+    },
+  };
+  const runtime = createRuntime(daemon, {
+    packaged: true,
+    platformBinding: undefined,
+    platformOwner: {
+      platform: "darwin",
+      binding: fakePlatformBinding(),
+      async start() {},
+      async dispose() {},
+    },
+    powerMonitor,
+    coordinatorFactory: () => coordinator,
+  });
+
+  const starting = runtime.ensureStarted();
+  await enableStarted.promise;
+  powerMonitor.emit("lock-screen");
+  await flushAsyncWork();
+  releaseEnable.resolve();
+  await starting;
+
+  assert.deepEqual(events, [
+    "enable.begin",
+    "gate:locked_control_session_mismatch",
+    "suspend:system_lock",
+    "enable.end",
+    "gate:system_lock",
+    "suspend:system_lock",
+  ]);
+  assert.equal(daemon.stopCalls, 0, "the task daemon remains alive while control is paused");
+  await runtime.shutdown();
+});
+
+test("a lock received before provider composition still blocks a later resume hint", async () => {
+  const daemon = fakeDaemon(authority("connection-precomposition-lock", 1));
+  const powerMonitor = fakePowerMonitor();
+  const events = [];
+  const coordinator = {
+    ...fakeCoordinator(),
+    closeCallGateForSecurityBoundary(reason) {
+      events.push(`gate:${reason}`);
+    },
+    async suspendForSystem(reason) {
+      events.push(`suspend:${reason}`);
+    },
+    async resumeForSystem() {
+      events.push("resume");
+    },
+  };
+  const runtime = createRuntime(daemon, {
+    packaged: true,
+    platformBinding: undefined,
+    platformOwner: {
+      platform: "darwin",
+      binding: fakePlatformBinding(),
+      async start() {},
+      async dispose() {},
+    },
+    powerMonitor,
+    coordinatorFactory: () => coordinator,
+  });
+
+  powerMonitor.emit("lock-screen");
+  await flushAsyncWork();
+  await runtime.ensureStarted();
+  powerMonitor.emit("suspend");
+  await flushAsyncWork();
+  powerMonitor.emit("resume");
+  await flushAsyncWork();
+  assert.equal(events.includes("resume"), false);
+
+  powerMonitor.emit("unlock-screen");
+  await flushAsyncWork();
+  assert.equal(events.filter((event) => event === "resume").length, 1);
+  await runtime.shutdown();
 });
 
 test("shutdown continues to the owned daemon after coordinator cleanup fails", async () => {

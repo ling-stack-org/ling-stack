@@ -49,7 +49,7 @@ const grant = {
   allowedLockedToolIdsDigest: digestB,
 };
 
-test("daemon client keeps renderer and Desktop authorities on separate headers", async () => {
+test("daemon client keeps the read-only projection and private Desktop mutations on separate headers", async () => {
   const requests = [];
   const client = createLockedControlDaemonClient({
     daemonBaseUrl: "http://127.0.0.1:17891",
@@ -66,11 +66,17 @@ test("daemon client keeps renderer and Desktop authorities on separate headers",
   });
 
   await client.snapshot();
-  const denied = await client.beginAuthorization({ requestId: "request-1", expectedRevision: 0 });
+  const denied = await client.beginAuthorization({
+    requestId: "request-1",
+    expectedRevision: 0,
+    authority: handshake,
+  });
   assert.equal(denied.accepted, false);
   assert.equal(requests[0].init.headers["X-Ling-Computer-Use-Token"], "route-token");
-  assert.equal(requests[1].init.headers["X-Ling-Computer-Use-Token"], "route-token");
+  assert.equal(requests[1].init.headers["X-Ling-Desktop-Bridge-Token"], "bridge-token");
+  assert.equal(requests[1].init.headers["X-Ling-Computer-Use-Token"], undefined);
   assert.match(requests[0].url, /cwd=%2Fworkspace/u);
+  assert.match(requests[1].url, /locked-control\/desktop\/authorize$/u);
 });
 
 test("prepare strips runtime-only fields and validates the returned grant", async () => {

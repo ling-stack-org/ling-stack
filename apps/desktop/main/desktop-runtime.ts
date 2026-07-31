@@ -138,6 +138,8 @@ export class DesktopRuntime {
   private shutdownRequested = false;
   private shutdownPromise: Promise<void> | undefined;
   private stopPowerMonitor: (() => void) | undefined;
+  private systemSessionLocked = false;
+  private systemSuspended = false;
   private lockedControlPolicyCoordinator: LockedComputerControlPolicyCoordinator | undefined;
   private lockedControlSnapshotValue: LockedControlPolicyCoordinatorSnapshot = Object.freeze({
     phase: "off",
@@ -229,11 +231,6 @@ export class DesktopRuntime {
         reason: error instanceof Error ? error.message : "permission_settings_failed",
       };
     }
-  }
-
-  authorizeLockedComputerControl(): Promise<DesktopCommandResult> {
-    return this.lockedControlPolicyCoordinator?.authorizeCurrentTask()
-      ?? Promise.resolve({ accepted: false, reason: "locked_control_disabled_by_build" });
   }
 
   revokeLockedComputerControl(): Promise<DesktopCommandResult> {
@@ -352,6 +349,11 @@ export class DesktopRuntime {
 
   suspendComputerControlForSystem(reason: string): Promise<void> {
     if (this.shutdownRequested) return Promise.resolve();
+    if (reason === "system_lock") {
+      this.systemSessionLocked = true;
+    } else {
+      this.systemSuspended = true;
+    }
     const lockedPolicy = this.lockedControlPolicyCoordinator;
     if (lockedPolicy) {
       return reason === "system_lock"
@@ -371,10 +373,20 @@ export class DesktopRuntime {
 
   resumeComputerControlForSystem(kind: "unlock" | "resume" = "unlock"): Promise<void> {
     if (this.shutdownRequested) return Promise.resolve();
+    const boundaryWasActive = kind === "unlock"
+      ? this.systemSessionLocked
+      : this.systemSuspended;
+    if (kind === "unlock") {
+      this.systemSessionLocked = false;
+    } else {
+      this.systemSuspended = false;
+    }
+    if (!boundaryWasActive) return Promise.resolve();
     const lockedPolicy = this.lockedControlPolicyCoordinator;
     if (lockedPolicy) {
       return kind === "unlock" ? lockedPolicy.handleUnlock() : lockedPolicy.handleResume();
     }
+    if (this.systemSessionLocked || this.systemSuspended) return Promise.resolve();
     return this.enqueue(async () => {
       const coordinator = this.coordinatorValue;
       if (!coordinator) {
@@ -624,6 +636,37 @@ export class DesktopRuntime {
         reason: snapshot.reason ?? snapshot.providerState,
       });
     }
+    await this.reassertSystemBoundaryAfterEnable(coordinator);
+  }
+
+  private async reassertSystemBoundaryAfterEnable(
+    coordinator: DesktopRuntimeCuaDriverCoordinator,
+  ): Promise<void> {
+    const reason = this.systemSessionLocked
+      ? "system_lock"
+      : this.systemSuspended
+        ? "system_suspend"
+        : undefined;
+    if (!reason || this.coordinatorValue !== coordinator) return;
+    coordinator.closeCallGateForSecurityBoundary?.(reason);
+    try {
+      if (coordinator.suspendForSystem) {
+        await coordinator.suspendForSystem(reason);
+      } else {
+        await this.shutdownCoordinatorInstance(coordinator, reason);
+      }
+    } catch (error) {
+      this.options.onDiagnostic?.("desktop_runtime.cua_driver_system_boundary_reassert_failed", {
+        reason,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      await this.shutdownCoordinatorInstance(coordinator, reason).catch((cleanupError) => {
+        this.options.onDiagnostic?.("desktop_runtime.cua_driver_system_boundary_cleanup_failed", {
+          reason,
+          error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+        });
+      });
+    }
   }
 
   private createLockedControlPolicyCoordinator(
@@ -691,8 +734,18 @@ export class DesktopRuntime {
         throw new Error("locked_control_disabled_by_build");
       },
       async stopLockedGeneration() {},
-      async resumeNormal() {
+      resumeNormal: async () => {
+        if (this.systemSessionLocked || this.systemSuspended) return;
         await coordinator.resumeForSystem?.();
+        const reason = this.systemSessionLocked
+          ? "system_lock"
+          : this.systemSuspended
+            ? "system_suspend"
+            : undefined;
+        if (reason) {
+          coordinator.closeCallGateForSecurityBoundary?.(reason);
+          await coordinator.suspendForSystem?.(reason);
+        }
       },
     };
     const identityVerifier = createLockedControlIdentityVerifier({

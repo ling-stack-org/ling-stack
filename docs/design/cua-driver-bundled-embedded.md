@@ -97,11 +97,11 @@ The page has five sections:
 3. **Control preview**: the existing PiP auto-show preference moves from Interface
    Preferences. It controls only preview presentation and never enables or disables native
    control.
-4. **Privacy**: control while the screen is locked remains fixed Off for the bundled V1
-   release. A governed, task-scoped follow-up is defined in
-   [Governed Locked Computer Control](locked-computer-control-policy.md) and stays disabled
-   until a platform passes its identity, audit, feasibility and security release gates.
-   Per-application allowlists are not shown until Ling has an enforceable application
+4. **Lock behavior**: non-visual tasks continue while the computer is locked, but Computer
+   Control closes its gate and retires the current provider generation. Settings explains
+   the fixed pause-and-resume behavior defined in
+   [Lock-Aware Task Continuation](locked-computer-control-policy.md); there is no locked-control
+   Switch. Per-application allowlists are not shown until Ling has an enforceable application
    boundary.
 5. **Advanced**: provider display version, Ling build revision, platform, integrity result,
    last check and known Windows limitations. Last check comes from provider health, not the
@@ -755,9 +755,9 @@ Migration rules:
   macOS permissions.
 - Bundled V1 never controls a locked computer. Lock/suspend/session invalidation closes the
   call gate, revokes the current generation and retains requested intent for a fresh
-  post-unlock readiness pass. The optional follow-up cannot replace this behavior until the
-  per-platform gates in [Governed Locked Computer Control](locked-computer-control-policy.md)
-  pass; failure or unknown capability always preserves this baseline.
+  post-unlock readiness pass. This fixed behavior is defined by
+  [Lock-Aware Task Continuation](locked-computer-control-policy.md); changing it requires a
+  new product and security design.
 - The Ling-managed embedded path never invokes or exposes updater/install operations,
   performs background provider downloads, or falls back to unreviewed `PATH` entries.
   Upstream `0.8.3` still contains a standalone CLI updater; direct generic-shell execution
