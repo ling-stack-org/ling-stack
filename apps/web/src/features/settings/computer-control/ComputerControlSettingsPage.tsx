@@ -1,10 +1,11 @@
-import { Cpu, Eye, LockKeyhole, MonitorCog, RefreshCw, ShieldCheck } from "lucide-react";
+import { Cpu, MonitorCog, RefreshCw, ShieldCheck } from "lucide-react";
 import type { ComputerControlController } from "../../../domains/computer-control/use-computer-control-controller.js";
 import type { ComputerControlPrimaryAction } from "../../../domains/computer-control/computer-control-view-model.js";
 import { useI18n } from "../../../i18n.js";
-import { Badge, Button, DataRow, InlineFeedback, Skeleton, Switch } from "../../../shared/ui/index.js";
+import { Badge, Button, InlineFeedback, Skeleton, Switch } from "../../../shared/ui/index.js";
 import { DesktopComputerUsePreference } from "../DesktopComputerUsePreference.js";
 import { ComputerControlStatusDetails } from "./ComputerControlStatusDetails.js";
+import { LockedComputerControlSection } from "./LockedComputerControlSection.js";
 
 export function ComputerControlSettingsPage({
   controller,
@@ -70,18 +71,7 @@ export function ComputerControlSettingsPage({
 
       <DesktopComputerUsePreference sectionTitle="Control preview" />
 
-      <section className="computer-control-section" aria-labelledby="computer-control-privacy-title">
-        <SectionHeader icon={<LockKeyhole />} title={t("Privacy")} id="computer-control-privacy-title" />
-        <DataRow
-          identity={(
-            <span className="computer-control-row-copy">
-              <strong>{t("Allow control while locked")}</strong>
-              <small>{t("Always off in this version")}</small>
-            </span>
-          )}
-          actions={<Switch aria-label={t("Allow control while locked")} checked={false} disabled />}
-        />
-      </section>
+      <LockedComputerControlSection controller={controller} />
 
       <section className="computer-control-section" aria-labelledby="computer-control-advanced-title">
         <SectionHeader icon={<Cpu />} title={t("Advanced details")} id="computer-control-advanced-title" />

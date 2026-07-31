@@ -18,13 +18,13 @@ import {
 
 import { fail, isWithin } from "./cua-driver-package-staging-contract.mjs";
 
-// The fixed 0.8.3-ling.1 inventory needs at most four directories plus ten
+// The fixed 0.8.3-ling.1 inventory needs at most four directories plus eleven
 // files, three relative path components, and far less than 128 MiB in total.
 // Keep traversal bounded before the exact platform inventory is evaluated.
 export const CUA_DRIVER_PACKAGE_TREE_LIMITS = Object.freeze({
   maxCumulativeBytes: 128 * 1024 * 1024,
   maxDepth: 3,
-  maxEntries: 14,
+  maxEntries: 15,
 });
 
 export async function assertSafeTree(boundaryRoot, treeRoot) {

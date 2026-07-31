@@ -110,6 +110,7 @@ test("bundled check list and call share one lease client and never delegate or f
   assert.deepEqual(observed, [
     ["check", false],
     ["list", false],
+    ["postcheck"],
     ["call", "list_windows", { pid: 42 }, false],
     ["postcheck"],
   ]);

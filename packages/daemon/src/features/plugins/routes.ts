@@ -65,6 +65,7 @@ import {
 } from "./install.js";
 import { buildManagedPluginRuntimePreview } from "./runtime-injection.js";
 import { createTrustedLocalMcpPlugin } from "./create-local-plugin.js";
+import type { LockedComputerControlRegistry } from "../computer-use/locked-control-registry.js";
 
 export type ManagedPluginRoute =
   | {
@@ -85,6 +86,7 @@ export async function handlePluginsCollection(
   storeRegistry: RunStoreRegistry,
   extensionRegistry: LingExtensionRegistry,
   mcpBroker: McpBroker,
+  lockedComputerControl?: LockedComputerControlRegistry,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -104,6 +106,7 @@ export async function handlePluginsCollection(
           now: new Date().toISOString(),
           cuaDriverRuntimeAuthority: mcpBroker.cuaDriverRuntimeAuthority,
           cuaDriverFeatureFlags: config.cuaDriver,
+          lockedControlProjection: lockedComputerControl?.snapshot().projection,
         }),
       });
       return;

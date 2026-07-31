@@ -11,6 +11,8 @@ const desktopCapability = {
   platform: "macos",
   async requestPermissions() { return { accepted: true }; },
   async openPermissionSettings() { return { accepted: true }; },
+  async authorizeLockedControl() { return { accepted: true }; },
+  async revokeLockedControl() { return { accepted: true }; },
 };
 
 test("surface selector keeps bundled identities internal and preserves external mode", () => {

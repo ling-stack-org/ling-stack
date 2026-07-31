@@ -136,9 +136,38 @@
   gap: 8px;
 }
 
+.locked-computer-control-section .ling-ui-data-row {
+  align-items: flex-start;
+}
+
+.locked-computer-control-section .computer-control-row-copy {
+  max-width: 580px;
+}
+
+.locked-computer-control-dialog p {
+  margin: 0;
+  color: var(--ling-text-muted);
+}
+
+.locked-computer-control-dialog ul {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0 0;
+  padding-inline-start: 22px;
+  color: var(--ling-text-secondary);
+}
+
+.locked-computer-control-dialog li::marker {
+  color: var(--ling-text-link);
+}
+
 @media (max-width: 760px) {
   .computer-control-status-card,
   .computer-control-advanced-grid {
     grid-template-columns: 1fr;
+  }
+
+  .locked-computer-control-section .ling-ui-data-row {
+    align-items: stretch;
   }
 }

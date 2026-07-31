@@ -55,6 +55,11 @@ const enUS = {
   retryCaptureAction: "Retry capture",
   tryStopAgainAction: "Try Stop again",
   stopComputerUseAction: "Stop Computer Use",
+  stopAndRevokeAction: "Stop and revoke",
+  lockedControlArmedLabel: "Locked control armed",
+  lockedControlAttestingLabel: "Securing locked session",
+  lockedControlActiveLabel: "Controlling while locked",
+  lockedControlPausedLabel: "Locked control paused",
 } as const;
 
 export type ComputerUsePreviewMessageKey = keyof typeof enUS;
@@ -110,6 +115,11 @@ const zhCN = {
   retryCaptureAction: "重试捕获",
   tryStopAgainAction: "再次尝试停止",
   stopComputerUseAction: "停止 Computer Use",
+  stopAndRevokeAction: "停止并撤销授权",
+  lockedControlArmedLabel: "锁定控制已待命",
+  lockedControlAttestingLabel: "正在保护锁定会话",
+  lockedControlActiveLabel: "正在锁定状态下控制",
+  lockedControlPausedLabel: "锁定控制已暂停",
 } satisfies Readonly<Record<ComputerUsePreviewMessageKey, string>>;
 
 const catalogs: Readonly<Record<ComputerUsePreviewLocale, Readonly<Record<ComputerUsePreviewMessageKey, string>>>> = {

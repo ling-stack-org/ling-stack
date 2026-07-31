@@ -24,6 +24,7 @@ import type {
   ComputerUseProjectionRegistryOptions,
 } from "./features/computer-use/registry.js";
 import type { CuaDriverDesktopBridgeAuthority } from "./features/computer-use/desktop-bridge-authority.js";
+import type { LockedComputerControlRegistry } from "./features/computer-use/locked-control-registry.js";
 import type { ActiveDirectReplyRegistry } from "./features/teammates/direct-reply-active-registry.js";
 import type { ActiveRunRegistry } from "./runtime/active-runs.js";
 import type { RunStoreFactory } from "./runtime/store-registry.js";
@@ -48,6 +49,14 @@ export interface McpBroker {
     readonly workspaceCwd: string;
     readonly platform: NodeJS.Platform;
     readonly hasCurrentLease: () => boolean;
+    readonly assertLockedApprovalAllowed?: (input: {
+      readonly serverId: string;
+      readonly runId: string;
+      readonly computerUseSessionId: string;
+      readonly toolId: string;
+      readonly toolCallId: string;
+      readonly defaultApproval: "allow" | "ask" | "deny";
+    }) => void;
   };
   checkServer(
     server: McpServer,
@@ -76,6 +85,13 @@ export interface McpBrokerOptions {
   readonly signal?: AbortSignal;
   /** Synchronous authorization fence run after transport completion. */
   readonly assertResultCurrent?: () => void;
+  readonly lockedControlExecution?: {
+    readonly runId: string;
+    readonly computerUseSessionId: string;
+    readonly toolCallId: string;
+    readonly defaultApproval: "allow" | "ask" | "deny";
+    readonly approvalId?: string;
+  };
 }
 
 export interface ExternalSecretStore extends SecretResolver {
@@ -151,6 +167,7 @@ export interface DaemonContext {
   readonly startupOptionalWarmups: StartupOptionalWarmupCoordinator;
   readonly computerUsePreviews: ComputerUseProjectionRegistry;
   readonly cuaDriverDesktopBridgeAuthority: CuaDriverDesktopBridgeAuthority;
+  readonly lockedComputerControl?: LockedComputerControlRegistry;
   readonly cuaDriverActivationService: BundledCuaDriverActivationService;
   readonly cuaDriverActivationCoordinator: CuaDriverDaemonActivationCoordinator;
   readonly computerUseStop?: DaemonDependencies["computerUseStop"];

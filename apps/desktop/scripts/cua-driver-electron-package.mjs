@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
-import { mkdtemp, mkdir, rmdir } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, rmdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -30,6 +30,7 @@ export async function prepareCuaDriverElectronPackage(input, dependencies = {}) 
   const cleanupPublishedStage = dependencies.cleanupPublishedStage
     ?? cleanupCuaDriverPublishedStage;
   const cleanupResidue = dependencies.cleanupResidue ?? cleanupCuaDriverStagingResidue;
+  const removeEvidence = dependencies.rm ?? rm;
   const removeContainer = dependencies.rmdir ?? rmdir;
   const containerRoot = await createTemporaryRoot(join(tmpdir(), "ling-cua-driver-electron-package-"));
   const resourcesRoot = join(containerRoot, "resources");
@@ -55,6 +56,7 @@ export async function prepareCuaDriverElectronPackage(input, dependencies = {}) 
     return Object.freeze({
       authority,
       containerRoot,
+      evidenceRoot: join(containerRoot, "signing-evidence"),
       packageResourcesRoot,
       platform,
       staged,
@@ -64,11 +66,13 @@ export async function prepareCuaDriverElectronPackage(input, dependencies = {}) 
         cleanupPromise ??= cleanupPreparedPackageStage({
           cleanupPublishedStage,
           containerRoot,
+          evidenceRoot: join(containerRoot, "signing-evidence"),
           get containerCleaned() { return containerCleaned; },
           get stageCleaned() { return stageCleaned; },
           markContainerCleaned() { containerCleaned = true; },
           markStageCleaned() { stageCleaned = true; },
           removeContainer,
+          removeEvidence,
           resourcesRoot,
           staged,
         })
@@ -120,6 +124,7 @@ async function cleanupPreparedPackageStage(input) {
     input.markStageCleaned();
   }
   if (!input.containerCleaned) {
+    await input.removeEvidence(input.evidenceRoot, { recursive: true, force: true });
     await input.removeContainer(input.containerRoot);
     input.markContainerCleaned();
   }
@@ -167,6 +172,11 @@ export async function runCuaDriverElectronPackageCli(
               prepared.authority.hostAuthority,
             ),
             LING_CUA_EXPECTED_PRE_SIGN_PAYLOAD_SHA256: prepared.expectedPreSignPayloadSha256,
+            // A signing state seals one concrete package output and must never be
+            // reused by a later Builder invocation. Keep it in this invocation's
+            // verified temporary container so repeat local/CI packages start clean
+            // without weakening the hooks' double-sign rejection.
+            LING_CUA_SIGNING_EVIDENCE_DIR: prepared.evidenceRoot,
           }
         : {}),
     };

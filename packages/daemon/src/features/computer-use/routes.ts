@@ -29,6 +29,10 @@ import {
   configuredTokenMatches,
   desktopBridgeTokenStatus,
 } from "./desktop-bridge-auth.js";
+import {
+  handleLockedControlDesktopRoute,
+  handleLockedControlRendererRoute,
+} from "./locked-control-routes.js";
 
 const STOP_ACK_TIMEOUT_MS = 10_000;
 const PRIVATE_SOURCE_OWNERSHIP_TIMEOUT_MS = 1_500;
@@ -102,6 +106,10 @@ export async function handleComputerUseRoute(
       return true;
     }
 
+    if (await handleLockedControlDesktopRoute(request, response, url, context)) {
+      return true;
+    }
+
     const sourceRoute = parseSourceRoute(url.pathname);
     if (!sourceRoute) {
       // Browser requests carry a local Origin and are protected by the local
@@ -126,6 +134,10 @@ export async function handleComputerUseRoute(
         );
         return true;
       }
+    }
+
+    if (await handleLockedControlRendererRoute(request, response, url, context)) {
+      return true;
     }
 
     if (url.pathname === "/computer-use/sessions") {

@@ -204,6 +204,16 @@ function actionsFor(
       false,
       transient.openCommandState === "pending",
     ),
+    ...(snapshot.lockedControl && snapshot.canStop
+      ? [action(
+          "stop",
+          t("stopAndRevokeAction"),
+          true,
+          transient.stopCommandState === "pending",
+          false,
+          transient.stopCommandState === "pending",
+        )]
+      : []),
     action("hide", t("hideAction")),
   ];
   const menuActions: ComputerUsePreviewActionViewModel[] = [
@@ -216,7 +226,7 @@ function actionsFor(
     );
   }
   menuActions.push(action("close", t("closeWindowAction")));
-  if (snapshot.canStop) {
+  if (snapshot.canStop && !snapshot.lockedControl) {
     menuActions.push(action(
       "stop",
       transient.stopCommandState === "failed" ? t("tryStopAgainAction") : t("stopComputerUseAction"),
