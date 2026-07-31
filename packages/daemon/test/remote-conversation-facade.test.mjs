@@ -12,6 +12,7 @@ import {
 import { RemoteConversationFacade } from "../dist/features/remote-access/conversation-facade.js";
 import { RemoteAccessError } from "../dist/features/remote-access/errors.js";
 import { RemoteProjectionOutboxWorker } from "../dist/features/remote-access/projection-outbox-worker.js";
+import { RemoteDispatchWorker } from "../dist/features/remote-access/dispatch-worker.js";
 
 function fixedClock(value = "2026-07-31T06:00:00.000Z") {
   return () => value;
@@ -240,6 +241,62 @@ test("projection worker acknowledges rows only after sanitized events publish", 
     assert.equal(store.listRemoteProjectionOutbox({ unprocessedOnly: true, limit: 100 }).length, 0);
     assert.ok(published.some(({ event }) => event.type === "conversation.delta"));
     assert.equal(published.some(({ event }) => JSON.stringify(event).includes("boundPath")), false);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("dispatch worker retries durable intents and preserves the server-owned authority ceiling", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-remote-dispatch-worker-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const channel = store.createChannel({ name: "Dispatch", boundPath: cwd }, "2026-07-31T05:00:00.000Z");
+    const facade = createFacade(store);
+    facade.sendText({
+      commandId: "dispatch_command",
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      conversationId: channel.id,
+      body: "Dispatch safely.",
+      issuedAt: "2026-07-31T05:59:00.000Z",
+      retryUntil: "2026-08-01T05:59:00.000Z",
+    }, { deviceId: "iphone_1", bodyHash: "hash_dispatch_command" });
+
+    let clockIndex = 0;
+    const clockValues = [
+      "2026-07-31T06:00:00.000Z",
+      "2026-07-31T06:00:01.000Z",
+      "2026-07-31T06:00:02.000Z",
+      "2026-07-31T06:00:10.000Z",
+      "2026-07-31T06:00:11.000Z",
+    ];
+    const seen = [];
+    const firstWorker = new RemoteDispatchWorker({
+      store,
+      workerId: "remote_worker_1",
+      now: () => clockValues[Math.min(clockIndex++, clockValues.length - 1)],
+      retryDelayMs: 1_000,
+      dispatcher: {
+        dispatch(intent) {
+          seen.push(intent);
+          throw new Error("provider temporarily unavailable");
+        },
+      },
+    });
+    assert.deepEqual(await firstWorker.drainBatch(), { dispatched: 0, failed: 1, skipped: 0 });
+    assert.equal(store.listRemoteDispatchIntents({ statuses: ["failed"] })[0]?.attemptCount, 1);
+
+    const secondWorker = new RemoteDispatchWorker({
+      store,
+      workerId: "remote_worker_2",
+      now: fixedClock("2026-07-31T06:00:10.000Z"),
+      dispatcher: { dispatch(intent) { seen.push(intent); } },
+    });
+    assert.deepEqual(await secondWorker.drainBatch(), { dispatched: 1, failed: 0, skipped: 0 });
+    assert.equal(store.listRemoteDispatchIntents({ statuses: ["dispatched"] })[0]?.attemptCount, 2);
+    assert.ok(seen.every((intent) => intent.authority.authorityCeiling === "conversation_comment"));
+    assert.ok(seen.every((intent) => intent.authority.allowToolCalls === false));
+    assert.ok(seen.every((intent) => intent.authority.allowWorkflowAutoStart === false));
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });
