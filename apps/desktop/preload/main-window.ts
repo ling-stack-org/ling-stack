@@ -117,6 +117,15 @@ const capabilities: LingDesktopCapabilities = {
         },
       }
     : {}),
+  lockedTaskContinuation: {
+    getLockedTaskContinuationPreferences: () => ipcRenderer.invoke(
+      DESKTOP_IPC_CHANNELS.computerControlLockedTaskContinuationGet,
+    ),
+    setContinueTasksWhileLocked: (enabled: boolean) => ipcRenderer.invoke(
+      DESKTOP_IPC_CHANNELS.computerControlLockedTaskContinuationSet,
+      enabled,
+    ),
+  },
   computerUse: {
     reportLocale: (locale: ComputerUsePreviewLocale) => {
       ipcRenderer.send(DESKTOP_IPC_CHANNELS.computerUseReportLocale, locale);

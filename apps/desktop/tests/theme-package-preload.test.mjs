@@ -176,6 +176,9 @@ test("main-window preload exposes Computer Control only for a validated packaged
   const ipcRenderer = {
     invoke: async (channel, ...args) => {
       calls.push([channel, ...args]);
+      if (channel === DESKTOP_IPC_CHANNELS.computerControlLockedTaskContinuationGet) {
+        return { continueWhileLocked: false };
+      }
       return { accepted: true };
     },
     send: () => undefined,
@@ -207,11 +210,18 @@ test("main-window preload exposes Computer Control only for a validated packaged
   });
   await macCapabilities.computerControl.requestPermissions();
   await macCapabilities.computerControl.openPermissionSettings("screen_recording");
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(await macCapabilities.lockedTaskContinuation.getLockedTaskContinuationPreferences())),
+    { continueWhileLocked: false },
+  );
+  await macCapabilities.lockedTaskContinuation.setContinueTasksWhileLocked(true);
   assert.equal("authorizeLockedControl" in macCapabilities.computerControl, false);
   assert.equal("revokeLockedControl" in macCapabilities.computerControl, false);
   assert.deepEqual(calls, [
     [DESKTOP_IPC_CHANNELS.computerControlRequestPermissions],
     [DESKTOP_IPC_CHANNELS.computerControlOpenPermissionSettings, "screen_recording"],
+    [DESKTOP_IPC_CHANNELS.computerControlLockedTaskContinuationGet],
+    [DESKTOP_IPC_CHANNELS.computerControlLockedTaskContinuationSet, true],
   ]);
 
   for (const platformArgument of [undefined, "linux", "macos-extra"]) {
@@ -231,6 +241,7 @@ test("main-window preload exposes Computer Control only for a validated packaged
       ...(platformArgument ? [`--ling-computer-control-platform=${platformArgument}`] : []),
     ]);
     assert.equal(capabilities.computerControl, undefined);
+    assert.ok(capabilities.lockedTaskContinuation);
   }
 });
 

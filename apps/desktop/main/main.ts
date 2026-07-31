@@ -69,6 +69,7 @@ import { DesktopThemePackageRepository } from "./theme-packages/theme-package-re
 import { DesktopNavigationIntentStore } from "./navigation-intent.js";
 import { openDesktopOwnerWindow } from "./owner-window.js";
 import { DesktopPreferenceStore } from "./preferences.js";
+import { FileLockedTaskContinuationPreferenceStore } from "./locked-task-continuation/preference-store.js";
 import { DesktopRendererThemeStore } from "./renderer-theme-store.js";
 import { resolveDesktopResourcePaths } from "./resource-paths.js";
 import { resolveDesktopResourcesWithStartupRecovery } from "./resource-startup-recovery.js";
@@ -393,6 +394,9 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
         workspaceCwd: defaultWorkspaceCwd,
         resourcesRoot: resources.resourcesRoot,
         userDataPath: app.getPath("userData"),
+        lockedTaskContinuationPreferenceStore: new FileLockedTaskContinuationPreferenceStore(
+          resolve(app.getPath("userData"), "locked-task-continuation-preference.json"),
+        ),
         featureFlags,
         packaged: app.isPackaged,
         powerMonitor,
