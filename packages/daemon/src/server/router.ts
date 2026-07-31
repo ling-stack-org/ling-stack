@@ -333,6 +333,9 @@ export async function routeRequest(
   response: ServerResponse,
   context: DaemonContext,
 ): Promise<void> {
+  if (await context.remoteAccess.handleManagementRequest(request, response)) {
+    return;
+  }
   const {
     config,
     runnerRegistry,

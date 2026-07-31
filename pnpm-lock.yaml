@@ -299,6 +299,9 @@ importers:
       '@ling-stack/providers':
         specifier: workspace:*
         version: link:../providers
+      '@ling-stack/remote-protocol':
+        specifier: workspace:*
+        version: link:../remote-protocol
       '@ling-stack/runner-pi':
         specifier: workspace:*
         version: link:../runner-pi

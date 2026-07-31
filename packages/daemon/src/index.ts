@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import {
   createSqliteRunStore,
@@ -69,6 +70,7 @@ import { BundledCuaDriverActivationService } from "./features/plugins/cua-driver
 import { CuaDriverDaemonActivationCoordinator } from "./features/plugins/cua-driver-daemon-composition.js";
 import { createCuaDriverGenerationBroker } from "./features/plugins/cua-driver-generation-broker.js";
 import { createCuaDriverDescriptor } from "./features/plugins/presets.js";
+import { RemoteAccessController } from "./features/remote-access/controller.js";
 
 export { defaultDaemonConfig } from "./config.js";
 export type { DaemonConfig, ResolvedDaemonConfig } from "./config.js";
@@ -144,6 +146,10 @@ export interface DaemonServer {
   readonly extensionRegistry: LingExtensionRegistry;
   readonly startupState: StartupStateRegistry;
   readonly computerUsePreviews: ComputerUseProjectionRegistry;
+  readonly remoteAccessManagement: {
+    readonly capability: string;
+    readonly csrfToken: string;
+  };
   start(): Promise<void>;
   stop(): Promise<void>;
 }
@@ -285,6 +291,19 @@ export function createDaemonServer(
     automationSchedulers,
   });
   const activeDirectReplies = new ActiveDirectReplyRegistry();
+  const remoteAccessManagementCapability = dependencies.remoteAccessManagementCapability
+    ?? process.env.LING_MOBILE_ACCESS_MANAGEMENT_CAPABILITY
+    ?? randomBytes(32).toString("base64url");
+  const defaultStoragePaths = resolveStoragePaths(resolvedConfig.defaultWorkspaceCwd);
+  const remoteAccess = new RemoteAccessController({
+    store: storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd),
+    stateDir: dependencies.remoteAccessStateDir ?? defaultStoragePaths.user.stateDir,
+    listenerPort: resolvedConfig.remoteAccess.listenerPort,
+    workspaceDisplayName: defaultStoragePaths.workspace.identity.displayName,
+    managementCapability: remoteAccessManagementCapability,
+    managementAllowedOrigins: resolvedConfig.remoteAccess.managementAllowedOrigins,
+    dispatcher: dependencies.remoteReplyDispatcher,
+  });
   const context: DaemonContext = {
     config: resolvedConfig,
     runnerRegistry,
@@ -319,6 +338,7 @@ export function createDaemonServer(
       ?? dependencies.desktopBridgeToken
       ?? process.env.LING_DESKTOP_BRIDGE_TOKEN,
     computerUseTargetOwnershipTimeoutMs: dependencies.computerUseTargetOwnershipTimeoutMs,
+    remoteAccess,
   };
   const server = createServer(async (request, response) => {
     try {
@@ -342,6 +362,10 @@ export function createDaemonServer(
     extensionRegistry,
     startupState,
     computerUsePreviews,
+    remoteAccessManagement: {
+      capability: remoteAccessManagementCapability,
+      csrfToken: remoteAccess.csrfToken,
+    },
     start: async () => {
       cuaDriverActivationCoordinator.resetForDaemonStart();
       await new Promise<void>((resolve, reject) => {
@@ -358,6 +382,7 @@ export function createDaemonServer(
         runnerRegistry,
         secretResolver,
       });
+      await remoteAccess.startIfEnabled();
       startupOptionalWarmups.start(resolvedConfig.defaultWorkspaceCwd, storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd));
       resumePendingMediaJobExecutions({
         cwd: resolvedConfig.defaultWorkspaceCwd,
@@ -383,6 +408,7 @@ export function createDaemonServer(
     },
     stop: async () => {
       cuaDriverActivationCoordinator.beginShutdown();
+      await remoteAccess.stop();
       await new Promise<void>((resolve, reject) => {
         activeRuns.cancelAll();
         activeDirectReplies.cancelAll();

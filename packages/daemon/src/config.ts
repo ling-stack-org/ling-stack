@@ -12,6 +12,12 @@ export interface DaemonConfig {
   readonly transports?: TransportFeatureConfig;
   readonly channels?: ChannelFeatureConfig;
   readonly cuaDriver?: CuaDriverFeatureConfig;
+  readonly remoteAccess?: RemoteAccessFeatureConfig;
+}
+
+export interface RemoteAccessFeatureConfig {
+  readonly listenerPort?: number;
+  readonly managementAllowedOrigins?: readonly string[];
 }
 
 /**
@@ -139,6 +145,10 @@ export interface ResolvedDaemonConfig {
       readonly win32: boolean;
     };
   };
+  readonly remoteAccess: {
+    readonly listenerPort: number;
+    readonly managementAllowedOrigins: readonly string[];
+  };
 }
 
 export const defaultDaemonConfig: DaemonConfig = {
@@ -148,9 +158,10 @@ export const defaultDaemonConfig: DaemonConfig = {
 };
 
 export function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {
+  const port = config.port ?? 17891;
   return {
     host: config.host ?? "127.0.0.1",
-    port: config.port ?? 17891,
+    port,
     maxBodyBytes: config.maxBodyBytes ?? 1024 * 1024,
     defaultWorkspaceCwd: resolvePath(config.defaultWorkspaceCwd ?? process.env.LING_STACK_DEFAULT_WORKSPACE_CWD ?? process.cwd()),
     runners: config.runners ?? {},
@@ -182,6 +193,14 @@ export function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {
           ?? readBooleanEnv(process.env.LING_DESKTOP_CUA_DRIVER_PACKAGED_PROVIDER_WIN32, false),
       },
     },
+    remoteAccess: {
+      listenerPort: config.remoteAccess?.listenerPort ?? readIntegerEnv(process.env.LING_MOBILE_GATEWAY_PORT, 17892),
+      managementAllowedOrigins: config.remoteAccess?.managementAllowedOrigins ?? [
+        `http://127.0.0.1:${port}`,
+        `http://localhost:${port}`,
+        "app://ling",
+      ],
+    },
   };
 }
 
@@ -190,4 +209,12 @@ function readBooleanEnv(value: string | undefined, fallback: boolean): boolean {
     return fallback;
   }
   return value === "1" || value.toLowerCase() === "true" || value.toLowerCase() === "yes";
+}
+
+function readIntegerEnv(value: string | undefined, fallback: number): number {
+  if (value === undefined) {
+    return fallback;
+  }
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 65_535 ? parsed : fallback;
 }
