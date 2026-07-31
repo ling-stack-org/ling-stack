@@ -50,6 +50,7 @@ function validateCommandResult(value: unknown, path: string): RemoteCommandResul
     "conversation_marked_read",
     "profile_read_requested",
     "profile_updated",
+    "device_unpaired",
   ] as const, `${path}.kind`);
   switch (kind) {
     case "pong":
@@ -62,6 +63,7 @@ function validateCommandResult(value: unknown, path: string): RemoteCommandResul
     case "snapshot_requested":
     case "conversation_list_requested":
     case "profile_read_requested":
+    case "device_unpaired":
       assertStrictKeys(record, ["kind"], [], path);
       return { kind };
     case "conversation_opened":
@@ -132,6 +134,7 @@ const EXPECTED_RESULT_KINDS: Record<RemoteLifecycleCommandTypeV1, RemoteCommandR
   "conversation.mark_read": "conversation_marked_read",
   "profile.read": "profile_read_requested",
   "profile.update": "profile_updated",
+  "security.unpair": "device_unpaired",
 };
 
 function validateCommandCompleted(value: unknown, path: string): RemoteCommandCompletedV1 {

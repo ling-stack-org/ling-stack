@@ -19,7 +19,8 @@ export interface RemotePendingSend {
   readonly body: string;
   readonly issuedAt: string;
   readonly retryUntil: string;
-  readonly status: "sending" | "accepted" | "failed";
+  readonly status: "sending" | "accepted" | "completed" | "failed";
+  readonly messageId?: string;
   readonly error?: RemoteCommandFailedV1["error"];
 }
 
@@ -55,7 +56,7 @@ export type RemoteStateAction =
   | { readonly type: "profile"; readonly profile: RemoteUserProfileV1 }
   | { readonly type: "send_started"; readonly send: RemotePendingSend }
   | { readonly type: "send_accepted"; readonly commandId: string }
-  | { readonly type: "send_completed"; readonly commandId: string }
+  | { readonly type: "send_completed"; readonly commandId: string; readonly messageId: string }
   | { readonly type: "send_failed"; readonly commandId: string; readonly error: RemoteCommandFailedV1["error"] }
   | { readonly type: "clear_workspace"; readonly workspaceBindingId?: string };
 
@@ -102,8 +103,12 @@ export function reduceRemoteClientState(state: RemoteClientState, action: Remote
         ? { ...state, pendingSends: { ...state.pendingSends, [action.commandId]: { ...pending, status: "accepted", error: undefined } } }
         : state;
     }
-    case "send_completed":
-      return { ...state, pendingSends: omitKey(state.pendingSends, action.commandId) };
+    case "send_completed": {
+      const pending = state.pendingSends[action.commandId];
+      return pending
+        ? { ...state, pendingSends: { ...state.pendingSends, [action.commandId]: { ...pending, status: "completed", messageId: action.messageId, error: undefined } } }
+        : state;
+    }
     case "send_failed": {
       const pending = state.pendingSends[action.commandId];
       return pending
@@ -148,6 +153,7 @@ function applyConversationSnapshot(
         olderPageCursor: snapshot.olderPageCursor,
       },
     },
+    pendingSends: removeProjectedSends(state.pendingSends, messages),
   };
 }
 
@@ -182,7 +188,9 @@ function applyConversationDelta(state: RemoteClientState, delta: RemoteConversat
   }
   const detail = state.details[delta.conversationId];
   if (!detail) {
-    return state;
+    return delta.operation === "message_upsert"
+      ? { ...state, pendingSends: removeProjectedSends(state.pendingSends, [delta.message]) }
+      : state;
   }
   if (delta.operation === "message_upsert") {
     const messages = mergeMessages(detail.messages, [delta.message]);
@@ -192,6 +200,7 @@ function applyConversationDelta(state: RemoteClientState, delta: RemoteConversat
         ...state.details,
         [delta.conversationId]: { ...detail, barrierSeq: Math.max(detail.barrierSeq, delta.message.activitySeq), messages },
       },
+      pendingSends: removeProjectedSends(state.pendingSends, [delta.message]),
     };
   }
   return {
@@ -205,6 +214,14 @@ function applyConversationDelta(state: RemoteClientState, delta: RemoteConversat
       },
     },
   };
+}
+
+function removeProjectedSends(
+  pendingSends: Readonly<Record<string, RemotePendingSend>>,
+  messages: readonly RemoteConversationMessageV1[],
+): Record<string, RemotePendingSend> {
+  const projectedIds = new Set(messages.map((message) => message.messageId));
+  return Object.fromEntries(Object.entries(pendingSends).filter(([, send]) => !send.messageId || !projectedIds.has(send.messageId)));
 }
 
 function mergeMessages(

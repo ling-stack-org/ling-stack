@@ -187,6 +187,19 @@ test("client frames accept only the V1 direction-specific schema", () => {
   );
 });
 
+test("self-unpair is a command-id-only security capability", () => {
+  const frame = {
+    ...validClientFrame,
+    type: "security.unpair",
+    payload: { commandId: "unpair-1" },
+  };
+  assert.deepEqual(parseRemoteClientFrameV1(JSON.stringify(frame), { nowMs }), frame);
+  assert.throws(
+    () => parseRemoteClientFrameV1(JSON.stringify({ ...frame, payload: { ...frame.payload, deviceId: "other-device" } }), { nowMs }),
+    /unknown field/u,
+  );
+});
+
 test("client frames enforce expiry, text and pre-parse frame limits", () => {
   assert.throws(
     () => parseRemoteClientFrameV1(JSON.stringify({

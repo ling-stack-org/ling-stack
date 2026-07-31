@@ -47,6 +47,7 @@ export interface RemoteGatewaySessionOptions {
   readonly policy: RemoteAccessPolicySummaryV1;
   readonly now?: () => string;
   readonly onMutation?: () => void;
+  readonly onSelfUnpair?: () => void;
   readonly onClosed?: (session: RemoteGatewaySession) => void;
 }
 
@@ -248,6 +249,10 @@ export class RemoteGatewaySession {
         this.options.onMutation?.();
         return;
       }
+      case "security.unpair":
+        this.complete(frame, { kind: "device_unpaired" });
+        this.options.onSelfUnpair?.();
+        return;
       default:
         throw new RemoteAccessError("protocol_incompatible", `Unsupported command: ${(payload as { commandId: string }).commandId}`);
     }
@@ -434,6 +439,9 @@ function commandCapability(
   }
   if (commandType === "profile.update") {
     return "profile.update";
+  }
+  if (commandType === "security.unpair") {
+    return "security.unpair";
   }
   return undefined;
 }

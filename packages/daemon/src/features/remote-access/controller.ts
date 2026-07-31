@@ -281,6 +281,9 @@ export class RemoteAccessController {
               policy: facade.policySummary(capabilities),
               now: this.now,
               onMutation: () => this.scheduleDrain(),
+              onSelfUnpair: () => {
+                setTimeout(() => this.auth.revokeDevice(), 0).unref();
+              },
               onClosed: (closed) => {
                 if (this.activeSession === closed) {
                   this.activeSession = undefined;
@@ -357,6 +360,7 @@ export class RemoteAccessController {
       "conversation.mark_read",
       "profile.read",
       "profile.update",
+      "security.unpair",
     ];
   }
 

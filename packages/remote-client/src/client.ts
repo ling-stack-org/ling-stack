@@ -104,6 +104,23 @@ export class RemoteSessionClient {
     return () => this.listeners.delete(listener);
   }
 
+  async restoreCachedState(): Promise<void> {
+    const workspaceBindingId = this.binding.workspaceBindingId;
+    if (!workspaceBindingId) {
+      return;
+    }
+    const cache = await this.options.cacheStore.read(workspaceBindingId);
+    if (cache?.workspaceBindingId !== workspaceBindingId) {
+      return;
+    }
+    this.stateValue = {
+      ...cache.state,
+      connection: "disconnected",
+      lastError: undefined,
+    };
+    this.emit();
+  }
+
   async connect(): Promise<void> {
     if (this.binding.status !== "active") {
       throw new Error("remote_binding_revoked");
@@ -216,22 +233,48 @@ export class RemoteSessionClient {
     void handle.completion.catch(() => undefined);
   }
 
+  async unpair(): Promise<void> {
+    let remoteError: unknown;
+    try {
+      if (this.stateValue.connection === "connected") {
+        const handle = await this.sendCommand("security.unpair", {
+          commandId: await this.options.entropy.randomId("unpair"),
+        });
+        await handle.completion;
+      }
+    } catch (error) {
+      remoteError = error;
+    }
+    try {
+      await this.revokeLocal("revoked");
+    } catch (cleanupError) {
+      throw cleanupError;
+    }
+    if (remoteError) {
+      throw remoteError;
+    }
+  }
+
   async revokeLocal(reason: "revoked" | "replaced" | "disabled" | "identity_reset" = "revoked"): Promise<void> {
     const activeBinding = this.binding;
     const revoked: RemoteBindingV1 = { ...activeBinding, status: "revoked" };
-    await this.options.bindingStore.write(revoked);
     this.binding = revoked;
+    const cleanupErrors: unknown[] = [];
+    await attemptCleanup(() => this.options.bindingStore.write(revoked), cleanupErrors);
     this.intentionalClose = true;
     this.clearReconnectTimer();
     this.socket?.close(4001, reason);
     this.socket = undefined;
     if (activeBinding.workspaceBindingId) {
-      await this.options.cacheStore.remove(activeBinding.workspaceBindingId);
+      await attemptCleanup(() => this.options.cacheStore.remove(activeBinding.workspaceBindingId!), cleanupErrors);
     }
-    await this.options.keys.delete(activeBinding.deviceKeyId);
-    await this.options.bindingStore.remove();
+    await attemptCleanup(() => this.options.keys.delete(activeBinding.deviceKeyId), cleanupErrors);
+    await attemptCleanup(() => this.options.bindingStore.remove(), cleanupErrors);
     this.dispatch({ type: "clear_workspace" });
     this.dispatch({ type: "connection", status: "revoked" });
+    if (cleanupErrors.length > 0) {
+      throw new Error("remote_local_revoke_incomplete");
+    }
   }
 
   private async openAuthenticatedSession(): Promise<void> {
@@ -396,7 +439,11 @@ export class RemoteSessionClient {
       case "command.completed":
         this.completeCommand(frame.payload.commandId, frame.payload.result);
         if (frame.payload.commandType === "conversation.send_text") {
-          this.dispatch({ type: "send_completed", commandId: frame.payload.commandId });
+          this.dispatch({
+            type: "send_completed",
+            commandId: frame.payload.commandId,
+            messageId: frame.payload.result.messageId,
+          });
         }
         return;
       case "command.failed":
@@ -609,5 +656,13 @@ export class RemoteSessionClient {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = undefined;
     }
+  }
+}
+
+async function attemptCleanup(operation: () => Promise<void>, errors: unknown[]): Promise<void> {
+  try {
+    await operation();
+  } catch (error) {
+    errors.push(error);
   }
 }

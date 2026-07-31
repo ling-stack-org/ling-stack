@@ -62,6 +62,12 @@ export function validateClientPayload<TType extends RemoteClientCommandTypeV1>(
         nonce: expectIdentifier(record.nonce, `${path}.nonce`),
       };
       break;
+    case "security.unpair":
+      assertStrictKeys(record, ["commandId"], [], path);
+      payload = {
+        commandId: expectIdentifier(record.commandId, `${path}.commandId`),
+      };
+      break;
     case "stream.subscribe":
       assertStrictKeys(record, ["commandId", "scope"], ["resume"], path);
       payload = {

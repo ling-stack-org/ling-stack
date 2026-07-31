@@ -324,6 +324,7 @@ test("authenticated WebSocket receives snapshots and fails closed on unavailable
     await waitFor(() => frames.some((frame) => frame.type === "session.ready"));
     const ready = frames.find((frame) => frame.type === "session.ready");
     assert.equal(ready.payload.capabilities?.includes?.("conversation.send_text") ?? ready.payload.policy.capabilities.includes("conversation.send_text"), false);
+    assert.equal(ready.payload.policy.capabilities.includes("security.unpair"), true);
 
     socket.send(JSON.stringify(clientFrame({
       gatewayId: qr.gatewayId,
@@ -354,6 +355,19 @@ test("authenticated WebSocket receives snapshots and fails closed on unavailable
     const failed = frames.find((frame) => frame.type === "command.failed" && frame.payload.commandId === "send_denied");
     assert.equal(failed.payload.error.code, "capability_not_allowed");
     assert.equal(store.getRemoteCommandReceipt("send_denied"), undefined);
+
+    socket.send(JSON.stringify(clientFrame({
+      gatewayId: qr.gatewayId,
+      sessionId: authChallenge.candidateSessionId,
+      clientSeq: 3,
+      type: "security.unpair",
+      payload: { commandId: "unpair_self" },
+    })));
+    await waitFor(() => frames.some((frame) => frame.type === "command.completed" && frame.payload.commandId === "unpair_self"));
+    await waitFor(async () => {
+      const status = await expectOk(fetch(`${origin}/v1/mobile-access/status`, { headers: managementHeaders }));
+      return status.pairedDevice === undefined;
+    });
   } finally {
     socket?.close();
     await daemon.stop();
@@ -399,7 +413,7 @@ async function expectOk(responsePromise) {
 async function waitFor(predicate, timeoutMs = 3_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (predicate()) {
+    if (await predicate()) {
       return;
     }
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));

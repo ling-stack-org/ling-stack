@@ -36,6 +36,7 @@ export const REMOTE_CAPABILITIES_V1 = [
   "conversation.mark_read",
   "profile.read",
   "profile.update",
+  "security.unpair",
 ] as const;
 
 export type RemoteCapabilityV1 = (typeof REMOTE_CAPABILITIES_V1)[number];
@@ -52,6 +53,7 @@ export const REMOTE_CLIENT_COMMAND_TYPES_V1 = [
   "conversation.mark_read",
   "profile.read",
   "profile.update",
+  "security.unpair",
 ] as const;
 
 export type RemoteClientCommandTypeV1 = (typeof REMOTE_CLIENT_COMMAND_TYPES_V1)[number];
@@ -67,6 +69,7 @@ export const REMOTE_LIFECYCLE_COMMAND_TYPES_V1 = [
   "conversation.mark_read",
   "profile.read",
   "profile.update",
+  "security.unpair",
 ] as const;
 
 export type RemoteLifecycleCommandTypeV1 = (typeof REMOTE_LIFECYCLE_COMMAND_TYPES_V1)[number];
@@ -418,6 +421,10 @@ export interface RemoteProfileUpdateCommandV1 {
   readonly avatarDataUrl?: string | null;
 }
 
+export interface RemoteSecurityUnpairCommandV1 {
+  readonly commandId: string;
+}
+
 export interface RemoteSessionReadyV1 {
   readonly deviceId: string;
   readonly protocolVersion: typeof REMOTE_PROTOCOL_VERSION;
@@ -450,6 +457,7 @@ export interface RemoteCommandResultMapV1 {
   };
   readonly "profile.read": { readonly kind: "profile_read_requested" };
   readonly "profile.update": { readonly kind: "profile_updated"; readonly revision: number };
+  readonly "security.unpair": { readonly kind: "device_unpaired" };
 }
 
 export type RemoteCommandResultV1 = RemoteCommandResultMapV1[RemoteLifecycleCommandTypeV1];
@@ -517,6 +525,7 @@ export interface RemoteClientCommandPayloadMapV1 {
   readonly "conversation.mark_read": RemoteMarkConversationReadCommandV1;
   readonly "profile.read": RemoteProfileReadCommandV1;
   readonly "profile.update": RemoteProfileUpdateCommandV1;
+  readonly "security.unpair": RemoteSecurityUnpairCommandV1;
 }
 
 export type RemoteClientCommandFrameV1<

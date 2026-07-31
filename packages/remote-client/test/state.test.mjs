@@ -94,3 +94,23 @@ test("failed sends remain retryable with the original command identity", () => {
     error: { code: "pc_unavailable", message: "offline", retryable: true },
   });
 });
+
+test("completed sends remain optimistic until the authoritative projection arrives", () => {
+  let state = createInitialRemoteClientState();
+  state = reduceRemoteClientState(state, {
+    type: "send_started",
+    send: { commandId: "send_1", conversationId: "channel_1", body: "Project me", issuedAt: now, retryUntil: "2026-08-01T10:00:00.000Z", status: "sending" },
+  });
+  state = reduceRemoteClientState(state, {
+    type: "send_completed",
+    commandId: "send_1",
+    messageId: "message_1",
+  });
+  assert.equal(state.pendingSends.send_1.status, "completed");
+
+  state = reduceRemoteClientState(state, {
+    type: "conversation_delta",
+    delta: { operation: "message_upsert", workspaceId: "default", conversationId: "channel_1", message },
+  });
+  assert.equal(state.pendingSends.send_1, undefined);
+});
