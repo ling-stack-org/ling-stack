@@ -1,0 +1,417 @@
+diff --git a/libs/cua-driver/rust/crates/cua-driver-core/src/input_fence.rs b/libs/cua-driver/rust/crates/cua-driver-core/src/input_fence.rs
+new file mode 100644
+index 0000000..5b24274
+--- /dev/null
++++ b/libs/cua-driver/rust/crates/cua-driver-core/src/input_fence.rs
+@@ -0,0 +1,356 @@
++//! Ling-owned one-way input fence for embedded provider generations.
++//!
++//! The fence control listener runs on an ordinary OS thread, independent from
++//! the async MCP executor. A valid fence request closes admission first and
++//! acknowledges only after every already-admitted mutating tool has dropped
++//! its permit. A timed-out fence remains closed; the Desktop then terminates
++//! the retained provider process.
++
++use serde::{Deserialize, Serialize};
++use std::io::{BufRead, BufReader, Read, Write};
++use std::net::{Ipv4Addr, SocketAddrV4, TcpListener, TcpStream};
++use std::sync::{Arc, Condvar, Mutex, OnceLock};
++use std::time::{Duration, Instant};
++
++pub const INPUT_FENCE_PORT_ENV: &str = "CUA_DRIVER_INPUT_FENCE_PORT";
++pub const INPUT_FENCE_TOKEN_ENV: &str = "CUA_DRIVER_INPUT_FENCE_TOKEN";
++pub const INPUT_EPOCH_ENV: &str = "CUA_DRIVER_INPUT_EPOCH";
++pub const INPUT_FENCE_PROTOCOL_VERSION: u32 = 1;
++const MAX_PROTOCOL_BYTES: u64 = 4_096;
++const MAX_FENCE_TIMEOUT_MS: u64 = 1_000;
++
++static GLOBAL_FENCE: OnceLock<Arc<InputFence>> = OnceLock::new();
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum InputFenceError {
++    Closed,
++    EpochMismatch,
++    Timeout,
++    InvalidConfiguration,
++    AlreadyStarted,
++    Io,
++}
++
++#[derive(Debug)]
++struct FenceState {
++    epoch: u64,
++    fenced: bool,
++    active: usize,
++}
++
++#[derive(Debug)]
++pub struct InputFence {
++    state: Mutex<FenceState>,
++    drained: Condvar,
++}
++
++#[derive(Debug)]
++pub struct InputPermit {
++    fence: Arc<InputFence>,
++    epoch: u64,
++}
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
++#[serde(rename_all = "camelCase")]
++pub struct FenceAcknowledgement {
++    pub previous_epoch: u64,
++    pub next_epoch: u64,
++    pub active_inputs: usize,
++}
++
++impl InputFence {
++    pub fn new(epoch: u64) -> Result<Arc<Self>, InputFenceError> {
++        if epoch == 0 || epoch == u64::MAX {
++            return Err(InputFenceError::InvalidConfiguration);
++        }
++        Ok(Arc::new(Self {
++            state: Mutex::new(FenceState {
++                epoch,
++                fenced: false,
++                active: 0,
++            }),
++            drained: Condvar::new(),
++        }))
++    }
++
++    pub fn acquire(self: &Arc<Self>) -> Result<InputPermit, InputFenceError> {
++        let mut state = self.state.lock().map_err(|_| InputFenceError::Closed)?;
++        if state.fenced {
++            return Err(InputFenceError::Closed);
++        }
++        state.active = state.active.checked_add(1).ok_or(InputFenceError::Closed)?;
++        Ok(InputPermit {
++            fence: self.clone(),
++            epoch: state.epoch,
++        })
++    }
++
++    pub fn fence(
++        &self,
++        expected_epoch: u64,
++        timeout: Duration,
++    ) -> Result<FenceAcknowledgement, InputFenceError> {
++        let mut state = self.state.lock().map_err(|_| InputFenceError::Closed)?;
++        if state.epoch != expected_epoch {
++            return Err(InputFenceError::EpochMismatch);
++        }
++        if !state.fenced {
++            state.fenced = true;
++            state.epoch = state.epoch.checked_add(1).ok_or(InputFenceError::Closed)?;
++        }
++        let deadline = Instant::now() + timeout;
++        while state.active > 0 {
++            let remaining = deadline.saturating_duration_since(Instant::now());
++            if remaining.is_zero() {
++                return Err(InputFenceError::Timeout);
++            }
++            let (next, waited) = self
++                .drained
++                .wait_timeout(state, remaining)
++                .map_err(|_| InputFenceError::Closed)?;
++            state = next;
++            if waited.timed_out() && state.active > 0 {
++                return Err(InputFenceError::Timeout);
++            }
++        }
++        Ok(FenceAcknowledgement {
++            previous_epoch: expected_epoch,
++            next_epoch: state.epoch,
++            active_inputs: 0,
++        })
++    }
++
++    #[cfg(test)]
++    fn snapshot(&self) -> (u64, bool, usize) {
++        let state = self.state.lock().unwrap();
++        (state.epoch, state.fenced, state.active)
++    }
++}
++
++impl InputPermit {
++    pub fn epoch(&self) -> u64 {
++        self.epoch
++    }
++}
++
++impl Drop for InputPermit {
++    fn drop(&mut self) {
++        if let Ok(mut state) = self.fence.state.lock() {
++            state.active = state.active.saturating_sub(1);
++            if state.active == 0 {
++                self.fence.drained.notify_all();
++            }
++        }
++    }
++}
++
++/// Acquire one permit for a tool that may mutate the user desktop.
++/// Unmanaged/upstream execution remains unchanged when no Ling fence exists.
++pub fn acquire_for_tool(tool_name: &str) -> Result<Option<InputPermit>, InputFenceError> {
++    if !tool_requires_input_fence(tool_name) {
++        return Ok(None);
++    }
++    GLOBAL_FENCE.get().map(|fence| fence.acquire()).transpose()
++}
++
++pub fn tool_requires_input_fence(tool_name: &str) -> bool {
++    matches!(
++        tool_name,
++        "bring_to_front"
++            | "click"
++            | "double_click"
++            | "drag"
++            | "hotkey"
++            | "kill_app"
++            | "launch_app"
++            | "move_cursor"
++            | "page"
++            | "press_key"
++            | "replay_trajectory"
++            | "right_click"
++            | "scroll"
++            | "set_agent_cursor_enabled"
++            | "set_agent_cursor_motion"
++            | "set_agent_cursor_style"
++            | "set_config"
++            | "set_value"
++            | "start_recording"
++            | "stop_recording"
++            | "type_text"
++            | "zoom"
++    )
++}
++
++/// Start the independent loopback control thread when all three env values exist.
++/// Partial configuration is a fatal managed-environment error.
++pub fn start_server_from_env() -> Result<Option<(u16, u64)>, InputFenceError> {
++    let port = std::env::var(INPUT_FENCE_PORT_ENV).ok();
++    let token = std::env::var(INPUT_FENCE_TOKEN_ENV).ok();
++    let epoch = std::env::var(INPUT_EPOCH_ENV).ok();
++    if port.is_none() && token.is_none() && epoch.is_none() {
++        return Ok(None);
++    }
++    let port = port
++        .and_then(|value| value.parse::<u16>().ok())
++        .filter(|value| *value > 0)
++        .ok_or(InputFenceError::InvalidConfiguration)?;
++    let token = token
++        .filter(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
++        .ok_or(InputFenceError::InvalidConfiguration)?;
++    let epoch = epoch
++        .and_then(|value| value.parse::<u64>().ok())
++        .filter(|value| *value > 0 && *value < u64::MAX)
++        .ok_or(InputFenceError::InvalidConfiguration)?;
++    let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port))
++        .map_err(|_| InputFenceError::Io)?;
++    let fence = InputFence::new(epoch)?;
++    GLOBAL_FENCE
++        .set(fence.clone())
++        .map_err(|_| InputFenceError::AlreadyStarted)?;
++    std::thread::Builder::new()
++        .name("ling-input-fence".into())
++        .spawn(move || serve(listener, fence, token))
++        .map_err(|_| InputFenceError::Io)?;
++    Ok(Some((port, epoch)))
++}
++
++#[derive(Debug, Deserialize)]
++#[serde(rename_all = "camelCase", deny_unknown_fields)]
++struct FenceRequest {
++    protocol_version: u32,
++    token: String,
++    command: String,
++    expected_epoch: u64,
++    timeout_ms: u64,
++}
++
++#[derive(Debug, Serialize)]
++#[serde(rename_all = "camelCase")]
++struct FenceResponse<'a> {
++    protocol_version: u32,
++    status: &'a str,
++    #[serde(skip_serializing_if = "Option::is_none")]
++    code: Option<&'a str>,
++    #[serde(flatten, skip_serializing_if = "Option::is_none")]
++    acknowledgement: Option<FenceAcknowledgement>,
++}
++
++fn serve(listener: TcpListener, fence: Arc<InputFence>, token: String) {
++    for stream in listener.incoming() {
++        let Ok(mut stream) = stream else { continue };
++        let response = handle_stream(&mut stream, &fence, &token);
++        let _ = serde_json::to_writer(&mut stream, &response);
++        let _ = stream.write_all(b"\n");
++        let _ = stream.flush();
++        if response.status == "fenced" {
++            break;
++        }
++    }
++}
++
++fn handle_stream<'a>(
++    stream: &mut TcpStream,
++    fence: &Arc<InputFence>,
++    expected_token: &str,
++) -> FenceResponse<'a> {
++    let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
++    let mut line = String::new();
++    let request = BufReader::new(stream)
++        .take(MAX_PROTOCOL_BYTES)
++        .read_line(&mut line)
++        .ok()
++        .filter(|bytes| *bytes > 0)
++        .and_then(|_| serde_json::from_str::<FenceRequest>(&line).ok());
++    let Some(request) = request else {
++        return error_response("invalid_request");
++    };
++    if request.protocol_version != INPUT_FENCE_PROTOCOL_VERSION
++        || request.command != "fence"
++        || request.token != expected_token
++        || request.timeout_ms == 0
++        || request.timeout_ms > MAX_FENCE_TIMEOUT_MS
++    {
++        return error_response("invalid_request");
++    }
++    match fence.fence(
++        request.expected_epoch,
++        Duration::from_millis(request.timeout_ms),
++    ) {
++        Ok(acknowledgement) => FenceResponse {
++            protocol_version: INPUT_FENCE_PROTOCOL_VERSION,
++            status: "fenced",
++            code: None,
++            acknowledgement: Some(acknowledgement),
++        },
++        Err(InputFenceError::EpochMismatch) => error_response("epoch_mismatch"),
++        Err(InputFenceError::Timeout) => error_response("timeout"),
++        Err(_) => error_response("fence_failed"),
++    }
++}
++
++fn error_response(code: &'static str) -> FenceResponse<'static> {
++    FenceResponse {
++        protocol_version: INPUT_FENCE_PROTOCOL_VERSION,
++        status: "error",
++        code: Some(code),
++        acknowledgement: None,
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn fence_waits_for_admitted_input_then_closes_forever() {
++        let fence = InputFence::new(7).unwrap();
++        let permit = fence.acquire().unwrap();
++        assert_eq!(permit.epoch(), 7);
++        let other = fence.clone();
++        let waiter = std::thread::spawn(move || other.fence(7, Duration::from_secs(1)).unwrap());
++        std::thread::sleep(Duration::from_millis(20));
++        assert_eq!(fence.snapshot(), (8, true, 1));
++        drop(permit);
++        assert_eq!(waiter.join().unwrap().next_epoch, 8);
++        assert_eq!(fence.snapshot(), (8, true, 0));
++        assert_eq!(fence.acquire().unwrap_err(), InputFenceError::Closed);
++    }
++
++    #[test]
++    fn timeout_is_fail_closed_and_epoch_mismatch_cannot_fence() {
++        let fence = InputFence::new(11).unwrap();
++        assert_eq!(
++            fence.fence(10, Duration::from_millis(1)).unwrap_err(),
++            InputFenceError::EpochMismatch
++        );
++        let permit = fence.acquire().unwrap();
++        assert_eq!(
++            fence.fence(11, Duration::from_millis(1)).unwrap_err(),
++            InputFenceError::Timeout
++        );
++        assert_eq!(fence.snapshot(), (12, true, 1));
++        drop(permit);
++        assert_eq!(fence.acquire().unwrap_err(), InputFenceError::Closed);
++    }
++
++    #[test]
++    fn only_desktop_mutation_tools_require_a_permit() {
++        for tool in [
++            "click",
++            "type_text",
++            "set_value",
++            "page",
++            "replay_trajectory",
++        ] {
++            assert!(tool_requires_input_fence(tool), "{tool}");
++        }
++        for tool in [
++            "health_report",
++            "get_desktop_state",
++            "list_windows",
++            "check_permissions",
++        ] {
++            assert!(!tool_requires_input_fence(tool), "{tool}");
++        }
++    }
++}
+
+diff --git a/libs/cua-driver/rust/crates/cua-driver-core/src/lib.rs b/libs/cua-driver/rust/crates/cua-driver-core/src/lib.rs
+index 928f15b..2158343 100644
+--- a/libs/cua-driver/rust/crates/cua-driver-core/src/lib.rs
++++ b/libs/cua-driver/rust/crates/cua-driver-core/src/lib.rs
+@@ -39,6 +39,7 @@ pub mod element_token;
+ pub mod ffmpeg_install;
+ pub mod health_report;
+ pub mod image_utils;
++pub mod input_fence;
+ pub mod ling_managed;
+ pub mod ling_managed_readiness;
+ pub mod page;
+diff --git a/libs/cua-driver/rust/crates/cua-driver-core/src/server.rs b/libs/cua-driver/rust/crates/cua-driver-core/src/server.rs
+index c5407e3..efecb9a 100644
+--- a/libs/cua-driver/rust/crates/cua-driver-core/src/server.rs
++++ b/libs/cua-driver/rust/crates/cua-driver-core/src/server.rs
+@@ -756,6 +756,22 @@ async fn handle_request_with_dispatch_guard(
+                         }
+                     };
+                 }
++                let _input_permit = match crate::input_fence::acquire_for_tool(&call.name) {
++                    Ok(permit) => permit,
++                    Err(_) => {
++                        let code = "locked_control_input_fenced";
++                        let result = crate::protocol::ToolResult::error(code)
++                            .with_structured(serde_json::json!({ "code": code }));
++                        return match serde_json::to_value(result) {
++                            Ok(value) => Response::ok(id, value),
++                            Err(error) => Response::error(
++                                id,
++                                -32603,
++                                format!("Serialize error: {error}"),
++                            ),
++                        };
++                    }
++                };
+                 let result = registry.invoke(&call.name, call.args).await;
+                 match serde_json::to_value(result) {
+                     Ok(v) => Response::ok(id, v),
+diff --git a/libs/cua-driver/rust/crates/cua-driver/src/main.rs b/libs/cua-driver/rust/crates/cua-driver/src/main.rs
+index 25c9745..8b8d546 100644
+--- a/libs/cua-driver/rust/crates/cua-driver/src/main.rs
++++ b/libs/cua-driver/rust/crates/cua-driver/src/main.rs
+@@ -93,6 +93,10 @@ fn validate_ling_managed_environment() {
+         eprintln!("cua-driver: invalid Ling-managed lifetime: {error}");
+         std::process::exit(78);
+     }
++    if let Err(error) = cua_driver_core::input_fence::start_server_from_env() {
++        eprintln!("cua-driver: invalid Ling input-fence environment: {error:?}");
++        std::process::exit(78);
++    }
+ }
+ 
+ fn register_managed_readiness_provider() {

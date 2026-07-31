@@ -260,6 +260,75 @@ test("Computer Use HTTP projection and Stop wait for runtime acknowledgement", a
     assert.equal(handshake.headers.get("access-control-allow-origin"), null);
     assert.equal(handshake.headers.get("cache-control"), "no-store");
 
+    if (supportedDesktopPlatform) {
+      const lockedUrl = `${baseUrl}/computer-use/locked-control?cwd=${encodeURIComponent(cwd)}`;
+      const initialLocked = await getJson(lockedUrl);
+      assert.equal(initialLocked.revision, 0);
+      assert.deepEqual(initialLocked.projection, {
+        schemaVersion: 1,
+        capability: "disabled_by_build",
+        phase: "off",
+        reason: "locked_control_disabled_by_build",
+      });
+
+      const privateCapabilityUrl = `${baseUrl}/computer-use/locked-control/desktop/capability`;
+      const forbiddenCapability = await fetch(privateCapabilityUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Ling-Desktop-Bridge-Token": "wrong-token",
+        },
+        body: "{}",
+      });
+      assert.equal(forbiddenCapability.status, 403);
+      assert.equal(forbiddenCapability.headers.get("access-control-allow-origin"), null);
+
+      const capability = await fetch(privateCapabilityUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Ling-Desktop-Bridge-Token": "desktop-bridge-test-token-0123456789",
+        },
+        body: JSON.stringify({
+          authority: {
+            daemonAuthorityEpoch: handshakeBody.daemonAuthorityEpoch,
+            bridgeConnectionId: handshakeBody.bridgeConnectionId,
+            desktopInstanceEpoch: handshakeBody.desktopInstanceEpoch,
+            workspaceCwd: cwd,
+          },
+          buildId: "desktop-test-build",
+          capability: {
+            schemaVersion: 1,
+            platform: process.platform,
+            state: "disabled_by_build",
+            reason: "locked_control_disabled_by_build",
+            canCaptureSameUserDesktopWhileLocked: false,
+            canInjectSameUserDesktopWhileLocked: false,
+            canProveSessionContinuity: false,
+            secureSurfaceExcluded: false,
+            adapterVersion: `${process.platform}-disabled-test-v1`,
+            osVersion: "test-os",
+            observedAt: "2026-07-31T00:00:00.000Z",
+          },
+        }),
+      });
+      assert.equal(capability.status, 200, await capability.text());
+      assert.equal(capability.headers.get("access-control-allow-origin"), null);
+
+      const begin = await fetch(`${baseUrl}/computer-use/locked-control/authorize?cwd=${encodeURIComponent(cwd)}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Ling-Computer-Use-Token": COMPUTER_USE_ROUTE_TOKEN,
+        },
+        body: JSON.stringify({ requestId: "locked-authorize-1", expectedRevision: 1 }),
+      });
+      assert.equal(begin.status, 409);
+      const beginBody = await begin.json();
+      assert.equal(beginBody.accepted, false);
+      assert.equal(beginBody.reason, "locked_control_disabled_by_build");
+    }
+
     const listed = await getJson(`${baseUrl}/computer-use/sessions?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(listed.projections.length, 1);
     assert.equal(listed.projections[0].preview.descriptorId, "opaque-preview-1");

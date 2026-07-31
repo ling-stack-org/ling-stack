@@ -48,7 +48,7 @@
   "patchSet": {
     "id": "ling-managed-embedded-v1",
     "manifest": "patches/ling-managed-embedded-v1/series.json",
-    "sha256": "87b6b71942bc93d33ba293ffcc67e245aefd43a416bbf9e5516e2dbc1de43936",
+    "sha256": "edb89636dab1f7d2b9db85bcfa88d2979f8c25f5d14bb2af83033a3ca9f1822c",
     "implementationStatus": "runtime_integrated"
   },
   "toolchain": {
@@ -77,7 +77,7 @@
           "cleanPackage": "cua-driver",
           "targets": {
             "aarch64-apple-darwin": {
-              "expectedSourceSha256": "af7a2f9bfabe98704bafca0f2c7f6e2ae4e9f53fe6653d5cd8cea44fc25e103d",
+              "expectedSourceSha256": "e79f3c696c623aaa18074f44d668416018525c8b1ffb8d262bf1fd77e1ade99a",
               "maxAttempts": 32
             }
           }
@@ -121,6 +121,11 @@
     "hostProcessIdEnvironmentVariable": "CUA_DRIVER_HOST_PID",
     "childInstanceNonceEnvironmentVariable": "CUA_DRIVER_CHILD_INSTANCE_NONCE",
     "leaseGenerationEnvironmentVariable": "CUA_DRIVER_LEASE_GENERATION",
+    "inputFencePortEnvironmentVariable": "CUA_DRIVER_INPUT_FENCE_PORT",
+    "inputFenceTokenEnvironmentVariable": "CUA_DRIVER_INPUT_FENCE_TOKEN",
+    "inputEpochEnvironmentVariable": "CUA_DRIVER_INPUT_EPOCH",
+    "inputFenceProtocolVersion": 1,
+    "inputFenceAdmission": "mutating_tool_call_v1",
     "stateSchemaVersion": 1,
     "telemetryEnabled": false,
     "startupUpdateCheckEnabled": false,

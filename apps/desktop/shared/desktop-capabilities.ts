@@ -117,6 +117,8 @@ export interface ComputerControlDesktopCapability {
   readonly platform: "macos" | "windows";
   requestPermissions(): Promise<DesktopCommandResult>;
   openPermissionSettings(permission: ComputerControlPermissionKind): Promise<DesktopCommandResult>;
+  authorizeLockedControl(): Promise<DesktopCommandResult>;
+  revokeLockedControl(): Promise<DesktopCommandResult>;
 }
 
 export interface DesktopNavigationIntent {
@@ -220,6 +222,11 @@ export interface ComputerUsePipRendererSnapshot {
   readonly statusDetail?: string;
   readonly canStop: boolean;
   readonly canOpenSettings: boolean;
+  readonly lockedControl?: {
+    readonly phase: "armed" | "attesting" | "active_locked" | "paused";
+    readonly expiresAt?: string;
+    readonly reason?: string;
+  };
   readonly deck?: {
     readonly activePageId: string;
     readonly requestedPageId?: string;

@@ -207,9 +207,13 @@ test("main-window preload exposes Computer Control only for a validated packaged
   });
   await macCapabilities.computerControl.requestPermissions();
   await macCapabilities.computerControl.openPermissionSettings("screen_recording");
+  await macCapabilities.computerControl.authorizeLockedControl();
+  await macCapabilities.computerControl.revokeLockedControl();
   assert.deepEqual(calls, [
     [DESKTOP_IPC_CHANNELS.computerControlRequestPermissions],
     [DESKTOP_IPC_CHANNELS.computerControlOpenPermissionSettings, "screen_recording"],
+    [DESKTOP_IPC_CHANNELS.computerControlAuthorizeLocked],
+    [DESKTOP_IPC_CHANNELS.computerControlRevokeLocked],
   ]);
 
   for (const platformArgument of [undefined, "linux", "macos-extra"]) {

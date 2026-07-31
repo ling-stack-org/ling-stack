@@ -5,6 +5,7 @@ import type {
   CuaDriverArchitecture,
   CuaDriverFeatureFlags,
 } from "@ling-stack/contracts";
+import { DEFAULT_LOCKED_COMPUTER_CONTROL_POLICIES } from "@ling-stack/contracts";
 import type { DesktopDaemonStatus } from "../shared/desktop-capabilities.js";
 import type {
   ComputerControlPermissionKind,
@@ -35,6 +36,14 @@ import type {
   DesktopDaemonCuaDriverAuthorityTuple,
   DesktopDaemonLifecycle,
 } from "./daemon-lifecycle.js";
+import { createLockedControlCapabilityAttestor } from "./locked-computer-control/capability-attestor.js";
+import { createLockedControlDaemonClient } from "./locked-computer-control/daemon-client.js";
+import { createLockedControlIdentityVerifier } from "./locked-computer-control/identity-verifier.js";
+import {
+  LockedComputerControlPolicyCoordinator,
+  type LockedControlPolicyCoordinatorSnapshot,
+  type LockedControlGenerationRuntime,
+} from "./locked-computer-control/policy-coordinator.js";
 
 export type DesktopRuntimeErrorCode =
   | "architecture_unsupported"
@@ -60,6 +69,8 @@ export interface DesktopRuntimeCuaDriverCoordinator {
   restart?(reason?: string): Promise<CuaDriverCoordinatorSnapshot>;
   suspendForSystem?(reason: string): Promise<void>;
   resumeForSystem?(): Promise<void>;
+  readonly snapshot?: CuaDriverCoordinatorSnapshot;
+  closeCallGateForSecurityBoundary?(reason: string): void;
   shutdown(): Promise<void>;
 }
 
@@ -127,6 +138,14 @@ export class DesktopRuntime {
   private shutdownRequested = false;
   private shutdownPromise: Promise<void> | undefined;
   private stopPowerMonitor: (() => void) | undefined;
+  private lockedControlPolicyCoordinator: LockedComputerControlPolicyCoordinator | undefined;
+  private lockedControlSnapshotValue: LockedControlPolicyCoordinatorSnapshot = Object.freeze({
+    phase: "off",
+    lockEpoch: 0,
+  });
+  private readonly lockedControlListeners = new Set<(
+    snapshot: LockedControlPolicyCoordinatorSnapshot,
+  ) => void>();
 
   constructor(private readonly options: DesktopRuntimeOptions) {
     this.platform = options.platform ?? process.platform;
@@ -210,6 +229,28 @@ export class DesktopRuntime {
         reason: error instanceof Error ? error.message : "permission_settings_failed",
       };
     }
+  }
+
+  authorizeLockedComputerControl(): Promise<DesktopCommandResult> {
+    return this.lockedControlPolicyCoordinator?.authorizeCurrentTask()
+      ?? Promise.resolve({ accepted: false, reason: "locked_control_disabled_by_build" });
+  }
+
+  revokeLockedComputerControl(): Promise<DesktopCommandResult> {
+    return this.lockedControlPolicyCoordinator?.revokeCurrentGrant()
+      ?? Promise.resolve({ accepted: false, reason: "locked_control_disabled_by_build" });
+  }
+
+  get lockedComputerControlSnapshot(): LockedControlPolicyCoordinatorSnapshot {
+    return this.lockedControlSnapshotValue;
+  }
+
+  onLockedComputerControlChanged(
+    listener: (snapshot: LockedControlPolicyCoordinatorSnapshot) => void,
+  ): () => void {
+    this.lockedControlListeners.add(listener);
+    listener(this.lockedControlSnapshotValue);
+    return () => this.lockedControlListeners.delete(listener);
   }
 
   onStatusChanged(listener: (status: DesktopDaemonStatus) => void): () => void {
@@ -311,6 +352,12 @@ export class DesktopRuntime {
 
   suspendComputerControlForSystem(reason: string): Promise<void> {
     if (this.shutdownRequested) return Promise.resolve();
+    const lockedPolicy = this.lockedControlPolicyCoordinator;
+    if (lockedPolicy) {
+      return reason === "system_lock"
+        ? lockedPolicy.handleLock()
+        : lockedPolicy.handleSuspend();
+    }
     return this.enqueue(async () => {
       const coordinator = this.coordinatorValue;
       if (!coordinator) return;
@@ -322,8 +369,12 @@ export class DesktopRuntime {
     });
   }
 
-  resumeComputerControlForSystem(): Promise<void> {
+  resumeComputerControlForSystem(kind: "unlock" | "resume" = "unlock"): Promise<void> {
     if (this.shutdownRequested) return Promise.resolve();
+    const lockedPolicy = this.lockedControlPolicyCoordinator;
+    if (lockedPolicy) {
+      return kind === "unlock" ? lockedPolicy.handleUnlock() : lockedPolicy.handleResume();
+    }
     return this.enqueue(async () => {
       const coordinator = this.coordinatorValue;
       if (!coordinator) {
@@ -515,6 +566,11 @@ export class DesktopRuntime {
     this.coordinatorValue = coordinator;
     this.coordinatorAuthority = authority;
     this.coordinatorPlatformOwnerReady = platformOwnerState;
+    this.lockedControlPolicyCoordinator = this.createLockedControlPolicyCoordinator(
+      coordinator,
+      authority,
+      platform,
+    );
     this.options.onDiagnostic?.("desktop_runtime.cua_driver_composed", {
       platform,
       gateEnabled: true,
@@ -570,6 +626,117 @@ export class DesktopRuntime {
     }
   }
 
+  private createLockedControlPolicyCoordinator(
+    coordinator: DesktopRuntimeCuaDriverCoordinator,
+    authority: DesktopDaemonCuaDriverAuthorityTuple,
+    platform: Exclude<BundledCuaDriverPlatform, "unsupported">,
+  ): LockedComputerControlPolicyCoordinator {
+    const handshakeAuthority = Object.freeze({
+      daemonAuthorityEpoch: authority.daemonAuthorityEpoch,
+      bridgeConnectionId: authority.bridgeConnectionId,
+      desktopInstanceEpoch: authority.desktopInstanceEpoch,
+      workspaceCwd: authority.workspaceCwd,
+    });
+    const capability = Object.freeze({
+      schemaVersion: 1 as const,
+      platform,
+      state: "disabled_by_build" as const,
+      reason: "locked_control_disabled_by_build" as const,
+      canCaptureSameUserDesktopWhileLocked: false,
+      canInjectSameUserDesktopWhileLocked: false,
+      canProveSessionContinuity: false,
+      secureSurfaceExcluded: false,
+      adapterVersion: `${platform}-locked-control-disabled-v1`,
+      osVersion: process.version,
+      observedAt: new Date().toISOString(),
+    });
+    const daemon = createLockedControlDaemonClient({
+      daemonBaseUrl: this.options.daemonBaseUrl,
+      workspaceCwd: this.workspaceCwd,
+      bridgeToken: this.options.bridgeToken,
+    });
+    let policyCoordinator: LockedComputerControlPolicyCoordinator | undefined;
+    let lastReservedGeneration = 0;
+    const runtime: LockedControlGenerationRuntime = {
+      readAuthority: () => ({
+        platform,
+        desktopInstanceId: this.desktopInstanceId,
+        desktopInstanceEpoch: authority.desktopInstanceEpoch,
+        daemonAuthorityEpoch: authority.daemonAuthorityEpoch,
+        bridgeConnectionId: authority.bridgeConnectionId,
+        workspaceCwd: authority.workspaceCwd,
+        normalGeneration: coordinator.snapshot?.generation ?? 0,
+        lockEpoch: policyCoordinator?.snapshot().lockEpoch ?? 0,
+        // A packaged native session adapter must provide this before the
+        // policy can move beyond fixed Off. Never synthesize a digest.
+      }),
+      closeCallGate: (reason) => coordinator.closeCallGateForSecurityBoundary?.(reason),
+      retireNormalForLock: async (reason) => {
+        if (!coordinator.suspendForSystem) throw new Error("locked_control_runtime_unavailable");
+        await coordinator.suspendForSystem(
+          reason === "locked_control_suspend" ? "system_suspend" : "system_lock",
+        );
+      },
+      reserveLockedGeneration: () => {
+        const current = coordinator.snapshot?.generation ?? 0;
+        lastReservedGeneration = Math.max(lastReservedGeneration + 1, current + 1);
+        if (!Number.isSafeInteger(lastReservedGeneration)) {
+          throw new Error("locked_control_generation_exhausted");
+        }
+        return lastReservedGeneration;
+      },
+      async startLockedGeneration() {
+        // Product builds remain fixed Off until a packaged native capability
+        // and an exact restricted-generation launcher are promoted together.
+        throw new Error("locked_control_disabled_by_build");
+      },
+      async stopLockedGeneration() {},
+      async resumeNormal() {
+        await coordinator.resumeForSystem?.();
+      },
+    };
+    const identityVerifier = createLockedControlIdentityVerifier({
+      platform,
+      localizedReason: "Authorize Ling to control this computer for the current task",
+      readContext: () => {
+        throw new Error("locked_control_native_session_binding_unavailable");
+      },
+    });
+    policyCoordinator = new LockedComputerControlPolicyCoordinator({
+      policy: DEFAULT_LOCKED_COMPUTER_CONTROL_POLICIES[platform],
+      capability: () => capability,
+      daemon,
+      identityVerifier,
+      attestor: createLockedControlCapabilityAttestor({}),
+      runtime,
+      onStateChanged: (snapshot) => {
+        this.lockedControlSnapshotValue = snapshot;
+        for (const listener of this.lockedControlListeners) {
+          try {
+            listener(snapshot);
+          } catch {
+            // UI observers do not own locked-control authority.
+          }
+        }
+        this.options.onDiagnostic?.("desktop_runtime.locked_control_state_changed", {
+          phase: snapshot.phase,
+          lockEpoch: snapshot.lockEpoch,
+          ...(snapshot.reason ? { reason: snapshot.reason } : {}),
+        });
+      },
+    });
+    void daemon.publishCapability({
+      authority: handshakeAuthority,
+      capability,
+      buildId: "ling-desktop-locked-control-v1",
+    }).catch((error) => {
+      this.options.onDiagnostic?.("desktop_runtime.locked_control_capability_publish_failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+    return policyCoordinator;
+  }
+
   private isCurrentCoordinatorAuthority(
     coordinator: DesktopRuntimeCuaDriverCoordinator,
     authority: DesktopDaemonCuaDriverAuthorityTuple,
@@ -596,6 +763,9 @@ export class DesktopRuntime {
       return;
     }
     this.options.onDiagnostic?.("desktop_runtime.cua_driver_shutdown", { reason });
+    const lockedPolicy = this.lockedControlPolicyCoordinator;
+    this.lockedControlPolicyCoordinator = undefined;
+    await lockedPolicy?.shutdown();
     await coordinator.shutdown();
     if (this.coordinatorValue === coordinator) {
       this.coordinatorValue = undefined;
@@ -650,18 +820,21 @@ export class DesktopRuntime {
     const onSuspend = (): void => {
       void this.suspendComputerControlForSystem("system_suspend").catch(() => undefined);
     };
-    const onRecovery = (): void => {
-      void this.resumeComputerControlForSystem().catch(() => undefined);
+    const onUnlock = (): void => {
+      void this.resumeComputerControlForSystem("unlock").catch(() => undefined);
+    };
+    const onResume = (): void => {
+      void this.resumeComputerControlForSystem("resume").catch(() => undefined);
     };
     monitor.on("lock-screen", onLock);
     monitor.on("suspend", onSuspend);
-    monitor.on("unlock-screen", onRecovery);
-    monitor.on("resume", onRecovery);
+    monitor.on("unlock-screen", onUnlock);
+    monitor.on("resume", onResume);
     return () => {
       monitor.off("lock-screen", onLock);
       monitor.off("suspend", onSuspend);
-      monitor.off("unlock-screen", onRecovery);
-      monitor.off("resume", onRecovery);
+      monitor.off("unlock-screen", onUnlock);
+      monitor.off("resume", onResume);
     };
   }
 

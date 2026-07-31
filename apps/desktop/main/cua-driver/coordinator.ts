@@ -73,6 +73,7 @@ import {
   type CuaDriverPlatformBindingMetadata,
 } from "./platform-binding.js";
 import type { CuaDriverAvailabilityPublisher } from "./availability-publisher.js";
+import { CuaDriverInputFenceError } from "./input-fence-client.js";
 
 export type CuaDriverCoordinatorLifecycle = "disabled" | "validating" | "included" | "starting" | "active" | "stopping" | "failed";
 
@@ -268,6 +269,11 @@ export class CuaDriverDesktopCoordinator {
 
   get providerHost(): CuaDriverProviderHost | undefined {
     return this.host;
+  }
+
+  /** Synchronous admission fence used before the locked-control policy queue awaits. */
+  closeCallGateForSecurityBoundary(reason: string): void {
+    this.proxy?.closeCallGate(reason);
   }
 
   /** Host lock/suspend fence. Retains requested intent while retiring this generation. */
@@ -911,6 +917,7 @@ export class CuaDriverDesktopCoordinator {
   private startWindowsSessionSuspensionCleanup(reason: string, generation: number): void {
     const pending = Promise.resolve().then(async () => {
       try {
+        await this.fenceProviderBeforeSessionBoundary(reason, generation);
         await this.beginDisable(reason);
         if (this.requestedEnabled && !this.stopped && !this.cleanupDebt && this.windowsSessionSuspended) {
           this.publishSnapshot({
@@ -928,6 +935,27 @@ export class CuaDriverDesktopCoordinator {
       }
     });
     this.trackSessionTransition(pending);
+  }
+
+  private async fenceProviderBeforeSessionBoundary(reason: string, generation: number): Promise<void> {
+    const host = this.host;
+    if (!host || host.generation !== generation) return;
+    if (typeof host.fenceInput !== "function") return;
+    try {
+      await host.fenceInput();
+    } catch (error) {
+      const fenceReason = error instanceof CuaDriverInputFenceError && error.fenceCode === "timeout"
+        ? "locked_control_input_fence_timeout"
+        : "locked_control_input_unavailable";
+      this.proxy?.closeCallGate(fenceReason);
+      this.telemetry.emit("error", "cua_driver.coordinator.input_fence_failed", {
+        generation,
+        reason,
+        fenceReason,
+      });
+      if (typeof host.terminateImmediately !== "function") throw error;
+      await host.terminateImmediately(fenceReason);
+    }
   }
 
   private queueWindowsSessionSuspension(reason: string, generation: number): void {

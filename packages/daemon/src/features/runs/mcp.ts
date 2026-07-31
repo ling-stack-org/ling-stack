@@ -122,6 +122,7 @@ export function createMcpToolCallHandler(
   mcpBroker: McpBroker,
   tools: readonly PiRunnerMcpToolDefinition[],
   options: {
+    readonly runId?: string;
     readonly onStart?: (input: {
       readonly request: PiRunnerMcpToolCallRequest;
       readonly definition: PiRunnerMcpToolDefinition;
@@ -153,6 +154,14 @@ export function createMcpToolCallHandler(
       assertResultCurrent: () => {
         assertMcpResultAuthorityCurrent(store, authority);
       },
+      ...(options.runId ? {
+        lockedControlExecution: {
+          runId: options.runId,
+          computerUseSessionId: `computer_use_${options.runId}`,
+          toolCallId: request.toolCallId,
+          defaultApproval: request.defaultApproval,
+        },
+      } : {}),
     }, tool.rawName, request.input);
     request.signal?.throwIfAborted();
     // The production brokers check at the transport boundary. Recheck here as

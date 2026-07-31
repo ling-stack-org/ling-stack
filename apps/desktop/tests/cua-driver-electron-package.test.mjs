@@ -147,6 +147,7 @@ test("package preparation stages one platform and writes build-authority files",
       ), "utf8")).signingPolicy.signingTier,
       "unsigned_dev",
     );
+    assert.equal(prepared.evidenceRoot, join(prepared.containerRoot, "signing-evidence"));
     await prepared.cleanup();
     await prepared.cleanup();
     await assert.rejects(access(prepared.containerRoot));
@@ -229,6 +230,7 @@ test("package CLI passes only its verified temporary root and digest to Builder"
       {
         LING_CUA_DRIVER_PACKAGE_PROVIDER: "1",
         LING_CUA_DRIVER_SOURCE_BUILD_ROOT: sourceRoot,
+        LING_CUA_SIGNING_EVIDENCE_DIR: resolve(tmpdir(), "caller-controlled-evidence"),
         LING_CUA_SIGNING_TIER: "unsigned_dev",
       },
       {
@@ -254,6 +256,15 @@ test("package CLI passes only its verified temporary root and digest to Builder"
             true,
           );
           stagedContainer = dirname(dirname(dirname(input.environment.LING_CUA_PACKAGE_RESOURCES_ROOT)));
+          assert.equal(
+            input.environment.LING_CUA_SIGNING_EVIDENCE_DIR,
+            join(stagedContainer, "signing-evidence"),
+          );
+          await mkdir(input.environment.LING_CUA_SIGNING_EVIDENCE_DIR, { recursive: true });
+          await writeFile(
+            join(input.environment.LING_CUA_SIGNING_EVIDENCE_DIR, "provider-signing-state.json"),
+            "fixture",
+          );
           await access(join(
             input.environment.LING_CUA_PACKAGE_RESOURCES_ROOT,
             "packaged-provider-capabilities.json",

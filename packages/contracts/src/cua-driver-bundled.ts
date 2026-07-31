@@ -427,6 +427,11 @@ export interface DarwinBundledCuaDriverLockV1 {
   readonly runtime: {
     readonly args: readonly ["mcp", "--embedded", "--host-bundle-id", "com.lingstack.desktop"];
     readonly stateHomeEnvironmentVariable: "CUA_DRIVER_STATE_HOME";
+    readonly inputFencePortEnvironmentVariable: "CUA_DRIVER_INPUT_FENCE_PORT";
+    readonly inputFenceTokenEnvironmentVariable: "CUA_DRIVER_INPUT_FENCE_TOKEN";
+    readonly inputEpochEnvironmentVariable: "CUA_DRIVER_INPUT_EPOCH";
+    readonly inputFenceProtocolVersion: 1;
+    readonly inputFenceAdmission: "mutating_tool_call_v1";
     readonly stateSchemaVersion: 1;
     readonly stateHomeRequiredInEmbeddedMode: true;
     readonly telemetryEnabled: false;
@@ -497,6 +502,11 @@ export interface WindowsBundledCuaDriverLockV1 {
     readonly requiredSession: "interactive-user";
     readonly rejectSessionZero: true;
     readonly stateHomeEnvironmentVariable: "CUA_DRIVER_STATE_HOME";
+    readonly inputFencePortEnvironmentVariable: "CUA_DRIVER_INPUT_FENCE_PORT";
+    readonly inputFenceTokenEnvironmentVariable: "CUA_DRIVER_INPUT_FENCE_TOKEN";
+    readonly inputEpochEnvironmentVariable: "CUA_DRIVER_INPUT_EPOCH";
+    readonly inputFenceProtocolVersion: 1;
+    readonly inputFenceAdmission: "mutating_tool_call_v1";
     readonly stateSchemaVersion: 1;
     readonly telemetryEnabled: false;
     readonly startupUpdateCheckEnabled: false;

@@ -96,7 +96,7 @@ test("provider lock is the exact V2 contract and remains fail-closed", async () 
   assert.equal(lock.platforms.darwin.componentId, "cua-driver-darwin");
   assert.equal(
     lock.platforms.darwin.sourceBuild.binarySha256BeforeSigning,
-    "12ca08fec08c9540e6ec6a9de5ab079f27e09de55a6f0b8184279fb003cdddb0",
+    "44b0eecbf60ffc8d01350a85347f77febc84f71778d2eabe465f161cb328db30",
   );
   const inputs = JSON.parse(await readFile(join(PROVIDER_RESOURCE_ROOT, "source-build-inputs.json"), "utf8"));
   assert.deepEqual(Object.keys(inputs).sort(), [
@@ -122,6 +122,7 @@ test("provider lock is the exact V2 contract and remains fail-closed", async () 
     await readFile(join(PROVIDER_RESOURCE_ROOT, inputs.patchSet.manifest), "utf8"),
   );
   assert.deepEqual(series.rustfmtPaths, [
+    "libs/cua-driver/rust/crates/cua-driver-core/src/input_fence.rs",
     "libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed.rs",
     "libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed_readiness.rs",
     "libs/cua-driver/rust/crates/cua-driver/src/ling_managed_lifetime.rs",

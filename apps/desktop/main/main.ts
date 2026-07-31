@@ -154,6 +154,7 @@ let smokeProjectionSource: "daemon" | "fake" = "fake";
 let desktopBridgeToken: string | undefined;
 let unregisterIpc: (() => void) | undefined;
 let unregisterThemePackageIpc: (() => void) | undefined;
+let unregisterLockedControlPreview: (() => void) | undefined;
 let desktopRuntime: DesktopRuntime | undefined;
 let computerUse: ComputerUsePreviewCoordinator | undefined;
 const desktopNavigationIntents = new DesktopNavigationIntentStore();
@@ -517,6 +518,9 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
       return false;
     }
     logStartup("computer_use.started", { fakeMode: fakeComputerUseMode, realCaptureSmokeMode });
+    unregisterLockedControlPreview ??= desktopRuntime.onLockedComputerControlChanged(
+      (snapshot) => computerUse?.reportLockedControlState(snapshot),
+    );
     computerUse.onSummaryChanged((summary) => {
       sendToLiveDesktopWindow(
         mainWindow ?? loadingMainWindow,
@@ -1843,6 +1847,9 @@ async function shutdown(): Promise<void> {
 
   const activeComputerUse = computerUse;
   computerUse = undefined;
+  const activeUnregisterLockedControlPreview = unregisterLockedControlPreview;
+  unregisterLockedControlPreview = undefined;
+  await attemptCleanup(() => activeUnregisterLockedControlPreview?.());
   await attemptCleanup(() => activeComputerUse?.dispose());
 
   await attemptCleanup(() => windowsProviderSmokeCommandReader?.close());
