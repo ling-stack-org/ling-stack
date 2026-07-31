@@ -538,6 +538,7 @@ import { SqliteChannelProposalStore } from "./sqlite/channel-proposal-store.js";
 import { SqliteChannelAssetStore } from "./sqlite/channel-asset-store.js";
 import { SqliteConversationAssetStore } from "./sqlite/conversation-asset-store.js";
 import { SqliteConversationRevisionStore } from "./sqlite/conversation-revision-store.js";
+import { SqliteRemoteAccessStore } from "./sqlite/remote-access-store.js";
 import { SqliteChannelCollaborationStore } from "./sqlite/channel-collaboration-store.js";
 import { SqliteChannelProtocolStore } from "./sqlite/channel-protocol-store.js";
 import { SqliteChannelPlaybookStore } from "./sqlite/channel-playbook-store.js";
@@ -584,6 +585,7 @@ export class SqliteRunStore implements RunStore {
   private readonly lingTurns: SqliteLingTurnStore;
   private readonly terminalReports: SqliteTerminalReportStore;
   private readonly conversationRevisions: SqliteConversationRevisionStore;
+  private readonly remoteAccess: SqliteRemoteAccessStore;
   private readonly stateTransitions: SqliteStateTransitionStore;
   private readonly resourceLeases: SqliteResourceLeaseStore;
   private readonly runtimeSemaphores: SqliteRuntimeSemaphoreStore;
@@ -712,6 +714,7 @@ export class SqliteRunStore implements RunStore {
     );
     this.terminalReports = new SqliteTerminalReportStore({ database: this.database });
     this.conversationRevisions = new SqliteConversationRevisionStore({ database: this.database });
+    this.remoteAccess = new SqliteRemoteAccessStore({ database: this.database });
     this.lingThreadMetadata = new SqliteLingThreadMetadataCoordinator(
       { database: this.database },
       {
@@ -1021,6 +1024,77 @@ export class SqliteRunStore implements RunStore {
 
   createLingThread(input: CreateLingThreadInput, now: string): LingThread {
     return this.lingThreads.createLingThread(input, now);
+  }
+
+  commitRemoteConversationSend(
+    input: import("../remote-access-types.js").CommitRemoteConversationSendInput,
+    now: string,
+  ): import("../remote-access-types.js").CommitRemoteConversationSendResult {
+    return this.remoteAccess.commitRemoteConversationSend(input, now);
+  }
+
+  getRemoteCommandReceipt(
+    commandId: string,
+  ): import("../remote-access-types.js").RemoteCommandReceipt | undefined {
+    return this.remoteAccess.getRemoteCommandReceipt(commandId);
+  }
+
+  compactRemoteCommandReceipts(now: string): { readonly compacted: number; readonly purged: number } {
+    return this.remoteAccess.compactRemoteCommandReceipts(now);
+  }
+
+  listRemoteDispatchIntents(
+    options?: import("../remote-access-types.js").ListRemoteDispatchIntentsOptions,
+  ): import("../remote-access-types.js").RemoteDispatchIntent[] {
+    return this.remoteAccess.listRemoteDispatchIntents(options);
+  }
+
+  claimRemoteDispatchIntent(
+    intentId: string,
+    input: { readonly workerId: string; readonly claimExpiresAt: string },
+    now: string,
+  ): import("../remote-access-types.js").RemoteDispatchIntent | undefined {
+    return this.remoteAccess.claimRemoteDispatchIntent(intentId, input, now);
+  }
+
+  completeRemoteDispatchIntent(
+    intentId: string,
+    now: string,
+  ): import("../remote-access-types.js").RemoteDispatchIntent | undefined {
+    return this.remoteAccess.completeRemoteDispatchIntent(intentId, now);
+  }
+
+  failRemoteDispatchIntent(
+    intentId: string,
+    errorMessage: string,
+    retryAt: string,
+    now: string,
+  ): import("../remote-access-types.js").RemoteDispatchIntent | undefined {
+    return this.remoteAccess.failRemoteDispatchIntent(intentId, errorMessage, retryAt, now);
+  }
+
+  listRemoteProjectionOutbox(
+    options?: import("../remote-access-types.js").ListRemoteProjectionOutboxOptions,
+  ): import("../remote-access-types.js").RemoteProjectionOutboxRecord[] {
+    return this.remoteAccess.listRemoteProjectionOutbox(options);
+  }
+
+  markRemoteProjectionOutboxProcessed(activitySeqs: readonly number[], now: string): number {
+    return this.remoteAccess.markRemoteProjectionOutboxProcessed(activitySeqs, now);
+  }
+
+  getConversationReadState(
+    input: Omit<import("../remote-access-types.js").MarkConversationReadInput, "throughActivitySeq">,
+    now: string,
+  ): import("../remote-access-types.js").ConversationReadState {
+    return this.remoteAccess.getConversationReadState(input, now);
+  }
+
+  markConversationRead(
+    input: import("../remote-access-types.js").MarkConversationReadInput,
+    now: string,
+  ): import("../remote-access-types.js").ConversationReadState {
+    return this.remoteAccess.markConversationRead(input, now);
   }
 
   commitConversationMessageEdit(

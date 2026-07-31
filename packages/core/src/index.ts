@@ -79,6 +79,7 @@ export * from "./terminal-report-types.js";
 export * from "./terminal-report-validation.js";
 export * from "./terminal-report-fallback.js";
 export * from "./conversation-revision-types.js";
+export * from "./remote-access-types.js";
 export * from "./effective-skills.js";
 export * from "./mcp-types.js";
 export * from "./workspace-types.js";

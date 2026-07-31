@@ -8,6 +8,17 @@ import type {
   ResolveApprovalRequestInput,
 } from "./approval-types.js";
 import type {
+  CommitRemoteConversationSendInput,
+  CommitRemoteConversationSendResult,
+  ConversationReadState,
+  ListRemoteDispatchIntentsOptions,
+  ListRemoteProjectionOutboxOptions,
+  MarkConversationReadInput,
+  RemoteCommandReceipt,
+  RemoteDispatchIntent,
+  RemoteProjectionOutboxRecord,
+} from "./remote-access-types.js";
+import type {
   ApprovalPolicy,
   ApprovalPolicyUpdateInput,
 } from "./approval-policy.js";
@@ -1283,6 +1294,21 @@ export interface ListControlPlaneEventsOptions {
 
 export interface RunStore {
   readonly paths: LingStackRuntimePaths;
+  commitRemoteConversationSend(input: CommitRemoteConversationSendInput, now: string): CommitRemoteConversationSendResult;
+  getRemoteCommandReceipt(commandId: string): RemoteCommandReceipt | undefined;
+  compactRemoteCommandReceipts(now: string): { readonly compacted: number; readonly purged: number };
+  listRemoteDispatchIntents(options?: ListRemoteDispatchIntentsOptions): RemoteDispatchIntent[];
+  claimRemoteDispatchIntent(
+    intentId: string,
+    input: { readonly workerId: string; readonly claimExpiresAt: string },
+    now: string,
+  ): RemoteDispatchIntent | undefined;
+  completeRemoteDispatchIntent(intentId: string, now: string): RemoteDispatchIntent | undefined;
+  failRemoteDispatchIntent(intentId: string, errorMessage: string, retryAt: string, now: string): RemoteDispatchIntent | undefined;
+  listRemoteProjectionOutbox(options?: ListRemoteProjectionOutboxOptions): RemoteProjectionOutboxRecord[];
+  markRemoteProjectionOutboxProcessed(activitySeqs: readonly number[], now: string): number;
+  getConversationReadState(input: Omit<MarkConversationReadInput, "throughActivitySeq">, now: string): ConversationReadState;
+  markConversationRead(input: MarkConversationReadInput, now: string): ConversationReadState;
   commitConversationMessageEdit(input: CommitConversationMessageEditInput, now: string): CommitConversationMessageEditResult;
   listConversationMessageRevisions(options: ListConversationMessageRevisionsOptions): ConversationMessageRevision[];
   getConversationTurnSupersession(id: string): ConversationTurnSupersession | undefined;
@@ -1938,6 +1964,20 @@ export interface RunStore {
 export type RunStoreFacet<K extends keyof RunStore> = Pick<RunStore, K>;
 
 export type RunStorePathsFacet = RunStoreFacet<"paths">;
+
+export type RemoteAccessStoreFacet = RunStoreFacet<
+  | "commitRemoteConversationSend"
+  | "getRemoteCommandReceipt"
+  | "compactRemoteCommandReceipts"
+  | "listRemoteDispatchIntents"
+  | "claimRemoteDispatchIntent"
+  | "completeRemoteDispatchIntent"
+  | "failRemoteDispatchIntent"
+  | "listRemoteProjectionOutbox"
+  | "markRemoteProjectionOutboxProcessed"
+  | "getConversationReadState"
+  | "markConversationRead"
+>;
 
 export type LingThreadStoreFacet = RunStoreFacet<
   | "createLingThread"
