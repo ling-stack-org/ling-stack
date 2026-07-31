@@ -5,6 +5,7 @@ import { createLingStackFileMutationToolExtension } from "./extensions/file-muta
 import { createLingStackMcpProxyExtension } from "./extensions/mcp-proxy.js";
 import { createLingStackPermissionRequestExtension } from "./extensions/permissions.js";
 import { createLingStackToolHydrationExtension } from "./extensions/tool-hydration.js";
+import { createLingStackTaskContinuationExtension } from "./extensions/task-continuation.js";
 import type { PiRunnerRunOptions } from "./types.js";
 import { getLingStackSystemPrompt } from "./utils.js";
 
@@ -25,6 +26,7 @@ export async function createLingStackResourceLoader(
     systemPrompt: getLingStackSystemPrompt(options),
     appendSystemPrompt: [...(options.appendSystemPrompt ?? [])],
     extensionFactories: [
+      ...(options.onTaskContinuationBoundary ? [createLingStackTaskContinuationExtension(options)] : []),
       createLingStackFileMutationToolExtension(options),
       ...(options.runtimeToolFeatures?.unifiedExec ? [createLingStackBashToolExtension(options)] : []),
       createLingStackApprovalExtension(options),
