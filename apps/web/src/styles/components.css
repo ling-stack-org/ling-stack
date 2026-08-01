@@ -108,7 +108,7 @@ small,
 .primary-button {
   border-color: var(--accent-border);
   background: linear-gradient(180deg, var(--accent), var(--accent-strong));
-  color: #ffffff;
+  color: var(--ling-action-accent-fg);
 }
 
 .primary-button:hover:not(:disabled) {
@@ -565,10 +565,6 @@ code {
 
 :root[data-theme="dark"] .provider-run-notice.neutral strong {
   color: var(--text-strong);
-}
-
-:root[data-theme="dark"] .primary-button {
-  color: #050505;
 }
 
 :root[data-theme="dark"] .avatar-initial.gray {

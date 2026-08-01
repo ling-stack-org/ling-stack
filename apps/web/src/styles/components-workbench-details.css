@@ -452,7 +452,7 @@
 .workspace-context-stack > .first-run-flow,
 .workspace-context-stack > .timeline {
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.5);
+  background: var(--surface-panel);
 }
 
 .workspace-context-stack .first-run-steps {
@@ -576,12 +576,12 @@
 :root[data-theme="dark"] .provider-run-notice,
 :root[data-theme="dark"] .tool-row,
 :root[data-theme="dark"] .persistence-line {
-  background: color-mix(in srgb, var(--surface-panel-strong) 84%, #000000);
+  background: var(--ling-bg-elevated);
 }
 
 :root[data-theme="dark"] .status-badge,
 :root[data-theme="dark"] .event-count {
-  background: color-mix(in srgb, var(--surface-panel-strong) 86%, #000000);
+  background: var(--ling-bg-subtle);
 }
 
 /* Final responsive workbench overrides, kept last because legacy media rules above still exist. */

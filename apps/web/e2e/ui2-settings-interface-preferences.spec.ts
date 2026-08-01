@@ -141,6 +141,7 @@ test("registered local themes stay selectable and expose P7C management actions"
   await localTheme.click();
   await expect(localTheme).toHaveAttribute("aria-checked", "true");
   await expect(page.locator("html")).toHaveAttribute("data-ui-theme", manifest.id);
+  await expectLegacyAliasesToFollowThemePack(page, manifest);
   await expect(panel.locator(".settings-interface-theme-heading")).toContainText(manifest.name);
   const nameMetrics = await localTheme.locator("strong").first().evaluate((element) => ({
     clientWidth: element.clientWidth,
@@ -333,13 +334,61 @@ async function expectSwitchCentersAligned(control: Locator): Promise<void> {
 }
 
 function longLocalThemeFixture(): LingThemePackManifest {
+  const base = structuredClone(lingDarkTheme);
   return {
-    ...structuredClone(lingDarkTheme),
+    ...base,
     id: "quiet-night-long-name",
     familyId: "quiet-night-long-name",
     name: "Quiet Night for Focused Local Workspaces with a Long Registered Theme Name",
     source: "local-import",
+    tokens: {
+      ...base.tokens,
+      background: {
+        ...base.tokens.background,
+        app: "#101820",
+        panel: "#17232d",
+      },
+      text: {
+        ...base.tokens.text,
+        default: "#d2dbe4",
+      },
+    },
   };
+}
+
+async function expectLegacyAliasesToFollowThemePack(page: Page, manifest: LingThemePackManifest): Promise<void> {
+  const result = await page.evaluate(() => {
+    const resolveColor = (variable: string, property: "backgroundColor" | "color"): string => {
+      const probe = document.createElement("span");
+      probe.style[property] = `var(${variable})`;
+      document.body.append(probe);
+      const value = getComputedStyle(probe)[property];
+      probe.remove();
+      return value;
+    };
+    return {
+      appAlias: resolveColor("--app-bg", "backgroundColor"),
+      appToken: resolveColor("--ling-bg-app", "backgroundColor"),
+      panelAlias: resolveColor("--surface-panel", "backgroundColor"),
+      panelToken: resolveColor("--ling-bg-panel", "backgroundColor"),
+      textAlias: resolveColor("--text", "color"),
+      textToken: resolveColor("--ling-text-default", "color"),
+    };
+  });
+  expect(result.appAlias).toBe(result.appToken);
+  expect(result.panelAlias).toBe(result.panelToken);
+  expect(result.textAlias).toBe(result.textToken);
+  expect(result.appToken).toBe(hexToRgb(manifest.tokens.background.app));
+  expect(result.panelToken).toBe(hexToRgb(manifest.tokens.background.panel));
+  expect(result.textToken).toBe(hexToRgb(manifest.tokens.text.default));
+}
+
+function hexToRgb(value: string): string {
+  const normalized = value.replace(/^#/u, "");
+  const red = Number.parseInt(normalized.slice(0, 2), 16);
+  const green = Number.parseInt(normalized.slice(2, 4), 16);
+  const blue = Number.parseInt(normalized.slice(4, 6), 16);
+  return `rgb(${red}, ${green}, ${blue})`;
 }
 
 async function seedStoredTheme(page: Page, manifest: LingThemePackManifest): Promise<void> {

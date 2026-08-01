@@ -1,5 +1,14 @@
 # Ling Dark 内置主题
 
+Status: active Theme Pack reference; the former pure-black surface direction was
+superseded on 2026-07-31 by
+[Dark Mode Surface Convergence](../../dark-mode-surface-convergence.md).
+
+The canonical values live in
+`packages/ui-react/src/theme/built-ins/ling-dark.ts`. Historical screenshots may still
+show the earlier pure-black implementation; they are implementation evidence, not the
+current visual target.
+
 ## Identity
 
 ```text
@@ -25,43 +34,44 @@ artwork: none
 
 | Semantic token | Value |
 |---|---|
-| `--ling-bg-app` | `#000000` |
-| `--ling-bg-panel` | `#050505` |
-| `--ling-bg-elevated` | `#111111` |
-| `--ling-bg-subtle` | `#171717` |
-| `--ling-bg-pressed` | `#262626` |
-| `--ling-bg-overlay` | `rgba(0, 0, 0, 0.68)` |
-| `--ling-bg-code` | `#0d0d0d` |
-| `--ling-bg-sidebar` | `#050505` |
-| `--ling-bg-composer` | `#111111` |
-| `--ling-text-strong` | `#f8fafc` |
-| `--ling-text` | `#e5e7eb` |
-| `--ling-text-muted` | `#a1a1aa` |
-| `--ling-text-soft` | `#71717a` |
-| `--ling-text-inverse` | `#111111` |
-| `--ling-text-link` | `#93c5fd` |
-| `--ling-border` | `#27272a` |
-| `--ling-border-strong` | `#3f3f46` |
-| `--ling-border-focus` | `#a1a1aa` |
-| `--ling-accent` | `#ffffff` |
-| `--ling-accent-hover` | `#e5e7eb` |
-| `--ling-accent-pressed` | `#d4d4d8` |
-| `--ling-accent-foreground` | `#111111` |
-| `--ling-selection` | `rgba(255, 255, 255, 0.14)` |
+| `--ling-bg-app` | `#111315` |
+| `--ling-bg-panel` | `#171a1d` |
+| `--ling-bg-elevated` | `#1d2024` |
+| `--ling-bg-subtle` | `#22262b` |
+| `--ling-bg-pressed` | `#2c3137` |
+| `--ling-bg-overlay` | `rgb(0 0 0 / 58%)` |
+| `--ling-bg-code` | `#15181b` |
+| `--ling-bg-sidebar` | `#141618` |
+| `--ling-bg-composer` | `#191c20` |
+| `--ling-text-strong` | `#f4f5f6` |
+| `--ling-text-default` | `#d7dbe0` |
+| `--ling-text-muted` | `#9ba3ad` |
+| `--ling-text-soft` | `#89929d` |
+| `--ling-text-inverse` | `#111315` |
+| `--ling-text-link` | `#9fc2e6` |
+| `--ling-border-default` | `#353b42` |
+| `--ling-border-strong` | `#4b535d` |
+| `--ling-border-focus` | `#8aa8c7` |
+| `--ling-action-accent` | `#f0f2f4` |
+| `--ling-action-accent-hover` | `#ffffff` |
+| `--ling-action-accent-pressed` | `#d8dde2` |
+| `--ling-action-accent-fg` | `#151719` |
+| `--ling-action-selection` | `#2b3a49` |
 
 ## Semantic Tones
 
 | Tone | Foreground | Soft background | Border |
 |---|---|---|---|
-| Success | `#4ade80` | `rgba(34, 197, 94, 0.12)` | `rgba(74, 222, 128, 0.34)` |
-| Warning | `#fbbf24` | `rgba(245, 158, 11, 0.12)` | `rgba(251, 191, 36, 0.34)` |
-| Danger | `#f87171` | `rgba(239, 68, 68, 0.12)` | `rgba(248, 113, 113, 0.34)` |
-| Info | `#93c5fd` | `rgba(59, 130, 246, 0.12)` | `rgba(147, 197, 253, 0.34)` |
+| Success | `#79bd94` | `#1c2c23` | `#365a45` |
+| Warning | `#ddb45f` | `#2c271b` | `#5f512f` |
+| Danger | `#e48782` | `#2d2020` | `#633c3a` |
+| Info | `#8cb5df` | `#1d2935` | `#3a5773` |
 
 ## Surface Rules
 
-- App 纯黑与 panel `#050505` 只用于建立层级，不使用高亮边框包围每个 section。
-- Elevated overlay 使用 `#111111` 与中等阴影，不使用硬编码黑色块覆盖内容。
+- App 使用中性深灰 `#111315`；opaque 纯黑不再是产品 surface。
+- Panel、Sidebar、Composer 与 Elevated 使用相邻但可识别的深灰层级，不使用高亮边框包围每个 section。
+- 纯黑仅可作为遮罩、阴影或媒体 letterbox 的带透明度材料。
 - Composer、terminal、code block 和 Inspector 分别使用专用语义 surface。
 - disabled 不得仅通过降低 opacity 到难以读取的程度。
 - Toast、Popover 和 Menu 不出现硬编码白色内层或纯黑透明断层。
@@ -84,6 +94,8 @@ artwork: none
 ## Required Evidence
 
 - 与 Ling Light 相同的全组件、Shell、Settings、会话和 overlay 证据。
+- 首页作为新 surface hierarchy 的首个视觉验收切片；该方向已于 2026-07-31
+  确认，并授权迁移 Settings 与其余产品表面。
 - 刷新、硬重载、系统主题变化、窗口重开和 Desktop 冷启动录屏/帧证据。
 - code syntax、canvas、图表、热力图、terminal、native controls 和 scrollbar 检查。
 - `1440x960`、`1280x800`、macOS 和 Windows representative desktop viewport。
