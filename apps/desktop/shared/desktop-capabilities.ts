@@ -32,6 +32,54 @@ export interface DesktopDaemonStatus {
   readonly message?: string;
 }
 
+export interface DesktopMobileAccessStatus {
+  readonly enabled: boolean;
+  readonly listener: { readonly host: "127.0.0.1"; readonly port: number; readonly listening: boolean };
+  readonly gatewayOrigin?: string;
+  readonly gatewayId: string;
+  readonly gatewayIdentityFingerprint: string;
+  readonly pairedDevice?: {
+    readonly deviceId: string;
+    readonly displayName: string;
+    readonly platform: "ios" | "android";
+    readonly pairedAt: string;
+  };
+  readonly pairing: {
+    readonly state: "idle" | "waiting_for_phone" | "awaiting_pc_confirmation" | "accepted";
+    readonly pairingId?: string;
+    readonly expiresAt?: string;
+    readonly pendingDevice?: {
+      readonly deviceId: string;
+      readonly displayName: string;
+      readonly platform: "ios" | "android";
+      readonly publicKeyFingerprint: string;
+    };
+  };
+  readonly policyVersion: number;
+  readonly workspaceBindingId: string;
+  readonly sendEnabled: boolean;
+}
+
+export interface DesktopMobileAccessPairingStartResult {
+  readonly encodedQr: string;
+  readonly qr: {
+    readonly gatewayId: string;
+    readonly gatewayIdentityFingerprint: string;
+    readonly expiresAt: string;
+  };
+  readonly status: DesktopMobileAccessStatus;
+}
+
+export interface DesktopMobileAccessCapabilities {
+  status(): Promise<DesktopMobileAccessStatus>;
+  enable(gatewayOrigin: string): Promise<DesktopMobileAccessStatus>;
+  disable(): Promise<DesktopMobileAccessStatus>;
+  startPairing(): Promise<DesktopMobileAccessPairingStartResult>;
+  confirmPairing(): Promise<DesktopMobileAccessStatus>;
+  rejectPairing(): Promise<DesktopMobileAccessStatus>;
+  revoke(): Promise<DesktopMobileAccessStatus>;
+}
+
 export interface DesktopRect {
   readonly x: number;
   readonly y: number;
@@ -195,6 +243,7 @@ export interface LingDesktopCapabilities {
     getStatus(): Promise<DesktopDaemonStatus>;
     restart(): Promise<DesktopDaemonStatus>;
   };
+  readonly mobileAccess?: DesktopMobileAccessCapabilities;
   /** Present only when this packaged host carries bundled provider authority. */
   readonly computerControl?: ComputerControlDesktopCapability;
   /** Desktop-owned preference, independent from Cua Driver readiness. */

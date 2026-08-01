@@ -8,6 +8,20 @@ import type {
   ResolveApprovalRequestInput,
 } from "./approval-types.js";
 import type {
+  CommitRemoteConversationSendInput,
+  CommitRemoteConversationSendResult,
+  ConversationReadState,
+  ListRemoteDispatchIntentsOptions,
+  ListRemoteProjectionOutboxOptions,
+  MarkConversationReadInput,
+  RemoteCommandReceipt,
+  RemoteConversationActivityInput,
+  RemoteDispatchIntent,
+  RemoteProjectionEntityVersion,
+  RemoteProjectionEntityVersionInput,
+  RemoteProjectionOutboxRecord,
+} from "./remote-access-types.js";
+import type {
   ApprovalPolicy,
   ApprovalPolicyUpdateInput,
 } from "./approval-policy.js";
@@ -191,6 +205,7 @@ import type {
   ListTeammateDirectLinkPreviewsOptions,
   ListTeammateDirectReplyInterventionsOptions,
   ListTeammateDirectMessagesOptions,
+  ListTeammateDirectThreadsOptions,
   ListTasksOptions,
   ReplaceAiCouncilMemberInput,
   ReplaceTeammateChannelMembershipInput,
@@ -1283,6 +1298,23 @@ export interface ListControlPlaneEventsOptions {
 
 export interface RunStore {
   readonly paths: LingStackRuntimePaths;
+  commitRemoteConversationSend(input: CommitRemoteConversationSendInput, now: string): CommitRemoteConversationSendResult;
+  getRemoteCommandReceipt(commandId: string): RemoteCommandReceipt | undefined;
+  compactRemoteCommandReceipts(now: string): { readonly compacted: number; readonly purged: number };
+  listRemoteDispatchIntents(options?: ListRemoteDispatchIntentsOptions): RemoteDispatchIntent[];
+  claimRemoteDispatchIntent(
+    intentId: string,
+    input: { readonly workerId: string; readonly claimExpiresAt: string },
+    now: string,
+  ): RemoteDispatchIntent | undefined;
+  completeRemoteDispatchIntent(intentId: string, now: string): RemoteDispatchIntent | undefined;
+  failRemoteDispatchIntent(intentId: string, errorMessage: string, retryAt: string, now: string): RemoteDispatchIntent | undefined;
+  listRemoteProjectionOutbox(options?: ListRemoteProjectionOutboxOptions): RemoteProjectionOutboxRecord[];
+  getRemoteProjectionEntityVersion(input: RemoteProjectionEntityVersionInput): RemoteProjectionEntityVersion;
+  getLatestConversationActivitySeq(input: RemoteConversationActivityInput): number;
+  markRemoteProjectionOutboxProcessed(activitySeqs: readonly number[], now: string): number;
+  getConversationReadState(input: Omit<MarkConversationReadInput, "throughActivitySeq">, now: string): ConversationReadState;
+  markConversationRead(input: MarkConversationReadInput, now: string): ConversationReadState;
   commitConversationMessageEdit(input: CommitConversationMessageEditInput, now: string): CommitConversationMessageEditResult;
   listConversationMessageRevisions(options: ListConversationMessageRevisionsOptions): ConversationMessageRevision[];
   getConversationTurnSupersession(id: string): ConversationTurnSupersession | undefined;
@@ -1565,6 +1597,7 @@ export interface RunStore {
   resolveGovernanceNotificationByDedupeKey(workspaceId: string, dedupeKey: string, now: string): GovernanceNotification | undefined;
   getGovernanceNotificationSummary(workspaceId?: string, generatedAt?: string): GovernanceNotificationSummary;
   getOrCreateTeammateDirectThread(teammateId: string, now: string): TeammateDirectThread;
+  listTeammateDirectThreads(options?: ListTeammateDirectThreadsOptions): TeammateDirectThread[];
   updateTeammateDirectThreadWorkspace(threadId: string, workspaceBinding: DirectWorkspaceBinding | null, now: string): TeammateDirectThread | undefined;
   listTeammateDirectMessages(options: ListTeammateDirectMessagesOptions): TeammateDirectMessage[];
   listTeammateDirectMessagesPage(options: ListTeammateDirectMessagesOptions): TeammateDirectMessageListPage;
@@ -1939,6 +1972,22 @@ export type RunStoreFacet<K extends keyof RunStore> = Pick<RunStore, K>;
 
 export type RunStorePathsFacet = RunStoreFacet<"paths">;
 
+export type RemoteAccessStoreFacet = RunStoreFacet<
+  | "commitRemoteConversationSend"
+  | "getRemoteCommandReceipt"
+  | "compactRemoteCommandReceipts"
+  | "listRemoteDispatchIntents"
+  | "claimRemoteDispatchIntent"
+  | "completeRemoteDispatchIntent"
+  | "failRemoteDispatchIntent"
+  | "listRemoteProjectionOutbox"
+  | "getRemoteProjectionEntityVersion"
+  | "getLatestConversationActivitySeq"
+  | "markRemoteProjectionOutboxProcessed"
+  | "getConversationReadState"
+  | "markConversationRead"
+>;
+
 export type LingThreadStoreFacet = RunStoreFacet<
   | "createLingThread"
   | "getLingThread"
@@ -2063,6 +2112,7 @@ export type TeammateStoreFacet = RunStoreFacet<
   | "listTeammateMemoryScopes"
   | "replaceTeammateMemoryScopes"
   | "getOrCreateTeammateDirectThread"
+  | "listTeammateDirectThreads"
   | "updateTeammateDirectThreadWorkspace"
   | "listTeammateDirectMessages"
   | "listTeammateDirectMessagesPage"

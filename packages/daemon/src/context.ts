@@ -37,6 +37,8 @@ import type { BundledCuaDriverActivationService } from "./features/plugins/cua-d
 import type { CuaDriverPooledClientFactory } from "./features/plugins/cua-driver-client-pool.js";
 import type { CuaDriverLeaseMcpClient } from "./features/plugins/cua-driver-lease-client.js";
 import type { CuaDriverDaemonActivationCoordinator } from "./features/plugins/cua-driver-daemon-composition.js";
+import type { RemoteAccessController } from "./features/remote-access/controller.js";
+import type { RemoteReplyDispatcher } from "./features/remote-access/dispatch-worker.js";
 
 export interface RunnerAdapter {
   runTask(options: PiRunnerRunOptions): Promise<PiRunnerResult>;
@@ -142,6 +144,10 @@ export interface DaemonDependencies {
   readonly computerUseRouteToken?: string;
   readonly computerUseProjectionOptions?: ComputerUseProjectionRegistryOptions;
   readonly computerUseTargetOwnershipTimeoutMs?: number;
+  readonly remoteAccessManagementCapability?: string;
+  readonly remoteAccessStateDir?: string;
+  /** Pass null only for fail-closed embedding/tests that intentionally disable Mobile send. */
+  readonly remoteReplyDispatcher?: RemoteReplyDispatcher | null;
 }
 
 export interface DaemonContext {
@@ -174,4 +180,5 @@ export interface DaemonContext {
   readonly desktopBridgeToken?: string;
   readonly computerUseRouteToken?: string;
   readonly computerUseTargetOwnershipTimeoutMs?: number;
+  readonly remoteAccess: RemoteAccessController;
 }

@@ -12,6 +12,7 @@ import {
   type ComputerUsePreviewReleaseMediaAck,
   type ComputerControlPermissionKind,
   type DesktopRect,
+  type DesktopMobileAccessCapabilities,
 } from "../shared/desktop-capabilities.js";
 import { DESKTOP_IPC_CHANNELS } from "../shared/ipc-channels.js";
 import type { ComputerUsePreviewCoordinator } from "./computer-use/coordinator.js";
@@ -42,6 +43,7 @@ export function registerDesktopIpc(input: {
   readonly getMainWindow: () => BrowserWindow | undefined;
   readonly navigationIntents?: DesktopNavigationIntentStore;
   readonly themeStore?: DesktopRendererThemeStore;
+  readonly mobileAccess?: DesktopMobileAccessCapabilities;
   readonly fixedComputerUseConversationId?: string;
   readonly ipcMainImpl?: Pick<IpcMain, "handle" | "on" | "removeHandler" | "removeAllListeners">;
 }): () => void {
@@ -67,6 +69,37 @@ export function registerDesktopIpc(input: {
     isMainWindowSender(event)
       ? input.runtime.restart()
       : { state: "disconnected", baseUrl: "", ownedByDesktop: false, message: "unauthorized_sender" });
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.mobileAccessStatus, async (event) => {
+    assertMobileAccessSender(isMainWindowSender(event), input.mobileAccess);
+    return await input.mobileAccess!.status();
+  });
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.mobileAccessEnable, async (event, gatewayOrigin: unknown) => {
+    assertMobileAccessSender(isMainWindowSender(event), input.mobileAccess);
+    if (!isHttpsOrigin(gatewayOrigin)) {
+      throw new Error("invalid_mobile_gateway_origin");
+    }
+    return await input.mobileAccess!.enable(gatewayOrigin);
+  });
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.mobileAccessDisable, async (event) => {
+    assertMobileAccessSender(isMainWindowSender(event), input.mobileAccess);
+    return await input.mobileAccess!.disable();
+  });
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.mobileAccessPairingStart, async (event) => {
+    assertMobileAccessSender(isMainWindowSender(event), input.mobileAccess);
+    return await input.mobileAccess!.startPairing();
+  });
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.mobileAccessPairingConfirm, async (event) => {
+    assertMobileAccessSender(isMainWindowSender(event), input.mobileAccess);
+    return await input.mobileAccess!.confirmPairing();
+  });
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.mobileAccessPairingReject, async (event) => {
+    assertMobileAccessSender(isMainWindowSender(event), input.mobileAccess);
+    return await input.mobileAccess!.rejectPairing();
+  });
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.mobileAccessRevoke, async (event) => {
+    assertMobileAccessSender(isMainWindowSender(event), input.mobileAccess);
+    return await input.mobileAccess!.revoke();
+  });
   desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.navigationIntentGet, async (event) =>
     isMainWindowSender(event) ? navigationIntents.getPendingIntent() : undefined);
   desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.navigationIntentAck, async (event, requestId: unknown) => {
@@ -554,4 +587,25 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isComputerControlPermissionKind(value: unknown): value is ComputerControlPermissionKind {
   return value === "accessibility" || value === "screen_recording";
+}
+
+function assertMobileAccessSender(
+  authorized: boolean,
+  mobileAccess: DesktopMobileAccessCapabilities | undefined,
+): asserts mobileAccess is DesktopMobileAccessCapabilities {
+  if (!authorized || !mobileAccess) {
+    throw new Error("mobile_access_unauthorized_or_unavailable");
+  }
+}
+
+function isHttpsOrigin(value: unknown): value is string {
+  if (typeof value !== "string" || value.length > 2_048) {
+    return false;
+  }
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.origin === value && !url.username && !url.password;
+  } catch {
+    return false;
+  }
 }

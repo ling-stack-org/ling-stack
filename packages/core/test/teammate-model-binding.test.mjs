@@ -118,6 +118,41 @@ test("teammate model binding migration repairs inherited built-ins and remains i
   }
 });
 
+test("teammate model binding migration repairs a local version 107 collision", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-teammate-model-binding-collision-"));
+  const databasePath = resolve(cwd, ".ling-stack", "ling-stack.sqlite");
+  let store = createSqliteRunStore(cwd);
+  try {
+    store.close();
+    const database = new DatabaseSync(databasePath);
+    try {
+      database.exec("ALTER TABLE ai_teammates DROP COLUMN model_binding_mode;");
+      database.prepare("UPDATE schema_migrations SET name = 'create_remote_conversation_state' WHERE version = 107").run();
+    } finally {
+      database.close();
+    }
+
+    store = createSqliteRunStore(cwd);
+    assert.equal(store.getAiTeammate("ling_agent").modelBindingMode, "workspace_default");
+    const migrated = new DatabaseSync(databasePath);
+    try {
+      assert.ok(migrated.prepare("SELECT name FROM pragma_table_info('ai_teammates') WHERE name = 'model_binding_mode'").get());
+      assert.ok(migrated.prepare(
+        "SELECT version FROM schema_migrations WHERE version = 108 AND name = 'create_remote_conversation_state'",
+      ).get());
+    } finally {
+      migrated.close();
+    }
+  } finally {
+    try {
+      store.close();
+    } catch {
+      // The store may already be closed after a failed migration assertion.
+    }
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 function pickBinding(teammate) {
   return {
     modelBindingMode: teammate.modelBindingMode,

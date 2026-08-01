@@ -13,6 +13,13 @@ export const DESKTOP_THEME_PACKAGE_IPC_CHANNELS = {
 export const DESKTOP_IPC_CHANNELS = {
   daemonStatus: "ling-desktop:daemon:status",
   daemonRestart: "ling-desktop:daemon:restart",
+  mobileAccessStatus: "ling-desktop:mobile-access:status",
+  mobileAccessEnable: "ling-desktop:mobile-access:enable",
+  mobileAccessDisable: "ling-desktop:mobile-access:disable",
+  mobileAccessPairingStart: "ling-desktop:mobile-access:pairing-start",
+  mobileAccessPairingConfirm: "ling-desktop:mobile-access:pairing-confirm",
+  mobileAccessPairingReject: "ling-desktop:mobile-access:pairing-reject",
+  mobileAccessRevoke: "ling-desktop:mobile-access:revoke",
   navigationIntentGet: "ling-desktop:navigation:intent-get",
   navigationIntentChanged: "ling-desktop:navigation:intent-changed",
   navigationIntentAck: "ling-desktop:navigation:intent-ack",

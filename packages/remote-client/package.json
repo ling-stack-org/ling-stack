@@ -1,0 +1,22 @@
+{
+  "name": "@ling-stack/remote-client",
+  "version": "0.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "corepack pnpm --filter @ling-stack/contracts build && corepack pnpm --filter @ling-stack/remote-protocol build && tsc -p tsconfig.json",
+    "typecheck": "corepack pnpm --filter @ling-stack/contracts build && corepack pnpm --filter @ling-stack/remote-protocol build && tsc -p tsconfig.json --noEmit",
+    "test": "corepack pnpm run build && node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@ling-stack/contracts": "workspace:*",
+    "@ling-stack/remote-protocol": "workspace:*"
+  }
+}

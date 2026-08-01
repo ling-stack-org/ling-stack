@@ -1,58 +1,67 @@
-# macOS Private Chat Titlebar Design QA
+# Ling Mobile Conversation UI 2.0 Design QA
 
-## Comparison Target
+- Source visual truth: `/Users/tianxiao/.gstack/projects/tianxiaochannel-oss88-ling-stack/designs/mobile-conversation-sync-20260731/mobile-conversation-ui2-preview.html`
+- Source board capture: `/var/folders/wv/szx379kx7r135_kzktxrrs680000gn/T/codex-clipboard-adad8a25-383a-498c-ad9d-32c7f170a0fd.png`
+- Runtime: native React Native Release build on iPhone 17 Simulator, iOS 26.5
+- Source phone viewport: 390 x 844 CSS px, source crops 390 x 844 px
+- Implementation viewport: 402 x 874 CSS px, screenshots 1206 x 2622 px at 3x density
+- Comparison normalization: source and implementation were each normalized to 402 x 874 px before side-by-side review
 
-- Source visual truth: `/var/folders/wv/szx379kx7r135_kzktxrrs680000gn/T/codex-clipboard-b71e6037-3066-4871-9b46-69d34f9e62de.png`
-- Implementation screenshot: `/Users/tianxiao/ling-stack-macos-titlebar-density-fix/apps/web/test-results/macos-titlebar-macOS-deskt-73ae6-r-and-uses-one-dock-divider-chromium/macos-titlebar.png`
-- Viewport: `1440 x 919` CSS pixels.
-- Source: `2880 x 1838` pixels at macOS `2x`; normalized comparison size `1440 x 919`.
-- Implementation: `1440 x 919` pixels at browser `1x`.
-- State: Chinese locale, Ling Agent private chat selected, empty message feed, workspace tools dock fully expanded, light theme.
-- Native chrome note: the source includes macOS traffic lights; the browser implementation capture excludes native window chrome. Native chrome was excluded from the content-layout comparison.
+## Evidence
 
-## Findings
+| State | Implementation | Side-by-side comparison |
+| --- | --- | --- |
+| Unpaired secure pairing | `/tmp/ling-mobile-ui2-qa/pairing-release.png` | `/tmp/ling-mobile-ui2-qa/pairing-comparison.png` |
+| Unified conversation index | `/tmp/ling-mobile-ui2-qa/index-light-v2.png` | `/tmp/ling-mobile-ui2-qa/index-comparison.png` |
+| Profile and appearance | `/tmp/ling-mobile-ui2-qa/profile-light-v2.png` | `/tmp/ling-mobile-ui2-qa/profile-comparison.png` |
+| Channel detail | `/tmp/ling-mobile-ui2-qa/channel-light-v2.png` | `/tmp/ling-mobile-ui2-qa/channel-comparison.png` |
+| Normal conversation detail | `/tmp/ling-mobile-ui2-qa/conversation-light-v2.png` | `/tmp/ling-mobile-ui2-qa/conversation-comparison.png` |
+| Teammate direct detail | `/tmp/ling-mobile-ui2-qa/teammate-light-v2.png` | `/tmp/ling-mobile-ui2-qa/teammate-comparison.png` |
+| Dark conversation index | `/tmp/ling-mobile-ui2-qa/index-dark-v2.png` | Token and system-appearance verification |
+| Dark profile | `/tmp/ling-mobile-ui2-qa/profile-dark-v2.png` | Token and system-appearance verification |
+| Dark channel detail | `/tmp/ling-mobile-ui2-qa/channel-dark-v2.png` | Token and system-appearance verification |
 
-- No actionable P0, P1, or P2 visual differences remain in the user-marked regions.
-- Fonts and typography: unchanged from the shared Web implementation; hierarchy, weight, truncation, and small-label sizing remain consistent.
-- Spacing and layout rhythm: the unintended `20px` outer workspace gutter is removed. The private-chat header now begins at the workspace top-left, while its intentional `18px` internal content inset remains.
-- Colors and tokens: backgrounds, borders, muted text, selection fill, and drawer row separators continue to use the existing shared tokens.
-- Image and asset quality: no image assets were added or replaced. Existing avatar fallback behavior remains unchanged.
-- Copy and content: Chinese labels and the empty-state/drawer content match the selected product state.
-- Drawer affordance: the resize handle remains an `8px` hit target with one centered `1px` visible divider; the drawer no longer paints a second left border.
+Focused comparisons were included for every major screen because typography, identity avatars, message alignment, controls, and composer details were too small to judge reliably from the full six-screen board alone.
 
-## Full-view Evidence
+## Required Fidelity Surfaces
 
-- Before: the source shows a visible top and left gutter around the private-chat surface and two adjacent vertical lines at the workspace dock boundary.
-- After: the implementation screenshot shows the header flush with the workspace origin and one divider between conversation content and the dock.
-
-## Focused-region Evidence
-
-- The header origin and dock boundary were inspected at original resolution in the paired comparison. Both target defects occupy clear, high-contrast regions in the full-height capture, so an additional crop was not needed.
-- Computed geometry confirms `padding-top: 0px`, `padding-left: 0px`, header top `0`, header left inset `0`, resize line width `1px`, and dock left border width `0px`.
+- Fonts and typography: system SF typography, weights, sizes, line heights, truncation, and metadata hierarchy match the source. Line wrapping differs where expected because the simulator is 12 CSS px wider than the source phone.
+- Spacing and layout rhythm: safe areas, header heights, list rows, 16 px side gutters, card radii, transcript gaps, and composer placement match the source proportions.
+- Colors and tokens: Ling Light and Ling Dark values map directly from the HTML variables. Native iOS appearance is now `automatic`, and a dark-system Release run rendered the dark tokens.
+- Image and icon fidelity: no source raster assets were required. Standard navigation, scan, sync, and chevron symbols use the Expo icon library; identity marks remain semantic text avatars as in the source.
+- Copy and content: pairing, filters, profile preferences, PC binding, three conversation identities, teammate privacy note, reconnect labels, and composer placeholders match the source behavior and wording.
 
 ## Comparison History
 
-1. Initial finding: P1 outer workspace gutter added `20px` above and left of the private-chat surface. P2 duplicate divider came from the resize-handle pseudo-element plus the drawer's own left border.
-2. Fix: excluded `.workspace-teammate-private-surface` from the generic padded workspace selector and suppressed the drawer border inside `.workspace-right-dock-frame` while retaining the resize-handle line.
-3. Post-fix evidence: the `1440 x 919` Chinese empty-state capture and the focused layout regression test both pass.
+### Iteration 1
 
-## Interaction And Runtime Checks
+- P1: the physical-device screenshot showed the Expo Development Build launcher instead of Ling UI.
+- P1: the existing native screens used the earlier card-heavy layout rather than the selected HTML hierarchy.
+- Fixes: rebuilt all six screens around the selected UI, moved to an embedded Release bundle, and added the exact Light/Dark tokens and semantic identity treatment.
 
-- Opened Ling Agent from the sidebar.
-- Opened and fully expanded the workspace tools dock.
-- Verified the empty conversation surface, composer, toolbar, and dock remain visible.
-- No application page errors or application console errors were observed. Expected missing mock image requests exercised the existing asset fallback and were excluded from the application-error assertion.
+### Iteration 2
 
-## Implementation Checklist
+- P2: single-name avatars rendered two letters, the empty composer rendered a gray send button, and the profile used an oversized native switch.
+- Fixes: single-character identity initials, source-colored send button with logical disabled state, and a 45 x 28 accessible toggle matching the source.
+- Post-fix evidence: the five light-mode side-by-side comparison files above contain no remaining actionable P0/P1/P2 visual differences.
 
-- [x] Remove the private-chat outer gutter.
-- [x] Preserve the Web header's native height and internal spacing.
-- [x] Keep the drawer resize interaction with one visible divider.
-- [x] Add a macOS layout regression test.
-- [x] Capture and compare the target state at the normalized viewport.
+### Iteration 3
 
-## Open Questions
+- P1: native `UIUserInterfaceStyle` was locked to Light, so following a dark system did not change the app.
+- Fix: set Expo `userInterfaceStyle` to `automatic`, regenerated the iOS project, and reran Release captures in dark mode.
+- Post-fix evidence: dark index, profile, and channel captures render Ling Dark consistently.
 
-- None.
+## Findings
+
+- No actionable P0/P1/P2 differences remain.
+- P3: the sample design uses the profile glyph `田`, while runtime fallback initials derive from the actual profile name; this is intentional data-driven behavior and disappears when the user has an avatar.
+- Expected: text wraps later on the 402 px simulator and the user's wider iPhone 13 Pro Max than on the 390 px source viewport.
+- Expected: the reference index demonstrates a reconnect banner while its header still says synced. Runtime keeps those two status surfaces consistent, so the banner appears only while actually reconnecting.
+
+## Interaction and Runtime Checks
+
+- Release build launches directly into Ling without Metro or the Expo launcher.
+- Paired and unpaired roots, all three conversation kinds, profile navigation target, filters, theme controls, and composer states were rendered from the production components.
+- TypeScript, mobile contract tests, Expo Doctor, and native Release build are separate blocking checks run after visual QA.
 
 final result: passed

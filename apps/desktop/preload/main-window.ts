@@ -101,6 +101,15 @@ const capabilities: LingDesktopCapabilities = {
     getStatus: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.daemonStatus),
     restart: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.daemonRestart),
   },
+  mobileAccess: {
+    status: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.mobileAccessStatus),
+    enable: (gatewayOrigin) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.mobileAccessEnable, gatewayOrigin),
+    disable: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.mobileAccessDisable),
+    startPairing: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.mobileAccessPairingStart),
+    confirmPairing: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.mobileAccessPairingConfirm),
+    rejectPairing: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.mobileAccessPairingReject),
+    revoke: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.mobileAccessRevoke),
+  },
   ...(computerControlPlatform === "macos" || computerControlPlatform === "windows"
     ? {
         computerControl: {

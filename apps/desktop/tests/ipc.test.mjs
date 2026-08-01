@@ -4,6 +4,59 @@ import { registerDesktopIpc } from "../dist/main/ipc.js";
 import { DesktopNavigationIntentStore } from "../dist/main/navigation-intent.js";
 import { DESKTOP_IPC_CHANNELS } from "../dist/shared/ipc-channels.js";
 
+test("Desktop IPC exposes Mobile Access only to the main renderer and validates HTTPS origins", async () => {
+  const ipc = new FakeIpcMain();
+  const calls = [];
+  const status = {
+    enabled: false,
+    gatewayIdentityFingerprint: "sha256:gateway",
+    listener: { host: "127.0.0.1", port: 17892, listening: false },
+    pairing: { state: "idle" },
+    sendEnabled: false,
+  };
+  const mobileAccess = {
+    status: async () => status,
+    enable: async (gatewayOrigin) => {
+      calls.push(["enable", gatewayOrigin]);
+      return { ...status, enabled: true, gatewayOrigin };
+    },
+    disable: async () => status,
+    startPairing: async () => { throw new Error("not_used"); },
+    confirmPairing: async () => { throw new Error("not_used"); },
+    rejectPairing: async () => { throw new Error("not_used"); },
+    revoke: async () => { throw new Error("not_used"); },
+  };
+  const unregister = registerDesktopIpc({
+    ipcMainImpl: ipc,
+    runtime: {
+      status: { state: "connected", baseUrl: "http://127.0.0.1:17891", ownedByDesktop: true },
+      onStatusChanged: () => () => {},
+    },
+    computerUse: { ownsPreviewWebContents: () => false },
+    getMainWindow: () => ({ webContents: { id: 11 } }),
+    mobileAccess,
+  });
+  const mainEvent = { sender: { id: 11 } };
+  const foreignEvent = { sender: { id: 33 } };
+
+  assert.deepEqual(await ipc.invoke(DESKTOP_IPC_CHANNELS.mobileAccessStatus, mainEvent), status);
+  await assert.rejects(
+    ipc.invoke(DESKTOP_IPC_CHANNELS.mobileAccessStatus, foreignEvent),
+    /mobile_access_unauthorized_or_unavailable/u,
+  );
+  await assert.rejects(
+    ipc.invoke(DESKTOP_IPC_CHANNELS.mobileAccessEnable, mainEvent, "http://ling.example.test"),
+    /invalid_mobile_gateway_origin/u,
+  );
+  assert.deepEqual(
+    await ipc.invoke(DESKTOP_IPC_CHANNELS.mobileAccessEnable, mainEvent, "https://ling.example.test"),
+    { ...status, enabled: true, gatewayOrigin: "https://ling.example.test" },
+  );
+  assert.deepEqual(calls, [["enable", "https://ling.example.test"]]);
+
+  unregister();
+});
+
 test("Desktop IPC scopes privileged actions and strictly validates preview media release ACKs", async () => {
   const ipc = new FakeIpcMain();
   const calls = [];

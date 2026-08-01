@@ -5,8 +5,8 @@
 This document records the first shared contracts and API client extraction plan.
 
 The Web UI currently owns daemon DTOs in `apps/web/src/types.ts` and daemon fetch logic in
-`apps/web/src/api.ts`. That works for one client, but Web, CLI, future desktop, future
-mobile/PWA, and GitHub automation UI should not each copy daemon wire shapes.
+`apps/web/src/api.ts`. That works for one client, but Web, CLI, Desktop, and future
+constrained mobile surfaces should not each copy semantic wire shapes.
 
 The first slice is a non-breaking extraction. It should not redesign the daemon API.
 
@@ -17,6 +17,8 @@ The first slice is a non-breaking extraction. It should not redesign the daemon 
 - Keep Web form state out of shared contracts.
 - Keep daemon routes and response shapes unchanged.
 - Let Web migrate to the shared API client first.
+- Keep the broad trusted-local daemon client separate from the device-authenticated Mobile
+  Remote Gateway client.
 - Avoid forcing daemon internals to depend on contracts until the wire shape is stable.
 
 ## Target Packages
@@ -74,7 +76,7 @@ Contracts should not include Web-only UI state:
 ## Conversation Transcript Contract
 
 The conversation transcript is not Web-only UI state. It is a shared semantic read model
-that lets Web, the future desktop app, and CLI/TUI clients render the same Ling Agent
+that lets Web, Desktop, and CLI/TUI clients render the same Ling Agent
 conversation without reimplementing intent routing or workflow/run grouping.
 
 Target file:
@@ -227,7 +229,8 @@ The exact TypeScript names can change during implementation, but these invariant
 
 ### Transcript Delta Events
 
-The API client should eventually expose a stream helper for the transcript lifecycle:
+The trusted local API client should eventually expose a stream helper for the transcript
+lifecycle:
 
 ```ts
 export type ConversationTranscriptEvent =
@@ -313,14 +316,19 @@ export class LingDaemonClient {
 
 The client should preserve the current Web behavior:
 
-- `cwd` remains a query parameter.
+- `cwd` remains a query parameter for trusted local clients only. The Mobile Remote Gateway
+  maps an opaque approved workspace id to a fixed PC-side path and never accepts remote
+  `cwd` or filesystem paths.
 - error bodies prefer `message`, then `error`, then HTTP status text.
 - `.ling-stack` path errors keep the friendly workspace-path guidance.
 - artifact URLs preserve the optional `cwd`.
 - POST `/runs` streaming remains separate because it uses SSE over `fetch()` response
   bodies.
-- Transcript streaming should be exposed as a shared client helper once the daemon
+- Transcript streaming should be exposed as a shared local client helper once the daemon
   provides the endpoint. Web and Desktop must not each parse raw SSE differently.
+- Mobile uses `@ling-stack/remote-client` and `@ling-stack/remote-protocol` over the
+  allowlisted Remote Gateway; it must not instantiate the broad `LingDaemonClient` against
+  a remotely reachable URL.
 
 ## Migration Order
 
@@ -357,7 +365,7 @@ The client should preserve the current Web behavior:
 - No runtime schema validation dependency in this slice.
 - No OpenAPI generator.
 - No forced daemon-to-contract dependency in the first slice.
-- No desktop implementation.
+- No Mobile Remote Gateway implementation in this extraction slice.
 - No requirement that CLI own or generate conversation transcript state. CLI is a client
   over the shared API.
 

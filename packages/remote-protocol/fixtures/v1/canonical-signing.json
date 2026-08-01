@@ -1,0 +1,141 @@
+{
+  "profile": {
+    "version": 1,
+    "canonicalJson": "RFC 8785 JCS",
+    "domainSeparator": "UTF8(domain) || 0x00 || UTF8(JCS(value))",
+    "digest": "SHA-256",
+    "hmac": "HMAC-SHA-256",
+    "signature": "ES256 IEEE-P1363 64-byte r||s",
+    "binaryEncoding": "unpadded base64url"
+  },
+  "canonical": {
+    "value": {
+      "z": "远程 Ling",
+      "a": [true, null, 0, 0, 1e-7, "line\nfeed"],
+      "nested": { "y": "😀", "x": 42.5 }
+    },
+    "text": "{\"a\":[true,null,0,0,1e-7,\"line\\nfeed\"],\"nested\":{\"x\":42.5,\"y\":\"😀\"},\"z\":\"远程 Ling\"}",
+    "bytesBase64Url": "eyJhIjpbdHJ1ZSxudWxsLDAsMCwxZS03LCJsaW5lXG5mZWVkIl0sIm5lc3RlZCI6eyJ4Ijo0Mi41LCJ5Ijoi8J-YgCJ9LCJ6Ijoi6L-c56iLIExpbmcifQ"
+  },
+  "gatewayIdentity": {
+    "publicKeyJwk": {
+      "kty": "EC",
+      "crv": "P-256",
+      "x": "qNRpz7GFi81GNokrjOM9zByx4vWZb-cTcn4o9M92XL8",
+      "y": "B54q082aGZOFUwGjsB065KZ2O3NV-1xm_7sRXKp1EJA"
+    },
+    "fingerprint": "uKF1QUC2cyoeNRg9p8VuuRLJBGTs-qUrSGvaCf8LDY0"
+  },
+  "deviceIdentity": {
+    "publicKeyJwk": {
+      "kty": "EC",
+      "crv": "P-256",
+      "x": "nGu096lwOjGAo83yEqiy8CM9CBtkWrBmTimfLXbpA5o",
+      "y": "KZyEmS_LGICs3n4BOqq7PAQooq5b9eraWqQNV-FpS24"
+    },
+    "fingerprint": "aBsBP8x1_eDXGB_0-XCnWYMl-HvAkpWVuh80l1Hth8s"
+  },
+  "pairingChallenge": {
+    "input": {
+      "gatewayOrigin": "https://ling-pc.example.ts.net",
+      "gatewayId": "gateway-fixture-1",
+      "pairingId": "pairing-fixture-1",
+      "serverNonce": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "issuedAt": "2026-07-19T10:00:00.000Z",
+      "expiresAt": "2026-07-19T10:05:00.000Z",
+      "protocolVersion": 1
+    },
+    "signingBytesBase64Url": "bGluZy1yZW1vdGUtcGFpci1jaGFsbGVuZ2UtdjEAeyJleHBpcmVzQXQiOiIyMDI2LTA3LTE5VDEwOjA1OjAwLjAwMFoiLCJnYXRld2F5SWQiOiJnYXRld2F5LWZpeHR1cmUtMSIsImdhdGV3YXlPcmlnaW4iOiJodHRwczovL2xpbmctcGMuZXhhbXBsZS50cy5uZXQiLCJpc3N1ZWRBdCI6IjIwMjYtMDctMTlUMTA6MDA6MDAuMDAwWiIsInBhaXJpbmdJZCI6InBhaXJpbmctZml4dHVyZS0xIiwicHJvdG9jb2xWZXJzaW9uIjoxLCJzZXJ2ZXJOb25jZSI6IkFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUEifQ",
+    "signatureBase64Url": "O4Z651ge7ARzrwm0tT81SGsFyYt6ADqjAtY_VL7ypBdyUBjaHGtw5wAareVQbNt7v9okkltGXADgdM7hwLEl8Q"
+  },
+  "pairingProof": {
+    "input": {
+      "gatewayOrigin": "https://ling-pc.example.ts.net",
+      "gatewayId": "gateway-fixture-1",
+      "pairingId": "pairing-fixture-1",
+      "serverNonce": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "clientNonce": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+      "deviceId": "device-fixture-1",
+      "displayName": "Ling 测试手机",
+      "platform": "ios",
+      "devicePublicKeyJwk": {
+        "kty": "EC",
+        "crv": "P-256",
+        "x": "nGu096lwOjGAo83yEqiy8CM9CBtkWrBmTimfLXbpA5o",
+        "y": "KZyEmS_LGICs3n4BOqq7PAQooq5b9eraWqQNV-FpS24"
+      },
+      "devicePublicKeyFingerprint": "aBsBP8x1_eDXGB_0-XCnWYMl-HvAkpWVuh80l1Hth8s",
+      "protocolVersion": 1
+    },
+    "signingBytesBase64Url": "bGluZy1yZW1vdGUtcGFpci1wcm9vZi12MQB7ImNsaWVudE5vbmNlIjoiQVFFQkFRRUJBUUVCQVFFQkFRRUJBUUVCQVFFQkFRRUJBUUVCQVFFQkFRRSIsImRldmljZUlkIjoiZGV2aWNlLWZpeHR1cmUtMSIsImRldmljZVB1YmxpY0tleUZpbmdlcnByaW50IjoiYUJzQlA4eDFfZURYR0JfMC1YQ25XWU1sLUh2QWtwV1Z1aDgwbDFIdGg4cyIsImRldmljZVB1YmxpY0tleUp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6Im5HdTA5Nmx3T2pHQW84M3lFcWl5OENNOUNCdGtXckJtVGltZkxYYnBBNW8iLCJ5IjoiS1p5RW1TX0xHSUNzM240Qk9xcTdQQVFvb3E1YjllcmFXcVFOVi1GcFMyNCJ9LCJkaXNwbGF5TmFtZSI6Ikxpbmcg5rWL6K-V5omL5py6IiwiZ2F0ZXdheUlkIjoiZ2F0ZXdheS1maXh0dXJlLTEiLCJnYXRld2F5T3JpZ2luIjoiaHR0cHM6Ly9saW5nLXBjLmV4YW1wbGUudHMubmV0IiwicGFpcmluZ0lkIjoicGFpcmluZy1maXh0dXJlLTEiLCJwbGF0Zm9ybSI6ImlvcyIsInByb3RvY29sVmVyc2lvbiI6MSwic2VydmVyTm9uY2UiOiJBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBIn0",
+    "signatureBase64Url": "if_12JjVkzbmGJHXU-tGCo2z9O5fI2Q15X0MCPNYDh3ZfqeQlWc6kaY1sxbz4j5UoLz0ddz-L12o9xKQ5SR-XQ",
+    "pairingSecretBase64Url": "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk",
+    "hmacBase64Url": "iQqwG0OAbN5V2OnyZrRDg_7VFPhQfAhfxEU4CSejv5Q"
+  },
+  "pairingAccepted": {
+    "input": {
+      "gatewayOrigin": "https://ling-pc.example.ts.net",
+      "gatewayId": "gateway-fixture-1",
+      "pairingId": "pairing-fixture-1",
+      "deviceId": "device-fixture-1",
+      "deviceEpoch": 7,
+      "protocolVersion": 1,
+      "pairedAt": "2026-07-19T10:00:10.000Z"
+    },
+    "signingBytesBase64Url": "bGluZy1yZW1vdGUtcGFpci1hY2NlcHRlZC12MQB7ImRldmljZUVwb2NoIjo3LCJkZXZpY2VJZCI6ImRldmljZS1maXh0dXJlLTEiLCJnYXRld2F5SWQiOiJnYXRld2F5LWZpeHR1cmUtMSIsImdhdGV3YXlPcmlnaW4iOiJodHRwczovL2xpbmctcGMuZXhhbXBsZS50cy5uZXQiLCJwYWlyZWRBdCI6IjIwMjYtMDctMTlUMTA6MDA6MTAuMDAwWiIsInBhaXJpbmdJZCI6InBhaXJpbmctZml4dHVyZS0xIiwicHJvdG9jb2xWZXJzaW9uIjoxfQ",
+    "signatureBase64Url": "9_vyPYjqrZL86CUdoOWI6lPvx5mk1SeNhPbF_MX8S7VMpaEL7d0dj_D4qu01Q0I1jMrb7FyEaqgdFPMWgmwftw"
+  },
+  "authChallenge": {
+    "input": {
+      "gatewayOrigin": "https://ling-pc.example.ts.net",
+      "gatewayId": "gateway-fixture-1",
+      "challengeId": "challenge-fixture-1",
+      "candidateSessionId": "session-fixture-1",
+      "serverNonce": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI",
+      "deviceEpoch": 7,
+      "issuedAt": "2026-07-19T10:01:00.000Z",
+      "expiresAt": "2026-07-19T10:01:30.000Z",
+      "supportedProtocolVersions": [1]
+    },
+    "signingBytesBase64Url": "bGluZy1yZW1vdGUtYXV0aC1jaGFsbGVuZ2UtdjEAeyJjYW5kaWRhdGVTZXNzaW9uSWQiOiJzZXNzaW9uLWZpeHR1cmUtMSIsImNoYWxsZW5nZUlkIjoiY2hhbGxlbmdlLWZpeHR1cmUtMSIsImRldmljZUVwb2NoIjo3LCJleHBpcmVzQXQiOiIyMDI2LTA3LTE5VDEwOjAxOjMwLjAwMFoiLCJnYXRld2F5SWQiOiJnYXRld2F5LWZpeHR1cmUtMSIsImdhdGV3YXlPcmlnaW4iOiJodHRwczovL2xpbmctcGMuZXhhbXBsZS50cy5uZXQiLCJpc3N1ZWRBdCI6IjIwMjYtMDctMTlUMTA6MDE6MDAuMDAwWiIsInNlcnZlck5vbmNlIjoiQWdJQ0FnSUNBZ0lDQWdJQ0FnSUNBZ0lDQWdJQ0FnSUNBZ0lDQWdJQ0FnSSIsInN1cHBvcnRlZFByb3RvY29sVmVyc2lvbnMiOlsxXX0",
+    "signatureBase64Url": "NUVu1-17_SWDlJl3-vwStoOMJv0SOzvR28TjNQoacxBuejKHv99eIiZ3nuPAm0gmZrXZUzccyJNNKkVSJhjkGg"
+  },
+  "resume": {
+    "cursors": [
+      { "streamId": "stream-z", "snapshotId": "snapshot-2", "lastAckServerSeq": 8, "hasMaterializedSnapshot": true },
+      { "streamId": "stream-a", "snapshotId": "snapshot-1", "lastAckServerSeq": 3, "hasMaterializedSnapshot": true }
+    ],
+    "hashBase64Url": "U9_Esu_nRcXOvTbvhKxC69yjxUvugtlVCJr8GAwV9Xs"
+  },
+  "authProof": {
+    "input": {
+      "gatewayOrigin": "https://ling-pc.example.ts.net",
+      "gatewayId": "gateway-fixture-1",
+      "challengeId": "challenge-fixture-1",
+      "candidateSessionId": "session-fixture-1",
+      "serverNonce": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI",
+      "clientNonce": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+      "deviceId": "device-fixture-1",
+      "deviceEpoch": 7,
+      "protocolVersion": 1,
+      "resumeHash": "U9_Esu_nRcXOvTbvhKxC69yjxUvugtlVCJr8GAwV9Xs"
+    },
+    "signingBytesBase64Url": "bGluZy1yZW1vdGUtYXV0aC12MQB7ImNhbmRpZGF0ZVNlc3Npb25JZCI6InNlc3Npb24tZml4dHVyZS0xIiwiY2hhbGxlbmdlSWQiOiJjaGFsbGVuZ2UtZml4dHVyZS0xIiwiY2xpZW50Tm9uY2UiOiJBd01EQXdNREF3TURBd01EQXdNREF3TURBd01EQXdNREF3TURBd01EQXdNIiwiZGV2aWNlRXBvY2giOjcsImRldmljZUlkIjoiZGV2aWNlLWZpeHR1cmUtMSIsImdhdGV3YXlJZCI6ImdhdGV3YXktZml4dHVyZS0xIiwiZ2F0ZXdheU9yaWdpbiI6Imh0dHBzOi8vbGluZy1wYy5leGFtcGxlLnRzLm5ldCIsInByb3RvY29sVmVyc2lvbiI6MSwicmVzdW1lSGFzaCI6IlU5X0VzdV9uUmNYT3ZUYnZoS3hDNjl5anhVdnVndGxWQ0pyOEdBd1Y5WHMiLCJzZXJ2ZXJOb25jZSI6IkFnSUNBZ0lDQWdJQ0FnSUNBZ0lDQWdJQ0FnSUNBZ0lDQWdJQ0FnSUNBZ0kifQ",
+    "signatureBase64Url": "Q-iD6XLH4gvQBLuqEayyXDfuLPf1xlNSzV45Dy3EBapfrj_KKHUzIgzVzVGFFvc9303AR--G2X7Eza23PRk6Vw"
+  },
+  "command": {
+    "input": {
+      "gatewayId": "gateway-fixture-1",
+      "deviceEpoch": 7,
+      "commandKind": "conversation.send_text",
+      "workspaceId": "workspace-fixture-1",
+      "conversationId": "conversation-fixture-1",
+      "body": "来自手机的安全消息",
+      "issuedAt": "2026-07-19T10:00:00.000Z",
+      "retryUntil": "2026-07-19T11:00:00.000Z",
+      "remotePolicyVersion": 1
+    },
+    "hashInputBytesBase64Url": "bGluZy1yZW1vdGUtY29tbWFuZC12MQB7ImJvZHkiOiLmnaXoh6rmiYvmnLrnmoTlronlhajmtojmga8iLCJjb21tYW5kS2luZCI6ImNvbnZlcnNhdGlvbi5zZW5kX3RleHQiLCJjb252ZXJzYXRpb25JZCI6ImNvbnZlcnNhdGlvbi1maXh0dXJlLTEiLCJkZXZpY2VFcG9jaCI6NywiZ2F0ZXdheUlkIjoiZ2F0ZXdheS1maXh0dXJlLTEiLCJpc3N1ZWRBdCI6IjIwMjYtMDctMTlUMTA6MDA6MDAuMDAwWiIsInJlbW90ZVBvbGljeVZlcnNpb24iOjEsInJldHJ5VW50aWwiOiIyMDI2LTA3LTE5VDExOjAwOjAwLjAwMFoiLCJ3b3Jrc3BhY2VJZCI6IndvcmtzcGFjZS1maXh0dXJlLTEifQ",
+    "hashBase64Url": "bEWd1JnpuJCGL7ewPUdtgFLDJrmmm2r9l968Rt8vvfY"
+  }
+}

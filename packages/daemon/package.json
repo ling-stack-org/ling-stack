@@ -18,6 +18,7 @@
     "@ling-stack/core": "workspace:*",
     "@ling-stack/plugin-sdk": "workspace:*",
     "@ling-stack/providers": "workspace:*",
+    "@ling-stack/remote-protocol": "workspace:*",
     "@ling-stack/runner-pi": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "mammoth": "1.12.0",

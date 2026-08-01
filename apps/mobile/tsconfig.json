@@ -1,0 +1,14 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "paths": {
+      "react": ["./node_modules/react-types-mobile/index.d.ts"],
+      "react/jsx-runtime": ["./node_modules/react-types-mobile/jsx-runtime.d.ts"],
+      "react/jsx-dev-runtime": ["./node_modules/react-types-mobile/jsx-dev-runtime.d.ts"]
+    },
+    "strict": true,
+    "resolveJsonModule": true,
+    "types": ["react-types-mobile"]
+  },
+  "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"]
+}

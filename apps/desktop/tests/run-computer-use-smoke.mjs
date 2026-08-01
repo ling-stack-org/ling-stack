@@ -34,7 +34,10 @@ try {
     ],
     env: {
       ...process.env,
-      ...(realCapture || realDisplayCapture ? {} : { LING_DESKTOP_FAKE_COMPUTER_USE: "1" }),
+      ...(realCapture || realDisplayCapture ? {} : {
+        LING_DESKTOP_FAKE_COMPUTER_USE: "1",
+        LING_STACK_HOME: join(userDataDirectory, "ling-stack-home"),
+      }),
       LING_STACK_DAEMON_URL: daemonUrl,
       LING_STACK_DEFAULT_WORKSPACE_CWD:
         process.env.LING_STACK_DEFAULT_WORKSPACE_CWD ?? dirname(dirname(desktopRoot)),

@@ -59,6 +59,7 @@ docs:
 - [Daemon Modularization](daemon-modularization.md)
 - [Web Modularization](web-modularization.md)
 - [State Machines and Recovery](state-machine-recovery.md)
+- [Ling Mobile Remote Access](mobile-remote-access.md)
 
 ## Visual Framework Map
 
@@ -72,8 +73,11 @@ flowchart TD
   Web["Web app"] --> ApiClient["Shared API client"]
   CLI["CLI"] --> ApiClient
   Desktop["Desktop shell"] --> ApiClient
+  Mobile["Mobile app"] --> RemoteClient["Remote client + device auth"]
 
   ApiClient --> Daemon["Local daemon gateway"]
+  RemoteClient --> RemoteGateway["Opt-in Remote Gateway"]
+  RemoteGateway --> Daemon
   Daemon --> Kernel["Platform kernel"]
   Daemon --> Supervisor["Runtime supervisor"]
   Daemon --> ExtensionHost["Extension host"]
@@ -213,7 +217,9 @@ and legal state transitions.
 
 ```mermaid
 flowchart TD
-  Clients["Web, CLI, desktop, future workers"] --> ControlPlane["Daemon control plane"]
+  LocalClients["Web, CLI, desktop, future workers"] --> ControlPlane["Daemon control plane"]
+  Mobile["Paired mobile"] --> RemoteGateway["Remote Gateway allowlist"]
+  RemoteGateway --> ControlPlane
 
   ControlPlane --> WorkUnits["Work units"]
   ControlPlane --> Attempts["Attempts"]
@@ -300,6 +306,10 @@ flowchart TD
   PluginSdk["packages/plugin-sdk"] --> PluginContracts["future plugin contribution contracts"]
   Cli["packages/cli"] --> ApiClient
   Web["apps/web"] --> WebApi
+  Desktop["apps/desktop"] --> ApiClient
+  Mobile["apps/mobile"] --> RemoteClient["packages/remote-client"]
+  RemoteClient --> RemoteGateway["daemon remote-access feature"]
+  RemoteGateway --> Daemon
 
   Runtime --> RunnerPi
   ProvidersFeature --> ProvidersPkg
@@ -342,6 +352,13 @@ and hand risky steps back for approval.
 Web / Desktop / CLI
   -> shared API client
   -> local daemon gateway
+
+Mobile
+  -> remote client + device proof
+  -> opt-in Remote Gateway allowlist
+  -> local daemon authority
+
+daemon
   -> platform kernel
   -> runtime supervisor
   -> extension host

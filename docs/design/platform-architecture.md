@@ -25,12 +25,19 @@ document focuses on the kernel, extension, and package boundaries that make that
 safe to implement.
 
 ```text
-clients
--> shared API client
--> local daemon gateway
--> platform kernel
--> extension host
--> providers, runners, channels, skills, tools, memory, automation
+Web / Desktop / CLI
+  -> shared API client
+  -> local daemon gateway
+
+Mobile
+  -> remote client + device-auth protocol
+  -> opt-in Remote Gateway (separate listener)
+  -> local daemon authority
+
+daemon gateway
+  -> platform kernel
+  -> extension host
+  -> providers, runners, channels, skills, tools, memory, automation
 ```
 
 The kernel owns correctness. Extensions add capability.
@@ -75,7 +82,13 @@ packages/
     event names, status enums, and compatibility rules.
 
   api-client/
-    Shared daemon client used by web, desktop, mobile/PWA, and CLI.
+    Shared local daemon client used by web, desktop, and CLI.
+
+  remote-protocol/
+    Runtime validation and canonical signing input for the constrained mobile surface.
+
+  remote-client/
+    Device-authenticated Remote Gateway client used by the mobile app.
 
   plugin-sdk/
     Stable interfaces for providers, runners, channel sources, tools, memory
@@ -121,7 +134,8 @@ Current packages can map into this direction without immediate renames:
 | `packages/runner-pi` | First runner extension |
 | `packages/cli` | CLI client over daemon API |
 | `apps/web` | Reference client and feature host |
-| `apps/desktop` | Future desktop shell over the same API |
+| `apps/desktop` | Packaged desktop shell, daemon lifecycle, and local notifications |
+| `apps/mobile` | Device-authenticated constrained remote shell over Remote Gateway |
 
 ## System Diagram
 
@@ -130,9 +144,11 @@ flowchart TD
   Web["Web Client"] --> ApiClient["Shared API Client"]
   Desktop["Desktop Client"] --> ApiClient
   CLI["CLI"] --> ApiClient
-  Mobile["Future Mobile/PWA"] --> ApiClient
+  Mobile["Mobile"] --> RemoteClient["Remote client + device auth"]
 
   ApiClient --> Daemon["Local Daemon Gateway"]
+  RemoteClient --> RemoteGateway["Opt-in Remote Gateway"]
+  RemoteGateway --> Daemon
   Daemon --> Coordinator["Channel Coordinator"]
   Daemon --> Kernel["Platform Kernel"]
 
@@ -239,11 +255,13 @@ It must not allow plugins to access SQLite directly or bypass state machines.
 
 ### Clients
 
-Clients are views and command surfaces over the daemon API.
+Clients are views and command surfaces over daemon-owned state. Trusted local clients use
+the daemon API; remote clients use a constrained Gateway contract.
 
-The web app is the reference client. The desktop app should wrap the same API and shared
-UI modules rather than implementing a separate product model. A future mobile or PWA
-client should reuse the same contracts and API client.
+The web app is the reference client. The desktop app wraps the same local API and shared
+UI modules rather than implementing a separate product model. Mobile is a constrained
+remote surface: it reuses semantic contracts and headless policies, but it must enter
+through the device-authenticated Remote Gateway rather than the broad local daemon API.
 
 ## Extension Points
 
@@ -594,12 +612,15 @@ or queued a follow-up run.
 ## Multi-Client Strategy
 
 The web app is the reference client. The desktop app is a packaged local experience. The
-future mobile/PWA client is a constrained remote surface over the same contracts.
+mobile client is a constrained remote surface over the same semantic contracts through a
+separate Remote Gateway.
 
 Shared pieces:
 
 - `contracts` for API types and status enums.
-- `api-client` for HTTP/SSE/WebSocket calls.
+- `api-client` for local HTTP/SSE/WebSocket calls from trusted local clients.
+- `remote-protocol` and `remote-client` for mobile device authentication, snapshots, and
+  bounded remote commands.
 - `ui` for design tokens and reusable primitives.
 - `features` for channel/task/run/approval/provider/teammate modules.
 
@@ -610,10 +631,11 @@ Client-specific pieces:
 | Web | Browser routing, responsive layout, local development UI |
 | Desktop | Daemon lifecycle, tray, notifications, keychain, updater |
 | CLI | Scriptable commands and diagnostics |
-| Mobile/PWA | Read-heavy workflows, approvals, notifications, lightweight comments |
+| Mobile/PWA | Read-heavy channel workflows, notifications, lightweight text comments, and the explicit Remote Gateway capability allowlist |
 
-Do not fork feature behavior per client. A paused channel, queued run, pending approval,
-or blocked lease must mean the same thing everywhere.
+Do not fork durable feature behavior per client. A paused channel, queued run, pending
+approval, or blocked lease must mean the same thing everywhere. A remote client may expose
+fewer controls, but it may not invent a second authority or bypass daemon policy.
 
 ## UI Architecture Direction
 
@@ -815,8 +837,7 @@ Extract shared API DTOs and client code:
 - `packages/contracts`
 - `packages/api-client`
 
-The web app, CLI, and future desktop app should stop carrying separate copies of the same
-types.
+The web app, CLI, and Desktop should stop carrying separate copies of the same types.
 The detailed plan lives in [Contracts and API Client](contracts-api-client.md).
 
 Status: the shared packages exist and Web is the first consumer through a compatibility

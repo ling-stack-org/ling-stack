@@ -16,8 +16,8 @@ Sending a channel message from the composer should start a normal Ling Agent cha
 The existing JSON `POST /channels/:id/messages` remains supported for API compatibility. The Web app should prefer the streaming endpoint for composer sends.
 
 The current message-body stream is a compatibility transport. The target product stream
-is a shared semantic transcript stream that can be consumed by Web, the future desktop
-app, and CLI/TUI-style clients:
+is a shared semantic transcript stream that can be consumed by Web, Desktop, Mobile
+through its constrained Gateway, and CLI/TUI-style clients:
 
 ```text
 daemon/core channel records and run events
@@ -120,7 +120,25 @@ JSON-RPC app-server wholesale. Ling's names can remain `ConversationTranscript`,
 
 `delta` updates the same `ChannelMessage` row with `status: "pending"`. `done` updates the same row to `ready`, `blocked`, or `failed`. The browser stream is only a live transport; the SQLite channel message store remains the source of truth.
 
+The constrained mobile surface uses the same semantic transcript model through the
+Remote Gateway described in [Ling Mobile Remote Access](mobile-remote-access.md). It does
+not receive the broad channel SSE route or pass `cwd`. The Gateway maps an opaque approved
+workspace id to the local store, projects a redacted snapshot/delta stream, and keeps the
+daemon as the only state authority.
+
+Remote text sends carry a durable `(gatewayId, deviceEpoch, commandId)` receipt. The receipt,
+the local-user channel message, and a bounded Mobile dispatch intent are committed in one
+daemon transaction before asynchronous conversational reply work starts. A reconnect that
+retries the same command therefore returns the original message result instead of creating
+a duplicate message or duplicate visible reply. A different request body with the same
+command id is an explicit idempotency conflict.
+
 If the browser disconnects, the daemon should stop writing to that client but should not treat the disconnect as user cancellation for channel replies. Explicit cancellation remains a separate runtime control concern.
+
+The same rule applies to Mobile: a phone network drop never cancels a PC run or changes its
+state. The phone re-authenticates, resumes from its last acknowledged remote sequence, and
+requests a fresh snapshot when the cursor is too old. Mobile V0 has no offline mutation
+queue, so an unsent draft is local UI state rather than an eventually replayed command.
 
 For transcript streaming, the daemon persists the underlying channel/run/workflow records
 and rebuilds the transcript snapshot from those records. The transcript stream itself is
@@ -172,3 +190,8 @@ for the current product-level transcript behavior.
   in place and terminal blocks commit without being deleted.
 - Web and Desktop consume the same transcript snapshot/delta contract. CLI may render the
   same model as text or TUI, but it does not own the conversation projection.
+- Mobile consumes the same semantic snapshot/delta contract through an authenticated
+  Remote Gateway; it never receives arbitrary daemon routes, local paths, raw tool output,
+  or artifact bytes.
+- Repeating a Mobile `commandId` after a disconnect creates one and only one durable local
+  user message.

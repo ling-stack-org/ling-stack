@@ -216,8 +216,12 @@ const CUA_DRIVER_ACTIVATION_MIGRATION_VERSION = 105;
 const CUA_DRIVER_ACTIVATION_MIGRATION_NAME = "create_cua_driver_activation_state";
 const MCP_AUTHORITY_REVISIONS_MIGRATION_VERSION = 106;
 const MCP_AUTHORITY_REVISIONS_MIGRATION_NAME = "add_mcp_authority_revisions";
+const REMOTE_CONVERSATION_STATE_MIGRATION_VERSION = 108;
+const REMOTE_CONVERSATION_STATE_MIGRATION_NAME = "create_remote_conversation_state";
 const TEAMMATE_MODEL_BINDING_MIGRATION_VERSION = 107;
 const TEAMMATE_MODEL_BINDING_MIGRATION_NAME = "add_teammate_model_binding_mode";
+const REMOTE_UNREAD_ENTITY_MIGRATION_VERSION = 109;
+const REMOTE_UNREAD_ENTITY_MIGRATION_NAME = "deduplicate_remote_run_unread_entities";
 const AI_EVOLUTION_SKILL_LIFECYCLE_MIGRATION_NAME = "repair_ai_evolution_skill_lifecycle";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
@@ -5092,7 +5096,386 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       END;
   `);
 
-  if (!context.hasMigration(TEAMMATE_MODEL_BINDING_MIGRATION_VERSION)) {
+    const hasRemoteConversationStateMigration = context.hasMigration(REMOTE_CONVERSATION_STATE_MIGRATION_VERSION);
+    if (
+      !hasRemoteConversationStateMigration ||
+      !context.hasTable("remote_command_receipts") ||
+      !context.hasTable("remote_dispatch_intents") ||
+      !context.hasTable("remote_projection_outbox") ||
+      !context.hasTable("conversation_read_states")
+    ) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS remote_command_receipts (
+          command_id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          device_id TEXT NOT NULL,
+          command_type TEXT NOT NULL,
+          body_hash TEXT NOT NULL,
+          receipt_state TEXT NOT NULL CHECK (receipt_state IN ('full', 'tombstone')),
+          status TEXT NOT NULL CHECK (status IN ('pending', 'completed', 'failed')),
+          issued_at TEXT NOT NULL,
+          retry_until TEXT NOT NULL,
+          terminal_json TEXT,
+          message_id TEXT,
+          dispatch_intent_id TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          compacted_at TEXT,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_remote_command_receipts_workspace_created
+        ON remote_command_receipts(workspace_id, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_remote_command_receipts_retention
+        ON remote_command_receipts(receipt_state, retry_until, compacted_at);
+
+        CREATE TABLE IF NOT EXISTS remote_dispatch_intents (
+          id TEXT PRIMARY KEY,
+          command_id TEXT NOT NULL UNIQUE,
+          workspace_id TEXT NOT NULL,
+          conversation_kind TEXT NOT NULL CHECK (conversation_kind IN ('channel', 'conversation', 'teammate_direct')),
+          conversation_id TEXT NOT NULL,
+          message_id TEXT NOT NULL,
+          source_surface TEXT NOT NULL CHECK (source_surface = 'mobile'),
+          authority_ceiling TEXT NOT NULL CHECK (authority_ceiling = 'conversation_comment'),
+          allow_ai_reply INTEGER NOT NULL CHECK (allow_ai_reply = 1),
+          allow_tool_calls INTEGER NOT NULL CHECK (allow_tool_calls = 0),
+          allow_workflow_auto_start INTEGER NOT NULL CHECK (allow_workflow_auto_start = 0),
+          allow_execution_proposal INTEGER NOT NULL CHECK (allow_execution_proposal = 0),
+          status TEXT NOT NULL CHECK (status IN ('pending', 'claimed', 'dispatched', 'failed')),
+          attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+          available_at TEXT NOT NULL,
+          claimed_by TEXT,
+          claim_expires_at TEXT,
+          last_error TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          dispatched_at TEXT,
+          FOREIGN KEY(command_id) REFERENCES remote_command_receipts(command_id) ON DELETE CASCADE,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_remote_dispatch_intents_claim
+        ON remote_dispatch_intents(status, available_at, claim_expires_at, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_remote_dispatch_intents_conversation
+        ON remote_dispatch_intents(workspace_id, conversation_kind, conversation_id, created_at);
+
+        CREATE TABLE IF NOT EXISTS remote_projection_outbox (
+          activity_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+          workspace_id TEXT NOT NULL,
+          conversation_kind TEXT CHECK (conversation_kind IS NULL OR conversation_kind IN ('channel', 'conversation', 'teammate_direct')),
+          conversation_id TEXT,
+          entity_type TEXT NOT NULL,
+          entity_id TEXT NOT NULL,
+          operation TEXT NOT NULL CHECK (operation IN ('insert', 'update', 'delete')),
+          affects_unread INTEGER NOT NULL DEFAULT 0 CHECK (affects_unread IN (0, 1)),
+          occurred_at TEXT NOT NULL,
+          processed_at TEXT,
+          CHECK (
+            (conversation_kind IS NULL AND conversation_id IS NULL)
+            OR (conversation_kind IS NOT NULL AND conversation_id IS NOT NULL)
+          ),
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_remote_projection_outbox_pending
+        ON remote_projection_outbox(processed_at, activity_seq);
+
+        CREATE INDEX IF NOT EXISTS idx_remote_projection_outbox_conversation
+        ON remote_projection_outbox(workspace_id, conversation_kind, conversation_id, activity_seq);
+
+        CREATE TABLE IF NOT EXISTS conversation_read_states (
+          workspace_id TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          conversation_kind TEXT NOT NULL CHECK (conversation_kind IN ('channel', 'conversation', 'teammate_direct')),
+          conversation_id TEXT NOT NULL,
+          read_through_activity_seq INTEGER NOT NULL DEFAULT 0 CHECK (read_through_activity_seq >= 0),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY(workspace_id, user_id, conversation_kind, conversation_id),
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_conversation_read_states_user
+        ON conversation_read_states(workspace_id, user_id, updated_at DESC);
+      `);
+
+      if (!hasRemoteConversationStateMigration) {
+        context.recordMigration(REMOTE_CONVERSATION_STATE_MIGRATION_VERSION, REMOTE_CONVERSATION_STATE_MIGRATION_NAME);
+      }
+    }
+
+    database.exec(`
+      CREATE TRIGGER IF NOT EXISTS trg_remote_outbox_channel_insert
+      AFTER INSERT ON channels
+      BEGIN
+        INSERT INTO remote_projection_outbox (
+          workspace_id, conversation_kind, conversation_id, entity_type, entity_id,
+          operation, affects_unread, occurred_at
+        ) VALUES (NEW.workspace_id, 'channel', NEW.id, 'channel', NEW.id, 'insert', 0, NEW.updated_at);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_remote_outbox_channel_update
+      AFTER UPDATE ON channels
+      BEGIN
+        INSERT INTO remote_projection_outbox (
+          workspace_id, conversation_kind, conversation_id, entity_type, entity_id,
+          operation, affects_unread, occurred_at
+        ) VALUES (NEW.workspace_id, 'channel', NEW.id, 'channel', NEW.id, 'update', 0, NEW.updated_at);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_remote_outbox_channel_delete
+      AFTER DELETE ON channels
+      BEGIN
+        INSERT INTO remote_projection_outbox (
+          workspace_id, conversation_kind, conversation_id, entity_type, entity_id,
+          operation, affects_unread, occurred_at
+        ) VALUES (OLD.workspace_id, 'channel', OLD.id, 'channel', OLD.id, 'delete', 0, OLD.updated_at);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_remote_outbox_channel_message_insert
+      AFTER INSERT ON channel_messages
+      BEGIN
+        INSERT INTO remote_projection_outbox (
+          workspace_id, conversation_kind, conversation_id, entity_type, entity_id,
+          operation, affects_unread, occurred_at
+        ) VALUES (
+          NEW.workspace_id, 'channel', NEW.channel_id, 'channel_message', NEW.id,
+          'insert', CASE WHEN NEW.author_type = 'local-user' THEN 0 ELSE 1 END, NEW.updated_at
+        );
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_remote_outbox_channel_message_update
+      AFTER UPDATE ON channel_messages
+      BEGIN
+        INSERT INTO remote_projection_outbox (
+          workspace_id, conversation_kind, conversation_id, entity_type, entity_id,
+          operation, affects_unread, occurred_at
+        ) VALUES (
+          NEW.workspace_id, 'channel', NEW.channel_id, 'channel_message', NEW.id,
+          'update', CASE WHEN NEW.author_type = 'local-user' THEN 0 ELSE 1 END, NEW.updated_at
+        );
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_remote_outbox_channel_message_delete
+      AFTER DELETE ON channel_messages
+      BEGIN
+        INSERT INTO remote_projection_outbox (
+          workspace_id, conversation_kind, conversation_id, entity_type, entity_id,
+          operation, affects_unread, occurred_at
+        ) VALUES (
+          OLD.workspace_id, 'channel', OLD.channel_id, 'channel_message', OLD.id,
+          'delete', CASE WHEN OLD.author_type = 'local-user' THEN 0 ELSE 1 END, OLD.updated_at
+        );
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_remote_outbox_direct_thread_insert
+      AFTER INSERT ON teammate_direct_threads
+      BEGIN
+        INSERT INTO remote_projection_outbox (
+          workspace_id, conversation_kind, conversation_id, entity_type, entity_id,
+          operation, affects_unread, occurred_at
+        ) VALUES (NEW.workspace_id, 'teammate_direct', NEW.id, 'teammate_direct_thread', NEW.id, 'insert', 0, NEW.updated_at);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_remote_outbox_direct_thread_update
+      AFTER UPDATE ON teammate_direct_threads
+      BEGIN
+        INSERT INTO remote_projection_outbox (
+          workspace_id, conversation_kind, conversation_id, entity_type, entity_id,
+          operation, affects_unread, occurred_at
+        ) VALUES (NEW.workspace_id, 'teammate_direct', NEW.id, 'teammate_direct_thread', NEW.id, 'update', 0, NEW.updated_at);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_remote_outbox_direct_thread_delete
+      AFTER DELETE ON teammate_direct_threads
+      BEGIN
+        INSERT INTO remote_projection_outbox (
+          workspace_id, conversation_kind, conversation_id, entity_type, entity_id,
+          operation, affects_unread, occurred_at
+        ) VALUES (OLD.workspace_id, 'teammate_direct', OLD.id, 'teammate_direct_thread', OLD.id, 'delete', 0, OLD.updated_at);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_remote_outbox_direct_message_insert
+      AFTER INSERT ON teammate_direct_messages
+      BEGIN
+        INSERT INTO remote_projection_outbox (
+          workspace_id, conversation_kind, conversation_id, entity_type, entity_id,
+          operation, affects_unread, occurred_at
+        ) VALUES (
+          NEW.workspace_id, 'teammate_direct', NEW.thread_id, 'teammate_direct_message', NEW.id,
+          'insert', CASE WHEN NEW.author_type = 'local-user' THEN 0 ELSE 1 END, NEW.updated_at
+        );
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_remote_outbox_direct_message_update
+      AFTER UPDATE ON teammate_direct_messages
+      BEGIN
+        INSERT INTO remote_projection_outbox (
+          workspace_id, conversation_kind, conversation_id, entity_type, entity_id,
+          operation, affects_unread, occurred_at
+        ) VALUES (
+          NEW.workspace_id, 'teammate_direct', NEW.thread_id, 'teammate_direct_message', NEW.id,
+          'update', CASE WHEN NEW.author_type = 'local-user' THEN 0 ELSE 1 END, NEW.updated_at
+        );
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_remote_outbox_direct_message_delete
+      AFTER DELETE ON teammate_direct_messages
+      BEGIN
+        INSERT INTO remote_projection_outbox (
+          workspace_id, conversation_kind, conversation_id, entity_type, entity_id,
+          operation, affects_unread, occurred_at
+        ) VALUES (
+          OLD.workspace_id, 'teammate_direct', OLD.thread_id, 'teammate_direct_message', OLD.id,
+          'delete', CASE WHEN OLD.author_type = 'local-user' THEN 0 ELSE 1 END, OLD.updated_at
+        );
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_remote_outbox_ling_thread_insert
+      AFTER INSERT ON ling_threads
+      WHEN NEW.kind = 'conversation'
+      BEGIN
+        INSERT INTO remote_projection_outbox (
+          workspace_id, conversation_kind, conversation_id, entity_type, entity_id,
+          operation, affects_unread, occurred_at
+        ) VALUES (NEW.workspace_id, 'conversation', NEW.id, 'ling_thread', NEW.id, 'insert', 0, NEW.updated_at);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_remote_outbox_ling_thread_update
+      AFTER UPDATE ON ling_threads
+      WHEN NEW.kind = 'conversation'
+      BEGIN
+        INSERT INTO remote_projection_outbox (
+          workspace_id, conversation_kind, conversation_id, entity_type, entity_id,
+          operation, affects_unread, occurred_at
+        ) VALUES (NEW.workspace_id, 'conversation', NEW.id, 'ling_thread', NEW.id, 'update', 0, NEW.updated_at);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_remote_outbox_ling_thread_delete
+      AFTER DELETE ON ling_threads
+      WHEN OLD.kind = 'conversation'
+      BEGIN
+        INSERT INTO remote_projection_outbox (
+          workspace_id, conversation_kind, conversation_id, entity_type, entity_id,
+          operation, affects_unread, occurred_at
+        ) VALUES (OLD.workspace_id, 'conversation', OLD.id, 'ling_thread', OLD.id, 'delete', 0, OLD.updated_at);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_remote_outbox_ling_turn_insert
+      AFTER INSERT ON ling_turns
+      WHEN (SELECT kind FROM ling_threads WHERE id = NEW.thread_id) = 'conversation'
+      BEGIN
+        INSERT INTO remote_projection_outbox (
+          workspace_id, conversation_kind, conversation_id, entity_type, entity_id,
+          operation, affects_unread, occurred_at
+        ) VALUES (NEW.workspace_id, 'conversation', NEW.thread_id, 'ling_turn', NEW.id, 'insert', 0, NEW.updated_at);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_remote_outbox_ling_turn_update
+      AFTER UPDATE ON ling_turns
+      WHEN (SELECT kind FROM ling_threads WHERE id = NEW.thread_id) = 'conversation'
+      BEGIN
+        INSERT INTO remote_projection_outbox (
+          workspace_id, conversation_kind, conversation_id, entity_type, entity_id,
+          operation, affects_unread, occurred_at
+        ) VALUES (NEW.workspace_id, 'conversation', NEW.thread_id, 'ling_turn', NEW.id, 'update', 0, NEW.updated_at);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_remote_outbox_ling_turn_delete
+      BEFORE DELETE ON ling_turns
+      WHEN (SELECT kind FROM ling_threads WHERE id = OLD.thread_id) = 'conversation'
+      BEGIN
+        INSERT INTO remote_projection_outbox (
+          workspace_id, conversation_kind, conversation_id, entity_type, entity_id,
+          operation, affects_unread, occurred_at
+        ) VALUES (OLD.workspace_id, 'conversation', OLD.thread_id, 'ling_turn', OLD.id, 'delete', 0, OLD.updated_at);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_remote_outbox_run_session_insert
+      AFTER INSERT ON run_sessions
+      WHEN NEW.thread_id IS NOT NULL
+        AND (SELECT kind FROM ling_threads WHERE id = NEW.thread_id) = 'conversation'
+      BEGIN
+        INSERT INTO remote_projection_outbox (
+          workspace_id, conversation_kind, conversation_id, entity_type, entity_id,
+          operation, affects_unread, occurred_at
+        ) VALUES ('workspace_default', 'conversation', NEW.thread_id, 'run_session', NEW.id, 'insert', 0, NEW.updated_at);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_remote_outbox_run_session_update
+      AFTER UPDATE ON run_sessions
+      WHEN NEW.thread_id IS NOT NULL
+        AND (SELECT kind FROM ling_threads WHERE id = NEW.thread_id) = 'conversation'
+      BEGIN
+        INSERT INTO remote_projection_outbox (
+          workspace_id, conversation_kind, conversation_id, entity_type, entity_id,
+          operation, affects_unread, occurred_at
+        ) VALUES ('workspace_default', 'conversation', NEW.thread_id, 'run_session', NEW.id, 'update', 0, NEW.updated_at);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_remote_outbox_run_event_insert
+      AFTER INSERT ON run_events
+      BEGIN
+        INSERT INTO remote_projection_outbox (
+          workspace_id, conversation_kind, conversation_id, entity_type, entity_id,
+          operation, affects_unread, occurred_at
+        )
+        SELECT
+          'workspace_default', 'conversation', runs.thread_id, 'run_session', NEW.run_id,
+          'insert', CASE WHEN NEW.type IN ('message_end', 'result') THEN 1 ELSE 0 END, NEW.ts
+        FROM run_sessions AS runs
+        INNER JOIN ling_threads AS threads ON threads.id = runs.thread_id
+        WHERE runs.id = NEW.run_id AND threads.kind = 'conversation';
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_remote_outbox_user_profile_insert
+      AFTER INSERT ON user_profile
+      BEGIN
+        INSERT INTO remote_projection_outbox (
+          workspace_id, conversation_kind, conversation_id, entity_type, entity_id,
+          operation, affects_unread, occurred_at
+        ) VALUES ('workspace_default', NULL, NULL, 'user_profile', NEW.id, 'insert', 0, NEW.updated_at);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_remote_outbox_user_profile_update
+      AFTER UPDATE ON user_profile
+      BEGIN
+        INSERT INTO remote_projection_outbox (
+          workspace_id, conversation_kind, conversation_id, entity_type, entity_id,
+          operation, affects_unread, occurred_at
+        ) VALUES ('workspace_default', NULL, NULL, 'user_profile', NEW.id, 'update', 0, NEW.updated_at);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_remote_outbox_read_state_insert
+      AFTER INSERT ON conversation_read_states
+      BEGIN
+        INSERT INTO remote_projection_outbox (
+          workspace_id, conversation_kind, conversation_id, entity_type, entity_id,
+          operation, affects_unread, occurred_at
+        ) VALUES (
+          NEW.workspace_id, NEW.conversation_kind, NEW.conversation_id, 'conversation_read_state',
+          NEW.user_id || ':' || NEW.conversation_id, 'insert', 0, NEW.updated_at
+        );
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_remote_outbox_read_state_update
+      AFTER UPDATE ON conversation_read_states
+      WHEN OLD.read_through_activity_seq IS NOT NEW.read_through_activity_seq
+      BEGIN
+        INSERT INTO remote_projection_outbox (
+          workspace_id, conversation_kind, conversation_id, entity_type, entity_id,
+          operation, affects_unread, occurred_at
+        ) VALUES (
+          NEW.workspace_id, NEW.conversation_kind, NEW.conversation_id, 'conversation_read_state',
+          NEW.user_id || ':' || NEW.conversation_id, 'update', 0, NEW.updated_at
+        );
+      END;
+    `);
+  const hasTeammateModelBindingMigration = context.hasMigration(TEAMMATE_MODEL_BINDING_MIGRATION_VERSION);
+  if (!hasTeammateModelBindingMigration || !context.hasColumn("ai_teammates", "model_binding_mode")) {
     if (!context.hasColumn("ai_teammates", "model_binding_mode")) {
       database.exec("ALTER TABLE ai_teammates ADD COLUMN model_binding_mode TEXT NOT NULL DEFAULT 'fixed';");
     }
@@ -5106,6 +5489,50 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       WHERE id LIKE 'teammate_builtin_%'
         AND provider_preset_id IS NULL;
     `);
-    context.recordMigration(TEAMMATE_MODEL_BINDING_MIGRATION_VERSION, TEAMMATE_MODEL_BINDING_MIGRATION_NAME);
+    if (!hasTeammateModelBindingMigration) {
+      context.recordMigration(TEAMMATE_MODEL_BINDING_MIGRATION_VERSION, TEAMMATE_MODEL_BINDING_MIGRATION_NAME);
+    }
+  }
+
+  if (!context.hasMigration(REMOTE_UNREAD_ENTITY_MIGRATION_VERSION)) {
+    database.exec(`
+      DROP TRIGGER IF EXISTS trg_remote_outbox_run_event_insert;
+
+      UPDATE remote_projection_outbox
+      SET
+        entity_type = 'run_session',
+        entity_id = (
+          SELECT events.run_id
+          FROM run_events AS events
+          WHERE events.id = remote_projection_outbox.entity_id
+        )
+      WHERE entity_type = 'run_event'
+        AND EXISTS (
+          SELECT 1
+          FROM run_events AS events
+          WHERE events.id = remote_projection_outbox.entity_id
+        );
+
+      CREATE TRIGGER trg_remote_outbox_run_event_insert
+      AFTER INSERT ON run_events
+      BEGIN
+        INSERT INTO remote_projection_outbox (
+          workspace_id, conversation_kind, conversation_id, entity_type, entity_id,
+          operation, affects_unread, occurred_at
+        )
+        SELECT
+          'workspace_default', 'conversation', runs.thread_id, 'run_session', NEW.run_id,
+          'insert', CASE WHEN NEW.type IN ('message_end', 'result') THEN 1 ELSE 0 END, NEW.ts
+        FROM run_sessions AS runs
+        INNER JOIN ling_threads AS threads ON threads.id = runs.thread_id
+        WHERE runs.id = NEW.run_id AND threads.kind = 'conversation';
+      END;
+
+      CREATE INDEX IF NOT EXISTS idx_remote_projection_outbox_entity
+      ON remote_projection_outbox(
+        workspace_id, conversation_kind, conversation_id, entity_type, entity_id, activity_seq
+      );
+    `);
+    context.recordMigration(REMOTE_UNREAD_ENTITY_MIGRATION_VERSION, REMOTE_UNREAD_ENTITY_MIGRATION_NAME);
   }
 }

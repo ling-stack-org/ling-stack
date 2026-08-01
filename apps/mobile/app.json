@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "Ling Mobile",
+    "slug": "ling-mobile",
+    "version": "0.0.1",
+    "platforms": ["ios", "android"],
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "允许 Ling 扫描 PC 上的安全配对码。",
+          "recordAudioAndroid": false
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "允许 Ling 选择你的个人头像。"
+        }
+      ]
+    ],
+    "ios": {
+      "bundleIdentifier": "com.lingstack.mobile",
+      "supportsTablet": false
+    },
+    "android": {
+      "package": "com.lingstack.mobile"
+    }
+  }
+}

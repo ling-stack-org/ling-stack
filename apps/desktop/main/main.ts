@@ -65,6 +65,7 @@ import type { DesktopStartupFailurePrompt } from "./startup-failure-recovery.js"
 import { loadOrCreateDesktopBridgeToken } from "./bridge-token.js";
 import { registerDesktopIpc } from "./ipc.js";
 import { registerDesktopThemePackageIpc } from "./theme-packages/theme-package-ipc.js";
+import { DesktopMobileAccessClient } from "./mobile-access/client.js";
 import { DesktopThemePackageRepository } from "./theme-packages/theme-package-repository.js";
 import { DesktopNavigationIntentStore } from "./navigation-intent.js";
 import { openDesktopOwnerWindow } from "./owner-window.js";
@@ -547,6 +548,10 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
     getMainWindow: () => mainWindow ?? loadingMainWindow,
     navigationIntents: desktopNavigationIntents,
     themeStore: desktopRendererThemeStore,
+    mobileAccess: new DesktopMobileAccessClient({
+      daemonBaseUrl,
+      desktopBridgeToken: bridgeToken,
+    }),
     ...(fakeComputerUseMode || realCaptureSmokeMode || fixedComputerUseConversationId
       ? { fixedComputerUseConversationId: fixedComputerUseConversationId ?? smokeComputerUseProjection.conversationId }
       : {}),
