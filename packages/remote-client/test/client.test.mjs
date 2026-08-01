@@ -106,7 +106,7 @@ test("session authentication restores the binding and starts a full workspace su
   socket.open();
   await Promise.resolve();
   assert.equal(socket.sent[0].candidateSessionId, "session-fixture-1");
-  socket.message({
+  const readyFrame = {
     version: 1,
     type: "session.ready",
     messageId: "server-message-1",
@@ -130,7 +130,8 @@ test("session authentication restores the binding and starts a full workspace su
     eventId: "event-1",
     serverSeq: 1,
     occurredAt: now,
-  });
+  };
+  socket.message(readyFrame);
   await connecting;
   await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -139,6 +140,19 @@ test("session authentication restores the binding and starts a full workspace su
   assert.equal(binding.workspaceBindingId, "workspace-binding-1");
   assert.ok(socket.sent.some((frame) => frame.type === "stream.subscribe" && frame.payload.scope.workspaceId === "default"));
   assert.ok(socket.sent.some((frame) => frame.type === "stream.ack" && frame.payload.ackServerSeq === 1));
+
+  const sentBeforeGap = socket.sent.length;
+  socket.message({
+    ...readyFrame,
+    messageId: "server-message-gap",
+    eventId: "event-gap",
+    serverSeq: 3,
+  });
+  await waitFor(() => socket.sent.slice(sentBeforeGap).some((frame) => frame.type === "snapshot.request"));
+  assert.equal(
+    socket.sent.slice(sentBeforeGap).some((frame) => frame.type === "stream.ack" && frame.payload.ackServerSeq === 3),
+    false,
+  );
   client.disconnect();
 });
 

@@ -398,7 +398,11 @@ export function createDaemonServer(
         runnerRegistry,
         secretResolver,
       });
-      await remoteAccess.startIfEnabled();
+      // Ephemeral control-plane servers are used by tests and embedded fixtures.
+      // They must never claim the installation-global Remote Gateway listener.
+      if (resolvedConfig.port !== 0) {
+        await remoteAccess.startIfEnabled();
+      }
       startupOptionalWarmups.start(resolvedConfig.defaultWorkspaceCwd, storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd));
       resumePendingMediaJobExecutions({
         cwd: resolvedConfig.defaultWorkspaceCwd,

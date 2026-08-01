@@ -19,6 +19,7 @@ import {
   nativeSecureDeviceKeyAdapter,
   nativeSecureEntropy,
 } from "../platform/secure-device-key/native-adapter";
+import { pollForPairingAcceptance } from "./pairing-polling";
 
 export type MobilePairingPhase =
   | "loading"
@@ -30,7 +31,7 @@ export type MobilePairingPhase =
   | "paired"
   | "error";
 
-interface MobileRemoteContextValue {
+export interface MobileRemoteContextValue {
   readonly phase: MobilePairingPhase;
   readonly error?: string;
   readonly pendingPairing?: RemotePendingPairing;
@@ -138,26 +139,23 @@ export function MobileRemoteProvider({ children }: { readonly children: ReactNod
           return;
         }
         setPhase("awaiting_pc");
-        while (generation === pairingGeneration.current) {
-          if (Date.parse(started.pending.qr.expiresAt) < Date.now()) {
-            throw new Error("pairing_expired");
-          }
-          await delay(1_500);
-          const accepted = await pairing.submit(started.pending);
-          if (accepted) {
-            if (generation !== pairingGeneration.current) {
-              return;
-            }
-            setPhase("initial_sync");
-            await startSession(accepted);
-            setPendingPairing(undefined);
-            return;
-          }
+        const accepted = await pollForPairingAcceptance({
+          expiresAt: started.pending.qr.expiresAt,
+          isActive: () => generation === pairingGeneration.current,
+          submit: () => pairing.submit(started.pending),
+          onTransientError: (submitError) => console.warn("mobile_remote_pairing_retry", submitError),
+        });
+        if (!accepted || generation !== pairingGeneration.current) {
+          return;
         }
+        setPhase("initial_sync");
+        await startSession(accepted);
+        setPendingPairing(undefined);
       } catch (pairingError) {
         if (generation !== pairingGeneration.current) {
           return;
         }
+        console.error("mobile_remote_pairing_failed", pairingError);
         setError(userFacingError(pairingError));
         setPhase("error");
       }
@@ -222,8 +220,4 @@ function userFacingError(error: unknown): string {
     return "无法使用此 iPhone 的安全设备密钥。";
   }
   return "暂时无法连接 Ling PC，请稍后重试。";
-}
-
-async function delay(milliseconds: number): Promise<void> {
-  await new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 }

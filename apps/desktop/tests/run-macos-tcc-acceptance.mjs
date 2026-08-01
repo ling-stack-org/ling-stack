@@ -702,6 +702,7 @@ export async function startMacosRestartDaemon({
     {
       desktopBridgeToken: bridgeToken,
       computerUseRouteToken: bridgeToken,
+      remoteAccessStateDir: join(defaultWorkspaceCwd, ".ling-stack", "remote-access-test-state"),
       computerUseStop: async () => ({
         accepted: true,
         acknowledged: true,

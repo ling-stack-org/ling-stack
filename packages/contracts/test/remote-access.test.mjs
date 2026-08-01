@@ -27,6 +27,7 @@ test("remote V1 allowlists contain only the designed communication surface", () 
     "conversation.mark_read",
     "profile.read",
     "profile.update",
+    "security.unpair",
   ]);
   assert.deepEqual(REMOTE_CONVERSATION_KINDS_V1, ["channel", "conversation", "teammate_direct"]);
   assert.deepEqual(REMOTE_CLIENT_COMMAND_TYPES_V1, [
@@ -41,11 +42,13 @@ test("remote V1 allowlists contain only the designed communication surface", () 
     "conversation.mark_read",
     "profile.read",
     "profile.update",
+    "security.unpair",
   ]);
   assert.equal(REMOTE_CLIENT_COMMAND_TYPES_V1.includes("approval.resolve"), false);
   assert.equal(REMOTE_CLIENT_COMMAND_TYPES_V1.includes("run.cancel"), false);
   assert.equal(REMOTE_CLIENT_COMMAND_TYPES_V1.includes("file.read"), false);
   assert.equal(REMOTE_LIFECYCLE_COMMAND_TYPES_V1.includes("stream.ack"), false);
+  assert.equal(REMOTE_LIFECYCLE_COMMAND_TYPES_V1.includes("security.unpair"), true);
   assert.equal(REMOTE_SERVER_EVENT_TYPES_V1.includes("approval.summary"), false);
   assert.equal(REMOTE_SERVER_EVENT_TYPES_V1.includes("conversation.delta"), true);
   assert.equal(REMOTE_SERVER_EVENT_TYPES_V1.includes("profile.snapshot"), true);
