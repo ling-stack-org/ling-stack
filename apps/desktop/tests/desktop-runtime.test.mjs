@@ -612,6 +612,37 @@ test("closed gate never composes a provider even when the daemon returned a type
   assert.equal(runtime.cuaDriverCoordinator, undefined);
 });
 
+test("task continuation observes lock state even when the Cua Driver gate is closed", async () => {
+  const daemon = fakeDaemon(authority("closed-gate-task-continuation", 1));
+  const powerMonitor = fakePowerMonitor();
+  const published = [];
+  const runtime = createRuntime(daemon, {
+    featureFlags: closedFeatureFlags(),
+    platformBinding: undefined,
+    powerMonitor,
+    lockedTaskContinuationPreferenceStore: {
+      async load() {
+        return { schemaVersion: 1, continueWhileLocked: false };
+      },
+      async save() {},
+    },
+    lockedTaskContinuationClient: recordingLockedTaskContinuationClient(published),
+  });
+
+  await runtime.ensureStarted();
+  powerMonitor.emit("lock-screen");
+  await flushAsyncWork();
+  assert.deepEqual(published.at(-1), {
+    workspaceCwd,
+    desktopInstanceId: runtime.desktopInstanceId,
+    leaseTtlMs: 15_000,
+    continueWhileLocked: false,
+    locked: true,
+  });
+  await runtime.shutdown();
+  assert.deepEqual(powerMonitor.observedEvents(), []);
+});
+
 test("open bundled gate fails closed when daemon authority is missing", async () => {
   const daemon = fakeDaemon(undefined);
   const runtime = createRuntime(daemon);
@@ -1185,6 +1216,228 @@ test("shutdown fences an in-flight restart before it can compose replacement aut
   assert.equal(runtime.cuaDriverCoordinator, undefined);
 });
 
+test("locked-task continuation loads once and syncs the persisted preference after daemon startup", async () => {
+  const daemon = fakeDaemon(authority("connection-task-continuation-load", 1));
+  const published = [];
+  let loadCalls = 0;
+  const runtime = createRuntime(daemon, {
+    lockedTaskContinuationPreferenceStore: {
+      async load() {
+        loadCalls += 1;
+        return { schemaVersion: 1, continueWhileLocked: false };
+      },
+      async save() {},
+    },
+    lockedTaskContinuationClient: recordingLockedTaskContinuationClient(published),
+  });
+
+  assert.deepEqual(await runtime.getLockedTaskContinuationPreferences(), {
+    continueWhileLocked: false,
+  });
+  await runtime.ensureStarted();
+  assert.equal(loadCalls, 1);
+  assert.deepEqual(published, [{
+    workspaceCwd,
+    desktopInstanceId: runtime.desktopInstanceId,
+    leaseTtlMs: 15_000,
+    continueWhileLocked: false,
+    locked: false,
+  }]);
+  await runtime.shutdown();
+});
+
+test("locked-task continuation publishes the probed locked state on first startup sync", async () => {
+  const daemon = fakeDaemon(authority("connection-task-continuation-initial-lock", 1));
+  const published = [];
+  const runtime = createRuntime(daemon, {
+    readSystemSessionLocked: async () => true,
+    lockedTaskContinuationPreferenceStore: {
+      async load() {
+        return { schemaVersion: 1, continueWhileLocked: false };
+      },
+      async save() {},
+    },
+    lockedTaskContinuationClient: recordingLockedTaskContinuationClient(published),
+  });
+
+  await runtime.ensureStarted();
+  assert.equal(published.length, 1);
+  assert.deepEqual(published[0], {
+    workspaceCwd,
+    desktopInstanceId: runtime.desktopInstanceId,
+    leaseTtlMs: 15_000,
+    continueWhileLocked: false,
+    locked: true,
+  });
+  await runtime.shutdown();
+});
+
+test("locked-task continuation fails closed when the initial session state is unknown", async () => {
+  const daemon = fakeDaemon(authority("connection-task-continuation-unknown-lock", 1));
+  const published = [];
+  const diagnostics = [];
+  const runtime = createRuntime(daemon, {
+    readSystemSessionLocked: async () => undefined,
+    onDiagnostic: (event, details) => diagnostics.push({ event, details }),
+    lockedTaskContinuationPreferenceStore: {
+      async load() {
+        return { schemaVersion: 1, continueWhileLocked: false };
+      },
+      async save() {},
+    },
+    lockedTaskContinuationClient: recordingLockedTaskContinuationClient(published),
+  });
+
+  await runtime.ensureStarted();
+  assert.equal(published[0].locked, true);
+  assert.deepEqual(diagnostics.find((diagnostic) =>
+    diagnostic.event === "desktop_runtime.locked_task_initial_state_unknown"), {
+    event: "desktop_runtime.locked_task_initial_state_unknown",
+    details: { platform: "darwin", failClosed: true },
+  });
+  await runtime.shutdown();
+});
+
+test("locked-task continuation remains blocked until lock and suspend boundaries both clear", async () => {
+  const daemon = fakeDaemon(authority("connection-task-continuation-boundaries", 1));
+  const published = [];
+  const saved = [];
+  const runtime = createRuntime(daemon, {
+    lockedTaskContinuationPreferenceStore: {
+      async load() {
+        return { schemaVersion: 1, continueWhileLocked: true };
+      },
+      async save(preference) {
+        saved.push(preference);
+      },
+    },
+    lockedTaskContinuationClient: recordingLockedTaskContinuationClient(published),
+  });
+
+  assert.deepEqual(await runtime.setContinueTasksWhileLocked(false), { accepted: true });
+  await runtime.suspendComputerControlForSystem("system_lock");
+  await runtime.suspendComputerControlForSystem("system_suspend");
+  await runtime.resumeComputerControlForSystem("unlock");
+  assert.equal(published.at(-1).locked, true);
+  await runtime.resumeComputerControlForSystem("resume");
+  assert.deepEqual(published.at(-1), {
+    workspaceCwd,
+    desktopInstanceId: runtime.desktopInstanceId,
+    leaseTtlMs: 15_000,
+    continueWhileLocked: false,
+    locked: false,
+  });
+  assert.deepEqual(saved, [{ schemaVersion: 1, continueWhileLocked: false }]);
+  await runtime.shutdown();
+});
+
+test("enabling continuation while locked releases task work without resuming Computer Control", async () => {
+  const daemon = fakeDaemon(authority("connection-task-continuation-toggle", 1));
+  const published = [];
+  const runtime = createRuntime(daemon, {
+    lockedTaskContinuationPreferenceStore: {
+      async load() {
+        return { schemaVersion: 1, continueWhileLocked: false };
+      },
+      async save() {},
+    },
+    lockedTaskContinuationClient: recordingLockedTaskContinuationClient(published),
+  });
+
+  await runtime.suspendComputerControlForSystem("system_lock");
+  assert.deepEqual(await runtime.setContinueTasksWhileLocked(true), { accepted: true });
+  assert.deepEqual(published.at(-1), {
+    workspaceCwd,
+    desktopInstanceId: runtime.desktopInstanceId,
+    leaseTtlMs: 15_000,
+    continueWhileLocked: true,
+    locked: true,
+  });
+  await runtime.shutdown();
+});
+
+test("a failed daemon sync restores the previously persisted continuation preference", async () => {
+  const daemon = fakeDaemon(authority("connection-task-continuation-rollback", 1));
+  const saved = [];
+  const published = [];
+  const runtime = createRuntime(daemon, {
+    lockedTaskContinuationPreferenceStore: {
+      async load() {
+        return { schemaVersion: 1, continueWhileLocked: true };
+      },
+      async save(preference) {
+        saved.push(preference);
+      },
+    },
+    lockedTaskContinuationClient: {
+      async publish(input) {
+        published.push(input);
+        if (!input.continueWhileLocked) throw new Error("daemon unavailable");
+        return {
+          revision: published.length,
+          ...input,
+          blocked: input.locked && !input.continueWhileLocked,
+        };
+      },
+    },
+  });
+
+  assert.deepEqual(await runtime.setContinueTasksWhileLocked(false), {
+    accepted: false,
+    reason: "locked_task_continuation_sync_failed",
+  });
+  assert.deepEqual(await runtime.getLockedTaskContinuationPreferences(), {
+    continueWhileLocked: true,
+  });
+  assert.deepEqual(saved, [
+    { schemaVersion: 1, continueWhileLocked: false },
+    { schemaVersion: 1, continueWhileLocked: true },
+  ]);
+  assert.deepEqual(published.map((input) => input.continueWhileLocked), [false, true]);
+  await runtime.shutdown();
+});
+
+test("a failed durable rollback keeps the newly persisted continuation preference as truth", async () => {
+  const daemon = fakeDaemon(authority("connection-task-continuation-rollback-failure", 1));
+  const saved = [];
+  let saveCalls = 0;
+  const runtime = createRuntime(daemon, {
+    lockedTaskContinuationPreferenceStore: {
+      async load() {
+        return { schemaVersion: 1, continueWhileLocked: true };
+      },
+      async save(preference) {
+        saveCalls += 1;
+        saved.push(preference);
+        if (saveCalls === 2) throw new Error("rollback disk failure");
+      },
+    },
+    lockedTaskContinuationClient: {
+      async publish(input) {
+        if (!input.continueWhileLocked) throw new Error("daemon unavailable");
+        return {
+          revision: 1,
+          ...input,
+          blocked: input.locked && !input.continueWhileLocked,
+        };
+      },
+    },
+  });
+
+  assert.deepEqual(await runtime.setContinueTasksWhileLocked(false), {
+    accepted: false,
+    reason: "locked_task_continuation_rollback_failed",
+  });
+  assert.deepEqual(await runtime.getLockedTaskContinuationPreferences(), {
+    continueWhileLocked: false,
+  });
+  assert.deepEqual(saved, [
+    { schemaVersion: 1, continueWhileLocked: false },
+    { schemaVersion: 1, continueWhileLocked: true },
+  ]);
+  await runtime.shutdown();
+});
+
 function createRuntime(daemon, overrides = {}) {
   return new DesktopRuntime({
     daemon,
@@ -1197,8 +1450,33 @@ function createRuntime(daemon, overrides = {}) {
     architecture: "arm64",
     featureFlags: bundledDarwinFeatureFlags(),
     platformBinding: fakePlatformBinding(),
+    readSystemSessionLocked: async () => false,
+    lockedTaskContinuationClient: {
+      async publish(input) {
+        return {
+          revision: 0,
+          continueWhileLocked: input.continueWhileLocked,
+          locked: input.locked,
+          blocked: input.locked && !input.continueWhileLocked,
+        };
+      },
+    },
     ...overrides,
   });
+}
+
+function recordingLockedTaskContinuationClient(published) {
+  return {
+    async publish(input) {
+      published.push(input);
+      return {
+        revision: published.length,
+        continueWhileLocked: input.continueWhileLocked,
+        locked: input.locked,
+        blocked: input.locked && !input.continueWhileLocked,
+      };
+    },
+  };
 }
 
 function fakeDaemon(initialAuthority, options = {}) {

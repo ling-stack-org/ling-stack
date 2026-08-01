@@ -2,204 +2,218 @@
 
 ## Status
 
-**Scope:** macOS and Windows product code; macOS local verification; Windows real-machine
-acceptance by the Windows owner.
-**Decision:** tasks continue, Computer Control pauses, unlock triggers fresh readiness.
-**Supersedes:** the persistent locked-control Switch and restricted locked-generation plan.
+**Scope:** macOS and Windows shared product code; macOS local verification; Windows
+real-machine acceptance by the Windows owner.
+**Decision:** persistent default-On non-visual continuation Switch; Computer Control always
+pauses while locked.
+**Status:** implementation, local validation and PR handoff complete; Windows real-machine
+acceptance remains with the Windows owner.
 
 ## Delivery outcome
 
-- Lock/sleep never intentionally cancels the daemon or active non-visual task.
-- Computer Control closes its gate and retires provider/lease generation on lock/sleep.
-- Unlock/resume creates a fresh normal generation after full readiness.
-- Settings documents the behavior and exposes no locked-control mutation.
-- Negative macOS/Windows security probes remain evidence, not an enablement path.
-
-## What already exists
-
-| Capability | Current owner | Plan action |
-|---|---|---|
-| OS lock/sleep/unlock/resume events | `DesktopRuntime` | Reuse without new event layer |
-| gate, input fence, lease/process cleanup | Cua Driver coordinator | Reuse and regression-test ordering |
-| fresh generation recovery | Cua Driver coordinator | Reuse normal readiness path |
-| daemon/run lifecycle | Desktop daemon/runtime | Prove it stays independent |
-| bundled settings page | Web settings | Replace action UI with fixed explanation |
-| macOS attended probe | Desktop scripts | Retain unsupported evidence |
-| Windows denial harness | Desktop scripts/release handoff | Retain as defensive verification |
+- Settings exposes **Continue running while locked** and persists it locally.
+- On leaves current non-visual behavior unchanged.
+- Off pauses the embedded run at the next safe Agent/provider/tool boundary and resumes the
+  same run after unlock.
+- Waiting does not consume idle/hard timeout budget and remains cancellable.
+- Computer Control always fences and recovers through fresh unlocked readiness.
+- No locked-control grant, credential path or secure-surface authority is added.
 
 ## Dependency order
 
 ```text
-1. Scope reduction
-      |
-      +--> 2. Static Settings behavior
-      +--> 3. Design/source-of-truth rewrite
-      +--> 4. Runtime/task-continuation assertions
-                    |
-                    v
-             5. Local validation and review
+1. Preference and Desktop IPC
+   -> 2. Desktop-to-daemon state bridge
+      -> 3. Cooperative daemon/runner gate
+         -> 4. Settings Switch and rollback UX
+            -> 5. Docs, focused validation and ship
 ```
 
-Sequential implementation is preferred because the cleanup, UI and docs all describe one
-security boundary and should be reviewed as one diff.
-
-## Slice 1 — Remove the persistent locked-control product surface
+## Slice 1 — Focused persistent preference
 
 ### Changes
 
-- Revert `allowLockedComputerUse` from Desktop preferences.
-- Revert `setLockedComputerControlEnabled` from Desktop capability, preload and IPC.
-- Revert the proposed persistent `userOptIn` additions from contracts and daemon state.
-- Remove renderer `/authorize` and `/revoke`; keep only the read-only locked-state
-  projection. Any dormant compatibility mutation remains Desktop-bridge authenticated and
-  packaged `disabled_by_build`.
-- Revert automatic runtime-grant arming from the policy coordinator.
-- Restore fixed `disabled_by_build` semantics.
+- Add a versioned `locked-task-continuation-preference.json` store.
+- Default missing/malformed state to On.
+- Serialize atomic writes with last invocation winning.
+- Add typed get/set Desktop capability, preload exposure and IPC handlers.
+- Restrict IPC to the main window and boolean values.
+- Keep this file separate from Computer Use preview preferences.
 
 ### Exit criteria
 
-- No persistent locked-control preference is stored.
-- No Renderer command can turn locked control on.
-- Existing Computer Use Stop and normal Computer Control On/Off behavior are unchanged.
+- Restart reloads the saved value.
+- Save failure returns a rejected command and preserves the prior value.
+- Web-only/no Desktop mode cannot claim persistence.
 
-## Slice 2 — Replace Settings with lock-aware guidance
+## Slice 2 — Private Desktop-to-daemon state bridge
 
 ### Changes
 
-- Replace `LockedComputerControlSection` with `LockAwareComputerControlSection`.
-- Render three fixed rows: task continuation, Computer Control pause, unlock recovery.
+- Add a focused client and `POST /computer-use/locked-task-continuation/desktop/state`.
+- Require Desktop bridge token, configured workspace, POST and exact boolean schema.
+- Publish at daemon startup/restart, OS boundary changes and preference changes.
+- Probe the current macOS/Windows session state before first publication and fail closed
+  when the probe is unknown.
+- Bind state to an ephemeral Desktop owner, renew a short lease and release it at shutdown.
+- Latch lock/suspend before asynchronous work and serialize publications.
+
+### Exit criteria
+
+- Renderer/route tokens cannot mutate the gate.
+- A Desktop crash cannot leave an immortal blocked state in an external daemon.
+- Reordered unlock/resume cannot publish unlocked until both boundaries clear.
+- A task-state sync cannot delay or authorize Computer Control.
+
+## Slice 3 — Cooperative run gate
+
+### Changes
+
+- Add process-wide continuation snapshot/waiters to `RuntimeSupervisor`.
+- Gate run start in the daemon orchestrator.
+- Add embedded Pi callbacks before Agent start, provider request and tool call.
+- Preserve atomic in-flight action completion.
+- Pause idle/hard timeout accounting only while that run actually waits at the gate.
+- Use monotonic elapsed time for the hard-timeout budget.
+- Use the run abort signal to cancel a waiter.
+
+### Exit criteria
+
+- Off plus locked blocks the next safe boundary.
+- Unlock or toggle On releases the same run.
+- Cancellation while waiting completes normally.
+- External opaque runners are documented as run-start-only unless callback-aware.
+
+## Slice 4 — Settings and safety boundary
+
+### Changes
+
+- Replace the fixed “tasks continue” badge with a persistent Switch.
+- Add optimistic checked state, busy state, load warning and durable-truth reconciliation
+  after save/sync/rollback failures.
+- Expose the task preference capability independently from optional Cua Driver readiness.
+- Keep fixed Computer Control pause and fresh-unlock recovery rows.
 - Add Chinese translations.
-- Add a source-contract test proving the component has no Switch, locked projection or
-  authorization/revoke command.
+- Update source-contract tests to require the task Switch and forbid locked-control commands.
 
 ### Exit criteria
 
-- The Computer Control page contains no “Allow control while locked” action.
-- The explanation remains visible whether normal Computer Control is On or Off.
-- UI copy explicitly excludes lock/login/password/secure-desktop interaction.
-
-## Slice 3 — Preserve evidence and normal provider compatibility
-
-### Changes
-
-- Retain the corrected Darwin session keys and unlocked missing-lock-field handling.
-- Retain the disposable AppKit attended probe and content-free unsupported evidence.
-- Retain the system-only macOS PATH required by embedded Cua Driver 0.8.3.
-- Document that the probe cannot promote product capability.
-
-### Exit criteria
-
-- Native helper and probe compile on macOS arm64.
-- Evidence validates as `unsupported / locked_control_input_unavailable`.
-- Managed provider environment does not inherit a hostile caller PATH.
-
-## Slice 4 — Harden runtime regression coverage
-
-### Automated checks
-
-- Desktop runtime receives lock, suspend, unlock and resume in order.
-- `resume` before `unlock`, and `unlock` before `resume`, remain paused until both system
-  boundaries clear.
-- A lock that arrives during initial provider enable is latched and reasserted after enable;
-  the candidate generation cannot remain published.
-- Lock/suspend invokes only Computer Control suspension.
-- Daemon start count stays one and stop count stays zero until Desktop shutdown.
-- Provider gate closes before input fence, lease revoke and process cleanup.
-- Unlock/session-active creates exactly one fresh generation.
-- Relock during recovery tears down the candidate generation.
-- Settings source contains no locked-control mutation.
-
-### Attended checks
-
-- No additional macOS lock test is required for this change; the retained negative evidence
-  already rejects locked input.
-- Windows owners verify ordinary pause/unlock recovery on Windows x64 before release. They do
-  not need to prove locked input.
+- UI clearly says the Switch covers Agent/Shell/API/file work only.
+- No text/action implies screen control while locked.
+- Toggling On while locked never resumes the Driver coordinator.
 
 ## Slice 5 — Validation and ship
 
-Run the narrow checks first:
+Run focused checks:
 
 ```bash
-corepack pnpm --filter @ling-stack/desktop build
-node --test apps/desktop/tests/desktop-runtime.test.mjs \
-  apps/desktop/tests/cua-driver-coordinator.test.mjs \
-  apps/desktop/tests/cua-driver-provider-host.test.mjs \
-  apps/desktop/tests/locked-control-darwin-probe-core.test.mjs \
-  apps/desktop/tests/locked-control-feasibility-probe.test.mjs \
-  apps/desktop/tests/locked-control-native-helper-source.test.mjs
+corepack pnpm --filter @ling-stack/runner-pi test
+corepack pnpm --filter @ling-stack/daemon build
+node --test packages/daemon/test/locked-task-continuation.test.mjs
 
-corepack pnpm --filter @ling-stack/web typecheck
+corepack pnpm --filter @ling-stack/desktop build
+node --test apps/desktop/tests/locked-task-continuation.test.mjs \
+  apps/desktop/tests/desktop-runtime.test.mjs \
+  apps/desktop/tests/ipc.test.mjs \
+  apps/desktop/tests/theme-package-preload.test.mjs
+
+node --test apps/web/test/lock-aware-computer-control-section.test.mjs
+corepack pnpm --filter @ling-stack/web test
 corepack pnpm --filter @ling-stack/web lint
 corepack pnpm --filter @ling-stack/web check:i18n
-node --test apps/web/test/lock-aware-computer-control-section.test.mjs \
-  apps/web/test/computer-control-view-model.test.mjs
+git diff --check
 ```
 
-Then run repository-appropriate broader checks if the focused checks pass. Hosted native CI
-is not required while the Actions allowance is constrained; Windows real-machine acceptance
-is a release handoff.
+Then review the final diff, commit, push and create/merge a PR only when explicitly
+requested. Windows owners validate the x64 packaged behavior later; they do not need to
+prove or enable locked input.
 
 ## Test and failure coverage
 
-| Path | Test type | Expected result |
+| Path | Test | Expected result |
 |---|---|---|
-| lock/suspend event | Desktop unit | Computer Control suspension called; daemon untouched |
-| unlock/resume event | Desktop unit | recovery hint called; daemon untouched |
-| resume before unlock | Desktop/policy unit | no recovery until unlock also arrives |
-| lock during initial enable | Desktop/coordinator unit | suspension remains latched; candidate retired |
-| renderer authorization/revoke | daemon API | routes do not exist; only read-only projection remains |
-| provider fence timeout | coordinator unit | immediate kill before cleanup |
-| duplicate unlock hints | coordinator unit | one fresh generation |
-| relock during recovery | coordinator unit | candidate generation removed |
-| hostile host PATH | provider-host unit | only fixed system PATH on macOS |
-| Settings page | Web source contract | explanation present; Switch/commands absent |
-| macOS feasibility artifact | evidence unit | unsupported locked input remains immutable |
-
-No silent failure mode remains that could enable locked input. A readiness failure after
-unlock is visible as the existing Computer Control waiting/repair state while the ordinary
-task remains alive.
+| missing/malformed preference | Desktop unit | default On |
+| concurrent saves | Desktop unit | last invocation wins; no temp residue |
+| client publication | Desktop unit | exact URL/header/body and response validation |
+| IPC get/set | Desktop unit | main window only; boolean only |
+| lock plus Switch Off | Runtime/gate unit | next safe boundary waits |
+| unlock/resume reordered | Runtime unit | blocked until both clear |
+| toggle On while locked | Runtime/gate unit | task released; control remains fenced |
+| waiter cancellation | Gate unit | abort reason preserved and listener removed |
+| provider/model/tool boundaries | Runner unit | wait before next atomic action |
+| timeout while blocked | Orchestrator regression | no idle/hard cancellation budget consumed |
+| global gate blocked before a run reaches a boundary | Orchestrator regression | that run's timeout remains active |
+| wall clock changes during wait | Orchestrator regression | monotonic hard-time budget remains correct |
+| Desktop starts while already locked | Runtime unit | first publication is locked; unknown probe fails closed |
+| Desktop exits/crashes | Runtime/daemon unit | owner release or TTL expiry clears stale gate state |
+| daemon sync plus rollback write failure | Runtime/Web unit | newly persisted value remains truth and UI rereads it |
+| private daemon route | Daemon HTTP unit | token/method/workspace/schema enforced; no CORS grant |
+| Settings | Web source/component checks | task Switch present; locked-control commands absent |
+| lock/suspend control path | Existing Desktop/coordinator tests | control fenced; daemon untouched |
 
 ## Implementation tasks
 
-- [x] **LATC-01 (P1)** — Remove persistent opt-in preference, IPC and daemon state.
-- [x] **LATC-02 (P1)** — Add fixed lock-aware Settings explanation.
-- [x] **LATC-03 (P1)** — Rewrite policy and detailed design.
-- [x] **LATC-04 (P1)** — Assert lock/sleep does not stop the daemon.
-- [x] **LATC-05 (P1)** — Retain native probe corrections, evidence and provider PATH fix.
-- [x] **LATC-06 (P1)** — Run focused Desktop/Web validation and fix failures.
-- [x] **LATC-06A (P1)** — Remove Renderer mutation routes and harden reordered/pre-enable
-  lock and suspend boundaries.
-- [ ] **LATC-07 (P2)** — Review final diff, commit, push and merge when requested.
-- [ ] **LATC-WIN-01 (release handoff)** — Windows owner validates x64 pause/unlock recovery.
+- [x] **LATC-08 (P1)** — Add focused default-On atomic preference store.
+- [x] **LATC-09 (P1)** — Add typed main-window IPC/preload get/set capability.
+- [x] **LATC-10 (P1)** — Add Desktop-authenticated daemon state client and route.
+- [x] **LATC-11 (P1)** — Add abortable cooperative gate to Runtime Supervisor.
+- [x] **LATC-12 (P1)** — Gate run start and embedded Pi Agent/provider/tool boundaries.
+- [x] **LATC-13 (P1)** — Exclude blocked time from idle/hard timeout accounting.
+- [x] **LATC-14 (P1)** — Wire Desktop startup/restart and dual OS boundaries.
+- [x] **LATC-15 (P1)** — Add persistent Settings Switch, translations and rollback UX.
+- [x] **LATC-16 (P1)** — Add focused Desktop/Daemon/Runner/Web tests.
+- [x] **LATC-17 (P1)** — Update policy, detailed design and implementation plan.
+- [x] **LATC-18 (P1)** — Run broad local validation and final diff review.
+- [x] **LATC-20 (P1)** — Add per-run timeout accounting and monotonic hard-time budget.
+- [x] **LATC-21 (P1)** — Add Desktop owner lease, heartbeat, explicit release and expiry.
+- [x] **LATC-22 (P1)** — Add initial macOS/Windows lock probe with fail-closed unknown state.
+- [x] **LATC-23 (P1)** — Decouple Renderer preference capability from Cua Driver readiness.
+- [x] **LATC-24 (P1)** — Preserve durable truth when publication rollback cannot reach disk.
+- [x] **LATC-19 (P2)** — Prepare the verified implementation for commit/push/PR/merge on request.
+- [ ] **LATC-WIN-02 (release handoff)** — Windows owner validates x64 persistence,
+  lock pause/resume and unchanged Computer Control fence on real hardware.
 
 ## Estimate
 
-- Scope reduction and UI/docs/tests: 2–4 hours with Codex.
-- Local macOS validation and review: 1–2 hours depending on build cache.
-- Windows x64 acceptance: 0.5–1 day for the Windows owner; it does not block local macOS
+- Shared implementation, focused tests and docs: completed in this slice.
+- Broad local validation/review: 0.5–1.5 hours depending on test cache.
+- Windows x64 acceptance: 0.5–1 day for the Windows owner; it does not block macOS local
   implementation completion.
+
+## Local validation record
+
+On 2026-07-31 the focused Desktop, Daemon, Runner and Web checks passed, including Desktop
+build/typecheck, Web lint and i18n. The broad Daemon run passed 840/842 in parallel; the two
+SQLite migration uniqueness races both passed when rerun individually. The unrelated
+Windows provider verifier remains red because its existing production-lock fixture lacks
+the previously required input-fence contract; none of the files in that fixture/verifier
+path are changed by this slice.
+
+The final focused rerun passed Desktop 54/54, locked-task Daemon 7/7, Runner 16/16 and Web
+19/19. The pre-merge review closed all six timeout/lifecycle/startup/capability/durability
+findings and additionally bounded stalled heartbeat requests and corrected rollback UI
+copy. `git diff --check`, Web lint and the i18n audit were clean.
 
 ## Definition of done
 
-- Persistent locked-control UX and state are absent from the diff.
-- Lock/sleep pauses only Computer Control.
-- Unlock/resume requires a fresh generation and readiness.
-- Settings has no locked-control Switch or command.
-- macOS negative evidence remains valid and content-free.
-- Focused builds/tests/lint/i18n pass.
-- Windows acceptance ownership and boundary are explicit.
+- Default-On preference persists and is visible in packaged macOS/Windows Settings.
+- Off plus locked cooperatively pauses embedded non-visual work at safe boundaries.
+- Unlock or On resumes the same run and cancellation remains functional.
+- Lock/suspend always pauses Computer Control independently.
+- Focused build/tests and Web lint/i18n pass.
+- Final diff contains no locked-control authorization path.
+- Windows real-machine acceptance boundary is explicit.
 
 ## NOT in scope
 
-- Positive locked-screen capture/input or a locked provider generation.
-- Local identity confirmation for a locked-control preference.
-- New grant/audit/persistence infrastructure.
-- Automatic unlock, password/PIN entry or secure-desktop control.
-- DLL/native-addon conversion.
-- Windows ARM64 or Linux Desktop provider support.
+- Positive locked-screen capture/input or a locked Driver generation.
+- Identity confirmation for non-visual task continuation.
+- New audit database or cloud preference synchronization.
+- Forced mid-action Shell/API/file interruption.
+- Mid-run pause for callback-unaware third-party runners.
+- DLL/native-addon conversion, Windows ARM64 or Linux Desktop.
 
 ## Unresolved decisions
 
-There are no unresolved implementation decisions. Windows x64 real-machine acceptance is an
-explicit release handoff, not an architecture decision.
+There are no unresolved decisions for the embedded Pi/Desktop scope. Windows x64
+real-machine acceptance is an explicit release handoff, not an architecture decision.

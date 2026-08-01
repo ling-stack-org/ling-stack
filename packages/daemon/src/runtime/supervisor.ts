@@ -22,6 +22,10 @@ import {
   releaseWorkUnitRuntimeResources,
   transitionWorkUnitTerminal,
 } from "./work-units.js";
+import {
+  LockedTaskContinuationGate,
+  type LockedTaskContinuationSnapshot,
+} from "./locked-task-continuation.js";
 
 const RUNTIME_SCHEMA_VERSION = 22;
 
@@ -42,6 +46,9 @@ export class RuntimeSupervisor {
   private readonly lockedCwds = new Set<string>();
   private readonly runtimeLockPathsByCwd = new Map<string, string>();
   private readonly reconciledCwds = new Set<string>();
+  private readonly lockedTaskContinuation = new LockedTaskContinuationGate();
+  private lockedTaskContinuationOwnerId: string | undefined;
+  private lockedTaskContinuationLeaseTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(
     private readonly config: ResolvedDaemonConfig,
@@ -58,6 +65,48 @@ export class RuntimeSupervisor {
 
   getSandboxFeatures(): ResolvedDaemonConfig["sandbox"] {
     return this.config.sandbox;
+  }
+
+  getLockedTaskContinuationSnapshot(): LockedTaskContinuationSnapshot {
+    return this.lockedTaskContinuation.snapshot();
+  }
+
+  updateLockedTaskContinuation(input: {
+    readonly desktopInstanceId: string;
+    readonly leaseTtlMs: number;
+    readonly continueWhileLocked: boolean;
+    readonly locked: boolean;
+  }): LockedTaskContinuationSnapshot {
+    this.clearLockedTaskContinuationLease();
+    this.lockedTaskContinuationOwnerId = input.desktopInstanceId;
+    const ownerId = input.desktopInstanceId;
+    this.lockedTaskContinuationLeaseTimer = setTimeout(() => {
+      if (this.lockedTaskContinuationOwnerId !== ownerId) return;
+      this.lockedTaskContinuationOwnerId = undefined;
+      this.lockedTaskContinuationLeaseTimer = undefined;
+      this.lockedTaskContinuation.update({ continueWhileLocked: true, locked: false });
+    }, input.leaseTtlMs);
+    if (typeof this.lockedTaskContinuationLeaseTimer.unref === "function") {
+      this.lockedTaskContinuationLeaseTimer.unref();
+    }
+    return this.lockedTaskContinuation.update(input);
+  }
+
+  releaseLockedTaskContinuation(desktopInstanceId: string): LockedTaskContinuationSnapshot {
+    if (this.lockedTaskContinuationOwnerId !== desktopInstanceId) {
+      return this.lockedTaskContinuation.snapshot();
+    }
+    this.clearLockedTaskContinuationLease();
+    this.lockedTaskContinuationOwnerId = undefined;
+    return this.lockedTaskContinuation.update({ continueWhileLocked: true, locked: false });
+  }
+
+  isLockedTaskContinuationBlocked(): boolean {
+    return this.lockedTaskContinuation.isBlocked();
+  }
+
+  waitForLockedTaskContinuation(signal?: AbortSignal): Promise<void> {
+    return this.lockedTaskContinuation.waitUntilAllowed(signal);
   }
 
   getRuntime(cwd: string, store: RuntimeSupervisorRuntimeStore): RuntimeInstance {
@@ -108,6 +157,9 @@ export class RuntimeSupervisor {
   }
 
   releaseAll(): void {
+    this.clearLockedTaskContinuationLease();
+    this.lockedTaskContinuationOwnerId = undefined;
+    this.lockedTaskContinuation.update({ continueWhileLocked: true, locked: false });
     for (const [cwd, runtime] of this.runtimesByCwd.entries()) {
       const lockPath = this.runtimeLockPathsByCwd.get(cwd) ?? join(cwd, ".ling-stack", "runtime.lock");
       try {
@@ -123,6 +175,12 @@ export class RuntimeSupervisor {
     this.lockedCwds.clear();
     this.runtimeLockPathsByCwd.clear();
     this.reconciledCwds.clear();
+  }
+
+  private clearLockedTaskContinuationLease(): void {
+    if (!this.lockedTaskContinuationLeaseTimer) return;
+    clearTimeout(this.lockedTaskContinuationLeaseTimer);
+    this.lockedTaskContinuationLeaseTimer = undefined;
   }
 
   private ensureRuntimeLock(cwd: string, store: RuntimeSupervisorRuntimeStore): void {

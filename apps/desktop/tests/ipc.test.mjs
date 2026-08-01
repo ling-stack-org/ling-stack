@@ -80,6 +80,8 @@ test("Desktop IPC scopes privileged actions and strictly validates preview media
         return { state: "connected", baseUrl: "http://127.0.0.1:1", ownedByDesktop: true };
       },
       onStatusChanged: () => () => {},
+      getLockedTaskContinuationPreferences: async () => ({ continueWhileLocked: true }),
+      setContinueTasksWhileLocked: async () => ({ accepted: true }),
       revokeLockedComputerControl: async () => {
         calls.push(["revokeLockedControl"]);
         return { accepted: true };
@@ -523,6 +525,14 @@ test("Desktop IPC exposes computer-control permission commands only to the main 
         calls.push(["openPermissionSettings", permission]);
         return { accepted: true };
       },
+      getLockedTaskContinuationPreferences: async () => {
+        calls.push(["getLockedTaskContinuationPreferences"]);
+        return { continueWhileLocked: false };
+      },
+      setContinueTasksWhileLocked: async (enabled) => {
+        calls.push(["setContinueTasksWhileLocked", enabled]);
+        return { accepted: true };
+      },
       revokeLockedComputerControl: async () => {
         return { accepted: true };
       },
@@ -547,6 +557,22 @@ test("Desktop IPC exposes computer-control permission commands only to the main 
       "accessibility",
     ),
     { accepted: true },
+  );
+  assert.deepEqual(
+    await ipc.invoke(DESKTOP_IPC_CHANNELS.computerControlLockedTaskContinuationGet, mainEvent),
+    { continueWhileLocked: false },
+  );
+  assert.deepEqual(
+    await ipc.invoke(DESKTOP_IPC_CHANNELS.computerControlLockedTaskContinuationSet, mainEvent, false),
+    { accepted: true },
+  );
+  assert.deepEqual(
+    await ipc.invoke(DESKTOP_IPC_CHANNELS.computerControlLockedTaskContinuationSet, previewEvent, true),
+    { accepted: false, reason: "unauthorized_or_invalid_locked_task_continuation" },
+  );
+  assert.deepEqual(
+    await ipc.invoke(DESKTOP_IPC_CHANNELS.computerControlLockedTaskContinuationSet, mainEvent, "false"),
+    { accepted: false, reason: "unauthorized_or_invalid_locked_task_continuation" },
   );
   assert.deepEqual(
     await ipc.invoke(
@@ -583,6 +609,8 @@ test("Desktop IPC exposes computer-control permission commands only to the main 
   assert.deepEqual(calls, [
     ["requestPermissions"],
     ["openPermissionSettings", "accessibility"],
+    ["getLockedTaskContinuationPreferences"],
+    ["setContinueTasksWhileLocked", false],
     ["openPermissionSettings", "screen_recording"],
   ]);
 

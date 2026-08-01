@@ -33,6 +33,7 @@ import {
   handleLockedControlDesktopRoute,
   handleLockedControlProjectionRoute,
 } from "./locked-control-routes.js";
+import { handleLockedTaskContinuationDesktopRoute } from "./locked-task-continuation-routes.js";
 
 const STOP_ACK_TIMEOUT_MS = 10_000;
 const PRIVATE_SOURCE_OWNERSHIP_TIMEOUT_MS = 1_500;
@@ -107,6 +108,10 @@ export async function handleComputerUseRoute(
     }
 
     if (await handleLockedControlDesktopRoute(request, response, url, context)) {
+      return true;
+    }
+
+    if (await handleLockedTaskContinuationDesktopRoute(request, response, url, context)) {
       return true;
     }
 

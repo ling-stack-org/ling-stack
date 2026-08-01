@@ -794,6 +794,9 @@ export async function executeRunRequest(
   });
 
   let lastRuntimeActivityAt = Date.now();
+  let taskContinuationWaitDepth = 0;
+  let pauseHardTimeout = (): void => undefined;
+  let resumeHardTimeout = (): void => undefined;
   const recordRuntimeHeartbeat = (source: "supervisor" | "runner" = "supervisor", detail?: unknown): void => {
     const ts = new Date().toISOString();
     try {
@@ -808,6 +811,28 @@ export async function executeRunRequest(
     } catch {
       // Heartbeat persistence must not hide runner output; runtime diagnostics will show stale state if storage fails.
     }
+  };
+  const waitForTaskContinuation = async (
+    boundary: "run_start" | "before_agent_start" | "before_provider_request" | "tool_call",
+  ): Promise<void> => {
+    if (!runtimeSupervisor.isLockedTaskContinuationBlocked()) return;
+    recordRuntimeHeartbeat("supervisor", {
+      event: "locked_task_continuation_waiting",
+      boundary,
+    });
+    taskContinuationWaitDepth += 1;
+    if (taskContinuationWaitDepth === 1) pauseHardTimeout();
+    try {
+      await runtimeSupervisor.waitForLockedTaskContinuation(abortController.signal);
+    } finally {
+      taskContinuationWaitDepth = Math.max(0, taskContinuationWaitDepth - 1);
+      if (taskContinuationWaitDepth === 0) resumeHardTimeout();
+    }
+    lastRuntimeActivityAt = Date.now();
+    recordRuntimeHeartbeat("supervisor", {
+      event: "locked_task_continuation_resumed",
+      boundary,
+    });
   };
   const requestRuntimeAbort = (event: "idle_timeout" | "hard_timeout"): void => {
     const current = store.getWorkUnit(workUnit.id);
@@ -850,6 +875,10 @@ export async function executeRunRequest(
     if (!current || !isActiveWorkUnitStatus(current.status)) {
       return;
     }
+    if (taskContinuationWaitDepth > 0) {
+      lastRuntimeActivityAt = Date.now();
+      return;
+    }
     if (Date.now() - lastRuntimeActivityAt > current.timeoutPolicy.idleTimeoutMs) {
       requestRuntimeAbort("idle_timeout");
     }
@@ -857,12 +886,46 @@ export async function executeRunRequest(
   if (typeof heartbeatTimer.unref === "function") {
     heartbeatTimer.unref();
   }
-  const hardTimeoutTimer = setTimeout(() => {
-    requestRuntimeAbort("hard_timeout");
-  }, workUnit.timeoutPolicy.hardTimeoutMs);
-  if (typeof hardTimeoutTimer.unref === "function") {
-    hardTimeoutTimer.unref();
-  }
+  let hardTimeoutRemainingMs = workUnit.timeoutPolicy.hardTimeoutMs;
+  let hardTimeoutActiveSince = performance.now();
+  let hardTimeoutTimer: ReturnType<typeof setTimeout> | undefined;
+  const clearHardTimeout = (): void => {
+    if (!hardTimeoutTimer) return;
+    clearTimeout(hardTimeoutTimer);
+    hardTimeoutTimer = undefined;
+  };
+  const accountHardTimeout = (now = performance.now()): void => {
+    hardTimeoutRemainingMs -= Math.max(0, now - hardTimeoutActiveSince);
+    hardTimeoutActiveSince = now;
+  };
+  const scheduleHardTimeout = (): void => {
+    if (hardTimeoutTimer || taskContinuationWaitDepth > 0 || abortController.signal.aborted) return;
+    const delay = Math.max(1, hardTimeoutRemainingMs);
+    hardTimeoutTimer = setTimeout(() => {
+      hardTimeoutTimer = undefined;
+      accountHardTimeout();
+      if (hardTimeoutRemainingMs <= 0) {
+        requestRuntimeAbort("hard_timeout");
+        return;
+      }
+      scheduleHardTimeout();
+    }, delay);
+    if (typeof hardTimeoutTimer.unref === "function") hardTimeoutTimer.unref();
+  };
+  pauseHardTimeout = (): void => {
+    accountHardTimeout();
+    clearHardTimeout();
+    if (hardTimeoutRemainingMs <= 0) requestRuntimeAbort("hard_timeout");
+  };
+  resumeHardTimeout = (): void => {
+    hardTimeoutActiveSince = performance.now();
+    if (hardTimeoutRemainingMs <= 0) {
+      requestRuntimeAbort("hard_timeout");
+      return;
+    }
+    scheduleHardTimeout();
+  };
+  scheduleHardTimeout();
 
   const appendAndMaybeStream = (type: RunEventType, data: unknown): RunEventEnvelope | undefined => {
     if (persistenceError) {
@@ -898,6 +961,7 @@ export async function executeRunRequest(
   };
 
   try {
+    await waitForTaskContinuation("run_start");
     runStartedAt = new Date().toISOString();
     const runStartTransition = store.transitionRunStatus({
       runId: run.id,
@@ -1013,6 +1077,7 @@ export async function executeRunRequest(
         runnerCapabilities: runnerResolution.runner.capabilities,
         mcpToolRefs: mcpTools.map((tool) => `${tool.serverId}:${tool.rawName}`),
       }),
+      onTaskContinuationBoundary: (boundary) => waitForTaskContinuation(boundary),
       onToolHydrationRequest: runnerResolution.runner.toolHydration?.mode === "daemon_hydrated" &&
         runnerResolution.runner.toolHydration.conformance === "verified"
         ? (request) => hydrateRunnerToolSurface({
@@ -1254,7 +1319,7 @@ export async function executeRunRequest(
     }
   } finally {
     clearInterval(heartbeatTimer);
-    clearTimeout(hardTimeoutTimer);
+    clearHardTimeout();
     store.releaseResourceLeasesForOwner("run", run.id, new Date().toISOString());
     store.releaseRuntimeSemaphoreSlotsForOwner(attempt.id, new Date().toISOString(), "run-finished");
     activeRuns.delete(run.id);

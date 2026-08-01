@@ -4,158 +4,189 @@
 
 **Status:** Accepted for macOS and Windows Desktop.
 **Updated:** 2026-07-31.
-**Supersedes:** the earlier Governed Locked Computer Control proposal at this same path.
+**Supersedes:** the fixed always-continue task policy at this same path. It does not restore
+the superseded proposal to control the screen while locked.
 
-This document is the product policy for what Ling does when the operating system locks,
-sleeps, unlocks or resumes. The policy is intentionally simpler than the superseded design:
-Ling keeps non-visual task execution alive, pauses Computer Control at the native boundary,
-and restores it only after a fresh unlocked readiness cycle.
+This document defines two deliberately separate behaviors:
+
+1. whether non-visual Agent work continues while the operating system is locked; and
+2. the fixed security boundary that always pauses Computer Control while locked.
 
 ## Decision
 
-1. **Tasks continue while locked.** The daemon, active run, Shell, API calls, file work and
-   other operations that do not require the interactive desktop remain alive.
-2. **Computer Control pauses while locked.** The current provider call gate closes, input is
-   fenced, the active provider generation and lease are retired, and no replacement locked
-   generation is started.
-3. **Unlock is a recovery hint, not authorization.** Ling creates a fresh normal generation
-   only after the interactive session, system permissions, packaged artifacts, provider
-   readiness and lease publication pass again.
-4. **Secure surfaces are never controlled.** Ling does not operate loginwindow, Winlogon,
-   password/PIN/biometric prompts, UAC secure desktop, Session 0 or automatic unlock flows.
-5. **There is no “control while locked” switch.** This boundary is fixed product behavior,
-   not a device preference, task grant or renderer command.
+1. **“Continue running while locked” is a persistent Desktop preference.** It defaults On
+   to preserve current behavior on upgrade.
+2. **On:** Agent reasoning, Shell, API, file operations and other non-visual work may
+   continue while the machine is locked and awake.
+3. **Off:** an active run pauses cooperatively at its next safe model/tool boundary. Ling
+   does not kill the daemon, cancel the run or interrupt one atomic action already in
+   progress. Unlock resumes the same run automatically.
+4. **Computer Control always pauses.** The preference never authorizes screen capture,
+   pointer/keyboard input, loginwindow, Winlogon, password/PIN/biometric prompts, UAC secure
+   desktop, Session 0 or automatic unlock.
+5. **Unlock is a recovery hint for Computer Control, not authorization.** Control returns
+   only after both lock and suspend boundaries clear and a fresh normal Driver generation
+   passes readiness.
+6. **There is still no “control while locked” Switch.** The new Switch controls only
+   non-visual task continuation.
 
-Confidence in this policy is **high**: the existing Desktop and Cua Driver coordinators
-already implement the pause/resume lifecycle, and the macOS attended probe showed that
-locked input is not delivered on the measured platform cell.
+Confidence is **high** for the embedded Pi runner path and Desktop preference lifecycle.
+External opaque runners can be gated before run start, but an already-running external
+process cannot provide model/tool safe-boundary callbacks unless that runner implements the
+same continuation contract.
 
-## Product outcome
+## Product behavior
 
-The user can lock the computer without cancelling a long-running Ling task. If the task
-reaches a step that needs GUI interaction, that step waits until the machine is unlocked and
-Computer Control becomes ready again. Ling never types into or clicks the lock screen.
+The Computer Control settings page shows:
 
-The Computer Control settings page explains this fixed behavior:
+- a persistent **Continue running while locked** Switch, On by default;
+- a fixed **Computer Control pauses** row; and
+- a fixed **Control resumes after unlock** row.
 
-- Tasks keep running.
-- Computer Control pauses.
-- Control resumes automatically after unlock and fresh checks.
-
-No authorization button, long-lived Switch, grant countdown or locked-active status is
-shown.
+Turning the Switch Off while already locked pauses the active embedded run at its next safe
+boundary. Turning it On while locked releases waiting non-visual work immediately. Neither
+action resumes or authorizes Computer Control.
 
 ## State and event semantics
 
-| Event | Task/daemon | Computer Control | Recovery |
+| Event/state | Switch On | Switch Off | Computer Control |
 |---|---|---|---|
-| `lock-screen` | Continue | Close gate, fence input, revoke lease, stop current provider generation | Wait for unlock |
-| `suspend` / sleep | Process may be OS-suspended but is not intentionally cancelled | Same fail-closed retirement as lock | Wait for resume plus unlocked readiness |
-| `unlock-screen` | Continue | Still unavailable while sleep/suspend is active or until fresh readiness succeeds | Recover only after suspend is also clear |
-| `resume` | Continue | Still unavailable while the session is locked | Recover only after lock is also clear and the session is interactive |
-| user/session switch | Continue non-visual work where valid | Stay paused; old session authority is invalid | Require the current interactive session and fresh readiness |
-| Desktop shutdown/update | Stop according to normal Desktop lifecycle | Revoke and clean up | Normal next startup |
+| unlocked and awake | Run normally | Run normally | Normal requested state |
+| `lock-screen` | Continue non-visual work | Pause at next safe boundary | Close gate and retire active generation |
+| `suspend` / sleep | OS may suspend processes; Ling does not cancel | Same, and remain cooperatively blocked | Same fail-closed retirement as lock |
+| `unlock-screen` while suspended | Follow remaining suspend boundary | Remain blocked | Remain paused |
+| `resume` while locked | Follow remaining lock boundary | Remain blocked | Remain paused |
+| both boundaries clear | Continue | Resume same run automatically | Fresh normal readiness and generation |
+| toggle On while locked | Already allowed | Release waiters immediately | Remain paused |
+| toggle Off while locked | Block at next safe boundary | Already blocked | Remain paused |
+| Desktop shutdown/update | Normal shutdown semantics | Normal shutdown semantics | Revoke and clean up |
 
-Duplicate and reordered OS events are expected. Lock and suspend are independent latched
-boundaries: both must clear before recovery. `resume -> unlock` and `unlock -> resume` are
-equivalent, and neither first event can reopen control alone. Unlock/resume is only a hint
-and cannot reopen a retired generation. A lock that arrives during initial enable or later
-recovery wins and retires the candidate generation.
+Lock and suspend are independent latched boundaries. Both must clear before the daemon is
+published as unlocked and before Computer Control recovery. Duplicate and reordered events
+must be idempotent.
+
+## Safe-boundary semantics
+
+For the default embedded Pi runner, the cooperative gate is checked:
+
+- before run/Agent start;
+- before each provider/model request; and
+- before each tool call.
+
+An already-running single Shell command, API request or file mutation may finish atomically.
+The next provider or tool boundary then waits. Cancellation still wins: a waiting run reacts
+to its existing abort signal and does not become un-cancellable.
+
+Idle and hard timeout budgets do not accumulate while a run is blocked only by this
+preference. Ordinary user cancellation, Desktop shutdown and unrelated runtime failures
+retain their existing behavior.
+
+This timeout exemption is per run and starts only when that run actually waits at a safe
+boundary. It is not inferred from process-wide gate state. Hard-timeout elapsed time uses a
+monotonic clock so wall-clock corrections do not change the run budget.
 
 ## Authority and data flow
 
 ```text
-macOS powerMonitor / Windows session observer
-                  |
-                  v
-        DesktopRuntime serialized boundary
-                  |
-        +---------+----------+
-        | lock / suspend     | unlock / resume
-        v                    v
- close provider gate    mark recovery hinted
- fence input            verify interactive session
- revoke lease           recheck permissions/artifacts
- stop generation        create fresh generation + lease
-        |                    |
-        +---------+----------+
-                  v
-       daemon and ordinary task stay alive
+Settings Renderer
+  -> allowlisted main-window IPC
+  -> DesktopRuntime
+  -> local versioned preference file (default On)
+  -> Desktop-bridge-authenticated daemon route
+  -> process-wide cooperative continuation gate
+  -> embedded Pi model/tool boundaries
+
+OS lock/suspend observer
+  -> DesktopRuntime probes the initial OS state, then latches lock/suspend immediately
+  -> publishes aggregate locked state to the same daemon gate
+  -> independently fences and retires Computer Control
 ```
 
-The renderer has no mutation API that can override this boundary: the daemon exposes only a
-read-only locked-state projection to it. Existing dormant compatibility authorization code
-is Desktop-bridge authenticated and fixed `disabled_by_build` in packaged policy. Existing
-Computer Use approvals continue to apply after recovery; unlocking does not grant or
-auto-approve a tool call.
+The renderer cannot call the daemon mutation route directly. The route accepts only the
+Desktop bridge token and the configured workspace. It has no method for authorizing locked
+Computer Control.
+
+## Persistence and privacy
+
+- Preference file: `locked-task-continuation-preference.json` under Desktop `userData`.
+- Schema v1 stores only `continueWhileLocked: boolean` and defaults On when missing or
+  malformed.
+- Writes are serialized, atomic and mode `0600` where supported.
+- It is intentionally separate from Computer Use preview preferences so whole-object saves
+  cannot overwrite each other.
+- Daemon state is owned by one ephemeral Desktop instance and renewed as a 15-second lease;
+  Desktop releases it on normal shutdown and the daemon expires it after a crash.
+- No cloud account, screen data, credentials, raw session identifier or task content is
+  stored.
+- A save failure keeps the previous preference. A daemon sync failure attempts to restore
+  it; if the rollback write itself fails, the newly written file remains authoritative and
+  Settings rereads that durable value instead of claiming a false rollback.
 
 ## Platform policy
 
 ### macOS
 
-- `powerMonitor` lock/suspend events synchronously close the Computer Control path.
-- Accessibility and Screen Recording are rechecked by normal provider readiness after
-  unlock.
-- The retained macOS 26.5.2 Apple Silicon probe proved same-session exact-window capture but
-  not locked input acknowledgement. The result is
-  `unsupported / locked_control_input_unavailable` and blocks any locked-control feature.
-- loginwindow and system authentication surfaces remain outside Ling's control.
+- Electron `powerMonitor` supplies lock/suspend/unlock/resume signals.
+- Startup reads `IOConsoleLocked` before first daemon publication; an unknown result is
+  treated as locked until a real boundary event resolves it.
+- The daemon and non-visual run remain owned by Desktop across lock while macOS remains
+  awake.
+- Accessibility and Screen Recording are rechecked only for fresh unlocked Computer
+  Control recovery.
+- loginwindow and system authentication surfaces remain outside Ling authority.
 
 ### Windows
 
-- Windows x64 uses the same product behavior: task continues, Computer Control pauses.
-- WTS disconnect, Winlogon, UAC secure desktop and Session 0 remain denied.
-- Unlock/session-active hints may start fresh normal readiness; they never authorize input
-  into Winlogon or reuse the old process/lease generation.
-- Windows colleagues own final Windows real-machine acceptance. Positive locked input is no
-  longer a release goal.
-
-## Evidence policy
-
-The disposable macOS probe and Windows denial harness are retained as negative security
-evidence. They are not product runtime dependencies and cannot enable a feature flag. A
-future proposal to control while locked would require a new design, new threat model and
-new explicit product approval; editing the retained evidence is not a promotion path.
+- Windows x64 uses the same preference and daemon gate contract.
+- WTS/session signals converge on the same lock/suspend state and fresh unlocked recovery.
+- Startup checks `LogonUI` in Desktop's current session before first publication and uses
+  the same unknown-means-locked fallback.
+- Winlogon, UAC secure desktop and Session 0 remain denied.
+- Windows colleagues own final real-machine acceptance; the shared TypeScript/product path
+  is implemented here.
 
 ## Show, hide, disable and close semantics
 
-| Condition | Settings surface | User action |
+| Condition | Settings surface | Behavior |
 |---|---|---|
-| Bundled Desktop Computer Control page | Show the three fixed lock-behavior rows | None |
-| Computer Control Off | Keep the explanation visible | User may enable normal unlocked Computer Control |
-| Computer Control waiting for unlock | Status card reports interactive session required | Unlock and recheck |
-| Pure Web / external provider / unsupported platform | Follow the existing Computer Control surface rules | No lock-behavior mutation is exposed |
-
-## Audit and privacy
-
-Existing coordinator telemetry may record boundary reason, generation, readiness state and
-cleanup outcome. It must not record screen pixels, window content, credentials, raw session
-identifiers, passwords, PINs or biometric results. The settings page exposes product
-behavior only, never process paths, bearer tokens or native session digests.
+| packaged macOS/Windows Desktop | Show persistent Switch plus two fixed safety rows | Switch remains available independently of Cua Driver readiness |
+| Computer Control Off | Keep section visible | Preference remains independent of normal control On/Off |
+| machine locked | Keep saved value; no locked-control action appears | Change takes effect at next safe boundary |
+| pure Web / no Desktop capability | Show read-only explanation according to existing page rules | Do not pretend a Web-only Switch was persisted |
+| Settings closed or Desktop restarted | No reset | Reload the local saved preference |
 
 ## Release gates
 
-- Desktop tests prove lock/suspend calls the Computer Control suspension path.
-- Tests prove lock/suspend does not stop or restart the daemon.
-- Coordinator tests prove gate closure precedes input fencing and process/lease cleanup.
-- Tests prove unlock/session-active creates at most one fresh generation and a relock wins.
-- Tests prove reordered resume/unlock events remain gated until both boundaries clear.
-- Tests prove a lock during initial provider enable is latched and reasserted.
-- Daemon tests prove renderer authorization and revoke routes do not exist.
-- The settings section contains no Switch or locked-control mutation command.
+- Preference tests cover default, sanitization, atomic persistence and concurrent writes.
+- IPC/preload tests prove only the main window can read/write the preference.
+- Daemon route tests prove Desktop-token, method, workspace and schema enforcement and no
+  Renderer CORS authority.
+- Gate tests cover default-open, lock blocking, unlock/toggle release and abort cleanup.
+- Runner tests cover Agent, provider and tool boundaries without interrupting tool results.
+- Runtime tests cover initial locked startup, dual lock/suspend latches, toggle On while
+  locked, durable rollback failure and Desktop lifecycle release.
+- Daemon tests cover lease heartbeat ownership, expiry and explicit owner release.
+- Timeout regressions prove only a run that actually waits receives idle/hard budget
+  suspension and hard-time accounting uses monotonic elapsed time.
+- Computer Control regression tests continue proving lock/suspend fences control and does
+  not stop the daemon.
 - macOS build/typecheck and focused tests pass locally.
-- Windows source/build changes may land, but Windows real-machine acceptance remains owned
-  by the Windows team.
+- Windows source/build may land before Windows real-machine acceptance.
 
 ## NOT in scope
 
-- Controlling the screen while the computer is locked.
-- Automatic unlock, password/PIN entry, loginwindow, Winlogon, UAC or secure-desktop input.
-- Persistent locked-control preferences, per-task locked grants or a locked tool allowlist.
-- Keeping an old provider process, lease or generation alive across lock/unlock.
-- Changing ordinary task cancellation, approval or daemon shutdown semantics.
+- Screen capture or input while locked.
+- Automatic unlock or credential/security-surface interaction.
+- A persistent locked-control grant, identity-confirmed locked session or locked tool
+  allowlist.
+- Interrupting an already-running atomic Shell/API/file action merely because the screen
+  locked.
+- Making an opaque external runner cooperatively pausable without a boundary callback.
 - DLL/native-addon conversion of the embedded Cua Driver.
+- Windows ARM64 or Linux Desktop support.
 
 ## Unresolved decisions
 
-There are no unresolved product or implementation decisions for this policy.
+There are no unresolved decisions for the default embedded runner and Desktop product
+scope. Cooperative mid-run pause for third-party opaque runners is a documented extension
+boundary, not a release blocker.
