@@ -1,3 +1,4 @@
+import Ionicons from "@expo/vector-icons/Ionicons";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -34,17 +35,15 @@ function PairingWelcomeScreen() {
         <View accessible accessibilityLabel="Ling" style={styles.logo}>
           <Text style={styles.logoText}>L</Text>
         </View>
-        <View style={styles.centerText}>
-          <Text accessibilityRole="header" style={styles.title}>连接你的 Ling</Text>
-          <Text style={styles.description}>扫描 PC 上的配对码，安全同步已有会话。</Text>
-        </View>
+        <Text accessibilityRole="header" style={styles.welcomeTitle}>连接你的 Ling</Text>
+        <Text style={styles.welcomeDescription}>扫描 PC 上的配对码，安全同步已有频道、会话和队友私聊。</Text>
         {remote.error ? <Text accessibilityRole="alert" style={styles.error}>{remote.error}</Text> : null}
-        <PrimaryButton label="扫描 PC 配对码" onPress={remote.openScanner} />
-        <Text style={styles.instruction}>在 PC：设置 → 设备 → 移动端访问 → 开始配对</Text>
-      </View>
-      <View style={styles.securityNote}>
-        <Text style={styles.securityTitle}>设备级安全连接</Text>
-        <Text style={styles.securityBody}>一台 PC 仅绑定一部手机。私钥不会离开当前设备，绑定还需要在 PC 上确认。</Text>
+        <PrimaryButton label="扫描 PC 配对码" onPress={remote.openScanner} scanIcon />
+        <View style={styles.pairingPath}>
+          <Text style={styles.pairingPathTitle}>在 PC 上开始：</Text>
+          <Text style={styles.pairingPathBody}>设置 → 移动端访问 → 开始配对</Text>
+        </View>
+        <Text style={styles.securityBody}>一台 PC 仅绑定一部手机。设备私钥不会离开手机，绑定还需要在 PC 上确认。</Text>
       </View>
     </SafeAreaView>
   );
@@ -139,11 +138,16 @@ function LoadingScreen({ label }: { readonly label: string }) {
   return <SafeAreaView style={styles.screen}><View style={styles.progressContent}><ActivityIndicator color={theme.action.accent} /><Text style={styles.description}>{label}</Text></View></SafeAreaView>;
 }
 
-function PrimaryButton({ label, onPress }: { readonly label: string; readonly onPress: () => void }) {
+function PrimaryButton({ label, onPress, scanIcon = false }: {
+  readonly label: string;
+  readonly onPress: () => void;
+  readonly scanIcon?: boolean;
+}) {
   const { theme } = useMobileTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <Pressable accessibilityRole="button" onPress={onPress} style={({ pressed }) => [styles.primaryButton, pressed && { opacity: 0.82 }]}>
+      {scanIcon ? <Ionicons color={theme.action.foreground} name="scan-outline" size={18} /> : null}
       <Text style={styles.primaryButtonText}>{label}</Text>
     </Pressable>
   );
@@ -168,20 +172,21 @@ function shortFingerprint(value: string): string {
 
 function createStyles(theme: ReturnType<typeof useMobileTheme>["theme"]) {
   return StyleSheet.create({
-    screen: { flex: 1, backgroundColor: theme.background.app, paddingHorizontal: 24 },
-    welcomeContent: { flex: 1, alignItems: "center", justifyContent: "center", gap: 24 },
-    logo: { width: 72, height: 72, borderRadius: 24, alignItems: "center", justifyContent: "center", backgroundColor: theme.action.accent },
-    logoText: { color: theme.text.inverse, fontSize: 36, fontWeight: "700" },
-    centerText: { alignItems: "center", gap: 8 },
+    screen: { flex: 1, backgroundColor: theme.background.panel, paddingHorizontal: 28 },
+    welcomeContent: { flex: 1, alignItems: "center", paddingTop: 118, paddingBottom: 28 },
+    logo: { width: 68, height: 68, borderRadius: 21, alignItems: "center", justifyContent: "center", backgroundColor: theme.action.accent },
+    logoText: { color: theme.action.foreground, fontSize: 28, fontWeight: "700" },
+    welcomeTitle: { marginTop: 30, color: theme.text.strong, fontSize: 28, lineHeight: 34, fontWeight: "700", letterSpacing: -0.4, textAlign: "center" },
+    welcomeDescription: { maxWidth: 290, marginTop: 8, color: theme.text.muted, fontSize: 15, lineHeight: 22, textAlign: "center" },
     title: { color: theme.text.strong, fontSize: 28, lineHeight: 34, fontWeight: "700", textAlign: "center" },
     description: { color: theme.text.muted, fontSize: 16, lineHeight: 24, textAlign: "center" },
-    instruction: { color: theme.text.muted, fontSize: 13, lineHeight: 19, textAlign: "center" },
-    error: { color: theme.status.danger, fontSize: 14, lineHeight: 20, textAlign: "center" },
-    primaryButton: { minHeight: 52, minWidth: 220, paddingHorizontal: 24, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: theme.action.accent },
-    primaryButtonText: { color: theme.text.inverse, fontSize: 16, fontWeight: "600" },
-    securityNote: { marginBottom: 20, borderRadius: 14, backgroundColor: theme.background.subtle, padding: 16, gap: 4 },
-    securityTitle: { color: theme.text.strong, fontSize: 13, fontWeight: "600" },
-    securityBody: { color: theme.text.muted, fontSize: 13, lineHeight: 19 },
+    error: { marginTop: 12, color: theme.status.danger, fontSize: 13, lineHeight: 18, textAlign: "center" },
+    primaryButton: { width: "100%", minHeight: 52, marginTop: 42, paddingHorizontal: 24, borderRadius: 14, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 9, backgroundColor: theme.action.accent },
+    primaryButtonText: { color: theme.action.foreground, fontSize: 16, fontWeight: "700" },
+    pairingPath: { width: "100%", marginTop: 34, paddingHorizontal: 14, paddingVertical: 13, borderWidth: 1, borderColor: theme.border.default, borderRadius: 12, backgroundColor: theme.background.subtle },
+    pairingPathTitle: { color: theme.text.default, fontSize: 12, lineHeight: 18, fontWeight: "700" },
+    pairingPathBody: { color: theme.text.default, fontSize: 12, lineHeight: 18 },
+    securityBody: { maxWidth: 320, marginTop: "auto", color: theme.text.soft, fontSize: 11, lineHeight: 17, textAlign: "center" },
     permissionContent: { flex: 1, alignItems: "center", justifyContent: "center", gap: 20 },
     cameraScreen: { flex: 1, backgroundColor: "#000" },
     cameraOverlay: { flex: 1, alignItems: "center", justifyContent: "space-between", paddingHorizontal: 24, paddingBottom: 64 },

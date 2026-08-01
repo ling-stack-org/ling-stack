@@ -5,6 +5,7 @@
     "version": "0.0.1",
     "platforms": ["ios", "android"],
     "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
     "plugins": [
       [
         "expo-camera",

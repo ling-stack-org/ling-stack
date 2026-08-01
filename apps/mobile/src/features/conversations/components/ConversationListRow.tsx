@@ -1,13 +1,13 @@
 import type { RemoteConversationSummaryV1 } from "@ling-stack/contracts";
-import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { useMobileTheme } from "../../../theme/mobile-theme-provider";
 import {
-  conversationGlyph,
   conversationKindLabel,
-  conversationSubtitle,
+  conversationListKindLabel,
   relativeTimestamp,
 } from "../domain/conversation-view-model";
+import { ConversationIdentityAvatar } from "./ConversationIdentityAvatar";
 
 export function ConversationListRow({ conversation, onPress }: {
   readonly conversation: RemoteConversationSummaryV1;
@@ -27,45 +27,37 @@ export function ConversationListRow({ conversation, onPress }: {
       accessibilityLabel={accessibilityLabel}
       accessibilityRole="button"
       onPress={onPress}
-      style={({ pressed }) => [styles.row, { borderBottomColor: theme.border.default }, pressed && { backgroundColor: theme.background.pressed }]}
+      style={({ pressed }) => [styles.row, { borderBottomColor: theme.border.hairline }, pressed && { backgroundColor: theme.background.pressed }]}
     >
-      {conversation.identity.avatarDataUrl ? (
-        <Image source={{ uri: conversation.identity.avatarDataUrl }} style={styles.avatar} />
-      ) : (
-        <View style={[styles.avatar, { backgroundColor: theme.background.subtle }]}>
-          <Text style={[styles.avatarText, { color: theme.text.strong }]}>{conversationGlyph(conversation)}</Text>
-        </View>
-      )}
+      <ConversationIdentityAvatar conversation={conversation} />
       <View style={styles.body}>
         <View style={styles.titleLine}>
           <Text numberOfLines={1} style={[styles.title, { color: theme.text.strong }]}>{conversation.title}</Text>
-          <Text style={[styles.time, { color: theme.text.muted }]}>{relativeTimestamp(conversation.latestMessageAt ?? conversation.updatedAt)}</Text>
+          <Text numberOfLines={1} style={[styles.kind, { color: theme.text.muted }]}>{conversationListKindLabel(conversation)}</Text>
         </View>
-        <Text numberOfLines={1} style={[styles.subtitle, { color: theme.text.muted }]}>{conversationSubtitle(conversation)}</Text>
-        <View style={styles.previewLine}>
-          <Text numberOfLines={1} style={[styles.preview, { color: theme.text.default }]}>{conversation.latestPreview || "还没有消息"}</Text>
-          {conversation.unreadCount > 0 ? (
-            <View style={[styles.badge, { backgroundColor: theme.action.accent }]}>
-              <Text style={[styles.badgeText, { color: theme.text.inverse }]}>{unread}</Text>
-            </View>
-          ) : null}
-        </View>
+        <Text numberOfLines={1} style={[styles.preview, { color: theme.text.muted }]}>{conversation.latestPreview || "还没有消息"}</Text>
+      </View>
+      <View style={styles.meta}>
+        <Text style={[styles.time, { color: theme.text.soft }]}>{relativeTimestamp(conversation.latestMessageAt ?? conversation.updatedAt)}</Text>
+        {conversation.unreadCount > 0 ? (
+          <View style={[styles.badge, { backgroundColor: theme.action.accent }]}>
+            <Text style={[styles.badgeText, { color: theme.action.foreground }]}>{unread}</Text>
+          </View>
+        ) : null}
       </View>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  row: { minHeight: 86, flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 10, paddingHorizontal: 16, borderBottomWidth: StyleSheet.hairlineWidth },
-  avatar: { width: 42, height: 42, borderRadius: 14, alignItems: "center", justifyContent: "center" },
-  avatarText: { fontSize: 17, fontWeight: "700" },
-  body: { flex: 1, minWidth: 0, gap: 2 },
+  row: { minHeight: 82, flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 12, paddingHorizontal: 16, borderBottomWidth: 1 },
+  body: { flex: 1, minWidth: 0 },
   titleLine: { flexDirection: "row", alignItems: "center", gap: 8 },
-  title: { flex: 1, fontSize: 16, lineHeight: 21, fontWeight: "600" },
-  time: { fontSize: 12, lineHeight: 16, fontVariant: ["tabular-nums"] },
-  subtitle: { fontSize: 12, lineHeight: 16 },
-  previewLine: { flexDirection: "row", alignItems: "center", gap: 8 },
-  preview: { flex: 1, fontSize: 14, lineHeight: 19 },
-  badge: { minWidth: 22, height: 20, paddingHorizontal: 6, borderRadius: 999, alignItems: "center", justifyContent: "center" },
+  title: { flexShrink: 1, fontSize: 16, lineHeight: 20, fontWeight: "600" },
+  kind: { flexShrink: 0, maxWidth: "48%", fontSize: 11, lineHeight: 15, fontWeight: "600" },
+  preview: { marginTop: 5, fontSize: 14, lineHeight: 18 },
+  meta: { alignSelf: "stretch", alignItems: "flex-end", justifyContent: "space-between", paddingVertical: 2 },
+  time: { fontSize: 11, lineHeight: 15, fontVariant: ["tabular-nums"] },
+  badge: { minWidth: 20, height: 20, paddingHorizontal: 6, borderRadius: 999, alignItems: "center", justifyContent: "center" },
   badgeText: { fontSize: 11, fontWeight: "700" },
 });

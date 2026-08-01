@@ -1,4 +1,5 @@
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
+import Ionicons from "@expo/vector-icons/Ionicons";
 import * as ImagePicker from "expo-image-picker";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
@@ -7,14 +8,13 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import type { MobileStackParamList } from "../../navigation/types";
 import { useMobileRemote } from "../../remote/MobileRemoteProvider";
 import { useMobileTheme } from "../../theme/mobile-theme-provider";
-import type { MobileThemePreference } from "../../theme/mobile-theme";
 import { initials } from "../conversations/domain/conversation-view-model";
 
 type Props = NativeStackScreenProps<MobileStackParamList, "My">;
 
 export function MyScreen({ navigation }: Props) {
   const { theme, preference, setPreference } = useMobileTheme();
-  const { binding, client, remoteState, unpair } = useMobileRemote();
+  const { client, remoteState, unpair } = useMobileRemote();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const profile = remoteState.profile;
   const [displayName, setDisplayName] = useState(profile?.displayName ?? "");
@@ -85,37 +85,87 @@ export function MyScreen({ navigation }: Props) {
   return (
     <SafeAreaView edges={["top", "bottom"]} style={styles.screen}>
       <View style={styles.header}>
-        <Pressable accessibilityLabel="返回会话" accessibilityRole="button" hitSlop={8} onPress={() => navigation.goBack()} style={styles.back}><Text style={styles.backText}>‹</Text></Pressable>
+        <Pressable accessibilityLabel="返回会话" accessibilityRole="button" hitSlop={8} onPress={() => navigation.goBack()} style={styles.back}>
+          <Ionicons color={theme.text.strong} name="chevron-back" size={25} />
+        </Pressable>
         <Text accessibilityRole="header" style={styles.headerTitle}>我的</Text>
         <View style={styles.headerSpacer} />
       </View>
       <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.profileSection}>
+        <View style={styles.profileCard}>
           <Pressable accessibilityLabel={editing ? "选择新头像" : "个人头像"} accessibilityRole={editing ? "button" : "image"} disabled={!editing} onPress={() => void chooseAvatar()} style={styles.avatarButton}>
             {avatarDataUrl ? <Image source={{ uri: avatarDataUrl }} style={styles.avatar} /> : <View style={styles.avatarFallback}><Text style={styles.avatarText}>{initials(displayName || "我")}</Text></View>}
             {editing ? <View style={styles.avatarEdit}><Text style={styles.avatarEditText}>更换</Text></View> : null}
           </Pressable>
-          {editing ? (
-            <TextInput accessibilityLabel="显示名称" autoFocus maxLength={80} onChangeText={setDisplayName} style={styles.nameInput} value={displayName} />
-          ) : <Text style={styles.name}>{profile?.displayName ?? "本地用户"}</Text>}
-          <Text style={styles.handle}>@{profile?.handle ?? "local-user"}</Text>
-          {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
-          {editing ? (
-            <View style={styles.editActions}><TextButton label="取消" onPress={() => setEditing(false)} /><PrimarySmallButton disabled={saving} label={saving ? "保存中…" : "保存"} onPress={() => void save()} /></View>
-          ) : <TextButton label="编辑个人资料" onPress={() => setEditing(true)} />}
+          <View style={styles.profileCopy}>
+            {editing ? (
+              <TextInput accessibilityLabel="显示名称" autoFocus maxLength={80} onChangeText={setDisplayName} style={styles.nameInput} value={displayName} />
+            ) : <Text numberOfLines={1} style={styles.name}>{profile?.displayName ?? "本地用户"}</Text>}
+            <Text numberOfLines={1} style={styles.handle}>@{profile?.handle ?? "local-user"}</Text>
+            {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
+            {editing ? (
+              <View style={styles.editActions}><TextButton label="取消" onPress={() => setEditing(false)} /><PrimarySmallButton disabled={saving} label={saving ? "保存中…" : "保存"} onPress={() => void save()} /></View>
+            ) : null}
+          </View>
+          {!editing ? (
+            <Pressable accessibilityRole="button" onPress={() => setEditing(true)} style={({ pressed }) => [styles.editProfile, pressed && { backgroundColor: theme.background.pressed }]}>
+              <Text style={styles.editProfileText}>编辑</Text>
+            </Pressable>
+          ) : null}
         </View>
 
         <Section title="界面偏好">
-          {(["system", "light", "dark"] as const).map((option) => (
-            <PreferenceRow key={option} label={themeLabel(option)} selected={preference === option} onPress={() => void setPreference(option)} />
-          ))}
+          <View style={styles.settingsRow}>
+            <View style={styles.settingsCopy}>
+              <Text style={styles.settingsLabel}>跟随系统</Text>
+              <Text style={styles.settingsHint}>自动使用 Ling Light 或 Ling Dark</Text>
+            </View>
+            <Pressable
+              accessibilityLabel="跟随系统主题"
+              accessibilityRole="switch"
+              accessibilityState={{ checked: preference === "system" }}
+              onPress={() => void setPreference(preference === "system" ? theme.mode : "system")}
+              style={({ pressed }) => [
+                styles.togglePill,
+                { backgroundColor: preference === "system" ? theme.action.accent : theme.border.strong },
+                pressed && { opacity: 0.82 },
+              ]}
+            >
+              <View
+                style={[
+                  styles.toggleKnob,
+                  { backgroundColor: theme.action.foreground, transform: [{ translateX: preference === "system" ? 17 : 0 }] },
+                ]}
+              />
+            </Pressable>
+          </View>
+          <Pressable
+            accessibilityLabel={`主题，Ling ${theme.mode === "light" ? "Light" : "Dark"}`}
+            accessibilityRole="button"
+            onPress={() => void setPreference(theme.mode === "light" ? "dark" : "light")}
+            style={({ pressed }) => [styles.settingsRow, styles.settingsRowBorder, pressed && { backgroundColor: theme.background.pressed }]}
+          >
+            <View style={styles.settingsCopy}>
+              <Text style={styles.settingsLabel}>主题</Text>
+              <Text style={styles.settingsHint}>仅影响当前手机</Text>
+            </View>
+            <View style={styles.settingsValueWrap}>
+              <Text style={styles.settingsValue}>Ling {theme.mode === "light" ? "Light" : "Dark"}</Text>
+              <Ionicons color={theme.text.muted} name="chevron-forward" size={15} />
+            </View>
+          </Pressable>
         </Section>
 
         <Section title="已绑定的 PC">
-          <View style={styles.pcRow}>
-            <View style={styles.pcIcon}><Text style={styles.pcIconText}>PC</Text></View>
-            <View style={styles.pcText}><Text numberOfLines={1} style={styles.pcTitle}>{remoteState.workspace?.displayName ?? "Ling PC"}</Text><Text numberOfLines={1} style={styles.pcSubtitle}>{binding?.gatewayId ?? "安全连接"}</Text></View>
-            <Text style={[styles.pcStatus, { color: remoteState.connection === "connected" ? theme.status.success : theme.status.warning }]}>{remoteState.connection === "connected" ? "已连接" : "离线"}</Text>
+          <View style={styles.settingsRow}>
+            <View style={styles.settingsCopy}>
+              <Text numberOfLines={1} style={styles.settingsLabel}>{remoteState.workspace?.displayName ?? "Ling PC"}</Text>
+              <Text numberOfLines={1} style={styles.settingsHint}>上次同步：{remoteState.connection === "connected" ? "刚刚" : "等待重新连接"}</Text>
+            </View>
+            <View style={styles.pcStatus}>
+              <View style={[styles.pcStatusDot, { backgroundColor: remoteState.connection === "connected" ? theme.status.success : theme.status.warning }]} />
+              <Text style={[styles.pcStatusText, { color: theme.text.muted }]}>{remoteState.connection === "connected" ? "已连接" : "离线"}</Text>
+            </View>
           </View>
         </Section>
 
@@ -125,11 +175,7 @@ export function MyScreen({ navigation }: Props) {
   );
 
   function Section({ title, children }: { readonly title: string; readonly children: React.ReactNode }) {
-    return <View style={styles.section}><Text style={styles.sectionTitle}>{title}</Text><View style={styles.sectionBody}>{children}</View></View>;
-  }
-
-  function PreferenceRow({ label, selected, onPress }: { readonly label: string; readonly selected: boolean; readonly onPress: () => void }) {
-    return <Pressable accessibilityRole="radio" accessibilityState={{ checked: selected }} onPress={onPress} style={({ pressed }) => [styles.preferenceRow, pressed && { backgroundColor: theme.background.pressed }]}><Text style={styles.preferenceLabel}>{label}</Text><View style={[styles.radio, selected && styles.radioSelected]}>{selected ? <View style={styles.radioDot} /> : null}</View></Pressable>;
+    return <View style={styles.section}><Text style={styles.sectionTitle}>{title}</Text>{children}</View>;
   }
 
   function TextButton({ label, onPress }: { readonly label: string; readonly onPress: () => void }) {
@@ -141,51 +187,48 @@ export function MyScreen({ navigation }: Props) {
   }
 }
 
-function themeLabel(preference: MobileThemePreference): string {
-  return preference === "system" ? "跟随系统" : preference === "light" ? "Ling Light" : "Ling Dark";
-}
-
 function createStyles(theme: ReturnType<typeof useMobileTheme>["theme"]) {
   return StyleSheet.create({
     screen: { flex: 1, backgroundColor: theme.background.app },
-    header: { height: 54, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 10, backgroundColor: theme.background.panel, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.border.default },
+    header: { minHeight: 66, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 12, backgroundColor: theme.background.panel, borderBottomWidth: 1, borderBottomColor: theme.border.hairline },
     back: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
-    backText: { color: theme.text.strong, fontSize: 38, lineHeight: 40, fontWeight: "300", marginTop: -3 },
     headerTitle: { color: theme.text.strong, fontSize: 17, fontWeight: "600" },
     headerSpacer: { width: 44 },
-    content: { paddingBottom: 32 },
-    profileSection: { alignItems: "center", gap: 8, paddingHorizontal: 20, paddingVertical: 28, backgroundColor: theme.background.panel },
-    avatarButton: { width: 86, height: 86, borderRadius: 28, overflow: "hidden", marginBottom: 4 },
-    avatar: { width: 86, height: 86 },
-    avatarFallback: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: theme.background.subtle },
-    avatarText: { color: theme.text.strong, fontSize: 27, fontWeight: "700" },
+    content: { paddingHorizontal: 16, paddingTop: 20, paddingBottom: 32 },
+    profileCard: { minHeight: 98, flexDirection: "row", alignItems: "center", gap: 14, padding: 18, borderRadius: 16, backgroundColor: theme.background.panel },
+    avatarButton: { width: 62, height: 62, borderRadius: 31, overflow: "hidden" },
+    avatar: { width: 62, height: 62, borderRadius: 31 },
+    avatarFallback: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: theme.identity.background },
+    avatarText: { color: theme.identity.foreground, fontSize: 20, fontWeight: "700" },
     avatarEdit: { position: "absolute", left: 0, right: 0, bottom: 0, height: 24, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.58)" },
     avatarEditText: { color: "#fff", fontSize: 11, fontWeight: "700" },
-    name: { color: theme.text.strong, fontSize: 20, lineHeight: 26, fontWeight: "700" },
-    handle: { color: theme.text.muted, fontSize: 13 },
-    nameInput: { width: "80%", minHeight: 44, borderRadius: 10, backgroundColor: theme.background.subtle, color: theme.text.strong, fontSize: 17, textAlign: "center", paddingHorizontal: 12 },
-    error: { color: theme.status.danger, fontSize: 13, lineHeight: 18, textAlign: "center" },
-    editActions: { flexDirection: "row", alignItems: "center", gap: 8 },
-    textButton: { minHeight: 44, justifyContent: "center", paddingHorizontal: 14 },
-    textButtonLabel: { color: theme.text.strong, fontSize: 14, fontWeight: "600" },
-    primarySmall: { minHeight: 40, borderRadius: 10, justifyContent: "center", backgroundColor: theme.action.accent, paddingHorizontal: 18 },
-    primarySmallText: { color: theme.text.inverse, fontSize: 14, fontWeight: "700" },
-    section: { marginTop: 20, gap: 7 },
-    sectionTitle: { color: theme.text.muted, fontSize: 12, fontWeight: "600", paddingHorizontal: 20, textTransform: "uppercase" },
-    sectionBody: { backgroundColor: theme.background.panel, borderTopWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: theme.border.default },
-    preferenceRow: { minHeight: 52, paddingHorizontal: 20, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.border.default },
-    preferenceLabel: { color: theme.text.default, fontSize: 16 },
-    radio: { width: 22, height: 22, borderRadius: 11, borderWidth: 1.5, borderColor: theme.border.default, alignItems: "center", justifyContent: "center" },
-    radioSelected: { borderColor: theme.action.accent },
-    radioDot: { width: 12, height: 12, borderRadius: 6, backgroundColor: theme.action.accent },
-    pcRow: { minHeight: 68, flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 20, paddingVertical: 10 },
-    pcIcon: { width: 40, height: 40, borderRadius: 12, alignItems: "center", justifyContent: "center", backgroundColor: theme.background.subtle },
-    pcIconText: { color: theme.text.strong, fontSize: 11, fontWeight: "700" },
-    pcText: { flex: 1, minWidth: 0 },
-    pcTitle: { color: theme.text.strong, fontSize: 15, fontWeight: "600" },
-    pcSubtitle: { color: theme.text.muted, fontSize: 11, lineHeight: 16 },
-    pcStatus: { fontSize: 12, fontWeight: "600" },
-    unpair: { minHeight: 52, alignItems: "center", justifyContent: "center", marginTop: 28, marginHorizontal: 20, borderRadius: 12, backgroundColor: theme.background.panel },
-    unpairText: { color: theme.status.danger, fontSize: 15, fontWeight: "600" },
+    profileCopy: { flex: 1, minWidth: 0 },
+    name: { color: theme.text.strong, fontSize: 18, lineHeight: 23, fontWeight: "700" },
+    handle: { marginTop: 3, color: theme.text.muted, fontSize: 13, lineHeight: 17 },
+    nameInput: { minHeight: 36, borderRadius: 9, borderWidth: 1, borderColor: theme.border.default, backgroundColor: theme.background.panel, color: theme.text.strong, fontSize: 16, paddingHorizontal: 10, paddingVertical: 6 },
+    error: { marginTop: 4, color: theme.status.danger, fontSize: 11, lineHeight: 15 },
+    editActions: { marginTop: 8, flexDirection: "row", alignItems: "center", gap: 8 },
+    editProfile: { minHeight: 36, justifyContent: "center", paddingHorizontal: 12, borderWidth: 1, borderColor: theme.border.default, borderRadius: 9, backgroundColor: theme.background.panel },
+    editProfileText: { color: theme.text.strong, fontSize: 12, fontWeight: "600" },
+    textButton: { minHeight: 36, justifyContent: "center", paddingHorizontal: 10 },
+    textButtonLabel: { color: theme.text.strong, fontSize: 12, fontWeight: "600" },
+    primarySmall: { minHeight: 36, borderRadius: 9, justifyContent: "center", backgroundColor: theme.action.accent, paddingHorizontal: 14 },
+    primarySmallText: { color: theme.action.foreground, fontSize: 12, fontWeight: "700" },
+    section: { marginTop: 18, overflow: "hidden", borderRadius: 16, backgroundColor: theme.background.panel },
+    sectionTitle: { color: theme.text.muted, fontSize: 12, lineHeight: 16, fontWeight: "600", paddingHorizontal: 16, paddingTop: 15, paddingBottom: 8 },
+    settingsRow: { minHeight: 54, paddingHorizontal: 16, paddingVertical: 10, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, backgroundColor: theme.background.panel },
+    settingsRowBorder: { borderTopWidth: 1, borderTopColor: theme.border.hairline },
+    settingsCopy: { flex: 1, minWidth: 0 },
+    settingsLabel: { color: theme.text.strong, fontSize: 15, lineHeight: 20, fontWeight: "600" },
+    settingsHint: { marginTop: 2, color: theme.text.muted, fontSize: 11, lineHeight: 15 },
+    settingsValueWrap: { flexDirection: "row", alignItems: "center", gap: 4 },
+    settingsValue: { color: theme.text.muted, fontSize: 13 },
+    togglePill: { width: 45, height: 28, borderRadius: 999, padding: 3 },
+    toggleKnob: { width: 22, height: 22, borderRadius: 11 },
+    pcStatus: { flexDirection: "row", alignItems: "center", gap: 6 },
+    pcStatusDot: { width: 7, height: 7, borderRadius: 999 },
+    pcStatusText: { fontSize: 12 },
+    unpair: { minHeight: 44, alignItems: "center", justifyContent: "center", marginTop: 22 },
+    unpairText: { color: theme.status.danger, fontSize: 14, fontWeight: "600" },
   });
 }

@@ -28,7 +28,7 @@ export function MobileConversationNavigator() {
       <Stack.Navigator screenOptions={{ headerShown: false, animation: "slide_from_right" }}>
         <Stack.Screen component={ConversationIndexScreen} name="Conversations" />
         <Stack.Screen component={ConversationDetailScreen} name="ConversationDetail" />
-        <Stack.Screen component={MyScreen} name="My" options={{ presentation: "modal", animation: "slide_from_bottom" }} />
+        <Stack.Screen component={MyScreen} name="My" />
       </Stack.Navigator>
     </NavigationContainer>
   );

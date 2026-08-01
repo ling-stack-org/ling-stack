@@ -17,18 +17,26 @@ test("unpaired launch is gated by secure QR pairing and PC confirmation", async 
   assert.match(provider, /nativeSecureDeviceKeyAdapter/u);
 });
 
-test("paired Mobile V1 exposes one index and one shared detail for all three kinds", async () => {
-  const [navigator, index, detail, domain] = await Promise.all([
+test("paired Mobile V1 exposes one index and one shared semantic detail for all three kinds", async () => {
+  const [manifest, navigator, index, detail, domain, adapter, body] = await Promise.all([
+    source("../package.json"),
     source("../src/navigation/MobileConversationNavigator.tsx"),
     source("../src/features/conversations/screens/ConversationIndexScreen.tsx"),
     source("../src/features/conversations/screens/ConversationDetailScreen.tsx"),
     source("../src/features/conversations/domain/conversation-view-model.ts"),
+    source("../src/features/conversations/domain/MobileConversationAdapter.ts"),
+    source("../src/features/conversations/components/NativeMessageBody.tsx"),
   ]);
   assert.match(navigator, /ConversationIndexScreen/u);
   assert.match(navigator, /ConversationDetailScreen/u);
   assert.match(index, /ConversationKindFilter/u);
   assert.match(detail, /PlainTextComposer/u);
+  assert.match(detail, /adaptRemoteConversationMessages/u);
   assert.match(domain, /teammate_direct/u);
+  assert.match(manifest, /@ling-stack\/conversation-ui-core/u);
+  assert.match(adapter, /parseMessageBody/u);
+  assert.match(body, /MessageBodyBlock/u);
+  assert.doesNotMatch(`${adapter}\n${body}`, /apps\/web|conversation-ui-react|\.css/iu);
   assert.doesNotMatch(`${index}\n${detail}`, /attachment|workflow|approval|terminal|Computer Use/iu);
 });
 
@@ -46,7 +54,9 @@ test("profile surface remains narrow and unpair calls the ordered remote client 
     source("../src/remote/MobileRemoteProvider.tsx"),
     source("../../../packages/remote-client/src/client.ts"),
   ]);
-  assert.match(profile, /编辑个人资料/u);
+  assert.match(profile, />编辑</u);
+  assert.match(profile, /跟随系统/u);
+  assert.match(profile, /已绑定的 PC/u);
   assert.match(profile, /Ling Light/u);
   assert.match(profile, /取消绑定/u);
   assert.match(provider, /client\.unpair\(\)/u);

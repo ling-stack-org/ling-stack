@@ -16,7 +16,7 @@ export function ConversationKindFilter({ value, onChange }: {
 }) {
   const { theme } = useMobileTheme();
   return (
-    <View accessibilityRole="tablist" style={[styles.container, { backgroundColor: theme.background.subtle }]}>
+    <View accessibilityRole="tablist" style={[styles.container, { borderBottomColor: theme.border.hairline }]}>
       {options.map((option) => {
         const selected = option.value === value;
         return (
@@ -31,7 +31,7 @@ export function ConversationKindFilter({ value, onChange }: {
               pressed && !selected && { backgroundColor: theme.background.pressed },
             ]}
           >
-            <Text style={[styles.label, { color: selected ? theme.text.inverse : theme.text.muted }]}>{option.label}</Text>
+            <Text style={[styles.label, { color: selected ? theme.action.foreground : theme.text.muted }]}>{option.label}</Text>
           </Pressable>
         );
       })}
@@ -40,7 +40,7 @@ export function ConversationKindFilter({ value, onChange }: {
 }
 
 const styles = StyleSheet.create({
-  container: { flexDirection: "row", borderRadius: 10, padding: 3, gap: 2 },
-  option: { flex: 1, minHeight: 38, alignItems: "center", justifyContent: "center", borderRadius: 8 },
+  container: { flexDirection: "row", gap: 6, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 10, borderBottomWidth: 1 },
+  option: { minHeight: 36, alignItems: "center", justifyContent: "center", borderRadius: 999, paddingHorizontal: 14 },
   label: { fontSize: 14, fontWeight: "600" },
 });
