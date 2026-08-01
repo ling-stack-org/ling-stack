@@ -1,13 +1,14 @@
 # Ling Mobile Remote Access
 
 Status: proposed; architecture locked for isolated implementation, not approved for `main`
-Date: 2026-07-31
+Date: 2026-08-01
 
 Related documents:
 
 - [Mobile Remote Access Detailed Design](mobile-remote-access-detailed-design.md)
 - [Mobile Remote Access Implementation Plan](mobile-remote-access-implementation-plan.md)
 - [Mobile Conversation UI 2.0 Detailed Design](mobile-conversation-ui2-detailed-design.md)
+- [Mobile Approval and Creation Detailed Design](mobile-approval-and-creation-detailed-design.md)
 - [Contracts and API Client](contracts-api-client.md)
 - [Platform Architecture](platform-architecture.md)
 - [Ling Framework](ling-framework.md)
@@ -40,6 +41,12 @@ UI 2.0 has landed, and the isolated Mobile branch has been synchronized with tha
 The native conversation design is now locked for a narrow V1 that synchronizes channels,
 normal conversations, and teammate-direct conversations. Shared visual values are mapped
 through app-local native tokens; Web DOM/CSS components remain outside Mobile.
+
+The 2026-08-01 scope amendment completes the remote-user loop: Mobile may resolve a
+server-approved subset of the same durable approvals used by PC, start a normal or
+teammate-direct conversation with its first message, create a basic server-default
+channel, and add an existing teammate to a channel. It still cannot create/configure an
+AI teammate or mutate broad runtime/approval policy.
 
 ## Why This Shape
 
@@ -84,9 +91,17 @@ boundary, not a host-binding change to the current daemon server.
 - Open any authorized conversation, load a sanitized transcript snapshot, and receive
   ordered updates.
 - Send a plain-text message or follow-up into the existing conversation owner.
+- Start a normal or teammate-direct conversation without persisting an abandoned empty
+  thread before the first message.
+- Create a basic channel using server-owned workspace/runtime defaults and optionally
+  select existing active teammates.
+- Add an existing active teammate to an allowed channel through an additive operation.
+- Show pending approvals tied to allowed conversations and resolve only the Mobile-
+  eligible subset with `Allow once` or `Deny`.
 - Keep Mobile-originated text at a conversation-comment/conversational-reply ceiling; it
   must not auto-start workflows, execution proposals, or tool-backed runs in V1.
-- Keep execution/run/approval surfaces out of the Mobile V1 UI.
+- Keep run control and broad execution surfaces out of Mobile; approval is a narrow
+  decision surface over the existing daemon-owned approval, not a run console.
 - Reuse the PC user-profile identity and appearance vocabulary through a minimal `My`
   page; Mobile appearance remains device-local.
 - Survive backgrounding, network changes, and reconnects without duplicating commands.
@@ -99,8 +114,11 @@ boundary, not a host-binding change to the current daemon server.
 - No Ling-hosted account, cloud database, or mandatory Ling relay.
 - No direct exposure of `17891`, `/rpc/stream`, or the broad daemon API.
 - No arbitrary `cwd`, file path, shell, provider, MCP, broad settings, or secret endpoints.
-- No remote permission-preset escalation.
-- No remote approval, run-status, or execution-control surface in V1.
+- No remote permission-preset, workspace-policy, persistent-tool, or arbitrary-path
+  escalation. Mobile approval is `allow_once` only.
+- No remote run cancellation/intervention or broad execution-control surface.
+- No Mobile approval of critical or configured sensitive action families; those remain
+  PC-only.
 - No file upload/download, raw artifact content, terminal attachment, or Computer Use
   control.
 - No browser/PWA remote client; the device-key boundary is first-party mobile only.
@@ -184,6 +202,12 @@ Safe reuse:
 - `@ling-stack/remote-client` for connection and synchronization state;
 - `@ling-stack/conversation-ui-core` for pure policy and view-model helpers.
 
+Approval and creation reuse daemon application services behind Remote Gateway facades.
+They never import or forward the broad PC `/approvals`, `/channels`, `/threads`, or
+`/teammates` HTTP routes. The detailed capability, redaction, state-machine, and UI rules
+are defined in
+[Mobile Approval and Creation Detailed Design](mobile-approval-and-creation-detailed-design.md).
+
 Do not reuse directly:
 
 - `@ling-stack/conversation-ui-react`, because it renders DOM elements, accepts
@@ -216,14 +240,19 @@ or view-model shapes.
 | --- | --- | --- |
 | Pair/revoke one phone | Yes | Multiple devices and PC switching |
 | Secure QR pairing and PC confirmation | Yes | Separately threat-modeled manual/account discovery |
-| Channel, normal conversation, and teammate-direct list/open | Yes | Search, creation, rename, archive, administration |
+| Channel, normal conversation, and teammate-direct list/open | Yes | Search, rename, archive, delete, administration |
 | Snapshot and live transcript | Yes | Raw detail and full artifact exploration |
 | Send message/follow-up | Yes | Attachments and rich composer commands |
+| Start normal or teammate-direct conversation | Yes, daemon object begins with first message | Empty remote drafts and advanced start settings |
+| Create channel | Yes, name plus existing teammates under server defaults | Runtime/path/provider/tool settings and administration |
+| Add existing teammate to channel | Yes, additive only | Remove/default/replace-all membership and teammate configuration |
+| Create or configure AI teammate | No | PC-only until separately designed |
 | Conversational AI reply | Yes, tools/workflow auto-start disabled | Explicitly reviewed remote task capability |
 | Observe run status | No | Separate execution inspector after V1 |
 | Cancel active run | No | Separate opt-in control design after V1 security review |
-| See pending approvals | No | Read-only summary or approve/deny after separate review |
-| Notifications | Connection plumbing only | Message/mention actions after separate design |
+| See pending approvals | Yes, sanitized and conversation-scoped | Full raw evidence remains PC-only |
+| Resolve pending approvals | Eligible low/medium and reviewed high via `allow_once`; deny allowed by policy | Critical/sensitive approve and persistent policy changes |
+| Notifications | Foreground/content-free local attention only | Reliable background wake after a hosted/APNs design |
 | User profile | Read/update display name and bounded avatar | Activity/Token/skill analytics |
 | Mobile appearance | Follow system, Ling Light, Ling Dark | Sanitized mobile-compatible PC theme packs |
 | Offline queue | No | Explicitly designed bounded queue |
@@ -255,6 +284,30 @@ an endpoint for them.
 4. Opening a channel returns a bounded snapshot followed by ordered delta events.
 5. Sending uses a unique `commandId`; retries return the prior result instead of creating
    another channel message.
+
+### Approve or Deny
+
+1. The daemon creates one durable approval and the Gateway resolves it to exactly one
+   allowed conversation before projecting a redacted summary.
+2. Mobile shows an inline card and pending-count badge. It never receives the raw approval
+   payload.
+3. The user opens the detail. The server-owned policy decides whether Mobile may
+   `Allow once`, may only deny, or must handle the request on PC.
+4. PC and Mobile call one shared decision service. An atomic pending-state compare-and-set
+   makes the first decision win; the losing surface receives the latest terminal state.
+5. Runtime permission approval creates only the existing run-/continuation-scoped grant;
+   workspace policy is unchanged.
+
+### Start and Organize
+
+1. `New conversation` and `Start teammate direct` open local drafts. Backing out creates
+   no PC record.
+2. The first send atomically creates the authoritative thread, user message, bounded reply
+   dispatch, receipt, and projection event.
+3. `New channel` accepts a name and optional existing teammates. The daemon supplies all
+   workspace/runtime defaults and creates channel/memberships/outbox atomically.
+4. `Add existing teammate` is additive and idempotent. Mobile cannot remove members,
+   select a default, or change teammate configuration.
 
 ### Revoke
 
@@ -299,6 +352,11 @@ Final integration gate after the UI 2.0 design sync:
 ## Failure and Recovery Principles
 
 - A network drop never cancels the PC run.
+- A network drop after an approval or creation commit replays the durable command result;
+  it never resolves twice or creates a duplicate object.
+- PC/Mobile approval races are first-decision-wins and cannot overwrite a terminal state.
+- An approval whose provenance or payload cannot be safely projected remains PC-only or
+  is withheld.
 - A reconnect never resends a non-idempotent command without the original `commandId`.
 - A missing event range produces a fresh snapshot instead of guessed local state.
 - Authentication or protocol-version failure is fail-closed and never falls back to the
@@ -306,6 +364,8 @@ Final integration gate after the UI 2.0 design sync:
 - A second device cannot replace the active phone without local revocation/confirmation.
 - Mobile backgrounding closes or suspends the remote session; foregrounding performs a
   new challenge-response.
+- The local-only architecture does not claim reliable background approval push. Current
+  pending approvals are refreshed after foreground reauthentication.
 - The Gateway never accepts a client-provided filesystem path.
 - Mobile-originated text cannot inherit the local Web/Desktop workflow auto-start behavior;
   the server-owned Mobile policy is a lower authority ceiling.
@@ -355,6 +415,10 @@ create two diverging product models during UI 2.0.
 - Cloud history synchronization or offline delivery.
 - Public Internet port forwarding documentation.
 - Remote file browser, shell, terminal, secrets, provider settings, or Computer Use.
+- Creating/configuring AI teammates, changing approval policy, persistent permission
+  grants, critical approval, run cancellation, or deployment control.
+- Channel rename/archive/delete, teammate removal/default selection, or broad membership
+  replacement.
 - A shared cross-platform visual component library before a second native consumer exists.
 - A complete Desktop settings design in this first branch slice.
 
@@ -371,6 +435,13 @@ create two diverging product models during UI 2.0.
 - The phone can list/open authorized channels, normal conversations, and teammate-direct
   conversations, follow live transcript state, and send a message through existing daemon
   authority without gaining run-control or tool-backed workflow execution.
+- The phone can start a normal or teammate-direct conversation with its first message,
+  create a basic channel from server defaults, and add an existing teammate without
+  receiving path/provider/tool/permission fields.
+- Pending approvals are conversation-scoped and redacted; eligible `Allow once`/`Deny`
+  decisions use the same durable service as PC, and a PC/Mobile race has one winner.
+- Critical/sensitive approval remains PC-only, and Mobile cannot change approval policy or
+  produce a persistent grant.
 - An unpaired/revoked app displays the secure pairing flow; a paired app launches directly
   into conversations and exposes profile/appearance through the top-right avatar.
 - PC settings can generate a fresh expiring QR, confirm/reject one candidate, and inspect
@@ -385,7 +456,7 @@ create two diverging product models during UI 2.0.
 
 ## Unresolved Decisions
 
-No product or UI decision blocks the two-page Mobile V1 implementation. Before live
-integration, the channel-specific remote protocol must be expanded and reviewed for the
-three conversation kinds described in the Mobile Conversation UI 2.0 design. Android
-hardware-backed key evidence remains a release gate, not a UI-design blocker.
+No product or UI decision blocks phased implementation. The conversation-only base must
+first consume the shared conversation semantic core, then approval and creation land as
+separate capability-gated slices described in the 2026-08-01 detailed design. Android
+hardware-backed key evidence remains a public-release gate, not a design blocker.

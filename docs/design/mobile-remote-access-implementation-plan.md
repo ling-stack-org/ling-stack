@@ -1,8 +1,8 @@
 # Mobile Remote Access Implementation Plan
 
-Status: Mobile V1 execution plan locked; Slice 1 security spike complete; generic
-conversation protocol, live Gateway, native UI, and cross-device acceptance pending
-Date: 2026-07-31
+Status: Mobile V1 execution plan amended for shared message semantics, remote approval,
+and narrow creation; implementation and cross-device acceptance pending
+Date: 2026-08-01
 Base: current `origin/main` architecture at design start
 
 Related documents:
@@ -10,6 +10,7 @@ Related documents:
 - [Ling Mobile Remote Access](mobile-remote-access.md)
 - [Mobile Remote Access Detailed Design](mobile-remote-access-detailed-design.md)
 - [Mobile Conversation UI 2.0 Detailed Design](mobile-conversation-ui2-detailed-design.md)
+- [Mobile Approval and Creation Detailed Design](mobile-approval-and-creation-detailed-design.md)
 - [Platform Architecture](platform-architecture.md)
 - [Ling Framework](ling-framework.md)
 - [Channel Message Streaming](channel-message-streaming.md)
@@ -18,7 +19,9 @@ Related documents:
 
 Deliver an opt-in local Remote Gateway and first-party iOS/Android client that let one
 paired phone read and send text in approved Ling channels, normal conversations, and
-teammate-direct conversations over an encrypted tailnet path.
+teammate-direct conversations over an encrypted tailnet path, resolve a server-approved
+subset of durable approvals, and perform narrow conversation/channel/existing-teammate
+creation actions.
 The PC daemon remains authoritative. The implementation must not expose the existing
 daemon router, accept remote filesystem paths, or merge to `main` before the Mobile shared
 boundary and security review is complete.
@@ -34,8 +37,14 @@ boundary and security review is complete.
   conversations, and teammate-direct conversations.
 - Mobile text is tagged `sourceSurface=mobile` and capped at `conversation_comment`: a
   tool-disabled conversational reply is allowed, but workflow/proposal auto-start is not.
-- V1 excludes approval and run surfaces, attachments, files, terminal, broad settings,
-  providers, tools, secrets, and Computer Use.
+- V1 includes a redacted, conversation-scoped approval surface using `allow_once`/`deny`
+  over the existing durable approval; critical/sensitive approval and policy changes stay
+  PC-only.
+- V1 includes local-draft normal/direct start, server-default basic channel creation, and
+  additive existing-teammate membership. Creating/configuring an AI teammate remains
+  PC-only.
+- V1 excludes run control, attachments, files, terminal, broad settings, providers,
+  tools, secrets, persistent grants, and Computer Use.
 - V1 includes a minimal `My` page for synced user identity, device-local appearance,
   paired-PC status, and confirmed unpair; it does not expose the PC settings center.
 - One PC has one active phone and one authenticated session.
@@ -60,6 +69,9 @@ Phone: pair -> sync index -> open transcript -> send text -> receive live reply
           |          |               |                 |
           v          v               v                 v
        My/profile  unread cursor   reconnect/resync  same-command retry
+
+Phone completion: approval card -> review -> allow once/deny -> Agent continues
+                  + -> local draft/channel form/existing teammate -> durable result
 ```
 
 Android stays in the shared codebase and must compile and pass emulator tests during V1.
@@ -91,19 +103,35 @@ claiming that the Android release-security gate is complete.
   confirm/reject, inspect reachability, and revoke the single paired phone.
 - Native screens match the Mobile UI 2.0 design at 320 pt and 390 pt widths, support
   200% text scaling, and import no DOM/Web component or CSS.
+- Mobile renders message bodies through the shared `conversation-ui-core` semantic parser
+  with native components, preserving author, structure, status, ordering, and streaming.
+- Pending approvals tied to allowed conversations are projected through bounded redacted
+  summaries; eligible decisions use the same shared durable resolver as PC.
+- Atomic first-decision-wins prevents PC/Mobile approval races from overwriting a result.
+- A normal/direct conversation begins with its first message; basic channel creation and
+  additive existing-teammate membership use server-owned defaults and durable idempotency.
 
 ### Explicit V1 Boundary
 
-The following are deferred even when matching PC components already exist:
+Included through independently removable capabilities:
 
-- create a normal conversation, create a channel, or add a teammate;
-- search, attachments, files, terminal, approvals, run control, Computer Use, settings
-  center, theme packages, language/response settings, and notification content previews;
-- multiple phones, multiple PCs, cloud relay, public port forwarding, and offline sends.
+- synchronized conversation list/detail/send/read/profile plus shared native message
+  semantics;
+- redacted pending approvals and eligible `allow_once`/`deny` decisions;
+- local-draft normal/direct start with atomic first-message creation;
+- basic channel creation from server defaults and additive existing-teammate membership.
 
-The first follow-up is V1.1 `conversation.create` for a normal Ling conversation only.
-Channel creation follows later with a separate mobile form and permission review. Adding
-teammates remains PC-only until there is evidence that remote administration is needed.
+Deferred even when matching PC components already exist:
+
+- search, rename/archive/delete, attachments, files, terminal, run control, Computer Use,
+  settings center, theme packages, language/response settings, and rich notification
+  content;
+- creating/configuring AI teammates, channel member removal/default/replace-all,
+  provider/model/runner/tool/skill/MCP/memory/permission settings;
+- `Always allow`, approval policy/preset edits, persistent grants, critical/sensitive
+  Mobile approval, arbitrary path grants, and broad execution control;
+- reliable background push without an APNs-capable service, multiple phones/PCs, cloud
+  relay, public port forwarding, and offline mutations.
 
 ## Executable Milestones
 
@@ -116,7 +144,8 @@ checklists for each module.
 | M0: baseline | Existing key spike still works on the UI 2.0 baseline | S1 | Expo Doctor 20/20, RN 0.86.2, existing suites green |
 | M1: fixture app | Pairing, list, detail, My, Light/Dark render from shared fixtures | S1, S5, S6, S8 | All three kinds and every empty/error state render natively |
 | M2: secure read path | A real iPhone pairs and reads live PC conversations | S2-S5, S7 | Identity pin, auth, list/open/read, unread cursor, revoke, resync pass |
-| M3: complete V1 | The phone sends text, receives replies, edits profile, and survives reconnect | S2-S9 | Durable retry, authority ceiling, profile limits, real-device E2E pass |
+| M3: conversation baseline | The phone sends text, receives replies, edits profile, and survives reconnect | S2-S9 | Durable retry, authority ceiling, profile limits, real-device E2E pass |
+| M4: complete V1 | The phone unblocks eligible Agent approvals and safely starts/organizes conversations | S10-S12 | Approval race/redaction, creation idempotency, native security/UX E2E pass |
 
 ### Phase P0: Baseline and Dependency Readiness
 
@@ -166,8 +195,9 @@ Work:
 3. Add `profile.read` and `profile.update`. The update accepts only an 80-character
    `displayName` and a bounded PNG/JPEG/WebP avatar data URL with decoded-byte and pixel
    limits; `handle` is returned read-only and paths are never accepted.
-4. Remove run/approval summary capabilities from the V1 Mobile allowlist because the UI
-   and product scope do not consume them.
+4. Remove the old generic run/approval summary capabilities from the conversation-base
+   allowlist. P7 later adds a remote-specific approval projection; raw run summaries and
+   raw approval payloads remain excluded.
 5. Rename the policy ceiling from `channel_comment` to `conversation_comment` and require
    the same ceiling for every conversation kind.
 6. Keep strict unknown-field rejection, fixed protocol version/algorithm, canonical signed
@@ -432,19 +462,112 @@ Done when the iOS internal build passes the complete E2E matrix and disabling Re
 Access restores the pre-feature local PC behavior without daemon data loss. Estimated
 engineering effort: 2.5-4 days plus signing/account wait time.
 
+### Phase P7: Shared Approval Correctness and Remote Projection
+
+Modules:
+
+- `packages/core` approval request/checkpoint stores
+- one daemon application-level `ApprovalDecisionService`
+- `packages/contracts` and `packages/remote-protocol`
+- daemon remote approval facade/projection/redaction
+
+Work:
+
+1. Replace approval read-then-unconditional-update with one atomic
+   `UPDATE ... WHERE status='pending'` compare-and-set. Return the winning terminal state
+   to a losing PC/Mobile resolver.
+2. Extract one decision service used by both the local PC route and Remote Gateway. It
+   owns checkpoint sync, control-plane events, workflow/media hooks, runtime waiter/
+   continuation behavior, audit, and projection outbox.
+3. Add `approval.read`/`approval.resolve`, bounded remote summary/snapshot/delta DTOs,
+   strict validators, durable command result, and negative capability fixtures.
+4. Resolve every approval through exactly one allowed conversation. Withhold ambiguous or
+   disallowed provenance.
+5. Build a remote-specific redactor and server eligibility classifier. Never serialize
+   `ApprovalRequest.payload`; critical/sensitive approval remains PC-only and all Mobile
+   grants are `allow_once`.
+6. Bound pending snapshots, batch provenance resolution, index pending status/ownership,
+   and converge terminal state after expiry/reconnect/race.
+
+Done when PC/Mobile simultaneous decisions have exactly one winner and one complete set of
+side effects; payload/path/secret fuzz fixtures cannot escape; and runtime permission
+approval produces only the existing continuation-scoped grant. Estimated engineering
+effort: 2.5-4 days.
+
+### Phase P8: Narrow Conversation, Channel, and Existing-Teammate Creation
+
+Modules:
+
+- generic durable remote action receipts in `packages/core`
+- bounded daemon creation application services and projection outbox
+- contracts/protocol/remote-client commands and teammate catalog
+
+Work:
+
+1. Add `conversation.start` for normal/direct first-message creation. Atomically persist
+   thread, user message, bounded dispatch intent, receipt, and outbox; retry returns the
+   same ids.
+2. Add `channel.create` accepting only name and up to 20 existing active teammate ids.
+   The daemon supplies workspace binding/runtime/provider/tool/permission defaults and
+   Ling Agent membership.
+3. Add a sanitized active `teammate.list` catalog containing no system prompt, provider,
+   runner, tool, skill, MCP, memory, approval-profile, or hidden/disabled data.
+4. Add idempotent `channel.member.add`; do not call the existing broad replace-all
+   membership route and do not expose remove/default/configure operations.
+5. Fence every transaction with the current device epoch/policy version and publish new
+   objects only after commit.
+
+Done when crash/retry tests prove one object/result, invalid/stale teammate ids leave no
+partial channel, and capability-negative tests reject every broad PC field/action.
+Estimated engineering effort: 2-3.5 days.
+
+### Phase P9: Native Approval and Creation UX plus Real-Device Acceptance
+
+Modules:
+
+- `packages/remote-client` approval/catalog/creation state
+- `apps/mobile/src/features/approvals`
+- Mobile conversation create menu, local drafts, channel form, and teammate pickers
+- real iPhone Release acceptance
+
+Work:
+
+1. Add index approval badge, pending list, inline card, redacted detail sheet, expiry/
+   race/terminal states, and one-time non-blocking foreground attention.
+2. Gate high-risk `Allow once` behind local Face ID/Touch ID/passcode and a required
+   reason. Authentication cancellation sends no command. Critical/sensitive items show
+   `Handle on PC`.
+3. Add index `+` action sheet, local normal/direct drafts, first-send authoritative id
+   binding, new-channel form, and existing-teammate picker/add flow.
+4. Disable mutations offline/reconnecting while preserving local drafts/forms. Do not add
+   an offline queue or claim reliable background push.
+5. Verify 320/390 pt, 200% text, VoiceOver, Light/Dark, reconnect, response loss,
+   PC/Mobile decision race, background/foreground, revoke race, and Release installation.
+
+Done when the real iPhone unblocks an eligible waiting Agent, cannot approve a
+critical/sensitive request, creates/starts each allowed object without duplicates, and
+the PC/mobile surfaces converge after every race/reconnect. Estimated engineering effort:
+2.5-4 days plus signing/device time.
+
 ### Effort and Recommended Execution Order
 
-For one engineer working sequentially, the implementation is approximately 17-24 focused
-engineering days, excluding App Store/Play review and unavailable Android hardware. This
-is an estimate for planning, not a calendar promise.
+For one engineer working sequentially, the original conversation baseline was estimated at
+17-24 focused engineering days. The approval/creation extension adds approximately 7-11.5
+human engineering days before App Store/Play review and unavailable Android hardware.
+These are planning estimates, not a calendar promise; parts of the baseline are already
+implemented on this branch and must be re-verified rather than counted as newly complete.
 
 Recommended order in the current branch:
 
 ```text
-P0 -> P1 -> P2 -> P3 -> P4 -> P5 -> P6
+P0 -> P1 -> P2 -> P3 -> P4 -> P5 -> P6 -> P7 -> P8 -> P9
             |           |
             |           `-- P5 fixture UI may start after P1
             `-- P4 fake-transport client may start after P1
+
+P7 approval CAS/service may start after the current baseline is green.
+P8 contract work may run beside P7 only with one shared-contract owner.
+P9 fixture UI may start after P7/P8 DTOs are locked; live integration waits for both.
 ```
 
 For the first pass, keep one integration owner and one lockfile owner. If parallel
@@ -502,6 +625,43 @@ lockfile.
   - Surfaced by: simulator/unit evidence cannot prove Tailscale or hardware-key behavior.
   - Files: cross-module integration tests, Mobile E2E evidence, isolated CI/package jobs.
   - Verify: the complete P6 acceptance path and final repository-wide gates.
+- [ ] **T8 (P1, human: ~2 days / Codex-assisted: ~1 day)** — Shared message semantics —
+  connect Mobile to `conversation-ui-core` through a native adapter/renderer before adding
+  more control cards.
+  - Status on 2026-08-01: implementation, typecheck, Core/Mobile/Remote Client tests, iOS
+    production bundle, and signed Release install are complete. Keep this item open until
+    the installed phone visually proves real PC Markdown/code/list/quote and multi-Agent
+    author presentation.
+  - Previously surfaced by: `NativeMessageRow` rendered `message.body` as one plain `Text`,
+    so PC/Mobile Markdown/code/list/quote semantics and multi-Agent presentation could
+    diverge.
+  - Files: Mobile conversation data/components/tests, package manifest/lockfile.
+  - Verify: author/id/order/status/streaming and supported body-block parity tests, Mobile
+    typecheck/tests, Release visual evidence.
+- [ ] **T9 (P1, human: ~3 days / Codex-assisted: ~1.5 days)** — Durable approval bridge —
+  implement atomic first-decision-wins resolution, one shared decision service, sanitized
+  conversation provenance, eligibility, remote DTOs, and durable resolve commands.
+  - Surfaced by: P7 and the existing approval store's read-then-unconditional-update race.
+  - Files: `packages/core/`, daemon approvals/remote-access, contracts/protocol/client.
+  - Verify: PC/Mobile CAS race, redaction fuzz, critical/sensitive negative tests,
+    checkpoint/continuation side-effect parity, retry after response loss.
+- [ ] **T10 (P1, human: ~2.5 days / Codex-assisted: ~1.5 days)** — Narrow creation
+  services — implement atomic normal/direct start, basic server-default channel create,
+  sanitized teammate catalog, and additive channel membership.
+  - Surfaced by: P8; existing PC routes accept broad cwd/path/runtime/replace-all inputs and
+    cannot be exposed remotely.
+  - Files: core remote action storage, daemon bounded services/remote-access,
+    contracts/protocol/client.
+  - Verify: crash/replay idempotency, no partial object, stale teammate, capability-
+    negative fields/actions, revoke/policy race.
+- [ ] **T11 (P1, human: ~3 days / Codex-assisted: ~1.5 days)** — Native approval and
+  creation UX — add badge/cards/detail/local-auth, `+` menu, local drafts, channel form,
+  teammate pickers, and real-device acceptance.
+  - Surfaced by: P9 and the 2026-08-01 Mobile UX amendment.
+  - Files: `apps/mobile/src/features/approvals/`, Mobile conversations/navigation/state,
+    remote-client reducers, native tests/evidence.
+  - Verify: Light/Dark, 320/390 pt, 200% text, VoiceOver, local-auth cancel, PC-wins race,
+    offline/reconnect/background/revoke, signed iPhone Release run.
 
 ## What Already Exists
 
@@ -512,7 +672,10 @@ lockfile.
 | Shared conversation/transcript DTOs in `packages/contracts` | Reuse, then add isolated remote-access DTOs. |
 | Local user-profile route and store validation | Extract the validation/service, then wrap it with a stricter Mobile field allowlist; never reuse its `cwd` HTTP shape. |
 | PC channel unread calculation in `AppShell` | Replace the in-memory `seenAt` ref with a daemon read cursor so Mobile and PC converge; do not create a second phone-only unread model. |
-| Control-plane sequence/replay/redaction concepts | Reuse ordering concepts only; V1 UI does not project run/approval surfaces. |
+| Durable approval requests/checkpoints, PC approve/deny behavior, runtime permission waiter/continuation | Reuse as sole authority behind one shared decision service; do not create Mobile approval state in the daemon. |
+| Control-plane sequence/replay/redaction concepts | Reuse ordering concepts, but create a stricter remote approval projection rather than serializing raw control-plane/approval payloads. |
+| Normal-conversation first-message flow | Preserve create-on-first-send behavior through a bounded atomic Mobile start service. |
+| Channel and teammate membership stores | Reuse behind server-default create and additive-member services; never expose broad cwd/path/config/replace-all routes. |
 | `packages/conversation-ui-core` pure policies/view models | Reuse behind `MobileConversationAdapter`. |
 | `packages/api-client` transport conventions and error model | Reuse patterns or small extracted primitives only; do not expose the broad client from Mobile. |
 | Desktop daemon lifecycle and Settings `Device` group | Reuse for Gateway lifecycle and add `Mobile Access` beside `Computer Control`; keep CLI as a diagnostic/automation path. |
@@ -537,6 +700,11 @@ apps/mobile/
     components/
     state/
     MobileConversationAdapter.ts
+  src/features/approvals/
+    data/
+    screens/
+    components/
+    state/
   src/theme/
   src/platform/secure-device-key/
   src/platform/notifications/
@@ -580,6 +748,8 @@ packages/remote-client/
   src/connection-state.ts
   src/reconnect.ts
   src/stream-reducer.ts
+  src/approval-state.ts
+  src/creation-state.ts
   src/transport.ts
   src/index.ts
   test/
@@ -589,6 +759,8 @@ packages/core/src/storage/sqlite/
   remote-command-mappers.ts
   conversation-read-state-store.ts
   remote-projection-outbox-store.ts
+  approval-request-store.ts          # atomic pending-state CAS
+  remote-access-store.ts             # extend existing receipts for new mutations
 
 packages/daemon/src/features/remote-access/
   server.ts
@@ -601,10 +773,15 @@ packages/daemon/src/features/remote-access/
   projection.ts
   projection-outbox-worker.ts
   conversation-facade.ts
+  approval-facade.ts                 # projection, redaction, eligibility
+  creation-facade.ts                 # start/create/catalog/add boundaries
   profile-service.ts
   command-executor.ts
   schemas.ts
   audit.ts
+
+packages/daemon/src/features/runs/
+  approval-decision-service.ts       # shared by local PC route and Remote Gateway
 
 packages/cli/src/remote/
   enable.ts
@@ -629,6 +806,10 @@ responsibilities must stay separate:
 - reconnect/sync state is UI-independent;
 - Gateway routing/auth is not mixed into conversation business logic;
 - message idempotency is durable store behavior;
+- approval classification/redaction is daemon-owned and Mobile never receives raw
+  `ApprovalRequest.payload`;
+- PC and Remote Gateway share one approval decision service and atomic store transition;
+- creation uses bounded application services, not broad cwd-based HTTP route reuse;
 - native rendering remains app-local until there are two native consumers.
 
 ## Dependency Graph
@@ -654,6 +835,17 @@ S3 Gateway auth/session        S6 mobile shell + mock data
                      |
                      v
               S9 distribution/acceptance
+                     |
+                     v
+          S10 approval correctness/projection
+                     |
+                     +------------------+
+                     v                  v
+              S11 narrow creation   native approval fixtures
+                     |                  |
+                     +--------+---------+
+                              v
+                     S12 device convergence
 ```
 
 ## Delivery Boundaries
@@ -664,7 +856,8 @@ reviewable commits and, if UI 2.0 does not land promptly, split into these PR bo
 
 1. protocol, durable idempotency/dispatch, Gateway security, and CLI management;
 2. remote client, native-key adapter, and Mobile shell/live communication;
-3. UI 2.0 convergence, distribution, and final release acceptance.
+3. UI 2.0 convergence and conversation-baseline distribution;
+4. approval/creation extension and final cross-device security acceptance.
 
 No PR may merge to `main` without the user's final confirmation. Splitting review units
 does not authorize early mainline merge; it only prevents one long-lived, cross-platform
@@ -985,8 +1178,9 @@ UI 2.0 boundary:
 - do not copy the current Web projector or CSS;
 - keep the adapter and semantic token mapping app-local until a second native consumer
   exists;
-- do not add work cells, approvals, run control, attachments, files, terminal, broad PC
-  settings, or Computer Use to the V1 conversation shell.
+- Slice 6 does not add work cells, approval decisions, run control, attachments, files,
+  terminal, broad PC settings, or Computer Use. Slice 12 later adds only the reviewed
+  redacted approval cards/list/detail; the other exclusions remain.
 - do not copy PC Token/activity analytics, language/response settings, theme studio,
   theme import/create, or arbitrary theme packages into Mobile;
 - profile updates are dedicated allowlisted commands; Mobile theme selection is local and
@@ -1075,6 +1269,64 @@ Rollback:
   existing channel messages;
 - the general daemon listener and Web/Desktop local flows continue unchanged.
 
+## Slice 10: Approval Correctness, Projection, and Resolution
+
+Scope:
+
+- change approval resolution to atomic first-decision-wins CAS and preserve the winning
+  terminal result for stale callers;
+- extract one `ApprovalDecisionService` used by PC and Remote Gateway, including all
+  checkpoint, control-plane, workflow/media, runtime-continuation, audit, and outbox side
+  effects;
+- add capability-gated approval list/snapshot/delta/resolve contracts and validators;
+- batch-resolve each approval to one allowed conversation and project only bounded,
+  redacted, server-eligible summaries;
+- keep raw payloads, absolute paths, commands, MCP arguments/results, secrets, terminal,
+  artifacts, critical/sensitive approval, and persistent policy/grants off Mobile;
+- add durable decision receipts and converge expiry, PC/Mobile race, response loss,
+  reconnect, and revoke.
+
+Checkpoint: land shared PC approval regression tests before enabling the Remote Gateway
+command. A remote-only path that calls the store directly is a release blocker.
+
+## Slice 11: Conversation Start, Channel Create, and Existing Teammates
+
+Scope:
+
+- add atomic `conversation.start` for normal/direct first-message creation with the same
+  `conversation_comment` ceiling and deterministic durable ids;
+- add narrow `channel.create` with name plus existing teammate ids only; choose workspace
+  binding/runtime/provider/tool/permission defaults on the server;
+- add sanitized active teammate catalog projection;
+- add idempotent additive `channel.member.add`, never replace/remove/default/configure;
+- write command receipt, domain objects, membership, dispatch intent where applicable,
+  policy update, and projection outbox in one fenced transaction;
+- test stale ids, duplicate names/ids, hidden/disabled teammates, response loss, crash,
+  policy/revoke race, and every forbidden broad PC field/action.
+
+Checkpoint: no new remote command accepts `cwd`, path, provider, model, runner, tool,
+permission, system prompt, or arbitrary teammate configuration.
+
+## Slice 12: Native Approval/Creation UX and Real-Device Closure
+
+Scope:
+
+- add index approval badge, pending list, inline card, detail sheet, eligibility, expiry,
+  stale-decision, and terminal states;
+- invoke local Face ID/Touch ID/passcode before high-risk `allow_once`; cancellation sends
+  no command and critical/sensitive requests say `Handle on PC`;
+- add index `+` action sheet, local normal/direct drafts, first-send binding, basic channel
+  form, and existing-teammate pickers;
+- disable remote mutations offline/reconnecting while preserving local drafts/forms;
+- make no reliable background-push claim; reauthenticate and refresh approval snapshot on
+  foreground;
+- verify shared message semantics before layering approval cards into the transcript;
+- run fixture, accessibility, visual, protocol, race, reconnect, revoke, and real-iPhone
+  Release acceptance from the 2026-08-01 detailed design.
+
+Checkpoint: Mobile can unblock an eligible waiting Agent and create every allowed object
+without exposing a broad PC control, duplicate decision/object, or stale live label.
+
 ## Test Coverage Diagram
 
 ```text
@@ -1111,6 +1363,24 @@ PROFILE
   |-- display-name/avatar update ------------ [UNIT + E2E]
   |-- handle/path/oversized image rejected -- [UNIT + INTEGRATION]
   `-- update converges on PC and Mobile ----- [WEB/MOBILE E2E]
+
+APPROVAL
+  |-- allowed provenance + bounded redaction  [UNIT + INTEGRATION]
+  |-- ambiguous/disallowed/raw payload blocked [REGRESSION + FUZZ]
+  |-- low/medium/high eligibility ------------ [POLICY + NATIVE]
+  |-- critical/sensitive approve blocked ----- [CAPABILITY NEGATIVE]
+  |-- PC/Mobile race, first CAS wins --------- [STORE + E2E]
+  |-- response loss/same-command replay ------ [STORE + E2E]
+  `-- checkpoint/continuation side effects ---- [INTEGRATION]
+
+CREATION
+  |-- local draft/back creates no object ------ [MOBILE UNIT]
+  |-- normal/direct first-send atomic start ---- [STORE + E2E]
+  |-- basic channel + members + outbox atomic -- [STORE + CRASH]
+  |-- sanitized active teammate catalog -------- [UNIT + INTEGRATION]
+  |-- additive idempotent member add ------------ [STORE + E2E]
+  |-- broad PC fields/actions rejected ---------- [CAPABILITY NEGATIVE]
+  `-- response loss/revoke/policy race ---------- [STORE + E2E]
 
 READ STATE
   |-- Mobile open advances daemon cursor ---- [STORE + E2E]
@@ -1161,6 +1431,15 @@ CONVERSATIONAL REPLY
 | Mobile text tries to trigger a workflow/tool | Policy/integration | `conversation_comment` ceiling blocks it | Conversational reply or explicit blocked state |
 | Profile update contains a handle/path/oversized avatar | Unit/integration | Strict allowlist and byte/MIME/dimension validation | Clear validation failure; old profile remains |
 | Remote projection sees raw sensitive field | Redaction regression | Drop field/fail safe serialization | Safe incomplete detail, never raw payload |
+| PC and Mobile resolve one approval concurrently | Store/E2E | Atomic pending-state CAS and one shared decision service | First result shown; loser says already handled |
+| Approval expires or is cancelled while open | Client/E2E | Terminal delta disables controls | Expired/cancelled label and no stale action |
+| Approval payload/provenance cannot be sanitized | Redaction regression | Withhold or force PC-only | No sensitive detail; handle on PC when safe |
+| High-risk local authentication is cancelled | Native/real device | Send no resolve command | Approval stays pending and can be retried |
+| Runtime approval succeeds but continuation fails | Integration | Existing checkpoint records `resume_failed` | Clear follow-up state; no false running label |
+| New-conversation draft is abandoned | Mobile unit | Persist/delete local draft only | No empty PC conversation |
+| First-send/channel-create response is lost | Store/E2E | Durable receipt replays authoritative ids | Reconnect opens one object, no duplicate work |
+| Channel teammate selection is stale/invalid | Integration | Validate all ids before atomic commit | Form remains with targeted refresh/error |
+| Existing teammate is added twice | Store/E2E | Unique/additive idempotent membership | Success with one membership row |
 
 No listed V1 failure may be silent while leaving the UI labeled `online`.
 
@@ -1175,12 +1454,19 @@ After Slice 1 locks shared fixtures, independent lanes are possible:
 | C: source docs/ops | `docs/design`, packaging/setup docs | Slice 1 decisions |
 | D: integration | daemon + remote client + mobile | Lanes A and B |
 | E: UI convergence | contracts/core adapter + mobile visuals | UI 2.0 and Lane D |
+| F: approval correctness | core approval store/service + daemon remote approval | conversation baseline green |
+| G: creation services | core remote actions + daemon bounded creation | shared extension contracts |
+| H: approval/creation native UX | remote client + Mobile approvals/conversations | extension DTO fixtures |
+| I: extension acceptance | core + daemon + remote client + Mobile | Lanes F-H |
 
 Lanes A, B, and C can proceed in parallel only if each has its own sibling worktree and
 no one independently edits shared contracts or the lockfile. `packages/contracts`,
 `packages/conversation-ui-core`, and `pnpm-lock.yaml` have a single designated owner per
 integration window. Lane D starts after A+B merge into this feature line; Lane E starts
-after UI 2.0 is stable.
+after UI 2.0 is stable. Lane F can start independently after the current baseline is
+green. Contract ownership for F/G is sequential even if core implementation work is
+parallel. Lane H may build against locked fixtures while F/G run; Lane I starts only after
+F-H integrate.
 
 ## Test File Map
 
@@ -1197,8 +1483,11 @@ than hiding them in one end-to-end script:
 | Gateway | `packages/daemon/test/remote-access.test.mjs` | Listener isolation, pairing race/rotation, auth, allowlist, redaction, limits, revoke |
 | Local management | `packages/daemon/test/remote-access-management.test.mjs` | Capability, strict Origin/CSRF, missing Origin, CORS, replay, disable/revoke |
 | Profile | `packages/daemon/test/remote-profile.test.mjs` | Read projection, display name/avatar allowlist, handle/path/size/MIME rejection, convergence |
+| Approval CAS/service | `packages/core/test/approval-request-store.test.mjs` plus daemon approval tests | PC/Mobile first-decision-wins, one side-effect set, expiry, checkpoint/continuation parity |
+| Remote approval | `packages/daemon/test/remote-approval-facade.test.mjs` | Provenance, redaction, eligibility, critical block, resolve replay, revoke race |
+| Remote creation | `packages/daemon/test/remote-creation-facade.test.mjs` | Atomic normal/direct/channel create, server defaults, catalog, additive member, forbidden fields |
 | Client | `packages/remote-client/test/client.test.mjs` | State machine, reconnect, cold-start snapshot, sequence gap, retry deadline, busy, binding change |
-| Mobile unit | `apps/mobile/test/remote-connection-state.test.ts` | Secure-key adapter boundary, UI error states, adapter projection |
+| Mobile unit | `apps/mobile/test/remote-connection-state.test.ts` plus approval/creation contract tests | Secure-key boundary, UI states, shared message adapter, approval/local-auth/race, drafts/forms/pickers |
 | Real-device E2E | `apps/mobile/e2e/remote-access.real-device.md` plus the selected iOS/Android harness | Tailscale Serve, Wi-Fi/cellular, background/foreground, PC restart, revoke |
 
 The real-device artifact is a release checklist, not a substitute for the unit and
@@ -1248,6 +1537,14 @@ The implementation is eligible for a reviewed PR and user-approved merge behind
   module compiles, autolinks, and fails closed in emulator tests;
 - unique device/session, pairing expiry, replay, revoke, route allowlist, path injection,
   redaction, durable idempotency, and snapshot/delta recovery tests pass;
+- Mobile message author/body/status/order/streaming semantics consume the shared
+  `conversation-ui-core` adapter and native renderer;
+- approval resolution is atomic first-decision-wins and PC/Remote Gateway use one shared
+  application service with identical checkpoint/continuation/workflow/media side effects;
+- approval provenance/redaction/eligibility tests prove raw payloads and disallowed
+  conversations never reach Mobile, and critical/sensitive approval cannot be upgraded;
+- normal/direct first-message, basic channel creation, and additive teammate membership
+  pass crash/retry/revoke/policy-race and forbidden-field/action tests;
 - installation-global device/epoch state and workspace-local command transactions pass
   cross-workspace and revoke/rebind race tests;
 - `apps/mobile` has no Web/DOM imports;
@@ -1265,34 +1562,39 @@ Android client as release-ready.
 
 ## NOT in Scope
 
-- Remote approval decisions or run cancellation.
+- Approval-policy/preset edits, `Always allow`, persistent grants, critical/sensitive
+  Mobile approval, or run cancellation/intervention.
 - File/attachment/artifact transfer.
 - Terminal, shell, Computer Use, provider/tool/permission/settings control.
+- Creating/configuring AI teammates; channel rename/archive/delete; teammate removal,
+  default selection, or broad membership replacement.
 - PC theme creation/import, remote PC-theme mutation, or user activity/Token analytics.
 - Multiple phones, multiple PCs, Ling accounts, cloud relay, or offline mutation queue.
 - A shared native component package before a second native consumer exists.
 - Public port-forwarding support.
+- Reliable background approval push without an APNs-capable service.
 
 ## Decision Verdict and Remaining Gates
 
 There are no unresolved product or architecture decisions for Mobile V1. The first build
 is iPhone-first, keeps Android source/build coverage, uses a generic conversation protocol,
-implements daemon-owned cross-device read cursors, and excludes all creation/admin flows.
+implements daemon-owned cross-device read cursors, reuses shared conversation semantics,
+and adds only redacted `allow_once` approval plus narrow server-default creation.
 
-Implementation is still gated by work, not a choice: replace the implemented channel-only
-protocol, enforce the generic authority ceiling in all three send paths, prove real
-Tailscale transport, and complete the iOS E2E matrix. Physical Android hardware evidence
-remains the public Android release gate. A failed native-key gate is not permission to
-weaken authentication.
+Implementation is still gated by work, not a choice: finish the shared Mobile message
+adapter/renderer, land atomic shared approval resolution, implement bounded approval and
+creation facades/UI, prove real Tailscale transport, and complete the iOS E2E matrix.
+Physical Android hardware evidence remains the public Android release gate. A failed
+native-key or local-auth gate is not permission to weaken authentication.
 
 ## GSTACK REVIEW REPORT
 
 | Review | Trigger | Why | Runs | Status | Findings |
 | --- | --- | --- | ---: | --- | --- |
-| CEO Review | `/plan-ceo-review` | Scope and strategy | 0 | — | V1 scope was locked directly with the user |
+| CEO Review | `/plan-ceo-review` | Scope and strategy | 0 | — | V1 scope and 2026-08-01 amendment were locked directly with the user |
 | Codex Review | `/codex review` | Independent second opinion | 1 | ISSUES FOUND | Claude fallback found 6 gaps; 6/6 folded into the plan |
-| Eng Review | `/plan-eng-review` | Architecture and tests (required) | 1 | CLEAR | 10 issues resolved, 0 critical gaps, 0 unresolved |
-| Design Review | `/plan-design-review` | Mobile UI/UX gaps | 3 | CLEAR | Latest score 9/10, 6 decisions |
+| Eng Review | `/plan-eng-review` | Architecture and tests (required) | 3 | CLEAR | Latest run folded 13 amendment findings, 0 critical gaps, 0 unresolved |
+| Design Review | `/plan-design-review` | Mobile UI/UX gaps | 3 | CLEAR | Conversation UI remains 9/10 pending live QA; approval/creation flows are now fully specified |
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | Not required before P0 |
 
 **CROSS-MODEL:** The outside voice added six correctness requirements: protected local
@@ -1300,6 +1602,7 @@ management, durable projection outbox, bounded retry/tombstone, busy-send reject
 workspace-rebind clearing, and activity-sequence unread semantics. All six are now in the
 phase plan, failure matrix, and test map.
 
-**VERDICT:** ENG + DESIGN CLEARED — ready to implement P0 on the isolated feature branch.
+**VERDICT:** ENG + DESIGN CLEARED — implement shared message semantics first, then S10-S12
+on the isolated feature branch.
 
 NO UNRESOLVED DECISIONS

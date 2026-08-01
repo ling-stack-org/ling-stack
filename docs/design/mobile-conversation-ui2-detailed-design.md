@@ -1,13 +1,14 @@
 # Mobile Conversation UI 2.0 Detailed Design
 
-Status: design-ready for native implementation; live protocol expansion still required
-Date: 2026-07-31
+Status: design-ready for native implementation; shared message semantics plus approval and
+creation extensions pending
+Date: 2026-08-01
 Parent: [Ling Mobile Remote Access](mobile-remote-access.md)
 
 ## Outcome
 
-Ling Mobile V1 is a narrow remote conversation surface for the conversations that already
-exist on the paired PC. It synchronizes three conversation kinds:
+Ling Mobile V1 is a narrow remote conversation surface for the paired PC. It synchronizes
+and can safely start three conversation kinds:
 
 - **Channel**: a shared Ling channel with multiple participants.
 - **Conversation**: a normal one-to-one user and Ling conversation.
@@ -19,9 +20,11 @@ participants, subtitle, and message attribution, but not the navigation or compo
 
 V1 supports secure first-time pairing, reading synchronized history, receiving live
 updates, unread state, retaining an unsent local draft, sending plain text while connected,
-and a minimal personal surface for the synced user identity and Mobile appearance. The PC
-daemon remains the authority for message identity, ordering, execution, teammate identity,
-user profile, and retention.
+starting a normal/teammate-direct conversation with its first message, creating a basic
+channel, adding an existing teammate, resolving eligible durable approvals, and a minimal
+personal surface for the synced user identity and Mobile appearance. The PC daemon remains
+the authority for message identity, ordering, execution, approvals, teammate identity,
+user profile, runtime defaults, and retention.
 
 ## Product Principles
 
@@ -33,8 +36,10 @@ user profile, and retention.
    reconnecting, or unavailable. Cached content is never presented as live.
 4. **UI 2.0 semantics, native interaction.** Reuse the Ling theme, message hierarchy,
    identity language, and headless policies; implement native React Native components.
-5. **Subtract by default.** V1 has no remote task controls, approval actions, attachments,
-   file browser, terminal, settings workspace, or Computer Use surface.
+5. **Narrow action, not remote administration.** Approval is `allow_once`/`deny` over the
+   existing durable request; creation uses server defaults and existing teammates. V1 has
+   no run control, persistent policy, file browser, terminal, settings workspace, or
+   Computer Use surface.
 6. **Pairing is the application gate.** An unpaired app presents a dedicated secure
    pairing flow; a paired app launches directly into conversations.
 
@@ -59,12 +64,18 @@ App launch
   |                                                - Channels
   |                                                - Conversations
   |                                                - Direct
+  |                                                - Approval badge
+  |                                                - + action menu
   |                                                          |
-  |                                                          v
-  |                                                Conversation detail
-  |                                                - Header identity
-  |                                                - Synced transcript
-  |                                                - Plain-text composer
+  |                               +--------------------------+------------------+
+  |                               |                          |                  |
+  |                               v                          v                  v
+  |                      Pending approvals             Creation sheets   Conversation detail
+  |                      - List/detail                 - New conversation - Header identity
+  |                      - Allow once/deny             - New channel      - Synced transcript
+  |                                                   - Existing teammate - Plain-text composer
+  |                                                                          - Approval cards
+  |                                                                          - Add teammate
   |
   |                                                          |
   |                                                          +-- avatar -> My
@@ -77,9 +88,10 @@ App launch
   +-- revoked/unpaired ----> Screen 0 secure pairing
 ```
 
-There is no bottom tab bar in V1. Conversations remain a two-level navigation stack. The
-top-right user avatar opens `My` as a modal stack page. A persistent tab bar would spend
-scarce screen space on features that do not exist yet.
+There is no bottom tab bar in V1. Conversations remain the primary two-level navigation
+stack. Approval list/detail, creation forms, teammate pickers, and `My` are secondary
+stack/sheet surfaces opened from the index/detail headers. A persistent tab bar would
+spend scarce screen space on infrequent actions.
 
 ## Screen 0: Secure Pairing
 
@@ -166,17 +178,20 @@ The user sees, in order:
    or `离线`.
 2. **Conversation-kind filter**: `全部`, `频道`, `会话`, `私聊`.
 3. **A single activity-sorted list** spanning all three conversation kinds.
-4. **User avatar**: a 44 pt top-right button that opens `My`.
+4. **Pending approvals**: a 44 pt shield button, hidden when the capability is absent,
+   with a count badge when pending items exist.
+5. **Create**: a 44 pt `+` button opening the creation action sheet while online.
+6. **User avatar**: a 44 pt button that opens `My`.
 
-Search, creation, editing, sorting controls, workspace selection, and administration are
-not present in V1.
+Search, rename/archive/delete, sorting controls, workspace selection, teammate creation,
+and broad administration are not present in V1.
 
 ### Phone Wireframe
 
 ```text
 +--------------------------------------+
-|  会话                         已同步  |
-|  我的 Mac · 刚刚                      |
+|  会话                 [盾2] [+] [我]  |
+|  我的 Mac · 刚刚              已同步  |
 |                                      |
 | [全部]   频道    会话    私聊          |
 |--------------------------------------|
@@ -223,7 +238,7 @@ Type-specific presentation:
 | State | What the user sees | Available action |
 | --- | --- | --- |
 | Initial loading | Six quiet skeleton rows; title remains visible. | None. |
-| Empty | `PC 上还没有会话` and `在 PC 端开始对话后会出现在这里`. | Refresh connection only. |
+| Empty | `还没有会话` and `开始与 Ling 或队友对话`. | `新建会话` while online. |
 | Filter empty | `没有频道/会话/私聊` and a return-to-all action. | `查看全部`. |
 | Reconnecting | Cached rows remain visible with a top status strip. | Retry automatically; manual retry after timeout. |
 | Offline | Cached rows are labeled with last sync time; never shown as current. | `重新连接`. |
@@ -242,9 +257,9 @@ The user sees, in order:
 3. Transcript, anchored at the newest unread or latest message.
 4. Plain-text composer fixed above the keyboard and bottom safe area.
 
-The header has no overflow menu in V1 because there are no secondary conversation
-actions. It shows a back button, 32 pt identity, title, kind-specific subtitle, and a
-non-interactive sync indicator.
+The header shows a back button, 32 pt identity, title, kind-specific subtitle, and a
+non-interactive sync indicator. An active channel also exposes one overflow action,
+`添加已有队友`; other conversation kinds do not show administrative actions.
 
 ### Phone Wireframe
 
@@ -262,6 +277,10 @@ non-interactive sync indicator.
 |                                      |
 | [L] Ling · 正在回复                  |
 |     我会保留 UI 2.0 的消息层级……      |
+|                                      |
+| [!] Ling 需要你的批准                 |
+|     写入 2 个工作区文件 · 中风险       |
+|                           [查看详情]   |
 |                                      |
 |------------ 2 条新消息 --------------|
 |                                      |
@@ -289,6 +308,9 @@ non-interactive sync indicator.
   work cells, terminal reports, and evidence views are not rendered in V1.
 - A streaming message shows the UI 2.0 inline progress treatment and remains one message;
   it does not append a new list row per delta.
+- A pending approval is an inline control-plane card anchored to the authoritative
+  conversation, not an Agent chat bubble. It never impersonates a teammate message or
+  exposes a raw command/path/payload.
 
 ### Composer
 
@@ -301,7 +323,10 @@ non-interactive sync indicator.
   send is disabled with `连接 PC 后发送`.
 - Sending uses an optimistic local row only after a durable `commandId` exists. The row
   exposes `发送中`, `已发送`, or `发送失败`; retry reuses the same command id.
-- No attachment, slash-command, model, provider, permission, voice, or tool controls.
+- No attachment, slash-command, model, provider, permission-preset, voice, or tool
+  controls in the composer. Approval lives only in its reviewed cards/detail surface.
+- In a new normal/direct draft, the first send uses the atomic start command and then
+  replaces the local draft identity with the returned authoritative conversation id.
 
 ### Detail States
 
@@ -315,6 +340,99 @@ non-interactive sync indicator.
 | Send pending | One optimistic local message with progress. | Enabled for a later message only if client ordering permits it. |
 | Send failed | Failed row remains with concise reason and retry. | Draft is not duplicated. |
 | Revoked | Transcript leaves memory immediately. | Removed; pairing state takes over. |
+
+## Approval Attention and Decision
+
+Approval UI follows the complete security/product contract in
+[Mobile Approval and Creation Detailed Design](mobile-approval-and-creation-detailed-design.md).
+
+### Attention hierarchy
+
+1. The index shield badge gives a stable home for all pending requests.
+2. The open conversation shows its pending approval inline at the relevant transcript
+   position.
+3. The first new request in the foreground may open one non-blocking sheet. Dismissing it
+   leaves the badge/card and it does not reopen on every delta.
+4. A backgrounded/suspended app refreshes the approval snapshot on foreground; the local-
+   only architecture does not promise remote push wake.
+
+### Approval list
+
+Each row shows conversation identity, Agent/operation title, risk, relative expiry, and
+pending/terminal status. It never shows an absolute path, command line, raw MCP payload,
+terminal output, secret, or artifact content. Rows are ordered by nearest expiry, then
+creation time. A capability-disabled app hides the entry rather than showing a broken
+screen.
+
+### Approval detail
+
+```text
++--------------------------------------+
+| <  权限申请                           |
+|--------------------------------------|
+| Ling · 当前会话                       |
+| 中风险 · 4 分钟后过期                  |
+|                                      |
+| 需要写入工作区内的 2 个文件。           |
+| • src/...                            |
+| • tests/...                          |
+|                                      |
+| 仅本次生效，不会修改工作区权限策略。     |
+|                                      |
+| [拒绝]                  [仅本次允许]   |
++--------------------------------------+
+```
+
+- Low/medium eligible items expose both actions.
+- High eligible items require a decision reason and local Face ID/Touch ID/passcode before
+  the app sends `仅本次允许`.
+- Critical/sensitive items replace the approve button with `请在 PC 处理`; explicit deny
+  remains available only when the server policy permits it.
+- Submitting disables both buttons and shows `正在记录决定…`.
+- If PC wins the race, the sheet becomes `已在 PC 处理 · <result>` rather than showing a
+  generic failure.
+- Approved runtime permission remains run-/continuation-scoped. Mobile never offers
+  `始终允许`, permission preset, workspace policy, or allowed-path editing.
+
+## Creation Flows
+
+The index `+` action sheet contains:
+
+```text
+新建会话
+新建频道
+与已有队友私聊
+```
+
+### New conversation
+
+- Opens a blank local draft detail immediately.
+- No daemon object exists until the first non-empty message is sent.
+- Back preserves the device-local draft according to the normal draft policy; deleting the
+  draft leaves no PC object.
+- First-send pending/retry uses one command id and binds to the returned conversation.
+
+### New channel
+
+- One sheet contains a required name and optional multi-select of existing active
+  teammates.
+- The form explains `工具、模型和权限沿用 PC 工作区默认设置`.
+- It does not expose path, provider, model, tools, permissions, runtime policy, auto-reply,
+  response language, or default-teammate controls.
+- Success closes the sheet and opens the new channel. Failure preserves values and offers
+  same-command retry when safe.
+
+### Existing teammate
+
+- `与已有队友私聊` selects one active teammate and opens a local direct draft; the first
+  message creates or returns the authoritative direct thread.
+- `添加已有队友` inside a channel excludes current members, Ling Agent, hidden teammates,
+  and disabled teammates.
+- Mobile cannot create/edit/delete a teammate, remove a channel member, select a default,
+  or change teammate provider/runner/tools/skills/MCP/memory/permission settings.
+
+All creation mutations are disabled while offline/reconnecting. Draft text/form state may
+remain local, but there is no offline mutation queue.
 
 ## Synchronization Language
 
@@ -457,6 +575,9 @@ apps/mobile/src/
       ConversationIndexScreen.tsx
       ConversationDetailScreen.tsx
     components/
+      ConversationCreateMenu.tsx
+      NewChannelSheet.tsx
+      TeammatePickerSheet.tsx
       ConversationKindFilter.tsx
       ConversationListRow.tsx
       ConversationHeader.tsx
@@ -468,6 +589,17 @@ apps/mobile/src/
       useConversationIndex.ts
       useConversationDetail.ts
       useConversationDrafts.ts
+  features/approvals/
+    data/
+      MobileApprovalAdapter.ts
+    screens/
+      PendingApprovalsScreen.tsx
+    components/
+      InlineApprovalCard.tsx
+      ApprovalDetailSheet.tsx
+    state/
+      usePendingApprovals.ts
+      useApprovalDecision.ts
   features/profile/
     MyScreen.tsx
     ProfileIdentitySection.tsx
@@ -487,13 +619,17 @@ Responsibilities stay separated:
 - protocol validation, reconnection, ordering, and command receipts remain outside UI;
 - pairing screens consume a pairing state machine and never parse QR wire data directly;
 - profile edits use a dedicated allowlisted adapter, separate from conversation commands;
+- approval screens consume server eligibility and sanitized summaries; they never parse
+  or classify raw approval payloads;
+- creation screens emit narrow typed intents and never choose path/runtime defaults;
 - native theme values are app-local until a second native consumer exists.
 
 ## Required Remote Projection Evolution
 
-The implemented Slice 1 wire protocol is currently channel-specific. The UI must not
-rename channel DTOs and pretend they cover all conversation kinds. Before live V1
-integration, add a versioned remote conversation projection such as:
+The isolated branch now routes the generic conversation projection through
+`MobileConversationAdapter` and a Native renderer backed by `conversation-ui-core`.
+Approval and creation add separate capability-gated projections; they do not widen the
+conversation message DTO:
 
 ```ts
 type RemoteConversationKindV1 = "channel" | "conversation" | "teammate_direct";
@@ -531,6 +667,10 @@ payload; it cannot read files, paths, analytics, runs, skills, settings, or arbi
 profile storage. Mobile appearance remains local and requires no Remote Gateway setting
 mutation.
 
+Approval/catalog/creation DTOs, redaction, atomic decision rules, and command shapes are
+owned by
+[Mobile Approval and Creation Detailed Design](mobile-approval-and-creation-detailed-design.md).
+
 ## Accessibility and Platform Behavior
 
 - All interactive targets are at least 44 x 44 pt.
@@ -559,23 +699,29 @@ mutation.
 | 4 | Scans channel, normal, and direct conversations | In control | One list, clear type identity, activity order, unread counts. |
 | 5 | Opens a conversation | Continuous with PC | Same transcript identity and ordering, phone-native hierarchy. |
 | 6 | Sends plain text | Confident | Durable send state and no hidden workflow/tool escalation. |
-| 7 | Loses and regains connectivity | Not misled | Cached content is visibly stale; snapshot recovery avoids duplicates. |
-| 8 | Opens the avatar | Familiar | Identity and Mobile appearance are together without exposing the PC settings center. |
+| 7 | Receives an approval request away from the desk | Unblocked but cautious | Badge, inline card, redacted detail, risk-aware `Allow once`/`Deny`, and PC-only critical state. |
+| 8 | Starts a conversation/channel or chooses a teammate | Productive | One `+` menu, local drafts, server defaults, and narrow existing-teammate pickers. |
+| 9 | Loses and regains connectivity | Not misled | Cached content is visibly stale; snapshot recovery avoids duplicates or double decisions. |
+| 10 | Opens the avatar | Familiar | Identity and Mobile appearance are together without exposing the PC settings center. |
 
 ## NOT in Scope
 
-- Conversation creation, rename, archive, delete, pinning, search, or administration.
+- Conversation/channel rename, archive, delete, pinning, search, or broad administration.
 - Conversation attachments, voice/camera capture, rich composer commands, and
   model/provider/permission controls.
 - Manual low-entropy pairing codes until a separate protocol and threat model are approved.
-- Remote approvals, run control, tasks, work cells, files, terminal, artifacts, or
-  Computer Use.
-- Teammate profile editing, memory, activity inspector, channels tab, or private files.
+- `Always allow`, approval-policy/preset edits, persistent grants, critical/sensitive
+  Mobile approval, run control, tasks, work cells, files, terminal, artifacts, or Computer
+  Use.
+- Creating/editing/deleting an AI teammate, teammate memory/skills/MCP/permissions,
+  activity inspector, channels tab, or private files.
+- Channel member removal/default selection or replace-all membership management.
 - PC Token/activity analytics, theme creation/import, arbitrary theme packages, language,
   personalization, or broad settings management.
 - Changing the PC theme from Mobile; Mobile appearance is device-local in V1.
 - Workspace selection or exposure of local filesystem paths.
-- Push-notification design beyond content-free connection plumbing.
+- Guaranteed background approval push/wake without an APNs-capable service. Foreground
+  content-free attention and fresh foreground sync are included.
 - Tablet, split-view, landscape multi-column, watch, or desktop-native layouts.
 
 ## Acceptance Criteria
@@ -587,7 +733,18 @@ mutation.
 - Index and detail remain usable at 320 pt width and 200% font scale.
 - Cached data is never presented as current during reconnect/offline states.
 - Plain-text send has pending, success, failure, and same-command retry states.
-- No out-of-scope control is visible in the two primary screens.
+- No out-of-scope control is visible in the primary or secondary screens.
+- The index exposes a 44 pt approval entry, `+` creation entry, and avatar without
+  clipping at 320 pt/200% text; accessibility labels distinguish all three.
+- Pending approvals show conversation, action, risk, expiry, decision eligibility, and
+  terminal race state without raw payload/path/secret content.
+- High-risk approval invokes local OS authentication before `Allow once`; cancellation
+  sends no command. Critical/sensitive approval cannot be approved on Mobile.
+- Tapping new conversation/direct and backing out before send creates no daemon object;
+  first-send retry produces one authoritative thread/message/work unit.
+- New channel accepts only name and existing teammates, visibly states that PC defaults
+  apply, and cannot surface path/provider/model/tool/permission inputs.
+- Adding an existing teammate is additive/idempotent and cannot remove/default/configure.
 - Native source contains no `apps/web`, ReactDOM, DOM API, or Web CSS imports.
 - Light and dark themes map from UI 2.0 semantic values through typed native tokens.
 - Fixtures cover three conversation kinds plus loading, empty, partial, offline,
@@ -600,8 +757,11 @@ mutation.
   Mobile appearance, paired-PC status, and local unpair.
 - Mobile profile edits are narrow allowlisted commands; Mobile appearance never mutates
   the PC theme.
-- The live implementation does not ship until the channel-only protocol has a reviewed
-  generic conversation projection and authorization policy.
+- The live implementation does not ship until the generic conversation projection is
+  consumed through the shared Mobile semantic adapter/renderer and its authorization
+  policy remains green.
+- Approval/creation does not ship until the shared approval resolver uses atomic first-
+  decision-wins CAS and PC/Mobile race tests pass.
 
 ## Implementation Tasks
 
@@ -646,14 +806,30 @@ mutation.
   - Files: `apps/mobile/src/features/profile/`, Remote profile projection/commands.
   - Verify: profile limits, avatar payload validation, PC round-trip, theme persistence,
     local-only theme behavior, and credential/cache clearing after unpair.
+- [ ] **T9 (P1)** — Approval attention — implement pending badge, inline card, list,
+  redacted detail, eligibility states, local-auth gate, submission/race/expiry recovery.
+  - Files: `apps/mobile/src/features/approvals/`, remote-client approval state.
+  - Verify: low/medium/high/critical fixtures, PC-wins race, expired, offline, OS-auth
+    cancel, 320/390 pt, 200% text, VoiceOver, Light/Dark.
+- [ ] **T10 (P1)** — Conversation/channel creation — implement `+` action sheet, normal/
+  direct local drafts, first-send binding, new-channel form, and durable retry states.
+  - Files: Mobile conversation components/state and remote-client creation commands.
+  - Verify: back-before-send creates nothing, duplicate retry creates one object/work unit,
+    validation preserves form state, and offline disables mutation.
+- [ ] **T11 (P1)** — Existing teammate selection — implement sanitized teammate pickers,
+  direct-draft start, and additive channel membership.
+  - Files: Mobile conversation components/state and remote-client teammate catalog.
+  - Verify: existing/hidden/disabled/current-member states, idempotent add, stale catalog,
+    and negative assertions for create/edit/remove/default/configure controls.
 
 ## Design Review Result
 
 The previous plan was 4/10 for Mobile UI completeness: it listed broad screens, retained
-channel-only information architecture, and deferred visual decisions. This document raises
-the plan to 9/10 by fixing information hierarchy, state coverage, the end-to-end user
-journey, UI 2.0 token alignment, native component boundaries, responsive behavior, and
-accessibility. The remaining point is live visual QA on iOS and Android implementations;
-it cannot be proven by a design document.
+channel-only information architecture, and deferred visual decisions. The 2026-07-31 pass
+raised the conversation shell to 9/10. The 2026-08-01 amendment closes the remaining
+product-flow design gaps with explicit approval attention/detail, risk and stale-decision
+states, creation drafts/forms/pickers, server-default language, background limits,
+accessibility, failure recovery, and testable acceptance criteria. Live visual and real-
+device security QA remain implementation evidence, not unresolved design choices.
 
 NO UNRESOLVED DESIGN DECISIONS

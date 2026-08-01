@@ -1,7 +1,8 @@
 # Mobile Remote Access Detailed Design
 
-Status: Slice 1 channel protocol implemented; generic V1 conversation projection amendment pending
-Date: 2026-07-31
+Status: generic conversation protocol implemented on the isolated branch; approval and
+creation amendment designed, implementation pending
+Date: 2026-08-01
 Parent: [Ling Mobile Remote Access](mobile-remote-access.md)
 
 ## Purpose
@@ -65,6 +66,14 @@ Therefore Remote Access must not:
 13. Outbound projections omit raw daemon events, secrets, absolute paths, raw tool output,
     stdout/stderr, and artifact bytes.
 14. Protocol downgrade, unknown frame type, invalid field, and oversized input fail closed.
+15. Mobile and PC resolve one daemon-owned durable approval through the same application
+    service; Remote Gateway never creates or mutates a second approval model.
+16. Approval projection is conversation-scoped, bounded, and redacted. The raw approval
+    payload is never serialized to Mobile.
+17. Approval resolution is atomic first-decision-wins; a PC/Mobile race cannot overwrite a
+    terminal decision.
+18. Remote creation commands use server-owned workspace/runtime defaults, accept no path
+    or broad policy fields, and commit their receipt/domain mutation/projection atomically.
 
 ## 2026-07-31 Conversation Scope Amendment
 
@@ -85,6 +94,25 @@ separate `profile.read` and `profile.update` capabilities limited to display nam
 bounded validated avatar payload. Those commands cannot accept local paths or expose
 profile analytics. Mobile appearance is stored on the phone and does not require a remote
 settings capability or permission to mutate the PC theme.
+
+## 2026-08-01 Approval and Creation Amendment
+
+The Mobile completion scope now includes sanitized pending-approval attention, eligible
+`Allow once`/`Deny` decisions, normal/teammate-direct first-message creation, basic channel
+creation, and adding an existing teammate to a channel. The complete product, wire,
+eligibility, UI, failure, and test contract is defined in
+[Mobile Approval and Creation Detailed Design](mobile-approval-and-creation-detailed-design.md).
+
+This amendment does not expose the local `/approvals`, `/channels`, `/threads`, or
+`/teammates` routes. Remote Gateway uses narrow facades and a shared application-level
+approval decision service. Creating/configuring a new AI teammate, persistent permission
+or approval-policy changes, critical/sensitive approval, run control, provider/tool
+settings, path selection, and broad channel administration remain forbidden.
+
+Because no public or merged protocol-v1 compatibility promise exists yet, the isolated
+branch may add these typed capability-gated commands while retaining protocol version 1.
+If the conversation-only protocol ships before this amendment, the extension must use a
+new protocol version rather than silently changing a released strict event union.
 
 ## Network Topology
 
@@ -478,7 +506,8 @@ Protocol rules:
   has no command id, and never produces `command.accepted/completed/failed`. This prevents
   an acknowledgement-completion feedback loop. `messageId` identifies a transport frame,
   and a server `requestId` may reference that frame without replacing the stable command
-  id. Only `channel.send_text` persists the command id across sessions in V0;
+  id. Side-effecting/retryable Mobile mutations persist their command id and semantic
+  hash across sessions; transport/read commands need only in-session correlation;
 - `command.completed` and `command.failed` repeat `commandId` plus `commandType`, and the
   result discriminator must match that type;
 - server events are ordered per remote stream and acknowledged cumulatively;
@@ -489,7 +518,7 @@ Protocol rules:
 
 ## Remote Capability Allowlist
 
-V0 command kinds:
+The conversation-only base command kinds are:
 
 ```text
 session.ping
@@ -497,47 +526,77 @@ stream.subscribe
 stream.unsubscribe
 stream.ack
 snapshot.request
-channel.list
-channel.open
-channel.send_text
+conversation.list
+conversation.open
+conversation.send_text
+conversation.mark_read
+profile.read
+profile.update
+security.unpair
 ```
 
-V0 server event kinds:
+The 2026-08-01 completion scope adds independently removable capabilities and commands:
+
+```text
+approval.read       -> approval.list
+approval.resolve    -> approval.resolve
+conversation.start  -> conversation.start
+channel.create      -> channel.create
+teammate.read       -> teammate.list
+channel.member.add  -> channel.member.add
+```
+
+Server event kinds include:
 
 ```text
 session.ready
 workspace.summary
-channel.list_snapshot
-channel.snapshot
-transcript.delta
-run.summary
-approval.summary
+conversation.list_snapshot
+conversation.snapshot
+conversation.delta
+profile.snapshot
+approval.list_snapshot
+approval.delta
+teammate.list_snapshot
 command.accepted
 command.completed
 command.failed
 stream.resync_required
 security.revoked
+workspace.binding_changed
 ```
 
 Explicitly forbidden in V0:
 
 - arbitrary HTTP method/path forwarding;
-- client-supplied `cwd`, filesystem path, environment, provider, model, teammate, tools,
-  permission preset, or approval decision;
+- client-supplied `cwd`, filesystem path, environment, provider, model, tools, permission
+  preset, approval policy, persistent grant, or raw approval payload;
 - direct run start/cancel/intervention commands;
 - terminal, file, artifact bytes, attachment, plugin, settings, secret, memory export,
   Computer Use, or admin operations;
 - any unknown command or payload field.
 
+The allowed `teammateId` fields are references to entries in the sanitized active
+teammate catalog. They can select a direct-conversation target or additive channel member;
+they cannot select a provider/runner, create/edit a teammate, change default ownership, or
+modify teammate memory/skill/MCP/permission configuration.
+
+`approval.resolve` accepts only `allow_once` or `deny`. The server-owned decision policy
+may downgrade an item to `deny_or_pc`/`pc_only` regardless of the client UI. Critical risk
+and configured sensitive action families can never be approved by Mobile. The command
+resolves through the same application service as PC so checkpoint, continuation,
+workflow/media, audit, and projection side effects cannot diverge.
+
 ### Mobile Message Ceiling
 
-`channel.send_text` is a communication capability, not a hidden remote task endpoint.
+`conversation.send_text` and `conversation.start` are communication capabilities, not
+hidden remote task endpoints.
 The Gateway passes a server-owned context into a dedicated daemon application service:
 
 ```ts
 interface RemoteMessageExecutionPolicyV1 {
   readonly sourceSurface: "mobile";
-  readonly authorityCeiling: "channel_comment";
+  readonly authorityCeiling: "conversation_comment";
   readonly allowAiReply: true;
   readonly allowToolCalls: false;
   readonly allowWorkflowAutoStart: false;
@@ -546,7 +605,7 @@ interface RemoteMessageExecutionPolicyV1 {
 ```
 
 The service may create a conversational AI reply with tools disabled, but it must not call
-the generic local-user channel handler without this ceiling. `/`, `@`, hidden proposal
+a generic local-user conversation handler without this ceiling. `/`, `@`, hidden proposal
 markers, teammate routing, provider/model overrides, and natural-language instructions
 cannot raise the ceiling. If the daemon cannot enforce this context end-to-end, V0 falls
 back to durable comment-only delivery and does not start an AI route.
@@ -556,13 +615,13 @@ and authority ceiling. This lets the dispatcher and audit layer distinguish a Mo
 comment from a local Web/Desktop message. A future remote task capability needs a separate
 policy, audit, approval, and threat-model review; it is not an extra field on this command.
 
-`channel.send_text` contains only:
+An existing-conversation send contains only:
 
 ```ts
 interface RemoteSendTextCommandV1 {
   readonly commandId: string;
   readonly workspaceId: string; // opaque id, never cwd
-  readonly channelId: string;
+  readonly conversationId: string;
   readonly body: string;
 }
 ```
@@ -573,7 +632,7 @@ provider, teammate, tool, attachment, or file-reference fields. Any permitted co
 reply remains subject to the daemon's existing provider readiness and audit state, but it
 cannot auto-start a workflow or tool-backed run.
 
-## Workspace and Channel Authorization
+## Workspace and Conversation Authorization
 
 V0 binds the Gateway to one local workspace at enable/pair time:
 
@@ -581,16 +640,20 @@ V0 binds the Gateway to one local workspace at enable/pair time:
 interface RemoteAccessPolicyV1 {
   readonly workspaceId: string;
   readonly localWorkspacePath: string; // PC-side only; never serialized remotely
-  readonly channelAccess:
-    | { readonly mode: "selected"; readonly channelIds: readonly string[] }
-    | { readonly mode: "all_in_workspace" };
+  readonly conversationAccess:
+    | { readonly mode: "selected"; readonly conversationIds: readonly string[] }
+    | {
+        readonly mode: "all_in_workspace";
+        readonly kinds: readonly ("channel" | "conversation" | "teammate_direct")[];
+      };
   readonly capabilities: readonly RemoteCapabilityV1[];
 }
 ```
 
-`channel.read` is mandatory while Remote Access is enabled. The other three V0
-capabilities are independently removable by the local owner, so the wire policy can express
-a least-privilege subset but can never introduce a capability outside the V0 allowlist.
+`conversation.read` is mandatory while Remote Access is enabled. Mutation, approval,
+profile, catalog, creation, membership, and unpair capabilities are independently
+removable by the local owner. The wire policy can express a least-privilege subset but can
+never introduce a capability outside the reviewed allowlist.
 
 The local binding also stores a canonical identity, not only the display path:
 
@@ -611,15 +674,17 @@ move, symlink swap, missing database, or identity mismatch disables Remote Acces
 requires a local rebind. The Gateway never calls `RunStoreRegistry.getStore()` with a
 remote-provided string.
 
-The PC owner explicitly selects the channel mode locally. The remote `workspaceId` is an
-opaque alias looked up by the Gateway. Unknown aliases, channels outside the policy, and
-any path-shaped input fail closed without revealing whether a local path exists.
+The PC owner explicitly selects conversation access locally. The remote `workspaceId` is
+an opaque alias looked up by the Gateway. Unknown aliases, conversations outside the
+policy, and any path-shaped input fail closed without revealing whether a local path
+exists. A newly created channel or conversation is added to the active policy only by the
+same committed server transaction and only when its kind is locally allowed.
 
-Run and approval summaries are never workspace-global in V0. Before projection, the
+Run and approval summaries are never workspace-global. Before projection, the
 Gateway must resolve each run/approval through its source message/workflow/task provenance
-to an allowed `channelId`. If that binding is missing, ambiguous, or outside
-`channelAccess`, the event is withheld. Tests cover a permitted channel and a simultaneous
-non-permitted channel so metadata cannot leak across the allowlist.
+to exactly one allowed conversation id. If that binding is missing, ambiguous, or outside
+`conversationAccess`, the event is withheld. Tests cover a permitted conversation and a
+simultaneous non-permitted conversation so metadata cannot leak across the allowlist.
 
 ## Durable Command Idempotency
 
@@ -627,24 +692,23 @@ In-memory deduplication is insufficient. A disconnect can happen after the daemo
 user message but before the phone receives `command.completed`; blindly retrying would
 create a duplicate message and may trigger duplicate AI work.
 
-The daemon store adds a durable receipt keyed by `(gatewayId, deviceEpoch, commandId)`:
+The daemon store keeps a generic durable receipt keyed by `commandId`, with the
+authenticated device/workspace/policy fence recorded or revalidated around the mutation:
 
 ```ts
 interface RemoteCommandReceipt {
-  readonly gatewayId: string;
-  readonly deviceEpoch: number;
   readonly commandId: string;
-  readonly commandKind: "channel.send_text";
-  readonly sourceSurface: "mobile";
-  readonly authorityCeiling: "channel_comment";
-  readonly policyVersion: 1;
-  readonly requestHash: string;
-  readonly status: "accepted" | "completed" | "failed";
-  readonly resultRef?: string;
-  readonly dispatchRef?: string;
-  readonly errorCode?: string;
+  readonly workspaceId: string;
+  readonly deviceId: string;
+  readonly commandType: string;
+  readonly bodyHash: string;
+  readonly receiptState: "full" | "tombstone";
+  readonly status: "pending" | "completed" | "failed";
+  readonly issuedAt: string;
+  readonly retryUntil: string;
+  readonly terminalOutcome?: unknown;
   readonly createdAt: string;
-  readonly expiresAt: string;
+  readonly updatedAt: string;
 }
 ```
 
@@ -652,23 +716,32 @@ interface RemoteCommandReceipt {
 
 ```text
 "ling-remote-command-v1" || gatewayId || deviceEpoch || commandKind ||
-workspaceId || channelId || body || remotePolicyVersion
+workspaceId || canonicalSemanticPayload || remotePolicyVersion
 ```
 
 Transport-only `sessionId`, `clientSeq`, `sentAt`, `expiresAt`, and `requestId` are not part
 of this hash, so a legitimate retry in a new session matches the original semantic command.
 They are still validated before a new command is accepted.
 
-`channel.send_text` follows one `BEGIN IMMEDIATE` transaction:
+`conversation.send_text` follows one `BEGIN IMMEDIATE` transaction:
 
 1. load the receipt by primary key;
 2. if it exists with the same request hash, return the stored result;
 3. if it exists with a different hash, return `idempotency_conflict`;
-4. otherwise insert the receipt, create the user channel message, and write a durable
+4. otherwise insert the receipt, create the user conversation message, and write a durable
    dispatch intent keyed by that source message;
 5. record the message/dispatch ids as the command result and commit;
 6. after commit, a reconciled dispatcher claims the intent and enters the bounded
-   channel-comment reply path using the source message id as its idempotency boundary.
+   conversation-comment reply path using the source message id as its idempotency boundary.
+
+`conversation.start` extends that transaction with authoritative thread creation.
+`channel.create` commits channel, initial memberships, policy visibility, receipt, and
+projection outbox together. `channel.member.add` commits the unique membership, receipt,
+and outbox together. `approval.resolve` combines a durable command receipt with the atomic
+pending-state approval compare-and-set and shared decision-service side effects. Each
+command has its own canonical semantic payload; changing any target, decision, reason,
+name, teammate set, or first-message body under the same command id is an
+`idempotency_conflict`.
 
 The message, receipt, and dispatch intent must be atomic. A deterministic message id may
 provide an extra uniqueness guard, but it does not replace the request hash and receipt.
@@ -758,9 +831,10 @@ Requirements:
 - a network drop never cancels or changes the local run;
 - mobile does not maintain an offline mutation queue in V0.
 
-Existing control-plane replay/redaction utilities may be reused for safe run/approval
-summaries, but channel transcript changes need their own snapshot/delta projection because
-the current control-plane domains do not own channel messages.
+Existing control-plane replay/redaction utilities may inform safe approval projection,
+but the Gateway must build a remote-specific summary and never serialize the raw approval
+payload. Conversation transcript and approval changes use their own bounded snapshot/delta
+projection because the control plane does not own Mobile wire policy.
 
 ## Remote Projection and Redaction
 
@@ -771,6 +845,7 @@ Allowed outbound data:
 - assistant/user text visible in the channel;
 - high-level operation labels and terminal status;
 - redacted run and pending-approval summaries;
+- sanitized active-teammate catalog entries and basic creation/membership results;
 - safe timestamps, ids, revisions, and sequence cursors.
 
 Removed or replaced:
@@ -887,6 +962,9 @@ Initial limits, adjustable only from local configuration:
 - 256 KiB maximum frame, 32 KiB maximum text body;
 - 20 protocol frames/second sustained with a small burst;
 - 10 text-message commands/minute;
+- 20 approval-list/decision commands/minute and at most 100 pending summaries per snapshot;
+- 10 channel/conversation-start mutations/minute, at most 20 teammate ids per channel
+  create, and at most 200 sanitized teammates per catalog snapshot;
 - bounded unacknowledged event queue; overflow produces `resync_required` and closes;
 - WebSocket compression disabled;
 - idle and unauthenticated timeouts;
@@ -904,6 +982,8 @@ remote.enabled / remote.disabled
 pairing.opened / pairing.expired / pairing.rejected / pairing.confirmed
 device.authenticated / device.auth_failed / device.revoked / session.replaced
 command.accepted / command.replayed / command.conflict / command.rejected
+approval.projected / approval.resolved / approval.race_lost / approval.mobile_blocked
+conversation.started / channel.created / channel.member_added
 stream.resync_required
 ```
 
@@ -928,6 +1008,10 @@ body, raw payload, local path, or transcript content.
 | Oversized/hostile frame | Pre-parse size limit, strict schema, rate limit | Parser/library vulnerabilities still require dependency updates. |
 | PC sleeps during a run | Reauth and snapshot/delta resume | Phone cannot control the run while PC is unreachable. |
 | Phone is stolen | OS lock, hardware key, PC revoke | An unlocked stolen phone is usable until revoke. |
+| Raw approval payload leaks to phone | Dedicated bounded projection; no payload forwarding; redaction regression tests | User-authored description may still contain sensitive prose. |
+| PC and Mobile resolve together | Atomic `status='pending'` compare-and-set and shared decision service | The losing UI briefly shows stale pending state before terminal delta. |
+| Mobile approves a critical action | Server-owned eligibility rejects it regardless of client | User must return to PC or deny. |
+| Creation route smuggles path/runtime settings | Narrow command schemas plus server-owned defaults | A compromised paired phone can still create allowed basic objects until revoke. |
 
 ## Error Codes
 
@@ -951,6 +1035,12 @@ command_expired
 idempotency_conflict
 workspace_not_allowed
 channel_not_allowed
+approval_not_allowed
+approval_not_pending
+approval_expired
+approval_pc_required
+channel_name_invalid
+teammate_not_allowed
 capability_not_allowed
 payload_too_large
 rate_limited
@@ -989,6 +1079,13 @@ available only in local safe diagnostics.
 - rate, body, frame, unauthenticated timeout, and queue limits are enforced;
 - outbound projection contains no structured secrets, absolute paths, raw tool payloads,
   stdout/stderr, or artifact bytes.
+- pending approvals are projected only through allowed conversation provenance; raw
+  payload, unsafe path, and ambiguous ownership cases are withheld or PC-only;
+- PC/Mobile simultaneous decisions produce exactly one terminal approval and one complete
+  set of checkpoint/control-plane/continuation side effects;
+- critical/sensitive approval cannot be upgraded by changing a client field;
+- conversation/channel/member creation accepts no path/provider/tool/permission fields and
+  cannot call the broad local router.
 
 ### Idempotency and Recovery Tests
 
@@ -1009,6 +1106,12 @@ available only in local safe diagnostics.
   an old-generation cursor;
 - daemon restart, PC sleep, phone background/foreground, Wi-Fi/cellular switch, and relay
   fallback all converge to daemon-authoritative state.
+- approval response loss and retry return the first terminal decision without applying a
+  second decision;
+- `conversation.start` response loss/retry creates one thread, one user message, and one
+  bounded reply work unit;
+- channel create commits channel, memberships, receipt, and projection together or none;
+- additive teammate membership is idempotent and cannot replace/remove/default members.
 
 ### Real-Device Security Acceptance
 
@@ -1021,6 +1124,9 @@ available only in local safe diagnostics.
   loopback, and the external phone-to-Serve leg is HTTPS/WSS;
 - a focused penetration test covers pairing race, replay, frame fuzzing, downgrade, route
   confusion, rate-limit bypass, and log/diagnostic leakage.
+- iOS Release verifies the high-risk approval screen invokes local Face ID/Touch ID/
+  passcode before sending `allow_once`, cancellation sends no command, and critical
+  approval remains PC-only.
 
 ## Security Review Verdict
 
@@ -1029,6 +1135,9 @@ hardware-backed device proof, local pairing confirmation, durable idempotency, f
 workspace mapping, and strict allowlist described here. Removing any one of those controls
 changes the trust boundary and requires another review.
 
-Remote approval decisions, attachments, files, terminal output, run cancellation, and
-Computer Use remain excluded from V0. They must not be enabled as “small endpoint additions”
-because each introduces a new authorization and data-loss boundary.
+Mobile approval is acceptable only through the redacted, conversation-scoped,
+server-eligible, `allow_once`, atomic shared-decision design defined by the 2026-08-01
+amendment. Broad approval routes, policy changes, critical/sensitive approval,
+attachments, files, terminal output, run cancellation, and Computer Use remain excluded.
+They must not be enabled as “small endpoint additions” because each introduces a new
+authorization and data-loss boundary.
