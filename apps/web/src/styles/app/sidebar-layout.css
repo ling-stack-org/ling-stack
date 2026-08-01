@@ -213,7 +213,7 @@
   min-height: 0;
   padding: 12px 10px;
   border-right: 1px solid var(--border);
-  background: var(--surface-panel);
+  background: var(--surface-sidebar);
   overflow: hidden;
   transition:
     width var(--sidebar-rail-motion-duration) var(--sidebar-rail-motion-ease),

@@ -381,19 +381,19 @@ body {
   gap: 8px;
   min-height: 92px;
   grid-column: 1 / -1;
-  color: #777872;
+  color: var(--text-muted);
   font-size: 13px;
 }
 
 .conversation-empty-state {
   min-height: 320px;
-  border: 1px solid rgba(37, 42, 45, 0.09);
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.5);
+  background: var(--surface-panel);
 }
 
 .conversation-empty-state svg {
-  color: #69706e;
+  color: var(--text-muted);
 }
 
 .runtime-policy-summary {
@@ -403,13 +403,13 @@ body {
 }
 
 .runtime-policy-summary strong {
-  color: #21262a;
+  color: var(--text-strong);
   font-size: 13px;
   line-height: 18px;
 }
 
 .runtime-policy-summary small {
-  color: #69706f;
+  color: var(--text-muted);
   font-size: 11px;
   line-height: 15px;
 }
@@ -424,18 +424,18 @@ body {
   display: grid;
   gap: 4px;
   padding: 8px;
-  border: 1px solid rgba(33, 38, 42, 0.08);
+  border: 1px solid var(--border);
   border-radius: 7px;
-  background: rgba(255, 255, 255, 0.45);
+  background: var(--surface-panel);
 }
 
 .runtime-kpi-grid span {
-  color: #7a817e;
+  color: var(--text-muted);
   font-size: 11px;
 }
 
 .runtime-kpi-grid strong {
-  color: #26302f;
+  color: var(--text-strong);
   font-size: 18px;
 }
 

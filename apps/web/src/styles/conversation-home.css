@@ -78,6 +78,14 @@
 
 .conversation-home-shortcuts button:hover,
 .conversation-home-shortcuts button:focus-visible {
-  background: var(--surface-selected);
+  background: var(--surface-hover);
   color: var(--text-strong);
+}
+
+:root[data-theme="dark"] .conversation-home [data-conversation-composer][data-surface="normal_conversation"] {
+  box-shadow: var(--composer-ambient-shadow);
+}
+
+:root[data-theme="dark"] .conversation-home [data-conversation-composer][data-surface="normal_conversation"]:focus-within {
+  box-shadow: var(--composer-ambient-focus-shadow);
 }

@@ -24,7 +24,7 @@ p {
 }
 
 h1 {
-  color: #111a17;
+  color: var(--text-strong);
   font-size: 24px;
   line-height: 1.2;
   font-weight: 760;
@@ -32,7 +32,7 @@ h1 {
 
 .workspace-head p {
   margin-top: 6px;
-  color: #66756f;
+  color: var(--text-muted);
   font-size: 13px;
   line-height: 1.5;
 }
@@ -46,30 +46,30 @@ h1 {
 .first-run-flow.ready {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  border-color: #a9cfc0;
-  background: #f3fbf7;
+  border-color: var(--success-border);
+  background: var(--success-soft);
 }
 
 .first-run-flow.active {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  border-color: #d9bd71;
-  background: #fffaf0;
+  border-color: var(--warning-border);
+  background: var(--warning-soft);
 }
 
 .first-run-flow.active .first-run-copy span {
-  color: #8a5a0a;
+  color: var(--warning);
 }
 
 .first-run-flow.attention {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  border-color: #e7b4a8;
-  background: #fff7f4;
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
 }
 
 .first-run-flow.attention .first-run-copy span {
-  color: #9a341f;
+  color: var(--danger);
 }
 
 .first-run-title {
@@ -90,17 +90,17 @@ h1 {
 
 .first-run-copy span {
   gap: 7px;
-  color: #116149;
+  color: var(--success);
 }
 
 .first-run-copy strong {
-  color: #17211f;
+  color: var(--text-strong);
   font-size: 13px;
 }
 
 .first-run-copy small {
   overflow-wrap: anywhere;
-  color: #5f6d68;
+  color: var(--text-muted);
   font-size: 12px;
 }
 
@@ -126,35 +126,35 @@ h1 {
   gap: 8px;
   min-height: 104px;
   padding: 10px;
-  border: 1px solid #d8ded7;
-  background: #fbfcfa;
+  border: 1px solid var(--border);
+  background: var(--surface-panel);
 }
 
 .first-run-step.ready {
-  border-color: #bdd8cc;
-  background: #f2faf6;
+  border-color: var(--success-border);
+  background: var(--success-soft);
 }
 
 .first-run-step.ready > svg {
-  color: #116149;
+  color: var(--success);
 }
 
 .first-run-step.attention {
-  border-color: #e7b4a8;
-  background: #fff7f4;
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
 }
 
 .first-run-step.attention > svg {
-  color: #9a341f;
+  color: var(--danger);
 }
 
 .first-run-step.pending {
-  border-color: #d6c28a;
-  background: #fffaf0;
+  border-color: var(--warning-border);
+  background: var(--warning-soft);
 }
 
 .first-run-step.pending > svg {
-  color: #8a5a0a;
+  color: var(--warning);
 }
 
 .first-run-step-copy {
@@ -164,13 +164,13 @@ h1 {
 }
 
 .first-run-step-copy strong {
-  color: #17211f;
+  color: var(--text-strong);
   font-size: 12px;
 }
 
 .first-run-step-copy small {
   overflow-wrap: anywhere;
-  color: #5f6d68;
+  color: var(--text-muted);
   font-size: 12px;
   line-height: 1.35;
 }
@@ -182,8 +182,8 @@ h1 {
 
 .panel,
 .inspector {
-  border: 1px solid #d8ded7;
-  background: #ffffff;
+  border: 1px solid var(--border);
+  background: var(--surface-panel);
 }
 
 .panel {
@@ -209,7 +209,7 @@ h2 {
 }
 
 h3 {
-  color: #2f3c38;
+  color: var(--text-strong);
   font-size: 12px;
   line-height: 1.2;
   text-transform: uppercase;
@@ -222,7 +222,7 @@ h3 {
 }
 
 .field span {
-  color: #56635f;
+  color: var(--text-muted);
   font-size: 12px;
   font-weight: 650;
 }
@@ -245,8 +245,9 @@ h3 {
 }
 
 .primary-button {
-  background: #0e5a4a;
-  color: #ffffff;
+  border-color: var(--ling-action-accent);
+  background: var(--ling-action-accent);
+  color: var(--ling-action-accent-fg);
 }
 
 .primary-button:disabled,
@@ -256,14 +257,14 @@ h3 {
 }
 
 .secondary-button {
-  border-color: #cfd8d3;
-  background: #ffffff;
-  color: #26332f;
+  border-color: var(--border);
+  background: var(--surface-panel);
+  color: var(--text);
 }
 
 .secondary-button.danger {
-  border-color: #e7b4a8;
-  color: #9a341f;
+  border-color: var(--danger-border);
+  color: var(--danger);
 }
 
 .secondary-button.full {
@@ -292,68 +293,68 @@ h3 {
   align-items: center;
   height: 26px;
   padding: 0 9px;
-  border: 1px solid #d8ded7;
-  background: #fbfcfa;
-  color: #64736e;
+  border: 1px solid var(--border);
+  background: var(--surface-subtle);
+  color: var(--text-muted);
   font-size: 12px;
 }
 
 .status-badge.running {
-  border-color: #d9bd71;
-  background: #fff7df;
-  color: #8a5b00;
+  border-color: var(--warning-border);
+  background: var(--warning-soft);
+  color: var(--warning);
 }
 
 .status-badge.queued,
 .status-badge.waiting_for_approval {
-  border-color: #d9bd71;
-  background: #fff7df;
-  color: #8a5b00;
+  border-color: var(--warning-border);
+  background: var(--warning-soft);
+  color: var(--warning);
 }
 
 .status-badge.succeeded {
-  border-color: #a9cfc0;
-  background: #e7f5ef;
-  color: #116149;
+  border-color: var(--success-border);
+  background: var(--success-soft);
+  color: var(--success);
 }
 
 .status-badge.failed {
-  border-color: #e7b4a8;
-  background: #fff1ed;
-  color: #9a341f;
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 
 .status-badge.cancelled {
-  border-color: #ccd3d0;
-  background: #f1f4f2;
-  color: #5d6b66;
+  border-color: var(--border);
+  background: var(--surface-subtle);
+  color: var(--text-muted);
 }
 
 .status-badge.active,
 .status-badge.run,
 .status-badge.task,
 .status-badge.bound_path {
-  border-color: #a9cfc0;
-  background: #e7f5ef;
-  color: #116149;
+  border-color: var(--success-border);
+  background: var(--success-soft);
+  color: var(--success);
 }
 
 .status-badge.paused,
 .status-badge.channel,
 .status-badge.workspace,
 .status-badge.workflow_step {
-  border-color: #d9bd71;
-  background: #fff7df;
-  color: #8a5b00;
+  border-color: var(--warning-border);
+  background: var(--warning-soft);
+  color: var(--warning);
 }
 
 .status-badge.archived,
 .status-badge.provider,
 .status-badge.media_job,
 .status-badge.approval {
-  border-color: #ccd3d0;
-  background: #f1f4f2;
-  color: #5d6b66;
+  border-color: var(--border);
+  background: var(--surface-subtle);
+  color: var(--text-muted);
 }
 
 .inline-error {
@@ -362,15 +363,15 @@ h3 {
   gap: 8px;
   margin-bottom: 12px;
   padding: 10px;
-  background: #fff1ed;
-  color: #9a341f;
+  background: var(--danger-soft);
+  color: var(--danger);
   font-size: 13px;
 }
 
 pre {
   margin: 0;
   overflow: auto;
-  color: #43524e;
+  color: var(--text);
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 12px;
   line-height: 1.45;
@@ -382,7 +383,7 @@ pre {
   place-items: center;
   gap: 10px;
   min-height: 280px;
-  color: #6b7a75;
+  color: var(--text-muted);
   font-size: 13px;
 }
 
@@ -394,8 +395,8 @@ pre {
   display: grid;
   gap: 9px;
   padding: 10px;
-  border: 1px solid #d8ded7;
-  background: #fbfcfa;
+  border: 1px solid var(--border);
+  background: var(--surface-panel);
 }
 
 .ci-triage-panel.compact {
@@ -427,13 +428,13 @@ pre {
 }
 
 .ci-triage-head strong {
-  color: #17211f;
+  color: var(--text-strong);
   font-size: 13px;
 }
 
 .ci-triage-head small,
 .ci-triage-more {
-  color: #61706b;
+  color: var(--text-muted);
   font-size: 11px;
   font-weight: 700;
 }
@@ -452,8 +453,8 @@ pre {
   display: grid;
   gap: 8px;
   padding: 9px;
-  border: 1px solid #e1e6e2;
-  background: #ffffff;
+  border: 1px solid var(--border);
+  background: var(--surface-panel-strong);
 }
 
 .ci-triage-row.compact {
@@ -472,7 +473,7 @@ pre {
 
 .ci-triage-row-head strong {
   overflow: hidden;
-  color: #17211f;
+  color: var(--text-strong);
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -483,9 +484,9 @@ pre {
   align-items: center;
   min-height: 22px;
   padding: 0 8px;
-  border: 1px solid #d8ded7;
-  background: #f7faf7;
-  color: #61706b;
+  border: 1px solid var(--border);
+  background: var(--surface-subtle);
+  color: var(--text-muted);
   font-size: 11px;
   font-weight: 800;
   white-space: nowrap;
@@ -494,17 +495,17 @@ pre {
 .ci-triage-status.triaged,
 .ci-triage-status.task_created,
 .ci-triage-status.run_requested {
-  border-color: #a9cfc0;
-  background: #e7f5ef;
-  color: #116149;
+  border-color: var(--success-border);
+  background: var(--success-soft);
+  color: var(--success);
 }
 
 .ci-triage-status.blocked,
 .ci-triage-status.stale,
 .ci-triage-status.failed {
-  border-color: #e7b4a8;
-  background: #fff1ed;
-  color: #9a341f;
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 
 .ci-triage-meta,
@@ -518,9 +519,9 @@ pre {
 .ci-triage-actions code {
   min-height: 22px;
   padding: 2px 7px;
-  border: 1px solid #d8ded7;
-  background: #f7faf7;
-  color: #61706b;
+  border: 1px solid var(--border);
+  background: var(--surface-subtle);
+  color: var(--text-muted);
   font-size: 11px;
   font-weight: 700;
   overflow-wrap: anywhere;
@@ -538,7 +539,7 @@ pre {
 
 .ci-triage-field span {
   gap: 5px;
-  color: #61706b;
+  color: var(--text-muted);
   font-size: 11px;
   font-weight: 800;
   text-transform: uppercase;
@@ -548,15 +549,15 @@ pre {
 .ci-triage-field p {
   margin: 0;
   overflow-wrap: anywhere;
-  color: #42504c;
+  color: var(--text);
   font-size: 12px;
   line-height: 1.45;
 }
 
 .ci-triage-field code {
   padding: 7px;
-  border: 1px solid #e1e6e2;
-  background: #f7faf7;
+  border: 1px solid var(--border);
+  background: var(--surface-subtle);
   font-family: "SFMono-Regular", Consolas, monospace;
 }
 
@@ -568,6 +569,6 @@ pre {
 .ci-triage-empty {
   gap: 7px;
   min-height: 54px;
-  color: #61706b;
+  color: var(--text-muted);
   font-size: 12px;
 }
