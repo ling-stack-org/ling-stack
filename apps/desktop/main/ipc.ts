@@ -35,7 +35,8 @@ export function registerDesktopIpc(input: {
     | "onStatusChanged"
     | "requestComputerControlPermissions"
     | "openComputerControlPermissionSettings"
-    | "authorizeLockedComputerControl"
+    | "getLockedTaskContinuationPreferences"
+    | "setContinueTasksWhileLocked"
     | "revokeLockedComputerControl"
   >;
   readonly computerUse: ComputerUsePreviewCoordinator;
@@ -167,14 +168,16 @@ export function registerDesktopIpc(input: {
     }
     return input.runtime.openComputerControlPermissionSettings(permission);
   });
-  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.computerControlAuthorizeLocked, async (event) =>
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.computerControlLockedTaskContinuationGet, async (event) =>
     isMainWindowSender(event)
-      ? input.runtime.authorizeLockedComputerControl()
-      : { accepted: false, reason: "unauthorized_sender" });
-  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.computerControlRevokeLocked, async (event) =>
-    isMainWindowSender(event)
-      ? input.runtime.revokeLockedComputerControl()
-      : { accepted: false, reason: "unauthorized_sender" });
+      ? input.runtime.getLockedTaskContinuationPreferences()
+      : { continueWhileLocked: true });
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.computerControlLockedTaskContinuationSet, async (event, enabled: unknown) => {
+    if (!isMainWindowSender(event) || typeof enabled !== "boolean") {
+      return { accepted: false, reason: "unauthorized_or_invalid_locked_task_continuation" };
+    }
+    return input.runtime.setContinueTasksWhileLocked(enabled);
+  });
   desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.computerUsePreviewSnapshotGet, (event) =>
     input.computerUse.ownsPreviewWebContents(event.sender.id)
       ? input.computerUse.getRendererSnapshot()

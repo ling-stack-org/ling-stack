@@ -65,6 +65,13 @@
   max-width: 220px;
 }
 
+.conversation-authorization-trigger {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  font-weight: 500;
+  line-height: var(--ling-line-xs);
+}
+
 .conversation-authorization-trigger .expanded {
   transform: rotate(180deg);
 }

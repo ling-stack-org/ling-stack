@@ -19,6 +19,7 @@ import type {
 } from "../../features/providers/index.js";
 import {
   canBatchCheckProvider,
+  canUseConversationProvider,
   canWorkbenchBatchCheckProvider,
   defaultProviderForm,
   providerCheckDisplayMessage,
@@ -97,6 +98,7 @@ export function useProvidersDomain(input: {
   readonly translate: (value: string, params?: Record<string, string | number>) => string;
   readonly clearSelectedProvider: (providerId: string) => void;
   readonly clearProviderUsage: (providerId: string) => Promise<void>;
+  readonly onRunnableChatProviderReady?: (provider: ProviderPreset) => Promise<void>;
 }): ProvidersController {
   const [providers, setProviders] = useState<readonly ProviderPreset[]>([]);
   const [providerTemplates, setProviderTemplates] = useState<readonly ProviderTemplate[]>([]);
@@ -116,6 +118,12 @@ export function useProvidersDomain(input: {
   const [providerTemplateError, setProviderTemplateError] = useState<DomainError | undefined>();
   const [providerMutationError, setProviderMutationError] = useState<DomainError | undefined>();
   const error = providerMutationError ?? providerListError ?? providerTemplateError;
+
+  async function notifyRunnableChatProviderReady(provider: ProviderPreset): Promise<void> {
+    if (canUseConversationProvider(provider)) {
+      await input.onRunnableChatProviderReady?.(provider);
+    }
+  }
 
   async function refreshProviders(cwd = input.cwd): Promise<void> {
     if (!cwd) {
@@ -175,6 +183,7 @@ export function useProvidersDomain(input: {
         });
         return false;
       }
+      await notifyRunnableChatProviderReady(provider);
       return true;
     } catch (caught) {
       setProviderMutationError(readProviderDomainError("mutation", caught));
@@ -234,6 +243,7 @@ export function useProvidersDomain(input: {
         };
       }
 
+      await notifyRunnableChatProviderReady({ ...savedProvider, lastCheck: savedCheck });
       return { ok: true, successMessage: input.translate("Model preset saved successfully.") };
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
@@ -340,6 +350,9 @@ export function useProvidersDomain(input: {
       }
       const result = await checkProvider(input.cwd.trim(), providerId);
       setProviderCheck(result);
+      if (result.ok && provider) {
+        await notifyRunnableChatProviderReady({ ...provider, enabled: true, lastCheck: result });
+      }
       await refreshProviders();
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
@@ -378,6 +391,7 @@ export function useProvidersDomain(input: {
         const result = await checkProvider(input.cwd.trim(), provider.id);
         if (result.ok) {
           readyCount += 1;
+          await notifyRunnableChatProviderReady({ ...provider, lastCheck: result });
         } else {
           failedCount += 1;
         }

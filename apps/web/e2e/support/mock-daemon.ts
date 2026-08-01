@@ -1082,7 +1082,14 @@ export async function openEngineeringChannel(page: Page): Promise<void> {
   if (await channelMessageFeed.isVisible().catch(() => false)) {
     return;
   }
-  const engineeringChannel = page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).first();
+  const navigation = page.getByLabel("Ling Stack navigation");
+  const engineeringChannel = navigation.getByRole("button", { name: "Engineering" }).first();
+  if (!(await engineeringChannel.isVisible().catch(() => false))) {
+    const showNavigation = navigation.getByRole("button", { name: /Show navigation|显示导航/ });
+    if (await showNavigation.isVisible().catch(() => false)) {
+      await showNavigation.click();
+    }
+  }
   await expect(engineeringChannel).toBeVisible();
   await engineeringChannel.click();
   await expect(channelMessageFeed).toBeVisible();
@@ -5168,15 +5175,23 @@ function readChannelResponseLanguage(value: unknown): "workspace" | "follow_user
 }
 
 export function createMockTeammate(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  const id = typeof overrides.id === "string" ? overrides.id : "teammate_builtin_engineer";
+  const providerPresetId = typeof overrides.providerPresetId === "string" ? overrides.providerPresetId : undefined;
+  const modelBindingMode = overrides.modelBindingMode === "workspace_default" || overrides.modelBindingMode === "fixed"
+    ? overrides.modelBindingMode
+    : (id === "ling_agent" || id.startsWith("teammate_builtin_")) && !providerPresetId
+      ? "workspace_default"
+      : "fixed";
   return {
-    id: "teammate_builtin_engineer",
+    id,
     workspaceId: "workspace_default",
     templateId: "engineer",
     roleKey: "engineer",
     displayName: "Ling Engineer",
     description: "Owns scoped implementation in the Engineering channel.",
     avatarTone: "teal",
-    providerPresetId: undefined,
+    modelBindingMode,
+    providerPresetId,
     systemPrompt: "You are the Engineering AI teammate.",
     appendSystemPrompt: [],
     allowedTools: ["read", "grep", "find", "ls"],
@@ -5187,6 +5202,8 @@ export function createMockTeammate(overrides: Record<string, unknown> = {}): Rec
     createdAt: "2026-05-29T00:00:00.000Z",
     updatedAt: "2026-05-29T00:00:00.000Z",
     ...overrides,
+    modelBindingMode,
+    providerPresetId: modelBindingMode === "workspace_default" ? undefined : providerPresetId,
   };
 }
 
@@ -6133,6 +6150,18 @@ function mockProposalStepSummary(role: string): string {
 }
 
 export function createTeammateFromBody(body: Record<string, unknown>, id: string, existing: Record<string, unknown> = {}): Record<string, unknown> {
+  const providerPresetId = typeof body.providerPresetId === "string"
+    ? body.providerPresetId
+    : typeof existing.providerPresetId === "string"
+      ? existing.providerPresetId
+      : undefined;
+  const modelBindingMode = body.modelBindingMode === "workspace_default" || body.modelBindingMode === "fixed"
+    ? body.modelBindingMode
+    : existing.modelBindingMode === "workspace_default" || existing.modelBindingMode === "fixed"
+      ? existing.modelBindingMode
+      : (id === "ling_agent" || id.startsWith("teammate_builtin_")) && !providerPresetId
+        ? "workspace_default"
+        : "fixed";
   return {
     id,
     workspaceId: "workspace_default",
@@ -6142,7 +6171,8 @@ export function createTeammateFromBody(body: Record<string, unknown>, id: string
     description: typeof body.description === "string" ? body.description : typeof existing.description === "string" ? existing.description : "",
     avatarTone: typeof body.avatarTone === "string" ? body.avatarTone : typeof existing.avatarTone === "string" ? existing.avatarTone : undefined,
     avatarImageAttachmentId: typeof body.avatarImageAttachmentId === "string" ? body.avatarImageAttachmentId : typeof existing.avatarImageAttachmentId === "string" ? existing.avatarImageAttachmentId : undefined,
-    providerPresetId: typeof body.providerPresetId === "string" ? body.providerPresetId : typeof existing.providerPresetId === "string" ? existing.providerPresetId : undefined,
+    modelBindingMode,
+    providerPresetId: modelBindingMode === "workspace_default" ? undefined : providerPresetId,
     systemPrompt: typeof body.systemPrompt === "string" ? body.systemPrompt : typeof existing.systemPrompt === "string" ? existing.systemPrompt : undefined,
     appendSystemPrompt: Array.isArray(body.appendSystemPrompt) ? body.appendSystemPrompt : Array.isArray(existing.appendSystemPrompt) ? existing.appendSystemPrompt : [],
     allowedTools: Array.isArray(body.allowedTools) ? body.allowedTools : Array.isArray(existing.allowedTools) ? existing.allowedTools : ["read", "grep", "find", "ls"],
@@ -6275,6 +6305,57 @@ export function buildProviderCheckResult(provider: Record<string, unknown>): Rec
     };
   }
   return { ok: true, code: "ready", message: "Provider is reachable and accepted the configured model.", checkedAt };
+}
+
+function isMockRunnableConversationProvider(provider: unknown): provider is Record<string, unknown> {
+  if (!isRecord(provider) || provider.enabled !== true || provider.api === "media-job") {
+    return false;
+  }
+  if (!Array.isArray(provider.capabilities) || !provider.capabilities.includes("chat")) {
+    return false;
+  }
+  if (typeof provider.apiKeyRef === "string" && provider.apiKeyConfigured !== true) {
+    return false;
+  }
+  return isRecord(provider.lastCheck) && provider.lastCheck.ok === true;
+}
+
+function resolveMockTeammateProviderPresetId(
+  state: MockState,
+  teammate: Record<string, unknown>,
+  requestedProviderPresetId: unknown,
+): string | undefined {
+  if (typeof requestedProviderPresetId === "string" && requestedProviderPresetId.trim()) {
+    return requestedProviderPresetId;
+  }
+  if (teammate.modelBindingMode === "workspace_default") {
+    return typeof state.workspaceSettings.defaultProviderPresetId === "string"
+      ? state.workspaceSettings.defaultProviderPresetId
+      : undefined;
+  }
+  return typeof teammate.providerPresetId === "string" ? teammate.providerPresetId : undefined;
+}
+
+function mockProviderReferenceLabels(state: MockState, providerPresetId: string): string[] {
+  const labels: string[] = [];
+  if (state.workspaceSettings.defaultProviderPresetId === providerPresetId) {
+    labels.push("Workspace default model");
+  }
+  for (const channel of state.channels) {
+    if (isRecord(channel) && channel.status !== "archived" && channel.defaultProviderPresetId === providerPresetId) {
+      labels.push(typeof channel.name === "string" ? channel.name : String(channel.id));
+    }
+  }
+  for (const teammate of state.aiTeammates) {
+    if (
+      isRecord(teammate) &&
+      teammate.modelBindingMode === "fixed" &&
+      teammate.providerPresetId === providerPresetId
+    ) {
+      labels.push(typeof teammate.displayName === "string" ? teammate.displayName : String(teammate.id));
+    }
+  }
+  return labels;
 }
 
 function mockProviderGenerationOperation(provider: Record<string, unknown>): Parameters<typeof resolveGenerationProviderRuntimeState>[1] {
@@ -8784,6 +8865,15 @@ export async function handleDaemonRoute(
   }
   if (request.method() === "POST" && path === "/teammates") {
     const body = await request.postDataJSON() as Record<string, unknown>;
+    const providerPresetId = typeof body.providerPresetId === "string" ? body.providerPresetId.trim() : "";
+    const provider = state.providers.find((item) => isRecord(item) && item.id === providerPresetId);
+    if (!providerPresetId || !isMockRunnableConversationProvider(provider)) {
+      await route.fulfill({
+        status: 400,
+        json: { error: "conversation_model_not_ready", message: "Choose a checked chat model before creating this teammate." },
+      });
+      return;
+    }
     const teammate = createTeammateFromBody(body, `teammate_created_${state.aiTeammates.length + 1}`);
     state.aiTeammates.push(teammate);
     ensureMockDefaultTeammateMemoryScopes(state, String(teammate.id));
@@ -8818,6 +8908,26 @@ export async function handleDaemonRoute(
         return;
       }
       const body = await request.postDataJSON() as Record<string, unknown>;
+      if (body.modelBindingMode === "workspace_default" && teammateId !== "ling_agent" && !teammateId.startsWith("teammate_builtin_")) {
+        await route.fulfill({ status: 400, json: { error: "teammate_model_binding_invalid", message: "This teammate must use a fixed model." } });
+        return;
+      }
+      const nextBindingMode = body.modelBindingMode === "workspace_default" || body.modelBindingMode === "fixed"
+        ? body.modelBindingMode
+        : teammate.modelBindingMode;
+      const nextProviderPresetId = typeof body.providerPresetId === "string"
+        ? body.providerPresetId
+        : body.providerPresetId === null || nextBindingMode === "workspace_default"
+          ? undefined
+          : teammate.providerPresetId;
+      if (
+        (body.modelBindingMode !== undefined || body.providerPresetId !== undefined) &&
+        nextBindingMode === "fixed" &&
+        !isMockRunnableConversationProvider(state.providers.find((item) => isRecord(item) && item.id === nextProviderPresetId))
+      ) {
+        await route.fulfill({ status: 400, json: { error: "conversation_model_not_ready", message: "Choose a checked chat model before saving." } });
+        return;
+      }
       const updated = {
         ...teammate,
         ...createTeammateFromBody(
@@ -9430,7 +9540,7 @@ export async function handleDaemonRoute(
         updatedAt: "2026-06-04T00:20:00.000Z",
       };
       state.teammateDirectMessages.push(message);
-      const providerPresetId = typeof body.providerPresetId === "string" ? body.providerPresetId : typeof teammate.providerPresetId === "string" ? teammate.providerPresetId : undefined;
+      const providerPresetId = resolveMockTeammateProviderPresetId(state, teammate, body.providerPresetId);
       const provider = providerPresetId ? state.providers.find((item) => isRecord(item) && item.id === providerPresetId) : undefined;
       const blockedReason = teammate.status !== "active"
         ? `Teammate status is ${String(teammate.status)}.`
@@ -9498,7 +9608,7 @@ export async function handleDaemonRoute(
         updatedAt: "2026-05-29T00:10:00.000Z",
       };
       state.teammateDirectMessages.push(message);
-      const providerPresetId = typeof body.providerPresetId === "string" ? body.providerPresetId : typeof teammate.providerPresetId === "string" ? teammate.providerPresetId : undefined;
+      const providerPresetId = resolveMockTeammateProviderPresetId(state, teammate, body.providerPresetId);
       const provider = providerPresetId ? state.providers.find((item) => isRecord(item) && item.id === providerPresetId) : undefined;
       const blockedReason = teammate.status !== "active"
         ? `Teammate status is ${String(teammate.status)}.`
@@ -9927,6 +10037,23 @@ export async function handleDaemonRoute(
     const provider = isRecord(existing)
       ? { ...existing, ...createProviderFromBody(body, providerId, existing), id: providerId, updatedAt: "2026-05-25T00:10:00.000Z" }
       : createProviderFromBody(body, providerId);
+    const removesAvailability = isRecord(existing) && (
+      (existing.enabled === true && provider.enabled !== true) ||
+      (existing.api !== "media-job" && Array.isArray(existing.capabilities) && existing.capabilities.includes("chat") &&
+        (provider.api === "media-job" || !Array.isArray(provider.capabilities) || !provider.capabilities.includes("chat"))) ||
+      (body.clearApiKey === true && typeof existing.apiKeyRef === "string")
+    );
+    const referenceLabels = removesAvailability ? mockProviderReferenceLabels(state, providerId) : [];
+    if (referenceLabels.length > 0) {
+      await route.fulfill({
+        status: 409,
+        json: {
+          error: "provider_update_blocked",
+          message: `Provider is still used by ${referenceLabels.join(", ")}. Choose replacement models first.`,
+        },
+      });
+      return;
+    }
     state.providers[providerIndex] = provider;
     if (typeof body.apiKey === "string" && body.apiKey.trim()) {
       state.providerSecrets[providerId] = body.apiKey;
@@ -9999,6 +10126,15 @@ export async function handleDaemonRoute(
       await route.fulfill({
         status: failure.status ?? 400,
         json: { error: failure.error, message: failure.message },
+      });
+      return;
+    }
+    const providerPresetId = typeof body.defaultProviderPresetId === "string" ? body.defaultProviderPresetId.trim() : "";
+    const provider = state.providers.find((item) => isRecord(item) && item.id === providerPresetId);
+    if (!providerPresetId || !isMockRunnableConversationProvider(provider)) {
+      await route.fulfill({
+        status: 400,
+        json: { error: "conversation_model_not_ready", message: "Choose a checked chat model before creating this channel." },
       });
       return;
     }

@@ -47,39 +47,48 @@
   font-size: 11px;
 }
 
-.teammate-chat-header .teammate-workspace-identity > div {
-  display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr);
+.teammate-chat-header .teammate-chat-identity-copy {
+  display: flex;
   align-items: center;
-  column-gap: 6px;
+  gap: 6px;
   min-width: 0;
-}
-
-.teammate-chat-header .teammate-pack-label {
-  display: inline-flex;
-  max-width: 96px;
-  min-height: 18px;
-  align-items: center;
-  order: 2;
-  align-self: center;
-  overflow: hidden;
-  color: var(--ling-text-muted);
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .teammate-chat-header .teammate-workspace-identity h1,
 .teammate-chat-header .teammate-workspace-identity h2 {
-  order: 1;
+  flex: 0 1 auto;
+}
+
+.teammate-chat-more-button.ling-ui-button {
+  flex: 0 0 30px;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  min-height: 30px;
+  padding: 0;
+}
+
+.teammate-chat-more-menu {
+  min-width: 180px;
+}
+
+.teammate-rename-form {
+  display: contents;
+}
+
+.teammate-rename-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ling-space-3);
+}
+
+.teammate-rename-body {
+  display: grid;
+  gap: var(--ling-space-5);
 }
 
 .teammate-chat-header .teammate-workspace-identity p {
   display: none;
-  grid-column: 1 / -1;
-  order: 3;
 }
 
 .teammate-chat-header h1,

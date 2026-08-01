@@ -573,6 +573,7 @@ export function aiTeammateSelectSql(whereClause: string): string {
       description,
       avatar_tone,
       avatar_image_attachment_id,
+      model_binding_mode,
       provider_preset_id,
       runner_id,
       system_prompt,

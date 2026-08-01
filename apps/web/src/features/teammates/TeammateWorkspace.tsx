@@ -1,6 +1,18 @@
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type UIEvent } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Brain, FileText, Folder, Loader2, MessageSquare, Settings } from "lucide-react";
+import {
+  Bot,
+  Brain,
+  FileText,
+  Folder,
+  Hash,
+  Loader2,
+  MessageSquare,
+  Settings,
+  Sparkles,
+  UserRound,
+  Wrench,
+} from "lucide-react";
 import type { SkillPack } from "@ling-stack/core/skill-types";
 import {
   cancelTeammateDirectIntervention,
@@ -76,23 +88,20 @@ import type {
   TerminalReportDto,
 } from "../../types.js";
 import { resolveAuthorizationMode, resolveWorkspaceAccessMode } from "../../lib/conversation-authorization.js";
-import { TeammateActivityTab } from "./TeammateActivityTab.js";
 import { TeammateChatHeader } from "./TeammateChatHeader.js";
 import { type ConversationSummaryRow, type WorkspaceRightDockFileTarget, type WorkspaceRightDockPageRequest, type WorkspaceRightDockReviewTarget } from "../workspace/right-dock/index.js";
 import { buildTeammatePrivateDockViewModel } from "./teammate-private-dock.js";
 import { TeammateChannelsTab } from "./TeammateChannelsTab.js";
 import { TeammateDangerTab } from "./TeammateDangerTab.js";
-import { TeammateMemoryTab } from "./TeammateMemoryTab.js";
-import { TeammateMcpTab, type McpToolFilter as TeammateMcpToolFilter } from "./TeammateMcpTab.js";
+import { TeammateExternalToolsSection } from "./TeammateExternalToolsSection.js";
 import { TeammateModelTab } from "./TeammateModelTab.js";
 import { TeammatePermissionsTab } from "./TeammatePermissionsTab.js";
 import { TeammateProfileTab } from "./TeammateProfileTab.js";
 import { TeammatePrivateChatSurface } from "./TeammatePrivateChatSurface.js";
+import { TeammateRenameDialog } from "./TeammateRenameDialog.js";
 import { TeammateSettingsHeader } from "./TeammateSettingsHeader.js";
 import { TeammateSettingsNavigation } from "./TeammateSettingsNavigation.js";
-import { TeammateSettingsSummaryPanel } from "./TeammateSettingsSummaryPanel.js";
 import { TeammateSkillsTab } from "./TeammateSkillsTab.js";
-import { TeammateTasksTab } from "./TeammateTasksTab.js";
 import { useWorkspaceRightDockController } from "../workspace/useWorkspaceRightDockController.js";
 import { useConversationHeaderController } from "../workspace/useConversationHeaderController.js";
 import { teammatePrivateMessageSearchText } from "./teammate-private-chat-view-models.js";
@@ -111,14 +120,15 @@ import {
   type TeammateSettingsForm,
 } from "./teammate-workspace-utils.js";
 import { useTeammateProfileController } from "./useTeammateProfileController.js";
-import { useTeammateActivityController } from "./useTeammateActivityController.js";
+import { useTeammateRenameController } from "./useTeammateRenameController.js";
 import { useTeammateModelController } from "./useTeammateModelController.js";
 import { useTeammateSkillsController } from "./useTeammateSkillsController.js";
 import { useTeammateTasksController } from "./useTeammateTasksController.js";
 import { useTeammateMemoryController } from "./useTeammateMemoryController.js";
 import { useTeammateChannelsController } from "./useTeammateChannelsController.js";
 import { useTeammateDangerController } from "./useTeammateDangerController.js";
-import { useTeammateMcpFeedbackController } from "./useTeammateMcpFeedbackController.js";
+import { useTeammatePermissionsController } from "./useTeammatePermissionsController.js";
+import { useTeammateExternalToolsController } from "./useTeammateExternalToolsController.js";
 import type { TeammateUpdateAction } from "./types.js";
 import {
   useTeammateWorkspaceRequestOwner,
@@ -126,8 +136,7 @@ import {
 } from "./useTeammateWorkspaceRequestOwner.js";
 
 type TeammateWorkspaceView = "chat" | "settings";
-type TeammateWorkspaceTab = "profile" | "model" | "permissions" | "channels" | "skills" | "memory" | "mcp" | "danger" | "tasks" | "activity";
-type McpToolFilter = TeammateMcpToolFilter;
+type TeammateWorkspaceTab = "profile" | "model" | "channels" | "skills" | "tools_permissions";
 
 type MaybePromise<T> = T | Promise<T>;
 
@@ -136,6 +145,7 @@ export function TeammateWorkspace({
   teammate,
   userProfile,
   providers,
+  workspaceDefaultProviderPresetId,
   channels,
   runs,
   skillPack,
@@ -144,6 +154,8 @@ export function TeammateWorkspace({
   onDisableTeammate,
   onHardDeleteTeammate,
   onOpenProviders,
+  onOpenSkillLibrary,
+  onOpenAuthorizationSettings,
   onRefreshTeammates,
   onRefreshChannels,
   onTaskCreated,
@@ -153,7 +165,6 @@ export function TeammateWorkspace({
   defaultAuthorizationMode,
   defaultWorkspaceAccessMode,
   workspaceDefaultsAvailable = false,
-  onOpenAuthorizationSettings,
   onDirectConversationChange,
   fullAccessConfirmed = false,
   onConfirmFullAccess,
@@ -169,6 +180,7 @@ export function TeammateWorkspace({
   readonly teammate: AiTeammate;
   readonly userProfile?: UserProfile;
   readonly providers: readonly ProviderPreset[];
+  readonly workspaceDefaultProviderPresetId?: string;
   readonly channels: readonly Channel[];
   readonly runs: readonly RunSession[];
   readonly skillPack: SkillPack | undefined;
@@ -181,6 +193,8 @@ export function TeammateWorkspace({
   readonly onDisableTeammate: (teammateId: string) => Promise<void>;
   readonly onHardDeleteTeammate?: (teammateId: string, reason?: string) => Promise<void>;
   readonly onOpenProviders: () => void;
+  readonly onOpenSkillLibrary?: () => void;
+  readonly onOpenAuthorizationSettings?: () => void;
   readonly onRefreshTeammates?: () => MaybePromise<void>;
   readonly onRefreshChannels?: () => MaybePromise<void>;
   readonly onTaskCreated?: (task: Task) => void;
@@ -190,7 +204,6 @@ export function TeammateWorkspace({
   readonly defaultAuthorizationMode?: AuthorizationMode;
   readonly defaultWorkspaceAccessMode?: WorkspaceAccessMode;
   readonly workspaceDefaultsAvailable?: boolean;
-  readonly onOpenAuthorizationSettings?: () => void;
   readonly onDirectConversationChange?: (threadId?: string) => void;
   readonly fullAccessConfirmed?: boolean;
   readonly onConfirmFullAccess?: () => Promise<PermissionConfirmation | undefined>;
@@ -248,9 +261,6 @@ export function TeammateWorkspace({
   const [privateFeedLatestButtonVisible, setPrivateFeedLatestButtonVisible] = useState(false);
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
   const [composerDragActive, setComposerDragActive] = useState(false);
-  const [expandedMcpServerIds, setExpandedMcpServerIds] = useState<ReadonlySet<string>>(() => new Set());
-  const [mcpToolSearchByServerId, setMcpToolSearchByServerId] = useState<Readonly<Record<string, string>>>({});
-  const [mcpToolFilterByServerId, setMcpToolFilterByServerId] = useState<Readonly<Record<string, McpToolFilter>>>({});
   const workspaceRequestOwner = useTeammateWorkspaceRequestOwner(cwd, teammate.id);
   const workspaceError = workspaceRequestOwner.latestError?.message ?? "";
   const chatHeaderController = useConversationHeaderController({
@@ -264,7 +274,12 @@ export function TeammateWorkspace({
   const privateFeedUserScrollIntentRef = useRef(false);
   const directGuidanceOperationSeqRef = useRef(0);
   const attachmentPreviewUrlsRef = useRef(new Set<string>());
-  const provider = teammate.providerPresetId ? providers.find((item) => item.id === teammate.providerPresetId) : undefined;
+  const effectivePrivateProviderPresetId = teammate.modelBindingMode === "workspace_default"
+    ? workspaceDefaultProviderPresetId
+    : teammate.providerPresetId;
+  const provider = effectivePrivateProviderPresetId
+    ? providers.find((item) => item.id === effectivePrivateProviderPresetId)
+    : undefined;
   const isProtectedSystemTeammate = Boolean(teammate.protectedProfile || teammate.kind === "system_teammate" || teammate.systemRole === "ling_agent");
   const dangerController = useTeammateDangerController({
     teammate,
@@ -281,17 +296,28 @@ export function TeammateWorkspace({
     onTeammateUpdated,
     onRefreshTeammates,
   });
+  const renameController = useTeammateRenameController({
+    teammate,
+    onUpdateTeammate,
+    onTeammateUpdated,
+  });
   const modelController = useTeammateModelController({
     teammate,
     providers,
     settingsForm,
     setSettingsForm,
     isProtectedSystemTeammate,
+    workspaceDefaultProviderPresetId,
     onUpdateTeammate,
     onTeammateUpdated,
     onRefreshDirectRuntime: async () => {
       await refreshDirectRuntime();
     },
+  });
+  const permissionsController = useTeammatePermissionsController({
+    teammate,
+    onUpdateTeammate,
+    onTeammateUpdated,
   });
   const channelsController = useTeammateChannelsController({
     channels,
@@ -306,14 +332,7 @@ export function TeammateWorkspace({
     teammateId: teammate.id,
   });
   const memoryController = useTeammateMemoryController({ cwd, teammate, channels });
-  const mcpFeedbackController = useTeammateMcpFeedbackController({
-    bindings: mcpBindings,
-    cwd,
-    onBindingsReplaced: setMcpBindings,
-    teammateId: teammate.id,
-  });
   const effectiveSkills = skillsController.effectiveSkills;
-  const skillStats = skillsController.stats;
   const memoryById = memoryController.memoryById;
   const memoryScopes = memoryController.snapshot?.scopes ?? [];
   const usedMemoryEvents = memoryController.snapshot?.usedEvents ?? [];
@@ -343,15 +362,8 @@ export function TeammateWorkspace({
     teammate,
     channels,
     memberships: effectiveMemberships,
-    skills: effectiveSkills,
     onOpenTask: openAssignedTask,
-    onOpenWorkBoard,
     onTaskCreated: handleTaskCreated,
-  });
-  const activityController = useTeammateActivityController({
-    cwd,
-    enabled: workspaceView === "settings" && activeTab === "activity",
-    teammateId: teammate.id,
   });
   const mcpToolsByServerId = useMemo(() => {
     const grouped = new Map<string, McpTool[]>();
@@ -360,21 +372,27 @@ export function TeammateWorkspace({
     }
     return grouped;
   }, [mcpTools]);
-  const mcpBindingByServerId = useMemo(() => new Map(mcpBindings.map((binding) => [binding.serverId, binding])), [mcpBindings]);
-  const settingsSections: readonly { readonly id: TeammateWorkspaceTab; readonly label: string; readonly count?: number; readonly danger?: boolean }[] = [
-    { id: "profile", label: t("Profile") },
-    { id: "model", label: t("Model") },
-    { id: "permissions", label: t("Permissions") },
-    { id: "channels", label: t("Channels"), count: channelsController.stats.joined },
-    { id: "tasks", label: t("Tasks"), count: tasksController.stats.total },
-    { id: "activity", label: t("Activity") },
-    { id: "memory" as const, label: t("Memory"), count: memoryController.snapshot?.inbox.length || memoryScopes.length },
+  const externalToolsController = useTeammateExternalToolsController({
+    authoritativeBindings: mcpBindings,
+    cwd,
+    onBindingsReplaced: setMcpBindings,
+    teammateId: teammate.id,
+    toolsByServerId: mcpToolsByServerId,
+  });
+  const settingsSections = [
+    { id: "profile" as const, label: t("Profile"), icon: UserRound },
+    { id: "model" as const, label: t("Model"), icon: Bot },
+    { id: "channels" as const, label: t("Channels"), count: channelsController.stats.joined, icon: Hash },
     ...(isProtectedSystemTeammate ? [] : [
-      { id: "skills" as const, label: t("Skills"), count: skillStats.bound },
-      { id: "mcp" as const, label: t("MCP") },
+      { id: "skills" as const, label: t("Skills"), icon: Sparkles },
+      { id: "tools_permissions" as const, label: t("Tools and permissions"), icon: Wrench },
     ]),
-    { id: "danger" as const, label: t("Danger zone"), danger: true },
-  ];
+  ] satisfies readonly {
+    readonly id: TeammateWorkspaceTab;
+    readonly label: string;
+    readonly count?: number;
+    readonly icon: typeof UserRound;
+  }[];
   const normalizedMessageSearchQuery = messageSearchQuery.trim().toLowerCase();
   const visibleMessages = useMemo(() => {
     if (!normalizedMessageSearchQuery) {
@@ -480,7 +498,7 @@ export function TeammateWorkspace({
   }, [cwd, directReplyActive, hasActiveVisibleDirectRun, hasDirectRuntimeActivity, teammate.id, visibleDirectRunKey]);
 
   useEffect(() => {
-    if (isProtectedSystemTeammate && (activeTab === "skills" || activeTab === "mcp")) {
+    if (isProtectedSystemTeammate && (activeTab === "skills" || activeTab === "tools_permissions")) {
       setActiveTab("profile");
     }
   }, [activeTab, isProtectedSystemTeammate]);
@@ -664,9 +682,6 @@ export function TeammateWorkspace({
   useEffect(() => {
     setWorkspaceView("chat");
     setActiveTab("profile");
-    setExpandedMcpServerIds(new Set());
-    setMcpToolSearchByServerId({});
-    setMcpToolFilterByServerId({});
     setMessageSearchQuery("");
     setChatDockOpen(false);
     setChatDockPageRequest(undefined);
@@ -1493,85 +1508,15 @@ export function TeammateWorkspace({
     await refreshTeammateActivity();
   }
 
-  function toggleMcpTool(serverId: string, toolName: string): void {
-    setMcpBindings((current) => {
-      const existing = current.find((binding) => binding.serverId === serverId);
-      const currentTools = new Set(existing?.mode === "all_current_tools"
-        ? (mcpToolsByServerId.get(serverId) ?? []).map((tool) => tool.rawName)
-        : existing?.selectedToolNames ?? []);
-      if (currentTools.has(toolName)) {
-        currentTools.delete(toolName);
-      } else {
-        currentTools.add(toolName);
-      }
-      const nextBinding: TeammateMcpBinding | undefined = currentTools.size > 0
-        ? {
-          teammateId: teammate.id,
-          serverId,
-          mode: "selected",
-          selectedToolNames: [...currentTools].sort(),
-          approvalOverrides: existing?.approvalOverrides ?? {},
-          enabled: true,
-          createdAt: existing?.createdAt ?? new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        }
-        : undefined;
-      return [
-        ...current.filter((binding) => binding.serverId !== serverId),
-        ...(nextBinding ? [nextBinding] : []),
-      ];
-    });
-  }
-
-  function setMcpServerSelectedTools(serverId: string, toolNames: readonly string[]): void {
-    const nextToolNames = [...new Set(toolNames)].sort();
-    setMcpBindings((current) => {
-      const existing = current.find((binding) => binding.serverId === serverId);
-      const nextBinding: TeammateMcpBinding | undefined = nextToolNames.length > 0
-        ? {
-          teammateId: teammate.id,
-          serverId,
-          mode: "selected",
-          selectedToolNames: nextToolNames,
-          approvalOverrides: existing?.approvalOverrides ?? {},
-          enabled: true,
-          createdAt: existing?.createdAt ?? new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        }
-        : undefined;
-      return [
-        ...current.filter((binding) => binding.serverId !== serverId),
-        ...(nextBinding ? [nextBinding] : []),
-      ];
-    });
-  }
-
-  function toggleMcpServerExpanded(serverId: string): void {
-    setExpandedMcpServerIds((current) => {
-      const next = new Set(current);
-      if (next.has(serverId)) {
-        next.delete(serverId);
-      } else {
-        next.add(serverId);
-      }
-      return next;
-    });
-  }
-
-  function updateMcpToolSearch(serverId: string, value: string): void {
-    setMcpToolSearchByServerId((current) => ({ ...current, [serverId]: value }));
-  }
-
-  function updateMcpToolFilter(serverId: string, filter: McpToolFilter): void {
-    setMcpToolFilterByServerId((current) => ({ ...current, [serverId]: filter }));
-  }
-
   return (
-    <div className={[
-      "teammate-workspace",
-      `right-dock-motion-${chatDockController.motionState}`,
-      workspaceView === "settings" ? "settings-mode" : "chat-mode",
-    ].filter(Boolean).join(" ")}>
+    <div
+      className={[
+        "teammate-workspace",
+        `right-dock-motion-${chatDockController.motionState}`,
+        workspaceView === "settings" ? "settings-mode" : "chat-mode",
+      ].filter(Boolean).join(" ")}
+      data-ui2-teammate-settings={workspaceView === "settings" || undefined}
+    >
       {workspaceView === "chat" ? (
         <TeammateChatHeader
           cwd={cwd}
@@ -1593,6 +1538,7 @@ export function TeammateWorkspace({
           terminalOpen={chatTerminalOpen}
           terminalDisabled={!cwd.trim()}
           detailsOpen={chatDockOpen}
+          moreButtonRef={renameController.triggerRef}
           onToggleSearch={() => {
             setChatSummaryOpen(false);
             chatHeaderController.toggleSearch();
@@ -1602,12 +1548,21 @@ export function TeammateWorkspace({
           onClearSearch={chatHeaderController.clearSearch}
           onRefresh={chatHeaderController.refresh}
           onOpenAttachments={() => openChatDockPage("files")}
-          onOpenModelSettings={() => {
+          onOpenSettings={(section) => {
             chatHeaderController.closeSearch();
             setChatSummaryOpen(false);
             setChatDockOpen(false);
             setWorkspaceView("settings");
-            setActiveTab("model");
+            setActiveTab(section);
+          }}
+          onOpenRename={() => {
+            chatHeaderController.closeSearch();
+            setChatSummaryOpen(false);
+            renameController.openDialog();
+          }}
+          onOpenContext={() => {
+            chatHeaderController.closeSearch();
+            openChatDockPage("context");
           }}
           onToggleSummary={() => {
             chatHeaderController.closeSearch();
@@ -1623,23 +1578,47 @@ export function TeammateWorkspace({
         />
       ) : (
         <TeammateSettingsHeader
-          title={t("{name} settings", { name: settingsForm.displayName.trim() || teammate.displayName })}
+          teammateName={settingsForm.displayName.trim() || teammate.displayName}
           profileActive={activeTab === "profile"}
           profileDirty={profileController.profileDirty}
           savingProfile={profileController.savingProfile}
           modelActive={activeTab === "model" && !isProtectedSystemTeammate}
           modelDirty={modelController.modelDirty}
           savingModel={modelController.savingModel}
+          permissionsActive={activeTab === "tools_permissions"}
+          permissionsDirty={permissionsController.dirty || externalToolsController.dirty}
+          savingPermissions={permissionsController.saving || externalToolsController.saving}
           onBack={() => setWorkspaceView("chat")}
           onResetProfile={profileController.resetProfile}
           onSaveProfile={() => void profileController.saveProfile()}
           onResetModel={modelController.resetModel}
           onSaveModel={() => void modelController.saveModel()}
+          onResetPermissions={() => {
+            permissionsController.reset();
+            externalToolsController.reset();
+          }}
+          onSavePermissions={() => void Promise.all([
+            permissionsController.save(),
+            externalToolsController.save(),
+          ])}
         />
       )}
 
-      {workspaceError ? <div className="inline-error">{workspaceError}</div> : null}
-      {loading ? (
+      {renameController.open ? (
+        <TeammateRenameDialog
+          currentName={teammate.displayName}
+          error={renameController.error}
+          returnFocusRef={renameController.triggerRef}
+          saving={renameController.saving}
+          value={renameController.value}
+          onClose={renameController.close}
+          onSubmit={() => void renameController.submit()}
+          onValueChange={renameController.setValue}
+        />
+      ) : null}
+
+      {workspaceView === "chat" && workspaceError ? <div className="inline-error">{workspaceError}</div> : null}
+      {workspaceView === "chat" && loading ? (
         <div className="client-empty-state teammate-empty">
           <Loader2 className="spin" />
           <span>{t("Loading teammate workspace...")}</span>
@@ -1754,119 +1733,83 @@ export function TeammateWorkspace({
         />
       ) : null}
 
-      {workspaceView === "settings" && activeTab === "tasks" ? (
-        <TeammateTasksTab
-          controller={tasksController}
-          skills={effectiveSkills}
-          onOpenChannels={() => setActiveTab("channels")}
-        />
-      ) : null}
-
-      {workspaceView === "settings" && activeTab === "activity" ? (
-        <TeammateActivityTab controller={activityController} onOpenRun={onOpenRun} />
-      ) : null}
-
-      {workspaceView === "settings" && activeTab === "model" ? (
-        <TeammateModelTab
-          modelError={modelController.modelError}
-          savingModel={modelController.savingModel}
-          viewModel={modelController.viewModel}
-          onOpenProviders={onOpenProviders}
-          onSelectProvider={modelController.selectProvider}
-        />
-      ) : null}
-
-      {workspaceView === "settings" && activeTab === "permissions" ? (
-        <TeammatePermissionsTab
-          teammate={teammate}
-          workspaceDefaultsAvailable={workspaceDefaultsAvailable}
-          defaultAuthorizationMode={defaultAuthorizationMode}
-          defaultWorkspaceAccessMode={defaultWorkspaceAccessMode}
-          defaultPermissionMode={defaultPermissionMode}
-          defaultPermissionPreset={defaultPermissionPreset}
-          workspacePolicy={workspacePolicy}
-          workspacePolicyLoading={workspacePolicyLoading}
-          workspacePolicyError={workspacePolicyError}
-          onRefreshWorkspacePolicy={onRefreshWorkspacePolicy}
-          onOpenAuthorizationSettings={onOpenAuthorizationSettings}
-        />
-      ) : null}
-
-      {workspaceView === "settings" && activeTab === "channels" ? (
-        <TeammateChannelsTab controller={channelsController} />
-      ) : null}
-
-      {workspaceView === "settings" && activeTab === "skills" ? (
-        <TeammateSkillsTab controller={skillsController} />
-      ) : null}
-
-      {workspaceView === "settings" && activeTab === "memory" ? (
-        <TeammateMemoryTab
-          controller={memoryController}
-          isProtectedSystemTeammate={isProtectedSystemTeammate}
-        />
-      ) : null}
-
-      {workspaceView === "settings" && activeTab === "profile" ? (
-        <TeammateProfileTab
-          avatarCropSource={profileController.avatarCropSource}
-          avatarTriggerRef={profileController.avatarTriggerRef}
-          cwd={cwd}
-          teammate={teammate}
-          settingsForm={settingsForm}
-          personaImportForm={profileController.personaImportForm}
-          personaDraft={profileController.personaDraft}
-          profileError={profileController.profileError}
-          isProtectedSystemTeammate={isProtectedSystemTeammate}
-          uploadingAvatar={profileController.uploadingAvatar}
-          importingPersona={profileController.importingPersona}
-          onSettingsFormChange={setSettingsForm}
-          onPersonaImportFormChange={profileController.setPersonaImportForm}
-          onSelectAvatarFile={profileController.selectAvatarFile}
-          onRemoveAvatar={profileController.removeAvatar}
-          onCancelAvatarCrop={profileController.cancelAvatarCrop}
-          onConfirmAvatarCrop={profileController.confirmAvatarCrop}
-          onPreviewPersonaImport={profileController.previewPersonaImport}
-          onApplyPersonaDraft={profileController.applyPersonaDraft}
-        />
-      ) : null}
-
-      {workspaceView === "settings" && activeTab === "danger" ? (
-        <TeammateDangerTab
-          controller={dangerController}
-          teammate={teammate}
-        />
-      ) : null}
-
-      {workspaceView === "settings" && activeTab === "mcp" ? (
-        <TeammateMcpTab
-          mcpServers={mcpServers}
-          mcpToolsByServerId={mcpToolsByServerId}
-          mcpBindingByServerId={mcpBindingByServerId}
-          expandedMcpServerIds={expandedMcpServerIds}
-          mcpToolSearchByServerId={mcpToolSearchByServerId}
-          mcpToolFilterByServerId={mcpToolFilterByServerId}
-          savingMcp={mcpFeedbackController.saving}
-          saveError={mcpFeedbackController.error}
-          onSave={mcpFeedbackController.save}
-          onSetServerSelectedTools={setMcpServerSelectedTools}
-          onToggleServerExpanded={toggleMcpServerExpanded}
-          onUpdateToolSearch={updateMcpToolSearch}
-          onUpdateToolFilter={updateMcpToolFilter}
-          onToggleTool={toggleMcpTool}
-        />
-      ) : null}
-
       {workspaceView === "settings" ? (
-        <TeammateSettingsSummaryPanel
-          teammate={teammate}
-          modelLabel={modelController.viewModel.modelLabel}
-          modelProviderLabel={modelController.viewModel.providerLabel}
-          channelCount={channelsController.stats.joined}
-          executableSkillCount={skillStats.executable}
-          memoryReady={memoryScopes.length > 0}
-          mcpBindingCount={mcpBindings.length}
-        />
+        <div className="channel-settings-tab-content teammate-settings-tab-content">
+          {workspaceError ? <div className="inline-error">{workspaceError}</div> : null}
+          {loading ? (
+            <div className="client-empty-state teammate-empty">
+              <Loader2 className="spin" />
+              <span>{t("Loading teammate workspace...")}</span>
+            </div>
+          ) : null}
+
+          {activeTab === "model" ? (
+            <TeammateModelTab
+              modelError={modelController.modelError}
+              savingModel={modelController.savingModel}
+              viewModel={modelController.viewModel}
+              onOpenProviders={onOpenProviders}
+              onSelectProvider={modelController.selectProvider}
+            />
+          ) : null}
+
+          {activeTab === "channels" ? <TeammateChannelsTab controller={channelsController} /> : null}
+          {activeTab === "skills" ? <TeammateSkillsTab controller={skillsController} onOpenSkillLibrary={onOpenSkillLibrary} /> : null}
+
+          {activeTab === "profile" ? (
+            <div className="teammate-profile-settings-stack">
+              <TeammateProfileTab
+                avatarCropSource={profileController.avatarCropSource}
+                avatarTriggerRef={profileController.avatarTriggerRef}
+                cwd={cwd}
+                teammate={teammate}
+                settingsForm={settingsForm}
+                personaImportForm={profileController.personaImportForm}
+                personaDraft={profileController.personaDraft}
+                personaError={profileController.personaError}
+                profileError={profileController.profileError}
+                isProtectedSystemTeammate={isProtectedSystemTeammate}
+                uploadingAvatar={profileController.uploadingAvatar}
+                personaBusyAction={profileController.personaBusyAction}
+                onSettingsFormChange={setSettingsForm}
+                onPersonaImportFormChange={profileController.setPersonaImportForm}
+                onSelectAvatarFile={profileController.selectAvatarFile}
+                onRemoveAvatar={profileController.removeAvatar}
+                onCancelAvatarCrop={profileController.cancelAvatarCrop}
+                onConfirmAvatarCrop={profileController.confirmAvatarCrop}
+                onPreviewPersonaImport={profileController.previewPersonaImport}
+                onApplyPersonaDraft={profileController.applyPersonaDraft}
+              />
+              {!isProtectedSystemTeammate ? <TeammateDangerTab controller={dangerController} teammate={teammate} /> : null}
+            </div>
+          ) : null}
+
+          {activeTab === "tools_permissions" ? (
+            <div className="teammate-tools-permissions-panel">
+              <TeammatePermissionsTab
+                controller={permissionsController}
+                teammate={teammate}
+                workspaceDefaultsAvailable={workspaceDefaultsAvailable}
+                defaultAuthorizationMode={defaultAuthorizationMode}
+                defaultWorkspaceAccessMode={defaultWorkspaceAccessMode}
+                defaultPermissionMode={defaultPermissionMode}
+                defaultPermissionPreset={defaultPermissionPreset}
+                workspacePolicy={workspacePolicy}
+                workspacePolicyLoading={workspacePolicyLoading}
+                workspacePolicyError={workspacePolicyError}
+                onRefreshWorkspacePolicy={onRefreshWorkspacePolicy}
+                onOpenAuthorizationSettings={onOpenAuthorizationSettings}
+              />
+              {mcpServers.length > 0 ? (
+                <TeammateExternalToolsSection
+                  controller={externalToolsController}
+                  servers={mcpServers}
+                  toolsByServerId={mcpToolsByServerId}
+                />
+              ) : null}
+            </div>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );

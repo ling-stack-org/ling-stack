@@ -86,3 +86,18 @@ Search input, focus overflow, hard-coded light surface or document-level horizon
 - P6C.3 must close Context and every reachable Dock deep state using real private-chat data.
 - `TeammateWorkspace.tsx` remains 2,502 lines and `TeammatePrivateChatSurface.tsx` remains 1,091 lines. Both are still
   architecture debt; P6C.1 does not claim the private conversation module complete.
+
+## 2026-07-31 More Menu Follow-up
+
+- The private-chat More menu now contains `Settings / Rename teammate / Context` in that order.
+- Rename uses the existing teammate PATCH with a `displayName`-only payload. A focused controller owns draft, busy,
+  productized failure and stale teammate identity; a focused Dialog mirrors the verified Channel rename interaction.
+- Context calls the existing explicit `openChatDockPage("context")` path. Selecting it again while the dock is already
+  open keeps the Context page open instead of toggling the dock closed.
+- Success updates the private-chat Header and main navigation immediately. Failure keeps the edited name and does not
+  expose the daemon's raw error message.
+
+| File | Theme / viewport | SHA-256 | Original-size inspection |
+|---|---|---|---|
+| `1280x800-ling-dark-teammate-more-menu.png` | `ling-dark`, 1280x800 | `a7c5a36b2590ca415097b4292fe7dcc694793bff0704e2c501e1183ab29a6ee7` | Three compact icon-and-text actions align under the teammate identity without covering the toolbar. |
+| `1280x800-ling-dark-teammate-rename-dialog.png` | `ling-dark`, 1280x800 | `19279cb598090f5cfe0457b89a890b23bb1c6ebaf0486cf49d5a29ce96130918` | Shared Dialog geometry, focused name field, disabled unchanged Confirm and semantic dark surfaces remain contained. |

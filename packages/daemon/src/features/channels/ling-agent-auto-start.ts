@@ -1,4 +1,4 @@
-import type { Channel, ChannelExecutionProposal, ChannelMessage, RunStore, RunTool } from "@ling-stack/core";
+import { resolveEffectiveTeammateProviderPresetId, type Channel, type ChannelExecutionProposal, type ChannelMessage, type RunStore, type RunTool } from "@ling-stack/core";
 import { isLingAgentExecutorId } from "./ling-agent-executor.js";
 
 export type LingAutoStartRisk = "low" | "medium" | "high";
@@ -58,7 +58,14 @@ export function decideLingAgentAutoStart(input: {
     if (!isLingAgentExecutorId(participantId) && !participant) {
       return blocked("missing_executor", `Proposal teammate is not available: ${participantId}.`);
     }
-    const providerPresetId = participant?.providerPresetId ?? channel.defaultProviderPresetId;
+    const providerPresetId = participant
+      ? resolveEffectiveTeammateProviderPresetId({
+          teammate: participant,
+          surface: "channel",
+          workspaceDefaultProviderPresetId: store.getWorkspaceSettings().defaultProviderPresetId,
+          channelDefaultProviderPresetId: channel.defaultProviderPresetId,
+        })
+      : channel.defaultProviderPresetId;
     if (!providerPresetId) {
       return blocked("missing_executor", `No runnable provider is configured for proposal executor: ${participantId}.`);
     }

@@ -19,7 +19,7 @@ import {
 } from "./teammate-channels-view-models.js";
 import type { TeammateChannelsController } from "./useTeammateChannelsController.js";
 
-const channelFilters: readonly TeammateChannelFilter[] = ["all", "active", "paused", "archived"];
+const channelFilters: readonly TeammateChannelFilter[] = ["all", "active", "paused"];
 
 export function TeammateChannelsTab({
   controller,

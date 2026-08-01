@@ -36,22 +36,6 @@ export function ProviderPresetOptions({
   );
 }
 
-export function ChannelRuntimePolicyFields({
-  form,
-  onChange,
-}: {
-  readonly form: ChannelFormState;
-  readonly onChange: (form: ChannelFormState) => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  return (
-    <div className="runtime-policy-grid" aria-label={t("Channel runtime policy")}>
-      <ChannelExecutionModeSummary />
-      <ChannelWriteLockField form={form} onChange={onChange} />
-    </div>
-  );
-}
-
 export function ChannelExecutionModeSummary(): JSX.Element {
   const { t } = useI18n();
   return (

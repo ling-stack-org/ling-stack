@@ -13,6 +13,7 @@ import type {
 export interface TeammateSettingsForm {
   readonly displayName: string;
   readonly description: string;
+  readonly modelBindingMode: AiTeammate["modelBindingMode"];
   readonly providerPresetId: string;
   readonly status: AiTeammate["status"];
   readonly pinned: boolean;
@@ -69,6 +70,7 @@ export function teammateToSettingsForm(teammate: AiTeammate): TeammateSettingsFo
   return {
     displayName: teammate.displayName,
     description: teammate.description,
+    modelBindingMode: teammate.modelBindingMode,
     providerPresetId: teammate.providerPresetId ?? "",
     status: teammate.status,
     pinned: teammate.pinned,

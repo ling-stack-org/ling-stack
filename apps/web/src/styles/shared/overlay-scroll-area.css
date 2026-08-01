@@ -1,0 +1,89 @@
+.ling-overlay-scroll-area {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.ling-overlay-scroll-viewport {
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.ling-overlay-scroll-viewport::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.ling-overlay-scroll-viewport::-webkit-scrollbar-track,
+.ling-overlay-scroll-viewport::-webkit-scrollbar-thumb,
+.ling-overlay-scroll-viewport::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.ling-overlay-scrollbar {
+  position: absolute;
+  z-index: 2;
+  top: 4px;
+  right: 2px;
+  bottom: 4px;
+  width: 8px;
+  border-radius: 999px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--ling-motion-fast) var(--ling-ease-standard);
+}
+
+.ling-overlay-scrollbar[data-overflow="false"] {
+  display: none;
+}
+
+.ling-overlay-scrollbar-thumb {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 8px;
+  min-height: 32px;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: var(--ling-native-scrollbar);
+  background-clip: padding-box;
+  cursor: grab;
+  pointer-events: none;
+  touch-action: none;
+  user-select: none;
+}
+
+.ling-overlay-scroll-area:hover .ling-overlay-scrollbar[data-overflow="true"],
+.ling-overlay-scroll-area:focus-within .ling-overlay-scrollbar[data-overflow="true"],
+.ling-overlay-scroll-viewport[data-scrolling="true"] + .ling-overlay-scrollbar[data-overflow="true"],
+.ling-overlay-scrollbar[data-dragging="true"] {
+  opacity: 1;
+}
+
+.ling-overlay-scroll-area:hover .ling-overlay-scrollbar-thumb,
+.ling-overlay-scroll-area:focus-within .ling-overlay-scrollbar-thumb,
+.ling-overlay-scroll-viewport[data-scrolling="true"] + .ling-overlay-scrollbar .ling-overlay-scrollbar-thumb,
+.ling-overlay-scrollbar[data-dragging="true"] .ling-overlay-scrollbar-thumb {
+  pointer-events: auto;
+}
+
+.ling-overlay-scrollbar-thumb:hover {
+  background: var(--ling-native-scrollbar-hover);
+  background-clip: padding-box;
+}
+
+.ling-overlay-scrollbar-thumb:active {
+  cursor: grabbing;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ling-overlay-scrollbar {
+    transition-duration: var(--ling-motion-instant);
+  }
+}

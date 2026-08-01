@@ -36,7 +36,7 @@ test("ready model uses one header action owner with reset, guarded save, and exp
   const select = model.getByLabel("Assigned model");
   await expect(select).toHaveClass(/ling-ui-select/u);
   await expect(select).toHaveValue("provider_primary");
-  await expect(model.getByText("Ready for replies", { exact: true })).toBeVisible();
+  await expect(model.getByText("Fixed model · gpt-5.5", { exact: true })).toBeVisible();
   await expect(header.getByRole("button", { name: "Save model" })).toBeDisabled();
   await expect(model.getByRole("button", { name: "Save model" })).toHaveCount(0);
   await captureEvidence(page, "1440x960-ling-light-ready.png");
@@ -58,6 +58,51 @@ test("ready model uses one header action owner with reset, guarded save, and exp
   await expect(model.getByText("Saved", { exact: true })).toHaveCount(0);
   await expectNoPageOverflow(page);
   expect(runtimeErrors).toEqual([]);
+});
+
+test("built-in teammates can follow the workspace default or keep a fixed override", async ({ page }) => {
+  await prepareSurface(page, { theme: "light", width: 1440, height: 960, locale: "en-US" });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [
+    readyProvider({ id: "provider_workspace", displayName: "Workspace Relay", model: "gpt-workspace" }),
+    readyProvider({ id: "provider_override", displayName: "Override Relay", model: "gpt-override" }),
+  ];
+  state.workspaceSettings.defaultProviderPresetId = "provider_workspace";
+  state.aiTeammates = [createMockTeammate({
+    id: "teammate_builtin_engineer",
+    displayName: "Inherited Engineer",
+    modelBindingMode: "workspace_default",
+    providerPresetId: undefined,
+  })];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const model = await openModel(page, "Inherited Engineer");
+  const select = model.getByLabel("Assigned model");
+  const header = page.getByLabel("Single agent settings");
+  await expect(select).toHaveValue("__workspace_default__");
+  await expect(select.locator('option[value="__workspace_default__"]')).toContainText("Use workspace default (current: Workspace Relay / gpt-workspace)");
+  await expect(model.getByText("Workspace default · gpt-workspace", { exact: true })).toBeVisible();
+
+  await select.selectOption("provider_override");
+  await header.getByRole("button", { name: "Save model" }).click();
+  await expect.poll(() => {
+    const teammate = state.aiTeammates.find((item) => isRecord(item) && item.id === "teammate_builtin_engineer");
+    return isRecord(teammate) ? [teammate.modelBindingMode, teammate.providerPresetId] : [];
+  }).toEqual(["fixed", "provider_override"]);
+  await expect(model.getByText("Fixed model · gpt-override", { exact: true })).toBeVisible();
+
+  state.workspaceSettings.defaultProviderPresetId = "provider_workspace";
+  await page.reload();
+  const reloaded = await openModel(page, "Inherited Engineer");
+  await expect(reloaded.getByLabel("Assigned model")).toHaveValue("provider_override");
+
+  await reloaded.getByLabel("Assigned model").selectOption("__workspace_default__");
+  await page.getByLabel("Single agent settings").getByRole("button", { name: "Save model" }).click();
+  await expect.poll(() => {
+    const teammate = state.aiTeammates.find((item) => isRecord(item) && item.id === "teammate_builtin_engineer");
+    return isRecord(teammate) ? [teammate.modelBindingMode, teammate.providerPresetId] : [];
+  }).toEqual(["workspace_default", undefined]);
 });
 
 test("model state priority keeps missing, incompatible, disabled, key, check, and unassigned states truthful", async ({ page }) => {
@@ -122,11 +167,12 @@ test("model state priority keeps missing, incompatible, disabled, key, check, an
   expect(runtimeErrors).toEqual([]);
 });
 
-test("protected Ling Agent uses a managed model path without editable assignment", async ({ page }) => {
+test("protected Ling Agent shows the effective workspace default without editable assignment", async ({ page }) => {
   await prepareSurface(page, { theme: "dark", width: 1440, height: 960, locale: "zh-CN" });
   const runtimeErrors = collectRuntimeErrors(page);
   const state = createBaseState({ approvalStatus: "expired" });
-  state.providers = [];
+  state.providers = [readyProvider({ id: "provider_workspace", displayName: "工作区模型", model: "gpt-5.5" })];
+  state.workspaceSettings.defaultProviderPresetId = "provider_workspace";
   state.aiTeammates = [createMockTeammate({
     id: "ling_agent",
     kind: "system_teammate",
@@ -140,8 +186,8 @@ test("protected Ling Agent uses a managed model path without editable assignment
 
   const model = await openModel(page, "Ling Agent", chineseLabels);
   const header = page.getByLabel("单个智能体设置");
-  await expect(model.getByText("由 Ling Stack 管理", { exact: true })).toBeVisible();
-  await expect(model).toContainText("Ling Agent 使用当前频道或工作区选择的模型。");
+  await expect(model.getByText("工作区默认 · gpt-5.5", { exact: true })).toBeVisible();
+  await expect(model).toContainText("工作区模型");
   await expect(model.getByLabel("已分配模型")).toHaveCount(0);
   await expect(header.getByRole("button", { name: "重置模型" })).toHaveCount(0);
   await expect(header.getByRole("button", { name: "保存模型" })).toHaveCount(0);
@@ -230,8 +276,7 @@ test("long model identity remains contained in compact dark layout", async ({ pa
 });
 
 const chineseLabels = {
-  details: "显示详情",
-  dock: "私聊工作区面板",
+  more: "更多私聊选项",
   settings: "设置",
   settingsSections: "设置分组",
   model: "模型",
@@ -249,15 +294,13 @@ async function openModel(
   page: Page,
   teammateName: string,
   labels: {
-    readonly details: string;
-    readonly dock: string;
+    readonly more: string;
     readonly settings: string;
     readonly settingsSections: string;
     readonly model: string;
     readonly panel: string;
   } = {
-    details: "Show details",
-    dock: "Private chat workspace dock",
+    more: "More private chat views",
     settings: "Settings",
     settingsSections: "Settings sections",
     model: "Model",
@@ -267,10 +310,8 @@ async function openModel(
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: teammateName }).click();
   const chatHeader = page.locator("[data-ui2-teammate-chat-header]");
   await expect(chatHeader).toBeVisible();
-  if (await page.getByLabel(labels.dock).count() === 0) {
-    await chatHeader.getByRole("button", { name: labels.details }).click();
-  }
-  await page.getByLabel(labels.dock).getByRole("button", { name: labels.settings }).click();
+  await chatHeader.getByRole("button", { name: labels.more }).click();
+  await page.getByRole("menuitem", { name: labels.settings, exact: true }).click();
   await page.getByLabel(labels.settingsSections).getByRole("button", { name: labels.model, exact: true }).click();
   const model = page.getByLabel(labels.panel);
   await expect(model).toBeVisible();

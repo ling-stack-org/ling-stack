@@ -74,6 +74,8 @@ export class LockedComputerControlPolicyCoordinator {
   private lockEpoch = 0;
   private attestationSequence = 0;
   private boundaryRevision = 0;
+  private sessionLocked = false;
+  private systemSuspended = false;
   private stopped = false;
   private reason: LockedControlReasonCode | undefined;
 
@@ -120,23 +122,28 @@ export class LockedComputerControlPolicyCoordinator {
 
   /** Call directly from the native/Electron lock listener before awaiting. */
   handleLock(): Promise<void> {
+    this.sessionLocked = true;
     const boundaryRevision = this.advanceBoundaryRevision();
     this.options.runtime.closeCallGate("locked_control_session_mismatch");
     return this.enqueue(() => this.handleLockInternal(boundaryRevision));
   }
 
-  /** Unlock always consumes the grant and starts a fresh normal generation. */
+  /** Unlock consumes the grant; recovery waits if the system is still suspended. */
   handleUnlock(): Promise<void> {
+    this.sessionLocked = false;
     this.advanceBoundaryRevision();
     this.options.runtime.closeCallGate("locked_control_grant_consumed");
     return this.enqueue(async () => {
       await this.options.runtime.stopLockedGeneration("locked_control_grant_consumed").catch(() => undefined);
       await this.revokeInMemoryFirst("locked_control_grant_consumed", this.safeReadAuthority(), true);
-      if (!this.stopped) await this.options.runtime.resumeNormal();
+      if (!this.stopped && !this.sessionLocked && !this.systemSuspended) {
+        await this.options.runtime.resumeNormal();
+      }
     });
   }
 
   handleSuspend(): Promise<void> {
+    this.systemSuspended = true;
     this.advanceBoundaryRevision();
     this.options.runtime.closeCallGate("locked_control_suspend");
     return this.enqueue(async () => {
@@ -147,10 +154,13 @@ export class LockedComputerControlPolicyCoordinator {
   }
 
   handleResume(): Promise<void> {
+    this.systemSuspended = false;
     this.advanceBoundaryRevision();
     this.options.runtime.closeCallGate("locked_control_suspend");
     return this.enqueue(async () => {
-      if (!this.stopped) await this.options.runtime.resumeNormal();
+      if (!this.stopped && !this.sessionLocked && !this.systemSuspended) {
+        await this.options.runtime.resumeNormal();
+      }
     });
   }
 
@@ -197,6 +207,7 @@ export class LockedComputerControlPolicyCoordinator {
     const begun = await this.options.daemon.beginAuthorization({
       requestId,
       expectedRevision: daemonSnapshot.revision,
+      authority,
     });
     if (!begun.accepted) return { accepted: false, reason: begun.reason };
     this.transition("verifying");

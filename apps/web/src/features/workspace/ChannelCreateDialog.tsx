@@ -1,8 +1,8 @@
 import { Check, ChevronDown, Folder, FolderOpen, Loader2, Plus, Search, UserPlus } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { selectWorkspaceDirectory } from "../../api/workspace-directory.js";
 import { useI18n } from "../../i18n.js";
-import { isMediaProvider, providerPreflightReady } from "../../lib/providers.js";
+import { canUseConversationProvider, providerPreflightReady } from "../../lib/providers.js";
 import { DialogSection } from "../../shared/components/index.js";
 import {
   Dialog,
@@ -13,12 +13,17 @@ import {
   Field,
   Input,
   Select,
+  InlineFeedback,
 } from "../../shared/ui/index.js";
 import type { ChannelCreateFormState, ChannelFormState, ProviderPreset } from "../../types.js";
 import type { LocalTeammateDraft } from "../teammates/index.js";
 import { TeammateAvatarView } from "../teammates/TeammateAvatarView.js";
 import { LING_AGENT_AUTHOR_ID } from "./ChannelMessageRenderers.js";
-import { ChannelRuntimePolicyFields, ProviderPresetOptions } from "./WorkspaceControls.js";
+import {
+  ChannelExecutionModeSummary,
+  ChannelWriteLockField,
+  ProviderPresetOptions,
+} from "./WorkspaceControls.js";
 
 export interface ChannelCreateProjectOption {
   readonly path: string;
@@ -31,11 +36,13 @@ export function ChannelCreateDialog({
   projectOptions,
   providers,
   providersLoading,
+  defaultProviderId,
   teammates,
   creating,
   errorMessage,
   onFormChange,
   onCreateChannel,
+  onOpenProviders,
   onClose,
 }: {
   readonly cwd: string;
@@ -43,11 +50,13 @@ export function ChannelCreateDialog({
   readonly projectOptions: readonly ChannelCreateProjectOption[];
   readonly providers: readonly ProviderPreset[];
   readonly providersLoading: boolean;
+  readonly defaultProviderId: string;
   readonly teammates: readonly LocalTeammateDraft[];
   readonly creating: boolean;
   readonly errorMessage: string;
   readonly onFormChange: (form: ChannelCreateFormState) => void;
   readonly onCreateChannel: () => void | Promise<void>;
+  readonly onOpenProviders: () => void;
   readonly onClose: () => void;
 }): JSX.Element {
   const { t } = useI18n();
@@ -65,11 +74,11 @@ export function ChannelCreateDialog({
       : null,
   );
   const taskReadyProviders = useMemo(
-    () => providers.filter(providerPreflightReady),
+    () => providers.filter((provider) => canUseConversationProvider(provider) && providerPreflightReady(provider)),
     [providers],
   );
   const setupChatProviders = useMemo(
-    () => providers.filter((provider) => !isMediaProvider(provider) && !providerPreflightReady(provider)),
+    () => providers.filter((provider) => canUseConversationProvider(provider) && !providerPreflightReady(provider)),
     [providers],
   );
   const teammateOptions = useMemo(
@@ -78,6 +87,7 @@ export function ChannelCreateDialog({
   );
   const selectedProjectPath = form.boundPath.trim() || cwd.trim();
   const busy = creating || submitting;
+  const selectedProviderReady = taskReadyProviders.some((provider) => provider.id === form.defaultProviderPresetId);
   const selectedProjectLabel = selectedProjectPath ? projectLabelFromPath(selectedProjectPath) : t("Workspace default");
   const availableProjectOptions = useMemo(() => {
     const byPath = new Map<string, ChannelCreateProjectOption>();
@@ -101,6 +111,14 @@ export function ChannelCreateDialog({
       `${option.label} ${option.path}`.toLowerCase().includes(query)
     );
   }, [availableProjectOptions, projectSearch]);
+
+  useEffect(() => {
+    if (providersLoading || selectedProviderReady) return;
+    const nextProvider = taskReadyProviders.find((provider) => provider.id === defaultProviderId) ?? taskReadyProviders[0];
+    if (nextProvider && nextProvider.id !== form.defaultProviderPresetId) {
+      onFormChange({ ...form, defaultProviderPresetId: nextProvider.id });
+    }
+  }, [defaultProviderId, form, onFormChange, providersLoading, selectedProviderReady, taskReadyProviders]);
 
   function toggleTeammate(teammateId: string): void {
     const selected = new Set(form.selectedTeammateIds);
@@ -214,6 +232,17 @@ export function ChannelCreateDialog({
                   value={form.name}
                   onChange={(event) => onFormChange({ ...form, name: event.target.value })}
                 />
+              </Field>
+              <Field className="field wide channel-create-model-field" label={t("Ling Agent model")}>
+                <Select
+                  size="md"
+                  value={form.defaultProviderPresetId}
+                  onChange={(event) => onFormChange({ ...form, defaultProviderPresetId: event.target.value })}
+                  disabled={providersLoading || taskReadyProviders.length === 0}
+                >
+                  <option value="" disabled>{t("Select provider preset")}</option>
+                  <ProviderPresetOptions runnableProviders={taskReadyProviders} blockedProviders={setupChatProviders} />
+                </Select>
               </Field>
               <div className="field wide channel-create-project-field">
                 <span>{t("Project directory")}</span>
@@ -334,21 +363,22 @@ export function ChannelCreateDialog({
             </div>
           ) : null}
 
+          {!providersLoading && !selectedProviderReady ? (
+            <InlineFeedback className="channel-create-model-feedback" tone="warning" title={t("Choose a model before creating.")}>
+              <button className="secondary-button compact-button" type="button" onClick={onOpenProviders}>
+                {t("Open Model Workbench")}
+              </button>
+            </InlineFeedback>
+          ) : null}
+
           <DialogSection
             className="channel-create-section channel-create-advanced"
             title={t("Advanced settings")}
-            description={t("Model, language, and run policy")}
+            description={t("Language and run policy")}
             collapsible
           >
             <div className="channel-create-advanced-body">
-              <div className="channel-create-fields">
-                <label className="field">
-                  <span>{t("Base model")}</span>
-                  <Select size="md" value={form.defaultProviderPresetId} onChange={(event) => onFormChange({ ...form, defaultProviderPresetId: event.target.value })} disabled={providersLoading || providers.length === 0}>
-                    <option value="">{t("Select provider preset")}</option>
-                    <ProviderPresetOptions runnableProviders={taskReadyProviders} blockedProviders={setupChatProviders} />
-                  </Select>
-                </label>
+              <div className="channel-create-advanced-controls">
                 <label className="field">
                   <span>{t("AI response language")}</span>
                   <Select
@@ -362,8 +392,9 @@ export function ChannelCreateDialog({
                     <option value="en-US">{t("English")}</option>
                   </Select>
                 </label>
+                <ChannelWriteLockField form={form} onChange={updateRuntimeForm} />
               </div>
-              <ChannelRuntimePolicyFields form={form} onChange={updateRuntimeForm} />
+              <ChannelExecutionModeSummary />
             </div>
           </DialogSection>
 
@@ -372,7 +403,7 @@ export function ChannelCreateDialog({
           <button className="secondary-button compact-button" type="button" onClick={requestClose} disabled={busy}>
             {t("Cancel")}
           </button>
-          <button className="primary-button compact-button" type="button" onClick={() => void submitChannel()} disabled={busy}>
+          <button className="primary-button compact-button" type="button" onClick={() => void submitChannel()} disabled={busy || !selectedProviderReady || !form.name.trim()}>
             {busy ? <Loader2 className="spin" size={14} /> : <Plus size={14} />}
             {busy ? t("Creating channel...") : t("Create channel")}
           </button>

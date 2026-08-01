@@ -123,15 +123,18 @@ const capabilities: LingDesktopCapabilities = {
               DESKTOP_IPC_CHANNELS.computerControlOpenPermissionSettings,
               permission,
             ),
-          authorizeLockedControl: () => ipcRenderer.invoke(
-            DESKTOP_IPC_CHANNELS.computerControlAuthorizeLocked,
-          ),
-          revokeLockedControl: () => ipcRenderer.invoke(
-            DESKTOP_IPC_CHANNELS.computerControlRevokeLocked,
-          ),
         },
       }
     : {}),
+  lockedTaskContinuation: {
+    getLockedTaskContinuationPreferences: () => ipcRenderer.invoke(
+      DESKTOP_IPC_CHANNELS.computerControlLockedTaskContinuationGet,
+    ),
+    setContinueTasksWhileLocked: (enabled: boolean) => ipcRenderer.invoke(
+      DESKTOP_IPC_CHANNELS.computerControlLockedTaskContinuationSet,
+      enabled,
+    ),
+  },
   computerUse: {
     reportLocale: (locale: ComputerUsePreviewLocale) => {
       ipcRenderer.send(DESKTOP_IPC_CHANNELS.computerUseReportLocale, locale);

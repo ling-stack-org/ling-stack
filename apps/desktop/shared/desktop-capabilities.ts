@@ -160,13 +160,20 @@ export interface DesktopCommandResult {
 
 export type ComputerControlPermissionKind = "accessibility" | "screen_recording";
 
+export interface LockedTaskContinuationPreferences {
+  readonly continueWhileLocked: boolean;
+}
+
 export interface ComputerControlDesktopCapability {
   readonly packagedBundledCapable: true;
   readonly platform: "macos" | "windows";
   requestPermissions(): Promise<DesktopCommandResult>;
   openPermissionSettings(permission: ComputerControlPermissionKind): Promise<DesktopCommandResult>;
-  authorizeLockedControl(): Promise<DesktopCommandResult>;
-  revokeLockedControl(): Promise<DesktopCommandResult>;
+}
+
+export interface LockedTaskContinuationDesktopCapability {
+  getLockedTaskContinuationPreferences(): Promise<LockedTaskContinuationPreferences>;
+  setContinueTasksWhileLocked(enabled: boolean): Promise<DesktopCommandResult>;
 }
 
 export interface DesktopNavigationIntent {
@@ -239,6 +246,8 @@ export interface LingDesktopCapabilities {
   readonly mobileAccess?: DesktopMobileAccessCapabilities;
   /** Present only when this packaged host carries bundled provider authority. */
   readonly computerControl?: ComputerControlDesktopCapability;
+  /** Desktop-owned preference, independent from Cua Driver readiness. */
+  readonly lockedTaskContinuation: LockedTaskContinuationDesktopCapability;
   readonly computerUse: {
     reportLocale(locale: ComputerUsePreviewLocale): void;
     reportSelectedDeckOwner(owner?: ComputerUsePipDeckOwner): void;

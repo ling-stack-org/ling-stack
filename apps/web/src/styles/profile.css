@@ -63,7 +63,7 @@
   border-radius: 999px;
   appearance: none;
   background: var(--text-strong);
-  color: #ffffff;
+  color: var(--ling-text-inverse);
   font-size: 34px;
   font-weight: 700;
   line-height: 1;

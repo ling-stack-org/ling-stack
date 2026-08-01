@@ -26,6 +26,11 @@ test("Darwin locked-control helper uses LocalAuthentication and keeps locked att
   assert.match(source, /deviceOwnerAuthentication/u);
   assert.match(source, /SCDynamicStoreCopyConsoleUser/u);
   assert.match(source, /CGSSessionScreenIsLocked/u);
+  assert.match(source, /session\["kCGSSessionOnConsoleKey"\]/u);
+  assert.match(source, /session\["kCGSSessionAuditIDKey"\]/u);
+  assert.match(source, /session\["CGSSessionUniqueSessionUUID"\]/u);
+  assert.match(source, /session\["CGSSessionScreenIsLocked"\] as\? Bool \?\? false/u);
+  assert.equal(source.includes('session["kCGSessionOnConsoleKey"]'), false);
   assert.match(source, /"userDesktopTargeted": false/u);
   assert.match(source, /"secureSurfaceExcluded": false/u);
   assert.equal(source.includes("evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics"), false);

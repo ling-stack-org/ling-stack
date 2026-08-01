@@ -31,8 +31,9 @@ import {
 } from "./desktop-bridge-auth.js";
 import {
   handleLockedControlDesktopRoute,
-  handleLockedControlRendererRoute,
+  handleLockedControlProjectionRoute,
 } from "./locked-control-routes.js";
+import { handleLockedTaskContinuationDesktopRoute } from "./locked-task-continuation-routes.js";
 
 const STOP_ACK_TIMEOUT_MS = 10_000;
 const PRIVATE_SOURCE_OWNERSHIP_TIMEOUT_MS = 1_500;
@@ -110,6 +111,10 @@ export async function handleComputerUseRoute(
       return true;
     }
 
+    if (await handleLockedTaskContinuationDesktopRoute(request, response, url, context)) {
+      return true;
+    }
+
     const sourceRoute = parseSourceRoute(url.pathname);
     if (!sourceRoute) {
       // Browser requests carry a local Origin and are protected by the local
@@ -136,7 +141,7 @@ export async function handleComputerUseRoute(
       }
     }
 
-    if (await handleLockedControlRendererRoute(request, response, url, context)) {
+    if (await handleLockedControlProjectionRoute(request, response, url, context)) {
       return true;
     }
 

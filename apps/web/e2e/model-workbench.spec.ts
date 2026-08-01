@@ -90,6 +90,40 @@ async function expectProviderModelDiscoveryLayout(page: Page): Promise<void> {
   }
 }
 
+test("the first checked chat model becomes workspace default without replacing it later", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [
+    createChatProvider({
+      id: "provider_first_ready",
+      displayName: "First Ready Relay",
+      model: "gpt-first",
+      lastCheck: { ok: true, code: "ready", message: "Ready", checkedAt: "2026-07-30T00:00:00.000Z" },
+    }),
+    createChatProvider({
+      id: "provider_later_ready",
+      displayName: "Later Ready Relay",
+      model: "gpt-later",
+      lastCheck: { ok: true, code: "ready", message: "Ready", checkedAt: "2026-07-30T00:00:00.000Z" },
+    }),
+  ];
+  delete state.workspaceSettings.defaultProviderPresetId;
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openModelWorkbench(page);
+
+  const firstRow = page.locator(".provider-row").filter({ hasText: "First Ready Relay" });
+  await firstRow.getByRole("button", { name: "Check" }).click();
+  await expect.poll(() => state.workspaceSettings.defaultProviderPresetId).toBe("provider_first_ready");
+  await expect(firstRow).toContainText("Current default");
+
+  const laterRow = page.locator(".provider-row").filter({ hasText: "Later Ready Relay" });
+  await laterRow.getByRole("button", { name: "Check" }).click();
+  await expect.poll(() => state.workspaceSettings.defaultProviderPresetId).toBe("provider_first_ready");
+  await expect(firstRow).toContainText("Current default");
+  await expect(laterRow).not.toContainText("Current default");
+});
+
 test("model workbench empty state offers beginner chat and generation setup paths", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
@@ -787,8 +821,10 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await expect(reloadedOpenAiProxyRow.getByRole("button", { name: "Clear default" })).toHaveCount(0);
   await expect(reloadedOpenAiProxyRow.locator(".provider-state.run-ready")).toHaveCount(1);
   await clickProviderRowMenuItem(reloadedOpenAiProxyRow, "Disable");
-  await expect(reloadedOpenAiProxyRow.locator(".provider-state.disabled")).toHaveCount(1);
-  await expect(reloadedOpenAiProxyRow).not.toContainText("Current default");
+  await expect(reloadedOpenAiProxyRow.locator(".provider-state.disabled")).toHaveCount(0);
+  await expect(reloadedOpenAiProxyRow).toContainText("Current default");
+  await expect(page.getByText(/Provider is still used by Workspace default model/)).toBeVisible();
+  await expect.poll(() => state.workspaceSettings.defaultProviderPresetId).toBe("provider_openai_proxy");
   await expect(page.getByText(/Ready: .* passed preflight/)).toHaveCount(0);
   await expect(page.getByText("All saved chat providers are either preflight-ready or intentionally out of the run path.")).toHaveCount(0);
 

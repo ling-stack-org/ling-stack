@@ -36,6 +36,7 @@ test("managed provider environment is narrow, generation-bound and disables upda
   assert.deepEqual(environment, {
     HOME: "/Users/fixture",
     LANG: "en_US.UTF-8",
+    ...(process.platform === "darwin" ? { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" } : {}),
     CUA_DRIVER_EMBEDDED: "1",
     CUA_DRIVER_LING_MANAGED: "1",
     CUA_DRIVER_HOST_BUNDLE_ID: "com.lingstack.desktop",
@@ -50,7 +51,11 @@ test("managed provider environment is narrow, generation-bound and disables upda
     CUA_DRIVER_RS_TELEMETRY_ENABLED: "false",
     CUA_DRIVER_RS_UPDATE_CHECK: "false",
   });
-  assert.equal(environment.PATH, undefined);
+  assert.equal(
+    environment.PATH,
+    process.platform === "darwin" ? "/usr/bin:/bin:/usr/sbin:/sbin" : undefined,
+  );
+  assert.notEqual(environment.PATH, "/tmp/hostile-path");
   assert.equal(environment.LING_DESKTOP_BRIDGE_TOKEN, undefined);
   assert.equal(environment.OPENAI_API_KEY, undefined);
 });

@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { DEFAULT_WORKSPACE_ID, buildEffectiveTeammateSkills, type RunStore } from "@ling-stack/core";
+import { DEFAULT_WORKSPACE_ID, buildEffectiveTeammateSkills, resolveEffectiveTeammateProviderPresetId, type RunStore, type SecretResolver } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
@@ -10,6 +10,8 @@ import type { ControlPlaneEventHub } from "../control-plane/events.js";
 import { appendControlPlaneEvent } from "../control-plane/events.js";
 import { readOptionalTaskStatusQuery } from "../tasks/schemas.js";
 import { buildTeammateActivityItems } from "./activity.js";
+import { assertRunnableConversationProvider } from "../providers/conversation-model-validation.js";
+import { validateTeammateModelUpdate } from "./model-binding-validation.js";
 import {
   parseAiTeammateUpdateInput,
   parseCreateAiTeammateInput,
@@ -25,6 +27,7 @@ export async function handleTeammatesCollection(
   response: ServerResponse,
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
+  secretResolver: SecretResolver,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -49,7 +52,19 @@ export async function handleTeammatesCollection(
 
     if (request.method === "POST") {
       const body = await readJsonBody(request, config.maxBodyBytes);
-      const teammate = store.createAiTeammate(parseCreateAiTeammateInput(body), new Date().toISOString());
+      const input = parseCreateAiTeammateInput(body);
+      const providerPresetId = assertRunnableConversationProvider({
+        store,
+        cwd,
+        providerPresetId: input.providerPresetId,
+        secretResolver,
+        ownerLabel: "AI teammate",
+      });
+      const teammate = store.createAiTeammate({
+        ...input,
+        modelBindingMode: "fixed",
+        providerPresetId,
+      }, new Date().toISOString());
       writeJson(response, 201, { teammate });
       return;
     }
@@ -69,6 +84,7 @@ export async function handleTeammateItem(
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
   teammateId: string,
+  secretResolver: SecretResolver,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -91,7 +107,14 @@ export async function handleTeammateItem(
     }
     if (request.method === "PATCH") {
       const body = await readJsonBody(request, config.maxBodyBytes);
-      const updated = store.updateAiTeammate(teammateId, parseAiTeammateUpdateInput(body), new Date().toISOString());
+      const input = validateTeammateModelUpdate({
+        store,
+        cwd,
+        teammate,
+        update: parseAiTeammateUpdateInput(body),
+        secretResolver,
+      });
+      const updated = store.updateAiTeammate(teammateId, input, new Date().toISOString());
       writeJson(response, 200, { teammate: updated });
       return;
     }
@@ -247,7 +270,12 @@ export async function handleTeammateSkillBindings(
     if (request.method === "GET") {
       const channelId = url.searchParams.get("channelId") ?? undefined;
       const channel = channelId ? store.getChannel(channelId) : undefined;
-      const providerPresetId = teammate.providerPresetId ?? channel?.defaultProviderPresetId;
+      const providerPresetId = resolveEffectiveTeammateProviderPresetId({
+        teammate,
+        surface: channel ? "channel" : "private",
+        workspaceDefaultProviderPresetId: store.getWorkspaceSettings().defaultProviderPresetId,
+        channelDefaultProviderPresetId: channel?.defaultProviderPresetId,
+      });
       const providerPreset = providerPresetId ? store.getProviderPreset(providerPresetId) : undefined;
       const bindings = store.listTeammateSkillBindings(teammateId);
       writeJson(response, 200, {
@@ -293,7 +321,12 @@ export async function handleTeammateSkillBindings(
       );
       const channelId = url.searchParams.get("channelId") ?? undefined;
       const channel = channelId ? store.getChannel(channelId) : undefined;
-      const providerPresetId = teammate.providerPresetId ?? channel?.defaultProviderPresetId;
+      const providerPresetId = resolveEffectiveTeammateProviderPresetId({
+        teammate,
+        surface: channel ? "channel" : "private",
+        workspaceDefaultProviderPresetId: store.getWorkspaceSettings().defaultProviderPresetId,
+        channelDefaultProviderPresetId: channel?.defaultProviderPresetId,
+      });
       const providerPreset = providerPresetId ? store.getProviderPreset(providerPresetId) : undefined;
       writeJson(response, 200, {
         cwd,

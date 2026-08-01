@@ -17,7 +17,7 @@ const evidenceDirectory = fileURLToPath(new URL(
   import.meta.url,
 ));
 
-test("ordinary Danger uses shared controls, contained Input focus, one-Esc close, and trigger restore", async ({ page }) => {
+test("Profile management area uses shared controls, contained Input focus, one-Esc close, and trigger restore", async ({ page }) => {
   await prepareSurface(page, { theme: "light", width: 1440, height: 960, locale: "en-US" });
   const runtimeErrors = collectRuntimeErrors(page);
   const browserDialogs: string[] = [];
@@ -147,9 +147,9 @@ test("disable busy and failure stay scoped while other danger and settings actio
   await expect(hardDelete).toBeEnabled();
   const settings = page.getByLabel("Settings sections");
   await expect(settings.getByRole("button", { name: "Profile" })).toBeEnabled();
-  await settings.getByRole("button", { name: "Profile" }).click();
+  await settings.getByRole("button", { name: "Model" }).click();
   failureGate.resolve();
-  await settings.getByRole("button", { name: "Danger zone" }).click();
+  await settings.getByRole("button", { name: "Profile" }).click();
 
   const reopened = page.locator("[data-ui2-teammate-danger]");
   await expect(reopened.getByText("Disable is unavailable.", { exact: true })).toBeVisible();
@@ -195,7 +195,7 @@ test("delayed disable result cannot cross a teammate identity switch", async ({ 
   expect(runtimeErrors).toEqual([]);
 });
 
-test("protected Ling Agent has a truthful read-only Danger surface and zero mutation controls", async ({ page }) => {
+test("protected teammates hide the management area and expose zero lifecycle mutation controls", async ({ page }) => {
   await prepareSurface(page, { theme: "dark", width: 1280, height: 800, locale: "zh-CN", reducedMotion: "reduce" });
   const runtimeErrors = collectRuntimeErrors(page);
   const state = createDangerState([
@@ -228,25 +228,14 @@ test("protected Ling Agent has a truthful read-only Danger surface and zero muta
   });
   await page.goto("/");
 
-  const panel = await openDanger(page, "Ling Agent", chineseLabels);
-  await expect(panel.getByText("受保护的队友", { exact: true })).toBeVisible();
-  await expect(panel.getByText("Ling Agent 的生命周期和权限由 Ling Stack 管理。", { exact: true })).toBeVisible();
-  await expect(panel.getByText("只读", { exact: true })).toBeVisible();
-  await expect(panel.getByRole("button", { name: "停用" })).toHaveCount(0);
-  await expect(panel.getByRole("button", { name: "硬删除" })).toHaveCount(0);
-  await expect(panel.getByRole("textbox")).toHaveCount(0);
-  expect(mutationRequests).toBe(0);
-  await captureEvidence(page, "1280x800-ling-dark-protected-read-only-zh-CN.png");
-
-  for (const teammateName of ["系统协调器", "受保护审查员"]) {
-    const managedPanel = await openDanger(page, teammateName, chineseLabels);
-    await expect(managedPanel.getByText("受保护的队友", { exact: true })).toBeVisible();
-    await expect(managedPanel.getByText("由 Ling Stack 管理", { exact: true })).toBeVisible();
-    await expect(managedPanel.getByRole("button", { name: "停用" })).toHaveCount(0);
-    await expect(managedPanel.getByRole("button", { name: "硬删除" })).toHaveCount(0);
-    await expect(managedPanel.getByRole("textbox")).toHaveCount(0);
+  for (const teammateName of ["Ling Agent", "系统协调器", "受保护审查员"]) {
+    const settings = await openTeammateSettings(page, teammateName, chineseLabels);
+    await expect(settings.getByRole("button", { name: "危险操作区", exact: true })).toHaveCount(0);
+    await expect(page.locator("[data-ui2-teammate-danger]")).toHaveCount(0);
+    await expect(page.getByText("管理队友", { exact: true })).toHaveCount(0);
   }
   expect(mutationRequests).toBe(0);
+  await captureEvidence(page, "1280x800-ling-dark-protected-management-hidden-zh-CN.png");
   await expectNoPageOverflow(page);
   expect(runtimeErrors).toEqual([]);
 });
@@ -273,17 +262,17 @@ function createDangerState(teammates: unknown[] = [createOrdinaryTeammate()]): M
 }
 
 const englishLabels = {
-  danger: "Danger zone",
   details: "Show details",
   dock: "Private chat workspace dock",
+  profile: "Profile",
   settings: "Settings",
   settingsSections: "Settings sections",
 } as const;
 
 const chineseLabels = {
-  danger: "危险操作区",
   details: "显示详情",
   dock: "私聊工作区面板",
+  profile: "资料",
   settings: "设置",
   settingsSections: "设置分组",
 } as const;
@@ -291,6 +280,18 @@ const chineseLabels = {
 type DangerLabels = typeof englishLabels | typeof chineseLabels;
 
 async function openDanger(
+  page: Page,
+  teammateName: string,
+  labels: DangerLabels = englishLabels,
+): Promise<Locator> {
+  const settings = await openTeammateSettings(page, teammateName, labels);
+  await settings.getByRole("button", { name: labels.profile, exact: true }).click();
+  const panel = page.locator("[data-ui2-teammate-danger]");
+  await expect(panel).toBeVisible();
+  return panel;
+}
+
+async function openTeammateSettings(
   page: Page,
   teammateName: string,
   labels: DangerLabels = englishLabels,
@@ -306,10 +307,7 @@ async function openDanger(
   await page.getByLabel(labels.dock).getByRole("button", { name: labels.settings }).click();
   const settings = page.getByLabel(labels.settingsSections);
   await expect(settings).toBeVisible();
-  await settings.getByRole("button", { name: labels.danger }).click();
-  const panel = page.locator("[data-ui2-teammate-danger]");
-  await expect(panel).toBeVisible();
-  return panel;
+  return settings;
 }
 
 async function routeTeammateMutation(

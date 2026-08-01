@@ -1,5 +1,134 @@
 # P8.1 AI Teammate Management Implementation Plan
 
+> 2026-07-30 model binding implementation is owned by
+> [`conversation-model-binding-and-creation-validation-implementation-plan.md`](../../conversation-model-binding-and-creation-validation-implementation-plan.md).
+> It supersedes optional provider ids for public teammate creation while preserving the
+> historical UI2 evidence below.
+
+> 2026-07-30 update: `Tasks` and `Activity` were removed from private-chat Settings. Their former page components,
+> page-only controllers, styles and focused specs are retired. Private-message task creation and private Dock activity
+> remain supported through their existing owners. Sections 20 and 22 below are historical completion records and no
+> longer define reachable Settings tabs.
+
+## 0. 2026-07-30 Private Settings Shell Parity
+
+- Recompose private teammate Settings to the verified Channel Settings shell grammar: 58px back/title/subtitle Header,
+  horizontal navigation, and one internally scrolling content owner.
+- Keep `TeammateSettingsHeader` and `TeammateSettingsNavigation` as focused display owners. `TeammateWorkspace` only
+  selects the active section and mounts the content; it must not absorb tab business logic while already over 1,800 lines.
+- Reuse the channel Header and tab geometry/tokens. Teammate navigation may retain its existing button semantics for
+  compatibility, but visual order, height, focus treatment, overflow, and content boundaries must match Channel Settings.
+- Remove `TeammateSettingsSummaryPanel` from production. Its provider/model/channel/skill/memory/MCP values are repeated
+  in their owning sections and must not reserve a third column.
+- Preserve Profile/Model Reset and Save behavior, protected teammate visibility, all APIs, persistence, permissions,
+  model binding, channel membership, memory, skills, MCP, and danger semantics.
+- Update focused browser coverage to assert horizontal navigation, absent summary sidebar, 58px Header, one content
+  scroll owner, 1440x960 Light and 1280x800 Dark containment, back navigation, and no console/page errors.
+- Section 12 below remains historical implementation evidence. Its three-column grid and summary composition are
+  superseded by this section; its field behavior and feedback contracts remain valid.
+
+### 0.1 2026-07-31 Core Navigation And Ownership
+
+- Preserve daemon routes, contracts, SQLite schema, policy precedence, memory lifecycle, Skill Registry ownership and
+  runtime behavior. The existing teammate update contract already owns `allowedTools` and `approvalProfile`; the new
+  surface must not create a second permission API.
+- Replace `permissions + mcp` navigation with one `tools_permissions` section for editable teammates. A focused
+  permissions controller owns draft/save/conflict/error state; a composed surface owns capability controls, effective
+  Workspace limits and the existing MCP authorization section when servers exist. The teammate permission surface does
+  not render raw tool ids, required actions or the full allow/ask/deny decision list.
+- Workspace defaults remain read-only on this surface. Enabling teammate capability cannot override Workspace deny;
+  only an actual deny/error renders a scoped repair link. Ordinary healthy state has no Settings jump.
+- Remove `memory` and `danger` from reachable navigation. Keep memory loading/runtime data for private-chat projections;
+  compose `TeammateDangerTab` under Profile for ordinary teammates without changing disable/delete controllers.
+- Rework `TeammateSkillsTab` to a three-column list with immediate Switch mutation. Remove import, advanced ID binding,
+  row details icon and Registry archive from this surface; retain unlink in the Drawer and expose one empty-state route
+  to Settings > Skill Library.
+- Skill filters become `all / using / unused / attention`. Search corpus is limited to display name, summary and mapped
+  user-facing tool labels. Source diagnostics remain in the Drawer and may mark the row `Needs attention` without
+  exposing source metadata in the list.
+- Update Settings navigation, focused view-model/controller/component tests and existing teammate regressions. Verify
+  1440x960 Light, 1280x800 Dark, internal scrolling, Switch keyboard behavior, no horizontal overflow and no console or
+  page errors.
+- Keep the Skill list at natural height for short content. Its viewport max-height must subtract the private Settings
+  Header, tabs, content padding, toolbar and list header; long content scrolls only inside the list and must not make the
+  outer Settings content owner scroll.
+- Keep new production owners below 400 lines. `TeammateWorkspace.tsx` may only lose navigation/render composition and
+  wire focused controllers; it must not absorb permission or Skill business logic.
+- Keep private-header shortcuts focused: `TeammateChatHeader` renders only typed menu callbacks, a dedicated rename
+  controller owns draft/busy/error/stale identity state, and a dedicated Dialog owns presentation. Rename reuses the
+  existing teammate PATCH with only `displayName`; Context calls the existing explicit dock-page opener rather than the
+  toolbar toggle.
+
+### 0.2 2026-07-31 Local Web Verification
+
+Status: **completed and verified locally**.
+
+- The reachable navigation is `Profile / Model / Channels / Skills / Tools and permissions`; protected Ling Agent keeps
+  only Profile, Model and Channels. Memory and lifecycle mutations retain their runtime owners but no longer own tabs.
+- Current-teammate capability switches and approval mode save through the existing teammate update contract. Workspace
+  deny remains authoritative and is the only state that exposes the scoped repair route. MCP authorization is embedded
+  only when at least one server exists. The redundant permission `Technical information` disclosure is absent.
+- Skills now use the three-column binding surface and row-owned Drawer. Import, manual Skill ID binding, Registry archive,
+  source metadata and technical search values are absent from the default list.
+- Web typecheck, lint, i18n and 13 Web unit tests pass. The complete `ui2-teammate-management-*.spec.ts` matrix passes
+  `48/48`; selected Teammates integration passes `2/2`; MCP input/status regression passes `7/7`.
+- Original-size visual review passed for Light `1440x960` and Dark `1280x800`, including permission labels, Workspace
+  denial, Skill Drawer, attention state and overlay scrolling. Evidence uses the new `editable-tools-permissions`,
+  `workspace-deny-zh-CN`, `binding-list-and-detail`, `attention-detail` and `overlay-scroll-zh-CN` screenshots.
+- No daemon route, contract, SQLite schema, Workspace policy precedence, Skill Registry ownership, memory lifecycle or
+  teammate deletion semantics changed in this slice.
+- Permissions, Skills and Danger evidence metadata retain their historical records and append the 2026-07-31
+  replacement screenshots, current product boundaries and hashes.
+- Follow-up removal of the redundant permission `Technical information` disclosure passed focused Permissions `4/4`,
+  Web typecheck, lint, i18n and `git diff --check`; the wider `48/48` matrix remains the preceding integration baseline.
+
+### 0.3 2026-07-31 External Tools Productization
+
+Status: **completed and verified locally**.
+
+- Preserve the existing MCP Server, Tool, teammate-binding, Run resolver and approval semantics. User-facing copy calls
+  this capability `External tools`; MCP remains an internal/API term and a global Settings owner.
+- Replace the embedded technical tree with a compact service list. Each row shows display name, productized readiness,
+  authorized capability count and one `Manage` action. The section remains absent when no Server exists.
+- Open one shared right Drawer for a service. The Drawer owns user-visible capability search/filter and shared Checkbox
+  selection; raw names, ids, transport, secret fields, future-tool automatic authorization and bulk-select controls stay
+  absent.
+- Add `useTeammateExternalToolsController` for authoritative/draft bindings, dirty/reset/save, identity guards, Drawer
+  state and selection mutation. Add pure `teammate-external-tools-view-models.ts` for rows and filtering. Remove MCP
+  draft/search/expanded state and mutation helpers from `TeammateWorkspace.tsx` instead of adding more behavior there.
+- The existing Settings Header composes permission and external-tool dirty/busy state into one Reset/Save owner. The
+  external-tools section has no local Save button; a failed save remains scoped to that section and preserves the draft.
+- Update MCP-focused durable tests to assert the new presentation while retaining Run authorization, selected-tool
+  payload, disabled Server, identity-race, busy/error, keyboard, Drawer/Escape, Light/Dark and overflow coverage.
+- Verify Web typecheck, lint, i18n, focused MCP/teammate tests, `git diff --check`, and original-size `1440x960` Light plus
+  `1280x800` Dark screenshots. Do not modify API, contracts, SQLite schema, secret storage or runtime authority.
+- Implemented with a compact service list, shared Drawer/Checkbox controls, one Header save owner and a focused
+  controller/view-model split. Dynamic service descriptions containing connection-layer terminology are omitted from
+  both rendering and search without rewriting source data. The capability list stays natural-height until overflow.
+- Focused external-tool and MCP integration tests pass `7/7`; the legacy-writer regression passes `8/8`. Web typecheck,
+  lint, i18n and `git diff --check` pass. Current Light/Dark screenshots and hashes are recorded in the Permissions
+  evidence package. No route, contract, SQLite, secret, Run resolver or approval-precedence behavior changed.
+
+### 0.3 2026-07-31 Profile Layout Simplification
+
+- Reorder the ordinary profile into identity, description, status/sidebar display, folded advanced content and the
+  existing management section. Remove the duplicate status dot and the detached remove-avatar icon.
+- Replace the independent pinned/hidden Switches with one derived `Sidebar display` Select while preserving the existing
+  `pinned` and `hidden` request fields. Existing contradictory data resolves visually to Hidden until the user chooses a
+  different value; no background mutation occurs.
+- Keep the avatar crop/upload/delete controller and shared crop Dialog. Use one avatar Menu trigger with Change and
+  Restore-default actions, preserving focus restoration and action-scoped busy/error behavior.
+- Extract `TeammatePersonaImportDialog.tsx` as the sole persona-import presentation owner. It supports a Markdown/text
+  file name plus content or direct paste, never a visible editable source path, and reuses the existing preview/apply
+  APIs without adding routes or storage.
+- Changing persona input invalidates the current preview. `applyPersonaDraft()` returns a local success result so the
+  Dialog closes only after a successful existing update; failure retains the input and preview.
+- Keep `TeammateProfileTab.tsx`, the new Dialog and focused CSS below 400 lines. Do not add profile behavior to the
+  1,800-line `TeammateWorkspace.tsx` beyond typed composition wiring.
+- Update focused Profile E2E for hierarchy, sidebar-display mapping, avatar Menu, file/paste persona input, preview
+  invalidation, success/failure, Esc/focus, Light `1440x960`, Dark `1280x800`, console and overflow. Run Web typecheck,
+  lint, i18n and `git diff --check`, then recapture current Profile evidence and hashes.
+
 ## 1. Slice Contract
 
 P8.1 按以下顺序实施：
@@ -993,16 +1122,17 @@ The slice is **100%** complete by weighted work. Every row has implementation, n
 
 `teammate-channels-view-models.ts` owns:
 
-- `TeammateChannelFilter = all | active | paused | archived` and localized label keys;
-- one row per current Channel with `joined/default/protected`, lifecycle status, relationship status, searchable text,
+- `TeammateChannelFilter = all | active | paused` and localized label keys;
+- one row per non-archived current Channel with `joined/default/protected`, lifecycle status, relationship status, searchable text,
   primary action and disabled reason;
 - search/filter/no-result projection without mutating server state;
 - normalized full-replacement payloads for `join`, `leave` and `set-default`;
 - payload dedupe and the invariant that no more than one membership is default for this teammate.
 
 An active joined row exposes `Leave` and, unless already default, `Set default`. An active non-member exposes `Join`.
-Paused/archived existing members expose only `Leave`; paused/archived non-members expose no mutation and a visible
-reason. Protected/system rows expose `Always joined` and no action regardless of stored membership rows.
+Paused existing members expose only `Leave`; paused non-members expose no mutation and a visible reason. Archived
+channels never produce rows or filter options, but archived memberships remain in normalized full-replacement payloads.
+Protected/system rows expose `Always joined` and no action regardless of stored membership rows.
 
 ### 19.4 Controller Contract
 
@@ -1033,7 +1163,7 @@ are deleted from `teammates.css`; generic selectors still used by Danger/List ar
 `ui2-teammate-management-channels.spec.ts` must cover:
 
 1. active joined/not joined/default rows, Join/Leave/Set default and exact replacement payload;
-2. paused/archived disabled reasons while existing relationships remain safely removable;
+2. paused disabled reasons plus archived rows/filter/count omission while archived memberships remain in mutation payloads;
 3. protected Ling Agent read-only Always joined and zero PUT;
 4. initial loading, empty channel catalog, search no-result and Clear filters;
 5. retained stale refresh, row-scoped mutation failure and success Toast without page `Saved`;
@@ -1065,7 +1195,16 @@ Settings embedded boundary pass, original screenshots are inspected at full size
 motion migration docs contain a truthful closeout. Any backend inability to enforce the product contract is reported
 as a production gap rather than patched outside this slice.
 
-## 20. P8.1i Tasks Projection Implementation Plan
+### 19.8 2026-07-31 Archived-Channel Follow-up
+
+- Archived Channels no longer produce relationship rows, totals, search results or filter options.
+- Archived memberships remain in full-replacement mutation payloads and are never silently removed when another
+  Channel relationship changes.
+- Focused Channels passed `7/7`; Web typecheck and UI2 lint passed. Light `1440x960` and Dark `1280x800` screenshots
+  were recaptured and reviewed, with current hashes recorded in the Channels evidence metadata.
+- No API, contract, database, Channel lifecycle or membership persistence semantic changed.
+
+## 20. P8.1i Tasks Projection Implementation Plan（历史，设置页已撤销）
 
 ### 20.1 Fixed Decisions And Boundary
 
@@ -1197,7 +1336,7 @@ Status on 2026-07-21: **verified**.
 - focused `5/5`, selected `60/60`, Web static gates, six original-size screenshots and visual review passed.
 - Evidence and hashes: `evidence/features/ai-teammate-management-permissions/metadata.md`.
 
-## 22. P8.1k Recent Activity Implementation Plan
+## 22. P8.1k Recent Activity Implementation Plan（历史，设置页已撤销）
 
 ### 22.1 Fixed Decisions And Boundary
 

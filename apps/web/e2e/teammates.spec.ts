@@ -1344,6 +1344,12 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await openPrivateChatSettings(page);
   const settingsSections = page.getByLabel("Settings sections");
   await expect(settingsSections).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: /^Tasks(?:\s|$)/u })).toHaveCount(0);
+  await expect(settingsSections.getByRole("button", { name: /^Activity(?:\s|$)/u })).toHaveCount(0);
+  await expect(settingsSections.getByRole("button", { name: /^Memory(?:\s|$)/u })).toHaveCount(0);
+  await expect(settingsSections.getByRole("button", { name: "Danger zone", exact: true })).toHaveCount(0);
+  await expect(settingsSections.getByRole("button", { name: "Tools and permissions", exact: true })).toBeVisible();
+  await expect(page.locator("[data-ui2-teammate-tasks], [data-ui2-teammate-activity]")).toHaveCount(0);
   await settingsSections.getByRole("button", { name: /Channels/ }).click();
   await expect(page.getByText("Engineering").first()).toBeVisible();
   const designRow = page.locator(".teammate-channel-row").filter({ hasText: "Design" });
@@ -1368,10 +1374,12 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await settingsSections.getByRole("button", { name: /Skills/ }).click();
   const skillsPanel = page.locator("[data-ui2-teammate-skills]");
   await expect(skillsPanel).toContainText("Implementation");
+  await expect(skillsPanel.getByRole("button", { name: "Import skill" })).toHaveCount(0);
+  await expect(skillsPanel.getByText("Advanced binding", { exact: true })).toHaveCount(0);
   const codeReviewSkillRow = skillsPanel.locator('[data-skill-id="review"]');
-  await codeReviewSkillRow.getByRole("button", { name: "View skill details" }).click();
-  const skillDetail = page.getByRole("dialog", { name: "Skill detail" });
-  await skillDetail.getByText("Source and raw details", { exact: true }).click();
+  await codeReviewSkillRow.click();
+  const skillDetail = page.getByRole("dialog").filter({ hasText: "Code Review" });
+  await skillDetail.getByText("Technical information", { exact: true }).click();
   await expect(skillDetail).toContainText("skill_source_review_mock");
   await expect(skillDetail).toContainText("sha256:review-mock");
   const skillsDarkSurfaces = await page.evaluate(() => {
@@ -1392,70 +1400,24 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   }
   await page.keyboard.press("Escape");
   await expect(skillDetail).toHaveCount(0);
-  await skillsPanel.getByPlaceholder("Search skills or tools").fill("Engineering Plan Review");
+  await skillsPanel.getByPlaceholder("Search skills or purposes").fill("Engineering Plan Review");
   const engineeringReviewRow = skillsPanel.locator('[data-skill-id="plan-eng-review"]');
-  await expect(engineeringReviewRow).toContainText("Bindable");
-  await engineeringReviewRow.getByRole("button", { name: "Bind" }).click();
+  const engineeringReviewSwitch = engineeringReviewRow.getByRole("switch", { name: "Use skill for teammate: Engineering Plan Review" });
+  await expect(engineeringReviewSwitch).not.toBeChecked();
+  await engineeringReviewSwitch.click();
   await expect.poll(() => state.teammateSkillBindings.some((item) =>
     isRecord(item) && item.teammateId === teammateId && item.skillId === "plan-eng-review" && item.enabled === true
   )).toBe(true);
   await expect(page.getByText("Skill enabled for teammate", { exact: true })).toBeVisible();
-  await skillsPanel.getByPlaceholder("Search skills or tools").fill("");
+  await skillsPanel.getByPlaceholder("Search skills or purposes").fill("");
   const implementationRow = skillsPanel.locator('[data-skill-id="implement"]');
-  await expect(implementationRow.getByRole("button", { name: /More actions/ })).toHaveCount(0);
-  await implementationRow.getByRole("button", { name: "Disable" }).click();
+  await implementationRow.getByRole("switch", { name: "Use skill for teammate: Implementation" }).click();
   await expect.poll(() => {
     const binding = state.teammateSkillBindings.find((item) =>
       isRecord(item) && item.teammateId === teammateId && item.skillId === "implement"
     );
     return isRecord(binding) ? binding.enabled : undefined;
   }).toBe(false);
-  await skillsPanel.getByRole("button", { name: "Import skill" }).click();
-  const skillImportDialog = page.getByRole("dialog", { name: "Import skill" });
-  await skillImportDialog.getByLabel("Draft name").fill("Custom QA Pack");
-  await skillImportDialog.getByLabel("Source path").fill("skills/custom-qa/SKILL.md");
-  await skillImportDialog.getByLabel("Skill content").fill([
-    "# Custom QA Drill",
-    "id: custom-qa-drill",
-    "summary: Run a focused QA pass for private workspace changes.",
-    "Keep approval and secret instructions as review-only text.",
-  ].join("\n"));
-  await skillImportDialog.getByRole("button", { name: "Preview draft" }).click();
-  await expect(skillImportDialog).toContainText("custom-qa-drill");
-  await expect(skillImportDialog).toContainText("Permission-like instruction");
-  await skillImportDialog.getByRole("button", { name: "Publish to registry" }).click();
-  await expect.poll(() => state.skillRegistryEntries.some((item) =>
-    isRecord(item) && item.id === "custom-qa-drill" && item.reviewStatus === "published"
-  )).toBe(true);
-  await expect(page.getByText("Published 1 skill", { exact: true })).toBeVisible();
-  await skillsPanel.getByText("Advanced binding", { exact: true }).click();
-  const skillIdInput = skillsPanel.getByLabel("Skill id");
-  await skillIdInput.fill("custom-qa-drill");
-  await skillIdInput.press("Enter");
-  await expect.poll(() => {
-    const binding = state.teammateSkillBindings.find((item) =>
-      isRecord(item) && item.teammateId === teammateId && item.skillId === "custom-qa-drill"
-    );
-    return isRecord(binding) ? [binding.source, binding.enabled] : undefined;
-  }).toEqual(["user", true]);
-  let customSkillRow = skillsPanel.locator('[data-skill-id="custom-qa-drill"]');
-  await expect(customSkillRow).toContainText("User skill");
-  await customSkillRow.getByRole("button", { name: "More actions for Custom QA Drill" }).click();
-  await page.getByRole("menuitem", { name: "Remove from teammate" }).click();
-  await expect.poll(() => state.teammateSkillBindings.some((item) =>
-    isRecord(item) && item.teammateId === teammateId && item.skillId === "custom-qa-drill"
-  )).toBe(false);
-  customSkillRow = skillsPanel.locator('[data-skill-id="custom-qa-drill"]');
-  await expect(customSkillRow).toContainText("Registry skill");
-  await customSkillRow.getByRole("button", { name: "More actions for Custom QA Drill" }).click();
-  await page.getByRole("menuitem", { name: "Archive skill" }).click();
-  await page.getByRole("dialog", { name: "Archive skill?" }).getByRole("button", { name: "Archive skill" }).click();
-  await expect.poll(() => state.skillRegistryEntries.some((item) =>
-    isRecord(item) && item.id === "custom-qa-drill" && item.reviewStatus === "archived"
-  )).toBe(true);
-
-  await settingsSections.getByRole("button", { name: /Memory/ }).click();
-  await expect(page.getByText("Private chat summary")).toBeVisible();
 
   await settingsSections.getByRole("button", { name: /Profile/ }).click();
   const profilePanel = page.getByLabel("Teammate profile");
@@ -1465,7 +1427,8 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await profilePanel.getByLabel("System prompt").fill("Updated teammate system prompt from settings.");
   await page.getByLabel("Single agent settings").getByRole("button", { name: "Save" }).click();
   await expect(page.getByText("Teammate profile saved", { exact: true })).toBeVisible();
-  await expect(page.getByLabel("Single agent settings").getByRole("heading", { name: "Renamed Engineer settings", level: 2 })).toBeVisible();
+  await expect(page.getByLabel("Single agent settings").getByRole("heading", { name: "Teammate settings", level: 2 })).toBeVisible();
+  await expect(page.getByLabel("Single agent settings")).toContainText("Renamed Engineer");
   await expect.poll(() => {
     const teammate = state.aiTeammates.find((item) => isRecord(item) && item.id === teammateId);
     return isRecord(teammate)
@@ -1515,23 +1478,26 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(page.getByLabel("Private chat", { exact: true }).getByText("AI teammate is blocked: No provider preset is selected for this teammate.")).toBeVisible();
 
   await openPrivateChatSettings(page);
-  await page.getByLabel("Teammate profile").getByText("Advanced profile", { exact: true }).click();
-  const personaPanel = page.getByLabel("Persona import");
-  await personaPanel.getByLabel("Source path").fill("AGENTS.md");
-  await personaPanel.getByLabel("Persona content").fill([
+  const teammateProfile = page.getByLabel("Teammate profile");
+  await teammateProfile.getByText("Advanced profile", { exact: true }).click();
+  await teammateProfile.getByRole("button", { name: "Import role profile" }).click();
+  const personaPanel = page.getByRole("dialog", { name: "Import role profile" });
+  await personaPanel.getByRole("radio", { name: "Paste content" }).click();
+  await personaPanel.getByLabel("Role profile content").fill([
     "# Imported QA Persona",
     "Review private workspace changes carefully.",
     "Do not grant tools, approvals, secrets, or external send permissions.",
   ].join("\n"));
-  await personaPanel.getByRole("button", { name: "Preview draft" }).click();
-  await expect(personaPanel.getByText("Draft ready")).toBeVisible();
+  await personaPanel.getByRole("button", { name: "Check content" }).click();
+  await expect(personaPanel.getByLabel("Role profile preview")).toBeVisible();
   await expect(personaPanel.getByText("Permission-like persona text was ignored for authority changes.")).toBeVisible();
-  await personaPanel.getByRole("button", { name: "Apply persona draft" }).click();
+  await personaPanel.getByRole("button", { name: "Apply to profile" }).click();
   await expect.poll(() => {
     const teammate = state.aiTeammates.find((item) => isRecord(item) && item.id === teammateId);
     return isRecord(teammate) ? [teammate.displayName, teammate.appendSystemPrompt, teammate.allowedTools, teammate.approvalProfile] : undefined;
   }).toEqual(["Imported QA Persona", [], ["read", "grep", "find", "ls"], { mode: "standard", risk: "medium" }]);
-  await expect(page.getByLabel("Single agent settings").getByRole("heading", { name: "Imported QA Persona settings", level: 2 })).toBeVisible();
+  await expect(page.getByLabel("Single agent settings").getByRole("heading", { name: "Teammate settings", level: 2 })).toBeVisible();
+  await expect(page.getByLabel("Single agent settings")).toContainText("Imported QA Persona");
 
   await page.getByLabel("Upload avatar").setInputFiles({
     name: "avatar.png",
@@ -1564,7 +1530,8 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Imported QA Persona" }).click();
   await openPrivateChatSettings(page);
 
-  await page.getByRole("button", { name: "Remove avatar" }).click();
+  await page.getByLabel("Teammate profile").getByRole("button", { name: "Avatar options" }).click();
+  await page.getByRole("menuitem", { name: "Restore default avatar" }).click();
   await expect.poll(() => {
     const teammate = state.aiTeammates.find((item) => isRecord(item) && item.id === teammateId);
     return isRecord(teammate) ? teammate.avatarImageAttachmentId : "missing";
@@ -1572,8 +1539,9 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(page.getByLabel("Avatar").locator(".teammate-avatar-image-default")).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation").locator(".sidebar-row-shell.selected .teammate-avatar-image-default")).toBeVisible();
 
-  await page.getByLabel("Settings sections").getByRole("button", { name: "Danger zone" }).click();
-  await page.getByRole("button", { name: "Hard delete" }).click();
+  const manageTeammate = page.locator("[data-ui2-teammate-danger]");
+  await expect(manageTeammate.getByRole("heading", { name: "Manage teammate" })).toBeVisible();
+  await manageTeammate.getByRole("button", { name: "Hard delete" }).click();
   const hardDeleteDialog = page.getByRole("dialog", { name: "Hard delete private data" });
   await expect(hardDeleteDialog).toBeVisible();
   await hardDeleteDialog.getByLabel("Reason").fill("owner request");
@@ -1593,95 +1561,6 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   expect(runtimeErrors).toEqual([]);
 });
 
-test("AI teammate memory tab imports Markdown as review candidates", async ({ page }) => {
-  await page.addInitScript(() => {
-    localStorage.setItem("ling-stack.locale", "en-US");
-  });
-  const state = createBaseState({ approvalStatus: "expired" });
-  const teammateId = "teammate_builtin_engineer";
-  state.aiTeammates = [createMockTeammate({ id: teammateId, displayName: "Ling Engineer", providerPresetId: undefined })];
-  state.memoryObjects = [
-    {
-      id: "memory_existing_export",
-      workspaceId: "workspace_default",
-      scopeType: "workspace",
-      ownerId: "workspace_default",
-      title: "Existing export memory",
-      body: "Existing memory can be exported from the Memory tab.",
-      tags: ["export"],
-      sourceRefs: [{ type: "manual", id: "manual_export", label: "Manual export" }],
-      reviewState: "active",
-      enabled: true,
-      sensitivity: "normal",
-      verifyBeforeUse: false,
-      createdAt: "2026-06-18T00:00:00.000Z",
-      updatedAt: "2026-06-18T00:00:00.000Z",
-    },
-  ];
-  await mockDaemon(page, state);
-  await page.goto("/");
-
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Ling Engineer" }).click();
-  await openPrivateChatSettings(page);
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Memory/ }).click();
-
-  const memoryPanel = page.locator(".teammate-memory-panel");
-  await expect(memoryPanel.getByRole("heading", { name: "Memory", exact: true })).toBeVisible();
-  await expect(memoryPanel.getByRole("heading", { name: "Workspace memory governance" })).toBeVisible();
-
-  const downloadPromise = page.waitForEvent("download");
-  await memoryPanel.getByRole("button", { name: "Export" }).click();
-  const download = await downloadPromise;
-  expect(download.suggestedFilename()).toMatch(/memory-export-workspace_default-/);
-  await expect(page.getByText("Exported 1 memories; secret-adjacent content stayed excluded", { exact: true })).toBeVisible();
-
-  await memoryPanel.getByRole("button", { name: "Import" }).click();
-  const importDialog = page.getByRole("dialog", { name: "Import memory" });
-  await importDialog.getByLabel("Source label").fill("web-import.md");
-  await importDialog.getByRole("textbox", { name: "Markdown" }).fill(markdownImportFixture());
-  await expect(importDialog.getByRole("button", { name: "Import candidates" })).toBeDisabled();
-  await importDialog.getByRole("button", { name: "Preview import" }).click();
-
-  const preview = importDialog.getByLabel("Import preview summary");
-  await expect(preview).toContainText("1 candidates");
-  await expect(preview).toContainText("0 skipped");
-  await expect(preview).toContainText("2 warnings");
-  await importDialog.getByText("Import warnings and skipped items", { exact: true }).click();
-  await expect(importDialog).toContainText("retrievalProviderId was not imported.");
-  await expect(importDialog).toContainText('Original reviewState "active" was imported as candidate.');
-  await expect.poll(() => state.memoryMarkdownImportCalls).toEqual([
-    {
-      dryRun: true,
-      sourceLabel: "web-import.md",
-      candidateCount: 1,
-      skippedCount: 0,
-    },
-  ]);
-  await expect.poll(() => state.memoryObjects.map((item) => isRecord(item) ? item.title : undefined)).not.toContain("Web import preview memory");
-
-  await importDialog.getByRole("button", { name: "Import candidates" }).click();
-  await expect(importDialog).toHaveCount(0);
-  await expect(page.getByText("Imported 1 candidates", { exact: true })).toBeVisible();
-  await expect.poll(() => state.memoryMarkdownImportCalls.map((call) => call.dryRun)).toEqual([true, false]);
-  await expect.poll(() => {
-    const imported = state.memoryObjects.find((item) => isRecord(item) && item.title === "Web import preview memory");
-    return isRecord(imported)
-      ? {
-          reviewState: imported.reviewState,
-          enabled: imported.enabled,
-          retrievalProviderId: imported.retrievalProviderId,
-          sourceRefs: Array.isArray(imported.sourceRefs) ? imported.sourceRefs.map((ref) => isRecord(ref) ? ref.type : undefined) : [],
-        }
-      : undefined;
-  }).toEqual({
-    reviewState: "candidate",
-    enabled: true,
-    retrievalProviderId: undefined,
-    sourceRefs: ["manual", "import"],
-  });
-  await expect(memoryPanel.locator('[data-memory-id^="memory_imported_"]').filter({ hasText: "Web import preview memory" })).toBeVisible();
-});
-
 test("AI teammate settings save status and visibility fields", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
@@ -1697,8 +1576,7 @@ test("AI teammate settings save status and visibility fields", async ({ page }) 
   await page.getByLabel("Settings sections").getByRole("button", { name: /Profile/ }).click();
   const profilePanel = page.getByLabel("Teammate profile");
   await profilePanel.getByLabel("Status").selectOption("paused");
-  await profilePanel.getByLabel("Pinned in sidebar").setChecked(false);
-  await profilePanel.getByLabel("Hidden from sidebar").setChecked(true);
+  await profilePanel.getByLabel("Sidebar display").selectOption("hidden");
   await page.getByLabel("Single agent settings").getByRole("button", { name: "Save" }).click();
   await expect(page.locator('[data-ling-overlay="toast"]').filter({ hasText: "Teammate profile saved" })).toBeVisible();
 
@@ -1706,7 +1584,8 @@ test("AI teammate settings save status and visibility fields", async ({ page }) 
     const teammate = state.aiTeammates.find((item) => isRecord(item) && item.id === teammateId);
     return isRecord(teammate) ? [teammate.status, teammate.pinned, teammate.hidden] : undefined;
   }).toEqual(["paused", false, true]);
-  await expect(page.getByRole("heading", { name: "Ling Engineer settings", level: 2 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Teammate settings", level: 2 })).toBeVisible();
+  await expect(page.getByLabel("Single agent settings")).toContainText("Ling Engineer");
 });
 
 test("AI teammate private chat previews image attachments and keeps them in message history", async ({ page }) => {
@@ -2154,48 +2033,3 @@ test("AI teammate private chat keeps queued guidance from bypassing into a new m
   await expect.poll(() => state.teammateDirectMessages.length).toBe(0);
   await expect(page.getByText("已有排队引导，先执行或删除队列消息。")).toBeVisible();
 });
-
-function markdownImportFixture(): string {
-  return [
-    "---",
-    JSON.stringify({
-      schemaVersion: 1,
-      product: "ling-stack",
-      kind: "ling-memory-markdown-export",
-      workspaceId: "workspace_default",
-      generatedAt: "2026-06-18T00:00:00.000Z",
-      memoryCount: 1,
-      skippedSecretAdjacentCount: 0,
-      redactionApplied: false,
-      authority: "projection-only",
-    }),
-    "---",
-    "",
-    "# Ling Memory Export",
-    "",
-    "## Web import preview memory",
-    "",
-    "### Metadata",
-    "```json",
-    JSON.stringify({
-      id: "mem_exported_test",
-      workspaceId: "workspace_default",
-      scopeType: "workspace",
-      ownerId: "workspace_default",
-      reviewState: "active",
-      sensitivity: "normal",
-      enabled: true,
-      verifyBeforeUse: true,
-      tags: ["web", "import"],
-      sourceRefs: [{ type: "manual", id: "manual_1", label: "Browser QA" }],
-      retrievalProviderId: "vector-main",
-    }),
-    "```",
-    "",
-    "### Body",
-    "```text",
-    "Browser preview should create a candidate only.",
-    "```",
-    "",
-  ].join("\n");
-}

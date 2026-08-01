@@ -1,11 +1,11 @@
 .teammate-profile-panel {
   display: grid;
-  width: min(100%, 760px);
+  width: min(100%, 880px);
   min-width: 0;
   align-content: start;
   justify-self: center;
-  gap: var(--ling-space-6);
-  padding: var(--ling-space-7);
+  gap: var(--ling-space-5);
+  padding: var(--ling-space-6);
 }
 
 .teammate-profile-error,
@@ -18,24 +18,22 @@
   min-width: 0;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
-  gap: var(--ling-space-6);
-  padding-bottom: var(--ling-space-5);
-  border-bottom: 1px solid var(--ling-border-default);
+  gap: var(--ling-space-5);
 }
 
 .teammate-profile-avatar {
   position: relative;
   display: grid;
-  width: 76px;
-  height: 76px;
-  flex: 0 0 76px;
+  width: 72px;
+  height: 72px;
+  flex: 0 0 72px;
   place-items: center;
 }
 
 .teammate-profile-avatar > .teammate-avatar-image,
 .teammate-profile-avatar > .avatar-initial {
-  width: 76px;
-  height: 76px;
+  width: 72px;
+  height: 72px;
   border-radius: 50%;
 }
 
@@ -47,9 +45,9 @@
   position: absolute;
   right: -2px;
   bottom: -2px;
-  border: 1px solid var(--ling-border-default);
+  border: 0;
   background: var(--ling-bg-elevated);
-  box-shadow: var(--ling-shadow-medium);
+  box-shadow: var(--ling-shadow-low);
 }
 
 .teammate-profile-avatar-input {
@@ -59,24 +57,12 @@
 .teammate-profile-identity-fields {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
-  gap: var(--ling-space-5);
-}
-
-.teammate-profile-identity-status {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--ling-space-3);
-  padding-bottom: 1px;
 }
 
 .teammate-profile-lifecycle {
   display: grid;
   min-width: 0;
-  grid-template-columns: repeat(3, minmax(132px, 1fr));
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
   align-items: end;
   gap: var(--ling-space-5);
 }
@@ -84,70 +70,109 @@
 .teammate-profile-description,
 .teammate-profile-advanced,
 .teammate-profile-advanced-body,
-.teammate-profile-persona,
-.teammate-profile-persona-preview {
+.teammate-profile-persona-entry,
+.teammate-persona-import-body,
+.teammate-persona-preview {
   min-width: 0;
 }
 
 .teammate-profile-advanced-body {
   display: grid;
-  gap: var(--ling-space-6);
-}
-
-.teammate-profile-persona {
-  display: grid;
   gap: var(--ling-space-5);
-  padding-top: var(--ling-space-5);
-  border-top: 1px solid var(--ling-border-default);
 }
 
-.teammate-profile-persona-heading {
+.teammate-profile-persona-entry {
   display: flex;
   min-width: 0;
   align-items: center;
   justify-content: space-between;
   gap: var(--ling-space-4);
+  padding-top: var(--ling-space-5);
+  border-top: 1px solid var(--ling-border-default);
 }
 
-.teammate-profile-persona-heading h3 {
+.teammate-profile-persona-entry strong {
   min-width: 0;
-  margin: 0;
-  overflow: hidden;
   color: var(--ling-text-strong);
   font-size: var(--ling-font-sm);
-  font-weight: 700;
   line-height: var(--ling-line-sm);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.teammate-profile-persona-preview {
+.teammate-persona-import-body,
+.teammate-persona-preview {
   display: grid;
-  gap: var(--ling-space-3);
+  gap: var(--ling-space-4);
 }
 
-.teammate-profile-persona-row {
+.teammate-persona-import-mode {
+  width: fit-content;
+}
+
+.teammate-persona-file-picker {
+  position: relative;
+  box-sizing: border-box;
+  display: grid;
+  min-height: 112px;
+  place-items: center;
+  padding: var(--ling-space-6);
+  overflow: hidden;
+  border: 1px dashed var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  background: var(--ling-bg-subtle);
+  cursor: pointer;
+}
+
+.teammate-persona-file-picker:hover,
+.teammate-persona-file-picker:focus-within {
+  border-color: var(--ling-border-focus);
+  background: var(--ling-bg-pressed);
+}
+
+.teammate-persona-file-picker > span {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ling-space-3);
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+  line-height: var(--ling-line-sm);
+}
+
+.teammate-persona-file-picker svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  color: var(--ling-text-muted);
+  stroke-width: 1.8;
+}
+
+.teammate-persona-file-picker input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.teammate-persona-file-picker input:disabled {
+  cursor: not-allowed;
+}
+
+.teammate-persona-preview-row {
   grid-template-columns: minmax(120px, 0.8fr) minmax(0, 1.4fr) auto;
   gap: var(--ling-space-4);
 }
 
-.teammate-profile-persona-row strong,
-.teammate-profile-persona-summary {
+.teammate-persona-preview-row strong,
+.teammate-persona-preview-row span {
   min-width: 0;
   overflow-wrap: anywhere;
 }
 
-.teammate-profile-persona-summary {
+.teammate-persona-preview-row span {
   color: var(--ling-text-muted);
-}
-
-.teammate-profile-persona-actions {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: var(--ling-space-3);
 }
 
 @media (max-width: 1100px) {
@@ -160,23 +185,20 @@
     gap: var(--ling-space-5);
   }
 
-  .teammate-profile-identity-fields {
-    grid-template-columns: minmax(0, 1fr);
-    gap: var(--ling-space-3);
-  }
-
-  .teammate-profile-identity-status {
-    justify-content: flex-start;
-  }
-
   .teammate-profile-lifecycle {
-    grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  }
+
+  .teammate-profile-persona-entry {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .teammate-profile-panel,
-  .teammate-profile-avatar-change {
+  .teammate-profile-avatar-change,
+  .teammate-persona-import-dialog {
     scroll-behavior: auto;
   }
 }

@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { mockDaemon } from "./support/mock-daemon";
+import { expectCompactMutedComposerControl } from "./support/composer-control-assertions";
 import { expectMessageFrameContained } from "./support/message-frame-assertions";
 import { createBaseState, createChatProvider, cwd, type MockState } from "./support/mock-state";
 
@@ -140,7 +141,19 @@ test("normal conversation composer uses Radix menus and preserves draft, upload,
   await expect(thinkingMenu).toHaveAttribute("data-ling-overlay", "menu");
   await expect(thinkingMenu.getByRole("menuitemradio")).toHaveText(["Off", "Minimal", "Low", "Medium", "High", "XHigh"]);
   await thinkingMenu.getByRole("menuitemradio", { name: "High", exact: true }).click();
-  await expect(composer.getByRole("button", { name: "Selected thinking mode High" })).toBeFocused();
+  const activeThinkingTrigger = composer.getByRole("button", { name: "Selected thinking mode High" });
+  await expect(activeThinkingTrigger).toBeFocused();
+  await expectCompactMutedComposerControl(permissionTrigger);
+  await expectCompactMutedComposerControl(activeThinkingTrigger);
+  const composerControlStyles = await Promise.all([permissionTrigger, activeThinkingTrigger].map((control) => control.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      color: style.color,
+      fontSize: style.fontSize,
+      fontWeight: style.fontWeight,
+    };
+  })));
+  expect(composerControlStyles[1]).toEqual(composerControlStyles[0]);
 
   const modelTrigger = composer.getByRole("button", { name: /Selected model gpt-5\.5/ });
   await modelTrigger.click();

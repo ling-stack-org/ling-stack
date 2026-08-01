@@ -315,18 +315,42 @@ test("Computer Use HTTP projection and Stop wait for runtime acknowledgement", a
       assert.equal(capability.status, 200, await capability.text());
       assert.equal(capability.headers.get("access-control-allow-origin"), null);
 
-      const begin = await fetch(`${baseUrl}/computer-use/locked-control/authorize?cwd=${encodeURIComponent(cwd)}`, {
+      const privateBegin = await fetch(`${baseUrl}/computer-use/locked-control/desktop/authorize`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-Ling-Computer-Use-Token": COMPUTER_USE_ROUTE_TOKEN,
+          "X-Ling-Desktop-Bridge-Token": "desktop-bridge-test-token-0123456789",
         },
-        body: JSON.stringify({ requestId: "locked-authorize-1", expectedRevision: 1 }),
+        body: JSON.stringify({
+          authority: {
+            daemonAuthorityEpoch: handshakeBody.daemonAuthorityEpoch,
+            bridgeConnectionId: handshakeBody.bridgeConnectionId,
+            desktopInstanceEpoch: handshakeBody.desktopInstanceEpoch,
+            workspaceCwd: cwd,
+          },
+          requestId: "locked-authorize-1",
+          expectedRevision: 1,
+        }),
       });
-      assert.equal(begin.status, 409);
-      const beginBody = await begin.json();
+      assert.equal(privateBegin.status, 409);
+      const beginBody = await privateBegin.json();
       assert.equal(beginBody.accepted, false);
       assert.equal(beginBody.reason, "locked_control_disabled_by_build");
+
+      for (const suffix of ["authorize", "revoke"]) {
+        const rendererMutation = await fetch(
+          `${baseUrl}/computer-use/locked-control/${suffix}?cwd=${encodeURIComponent(cwd)}`,
+          {
+            method: "POST",
+            headers: {
+              Origin: "http://localhost:5173",
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ requestId: `renderer-${suffix}`, expectedRevision: 1 }),
+          },
+        );
+        assert.equal(rendererMutation.status, 404, `${suffix} must not exist on the Renderer surface`);
+      }
     }
 
     const listed = await getJson(`${baseUrl}/computer-use/sessions?cwd=${encodeURIComponent(cwd)}`);

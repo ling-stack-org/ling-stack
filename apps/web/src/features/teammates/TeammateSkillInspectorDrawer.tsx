@@ -1,4 +1,4 @@
-import { Plus, Unlink, X } from "lucide-react";
+import { Unlink } from "lucide-react";
 import type { RefObject } from "react";
 import { useI18n } from "../../i18n.js";
 import {
@@ -12,9 +12,10 @@ import {
   InlineFeedback,
   InspectorSection,
   StatusIndicator,
+  Switch,
 } from "../../shared/ui/index.js";
 import { approvalProfileText } from "./helpers.js";
-import { teammateSkillActionLabel, type TeammateSkillRowModel } from "./teammate-skills-view-models.js";
+import type { TeammateSkillRowModel } from "./teammate-skills-view-models.js";
 
 export function TeammateSkillInspectorDrawer({
   mutationKey,
@@ -57,27 +58,24 @@ export function TeammateSkillInspectorDrawer({
           globalThis.requestAnimationFrame(() => returnFocusRef.current?.focus());
         }}
       >
-        <DrawerHeader
-          closeLabel={t("Close")}
-          title={t("Skill detail")}
-          description={row?.displayName}
-        />
+        <DrawerHeader closeLabel={t("Close")} title={row?.displayName ?? t("Skill detail")} description={row?.summary} />
         {row ? (
           <>
             <DrawerBody>
-              <div className="teammate-skill-detail-status">
-                <StatusIndicator label={row.status.label} tone={row.status.tone} />
-                <StatusIndicator compact label={row.sourceState.label} tone={row.sourceState.tone} />
+              <div className="teammate-skill-detail-use">
+                <strong>{t("Use for this teammate")}</strong>
+                <Switch
+                  aria-label={t("Use skill for teammate: {name}", { name: row.displayName })}
+                  checked={Boolean(row.binding?.enabled)}
+                  disabled={Boolean(mutationKey)}
+                  loading={actionBusy}
+                  onCheckedChange={() => void onToggleBinding(row.id)}
+                />
               </div>
 
-              <section className="teammate-skill-detail-section">
-                <h3>{t("Description")}</h3>
-                <p>{row.summary}</p>
-              </section>
-
-              <section className="teammate-skill-detail-section">
-                <h3>{t("Blocked reasons")}</h3>
-                {row.effectiveSkill?.blockedReasons.length ? (
+              {row.effectiveSkill?.blockedReasons.length ? (
+                <section className="teammate-skill-detail-section">
+                  <h3>{t("Blocked reasons")}</h3>
                   <div className="teammate-skill-detail-reasons">
                     {row.effectiveSkill.blockedReasons.map((reason) => (
                       <InlineFeedback key={reason.code} tone="warning" title={t(reason.code)}>
@@ -85,16 +83,20 @@ export function TeammateSkillInspectorDrawer({
                       </InlineFeedback>
                     ))}
                   </div>
-                ) : (
-                  <p>{row.binding?.enabled ? t("No blocked reasons") : t("Bind this skill to evaluate executability.")}</p>
-                )}
-              </section>
+                </section>
+              ) : null}
+
+              {!row.skill ? (
+                <InlineFeedback tone="danger">{t("This binding points to a Skill that is no longer available.")}</InlineFeedback>
+              ) : null}
+
+              {row.sourceState.attention ? (
+                <InlineFeedback tone="warning">{row.sourceState.label}</InlineFeedback>
+              ) : null}
 
               <InspectorSection
-                open
                 className="teammate-skill-detail-requirements"
                 title={t("Requirements and policy")}
-                summary={t("{count} required tools", { count: row.skill?.requiredTools.length ?? 0 })}
               >
                 <DetailTokens label={t("Required tools")} values={row.skill?.requiredTools ?? []} empty={t("No tools")} />
                 <DetailTokens
@@ -108,20 +110,14 @@ export function TeammateSkillInspectorDrawer({
                 </div>
               </InspectorSection>
 
-              <InspectorSection
-                className="teammate-skill-detail-raw"
-                title={t("Source and raw details")}
-                summary={row.sourceLabel}
-              >
+              <InspectorSection className="teammate-skill-detail-raw" title={t("Technical information")}>
+                <div className="teammate-skill-detail-status">
+                  <StatusIndicator compact label={row.status.label} tone={row.status.tone} />
+                  <StatusIndicator compact label={row.sourceState.label} tone={row.sourceState.tone} />
+                </div>
                 <div className="teammate-skill-detail-value">
                   <strong>{t("Skill id")}</strong>
                   <code>{row.id}</code>
-                </div>
-                <div className="teammate-skill-detail-value">
-                  <strong>{t("Prompt fragments")}</strong>
-                  {row.skill?.promptFragments.length
-                    ? <pre>{row.skill.promptFragments.slice(0, 3).join("\n\n")}</pre>
-                    : <span>{t("No prompt fragments")}</span>}
                 </div>
                 {row.sourceSnapshot ? (
                   <div className="teammate-skill-source-raw-grid">
@@ -133,11 +129,11 @@ export function TeammateSkillInspectorDrawer({
                     />
                     <RawValue label={t("Review")} value={row.sourceSnapshot.reviewStatus} />
                   </div>
-                ) : <p>{t("No source snapshot is available.")}</p>}
+                ) : null}
               </InspectorSection>
             </DrawerBody>
-            <DrawerFooter>
-              {row.canRemove ? (
+            {row.canRemove ? (
+              <DrawerFooter>
                 <Button
                   leadingIcon={<Unlink />}
                   variant="danger"
@@ -148,18 +144,8 @@ export function TeammateSkillInspectorDrawer({
                 >
                   {t("Remove from teammate")}
                 </Button>
-              ) : null}
-              <Button
-                leadingIcon={row.primaryAction === "disable" ? <X /> : <Plus />}
-                variant="primary"
-                disabled={Boolean(mutationKey)}
-                loading={mutationKey === `${row.primaryAction}:${row.id}`}
-                loadingLabel={t("Saving...")}
-                onClick={() => void onToggleBinding(row.id)}
-              >
-                {teammateSkillActionLabel(row.primaryAction, t)}
-              </Button>
-            </DrawerFooter>
+              </DrawerFooter>
+            ) : null}
           </>
         ) : null}
       </DrawerContent>

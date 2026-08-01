@@ -44,6 +44,19 @@ import {
   type LockedControlPolicyCoordinatorSnapshot,
   type LockedControlGenerationRuntime,
 } from "./locked-computer-control/policy-coordinator.js";
+import {
+  createLockedTaskContinuationDaemonClient,
+  type LockedTaskContinuationDaemonClient,
+} from "./locked-task-continuation/daemon-client.js";
+import {
+  DEFAULT_LOCKED_TASK_CONTINUATION_PREFERENCE,
+  type LockedTaskContinuationPreference,
+  type LockedTaskContinuationPreferenceStore,
+} from "./locked-task-continuation/preference-store.js";
+import { readSystemSessionLocked } from "./locked-task-continuation/system-session-lock-state.js";
+
+const LOCKED_TASK_CONTINUATION_LEASE_TTL_MS = 15_000;
+const LOCKED_TASK_CONTINUATION_HEARTBEAT_MS = 5_000;
 
 export type DesktopRuntimeErrorCode =
   | "architecture_unsupported"
@@ -106,6 +119,9 @@ export interface DesktopRuntimeOptions {
   readonly platformBindingFactory?: (platform: BundledCuaDriverPlatform) => CuaDriverPlatformBinding;
   readonly coordinatorFactory?: DesktopRuntimeCuaDriverCoordinatorFactory;
   readonly availabilityClient?: CuaDriverAvailabilityClient;
+  readonly lockedTaskContinuationClient?: LockedTaskContinuationDaemonClient;
+  readonly lockedTaskContinuationPreferenceStore?: LockedTaskContinuationPreferenceStore;
+  readonly readSystemSessionLocked?: () => Promise<boolean | undefined>;
   readonly onDiagnostic?: (event: string, details?: Readonly<Record<string, unknown>>) => void;
   readonly openExternal?: (url: string) => Promise<void>;
   readonly powerMonitor?: {
@@ -128,6 +144,13 @@ export class DesktopRuntime {
   private readonly userDataPath: string;
   private readonly featureFlags: CuaDriverFeatureFlags;
   private readonly coordinatorFactory: DesktopRuntimeCuaDriverCoordinatorFactory;
+  private readonly lockedTaskContinuationClient: LockedTaskContinuationDaemonClient;
+  private lockedTaskContinuationPreference: LockedTaskContinuationPreference =
+    DEFAULT_LOCKED_TASK_CONTINUATION_PREFERENCE;
+  private lockedTaskContinuationPreferenceLoaded = false;
+  private lockedTaskContinuationPreferenceLoad: Promise<LockedTaskContinuationPreference> | undefined;
+  private lockedTaskContinuationOperationTail: Promise<void> = Promise.resolve();
+  private lockedTaskContinuationHeartbeat: ReturnType<typeof setInterval> | undefined;
   private operationTail: Promise<void> = Promise.resolve();
   private coordinatorValue: DesktopRuntimeCuaDriverCoordinator | undefined;
   private coordinatorAuthority: DesktopDaemonCuaDriverAuthorityTuple | undefined;
@@ -138,6 +161,11 @@ export class DesktopRuntime {
   private shutdownRequested = false;
   private shutdownPromise: Promise<void> | undefined;
   private stopPowerMonitor: (() => void) | undefined;
+  private systemSessionLocked = false;
+  private systemSuspended = false;
+  private systemSessionStateKnown = false;
+  private systemBoundaryRevision = 0;
+  private initialSystemSessionStatePromise: Promise<void> | undefined;
   private lockedControlPolicyCoordinator: LockedComputerControlPolicyCoordinator | undefined;
   private lockedControlSnapshotValue: LockedControlPolicyCoordinatorSnapshot = Object.freeze({
     phase: "off",
@@ -159,15 +187,22 @@ export class DesktopRuntime {
     }
     this.coordinatorFactory = options.coordinatorFactory
       ?? ((coordinatorOptions) => new CuaDriverDesktopCoordinator(coordinatorOptions));
+    this.lockedTaskContinuationClient = options.lockedTaskContinuationClient
+      ?? createLockedTaskContinuationDaemonClient({
+        daemonBaseUrl: options.daemonBaseUrl,
+        bridgeToken: options.bridgeToken,
+      });
     this.desktopInstanceId = options.desktopInstanceId
       ?? `desktop-${randomBytes(16).toString("hex")}`;
     if (desktopBundledCuaDriverGateEnabled(this.featureFlags, this.platform)) {
       this.stopDaemonStatusObserver = options.daemon.onStatusChanged((status) => {
         this.handleDaemonStatusChanged(status);
       });
-      if (options.packaged === true && options.platformOwner && options.powerMonitor) {
-        this.stopPowerMonitor = this.observePowerMonitor(options.powerMonitor);
-      }
+    }
+    // Task continuation is independent from Cua Driver readiness. Even when a
+    // provider owner fails to compose, Desktop must still publish lock state.
+    if (options.powerMonitor) {
+      this.stopPowerMonitor = this.observePowerMonitor(options.powerMonitor);
     }
   }
 
@@ -231,11 +266,6 @@ export class DesktopRuntime {
     }
   }
 
-  authorizeLockedComputerControl(): Promise<DesktopCommandResult> {
-    return this.lockedControlPolicyCoordinator?.authorizeCurrentTask()
-      ?? Promise.resolve({ accepted: false, reason: "locked_control_disabled_by_build" });
-  }
-
   revokeLockedComputerControl(): Promise<DesktopCommandResult> {
     return this.lockedControlPolicyCoordinator?.revokeCurrentGrant()
       ?? Promise.resolve({ accepted: false, reason: "locked_control_disabled_by_build" });
@@ -257,6 +287,62 @@ export class DesktopRuntime {
     return this.options.daemon.onStatusChanged(listener);
   }
 
+  async getLockedTaskContinuationPreferences(): Promise<{ readonly continueWhileLocked: boolean }> {
+    const preference = await this.loadLockedTaskContinuationPreference();
+    return Object.freeze({ continueWhileLocked: preference.continueWhileLocked });
+  }
+
+  setContinueTasksWhileLocked(enabled: boolean): Promise<DesktopCommandResult> {
+    return this.enqueueLockedTaskContinuation(async () => {
+      const previous = await this.loadLockedTaskContinuationPreference();
+      if (previous.continueWhileLocked === enabled) {
+        try {
+          await this.publishLockedTaskContinuationState(previous);
+          return { accepted: true };
+        } catch (error) {
+          this.reportLockedTaskContinuationFailure("sync_failed", error);
+          return { accepted: false, reason: "locked_task_continuation_sync_failed" };
+        }
+      }
+
+      const next = Object.freeze({
+        schemaVersion: 1 as const,
+        continueWhileLocked: enabled,
+      });
+      let saved = false;
+      try {
+        await this.options.lockedTaskContinuationPreferenceStore?.save(next);
+        saved = true;
+        this.lockedTaskContinuationPreference = next;
+        await this.publishLockedTaskContinuationState(next);
+        return { accepted: true };
+      } catch (error) {
+        if (!saved) {
+          this.lockedTaskContinuationPreference = previous;
+          this.reportLockedTaskContinuationFailure("save_failed", error);
+          return { accepted: false, reason: "locked_task_continuation_save_failed" };
+        }
+        try {
+          await this.options.lockedTaskContinuationPreferenceStore?.save(previous);
+          this.lockedTaskContinuationPreference = previous;
+        } catch (rollbackError) {
+          // The new value is still the durable truth. Keep memory and Renderer
+          // reconcilable with disk instead of claiming a rollback that failed.
+          this.lockedTaskContinuationPreference = next;
+          this.reportLockedTaskContinuationFailure("rollback_failed", rollbackError);
+          await this.publishLockedTaskContinuationState(next).catch(() => undefined);
+          return { accepted: false, reason: "locked_task_continuation_rollback_failed" };
+        }
+        await this.publishLockedTaskContinuationState(previous).catch(() => undefined);
+        this.reportLockedTaskContinuationFailure("sync_failed", error);
+        return {
+          accepted: false,
+          reason: "locked_task_continuation_sync_failed",
+        };
+      }
+    });
+  }
+
   /** Idempotent for one daemon handshake tuple, including window reopen. */
   ensureStarted(): Promise<DesktopDaemonStatus> {
     if (this.shutdownRequested) {
@@ -267,8 +353,12 @@ export class DesktopRuntime {
     }
     const pending = this.enqueue(async () => {
       this.assertCanStart();
-      const status = await this.options.daemon.ensureStarted();
+      const [status] = await Promise.all([
+        this.options.daemon.ensureStarted(),
+        this.ensureInitialSystemSessionState(),
+      ]);
       this.assertCanStart();
+      await this.syncLockedTaskContinuationState();
       await this.reconcileCoordinator();
       return status;
     });
@@ -313,6 +403,7 @@ export class DesktopRuntime {
       if (!status) {
         throw new Error("desktop_runtime_restart_status_missing");
       }
+      await this.syncLockedTaskContinuationState();
       await this.reconcileCoordinator();
       return status;
     });
@@ -352,30 +443,52 @@ export class DesktopRuntime {
 
   suspendComputerControlForSystem(reason: string): Promise<void> {
     if (this.shutdownRequested) return Promise.resolve();
-    const lockedPolicy = this.lockedControlPolicyCoordinator;
-    if (lockedPolicy) {
-      return reason === "system_lock"
-        ? lockedPolicy.handleLock()
-        : lockedPolicy.handleSuspend();
+    if (reason === "system_lock") {
+      this.systemSessionLocked = true;
+    } else {
+      this.systemSuspended = true;
     }
-    return this.enqueue(async () => {
-      const coordinator = this.coordinatorValue;
-      if (!coordinator) return;
-      if (coordinator.suspendForSystem) {
-        await coordinator.suspendForSystem(reason);
-      } else {
-        await this.shutdownCoordinator(reason);
-      }
-    });
+    this.systemSessionStateKnown = true;
+    this.systemBoundaryRevision += 1;
+    const continuationSync = this.syncLockedTaskContinuationState();
+    const lockedPolicy = this.lockedControlPolicyCoordinator;
+    const controlSuspension = lockedPolicy
+      ? reason === "system_lock"
+        ? lockedPolicy.handleLock()
+        : lockedPolicy.handleSuspend()
+      : this.enqueue(async () => {
+          const coordinator = this.coordinatorValue;
+          if (!coordinator) return;
+          if (coordinator.suspendForSystem) {
+            await coordinator.suspendForSystem(reason);
+          } else {
+            await this.shutdownCoordinator(reason);
+          }
+        });
+    return Promise.all([controlSuspension, continuationSync]).then(() => undefined);
   }
 
   resumeComputerControlForSystem(kind: "unlock" | "resume" = "unlock"): Promise<void> {
     if (this.shutdownRequested) return Promise.resolve();
+    const boundaryWasActive = kind === "unlock"
+      ? this.systemSessionLocked
+      : this.systemSuspended;
+    if (kind === "unlock") {
+      this.systemSessionLocked = false;
+    } else {
+      this.systemSuspended = false;
+    }
+    this.systemSessionStateKnown = true;
+    this.systemBoundaryRevision += 1;
+    if (!boundaryWasActive) return Promise.resolve();
+    const continuationSync = this.syncLockedTaskContinuationState();
     const lockedPolicy = this.lockedControlPolicyCoordinator;
     if (lockedPolicy) {
-      return kind === "unlock" ? lockedPolicy.handleUnlock() : lockedPolicy.handleResume();
+      const controlResume = kind === "unlock" ? lockedPolicy.handleUnlock() : lockedPolicy.handleResume();
+      return Promise.all([controlResume, continuationSync]).then(() => undefined);
     }
-    return this.enqueue(async () => {
+    if (this.systemSessionLocked || this.systemSuspended) return continuationSync;
+    const controlResume = this.enqueue(async () => {
       const coordinator = this.coordinatorValue;
       if (!coordinator) {
         await this.reconcileCoordinator();
@@ -387,6 +500,7 @@ export class DesktopRuntime {
         await this.reconcileCoordinator();
       }
     });
+    return Promise.all([controlResume, continuationSync]).then(() => undefined);
   }
 
   /**
@@ -400,6 +514,7 @@ export class DesktopRuntime {
     this.shutdownRequested = true;
     this.stopObservingDaemonStatus();
     this.stopObservingPowerMonitor();
+    this.stopLockedTaskContinuationHeartbeat();
     const pending = this.enqueue(async () => {
       let firstError: unknown;
       const attempt = async (operation: () => void | Promise<void>): Promise<void> => {
@@ -411,6 +526,12 @@ export class DesktopRuntime {
       };
       await attempt(() => this.shutdownCoordinator("desktop_quit"));
       await attempt(() => this.options.platformOwner?.dispose());
+      await attempt(() => this.enqueueLockedTaskContinuation(async () => {
+        await this.lockedTaskContinuationClient.release?.({
+          workspaceCwd: this.workspaceCwd,
+          desktopInstanceId: this.desktopInstanceId,
+        });
+      }));
       await attempt(() => this.options.daemon.stopOwnedDaemon());
       if (firstError !== undefined) {
         throw firstError;
@@ -624,6 +745,37 @@ export class DesktopRuntime {
         reason: snapshot.reason ?? snapshot.providerState,
       });
     }
+    await this.reassertSystemBoundaryAfterEnable(coordinator);
+  }
+
+  private async reassertSystemBoundaryAfterEnable(
+    coordinator: DesktopRuntimeCuaDriverCoordinator,
+  ): Promise<void> {
+    const reason = this.systemSessionLocked
+      ? "system_lock"
+      : this.systemSuspended
+        ? "system_suspend"
+        : undefined;
+    if (!reason || this.coordinatorValue !== coordinator) return;
+    coordinator.closeCallGateForSecurityBoundary?.(reason);
+    try {
+      if (coordinator.suspendForSystem) {
+        await coordinator.suspendForSystem(reason);
+      } else {
+        await this.shutdownCoordinatorInstance(coordinator, reason);
+      }
+    } catch (error) {
+      this.options.onDiagnostic?.("desktop_runtime.cua_driver_system_boundary_reassert_failed", {
+        reason,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      await this.shutdownCoordinatorInstance(coordinator, reason).catch((cleanupError) => {
+        this.options.onDiagnostic?.("desktop_runtime.cua_driver_system_boundary_cleanup_failed", {
+          reason,
+          error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+        });
+      });
+    }
   }
 
   private createLockedControlPolicyCoordinator(
@@ -691,8 +843,18 @@ export class DesktopRuntime {
         throw new Error("locked_control_disabled_by_build");
       },
       async stopLockedGeneration() {},
-      async resumeNormal() {
+      resumeNormal: async () => {
+        if (this.systemSessionLocked || this.systemSuspended) return;
         await coordinator.resumeForSystem?.();
+        const reason = this.systemSessionLocked
+          ? "system_lock"
+          : this.systemSuspended
+            ? "system_suspend"
+            : undefined;
+        if (reason) {
+          coordinator.closeCallGateForSecurityBoundary?.(reason);
+          await coordinator.suspendForSystem?.(reason);
+        }
       },
     };
     const identityVerifier = createLockedControlIdentityVerifier({
@@ -849,6 +1011,112 @@ export class DesktopRuntime {
         error: error instanceof Error ? error.message : String(error),
       });
     }
+  }
+
+  private loadLockedTaskContinuationPreference(): Promise<LockedTaskContinuationPreference> {
+    if (this.lockedTaskContinuationPreferenceLoaded) {
+      return Promise.resolve(this.lockedTaskContinuationPreference);
+    }
+    if (this.lockedTaskContinuationPreferenceLoad) {
+      return this.lockedTaskContinuationPreferenceLoad;
+    }
+    const pending = (async () => {
+      const preference = await this.options.lockedTaskContinuationPreferenceStore?.load()
+        ?? DEFAULT_LOCKED_TASK_CONTINUATION_PREFERENCE;
+      this.lockedTaskContinuationPreference = preference;
+      this.lockedTaskContinuationPreferenceLoaded = true;
+      return preference;
+    })();
+    this.lockedTaskContinuationPreferenceLoad = pending;
+    void pending.finally(() => {
+      if (this.lockedTaskContinuationPreferenceLoad === pending) {
+        this.lockedTaskContinuationPreferenceLoad = undefined;
+      }
+    }).catch(() => undefined);
+    return pending;
+  }
+
+  private syncLockedTaskContinuationState(): Promise<void> {
+    const pending = this.enqueueLockedTaskContinuation(async () => {
+      const preference = await this.loadLockedTaskContinuationPreference();
+      await this.publishLockedTaskContinuationState(preference);
+    });
+    return pending.catch((error) => {
+      this.reportLockedTaskContinuationFailure("sync_failed", error);
+      throw error;
+    });
+  }
+
+  private async publishLockedTaskContinuationState(
+    preference: LockedTaskContinuationPreference,
+  ): Promise<void> {
+    await this.lockedTaskContinuationClient.publish({
+      workspaceCwd: this.workspaceCwd,
+      desktopInstanceId: this.desktopInstanceId,
+      leaseTtlMs: LOCKED_TASK_CONTINUATION_LEASE_TTL_MS,
+      continueWhileLocked: preference.continueWhileLocked,
+      locked: this.systemSessionLocked || this.systemSuspended,
+    });
+    this.ensureLockedTaskContinuationHeartbeat();
+  }
+
+  private ensureInitialSystemSessionState(): Promise<void> {
+    if (this.systemSessionStateKnown) return Promise.resolve();
+    if (this.initialSystemSessionStatePromise) return this.initialSystemSessionStatePromise;
+    const boundaryRevision = this.systemBoundaryRevision;
+    const pending = (async () => {
+      const locked = await (this.options.readSystemSessionLocked?.()
+        ?? readSystemSessionLocked(this.platform as NodeJS.Platform));
+      if (this.systemSessionStateKnown || this.systemBoundaryRevision !== boundaryRevision) return;
+      this.systemSessionLocked = locked ?? true;
+      this.systemSessionStateKnown = true;
+      if (locked === undefined) {
+        this.options.onDiagnostic?.("desktop_runtime.locked_task_initial_state_unknown", {
+          platform: this.platform,
+          failClosed: true,
+        });
+      }
+    })();
+    this.initialSystemSessionStatePromise = pending;
+    void pending.finally(() => {
+      if (this.initialSystemSessionStatePromise === pending) {
+        this.initialSystemSessionStatePromise = undefined;
+      }
+    }).catch(() => undefined);
+    return pending;
+  }
+
+  private ensureLockedTaskContinuationHeartbeat(): void {
+    if (this.lockedTaskContinuationHeartbeat || this.shutdownRequested) return;
+    this.lockedTaskContinuationHeartbeat = setInterval(() => {
+      if (this.shutdownRequested) return;
+      void this.syncLockedTaskContinuationState().catch(() => undefined);
+    }, LOCKED_TASK_CONTINUATION_HEARTBEAT_MS);
+    if (typeof this.lockedTaskContinuationHeartbeat.unref === "function") {
+      this.lockedTaskContinuationHeartbeat.unref();
+    }
+  }
+
+  private stopLockedTaskContinuationHeartbeat(): void {
+    if (!this.lockedTaskContinuationHeartbeat) return;
+    clearInterval(this.lockedTaskContinuationHeartbeat);
+    this.lockedTaskContinuationHeartbeat = undefined;
+  }
+
+  private enqueueLockedTaskContinuation<T>(operation: () => Promise<T>): Promise<T> {
+    const pending = this.lockedTaskContinuationOperationTail.then(operation, operation);
+    this.lockedTaskContinuationOperationTail = pending.then(
+      () => undefined,
+      () => undefined,
+    );
+    return pending;
+  }
+
+  private reportLockedTaskContinuationFailure(reason: string, error: unknown): void {
+    this.options.onDiagnostic?.("desktop_runtime.locked_task_continuation_failed", {
+      reason,
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 
   private assertCanStart(): void {

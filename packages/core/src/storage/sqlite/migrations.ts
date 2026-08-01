@@ -216,8 +216,10 @@ const CUA_DRIVER_ACTIVATION_MIGRATION_VERSION = 105;
 const CUA_DRIVER_ACTIVATION_MIGRATION_NAME = "create_cua_driver_activation_state";
 const MCP_AUTHORITY_REVISIONS_MIGRATION_VERSION = 106;
 const MCP_AUTHORITY_REVISIONS_MIGRATION_NAME = "add_mcp_authority_revisions";
-const REMOTE_CONVERSATION_STATE_MIGRATION_VERSION = 107;
+const REMOTE_CONVERSATION_STATE_MIGRATION_VERSION = 108;
 const REMOTE_CONVERSATION_STATE_MIGRATION_NAME = "create_remote_conversation_state";
+const TEAMMATE_MODEL_BINDING_MIGRATION_VERSION = 107;
+const TEAMMATE_MODEL_BINDING_MIGRATION_NAME = "add_teammate_model_binding_mode";
 const AI_EVOLUTION_SKILL_LIFECYCLE_MIGRATION_NAME = "repair_ai_evolution_skill_lifecycle";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
@@ -5470,4 +5472,23 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
         );
       END;
     `);
+  const hasTeammateModelBindingMigration = context.hasMigration(TEAMMATE_MODEL_BINDING_MIGRATION_VERSION);
+  if (!hasTeammateModelBindingMigration || !context.hasColumn("ai_teammates", "model_binding_mode")) {
+    if (!context.hasColumn("ai_teammates", "model_binding_mode")) {
+      database.exec("ALTER TABLE ai_teammates ADD COLUMN model_binding_mode TEXT NOT NULL DEFAULT 'fixed';");
+    }
+    database.exec(`
+      UPDATE ai_teammates
+      SET model_binding_mode = 'workspace_default', provider_preset_id = NULL
+      WHERE id = 'ling_agent';
+
+      UPDATE ai_teammates
+      SET model_binding_mode = 'workspace_default'
+      WHERE id LIKE 'teammate_builtin_%'
+        AND provider_preset_id IS NULL;
+    `);
+    if (!hasTeammateModelBindingMigration) {
+      context.recordMigration(TEAMMATE_MODEL_BINDING_MIGRATION_VERSION, TEAMMATE_MODEL_BINDING_MIGRATION_NAME);
+    }
+  }
 }

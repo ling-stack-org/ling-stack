@@ -54,6 +54,26 @@ test("policy coordinator arms, rotates into one locked generation and consumes o
   await fx.coordinator.shutdown();
 });
 
+test("resume and unlock hints cannot restore normal control until both boundaries clear", async () => {
+  const resumeBeforeUnlock = fixture({ policy: disabledPolicy });
+  await resumeBeforeUnlock.coordinator.handleLock();
+  await resumeBeforeUnlock.coordinator.handleSuspend();
+  await resumeBeforeUnlock.coordinator.handleResume();
+  assert.equal(resumeBeforeUnlock.order.includes("resume"), false);
+  await resumeBeforeUnlock.coordinator.handleUnlock();
+  assert.equal(resumeBeforeUnlock.order.filter((event) => event === "resume").length, 1);
+  await resumeBeforeUnlock.coordinator.shutdown();
+
+  const unlockBeforeResume = fixture({ policy: disabledPolicy });
+  await unlockBeforeResume.coordinator.handleLock();
+  await unlockBeforeResume.coordinator.handleSuspend();
+  await unlockBeforeResume.coordinator.handleUnlock();
+  assert.equal(unlockBeforeResume.order.includes("resume"), false);
+  await unlockBeforeResume.coordinator.handleResume();
+  assert.equal(unlockBeforeResume.order.filter((event) => event === "resume").length, 1);
+  await unlockBeforeResume.coordinator.shutdown();
+});
+
 test("a lock arriving during OS identity verification invalidates the late success", async () => {
   const identityStarted = deferred();
   const releaseIdentity = deferred();

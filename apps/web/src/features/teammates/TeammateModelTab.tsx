@@ -60,10 +60,10 @@ export function TeammateModelTab({
         <Field className="teammate-model-field" label={t("Assigned model")}>
           <Select
             disabled={savingModel}
-            value={viewModel.selectedProviderId}
+            value={viewModel.selectionValue}
             onChange={(event) => onSelectProvider(event.target.value)}
           >
-            <option value="">{t("None")}</option>
+            {!viewModel.selectionValue ? <option disabled value="">{t("Choose a model")}</option> : null}
             {viewModel.options.map((option) => (
               <option key={option.id} disabled={option.disabled} value={option.id}>
                 {option.label}

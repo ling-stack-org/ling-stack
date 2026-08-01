@@ -5,7 +5,7 @@ import { useI18n } from "../../../i18n.js";
 import { Badge, Button, InlineFeedback, Skeleton, Switch } from "../../../shared/ui/index.js";
 import { DesktopComputerUsePreference } from "../DesktopComputerUsePreference.js";
 import { ComputerControlStatusDetails } from "./ComputerControlStatusDetails.js";
-import { LockedComputerControlSection } from "./LockedComputerControlSection.js";
+import { LockAwareComputerControlSection } from "./LockAwareComputerControlSection.js";
 
 export function ComputerControlSettingsPage({
   controller,
@@ -14,14 +14,34 @@ export function ComputerControlSettingsPage({
 }): JSX.Element | null {
   const { t } = useI18n();
   const view = controller.view;
-  if (view.kind === "hidden") return null;
-  if (view.kind === "loading") return <ComputerControlLoading />;
+  const taskContinuationAvailable = typeof window !== "undefined"
+    && Boolean(window.lingDesktop?.lockedTaskContinuation);
+  if (view.kind === "hidden") {
+    return taskContinuationAvailable ? (
+      <div className="computer-control-settings" data-computer-control-state="task-continuation-only">
+        <PageHeader />
+        <LockAwareComputerControlSection />
+      </div>
+    ) : null;
+  }
+  if (view.kind === "loading") {
+    return (
+      <div className="computer-control-settings" data-computer-control-state="loading">
+        <PageHeader />
+        <section className="computer-control-section computer-control-loading" aria-busy="true">
+          <Skeleton width="12rem" /><Skeleton width="100%" height={80} /><Skeleton width="70%" />
+        </section>
+        {taskContinuationAvailable ? <LockAwareComputerControlSection /> : null}
+      </div>
+    );
+  }
   if (view.kind === "error") {
     return (
       <div className="computer-control-settings" data-computer-control-state="error">
         <PageHeader />
         <InlineFeedback tone="danger" title={t("Computer Control could not be loaded")}>{t(errorCopy(view.error))}</InlineFeedback>
         <Button variant="secondary" leadingIcon={<RefreshCw />} onClick={() => void controller.refresh()}>{t("Retry")}</Button>
+        {taskContinuationAvailable ? <LockAwareComputerControlSection /> : null}
       </div>
     );
   }
@@ -71,7 +91,7 @@ export function ComputerControlSettingsPage({
 
       <DesktopComputerUsePreference sectionTitle="Control preview" />
 
-      <LockedComputerControlSection controller={controller} />
+      <LockAwareComputerControlSection />
 
       <section className="computer-control-section" aria-labelledby="computer-control-advanced-title">
         <SectionHeader icon={<Cpu />} title={t("Advanced details")} id="computer-control-advanced-title" />
@@ -125,10 +145,6 @@ function PrimaryAction({ action, busy, controller }: { readonly action: Computer
 
 function Detail({ label, value }: { readonly label: string; readonly value: string }): JSX.Element {
   return <div><dt>{label}</dt><dd>{value}</dd></div>;
-}
-
-function ComputerControlLoading(): JSX.Element {
-  return <div className="computer-control-settings" aria-busy="true"><PageHeader /><section className="computer-control-section computer-control-loading"><Skeleton width="12rem" /><Skeleton width="100%" height={80} /><Skeleton width="70%" /></section></div>;
 }
 
 function phasePresentation(phase: Extract<ReturnType<typeof import("../../../domains/computer-control/computer-control-view-model.js").buildComputerControlViewModel>, { kind: "bundled" }>["phase"]) {

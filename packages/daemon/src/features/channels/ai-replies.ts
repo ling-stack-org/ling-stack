@@ -1,4 +1,4 @@
-import type { Channel, ChannelMessage, RunStore, SecretResolver } from "@ling-stack/core";
+import { resolveEffectiveTeammateProviderPresetId, type Channel, type ChannelMessage, type RunStore, type SecretResolver } from "@ling-stack/core";
 import type { RunnerRegistry, RunnerResolution } from "../../runtime/runners.js";
 import type { RuntimeSupervisor } from "../../runtime/supervisor.js";
 import { startRuntimeWorkUnit, transitionWorkUnitTerminal } from "../../runtime/work-units.js";
@@ -72,7 +72,15 @@ export async function createAiChannelReply(input: {
     ? input.store.getAiTeammate(teammateId) ?? createLingAgentExecutor(now)
     : resolveAiTeammateReference(input.store, teammateId);
   const canonicalTeammateId = teammate?.id ?? teammateId;
-  const providerPresetId = input.providerPresetId ?? teammate?.providerPresetId ?? input.channel.defaultProviderPresetId;
+  const providerPresetId = teammate
+    ? resolveEffectiveTeammateProviderPresetId({
+        teammate,
+        surface: "channel",
+        requestedProviderPresetId: input.providerPresetId,
+        workspaceDefaultProviderPresetId: input.store.getWorkspaceSettings().defaultProviderPresetId,
+        channelDefaultProviderPresetId: input.channel.defaultProviderPresetId,
+      })
+    : input.providerPresetId ?? input.channel.defaultProviderPresetId;
   const runnerResolution = input.runnerRegistry.resolve({
     requestedRunnerId: teammate?.runnerId,
     allowFallback: true,

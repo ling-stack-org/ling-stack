@@ -165,7 +165,7 @@ test.describe("T13-O.21 Teammates legacy writer release", () => {
     expect(runtime).toEqual({ consoleErrors: [], pageErrors: [] });
   });
 
-  test("stage 2 keeps imported Quiet Ocean MCP settings reachable and token-owned", async ({ page }) => {
+  test("stage 2 keeps imported Quiet Ocean teammate permissions reachable without an empty MCP section", async ({ page }) => {
     await prepareSurface(page, { width: 1440, height: 960, theme: "light" });
     const runtime = watchRuntime(page);
     await mockDaemon(page, createTeammatesState());
@@ -174,12 +174,12 @@ test.describe("T13-O.21 Teammates legacy writer release", () => {
     await page.reload();
 
     await openTeammateSettings(page, "Ling Interface Architect with an intentionally long identity");
-    await page.getByLabel("Settings sections").getByRole("button", { name: "MCP" }).click();
-    const mcp = page.getByLabel("MCP tool authorization");
-    await expect(mcp).toBeVisible();
-    await expect(mcp.getByText("No MCP servers configured", { exact: true })).toBeVisible();
+    await page.getByLabel("Settings sections").getByRole("button", { name: "Tools and permissions" }).click();
+    await expect(page.getByLabel("Tools and permissions")).toBeVisible();
+    await expect(page.getByLabel("External tools")).toHaveCount(0);
     await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "quiet-ocean");
-    await expectUsesColorToken(page.locator(".teammate-settings-nav"), "backgroundColor", "--ling-bg-sidebar");
+    await expectUsesColorToken(page.locator(".teammate-settings-nav"), "backgroundColor", "--ling-bg-panel");
+    await expect(page.locator(".teammate-settings-summary-panel")).toHaveCount(0);
     await expectBounded(page.locator(".teammate-workspace.settings-mode"));
     await expectNoDocumentOverflow(page);
     await captureEvidence(page, "1440x960-quiet-ocean-private-mcp-settings.png");
@@ -238,9 +238,13 @@ test.describe("T13-O.21 Teammates legacy writer release", () => {
     const avatarFrame = profile.getByLabel("Avatar", { exact: true });
     const avatar = avatarFrame.locator(".teammate-avatar-image");
     await expect(profile).toBeVisible();
-    await expectAvatarGeometry(avatar, 76);
+    await expectAvatarGeometry(avatar, 72);
     await expectContained(avatar, avatarFrame);
-    await expect(avatarFrame.getByRole("button", { name: "Change avatar" })).toBeVisible();
+    const avatarOptions = avatarFrame.getByRole("button", { name: "Avatar options" });
+    await expect(avatarOptions).toBeVisible();
+    await avatarOptions.click();
+    await expect(page.getByRole("menuitem", { name: "Change avatar" })).toBeVisible();
+    await page.keyboard.press("Escape");
     await expectNoDocumentOverflow(page);
     await captureEvidence(page, "1280x800-ling-dark-teammate-profile-avatar.png");
     expect(runtime).toEqual({ consoleErrors: [], pageErrors: [] });

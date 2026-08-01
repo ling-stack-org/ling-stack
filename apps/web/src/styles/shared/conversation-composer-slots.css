@@ -6,6 +6,13 @@
   gap: var(--ling-space-3);
 }
 
+[data-conversation-composer] .conversation-authorization-trigger {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  font-weight: 500;
+  line-height: var(--ling-line-xs);
+}
+
 [data-conversation-composer] .mention-picker-popover {
   position: absolute;
   right: var(--ling-space-4);

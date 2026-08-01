@@ -57,6 +57,6 @@ export const DESKTOP_IPC_CHANNELS = {
   computerUsePreviewHide: "ling-desktop:computer-use:preview-hide",
   computerControlRequestPermissions: "ling-desktop:computer-control:request-permissions",
   computerControlOpenPermissionSettings: "ling-desktop:computer-control:open-permission-settings",
-  computerControlAuthorizeLocked: "ling-desktop:computer-control:authorize-locked",
-  computerControlRevokeLocked: "ling-desktop:computer-control:revoke-locked",
+  computerControlLockedTaskContinuationGet: "ling-desktop:computer-control:locked-task-continuation-get",
+  computerControlLockedTaskContinuationSet: "ling-desktop:computer-control:locked-task-continuation-set",
 } as const;

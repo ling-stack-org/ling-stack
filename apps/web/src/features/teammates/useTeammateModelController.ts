@@ -4,6 +4,7 @@ import { useLingToast } from "../../shared/ui/index.js";
 import type { AiTeammate, ProviderPreset, UpdateAiTeammateRequest } from "../../types.js";
 import {
   buildTeammateModelViewModel,
+  workspaceDefaultModelOptionValue,
   type TeammateModelViewModel,
 } from "./teammate-model-view-models.js";
 import type { TeammateSettingsForm } from "./teammate-workspace-utils.js";
@@ -25,6 +26,7 @@ export function useTeammateModelController({
   settingsForm,
   setSettingsForm,
   isProtectedSystemTeammate,
+  workspaceDefaultProviderPresetId,
   onUpdateTeammate,
   onTeammateUpdated,
   onRefreshDirectRuntime,
@@ -34,6 +36,7 @@ export function useTeammateModelController({
   readonly settingsForm: TeammateSettingsForm;
   readonly setSettingsForm: Dispatch<SetStateAction<TeammateSettingsForm>>;
   readonly isProtectedSystemTeammate: boolean;
+  readonly workspaceDefaultProviderPresetId?: string;
   readonly onUpdateTeammate: (
     teammateId: string,
     input: UpdateAiTeammateRequest,
@@ -47,14 +50,30 @@ export function useTeammateModelController({
   const operationSequenceRef = useRef(0);
   const [savingModel, setSavingModel] = useState(false);
   const [modelError, setModelError] = useState("");
+  const canFollowWorkspaceDefault = teammateCanFollowWorkspaceDefault(teammate.id);
+  const authoritativeBindingMode = teammate.modelBindingMode;
   const authoritativeProviderId = teammate.providerPresetId ?? "";
-  const modelDirty = !isProtectedSystemTeammate && settingsForm.providerPresetId !== authoritativeProviderId;
+  const modelDirty = !isProtectedSystemTeammate && (
+    settingsForm.modelBindingMode !== authoritativeBindingMode ||
+    (settingsForm.modelBindingMode === "fixed" && settingsForm.providerPresetId !== authoritativeProviderId)
+  );
   const viewModel = useMemo(() => buildTeammateModelViewModel({
+    canFollowWorkspaceDefault,
     isProtected: isProtectedSystemTeammate,
+    modelBindingMode: settingsForm.modelBindingMode,
     providers,
     selectedProviderId: settingsForm.providerPresetId,
+    workspaceDefaultProviderPresetId,
     t,
-  }), [isProtectedSystemTeammate, providers, settingsForm.providerPresetId, t]);
+  }), [
+    canFollowWorkspaceDefault,
+    isProtectedSystemTeammate,
+    providers,
+    settingsForm.modelBindingMode,
+    settingsForm.providerPresetId,
+    t,
+    workspaceDefaultProviderPresetId,
+  ]);
 
   useEffect(() => {
     operationSequenceRef.current += 1;
@@ -63,29 +82,47 @@ export function useTeammateModelController({
   }, [teammate.id]);
 
   function selectProvider(providerPresetId: string): void {
-    setSettingsForm((current) => ({ ...current, providerPresetId }));
+    setSettingsForm((current) => providerPresetId === workspaceDefaultModelOptionValue
+      ? { ...current, modelBindingMode: "workspace_default", providerPresetId: "" }
+      : { ...current, modelBindingMode: "fixed", providerPresetId });
     setModelError("");
   }
 
   function resetModel(): void {
     if (savingModel || isProtectedSystemTeammate) return;
-    setSettingsForm((current) => ({ ...current, providerPresetId: authoritativeProviderId }));
+    setSettingsForm((current) => ({
+      ...current,
+      modelBindingMode: authoritativeBindingMode,
+      providerPresetId: authoritativeProviderId,
+    }));
     setModelError("");
   }
 
   async function saveModel(): Promise<void> {
     if (!modelDirty || savingModel || isProtectedSystemTeammate) return;
+    if (settingsForm.modelBindingMode === "workspace_default" && !canFollowWorkspaceDefault) {
+      setModelError(t("This teammate must use a fixed model."));
+      return;
+    }
+    if (settingsForm.modelBindingMode === "fixed" && !settingsForm.providerPresetId) {
+      setModelError(t("Choose a model before saving."));
+      return;
+    }
     const operationId = ++operationSequenceRef.current;
     const teammateId = teammate.id;
     setSavingModel(true);
     setModelError("");
     try {
       const updated = await onUpdateTeammate(teammateId, {
-        providerPresetId: settingsForm.providerPresetId || null,
+        modelBindingMode: settingsForm.modelBindingMode,
+        providerPresetId: settingsForm.modelBindingMode === "fixed"
+          ? settingsForm.providerPresetId
+          : null,
       }, "model-save");
       if (operationSequenceRef.current !== operationId) return;
       setSettingsForm((current) => ({
         ...current,
+        modelBindingMode: updated.modelBindingMode,
         providerPresetId: updated.providerPresetId ?? "",
       }));
       onTeammateUpdated?.(updated);
@@ -115,4 +152,8 @@ export function useTeammateModelController({
     saveModel,
     selectProvider,
   };
+}
+
+function teammateCanFollowWorkspaceDefault(teammateId: string): boolean {
+  return teammateId === "ling_agent" || teammateId.startsWith("teammate_builtin_");
 }

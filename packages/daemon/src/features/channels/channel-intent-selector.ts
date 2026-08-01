@@ -528,9 +528,6 @@ function resolveRunnableIntentProviderPresetId(input: ChannelIntentSelectorInput
   const candidateIds = [
     input.requestedProviderPresetId,
     input.channel.defaultProviderPresetId,
-    ...input.store.listProviderPresets({ enabled: true })
-      .filter((preset) => preset.capabilities.includes("chat") && preset.api !== "media-job")
-      .map((preset) => preset.id),
   ].filter((id): id is string => Boolean(id));
   for (const providerPresetId of [...new Set(candidateIds)]) {
     try {

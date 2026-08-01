@@ -1,5 +1,6 @@
 import type { SQLOutputValue } from "node:sqlite";
 import { readOnlyRunTools } from "../../approval-policy.js";
+import { initialAiTeammateModelBinding } from "../../teammate-model-binding.js";
 import {
   DEFAULT_WORKSPACE_ID,
   LING_AGENT_ID,
@@ -32,8 +33,14 @@ export class SqliteTeammateCoreStore {
   ) {}
 
   createAiTeammate(input: CreateAiTeammateInput, now: string): AiTeammate {
+    const teammateId = input.id ?? createAiTeammateId();
+    const modelBinding = initialAiTeammateModelBinding(
+      teammateId,
+      input.modelBindingMode,
+      input.providerPresetId,
+    );
     const teammate: AiTeammate = {
-      id: input.id ?? createAiTeammateId(),
+      id: teammateId,
       workspaceId: DEFAULT_WORKSPACE_ID,
       templateId: input.templateId,
       roleKey: input.roleKey,
@@ -41,7 +48,8 @@ export class SqliteTeammateCoreStore {
       description: input.description,
       avatarTone: input.avatarTone,
       avatarImageAttachmentId: input.avatarImageAttachmentId,
-      providerPresetId: input.providerPresetId,
+      modelBindingMode: modelBinding.modelBindingMode,
+      providerPresetId: modelBinding.providerPresetId,
       runnerId: normalizeStoredRunnerId(input.runnerId),
       systemPrompt: input.systemPrompt,
       appendSystemPrompt: input.appendSystemPrompt ?? [],
@@ -65,6 +73,7 @@ export class SqliteTeammateCoreStore {
           description,
           avatar_tone,
           avatar_image_attachment_id,
+          model_binding_mode,
           provider_preset_id,
           runner_id,
           system_prompt,
@@ -76,7 +85,7 @@ export class SqliteTeammateCoreStore {
           hidden,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         teammate.id,
@@ -87,6 +96,7 @@ export class SqliteTeammateCoreStore {
         teammate.description,
         teammate.avatarTone ?? null,
         teammate.avatarImageAttachmentId ?? null,
+        teammate.modelBindingMode,
         teammate.providerPresetId ?? null,
         teammate.runnerId ?? null,
         teammate.systemPrompt ?? null,
@@ -153,6 +163,17 @@ export class SqliteTeammateCoreStore {
       }
     }
 
+    const requestedModelBindingMode = updateInput.modelBindingMode
+      ?? (updateInput.providerPresetId !== undefined
+        ? (updateInput.providerPresetId === null ? existing.modelBindingMode : "fixed")
+        : existing.modelBindingMode);
+    const modelBinding = initialAiTeammateModelBinding(
+      id,
+      requestedModelBindingMode,
+      updateInput.modelBindingMode === "workspace_default"
+        ? undefined
+        : nullableUpdate(updateInput.providerPresetId, existing.providerPresetId),
+    );
     const candidate: AiTeammate = {
       ...existing,
       templateId: nullableUpdate(updateInput.templateId, existing.templateId),
@@ -161,7 +182,8 @@ export class SqliteTeammateCoreStore {
       description: updateInput.description ?? existing.description,
       avatarTone: nullableUpdate(updateInput.avatarTone, existing.avatarTone),
       avatarImageAttachmentId: nullableUpdate(updateInput.avatarImageAttachmentId, existing.avatarImageAttachmentId),
-      providerPresetId: nullableUpdate(updateInput.providerPresetId, existing.providerPresetId),
+      modelBindingMode: modelBinding.modelBindingMode,
+      providerPresetId: modelBinding.providerPresetId,
       runnerId: normalizeStoredRunnerId(nullableUpdate(updateInput.runnerId, existing.runnerId)),
       systemPrompt: nullableUpdate(updateInput.systemPrompt, existing.systemPrompt),
       appendSystemPrompt: updateInput.appendSystemPrompt ?? existing.appendSystemPrompt,
@@ -184,6 +206,7 @@ export class SqliteTeammateCoreStore {
           description = ?,
           avatar_tone = ?,
           avatar_image_attachment_id = ?,
+          model_binding_mode = ?,
           provider_preset_id = ?,
           runner_id = ?,
           system_prompt = ?,
@@ -203,6 +226,7 @@ export class SqliteTeammateCoreStore {
         next.description,
         next.avatarTone ?? null,
         next.avatarImageAttachmentId ?? null,
+        next.modelBindingMode,
         next.providerPresetId ?? null,
         next.runnerId ?? null,
         next.systemPrompt ?? null,
@@ -232,6 +256,7 @@ export function applyLingAgentProtectedFields(teammate: AiTeammate): AiTeammate 
     ...teammate,
     templateId: LING_AGENT_ID,
     roleKey: "custom",
+    modelBindingMode: "workspace_default",
     providerPresetId: undefined,
     runnerId: undefined,
     systemPrompt: LING_AGENT_SYSTEM_PROMPT,
@@ -247,6 +272,7 @@ function sanitizeLingAgentUpdateInput(input: AiTeammateUpdateInput): AiTeammateU
   const forbiddenFields: (keyof AiTeammateUpdateInput)[] = [
     "templateId",
     "roleKey",
+    "modelBindingMode",
     "providerPresetId",
     "runnerId",
     "systemPrompt",

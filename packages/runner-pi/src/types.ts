@@ -292,6 +292,9 @@ export interface PiRunnerRunOptions {
   readonly onToolHydrationRequest?: (
     request: PiRunnerToolHydrationRequest,
   ) => PiRunnerToolHydrationResponse | Promise<PiRunnerToolHydrationResponse>;
+  readonly onTaskContinuationBoundary?: (
+    boundary: "before_agent_start" | "before_provider_request" | "tool_call",
+  ) => Promise<void>;
   readonly onMcpToolCall?: (request: PiRunnerMcpToolCallRequest) => PiRunnerMcpToolCallResult | Promise<PiRunnerMcpToolCallResult>;
 }
 

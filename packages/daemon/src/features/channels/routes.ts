@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { createChannelBranchId, createChannelId, type Channel, type ChannelBranch, type ProposedPlanArtifactStatus, type RunStore } from "@ling-stack/core";
+import { createChannelBranchId, createChannelId, type Channel, type ChannelBranch, type ProposedPlanArtifactStatus, type RunStore, type SecretResolver } from "@ling-stack/core";
+import { HttpError } from "../../errors.js";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
@@ -34,14 +35,17 @@ import {
   readOptionalChannelMessageRouteDecisionStatusQuery,
   readOptionalChannelHandoffStatusQuery,
 } from "./schemas.js";
+import { validateChannelModelUpdate } from "./model-binding-validation.js";
 import { createInitialChannelWorkspaceBinding } from "./workspace.js";
 import { hydrateProposedPlanSourceStates } from "../runs/proposed-plan-source-state.js";
+import { assertRunnableConversationProvider } from "../providers/conversation-model-validation.js";
 
 export async function handleChannelsCollection(
   request: IncomingMessage,
   response: ServerResponse,
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
+  secretResolver: SecretResolver,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -75,6 +79,13 @@ export async function handleChannelsCollection(
     if (request.method === "POST") {
       const body = await readJsonBody(request, config.maxBodyBytes);
       const input = parseCreateChannelInput(body);
+      const defaultProviderPresetId = assertRunnableConversationProvider({
+        store,
+        cwd,
+        providerPresetId: input.defaultProviderPresetId,
+        secretResolver,
+        ownerLabel: "Channel Ling Agent",
+      });
       if (input.autoReplyMode === "auto_route" && !config.channels.autoRoute) {
         writeJson(response, 400, { error: "auto_route_disabled", message: "Channel auto_route is disabled." });
         return;
@@ -96,6 +107,7 @@ export async function handleChannelsCollection(
       const channel = store.createChannel(
         {
           ...input,
+          defaultProviderPresetId,
           id: channelId,
           workspaceBinding: workspaceResult.binding,
         },
@@ -107,8 +119,8 @@ export async function handleChannelsCollection(
 
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /channels` });
   } catch (error) {
-    writeJson(response, 400, {
-      error: "bad_request",
+    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+      error: error instanceof HttpError ? error.code : "bad_request",
       message: error instanceof Error ? error.message : String(error),
     });
   }
@@ -120,6 +132,7 @@ export async function handleChannelItem(
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
   channelId: string,
+  secretResolver: SecretResolver,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -148,6 +161,7 @@ export async function handleChannelItem(
         writeJson(response, 400, { error: "auto_route_disabled", message: "Channel auto_route is disabled." });
         return;
       }
+      validateChannelModelUpdate({ store, cwd, channel, update: input, secretResolver });
       const updated = store.updateChannel(channelId, input, new Date().toISOString());
       writeJson(response, 200, { channel: updated });
       return;
@@ -166,8 +180,8 @@ export async function handleChannelItem(
 
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channels` });
   } catch (error) {
-    writeJson(response, 400, {
-      error: "bad_request",
+    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+      error: error instanceof HttpError ? error.code : "bad_request",
       message: error instanceof Error ? error.message : String(error),
     });
   }

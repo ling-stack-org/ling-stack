@@ -25,7 +25,7 @@ import {
 } from "../lib/channels.js";
 import type { ChannelActivityTriageDraft, ChannelActivityTriageResult } from "../lib/channel-activity-triage.js";
 import { titleFromPrompt } from "../lib/formatting.js";
-import { providerEffectiveBaseUrl, providerPreflightReady } from "../lib/providers.js";
+import { canUseConversationProvider, providerEffectiveBaseUrl, providerPreflightReady } from "../lib/providers.js";
 import { defaultTools } from "../lib/tools.js";
 import { readSseResponse } from "../sse.js";
 import type {
@@ -176,7 +176,6 @@ export function useChannelActionsController(input: {
   readonly t: (value: string, values?: Record<string, string | number>) => string;
   readonly addChannelTeammate: (channelId: string, teammateId: string) => Promise<void>;
   readonly setDefaultChannelTeammate: (channelId: string, teammateId: string) => Promise<void>;
-  readonly resolveChannelMessageProviderPresetId: (channel: Channel | undefined, teammateId: string | undefined) => string;
   readonly refreshChannels: (cwd?: string) => Promise<void>;
   readonly refreshTasks: (channelId?: string) => Promise<void>;
   readonly refreshChannelExecutionProposals: (channelId?: string) => Promise<void>;
@@ -231,6 +230,11 @@ export function useChannelActionsController(input: {
     }
     if (!input.channelForm.name.trim()) {
       reportFeedback("create-dialog", "draft", "validation", "请输入 channel name");
+      return;
+    }
+    const selectedProvider = input.providers.find((provider) => provider.id === input.channelForm.defaultProviderPresetId);
+    if (!selectedProvider || !canUseConversationProvider(selectedProvider) || !providerPreflightReady(selectedProvider)) {
+      reportFeedback("create-dialog", "draft", "validation", "请选择已配置并检查通过的聊天模型");
       return;
     }
 
@@ -459,10 +463,6 @@ export function useChannelActionsController(input: {
     const channelId = input.selectedChannelId;
     const selectedChannel = input.channels.find((channel) => channel.id === channelId);
     const firstAiMention = messageInput.mentions.find((mention) => mention.kind === "ai-teammate");
-    const providerPresetId = input.resolveChannelMessageProviderPresetId(
-      selectedChannel,
-      firstAiMention?.id || selectedChannel?.defaultTeammateId,
-    );
     try {
       clearFeedback("composer", channelId);
       let receivedAiReply = false;
@@ -476,7 +476,6 @@ export function useChannelActionsController(input: {
         linkPreviewIds: messageInput.linkPreviewIds,
         fileRefs: messageInput.fileRefs,
         requestAiReply: messageInput.requestAiReply,
-        providerPresetId: providerPresetId || undefined,
         teammateId: firstAiMention?.id || selectedChannel?.defaultTeammateId,
       });
       await readSseResponse(response, (event) => {

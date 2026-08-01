@@ -185,8 +185,9 @@ export function SettingsPage({
 }): JSX.Element {
   const { t } = useI18n();
   const [activeSection, setActiveSection] = useState<SettingsSectionId>(initialSection ?? "personal-profile");
-  const computerControlVisible = computerControl.surfaceMode === "computer_control";
-  const mobileAccessVisible = Boolean(window.lingDesktop?.mobileAccess);
+  const computerControlVisible = computerControl.surfaceMode === "computer_control"
+    || (typeof window !== "undefined" && Boolean(window.lingDesktop?.lockedTaskContinuation));
+  const mobileAccessVisible = typeof window !== "undefined" && Boolean(window.lingDesktop?.mobileAccess);
   useEffect(() => {
     if (!computerControlVisible && activeSection === "computer-control") {
       setActiveSection("personal-profile");

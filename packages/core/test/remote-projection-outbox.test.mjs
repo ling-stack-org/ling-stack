@@ -27,9 +27,9 @@ test("remote projection migration and triggers are idempotent", async () => {
         assert.ok(database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table));
       }
       assert.ok(database.prepare(
-        "SELECT version FROM schema_migrations WHERE version = 107 AND name = 'create_remote_conversation_state'",
+        "SELECT version FROM schema_migrations WHERE version = 108 AND name = 'create_remote_conversation_state'",
       ).get());
-      assert.equal(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 107").get().count, 1);
+      assert.equal(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 108").get().count, 1);
     } finally {
       database.close();
     }

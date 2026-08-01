@@ -133,6 +133,8 @@ test("Desktop IPC scopes privileged actions and strictly validates preview media
         return { state: "connected", baseUrl: "http://127.0.0.1:1", ownedByDesktop: true };
       },
       onStatusChanged: () => () => {},
+      getLockedTaskContinuationPreferences: async () => ({ continueWhileLocked: true }),
+      setContinueTasksWhileLocked: async () => ({ accepted: true }),
       revokeLockedComputerControl: async () => {
         calls.push(["revokeLockedControl"]);
         return { accepted: true };
@@ -576,12 +578,15 @@ test("Desktop IPC exposes computer-control permission commands only to the main 
         calls.push(["openPermissionSettings", permission]);
         return { accepted: true };
       },
-      authorizeLockedComputerControl: async () => {
-        calls.push(["authorizeLockedControl"]);
-        return { accepted: false, reason: "locked_control_disabled_by_build" };
+      getLockedTaskContinuationPreferences: async () => {
+        calls.push(["getLockedTaskContinuationPreferences"]);
+        return { continueWhileLocked: false };
+      },
+      setContinueTasksWhileLocked: async (enabled) => {
+        calls.push(["setContinueTasksWhileLocked", enabled]);
+        return { accepted: true };
       },
       revokeLockedComputerControl: async () => {
-        calls.push(["revokeLockedControl"]);
         return { accepted: true };
       },
     },
@@ -607,6 +612,22 @@ test("Desktop IPC exposes computer-control permission commands only to the main 
     { accepted: true },
   );
   assert.deepEqual(
+    await ipc.invoke(DESKTOP_IPC_CHANNELS.computerControlLockedTaskContinuationGet, mainEvent),
+    { continueWhileLocked: false },
+  );
+  assert.deepEqual(
+    await ipc.invoke(DESKTOP_IPC_CHANNELS.computerControlLockedTaskContinuationSet, mainEvent, false),
+    { accepted: true },
+  );
+  assert.deepEqual(
+    await ipc.invoke(DESKTOP_IPC_CHANNELS.computerControlLockedTaskContinuationSet, previewEvent, true),
+    { accepted: false, reason: "unauthorized_or_invalid_locked_task_continuation" },
+  );
+  assert.deepEqual(
+    await ipc.invoke(DESKTOP_IPC_CHANNELS.computerControlLockedTaskContinuationSet, mainEvent, "false"),
+    { accepted: false, reason: "unauthorized_or_invalid_locked_task_continuation" },
+  );
+  assert.deepEqual(
     await ipc.invoke(
       DESKTOP_IPC_CHANNELS.computerControlOpenPermissionSettings,
       mainEvent,
@@ -615,35 +636,11 @@ test("Desktop IPC exposes computer-control permission commands only to the main 
     { accepted: true },
   );
   assert.deepEqual(
-    await ipc.invoke(DESKTOP_IPC_CHANNELS.computerControlAuthorizeLocked, mainEvent),
-    { accepted: false, reason: "locked_control_disabled_by_build" },
-  );
-  assert.deepEqual(
-    await ipc.invoke(DESKTOP_IPC_CHANNELS.computerControlRevokeLocked, mainEvent),
-    { accepted: true },
-  );
-  assert.deepEqual(
     await ipc.invoke(DESKTOP_IPC_CHANNELS.computerControlRequestPermissions, previewEvent),
     { accepted: false, reason: "unauthorized_sender" },
   );
   assert.deepEqual(
     await ipc.invoke(DESKTOP_IPC_CHANNELS.computerControlRequestPermissions, foreignEvent),
-    { accepted: false, reason: "unauthorized_sender" },
-  );
-  assert.deepEqual(
-    await ipc.invoke(DESKTOP_IPC_CHANNELS.computerControlAuthorizeLocked, previewEvent),
-    { accepted: false, reason: "unauthorized_sender" },
-  );
-  assert.deepEqual(
-    await ipc.invoke(DESKTOP_IPC_CHANNELS.computerControlAuthorizeLocked, foreignEvent),
-    { accepted: false, reason: "unauthorized_sender" },
-  );
-  assert.deepEqual(
-    await ipc.invoke(DESKTOP_IPC_CHANNELS.computerControlRevokeLocked, previewEvent),
-    { accepted: false, reason: "unauthorized_sender" },
-  );
-  assert.deepEqual(
-    await ipc.invoke(DESKTOP_IPC_CHANNELS.computerControlRevokeLocked, foreignEvent),
     { accepted: false, reason: "unauthorized_sender" },
   );
   assert.deepEqual(
@@ -665,9 +662,9 @@ test("Desktop IPC exposes computer-control permission commands only to the main 
   assert.deepEqual(calls, [
     ["requestPermissions"],
     ["openPermissionSettings", "accessibility"],
+    ["getLockedTaskContinuationPreferences"],
+    ["setContinueTasksWhileLocked", false],
     ["openPermissionSettings", "screen_recording"],
-    ["authorizeLockedControl"],
-    ["revokeLockedControl"],
   ]);
 
   permissionRequestResult = { accepted: false, reason: "unsupported_platform_action" };

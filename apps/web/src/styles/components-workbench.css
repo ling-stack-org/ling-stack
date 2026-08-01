@@ -290,8 +290,8 @@
 }
 
 .channel-team-stack-overflow {
-  background: #eef1ef;
-  color: #65716c;
+  background: var(--surface-subtle);
+  color: var(--text-muted);
   font-size: 12px;
   font-weight: 800;
   letter-spacing: 0;
@@ -466,9 +466,9 @@
 }
 
 .task-workbench-window .primary-button {
-  border-color: #111111;
-  background: #111111;
-  color: #ffffff;
+  border-color: var(--ling-action-accent);
+  background: var(--ling-action-accent);
+  color: var(--ling-action-accent-fg);
   box-shadow: none;
 }
 
