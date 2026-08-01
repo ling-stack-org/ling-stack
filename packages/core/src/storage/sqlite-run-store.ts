@@ -1079,6 +1079,18 @@ export class SqliteRunStore implements RunStore {
     return this.remoteAccess.listRemoteProjectionOutbox(options);
   }
 
+  getRemoteProjectionEntityVersion(
+    input: import("../remote-access-types.js").RemoteProjectionEntityVersionInput,
+  ): import("../remote-access-types.js").RemoteProjectionEntityVersion {
+    return this.remoteAccess.getRemoteProjectionEntityVersion(input);
+  }
+
+  getLatestConversationActivitySeq(
+    input: import("../remote-access-types.js").RemoteConversationActivityInput,
+  ): number {
+    return this.remoteAccess.getLatestConversationActivitySeq(input);
+  }
+
   markRemoteProjectionOutboxProcessed(activitySeqs: readonly number[], now: string): number {
     return this.remoteAccess.markRemoteProjectionOutboxProcessed(activitySeqs, now);
   }

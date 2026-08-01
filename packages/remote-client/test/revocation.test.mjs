@@ -19,6 +19,19 @@ const binding = {
   workspaceBindingId: "workspace-binding-1",
 };
 
+const authChallenge = {
+  version: 1,
+  gatewayId: binding.gatewayId,
+  challengeId: "challenge-fixture-1",
+  serverNonce: fixture.authChallenge.input.serverNonce,
+  candidateSessionId: "session-fixture-1",
+  deviceEpoch: binding.deviceEpoch,
+  issuedAt: "2026-07-31T10:00:00.000Z",
+  expiresAt: "2026-07-31T10:00:30.000Z",
+  supportedProtocolVersions: [1],
+  gatewaySignature: fixture.authChallenge.signatureBase64Url,
+};
+
 test("local revocation attempts every cleanup step and can retry after a partial failure", async () => {
   const operations = [];
   let failFirstWrite = true;
@@ -72,3 +85,138 @@ test("local revocation attempts every cleanup step and can retry after a partial
     ["remove_binding"],
   ]);
 });
+
+test("revocation invalidates an authentication attempt before it can create a socket", async () => {
+  const signing = deferred();
+  let signStarted = false;
+  let socketCreations = 0;
+  const client = new RemoteSessionClient({
+    binding,
+    autoReconnect: false,
+    clock: { now: () => "2026-07-31T10:00:00.000Z" },
+    entropy: {
+      randomBytes: (length) => new Uint8Array(length).fill(2),
+      randomId: (prefix) => `${prefix}_1`,
+    },
+    keys: {
+      generateOrLoad: async () => { throw new Error("not_used"); },
+      sign: async () => {
+        signStarted = true;
+        return await signing.promise;
+      },
+      verify: async () => true,
+      delete: async () => undefined,
+    },
+    bindingStore: {
+      read: async () => binding,
+      write: async () => undefined,
+      remove: async () => undefined,
+    },
+    cacheStore: {
+      read: async () => undefined,
+      write: async () => undefined,
+      remove: async () => undefined,
+    },
+    http: {
+      getJson: async () => { throw new Error("not_used"); },
+      postJson: async () => ({ status: 200, body: authChallenge }),
+    },
+    webSocketFactory: () => {
+      socketCreations += 1;
+      throw new Error("socket_must_not_be_created");
+    },
+  });
+
+  const connecting = client.connect();
+  await waitFor(() => signStarted);
+  await client.revokeLocal();
+  signing.resolve(fixture.authProof.signatureBase64Url);
+
+  await assert.rejects(connecting, /remote_connection_invalidated/u);
+  assert.equal(socketCreations, 0);
+  assert.equal(client.state.connection, "revoked");
+});
+
+test("a socket close before session ready rejects connect and permits a fresh retry", async () => {
+  const sockets = [];
+  const client = new RemoteSessionClient({
+    binding,
+    autoReconnect: false,
+    clock: { now: () => "2026-07-31T10:00:00.000Z" },
+    entropy: {
+      randomBytes: (length) => new Uint8Array(length).fill(2),
+      randomId: (prefix) => `${prefix}_1`,
+    },
+    keys: {
+      generateOrLoad: async () => { throw new Error("not_used"); },
+      sign: async () => fixture.authProof.signatureBase64Url,
+      verify: async () => true,
+      delete: async () => undefined,
+    },
+    bindingStore: {
+      read: async () => binding,
+      write: async () => undefined,
+      remove: async () => undefined,
+    },
+    cacheStore: {
+      read: async () => undefined,
+      write: async () => undefined,
+      remove: async () => undefined,
+    },
+    http: {
+      getJson: async () => { throw new Error("not_used"); },
+      postJson: async () => ({ status: 200, body: authChallenge }),
+    },
+    webSocketFactory: () => {
+      const socket = createClosableSocket();
+      sockets.push(socket);
+      return socket;
+    },
+  });
+
+  const firstConnect = client.connect();
+  await waitFor(() => sockets.length === 1);
+  sockets[0].close(1006, "network_lost_before_ready");
+  await assert.rejects(firstConnect, /network_lost_before_ready/u);
+  assert.equal(client.state.connection, "reconnecting");
+
+  const retry = client.connect();
+  await waitFor(() => sockets.length === 2);
+  sockets[1].close(1006, "retry_closed_before_ready");
+  await assert.rejects(retry, /retry_closed_before_ready/u);
+  assert.equal(client.state.connection, "reconnecting");
+  client.disconnect();
+});
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+async function waitFor(predicate) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) return;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 1));
+  }
+  throw new Error("condition_not_met");
+}
+
+function createClosableSocket() {
+  const listeners = { open: [], message: [], close: [], error: [] };
+  return {
+    readyState: 0,
+    send() {},
+    addEventListener(type, listener) {
+      listeners[type].push(listener);
+    },
+    close(code, reason) {
+      this.readyState = 3;
+      for (const listener of listeners.close) {
+        listener({ code, reason });
+      }
+    },
+  };
+}

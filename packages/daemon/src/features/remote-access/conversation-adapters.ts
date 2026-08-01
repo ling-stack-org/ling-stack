@@ -5,7 +5,6 @@ import {
   type ConversationReadState,
   type LingThread,
   type RemoteConversationKind,
-  type RemoteProjectionOutboxRecord,
   type RunStore,
   type TeammateDirectMessage,
   type TeammateDirectThread,
@@ -57,13 +56,17 @@ abstract class BaseRemoteConversationAdapter implements RemoteConversationAdapte
   abstract open(conversationId: string, olderPageCursor: string | undefined, now: string): RemoteConversationPage;
   abstract isBusy(conversationId: string): boolean;
 
-  protected records(conversationId: string): RemoteProjectionOutboxRecord[] {
-    return this.options.store.listRemoteProjectionOutbox({
+  protected version(
+    conversationId: string,
+    entityType: string,
+    entityId: string,
+  ): { readonly revision: number; readonly activitySeq: number } {
+    return this.options.store.getRemoteProjectionEntityVersion({
       workspaceId: this.options.workspaceId,
       conversationKind: this.kind,
       conversationId,
-      afterActivitySeq: 0,
-      limit: 1_000,
+      entityType,
+      entityId,
     });
   }
 
@@ -76,20 +79,12 @@ abstract class BaseRemoteConversationAdapter implements RemoteConversationAdapte
     }, now);
   }
 
-  protected version(
-    records: readonly RemoteProjectionOutboxRecord[],
-    entityType: string,
-    entityId: string,
-  ): { readonly revision: number; readonly activitySeq: number } {
-    const matching = records.filter((record) => record.entityType === entityType && record.entityId === entityId);
-    return {
-      revision: Math.max(1, matching.filter((record) => record.operation !== "delete").length),
-      activitySeq: matching.at(-1)?.activitySeq ?? 0,
-    };
-  }
-
-  protected latestActivitySeq(records: readonly RemoteProjectionOutboxRecord[]): number {
-    return records.at(-1)?.activitySeq ?? 0;
+  protected latestActivitySeq(conversationId: string): number {
+    return this.options.store.getLatestConversationActivitySeq({
+      workspaceId: this.options.workspaceId,
+      conversationKind: this.kind,
+      conversationId,
+    });
   }
 }
 
@@ -124,8 +119,7 @@ export class ChannelRemoteConversationAdapter extends BaseRemoteConversationAdap
       surfaces: ["channel_root", "channel_branch", "topic_reply"],
       ownerId: channel.id,
     })).map((message) => projectChannelMessageRevisionMetadata(this.options.store, message));
-    const records = this.records(channel.id);
-    const messages = visible.map((message) => this.projectMessage(message, records, now));
+    const messages = visible.map((message) => this.projectMessage(message, now));
     return {
       summary: this.projectSummary(channel, now),
       messages,
@@ -144,7 +138,6 @@ export class ChannelRemoteConversationAdapter extends BaseRemoteConversationAdap
   }
 
   private projectSummary(channel: Channel, now: string): RemoteConversationSummaryV1 {
-    const records = this.records(channel.id);
     const readState = this.readState(channel.id, now);
     const latest = this.options.store.listChannelMessagesPage({ channelId: channel.id, limit: 1 }).messages.at(-1);
     return {
@@ -156,7 +149,7 @@ export class ChannelRemoteConversationAdapter extends BaseRemoteConversationAdap
       status: channel.status === "archived" ? "archived" : "active",
       ...(latest?.body ? { latestPreview: preview(latest.body) } : {}),
       ...(latest ? { latestMessageAt: latest.updatedAt } : {}),
-      activitySeq: Math.max(readState.activitySeq, this.latestActivitySeq(records)),
+      activitySeq: Math.max(readState.activitySeq, this.latestActivitySeq(channel.id)),
       unreadCount: readState.unreadCount,
       mentioned: readState.mentioned,
       updatedAt: latest?.updatedAt ?? channel.updatedAt,
@@ -165,10 +158,9 @@ export class ChannelRemoteConversationAdapter extends BaseRemoteConversationAdap
 
   private projectMessage(
     message: ChannelMessage,
-    records: readonly RemoteProjectionOutboxRecord[],
     now: string,
   ): RemoteConversationMessageV1 {
-    const version = this.version(records, "channel_message", message.id);
+    const version = this.version(message.channelId, "channel_message", message.id);
     const teammate = message.authorId ? this.options.store.getAiTeammate(message.authorId) : undefined;
     const role = message.authorType === "local-user"
       ? "local_user"
@@ -233,8 +225,7 @@ export class NormalRemoteConversationAdapter extends BaseRemoteConversationAdapt
     }
     const start = Math.max(0, end - 100);
     const page = ordered.slice(start, end);
-    const records = this.records(thread.id);
-    const messages = page.map((message) => this.projectMessage(thread, message, records, now));
+    const messages = page.map((message) => this.projectMessage(thread, message, now));
     return {
       summary: this.projectSummary(thread, now),
       messages,
@@ -254,7 +245,6 @@ export class NormalRemoteConversationAdapter extends BaseRemoteConversationAdapt
   }
 
   private projectSummary(thread: LingThread, now: string): RemoteConversationSummaryV1 {
-    const records = this.records(thread.id);
     const readState = this.readState(thread.id, now);
     const latestTurn = this.options.store.listLingTurns({ threadId: thread.id, limit: 1 }).at(0);
     return {
@@ -266,7 +256,7 @@ export class NormalRemoteConversationAdapter extends BaseRemoteConversationAdapt
       status: thread.status === "archived" || thread.archivedAt ? "archived" : "active",
       ...(latestTurn?.userInstruction ? { latestPreview: preview(latestTurn.userInstruction) } : {}),
       ...(latestTurn ? { latestMessageAt: latestTurn.updatedAt } : {}),
-      activitySeq: Math.max(readState.activitySeq, this.latestActivitySeq(records)),
+      activitySeq: Math.max(readState.activitySeq, this.latestActivitySeq(thread.id)),
       unreadCount: readState.unreadCount,
       mentioned: false,
       updatedAt: latestTurn?.updatedAt ?? thread.updatedAt,
@@ -276,13 +266,12 @@ export class NormalRemoteConversationAdapter extends BaseRemoteConversationAdapt
   private projectMessage(
     thread: LingThread,
     message: ConversationTranscriptMessage,
-    records: readonly RemoteProjectionOutboxRecord[],
     now: string,
   ): RemoteConversationMessageV1 {
     const isUser = message.role === "user";
     const entityType = isUser ? "ling_turn" : "run_session";
     const entityId = isUser ? message.turnId ?? message.id : message.runId ?? message.id;
-    const version = this.version(records, entityType, entityId);
+    const version = this.version(thread.id, entityType, entityId);
     return {
       messageId: message.id,
       workspaceId: this.options.workspaceId,
@@ -293,7 +282,7 @@ export class NormalRemoteConversationAdapter extends BaseRemoteConversationAdapt
       body: message.content,
       status: projectTranscriptStatus(message.status, message.content),
       revision: Math.max(message.revision ?? 1, version.revision),
-      activitySeq: isUser ? version.activitySeq : Math.max(version.activitySeq, this.latestActivitySeq(records)),
+      activitySeq: isUser ? version.activitySeq : Math.max(version.activitySeq, this.latestActivitySeq(thread.id)),
       createdAt: message.createdAt,
       updatedAt: message.updatedAt,
     };
@@ -337,8 +326,7 @@ export class TeammateDirectRemoteConversationAdapter extends BaseRemoteConversat
       ownerId: thread.teammateId,
       laneId: thread.id,
     })).map((message) => projectTeammateDirectMessageRevisionMetadata(this.options.store, message));
-    const records = this.records(thread.id);
-    const messages = visible.map((message) => this.projectMessage(message, records, now));
+    const messages = visible.map((message) => this.projectMessage(message, now));
     return {
       summary: this.projectSummary(thread, now),
       messages,
@@ -359,7 +347,6 @@ export class TeammateDirectRemoteConversationAdapter extends BaseRemoteConversat
 
   private projectSummary(thread: TeammateDirectThread, now: string): RemoteConversationSummaryV1 {
     const teammate = this.options.store.getAiTeammate(thread.teammateId);
-    const records = this.records(thread.id);
     const readState = this.readState(thread.id, now);
     const latest = this.options.store.listTeammateDirectMessagesPage({
       teammateId: thread.teammateId,
@@ -376,7 +363,7 @@ export class TeammateDirectRemoteConversationAdapter extends BaseRemoteConversat
       status: "active",
       ...(latest?.body ? { latestPreview: preview(latest.body) } : {}),
       ...(latest ? { latestMessageAt: latest.updatedAt } : {}),
-      activitySeq: Math.max(readState.activitySeq, this.latestActivitySeq(records)),
+      activitySeq: Math.max(readState.activitySeq, this.latestActivitySeq(thread.id)),
       unreadCount: readState.unreadCount,
       mentioned: false,
       updatedAt: latest?.updatedAt ?? thread.updatedAt,
@@ -385,10 +372,9 @@ export class TeammateDirectRemoteConversationAdapter extends BaseRemoteConversat
 
   private projectMessage(
     message: TeammateDirectMessage,
-    records: readonly RemoteProjectionOutboxRecord[],
     now: string,
   ): RemoteConversationMessageV1 {
-    const version = this.version(records, "teammate_direct_message", message.id);
+    const version = this.version(message.threadId, "teammate_direct_message", message.id);
     const teammate = this.options.store.getAiTeammate(message.teammateId);
     const role = message.authorType === "local-user"
       ? "local_user"

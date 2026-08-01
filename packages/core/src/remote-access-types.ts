@@ -101,6 +101,25 @@ export interface ListRemoteProjectionOutboxOptions {
   readonly limit?: number;
 }
 
+export interface RemoteProjectionEntityVersionInput {
+  readonly workspaceId: string;
+  readonly conversationKind?: RemoteConversationKind;
+  readonly conversationId?: string;
+  readonly entityType: string;
+  readonly entityId: string;
+}
+
+export interface RemoteProjectionEntityVersion {
+  readonly revision: number;
+  readonly activitySeq: number;
+}
+
+export interface RemoteConversationActivityInput {
+  readonly workspaceId: string;
+  readonly conversationKind: RemoteConversationKind;
+  readonly conversationId: string;
+}
+
 export interface ConversationReadState {
   readonly workspaceId: string;
   readonly userId: string;

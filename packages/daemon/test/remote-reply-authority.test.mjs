@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildRemoteConversationRunRequest } from "../dist/features/remote-access/default-reply-dispatcher.js";
+import {
+  buildRemoteConversationRunRequest,
+  resolveRemoteReplyProviderPresetId,
+} from "../dist/features/remote-access/default-reply-dispatcher.js";
 import { resolveTeammateDirectExecutionContext } from "../dist/features/teammates/direct-execution-context.js";
 
 const now = "2026-07-31T00:00:00.000Z";
@@ -140,4 +143,22 @@ test("teammate direct execution honors server-owned Mobile tool and idempotency 
   assert.equal(execution.runRequest.permissionPreset, "read_only");
   assert.equal(execution.runRequest.workspaceAccessMode, "read_only");
   assert.equal(execution.runRequest.idempotencyKey, "remote_dispatch_2");
+});
+
+test("Mobile replies inherit the workspace model for built-in teammates", () => {
+  const teammate = {
+    id: "teammate_builtin_designer",
+    modelBindingMode: "workspace_default",
+  };
+  assert.equal(resolveRemoteReplyProviderPresetId({
+    teammate,
+    surface: "private",
+    workspaceDefaultProviderPresetId: "provider_workspace_default",
+  }), "provider_workspace_default");
+  assert.equal(resolveRemoteReplyProviderPresetId({
+    teammate,
+    surface: "channel",
+    workspaceDefaultProviderPresetId: "provider_workspace_default",
+    channelDefaultProviderPresetId: "provider_channel_default",
+  }), "provider_workspace_default");
 });

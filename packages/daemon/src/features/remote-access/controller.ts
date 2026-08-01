@@ -152,7 +152,7 @@ export class RemoteAccessController {
     }
     const origin = request.headers.origin;
     if (!origin || !this.options.managementAllowedOrigins.includes(origin)) {
-      writeManagementJson(response, 403, { error: "origin_not_allowed", message: "A trusted management Origin is required." }, origin);
+      writeManagementJson(response, 403, { error: "origin_not_allowed", message: "A trusted management Origin is required." });
       return true;
     }
     setManagementCors(response, origin);

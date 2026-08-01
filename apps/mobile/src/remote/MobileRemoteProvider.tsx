@@ -14,6 +14,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState, type R
 import {
   mobileRemoteBindingStore,
   mobileRemoteCacheStore,
+  removeConversationDrafts,
 } from "../platform/remote-storage";
 import {
   nativeSecureDeviceKeyAdapter,
@@ -57,6 +58,7 @@ export function MobileRemoteProvider({ children }: { readonly children: ReactNod
   const [remoteState, setRemoteState] = useState<RemoteClientState>(createInitialRemoteClientState());
   const pairingGeneration = useRef(0);
   const unsubscribeClient = useRef<(() => void) | undefined>(undefined);
+  const userUnpairing = useRef(false);
 
   useEffect(() => {
     void mobileRemoteBindingStore.read()
@@ -77,6 +79,25 @@ export function MobileRemoteProvider({ children }: { readonly children: ReactNod
     };
   }, []);
 
+  const finishRemoteRevocation = async (workspaceBindingId: string | undefined): Promise<void> => {
+    pairingGeneration.current += 1;
+    let draftCleanupFailed = false;
+    if (workspaceBindingId) {
+      await removeConversationDrafts(workspaceBindingId).catch(() => {
+        draftCleanupFailed = true;
+      });
+    }
+    unsubscribeClient.current?.();
+    unsubscribeClient.current = undefined;
+    setClient(undefined);
+    setBinding(undefined);
+    setRemoteState(createInitialRemoteClientState());
+    setError(draftCleanupFailed
+      ? "PC 已撤销绑定，但本地草稿清理未完成；请重新绑定前重试。"
+      : "PC 已撤销这台 iPhone，请重新扫描配对码。");
+    setPhase("welcome");
+  };
+
   const startSession = async (nextBinding: RemoteBindingV1): Promise<void> => {
     unsubscribeClient.current?.();
     setBinding(nextBinding);
@@ -90,7 +111,14 @@ export function MobileRemoteProvider({ children }: { readonly children: ReactNod
       clock: systemRemoteClock,
       webSocketFactory: (url) => new WebSocket(url) as unknown as RemoteWebSocketLike,
     });
-    unsubscribeClient.current = nextClient.subscribe(setRemoteState);
+    let observedWorkspaceBindingId = nextBinding.workspaceBindingId;
+    unsubscribeClient.current = nextClient.subscribe((nextState) => {
+      observedWorkspaceBindingId = nextState.workspaceBindingId ?? observedWorkspaceBindingId;
+      setRemoteState(nextState);
+      if (nextState.connection === "revoked" && !userUnpairing.current) {
+        void finishRemoteRevocation(observedWorkspaceBindingId);
+      }
+    });
     setClient(nextClient);
     await nextClient.restoreCachedState();
     setPhase("paired");
@@ -169,7 +197,12 @@ export function MobileRemoteProvider({ children }: { readonly children: ReactNod
     },
     unpair: async () => {
       pairingGeneration.current += 1;
-      let unpairError: unknown;
+      userUnpairing.current = true;
+      const cleanupErrors: unknown[] = [];
+      const workspaceBindingId = binding?.workspaceBindingId ?? remoteState.workspaceBindingId;
+      if (workspaceBindingId) {
+        await removeConversationDrafts(workspaceBindingId).catch((cleanupError) => cleanupErrors.push(cleanupError));
+      }
       try {
         if (client) {
           await client.unpair();
@@ -181,15 +214,16 @@ export function MobileRemoteProvider({ children }: { readonly children: ReactNod
           await mobileRemoteBindingStore.remove();
         }
       } catch (cleanupError) {
-        unpairError = cleanupError;
+        cleanupErrors.push(cleanupError);
       } finally {
         unsubscribeClient.current?.();
         unsubscribeClient.current = undefined;
         setClient(undefined);
         setBinding(undefined);
         setRemoteState(createInitialRemoteClientState());
-        setError(unpairError ? "本机绑定已关闭；请在 PC 设置中确认手机也已撤销。" : undefined);
+        setError(cleanupErrors.length > 0 ? "本机绑定已关闭；请在 PC 设置中确认手机也已撤销。" : undefined);
         setPhase("welcome");
+        userUnpairing.current = false;
       }
     },
   }), [phase, error, pendingPairing, binding, client, remoteState]);

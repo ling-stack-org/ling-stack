@@ -220,6 +220,8 @@ const REMOTE_CONVERSATION_STATE_MIGRATION_VERSION = 108;
 const REMOTE_CONVERSATION_STATE_MIGRATION_NAME = "create_remote_conversation_state";
 const TEAMMATE_MODEL_BINDING_MIGRATION_VERSION = 107;
 const TEAMMATE_MODEL_BINDING_MIGRATION_NAME = "add_teammate_model_binding_mode";
+const REMOTE_UNREAD_ENTITY_MIGRATION_VERSION = 109;
+const REMOTE_UNREAD_ENTITY_MIGRATION_NAME = "deduplicate_remote_run_unread_entities";
 const AI_EVOLUTION_SKILL_LIFECYCLE_MIGRATION_NAME = "repair_ai_evolution_skill_lifecycle";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
@@ -5422,7 +5424,7 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
           operation, affects_unread, occurred_at
         )
         SELECT
-          'workspace_default', 'conversation', runs.thread_id, 'run_event', NEW.id,
+          'workspace_default', 'conversation', runs.thread_id, 'run_session', NEW.run_id,
           'insert', CASE WHEN NEW.type IN ('message_end', 'result') THEN 1 ELSE 0 END, NEW.ts
         FROM run_sessions AS runs
         INNER JOIN ling_threads AS threads ON threads.id = runs.thread_id
@@ -5490,5 +5492,47 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
     if (!hasTeammateModelBindingMigration) {
       context.recordMigration(TEAMMATE_MODEL_BINDING_MIGRATION_VERSION, TEAMMATE_MODEL_BINDING_MIGRATION_NAME);
     }
+  }
+
+  if (!context.hasMigration(REMOTE_UNREAD_ENTITY_MIGRATION_VERSION)) {
+    database.exec(`
+      DROP TRIGGER IF EXISTS trg_remote_outbox_run_event_insert;
+
+      UPDATE remote_projection_outbox
+      SET
+        entity_type = 'run_session',
+        entity_id = (
+          SELECT events.run_id
+          FROM run_events AS events
+          WHERE events.id = remote_projection_outbox.entity_id
+        )
+      WHERE entity_type = 'run_event'
+        AND EXISTS (
+          SELECT 1
+          FROM run_events AS events
+          WHERE events.id = remote_projection_outbox.entity_id
+        );
+
+      CREATE TRIGGER trg_remote_outbox_run_event_insert
+      AFTER INSERT ON run_events
+      BEGIN
+        INSERT INTO remote_projection_outbox (
+          workspace_id, conversation_kind, conversation_id, entity_type, entity_id,
+          operation, affects_unread, occurred_at
+        )
+        SELECT
+          'workspace_default', 'conversation', runs.thread_id, 'run_session', NEW.run_id,
+          'insert', CASE WHEN NEW.type IN ('message_end', 'result') THEN 1 ELSE 0 END, NEW.ts
+        FROM run_sessions AS runs
+        INNER JOIN ling_threads AS threads ON threads.id = runs.thread_id
+        WHERE runs.id = NEW.run_id AND threads.kind = 'conversation';
+      END;
+
+      CREATE INDEX IF NOT EXISTS idx_remote_projection_outbox_entity
+      ON remote_projection_outbox(
+        workspace_id, conversation_kind, conversation_id, entity_type, entity_id, activity_seq
+      );
+    `);
+    context.recordMigration(REMOTE_UNREAD_ENTITY_MIGRATION_VERSION, REMOTE_UNREAD_ENTITY_MIGRATION_NAME);
   }
 }

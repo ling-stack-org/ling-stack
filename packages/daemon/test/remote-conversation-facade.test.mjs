@@ -122,6 +122,55 @@ test("remote facade lists and opens only normalized channel, normal, and teammat
   }
 });
 
+test("remote projections keep advancing after more than one thousand conversation activities", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-remote-facade-large-outbox-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const channel = store.createChannel({ name: "Large Outbox", boundPath: cwd }, "2026-07-31T05:00:00.000Z");
+    for (let index = 0; index < 1_000; index += 1) {
+      store.createChannelMessage({
+        channelId: channel.id,
+        authorType: "local-user",
+        authorId: "local-user",
+        body: `Filler ${index}`,
+      }, new Date(Date.parse("2026-07-31T05:00:01.000Z") + index).toISOString());
+    }
+    const target = store.createChannelMessage({
+      channelId: channel.id,
+      authorType: "ai-teammate",
+      authorId: LING_AGENT_ID,
+      body: "Initial projected reply.",
+    }, "2026-07-31T05:01:00.000Z");
+    store.updateChannelMessageRuntime(target.id, {
+      body: "Updated projected reply.",
+    }, "2026-07-31T05:01:01.000Z");
+
+    const latestActivitySeq = store.getLatestConversationActivitySeq({
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      conversationKind: "channel",
+      conversationId: channel.id,
+    });
+    const version = store.getRemoteProjectionEntityVersion({
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      conversationKind: "channel",
+      conversationId: channel.id,
+      entityType: "channel_message",
+      entityId: target.id,
+    });
+    const snapshot = createFacade(store).openConversation(DEFAULT_WORKSPACE_ID, channel.id);
+    const projected = snapshot.messages.find((message) => message.messageId === target.id);
+
+    assert.ok(latestActivitySeq > 1_000);
+    assert.equal(snapshot.conversation.activitySeq, latestActivitySeq);
+    assert.equal(version.revision, 2);
+    assert.equal(projected?.revision, 2);
+    assert.equal(projected?.activitySeq, version.activitySeq);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("remote send is at-most-once and rejects a second command while dispatch is active", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-remote-facade-send-"));
   const store = createSqliteRunStore(cwd);

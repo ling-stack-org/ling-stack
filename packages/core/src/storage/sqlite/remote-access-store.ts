@@ -13,8 +13,11 @@ import {
   type MarkConversationReadInput,
   type RemoteCommandReceipt,
   type RemoteCommandTerminalOutcome,
+  type RemoteConversationActivityInput,
   type RemoteConversationKind,
   type RemoteDispatchIntent,
+  type RemoteProjectionEntityVersion,
+  type RemoteProjectionEntityVersionInput,
   type RemoteProjectionOutboxRecord,
 } from "../../remote-access-types.js";
 import { redactSecrets } from "../../redaction.js";
@@ -244,6 +247,38 @@ export class SqliteRemoteAccessStore {
       ORDER BY activity_seq ASC
       LIMIT ?
     `).all(...params).map((row) => mapRemoteProjectionOutbox(row as Record<string, SQLOutputValue>));
+  }
+
+  getRemoteProjectionEntityVersion(input: RemoteProjectionEntityVersionInput): RemoteProjectionEntityVersion {
+    const clauses = ["workspace_id = ?", "entity_type = ?", "entity_id = ?"];
+    const params: string[] = [input.workspaceId, input.entityType, input.entityId];
+    if (input.conversationKind !== undefined || input.conversationId !== undefined) {
+      if (!input.conversationKind || !input.conversationId) {
+        throw new Error("Remote projection entity conversation scope must include both kind and id.");
+      }
+      clauses.push("conversation_kind = ?", "conversation_id = ?");
+      params.push(input.conversationKind, input.conversationId);
+    }
+    const row = this.context.database.prepare(`
+      SELECT
+        COALESCE(SUM(CASE WHEN operation <> 'delete' THEN 1 ELSE 0 END), 0) AS revision,
+        COALESCE(MAX(activity_seq), 0) AS activity_seq
+      FROM remote_projection_outbox
+      WHERE ${clauses.join(" AND ")}
+    `).get(...params) as Record<string, SQLOutputValue>;
+    return {
+      revision: Math.max(1, readNumber(row, "revision")),
+      activitySeq: readNumber(row, "activity_seq"),
+    };
+  }
+
+  getLatestConversationActivitySeq(input: RemoteConversationActivityInput): number {
+    const row = this.context.database.prepare(`
+      SELECT COALESCE(MAX(activity_seq), 0) AS activity_seq
+      FROM remote_projection_outbox
+      WHERE workspace_id = ? AND conversation_kind = ? AND conversation_id = ?
+    `).get(input.workspaceId, input.conversationKind, input.conversationId);
+    return readNumber(row as Record<string, SQLOutputValue>, "activity_seq");
   }
 
   markRemoteProjectionOutboxProcessed(activitySeqs: readonly number[], now: string): number {
@@ -490,19 +525,6 @@ export class SqliteRemoteAccessStore {
       SELECT * FROM remote_dispatch_intents WHERE id = ?
     `).get(intentId);
     return row ? mapRemoteDispatchIntent(row as Record<string, SQLOutputValue>) : undefined;
-  }
-
-  private getLatestConversationActivitySeq(input: {
-    readonly workspaceId: string;
-    readonly conversationKind: RemoteConversationKind;
-    readonly conversationId: string;
-  }): number {
-    const row = this.context.database.prepare(`
-      SELECT COALESCE(MAX(activity_seq), 0) AS activity_seq
-      FROM remote_projection_outbox
-      WHERE workspace_id = ? AND conversation_kind = ? AND conversation_id = ?
-    `).get(input.workspaceId, input.conversationKind, input.conversationId);
-    return readNumber(row as Record<string, SQLOutputValue>, "activity_seq");
   }
 
   private buildConversationReadState(

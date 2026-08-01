@@ -1,6 +1,9 @@
 import {
   DEFAULT_WORKSPACE_ID,
   LING_AGENT_ID,
+  resolveEffectiveTeammateProviderPresetId,
+  type AiTeammate,
+  type Channel,
   type DirectWorkspaceBinding,
   type DirectWorkspaceSnapshot,
   type LingThread,
@@ -79,7 +82,12 @@ export class DefaultRemoteReplyDispatcher implements RemoteReplyDispatcher {
     const teammateId = sourceMessage.mentions.find((mention) => mention.kind === "ai-teammate")?.id
       ?? channel.defaultTeammateId;
     const teammate = teammateId ? this.options.store.getAiTeammate(teammateId) : undefined;
-    const providerPresetId = teammate?.providerPresetId ?? channel.defaultProviderPresetId;
+    const providerPresetId = resolveRemoteReplyProviderPresetId({
+      teammate,
+      surface: "channel",
+      workspaceDefaultProviderPresetId: this.options.store.getWorkspaceSettings().defaultProviderPresetId,
+      channelDefaultProviderPresetId: channel.defaultProviderPresetId,
+    });
     if (providerPresetId) {
       await this.options.providerStartupRefresh.refreshBeforeRun({
         cwd: this.options.store.paths.cwd,
@@ -155,7 +163,11 @@ export class DefaultRemoteReplyDispatcher implements RemoteReplyDispatcher {
     if (!sourceMessage || !thread || !teammate || sourceMessage.threadId !== thread.id || thread.workspaceId !== intent.workspaceId) {
       throw new Error(`Remote teammate reply source is unavailable: ${intent.id}`);
     }
-    const providerPresetId = teammate.providerPresetId;
+    const providerPresetId = resolveRemoteReplyProviderPresetId({
+      teammate,
+      surface: "private",
+      workspaceDefaultProviderPresetId: this.options.store.getWorkspaceSettings().defaultProviderPresetId,
+    });
     if (!providerPresetId) {
       throw new Error(`Remote teammate conversation has no server-owned provider selection: ${thread.id}`);
     }
@@ -197,6 +209,25 @@ export class DefaultRemoteReplyDispatcher implements RemoteReplyDispatcher {
       idempotencyKeyOverride: intent.id,
     });
   }
+}
+
+export function resolveRemoteReplyProviderPresetId(input: {
+  readonly teammate?: Pick<AiTeammate, "id" | "modelBindingMode" | "providerPresetId">;
+  readonly surface: "private" | "channel";
+  readonly workspaceDefaultProviderPresetId?: string;
+  readonly channelDefaultProviderPresetId?: Channel["defaultProviderPresetId"];
+}): string | undefined {
+  if (!input.teammate) {
+    return input.surface === "channel"
+      ? input.channelDefaultProviderPresetId
+      : input.workspaceDefaultProviderPresetId;
+  }
+  return resolveEffectiveTeammateProviderPresetId({
+    teammate: input.teammate,
+    surface: input.surface,
+    workspaceDefaultProviderPresetId: input.workspaceDefaultProviderPresetId,
+    channelDefaultProviderPresetId: input.channelDefaultProviderPresetId,
+  });
 }
 
 export function buildRemoteConversationRunRequest(input: {

@@ -1,4 +1,4 @@
-import type { RemoteProjectionOutboxRecord, RunStore, UserProfile } from "@ling-stack/core";
+import type { RunStore, UserProfile } from "@ling-stack/core";
 import {
   REMOTE_PROTOCOL_LIMITS,
   type RemoteProfileUpdateCommandV1,
@@ -10,7 +10,7 @@ const MAX_AVATAR_DECODED_BYTES = 72 * 1024;
 const MAX_AVATAR_DIMENSION = 1_024;
 const DEFAULT_PROFILE_ENTITY_ID = "default";
 
-type RemoteProfileStore = Pick<RunStore, "getUserProfile" | "updateUserProfile" | "listRemoteProjectionOutbox">;
+type RemoteProfileStore = Pick<RunStore, "getUserProfile" | "updateUserProfile" | "getRemoteProjectionEntityVersion">;
 
 export class RemoteProfileService {
   constructor(
@@ -41,17 +41,17 @@ export class RemoteProfileService {
   }
 
   private project(profile: UserProfile): RemoteUserProfileV1 {
-    const versions = this.store.listRemoteProjectionOutbox({
+    const version = this.store.getRemoteProjectionEntityVersion({
       workspaceId: this.workspaceId,
-      afterActivitySeq: 0,
-      limit: 1_000,
-    }).filter(isProfileChange);
+      entityType: "user_profile",
+      entityId: DEFAULT_PROFILE_ENTITY_ID,
+    });
     return {
       workspaceId: this.workspaceId,
       displayName: profile.displayName,
       ...(profile.handle ? { handle: profile.handle } : {}),
       ...(profile.avatarDataUrl ? { avatarDataUrl: profile.avatarDataUrl } : {}),
-      revision: Math.max(1, versions.length),
+      revision: version.revision,
       updatedAt: profile.updatedAt,
     };
   }
@@ -166,8 +166,4 @@ function webpDimensions(bytes: Buffer): { readonly width: number; readonly heigh
     };
   }
   return undefined;
-}
-
-function isProfileChange(record: RemoteProjectionOutboxRecord): boolean {
-  return record.entityType === "user_profile" && record.entityId === DEFAULT_PROFILE_ENTITY_ID;
 }

@@ -15,7 +15,10 @@ import type {
   ListRemoteProjectionOutboxOptions,
   MarkConversationReadInput,
   RemoteCommandReceipt,
+  RemoteConversationActivityInput,
   RemoteDispatchIntent,
+  RemoteProjectionEntityVersion,
+  RemoteProjectionEntityVersionInput,
   RemoteProjectionOutboxRecord,
 } from "./remote-access-types.js";
 import type {
@@ -1307,6 +1310,8 @@ export interface RunStore {
   completeRemoteDispatchIntent(intentId: string, now: string): RemoteDispatchIntent | undefined;
   failRemoteDispatchIntent(intentId: string, errorMessage: string, retryAt: string, now: string): RemoteDispatchIntent | undefined;
   listRemoteProjectionOutbox(options?: ListRemoteProjectionOutboxOptions): RemoteProjectionOutboxRecord[];
+  getRemoteProjectionEntityVersion(input: RemoteProjectionEntityVersionInput): RemoteProjectionEntityVersion;
+  getLatestConversationActivitySeq(input: RemoteConversationActivityInput): number;
   markRemoteProjectionOutboxProcessed(activitySeqs: readonly number[], now: string): number;
   getConversationReadState(input: Omit<MarkConversationReadInput, "throughActivitySeq">, now: string): ConversationReadState;
   markConversationRead(input: MarkConversationReadInput, now: string): ConversationReadState;
@@ -1976,6 +1981,8 @@ export type RemoteAccessStoreFacet = RunStoreFacet<
   | "completeRemoteDispatchIntent"
   | "failRemoteDispatchIntent"
   | "listRemoteProjectionOutbox"
+  | "getRemoteProjectionEntityVersion"
+  | "getLatestConversationActivitySeq"
   | "markRemoteProjectionOutboxProcessed"
   | "getConversationReadState"
   | "markConversationRead"

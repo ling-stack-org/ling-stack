@@ -197,6 +197,15 @@ test("management API uses strict Origin, capability, and CSRF while remote liste
     assert.equal(missingOrigin.status, 403);
     assert.equal(missingOrigin.headers.get("access-control-allow-origin"), null);
 
+    const maliciousOrigin = await fetch(`${origin}/v1/mobile-access/status`, {
+      headers: {
+        Origin: "https://evil.example",
+        "X-Ling-Mobile-Management-Capability": capability,
+      },
+    });
+    assert.equal(maliciousOrigin.status, 403);
+    assert.equal(maliciousOrigin.headers.get("access-control-allow-origin"), null);
+
     const headers = {
       Origin: origin,
       "Content-Type": "application/json",
