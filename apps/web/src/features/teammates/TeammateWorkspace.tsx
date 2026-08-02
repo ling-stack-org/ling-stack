@@ -39,7 +39,6 @@ import {
   uploadTeammatePrivateAttachment,
 } from "../../api.js";
 import { useI18n } from "../../i18n.js";
-import { providerPreflightReady } from "../../lib/providers.js";
 import { readSseResponse } from "../../sse.js";
 import {
   composerWorkspaceFileParts,
@@ -104,7 +103,7 @@ import { TeammateSettingsNavigation } from "./TeammateSettingsNavigation.js";
 import { TeammateSkillsTab } from "./TeammateSkillsTab.js";
 import { useWorkspaceRightDockController } from "../workspace/useWorkspaceRightDockController.js";
 import { useConversationHeaderController } from "../workspace/useConversationHeaderController.js";
-import { teammatePrivateMessageSearchText } from "./teammate-private-chat-view-models.js";
+import { buildTeammatePrivateModelNotice, teammatePrivateMessageSearchText } from "./teammate-private-chat-view-models.js";
 import {
   directComposerFileRefs,
   directWorkspacePathLabel,
@@ -280,6 +279,12 @@ export function TeammateWorkspace({
   const provider = effectivePrivateProviderPresetId
     ? providers.find((item) => item.id === effectivePrivateProviderPresetId)
     : undefined;
+  const privateModelNotice = buildTeammatePrivateModelNotice({
+    bindingMode: teammate.modelBindingMode,
+    effectiveProviderId: effectivePrivateProviderPresetId ?? "",
+    provider,
+    t,
+  });
   const isProtectedSystemTeammate = Boolean(teammate.protectedProfile || teammate.kind === "system_teammate" || teammate.systemRole === "ling_agent");
   const dangerController = useTeammateDangerController({
     teammate,
@@ -618,11 +623,20 @@ export function TeammateWorkspace({
     setChatDockOpen(true);
     setChatDockPageRequest({ page, nonce: Date.now(), workspaceFile, workspaceReview });
   }
+
+  function openTeammateSettings(section: "profile" | "model"): void {
+    chatHeaderController.closeSearch();
+    setChatSummaryOpen(false);
+    setChatDockOpen(false);
+    setWorkspaceView("settings");
+    setActiveTab(section);
+  }
+
   const pendingDirectLinkPreviews = useMemo(
     () => pendingDirectLinkPreviewIds.map((id) => directLinkPreviewById.get(id)).filter((preview): preview is TeammateDirectLinkPreview => Boolean(preview)),
     [directLinkPreviewById, pendingDirectLinkPreviewIds],
   );
-  const providerReady = Boolean(provider && providerPreflightReady(provider));
+  const providerReady = privateModelNotice === undefined;
   const providerRecovered = providerReady && Boolean(provider);
   const openDirectInterventions = directRuntime?.interventions ?? [];
   const hasQueuedDirectGuidance = openDirectInterventions.some((intervention) => intervention.status === "queued");
@@ -1521,7 +1535,6 @@ export function TeammateWorkspace({
         <TeammateChatHeader
           cwd={cwd}
           teammate={teammate}
-          providerReady={providerReady}
           attachmentCount={directAttachments.length}
           refreshing={chatHeaderController.refreshing}
           refreshDisabled={loading || !cwd.trim()}
@@ -1548,13 +1561,7 @@ export function TeammateWorkspace({
           onClearSearch={chatHeaderController.clearSearch}
           onRefresh={chatHeaderController.refresh}
           onOpenAttachments={() => openChatDockPage("files")}
-          onOpenSettings={(section) => {
-            chatHeaderController.closeSearch();
-            setChatSummaryOpen(false);
-            setChatDockOpen(false);
-            setWorkspaceView("settings");
-            setActiveTab(section);
-          }}
+          onOpenSettings={openTeammateSettings}
           onOpenRename={() => {
             chatHeaderController.closeSearch();
             setChatSummaryOpen(false);
@@ -1652,6 +1659,7 @@ export function TeammateWorkspace({
           terminalReports={terminalReports}
           dockViewModel={privateDockViewModel}
           providerRecovered={providerRecovered}
+          modelNotice={privateModelNotice}
           privateAttachmentById={privateAttachmentById}
           taskCreateBusyKeys={tasksController.busyKeys}
           taskCreateErrors={tasksController.messageErrors}
@@ -1692,6 +1700,7 @@ export function TeammateWorkspace({
           onCancelDirectGuidance={cancelDirectGuidance}
           onEditDirectGuidance={editDirectGuidance}
           onRefreshMessages={refreshTeammateWorkspace}
+          onOpenModelSettings={() => openTeammateSettings("model")}
           onMessageDraftChange={setMessageDraft}
           onComposerSubmit={handlePrivateComposerSubmit}
           onComposerKeyDown={handlePrivateComposerKeyDown}

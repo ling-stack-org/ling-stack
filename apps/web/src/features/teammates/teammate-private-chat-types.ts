@@ -37,6 +37,11 @@ export type TeammatePrivateComposerFileReferencePart = Extract<
   { readonly type: "workspace_file" }
 >;
 
+export interface TeammatePrivateModelNotice {
+  readonly description: string;
+  readonly modelLabel: string;
+}
+
 export interface TeammatePrivateChatSurfaceProps {
   readonly cwd: string;
   readonly teammate: AiTeammate;
@@ -53,6 +58,7 @@ export interface TeammatePrivateChatSurfaceProps {
   readonly executionActions: readonly ExecutionAction[];
   readonly terminalReports: readonly TerminalReportDto[];
   readonly providerRecovered: boolean;
+  readonly modelNotice?: TeammatePrivateModelNotice;
   readonly privateAttachmentById: ReadonlyMap<string, TeammatePrivateAttachment>;
   readonly taskCreateBusyKeys: ReadonlySet<string>;
   readonly taskCreateErrors: Readonly<Record<string, string>>;
@@ -96,6 +102,7 @@ export interface TeammatePrivateChatSurfaceProps {
   readonly onCancelDirectGuidance: (interventionId: string) => void | Promise<void>;
   readonly onEditDirectGuidance: (intervention: TeammateDirectReplyIntervention) => void | Promise<void>;
   readonly onRefreshMessages: () => void | Promise<void>;
+  readonly onOpenModelSettings: () => void;
   readonly onMessageDraftChange: (value: string) => void;
   readonly onComposerSubmit: (authorization: {
     readonly permissionPreset: PermissionPreset;

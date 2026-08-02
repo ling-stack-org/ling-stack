@@ -1,4 +1,4 @@
-import { FileText, Link2, Loader2, Plus, Send, Square, X } from "lucide-react";
+import { CircleAlert, FileText, Link2, Loader2, Plus, Send, SlidersHorizontal, Square, X } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import { conversationPermissionPresetMenuOptions } from "../../lib/session-permissions.js";
 import {
@@ -9,10 +9,11 @@ import {
   ComposerPermissionMenu,
   ConversationComposerShell,
   ConversationGuidanceStrip,
+  ConversationStatusStrip,
   isConversationGuidanceQueueVisible,
   TokenizedComposerInput,
 } from "../../shared/conversation/index.js";
-import { IconButton } from "../../shared/ui/index.js";
+import { IconButton, StatusIndicator } from "../../shared/ui/index.js";
 import type { TeammateDirectLinkPreview, TeammatePrivateAttachment } from "../../types.js";
 import type { TeammatePrivateChatSurfaceProps } from "./teammate-private-chat-types.js";
 import {
@@ -36,12 +37,14 @@ export type TeammatePrivateChatComposerProps = Pick<TeammatePrivateChatSurfacePr
   | "fullAccessConfirmed"
   | "hasDirectRuntimeActivity"
   | "messageDraft"
+  | "modelNotice"
   | "onCancelDirectGuidance"
   | "onComposerDragLeave"
   | "onComposerDragOver"
   | "onComposerDrop"
   | "onComposerPaste"
   | "onEditDirectGuidance"
+  | "onOpenModelSettings"
   | "onPromoteDirectGuidance"
   | "onRemoveComposerFileReference"
   | "onRemovePendingAttachment"
@@ -76,12 +79,14 @@ export function TeammatePrivateChatComposer({
   fullAccessConfirmed,
   hasDirectRuntimeActivity,
   messageDraft,
+  modelNotice,
   onCancelDirectGuidance,
   onComposerDragLeave,
   onComposerDragOver,
   onComposerDrop,
   onComposerPaste,
   onEditDirectGuidance,
+  onOpenModelSettings,
   onPromoteDirectGuidance,
   onRemoveComposerFileReference,
   onRemovePendingAttachment,
@@ -109,6 +114,22 @@ export function TeammatePrivateChatComposer({
 
   return (
     <div className="teammate-private-composer-owner" data-ui2-teammate-private-composer="true">
+      {modelNotice ? (
+        <ConversationStatusStrip
+          className="conversation-composer-status-strip teammate-model-status-strip attention"
+          icon={<CircleAlert size={15} />}
+          title={t("Model needs setup")}
+          description={modelNotice.description}
+          statusNode={<StatusIndicator className="teammate-model-status-indicator" label={t("Blocked")} tone="warning" />}
+          metaItems={[{ id: "model", label: t("Model"), value: modelNotice.modelLabel }]}
+          actions={[{
+            id: "configure-model",
+            label: t("Configure model"),
+            icon: <SlidersHorizontal size={14} />,
+            onClick: onOpenModelSettings,
+          }]}
+        />
+      ) : null}
       {directReplyActive || visibleDirectInterventions.length > 0 ? (
         <ConversationGuidanceStrip
           title={directReplyActive ? t("Replying") : t("Private guidance")}

@@ -179,52 +179,6 @@
   min-width: 0;
 }
 
-.channel-composer > .channel-active-status-strip {
-  margin-bottom: var(--ling-space-4);
-  border-color: var(--conversation-border);
-  border-radius: var(--ling-radius-md);
-  background: var(--conversation-bg);
-  box-shadow: none;
-}
-
-.channel-composer > .channel-active-status-strip.attention {
-  border-color: var(--ling-status-warning-border);
-  background: var(--ling-status-warning-bg);
-}
-
-.channel-composer > .channel-active-status-strip .conversation-status-icon {
-  border-color: var(--conversation-border);
-  color: var(--conversation-text-strong);
-  background: var(--conversation-bg);
-}
-
-.channel-composer > .channel-active-status-strip .conversation-status-title strong {
-  color: var(--conversation-text-strong);
-}
-
-.channel-composer > .channel-active-status-strip .conversation-status-main p,
-.channel-composer > .channel-active-status-strip .conversation-status-meta small {
-  color: var(--conversation-text-muted);
-}
-
-.channel-composer > .channel-active-status-strip .conversation-status-meta > span {
-  border-color: var(--conversation-border);
-  border-radius: var(--ling-radius-md);
-  background: var(--conversation-bg-muted);
-}
-
-.channel-composer > .channel-active-status-strip .conversation-status-action {
-  border-color: var(--conversation-border);
-  border-radius: var(--ling-radius-md);
-  color: var(--conversation-text-strong);
-  background: var(--conversation-bg);
-  box-shadow: none;
-}
-
-.channel-composer > .channel-active-status-strip .conversation-status-action:hover:not(:disabled) {
-  background: var(--conversation-bg-muted);
-}
-
 .activity-feed-status.ling-ui-inline-feedback,
 .composer-status-row.ling-ui-inline-feedback {
   width: fit-content;

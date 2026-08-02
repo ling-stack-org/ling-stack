@@ -1,8 +1,7 @@
 import type { CSSProperties, Ref } from "react";
-import { MoreHorizontal, PanelRightOpen, PencilLine, SlidersHorizontal, TriangleAlert } from "lucide-react";
+import { MoreHorizontal, PanelRightOpen, PencilLine, SlidersHorizontal } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import {
-  Button,
   IconButton,
   Menu,
   MenuContent,
@@ -23,7 +22,6 @@ import { teammateStatusPresentation } from "./teammate-status-presentation.js";
 export function TeammateChatHeader({
   cwd,
   teammate,
-  providerReady,
   attachmentCount,
   refreshing,
   refreshDisabled,
@@ -57,7 +55,6 @@ export function TeammateChatHeader({
 }: {
   readonly cwd: string;
   readonly teammate: AiTeammate;
-  readonly providerReady: boolean;
   readonly attachmentCount: number;
   readonly refreshing: boolean;
   readonly refreshDisabled: boolean;
@@ -171,26 +168,13 @@ export function TeammateChatHeader({
         onToggleTerminal={onToggleTerminal}
         onToggleDetails={onToggleDetails}
       />
-      {!providerReady || lifecycleStatus ? (
+      {lifecycleStatus ? (
         <div className="teammate-chat-alert-row" role="status">
-          {!providerReady ? (
-            <Button
-              className="teammate-chat-model-warning"
-              leadingIcon={<TriangleAlert size={14} />}
-              size="sm"
-              variant="ghost"
-              onClick={() => onOpenSettings("model")}
-            >
-              {t("Model needs setup")}
-            </Button>
-          ) : null}
-          {lifecycleStatus ? (
-            <StatusIndicator
-              className="teammate-chat-lifecycle-status"
-              label={t(lifecycleStatus.labelKey)}
-              tone={lifecycleStatus.tone}
-            />
-          ) : null}
+          <StatusIndicator
+            className="teammate-chat-lifecycle-status"
+            label={t(lifecycleStatus.labelKey)}
+            tone={lifecycleStatus.tone}
+          />
         </div>
       ) : null}
       <ConversationSummaryPopover

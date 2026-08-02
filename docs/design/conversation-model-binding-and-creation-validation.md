@@ -148,12 +148,16 @@ restore flow.
 - Channel and private-chat headers expose a persistent title-adjacent More menu with a
   Settings action; the entry remains available in healthy, warning and loading states.
 - Private Settings opens on Profile by default and keeps Model as an explicit section.
-  A model warning may open Model directly without replacing the persistent Settings entry.
+  A model warning opens Model directly without replacing the persistent Settings entry.
+- Private-chat model failures do not occupy the header. They use the same composer-adjacent
+  `ConversationStatusStrip` grammar as channels and appear immediately above the composer:
+  concise title, concrete blocker, current model summary and one `Configure model` action.
+  The notice disappears only when the teammate's authoritative effective model is runnable.
 - Channel create and General label the channel-owned selector as `Ling Agent model`. The
   Members section displays `Ling Agent model - <model>`, `Workspace default - <model>`, or
   `Fixed model - <model>` as read-only ownership.
-- No configured model: one compact actionable message, disabled send/create, no repeated
-  warning badge on every built-in teammate.
+- No configured model: one actionable composer notice, disabled send/create, no header badge
+  and no repeated warning badge on every built-in teammate.
 - Following default: `Workspace default - <model>` in private settings and effective model
   surfaces.
 - Fixed: `Fixed model - <model>`.

@@ -123,20 +123,6 @@
   overflow: hidden;
 }
 
-.teammate-chat-model-warning.ling-ui-button {
-  flex: 0 1 auto;
-  min-width: 0;
-  height: 28px;
-  min-height: 28px;
-  padding: 0 8px;
-  overflow: hidden;
-  border-color: var(--ling-status-warning-border);
-  color: var(--ling-status-warning);
-  background: var(--ling-status-warning-bg);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .teammate-chat-lifecycle-status {
   flex: 0 1 auto;
   max-width: 96px;

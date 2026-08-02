@@ -1153,7 +1153,11 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(page.locator(".brand-mark")).toHaveCount(0);
   await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: ["Ling Engineer"] });
   const privateChatHeader = page.locator(".teammate-chat-header");
-  await expect(privateChatHeader.getByRole("button", { name: "Model needs setup" })).toBeVisible();
+  await expect(privateChatHeader.getByRole("button", { name: "Model needs setup" })).toHaveCount(0);
+  const modelNotice = page.locator(".teammate-private-composer-owner > .teammate-model-status-strip");
+  await expect(modelNotice).toBeVisible();
+  await expect(modelNotice).toContainText("Model needs setup");
+  await expect(modelNotice.getByRole("button", { name: "Configure model" })).toBeVisible();
   await expect(privateChatHeader).not.toContainText("Model ready");
   await expect(privateChatHeader).not.toContainText("Memory on");
   const privateChatDarkSurfaces = await page.evaluate(() => {

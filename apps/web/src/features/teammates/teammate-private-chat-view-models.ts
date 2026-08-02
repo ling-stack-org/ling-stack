@@ -4,9 +4,12 @@ import {
   buildConversationWorkCellViewModel,
   type ConversationWorkCellViewModel,
 } from "../../lib/conversation-work-cell.js";
+import { providerRunPreflightBlocker } from "../../lib/providers.js";
 import type { LocalFileReference } from "../../shared/conversation/index.js";
 import type {
+  AiTeammateModelBindingMode,
   ExecutionAction,
+  ProviderPreset,
   RunSession,
   TeammateDirectLinkPreview,
   TeammateDirectMessage,
@@ -14,7 +17,36 @@ import type {
   TerminalReportDto,
 } from "../../types.js";
 import type { WorkspaceRightDockFileTarget } from "../workspace/right-dock/index.js";
+import type { TeammatePrivateModelNotice } from "./teammate-private-chat-types.js";
 import { isHistoricalProviderPreflightMessage } from "./teammate-workspace-utils.js";
+
+export function buildTeammatePrivateModelNotice({
+  bindingMode,
+  effectiveProviderId,
+  provider,
+  t,
+}: {
+  readonly bindingMode: AiTeammateModelBindingMode;
+  readonly effectiveProviderId: string;
+  readonly provider: ProviderPreset | undefined;
+  readonly t: Translate;
+}): TeammatePrivateModelNotice | undefined {
+  const blocker = providerRunPreflightBlocker(provider, t);
+  if (!blocker) return undefined;
+
+  const description = !effectiveProviderId
+    ? bindingMode === "workspace_default"
+      ? t("Set a workspace default chat model in Model Workbench.")
+      : t("Choose a configured chat model, or open Model Workbench to add one.")
+    : !provider
+      ? t("The previously selected model no longer exists. Choose another model or open Model Workbench.")
+      : blocker;
+
+  return {
+    description,
+    modelLabel: provider ? `${provider.displayName} / ${provider.model}` : t("No model selected"),
+  };
+}
 
 export interface TeammatePrivateMessageProjection {
   readonly authorName: string;

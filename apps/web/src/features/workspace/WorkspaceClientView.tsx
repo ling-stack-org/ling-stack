@@ -1438,7 +1438,7 @@ export function WorkspaceClientView({
   const activeConversationTask = activeConversationRun?.taskId ? taskById.get(activeConversationRun.taskId) : undefined;
   const channelActiveStatusStrip = activeConversationRun && !activeConversationRunHasWorkflowStep ? (
     <ConversationStatusStrip
-      className="channel-active-status-strip"
+      className="channel-active-status-strip conversation-composer-status-strip"
       icon={<Workflow size={15} />}
       title={t("Run in progress")}
       description={activeConversationTask ? t("Run for {title} is {status}.", { title: activeConversationTask.title, status: activeConversationRun.status }) : t("Run is still running.")}
@@ -1466,7 +1466,7 @@ export function WorkspaceClientView({
     />
   ) : pendingApprovalCount > 0 && inlineApprovalViews.length === 0 ? (
     <ConversationStatusStrip
-      className="channel-active-status-strip attention"
+      className="channel-active-status-strip conversation-composer-status-strip attention"
       icon={<ShieldCheck size={15} />}
       title={t("Pending approvals")}
       description={selectedApproval?.title ?? t("Approval request")}
@@ -1485,7 +1485,7 @@ export function WorkspaceClientView({
     />
   ) : providerBlocker && inlineApprovalViews.length === 0 ? (
     <ConversationStatusStrip
-      className="channel-active-status-strip attention"
+      className="channel-active-status-strip conversation-composer-status-strip attention"
       icon={<CircleAlert size={15} />}
       title={t("Provider needs attention")}
       description={providerBlocker}
