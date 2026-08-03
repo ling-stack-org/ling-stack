@@ -9,8 +9,6 @@ Related docs:
 
 - [Conversation Surface Contract](conversation-surface-contract.md)
 - [Conversation Surface Contract Implementation Plan](conversation-surface-contract-implementation-plan.md)
-- [Conversation Composer Unification Implementation Plan](conversation-composer-unification-implementation-plan.md)
-- [Channel Workspace v1.13 Smart Composer](channel-workspace-v1.13.md)
 - [Multi-Agent Slash Commands](multi-agent-slash-commands.md)
 - [Conversation Plan And Goal Modes](conversation-plan-and-goal-modes.md)
 - [AI Teammate Private Workspace](ai-teammate-private-workspace.md)

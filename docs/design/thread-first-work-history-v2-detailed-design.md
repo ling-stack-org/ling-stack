@@ -39,8 +39,7 @@ drill-down.
 
 - [Thread-First Work History](thread-first-work-history.md)
 - [Thread-First Work History Implementation Plan](thread-first-work-history-implementation-plan.md)
-- [Codex-Inspired Conversation Experience v1](codex-inspired-conversation-v1.md)
-- [Codex-Inspired Conversation Components v1](codex-inspired-conversation-components-v1.md)
+- [Conversation Surface Contract](./conversation-surface-contract.md)
 - [Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md)
 - [Contracts and API Client](contracts-api-client.md)
 - [Run Interruption And Continuation](run-interruption-continuation.md)

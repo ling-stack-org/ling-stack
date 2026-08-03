@@ -23,7 +23,7 @@ Tools are atomic capabilities such as `read`, `grep`, `bash`, `edit`, and `write
 This design sits under the broader [Ling Framework](ling-framework.md). Memory-specific
 behavior for teammates is covered by [Ling Memory v1](ling-memory-v1.md).
 The concrete import, persona draft, Effective Skill UI, and skill-aware run implementation
-slice is covered by [Ling Skill Import v1](ling-skill-import-v1.md). The workspace-level
+slice is covered by [Skill Import Productization](./skill-import-productization.md). The workspace-level
 grouping model for built-in and user-defined specialist rosters is covered by
 [AI Councils](ai-councils.md). Automatic multi-teammate execution is covered by
 [Multi-Agent Orchestrator](multi-agent-orchestrator.md).
@@ -182,7 +182,7 @@ skill. Backfill must be non-destructive:
 This keeps Ling closer to Codex-style effective capability resolution while preserving
 Ling's durable teammate and audit model.
 The implementation breakdown lives in
-[Runtime Control Plane Short-Term Implementation Plan](runtime-control-plane-short-term-implementation-plan.md).
+[Runtime Control Plane Short-Term Implementation Plan](./runtime-control-plane-roadmap.md).
 
 Default workflow:
 
@@ -366,7 +366,7 @@ imports; `AGENTS.md`/`AGENT.md`/`persona.md` enter as teammate persona drafts. T
 produces drafts, parse warnings, required tool previews, provider capability previews, and
 approval previews before any teammate can bind or run imported definitions. PATCH-style
 draft editing and deeper custom skill editing remain follow-ups. See
-[Ling Skill Import v1](ling-skill-import-v1.md).
+[Skill Import Productization](./skill-import-productization.md).
 
 Phase 5 is now specified by the implementation-ready GStack Skill Source Sync design.
 `SkillDefinition` remains the lightweight executable registry contract, while

@@ -9,7 +9,7 @@ Date: 2026-06-10
 
 Related docs:
 
-- [Channel Workspace Design](channel-workspace.md)
+- [Conversation Surface Contract](./conversation-surface-contract.md)
 - [Channel Context Processing Layer](channel-context-processing-layer.md)
 - [Channel Context Processing Layer Implementation Plan](channel-context-processing-layer-implementation-plan.md)
 - [Provider Presets](provider-presets.md)

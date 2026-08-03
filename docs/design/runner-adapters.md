@@ -252,7 +252,7 @@ Use a local or bundled Codex app-server as an execution backend while preserving
 approval/audit/runtime model.
 This adapter is separate from Ling's own long-term app-server-like control-plane
 layering, which is covered by
-[Runtime Control Plane Long-Term Implementation Plan](runtime-control-plane-long-term-implementation-plan.md).
+[Runtime Control Plane Long-Term Implementation Plan](./runtime-control-plane-roadmap.md).
 
 ### Feature Flag
 

@@ -9,8 +9,8 @@ Related docs:
 
 - [Desktop Shell](../../desktop-shell.md)
 - [Web 与 Desktop 表面规范](../foundations/05-Web与Desktop表面规范.md)
-- [Desktop 多窗口渲染器与主题同步](../architecture/09-Desktop多窗口渲染器与主题同步.md)
-- [Desktop 与 Computer Use PiP 迁移矩阵](../migration/13-Desktop与Computer-Use-PiP迁移矩阵.md)
+- [Desktop 多窗口渲染器与主题同步](../architecture/07-主题注册表与运行时切换.md)
+- [Desktop 与 Computer Use PiP 迁移矩阵](../migration/README.md)
 
 ## Function IDs
 
@@ -63,8 +63,7 @@ The pre-implementation `hiddenInset` BrowserWindow was correct, but its renderer
 the expanded Sidebar top area and three Feature Header class selectors。`DESKTOP-SHELL-MAIN-WINDOW-DRAG-001`
 closes that gap with shared Header markers、Home/Sidebar fallback regions、a traffic-light exclusion and portal
 overlay subtraction，without changing BrowserWindow options or adding visible chrome。Detailed ownership、
-geometry and tests are defined in
-[Main Window Integrated Chrome 详细设计与实现计划](18-Desktop-Client-Shell-implementation-plan.md)。
+geometry and tests are defined below。
 
 ## Ownership
 

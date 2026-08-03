@@ -1,0 +1,32 @@
+# Exact historical false positives reviewed on 2026-08-03 with Gitleaks v8.30.1.
+# Keep entries fingerprint-scoped. Do not replace these with broad path or rule exclusions.
+
+# Design copy containing the phrase "local-auth gate".
+fdee5706a4cc51516fdfa68b8e25905c15c49d97:docs/design/mobile-conversation-ui2-detailed-design.md:generic-api-key:810
+
+# E2E idempotency-key fixtures.
+72272baffd651e5cace5d74521f553cca27ab33c:apps/web/e2e/ui2-normal-conversation-feed-composer.spec.ts:generic-api-key:289
+72272baffd651e5cace5d74521f553cca27ab33c:apps/web/e2e/ui2-teammate-conversation-feed-composer.spec.ts:generic-api-key:308
+8c748232fb52bf6f1ade2ff5c543d79f058fbf6a:apps/web/e2e/ui2-normal-conversation-feed-composer.spec.ts:generic-api-key:269
+8c748232fb52bf6f1ade2ff5c543d79f058fbf6a:apps/web/e2e/ui2-teammate-conversation-feed-composer.spec.ts:generic-api-key:255
+e8a7ad9cf3a13d9d7335bb315b09b3eb6b00daf5:apps/web/e2e/ui2-normal-conversation-feed-composer.spec.ts:generic-api-key:259
+e8a7ad9cf3a13d9d7335bb315b09b3eb6b00daf5:apps/web/e2e/ui2-teammate-conversation-feed-composer.spec.ts:generic-api-key:248
+
+# Mock tokenizer label and redaction fixtures.
+8e80de4510336fc697ed43bcdf8ddd81c1db7353:apps/web/e2e/support/mock-daemon.ts:generic-api-key:7710
+7dcd67f8ac977a3daeec52272da7c7ec1c0dbc5f:packages/daemon/test/channel-context-processing.test.mjs:curl-auth-header:309
+
+# Daemon approval idempotency and explicit environment-reference fixtures.
+42739013c443ece60d1898f0375aeb2558f6fe16:packages/daemon/test/approval-policy-run.test.mjs:generic-api-key:3009
+064acf2ab6777fbaba2b49ac98d03c6081a83699:packages/daemon/test/approval-policy-run.test.mjs:generic-api-key:367
+a96f177a8b4c0c051e0eefd4b0a5d9ee36df8911:packages/daemon/test/approval-policy-run.test.mjs:generic-api-key:321
+
+# Provider and approval-policy fake API-key fixtures.
+9630e1b841c2a4402426513f7173878371690e14:packages/providers/test/media-adapter-contract.test.mjs:generic-api-key:371
+c9a984ab5e5611c7356f2992540b2d7f2d9521bd:packages/providers/test/media-adapter-contract.test.mjs:generic-api-key:371
+ee3cee21d7ef15f3c0cf6c70815d5e89907c6f7f:packages/providers/test/media-adapter-contract.test.mjs:generic-api-key:354
+6d594f7c28b91c2e5905afd9475542ee6beda164:packages/providers/test/media-adapter-contract.test.mjs:generic-api-key:290
+7dc59e805f379484e2110c08539bc9cff5393522:packages/providers/test/media-adapter-contract.test.mjs:generic-api-key:166
+7dc59e805f379484e2110c08539bc9cff5393522:packages/providers/test/media-adapter-contract.test.mjs:generic-api-key:215
+347b65a4a675d08223b1bd9cabe188020594238f:packages/providers/test/media-adapter-contract.test.mjs:generic-api-key:26
+9067d8d8cd29ad4a79adf40ab4b7c17137598146:packages/core/test/approval-policy.test.mjs:generic-api-key:132

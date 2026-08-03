@@ -110,7 +110,7 @@ test("workspace terminal runner executes a command in the workspace directory", 
 
 test("workspace terminal profile reports user host and workspace prompt", async () => {
   const profile = await getWorkspaceTerminalProfile({
-    cwd: "/Users/tianxiao/ling-stack",
+    cwd: "/Users/example/ling-stack",
     platform: "darwin",
     statImpl: async () => ({ isDirectory: () => true }),
     userInfoImpl: () => ({ username: "tianxiao" }),
@@ -118,7 +118,7 @@ test("workspace terminal profile reports user host and workspace prompt", async 
   });
 
   assert.deepEqual(profile, {
-    cwd: "/Users/tianxiao/ling-stack",
+    cwd: "/Users/example/ling-stack",
     workspaceLabel: "ling-stack",
     promptLabel: "tianxiao@tianxiaodeMacBook-Pro ling-stack %",
     username: "tianxiao",

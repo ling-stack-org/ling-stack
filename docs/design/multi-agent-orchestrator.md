@@ -105,7 +105,6 @@ Advanced follow-up design:
   the user-facing visibility boundary: live progress is visible while work runs, terminal
   work folds into compact summaries, and raw selector, handoff, and runtime evidence stays
   expandable instead of becoming default chat content.
-- [Multi-Agent Orchestration P4-P7 Detailed Design](multi-agent-orchestration-p4-p7-detailed-design.md)
   splits the next orchestration work into structured handoff intent, selector decisions,
   graph-defined fan-out/fan-in with memory candidates, and workflow evidence detail.
 - [Channel Context Budget Manager](channel-context-budget-manager.md) defines the bounded
@@ -717,7 +716,7 @@ git diff --check
 
 - [AI Teammates and Skills](ai-teammates-and-skills.md) defines teammate, skill, and
   workflow template metadata.
-- [Channel Workspace v1.2](channel-workspace-v1.2.md) defines manual workflow and
+- [Conversation Surface Contract](./conversation-surface-contract.md) defines manual workflow and
   workflow-step records that this orchestrator reuses.
 - [State Machines and Recovery](state-machine-recovery.md) defines legal workflow,
   workflow-step, task, run, approval, and work-unit transitions.

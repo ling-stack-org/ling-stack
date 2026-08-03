@@ -371,12 +371,12 @@ test("evidence policy redacts and bounds command and artifact summaries", () => 
   const failedSummary = summarizeCommandEvidence({
     command: "curl -H 'Authorization: Bearer abcdefghijklmnop' https://example.test",
     exitCode: 1,
-    stderr: `${"noise ".repeat(80)}sk-live_secret_token_1234567890 failed with Bearer abcdefghijklmnop`,
+    stderr: `${"noise ".repeat(80)}sk-test-redaction-token-1234567890 failed with Bearer abcdefghijklmnop`,
     maxTailChars: 120,
   });
   assert.match(failedSummary, /stderrTail/);
   assert.match(failedSummary, /\[REDACTED\]/);
-  assert.doesNotMatch(failedSummary, /sk-live_secret_token_1234567890/);
+  assert.doesNotMatch(failedSummary, /sk-test-redaction-token-1234567890/);
   assert.doesNotMatch(failedSummary, /Bearer abcdefghijklmnop/);
 
   const step = createWorkflowStep({
@@ -402,7 +402,7 @@ test("context condenser preserves current turn and condenses long evidence text"
     kind: "evidence",
     freshness: "durable",
     title: "Run log",
-    text: `stdout ${"noise ".repeat(120)}sk-live_secret_token_1234567890 ${"tail ".repeat(120)}`,
+    text: `stdout ${"noise ".repeat(120)}sk-test-redaction-token-1234567890 ${"tail ".repeat(120)}`,
     sourceRefs: [{ type: "artifact", id: "artifact_log", label: "Run log" }],
   });
 
@@ -415,7 +415,7 @@ test("context condenser preserves current turn and condenses long evidence text"
   assert.equal(result.sources[1].metadata.condensed, true);
   assert.match(result.sources[1].text, /Context source condensed for prompt budget/);
   assert.match(result.sources[1].text, /sourceRefs=artifact:artifact_log/);
-  assert.doesNotMatch(result.sources[1].text, /sk-live_secret_token_1234567890/);
+  assert.doesNotMatch(result.sources[1].text, /sk-test-redaction-token-1234567890/);
   assert.equal(result.dropped.length, 0);
   assert.equal(result.condensedSourceIds[0], "evidence:run_log");
   assert.match(result.compactionIds[0], /^context_condenser_text_/);

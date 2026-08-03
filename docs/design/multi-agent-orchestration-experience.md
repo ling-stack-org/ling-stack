@@ -7,12 +7,11 @@ Design baseline for the next multi-agent orchestration slices.
 Related docs:
 
 - [Multi-Agent App Detailed Design](multi-agent-app-detailed-design.md)
-- [Multi-Agent Collaboration Cards And Ambient Audit](multi-agent-collaboration-cards-and-ambient-audit.md)
-- [Multi-Agent Collaboration Cards Implementation Plan](multi-agent-collaboration-cards-implementation-plan.md)
+- [Conversation Surface Contract](conversation-surface-contract.md)
+- [Conversation Surface Contract Implementation Plan](conversation-surface-contract-implementation-plan.md)
 - [Channel Context Processing Layer](channel-context-processing-layer.md)
 - [Channel Intent To Workflow Selector](channel-intent-workflow-selector.md)
 - [Channel Message Streaming](channel-message-streaming.md)
-- [Codex-Inspired Conversation Components v1](codex-inspired-conversation-components-v1.md)
 - [Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md)
 
 P0-P3 implementation status as of 2026-06-09:
@@ -43,7 +42,7 @@ P4-P7 implementation status as of 2026-06-09:
   to WorkflowGraph adapter, proposal edit, clarify, independent intent evidence,
   confirmed direct-workflow prefill, and model-assisted intent selection.
 - Detailed design:
-  [P4-P7 Detailed Design](multi-agent-orchestration-p4-p7-detailed-design.md).
+  [Multi-Agent Orchestrator](./multi-agent-orchestrator.md).
 
 This document connects the implemented channel conversation work with the existing
 durable orchestrator. It should guide future implementation without turning the
@@ -82,11 +81,10 @@ Completed work collapses into summaries.
 Conversation layout follows task flow, not a fixed template.
 ```
 
-The product surface should follow
-[Multi-Agent Collaboration Cards And Ambient Audit](multi-agent-collaboration-cards-and-ambient-audit.md):
-requirement shaping appears as a compact shaping card, executable work appears as a task
-card, step outputs fold into handoff cards, and audit/debug details stay behind explicit
-expansion.
+The product surface follows [Conversation Surface Contract](conversation-surface-contract.md)
+and [Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md): requirement shaping,
+executable work, and step handoffs are semantic presentations inside one operation cell.
+Audit and debug details stay behind explicit expansion.
 
 For the default channel feed, those cards are projections inside the unified operation
 cell model in [Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md). They should
@@ -454,9 +452,9 @@ Not allowed by default:
 ### Progress Popover
 
 The progress section should be the glanceable operational surface for active multi-agent
-work. It should use the compact progress projection from
-[Multi-Agent Collaboration Cards And Ambient Audit](multi-agent-collaboration-cards-and-ambient-audit.md),
-not a full workflow inspector. It can show:
+work. It should use the compact operation projection from
+[Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md), not a full workflow
+inspector. It can show:
 
 - current task title;
 - current state;
@@ -502,7 +500,7 @@ side-panel view.
 - Keep model-generated graph rewrites out of scope.
 - Add graph termination and failure policy.
 - Implementation plan:
-  [P1 Workflow Graph](multi-agent-orchestration-p1-workflow-graph-implementation-plan.md).
+  [Multi-Agent Orchestrator](./multi-agent-orchestrator.md).
 
 ### P2: Output And Context Packet Standardization
 
@@ -511,7 +509,7 @@ side-panel view.
   transcript summaries.
 - Expose packet evidence through inline operation-cell evidence and in-turn previews.
 - Implementation plan:
-  [P2 Packet Standardization](multi-agent-orchestration-p2-packets-implementation-plan.md).
+  [Multi-Agent Orchestrator](./multi-agent-orchestrator.md).
 
 ### P3: Live Multi-Agent Progress Presentation
 
@@ -522,7 +520,7 @@ side-panel view.
   patterns.
 - Do not rebuild the conversation feed or replace the Codex-inspired component model.
 - Implementation plan:
-  [P3 Live Progress](multi-agent-orchestration-p3-live-progress-implementation-plan.md).
+  Multi-Agent Orchestration Experience.
 
 ### P4: Structured Handoff Intent
 
@@ -531,7 +529,7 @@ side-panel view.
 - Show accepted handoffs as live progress or collapsed evidence depending on execution
   state.
 - Implementation detail:
-  [P4-P7 Detailed Design](multi-agent-orchestration-p4-p7-detailed-design.md#p4-structured-handoff-intent).
+  [Multi-Agent Orchestrator](./multi-agent-orchestrator.md).
 
 ### P5: Selector Coordinator
 
@@ -540,7 +538,7 @@ side-panel view.
 - Show only user-relevant selector outcomes in live progress.
 - Keep raw selector reasoning inside evidence.
 - Implementation detail:
-  [P4-P7 Detailed Design](multi-agent-orchestration-p4-p7-detailed-design.md#p5-selector-coordinator).
+  [Multi-Agent Orchestrator](./multi-agent-orchestrator.md).
 
 ### P6: Fan-Out And Fan-In
 
@@ -553,7 +551,7 @@ side-panel view.
   `test_artifact_only` may auto-parallelize; `workspace_write`, `external_mutation`, and
   `release` stay serial until isolated worktree merge exists.
 - Implementation detail:
-  [P4-P7 Detailed Design](multi-agent-orchestration-p4-p7-detailed-design.md#p6-fan-out-fan-in-and-memory-candidates).
+  [Multi-Agent Orchestrator](./multi-agent-orchestrator.md).
 - Canonical safe-parallel rule:
   [Multi-Agent App Detailed Design](multi-agent-app-detailed-design.md#safe-parallel-scheduler).
 
@@ -564,9 +562,9 @@ side-panel view.
 - Keep summaries concise in the main feed.
 - Add browser checks for active progress visibility and terminal folding.
 - Implementation detail:
-  [P4-P7 Detailed Design](multi-agent-orchestration-p4-p7-detailed-design.md#p7-workflow-evidence-detail).
+  [Multi-Agent Orchestrator](./multi-agent-orchestrator.md).
 
-### P8: Collaboration Cards And Ambient Audit
+### P8: Collaboration Projections And Ambient Audit
 
 - Add product-level requirement shaping cards before scope is executable.
 - Render confirmed workflows as operation cells whose collaboration-task fields are
@@ -574,10 +572,10 @@ side-panel view.
 - Fold serial step streams into summaries and handoff cards after terminal state.
 - Keep parallel branch streams compact by default, with per-branch expansion.
 - Keep audit/debug details out of the default feed.
-- Design baseline:
-  [Multi-Agent Collaboration Cards And Ambient Audit](multi-agent-collaboration-cards-and-ambient-audit.md).
-- First implementation slice:
-  [Multi-Agent Collaboration Cards Implementation Plan](multi-agent-collaboration-cards-implementation-plan.md).
+- Design baseline: [Conversation Surface Contract](conversation-surface-contract.md) and
+  [Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md).
+- Implementation source:
+  [Conversation Surface Contract Implementation Plan](conversation-surface-contract-implementation-plan.md).
 
 ## Non-Goals
 

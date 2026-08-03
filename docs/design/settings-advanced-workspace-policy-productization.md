@@ -8,12 +8,11 @@ created from the July 2026 screenshot review and should be read before changing
 the advanced permission editor.
 
 The implementation checklist lives in
-[Settings Advanced Workspace Policy Productization Implementation Plan](settings-advanced-workspace-policy-productization-implementation-plan.md).
+Settings Advanced Workspace Policy Productization.
 
 ## Related Docs
 
-- [Settings Full-Surface Productization P10](settings-full-surface-productization-p10.md)
-- [Settings Semantic Convergence P3](settings-semantic-convergence-p3.md)
+- [Settings Shell](./ui2.0升级/modules/settings/README.md)
 - [Codex-Inspired Settings Permission Presets](codex-inspired-settings-permission-presets.md)
 - [Ling Design System](ling-design-system.md)
 

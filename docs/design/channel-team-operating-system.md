@@ -1,13 +1,15 @@
 # Channel Team Operating System
 
-Status: design direction, not implemented
+Status: active design contract; R0-R7 foundations are implemented, while observer model
+calls, automatic promotion, snapshot restore, and historical replay remain unshipped
 Date: 2026-06-26
+Updated: 2026-08-03
 
 Related docs:
 
 - [Ling Agent Session Control Plane](ling-agent-session.md)
 - [Channel Context Processing Layer](channel-context-processing-layer.md)
-- [Channel Workspace Design](channel-workspace.md)
+- [Conversation Surface Contract](./conversation-surface-contract.md)
 - [Multi-Agent Orchestrator](multi-agent-orchestrator.md)
 - [Multi-Agent Orchestration Experience](multi-agent-orchestration-experience.md)
 - [Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md)
@@ -69,6 +71,24 @@ Promote through review.
 Adapt participation.
 Never drift identity.
 ```
+
+## Current Implementation Boundary
+
+The current mainline includes channel-team contracts, durable evidence and lifecycle
+stores, the feature-gated ObserverBus integration, narrow Risk Review mapping, authority
+projection, metrics, and shadow pattern/snapshot/evaluation foundations. Git history and
+the current tests preserve the former remediation evidence.
+
+The following capabilities are not implied by those foundations:
+
+- observers do not yet perform general model-backed code or file review automatically;
+- memory, protocol, and skill promotion still require their existing review paths;
+- snapshot restore/apply and real historical evaluation replay are not shipped;
+- Human Override and broad turn-control UI remain deferred.
+
+Until those capabilities are explicitly implemented, snapshot and evaluation data is
+shadow evidence only and cannot change live protocol, identity, permission, or approval
+behavior.
 
 ## Non-Goals
 

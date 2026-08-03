@@ -14,8 +14,7 @@ Related documents:
 - [Ling Framework](ling-framework.md)
 - [Channel Message Streaming](channel-message-streaming.md)
 - [Conversation Surface Contract](conversation-surface-contract.md)
-- [Conversation UI Package Extraction Implementation Plan](conversation-ui-package-extraction-implementation-plan.md)
-- [Channel Workspace Design](channel-workspace.md)
+- [Conversation UI Package Extraction Implementation Plan](./conversation-surface-contract-implementation-plan.md)
 
 ## Decision
 

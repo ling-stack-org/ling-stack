@@ -13,7 +13,7 @@ acceptance, tray, updater, and full keychain UX remain incomplete or later shell
 - [UI React Shared Package Architecture](ui2.0升级/architecture/01-ui-react共享包架构.md)
 - [UI 2.0 Theme Packs](ui2.0升级/themes/README.md)
 - [Theme Registry And Runtime Switching](ui2.0升级/architecture/07-主题注册表与运行时切换.md)
-- [Desktop Main Window Integrated Chrome](ui2.0升级/modules/18-Desktop-Client-Shell-implementation-plan.md)
+- [Desktop Main Window Integrated Chrome](./ui2.0升级/modules/18-Desktop-Client-Shell.md)
 
 ## Purpose
 

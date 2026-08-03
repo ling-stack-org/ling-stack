@@ -1,17 +1,17 @@
 # Conversation Command Execution Batching Detailed Design
 
-Status: implemented, pending PR merge
+Status: implemented on `main`
 Date: 2026-07-13
+Last verified: 2026-08-03
 Scope: persisted command evidence, live command output projection, deterministic command
 batching, shared conversation view models, Web rendering, refresh behavior, and tests
 
 Related docs:
 
-- [Conversation Work Cell Operation Records](conversation-work-cell-operation-records.md)
+- [Conversation Surface Contract](./conversation-surface-contract.md)
 - [Conversation Shared Capabilities Detailed Design](conversation-shared-capabilities-detailed-design.md)
 - [Thread-First Work History V2 Detailed Design](thread-first-work-history-v2-detailed-design.md)
 - [Ling Agent Terminal Report Protocol](ling-agent-terminal-report-protocol.md)
-- [Conversation Surface Contract](conversation-surface-contract.md)
 
 ## 1. Purpose
 
@@ -56,9 +56,9 @@ reverse-engineer undocumented UI heuristics. The open-source Codex TUI currently
 some adjacent exploration commands; it is evidence for client-side projection, not a
 drop-in algorithm for Ling.
 
-## 3. Current State And Gaps
+## 3. Pre-Implementation State And Gaps
 
-### 3.1 Existing Runtime Evidence
+### 3.1 Baseline Runtime Evidence
 
 The daemon already persists:
 
@@ -570,47 +570,18 @@ The `Batched` state exists only in the view projection. Runtime actions remain
   in their existing order;
 - no raw JSON, provider metadata, secret text, or internal ids appear in the main feed.
 
-## 15. Implementation Slices
+## 15. Current Implementation Boundary
 
-### Slice A: Command Evidence Read Model
+- The command evidence read model folds bounded live updates and final unified-exec results
+  into typed execution actions.
+- One pure shared projection creates deterministic command batches across channel, normal
+  conversation and teammate-private surfaces.
+- Active command output refreshes without reordering committed evidence; completed
+  low-risk bursts can collapse while individual commands remain recoverable.
+- Product and package tests cover real executable cases, accessibility, i18n and refresh.
 
-- extend contracts;
-- fold `tool_update` and unified final results into `ExecutionAction`;
-- add bounds, redaction, parser, and contract tests;
-- fix execution-action refresh from control-plane invalidation.
+Run-by-run implementation history and test counts live in Git and CI artifacts.
 
-Exit criteria: an active run's action endpoint changes revision and returns truthful
-bounded command evidence before the run completes.
-
-### Slice B: Shared Batch Projection
-
-- add operation-item and batch contracts;
-- implement the pure batching module;
-- migrate normal, private, and channel projections through the same function;
-- add deterministic boundary tests.
-
-Exit criteria: the same action fixture produces the same batch tree on every executable
-conversation surface.
-
-### Slice C: Live Refresh And Web UI
-
-- add throttled conversation refresh and active-run fallback pollers;
-- add `ConversationCommandBatch` and active output behavior;
-- preserve independent disclosure state;
-- add i18n, accessibility, and component tests.
-
-Exit criteria: the latest command updates incrementally, completed bursts collapse, and
-refresh does not lose or reorder evidence.
-
-### Slice D: Real-Case Validation
-
-- update the opt-in Work Cell fixture with real command evidence;
-- add ordinary, private, single-agent channel, and multi-agent channel e2e cases;
-- run desktop/mobile visual review and console checks;
-- verify no regression in TerminalReport, artifact preview, workspace review, or latest
-  conversation positioning.
-
-Exit criteria: real executable cases match the documented UI and all focused checks pass.
 
 ## 16. Non-Goals
 

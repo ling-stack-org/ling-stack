@@ -552,7 +552,7 @@ Local stack restarted
 Daemon build: ok
 Daemon: ready (http://127.0.0.1:17891)
   Config: ready
-  Workspace: ready /Users/tianxiao/ling-stack
+  Workspace: ready /Users/example/ling-stack
   Runtime: ready defaultRunner=pi
   Warmup: provider_warmup=warming, automation_scheduler=ready
 Web: ready (http://127.0.0.1:5173)

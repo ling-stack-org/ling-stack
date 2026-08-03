@@ -43,7 +43,7 @@ docs:
 - [Multi-Agent App Detailed Design](multi-agent-app-detailed-design.md)
 - [AI Teammate Private Workspace](ai-teammate-private-workspace.md)
 - [Ling Memory v1](ling-memory-v1.md)
-- [Ling Skill Import v1](ling-skill-import-v1.md)
+- [Skill Import Productization](./skill-import-productization.md)
 - [Skill Context Optimization](skill-context-optimization.md)
 - [Runtime Supervisor](runtime-supervisor.md)
 - [Runtime Control Plane Detailed Design](runtime-control-plane-detailed-design.md)
@@ -645,7 +645,7 @@ Imported skills must not execute immediately. A user or policy must bind them to
 teammate, and the effective skill read model must still validate tools, provider
 capabilities, approvals, and state-machine legality.
 
-The concrete next slice is defined in [Ling Skill Import v1](ling-skill-import-v1.md).
+The concrete next slice is defined in [Skill Import Productization](./skill-import-productization.md).
 
 ## Execution Model
 

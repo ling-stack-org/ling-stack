@@ -4,10 +4,9 @@
 
 ## Related Docs
 
-- [Ling Skill Import V1](ling-skill-import-v1.md)
+- [Skill Import Productization](./skill-import-productization.md)
 - [GStack Skill Source Sync](gstack-skill-source-sync.md)
-- [Settings Diagnostic Density P8](settings-diagnostic-density-p8.md)
-- [Settings Visual Density Follow-up](settings-visual-density-followup.md)
+- [Settings Shell](./ui2.0升级/modules/settings/README.md)
 
 ## Summary
 

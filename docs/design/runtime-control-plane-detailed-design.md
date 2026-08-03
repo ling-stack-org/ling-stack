@@ -7,12 +7,15 @@ join point between:
 
 - [Runtime Supervisor](runtime-supervisor.md)
 - [Runtime Control Plane Roadmap](runtime-control-plane-roadmap.md)
-- [Runtime Control Plane Mid-Term Implementation Plan](runtime-control-plane-mid-term-implementation-plan.md)
 - [Runner Registry](runner-registry.md)
 - [Pi Coding Agent Integration](../pi-coding-agent-integration.md)
 
 The design is intentionally narrower than a new agent engine. Ling owns the runtime
 control plane. Pi remains the default coding-agent kernel behind `runner-pi`.
+
+Implementation sequencing is owned by the roadmap: first verify operator lifecycle and registry refresh, then
+establish daemon-owned snapshots/events and client subscriptions, and only after concrete multi-client pressure
+consider processor/transport decomposition. This document remains the object, API, event and ownership contract.
 
 ## Problem
 

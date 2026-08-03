@@ -20,14 +20,12 @@ still giving external work a durable routing and execution queue.
 
 - [Product Design](../product-design.md)
 - [Approval Policy](approval-policy.md)
-- [Codex-Inspired Runtime Tools P2A: Permission Requests Implementation](codex-inspired-runtime-tools-p2a-permission-requests-implementation.md)
+- [Codex-Inspired Runtime Tools P2A: Permission Requests Implementation](./codex-inspired-runtime-tools.md)
 - [Inline Runtime Approval Detailed Design](inline-runtime-approval-detailed-design.md)
-- [Review Queue and Work Board Detailed Design](review-queue-work-board-detailed-design.md)
-- [Work Board, Review Queue, and Inline Approval Implementation Plan](work-board-review-queue-implementation-plan.md)
 - [Codex-Inspired Settings And Permission Presets](codex-inspired-settings-permission-presets.md)
 - [External Work Orchestration](external-work-orchestration.md)
 - [External Work Status Surface](external-work-status-surface.md)
-- [Channel Workspace v1.25 Codex-Inspired Progress Popover](channel-workspace-v1.25.md)
+- [Conversation Surface Contract](./conversation-surface-contract.md)
 
 ## Problem
 
@@ -368,9 +366,9 @@ The channel progress popover should stay lightweight:
 - Add the design doc.
 - Use [Inline Runtime Approval Detailed Design](inline-runtime-approval-detailed-design.md)
   for the local active-run approval slice.
-- Use [Review Queue and Work Board Detailed Design](review-queue-work-board-detailed-design.md)
+- Use Work Board, Review Queue, and Inline Approval Boundaries
   for the external-work and board slice.
-- Use [Work Board, Review Queue, and Inline Approval Implementation Plan](work-board-review-queue-implementation-plan.md)
+- Use Work Board, Review Queue, and Inline Approval Boundaries
   to split this design into PR-sized implementation work.
 - Keep existing approval, run, external-work, and task stores unchanged.
 - Derive Inbox and board rows from existing records in the Web domain layer or daemon

@@ -10,11 +10,11 @@ only the internal ordinary-answer router contract.
 
 Related docs:
 
-- [Channel Workspace Design](channel-workspace.md)
+- [Conversation Surface Contract](./conversation-surface-contract.md)
 - [Ling Agent Session Control Plane](ling-agent-session.md)
 - [Channel Intent To Workflow Selector](channel-intent-workflow-selector.md)
 - [Channel Team Operating System](channel-team-operating-system.md)
-- [Multi-Agent Orchestration P4-P7 Detailed Design](multi-agent-orchestration-p4-p7-detailed-design.md)
+- [Multi-Agent Orchestrator](./multi-agent-orchestrator.md)
 - [Multi-Agent Orchestration Experience](multi-agent-orchestration-experience.md)
 - [AI Teammates and Skills](ai-teammates-and-skills.md)
 - [AI Teammate Private Workspace](ai-teammate-private-workspace.md)

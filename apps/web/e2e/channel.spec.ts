@@ -1381,7 +1381,7 @@ test("channel environment surface shows read-only context and opens review", asy
   await expect(environmentPage).toContainText("No browser evidence");
   await expect(environmentPage).toContainText("No sources");
 
-  const selectedEnvironmentPath = "/Users/gsx/minimax-agent-cn/projects";
+  const selectedEnvironmentPath = "/Users/example/workspace/projects";
   await environmentPage.getByRole("button", { name: "Change directory" }).click();
   await expect.poll(() => {
     const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
@@ -1684,7 +1684,7 @@ test("new channel dialog selects a project folder before create", async ({ page 
   await page.getByRole("menuitem", { name: "New channel" }).click();
 
   const createChannelPanel = page.getByRole("dialog", { name: "New channel" });
-  const selectedPath = "/Users/gsx/minimax-agent-cn/projects";
+  const selectedPath = "/Users/example/workspace/projects";
   const projectTrigger = createChannelPanel.getByRole("button", { name: "Project directory" });
   await expect(projectTrigger).toContainText("ling-stack-workspace");
   await projectTrigger.click();
@@ -3047,7 +3047,7 @@ test("channel settings manage workspace binding", async ({ page }) => {
     return [channel.boundPath, channel.workspaceBinding.mode, channel.workspaceBinding.executionPath];
   }).toEqual([manualExecutionPath, "local", manualExecutionPath]);
 
-  const selectedExecutionPath = "/Users/gsx/minimax-agent-cn/projects";
+  const selectedExecutionPath = "/Users/example/workspace/projects";
   await workspaceSettings.getByRole("button", { name: "Change directory" }).click();
   await expect.poll(() => {
     const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
@@ -5396,7 +5396,7 @@ test("completed workflow hides accepted proposal and leaves final result in defa
     taskSnapshot: {
       id: "task_completed_workflow",
       title: "Create README.md",
-      prompt: "Create /Users/tianxiao/ling-stack-test/README.md.",
+      prompt: "Create /Users/example/ling-stack-test/README.md.",
     },
     requestSnapshot: {
       cwd,
@@ -5405,7 +5405,7 @@ test("completed workflow hides accepted proposal and leaves final result in defa
       task: {
         id: "task_completed_workflow",
         title: "Create README.md",
-        prompt: "Create /Users/tianxiao/ling-stack-test/README.md.",
+        prompt: "Create /Users/example/ling-stack-test/README.md.",
         channelId: "channel_engineering",
       },
     },
@@ -5425,7 +5425,7 @@ test("completed workflow hides accepted proposal and leaves final result in defa
       intent: "discuss",
       authorType: "local-user",
       authorId: "tian",
-      body: "/Users/tianxiao/ling-stack-test 下面，帮我创建一个 README.md",
+      body: "/Users/example/ling-stack-test 下面，帮我创建一个 README.md",
       mentions: [],
       attachmentIds: [],
       linkPreviewIds: [],
@@ -5475,7 +5475,7 @@ test("completed workflow hides accepted proposal and leaves final result in defa
       channelId: "channel_engineering",
       sourceMessageId: "msg_create_readme",
       proposedByTeammateId: "docs",
-      title: "Create /Users/tianxiao/ling-stack-test/README.md",
+      title: "Create /Users/example/ling-stack-test/README.md",
       prompt: "Create the requested README file with the declared file tool scope.",
       assigneeTeammateId: "docs",
       acceptanceCriteria: ["Target file is created."],
@@ -5493,7 +5493,7 @@ test("completed workflow hides accepted proposal and leaves final result in defa
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
       title: "Create README.md",
-      prompt: "Create /Users/tianxiao/ling-stack-test/README.md.",
+      prompt: "Create /Users/example/ling-stack-test/README.md.",
       status: "done",
       currentRunId: workflowRun.id,
       createdAt: "2026-05-25T00:30:00.000Z",
@@ -5506,7 +5506,7 @@ test("completed workflow hides accepted proposal and leaves final result in defa
       id: "workflow_completed",
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
-      title: "Create /Users/tianxiao/ling-stack-test/README.md",
+      title: "Create /Users/example/ling-stack-test/README.md",
       objective: "Create the requested README file with the declared file tool scope.",
       status: "succeeded",
       createdBy: "local-user",
@@ -5524,7 +5524,7 @@ test("completed workflow hides accepted proposal and leaves final result in defa
       runId: workflowRun.id,
       position: 1,
       title: "Docs: Create README.md",
-      prompt: "Create /Users/tianxiao/ling-stack-test/README.md.",
+      prompt: "Create /Users/example/ling-stack-test/README.md.",
       toParticipantId: "docs",
       toParticipantLabel: "Docs",
       status: "succeeded",
@@ -5538,7 +5538,7 @@ test("completed workflow hides accepted proposal and leaves final result in defa
       id: "artifact_completed_readme",
       runId: workflowRun.id,
       type: "file",
-      path: "/Users/tianxiao/ling-stack-test/README.md",
+      path: "/Users/example/ling-stack-test/README.md",
       title: "README.md",
       contentType: "text/markdown; charset=utf-8",
       sizeBytes: 0,
@@ -5558,7 +5558,7 @@ test("completed workflow hides accepted proposal and leaves final result in defa
   await expandOperationBubbleIfCollapsed(workCell);
   await expect(workCell).not.toContainText("Work complete");
   await expect(workCell).not.toContainText("Completed: Created the requested README file.");
-  await expect(workCell).not.toContainText("Create /Users/tianxiao/ling-stack-test/README.md");
+  await expect(workCell).not.toContainText("Create /Users/example/ling-stack-test/README.md");
   await expect(feed).not.toContainText("确认需求：");
   await expect(feed).not.toContainText("完成：");
   await expect(workCell).not.toContainText("Ling summary");
@@ -5580,7 +5580,7 @@ test("completed workflow hides accepted proposal and leaves final result in defa
   await expect(feed.locator(".conversation-work-cell")).toHaveCount(1);
 
   await openChannelChatTools(page);
-  await expect(feed.getByLabel("Task confirmation")).toContainText("Create /Users/tianxiao/ling-stack-test/README.md");
+  await expect(feed.getByLabel("Task confirmation")).toContainText("Create /Users/example/ling-stack-test/README.md");
 });
 
 test("terminal workflow step suppresses stale running run surfaces", async ({ page }) => {
@@ -5599,7 +5599,7 @@ test("terminal workflow step suppresses stale running run surfaces", async ({ pa
     taskSnapshot: {
       id: "task_stale_running_workflow",
       title: "Create README.md",
-      prompt: "Create /Users/tianxiao/ling-stack-test/README.md.",
+      prompt: "Create /Users/example/ling-stack-test/README.md.",
     },
     requestSnapshot: {
       cwd,
@@ -5608,7 +5608,7 @@ test("terminal workflow step suppresses stale running run surfaces", async ({ pa
       task: {
         id: "task_stale_running_workflow",
         title: "Create README.md",
-        prompt: "Create /Users/tianxiao/ling-stack-test/README.md.",
+        prompt: "Create /Users/example/ling-stack-test/README.md.",
         channelId: "channel_engineering",
       },
     },
@@ -5629,7 +5629,7 @@ test("terminal workflow step suppresses stale running run surfaces", async ({ pa
       intent: "discuss",
       authorType: "local-user",
       authorId: "tian",
-      body: "/Users/tianxiao/ling-stack-test 下面，帮我创建一个 README.md",
+      body: "/Users/example/ling-stack-test 下面，帮我创建一个 README.md",
       mentions: [],
       attachmentIds: [],
       linkPreviewIds: [],
@@ -5645,7 +5645,7 @@ test("terminal workflow step suppresses stale running run surfaces", async ({ pa
       channelId: "channel_engineering",
       sourceMessageId: "msg_stale_running_workflow",
       proposedByTeammateId: "docs",
-      title: "Create /Users/tianxiao/ling-stack-test/README.md",
+      title: "Create /Users/example/ling-stack-test/README.md",
       prompt: "Create the requested README file with the declared file tool scope.",
       assigneeTeammateId: "docs",
       acceptanceCriteria: ["Target file is created."],
@@ -5663,7 +5663,7 @@ test("terminal workflow step suppresses stale running run surfaces", async ({ pa
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
       title: "Create README.md",
-      prompt: "Create /Users/tianxiao/ling-stack-test/README.md.",
+      prompt: "Create /Users/example/ling-stack-test/README.md.",
       status: "done",
       currentRunId: staleRun.id,
       createdAt: "2026-05-25T00:40:00.000Z",
@@ -5676,7 +5676,7 @@ test("terminal workflow step suppresses stale running run surfaces", async ({ pa
       id: "workflow_stale_terminal",
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
-      title: "Create /Users/tianxiao/ling-stack-test/README.md",
+      title: "Create /Users/example/ling-stack-test/README.md",
       objective: "Create the requested README file with the declared file tool scope.",
       status: "succeeded",
       createdBy: "local-user",
@@ -5693,7 +5693,7 @@ test("terminal workflow step suppresses stale running run surfaces", async ({ pa
       taskId: "task_stale_running_workflow",
       position: 1,
       title: "Docs: Create README.md",
-      prompt: "Create /Users/tianxiao/ling-stack-test/README.md.",
+      prompt: "Create /Users/example/ling-stack-test/README.md.",
       toParticipantId: "docs",
       toParticipantLabel: "Docs",
       status: "succeeded",
@@ -6531,7 +6531,7 @@ test("blocked workflow hides accepted proposal and leaves blocker report in defa
       intent: "discuss",
       authorType: "local-user",
       authorId: "tian",
-      body: "/Users/tianxiao/ling-stack-test 下面，帮我创建一个 README.md",
+      body: "/Users/example/ling-stack-test 下面，帮我创建一个 README.md",
       mentions: [],
       attachmentIds: [],
       linkPreviewIds: [],
@@ -6582,7 +6582,7 @@ test("blocked workflow hides accepted proposal and leaves blocker report in defa
       workflowId: "workflow_blocked",
       position: 1,
       title: "Ling Agent: Create README.md",
-      prompt: "Create /Users/tianxiao/ling-stack-test/README.md.",
+      prompt: "Create /Users/example/ling-stack-test/README.md.",
       toParticipantId: "ling_agent",
       toParticipantLabel: "Ling Agent",
       status: "blocked",
@@ -6876,7 +6876,7 @@ test("progress popover owns workflow status while the right drawer avoids duplic
       workflowId: "workflow_blocked_ui",
       position: 1,
       title: "Ling Agent: Create README.md",
-      prompt: "Create /Users/tianxiao/ling-stack-test/README.md.",
+      prompt: "Create /Users/example/ling-stack-test/README.md.",
       toParticipantId: "ling_agent",
       toParticipantLabel: "Ling Agent",
       status: "blocked",

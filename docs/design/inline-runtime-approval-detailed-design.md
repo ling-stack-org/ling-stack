@@ -29,11 +29,10 @@ point for active local work.
 ## Related Docs
 
 - [Work Board, Review Queue, and Inline Approval Boundaries](work-board-review-queue.md)
-- [Work Board, Review Queue, and Inline Approval Implementation Plan](work-board-review-queue-implementation-plan.md)
 - [Approval Policy](approval-policy.md)
-- [Codex-Inspired Runtime Tools P2A: Permission Requests Implementation](codex-inspired-runtime-tools-p2a-permission-requests-implementation.md)
+- [Codex-Inspired Runtime Tools P2A: Permission Requests Implementation](./codex-inspired-runtime-tools.md)
 - [Codex-Inspired Settings And Permission Presets](codex-inspired-settings-permission-presets.md)
-- [Channel Workspace v1.25 Codex-Inspired Progress Popover](channel-workspace-v1.25.md)
+- [Conversation Surface Contract](./conversation-surface-contract.md)
 - [Codex-Like Execution Experience](codex-like-execution.md)
 
 ## Current Implementation Anchors
@@ -47,7 +46,7 @@ point for active local work.
 | Web approval card | `apps/web/src/features/approvals/ApprovalCard.tsx` | reusable payload summaries and approve/deny behavior |
 | Web approvals page | `apps/web/src/features/approvals/ApprovalsPage.tsx` | fallback and audit list, not primary active-run UX |
 | Channel workspace | `apps/web/src/features/workspace/ChannelTaskWorkspace.tsx` | active task/run context where inline approval should appear |
-| Attention popover | `docs/design/channel-workspace-v1.25.md` | compact channel-scoped attention entry point |
+| Attention popover | `docs/design/conversation-surface-contract.md` | compact channel-scoped attention entry point |
 
 ## Goals
 

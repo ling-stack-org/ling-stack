@@ -8,7 +8,6 @@ user message editing, teammate-private execution, transcript supersession, and t
 Related docs:
 
 - [Conversation Shared Capabilities](conversation-shared-capabilities.md)
-- [Conversation Shared Capabilities Implementation Plan](conversation-shared-capabilities-implementation-plan.md)
 - [Conversation Surface Contract](conversation-surface-contract.md)
 - [Conversation Composer Unification](conversation-composer-unification.md)
 - [AI Teammate Private Workspace](ai-teammate-private-workspace.md)

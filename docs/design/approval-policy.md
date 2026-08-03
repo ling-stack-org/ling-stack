@@ -2,7 +2,9 @@
 
 ## Status
 
-Partially implemented for Milestone 5: Pi Controlled Tool Wrapper.
+Status: active enforcement contract; core local-tool approval is implemented
+Owner: Approval policy and runtime enforcement
+Last verified: 2026-08-03
 
 Current implementation includes workspace-level configurable policy storage, `GET/PATCH /approval-policy`, Web Settings controls, CLI policy commands, tool decisions (`allow`, `ask`, `deny`), write path scopes, and Pi pre-tool interception for `bash`, `edit`, and `write`.
 
@@ -54,7 +56,7 @@ Implemented today:
 - Approved requests resume the Pi tool call; denied requests return a blocked tool result before the side effect.
 - CLI can inspect, update, and reset workspace approval policy.
 
-Not implemented yet:
+Remaining integration boundaries:
 
 - Approval expiry/cancellation UI.
 - External sends, deploys, and credential changes.

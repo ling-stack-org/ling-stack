@@ -8,6 +8,9 @@
   "packageManager": "pnpm@10.0.0",
   "scripts": {
     "build": "corepack pnpm -r build",
+    "check:docs": "node scripts/check-markdown-links.mjs",
+    "check:licenses": "node scripts/check-license-policy.mjs",
+    "check:public": "node scripts/check-public-repo-safety.mjs",
     "typecheck": "corepack pnpm -r typecheck",
     "ling": "node packages/cli/dist/index.js",
     "local:restart": "node packages/cli/dist/index.js restart",

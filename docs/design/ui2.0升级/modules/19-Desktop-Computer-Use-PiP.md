@@ -9,8 +9,8 @@ Related docs:
 
 - [Desktop Computer Use Picture-in-Picture](../../desktop-computer-use-picture-in-picture.md)
 - [Desktop Computer Use Picture-in-Picture Detailed Design](../../desktop-computer-use-picture-in-picture-detailed-design.md)
-- [Compact Desktop Window 与 Capability Control](../components/14-Compact-Desktop-Window与Capability-Control.md)
-- [Desktop 多窗口渲染器与主题同步](../architecture/09-Desktop多窗口渲染器与主题同步.md)
+- [Compact Desktop Window 与 Capability Control](../components/06-Desktop紧凑窗口.md)
+- [Desktop 多窗口渲染器与主题同步](../architecture/07-主题注册表与运行时切换.md)
 
 ## Function IDs
 
@@ -52,9 +52,8 @@ Migration status and remaining debt：
 - PiP renderer、media/state/theme controllers and focused CSS migration are implemented；
 - current-session control and PiP consume shared Button、IconButton、Menu、Spinner and status primitives；
 - revisioned Theme Pack snapshot replaces PiP `prefers-color-scheme` ownership；
-- macOS arm64 已基线化 14 个场景、28 张 Light/Dark 截图，覆盖 11 个权威状态、3 种 live
-  尺寸和 reduced motion；
-- Windows DPI/high-contrast、真实 AT 和 reduced-transparency 视觉证据仍开放。
+- macOS renderer 已实现 11 个权威状态和三种 live 尺寸；Windows DPI/high-contrast、真实 AT、
+  reduced-transparency 和签名包视觉证据仍开放。
 
 ## Product Boundary
 
@@ -266,60 +265,24 @@ apps/desktop/renderer/computer-use-preview/
 - no production source file in this renderer exceeds `500` lines；the old `815`-line imperative
   `main.ts` has been removed and must not be reintroduced。
 
-## Tests And Evidence
+## Tests And Accessibility
 
-- retain existing coordinator、media lifecycle and provenance tests unchanged。
-- renderer E2E covers all 11 states，all actions，menu keyboard，focus return，locale switch and theme switch。
-- screenshot baseline：min/default/max，live hover，approval，permission，connecting，reconnecting，
-  failed，stop failed，reduced motion，forced colors。
-- clients：macOS arm64/x64 and Windows x64 at 100/125/150/200% DPI。
-- assert all button hit areas `>=32px` and no overlay/content collision at minimum size。
-- theme switch keeps video stream and window bounds；no media reacquisition caused by visual change。
+- coordinator、media lifecycle、provenance 和 renderer tests 覆盖 11 个权威状态、全部行动、菜单键盘、
+  焦点恢复、locale 和 theme switch。
+- visual acceptance 覆盖 min/default/max、live hover、approval、permission、connecting/reconnecting、
+  failed/stop-failed、reduced motion 和 forced colors。
+- macOS arm64/x64 与 Windows x64 在目标 DPI 分开记账；一个平台的自动测试不等于另一个平台的实机证据。
+- 所有按钮命中区域 `>=32px`；主题切换保持视频流和窗口 bounds，不重新获取 media。
 
-Screenshot baseline 与行为测试分开记账：renderer/coordinator tests 覆盖状态不代表已有视觉证据。
-当前 macOS arm64 自动截图 harness 已为以下 11 个权威状态分别生成 Light/Dark fixture；加上
-minimum/default/maximum 三种 live 尺寸与 reduced-motion，共 14 scenario、28 张基线：
-
-```text
-live
-connecting
-reconnecting
-paused
-approval-required
-permission-required
-stopping
-completed
-stopped
-failed
-stop-failed
-```
-
-`DESKTOP-CUA-PIP-STATUS-001` 因此可标记 macOS visual implemented；只有 Windows DPI、high
-contrast、真实 AT、reduced transparency 和目标签名候选也补齐后，才能标记跨平台 `verified`。
-
-## DP.1 PiP Accessibility Semantics Slice
-
-Status：`automated implementation complete / real AT and Windows evidence pending`（2026-07-26）。
-
-本切片只关闭当前 React renderer 的语义缺口：
+Accessibility contract：
 
 - window shell accessible name 必须同时包含 target 与当前产品化 status label；中英文使用同一 typed key；
 - `.preview-controls` 必须是命名 `role=toolbar`，DOM/Tab 顺序固定为 Open task、Hide、More；
 - Shift+Tab 反向，Menu 打开聚焦首项，Esc 返回 More；状态 live region 与视频 label 不重复公告；
-- 修改仅限 `ComputerUsePreviewApp.tsx`、`messages.ts` 和新 focused a11y renderer spec。
-
-本切片不修改 shared CSS、Spinner/reduced motion、forced colors、window geometry、coordinator、main、IPC、
-media lifecycle 或截图 baseline。完成后 `DESKTOP-CUA-PIP-A11Y-001` 仍不能 verified：真实 VoiceOver、
-Narrator/NVDA、Windows High Contrast 和 packaged host evidence 继续保持 open。
-
-验证：Desktop renderer existing spec、new a11y spec、desktop typecheck/build、message catalog parity、
-`git diff --check`。测试必须断言 exact toolbar role/name、target+status shell name、Tab/Shift+Tab、Menu Esc
-focus return以及 locale switch 后语义仍更新。
-
-Closeout：生产 renderer 已满足上述语义，本轮 focused spec 将 Open task / Hide / More 的完整 Tab 顺序、
-Menu Arrow 循环、Esc/选择后的 focus return、locale/lang/title 更新、单一 polite/atomic live region 和 truthful
-video/fallback 语义固定为自动化合同。A11Y `3/3`、renderer `23/23`、message catalog `2/2`、Desktop
-typecheck/build/diff 通过。Function ID 进入 `implemented`，不继承真实 AT 或 Windows 平台证据。
+- 自动测试必须断言 toolbar role/name、target+status shell name、Tab/Shift+Tab、Menu Esc focus return 和
+  locale switch 后语义更新。
+- 真实 VoiceOver、Narrator/NVDA、Windows High Contrast、reduced transparency 和签名包证据继续由发布
+  清单管理；测试次数和截图台账不写入本合同。
 
 ## Acceptance
 

@@ -2,8 +2,8 @@
 
 ## Related Docs
 
-- [Product UX System P5](product-ux-system-p5.md)
-- [Settings Visual Density Follow-up](settings-visual-density-followup.md)
+- [Ling UI 2.0 整体升级方案](./ui2.0升级/00-UI2.0整体升级方案.md)
+- [Settings Shell](./ui2.0升级/modules/settings/README.md)
 
 ## Summary
 

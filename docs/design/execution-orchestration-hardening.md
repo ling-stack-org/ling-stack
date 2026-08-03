@@ -22,7 +22,7 @@ more inspectable, and closer to a durable project-work experience.
 
 Implementation detail plan:
 
-- [Execution And Orchestration Hardening Implementation Plan](execution-orchestration-hardening-implementation-plan.md)
+- [Execution And Orchestration Hardening Implementation Plan](./state-machine-recovery.md)
 
 ## High-Level Design
 

@@ -2,6 +2,10 @@
 
 ## Status
 
+The earlier external-provider detection and guided-install flow is implemented and remains the
+`external_local` compatibility path. Packaged Desktop now uses the bundled Computer Control product surface below;
+the old guided-install plan no longer owns future work.
+
 ### Computer Control product surface (2026-07-30)
 
 This update supersedes the earlier decision that the canonical Cua Driver row is the

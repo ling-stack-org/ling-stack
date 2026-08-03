@@ -2,7 +2,14 @@
 
 ## Status
 
-Proposed product and daemon design for the Codex-inspired Automations surface.
+Status: implemented active product contract
+Owner: Automations domain
+Last verified: 2026-08-03
+
+Durable definitions, drafts, runs, templates, scheduler control, daemon routes, API client,
+Web management, manual execution and standard Run/Approval integration are implemented.
+Richer monitor sources, desktop notifications and external destinations remain bounded
+follow-ups.
 
 Related design docs:
 
@@ -12,9 +19,6 @@ Related design docs:
 - [External Work Orchestration](external-work-orchestration.md)
 - [Daemon Lifecycle and Doctor P0](daemon-lifecycle-p0.md)
 - [CLI Run I/O and Completion P1](cli-run-io-completion-p1.md)
-- [Automations Implementation Plan](automations-implementation-plan.md)
-- [Automations P1.5: Codex-Inspired Creation Experience](automations-p1.5-creation-experience.md)
-- [Automations P1.5 Implementation Slices](automations-p1.5-implementation-slices.md)
 
 ## Purpose
 
@@ -43,26 +47,22 @@ AutomationDefinition
   -> EvidenceBundle and artifacts
 ```
 
-## Problem
+## Problem Solved
 
-Ling can already run scoped tasks, workflows, external-work polling, approvals, and
-thread resume. Those are powerful primitives, but a user still has to start most work
-manually.
-
-The missing product capability is repeatability:
+Automations add repeatability to scoped tasks, workflows, approvals and thread history:
 
 - "Give me a daily brief for this project every morning."
 - "Review the week every Friday."
 - "Monitor this project and tell me when there is something actionable."
 - "Run this same teammate prompt whenever I ask, with the same policy and output shape."
 
-Without first-class automations, those flows become ad hoc scripts or hidden daemon
-timers. That is the wrong boundary. Timers should trigger durable Ling work; they should
-not become a second task system.
+Before this capability, those flows became ad hoc scripts or hidden daemon timers. The
+implemented boundary keeps timers as triggers for durable Ling work instead of creating a
+second task system.
 
 ## Current Baseline
 
-Implemented foundations that automations should reuse:
+Implemented foundations and product behavior:
 
 - `LingThread` groups runs and exposes long-lived evidence and resume paths.
 - `RunSession` and run events persist execution facts.
@@ -74,15 +74,14 @@ Implemented foundations that automations should reuse:
   registration, non-overlapping ticks, idempotency, and safe stop/list behavior.
 - Channel brief, channel decisions, context summaries, workflows, and external work
   records provide the local facts that daily and weekly reports can summarize.
+- `AutomationDefinition`, drafts and `AutomationRun` are persisted in the standard store.
+- daemon routes expose CRUD, preview, manual run and scheduler start/status/stop.
+- the Web Automations page manages definitions, drafts, runs, templates and execution
+  detail through the shared API client.
+- scheduled and manual fires reuse normal Ling threads, runs, approvals and artifacts.
 
-Gaps:
-
-- No generic `AutomationDefinition`.
-- No user-facing Automations page.
-- No generic scheduled trigger registry.
-- No durable automation run record that links scheduled/manual/monitor fires to Ling
-  threads and run sessions.
-- No reusable built-in templates for daily brief, weekly review, or project monitor.
+Remaining product work is limited to richer monitor sources, desktop notification policy,
+export/report destinations and approval-backed external action proposals.
 
 ## Goals
 
@@ -789,9 +788,9 @@ Do not borrow:
 - Hidden turn state as the automation history.
 - Any approval bypass just because a run is scheduled.
 
-## Implementation Plan
+## Delivery Status And Follow-Ups
 
-### P0: Durable model and manual automations
+### P0: Durable model and manual automations - implemented
 
 - Add core types and SQLite migrations.
 - Extend `LingThreadKind` with `automation`.
@@ -801,7 +800,7 @@ Do not borrow:
 - Add Web empty state and list/detail shell.
 - Add tests for CRUD, idempotent manual run, context preview, and approval inheritance.
 
-### P1: Local scheduler
+### P1: Local scheduler - implemented
 
 - Add `AutomationSchedulerRegistry`.
 - Add scheduler start/list/stop endpoints.
@@ -812,7 +811,7 @@ Do not borrow:
 - Add tests for duplicate registration, sleep/wake burst idempotency, stop behavior, and
   no hidden side effects.
 
-### P2: Project monitor
+### P2: Project monitor - partially implemented
 
 - Add monitor sources for doctor, runtime stuck work, pending approvals, and external work
   summaries.
@@ -821,7 +820,7 @@ Do not borrow:
 - Add local notification output.
 - Add Web monitor cards and no-op history.
 
-### P3: Rich outputs and desktop integration
+### P3: Rich outputs and desktop integration - deferred
 
 - Add desktop scheduler opt-in.
 - Add notification preferences.
@@ -829,9 +828,9 @@ Do not borrow:
 - Add external action proposal destinations.
 - Add workflow-template automations through the orchestrator.
 
-## Verification
+## Regression Contract
 
-Minimum tests for the first implementation:
+The maintained regression suite must continue to prove:
 
 - Creating a daily brief creates an automation definition and automation thread.
 - Manual run creates exactly one automation run for one idempotency key.
@@ -843,12 +842,3 @@ Minimum tests for the first implementation:
 - Cancelling the underlying Ling run marks the automation run cancelled.
 - Late runner completion does not overwrite cancelled automation run state.
 - `--json` CLI automation commands print JSON-only stdout.
-
-Manual smoke:
-
-```bash
-corepack pnpm typecheck
-corepack pnpm --filter @ling-stack/core test
-corepack pnpm --filter @ling-stack/daemon test
-corepack pnpm --filter @ling-stack/web test:e2e
-```

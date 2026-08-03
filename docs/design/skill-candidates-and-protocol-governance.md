@@ -9,7 +9,7 @@ Scope: Ling-native reusable workflow candidate generation, duplicate/conflict go
 channel protocol candidates, and skill health diagnostics.
 
 Detailed implementation breakdown:
-[Skill Candidates And Protocol Governance Implementation Plan](skill-candidates-and-protocol-governance-implementation-plan.md).
+Skill Candidates And Protocol Governance.
 
 ## Summary
 
@@ -50,9 +50,9 @@ memory system, automations, channel workspace, approval policy, or runner resour
 This design extends:
 
 - [AI Teammates and Skills](ai-teammates-and-skills.md)
-- [Ling Skill Import v1](ling-skill-import-v1.md)
+- [Skill Import Productization](./skill-import-productization.md)
 - [Memory Health And Multi-Agent Memory Fan-In](memory-health-and-fanin.md)
-- [Channel Workspace Design](channel-workspace.md)
+- [Conversation Surface Contract](./conversation-surface-contract.md)
 - [Automations](automations.md)
 - [Approval Policy](approval-policy.md)
 - [Runtime Supervisor](runtime-supervisor.md)

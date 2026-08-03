@@ -1,49 +1,147 @@
-# Contributing
+# Contributing to Ling Stack
 
-Ling Stack is currently private, so GitHub branch protection for `main` may be
-unavailable on the active GitHub plan. Until server-side protection can be enabled,
-the repository uses the process rules below.
+Thank you for helping improve Ling Stack. Contributions are welcome across product
+design, documentation, TypeScript packages, the Web UI, the Electron desktop shell,
+provider adapters, tests, and developer tooling.
 
-## Main Branch Policy
+Ling Stack is still an alpha. Correctness, explicit authority, local data safety, and
+honest product status matter more than adding surface area quickly.
 
-- Do not push feature, fix, or documentation work directly to `main`.
-- Create a topic branch for every change and open a pull request before landing it.
-- Merge into `main` only after the pull request has been reviewed and the relevant
-  local validation has passed.
-- Do not force-push `main`.
-- Do not delete `main`.
-- Keep unrelated dirty worktree changes out of commits.
-- Use emergency direct pushes only with explicit owner approval and document the
-  reason in the commit or follow-up issue.
+## Before You Start
 
-For local work in this repository, prefer branch names with the `codex/` prefix for
-Codex-generated changes.
+- Read the [README](README.md), [architecture](docs/architecture.md), and
+  [implementation status](docs/design/implementation-status.md).
+- Search existing issues and pull requests before opening duplicate work.
+- Open an issue before a large feature, public API change, storage migration, security
+  boundary change, or new external integration.
+- For substantial Ling product or architecture work, update the durable design contract
+  and implementation plan under `docs/design/` before coding.
+- Do not treat old phase numbers, deleted implementation diaries, or screenshots as the
+  current source of truth.
 
-## Pull Request Expectations
+Small fixes, tests, documentation corrections, and focused accessibility improvements do
+not need a new design document.
 
-Every pull request should state:
+## Development Setup
 
-- what changed;
-- what product, runtime, API, or documentation boundary is affected;
-- which validation commands were run;
-- any known limitations or deferred follow-ups.
+Requirements:
 
-Use the narrowest validation that proves the change. For larger implementation slices,
-run the relevant typecheck, tests, build, and targeted smoke checks before merging.
+- Node.js 22.15 or newer
+- Corepack with pnpm 10
 
-## Future GitHub Protection
+```bash
+git clone https://github.com/tianxiaochannel-oss88/ling-stack.git
+cd ling-stack
+corepack enable
+corepack pnpm install
+corepack pnpm build
+```
 
-When this repository becomes public, or when the GitHub plan supports protected
-branches for this private repository, enable protection on `main` with these minimum
-rules:
+Start the daemon and Web UI in separate terminals:
 
-- require a pull request before merging;
-- require at least one approval;
-- dismiss stale approvals after new commits;
-- require conversation resolution;
-- disable force pushes;
-- disable branch deletion;
-- include administrators in the rule.
+```bash
+corepack pnpm ling daemon start --foreground
+corepack pnpm ling ui --foreground --open
+```
 
-Do not enable required status checks until the repository has stable GitHub Actions
-workflow check names. Revisit this rule after CI is added.
+See [Quick Start From Source](README.md#quick-start-from-source) for ports, health
+checks, desktop development, and local data paths.
+
+## Branches And Pull Requests
+
+- Create a topic branch from the latest `main`.
+- Use a descriptive branch name such as `feat/provider-health` or
+  `fix/channel-scroll`.
+- Do not force-push or commit directly to `main`.
+- Keep unrelated changes out of the same pull request.
+- Use short, imperative commit subjects. Conventional prefixes such as `feat:`, `fix:`,
+  `docs:`, and `test:` are welcome but not required.
+- Rebase or merge the latest `main` before requesting final review when the branch has
+  drifted materially.
+
+Every pull request must explain:
+
+- the problem and user-visible outcome;
+- the modules and boundaries changed;
+- validation commands and manual checks performed;
+- security, permission, storage, migration, and compatibility impact;
+- known limitations or deliberately deferred work;
+- screenshots for visible UI changes.
+
+Draft pull requests are welcome for early alignment. A pull request is ready for review
+only when its description is complete and its claimed validation has actually run.
+
+## Engineering Guidelines
+
+- Follow existing module boundaries and local patterns before introducing abstractions.
+- Keep UI, state, domain logic, API/client code, types, and tests in focused modules.
+- Avoid adding major behavior to production files over 800 lines; extract focused
+  components, hooks, services, helpers, or types first.
+- Do not bypass daemon contracts from Web or Desktop code to call providers, tools, or
+  persistence directly.
+- Use structured parsers and typed contracts for structured data.
+- Keep user-facing copy outcome-oriented; raw IDs, hashes, routes, and provider payloads
+  belong in technical details or logs.
+- Preserve Chinese and English product coverage together.
+- Do not weaken, skip, or delete tests merely to make a contribution pass.
+
+## Validation
+
+For documentation-only changes:
+
+```bash
+corepack pnpm check:docs
+corepack pnpm check:licenses
+corepack pnpm check:public
+git diff --check
+```
+
+For code changes, run the narrowest focused tests first, then the relevant repository
+checks:
+
+```bash
+corepack pnpm typecheck
+corepack pnpm test
+corepack pnpm build
+```
+
+Web changes should also run:
+
+```bash
+corepack pnpm --filter @ling-stack/web lint
+corepack pnpm --filter @ling-stack/web check:i18n
+```
+
+Visible Web or Desktop changes require real interaction checks at supported desktop
+viewports. Include screenshots when they help reviewers verify layout, dark mode,
+loading, empty, error, focus, and overflow states.
+
+Platform-specific Desktop, Computer Use, signing, packaging, and native-provider gates
+must run on their documented target environment. A generic build or Linux CI pass does
+not replace macOS, Windows, signing, accessibility, or clean-machine evidence.
+
+## Security And Local Data
+
+- Never commit API keys, tokens, credentials, `.env` files, local SQLite databases,
+  session logs, generated artifacts, or `WORKFLOW.md` with machine-specific references.
+- Keep the daemon bound to loopback unless a separately reviewed authenticated remote
+  boundary is in scope.
+- Do not broaden permissions, approval bypasses, external mutations, filesystem scope,
+  or secret handling as an incidental part of another change.
+- Use [SECURITY.md](SECURITY.md) for vulnerability reports. Do not disclose sensitive
+  findings in public issues or pull requests.
+
+## AI-Assisted Contributions
+
+AI-assisted contributions are welcome. The human contributor remains responsible for
+understanding the change, reviewing generated code, protecting private data, running the
+claimed validation, and responding to review. Do not submit unreviewed model output or
+private conversation transcripts.
+
+## Community
+
+Participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md). Usage and setup
+questions follow [SUPPORT.md](SUPPORT.md).
+
+By contributing, you agree that your contribution is licensed under the repository's
+[MIT License](LICENSE).

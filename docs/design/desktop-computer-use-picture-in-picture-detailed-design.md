@@ -100,65 +100,10 @@ be bypassed by sibling structured output; and startup failure cleans Desktop-own
 before process exit. The feature must continue to consume structured projections rather
 than infer state from transcript copy.
 
-Local engineering evidence recorded across 2026-07-16 and 2026-07-17:
-
-- Final pre-commit verification on the current worktree passes Desktop Node **291/291**, PiP
-  renderer **20/20**, Web E2E **35/35**, contracts **5/5**, API client **48/48**, full daemon
-  **629/629**, macOS release-focused **28/28**, Windows acceptance/provider/release focused
-  **57/57**, and all **11/11** strict Draft 2020-12 release-evidence schemas. The Desktop
-  production build, Web production build/typecheck/lint/i18n checks, workspace typecheck/lint,
-  and actionlint also pass.
-- The display-media grant binds the exact loaded main document's frame token, frame-tree
-  node, renderer process id, routing id, webContents, dedicated Session, URL/origin,
-  authorization expiry, descriptor identity, and prepare generation. Wrong URL or Session,
-  a same-partition foreign renderer, audio, a subframe, main-document navigation/reload,
-  requester destruction, release interruption, expiry, and replay are denied. The authorized
-  document consumes the grant once; release invalidates it, and disposal also removes the
-  Session handler.
-- 25,000 layout decisions average about **6.37 microseconds**. The fake ownership/crash lane
-  records **415.27 ms p95**. The full real performance lane records first decoded frame at
-  **168.09 ms p50 / 177.84 ms p95**, Hide plus renderer media release at **2.16 ms p50 /
-  3.65 ms p95**, a 30-second active-versus-hidden CPU delta of **0.21%**, and active
-  working-set overhead of **11,763,712 B**. Activation churn is **6.04% CPU** with a
-  **17,661,952 B** working-set delta. Twelve capture activations perform
-  exactly **12** descriptor-matching source enumerations, reuse **1** renderer document, make
-  **0** post-acquisition `applyConstraints()` calls, and leave **0** process/window/renderer/
-  listener/IPC/timer/subscription/source residue.
-- The baseline screenshot matrix passes **10/10** macOS arm64 baselines across light, dark, and an
-  explicitly emulated `prefers-reduced-motion: reduce` media query. This is visual evidence
-  for the PiP renderer only; Windows visual/DPI acceptance remains a VM gate.
-- The renderer release protocol binds a 500 ms request to the exact webContents, session,
-  and revision. It waits for pending `getDisplayMedia()` acquisition, stops late streams,
-  acknowledges only after all observed tracks are ended, and force-destroys the exact
-  BrowserWindow on timeout, negative acknowledgement, or send failure without sending Stop.
-  Dev fake and real capture smokes preserve the same renderer across Hide -> Show, proving
-  the normal path completed through acknowledgement rather than forced teardown. The real
-  lane additionally verifies a live renderer MediaStream track before Hide, zero live tracks
-  after the release acknowledgement, and a newly live track after Show.
-- Fresh arm64 `.app` and mounted-DMG fake, real-window, and primary-display lifecycle
-  plus packaged provenance smokes pass. The provenance matrix rejects wrong URL, wrong
-  partition, a foreign renderer, audio, a subframe or CSP-blocked request, main-document
-  reload/navigation, release interruption, expired grants, and replay while allowing one
-  authorized use. Both
-  DMGs pass `hdiutil verify` and both ZIPs pass `unzip -t`. Real window and primary-display
-  lanes retain the PiP across app blur/main-window minimize and recover a forced renderer
-  crash with a live replacement track. The candidates remain unsigned or ad-hoc, have no
-  Team ID, and are rejected by Gatekeeper, so they are engineering evidence only.
-- The current-host Cua handoff smoke parses Cua Driver's numeric `window_id`, verifies its
-  exact equality with the Electron source id used only as the test oracle, and passes only
-  the Cua-derived native window id and provider-reported owner PID into the Ling descriptor.
-  It never selects by title, foreground window, z-order, or candidate proximity. The arm64
-  and x64 packaged real-window application lanes pass this handoff.
-- A historical unsigned Windows x64 cross-package produces an unsigned PE32+ application and NSIS
-  installer with the plugin shell and checksum present. Because neither artifact has run
-  on Windows, installation, Authenticode, SmartScreen, and real provider behavior remain
-  external release gates.
-
-These final pre-commit counts are current local engineering evidence for the worktree. Fixed
-artifact fingerprints explicitly labeled `baseline @ e20777f5` remain commit-bound historical
-references rather than current candidate hashes. Signed clean-host, interactive Windows VM,
-hosted signed CI, clean-machine lifecycle, detached-signature, and real candidate-daemon
-provenance gates remain separate external evidence.
+Local run counts, performance samples, screenshots and artifact fingerprints are kept in
+CI or Release artifacts. They are not part of this detailed design and cannot substitute
+for signed clean-host macOS, interactive Windows, accessibility, installer lifecycle or
+candidate-provenance gates.
 
 ## Target Module Structure
 

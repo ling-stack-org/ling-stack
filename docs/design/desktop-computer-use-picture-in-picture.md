@@ -512,36 +512,10 @@ First-version targets on a supported laptop:
 - position update during resize or dock changes: one update per animation frame at most;
 - no main-conversation scroll or typing jank while the preview is active.
 
-The 2026-07-18 current-host Electron measurements meet the local budgets. Final V2 verification
-on the current worktree passes Desktop Node **337/338** with one environment-only unsigned-
-candidate skip, PiP renderer **25/25**, focused shared-Web Desktop bridge E2E **19/19**, Desktop
-and Web typechecks, Web lint/i18n, fake and real smoke, `git diff --check`, and all **16** macOS
-arm64 Computer Use screenshot baselines. The implementation plan retains the broader V1 release-
-harness counts and evidence boundaries.
-
-This is current local engineering evidence against the final pre-commit diff. The fixed artifact
-fingerprints labeled `baseline @ e20777f5` remain historical references rather than current
-candidate hashes. None of this closes Developer ID/TCC/capture-indicator/VoiceOver or Windows
-VM/provider/DPI/SmartScreen/Narrator/NVDA, hosted signed CI, clean-machine lifecycle, detached
-signature, or real candidate-daemon provenance gates.
-
-| Measure | Verified result |
-| --- | --- |
-| First decoded frame | **153.73 ms p50**, **164.31 ms p95** |
-| Hide and renderer media release | **1.39 ms p50**, **6.76 ms p95** |
-| V2 fake-source page switch | **11.32 ms p95**, `maxActiveAdapterSources = 1` |
-| 30-second active capture versus hidden idle | **0.23% incremental CPU**, **9,863,168 B** working-set overhead |
-| Repeated activation churn | **4.9% CPU**, **18,857,984 B** working-set growth |
-| Capture lifecycle invariants | **10/10 active samples = 1 live track**, every hidden sample = **0**, **12 activations = 12 source enumerations**, **1 renderer document**, **0 `applyConstraints()` calls**, **0 final process/window/renderer/track/listener/IPC/timer/subscription/source residue** |
-
-The final full daemon suite passes **629/629** on the current worktree, so the earlier isolated
-`channel auto_route` scheduling fluctuation is not an open local pre-commit verification gap.
-
-These are current-host engineering results, not substitutes for Developer ID,
-notarization, Gatekeeper, clean-host TCC/capture-indicator, Windows interactive
-provider/DPI/dual-display, Authenticode/SmartScreen/signed NSIS, hosted signed CI execution, clean-machine
-install/update/uninstall, VoiceOver/Narrator/NVDA, external detached signatures, or real
-candidate-daemon provenance evidence.
+Current-host measurements are engineering evidence only. Run values, screenshots, suite
+counts and artifact fingerprints are stored in CI or Release artifacts rather than this
+product contract. They cannot close Developer ID, notarization, clean-host permission,
+Windows, accessibility, signed installer or candidate-provenance gates.
 
 Native adapters may improve these targets later without changing the shared contracts.
 

@@ -29,6 +29,16 @@ Codex app-server is a reference architecture and a possible future runner backen
 the current source of truth. Existing documents already reserve `codex-app-server` as a
 disabled future runner adapter behind conformance and feature flags.
 
+The old short/mid/long implementation files are consolidated here. Current status:
+
+- operator lifecycle, restart/doctor foundations and several skill/template refresh paths already exist but require
+  code-level status verification before being called a closed phase;
+- daemon-owned state, snapshots and bounded events are the active medium-term direction;
+- app-server-like processors, registry broker and alternate transports are long-term entry-criteria work only;
+- no phase authorizes replacing HTTP/SSE, Pi, approval policy or the durable run/audit stores by default.
+
+New runtime-control work updates this roadmap and the detailed design instead of creating another phase plan.
+
 ## What To Borrow From Codex
 
 Borrow the internal separation where Ling has the same pressure:
@@ -53,9 +63,8 @@ Do not borrow by default:
 
 ### Phase 0: Keep The HTTP Daemon, Harden The Operator Loop
 
-This phase is already represented by the CLI and daemon lifecycle designs.
-The short-term implementation details live in
-[Runtime Control Plane Short-Term Implementation Plan](runtime-control-plane-short-term-implementation-plan.md).
+This phase is represented by the CLI and daemon lifecycle designs. New operator-loop work
+is tracked directly in this roadmap.
 
 - Keep the existing daemon HTTP/SSE API.
 - Add robust daemon `start`, `status`, `stop`, `restart`, and `logs` behavior.
@@ -68,7 +77,7 @@ The short-term implementation details live in
 
 Make the daemon boundary explicit before adding heavier transport.
 The mid-term implementation details live in
-[Runtime Control Plane Mid-Term Implementation Plan](runtime-control-plane-mid-term-implementation-plan.md).
+[Runtime Control Plane Mid-Term Implementation Plan](./runtime-control-plane-detailed-design.md).
 
 - Treat the daemon as the only owner of active runs, work units, leases, approvals, and
   memory review state.
@@ -115,8 +124,7 @@ Add long-lived runtime work without turning it into hidden prompt mutation.
 Only after the control-plane contracts are stable, implement Codex app-server as an
 optional runner backend.
 The adapter design lives in [Runner Adapters](runner-adapters.md), and the broader
-long-term control-plane layering lives in
-[Runtime Control Plane Long-Term Implementation Plan](runtime-control-plane-long-term-implementation-plan.md).
+long-term control-plane layering remains in this roadmap and the detailed design.
 
 - Keep it behind `runners.codexAppServer.enabled`.
 - Require health probes, capability negotiation, conformance tests, approval bridge,
@@ -130,8 +138,6 @@ long-term control-plane layering lives in
 
 If Web, CLI, desktop, external workers, and background jobs create real pressure on the
 HTTP/SSE API, introduce app-server-like transport concepts incrementally.
-The long-term implementation details live in
-[Runtime Control Plane Long-Term Implementation Plan](runtime-control-plane-long-term-implementation-plan.md).
 
 - Add initialize gates and client capability negotiation.
 - Add request queues and backpressure for slow clients.

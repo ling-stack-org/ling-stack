@@ -5,13 +5,12 @@ Date: 2026-06-10
 
 Related docs:
 
-- [Channel Workspace Design](channel-workspace.md)
+- [Conversation Surface Contract](./conversation-surface-contract.md)
 - [Ling Agent Session Control Plane](ling-agent-session.md)
 - [Channel Auto Reply Router](channel-auto-reply-router.md)
-- [Multi-Agent Collaboration Cards And Ambient Audit](multi-agent-collaboration-cards-and-ambient-audit.md)
+- [Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md)
 - [Multi-Agent Orchestration Experience](multi-agent-orchestration-experience.md)
-- [Multi-Agent Orchestration P4-P7 Detailed Design](multi-agent-orchestration-p4-p7-detailed-design.md)
-- [Multi-Agent Orchestrator](multi-agent-orchestrator.md)
+- [Multi-Agent Orchestrator](./multi-agent-orchestrator.md)
 - [Channel Context Budget Manager](channel-context-budget-manager.md)
 
 ## Purpose
@@ -404,7 +403,7 @@ is pending, Web may show the existing local-only pending row such as `Thinking..
 | `大家都说下这个设计的风险` | `visible_multi_reply` | Multiple role opinions change the user's decision, but no execution has started. |
 | `@Ling Agent 在工作区创建 login.html` | `direct_workflow` | Mention does not force ordinary reply; the clear file target and create action win. |
 | after Ling says `login.html`, user says `可以直接在工作区帮我做好吗？` | `direct_workflow` or `clarify` | Resolve the one recent file target. If multiple targets are plausible, ask one question. |
-| `在 /Users/tianxiao/ling-stack-test 下创建 README.md` | `direct_workflow` or blocked proposal | If target and action are clear, prefill one file-write workflow. A read-only channel may still start it with task-scoped `write`; block only when the assignee, provider, runner, or workspace policy cannot support it. |
+| `在 /Users/example/ling-stack-test 下创建 README.md` | `direct_workflow` or blocked proposal | If target and action are clear, prefill one file-write workflow. A read-only channel may still start it with task-scoped `write`; block only when the assignee, provider, runner, or workspace policy cannot support it. |
 | `把这个 README 写进去，内容是 ...` | `direct_workflow` | Concrete file-write request; do not answer with a shell snippet as ordinary `ai_reply`. |
 | `帮我跑测试看一下` | `direct_workflow` or `clarify` | If the target test command or project context is known, prefill an approved command workflow; otherwise ask for the target. |
 | `所有队友协作实现这个功能` | `workflow_proposal` | The user asks for coordinated work, not just visible opinions. |
