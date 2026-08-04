@@ -3,7 +3,6 @@ import {
   ListChecks,
   MessageSquare,
   PanelRight,
-  RefreshCw,
   Search,
   Settings,
   SquareTerminal,
@@ -43,7 +42,6 @@ export interface ThemeStudioPreviewCopy {
     readonly workspace: string;
     readonly ready: string;
     readonly search: string;
-    readonly refresh: string;
     readonly summary: string;
     readonly terminal: string;
     readonly details: string;
@@ -238,7 +236,6 @@ function ConversationPreview({ copy }: { readonly copy: ThemeStudioPreviewCopy }
         </span>
         <div className="ling-ui-theme-studio-preview-toolbar">
           <IconButton icon={Search} label={copy.shared.search} tooltip="" />
-          <IconButton icon={RefreshCw} label={copy.shared.refresh} tooltip="" />
           <IconButton icon={ListChecks} label={copy.shared.summary} tooltip="" />
           <IconButton icon={SquareTerminal} label={copy.shared.terminal} tooltip="" />
           <IconButton icon={PanelRight} label={copy.shared.details} pressed tooltip="" />

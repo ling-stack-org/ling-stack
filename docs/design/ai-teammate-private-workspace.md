@@ -81,7 +81,7 @@ Approved correction, 2026-07-12:
 The broader platform direction lives in [Ling Framework](ling-framework.md). The target
 memory design for private, channel, shared, and task/run recall lives in
 [Ling Memory v1](ling-memory-v1.md). The target skill import, persona draft, Effective
-Skill, and skill-aware run model lives in [Ling Skill Import v1](ling-skill-import-v1.md).
+Skill, and skill-aware run model lives in [Skill Import Productization](./skill-import-productization.md).
 The council grouping model for built-in and custom teammate rosters lives in
 [AI Councils](ai-councils.md). The first daemon/core slice is implemented for the
 built-in Development Council, channel reference attachments, effective channel specialist
@@ -90,8 +90,8 @@ The routing model for teammate-private and channel-scoped governance notificatio
 in [Channel And Agent Governance Notifications](channel-and-agent-governance-notifications.md).
 The shared Codex-style conversation, evidence folding, right drawer, and component
 extraction direction lives in
-[Codex-Inspired Conversation Experience v1](codex-inspired-conversation-v1.md) and
-[Codex-Inspired Conversation Components v1](codex-inspired-conversation-components-v1.md).
+[Conversation Surface Contract](./conversation-surface-contract.md) and
+[Conversation Surface Contract](./conversation-surface-contract.md).
 The approved shared UI, rich content, latest-message editing, and private execution
 correction lives in [Conversation Shared Capabilities](conversation-shared-capabilities.md)
 and [Conversation Shared Capabilities Detailed Design](conversation-shared-capabilities-detailed-design.md).
@@ -1002,7 +1002,7 @@ Docs:
 
 - [x] update `docs/daemon-api.md`,
 - [x] update `docs/design/ai-teammates-and-skills.md`,
-- [x] update `docs/design/web-ui-v0.1.md`,
+- [x] update `docs/design/ui2.0升级/00-UI2.0整体升级方案.md`,
 - [x] update `README.md` current status.
 
 ### Slice 6: Private Data Lifecycle
@@ -1109,4 +1109,4 @@ The private workspace now includes:
 
 Calendar, custom skill-pack import, optional vector retrieval provider installation, and
 multi-party direct messages remain deferred. The skill-focused slice is specified in
-[Ling Skill Import v1](ling-skill-import-v1.md).
+[Skill Import Productization](./skill-import-productization.md).

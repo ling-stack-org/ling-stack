@@ -39,7 +39,7 @@ export function deriveMediaJobRepairView(input: {
   const rawDetails = redactSensitiveText(job.errorMessage?.trim() || "No raw generation error was returned.");
   if (result.state === "ready" && job.status === "succeeded") return undefined;
   if (approval.kind === "pending") return repair("warning", "Waiting for review", "Approve or reject this generation request in the review queue.", "open_approval", "Open review queue", rawDetails);
-  if (approval.kind === "missing") return repair("warning", "Review request is unavailable", "Refresh generation tasks and approvals before trying again.", "refresh", "Refresh", rawDetails);
+  if (approval.kind === "missing") return repair("warning", "Review request is unavailable", "Check generation task and approval status before trying again.", "refresh", "Check status", rawDetails);
   if (source.kind === "provider_missing") return repair("danger", "Model route is unavailable", "Configure a generation model before retrying this task.", "repair_provider", "Configure generation model", rawDetails);
   if (source.kind === "provider" && !source.runtime.canRun) return providerRepair(source.runtime.reason, rawDetails);
   if (source.kind === "workflow_missing") return repair("danger", "Workflow is unavailable", "Open the workflow library to choose or restore a workflow.", "repair_workflow", "Open workflow", rawDetails);

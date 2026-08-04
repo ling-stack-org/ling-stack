@@ -374,7 +374,7 @@ test("recent conversations only show records created from the conversation home"
   await expect(conversationToolbar).toHaveClass(/workspace-top-right-toolbar/);
   await expect(conversationToolbar.locator(".workspace-toolbar-action-label")).toHaveCount(0);
   await expect(conversationToolbar.getByRole("button", { name: "Search" })).toHaveClass(/workspace-toolbar-icon-button/);
-  await expect(conversationToolbar.getByRole("button", { name: "Refresh" })).toHaveClass(/workspace-toolbar-icon-button/);
+  await expect(conversationToolbar.getByRole("button", { name: "Refresh" })).toHaveCount(0);
   await expect(conversationToolbar.getByRole("button", { name: "Summary" })).toHaveClass(/workspace-toolbar-icon-button/);
   await expect(conversationToolbar.getByRole("button", { name: "Terminal" })).toHaveClass(/workspace-toolbar-icon-button/);
   await expect(conversationToolbar.getByRole("button", { name: /^Review/ })).toHaveCount(0);

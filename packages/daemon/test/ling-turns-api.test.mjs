@@ -605,7 +605,7 @@ test("daemon structured thread search uses durable fields and archived filters",
     assert.ok(thread);
     store.updateLingThread(thread.id, {
       title: "Structured alpha branch",
-      objective: "Keep sk-searchsecret123456789 for secret audit matching.",
+      objective: "Keep sk-test-searchsecret123456789 for secret audit matching.",
     }, "2026-06-08T01:00:00.000Z");
     const turn = store.createLingTurn(
       {
@@ -652,7 +652,7 @@ test("daemon structured thread search uses durable fields and archived filters",
     const secretSearch = await getJson(`${daemon.url}/threads?cwd=${encodeURIComponent(cwd)}&q=${encodeURIComponent("secret audit")}&limit=10`);
     const secretMatch = secretSearch.matches.find((match) => match.threadId === thread.id && match.field === "thread_objective");
     assert.ok(secretMatch);
-    assert.equal(secretMatch.snippet.includes("sk-searchsecret123456789"), false);
+    assert.equal(secretMatch.snippet.includes("sk-test-searchsecret123456789"), false);
     assert.equal(secretMatch.snippet.includes("[REDACTED]"), true);
 
     const tooShort = await getJsonAllowError(`${daemon.url}/threads?cwd=${encodeURIComponent(cwd)}&q=a`);

@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mkdir, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { mockDaemon, toPublicMockMcpServer } from "./support/mock-daemon";
+import { triggerFocusRevalidation } from "./support/focus-revalidation";
 import {
   createBaseState,
   createMockMcpServer,
@@ -79,7 +80,7 @@ test("MCP list keeps loading and refresh failure scoped while preserving authori
   const panel = await openMcpSettings(page);
 
   await expect(panel.getByLabel("Loading MCP servers")).toBeVisible();
-  await expect(panel.getByRole("button", { name: "Refresh MCP servers" })).toHaveAttribute("aria-busy", "true");
+  await expect(panel.getByRole("button", { name: "Refresh MCP servers" })).toHaveCount(0);
   listMode = "ok";
   initialGate.resolve();
   const readyRow = mcpRow(panel, "Repository tools");
@@ -89,7 +90,7 @@ test("MCP list keeps loading and refresh failure scoped while preserving authori
   await captureEvidence(page, "1440x960-ling-light-ready-list.png");
 
   listMode = "fail";
-  await panel.getByRole("button", { name: "Refresh MCP servers" }).click();
+  await triggerFocusRevalidation(page);
   await expect(panel).toContainText("MCP servers could not be refreshed. The last loaded list is still shown.");
   await expect(readyRow).toBeVisible();
   await expectNoHorizontalOverflow(panel);
@@ -304,7 +305,7 @@ test("check and sync use provider-owned success toasts and persistent row failur
 
   server.status = "failed";
   server.updatedAt = "2026-06-03T00:09:00.000Z";
-  await panel.getByRole("button", { name: "Refresh MCP servers" }).click();
+  await triggerFocusRevalidation(page);
   await expect(rowFailure).toContainText("Connection check failed");
 
   checkMode = "ok";
@@ -337,7 +338,7 @@ test("check and sync use provider-owned success toasts and persistent row failur
   await expect(rowFailure).toContainText("Connection check failed");
   server.displayName = "Action server renamed";
   server.updatedAt = "2026-06-03T00:10:00.000Z";
-  await panel.getByRole("button", { name: "Refresh MCP servers" }).click();
+  await triggerFocusRevalidation(page);
   const renamedRow = mcpRow(panel, "Action server renamed");
   await expect(renamedRow).toBeVisible();
   await expect(renamedRow.locator(".settings-mcp-row-feedback")).toHaveCount(0);
@@ -346,13 +347,13 @@ test("check and sync use provider-owned success toasts and persistent row failur
   await renamedRow.getByRole("button", { name: "Sync tool list" }).click();
   await expect(renamedRow.locator(".settings-mcp-row-feedback")).toContainText("Tool list sync failed");
   state.mcpServers = [];
-  await panel.getByRole("button", { name: "Refresh MCP servers" }).click();
+  await triggerFocusRevalidation(page);
   await expect(renamedRow).toHaveCount(0);
   await expect(panel.getByText("No MCP servers")).toBeVisible();
   server.displayName = "Action server restored";
   server.updatedAt = "2026-06-03T00:11:00.000Z";
   state.mcpServers = [server];
-  await panel.getByRole("button", { name: "Refresh MCP servers" }).click();
+  await triggerFocusRevalidation(page);
   const restoredRow = mcpRow(panel, "Action server restored");
   await expect(restoredRow).toBeVisible();
   await expect(restoredRow.locator(".settings-mcp-row-feedback")).toHaveCount(0);

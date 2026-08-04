@@ -73,7 +73,6 @@ export function TeammateCreateRoleStep({
           >
             <span className="teammate-create-role-copy">
               <strong>{t("Start from blank")}</strong>
-              <small>{t("Open a focused setup page for a custom teammate.")}</small>
             </span>
           </Button>
         </div>

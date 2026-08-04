@@ -1,656 +1,306 @@
-# Ling Stack
+<div align="center">
+  <img src="apps/web/public/favicon.png" alt="Ling Stack" width="88" height="88" />
+  <h1>Ling Stack</h1>
+  <p><strong>A local-first workspace for AI teammates, models, tools, approvals, and auditable work.</strong></p>
+  <p>
+    <a href="docs/product-design.md">Product</a> ·
+    <a href="docs/architecture.md">Architecture</a> ·
+    <a href="docs/design/README.md">Design docs</a> ·
+    <a href="CHANGELOG.md">Changelog</a> ·
+    <a href="CONTRIBUTING.md">Contributing</a> ·
+    <a href="SECURITY.md">Security</a> ·
+    <a href="LICENSE">MIT License</a>
+  </p>
+</div>
 
-A multilingual, local-first AI teammate workspace for humans, agents, tools, approvals, and model providers.
+> [!WARNING]
+> Ling Stack is a source-first alpha. The Web app, CLI, local daemon, and Electron
+> desktop shell are under active development. Stable signed installers and a supported
+> production release are not available yet.
 
-Ling Stack connects channels, tasks, runtime sessions, provider routing, artifacts, and human approval gates in one auditable workspace. The current mainline is a local Model Workbench for GPT, Claude, domestic AI providers, OpenAI-compatible relays, and custom compatible endpoints that can be checked and used directly from workspace tasks.
+Ling Stack brings conversations, channels, AI teammates, model configuration, skills,
+tools, media generation, approvals, artifacts, and runtime history into one local
+workspace. It is designed for work that needs more structure and accountability than a
+standalone chat window.
 
-> Local-first workspace. AI teammates. Channels and tasks. Pi coding-agent runtime. Provider adapters. Approval gates. Auditable sessions. Domestic AI providers first, GPT and Claude included.
+## Why Ling Stack
 
-## Documentation
+AI work is often split across a chat client, coding-agent CLI, model relay, media tool,
+task tracker, and an informal review process. That fragmentation makes it difficult to
+answer basic operational questions:
 
-- [Contributing](CONTRIBUTING.md)
-- [Product design](docs/product-design.md)
-- [Ling Framework](docs/design/ling-framework.md)
-- [Ling Memory v1](docs/design/ling-memory-v1.md)
-- [Memory Health and Multi-Agent Memory Fan-In](docs/design/memory-health-and-fanin.md)
-- [Memory Health and Multi-Agent Memory Fan-In implementation plan](docs/design/memory-health-and-fanin-implementation-plan.md)
-- [Architecture](docs/architecture.md)
-- [v0.1 detailed design](docs/v0.1-detailed-design.md)
-- [Architecture Decision Records](docs/adr/README.md)
-- [Daemon API](docs/daemon-api.md)
-- [CLI v0.1](docs/design/cli-v0.1.md)
-- [Daemon lifecycle and doctor P0](docs/design/daemon-lifecycle-p0.md)
-- [Startup readiness chain](docs/design/startup-readiness-chain.md)
-- [Two-layer configuration](docs/design/two-layer-configuration.md)
-- [Workspace state storage](docs/design/workspace-state-storage.md)
-- [Runtime, provider, and secrets inheritance](docs/design/runtime-provider-secrets-inheritance.md)
-- [CLI run I/O and completion P1](docs/design/cli-run-io-completion-p1.md)
-- [CLI run I/O and completion P1 implementation plan](docs/design/cli-run-io-completion-p1-implementation-plan.md)
-- [MCP status boundaries P2](docs/design/mcp-status-boundaries-p2.md)
-- [MCP status boundaries P2 implementation plan](docs/design/mcp-status-boundaries-p2-implementation-plan.md)
-- [Provider adapters](docs/provider-adapters.md)
-- [Seedream live smoke](docs/seedream-live-smoke.md)
-- [External work live smoke](docs/external-work-live-smoke.md)
-- [Provider presets](docs/design/provider-presets.md)
-- [Approval policy](docs/design/approval-policy.md)
-- [Codex-inspired settings and permission presets](docs/design/codex-inspired-settings-permission-presets.md)
-- [Codex-inspired settings and permission presets implementation plan](docs/design/codex-inspired-settings-permission-presets-implementation-plan.md)
-- [Core tools, runners, MCP tools, and plugin boundary](docs/design/core-tools-runtime-boundary.md)
-- [Core tools runtime boundary implementation plan](docs/design/core-tools-runtime-boundary-implementation-plan.md)
-- [Codex-inspired runtime tools](docs/design/codex-inspired-runtime-tools.md)
-- [Codex-inspired runtime tools P0 apply-patch implementation](docs/design/codex-inspired-runtime-tools-p0-apply-patch-implementation.md)
-- [Channel workspace](docs/design/channel-workspace.md)
-- [Ling Agent Session Control Plane](docs/design/ling-agent-session.md)
-- [Ling Agent Session implementation plan](docs/design/ling-agent-session-implementation-plan.md)
-- [Channel Team Operating System](docs/design/channel-team-operating-system.md)
-- [Channel Team Operating System task plan - 2026-06-26](docs/design/channel-team-operating-system-task-plan-2026-06-26.md)
-- [Channel Team Operating System remediation plan - 2026-06-27](docs/design/channel-team-operating-system-remediation-plan-2026-06-27.md)
-- [Input Materialization Detailed Design](docs/design/input-materialization-detailed-design.md)
-- [Ling Web Tools](docs/design/ling-web-tools.md)
-- [Web E2E Acceptance Matrix](docs/design/web-e2e-acceptance-matrix.md)
-- [Conversation performance deferral and virtualization](docs/design/conversation-performance-deferral-and-virtualization.md)
-- [Conversation Plan and Goal Modes](docs/design/conversation-plan-and-goal-modes.md)
-- [Conversation Plan History and Goal Completion detailed design](docs/design/conversation-plan-history-and-goal-completion-detailed-design.md)
-- [AI teammates and skills](docs/design/ai-teammates-and-skills.md)
-- [AI councils](docs/design/ai-councils.md)
-- [GStack skill source sync](docs/design/gstack-skill-source-sync.md)
-- [Skill candidates and protocol governance](docs/design/skill-candidates-and-protocol-governance.md)
-- [Skill candidates and protocol governance implementation plan](docs/design/skill-candidates-and-protocol-governance-implementation-plan.md)
-- [Ling-native skill recording P0 detailed design](docs/design/ling-native-skill-recording-p0-detailed-design.md)
-- [AI teammate private workspace](docs/design/ai-teammate-private-workspace.md)
-- [Platform architecture](docs/design/platform-architecture.md)
-- [External work orchestration](docs/design/external-work-orchestration.md)
-- [External work roadmap](docs/design/external-work-roadmap.md)
-- [External work Phase 2 implementation](docs/design/external-work-phase-2-implementation.md)
-- [External work Phase 3 implementation](docs/design/external-work-phase-3-implementation.md)
-- [External work Phase 4 implementation](docs/design/external-work-phase-4-implementation.md)
-- [External work Phase 5 implementation](docs/design/external-work-phase-5-implementation.md)
-- [External work Phase 6 implementation](docs/design/external-work-phase-6-implementation.md)
-- [External work Phase 7 implementation](docs/design/external-work-phase-7-implementation.md)
-- [External work status surface](docs/design/external-work-status-surface.md)
-- [External work GA hardening](docs/design/external-work-ga-hardening.md)
-- [GitHub automation](docs/design/github-automation.md)
-- [Automations](docs/design/automations.md)
-- [Automations implementation plan](docs/design/automations-implementation-plan.md)
-- [Web modularization](docs/design/web-modularization.md)
-- [Contracts / API Client](docs/design/contracts-api-client.md)
-- [Internal Registry / Plugin SDK](docs/design/internal-registry-plugin-sdk.md)
-- [Plugin Manager](docs/design/plugin-manager.md)
-- [Plugin Manager implementation plan](docs/design/plugin-manager-implementation-plan.md)
-- [Runner Registry](docs/design/runner-registry.md)
-- [Runtime Supervisor](docs/design/runtime-supervisor.md)
-- [Runtime Control Plane roadmap](docs/design/runtime-control-plane-roadmap.md)
-- [Runtime Control Plane detailed design](docs/design/runtime-control-plane-detailed-design.md)
-- [Multi-Agent Orchestrator](docs/design/multi-agent-orchestrator.md)
-- [Codex-like Execution](docs/design/codex-like-execution.md)
-- [Desktop Shell](docs/design/desktop-shell.md)
-- [Bundled Embedded Cua Driver](docs/design/cua-driver-bundled-embedded.md)
-- [Bundled Embedded Cua Driver detailed design](docs/design/cua-driver-bundled-embedded-detailed-design.md)
-- [Bundled Embedded Cua Driver implementation plan](docs/design/cua-driver-bundled-embedded-implementation-plan.md)
-- [Lock-Aware Task Continuation and Computer Control](docs/design/locked-computer-control-policy.md)
-- [Lock-Aware Task Continuation detailed design](docs/design/locked-computer-control-detailed-design.md)
-- [Lock-Aware Task Continuation implementation plan](docs/design/locked-computer-control-implementation-plan.md)
-- [Windows locked-surface denial evidence handoff](docs/release/locked-computer-control-windows-handoff.md)
-- [Desktop Computer Use Picture-in-Picture](docs/design/desktop-computer-use-picture-in-picture.md)
-- [Desktop Computer Use Picture-in-Picture detailed design](docs/design/desktop-computer-use-picture-in-picture-detailed-design.md)
-- [Desktop Computer Use Picture-in-Picture implementation plan](docs/design/desktop-computer-use-picture-in-picture-implementation-plan.md)
-- [Desktop release acceptance](docs/release/desktop.md)
-- [Secrets / Keychain](docs/design/secrets-keychain.md)
-- [State machines and recovery](docs/design/state-machine-recovery.md)
-- [Multi-channel concurrency](docs/design/multi-channel-concurrency.md)
-- [Run interruption and continuation](docs/design/run-interruption-continuation.md)
-- [Pi coding-agent integration](docs/pi-coding-agent-integration.md)
+- Which model and tools were used?
+- What did the agent read, change, or generate?
+- Which actions required human approval?
+- Where are the resulting files and evidence?
+- Can an interrupted run be inspected or resumed safely?
 
-## UI Direction
+Ling Stack makes those boundaries explicit. A workspace owns the context and policy;
+maintained runtimes execute scoped work; humans remain in control of risky side effects.
 
-The shared Web UI and the current Electron Desktop alpha follow the same product direction:
-a client-style AI teammate workspace, not a marketing homepage or a configuration dashboard.
+## What You Can Do
 
-Concept direction:
+- **Work with AI teammates:** use normal conversations, private teammate chats, and
+  channel collaboration with explicit model and tool configuration.
+- **Connect different model providers:** configure OpenAI, Anthropic, Volcengine Ark,
+  DeepSeek-compatible endpoints, MiniMax, GLM, and OpenAI-compatible relays through the
+  Model Workbench.
+- **Run auditable agent work:** execute tasks through the Pi coding-agent adapter while
+  preserving events, approvals, artifacts, and session history.
+- **Control authority:** apply workspace permission presets and require confirmation for
+  file writes, shell commands, paid media generation, and other governed actions.
+- **Manage reusable skills:** import, edit, bind, and review skills without treating a
+  skill as implicit execution permission.
+- **Produce media:** create image and video jobs through capability-checked model adapters
+  and the scene-based Media Production workspace.
+- **Connect tools:** register MCP servers and assign their tools to AI teammates
+  explicitly.
+- **Coordinate external work:** import and inspect GitHub or Linear work locally, with
+  external mutations separated behind explicit approval and execution steps.
+- **Use one local control plane:** access the same daemon-backed product from the Web UI,
+  CLI, or Electron desktop shell.
 
-![Ling Stack client UI direction](docs/design/assets/ling-stack-client-ui-direction.png)
+## Product Principles
 
-Current Web homepage reference:
+- **Local first:** workspace state, audit records, and generated artifacts stay local by
+  default.
+- **Capability driven:** model and tool availability is based on verified capabilities,
+  not optimistic labels.
+- **Explicit authority:** a configured skill or provider does not silently grant tools,
+  filesystem access, network access, or external mutation rights.
+- **Auditable by design:** runs produce durable events and artifacts that can be inspected
+  after execution.
+- **One product model:** Web, Desktop, and CLI share daemon contracts and state machines
+  instead of implementing separate behavior.
+- **Multilingual:** Chinese and English product surfaces are maintained together.
 
-![Ling Stack Web homepage desktop](docs/design/assets/ling-stack-web-homepage-desktop.png)
+## Architecture
 
-Mobile collapse reference:
-
-![Ling Stack Web homepage mobile](docs/design/assets/ling-stack-web-homepage-mobile.png)
-
-Design intent:
-
-- Open directly into a default configured workspace and selected channel.
-- Keep the left sidebar focused on workspace, inbox, tasks, runs, channels, AI teammates, direct messages, and a compact configuration rail.
-- Keep the center as the main work surface: channel activity, task cards, run actions, and a task composer.
-- Make AI teammate creation a client-style wizard: choose default role or blank, bind model, fill profile, then choose channel and memory/file scope.
-- Keep provider setup, approval policy, MCP tool servers, media jobs, and settings out of the homepage flow; expose them through configuration entry points and dedicated settings pages.
-- Keep the right panel for context: readiness, first-run state, approvals, artifacts, provider health, and live events.
-- Use a macOS-like, minimal, frosted-glass visual system with restrained gradients, readable operational density, and no decorative hero sections.
-
-This direction is recorded as the reference for both `apps/web` and the future desktop client. The detailed Web design contract lives in [Web UI v0.1 Design](docs/design/web-ui-v0.1.md).
-
-## Why This Exists
-
-AI coding and agent tools are getting powerful, but most of them still live in separate boxes:
-
-- One chat client for GPT or Claude.
-- One local relay for domestic models.
-- One coding-agent CLI for file edits.
-- One media tool for image or video generation.
-- One task tracker for real work.
-- One human review process outside the agent runtime.
-
-That split creates operational friction. The model may generate useful work, but the surrounding workflow is still manual: copy the prompt, choose the model, run the tool, inspect the diff, approve the risky action, save the artifact, and explain what happened later.
-
-Ling Stack exists to make that workflow explicit and inspectable. The goal is not another chat window. The goal is a workspace where AI teammates can pick up scoped tasks, run through a maintained agent kernel, produce logs and artifacts, and hand risky actions back to humans for approval.
-
-## The Core Idea
-
-Separate the product layer from the agent kernel.
-
-```text
-workspace and channels
-+ tasks and AI teammates
-+ skills and teammate bindings
-+ approval and audit policy
-+ durable state machines and recovery
-+ provider routing
-+ maintained coding-agent kernel
-+ streamed runtime events
-+ artifacts and session records
+```mermaid
+flowchart LR
+  Web[Web UI] --> Daemon[Local daemon]
+  Desktop[Electron Desktop] --> Daemon
+  CLI[CLI] --> Daemon
+  Daemon --> Core[Workspace and policy core]
+  Daemon --> Runner[Pi runner adapter]
+  Daemon --> Providers[Model and media adapters]
+  Daemon --> Tools[MCP and local tools]
+  Core --> Store[(SQLite)]
+  Core --> Files[Artifacts and session logs]
+  Runner --> Providers
 ```
 
-Ling Stack owns the workspace. Pi owns the first coding-agent runtime.
+The daemon is the local authority for workspace state, approvals, runs, and recovery.
+The UI does not bypass it to call tools or provider adapters directly. Pi owns the first
+maintained coding-agent runtime; Ling Stack owns the surrounding product, policy, and
+evidence model.
 
-### Responsibility Layers
-
-| Layer | Purpose | Current path |
+| Area | Path | Responsibility |
 | --- | --- | --- |
-| Workspace | Channels, tasks, teammates, approvals, artifacts | `packages/core` |
-| Runner | Execute coding-agent tasks and stream events | `packages/runner-pi` |
-| Daemon | Local API for CLI, web UI, and desktop shell | `packages/daemon` |
-| Providers | Model and media capability adapters | `packages/providers` |
-| UI | Shared Web surface and Electron Desktop alpha | `apps/web`, `apps/desktop` |
+| Web application | `apps/web` | Shared local workspace UI |
+| Desktop application | `apps/desktop` | Electron lifecycle, native integration, and shared Web surface |
+| CLI | `packages/cli` | Local lifecycle, diagnostics, and workspace commands |
+| Daemon | `packages/daemon` | HTTP/SSE API, orchestration, persistence, and recovery |
+| Core | `packages/core` | Workspace domain, policy, approvals, and state machines |
+| Contracts | `packages/contracts` | Shared public and internal API contracts |
+| API client | `packages/api-client` | Typed daemon client |
+| Providers | `packages/providers` | Chat, search, image, and video adapters |
+| Runner | `packages/runner-pi` | Pi coding-agent integration |
+| UI packages | `packages/ui-react`, `packages/conversation-ui-*` | Shared React components and conversation primitives |
+| Plugin SDK | `packages/plugin-sdk` | Internal plugin contracts and validation |
 
-## Benefits
+See [Architecture](docs/architecture.md) and the
+[design documentation index](docs/design/README.md) for ownership details.
 
-- **No duplicated agent kernel:** Ling Stack wraps `@earendil-works/pi-coding-agent` instead of rebuilding a coding-agent loop from scratch.
-- **Provider flexibility:** GPT, Claude, DeepSeek / DPV4-compatible endpoints, MiniMax, GLM, Doubao, Jimeng, and OpenAI-compatible relays can sit behind one workspace policy.
-- **Multilingual by design:** the product is not limited to Chinese users; the initial provider emphasis is domestic AI vendor support.
-- **Auditable execution:** runner events are streamed as first-class workspace events instead of disappearing inside a terminal.
-- **Durable recovery:** tasks, runs, approvals, media jobs, and future multi-teammate workflows should transition through explicit state machines so disconnects and retries do not corrupt work.
-- **Composable skills:** AI teammates can use workflow templates inspired by gstack while execution remains governed by tools, provider capabilities, approval policy, and state machines.
-- **Approval-ready workflow:** file writes, shell commands, external sends, deployments, and high-cost media jobs can route through human review.
-- **Local-first adoption:** the first useful version can run as a CLI, local daemon, and local web UI before cloud/team sync exists.
-- **Desktop shell without a product fork:** the macOS/Windows Electron alpha wraps the local daemon and loads the same Web product; Linux packaging is not part of the current Computer Use PiP release.
+## Project Status
 
-## Core Principles
+The repository currently contains working foundations for:
 
-- Do not build another generic chat client.
-- Keep channels, tasks, approvals, artifacts, and audit logs as the core product surface.
-- Treat skills as workflow templates, not direct execution permission.
-- Treat model providers as capability adapters, not just chat endpoints.
-- Use Pi for the coding-agent kernel and maintain only a thin adapter.
-- Keep domestic AI vendors first-class without making the product China-only.
-- Keep GPT, Claude, and OpenAI-compatible relay entry points first-class.
-- Make risky side effects visible and approvable.
-- Treat status transitions as durable state machine events, not transient UI state.
-- Store enough runtime evidence to explain what happened after the fact.
-- Keep the desktop shell downstream of the daemon API.
+- local channels, conversations, tasks, AI teammates, and model bindings;
+- provider setup, readiness checks, and workspace defaults;
+- streamed coding-agent runs with SQLite state, JSONL events, approvals, and artifacts;
+- skills, teammate bindings, AI-generated skill review, and skill revision;
+- image/video media jobs and a scene-based media production surface;
+- MCP management, local tools, automations, and external-work orchestration;
+- shared Web and Electron UI, theme persistence, and Computer Use PiP foundations.
 
-## Who Should Use This
+Important open gates include signed desktop distribution, clean-machine platform
+acceptance, remaining Computer Use platform verification, selected media-provider live
+adapters, and several product surfaces that remain intentionally hidden pending review.
+Mobile is not part of the current product acceptance scope.
 
-Ling Stack is for:
+The maintained list of incomplete work is in
+[Implementation Status](docs/design/implementation-status.md). Do not infer current
+status from old phase names or Git history.
 
-- Developers who use multiple model providers and want one local AI workspace.
-- Teams that need AI help with code, docs, support, operations, and media tasks.
-- Users who need domestic AI providers alongside GPT and Claude.
-- Agent power users already using Codex, Claude Code, Pi, MCP, local proxies, or OpenAI-compatible relays.
-- Builders who want auditable AI work instead of opaque chat transcripts.
+## Quick Start From Source
 
-It is less useful for one-shot prompts, stateless bots, or users who only need a simple chat client.
+### Requirements
 
-## What This Is / Is Not
+- Git
+- Node.js `22.15` or newer
+- Corepack with pnpm `10`
 
-This project is:
+The repository is a pnpm workspace and is not currently published as a stable npm or
+desktop release.
 
-- A local-first AI teammate workspace.
-- A product layer around maintained agent runtimes.
-- A provider and approval orchestration layer.
-- A future CLI, web UI, and desktop app surface.
-- A place to make AI work visible, reviewable, and repeatable.
-
-This project is not:
-
-- A replacement for Pi.
-- A model provider.
-- A pure chat UI.
-- A vector database.
-- A secret manager.
-- A permission slip for agents to change files, deploy, or send messages without review.
-
-## Quick Start
-
-The project is still early, but the daemon can already stream Pi runner events.
-
-### 1. Install dependencies
+### 1. Clone and install
 
 ```bash
+git clone https://github.com/tianxiaochannel-oss88/ling-stack.git
+cd ling-stack
+corepack enable
 corepack pnpm install
 ```
 
-### 2. Build and typecheck
+### 2. Build the workspace
 
 ```bash
-corepack pnpm typecheck
 corepack pnpm build
 ```
 
-### 3. Start local services
+### 3. Start the daemon
 
-For a local development checkout, use the short CLI entrypoint:
-
-```bash
-ling restart
-ling status
-```
-
-`ling restart` restarts the local daemon and Web UI, waits for daemon health and the
-Web UI HTTP endpoint, and keeps lower-level service-manager details hidden.
-
-If the short alias is not linked in your shell yet, use:
+In the first terminal:
 
 ```bash
-corepack pnpm ling restart
+corepack pnpm ling daemon start --foreground
 ```
 
-Daemon-only foreground startup is still available for low-level debugging:
+The daemon listens on `http://127.0.0.1:17891` by default. Keep it bound to loopback
+unless you have designed and reviewed a separate authenticated remote-access boundary.
+
+### 4. Start the Web UI
+
+In a second terminal:
 
 ```bash
-node packages/daemon/dist/cli.js
+corepack pnpm ling ui --foreground --open
 ```
 
-Default endpoint:
+Open `http://127.0.0.1:5173` if the browser does not open automatically.
 
-```text
-http://127.0.0.1:17891
-```
-
-### 4. Check health
+### 5. Verify the local stack
 
 ```bash
 curl http://127.0.0.1:17891/health
+corepack pnpm ling doctor
 ```
 
-### 5. Create and check a provider preset
+Ling Stack can be explored before a provider is configured. To run model-backed work,
+open **Model Workbench**, add a chat-capable model, save the API key to the supported
+secret store or environment reference, and run its readiness check. The first verified
+chat model becomes the workspace default; later default changes remain explicit.
 
-Provider presets persist non-secret provider configuration in the local workspace database. Secrets are referenced by name, not stored as raw keys.
+### Desktop development
 
-Built-in templates are available from the daemon:
+The Electron application builds the shared Web app and daemon before launch:
 
 ```bash
-curl http://127.0.0.1:17891/provider-templates
+corepack pnpm --filter @ling-stack/desktop dev
 ```
 
-Common development secret refs:
+Desktop packaging and signing have additional platform gates. Read
+[Desktop release and acceptance](docs/release/desktop.md) before treating a local package
+as distributable.
 
-```bash
-export OPENAI_API_KEY=sk-...
-export ANTHROPIC_API_KEY=sk-ant-...
-export LOCAL_RELAY_API_KEY=sk-local
-export ARK_API_KEY=...
-export DEEPSEEK_API_KEY=...
-export MINIMAX_API_KEY=...
-export ZHIPU_API_KEY=...
-export JIMENG_API_KEY=...
-export SEEDREAM_API_KEY=...
-export SEEDANCE_API_KEY=...
-```
+## Configuration And Data
 
-Recommended CLI first loop:
+Provider secrets should be supplied through supported secret references such as
+`env:NAME` or the desktop/keychain flow. Do not commit API keys, tokens, local provider
+configuration, or workspace state.
 
-```bash
-node packages/cli/dist/index.js init --with-provider-templates
-export LOCAL_RELAY_API_KEY=sk-local
-node packages/cli/dist/index.js provider list
-node packages/cli/dist/index.js provider update provider_... --enabled true --api-key-ref env:LOCAL_RELAY_API_KEY
-node packages/cli/dist/index.js provider check-all
-node packages/cli/dist/index.js doctor
-```
+Common development variables are documented in [.env.example](.env.example). The
+example file contains names and placeholders only; copy only the variables you actually
+need into your local environment.
 
-Use `node packages/cli/dist/index.js init --workspace-state-location user-data-dir`
-only for an explicit opt-in workspace whose runtime state should live under
-`~/.ling-stack/workspaces/<workspace-id>/` instead of the repo-local `.ling-stack/`
-state root. This does not migrate an existing repo-local database.
-Use `node packages/cli/dist/index.js workspace migrate-state --to user-data-dir` or
-`--to repo-local` for an explicit, manifest-backed migration between the two locations.
-Add `--dry-run --json` first to preview source, target, backup, daemon, registry, and
-writability checks without copying files.
-Run `node packages/cli/dist/index.js doctor config --json` to inspect the resolved state
-root, registry row, and whether a read-only repo is relying on user-data-dir state.
-If the registry row is stale, run `node packages/cli/dist/index.js workspace repair-registry --dry-run --json`
-first, then run without `--dry-run` to update only the registry row.
-
-The Web UI exposes the same flow in Model Workbench: choose GPT/Claude, domestic AI, OpenAI-compatible relay, or custom OpenAI-compatible access; save the preset; set the shown `env:NAME`; run Check; then use only preflight-ready chat providers in Workspace. Media providers remain visible but stay in Media Jobs and cannot run coding tasks.
-
-Seedream `image_generate` can run through the live transport gate. Configure a media preset through the CLI:
-
-```bash
-node packages/cli/dist/index.js provider update provider_... \
-  --base-url https://ark.cn-beijing.volces.com/api/v3 \
-  --model doubao-seedream-5-0-260128 \
-  --api-key-ref env:SEEDREAM_API_KEY \
-  --compat-json '{"mediaVendorTransport":{"mode":"live"}}'
-```
-
-This validates `baseUrl` and `apiKeyRef`. Standalone Media Jobs execute directly after runtime readiness checks. Media Production scene runs, ordered project runs, and ComfyUI workflow tests create a scoped `media_cost` approval and wait before paid generation begins. Automated tests use mock HTTP; real smoke requires `SEEDREAM_API_KEY`. The adapter records request/response metadata and downloads returned HTTP(S) image URLs into local `.ling-stack/artifacts` image artifacts without forwarding the provider authorization header to the image URL. See [Seedream live smoke](docs/seedream-live-smoke.md) for the standalone job and artifact verification path.
-
-```bash
-export LOCAL_RELAY_API_KEY=sk-local
-
-curl http://127.0.0.1:17891/providers?cwd="$PWD" \
-  -H 'content-type: application/json' \
-  -d '{
-    "kind": "openai-compatible",
-    "displayName": "Local Relay",
-    "providerId": "local-relay",
-    "model": "gpt-5.5",
-    "api": "openai-completions",
-    "baseUrl": "http://127.0.0.1:8317/v1",
-    "apiKeyRef": "env:LOCAL_RELAY_API_KEY",
-    "capabilities": ["chat", "tool_call", "reasoning"],
-    "input": ["text"],
-    "enabled": true
-  }'
-```
-
-The response includes a generated `provider.id`, for example `provider_...`.
-
-### 6. Create a channel and task
-
-```bash
-node packages/cli/dist/index.js channel create --name Engineering --path "$PWD" --provider provider_...
-node packages/cli/dist/index.js task create --channel channel_... --title "Inspect repo" --prompt "List files and summarize this repo."
-```
-
-### 7. Import, poll, or triage external work
-
-GitHub external work orchestration is read-only for import, poll, reconcile, and CI
-triage. Fixture import parses
-`WORKFLOW.md`, normalizes a PR or issue payload, creates or reuses a Ling workflow and
-step, and writes evidence artifacts. Manual poll uses GitHub read-only REST endpoints
-to discover open PR/issue candidates, claim each subject, prepare isolated local
-workspace state, and reconcile durable scheduler state. Manual CI triage reads failing
-checks, workflow jobs, and bounded redacted logs for an existing PR external-work item,
-then creates or reuses local triage records, evidence artifacts, and scoped fix tasks.
-Import, poll, reconcile, background scheduler registration, and CI triage do not start
-the runner or mutate GitHub. Phase 4.1 adds a separate explicit local CI fix run bridge
-for an existing triage record; it still does not mutate GitHub. Phase 3 adds
-approval-gated action records for GitHub comments and labels. Phase 5 adds strict
-approval-gated GitHub PR review actions. Phase 6 adds explicit GitHub background
-polling registration for one `cwd + channel + WORKFLOW.md`; it is not a webhook receiver
-or hidden all-repository crawler. Propose/list/show/cancel stay local-only; `actions
-execute` is the only command that can call the approved GitHub comment, label, or PR
-review endpoint after stale-target revalidation. The Web Inbox now shows GitHub
-external action approval cards
-with the target snapshot, proposed payload, linked evidence artifacts, and a separate
-Execute action button after approval; approving in Web does not execute the mutation.
-The Web Workspace and task Inspector also show local GitHub CI triage records, failed
-check metadata, reproduction hints, linked artifacts, and linked fix task/run ids
-without starting a runner.
-
-Phase 7 adds Linear as the second source adapter. Linear is read-only in this slice:
-manual import and poll normalize `linear_issue` items, reuse the same workflow,
-scheduler-state, workspace, hook, and artifact paths, and do not propose or execute
-Linear mutations. Linear workflows use `source.kind: linear`, `source.projectSlug`, and
-an optional `source.secretRef: env:LINEAR_TOKEN`.
-
-Repository-local external-work configuration should be copied from
-`WORKFLOW.example.md` to `WORKFLOW.md`. The root `WORKFLOW.md` is ignored because it may
-contain local repository targets and machine-specific secret refs. Keep raw token values
-out of both files: use `env:GITHUB_TOKEN`, `env:LINEAR_TOKEN`, or a `keychain:...`
-secret reference.
-
-For live poll/reconcile, prefer authenticated GitHub reads. The user-facing setup path
-is Web Settings -> External Work: if `WORKFLOW.md` is missing or invalid, paste a GitHub
-URL or enter `owner/repo`, then click `Create WORKFLOW.md` / `Repair WORKFLOW.md`; after
-that, paste a GitHub token into `Save GitHub token`. The daemon writes only the local workflow file, stores
-the token in macOS Keychain, and records only a `source.secretRef:
-keychain:LING_STACK_GITHUB_..._TOKEN` reference in `WORKFLOW.md`. The token value is not
-stored in browser state, SQLite, artifacts, or logs. Headless CLI/dev workflows can still
-use `source.secretRef: env:GITHUB_TOKEN` and start or restart the daemon with
-`GITHUB_TOKEN` in its environment, for example from `gh auth token`.
-
-```bash
-node packages/cli/dist/index.js external-work github import \
-  --channel channel_... \
-  --event-type pull_request.opened \
-  --payload-file examples/external-work/github/pull-request-opened.json \
-  --workflow-path WORKFLOW.md
-
-node packages/cli/dist/index.js external-work github poll \
-  --channel channel_... \
-  --workflow-path WORKFLOW.md \
-  --limit 50
-
-node packages/cli/dist/index.js external-work github background start \
-  --channel channel_... \
-  --workflow-path WORKFLOW.md \
-  --limit 50
-
-node packages/cli/dist/index.js external-work github background list
-
-node packages/cli/dist/index.js external-work github background stop external_work_background_...
-
-node packages/cli/dist/index.js external-work linear import \
-  --channel channel_... \
-  --event-type issue.created \
-  --payload-file issue.json \
-  --workflow-path WORKFLOW.md
-
-node packages/cli/dist/index.js external-work linear poll \
-  --channel channel_... \
-  --workflow-path WORKFLOW.md \
-  --limit 50
-
-node packages/cli/dist/index.js external-work list \
-  --channel channel_... \
-  --status ready
-
-node packages/cli/dist/index.js external-work show external_work_...
-
-node packages/cli/dist/index.js external-work github ci triage \
-  --external-work external_work_... \
-  --workflow-path WORKFLOW.md \
-  --limit 5
-
-node packages/cli/dist/index.js external-work github ci run \
-  --triage external_work_ci_triage_... \
-  --provider provider_...
-
-node packages/cli/dist/index.js external-work actions propose-comment \
-  --external-work external_work_... \
-  --body-file comment.md \
-  --approval standard
-
-node packages/cli/dist/index.js external-work actions propose-review \
-  --external-work external_work_... \
-  --event REQUEST_CHANGES \
-  --body-file review.md
-
-node packages/cli/dist/index.js external-work actions list \
-  --external-work external_work_... \
-  --status waiting_for_approval
-
-node packages/cli/dist/index.js external-work actions show external_work_action_...
-
-# Either cancel a pending action locally:
-node packages/cli/dist/index.js external-work actions cancel external_work_action_... \
-  --reason "No longer needed"
-
-# Or approve and execute it:
-node packages/cli/dist/index.js approvals approve approval_... \
-  --reason "Approved external action execution"
-
-node packages/cli/dist/index.js external-work actions execute external_work_action_... \
-  --workflow-path WORKFLOW.md
-
-node packages/cli/dist/index.js external-work reconcile \
-  --channel channel_... \
-  --workflow-path WORKFLOW.md
-```
-
-Use `--json` for full import, poll, CI triage, list, show, action, and reconcile
-responses. CI triage creates local fix tasks by default; add `--no-create-task` to keep
-only the triage records and artifacts. `external-work github ci run` is the explicit
-Phase 4.1 bridge from a triage record to a normal local runner stream; it does not
-mutate GitHub. A copy-pasteable fixture smoke path lives in
-[examples/external-work/github](examples/external-work/github/README.md). A real
-repository smoke with an isolated daemon, live GitHub reads, local action proposal, Web
-approval checks, and a separately gated mutation step lives in
-[External work live smoke](docs/external-work-live-smoke.md).
-The forward plan from the Phase 5 strict PR review action slice through Phase 7 and GA
-hardening is tracked in [External work roadmap](docs/design/external-work-roadmap.md)
-plus the Phase 5, Phase 6, Phase 7, and GA hardening implementation plans:
-[Phase 5](docs/design/external-work-phase-5-implementation.md),
-[Phase 6](docs/design/external-work-phase-6-implementation.md), and
-[Phase 7](docs/design/external-work-phase-7-implementation.md). The next production
-readiness slice is [External work GA hardening](docs/design/external-work-ga-hardening.md).
-The setup entry point for "where do I connect this to a real repo" is the Web Settings
-External Work panel. It reads local `WORKFLOW.md` status, source target, token readiness,
-record counts, and background scheduler state without calling GitHub or Linear. If the
-workflow is missing or invalid, Settings can create a minimal local `WORKFLOW.md` from a
-GitHub repository or Linear project slug before the token field is enabled. It also
-provides the explicit token setup/remove controls for Keychain-backed GitHub/Linear
-tokens. The same read-only check is available from the CLI:
-
-```bash
-ling-stack external-work status --channel channel_... --workflow-path WORKFLOW.md
-```
-
-Design details are tracked in
-[External work status surface](docs/design/external-work-status-surface.md).
-
-### 8. Run a task through the Pi runner
-
-`POST /runs` returns an SSE stream. See [Daemon API](docs/daemon-api.md) for full request examples.
-
-```bash
-curl -N http://127.0.0.1:17891/runs \
-  -H 'content-type: application/json' \
-  -d '{
-    "cwd": "'$PWD'",
-    "task": {
-      "id": "task-1",
-      "title": "Inspect the project",
-      "prompt": "List the files and summarize the repo."
-    },
-    "providerPresetId": "provider_...",
-    "tools": ["read", "grep", "find", "ls"],
-    "thinkingLevel": "medium"
-  }'
-```
-
-Inline provider JSON is still accepted for development, but product flows should prefer `providerPresetId` so raw API keys are not persisted in workspace records.
-
-## Repository Layout
+By default, runtime state is local to the workspace under `.ling-stack/`:
 
 ```text
-apps/
-  web/          Local workspace UI.
-  desktop/      Future cross-platform desktop shell.
-
-packages/
-  core/         Workspace, tasks, approvals, sessions, and policy engine.
-  cli/          Command-line interface.
-  daemon/       Local HTTP/SSE API.
-  providers/    Model and media provider adapters.
-  runner-pi/    Pi coding-agent wrapper used as the first execution kernel.
-
-docs/
-  product-design.md
-  architecture.md
-  v0.1-detailed-design.md
-  daemon-api.md
-  design/cli-v0.1.md
-  design/daemon-lifecycle-p0.md
-  design/provider-presets.md
-  design/approval-policy.md
-  provider-adapters.md
-  pi-coding-agent-integration.md
-
-examples/
+.ling-stack/
+  ling-stack.sqlite   SQLite workspace state
+  sessions/           JSONL run events and evidence
+  artifacts/          Generated and collected files
+  logs/               Local runtime logs
 ```
 
-## Provider Targets
+An explicit user-data-directory mode is also available. State-location changes use the
+CLI migration and registry-repair flows; do not move the database by hand. See
+[Workspace State Storage](docs/design/workspace-state-storage.md).
 
-First-class provider targets:
+## Model And Tool Boundaries
 
-- OpenAI GPT models.
-- Anthropic Claude models.
-- Doubao / Volcengine Ark.
-- DeepSeek / DPV4-compatible endpoints.
-- MiniMax.
-- GLM / Zhipu.
-- Jimeng / Seedream / Seedance for media jobs, kept separate from coding task providers.
-- Generic OpenAI-compatible relay endpoints.
+Provider support is capability based. Chat, tool calling, reasoning, web search, image
+generation, image editing, and video generation are separate capabilities. A media-only
+provider cannot be selected for a normal AI teammate conversation.
 
-Provider support is capability-based. Ling Stack should not pretend every provider is only a chat model.
+Coding sessions use `@earendil-works/pi-coding-agent` through
+`@ling-stack/runner-pi`. Media jobs use dedicated adapters and do not pass through the
+coding-agent runtime. MCP servers and local tools are governed separately from skills.
 
-## Current Status
+More detail:
 
-Implemented:
+- [Provider adapters](docs/provider-adapters.md)
+- [Pi coding-agent integration](docs/pi-coding-agent-integration.md)
+- [Approval policy](docs/design/approval-policy.md)
+- [Plugin Manager](docs/design/plugin-manager.md)
+- [Daemon API](docs/daemon-api.md)
 
-- Monorepo scaffold.
-- `@ling-stack/runner-pi` wrapper around `@earendil-works/pi-coding-agent`.
-- `@ling-stack/daemon` with `GET /health`.
-- `POST /runs` streaming Pi runner events over SSE.
-- SQLite-backed run session and event persistence.
-- JSONL event audit logs under `.ling-stack/sessions`.
-- `GET /runs`, `GET /runs/:id`, and `GET /runs/:id/events`.
-- Artifact metadata storage plus `GET /runs/:id/artifacts`, `GET /artifacts/:id`, and `GET /artifacts/:id/content`.
-- Best-effort `POST /runs/:id/cancel`.
-- Workspace bootstrap plus persisted channel and task storage.
-- Channel daemon APIs: `GET/POST /channels`, `GET/PATCH/DELETE /channels/:id`.
-- Task daemon APIs: `GET/POST /tasks`, `GET/PATCH/DELETE /tasks/:id`.
-- Task lifecycle updates from linked run sessions: `running`, `done`, `failed`, and `cancelled`.
-- Provider preset storage and daemon APIs.
-- Built-in provider templates for OpenAI, Claude, OpenAI-compatible relays, Doubao, DeepSeek/DPV4, MiniMax, GLM, Jimeng, Seedream, and Seedance.
-- `POST /runs` with `providerPresetId`.
-- Provider live checks for OpenAI-compatible chat, OpenAI Responses, and Anthropic Messages presets.
-- Approval request storage and daemon APIs.
-- Default read-only tool policy for product runs.
-- Pi pre-tool approval gate for `bash`, `edit`, and `write`.
-- Workspace approval policy storage, daemon API, Web settings UI, CLI policy commands, tool decisions, and write path scopes.
-- Local web UI with channel/task workspace, channel detail editing, task detail editing, task run entry, event stream, persisted run detail/rerun, Model Workbench provider setup, approval list, and persisted English / Chinese UI language switching.
-- Durable AI teammate storage and daemon APIs: seeded `gstack-default` teammates, custom teammate creation, channel memberships, skill bindings, memory-scope metadata, private direct threads/messages, task/activity read models, and soft disable.
-- AI Teammates Web wizard and private workspace: per-teammate model selection, channel/memory/file scoping metadata, daemon-backed sidebar roster, private chat, tasks/activity/channels/skills/memory/settings tabs, and persisted pin/hide/status/settings controls.
-- Skill governance foundation: read-only Skill Health report and Settings panel, durable manual SkillCandidate queue, shared contracts/API client helpers, daemon candidate list/get/create/review/draft routes, duplicate analysis, review gates before draft approval, and Web candidate review-to-import-draft flow.
-- Procedure observation foundation: structured `ProcedureObservation` storage, conservative candidate routing, `/procedure-observations`, `/procedure-observations/jobs`, and `/skill-candidates/observe` for pending skill candidates without raw transcript ingestion or auto-publication. Observation jobs are explicit/idempotent and only create candidates when user-confirmed gates pass.
-- Procedure observation cluster read model: `/procedure-observation-clusters`, `/procedure-observation-clusters/:id`, `playbook` routing for channel-local workflow procedures, and a read-only Candidate Clusters panel in Settings.
-- Channel protocol candidate API: `/channels/:id/protocol-candidates` reuses reviewed channel protocol drafts so channel canvas rules can be approved or rejected without creating skills or granting authority.
-- Channel Protocol Canvas read model: `/channels/:id/protocol/canvas` returns effective protocol state, draft candidates, and channel-scoped protocol/playbook clusters for shared Web/Desktop/API clients.
-- Skill usage governance telemetry: event-first local usage/failure/correction records, `/skills/usage-events`, `/skills/usage-stats`, `/skills/:id/corrections`, and health findings for never-used generated skills, high failure rates, and repeated user corrections. Telemetry never auto-publishes, auto-disables, or auto-deletes skills.
-- Model Workbench grouping for GPT/Claude, domestic AI, OpenAI-compatible relays, custom compatible access, and media providers, with coding-task readiness shown separately from media-only capabilities.
-- Run Evidence panel with session files, summary preview, tool/approval counts, and artifact rows.
-- Automatic artifact extraction from Pi tool outputs, generated text/log/Markdown/diff content, and generated file path metadata.
-- Media job and Media Production foundations with local metadata storage, direct standalone generation, scoped `media_cost` approval for production scenes/projects/workflow tests, recoverable provider and ComfyUI execution, local artifacts, and Web task history. Seedream has a documented live smoke path; additional media vendors and billing stay behind the mainline Model Workbench work.
-- CLI first-loop commands for init, channels, tasks, providers, runs, approvals, approval policy, daemon foreground start, and Web UI launch.
-- Initial product, architecture, daemon, provider, and Pi integration docs.
+## Development
 
-Not implemented yet:
+Run the repository-wide checks with:
 
-- Approval gates for external sends, deployments, and credential changes.
-- Rich task detail views beyond the first edit form.
-- Real media byte outputs beyond Seedream `image_generate` HTTP(S) image URL downloads.
-- Live Jimeng/Seedance execution and Seedream operations beyond `image_generate`.
-- Billing, cost estimation, and broader media workflow automation.
-- OS keychain integration for secrets.
-- Live media provider generation checks.
-- Production Desktop packaging: Developer ID/notarized macOS artifacts, signed Windows
-  installer, clean-machine install/update/uninstall evidence, and real-platform capture gates.
+```bash
+corepack pnpm typecheck
+corepack pnpm test
+corepack pnpm build
+corepack pnpm check:docs
+corepack pnpm check:licenses
+corepack pnpm check:public
+```
+
+Package-specific scripts are available through pnpm filters. Some desktop and native
+Computer Use checks require their target operating system, signing material, or dedicated
+test fixtures and are not implied by the generic commands above.
+
+Before opening a pull request, read [CONTRIBUTING.md](CONTRIBUTING.md). Keep changes scoped,
+state which validations ran, and do not commit local workspace data or credentials.
+
+## Documentation
+
+- [Product design](docs/product-design.md)
+- [Architecture](docs/architecture.md)
+- [Design documentation index](docs/design/README.md)
+- [Implementation status](docs/design/implementation-status.md)
+- [Architecture Decision Records](docs/adr/README.md)
+- [Daemon API](docs/daemon-api.md)
+- [Desktop release and acceptance](docs/release/desktop.md)
+- [Release policy](docs/release/README.md)
+- [Documentation governance](docs/maintenance/document-cleanup-inventory.md)
+- [Open-source readiness](docs/maintenance/open-source-readiness.md)
+- [Changelog](CHANGELOG.md)
+- [Third-party notices](THIRD_PARTY_NOTICES.md)
+- [Security policy](SECURITY.md)
+- [Contributing](CONTRIBUTING.md)
+- [Community support](SUPPORT.md)
+
+Design contracts describe durable product and architecture boundaries. Completed
+implementation diaries and screenshot evidence belong in Git history or CI/release
+artifacts rather than the main documentation tree.
+
+## Security
+
+- Keep the daemon on loopback by default.
+- Never commit provider keys, external-service tokens, workspace databases, session logs,
+  or generated artifacts.
+- Treat skills as instructions, not authority grants.
+- Keep destructive tools, external mutations, deployments, credential changes, and paid
+  generation behind explicit policy and approval boundaries.
+- Do not describe unsigned or locally built desktop packages as production releases.
+
+Report vulnerabilities through the private process in [SECURITY.md](SECURITY.md). Do not
+include sensitive vulnerability details in a public issue or pull request.
 
 ## License
 
-MIT.
+Ling Stack is available under the [MIT License](LICENSE).

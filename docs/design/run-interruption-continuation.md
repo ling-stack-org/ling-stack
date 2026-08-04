@@ -1,12 +1,12 @@
 # Run Interruption And Continuation
 
-Status: design baseline for a follow-up implementation slice
+Status: implemented product and runtime contract
 Owner: Runtime supervisor, daemon API, Web run surface
-Last updated: 2026-06-04
+Last verified: 2026-08-03
 
 ## Summary
 
-Ling Stack should support human course correction while an AI teammate run is active.
+Ling Stack supports human course correction while an AI teammate run is active.
 The product goal is not true token-stream prompt injection. The goal is an auditable
 runtime interaction model:
 
@@ -27,24 +27,17 @@ The complete approval, evidence, thread, and resume product contract is defined 
 
 ## Current State
 
-The current runner path creates a Pi session and calls one `session.prompt(...)`. The
-adapter can ask the session to abort through `session.abort()`, and the daemon already
-has:
+The current daemon and Web surfaces implement:
 
-- durable run sessions and run events,
-- work units and attempts,
-- explicit run/work-unit cancel,
-- queued work units for resource conflicts,
-- retry and reconcile controls,
-- compare-and-set protection against late runner success after cancel.
+- durable `RunIntervention` records with `queue_followup` and `interrupt_redirect`;
+- FIFO continuation, explicit source-run lineage, cancellation and late-result guards;
+- preserved partial events, attachments, links, workspace refs, artifacts, approvals,
+  and memory evidence;
+- channel Composer controls that distinguish queued guidance from stop-and-redirect;
+- refresh-safe intervention lists and explicit cancel/edit/promote actions.
 
-What is not implemented yet:
-
-- mid-run user interjection,
-- queued follow-up input for the same task,
-- cancel-and-resume based on partial output,
-- run lineage from interrupted run to continuation run,
-- UI controls that distinguish "queue follow-up" from "stop and redirect".
+Runner-native token-stream prompt injection remains intentionally unsupported. Guidance
+is applied only at an auditable continuation boundary.
 
 ## Non-Goals
 

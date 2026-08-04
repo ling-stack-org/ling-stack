@@ -1,0 +1,65 @@
+name: Product or feature proposal
+description: Propose a user outcome or architecture change
+title: "[Proposal]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ling Stack favors clear user problems and durable boundaries over adding isolated controls. Large changes should identify their product, authority, storage, and compatibility impact.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What cannot the user accomplish today, and who experiences the problem?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe the observable result without prescribing an implementation too early.
+    validations:
+      required: true
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Current and proposed workflow
+      description: Show the important steps before and after the change.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Primary area
+      options:
+        - Conversations and channels
+        - AI teammates and memory
+        - Models and providers
+        - Skills and plugins
+        - MCP and tools
+        - Media production
+        - Approvals and security
+        - Desktop and Computer Use
+        - CLI, daemon, or API
+        - Documentation and contributor experience
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: Boundaries and risks
+      description: Consider permissions, secrets, external actions, storage, migration, platform support, and backward compatibility.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I searched existing issues, pull requests, and the implementation-status index.
+          required: true
+        - label: I described a user outcome rather than only a preferred UI or technology.
+          required: true

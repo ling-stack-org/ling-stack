@@ -36,7 +36,6 @@ export function quickThemePreviewCopy(t: Translate): ThemeStudioPreviewCopy {
       workspace: t("Ling workspace"),
       ready: t("Ready"),
       search: t("Search"),
-      refresh: t("Refresh"),
       summary: t("Summary"),
       terminal: t("Terminal"),
       details: t("Details"),

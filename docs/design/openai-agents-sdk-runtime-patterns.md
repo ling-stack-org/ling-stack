@@ -2,7 +2,8 @@
 
 ## Status
 
-Design baseline for implementation planning.
+Ling-owned trace、checkpoint、handoff、tool namespace、sandbox readiness and conformance patterns are
+implemented. A real OpenAI Agents SDK runner/sidecar remains deliberately deferred behind adapter conformance.
 
 This document records which OpenAI Agents SDK patterns Ling Stack should borrow, how
 those patterns map onto the existing daemon-owned runtime, and which boundaries must not
@@ -82,6 +83,10 @@ These are Ling-owned contracts. A runner adapter may expose similar concepts, bu
 adapter must normalize them into Ling records before they influence product state.
 
 ## Implementation Priority
+
+The implemented patterns remain daemon-owned and SDK-independent. Future SDK work must use a dedicated adapter,
+keep Pi as the default runner, and route approvals, artifacts, workspace boundaries, hydration and trace evidence
+through Ling. No SDK dependency belongs in the daemon until those gates can be proven.
 
 The short-term path is to harden Ling's own runtime contracts before adding an OpenAI
 Agents SDK-backed runner. That means P14/P15 in the implementation plan are the next
@@ -786,7 +791,8 @@ Any future adapter that claims Agents-SDK-like capabilities must prove:
 - Do not add hidden mid-run prompt injection.
 - Do not auto-start handoff targets from model text without durable workflow records.
 
-## Implementation Entry Point
+## Implementation Status
 
-The staged implementation plan is
-[OpenAI Agents SDK Runtime Patterns Implementation Plan](openai-agents-sdk-runtime-patterns-implementation-plan.md).
+Each pattern section records the current Ling-owned implementation boundary. A future SDK
+adapter starts from [External Agent Runner Adapters](external-agent-runner-adapters-implementation-plan.md)
+only after the conformance gates in this contract are satisfied.

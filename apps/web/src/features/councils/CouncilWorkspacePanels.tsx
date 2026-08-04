@@ -1,7 +1,4 @@
-import {
-  Plus,
-  RefreshCw,
-} from "lucide-react";
+import { Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { useI18n } from "../../i18n.js";
@@ -90,13 +87,6 @@ export function CouncilWorkspacePanels(props: CouncilWorkspacePanelsProps): JSX.
           )}
           secondaryActions={(
             <>
-              <IconButton
-                icon={RefreshCw}
-                label={t("Refresh councils")}
-                loading={props.listHealthController.refreshBusy}
-                loadingLabel={t("Refreshing councils")}
-                onClick={() => void props.onRefresh()}
-              />
               <Button onClick={props.onOpenAiTeammates} size="sm" variant="secondary">
                 {t("Open AI Teammates")}
               </Button>

@@ -10,7 +10,7 @@ const evidenceDirectory = fileURLToPath(new URL(
   import.meta.url,
 ));
 
-test("UI 2.0 Field and Select connect labels, descriptions, and stable sizing", async ({ page }) => {
+test("UI 2.0 Field and Select connect labels without restoring low-value governance copy", async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page);
   await prepareSettings(page, "light", 1440, 960);
   const state = createBaseState({ approvalStatus: "expired" });
@@ -24,9 +24,9 @@ test("UI 2.0 Field and Select connect labels, descriptions, and stable sizing", 
   const controlId = await select.getAttribute("id");
   expect(controlId).toBeTruthy();
   await expect(field.locator(`label[for="${controlId}"]`)).toHaveText("Candidate generation");
-  await expect(select).toHaveAttribute("aria-describedby", `${controlId}-description`);
+  await expect(select).not.toHaveAttribute("aria-describedby", /.+/u);
   await expect(select).toHaveAttribute("data-ling-control-native", "true");
-  await expect(field.locator("[id$='-description']")).toContainText("stable success");
+  await expect(field.locator("[id$='-description']")).toHaveCount(0);
   const selectShell = select.locator("xpath=ancestor::span[contains(@class, 'ling-ui-select')]");
   const heightBeforeFocus = await selectShell.evaluate((element) => element.getBoundingClientRect().height);
   await select.focus();

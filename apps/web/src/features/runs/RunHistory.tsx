@@ -1,5 +1,7 @@
+import { useEffect } from "react";
 import type { ApprovalResolution } from "../approvals/types.js";
 import { useI18n } from "../../i18n.js";
+import { useFocusRevalidationToken } from "../../shared/hooks/use-focus-revalidation-token.js";
 import type {
   ApprovalRequest,
   MemoryObject,
@@ -33,15 +35,12 @@ export function RunHistory({
   workUnitDetail,
   assistantText,
   approvals,
-  approvalsLoading,
   resolvingApprovals,
-  isLoading,
   isRunning,
   cancellingRunId,
   errorMessage,
   onRefresh,
   onRefreshSelected,
-  onRefreshApprovals,
   onRerun,
   onCancelRun,
   onResolveApproval,
@@ -63,15 +62,12 @@ export function RunHistory({
   readonly workUnitDetail: WorkUnitDetailResponse | undefined;
   readonly assistantText: string;
   readonly approvals: readonly ApprovalRequest[];
-  readonly approvalsLoading: boolean;
   readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
-  readonly isLoading: boolean;
   readonly isRunning: boolean;
   readonly cancellingRunId: string;
   readonly errorMessage: string;
   readonly onRefresh: () => void;
   readonly onRefreshSelected: () => void;
-  readonly onRefreshApprovals: () => void;
   readonly onRerun: (run: RunSession) => void;
   readonly onCancelRun: (run: RunSession) => void;
   readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
@@ -81,8 +77,16 @@ export function RunHistory({
   readonly onSelect: (runId: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const focusRevalidationToken = useFocusRevalidationToken();
   const controller = useRunsThreadsPageController({ cwd, runs, selectedRunId, selectedRun, autoSelectThread: false, loadTurns: true });
   const { state, actions } = controller;
+
+  useEffect(() => {
+    if (focusRevalidationToken === 0) return;
+    void actions.refreshThreads();
+    // AppShell refreshes run summaries; this owner refreshes durable thread evidence.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusRevalidationToken]);
 
   function selectRun(runId: string): void {
     actions.setSelectedThreadId("");
@@ -109,9 +113,7 @@ export function RunHistory({
         <RunHistoryHeader
           archivedFilter={state.archivedFilter}
           onArchivedFilterChange={actions.setArchivedFilter}
-          onRefresh={refreshAll}
           onSearchChange={actions.setSearch}
-          refreshing={isLoading || state.listState === "refreshing"}
           search={state.search}
           title={t("Work history")}
         />
@@ -149,7 +151,6 @@ export function RunHistory({
       ) : (
         <RunDetailPanel
           approvals={approvals}
-          approvalsLoading={approvalsLoading}
           artifacts={artifacts}
           assistantText={assistantText}
           cancellingRunId={cancellingRunId}
@@ -162,7 +163,6 @@ export function RunHistory({
           onOpenApprovals={onOpenApprovals}
           onOpenProviders={onOpenProviders}
           onRefresh={onRefreshSelected}
-          onRefreshApprovals={onRefreshApprovals}
           onRerun={onRerun}
           onResolveApproval={onResolveApproval}
           onSelectRun={selectRun}

@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { mockDaemon } from "./support/mock-daemon";
+import { triggerFocusRevalidation } from "./support/focus-revalidation";
 import {
   createBaseState,
   createMockTeammate,
@@ -97,12 +98,8 @@ test("Council refresh keeps rows, reports stale state, and remains single-flight
   failNextList = true;
   state.failNextAiCouncilHealth = { error: "council_health_unavailable", message: "Synthetic council health failure" };
 
-  const refresh = surface.getByRole("button", { name: "Refresh councils" });
-  await refresh.evaluate((element) => {
-    (element as HTMLButtonElement).click();
-    (element as HTMLButtonElement).click();
-  });
-  await expect(refresh).toHaveAttribute("aria-busy", "true");
+  await expect(surface.getByRole("button", { name: "Refresh councils" })).toHaveCount(0);
+  await triggerFocusRevalidation(page);
   await expect.poll(() => councilRequests.join(","), { timeout: 2_000 }).toBe("/ai-councils,/ai-councils/health");
   await expect.poll(() => councilResponses.sort().join(","), { timeout: 2_000 }).toBe("503:/ai-councils,503:/ai-councils/health");
   await expect(surface.getByText("Council refresh failed", { exact: true })).toBeVisible();
@@ -143,7 +140,7 @@ test("Truncated and outdated reports remain partial instead of claiming healthy"
 
   state.aiCouncilHealthFindingLimitOverride = undefined;
   state.aiCouncilHealthGeneratedAt = "2026-06-01T00:00:00.000Z";
-  await surface.getByRole("button", { name: "Refresh councils" }).click();
+  await triggerFocusRevalidation(page);
   await expect(surface.getByLabel("Council health")).toContainText("Health report predates this council configuration");
   await expectNoPageOverflow(page);
   expect(runtimeErrors).toEqual([]);

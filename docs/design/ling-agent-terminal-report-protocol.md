@@ -7,7 +7,6 @@ multi-agent participation, terminal evidence, and shared conversation projection
 
 Related docs:
 
-- [Ling Agent TerminalReport Implementation Plan](ling-agent-terminal-report-implementation-plan.md)
 - [Ling Agent Session Control Plane](ling-agent-session.md)
 - [Ling Agent Session Implementation Plan](ling-agent-session-implementation-plan.md)
 - [Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md)

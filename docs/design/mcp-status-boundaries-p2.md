@@ -9,7 +9,7 @@ The goal is to separate MCP persisted configuration, runtime connection state,
 auth/secret resolution, and status reporting before more CLI and Web MCP surfaces
 depend on them.
 
-Detailed patch breakdown lives in [MCP Status Boundaries P2 Implementation Plan](mcp-status-boundaries-p2-implementation-plan.md).
+Detailed patch breakdown lives in MCP Status Boundaries P2.
 
 Current implementation state:
 
@@ -29,7 +29,6 @@ Current implementation state:
 - [Secrets and Keychain](secrets-keychain.md)
 - [Daemon Modularization](daemon-modularization.md)
 - [Runner Adapters](runner-adapters.md)
-- [MCP Status Boundaries P2 Implementation Plan](mcp-status-boundaries-p2-implementation-plan.md)
 
 ## Reference Snapshot
 

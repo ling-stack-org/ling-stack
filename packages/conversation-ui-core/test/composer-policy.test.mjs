@@ -19,7 +19,7 @@ const slashCommands = [
 test("composer parser extracts attachments, teammate mentions, slash commands, urls, and workspace files", () => {
   const parts = parseComposerInputParts("@Designer /review ./apps/web https://example.com", {
     attachments: [{ attachmentId: "attachment-1" }],
-    cwd: "/Users/tianxiao/ling-stack",
+    cwd: "/Users/example/ling-stack",
     teammateMentions: [{ id: "teammate-1", label: "Designer" }],
     slashCommands,
     linkPreviews: [{ url: "https://example.com", title: "Example", state: "ready" }],

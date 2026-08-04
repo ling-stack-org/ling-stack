@@ -58,11 +58,7 @@ test("AI teammate dock exposes real private context and tools at 1440x960 light"
   await expect(context).toContainText("private-dock-notes.md");
   await expect(context).toContainText("Private Dock memory");
   await expect(context).not.toContainText("Execute private Dock checks");
-  const refresh = page.getByRole("toolbar", { name: "Private chat actions" }).getByRole("button", { name: "Refresh" });
-  await refresh.click();
-  await expect(refresh).toBeDisabled();
-  await expect(context).toContainText("Refreshing workspace");
-  await expect(refresh).toBeEnabled();
+  await expect(page.getByRole("toolbar", { name: "Private chat actions" }).getByRole("button", { name: "Refresh" })).toHaveCount(0);
   await expect(context).toContainText("Ready");
   await captureEvidence(page, "1440x960-ling-light-teammate-context-loaded.png");
   await dock.getByRole("button", { name: "Back" }).click();

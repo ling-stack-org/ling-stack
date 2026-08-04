@@ -139,6 +139,7 @@ import { permissionPresetForWorkspaceAccessMode, workspaceAccessModeForPermissio
 import { authorizationAndAccessToLegacyPermission } from "../lib/conversation-authorization.js";
 import { StatusBadge } from "../shared/components/index.js";
 import { CurrentSessionHeaderCapabilityProvider } from "../shared/current-session/CurrentSessionHeaderCapability.js";
+import { useFocusRevalidationToken } from "../shared/hooks/use-focus-revalidation-token.js";
 import {
   aiTeammateToLocalDraft,
   buildChannelUnreadState,
@@ -235,11 +236,16 @@ export function AppShell(): JSX.Element {
   const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsSectionId | undefined>();
   const [settingsRunDiagnosticsRunId, setSettingsRunDiagnosticsRunId] = useState<string | undefined>();
   const [desktopTeammateConversationId, setDesktopTeammateConversationId] = useState<string | undefined>();
+  const [teammateSettingsOpenRequest, setTeammateSettingsOpenRequest] = useState<{
+    readonly teammateId: string;
+    readonly requestId: number;
+  }>();
   const [providerSetupIntent, setProviderSetupIntent] = useState<ProviderSetupIntent | "">("");
   const settingsReturnTargetRef = useRef<SettingsReturnTarget | undefined>(undefined);
   const [channelSidebarOpen, setChannelSidebarOpen] = useState(() => !narrowViewport);
   const [selectedChannelBranchId, setSelectedChannelBranchId] = useState("");
   const [daemonHealthy, setDaemonHealthy] = useState<boolean | undefined>();
+  const focusRevalidationToken = useFocusRevalidationToken({ enabled: daemonHealthy === true });
   const [daemonHealthRefreshing, setDaemonHealthRefreshing] = useState(false);
   const [daemonFeatures, setDaemonFeatures] = useState<DaemonFeatureFlags>({
     channels: { autoRoute: false },
@@ -1406,6 +1412,16 @@ export function AppShell(): JSX.Element {
     setActiveSidebarTarget("workspace");
   }
 
+  function openAiTeammateSettings(teammateId: string): void {
+    clearSettingsWorkspaceToolView();
+    closeSettingsRunDiagnostics();
+    setTeammateSettingsOpenRequest((current) => ({
+      teammateId,
+      requestId: (current?.requestId ?? 0) + 1,
+    }));
+    selectAiTeammate(teammateId);
+  }
+
   async function openConversationThread(
     conversationId: string,
     isCurrentIntent: () => boolean = () => true,
@@ -1756,6 +1772,7 @@ export function AppShell(): JSX.Element {
     if (activeView === "workspace") {
       void refreshChannels();
       void refreshConversationThreads();
+      if (!selectedChannelId) void refreshSelectedConversation();
       void refreshRuns();
       void refreshApprovals();
       void refreshExternalWorkCiTriage();
@@ -1810,8 +1827,22 @@ export function AppShell(): JSX.Element {
       void refreshExternalWorkStatus();
       void refreshMcp();
       void refreshPlugins();
+      if (settingsWorkspaceToolView === "providers") {
+        void refreshProviderTemplates();
+        void refreshProviders();
+      }
+      if (settingsWorkspaceToolView === "teammates") {
+        void refreshAiTeammates();
+        void refreshChannels();
+      }
+      if (settingsWorkspaceToolView === "councils") {
+        if (focusRevalidationToken === 0) {
+          void refreshAiCouncils();
+          void refreshAiTeammates();
+        }
+      }
     }
-  }, [activeView]);
+  }, [activeView, focusRevalidationToken]);
 
   useEffect(() => {
     if (selectedChannelId) {
@@ -1832,7 +1863,7 @@ export function AppShell(): JSX.Element {
       resetExternalWorkSelectedChannel();
       setSelectedTaskId("");
     }
-  }, [selectedChannelId, selectedChannelMessageThreadId]);
+  }, [focusRevalidationToken, selectedChannelId, selectedChannelMessageThreadId]);
 
   useEffect(() => {
     const workspaceCwd = form.cwd.trim();
@@ -2200,6 +2231,7 @@ export function AppShell(): JSX.Element {
         onRemoveTeammate={(teammateId) => void removeAiTeammate(teammateId).catch(() => undefined)}
         onToggleTeammatePinned={(teammateId) => void toggleAiTeammatePinned(teammateId).catch(() => undefined)}
         onToggleTeammateHidden={(teammateId) => void toggleAiTeammateHidden(teammateId).catch(() => undefined)}
+        onEditTeammate={openAiTeammateSettings}
         onOpenTeammate={(teammateId) => {
           clearSettingsWorkspaceToolView();
           closeSettingsRunDiagnostics();
@@ -2523,7 +2555,6 @@ export function AppShell(): JSX.Element {
             onRefreshWorkItems={() => void refreshWorkItems()}
             onRefreshChannelProtocol={() => void refreshChannelProtocol()}
             onRefreshChannelFiles={() => void Promise.all([refreshChannelFiles(), refreshChannelRunArtifacts()])}
-            onRefreshChannelGovernanceNotifications={() => void refreshChannelGovernanceNotifications()}
             onMarkChannelGovernanceNotificationSeen={(notificationId) => void markChannelGovernanceNotificationSeen(notificationId)}
             onDismissChannelGovernanceNotification={(notificationId) => void dismissChannelGovernanceNotification(notificationId)}
             onRefreshAiCouncils={() => void refreshAiCouncils()}
@@ -2531,6 +2562,7 @@ export function AppShell(): JSX.Element {
             onUpdateChannelCouncilPolicy={(input) => updateSelectedChannelCouncilPolicy(input)}
             attachmentContentUrl={(attachment) => channelAttachmentContentUrl(attachment, form.cwd.trim())}
             onRefreshTasks={() => void refreshTasks()}
+            onRefreshRunApprovals={() => void refreshApprovals(form.cwd.trim(), activeRunId || undefined)}
             onSelectTask={setSelectedTaskId}
             onCheckThenRunTask={(task) => void checkThenRunPersistedTask(task)}
             onRunTask={(task) => void runPersistedTask(task)}
@@ -2551,7 +2583,6 @@ export function AppShell(): JSX.Element {
             onCancelActiveRun={(targetRun) => void cancelRunOrWorkUnit(targetRun)}
             onOpenRun={(runId) => void openRunFromWorkspace(runId)}
             onOpenApprovals={(runId) => openApprovalsFromWorkspace(runId)}
-            onRefreshRunApprovals={() => void refreshApprovals(form.cwd.trim(), activeRunId || undefined)}
             onRefreshRuntime={() => void refreshRuntimeState()}
             onCancelWorkUnit={(workUnitId) => void runWorkUnitAction(workUnitId, "cancel")}
             onRetryWorkUnit={(workUnitId) => void runWorkUnitAction(workUnitId, "retry")}
@@ -2716,6 +2747,10 @@ export function AppShell(): JSX.Element {
                 workspacePolicyLoading={approvalPolicyLoading}
                 workspacePolicyError={settingsDomain.error?.scope === "load" ? settingsDomain.error.message : undefined}
                 onRefreshWorkspacePolicy={() => void refreshApprovalPolicy()}
+                settingsOpenRequest={teammateSettingsOpenRequest}
+                onSettingsOpenRequestConsumed={(requestId) => {
+                  setTeammateSettingsOpenRequest((current) => current?.requestId === requestId ? undefined : current);
+                }}
                   />
                 ) : activeView === "teammates" ? (
                   <AiTeammatesPage
@@ -2732,6 +2767,7 @@ export function AppShell(): JSX.Element {
                     onRemoveTeammate={(teammateId) => void removeAiTeammate(teammateId).catch(() => undefined)}
                     onToggleTeammatePinned={(teammateId) => void toggleAiTeammatePinned(teammateId).catch(() => undefined)}
                     onToggleTeammateHidden={(teammateId) => void toggleAiTeammateHidden(teammateId).catch(() => undefined)}
+                    onEditTeammate={openAiTeammateSettings}
                     onOpenTeammate={selectAiTeammate}
                     onOpenCouncils={() => openSettingsWorkspaceTool("councils")}
                     onOpenProviders={() => openSettingsWorkspaceTool("providers")}
@@ -2764,15 +2800,12 @@ export function AppShell(): JSX.Element {
                 workUnitDetail={selectedWorkUnitDetail}
                 assistantText={assistantText}
                 approvals={activeRunApprovals}
-                approvalsLoading={approvalsLoading}
                 resolvingApprovals={resolvingApprovals}
-                isLoading={runsLoading}
                 isRunning={isRunning}
                 cancellingRunId={cancellingRunId}
                 errorMessage={runsDomain.error?.message ?? ""}
                 onRefresh={() => void refreshRuns()}
                 onRefreshSelected={() => void loadRun(activeRunId || lookupRunId)}
-                onRefreshApprovals={() => void refreshApprovals(form.cwd.trim(), activeRunId || undefined)}
                 onRerun={(sourceRun) => void rerunRun(sourceRun)}
                 onCancelRun={(sourceRun) => void cancelRunOrWorkUnit(sourceRun)}
                 onResolveApproval={(approvalId, decision, reason) => void resolveApproval(approvalId, decision, reason)}
@@ -3146,7 +3179,6 @@ export function AppShell(): JSX.Element {
               assistantText={assistantText}
               isRunning={isRunning}
               pendingApprovals={activePendingApprovals}
-              approvalsLoading={approvalsLoading}
               resolvingApprovals={resolvingApprovals}
               providers={providers}
               selectedProviderId={selectedProviderIdForRun}
@@ -3168,7 +3200,6 @@ export function AppShell(): JSX.Element {
               cwd={form.cwd}
               onLookupRunIdChange={setLookupRunId}
               onLoadRun={() => void loadRun()}
-              onRefreshApprovals={() => void refreshApprovals(form.cwd.trim(), activeRunId || undefined)}
               onResolveApproval={(approvalId, decision, reason) => void resolveApproval(approvalId, decision, reason)}
               onExecuteExternalAction={(actionId) => void executeExternalAction(actionId)}
               onCancelExternalAction={(actionId) => void cancelExternalAction(actionId, "Cancelled from Web Inspector")}

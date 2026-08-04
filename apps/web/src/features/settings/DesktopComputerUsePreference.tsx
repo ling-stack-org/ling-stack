@@ -93,7 +93,6 @@ export function DesktopComputerUsePreference({
               <MonitorUp aria-hidden="true" />
               <span>
                 <strong>{t("Computer Use picture-in-picture")}</strong>
-                <small>{t("Automatically show the approved Computer Use preview on Desktop")}</small>
               </span>
             </span>
           )}

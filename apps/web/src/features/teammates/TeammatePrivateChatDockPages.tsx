@@ -39,15 +39,7 @@ export function TeammatePrivateChatContextPage({
       aria-label={t("Conversation context")}
     >
       <header className="teammate-private-dock-page-header">
-        <span>
-          <strong>{context.teammateName}</strong>
-          <small>{t("Private conversation context")}</small>
-        </span>
-        <StatusIndicator
-          compact
-          label={context.workspace.statusLabel}
-          tone={context.workspace.tone}
-        />
+        <strong>{context.teammateName}</strong>
       </header>
 
       {context.workspace.error ? (

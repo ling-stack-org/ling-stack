@@ -2,6 +2,7 @@ import { access, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mockDaemon, type MockState } from "./support/mock-daemon";
+import { triggerFocusRevalidation } from "./support/focus-revalidation";
 import { createDefaultProviderTemplates } from "./support/mock-state";
 import {
   createLoadedMediaProductionFixture,
@@ -33,7 +34,8 @@ test("MP-11 workflow load uses a shared dialog, retains refresh failures, and re
 
   control.listDelayMs = 0;
   control.failNextConnectionList = 1;
-  await dialog.getByRole("button", { name: "Refresh production workflows" }).click();
+  await expect(dialog.getByRole("button", { name: "Refresh production workflows" })).toHaveCount(0);
+  await triggerFocusRevalidation(page);
   const retainedFailure = dialog.getByRole("alert").filter({ hasText: "Could not refresh production workflows" });
   await expect(retainedFailure).toBeVisible();
   await expect(dialog.getByRole("option", { name: /Editorial workflow/ })).toBeVisible();

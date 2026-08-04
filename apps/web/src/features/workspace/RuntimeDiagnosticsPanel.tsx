@@ -45,7 +45,7 @@ export function RuntimeDiagnosticsPanel({
         <span><Activity size={15} /><strong>{t("Runtime supervisor")}</strong></span>
         <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={loading}>
           {loading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
-          {t("Refresh")}
+          {t("Check status")}
         </button>
       </div>
 

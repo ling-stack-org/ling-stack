@@ -538,16 +538,25 @@ test("remounts the header slot without duplicating the bridge subscription or lo
 });
 
 test("keeps header controls inside a 640px viewport with 32px action targets", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 760 });
+  await openDesktopBridgeChannel(page);
   await page.setViewportSize({ width: 640, height: 760 });
   await emitComputerUseSummary(page, { sessionId: "computer-use-narrow" });
   await expectNarrowHeaderControl(page, ".channel-header");
 
-  await openDesktopBridgeNormalConversation(page);
+  await page.setViewportSize({ width: 1280, height: 760 });
+  await emitDesktopNavigationIntent(page, 100, DESKTOP_BRIDGE_THREAD_ID);
+  await expect(page.locator(".normal-conversation-header")).toBeVisible();
+  await page.setViewportSize({ width: 640, height: 760 });
   await expectNarrowHeaderControl(page, ".normal-conversation-header");
 
+  await page.setViewportSize({ width: 1280, height: 760 });
+  const showNavigation = page.getByRole("button", { name: "Show navigation" });
+  if (await showNavigation.isVisible()) await showNavigation.click();
   await openDesktopBridgeTeammate(page);
   await expect.poll(async () => (await desktopControlSnapshot(page)).selectedConversationId).toBe(DESKTOP_BRIDGE_TEAMMATE_THREAD_ID);
   await emitComputerUseSummary(page, { sessionId: "computer-use-narrow-teammate" });
+  await page.setViewportSize({ width: 640, height: 760 });
   await expectNarrowHeaderControl(page, ".teammate-chat-header");
 });
 

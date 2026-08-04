@@ -1,4 +1,4 @@
-import { Clock3, Pencil, RefreshCw, Square, Workflow } from "lucide-react";
+import { Clock3, Pencil, Square, Workflow } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import { Button, EmptyState, InlineFeedback, InspectorSection, Textarea } from "../../shared/ui/index.js";
 import type { RunSession } from "../../types.js";
@@ -18,7 +18,6 @@ export function RunGuidancePanel({ cwd, run, canRedirect, onRefreshRun }: {
   return (
     <InspectorSection
       className="run-guidance-panel"
-      action={<Button leadingIcon={<RefreshCw size={14} />} loading={state.busyKeys.has("refresh")} onClick={() => void actions.loadInterventions()} size="sm">{t("Refresh")}</Button>}
       summary={t("{count} interventions", { count: state.interventions.length })}
       title={t("Run guidance")}
       open
@@ -36,7 +35,12 @@ export function RunGuidancePanel({ cwd, run, canRedirect, onRefreshRun }: {
         />
         {state.errors[queueKey] ? <InlineFeedback tone="danger">{state.errors[queueKey] === "missing_instruction" ? t("Please enter guidance first.") : state.errors[queueKey]}</InlineFeedback> : null}
         {state.errors[redirectKey] ? <InlineFeedback tone="danger">{state.errors[redirectKey] === "missing_instruction" ? t("Please enter guidance first.") : state.errors[redirectKey]}</InlineFeedback> : null}
-        {state.errors.refresh ? <InlineFeedback tone={state.loadState === "stale" ? "warning" : "danger"}>{state.errors.refresh}</InlineFeedback> : null}
+        {state.errors.refresh ? (
+          <InlineFeedback tone={state.loadState === "stale" ? "warning" : "danger"}>
+            <span>{state.errors.refresh}</span>
+            <Button size="sm" variant="secondary" onClick={() => void actions.loadInterventions()}>{t("Retry")}</Button>
+          </InlineFeedback>
+        ) : null}
         <div className="runs-form-actions">
           <Button disabled={!state.instruction.trim()} leadingIcon={<Clock3 size={14} />} loading={state.busyKeys.has(queueKey)} onClick={() => void actions.create("queue_followup")} size="sm">{t("Queue guidance")}</Button>
           <Button aria-label={t("Redirect current run")} disabled={!state.instruction.trim() || !canRedirect} leadingIcon={<Square size={14} />} loading={state.busyKeys.has(redirectKey)} onClick={() => void actions.create("interrupt_redirect")} size="sm" variant="danger">{t("Stop and redirect")}</Button>

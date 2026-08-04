@@ -44,7 +44,7 @@ for (const fixture of [
 
     await expect(header).toBeVisible();
     await expect(identity).toContainText("Deployment readiness conversation");
-    await expectToolbarActions(toolbar, ["search", "refresh", "summary", "terminal", "details"]);
+    await expectToolbarActions(toolbar, ["search", "summary", "terminal", "details"]);
     expect(Math.round((await header.boundingBox())?.height ?? 0)).toBe(48);
     await expectAlignedConversationColumns(feed, composer);
     await expectHeaderSlotsDoNotOverlap(identity, toolbar);
@@ -86,12 +86,8 @@ for (const fixture of [
     await expect(header.getByRole("textbox", { name: "Search conversation messages" })).toHaveValue("");
     await page.keyboard.press("Escape");
 
-    const refresh = toolbar.getByRole("button", { name: "Refresh" });
-    await refresh.click();
-    await expect(refresh).toBeDisabled();
-    await expect(refresh.locator(".ling-ui-spinner")).toHaveCount(1);
+    await expect(toolbar.getByRole("button", { name: "Refresh" })).toHaveCount(0);
     await expect(toolbar.getByRole("button", { name: "Summary" })).toBeEnabled();
-    await expect(refresh).toBeEnabled();
 
     await searchTrigger.click();
     const evidenceSearch = header.getByRole("search", { name: "Search conversation messages" });

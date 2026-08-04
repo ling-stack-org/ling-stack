@@ -524,7 +524,7 @@ source of truth aligned with that roadmap.
 
 ### Phase 2: GitHub Polling, Claims, and Workspaces
 
-Implementation plan: [External Work Phase 2 Implementation](external-work-phase-2-implementation.md).
+Implementation plan: External Work Orchestration.
 
 - Add GitHub poll adapter for PR and issue candidates.
 - Add claim leases for repo, PR, issue, workflow step, and bound path.
@@ -541,7 +541,7 @@ Implementation plan: [External Work Phase 2 Implementation](external-work-phase-
 
 ### Phase 3: Approval-Gated Comments and Labels
 
-Implementation plan: [External Work Phase 3 Implementation](external-work-phase-3-implementation.md).
+Implementation plan: External Work Orchestration.
 
 - Add durable proposed action records for comments and labels. The Phase 3 concrete
   contract is `ExternalWorkAction`, while this document keeps `ExternalProposedAction`
@@ -567,7 +567,7 @@ Implementation plan: [External Work Phase 3 Implementation](external-work-phase-
 
 ### Phase 4: CI Triage and Local Fix Tasks
 
-Implementation plan: [External Work Phase 4 Implementation](external-work-phase-4-implementation.md).
+Implementation plan: External Work Orchestration.
 
 - Normalize failing checks and workflow runs for existing GitHub PR external work.
 - Capture check/job metadata, bounded redacted log excerpts, first failing command, and
@@ -607,7 +607,7 @@ Implementation plan: [External Work Phase 4 Implementation](external-work-phase-
 - Keep edit-and-approve out of the first loop. Cancel and re-propose instead.
 - Keep no-force-push as the default push boundary.
 - Track the implementation details in
-  [External Work Phase 5 Implementation](external-work-phase-5-implementation.md).
+  External Work Orchestration.
 
 ### Phase 6: Background Polling and Reconciliation
 
@@ -622,7 +622,7 @@ Implementation plan: [External Work Phase 4 Implementation](external-work-phase-
   read GitHub and create/reuse local records, but they must not start runners or execute
   GitHub mutations.
 - Track the implementation details in
-  [External Work Phase 6 Implementation](external-work-phase-6-implementation.md).
+  External Work Orchestration.
 
 ### Phase 7: Second Channel Adapter
 
@@ -637,7 +637,7 @@ Implementation plan: [External Work Phase 4 Implementation](external-work-phase-
 - Keep Linear background polling and webhook ingestion out of the first Phase 7 slice.
 - Treat GitLab or Jira as later alternatives only if real usage requires them.
 - Track the implementation details in
-  [External Work Phase 7 Implementation](external-work-phase-7-implementation.md).
+  External Work Orchestration.
 
 ### GA Hardening
 

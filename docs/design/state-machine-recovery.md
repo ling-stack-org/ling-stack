@@ -6,10 +6,11 @@ This matters before multi-agent orchestration. Once several AI teammates, channe
 
 Related docs:
 
-- [Multi-Agent Collaboration Cards And Ambient Audit](multi-agent-collaboration-cards-and-ambient-audit.md)
+- [Conversation Surface Contract](conversation-surface-contract.md)
+- [Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md)
 - [Multi-Agent Orchestrator](multi-agent-orchestrator.md)
 
-Collaboration task cards are product read models over these state machines. They may
+Operation-cell collaboration projections are product read models over these state machines. They may
 derive compact states such as `shaping`, `running`, `waiting_for_approval`, or
 `completed`, but they must not bypass workflow, step, run, approval, or lease transition
 rules.
@@ -36,6 +37,18 @@ The current code now has the first durable transition layer:
 - `GET /state-transitions` and `GET /runtime/leases` expose read-only debugging timelines.
 
 The remaining migration work is to route every approval and media-job status write through the same transition event table. The runner path already uses compare-and-set for task/run state, and cancellation releases active leases so late runner success cannot overwrite a cancelled run.
+
+The orchestration hardening baseline is also implemented:
+
+- stale runner completion is audited and cannot overwrite a newer terminal state;
+- requested/effective runner and explicit fallback policy are persisted and inspectable;
+- approval previews and tool result artifacts remain linked by stable run/tool-call identity;
+- resume preview and execution share one deterministic context builder;
+- workflow context/output packets are durable run artifacts referenced by step metadata;
+- failure policy and post-step gates pause or continue downstream work through existing durable approvals.
+
+These are state-machine guarantees, not a second workflow engine. Future changes must preserve compare-and-set,
+idempotency, recovery, and approval ownership.
 
 ## Required State Machines
 

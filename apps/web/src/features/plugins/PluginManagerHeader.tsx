@@ -1,5 +1,5 @@
-import { Plus, RefreshCw, Search, X } from "lucide-react";
-import { Button, Field, IconButton, Input, Select } from "../../shared/ui/index.js";
+import { Plus, Search, X } from "lucide-react";
+import { Button, Field, Input, Select } from "../../shared/ui/index.js";
 import type { PluginManagerCopy } from "./plugin-manager-copy.js";
 import type { PluginManagerController } from "./usePluginManagerController.js";
 import type { Translate } from "../../i18n.js";
@@ -90,15 +90,6 @@ export function PluginManagerHeader({
             <option value="unavailable">{t("Unavailable")}</option>
           </Select>
         </Field>
-        <IconButton
-          className="plugin-refresh-button"
-          icon={RefreshCw}
-          label={t("Refresh")}
-          loading={isLoading}
-          loadingLabel={t("Loading")}
-          onClick={() => controller.runRefresh(onRefresh)}
-          size="sm"
-        />
       </div>
       {controller.retainedRefreshError ? (
         <PluginManagerRefreshFeedback

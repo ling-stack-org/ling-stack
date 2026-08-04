@@ -16,13 +16,13 @@ function macEnvironment(overrides = {}) {
     GITHUB_REPOSITORY: "tianxiaochannel-oss88/ling-stack",
     GITHUB_SHA: SHA,
     GITHUB_TRIGGERING_ACTOR: "tianxiaochannel-oss88",
-    GITHUB_WORKSPACE: "/Users/tianxiao/.github-actions/ling-cua-driver-macos-arm64-v1/_work/ling-stack/ling-stack",
+    GITHUB_WORKSPACE: "/Users/example/.github-actions/ling-cua-driver-macos-arm64-v1/_work/ling-stack/ling-stack",
     LING_CUA_EXPECTED_COMMIT: SHA,
     RUNNER_ARCH: "ARM64",
     RUNNER_ENVIRONMENT: "self-hosted",
     RUNNER_NAME: "ling-cua-driver-macos-arm64-v1",
     RUNNER_OS: "macOS",
-    RUNNER_TEMP: "/Users/tianxiao/.github-actions/ling-cua-driver-macos-arm64-v1/_work/_temp",
+    RUNNER_TEMP: "/Users/example/.github-actions/ling-cua-driver-macos-arm64-v1/_work/_temp",
     ...overrides,
   };
 }

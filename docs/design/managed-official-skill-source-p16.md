@@ -5,14 +5,16 @@
 - [Skill Source Sync Simplification P15](skill-source-sync-simplification-p15.md)
 - [GStack Skill Source Sync](gstack-skill-source-sync.md)
 - [GStack Source Upgrade Lifecycle](gstack-source-upgrade-lifecycle.md)
-- [Settings Interaction Depth P9](settings-interaction-depth-p9.md)
-- [Settings Full-Surface Productization P10](settings-full-surface-productization-p10.md)
-- [P16 Implementation Plan](managed-official-skill-source-p16-implementation-plan.md)
+- [Settings Shell](./ui2.0升级/modules/settings/README.md)
 
 ## Status
 
-Implementation-ready design. This supersedes P15's persisted local-checkout
+Implemented active contract. The managed official cache, subscription state, refresh,
+preview and trusted explicit publish path supersede P15's persisted local-checkout
 connection as the normal source-sync mechanism.
+
+Owner: Skill source sync
+Last verified: 2026-08-03
 
 ## Summary
 

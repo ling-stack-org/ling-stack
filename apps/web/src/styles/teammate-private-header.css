@@ -87,10 +87,6 @@
   gap: var(--ling-space-5);
 }
 
-.teammate-chat-header .teammate-workspace-identity p {
-  display: none;
-}
-
 .teammate-chat-header h1,
 .teammate-chat-header h2 {
   min-width: 0;

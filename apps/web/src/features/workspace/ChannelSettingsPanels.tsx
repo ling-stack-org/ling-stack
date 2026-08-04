@@ -58,8 +58,6 @@ export function ChannelSettingsPanels({
   onAddSelectedChannelCouncil,
   onRemoveChannelCouncil,
   onSetPreferredChannelCouncil,
-  onRefreshAiCouncils,
-  onRefreshChannelCouncil,
   channelTeamMetricsPanel,
   channelEditForm,
   onChannelEditFormChange,
@@ -110,8 +108,6 @@ export function ChannelSettingsPanels({
   readonly onAddSelectedChannelCouncil: () => void;
   readonly onRemoveChannelCouncil: (councilId: string) => void;
   readonly onSetPreferredChannelCouncil: (councilId: string) => void;
-  readonly onRefreshAiCouncils: () => void;
-  readonly onRefreshChannelCouncil: () => void;
   readonly channelTeamMetricsPanel: ReactNode;
   readonly channelEditForm: ChannelFormState;
   readonly onChannelEditFormChange: (form: ChannelFormState) => void;
@@ -244,8 +240,6 @@ export function ChannelSettingsPanels({
             onAddSelectedChannelCouncil={onAddSelectedChannelCouncil}
             onRemoveChannelCouncil={onRemoveChannelCouncil}
             onSetPreferredChannelCouncil={onSetPreferredChannelCouncil}
-            onRefreshAiCouncils={onRefreshAiCouncils}
-            onRefreshChannelCouncil={onRefreshChannelCouncil}
           />
         </TabsContent>
 

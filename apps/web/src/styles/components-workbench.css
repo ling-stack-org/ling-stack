@@ -259,36 +259,6 @@
   line-height: 1;
 }
 
-.channel-team-stack-avatar .avatar-initial.teal {
-  background: #2f8076;
-  color: #ffffff;
-}
-
-.channel-team-stack-avatar .avatar-initial.violet {
-  background: #7861d8;
-  color: #ffffff;
-}
-
-.channel-team-stack-avatar .avatar-initial.blue {
-  background: #526bb8;
-  color: #ffffff;
-}
-
-.channel-team-stack-avatar .avatar-initial.orange {
-  background: #a96317;
-  color: #ffffff;
-}
-
-.channel-team-stack-avatar .avatar-initial.rose {
-  background: #b95c73;
-  color: #ffffff;
-}
-
-.channel-team-stack-avatar .avatar-initial.gray {
-  background: #64706b;
-  color: #ffffff;
-}
-
 .channel-team-stack-overflow {
   background: var(--surface-subtle);
   color: var(--text-muted);

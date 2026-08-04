@@ -4,7 +4,6 @@
 
 ## Related Docs
 
-- [Ling Skill Import V1](ling-skill-import-v1.md)
 - [Skill Library Ownership Separation](skill-library-ownership-separation.md)
 - [Skill Context Optimization](skill-context-optimization.md)
 - [Skill Editing And Revision](skill-editing-and-revision.md)

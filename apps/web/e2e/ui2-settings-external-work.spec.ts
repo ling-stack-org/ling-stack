@@ -19,7 +19,7 @@ test("External Work keeps no-channel and ready GitHub states quiet and truthful"
   await openExternalWork(page, false);
   const panel = page.locator("[data-ui2-external-work]");
   await expect(panel.getByText("Select a channel", { exact: true })).toBeVisible();
-  await expect(panel.getByRole("button", { name: "Refresh external work status" })).toHaveCount(0);
+  await expect(panel.getByRole("button", { name: "Check status" })).toHaveCount(0);
 
   await page.getByRole("button", { name: "Back to app" }).click();
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
@@ -66,13 +66,13 @@ test("status loading is local and refresh failure keeps the last loaded state", 
   const panel = await openExternalWork(page);
 
   await expect(panel.getByRole("status", { name: "Loading external work status" })).toBeVisible();
-  await expect(panel.getByRole("button", { name: "Refresh external work status" })).toHaveAttribute("aria-busy", "true");
+  await expect(panel.getByRole("button", { name: "Check status" })).toHaveAttribute("aria-busy", "true");
   statusMode = "ok";
   gate.resolve();
   await expect(panel.locator(".settings-external-work-overall-row").getByText("openclaw/openclaw", { exact: true })).toBeVisible();
 
   statusMode = "fail";
-  await panel.getByRole("button", { name: "Refresh external work status" }).click();
+  await panel.getByRole("button", { name: "Check status" }).click();
   await expect(panel).toContainText("External work status could not be refreshed. The last loaded state is still shown.");
   await expect(panel.locator(".settings-external-work-overall-row").getByText("openclaw/openclaw", { exact: true })).toBeVisible();
   await panel.getByText("Status error details", { exact: true }).click();
@@ -196,7 +196,7 @@ test("operation busy state is scoped and Linear keeps unsupported background tru
   await expect(panel.getByRole("button", { name: "停止后台轮询" })).toBeVisible();
 
   state.externalWorkStatus = createExternalWorkStatus({ sourceKind: "linear" });
-  await panel.getByRole("button", { name: "刷新外部工作状态" }).click();
+  await panel.getByRole("button", { name: "检查状态" }).click();
   await expect(panel).toContainText("不支持");
   await expect(panel.getByRole("button", { name: /启动后台轮询|停止后台轮询/ })).toHaveCount(0);
   await expect(panel.getByRole("button", { name: "轮询一次" })).toBeEnabled();

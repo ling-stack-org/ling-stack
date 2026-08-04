@@ -1,4 +1,4 @@
-import { ArrowRight, Hash, Link2, RefreshCw, Star, Unlink } from "lucide-react";
+import { ArrowRight, Hash, Link2, Star, Unlink } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import { aiCouncilSourceLabel } from "../../lib/ai-councils.js";
 import {
@@ -40,13 +40,6 @@ export function CouncilChannelsPanel({
               ? t("Loading councils")
               : t("{count} council(s) attached", { count: controller.rows.length })}
             tone={controller.loadError ? (controller.stale ? "warning" : "danger") : "neutral"}
-          />
-          <IconButton
-            disabled={!controller.selectedChannel || controller.loading}
-            icon={RefreshCw}
-            label={t("Refresh")}
-            loading={controller.refreshing}
-            onClick={() => void controller.refresh("refresh")}
           />
         </span>
       </header>

@@ -73,7 +73,7 @@ The parser only emits an intent when all of these are true:
 
 These inputs must not be treated as slash commands:
 
-- absolute local paths such as `/Users/tianxiao/project` or `/tmp/file`;
+- absolute local paths such as `/Users/example/project` or `/tmp/file`;
 - relative paths such as `./src`, `../docs`;
 - URL paths and ordinary prose containing `/segment`;
 - unknown commands such as `/not-a-real-command`.

@@ -9,7 +9,7 @@
 相关文档：
 
 - [模型工作台视频生产台](model-workbench-video-production-studio.md)
-- [媒体生产画布优先布局](media-production-canvas-first-layout.md)
+- [媒体生产体验收口](./media-production-experience-refinement.md)
 - [Provider Generation Runtime](provider-generation-runtime.md)
 
 ## Purpose

@@ -9,7 +9,6 @@ Related docs:
 
 - [Conversation Surface Contract](conversation-surface-contract.md)
 - [Conversation Shared Capabilities Detailed Design](conversation-shared-capabilities-detailed-design.md)
-- [Conversation Shared Capabilities Implementation Plan](conversation-shared-capabilities-implementation-plan.md)
 - [Conversation Composer Unification](conversation-composer-unification.md)
 - [AI Teammate Private Workspace](ai-teammate-private-workspace.md)
 - [Thread-First Work History V2 Detailed Design](thread-first-work-history-v2-detailed-design.md)
@@ -17,11 +16,11 @@ Related docs:
 
 ## Purpose
 
-Ling Stack already has the foundations of a shared conversation system: shared message
+Ling Stack has a shared conversation system: shared message
 rows, action bars, composer primitives, work cells, terminal reports, topic replies,
-thread forks, and queued run guidance. The next implementation phase must complete that
-system without creating a second channel UI, a separate private-chat renderer, or a
-Codex-shaped parallel runtime.
+thread forks, and queued run guidance. Follow-up work must extend that system without
+creating a second channel UI, a separate private-chat renderer, or a Codex-shaped
+parallel runtime.
 
 This design locks four decisions:
 

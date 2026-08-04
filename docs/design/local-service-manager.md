@@ -96,7 +96,7 @@ LaunchAgent-managed development services should bind to the canonical local sour
 checkout, not to a temporary Git worktree. On this machine the canonical checkout is:
 
 ```text
-/Users/tianxiao/ling-stack
+/Users/example/ling-stack
 ```
 
 Temporary worktrees may be useful for parallel branches, but they should not become the

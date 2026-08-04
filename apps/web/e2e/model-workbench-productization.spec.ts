@@ -52,10 +52,7 @@ test("P13 shows one neutral summary and one product state per model route", asyn
   }
   await expect(page.locator(".provider-row-technical-details")).toHaveCount(0);
   await expect(page.locator(".provider-key-status-stack")).toHaveCount(0);
-  const refreshButton = page.getByRole("button", { name: "Refresh" });
-  await expect(refreshButton).toHaveAttribute("aria-label", "Refresh");
-  await expect(refreshButton).toHaveAttribute("title", "Refresh");
-  await expect(refreshButton).toHaveAttribute("data-icon-only", "true");
+  await expect(page.getByRole("button", { name: "Refresh" })).toHaveCount(0);
 
   const overflow = await page.locator(".provider-table-shell").evaluate((element) => ({
     clientWidth: element.clientWidth,

@@ -1,6 +1,6 @@
-import { Activity, Archive, ArchiveRestore, GitBranch, Pin, PinOff, RefreshCw, Workflow } from "lucide-react";
+import { Activity, Archive, ArchiveRestore, GitBranch, Pin, PinOff, Workflow } from "lucide-react";
 import { useI18n } from "../../i18n.js";
-import { Button, EmptyState, IconButton, InlineFeedback } from "../../shared/ui/index.js";
+import { Button, EmptyState, InlineFeedback } from "../../shared/ui/index.js";
 import type { LingThread } from "../../types.js";
 import type { WorkHistoryTurnLoadState } from "./runs-thread-types.js";
 import { ThreadAttemptsSection } from "./ThreadAttemptsSection.js";
@@ -50,7 +50,6 @@ export function ThreadDetailPanel({ cwd, thread, threadId, turnState, visibleThr
           <span><h2 id="thread-detail-title">{t("Thread detail")}</h2><small>{state.displayThread?.title ?? threadId} · {t(state.displayThread?.status ?? "unknown")}</small></span>
         </div>
         <div className="runs-detail-actions">
-          <IconButton icon={RefreshCw} label={t("Reload")} loading={state.busyActions.has("refresh")} onClick={() => void actions.loadEvidence()} variant="secondary" />
           <Button disabled={!state.sourceRunId} leadingIcon={<Activity size={15} />} onClick={() => onSelectRun(state.sourceRunId)} size="sm">{t("Open source run")}</Button>
           <Button disabled={!state.canFork} leadingIcon={<GitBranch size={15} />} loading={state.busyActions.has("fork")} onClick={() => void actions.fork()} size="sm">{t("Fork")}</Button>
           <Button

@@ -23,8 +23,6 @@ export function TeammateChatHeader({
   cwd,
   teammate,
   attachmentCount,
-  refreshing,
-  refreshDisabled,
   searchInputRef,
   searchOpen,
   searchQuery,
@@ -43,7 +41,6 @@ export function TeammateChatHeader({
   onCloseSearch,
   onSearchQueryChange,
   onClearSearch,
-  onRefresh,
   onOpenAttachments,
   onOpenSettings,
   onOpenRename,
@@ -56,8 +53,6 @@ export function TeammateChatHeader({
   readonly cwd: string;
   readonly teammate: AiTeammate;
   readonly attachmentCount: number;
-  readonly refreshing: boolean;
-  readonly refreshDisabled: boolean;
   readonly searchInputRef: Ref<HTMLInputElement>;
   readonly searchOpen: boolean;
   readonly searchQuery: string;
@@ -76,7 +71,6 @@ export function TeammateChatHeader({
   readonly onCloseSearch: () => void;
   readonly onSearchQueryChange: (value: string) => void;
   readonly onClearSearch: () => void;
-  readonly onRefresh: () => void | Promise<void>;
   readonly onOpenAttachments: () => void;
   readonly onOpenSettings: (section: "profile" | "model") => void;
   readonly onOpenRename: () => void;
@@ -128,7 +122,6 @@ export function TeammateChatHeader({
               </MenuItem>
             </MenuContent>
           </Menu>
-          <p>{t("Private conversation only visible between you and {name}", { name: teammate.displayName })}</p>
         </div>
       </div>
       {searchOpen ? (
@@ -149,9 +142,6 @@ export function TeammateChatHeader({
         searchActive={searchOpen}
         searchButtonRef={searchTriggerRef}
         searchLabel={t("Search")}
-        refreshDisabled={refreshDisabled}
-        refreshLabel={t("Refresh")}
-        refreshLoading={refreshing}
         fileCount={attachmentCount}
         filesLabel={t("{label}: {count}", { label: t("Private attachments"), count: attachmentCount })}
         summaryActive={summaryOpen}
@@ -162,7 +152,6 @@ export function TeammateChatHeader({
         detailsActive={detailsOpen}
         detailsLabel={detailsOpen ? t("Hide details") : t("Show details")}
         onToggleSearch={onToggleSearch}
-        onRefresh={() => void onRefresh()}
         onOpenFiles={onOpenAttachments}
         onToggleSummary={onToggleSummary}
         onToggleTerminal={onToggleTerminal}

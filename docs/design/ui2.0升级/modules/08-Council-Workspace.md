@@ -1,66 +1,53 @@
 # Council Workspace
 
-## Goal
+## Product Boundary
 
-Council 页面统一列表、成员、频道接入和设置，显示真实 readiness 与关系状态，不成为另一套
-独立聊天引擎。Ling Agent 继续是协调者，不新增 Leader 实体。
+Council 是可管理的协作配置，不是另一个运行引擎。当前 UI 只投影 Core/daemon 已有的 list、health、
+create、clone、members、channel policy、settings、pause/resume 和 archive 能力。
 
-## Function Points
+- `source=user` 的 Council 可编辑；`builtin/template` 只读并通过 Clone 产生自定义副本。
+- Health 是带 `generatedAt` 和完整度的权威报告；缺失、过期、截断或 mutation 后尚未刷新时不得显示 Ready。
+- 当前没有稳定 Council runtime provenance，不能从成员、频道、时间戳或 Health 推断运行、成功率或调度。
+- 不新增 Delete、Restore、Archived catalog、审批引擎、权限状态机或数据库/API 字段。
 
-- `COUNCIL-LIST-001`：列表、置顶、状态和健康摘要。
-- `COUNCIL-CREATE-001`：创建名称、描述、成员和 routing mode。
-- `COUNCIL-MEMBERS-001`：添加、删除、启停、排序和可证明的 readiness 配置状态。
-- `COUNCIL-CHANNELS-001`：频道选择、接入、移除和打开应用频道。
-- `COUNCIL-SETTINGS-001`：名称、描述、状态、Clone、Archive。
-- `COUNCIL-RUNTIME-001`：成员运行、审批、失败和恢复摘要。
+## List And Selection
 
-## Layout
+- 搜索匹配用户可见名称和说明；筛选只使用真实 source/lifecycle/readiness。
+- 一行只显示一个主状态。partial Health 可以显示明确 finding，但不能证明其他对象正常。
+- initial loading 使用 Skeleton；refresh 保留旧列表并标 stale；切换 Council 时旧请求不得写入新对象。
+- 长列表内部滚动，操作列固定；选择行打开 Workspace，不增加重复“详情”按钮。
 
-左侧 compact list，右侧 Details Tabs：Members、Channels、Settings。频道接入空态横向排版，
-不出现竖排文字或超大空框。Settings 嵌入态去除重复页面标题。
+## Create And Clone
 
-## Actions
+- Create 只收集当前 API 支持的名称、说明和成员配置；提交前校验必填与重复。
+- Clone 明确复制哪些配置，不复制 runtime、Health、审批或历史；响应是新对象的权威来源。
+- 保存失败保留用户输入；成功后选择新 Council。managed Council 的编辑行动始终指向 Clone。
 
-成员行只显示状态和一个主行动；排序/移除为 icon/menu。`Open channel in app` 是显式离开
-Settings 的行动。Clone、Archive 放低频区。
+## Members
 
-## States
+- 成员顺序仅表达管理顺序，不暗示调度优先级。首版使用上下箭头，不增加拖拽语义。
+- Add、enable/disable、reorder、remove 都通过完整成员数组 PUT；提交前读取最新 fingerprint，检测到
+  冲突时不覆盖远端。
+- PUT 成功后等待更新的 Health generation；Health 刷新失败不回滚已保存成员配置。
+- 移除只解除 Council membership，不删除队友，也不改变直接频道成员关系。
+- builtin/template 成员只读；状态优先显示缺失、隐藏、未启用等明确 finding，再显示 pending/ready。
 
-no council、no selection、paused、archived、no members、member unavailable、no channels、
-attach saving、partial ready、member failed、waiting approval。
+## Channels
 
-## Components And Tests
+- Channel policy 只管理 Council 与频道的现有引用，不覆盖频道直接成员或各队友模型。
+- 保存以服务端响应为权威；切换频道、Council 或旧请求返回时使用 identity guard。
+- Council paused/archived 或 readiness 不完整时，UI 明确说明影响，不伪造可运行状态。
 
-DataRow、Tabs、Dialog、Select、StatusIndicator、InspectorSection、EmptyState。运行投影若当前
-API 不足，标 blocker，不能前端猜测。`councils.spec.ts`、`settings.spec.ts`、`ling-light` / `ling-dark`。
+## Settings And Archive
 
-## Council A Progress
+- 自定义 Council 可编辑名称、说明、置顶和 active/paused；dirty draft 与 authority 分离。
+- 保存失败保留草稿，reset 回到最新 authority。生命周期 action 使用独立 busy。
+- Archive 使用共享 Dialog；提交中阻止重复提交，失败保留 Dialog，成功后从 active list 移除。
+- Archive 不是永久删除。Core 负责清理频道引用，前端不发送第二次伪 cleanup。
+- managed Council 不发送 PATCH，只展示只读边界和 Clone。
 
-- `COUNCIL-CREATE-001`：`verified`。Create 成员/routing、零成员二次确认、Clone 审阅、busy/失败、超过
-  100 条列表的 detail 权威确认和源成员/routing 漂移复核均有 focused E2E 与真实页面证据。
-- `COUNCIL-LIST-001`：`verified`。Search/Health filter、显式 selection、单一主状态、partial report 防误报、
-  retained refresh、empty/no-result、长列表滚动和 Settings 嵌入态已有 focused E2E 与五张真实页面证据。
-- `COUNCIL-MEMBERS-001`：`verified`。自定义 Council 使用成员 GET preflight/整组 PUT 完成添加、移除、
-  启停和展示排序；builtin/template 只读并引导 Clone。readiness 只来自成员配置和完整、新鲜的 Health
-  report，不把顺序或 enabled 状态解释为运行事实。Focused `9/9`、List/Create `13/13`、旧 Council
-  `2/2`、Settings workspace-tools `7/7` 和六张原图证据通过。
-- `COUNCIL-CHANNELS-001`：`verified`。频道目录、接入/首选/解除、paused/archived removal-only、retained
-  stale、row failure、GET/PUT identity race、100 行和真实 Open Channel 已迁移到 UI2 focused owner；focused
-  `7/7`、Council/Settings/Dark selected `40/40` 和六张原图证据通过，只展示配置与关系事实，不声明 Council
-  runtime provenance。
-- `COUNCIL-SETTINGS-001`：`verified`。自定义 Council draft/reset/save、Pause/Resume、projection repair、managed
-  read-only、Archive Portal/busy/failure/success、policy cleanup、no Delete 和 100 行边界已有 focused `7/7`、
-  selected `66/66` 与六张原图证据。
-- `COUNCIL-RUNTIME-001`：保持 inventory。现有数据没有稳定 Council 运行来源，不新增 provenance/API/字段，
-  也不从一般 Runs 猜测 Council 正在运行。
+## Presentation
 
-List/Health 详细合同、实施计划和证据分别见 `08-Council-List-Health-A.md`、
-`08-Council-List-Health-A-implementation-plan.md` 和 `evidence/features/council-list-health/metadata.md`。
-
-Members A 的合同、实施结果和证据见 `08-Council-Members-A.md`、
-`08-Council-Members-A-implementation-plan.md` 与 `evidence/features/council-members/metadata.md`。
-Channels A 的合同、实施计划和证据见 `08-Council-Channels-A.md`、
-`08-Council-Channels-A-implementation-plan.md` 与 `evidence/features/council-channels/metadata.md`。
-Settings/Archive 的合同、实施计划和证据见 `08-Council-Settings-Archive.md`、
-`08-Council-Settings-Archive-implementation-plan.md` 与
-`evidence/features/council-settings-archive/metadata.md`。`COUNCIL-RUNTIME-001` 继续保持 inventory。
+- 页面使用列表 + 按需 Workspace/Inspector；默认层不展示 raw ID、workspace ID、payload、route 或时间戳。
+- 失败靠近所属 panel；明显的列表变化不再追加成功 Toast。
+- `1280x800` 下表单单列、动作不遮挡身份；Dialog、列表和 Inspector 各自拥有唯一滚动 owner。

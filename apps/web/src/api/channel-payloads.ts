@@ -12,7 +12,7 @@ export function channelFormToPayload(form: ChannelFormState): CreateChannelReque
     name: form.name.trim(),
     status: form.status,
     boundPath: form.boundPath.trim() || undefined,
-    defaultProviderPresetId: form.defaultProviderPresetId.trim(),
+    defaultProviderPresetId: form.defaultProviderPresetId.trim() || undefined,
     defaultTeammateId: form.defaultTeammateId || undefined,
     autoReplyMode: form.autoReplyMode,
     responseLanguage: form.responseLanguage,

@@ -4,6 +4,7 @@ import path from "node:path";
 import { inflateSync } from "node:zlib";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mockDaemon, type MockState } from "./support/mock-daemon";
+import { triggerFocusRevalidation } from "./support/focus-revalidation";
 import { createDefaultProviderTemplates } from "./support/mock-state";
 import {
   createMediaEmptyFixture,
@@ -55,7 +56,7 @@ test("MJ-02-list-states: canonical rows, filters, keyboard, 100-row scroll", asy
   await captureLedger(page, "1280x800-ling-dark-filter-no-result.png", "media_mixed_100", "LIST", "Show all", { width: 1280, height: 800 });
 });
 
-test("MJ-03-refresh-race: retained stale, retry, selection and artifact isolation", async ({ page }) => {
+test("MJ-03-focus-revalidation: retained stale, retry, selection and artifact isolation", async ({ page }) => {
   await initPage(page, "en-US", "ling-dark", { width: 1280, height: 800 });
   const state = createMediaMixedFixture();
   const control = createMediaRouteControl();
@@ -63,7 +64,8 @@ test("MJ-03-refresh-race: retained stale, retry, selection and artifact isolatio
   await page.locator('[data-media-job-row="media_job_preview_unavailable"]').click();
   const selectedBefore = await page.locator("[data-media-job-inspector]").getAttribute("data-media-job-inspector");
   control.failNextList = true;
-  await page.locator("[data-media-jobs-header]").getByRole("button", { name: "Refresh" }).click();
+  await expect(page.locator("[data-media-jobs-header]").getByRole("button", { name: "Refresh" })).toHaveCount(0);
+  await triggerFocusRevalidation(page);
   await expect(page.getByText("Could not refresh generation tasks. Showing the last loaded data.")).toBeVisible();
   await expect(page.locator("[data-media-job-row]").first()).toHaveAttribute("data-stale", "true");
   await expect(page.locator("[data-media-job-inspector]")).toHaveAttribute("data-media-job-inspector", selectedBefore ?? "");

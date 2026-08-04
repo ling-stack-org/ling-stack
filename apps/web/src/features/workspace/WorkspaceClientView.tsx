@@ -19,7 +19,6 @@ import {
   PencilLine,
   Play,
   Plus,
-  RefreshCw,
   Reply,
   Search,
   ShieldCheck,
@@ -507,7 +506,6 @@ export function WorkspaceClientView({
   onRefreshWorkItems,
   onRefreshChannelProtocol,
   onRefreshChannelFiles,
-  onRefreshChannelGovernanceNotifications,
   onMarkChannelGovernanceNotificationSeen,
   onDismissChannelGovernanceNotification,
   onRefreshAiCouncils,
@@ -515,6 +513,7 @@ export function WorkspaceClientView({
   onUpdateChannelCouncilPolicy,
   attachmentContentUrl,
   onRefreshTasks,
+  onRefreshRunApprovals,
   onSelectTask,
   onCheckThenRunTask,
   onRunTask,
@@ -522,7 +521,6 @@ export function WorkspaceClientView({
   onCancelActiveRun,
   onOpenRun,
   onOpenApprovals,
-  onRefreshRunApprovals,
   onRefreshRuntime,
   onCancelWorkUnit,
   onRetryWorkUnit,
@@ -688,7 +686,6 @@ export function WorkspaceClientView({
   readonly onRefreshWorkItems: () => void;
   readonly onRefreshChannelProtocol: () => void;
   readonly onRefreshChannelFiles: () => void;
-  readonly onRefreshChannelGovernanceNotifications: () => void;
   readonly onMarkChannelGovernanceNotificationSeen: (notificationId: string) => void;
   readonly onDismissChannelGovernanceNotification: (notificationId: string) => void;
   readonly onRefreshAiCouncils: () => void;
@@ -696,6 +693,7 @@ export function WorkspaceClientView({
   readonly onUpdateChannelCouncilPolicy: (input: UpdateChannelCouncilPolicyRequest) => Promise<void>;
   readonly attachmentContentUrl: (attachment: ChannelAttachment) => string;
   readonly onRefreshTasks: () => void;
+  readonly onRefreshRunApprovals: () => void;
   readonly onSelectTask: (taskId: string) => void;
   readonly onCheckThenRunTask: (task: Task) => void;
   readonly onRunTask: (task: Task) => void;
@@ -703,7 +701,6 @@ export function WorkspaceClientView({
   readonly onCancelActiveRun: (run?: RunSession) => void;
   readonly onOpenRun: (runId: string) => void;
   readonly onOpenApprovals: (runId?: string) => void;
-  readonly onRefreshRunApprovals: () => void;
   readonly onRefreshRuntime: () => void;
   readonly onCancelWorkUnit: (workUnitId: string) => void;
   readonly onRetryWorkUnit: (workUnitId: string) => void;
@@ -1333,7 +1330,6 @@ export function WorkspaceClientView({
   });
   const channelHeader = useChannelHeaderController({
     channelId: selectedChannelId,
-    onRefresh: onRefreshChannelActivity,
     onSearchChange: setActivitySearch,
   });
   const channelActivityToolsVisible =
@@ -2421,7 +2417,6 @@ export function WorkspaceClientView({
       onCancelActiveRun={onCancelActiveRun}
       onOpenRun={openRunInPanel}
       onOpenApprovals={onOpenApprovals}
-      onRefreshRunApprovals={onRefreshRunApprovals}
       onResolveApproval={onResolveApproval}
       onOpenProviders={onOpenProviders}
       attachmentContentUrl={attachmentContentUrl}
@@ -3144,8 +3139,8 @@ export function WorkspaceClientView({
     onCancelActiveRun,
     onRefreshChannelActivity,
     onRefreshTasks,
-    onRefreshRuntime,
     onRefreshRunApprovals,
+    onRefreshRuntime,
     t,
   });
   const channelComposerSubmitDisabled = activeConversationRun
@@ -3755,8 +3750,6 @@ export function WorkspaceClientView({
       onAddSelectedChannelCouncil={addSelectedChannelCouncil}
       onRemoveChannelCouncil={removeChannelCouncil}
       onSetPreferredChannelCouncil={setPreferredChannelCouncil}
-      onRefreshAiCouncils={onRefreshAiCouncils}
-      onRefreshChannelCouncil={onRefreshChannelCouncil}
       channelTeamMetricsPanel={channelTeamMetricsPanel}
       channelEditForm={channelEditForm}
       onChannelEditFormChange={updateChannelSettingsEditForm}
@@ -4107,10 +4100,6 @@ export function WorkspaceClientView({
           ariaLabel={t("Workspace task toolbar")}
           settingsPageOpen={channelSettingsPageOpen}
           environmentPageOpen={channelEnvironmentPageOpen}
-          settingsLoading={channelSettingsLoading}
-          settingsRefreshDisabled={!selectedChannelId || channelSettingsLoading}
-          settingsRefreshLabel={t("Refresh")}
-          onRefreshSettings={refreshChannelSettingsPage}
           searchActive={channelHeader.searchOpen}
           searchDisabled={!selectedChannelId}
           searchLabel={t("Search")}
@@ -4123,10 +4112,6 @@ export function WorkspaceClientView({
             }
             channelHeader.toggleSearch();
           }}
-          refreshDisabled={!selectedChannelId}
-          refreshLabel={t("Refresh")}
-          refreshLoading={channelHeader.refreshing}
-          onRefresh={() => void channelHeader.refresh()}
           teammateActionNode={channelHeaderTeammateCount > 0 ? (
             <button
               ref={teammateManagerButtonRef}
@@ -4167,7 +4152,6 @@ export function WorkspaceClientView({
                   onChannelCreateOpenChange(false);
                 }
               }}
-              onRefresh={onRefreshChannelGovernanceNotifications}
               onMarkSeen={onMarkChannelGovernanceNotificationSeen}
               onDismiss={onDismissChannelGovernanceNotification}
             />
@@ -4530,15 +4514,6 @@ export function WorkspaceClientView({
                       size="sm"
                     />
                   ) : null}
-                  <IconButton
-                    icon={RefreshCw}
-                    label={t("Refresh")}
-                    loading={sidePanelLoading}
-                    loadingLabel={t("Refresh")}
-                    onClick={refreshSidePanel}
-                    disabled={sidePanelLoading || !selectedChannelId}
-                    size="sm"
-                  />
                 </>
               )}
               onClose={closeChannelRightDock}

@@ -8,7 +8,7 @@ Related docs:
 - [Thread-First Work History](thread-first-work-history.md)
 - [Thread-First Work History V2 Detailed Design](thread-first-work-history-v2-detailed-design.md)
 - [Thread-First Work History Implementation Plan](thread-first-work-history-implementation-plan.md)
-- [Codex-Inspired Conversation V1](codex-inspired-conversation-v1.md)
+- [Conversation Surface Contract](./conversation-surface-contract.md)
 
 ## Decision
 

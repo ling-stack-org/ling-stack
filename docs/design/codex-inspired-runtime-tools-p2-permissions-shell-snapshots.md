@@ -24,10 +24,6 @@ silent access, or make shell state authoritative.
 ## Related Docs
 
 - [Codex-Inspired Runtime Tools](codex-inspired-runtime-tools.md)
-- [Codex-Inspired Runtime Tools P0: Apply-Patch Implementation](codex-inspired-runtime-tools-p0-apply-patch-implementation.md)
-- [Codex-Inspired Runtime Tools P1: Unified Exec For Bash Implementation](codex-inspired-runtime-tools-p1-unified-exec-implementation.md)
-- [Codex-Inspired Runtime Tools P2A: Permission Requests Implementation](codex-inspired-runtime-tools-p2a-permission-requests-implementation.md)
-- [Codex-Inspired Runtime Tools P2B: Shell Snapshots Implementation](codex-inspired-runtime-tools-p2b-shell-snapshots-implementation.md)
 - [Codex-Inspired Runtime Tools P2B: Shell Snapshots Follow-Ups](codex-inspired-runtime-tools-p2b-shell-snapshots-follow-ups.md)
 - [CLI Run I/O and Completion P1](cli-run-io-completion-p1.md)
 - [Core Tools, Runners, MCP Tools, and Plugin Boundary](core-tools-runtime-boundary.md)
@@ -364,7 +360,7 @@ Shell snapshots provide bounded evidence for Web, CLI doctor, and debugging.
 
 P2B should not implement shell snapshots against ad hoc bash events. It should build on
 the normalized `bash` exec backend from
-[Codex-Inspired Runtime Tools P1: Unified Exec For Bash Implementation](codex-inspired-runtime-tools-p1-unified-exec-implementation.md).
+[Codex-Inspired Runtime Tools](./codex-inspired-runtime-tools.md).
 
 The pre-P1 fallback was a no-op diagnostics shape that reports `unavailable`. Now that
 P1 unified exec exists, P2B can capture snapshots from unified exec request, output, and
@@ -373,7 +369,7 @@ result state.
 ### Snapshot Shape
 
 P2B implementation details refine this shape in
-[Codex-Inspired Runtime Tools P2B: Shell Snapshots Implementation](codex-inspired-runtime-tools-p2b-shell-snapshots-implementation.md).
+[Codex-Inspired Runtime Tools P2B: Shell Snapshots Implementation](./codex-inspired-runtime-tools.md).
 
 ```ts
 interface ShellSnapshot {
@@ -593,7 +589,7 @@ Feature gate state should appear in runtime diagnostics and request snapshots.
 ### P2.2 Daemon Permission Request Bridge
 
 Detailed implementation plan:
-[Codex-Inspired Runtime Tools P2A: Permission Requests Implementation](codex-inspired-runtime-tools-p2a-permission-requests-implementation.md).
+[Codex-Inspired Runtime Tools P2A: Permission Requests Implementation](./codex-inspired-runtime-tools.md).
 
 - Add `createRunPermissionRequestHandler`.
 - Reuse approval store and approval events.
@@ -617,7 +613,7 @@ Detailed implementation plan:
 ### P2.5 Shell Snapshot Artifacts
 
 Detailed implementation plan:
-[Codex-Inspired Runtime Tools P2B: Shell Snapshots Implementation](codex-inspired-runtime-tools-p2b-shell-snapshots-implementation.md).
+[Codex-Inspired Runtime Tools P2B: Shell Snapshots Implementation](./codex-inspired-runtime-tools.md).
 
 Follow-up split:
 [Codex-Inspired Runtime Tools P2B: Shell Snapshots Follow-Ups](codex-inspired-runtime-tools-p2b-shell-snapshots-follow-ups.md).

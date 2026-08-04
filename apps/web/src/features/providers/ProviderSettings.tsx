@@ -7,7 +7,7 @@ import {
   providerNeedsSecret,
 } from "../../lib/providers.js";
 import { readRunProviderPresetId } from "../../lib/run-evidence.js";
-import { InlineFeedback } from "../../shared/ui/index.js";
+import { Button, InlineFeedback } from "../../shared/ui/index.js";
 import type {
   ProviderCheckResult,
   ProviderFormState,
@@ -158,10 +158,14 @@ export function ProviderSettings(props: ProviderSettingsProps): JSX.Element {
           onProviderStatusFilterChange={workbench.setStatusFilter}
           onAddModel={() => editor.openNew()}
           onCheckBatch={() => void feedback.checkBatch()}
-          onRefresh={props.onRefresh}
           settingsToolMode={props.settingsToolMode}
         />
-        {props.errorMessage ? <InlineFeedback className="provider-page-error inline-error" tone="danger" title={t("Error")}>{props.errorMessage}</InlineFeedback> : null}
+        {props.errorMessage ? (
+          <InlineFeedback className="provider-page-error inline-error" tone="danger" title={t("Error")}>
+            <span>{props.errorMessage}</span>
+            <Button size="sm" variant="secondary" onClick={props.onRefresh}>{t("Retry")}</Button>
+          </InlineFeedback>
+        ) : null}
         <ProviderNextAction providers={providers} nextActionProvider={nextActionProvider} isLoading={props.isLoading} />
         {repairRun ? (
           <ProviderRunRepairPanel

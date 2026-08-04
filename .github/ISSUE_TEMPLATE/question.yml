@@ -1,0 +1,37 @@
+name: Setup or usage question
+description: Ask for help using the current source-first alpha
+title: "[Question]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Read README.md and SUPPORT.md first. Never paste API keys, tokens, private paths, workspace data, or sensitive model content into a public issue.
+  - type: textarea
+    id: goal
+    attributes:
+      label: What are you trying to do?
+    validations:
+      required: true
+  - type: textarea
+    id: attempted
+    attributes:
+      label: What have you tried?
+      description: Include safe commands and redacted output.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include commit, OS, architecture, Node version, and Web or Desktop mode.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I read the Quick Start and Support documents.
+          required: true
+        - label: I removed credentials, private paths, and private workspace data.
+          required: true

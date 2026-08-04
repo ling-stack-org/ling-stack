@@ -7,10 +7,8 @@ rendering, and virtualized transcript measurement
 
 Related docs:
 
-- [Conversation Operation Bubble And Performance Store](conversation-operation-bubble-and-performance-store.md)
-- [Conversation UI Framework Copy Canon Implementation Plan](conversation-ui-framework-copy-implementation-plan.md)
+- [Conversation Surface Contract](./conversation-surface-contract.md)
 - [Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md)
-- [Conversation UI Framework Temporary Implementation Checklist](conversation-ui-framework-implementation-checklist.md)
 
 ## Purpose
 

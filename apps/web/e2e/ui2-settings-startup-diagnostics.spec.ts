@@ -38,7 +38,7 @@ test("Startup keeps initial loading stable and ready state quiet", async ({ page
   gate.resolve();
   await expect(panel.locator(".settings-startup-primary-state").getByText("Ready", { exact: true })).toBeVisible();
   await expect(panel.getByText("No startup diagnostics", { exact: true })).toHaveCount(0);
-  await expect(panel.getByRole("button", { name: "Refresh startup status" })).toHaveJSProperty("offsetWidth", 32);
+  await expect(panel.getByRole("button", { name: "Check status" })).toHaveJSProperty("offsetWidth", 32);
   const technical = panel.locator("details").filter({ hasText: "Technical details" });
   await expect(technical).not.toHaveAttribute("open", "");
   await expect(panel.getByText("startup_e2e_ready", { exact: true })).toBeHidden();
@@ -126,7 +126,7 @@ test("Startup refresh failure preserves the last snapshot as a Chinese dark stal
   const panel = await openStartupDiagnostics(page);
   await expect(panel.locator(".settings-startup-primary-state").getByText("就绪", { exact: true })).toBeVisible();
 
-  const refresh = panel.getByRole("button", { name: "刷新启动状态" });
+  const refresh = panel.getByRole("button", { name: "检查状态" });
   await refresh.click();
   await expect(refresh).toHaveAttribute("aria-busy", "true");
   await expect(panel.getByRole("button", { name: "打开运行诊断" })).toBeEnabled();
@@ -205,7 +205,7 @@ test("Run Diagnostics distinguishes no-runs from a persistent folded load failur
   await captureEvidence(page, "1280x800-ling-dark-run-diagnostics-empty.png");
 
   failRunList = true;
-  await diagnostics.getByRole("button", { name: "Refresh run diagnostics" }).click();
+  await diagnostics.getByRole("button", { name: "Check run status" }).click();
   await expect(diagnostics.getByText("Run diagnostics are unavailable", { exact: true })).toBeVisible();
   await expect(diagnostics.getByText("Synthetic run list failure", { exact: true })).toBeHidden();
   await diagnostics.getByText("Error details", { exact: true }).click();

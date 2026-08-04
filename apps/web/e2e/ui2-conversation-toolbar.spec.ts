@@ -33,12 +33,12 @@ for (const fixture of [
 
     await openEngineeringChannel(page);
     const channelToolbar = page.getByRole("toolbar", { name: "Workspace task toolbar" });
-    await expectToolbarContract(channelToolbar, ["search", "refresh", "teammates", "summary", "terminal", "details"]);
+    await expectToolbarContract(channelToolbar, ["search", "teammates", "summary", "terminal", "details"]);
     await captureEvidence(page, `${fixture.width}x${fixture.height}-ling-${fixture.theme}-channel-toolbar.png`);
 
     await page.getByLabel("Ling Stack navigation").getByRole("button", { name: teammateName }).click();
     const teammateToolbar = page.getByRole("toolbar", { name: "Private chat actions" });
-    await expectToolbarContract(teammateToolbar, ["search", "refresh", "summary", "terminal", "details"]);
+    await expectToolbarContract(teammateToolbar, ["search", "summary", "terminal", "details"]);
     await teammateToolbar.getByRole("button", { name: "Search" }).hover();
     await expect(page.getByRole("tooltip").filter({ hasText: "Search" })).toBeVisible();
     await page.mouse.move(0, 0);
@@ -49,7 +49,7 @@ for (const fixture of [
     await home.getByRole("textbox", { name: "Conversation message" }).fill("Verify the shared conversation toolbar");
     await home.getByRole("button", { name: "Send" }).click();
     const conversationToolbar = page.getByRole("toolbar", { name: "Conversation workspace toolbar" });
-    await expectToolbarContract(conversationToolbar, ["search", "refresh", "summary", "terminal", "details"]);
+    await expectToolbarContract(conversationToolbar, ["search", "summary", "terminal", "details"]);
     const summary = conversationToolbar.getByRole("button", { name: "Summary" });
     await summary.click();
     await expect(summary).toHaveAttribute("aria-pressed", "true");

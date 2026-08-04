@@ -101,7 +101,6 @@ export function TaskDetailPanel({
   onCancelActiveRun,
   onOpenRun,
   onOpenApprovals,
-  onRefreshRunApprovals,
   onResolveApproval,
   onOpenProviders,
   attachmentContentUrl,
@@ -141,7 +140,6 @@ export function TaskDetailPanel({
   readonly onCancelActiveRun: (run?: RunSession) => void;
   readonly onOpenRun: (runId: string) => void;
   readonly onOpenApprovals: (runId?: string) => void;
-  readonly onRefreshRunApprovals: () => void;
   readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
   readonly onOpenProviders: (run?: RunSession) => void;
   readonly attachmentContentUrl: (attachment: ChannelAttachment) => string;
@@ -412,9 +410,6 @@ export function TaskDetailPanel({
         <section className="channel-task-approval-panel" aria-label={t("Pending approval")} aria-live="polite">
           <header>
             <span><ShieldCheck size={15} />{t("Pending approval")}</span>
-            <Button size="sm" variant="ghost" loading={approvalsLoading} onClick={onRefreshRunApprovals}>
-              {t("Refresh")}
-            </Button>
           </header>
           <div className="channel-task-approval-list">
             {pendingRunApprovals.map((approval) => (

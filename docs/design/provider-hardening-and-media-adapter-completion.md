@@ -11,7 +11,6 @@ Related docs:
 
 - [Provider Presets Design](provider-presets.md)
 - [Provider Generation Runtime Resolver](provider-generation-runtime.md)
-- [Provider Generation Runtime Resolver Implementation Plan](provider-generation-runtime-implementation-plan.md)
 - [Secrets and Keychain](secrets-keychain.md)
 - [Runtime, Provider, and Secrets Inheritance](runtime-provider-secrets-inheritance.md)
 - [Daemon API](../daemon-api.md)

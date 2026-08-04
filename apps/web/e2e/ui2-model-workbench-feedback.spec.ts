@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { mockDaemon } from "./support/mock-daemon";
+import { triggerFocusRevalidation } from "./support/focus-revalidation";
 import {
   createBaseState,
   createChatProvider,
@@ -193,7 +194,7 @@ test("row check failure persists until retry or provider identity changes", asyn
     displayName: "Auth Failed Identity Relay",
     model: "identity-failure-model",
   };
-  await page.getByRole("button", { name: "Refresh" }).click();
+  await triggerFocusRevalidation(page);
   const identityRow = page.locator(".provider-row").filter({ hasText: "identity-failure-model" });
   await identityRow.getByRole("button", { name: "Check" }).click();
   await expect(failure).toContainText("Invalid API key.");
@@ -202,7 +203,7 @@ test("row check failure persists until retry or provider identity changes", asyn
     ...(state.providers[0] as Record<string, unknown>),
     model: "identity-replacement-model",
   };
-  await page.getByRole("button", { name: "Refresh" }).click();
+  await triggerFocusRevalidation(page);
   await expect(failure).toHaveCount(0);
   await expect(page.locator(".provider-row").filter({ hasText: "identity-replacement-model" })).toBeVisible();
   await expectNoDocumentOverflow(page);

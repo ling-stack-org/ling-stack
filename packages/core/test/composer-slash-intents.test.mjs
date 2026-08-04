@@ -151,7 +151,7 @@ test("does not parse unknown commands or unresolved teammates", () => {
 
 test("does not parse local paths or slash-like prose as commands", () => {
   for (const input of [
-    "/Users/tianxiao/ling-stack",
+    "/Users/example/ling-stack",
     "/tmp/file",
     "./src/index.ts",
     "../docs/design.md",

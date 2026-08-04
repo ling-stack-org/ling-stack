@@ -89,7 +89,7 @@ test("1280x800 Ling Dark contains shared Textarea focus through failure and retr
     .evaluateAll((elements) => elements.flatMap((element) => getComputedStyle(element).transitionDuration.split(", ")));
   expect(transitionDurations.every((duration) => duration === "0s")).toBe(true);
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-  await expectButtonHitAreas(panel, 3);
+  await expectButtonHitAreas(panel, 2);
   await expectNoHorizontalOverflow(panel);
   await expectNoPageOverflow(page);
   await captureEvidence(page, "1280x800-ling-dark-failure-focus-reduced-motion.png");

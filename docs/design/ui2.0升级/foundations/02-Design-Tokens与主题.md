@@ -4,9 +4,9 @@
 
 - [主题系统入口](../themes/README.md)
 - [主题包 Schema 与 Token 合同](../themes/02-主题包Schema与Token合同.md)
-- [沉浸式主题与 Presentation Profile](../themes/06-沉浸式主题与Presentation-Profile.md)
+- [沉浸式主题与 Presentation Profile](../themes/01-独立主题包产品模型.md)
 - [AI 生成主题产品流程](../themes/07-AI生成主题产品流程.md)
-- [CSS 目标目录与加载顺序](../architecture/06-CSS目标目录与加载顺序.md)
+- [CSS 目标目录与加载顺序](../architecture/03-CSS所有权与迁移规则.md)
 - [主题注册表与运行时切换](../architecture/07-主题注册表与运行时切换.md)
 
 ## Ownership
@@ -53,7 +53,7 @@ Presentation Profile recipes
 | Z-index | sticky 20, menu 40, popover 50, dialog 60, toast 80, tooltip 90 |
 
 完整 duration、easing、属性和 reduced-motion 合同见
-[Motion 与状态转场](08-Motion与状态转场.md)。Feature 不得自行新增 raw duration/easing。
+[Motion 与状态转场](./04-交互动效与无障碍.md)。Feature 不得自行新增 raw duration/easing。
 
 ## Theme Pack Tokens
 
@@ -69,10 +69,8 @@ Theme Pack 覆盖的语义组：
 | Shadow | low, medium, overlay |
 | Native | selection, scrollbar, scrollbar hover |
 
-Built-in token values 分别在：
-
-- [Ling Light 内置主题](../themes/03-Ling-Light内置主题.md)
-- [Ling Dark 内置主题](../themes/04-Ling-Dark内置主题.md)
+Built-in token values 由
+[主题包 Schema 与 Token 合同](../themes/02-主题包Schema与Token合同.md)统一管理。
 
 ## Root Contract
 

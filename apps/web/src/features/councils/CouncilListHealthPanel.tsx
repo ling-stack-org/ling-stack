@@ -1,4 +1,4 @@
-import { Plus, RefreshCw, Search } from "lucide-react";
+import { Plus, Search } from "lucide-react";
 import type { ReactNode } from "react";
 import { useI18n } from "../../i18n.js";
 import {
@@ -53,14 +53,6 @@ export function CouncilListHealthPanel(props: CouncilListHealthPanelProps): JSX.
         <span className="council-list-health-title-actions">
           {props.initialLoading ? <span>{t("Loading")}</span> : <span>{t("{count} council(s)", { count: props.visibleRows.length })}</span>}
           {props.stale ? <StatusIndicator compact label={t("Stale snapshot")} tone="warning" /> : null}
-          <IconButton
-            icon={RefreshCw}
-            label={t("Refresh councils")}
-            loading={props.refreshBusy || props.initialLoading}
-            loadingLabel={t("Refreshing councils")}
-            onClick={() => void props.onRefresh()}
-            size="sm"
-          />
         </span>
       </div>
 

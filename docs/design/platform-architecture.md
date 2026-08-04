@@ -49,9 +49,9 @@ runtimes. The detailed design lives in [Runtime Supervisor](runtime-supervisor.m
 The phased plan for evolving this daemon into a Codex app-server-like local control
 plane lives in [Runtime Control Plane Roadmap](runtime-control-plane-roadmap.md).
 The mid-term control-plane implementation breakdown lives in
-[Runtime Control Plane Mid-Term Implementation Plan](runtime-control-plane-mid-term-implementation-plan.md).
+[Runtime Control Plane Mid-Term Implementation Plan](./runtime-control-plane-detailed-design.md).
 The long-term transport, processor, registry, subscription, and worker layering plan
-lives in [Runtime Control Plane Long-Term Implementation Plan](runtime-control-plane-long-term-implementation-plan.md).
+lives in [Runtime Control Plane Long-Term Implementation Plan](./runtime-control-plane-roadmap.md).
 
 ## Architecture Principles
 
@@ -530,7 +530,7 @@ resource lease, and test plan lives in [GitHub Automation Design](github-automat
 
 The GitHub channel source normalizes webhook or polled events. The Phase 4 CI triage
 implementation plan is tracked in
-[External Work Phase 4 Implementation](external-work-phase-4-implementation.md).
+[External Work Orchestration](./external-work-orchestration.md).
 
 ```text
 pull_request.opened
@@ -867,7 +867,7 @@ daemon, approval policy, leases, state machines, providers, and runner paths.
 Add Codex-like plugin management for internal, bundled, and trusted local capabilities
 before opening third-party APIs. The design lives in [Plugin Manager](plugin-manager.md);
 the Stage 1-3 implementation plan lives in
-[Plugin Manager Implementation Plan](plugin-manager-implementation-plan.md).
+[Plugin Manager](./plugin-manager.md).
 
 Initial scope:
 

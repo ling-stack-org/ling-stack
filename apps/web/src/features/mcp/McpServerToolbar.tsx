@@ -1,20 +1,16 @@
-import { Plus, RefreshCw, Server } from "lucide-react";
+import { Plus, Server } from "lucide-react";
 import { useI18n } from "../../i18n.js";
-import { Button, IconButton } from "../../shared/ui/index.js";
+import { Button } from "../../shared/ui/index.js";
 
 export function McpServerToolbar({
   disabled,
-  loading,
   onAdd,
-  onRefresh,
   readyCount,
   serverCount,
   toolCount,
 }: {
   readonly disabled: boolean;
-  readonly loading: boolean;
   readonly onAdd: (trigger: HTMLButtonElement) => void;
-  readonly onRefresh: () => void;
   readonly readyCount: number;
   readonly serverCount: number;
   readonly toolCount: number;
@@ -33,13 +29,6 @@ export function McpServerToolbar({
         </span>
       </span>
       <span className="settings-mcp-toolbar-actions">
-        <IconButton
-          icon={RefreshCw}
-          label={t("Refresh MCP servers")}
-          loading={loading}
-          loadingLabel={t("Refreshing MCP servers")}
-          onClick={onRefresh}
-        />
         <Button
           disabled={disabled}
           leadingIcon={<Plus />}

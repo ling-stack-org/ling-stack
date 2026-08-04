@@ -19,7 +19,6 @@ Related docs:
 - [Channel Context Processing Layer](channel-context-processing-layer.md)
 - [Channel Context Processing Layer Implementation Plan](channel-context-processing-layer-implementation-plan.md)
 - [Channel Team Operating System](channel-team-operating-system.md)
-- [Channel Team Operating System Task Plan - 2026-06-26](channel-team-operating-system-task-plan-2026-06-26.md)
 - [Web E2E Acceptance Matrix](web-e2e-acceptance-matrix.md)
 - [Conversation Plan And Goal Modes](conversation-plan-and-goal-modes.md)
 - [Ling Agent TerminalReport Protocol](ling-agent-terminal-report-protocol.md)

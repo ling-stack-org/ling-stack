@@ -1,6 +1,6 @@
-import { CheckCircle2, Plus, RefreshCw, Search } from "lucide-react";
+import { CheckCircle2, Plus, Search } from "lucide-react";
 import { useI18n } from "../../i18n.js";
-import { Button, IconButton, Input, Select, StatusIndicator } from "../../shared/ui/index.js";
+import { Button, Input, Select, StatusIndicator } from "../../shared/ui/index.js";
 import type { ProviderStatusFilter, ProviderWorkbenchSummary } from "./provider-workbench-view-models.js";
 
 export function ProviderWorkbenchHeader({
@@ -15,7 +15,6 @@ export function ProviderWorkbenchHeader({
   onProviderStatusFilterChange,
   onAddModel,
   onCheckBatch,
-  onRefresh,
   settingsToolMode = false,
 }: {
   readonly summary: ProviderWorkbenchSummary;
@@ -29,7 +28,6 @@ export function ProviderWorkbenchHeader({
   readonly onProviderStatusFilterChange: (value: ProviderStatusFilter) => void;
   readonly onAddModel: () => void;
   readonly onCheckBatch: () => void;
-  readonly onRefresh: () => void;
   readonly settingsToolMode?: boolean;
 }): JSX.Element {
   const { t } = useI18n();
@@ -41,7 +39,6 @@ export function ProviderWorkbenchHeader({
       {!settingsToolMode ? (
         <div className="provider-workbench-title-block">
           <h1 id="provider-workbench-title">{t("Model Workbench")}</h1>
-          <p>{t("Manage and configure all available model presets.")}</p>
         </div>
       ) : null}
       <div className="provider-readiness-summary" aria-label={t("Model readiness summary")}>
@@ -93,14 +90,6 @@ export function ProviderWorkbenchHeader({
         >
           {t("Check all")}
         </Button>
-        <IconButton
-          className="provider-refresh-button"
-          icon={RefreshCw}
-          label={t("Refresh")}
-          loading={isLoading}
-          disabled={isCheckingProviders}
-          onClick={onRefresh}
-        />
       </div>
     </header>
   );

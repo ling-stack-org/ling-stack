@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page, type Route } from "@playwright/t
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { mockDaemon } from "./support/mock-daemon";
+import { triggerFocusRevalidation } from "./support/focus-revalidation";
 import { createBaseState, cwd, isRecord, type MockState } from "./support/mock-state";
 
 const evidenceDirectory = fileURLToPath(new URL(
@@ -165,13 +166,8 @@ test("initial failure retries and retained refresh failure keeps authoritative r
   control.failNextGetMessage = "Synthetic retained policy failure";
   control.getDelayByChannel.set("channel_engineering", 250);
   const getCountBeforeRefresh = control.getRequests.length;
-  const refresh = panel.getByRole("button", { name: "Refresh" });
-  await expectTypedIconAction(page, refresh, "Refresh");
-  await refresh.focus();
-  await expect(refresh).toBeFocused();
-  await refresh.click();
-  await expect(refresh).toHaveAttribute("aria-busy", "true");
-  await expect(refresh).toBeDisabled();
+  await expect(panel.getByRole("button", { name: "Refresh" })).toHaveCount(0);
+  await triggerFocusRevalidation(page);
   await expect.poll(() => control.getRequests.length).toBeGreaterThan(getCountBeforeRefresh);
   await expect(panel.getByText("Synthetic retained policy failure", { exact: true })).toBeVisible();
   await expect(councilRow(panel, "council_alpha")).toContainText("Preferred");

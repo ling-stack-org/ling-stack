@@ -11,6 +11,7 @@ import {
 } from "../src/features/workspace/useNormalConversationIdentityController";
 import { NormalConversationOperationStore } from "../src/features/workspace/useNormalConversationOperationOwner";
 import { mockDaemon } from "./support/mock-daemon";
+import { triggerFocusRevalidation } from "./support/focus-revalidation";
 import { createBaseState, createChatProvider, cwd, type MockState } from "./support/mock-state";
 
 const appShellSourcePath = fileURLToPath(new URL("../src/app/AppShell.tsx", import.meta.url));
@@ -152,7 +153,7 @@ test("T13-P.9EF.C a late draft failure cannot replace an existing thread owner",
   await page.route(conversationDetailPattern(persistedThread.id), async (route) => {
     await route.fulfill({ status: 503, json: { error: "persisted_refresh_failed", message: ownerFailure } });
   }, { times: 1 });
-  await page.getByLabel("Conversation workspace toolbar").getByRole("button", { name: "Refresh" }).click();
+  await triggerFocusRevalidation(page);
   await expect(page.getByLabel("Conversation page").getByRole("alert")).toContainText(ownerFailure);
 
   const requestStarted = createDeferred();

@@ -34,7 +34,7 @@ export function CouncilHealthSummary({ row }: { readonly row: CouncilListHealthR
 function healthDetail(row: CouncilListHealthRowView, t: ReturnType<typeof useI18n>["t"]): string {
   if (row.state === "paused") return t("This council is paused and will not be used for channel collaboration.");
   if (row.state === "partial") return row.partialReason ?? t("Health information is incomplete.");
-  if (row.state === "pending") return t("Refresh to load member readiness.");
+  if (row.state === "pending") return t("Check member status to load readiness.");
   if (row.state === "healthy") return t("No readiness issues were found in the latest complete health report.");
   return row.severityLabels.join(" / ") || t("Member readiness needs attention.");
 }

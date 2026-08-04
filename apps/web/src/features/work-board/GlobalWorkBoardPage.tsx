@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { useWorkBoardEvidence } from "../../domains/work-items/use-work-board-evidence.js";
 import { useWorkBoardSourceProjection } from "../../domains/work-items/use-work-board-source-projection.js";
 import { useI18n } from "../../i18n.js";
+import { useFocusRevalidationToken } from "../../shared/hooks/use-focus-revalidation-token.js";
 import { buildWorkItemViews, type WorkItemView } from "../../lib/work-items.js";
 import { useLingToast } from "../../shared/ui/index.js";
 import { WorkBoardFailDialog } from "./WorkBoardFailDialog.js";
@@ -18,6 +19,7 @@ export type { WorkBoardScope } from "./work-board-types.js";
 
 export function GlobalWorkBoardPage(props: GlobalWorkBoardPageProps): JSX.Element {
   const { t } = useI18n();
+  const focusRevalidationToken = useFocusRevalidationToken();
   const { showToast } = useLingToast();
   const channelNames = useMemo(() => new Map(props.channels.map((channel) => [channel.id, channel.name])), [props.channels]);
   const projectionCwd = props.workspaceCwd?.trim() || props.runs.find((run) => run.cwd?.trim())?.cwd;
@@ -98,6 +100,13 @@ export function GlobalWorkBoardPage(props: GlobalWorkBoardPageProps): JSX.Elemen
     if (source.active) void source.refresh(); else void props.onRefresh();
   }
 
+  useEffect(() => {
+    if (focusRevalidationToken === 0) return;
+    refresh();
+    // The source projection owns retained data and scoped failure state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusRevalidationToken]);
+
   async function runMutation(action: WorkBoardActionResult | undefined, successMessage?: string, refreshSource = false): Promise<boolean> {
     if (action === undefined) return false;
     const asynchronous = typeof (action as Promise<unknown>)?.then === "function";
@@ -124,7 +133,7 @@ export function GlobalWorkBoardPage(props: GlobalWorkBoardPageProps): JSX.Elemen
 
   return (
     <section className="work-board-page" aria-labelledby="global-work-board-title" data-source-active={source.active} data-source-freshness={freshness}>
-      <WorkBoardHeader stats={stats} freshness={freshness} refreshing={source.freshness === "refreshing"} onRefresh={refresh} />
+      <WorkBoardHeader stats={stats} freshness={freshness} />
       <WorkBoardToolbar
         scope={controller.scope} query={controller.query} filters={controller.filters} sort={controller.sort} channels={props.channels}
         sourceOptions={sourceOptions} waitingOptions={waitingOptions} ownerOptions={ownerOptions} popoverOpen={controller.filterPopoverOpen}
