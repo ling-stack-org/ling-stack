@@ -16,6 +16,8 @@ release versions will follow [Semantic Versioning](https://semver.org/spec/v2.0.
 
 ### Changed
 
+- Simplified conversation message identity chrome and removed duplicate terminal-report
+  artifact and file-reference presentation.
 - Reworked the root README around the current source-first Alpha product and verified
   startup path.
 - Consolidated the design documentation around current contracts and implementation
