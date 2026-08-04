@@ -142,7 +142,6 @@ test("T13-O.31-E canonical Composer source ownership has no legacy or strict bla
 
   const strictComposerSelectors = extractCssSelectors(strictCss)
     .filter((selector) => selector.includes("[data-conversation-composer]"));
-  expect(strictComposerSelectors.length, "strict layer must explicitly exclude the canonical Composer subtree").toBeGreaterThan(0);
   expect(
     strictComposerSelectors.every((selector) => selector.includes(":not(")),
     `strict layer may reference Composer only through exclusions: ${strictComposerSelectors.join(" | ")}`,

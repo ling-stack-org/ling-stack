@@ -1,5 +1,5 @@
 import { Button, EmptyState, Skeleton } from "../../shared/ui/index.js";
-import { History, RefreshCw, ShieldCheck, X } from "lucide-react";
+import { History, ShieldCheck, X } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import type { ApprovalQueueRowView } from "./approval-view-models.js";
 import { ReviewQueueRow } from "./ReviewQueueRow.js";
@@ -11,7 +11,6 @@ export function ReviewQueueList({
   filtersActive,
   repairScoped,
   onSelect,
-  onRefresh,
   onClearFilters,
   onOpenWorkBoard,
 }: {
@@ -21,7 +20,6 @@ export function ReviewQueueList({
   readonly filtersActive: boolean;
   readonly repairScoped: boolean;
   readonly onSelect: (approvalId: string) => void;
-  readonly onRefresh: () => void;
   readonly onClearFilters: () => void;
   readonly onOpenWorkBoard?: (scope?: "actionable" | "history") => void;
 }): JSX.Element {
@@ -33,9 +31,7 @@ export function ReviewQueueList({
         <EmptyState
           action={filtersActive ? (
             <Button leadingIcon={<X aria-hidden="true" size={14} />} size="sm" onClick={onClearFilters}>{t("Clear filters")}</Button>
-          ) : (
-            <Button leadingIcon={<RefreshCw aria-hidden="true" size={14} />} size="sm" onClick={onRefresh}>{t("Refresh")}</Button>
-          )}
+          ) : undefined}
           compact
           description={filtersActive ? t("No activity matches these filters") : undefined}
           icon={<ShieldCheck size={20} />}

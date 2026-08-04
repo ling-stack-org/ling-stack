@@ -4,15 +4,17 @@ Status: cleanup completed locally
 Baseline commit: `ea8c40e3a1f6a083df64c0a69e252805bc96a320`
 Completed: 2026-08-03
 Owner: repository maintainers
-Last verified: 2026-08-03
+Last verified: 2026-08-04
 
 ## Outcome
 
 The cleanup started with 549 Markdown files in the `docs/` working-tree baseline. After the
 general cleanup, UI2 consolidation, and implementation-plan normalization, 213 Markdown
-files remained. The open-source-readiness batch then added two long-lived governance and
-release documents, so the current classified tree contains 215 Markdown files, a net
-reduction of 334 files. The governance record, canonical design index,
+files remained. The open-source-readiness batch added two long-lived governance and
+release documents, the data-revalidation contract, and the secondary-copy contract added
+four current authorities, so the classified tree contains 217 Markdown files, a net
+reduction of 332 files. The
+governance record, canonical design index,
 implementation-status index, publication checklist, and release policy are the long-lived
 navigation documents.
 
@@ -38,6 +40,8 @@ state was changed by this cleanup.
 | UI2 contract consolidation | 55 net Markdown files | 101 UI2 documents became 46 current contracts, release/migration authorities, and active plans. |
 | Implementation-plan normalization | 14 net Markdown files | Fifteen completed or duplicate plans were merged into contracts and replaced by one current status index. |
 | Open-source readiness | 2 added Markdown files | Publication governance and release policy are now explicit long-lived authorities. |
+| Data revalidation policy | 1 added Markdown file | Automatic focus revalidation replaces generic normal-state Refresh controls. |
+| Secondary copy policy | 1 added Markdown file | Explanatory copy is limited to decisions, consequences, dynamic state, and recovery. |
 
 ## Canonical Replacements
 
@@ -59,7 +63,7 @@ unclassified or review-pending files.
 
 | Retained class | Files | Rule |
 | --- | ---: | --- |
-| `CANONICAL_CONTRACT` - product and architecture contracts | 118 | Current capability or bounded subsystem authority |
+| `CANONICAL_CONTRACT` - product and architecture contracts | 120 | Current capability or bounded subsystem authority |
 | `PROTECTED_SAFETY_RUNTIME` - safety, migration, recovery, and runtime contracts | 24 | Deletion requires explicit security or architecture review |
 | `ACTIVE_PROTECTED_PLAN` - active or protected implementation plans | 14 | Material work remains, or the plan is part of a high-risk implementation boundary |
 | `ADR_RELEASE_API` - ADR, release, and daemon API authority | 9 | Permanent architecture or release evidence |
@@ -67,7 +71,7 @@ unclassified or review-pending files.
 | `UI2_MIGRATION_RELEASE` - UI2 migration and release authority | 2 | One compatibility record and one packaged Desktop release checklist |
 | `UI2_ACTIVE_PLAN` - active UI2 implementation plans | 4 | Work Board, Startup/Diagnostics, Workspace Tools, and protected Desktop theme publication |
 | `GOVERNANCE_INDEX` - governance and indexes | 4 | Canonical design index, implementation-status index, cleanup record, and publication checklist |
-| **Total** | **215** | |
+| **Total** | **217** | |
 
 ## Path Classification
 
@@ -128,6 +132,7 @@ aggregate counts in the same change whenever a document is added, deleted or rec
 | `docs/design/cua-driver-bundled-embedded.md` | `PROTECTED_SAFETY_RUNTIME` |
 | `docs/design/cua-driver-guided-installation-detailed-design.md` | `PROTECTED_SAFETY_RUNTIME` |
 | `docs/design/cua-driver-guided-installation.md` | `PROTECTED_SAFETY_RUNTIME` |
+| `docs/design/data-revalidation-and-manual-refresh-policy.md` | `CANONICAL_CONTRACT` |
 | `docs/design/daemon-lifecycle-p0.md` | `CANONICAL_CONTRACT` |
 | `docs/design/daemon-modularization.md` | `CANONICAL_CONTRACT` |
 | `docs/design/desktop-adaptive-layout-model-workbench.md` | `CANONICAL_CONTRACT` |
@@ -205,6 +210,7 @@ aggregate counts in the same change whenever a document is added, deleted or rec
 | `docs/design/runtime-provider-secrets-inheritance.md` | `PROTECTED_SAFETY_RUNTIME` |
 | `docs/design/runtime-supervisor.md` | `PROTECTED_SAFETY_RUNTIME` |
 | `docs/design/secrets-keychain.md` | `PROTECTED_SAFETY_RUNTIME` |
+| `docs/design/secondary-copy-and-information-density.md` | `CANONICAL_CONTRACT` |
 | `docs/design/session-persistence.md` | `PROTECTED_SAFETY_RUNTIME` |
 | `docs/design/settings-advanced-workspace-policy-productization.md` | `CANONICAL_CONTRACT` |
 | `docs/design/settings-archived-items-permanent-delete.md` | `CANONICAL_CONTRACT` |

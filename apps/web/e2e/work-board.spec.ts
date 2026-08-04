@@ -65,7 +65,7 @@ test("work board merges durable items and supports claim heartbeat", async ({ pa
   await expect(durableRow).toContainText("claimed by web-user");
   await expect(durableRow).toContainText("Work is claimed");
 
-  await durableRow.getByRole("button", { name: "Refresh claim" }).click();
+  await durableRow.getByRole("button", { name: "Renew claim" }).click();
   await expect.poll(() => state.workItems[0]?.claim?.heartbeatAt).toBe("2026-06-07T00:01:00.000Z");
   await expect(durableRow).toContainText("claimed by web-user");
 });

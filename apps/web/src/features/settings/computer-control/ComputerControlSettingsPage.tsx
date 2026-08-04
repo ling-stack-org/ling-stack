@@ -118,7 +118,7 @@ function PageHeader(): JSX.Element {
   return (
     <header className="computer-control-page-header">
       <span className="computer-control-page-icon"><MonitorCog aria-hidden="true" /></span>
-      <span><h1>{t("Computer Control")}</h1><p>{t("Let Ling operate your computer only when you ask it to.")}</p></span>
+      <h1>{t("Computer Control")}</h1>
     </header>
   );
 }

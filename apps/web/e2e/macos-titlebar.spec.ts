@@ -230,7 +230,7 @@ test("macOS private chat stays flush with the titlebar and keeps one dock divide
   expect(metrics.headerTop).toBe(0);
   expect(metrics.headerLeftInset).toBe(0);
   expect(metrics.identityLeftInset).toBe(18);
-  expect(metrics.identityTopInset).toBeCloseTo(10.5, 1);
+  expect(metrics.identityTopInset).toBeCloseTo(8.5, 1);
   expect(metrics.handleLineWidth).toBe("1px");
   expect(metrics.dockBorderLeftWidth).toBe("0px");
   expect(browserErrors).toEqual([]);

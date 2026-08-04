@@ -2,7 +2,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { mockDaemon } from "./support/mock-daemon";
-import { createBaseState } from "./support/mock-state";
+import { createBaseState, createChatProvider } from "./support/mock-state";
 
 const evidenceDirectory = fileURLToPath(new URL(
   "../../../docs/design/ui2.0升级/evidence/shell/ui2-dialog-foundation/",
@@ -13,6 +13,14 @@ test("UI 2.0 dialog owns dismissal, focus restoration, scrolling, and busy safet
   const runtimeErrors = collectRuntimeErrors(page);
   await prepareSurface(page, "light", 1440, 960);
   const state = createBaseState({ approvalStatus: "pending" });
+  state.providers = [createChatProvider({
+    lastCheck: {
+      ok: true,
+      code: "ready",
+      message: "Provider is reachable and accepted the configured model.",
+      checkedAt: "2026-07-24T00:00:00.000Z",
+    },
+  })];
   state.channels = [];
   state.channelBranches = [];
   state.channelCreateDelayMs = 1_500;
@@ -59,6 +67,14 @@ test("UI 2.0 dialog remains bounded and theme-safe at 1280x800 dark", async ({ p
   const runtimeErrors = collectRuntimeErrors(page);
   await prepareSurface(page, "dark", 1280, 800);
   const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [createChatProvider({
+    lastCheck: {
+      ok: true,
+      code: "ready",
+      message: "Provider is reachable and accepted the configured model.",
+      checkedAt: "2026-07-24T00:00:00.000Z",
+    },
+  })];
   state.channels = [];
   state.channelBranches = [];
   await mockDaemon(page, state);

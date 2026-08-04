@@ -18,13 +18,11 @@
 }
 
 .mobile-access-page-header h1,
-.mobile-access-page-header p,
 .mobile-access-section-header h2,
 .mobile-access-card p {
   margin: 0;
 }
 
-.mobile-access-page-header p,
 .mobile-access-card p,
 .mobile-access-expiry {
   color: var(--ling-text-muted);

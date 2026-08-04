@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent, type
 import { Camera, Pencil, Sparkles } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import {
+  Button,
   DataRow,
   EmptyState,
   IconButton,
@@ -46,6 +47,7 @@ interface ProfileSettingsSurfaceProps {
   readonly loading: boolean;
   readonly saving: boolean;
   readonly errorMessage: string;
+  readonly onRetryLoad: () => void;
   readonly avatarButtonRef: RefObject<HTMLButtonElement>;
   readonly fileInputRef: RefObject<HTMLInputElement>;
   readonly onAvatarChange: (event: ChangeEvent<HTMLInputElement>) => void;
@@ -67,6 +69,7 @@ export function ProfileSettingsSurface({
   loading,
   saving,
   errorMessage,
+  onRetryLoad,
   avatarButtonRef,
   fileInputRef,
   onAvatarChange,
@@ -158,7 +161,8 @@ export function ProfileSettingsSurface({
     >
       {!loaded && errorMessage ? (
         <InlineFeedback className="profile-settings-feedback" tone="danger" title={t("Profile needs attention")}>
-          {errorMessage}
+          <span>{errorMessage}</span>
+          <Button size="sm" variant="secondary" onClick={onRetryLoad}>{t("Retry")}</Button>
         </InlineFeedback>
       ) : null}
 

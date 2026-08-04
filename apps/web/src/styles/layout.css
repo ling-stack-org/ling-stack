@@ -58,18 +58,6 @@ body {
   color: var(--text);
 }
 
-.avatar-initial {
-  display: inline-grid;
-  place-items: center;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: var(--surface-pressed);
-  color: var(--text);
-  font-size: 10px;
-  font-weight: 800;
-}
-
 .user-profile-avatar {
   display: block;
   width: 18px;
@@ -77,36 +65,6 @@ body {
   border-radius: 50%;
   background: transparent;
   object-fit: cover;
-}
-
-.avatar-initial.orange {
-  background: var(--surface-subtle);
-  color: var(--text-strong);
-}
-
-.avatar-initial.teal {
-  background: var(--surface-subtle);
-  color: var(--text-strong);
-}
-
-.avatar-initial.violet {
-  background: var(--surface-subtle);
-  color: var(--text-strong);
-}
-
-.avatar-initial.blue {
-  background: var(--surface-subtle);
-  color: var(--text-strong);
-}
-
-.avatar-initial.rose {
-  background: var(--surface-subtle);
-  color: var(--text-strong);
-}
-
-.avatar-initial.gray {
-  background: var(--surface-subtle);
-  color: var(--text-strong);
 }
 
 .workspace:not(.workspace-provider-surface):where(:not(.workspace-automations-surface):not(.workspace-teammates-surface):not(.workspace-teammate-private-surface):not(.workspace-generation-surface)) {

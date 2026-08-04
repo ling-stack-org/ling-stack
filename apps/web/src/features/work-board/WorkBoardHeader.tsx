@@ -1,13 +1,10 @@
-import { RefreshCw } from "lucide-react";
 import { useI18n } from "../../i18n.js";
-import { IconButton, StatusIndicator } from "../../shared/ui/index.js";
+import { StatusIndicator } from "../../shared/ui/index.js";
 import type { WorkBoardFreshness, WorkBoardStats } from "./work-board-types.js";
 
-export function WorkBoardHeader({ stats, freshness, refreshing, onRefresh }: {
+export function WorkBoardHeader({ stats, freshness }: {
   readonly stats: WorkBoardStats;
   readonly freshness: WorkBoardFreshness;
-  readonly refreshing: boolean;
-  readonly onRefresh: () => void;
 }): JSX.Element {
   const { t } = useI18n();
   const degraded = freshness === "partial" || freshness === "stale" || freshness === "error";
@@ -22,14 +19,6 @@ export function WorkBoardHeader({ stats, freshness, refreshing, onRefresh }: {
           <span>{t("{count} blocked", { count: stats.blocked })}</span>
         </div>
       </div>
-      <IconButton
-        icon={RefreshCw}
-        label={t("Refresh")}
-        loading={refreshing}
-        loadingLabel={t("Refreshing")}
-        onClick={onRefresh}
-        variant="ghost"
-      />
     </header>
   );
 }

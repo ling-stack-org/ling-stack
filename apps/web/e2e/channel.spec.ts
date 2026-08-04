@@ -676,6 +676,9 @@ test("narrow channel viewport keeps the conversation column usable", async ({ pa
 
   const feed = page.getByLabel("Channel message feed");
   await expect(feed).toBeVisible();
+  await expect.poll(async () => Math.round(
+    await page.locator(".workspace-client-surface").evaluate((element) => element.getBoundingClientRect().width),
+  )).toBeGreaterThanOrEqual(330);
 
   const layout = await page.evaluate(() => {
     const readRect = (selector: string) => {
@@ -3292,8 +3295,8 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   await expect(sentMessageContent).toHaveCSS("padding-top", "8px");
   await expect(sentMessageContent).toHaveCSS("border-radius", "8px");
   await teammateReply.hover();
-  await expect(teammateReplyContent).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-  await expect(teammateReplyContent).not.toHaveCSS("border-top-color", "rgba(0, 0, 0, 0)");
+  await expect(teammateReplyContent).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(teammateReplyContent).toHaveCSS("border-top-color", "rgba(0, 0, 0, 0)");
   await expect(teammateReplyContent).toHaveCSS("padding-top", "0px");
   await page.mouse.move(8, 8);
   await expect(sentMessage.locator(".message-meta-action")).toHaveCount(0);

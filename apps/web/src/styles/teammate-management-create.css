@@ -94,8 +94,7 @@
   gap: var(--ling-space-1);
 }
 
-.teammate-create-role-copy strong,
-.teammate-create-role-copy small {
+.teammate-create-role-copy strong {
   overflow: hidden;
   min-width: 0;
   text-overflow: ellipsis;
@@ -107,12 +106,6 @@
   font-size: var(--ling-font-sm);
   font-weight: 650;
   line-height: var(--ling-line-sm);
-}
-
-.teammate-create-role-copy small {
-  color: var(--ling-text-muted);
-  font-size: var(--ling-font-xs);
-  line-height: var(--ling-line-xs);
 }
 
 .teammate-create-basic-fields,
@@ -225,8 +218,7 @@
   gap: var(--ling-space-1);
 }
 
-.teammate-custom-avatar-copy strong,
-.teammate-custom-avatar-copy small {
+.teammate-custom-avatar-copy strong {
   overflow: hidden;
   min-width: 0;
   text-overflow: ellipsis;
@@ -237,12 +229,6 @@
   color: var(--ling-text-strong);
   font-size: var(--ling-font-sm);
   line-height: var(--ling-line-sm);
-}
-
-.teammate-custom-avatar-copy small {
-  color: var(--ling-text-muted);
-  font-size: var(--ling-font-xs);
-  line-height: var(--ling-line-xs);
 }
 
 .teammate-avatar-tone-list {

@@ -1,4 +1,4 @@
-import { Badge, InlineFeedback } from "../../shared/ui/index.js";
+import { Badge, Button, InlineFeedback } from "../../shared/ui/index.js";
 import type { ExternalActionBusyState } from "../../domains/approvals/approval-domain-types.js";
 import { useI18n } from "../../i18n.js";
 import type { ApprovalRequest, Channel, ExternalWorkActionView, RunSession } from "../../types.js";
@@ -45,18 +45,19 @@ export function ApprovalsPage({
   const refresh = repairRunId ? () => onRefreshRepair(repairRunId) : onRefresh;
   const runRefresh = () => controller.runRefresh(refresh);
   const initialLoading = isLoading && approvals.length === 0;
-  const visiblePageError = approvals.length === 0 ? errorMessage : controller.refreshError;
+  const visiblePageError = approvals.length === 0 ? errorMessage : controller.refreshError || errorMessage;
   const repairApprovals = repairRunId ? approvals.filter((approval) => approval.runId === repairRunId) : [];
   return (
     <section className="panel approvals-panel approvals-ui2-page" data-approvals-ui2-page aria-labelledby="approvals-title">
-      <ApprovalsHeader isLoading={isLoading} pendingCount={controller.pendingCount} repairScoped={Boolean(repairRunId)} onRefresh={runRefresh} />
+      <ApprovalsHeader pendingCount={controller.pendingCount} repairScoped={Boolean(repairRunId)} />
       {visiblePageError ? (
-        <InlineFeedback className="approvals-ui2-page-feedback" data-approval-stale={approvals.length > 0 || undefined} title={t("Refresh")} tone={approvals.length > 0 ? "warning" : "danger"}>
-          {visiblePageError}
+        <InlineFeedback className="approvals-ui2-page-feedback" data-approval-stale={approvals.length > 0 || undefined} title={t("Approvals could not be loaded")} tone={approvals.length > 0 ? "warning" : "danger"}>
+          <span>{visiblePageError}</span>
+          <Button size="sm" variant="secondary" onClick={runRefresh}>{t("Retry")}</Button>
         </InlineFeedback>
       ) : null}
       {repairRunId ? (
-        <ApprovalRunRepairPanel runId={repairRunId} run={repairRun} approvals={repairApprovals} isLoading={isLoading} onRefresh={runRefresh} onOpenRun={() => onOpenRun(repairRunId)} onClear={onClearRepair} />
+        <ApprovalRunRepairPanel runId={repairRunId} run={repairRun} approvals={repairApprovals} onOpenRun={() => onOpenRun(repairRunId)} onClear={onClearRepair} />
       ) : (
         <>
           <ApprovalToolbar
@@ -86,7 +87,6 @@ export function ApprovalsPage({
           filtersActive={!repairRunId && controller.filtersActive}
           repairScoped={Boolean(repairRunId)}
           onSelect={onSelectApproval}
-          onRefresh={runRefresh}
           onClearFilters={controller.clearFilters}
           onOpenWorkBoard={onOpenWorkBoard}
         />

@@ -161,14 +161,12 @@ export function ConversationHome({
     cwd: workspaceCwd,
     threadId: detailContext?.threadId,
   });
-  const canRefreshConversation = Boolean(onRefreshConversation || (workspaceCwd.trim() && detailContext?.threadId));
   const refreshConversationSurface = useCallback(async (): Promise<void> => {
     refreshProposedPlanHistory();
     await onRefreshConversation?.();
   }, [onRefreshConversation, refreshProposedPlanHistory]);
   const normalConversationHeader = useNormalConversationHeaderController({
     identityKey: conversationIdentityController.ownerKey,
-    onRefresh: canRefreshConversation ? refreshConversationSurface : undefined,
     onSearchChange: setMessageSearchQuery,
   });
   const slashCommandPickerOptions = useMemo(
@@ -319,7 +317,7 @@ export function ConversationHome({
         } : undefined,
       } : item));
       setEditingMessageId(undefined);
-      await normalConversationHeader.refresh();
+      await refreshConversationSurface();
     } catch (error) {
       actionFeedback.report("edit", error instanceof Error ? error.message : String(error));
     } finally {
@@ -352,7 +350,7 @@ export function ConversationHome({
       if (result.status === "replacement_pending") {
         actionFeedback.report("replacement", result.failureReason ?? pending.failureReason ?? "");
       }
-      await normalConversationHeader.refresh();
+      await refreshConversationSurface();
     } catch (error) {
       actionFeedback.report("replacement", error instanceof Error ? error.message : String(error));
     } finally {
@@ -702,8 +700,6 @@ export function ConversationHome({
           searchOpen: normalConversationHeader.searchOpen,
           searchQuery: messageSearchQuery,
           searchTriggerRef: normalConversationHeader.searchTriggerRef,
-          refreshing: normalConversationHeader.refreshing,
-          refreshDisabled: !canRefreshConversation,
           summaryActive: conversationSummaryOpen,
           terminalActive: conversationTerminalOpen,
           terminalDisabled: !workspaceCwd.trim(),
@@ -715,7 +711,6 @@ export function ConversationHome({
             setConversationSummaryOpen(false);
             normalConversationHeader.toggleSearch();
           },
-          onRefresh: () => void normalConversationHeader.refresh(),
           onToggleSummary: () => {
             normalConversationHeader.closeSearch();
             setConversationSummaryOpen((current) => !current);

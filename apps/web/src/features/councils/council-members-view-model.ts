@@ -111,7 +111,7 @@ export function buildCouncilMembersEvidence(
   pending: CouncilMemberHealthPending | undefined,
   t: Translate,
 ): CouncilMembersEvidenceView {
-  if (!report) return { complete: false, reason: t("Refresh to load member readiness.") };
+  if (!report) return { complete: false, reason: t("Check member status to load readiness.") };
   if (report.workspaceId !== council.workspaceId) {
     return { complete: false, reason: t("Health report does not cover this workspace") };
   }

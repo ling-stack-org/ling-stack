@@ -18,7 +18,7 @@ import type {
   AutomationMutationKind,
 } from "../../domains/automations/use-automations-domain.js";
 import { useI18n } from "../../i18n.js";
-import { InlineFeedback, useLingToast } from "../../shared/ui/index.js";
+import { Button, InlineFeedback, useLingToast } from "../../shared/ui/index.js";
 import { AutomationArchiveDialog } from "./AutomationArchiveDialog.js";
 import { AutomationCreateDialog } from "./AutomationCreateDialog.js";
 import { AutomationDiscardDraftDialog } from "./AutomationDiscardDraftDialog.js";
@@ -138,11 +138,9 @@ export function AutomationsPage(props: AutomationsPageProps): JSX.Element {
     <div className="automations-inbox-page automation-ui2-page" data-automation-ui2-page>
       <AutomationWorkbenchHeader
         disabled={!props.cwd.trim()}
-        refreshing={props.isRefreshing}
         summary={controller.summary}
         t={t}
         onCreate={() => controller.openCreate("template")}
-        onRefresh={() => void props.onRefresh()}
       />
       <AutomationSchedulerSummary
         busy={Boolean(props.schedulerAction)}
@@ -153,7 +151,10 @@ export function AutomationsPage(props: AutomationsPageProps): JSX.Element {
         onStop={() => void runScheduler("stop")}
       />
       {props.refreshError ? (
-        <InlineFeedback className="automation-ui2-stale" title={t("Refresh")} tone="warning">{props.refreshError}</InlineFeedback>
+        <InlineFeedback className="automation-ui2-stale" title={t("Could not refresh automations")} tone="warning">
+          <span>{props.refreshError}</span>
+          <Button size="sm" variant="secondary" onClick={() => void props.onRefresh()}>{t("Retry")}</Button>
+        </InlineFeedback>
       ) : null}
       <main className="automation-ui2-main" aria-labelledby="automations-title">
         <AutomationListPane

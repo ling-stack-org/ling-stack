@@ -106,12 +106,12 @@ export function ChannelSettingsWorkspacePanel({
             <Button
               leadingIcon={<RefreshCw size={14} />}
               loading={channelWorkspaceBusyAction === "refresh"}
-              loadingLabel={t("Refresh status")}
+              loadingLabel={t("Check status")}
               size="sm"
               onClick={onRefreshChannelWorkspace}
               disabled={!selectedChannelId || Boolean(channelWorkspaceBusyAction)}
             >
-              {t("Refresh status")}
+              {t("Check status")}
             </Button>
             <Button
               leadingIcon={<FolderOpen size={14} />}

@@ -104,7 +104,6 @@ export function InterfaceThemeSettings({ onCreateTheme }: { readonly onCreateThe
             <Monitor aria-hidden="true" />
             <span>
               <strong>{t("Follow system")}</strong>
-              <small>{t("Use Ling Light with a light system appearance and Ling Dark with a dark appearance.")}</small>
             </span>
           </span>
         )}

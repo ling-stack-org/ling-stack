@@ -1,24 +1,20 @@
-import { History, RefreshCw, Search } from "lucide-react";
+import { History, Search } from "lucide-react";
 import type { KeyboardEvent } from "react";
 import { useI18n } from "../../i18n.js";
-import { IconButton, Input, SegmentedControl, SegmentedControlItem } from "../../shared/ui/index.js";
+import { Input, SegmentedControl, SegmentedControlItem } from "../../shared/ui/index.js";
 import type { LingThreadArchivedFilter } from "../../types.js";
 
 export function RunHistoryHeader({
   archivedFilter,
-  refreshing,
   search,
   title,
   onArchivedFilterChange,
-  onRefresh,
   onSearchChange,
 }: {
   readonly archivedFilter: LingThreadArchivedFilter;
-  readonly refreshing: boolean;
   readonly search: string;
   readonly title: string;
   readonly onArchivedFilterChange: (filter: LingThreadArchivedFilter) => void;
-  readonly onRefresh: () => void;
   readonly onSearchChange: (value: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
@@ -33,13 +29,6 @@ export function RunHistoryHeader({
       <div className="runs-page-heading">
         <History aria-hidden="true" size={18} />
         <h2>{title}</h2>
-        <IconButton
-          icon={RefreshCw}
-          label={t("Refresh")}
-          loading={refreshing}
-          onClick={onRefresh}
-          variant="secondary"
-        />
       </div>
       <div className="runs-page-toolbar">
         <Input

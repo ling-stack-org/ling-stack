@@ -237,6 +237,9 @@ authorization but cannot change model from the composer; the effective private m
 owned by teammate settings and may be shown read-only in the composer. The persistent
 private-chat Settings entry opens the full teammate settings surface, where editable
 teammates may switch binding mode or fixed model.
+Teammate Management keeps `Open chat` as the primary row action and exposes `Edit teammate`
+in the row menu. That command opens the same full settings surface on the Profile section;
+it must not create a second teammate editor or bypass protected-field rules.
 
 Channel keeps model selection out of the composer. Channel Settings owns one `Ling Agent
 model` for Ling Agent replies and channel-owned routing. Other built-in teammates continue

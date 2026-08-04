@@ -104,7 +104,7 @@ export function derivePrimaryWorkBoardAction(item: WorkItemView, input: {
   let label = "";
   if (item.approvalId && input.canOpenApproval) [target, label] = ["approval", "Handle approval"];
   else if (item.durable && !item.claim && !isTerminalWorkItemView(item) && input.canClaim) [target, label] = ["claim", "Claim"];
-  else if (input.preferClaimControl && item.durable && item.claim && input.canHeartbeat) [target, label] = ["heartbeat", "Refresh claim"];
+  else if (input.preferClaimControl && item.durable && item.claim && input.canHeartbeat) [target, label] = ["heartbeat", "Renew claim"];
   else if (item.status === "blocked" && item.runId && input.canOpenRun) [target, label] = ["run", "View failure"];
   else if (item.runId && input.canOpenRun) [target, label] = ["run", "Open run"];
   else if (item.taskId && input.canOpenTask) [target, label] = ["task", "Open task"];

@@ -3,10 +3,10 @@ import {
   Bot,
   EyeOff,
   MoreHorizontal,
+  Pencil,
   Pin,
   PinOff,
   PlugZap,
-  RefreshCw,
   Search,
   Trash2,
   UserPlus,
@@ -43,6 +43,7 @@ export function TeammateManagementList({
   loadErrorMessage,
   actionErrorMessagesByTeammateId,
   onCreate,
+  onEditTeammate,
   onOpenCouncils,
   onOpenProviders,
   onOpenTeammate,
@@ -61,6 +62,7 @@ export function TeammateManagementList({
   readonly loadErrorMessage?: string;
   readonly actionErrorMessagesByTeammateId: Readonly<Record<string, string>>;
   readonly onCreate: () => void;
+  readonly onEditTeammate?: (teammateId: string) => void;
   readonly onOpenCouncils?: () => void;
   readonly onOpenProviders: () => void;
   readonly onOpenTeammate?: (teammateId: string) => void;
@@ -89,13 +91,11 @@ export function TeammateManagementList({
             <small>{t("{count} configured", { count: controller.model.counts.active })}</small>
           </span>
         </span>
-        <IconButton
-          icon={RefreshCw}
-          label={t("Refresh teammates")}
-          loading={isLoading}
-          loadingLabel={t("Loading AI teammates")}
-          onClick={onRefresh}
-        />
+        {onOpenCouncils ? (
+          <Button size="sm" variant="secondary" onClick={onOpenCouncils}>
+            {t("Open Council Workspace")}
+          </Button>
+        ) : null}
       </div>
 
       <div className="teammate-management-list-toolbar" role="toolbar" aria-label={t("Teammate list controls")}>
@@ -123,20 +123,9 @@ export function TeammateManagementList({
 
       {loadErrorMessage ? (
         <InlineFeedback className="teammate-management-list-feedback" tone="danger">
-          {t("Teammates could not be refreshed. The last loaded list is still shown.")}
+          <span>{t("Teammates could not be refreshed. The last loaded list is still shown.")}</span>
+          <Button size="sm" variant="secondary" onClick={onRefresh}>{t("Retry")}</Button>
         </InlineFeedback>
-      ) : null}
-
-      {onOpenCouncils ? (
-        <section className="teammate-council-inline-entry" aria-label={t("Council workspace entry")}>
-          <span>
-            <Users aria-hidden="true" size={15} />
-            <small>{t("Teammates can join councils for shared management.")}</small>
-          </span>
-          <Button size="sm" variant="secondary" onClick={onOpenCouncils}>
-            {t("Open Council Workspace")}
-          </Button>
-        </section>
       ) : null}
 
       {initialLoading ? (
@@ -175,6 +164,7 @@ export function TeammateManagementList({
               row={row}
               settingsToolMode={settingsToolMode}
               onOpenProviders={onOpenProviders}
+              onEditTeammate={onEditTeammate}
               onOpenTeammate={onOpenTeammate}
               onRemoveTeammate={onRemoveTeammate}
               onToggleTeammateHidden={onToggleTeammateHidden}
@@ -190,6 +180,7 @@ export function TeammateManagementList({
 function TeammateManagementRow({
   actionErrorMessage,
   cwd,
+  onEditTeammate,
   onOpenProviders,
   onOpenTeammate,
   onRemoveTeammate,
@@ -200,6 +191,7 @@ function TeammateManagementRow({
 }: {
   readonly actionErrorMessage?: string;
   readonly cwd: string;
+  readonly onEditTeammate?: (teammateId: string) => void;
   readonly onOpenProviders: () => void;
   readonly onOpenTeammate?: (teammateId: string) => void;
   readonly onRemoveTeammate: (teammateId: string) => void;
@@ -286,6 +278,12 @@ function TeammateManagementRow({
               />
             </MenuTrigger>
             <MenuContent align="end">
+              {onEditTeammate ? (
+                <MenuItem onSelect={() => onEditTeammate(row.draft.id)}>
+                  <span className="ling-ui-menu-item-icon" aria-hidden="true"><Pencil /></span>
+                  <span>{t("Edit teammate")}</span>
+                </MenuItem>
+              ) : null}
               <MenuItem onSelect={() => onToggleTeammatePinned(row.draft.id)}>
                 <span className="ling-ui-menu-item-icon" aria-hidden="true">
                   {row.draft.pinned ? <PinOff /> : <Pin />}

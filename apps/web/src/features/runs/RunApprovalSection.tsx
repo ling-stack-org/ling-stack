@@ -1,22 +1,19 @@
-import { RefreshCw, ShieldCheck } from "lucide-react";
+import { ShieldCheck } from "lucide-react";
 import { ApprovalCard } from "../approvals/ApprovalCard.js";
 import type { ApprovalResolution } from "../approvals/types.js";
 import { useI18n } from "../../i18n.js";
-import { Button, EmptyState, InlineFeedback, InspectorSection } from "../../shared/ui/index.js";
+import { EmptyState, InlineFeedback, InspectorSection } from "../../shared/ui/index.js";
 import type { ApprovalRequest } from "../../types.js";
 
-export function RunApprovalSection({ approvals, loading, resolvingApprovals, onRefresh, onResolve }: {
+export function RunApprovalSection({ approvals, resolvingApprovals, onResolve }: {
   readonly approvals: readonly ApprovalRequest[];
-  readonly loading: boolean;
   readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
-  readonly onRefresh: () => void;
   readonly onResolve: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
   const pending = approvals.filter((approval) => approval.status === "pending");
   return (
     <InspectorSection
-      action={<Button leadingIcon={<RefreshCw size={14} />} loading={loading} onClick={onRefresh} size="sm">{t("Refresh")}</Button>}
       open={pending.length > 0}
       summary={t("{count} approval events", { count: approvals.length })}
       title={t("Approval state")}

@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page, type Route } from "@playwright/t
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { mockDaemon } from "./support/mock-daemon";
+import { triggerFocusRevalidation } from "./support/focus-revalidation";
 import {
   createBaseState,
   createMockTeammate,
@@ -132,11 +133,7 @@ test("paused channels stay actionable while archived channels stay out of the co
   expect(Math.max(...Object.values(focusGeometry ?? {}))).toBeLessThanOrEqual(1);
   await page.keyboard.press("Tab");
   await expect(channels.getByRole("combobox", { name: "频道状态" })).toBeFocused();
-  await page.keyboard.press("Tab");
-  const refreshAction = channels.getByRole("button", { name: "刷新频道" });
-  await expect(refreshAction).toBeFocused();
-  await expectTypedIconButton(refreshAction, "刷新频道");
-  await expectIconButtonTooltip(refreshAction, "刷新频道");
+  await expect(channels.getByRole("button", { name: "刷新频道" })).toHaveCount(0);
   await captureEvidence(page, "1280x800-ling-dark-lifecycle-zh-CN.png");
   await expectNoPageOverflow(page);
   expect(runtimeErrors).toEqual([]);
@@ -170,10 +167,8 @@ test("initial load failure retries and a later refresh retains authoritative row
   await page.goto("/");
 
   const channels = await openChannels(page);
-  const refreshAction = channels.getByRole("button", { name: "Refresh channels" });
   await expect(channels.getByLabel("Loading channel memberships")).toBeVisible();
-  await expect(refreshAction).toBeDisabled();
-  await expectTypedIconButton(refreshAction, "Refresh channels");
+  await expect(channels.getByRole("button", { name: "Refresh channels" })).toHaveCount(0);
   initialGate.resolve();
   await expect(channels.getByText("Channel memberships could not be loaded. Try again.", { exact: true })).toBeVisible();
   await expect(channels.locator("[data-channel-id]")).toHaveCount(0);
@@ -182,10 +177,7 @@ test("initial load failure retries and a later refresh retains authoritative row
   await channels.getByRole("button", { name: "Retry" }).click();
   await expect(channelRow(channels, "channel_engineering")).toContainText("Default channel");
   mode = "refresh-failure";
-  await refreshAction.click();
-  await expect(refreshAction).toBeDisabled();
-  await expect(refreshAction).toHaveAttribute("aria-busy", "true");
-  await expectTypedIconButton(refreshAction, "Refresh channels");
+  await triggerFocusRevalidation(page);
   refreshGate.resolve();
   await expect(channelRow(channels, "channel_engineering")).toContainText("Default channel");
   await expect(channels.getByText("Channel memberships could not be loaded. Try again.", { exact: true })).toBeVisible();

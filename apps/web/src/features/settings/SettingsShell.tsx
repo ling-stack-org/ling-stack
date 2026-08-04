@@ -65,50 +65,53 @@ export function SettingsShell({
             {backLabel}
           </Button>
         ) : null}
-        {groups.map((group) => (
-          <div
-            key={group.heading}
-            className="settings-section-group"
-            data-settings-shell-group="true"
-            role="group"
-            aria-label={group.heading}
-          >
-            <span className="settings-section-group-label" data-settings-shell-group-label="true" aria-hidden="true">
-              {group.heading}
-            </span>
-            {group.items.map((item) => {
-              if (item.hidden) {
+        {groups.map((group) => {
+          if (!group.items.some((item) => !item.hidden)) return null;
+          return (
+            <div
+              key={group.heading}
+              className="settings-section-group"
+              data-settings-shell-group="true"
+              role="group"
+              aria-label={group.heading}
+            >
+              <span className="settings-section-group-label" data-settings-shell-group-label="true" aria-hidden="true">
+                {group.heading}
+              </span>
+              {group.items.map((item) => {
+                if (item.hidden) {
+                  return (
+                    <span
+                      key={item.id}
+                      data-settings-section={item.id}
+                      hidden
+                      aria-hidden="true"
+                      aria-current={activeSection === item.id ? "page" : undefined}
+                      onClick={() => onSelectSection(item.id)}
+                    />
+                  );
+                }
+                const SectionIcon = item.icon;
+                const active = activeSection === item.id;
                 return (
-                  <span
+                  <Button
                     key={item.id}
+                    className={active ? "settings-section-item active" : "settings-section-item"}
                     data-settings-section={item.id}
-                    hidden
-                    aria-hidden="true"
-                    aria-current={activeSection === item.id ? "page" : undefined}
+                    leadingIcon={<SectionIcon className="settings-section-icon" data-settings-section-icon="true" aria-hidden="true" />}
+                    size="sm"
+                    title={item.title}
+                    variant="ghost"
+                    aria-current={active ? "page" : undefined}
                     onClick={() => onSelectSection(item.id)}
-                  />
+                  >
+                    {item.label}
+                  </Button>
                 );
-              }
-              const SectionIcon = item.icon;
-              const active = activeSection === item.id;
-              return (
-                <Button
-                  key={item.id}
-                  className={active ? "settings-section-item active" : "settings-section-item"}
-                  data-settings-section={item.id}
-                  leadingIcon={<SectionIcon className="settings-section-icon" data-settings-section-icon="true" aria-hidden="true" />}
-                  size="sm"
-                  title={item.title}
-                  variant="ghost"
-                  aria-current={active ? "page" : undefined}
-                  onClick={() => onSelectSection(item.id)}
-                >
-                  {item.label}
-                </Button>
-              );
-            })}
-          </div>
-        ))}
+              })}
+            </div>
+          );
+        })}
       </nav>
       <section
         className={contentClassName}

@@ -1,21 +1,17 @@
-import { Plus, RefreshCw } from "lucide-react";
-import { Button, IconButton } from "../../shared/ui/index.js";
+import { Plus } from "lucide-react";
+import { Button } from "../../shared/ui/index.js";
 import type { AutomationPageSummary, AutomationTranslate } from "./automation-view-models.js";
 
 export function AutomationWorkbenchHeader({
   disabled,
-  refreshing,
   summary,
   t,
   onCreate,
-  onRefresh,
 }: {
   readonly disabled: boolean;
-  readonly refreshing: boolean;
   readonly summary: AutomationPageSummary;
   readonly t: AutomationTranslate;
   readonly onCreate: () => void;
-  readonly onRefresh: () => void;
 }): JSX.Element {
   return (
     <header
@@ -32,14 +28,6 @@ export function AutomationWorkbenchHeader({
         })}</p>
       </div>
       <div className="automation-ui2-header-actions">
-        <IconButton
-          disabled={disabled}
-          icon={RefreshCw}
-          label={t("Refresh")}
-          loading={refreshing}
-          loadingLabel={t("Refresh")}
-          onClick={onRefresh}
-        />
         <Button
           disabled={disabled}
           leadingIcon={<Plus aria-hidden="true" size={16} />}

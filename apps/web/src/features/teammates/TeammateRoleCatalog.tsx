@@ -28,10 +28,7 @@ export function TeammateRoleCatalog({
       <header className="teammate-role-catalog-header">
         <span className="teammate-role-catalog-heading">
           <Brain aria-hidden="true" />
-          <span>
-            <h2>{t("Default roles")}</h2>
-            <small>{t("{count} roles", { count: templates.length })}</small>
-          </span>
+          <h2>{t("Default roles")}</h2>
         </span>
         {showCreateAction ? (
           <Button

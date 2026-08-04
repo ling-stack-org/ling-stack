@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { mockDaemon } from "./support/mock-daemon";
+import { triggerFocusRevalidation } from "./support/focus-revalidation";
 import {
   createBaseState,
   createChatProvider,
@@ -69,12 +70,19 @@ test("teammate management searches and filters one-status rows", async ({ page }
 
   await panel.getByLabel("Filter teammates").selectOption("all");
   await readyRow.getByRole("button", { name: "Teammate actions" }).click();
+  await expect(page.getByRole("menuitem", { name: "Edit teammate" })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "Unpin" })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "Hide" })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "Delete" })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("menuitem", { name: "Delete" })).toHaveCount(0);
   await expect(readyRow.getByRole("button", { name: "Teammate actions" })).toBeFocused();
+
+  await readyRow.getByRole("button", { name: "Teammate actions" }).click();
+  await page.getByRole("menuitem", { name: "Edit teammate" }).click();
+  const settings = page.getByLabel("Single agent settings");
+  await expect(settings.getByRole("heading", { name: "Teammate settings" })).toBeVisible();
+  await expect(page.getByLabel("Teammate profile").getByLabel("Teammate name")).toHaveValue("Ling Architect");
 
   await expectNoPageOverflow(page);
   expect(runtimeErrors).toEqual([]);
@@ -104,7 +112,7 @@ test("teammate management preserves rows during refresh failure", async ({ page 
   await page.goto("/");
   const panel = await openTeammateManagement(page);
   await expect(panel.getByLabel("Loading AI teammates")).toBeVisible();
-  await expect(panel.getByRole("button", { name: "Refresh teammates" })).toHaveAttribute("aria-busy", "true");
+  await expect(panel.getByRole("button", { name: "Refresh teammates" })).toHaveCount(0);
 
   listMode = "ok";
   initialGate.resolve();
@@ -112,9 +120,10 @@ test("teammate management preserves rows during refresh failure", async ({ page 
   await expect(list.locator(".teammate-draft-row")).toHaveCount(4);
 
   listMode = "fail";
-  await panel.getByRole("button", { name: "Refresh teammates" }).click();
+  await triggerFocusRevalidation(page);
   await expect(panel).toContainText("Teammates could not be refreshed. The last loaded list is still shown.");
   await expect(list.locator(".teammate-draft-row")).toHaveCount(4);
+  await expect(panel.getByRole("button", { name: "Retry" })).toBeVisible();
   await captureEvidence(page, "1440x960-ling-light-refresh-failure.png");
 
   await expectNoPageOverflow(page);

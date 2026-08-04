@@ -9,8 +9,6 @@ export interface NormalConversationHeaderProps {
   readonly searchOpen: boolean;
   readonly searchQuery: string;
   readonly searchTriggerRef: Ref<HTMLButtonElement>;
-  readonly refreshing: boolean;
-  readonly refreshDisabled: boolean;
   readonly summaryActive: boolean;
   readonly terminalActive: boolean;
   readonly terminalDisabled: boolean;
@@ -20,7 +18,6 @@ export interface NormalConversationHeaderProps {
   readonly onCloseSearch: () => void;
   readonly onSearchQueryChange: (value: string) => void;
   readonly onToggleSearch: () => void;
-  readonly onRefresh: () => void;
   readonly onToggleSummary: () => void;
   readonly onToggleTerminal: () => void;
   readonly onToggleDetails: () => void;
@@ -32,8 +29,6 @@ export function NormalConversationHeader({
   searchOpen,
   searchQuery,
   searchTriggerRef,
-  refreshing,
-  refreshDisabled,
   summaryActive,
   terminalActive,
   terminalDisabled,
@@ -43,7 +38,6 @@ export function NormalConversationHeader({
   onCloseSearch,
   onSearchQueryChange,
   onToggleSearch,
-  onRefresh,
   onToggleSummary,
   onToggleTerminal,
   onToggleDetails,
@@ -78,9 +72,6 @@ export function NormalConversationHeader({
         searchActive={searchOpen}
         searchButtonRef={searchTriggerRef}
         searchLabel={t("Search")}
-        refreshDisabled={refreshDisabled}
-        refreshLabel={t("Refresh")}
-        refreshLoading={refreshing}
         summaryActive={summaryActive}
         summaryLabel={t("Summary")}
         terminalActive={terminalActive}
@@ -89,7 +80,6 @@ export function NormalConversationHeader({
         detailsActive={detailsActive}
         detailsLabel={detailsActive ? t("Hide details") : t("Show details")}
         onToggleSearch={onToggleSearch}
-        onRefresh={onRefresh}
         onToggleSummary={onToggleSummary}
         onToggleTerminal={onToggleTerminal}
         onToggleDetails={onToggleDetails}

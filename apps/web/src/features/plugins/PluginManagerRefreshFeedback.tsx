@@ -19,7 +19,7 @@ export function PluginManagerRefreshFeedback({
     <InlineFeedback
       className="plugin-manager-retained-feedback"
       data-plugin-refresh-retained="true"
-      title={`${t("Refresh")} · ${t("failed")}`}
+      title={t("Plugin list update failed")}
       tone="warning"
     >
       <span className="plugin-manager-retained-copy">

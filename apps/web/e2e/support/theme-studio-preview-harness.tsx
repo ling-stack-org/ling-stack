@@ -90,7 +90,6 @@ const previewCopy = {
     workspace: "Ling workspace",
     ready: "Ready",
     search: "Search",
-    refresh: "Refresh",
     summary: "Summary",
     terminal: "Terminal",
     details: "Details",

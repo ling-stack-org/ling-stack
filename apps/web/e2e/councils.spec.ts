@@ -130,7 +130,7 @@ test("Council Workspace shows council health, members, and channel entry points"
   await expect(page.getByLabel("Settings sections").getByRole("button", { name: "Council Workspace" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Create council" })).toHaveCount(1);
-  await expect(page.getByRole("button", { name: "Refresh councils" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Refresh councils" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Open AI Teammates" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Clone to customize" })).toBeVisible();
   await expect(page.getByLabel("Council overview")).toHaveCount(0);

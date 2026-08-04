@@ -40,14 +40,7 @@
   stroke-width: 1.8;
 }
 
-.teammate-role-catalog-heading > span {
-  display: grid;
-  min-width: 0;
-  gap: var(--ling-space-1);
-}
-
-.teammate-role-catalog-heading h2,
-.teammate-role-catalog-heading small {
+.teammate-role-catalog-heading h2 {
   overflow: hidden;
   margin: 0;
   text-overflow: ellipsis;
@@ -59,12 +52,6 @@
   font-size: var(--ling-font-sm);
   font-weight: 650;
   line-height: var(--ling-line-sm);
-}
-
-.teammate-role-catalog-heading small {
-  color: var(--ling-text-muted);
-  font-size: var(--ling-font-xs);
-  line-height: var(--ling-line-xs);
 }
 
 .teammate-role-catalog-create {

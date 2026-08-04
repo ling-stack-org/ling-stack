@@ -1,4 +1,4 @@
-import { Check, CircleAlert, Info, RefreshCw, ShieldCheck, X } from "lucide-react";
+import { Check, CircleAlert, Info, ShieldCheck, X } from "lucide-react";
 import { useRef } from "react";
 import { useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
@@ -21,7 +21,6 @@ export function ChannelGovernanceNotificationsPopover({
   loading,
   actionId,
   onOpenChange,
-  onRefresh,
   onMarkSeen,
   onDismiss,
 }: {
@@ -31,7 +30,6 @@ export function ChannelGovernanceNotificationsPopover({
   readonly loading: boolean;
   readonly actionId: string;
   readonly onOpenChange: (open: boolean) => void;
-  readonly onRefresh: () => void;
   readonly onMarkSeen: (notificationId: string) => void;
   readonly onDismiss: (notificationId: string) => void;
 }): JSX.Element {
@@ -82,15 +80,6 @@ export function ChannelGovernanceNotificationsPopover({
             <ShieldCheck size={15} />
             <strong>{t("Review queue")}</strong>
           </span>
-          <IconButton
-            icon={RefreshCw}
-            label={t("Refresh")}
-            loading={loading}
-            loadingLabel={t("Refresh")}
-            onClick={onRefresh}
-            disabled={loading}
-            size="sm"
-          />
         </div>
         {notifications.length === 0 ? (
           <EmptyState

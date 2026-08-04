@@ -84,9 +84,9 @@ export function WorkspaceChangeReviewPage({
         <span className="workspace-change-review-tools">
           <IconButton
             icon={RefreshCw}
-            label={t("Refresh")}
+            label={t("Rescan changes")}
             loading={loading}
-            loadingLabel={t("Refresh")}
+            loadingLabel={t("Rescan changes")}
             onClick={onRefresh}
             disabled={loading}
             size="sm"

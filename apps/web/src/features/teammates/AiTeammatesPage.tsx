@@ -52,6 +52,7 @@ export function AiTeammatesPage({
   onRemoveTeammate,
   onToggleTeammatePinned,
   onToggleTeammateHidden,
+  onEditTeammate,
   onOpenTeammate,
   onOpenCouncils,
   onOpenProviders,
@@ -74,6 +75,7 @@ export function AiTeammatesPage({
   readonly onRemoveTeammate: (teammateId: string) => void;
   readonly onToggleTeammatePinned: (teammateId: string) => void;
   readonly onToggleTeammateHidden: (teammateId: string) => void;
+  readonly onEditTeammate?: (teammateId: string) => void;
   readonly onOpenTeammate?: (teammateId: string) => void;
   readonly onOpenCouncils?: () => void;
   readonly onOpenProviders: () => void;
@@ -155,6 +157,7 @@ export function AiTeammatesPage({
           teammates={localTeammates}
           templates={templates}
           onCreate={focusCreateFlow}
+          onEditTeammate={onEditTeammate}
           onOpenCouncils={onOpenCouncils}
           onOpenProviders={onOpenProviders}
           onOpenTeammate={onOpenTeammate}

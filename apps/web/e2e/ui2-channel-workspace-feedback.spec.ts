@@ -111,7 +111,7 @@ test("T13-P.6-G creates, refreshes, opens, and hands off through one global Toas
   const toast = globalToast(page, scope);
 
   const createWorktree = workspace.getByRole("button", { name: "Create worktree" });
-  const refresh = workspace.getByRole("button", { name: "Refresh status" });
+  const refresh = workspace.getByRole("button", { name: "Check status" });
   await createWorktree.click();
   await expect(createWorktree).toHaveAttribute("data-loading", "true");
   await expect(createWorktree.locator(".ling-ui-spinner")).toHaveCount(1);
@@ -205,7 +205,7 @@ test("T13-P.6-G keeps failures in Workspace Settings until the owning recovery c
   let workspace = await openChannelWorkspaceSettings(page);
   const settingsTabs = page.getByRole("tablist", { name: "Channel settings navigation" });
   const feedback = workspace.locator(".ling-ui-inline-feedback[data-tone='danger']");
-  const refresh = workspace.getByRole("button", { name: "Refresh status" });
+  const refresh = workspace.getByRole("button", { name: "Check status" });
 
   await refresh.click();
   await expect(feedback).toContainText("Workspace status is temporarily unavailable.");
@@ -222,7 +222,7 @@ test("T13-P.6-G keeps failures in Workspace Settings until the owning recovery c
     "1280x800-ling-dark-persistent-refresh-failure.png",
   );
 
-  await workspace.getByRole("button", { name: "Refresh status" }).click();
+  await workspace.getByRole("button", { name: "Check status" }).click();
   await expect(workspace.locator(".ling-ui-inline-feedback[data-tone='danger']")).toHaveCount(0);
   let toast = globalToast(page, "channel:channel_engineering:workspace-binding");
   await expect(toast).toContainText("Workspace status refreshed.");

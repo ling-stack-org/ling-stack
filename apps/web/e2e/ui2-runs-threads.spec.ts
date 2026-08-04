@@ -19,6 +19,7 @@ import {
   openMainRunHistory,
   openThreadsPage,
 } from "./support/runs-threads-fixture";
+import { triggerFocusRevalidation } from "./support/focus-revalidation";
 
 const cwd = "/tmp/ling-stack-runs-characterization";
 const evidenceDirectory = fileURLToPath(new URL("../../../docs/design/ui2.0升级/evidence/features/runs-threads/", import.meta.url));
@@ -155,7 +156,8 @@ test("RUN-HISTORY-001: 100 groups, keyboard, no-result, retained stale and dual-
   await expect(search).toHaveValue("");
   await expect(search).toBeFocused();
   failThreadList = true;
-  await shell.locator(".runs-page-header").getByRole("button", { name: "Refresh" }).click();
+  await expect(shell.locator(".runs-page-header").getByRole("button", { name: "Refresh" })).toHaveCount(0);
+  await triggerFocusRevalidation(page);
   await expect(shell.getByText("Some information may be out of date. Reconnect to continue.")).toBeVisible();
   await applyThemeWithoutReload(page, "ling-dark");
   await page.setViewportSize({ width: 1280, height: 800 });

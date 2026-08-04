@@ -6,6 +6,7 @@ import {
   selectConversationError,
 } from "../src/domains/conversations/conversation-error-owner";
 import { mockDaemon } from "./support/mock-daemon";
+import { triggerFocusRevalidation } from "./support/focus-revalidation";
 import {
   createBaseState,
   createChatProvider,
@@ -149,7 +150,7 @@ test("T13-P.9EF.B refresh failure stays with its thread and survives unrelated s
       json: { error: "beta_refresh_failed", message: failureMessage },
     });
   }, { times: 1 });
-  await page.getByLabel("Conversation workspace toolbar").getByRole("button", { name: "Refresh" }).click();
+  await triggerFocusRevalidation(page);
   await expect(page.getByLabel("Conversation page").getByRole("alert")).toContainText(failureMessage);
 
   await navigation.getByRole("button").filter({ hasText: "Engineering" }).first().click();

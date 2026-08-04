@@ -19,14 +19,7 @@
   border-bottom: 1px solid var(--ling-border-default);
 }
 
-.teammate-private-dock-page-header > span:first-child {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
-}
-
-.teammate-private-dock-page-header strong,
-.teammate-private-dock-page-header small {
+.teammate-private-dock-page-header strong {
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -35,12 +28,6 @@
   color: var(--ling-text-strong);
   font-size: var(--ling-font-sm);
   line-height: var(--ling-line-sm);
-}
-
-.teammate-private-dock-page-header small {
-  color: var(--ling-text-muted);
-  font-size: var(--ling-font-xs);
-  line-height: var(--ling-line-xs);
 }
 
 .teammate-private-dock-list {

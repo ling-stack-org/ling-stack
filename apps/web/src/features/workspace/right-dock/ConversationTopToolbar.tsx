@@ -1,4 +1,4 @@
-import { FileText, ListChecks, PanelBottom, PanelBottomClose, PanelRightClose, PanelRightOpen, RefreshCw, Search } from "lucide-react";
+import { FileText, ListChecks, PanelBottom, PanelBottomClose, PanelRightClose, PanelRightOpen, Search } from "lucide-react";
 import type { Ref } from "react";
 import { CurrentSessionHeaderCapabilitySlot } from "../../../shared/current-session/CurrentSessionHeaderCapability.js";
 import {
@@ -11,9 +11,6 @@ export interface ConversationTopToolbarProps {
   readonly searchActive: boolean;
   readonly searchButtonRef?: Ref<HTMLButtonElement>;
   readonly searchLabel: string;
-  readonly refreshDisabled?: boolean;
-  readonly refreshLabel: string;
-  readonly refreshLoading?: boolean;
   readonly fileCount?: number;
   readonly filesLabel?: string;
   readonly summaryActive: boolean;
@@ -25,7 +22,6 @@ export interface ConversationTopToolbarProps {
   readonly detailsActive: boolean;
   readonly detailsLabel: string;
   readonly onToggleSearch: () => void;
-  readonly onRefresh: () => void;
   readonly onOpenFiles?: () => void;
   readonly onToggleSummary: () => void;
   readonly onToggleTerminal: () => void;
@@ -37,9 +33,6 @@ export function ConversationTopToolbar({
   searchActive,
   searchButtonRef,
   searchLabel,
-  refreshDisabled = false,
-  refreshLabel,
-  refreshLoading = false,
   fileCount = 0,
   filesLabel,
   summaryActive,
@@ -51,7 +44,6 @@ export function ConversationTopToolbar({
   detailsActive,
   detailsLabel,
   onToggleSearch,
-  onRefresh,
   onOpenFiles,
   onToggleSummary,
   onToggleTerminal,
@@ -71,16 +63,6 @@ export function ConversationTopToolbar({
         icon={Search}
         label={searchLabel}
         onClick={onToggleSearch}
-      />
-      <WorkspaceToolbarIconButton
-        actionId="refresh"
-        className="conversation-toolbar-refresh"
-        disabled={refreshDisabled}
-        icon={RefreshCw}
-        label={refreshLabel}
-        loading={refreshLoading}
-        loadingLabel={refreshLabel}
-        onClick={onRefresh}
       />
       <WorkspaceToolbarIconButton
         actionId="summary"

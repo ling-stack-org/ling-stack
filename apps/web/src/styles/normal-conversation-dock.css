@@ -45,14 +45,7 @@
   border-bottom: 1px solid var(--ling-border-default);
 }
 
-.normal-conversation-dock-page-header > span:first-child {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
-}
-
-.normal-conversation-dock-page-header strong,
-.normal-conversation-dock-page-header small {
+.normal-conversation-dock-page-header strong {
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -61,12 +54,6 @@
   color: var(--ling-text-strong);
   font-size: var(--ling-font-sm);
   line-height: var(--ling-line-sm);
-}
-
-.normal-conversation-dock-page-header small {
-  color: var(--ling-text-muted);
-  font-size: var(--ling-font-xs);
-  line-height: var(--ling-line-xs);
 }
 
 .normal-conversation-dock-list {

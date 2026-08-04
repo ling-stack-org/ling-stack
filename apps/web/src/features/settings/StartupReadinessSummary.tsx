@@ -21,7 +21,7 @@ export function StartupReadinessSummary({
   const { t } = useI18n();
   const timestamp = status?.updatedAt
     ? t("Updated {time}", { time: formatDateTime(status.updatedAt) })
-    : t("Refresh startup status to inspect this workspace.");
+    : t("Check startup status to inspect this workspace.");
 
   return (
     <header className="settings-startup-header">
@@ -38,9 +38,9 @@ export function StartupReadinessSummary({
       <div className="settings-startup-actions">
         <IconButton
           icon={RefreshCw}
-          label={t("Refresh startup status")}
+          label={t("Check status")}
           loading={isLoading}
-          loadingLabel={t("Refreshing startup status")}
+          loadingLabel={t("Checking status")}
           onClick={onRefresh}
         />
         <Button

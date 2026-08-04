@@ -29,7 +29,12 @@ for (const viewport of viewportCases) {
     const navigation = page.getByLabel("Ling Stack navigation");
     await expect(shell).toBeVisible();
     await expect(navigation).toBeVisible();
-    await expect(navigation.getByRole("button", { name: "Engineering" })).toBeVisible();
+    if (viewport.width <= 900) {
+      await expect(navigation.getByRole("button", { name: "Channels", exact: true })).toBeVisible();
+      await expect(navigation.getByRole("button", { name: "Engineering" })).toHaveCount(0);
+    } else {
+      await expect(navigation.getByRole("button", { name: "Engineering" })).toBeVisible();
+    }
 
     await setSidebarCollapsed(page, false);
     await expectReducedMotionGeometry(page, viewport.width, 240);

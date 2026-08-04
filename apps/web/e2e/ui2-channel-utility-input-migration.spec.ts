@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { mockDaemon } from "./support/mock-daemon";
 import {
   createBaseState,
+  createChatProvider,
   createMockTeammate,
   cwd,
   isRecord,
@@ -20,6 +21,14 @@ test("Channel Create uses shared fields without changing validation, project sea
   const runtimeErrors = collectRuntimeErrors(page);
   await prepareSurface(page, "light", 1440, 960);
   const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [createChatProvider({
+    lastCheck: {
+      ok: true,
+      code: "ready",
+      message: "Provider is reachable and accepted the configured model.",
+      checkedAt: "2026-07-24T00:00:00.000Z",
+    },
+  })];
   state.channels = [];
   state.channelBranches = [];
   state.tasks = [];
@@ -48,8 +57,7 @@ test("Channel Create uses shared fields without changing validation, project sea
   await trigger.click();
   dialog = page.getByRole("dialog", { name: "New channel" });
   nameInput = dialog.getByLabel("Name");
-  await dialog.getByRole("button", { name: "Create channel" }).click();
-  await expect(dialog.getByRole("alert")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Create channel" })).toBeDisabled();
   await expect(dialog).toBeVisible();
 
   const teammate = dialog.locator(".channel-create-teammate").filter({ hasText: "Channel Input Reviewer" });

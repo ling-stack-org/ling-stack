@@ -1,6 +1,6 @@
-import { Brain, RefreshCw, ShieldCheck } from "lucide-react";
+import { Brain, ShieldCheck } from "lucide-react";
 import { useI18n } from "../../i18n.js";
-import { Button, IconButton, InlineFeedback, Skeleton, StatusIndicator } from "../../shared/ui/index.js";
+import { Button, InlineFeedback, Skeleton, StatusIndicator } from "../../shared/ui/index.js";
 import { TeammateMemoryGovernanceSection } from "./TeammateMemoryGovernanceSection.js";
 import { TeammateMemoryHealthSection } from "./TeammateMemoryHealthSection.js";
 import { TeammateMemoryImportDialog } from "./TeammateMemoryImportDialog.js";
@@ -34,13 +34,6 @@ export function TeammateMemoryTab({
           {snapshot && controller.viewModel.healthTone !== "success" ? (
             <StatusIndicator compact label={controller.viewModel.healthLabel} tone={controller.viewModel.healthTone} />
           ) : null}
-          <IconButton
-            icon={RefreshCw}
-            label={t("Refresh memory")}
-            loading={controller.refreshing}
-            disabled={controller.loading}
-            onClick={() => void controller.refresh("refresh")}
-          />
         </span>
       </header>
 

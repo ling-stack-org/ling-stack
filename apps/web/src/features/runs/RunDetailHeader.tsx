@@ -1,17 +1,16 @@
-import { Activity, RefreshCw, RotateCcw, Square } from "lucide-react";
+import { Activity, RotateCcw, Square } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import { readTaskTitle } from "../../lib/run-evidence.js";
-import { Button, IconButton, StatusIndicator } from "../../shared/ui/index.js";
+import { Button, StatusIndicator } from "../../shared/ui/index.js";
 import type { ApprovalRequest, RunSession } from "../../types.js";
 import { deriveRunPrimaryState } from "./run-detail-view-models.js";
 import { runCanBeStopped } from "./runs-thread-view-models.js";
 
-export function RunDetailHeader({ run, approvals, isRunning, cancellingRunId, onRefresh, onRerun, onCancelRun }: {
+export function RunDetailHeader({ run, approvals, isRunning, cancellingRunId, onRerun, onCancelRun }: {
   readonly run: RunSession | undefined;
   readonly approvals: readonly ApprovalRequest[];
   readonly isRunning: boolean;
   readonly cancellingRunId: string;
-  readonly onRefresh: () => void;
   readonly onRerun: (run: RunSession) => void;
   readonly onCancelRun: (run: RunSession) => void;
 }): JSX.Element {
@@ -27,7 +26,6 @@ export function RunDetailHeader({ run, approvals, isRunning, cancellingRunId, on
         <StatusIndicator label={t(primaryState.label)} tone={primaryState.tone} />
       </div>
       <div className="runs-detail-actions">
-        <IconButton disabled={!run || isRunning} icon={RefreshCw} label={t("Reload")} onClick={onRefresh} variant="secondary" />
         {run && runCanBeStopped(run) ? <Button leadingIcon={<Square size={14} />} loading={stopping} onClick={() => onCancelRun(run)} size="sm" variant="danger">{stopping ? t("Stopping") : t("Stop")}</Button> : null}
         <Button disabled={!run || isRunning || !providerPresetId} leadingIcon={<RotateCcw size={15} />} loading={isRunning} onClick={() => run && onRerun(run)} size="sm" variant="primary">{t("Rerun snapshot")}</Button>
       </div>

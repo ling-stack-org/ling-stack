@@ -49,8 +49,7 @@
   gap: var(--ling-space-2);
 }
 
-.provider-workbench-title-block h1,
-.provider-workbench-title-block p {
+.provider-workbench-title-block h1 {
   margin: 0;
   letter-spacing: 0;
 }
@@ -59,12 +58,6 @@
   color: var(--ling-text-strong);
   font-size: 20px;
   line-height: 28px;
-}
-
-.provider-workbench-title-block p {
-  color: var(--ling-text-muted);
-  font-size: var(--ling-font-sm);
-  line-height: var(--ling-line-sm);
 }
 
 .provider-readiness-summary {
@@ -118,8 +111,4 @@
 .provider-status-filter {
   width: 100%;
   min-width: 148px;
-}
-
-.provider-refresh-button {
-  justify-self: end;
 }

@@ -1,7 +1,8 @@
 import { Link2, RefreshCw, Workflow, X } from "lucide-react";
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import type { MediaJob, RunArtifact } from "../../../types.js";
 import { useI18n } from "../../../i18n.js";
+import { useFocusRevalidationToken } from "../../../shared/hooks/use-focus-revalidation-token.js";
 import {
   Button,
   Collapsible,
@@ -12,7 +13,6 @@ import {
   DialogContent,
   DialogHeader,
   InlineFeedback,
-  IconButton,
   Skeleton,
   Tabs,
   TabsContent,
@@ -52,11 +52,19 @@ export function MediaWorkflowLibraryDialog({
   readonly onClose: () => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const focusRevalidationToken = useFocusRevalidationToken({ enabled: open });
   const loadFailure = selectMediaWorkflowFailure(state.failures, "load");
   const initialLoading = state.phase === "initial-loading";
   const initialError = state.phase === "initial-error";
   const busy = hasMediaWorkflowMutationBusy(state);
   const returnFocusRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!open || focusRevalidationToken === 0) return;
+    void actions.refresh();
+    // The focus token owns cadence; the controller owns request identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusRevalidationToken, open]);
 
   return (
     <Dialog busy={busy} open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onClose(); }}>
@@ -82,13 +90,6 @@ export function MediaWorkflowLibraryDialog({
           <TabsList className="media-workflow-tabs" aria-label={t("Production workflows")}>
             <TabsTrigger value="workflows"><Workflow aria-hidden="true" size={15} />{t("Workflows")}</TabsTrigger>
             <TabsTrigger value="connections"><Link2 aria-hidden="true" size={15} />{t("Connections")}</TabsTrigger>
-            <IconButton
-              icon={RefreshCw}
-              label={t("Refresh production workflows")}
-              disabled={busy}
-              loading={state.phase === "refreshing"}
-              onClick={() => void actions.refresh()}
-            />
           </TabsList>
           {loadFailure ? (
             <WorkflowLoadFailure

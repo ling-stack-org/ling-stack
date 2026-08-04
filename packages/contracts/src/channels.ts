@@ -404,7 +404,7 @@ export interface CreateChannelRequest {
   readonly status: ChannelStatus;
   readonly boundPath?: string;
   readonly workspaceBinding?: ChannelWorkspaceBinding;
-  readonly defaultProviderPresetId: string;
+  readonly defaultProviderPresetId?: string;
   readonly defaultTeammateId?: string;
   readonly autoReplyMode?: ChannelAutoReplyMode;
   readonly responseLanguage?: ChannelResponseLanguage;

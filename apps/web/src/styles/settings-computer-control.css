@@ -17,12 +17,10 @@
 
 .computer-control-page-header h1,
 .computer-control-section h2,
-.computer-control-page-header p,
 .computer-control-section p {
   margin: 0;
 }
 
-.computer-control-page-header p,
 .computer-control-section p,
 .computer-control-row-copy small,
 .computer-control-readiness-copy small {

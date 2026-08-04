@@ -1,10 +1,9 @@
-import { Hash, RefreshCw, Search } from "lucide-react";
+import { Hash, Search } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import {
   Button,
   DataRow,
   EmptyState,
-  IconButton,
   InlineFeedback,
   Input,
   Select,
@@ -76,13 +75,6 @@ export function TeammateChannelsTab({
             <option key={item} value={item}>{t(channelFilterLabelKey(item))}</option>
           ))}
         </Select>
-        <IconButton
-          icon={RefreshCw}
-          label={t("Refresh channels")}
-          loading={refreshing}
-          disabled={loading}
-          onClick={() => void controller.refresh("refresh")}
-        />
       </div>
 
       {loadError ? (

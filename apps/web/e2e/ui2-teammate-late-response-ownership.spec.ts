@@ -1,6 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { fileURLToPath } from "node:url";
 import { mockDaemon } from "./support/mock-daemon";
+import { triggerFocusRevalidation } from "./support/focus-revalidation";
 import {
   createBaseState,
   createChatProvider,
@@ -206,13 +207,11 @@ test("header refresh loading follows identity and rejects the previous teammate 
     await releaseEngineer.promise;
     await route.fallback();
   }, { times: 1 });
-  const engineerRefresh = page.getByLabel("Private chat actions").getByRole("button", { name: "Refresh" });
-  await engineerRefresh.click();
+  await triggerFocusRevalidation(page);
   await engineerStarted.promise;
 
   await openTeammate(page, "Ling Designer");
-  const designerRefresh = page.getByLabel("Private chat actions").getByRole("button", { name: "Refresh" });
-  await expect(designerRefresh).not.toHaveAttribute("aria-busy", "true");
+  await expect(page.getByLabel("Private chat actions").getByRole("button", { name: "Refresh" })).toHaveCount(0);
   const designerStarted = deferred<void>();
   const releaseDesigner = deferred<void>();
   await page.route(/\/teammates\/teammate_designer\/direct-messages(?:\?.*)?$/u, async (route) => {
@@ -220,19 +219,18 @@ test("header refresh loading follows identity and rejects the previous teammate 
     await releaseDesigner.promise;
     await route.fallback();
   }, { times: 1 });
-  await designerRefresh.click();
+  await triggerFocusRevalidation(page);
   await designerStarted.promise;
-  await expect(designerRefresh).toHaveAttribute("aria-busy", "true");
 
   const engineerResponse = page.waitForResponse((response) => response.ok() && response.url().includes("teammate_engineer/direct-messages"));
   releaseEngineer.resolve();
   await engineerResponse;
-  await expect(designerRefresh).toHaveAttribute("aria-busy", "true");
+  await expect(page.getByRole("heading", { name: "Ling Designer", level: 1 })).toBeVisible();
 
   const designerResponse = page.waitForResponse((response) => response.ok() && response.url().includes("teammate_designer/direct-messages"));
   releaseDesigner.resolve();
   await designerResponse;
-  await expect(designerRefresh).not.toHaveAttribute("aria-busy", "true");
+  await expect(page.getByRole("heading", { name: "Ling Designer", level: 1 })).toBeVisible();
   expect(runtimeErrors).toEqual([]);
 });
 

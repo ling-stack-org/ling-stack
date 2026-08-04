@@ -29,6 +29,7 @@
 @import "./styles/approvals.css";
 @import "./styles/work-board.css";
 @import "./styles/layout.css";
+@import "./styles/shared/avatar-initial.css";
 @import "./styles/conversation-message-frame.css";
 @import "./styles/shared/teammate-avatar.css";
 @import "./styles/teammate-management-mcp.css";

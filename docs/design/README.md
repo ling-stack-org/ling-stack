@@ -89,6 +89,8 @@ part of the current product acceptance scope.
 - [UI 2.0 Product Contract](ui2.0升级/00-UI2.0整体升级方案.md)
 - [UI 2.0 Acceptance Contract](ui2.0升级/03-UI2.0验收总规范.md)
 - [Ling Design System](ling-design-system.md)
+- [Secondary Copy And Information Density](secondary-copy-and-information-density.md)
+- [Data Revalidation And Manual Refresh Policy](data-revalidation-and-manual-refresh-policy.md)
 - [Web Modularization](web-modularization.md)
 - [Web E2E Acceptance Matrix](web-e2e-acceptance-matrix.md)
 - [Desktop Shell](desktop-shell.md)

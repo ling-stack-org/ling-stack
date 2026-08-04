@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mockDaemon } from "./support/mock-daemon";
+import { triggerFocusRevalidation } from "./support/focus-revalidation";
 import {
   createBaseState,
   createChatProvider,
@@ -85,7 +86,7 @@ test("T13-P.9EF.C teammate list failure stays out of Channel", async ({ page }) 
   const panel = await openTeammateManagement(page);
   await expect(panel.getByLabel("Teammate list").locator(".teammate-draft-row")).toHaveCount(2);
   failList = true;
-  await panel.getByRole("button", { name: "Refresh teammates" }).click();
+  await triggerFocusRevalidation(page);
   await expect(panel).toContainText("Teammates could not be refreshed. The last loaded list is still shown.");
 
   await page.getByLabel("Settings sections").getByRole("button", { name: "Back to app" }).click();

@@ -3,6 +3,7 @@ import { useMemo, useRef, useState } from "react";
 import { useI18n } from "../../i18n.js";
 import {
   DataRow,
+  Button,
   EmptyState,
   InlineFeedback,
   Skeleton,
@@ -112,17 +113,16 @@ export function McpToolsPage({
     <div className="mcp-page settings-mcp-page" data-ui2-mcp-tools="">
       <McpServerToolbar
         disabled={!cwd.trim()}
-        loading={isLoading}
         readyCount={readyCount}
         serverCount={servers.length}
         toolCount={tools.length}
         onAdd={openCreate}
-        onRefresh={onRefresh}
       />
 
       {error?.scope === "load" ? (
         <InlineFeedback tone="danger">
-          {t("MCP servers could not be refreshed. The last loaded list is still shown.")}
+          <span>{t("MCP servers could not be refreshed. The last loaded list is still shown.")}</span>
+          <Button size="sm" variant="secondary" onClick={onRefresh}>{t("Retry")}</Button>
         </InlineFeedback>
       ) : null}
 

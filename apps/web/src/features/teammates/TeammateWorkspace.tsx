@@ -40,6 +40,7 @@ import {
 } from "../../api.js";
 import { useI18n } from "../../i18n.js";
 import { readSseResponse } from "../../sse.js";
+import { useFocusRevalidationToken } from "../../shared/hooks/use-focus-revalidation-token.js";
 import {
   composerWorkspaceFileParts,
   createAttachmentPreviewUrl,
@@ -174,6 +175,8 @@ export function TeammateWorkspace({
   workspacePolicyLoading = false,
   workspacePolicyError,
   onRefreshWorkspacePolicy,
+  settingsOpenRequest,
+  onSettingsOpenRequestConsumed,
 }: {
   readonly cwd: string;
   readonly teammate: AiTeammate;
@@ -213,8 +216,14 @@ export function TeammateWorkspace({
   readonly workspacePolicyLoading?: boolean;
   readonly workspacePolicyError?: string;
   readonly onRefreshWorkspacePolicy?: () => void;
+  readonly settingsOpenRequest?: {
+    readonly teammateId: string;
+    readonly requestId: number;
+  };
+  readonly onSettingsOpenRequestConsumed?: (requestId: number) => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const focusRevalidationToken = useFocusRevalidationToken();
   const [workspaceView, setWorkspaceView] = useState<TeammateWorkspaceView>("chat");
   const [activeTab, setActiveTab] = useState<TeammateWorkspaceTab>("profile");
   const [messages, setMessages] = useState<readonly TeammateDirectMessage[]>([]);
@@ -264,7 +273,6 @@ export function TeammateWorkspace({
   const workspaceError = workspaceRequestOwner.latestError?.message ?? "";
   const chatHeaderController = useConversationHeaderController({
     identityKey: teammate.id,
-    onRefresh: cwd.trim() ? () => refreshTeammateWorkspace(false) : undefined,
     onSearchChange: setMessageSearchQuery,
   });
   const privateFeedRef = useRef<HTMLDivElement | null>(null);
@@ -542,12 +550,12 @@ export function TeammateWorkspace({
       usedMemoryEvents,
       memoryById,
       activityItems,
-      refreshing: chatHeaderController.refreshing,
+      refreshing: loading,
       t,
     }),
     [
       activityItems,
-      chatHeaderController.refreshing,
+      loading,
       directAttachments,
       directExecutionActions,
       directWorkspace,
@@ -730,6 +738,13 @@ export function TeammateWorkspace({
     setPrivateFeedLatestButtonVisible(false);
   }, [teammate.id]);
 
+  useEffect(() => {
+    if (!settingsOpenRequest || settingsOpenRequest.teammateId !== teammate.id) return;
+    setWorkspaceView("settings");
+    setActiveTab("profile");
+    onSettingsOpenRequestConsumed?.(settingsOpenRequest.requestId);
+  }, [settingsOpenRequest?.requestId, settingsOpenRequest?.teammateId, teammate.id]);
+
   useEffect(() => () => {
     for (const previewUrl of attachmentPreviewUrlsRef.current) {
       revokeObjectUrl(previewUrl);
@@ -740,6 +755,13 @@ export function TeammateWorkspace({
   useEffect(() => {
     void refreshTeammateWorkspace();
   }, [cwd, teammate.id]);
+
+  useEffect(() => {
+    if (focusRevalidationToken === 0) return;
+    void refreshTeammateWorkspace(false);
+    if (workspaceView === "settings" && activeTab === "channels") void channelsController.refresh("refresh");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusRevalidationToken]);
 
   useEffect(() => {
     privateFeedPinnedToLatestRef.current = true;
@@ -1536,8 +1558,6 @@ export function TeammateWorkspace({
           cwd={cwd}
           teammate={teammate}
           attachmentCount={directAttachments.length}
-          refreshing={chatHeaderController.refreshing}
-          refreshDisabled={loading || !cwd.trim()}
           searchInputRef={chatHeaderController.searchInputRef}
           searchOpen={chatHeaderController.searchOpen}
           searchQuery={messageSearchQuery}
@@ -1559,7 +1579,6 @@ export function TeammateWorkspace({
           onCloseSearch={() => chatHeaderController.closeSearch(true)}
           onSearchQueryChange={setMessageSearchQuery}
           onClearSearch={chatHeaderController.clearSearch}
-          onRefresh={chatHeaderController.refresh}
           onOpenAttachments={() => openChatDockPage("files")}
           onOpenSettings={openTeammateSettings}
           onOpenRename={() => {

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useI18n } from "../../i18n.js";
+import { useFocusRevalidationToken } from "../../shared/hooks/use-focus-revalidation-token.js";
 import {
   aiCouncilBoundaryLabels,
   aiCouncilCapacityLabel,
@@ -47,6 +48,7 @@ export function CouncilWorkspacePage({
   settingsToolMode = false,
 }: CouncilWorkspacePageProps): JSX.Element {
   const { t } = useI18n();
+  const focusRevalidationToken = useFocusRevalidationToken();
   const [authoritativeProjectedCouncil, setAuthoritativeProjectedCouncil] = useState<AiCouncil>();
 
   const projectedCouncils = useMemo(() => {
@@ -113,6 +115,15 @@ export function CouncilWorkspacePage({
     onRefresh: refreshCouncils,
   });
   const mutationDisabled = membersController.mutationBusy || createCloneController.operationsBlocked || settingsArchiveController.archiveBusy || Boolean(settingsArchiveController.mutationKind) || aiCouncilsLoading;
+
+  useEffect(() => {
+    if (focusRevalidationToken === 0) return;
+    void listHealthController.refresh();
+    void membersController.refreshMembers();
+    void channelsController.refresh("refresh");
+    // The shared token owns the revalidation cadence; controller methods own request identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusRevalidationToken]);
 
   const selectedBoundaryLabels = selectedCouncil ? aiCouncilBoundaryLabels(selectedCouncil, t) : [];
   const selectedCapacityLabel = selectedCouncil ? aiCouncilCapacityLabel(selectedCouncil, t) : undefined;

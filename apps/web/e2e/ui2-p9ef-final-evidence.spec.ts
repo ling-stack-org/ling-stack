@@ -45,7 +45,7 @@ const scenarios = {
     viewport: { width: 1440, height: 960 },
     theme: "ling-light",
     locale: "en-US",
-    keyboard: { exercised: true, checks: ["Beta Refresh accepts keyboard focus"] },
+    keyboard: { exercised: true, checks: ["Beta Search accepts keyboard focus"] },
     reducedMotion: "no-preference",
   }),
   conversationAlphaRestored: scenario({
@@ -111,7 +111,7 @@ const scenarios = {
     viewport: { width: 1280, height: 800 },
     theme: "ling-dark",
     locale: "en-US",
-    keyboard: { exercised: true, checks: ["Designer Refresh accepts keyboard focus"] },
+    keyboard: { exercised: true, checks: ["Designer Search accepts keyboard focus"] },
     reducedMotion: "reduce",
   }),
   teammateEngineerError: scenario({
@@ -235,9 +235,9 @@ test("P9EF-EVIDENCE-01 Beta remains clean after Alpha fails late", async ({ page
   const betaPage = page.getByLabel("Conversation page");
   await expect(betaPage.getByText("Late Alpha stream failure.", { exact: true })).toHaveCount(0);
   await expect(betaPage.getByLabel("Conversation messages", { exact: true })).not.toContainText("Keep this failure with Alpha");
-  const refresh = betaPage.getByLabel("Conversation workspace toolbar").getByRole("button", { name: "Refresh" });
-  await refresh.focus();
-  await expect(refresh).toBeFocused();
+  const search = betaPage.getByLabel("Conversation workspace toolbar").getByRole("button", { name: "Search" });
+  await search.focus();
+  await expect(search).toBeFocused();
   await finish(page, scenarios.conversationBetaClean, runtime);
 });
 
@@ -332,9 +332,9 @@ test("P9EF-EVIDENCE-04 Designer ignores late Engineer snapshot", async ({ page }
   await response;
   await expect(page.getByText("Engineer stale private message.", { exact: true })).toHaveCount(0);
   await expect(page.getByText("Designer current private message.", { exact: true })).toBeVisible();
-  const refresh = page.getByRole("toolbar", { name: "Private chat actions" }).getByRole("button", { name: "Refresh" });
-  await refresh.focus();
-  await expect(refresh).toBeFocused();
+  const search = page.getByRole("toolbar", { name: "Private chat actions" }).getByRole("button", { name: "Search" });
+  await search.focus();
+  await expect(search).toBeFocused();
   await finish(page, scenarios.teammateDesignerClean, runtime);
 });
 

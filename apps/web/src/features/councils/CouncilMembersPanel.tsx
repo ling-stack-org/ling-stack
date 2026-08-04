@@ -1,4 +1,4 @@
-import { ArrowRight, Copy, Plus, RefreshCw } from "lucide-react";
+import { ArrowRight, Copy, Plus } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import type { AiCouncil } from "../../types.js";
 import {
@@ -40,13 +40,6 @@ export function CouncilMembersPanel({
             <small title={controller.evidence.reason}>{controller.summary.label}</small>
           </span>
           <span className="council-members-summary-actions">
-            <IconButton
-              disabled={controller.mutationBusy || controller.initialLoading}
-              icon={RefreshCw}
-              label={t("Refresh")}
-              loading={controller.refreshBusy}
-              onClick={() => void controller.refreshMembers()}
-            />
             {controller.managed ? (
               <Button
                 disabled={cloneDisabled}
@@ -232,11 +225,11 @@ function membersFeedback(
     return {
       action: {
         disabled: controller.readinessBusy,
-        label: t("Refresh"),
+        label: t("Check member status"),
         loading: controller.readinessBusy,
         run: () => void controller.refreshReadiness(),
       },
-      detail: controller.evidence.reason ?? t("Refresh to load member readiness."),
+      detail: controller.evidence.reason ?? t("Check member status to load readiness."),
       title: t("Health information is incomplete."),
       tone: "info",
     };
