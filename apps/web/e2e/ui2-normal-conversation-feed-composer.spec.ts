@@ -38,6 +38,11 @@ for (const fixture of [
 
     await expect(feed.locator(".normal-conversation-message-row")).toHaveCount(40);
     await expect(feed.getByText("Ling Agent is thinking...", { exact: true })).toHaveCount(2);
+    const runningMessage = feed.locator(".normal-conversation-message-row.ai-teammate")
+      .filter({ hasText: "Ling Agent is thinking..." })
+      .last();
+    await expect(runningMessage.locator(".conversation-work-cell")).toHaveCount(0);
+    await expect(runningMessage).not.toContainText("Working on UI2 feed run 20");
     await expect(feed.locator('.normal-conversation-message-error[data-tone="danger"]')).toContainText("Provider timed out while generating the response.");
     await expect(feed.locator(".conversation-attachment-chip")).toContainText("release-checklist.pdf");
     await expect(feed.getByRole("button", { name: "Retry response" })).toBeVisible();
