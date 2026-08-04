@@ -21,6 +21,26 @@ test("terminal report fallback aggregates workflow evidence", () => {
   assert.equal(validateTerminalReportContent(content, snapshot).ok, true);
 });
 
+test("terminal report fallback does not treat artifact storage paths as workspace changes", () => {
+  const snapshot = buildSnapshot();
+  const content = buildDeterministicTerminalReportContent({
+    ...snapshot,
+    artifacts: [
+      ...snapshot.artifacts,
+      {
+        id: "artifact_read_content",
+        kind: "document",
+        title: "read content",
+        path: "run_demo/001-read-content.md",
+        changedPaths: [],
+        sourceRefs: [ref("artifact", "artifact_read_content", "read content")],
+      },
+    ],
+  });
+
+  assert.deepEqual(content.changes.map((change) => change.paths[0]), ["docs/result.md", "src/index.ts"]);
+});
+
 test("terminal report validation rejects unsupported verification and participants", () => {
   const snapshot = buildSnapshot();
   const content = buildDeterministicTerminalReportContent(snapshot);

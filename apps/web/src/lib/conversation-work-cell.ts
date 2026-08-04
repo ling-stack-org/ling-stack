@@ -474,7 +474,7 @@ export function buildConversationWorkCellViewModel(input: BuildConversationWorkC
     input.t,
   );
   const terminalReport = input.terminalReport ? terminalReportToViewModel(input.terminalReport) : undefined;
-  const mergedEvidenceLinks = uniqueBy([
+  const combinedEvidenceLinks = uniqueBy([
     ...evidenceLinks,
     ...(terminalReport?.evidenceLinks ?? []),
   ], (item) => item.id);
@@ -484,6 +484,13 @@ export function buildConversationWorkCellViewModel(input: BuildConversationWorkC
     baseArtifactStripItems,
     (terminalReport?.artifactStripItems ?? []).filter((item) => item.kind !== "changed" || !hasBaseChangedItem),
   );
+  const representedArtifactIds = new Set(artifactStripItems.flatMap((item) => [
+    item.artifactId,
+    ...(item.changeArtifacts ?? []).map((artifact) => artifact.artifactId),
+  ]).filter((id): id is string => Boolean(id)));
+  const mergedEvidenceLinks = terminalReport
+    ? combinedEvidenceLinks.filter((link) => !link.artifactId || !representedArtifactIds.has(link.artifactId))
+    : combinedEvidenceLinks;
 
   return normalizeConversationOperationCell({
     id: turnContext ? `work-cell:turn:${turnContext.turn.id}` : `work-cell:${input.threadId}`,

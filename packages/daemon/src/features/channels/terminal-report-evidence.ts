@@ -133,7 +133,7 @@ export function collectRunTerminalReportEvidence(
   const approvalsRaw = store.listApprovalRequests({ runId: run.id, limit: 500 });
   const artifactsById = new Map(artifactsRaw.map((artifact) => [artifact.id, artifact]));
   const workspaceFileRefsByArtifactId = collectWorkspaceFileRefsByArtifactId(actions);
-  const changedPaths = changedPathsFromArtifacts(artifactsRaw);
+  const changedPaths = changedPathsFromActions(actions);
   const teammate = run.teammateId ? store.getAiTeammate(run.teammateId) : undefined;
   const resultSummary = readRunAssistantSummary(store, run.id, budgets.summaryCharacters) ?? run.errorMessage;
 
@@ -224,7 +224,14 @@ export function collectTurnTerminalReportEvidence(
     language: options.language ?? runs.map((run) => languageForRun(run, turn.userInstruction)).find(Boolean) ?? inferUserLanguage(turn.userInstruction),
     terminalState,
     terminalAt: turn.completedAt ?? turn.updatedAt,
-    steps: runs.map((run, index) => mapTurnRunStep(store, turn, run, index, budgets.summaryCharacters)),
+    steps: runs.map((run, index) => mapTurnRunStep(
+      store,
+      turn,
+      run,
+      index,
+      budgets.summaryCharacters,
+      actions.filter((action) => action.runId === run.id),
+    )),
     operations: actions.map((action) => mapOperation(action, artifactsById, budgets.summaryCharacters)),
     checks: actions.filter(isCheckAction).map((action) => mapCheck(action, budgets.summaryCharacters)),
     participants,
@@ -308,10 +315,7 @@ function mapWorkflowStep(item: WorkflowEvidence["steps"][number], maxCharacters:
   if (!status) {
     throw new Error(`Workflow step is not terminal: ${step.id} (${step.status})`);
   }
-  const changedPaths = uniqueStrings([
-    ...(item.outputPacket?.changedPaths ?? []),
-    ...changedPathsFromArtifacts(item.linkedArtifacts),
-  ]).map((path) => redactEvidenceText(path));
+  const changedPaths = uniqueStrings(item.outputPacket?.changedPaths ?? []).map((path) => redactEvidenceText(path));
   return {
     id: step.id,
     title: boundedText(step.title, maxCharacters),
@@ -339,6 +343,7 @@ function mapTurnRunStep(
   run: RunSession,
   index: number,
   maxCharacters: number,
+  actions: readonly ExecutionAction[],
 ): TerminalReportEvidenceStep {
   const task = store.getTask(run.taskId);
   const artifacts = store.listArtifacts(run.id);
@@ -351,7 +356,7 @@ function mapTurnRunStep(
     runId: run.id,
     resultSummary: summary ? boundedText(summary, maxCharacters) : undefined,
     blocker: run.errorMessage ? boundedText(run.errorMessage, maxCharacters) : undefined,
-    changedPaths: changedPathsFromArtifacts(artifacts),
+    changedPaths: changedPathsFromActions(actions),
     artifactIds: artifacts.map((artifact) => artifact.id),
     sourceRefs: uniqueRefs([
       sourceRefFor("turn", turn.id, turn.title),
@@ -366,13 +371,7 @@ function mapOperation(
   artifactsById: ReadonlyMap<string, RunArtifact>,
   maxCharacters: number,
 ): TerminalReportEvidenceOperation {
-  const changedPaths = uniqueStrings([
-    ...action.targetRefs.map((ref) => ref.path).filter((path): path is string => Boolean(path)),
-    ...action.resultArtifactIds.flatMap((id) => {
-      const artifact = artifactsById.get(id);
-      return artifact ? changedPathsFromArtifacts([artifact]) : [];
-    }),
-  ]).map((path) => redactEvidenceText(path));
+  const changedPaths = operationKind(action) === "edit" ? changedPathsFromActions([action]) : [];
   const title = action.summary && action.summary !== action.title
     ? `${action.title}: ${action.summary}`
     : action.title;
@@ -428,7 +427,7 @@ function mapArtifact(
     kind: artifactKind(artifact),
     title: redactEvidenceText(artifact.title?.trim() || artifact.path),
     path: redactEvidenceText(artifact.path),
-    changedPaths: changedPathsFromArtifacts([artifact]),
+    changedPaths: workspaceFileRefs.map((ref) => redactEvidenceText(ref.id)),
     status: "created",
     sourceRefs: uniqueRefs([
       ref,
@@ -870,11 +869,12 @@ function readRunAssistantSummary(store: RunStore, runId: string, maxCharacters: 
   return text ? boundedText(text, maxCharacters) : undefined;
 }
 
-function changedPathsFromArtifacts(artifacts: readonly RunArtifact[]): string[] {
-  return uniqueStrings(artifacts
-    .filter((artifact) => artifact.type === "file" || artifact.type === "diff")
-    .map((artifact) => artifact.path)
-    .filter((path) => !path.startsWith("workflows/")))
+function changedPathsFromActions(actions: readonly ExecutionAction[]): string[] {
+  return uniqueStrings(actions
+    .filter((action) => operationKind(action) === "edit")
+    .flatMap((action) => action.targetRefs)
+    .filter((ref) => ref.type === "file" && Boolean(ref.path))
+    .map((ref) => ref.path as string))
     .map((path) => redactEvidenceText(path));
 }
 
