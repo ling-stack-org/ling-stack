@@ -134,9 +134,6 @@ function fallbackOutcomeSummary(snapshot: TerminalReportEvidenceSnapshot): strin
 function fallbackChanges(snapshot: TerminalReportEvidenceSnapshot): TerminalReportChange[] {
   const artifactsByPath = new Map<string, typeof snapshot.artifacts[number]>();
   for (const artifact of snapshot.artifacts) {
-    if (artifact.path) {
-      artifactsByPath.set(artifact.path, artifact);
-    }
     for (const path of artifact.changedPaths) {
       artifactsByPath.set(path, artifact);
     }
@@ -145,7 +142,6 @@ function fallbackChanges(snapshot: TerminalReportEvidenceSnapshot): TerminalRepo
     ...snapshot.steps.flatMap((step) => step.changedPaths),
     ...snapshot.operations.filter((operation) => operation.kind === "edit").flatMap((operation) => operation.changedPaths),
     ...snapshot.artifacts.flatMap((artifact) => artifact.changedPaths),
-    ...snapshot.artifacts.map((artifact) => artifact.path).filter((path): path is string => Boolean(path)),
   ]);
   return [...paths].sort().map((path, index): TerminalReportChange => {
     const artifact = artifactsByPath.get(path);

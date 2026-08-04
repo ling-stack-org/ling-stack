@@ -2607,7 +2607,6 @@ export function AppShell(): JSX.Element {
               />
               ) : (
                 <ConversationHome
-                  userProfile={userProfile}
                   conversationTitle={selectedConversationDetail?.thread.title ?? ""}
                   initialMessages={selectedConversationMessages}
                   initialProjectPath={selectedConversationProjectPath}

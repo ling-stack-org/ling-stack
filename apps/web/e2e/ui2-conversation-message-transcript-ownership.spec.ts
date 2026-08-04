@@ -56,6 +56,7 @@ test("1440x960 Ling Light owns a complete Channel turn, transcript disclosure, t
   await expect(blockedRow).toHaveCount(1);
   await expectMessageFrameContained(sourceRow);
   await expectMessageFrameContained(assistantRow);
+  await expectOwnMessageBubble(sourceRow);
   await expectMessageInteractionPolicy(sourceRow, "user", "Copy message");
   await expectMessageInteractionPolicy(assistantRow, "assistant", "Copy message");
   await expectMessageInteractionPolicy(blockedRow, "state", "Copy message");
@@ -118,7 +119,13 @@ test("1280x800 Ling Dark keeps Normal message states independent from Channel ow
   const pending = rows.filter({ hasText: "Normal ownership response is still streaming" });
   const failed = rows.filter({ hasText: "Normal ownership provider failed" });
   await expect(own).toHaveClass(/message-bubble-own/u);
+  await expectOwnMessageBubble(own);
+  await expect(own).toHaveAttribute("data-has-avatar", "false");
+  await expect(own.locator(":scope > :is(.user-profile-avatar, .avatar-initial, img)")).toHaveCount(0);
   await expect(ready).toHaveClass(/message-bubble-peer/u);
+  await expect(ready).toHaveAttribute("data-has-avatar", "false");
+  await expect(ready.locator(":scope > :is(.user-profile-avatar, .avatar-initial, img)")).toHaveCount(0);
+  await expect(ready.locator(":scope > .message-content > header")).toBeHidden();
   await expect(pending).toHaveClass(/message-bubble-pending/u);
   await expect(pending.locator(".message-pending-spinner")).toBeVisible();
   await expect(failed).toHaveClass(/failed/u);
@@ -133,7 +140,6 @@ test("1280x800 Ling Dark keeps Normal message states independent from Channel ow
   await expectMessageFrameContained(ready);
   await expectMessageFrameContained(pending);
   await expectMessageFrameContained(failed);
-  await expectAuthorTimeBaseline(ready);
   const like = await exerciseActionBar(ready, "Like response");
   await like.click();
   await expect(like).toHaveClass(/selected/u);
@@ -174,6 +180,7 @@ test("1440x960 imported Quiet Ocean keeps Teammate identity, attachments, Memory
   const peer = rows.filter({ hasText: "Peer response with attachment and Memory" });
   const blocked = rows.filter({ hasText: "Private ownership request is blocked" });
   await expect(own).toHaveClass(/message-bubble-own/u);
+  await expectOwnMessageBubble(own);
   await expect(peer).toHaveClass(/message-bubble-peer/u);
   await expect(blocked).toHaveClass(/message-bubble-chat-blocked/u);
   await expect(blocked.getByRole("alert")).toContainText("Private ownership request is blocked");
@@ -582,6 +589,23 @@ async function expectAuthorTimeBaseline(row: Locator): Promise<void> {
   expect(layout?.gap ?? 0).toBeGreaterThanOrEqual(4);
   expect(layout?.overflow ?? 1).toBeLessThanOrEqual(1);
   expect(layout?.verticalOverlap ?? 0).toBeGreaterThan(0);
+}
+
+async function expectOwnMessageBubble(row: Locator): Promise<void> {
+  const appearance = await row.locator(":scope > .message-content").evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      backgroundColor: style.backgroundColor,
+      borderRadius: Number.parseFloat(style.borderTopLeftRadius),
+      justifySelf: style.justifySelf,
+      padding: Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.paddingRight),
+    };
+  });
+  expect(appearance.backgroundColor).not.toBe("transparent");
+  expect(appearance.backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
+  expect(appearance.borderRadius).toBeGreaterThan(0);
+  expect(appearance.justifySelf).toBe("end");
+  expect(appearance.padding).toBeGreaterThan(0);
 }
 
 async function expectReducedMotion(page: Page, locators: readonly Locator[]): Promise<void> {
