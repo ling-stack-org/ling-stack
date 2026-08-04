@@ -16,7 +16,6 @@ broker, teammate bindings, and approval policy as the execution authority.
 
 Related docs:
 
-- [Plugin Manager Implementation Plan](plugin-manager-implementation-plan.md)
 - [Bundled Embedded Cua Driver](cua-driver-bundled-embedded.md)
 - [Bundled Embedded Cua Driver Detailed Design](cua-driver-bundled-embedded-detailed-design.md)
 - [Core Tools, Runners, MCP Tools, and Plugin Boundary](core-tools-runtime-boundary.md)
@@ -462,7 +461,7 @@ Rules:
 - Still no arbitrary third-party install.
 
 Detailed implementation notes are tracked in
-[Plugin Manager Implementation Plan](plugin-manager-implementation-plan.md#stage-4-5-detailed-design).
+Plugin Manager.
 
 ### Slice 5: Install Cache, Runtime Injection, And Isolated Local Contract
 

@@ -145,7 +145,7 @@ export function MobileAccessSettingsPage(): JSX.Element {
           <dl className="mobile-access-details"><Detail label={t("Gateway")} value={status.gatewayOrigin ?? "—"} /><Detail label={t("Listener")} value={status.listener.listening ? t("Running") : t("Stopped")} /></dl>
           <div className="mobile-access-actions">
             <Button variant="primary" loading={busy === "pair"} leadingIcon={<QrCode />} onClick={() => void run("pair", () => capability.startPairing())}>{t("Generate pairing code")}</Button>
-            <Button variant="secondary" loading={busy === "refresh"} leadingIcon={<RefreshCw />} onClick={() => void refresh()}>{t("Refresh")}</Button>
+            <Button variant="secondary" loading={busy === "refresh"} leadingIcon={<RefreshCw />} onClick={() => void refresh()}>{t("Check status")}</Button>
             <Button variant="secondary" loading={busy === "disable"} onClick={() => void run("disable", () => capability.disable())}>{t("Disable")}</Button>
           </div>
         </section>
@@ -154,7 +154,7 @@ export function MobileAccessSettingsPage(): JSX.Element {
   );
 
   function PageHeader(): JSX.Element {
-    return <header className="mobile-access-page-header"><span className="mobile-access-page-icon"><Smartphone aria-hidden="true" /></span><span><h1>{t("Mobile Access")}</h1><p>{t("Continue existing Ling conversations securely from your phone.")}</p></span></header>;
+    return <header className="mobile-access-page-header"><span className="mobile-access-page-icon"><Smartphone aria-hidden="true" /></span><h1>{t("Mobile Access")}</h1></header>;
   }
 
   function SectionHeader({ icon, id, title }: { readonly icon: JSX.Element; readonly id: string; readonly title: string }): JSX.Element {

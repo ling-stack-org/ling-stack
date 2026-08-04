@@ -3,11 +3,9 @@
 ## Related Docs
 
 - [Managed Official Skill Source P16](managed-official-skill-source-p16.md)
-- [Settings Interaction Depth P9](settings-interaction-depth-p9.md)
-- [Settings Full-Surface Productization P10](settings-full-surface-productization-p10.md)
+- [Settings Shell](./ui2.0升级/modules/settings/README.md)
 - [Skill Capability Model And Library Simplification](skill-capability-model-and-library-simplification.md)
 - [GStack Skill Source Sync](gstack-skill-source-sync.md)
-- [P15 Implementation Plan](skill-source-sync-simplification-p15-implementation-plan.md)
 
 ## Summary
 

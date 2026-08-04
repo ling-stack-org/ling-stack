@@ -350,7 +350,7 @@ test("channel settings exposes loading, empty, failure, and scoped busy states",
   await captureEvidence(page, "1440x960-ling-light-channel-settings-general-error.png");
 
   await tabs.getByRole("tab", { name: "Workspace" }).click();
-  const refresh = settings.getByRole("button", { name: "Refresh status" });
+  const refresh = settings.getByRole("button", { name: "Check status" });
   await refresh.click();
   await expect(refresh).toBeDisabled();
   await expect(refresh.locator(".ling-ui-spinner")).toHaveCount(1);
@@ -421,7 +421,7 @@ test("channel dock reaches loaded, failure, and detail states across every launc
   await navigator.getByLabel("Filter files").fill("WorkspaceRightDock");
   await expect(navigator.getByRole("button", { name: /WorkspaceRightDock\.tsx/u })).toBeVisible();
   await captureEvidence(page, "1440x960-ling-light-channel-dock-review-detail.png");
-  await dock.locator(".workspace-change-review-toolbar").getByRole("button", { name: "Refresh", exact: true }).click();
+  await dock.locator(".workspace-change-review-toolbar").getByRole("button", { name: "Rescan changes", exact: true }).click();
   await expect(dock.getByText("Workspace review refresh failed.")).toBeVisible();
   await dock.getByRole("button", { name: "Back" }).click();
 

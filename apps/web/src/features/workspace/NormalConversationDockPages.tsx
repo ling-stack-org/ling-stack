@@ -31,11 +31,7 @@ export function NormalConversationContextPage({ context }: NormalConversationCon
       aria-label={t("Conversation context")}
     >
       <header className="normal-conversation-dock-page-header">
-        <span>
-          <strong>{context.conversationTitle}</strong>
-          <small>{t("Conversation context and workspace state")}</small>
-        </span>
-        <StatusIndicator compact label={t("Context ready")} tone="info" />
+        <strong>{context.conversationTitle}</strong>
       </header>
       <div className="normal-conversation-dock-list" role="list">
         <DataRow

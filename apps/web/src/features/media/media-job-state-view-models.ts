@@ -47,7 +47,7 @@ export function deriveMediaJobPrimaryAction(input: MediaJobProjectionInput): Med
   if (state === "waiting_for_review") {
     return input.approval.kind === "pending"
       ? action("open_approval", "Open review queue", false, undefined, "primary")
-      : action("refresh", "Refresh", false, undefined, "secondary");
+      : action("refresh", "Check status", false, undefined, "secondary");
   }
   if (state === "ready_to_start") return action("start", "Start generation", false, undefined, "secondary");
   if (state === "needs_attention") {
@@ -63,7 +63,7 @@ export function deriveMediaJobPrimaryAction(input: MediaJobProjectionInput): Med
     return action("retry", "Retry generation", false, undefined, "primary");
   }
   if (state === "completed") return action("view_result", "View result", false, undefined, "primary");
-  return action("refresh", "Refresh", false, undefined, "secondary");
+  return action("refresh", "Check status", false, undefined, "secondary");
 }
 
 export function deriveMediaJobRowView(input: MediaJobProjectionInput): MediaJobRowView {

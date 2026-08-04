@@ -12,11 +12,7 @@ daemon APIs, Web settings, channels, teammates, skills, and runner metadata.
 
 Related docs:
 
-- [Codex-Inspired Runtime Tools P0: Apply-Patch Implementation](codex-inspired-runtime-tools-p0-apply-patch-implementation.md)
-- [Codex-Inspired Runtime Tools P1: Unified Exec For Bash Implementation](codex-inspired-runtime-tools-p1-unified-exec-implementation.md)
 - [Codex-Inspired Runtime Tools P2: Permission Requests And Shell Snapshots](codex-inspired-runtime-tools-p2-permissions-shell-snapshots.md)
-- [Codex-Inspired Runtime Tools P2A: Permission Requests Implementation](codex-inspired-runtime-tools-p2a-permission-requests-implementation.md)
-- [Codex-Inspired Runtime Tools P2B: Shell Snapshots Implementation](codex-inspired-runtime-tools-p2b-shell-snapshots-implementation.md)
 - [Codex-Inspired Runtime Tools P2B: Shell Snapshots Follow-Ups](codex-inspired-runtime-tools-p2b-shell-snapshots-follow-ups.md)
 - [Core Tools, Runners, MCP Tools, and Plugin Boundary](core-tools-runtime-boundary.md)
 - [Approval Policy](approval-policy.md)
@@ -47,6 +43,16 @@ type RunTool = "read" | "grep" | "find" | "ls" | "bash" | "edit" | "write";
 They are product-visible permissions and audit dimensions. They appear in approval
 policy, channel allowed tools, teammate allowed tools, skill required tools, run request
 snapshots, and runner supported-tool metadata.
+
+## Implemented Boundary
+
+- The gated `request_permission` meta-tool creates durable, narrowly scoped approval evidence; it cannot
+  grant authority by itself or bypass the existing approval resolver.
+- Existing approval surfaces own the decision. Approved requests resume through the current run/checkpoint path;
+  denied, expired, stale, or mismatched requests fail closed.
+- Unified exec automatically emits artifact-backed lifecycle snapshots with redaction and bounded output.
+- PTY capture, manual capture, and a durable snapshot index remain optional follow-ups. They must not replace
+  artifacts as evidence or create a second process state source.
 
 Codex exposes a more terminal-first runtime shape. Public Codex sources show feature
 gates for shell execution, unified exec, shell snapshots, exec permission approvals,
@@ -207,7 +213,7 @@ daemon owns authorization, audit, and product semantics.
 ### P0: Apply-Patch Engine For Edit/Write
 
 Detailed implementation plan:
-[Codex-Inspired Runtime Tools P0: Apply-Patch Implementation](codex-inspired-runtime-tools-p0-apply-patch-implementation.md).
+Codex-Inspired Runtime Tools.
 
 Add a Ling-owned patch engine that can:
 
@@ -230,7 +236,7 @@ Acceptance:
 Introduce a normalized exec backend for `bash`.
 
 Detailed implementation plan:
-[Codex-Inspired Runtime Tools P1: Unified Exec For Bash Implementation](codex-inspired-runtime-tools-p1-unified-exec-implementation.md).
+Codex-Inspired Runtime Tools.
 
 Acceptance:
 
@@ -246,9 +252,6 @@ Acceptance:
 Detailed design:
 [Codex-Inspired Runtime Tools P2: Permission Requests And Shell Snapshots](codex-inspired-runtime-tools-p2-permissions-shell-snapshots.md).
 
-P2A implementation plan:
-[Codex-Inspired Runtime Tools P2A: Permission Requests Implementation](codex-inspired-runtime-tools-p2a-permission-requests-implementation.md).
-
 Add optional runtime features in two independently shippable tracks:
 
 | Track | Name | Dependency | Purpose |
@@ -258,9 +261,6 @@ Add optional runtime features in two independently shippable tracks:
 
 P2A first slice is implemented through durable approval records and continuation-scoped
 grant evidence.
-
-P2B.1 implementation:
-[Codex-Inspired Runtime Tools P2B: Shell Snapshots Implementation](codex-inspired-runtime-tools-p2b-shell-snapshots-implementation.md).
 
 The first P2B slice stores automatic `exec_start` and `exec_end` shell snapshots as
 redacted JSON/text run artifacts, exposes read-only daemon/API-client endpoints, and

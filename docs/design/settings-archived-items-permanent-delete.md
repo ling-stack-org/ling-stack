@@ -3,7 +3,7 @@
 ## Related Docs
 
 - [Ling Design System](ling-design-system.md)
-- [Settings Full Surface Productization P10](settings-full-surface-productization-p10.md)
+- [Settings Shell](./ui2.0升级/modules/settings/README.md)
 - [Sidebar Archive for Conversations and Teammates](sidebar-archive-conversations-teammates.md)
 
 ## Summary

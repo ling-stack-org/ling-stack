@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mockDaemon } from "./support/mock-daemon";
+import { triggerFocusRevalidation } from "./support/focus-revalidation";
 import {
   createBaseState,
   createChatProvider,
@@ -224,7 +225,7 @@ test("UI2 model search, filter, and destructive confirmation stay scoped", async
   await expect(target).toBeVisible();
 });
 
-test("UI2 model refresh retains stale rows and blocked delete remains actionable", async ({ page }) => {
+test("UI2 model focus revalidation retains stale rows and blocked delete remains actionable", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 960 });
   await useEnglish(page);
   const runtimeErrors = collectRuntimeErrors(page);
@@ -249,9 +250,11 @@ test("UI2 model refresh retains stale rows and blocked delete remains actionable
   await openWorkbench(page);
 
   failRefresh = true;
-  await page.getByRole("button", { name: "Refresh" }).click();
+  await expect(page.getByRole("button", { name: "Refresh" })).toHaveCount(0);
+  await triggerFocusRevalidation(page);
   await expect(page.locator(".provider-row")).toHaveCount(7);
   await expect(page.locator(".provider-page-error")).toContainText("Synthetic provider list failure");
+  await expect(page.locator(".provider-page-error").getByRole("button", { name: "Retry" })).toBeVisible();
   await expect(page.locator(".provider-readiness-summary")).toContainText("Stale");
   await captureEvidence(page, runtimeErrors, "1440x960-ling-light-retained-refresh-error.png", [503]);
 

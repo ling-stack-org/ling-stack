@@ -566,8 +566,3 @@ code {
 :root[data-theme="dark"] .provider-run-notice.neutral strong {
   color: var(--text-strong);
 }
-
-:root[data-theme="dark"] .avatar-initial.gray {
-  background: var(--surface-subtle);
-  color: var(--text-strong);
-}

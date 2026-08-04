@@ -1,5 +1,5 @@
-import { Box, Plus, RefreshCw } from "lucide-react";
-import { Button, IconButton, SegmentedControl, SegmentedControlItem } from "../../shared/ui/index.js";
+import { Box, Plus } from "lucide-react";
+import { Button, SegmentedControl, SegmentedControlItem } from "../../shared/ui/index.js";
 import { useI18n } from "../../i18n.js";
 import { mediaJobStatusFilters } from "./media-job-state-view-models.js";
 import type { MediaJobStatusFilter } from "./media-job-types.js";
@@ -9,20 +9,16 @@ export function MediaJobsHeader({
   generatingCount,
   attentionCount,
   statusFilter,
-  refreshing,
   hasRunnableModel,
   onFilterChange,
-  onRefresh,
   onPrimaryAction,
 }: {
   readonly taskCount: number;
   readonly generatingCount: number;
   readonly attentionCount: number;
   readonly statusFilter: MediaJobStatusFilter;
-  readonly refreshing: boolean;
   readonly hasRunnableModel: boolean;
   readonly onFilterChange: (filter: MediaJobStatusFilter) => void;
-  readonly onRefresh: () => void;
   readonly onPrimaryAction: () => void;
 }): JSX.Element {
   const { t } = useI18n();
@@ -37,12 +33,6 @@ export function MediaJobsHeader({
           <span>{summary.join(" · ")}</span>
         </div>
         <div className="media-jobs-header-actions">
-          <IconButton
-            icon={RefreshCw}
-            label={t("Refresh")}
-            loading={refreshing}
-            onClick={onRefresh}
-          />
           <Button
             leadingIcon={hasRunnableModel ? <Plus aria-hidden="true" size={16} /> : <Box aria-hidden="true" size={16} />}
             variant="primary"

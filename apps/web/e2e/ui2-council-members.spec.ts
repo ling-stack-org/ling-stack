@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { mockDaemon } from "./support/mock-daemon";
+import { triggerFocusRevalidation } from "./support/focus-revalidation";
 import { createBaseState, createMockTeammate, isRecord, type MockState } from "./support/mock-state";
 
 const evidenceDirectory = fileURLToPath(new URL(
@@ -50,7 +51,7 @@ test("custom members show truthful readiness and add one candidate with a single
   expect(state.teammateChannelMemberships).toHaveLength(directMemberships);
 
   state.aiCouncilHealthGeneratedAt = "2026-06-20T00:06:00.000Z";
-  const readinessRepair = panel.getByRole("button", { name: /Retry|Refresh/ }).last();
+  const readinessRepair = panel.getByRole("button", { name: /Retry|Check member status/ }).last();
   await readinessRepair.click();
   await expect(panel.getByText("Ready", { exact: true })).toHaveCount(3);
   await expectNoOverflow(page, panel);
@@ -187,13 +188,8 @@ test("load, retained refresh, and save failures remain repairable without optimi
   control.failNextGet = "Synthetic retained refresh failure";
   control.failNextGetCount = 1;
   control.getDelayByCouncil.set("council_custom_alpha", 250);
-  const refresh = panel.locator(".council-members-summary").getByRole("button", { name: "Refresh" });
-  await expectTypedIconAction(page, refresh, "Refresh");
-  await refresh.focus();
-  await expect(refresh).toBeFocused();
-  await refresh.click();
-  await expect(refresh).toHaveAttribute("aria-busy", "true");
-  await expect(refresh).toBeDisabled();
+  await expect(panel.locator(".council-members-summary").getByRole("button", { name: "Refresh" })).toHaveCount(0);
+  await triggerFocusRevalidation(page);
   await expect(panel).toContainText("Stale snapshot");
   await expect(memberRow(panel, "Ling Engineer")).toBeVisible();
   await expect(panel.getByLabel("Add teammate to council")).toBeDisabled();

@@ -8,7 +8,7 @@ Ling-owned lazy skill context loading
 Related docs:
 
 - [Ling Framework](ling-framework.md)
-- [Ling Skill Import v1](ling-skill-import-v1.md)
+- [Skill Import Productization](./skill-import-productization.md)
 - [GStack Skill Source Sync](gstack-skill-source-sync.md)
 - [Channel Context Budget Manager](channel-context-budget-manager.md)
 - [AI Teammates and Skills](ai-teammates-and-skills.md)

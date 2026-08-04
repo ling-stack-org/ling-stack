@@ -7,7 +7,6 @@ Implemented for the Codex CLI borrowing P1 slice.
 Related design docs:
 
 - [CLI v0.1](cli-v0.1.md)
-- [CLI Run I/O and Completion P1 Implementation Plan](cli-run-io-completion-p1-implementation-plan.md)
 - [Daemon lifecycle and doctor P0](daemon-lifecycle-p0.md)
 - [Daemon API](../daemon-api.md)
 
@@ -19,9 +18,9 @@ Reference snapshot:
 ## Problem
 
 P0 made `ling-stack` usable as a local operator CLI by hardening daemon lifecycle
-and doctor diagnostics. P1 should make direct runs reliable for shell automation.
+and doctor diagnostics. P1 made direct runs reliable for shell automation.
 
-The current `run` path still has four automation gaps:
+Before P1, the `run` path had four automation gaps:
 
 - prompt input is file/flag/positional only, with no stdin contract,
 - `run --json` can share stdout with human progress in the same printer,
@@ -29,8 +28,8 @@ The current `run` path still has four automation gaps:
 - completion cannot be generated safely while command metadata lives only inside
   hand-written dispatch branches.
 
-This slice defines the contract before implementation so `run` output does not
-drift by accident.
+The implementation below closes those gaps; this document now preserves the output and
+compatibility contract.
 
 ## Current Baseline
 
@@ -65,13 +64,13 @@ Implemented today:
 - `streamRun` consumes daemon SSE events and passes `ready` plus
   `RunEventEnvelope` objects to run output handlers.
 
-Not implemented yet:
+Deferred beyond P1:
 
 - `--output-schema <file>`,
 - dynamic completion for provider, channel, task, and run ids,
 - shared command metadata for help rendering.
 
-## Goals
+## Contract Requirements
 
 - Add a stable stdin prompt contract for `ling-stack run`.
 - Make `ling-stack run --json` stdout valid JSONL only.
@@ -483,7 +482,7 @@ ling-stack completion zsh >/tmp/ling-stack-completion.zsh
 
 ## Implementation Sequence
 
-Detailed patch breakdown: [CLI Run I/O and Completion P1 Implementation Plan](cli-run-io-completion-p1-implementation-plan.md).
+Detailed patch breakdown: CLI Run I/O and Completion P1.
 
 Implemented file shape:
 

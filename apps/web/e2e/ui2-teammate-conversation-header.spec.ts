@@ -44,7 +44,7 @@ for (const fixture of [
     const attachments = toolbar.getByRole("button", { name: "Private attachments: 1" });
     await expect(attachments).toBeVisible();
     await expect(attachments.locator("xpath=..").getByText("1", { exact: true })).toBeVisible();
-    await expectToolbarActions(toolbar, ["search", "refresh", "summary", "files", "terminal", "details"]);
+    await expectToolbarActions(toolbar, ["search", "summary", "files", "terminal", "details"]);
     expect(Math.round((await header.boundingBox())?.height ?? 0)).toBe(48);
     await expectAlignedConversationColumns(feed, composer);
     await expectHeaderSlotsDoNotOverlap(identity, toolbar);
@@ -112,13 +112,9 @@ for (const fixture of [
     await expect(searchTrigger).toBeFocused();
     expect(Math.round((await header.boundingBox())?.height ?? 0)).toBe(48);
 
-    const refresh = toolbar.getByRole("button", { name: "Refresh" });
-    await refresh.click();
-    await expect(refresh).toBeDisabled();
-    await expect(refresh.locator(".ling-ui-spinner")).toHaveCount(1);
+    await expect(toolbar.getByRole("button", { name: "Refresh" })).toHaveCount(0);
     await expect(toolbar.getByRole("button", { name: "Summary" })).toBeEnabled();
     await expect(feed).toBeVisible();
-    await expect(refresh).toBeEnabled();
 
     await searchTrigger.click();
     await header.getByRole("textbox", { name: "Search private messages" }).fill("private-architecture.pdf");

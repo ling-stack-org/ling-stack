@@ -59,7 +59,7 @@ export function ExternalWorkSettingsPanel({
         {selectedChannel ? (
           <IconButton
             icon={RefreshCw}
-            label={t("Refresh external work status")}
+            label={t("Check status")}
             loading={externalWorkStatusLoading}
             onClick={onRefreshExternalWork}
           />
@@ -80,10 +80,10 @@ export function ExternalWorkSettingsPanel({
           compact
           icon={<CircleAlert />}
           title={t("External work status is unavailable")}
-          description={t("Refresh to load the selected channel's workflow and credential state.")}
+          description={t("Check the selected channel's workflow and credential state.")}
           action={(
             <Button leadingIcon={<RefreshCw />} onClick={onRefreshExternalWork}>
-              {t("Refresh")}
+              {t("Check status")}
             </Button>
           )}
         />

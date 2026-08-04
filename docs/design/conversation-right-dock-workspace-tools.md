@@ -8,13 +8,8 @@ run/thread detail entry points, Web first, future Desktop/PC reuse
 Related docs:
 
 - [Conversation Surface Contract](conversation-surface-contract.md)
-- [Conversation UI Package Extraction Implementation Plan](conversation-ui-package-extraction-implementation-plan.md)
-- [Conversation Right Dock Workspace Tools Implementation Plan](conversation-right-dock-workspace-tools-implementation-plan.md)
 - [Conversation Composer Unification](conversation-composer-unification.md)
-- [Channel Workspace Design](channel-workspace.md)
-- [Channel Workspace v1.24 Right Drawer Workspace](channel-workspace-v1.24.md)
 - [Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md)
-- [Multi-Agent Collaboration Cards And Ambient Audit](multi-agent-collaboration-cards-and-ambient-audit.md)
 
 ## Purpose
 
@@ -39,6 +34,17 @@ should not clutter the chat feed.
 ## Product Decision
 
 Build a shared `RightDockShell` model.
+
+The evidence and approval closure slice is implemented:
+
+- approval decisions synchronously reconcile their workflow/step owner and remain idempotent across recovery;
+- browser evidence retains requested/final URLs and productized failure detail;
+- proposed plans expose `available/deleted/unknown` source-message state before offering source navigation;
+- Channel Team Metrics and Right Dock consume the same visible-evidence projection;
+- file rows carry explicit task/run/workflow/message owner scope instead of relying on flat path grouping.
+
+The Web must not infer workflow completion from an approval row, and the default Dock must not expose raw
+identifiers or unbounded evidence payloads.
 
 The shared part is the shell, navigation model, visual rhythm, empty states, page header,
 page stack, disclosure behavior, and review/evidence layout. Surface adapters decide
@@ -678,7 +684,7 @@ Work:
 
 - land this design,
 - land the detailed
-  [Conversation Right Dock Workspace Tools Implementation Plan](conversation-right-dock-workspace-tools-implementation-plan.md),
+  Conversation Right Dock Workspace Tools,
 - inventory current `RightDrawer`, `channel-side-panel`, `PageInspector`, run evidence,
   files, team metrics, and approval sources,
 - identify duplicate right-side settings or evidence rows to remove during migration.

@@ -1,6 +1,6 @@
 # Conversation Plan And Goal Modes
 
-Status: implementation design, first execution slice landed
+Status: active contract; first execution and plan-history/goal-completion slices implemented
 Date: 2026-07-01
 
 Related docs:
@@ -12,7 +12,6 @@ Related docs:
 - [Runner Adapters](runner-adapters.md)
 - [Runtime Control Plane Detailed Design](runtime-control-plane-detailed-design.md)
 - [Channel Context Processing Layer Implementation Plan](channel-context-processing-layer-implementation-plan.md)
-- [Conversation Plan History And Goal Completion Detailed Design](conversation-plan-history-and-goal-completion-detailed-design.md)
 
 ## Summary
 
@@ -27,6 +26,14 @@ These controls belong to the conversation session and control plane. They are no
 not prompt-only conventions, and not replacements for the current permission presets.
 
 The user-facing entry points should mirror the Codex screenshots:
+
+Implemented plan and goal history follows these durable rules:
+
+- a revised proposed plan replaces the prior active proposal while preserving history;
+- accept, archive, force-complete, and clear remain user-authority actions;
+- Ling Agent may complete a goal only after a strict evidence audit proves the full objective;
+- completion records actor, reason, summary, and evidence instead of accepting a direct status patch;
+- plan and goal history remains readable after refresh and does not depend on hidden runner memory.
 
 ```text
 composer + menu
@@ -936,8 +943,8 @@ End-to-end tests:
 ## Open Decisions
 
 No blocking product decision remains for the shipped first slice or the implemented
-Plan History / Goal Completion / guarded continuation follow-up. The decisions above are specified in
-[Conversation Plan History And Goal Completion Detailed Design](conversation-plan-history-and-goal-completion-detailed-design.md).
+Plan History / Goal Completion / guarded continuation follow-up. The decisions above are
+the current authority.
 
 Remaining scope is later tuning, not product ambiguity:
 
@@ -947,5 +954,4 @@ Remaining scope is later tuning, not product ambiguity:
 
 These are non-blocking follow-ups. The shipped behavior already includes right-dock plan
 history, explicit `/goal complete`, estimated-token budget fallback, workflow conversion
-preview, and guarded visible Goal continuation chains. Follow-up design details live in
-[Conversation Plan History And Goal Completion Detailed Design](conversation-plan-history-and-goal-completion-detailed-design.md#follow-up-tuning-detailed-design).
+preview, and guarded visible Goal continuation chains.

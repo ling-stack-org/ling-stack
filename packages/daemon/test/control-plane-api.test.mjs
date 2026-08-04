@@ -14,7 +14,7 @@ import { appendApprovalCreatedControlPlaneEvent } from "../dist/features/runs/ap
 test("control-plane snapshot returns requested redacted domains and isolates domain failures", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-control-plane-snapshot-"));
   const daemon = await startDaemonForTest({
-    secretResolver: createCompositeSecretResolver({ env: { LOCAL_RELAY_API_KEY: "sk-provider-secret-value" } }),
+    secretResolver: createCompositeSecretResolver({ env: { LOCAL_RELAY_API_KEY: "sk-test-provider-secret-value" } }),
   });
   try {
     const provider = (await postJson(`${daemon.url}/providers?cwd=${encodeURIComponent(cwd)}`, {
@@ -43,7 +43,7 @@ test("control-plane snapshot returns requested redacted domains and isolates dom
       scopeType: "workspace",
       ownerId: DEFAULT_WORKSPACE_ID,
       title: "Deploy rule",
-      body: "forbidden-memory-body sk-memory-secret-value",
+      body: "forbidden-memory-body sk-test-memory-secret-value",
       sourceKind: "user_explicit",
       confidence: "high",
       reasonCode: "test_fixture",
@@ -63,11 +63,11 @@ test("control-plane snapshot returns requested redacted domains and isolates dom
     assert.equal(snapshot.domains.memory.data.recentCandidates[0].body, undefined);
     assert.equal(snapshot.domains.mcp.data.servers[0].missingSecretCount, 1);
     assertControlPlanePayloadRedacted(snapshot, [
-      "sk-provider-secret-value",
+      "sk-test-provider-secret-value",
       "env:LOCAL_RELAY_API_KEY",
       "env:MCP_AUTHORIZATION",
       "forbidden-memory-body",
-      "sk-memory-secret-value",
+      "sk-test-memory-secret-value",
     ]);
 
     const badDomain = await requestJson(`${daemon.url}/control-plane/snapshot?cwd=${encodeURIComponent(cwd)}&domains=unknown`, { method: "GET" });
@@ -247,7 +247,7 @@ test("work unit control APIs append compact redacted control-plane transition ev
         idempotencyKey: "control-failed-retry",
         status: "failed",
         createdByActor: "system",
-        request: { prompt: "forbidden-work-unit-prompt sk-workunit-secret-value" },
+        request: { prompt: "forbidden-work-unit-prompt sk-test-workunit-secret-value" },
         now: "2026-06-22T00:00:00.000Z",
       });
       const running = store.createWorkUnit({
@@ -259,7 +259,7 @@ test("work unit control APIs append compact redacted control-plane transition ev
         idempotencyKey: "control-running-reconcile",
         status: "running",
         createdByActor: "system",
-        request: { prompt: "forbidden-work-unit-prompt sk-workunit-secret-value" },
+        request: { prompt: "forbidden-work-unit-prompt sk-test-workunit-secret-value" },
         now: "2026-06-22T00:01:00.000Z",
       });
       store.createWorkUnitAttempt({
@@ -279,7 +279,7 @@ test("work unit control APIs append compact redacted control-plane transition ev
         idempotencyKey: "control-queued-cancel",
         status: "queued",
         createdByActor: "system",
-        request: { prompt: "forbidden-work-unit-prompt sk-workunit-secret-value" },
+        request: { prompt: "forbidden-work-unit-prompt sk-test-workunit-secret-value" },
         now: "2026-06-22T00:02:00.000Z",
       });
     } finally {
@@ -325,7 +325,7 @@ test("work unit control APIs append compact redacted control-plane transition ev
     );
     assert.equal(transitions.get("wu_control_running_reconcile")?.data.runId, null);
     assert.equal(transitions.get("wu_control_running_reconcile")?.data.attemptId, "attempt_control_running_reconcile");
-    assertControlPlanePayloadRedacted(listed, ["forbidden-work-unit-prompt", "sk-workunit-secret-value"]);
+    assertControlPlanePayloadRedacted(listed, ["forbidden-work-unit-prompt", "sk-test-workunit-secret-value"]);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -347,7 +347,7 @@ test("runtime startup reconcile appends work-unit control-plane events outside w
         idempotencyKey: "control-runtime-reconcile",
         status: "running",
         createdByActor: "system",
-        request: { prompt: "forbidden-runtime-reconcile-prompt sk-runtime-secret-value" },
+        request: { prompt: "forbidden-runtime-reconcile-prompt sk-test-runtime-secret-value" },
         now: "2026-06-22T00:03:00.000Z",
       });
       store.createWorkUnitAttempt({
@@ -371,7 +371,7 @@ test("runtime startup reconcile appends work-unit control-plane events outside w
     assert.equal(reconciled.data.status, "stale");
     assert.equal(reconciled.data.reason, "runtime-startup-reconcile");
     assert.equal(reconciled.data.attemptId, "attempt_control_runtime_reconcile");
-    assertControlPlanePayloadRedacted(listed, ["forbidden-runtime-reconcile-prompt", "sk-runtime-secret-value"]);
+    assertControlPlanePayloadRedacted(listed, ["forbidden-runtime-reconcile-prompt", "sk-test-runtime-secret-value"]);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -778,7 +778,7 @@ test("run execution appends redacted run work-unit and artifact control-plane ev
       task: {
         id: "task_control_plane_run",
         title: "Control plane run",
-        prompt: "forbidden-run-prompt sk-run-secret-value",
+        prompt: "forbidden-run-prompt sk-test-run-secret-value",
       },
       provider: {
         provider: "test-provider",
@@ -814,8 +814,8 @@ test("run execution appends redacted run work-unit and artifact control-plane ev
     assert.equal(artifactCreated.data.path, undefined);
     assertControlPlanePayloadRedacted(listed, [
       "forbidden-run-prompt",
-      "sk-run-secret-value",
-      "sk-artifact-secret-value",
+      "sk-test-run-secret-value",
+      "sk-test-artifact-secret-value",
       "secret-output.md",
     ]);
   } finally {
@@ -853,7 +853,7 @@ test("run approvals append redacted control-plane created and resolved events", 
       payload: {
         type: "bash",
         cwd,
-        command: "echo sk-approval-secret-value",
+        command: "echo sk-test-approval-secret-value",
         riskFlags: ["test"],
       },
       expiresAt: "2999-01-01T00:00:00.000Z",
@@ -881,8 +881,8 @@ test("run approvals append redacted control-plane created and resolved events", 
     assert.equal(resolved.data.ownerId, "run_control_plane_approval");
     assert.equal(resolved.data.resolvedBy, "local-user");
     assertControlPlanePayloadRedacted(listed, [
-      "echo sk-approval-secret-value",
-      "sk-approval-secret-value",
+      "echo sk-test-approval-secret-value",
+      "sk-test-approval-secret-value",
       "approved for control-plane test",
       "Approval description should not be copied",
     ]);
@@ -1108,7 +1108,7 @@ class ControlPlaneRunRunner {
       toolName: "write",
       args: {
         path: "secret-output.md",
-        content: "# Control plane artifact\n\nsk-artifact-secret-value\n",
+        content: "# Control plane artifact\n\nsk-test-artifact-secret-value\n",
       },
     });
     options.onEvent?.({

@@ -42,7 +42,6 @@ export function PageInspector({
   assistantText,
   isRunning,
   pendingApprovals,
-  approvalsLoading,
   resolvingApprovals,
   providers,
   selectedProviderId,
@@ -64,7 +63,6 @@ export function PageInspector({
   approvalPolicyForm,
   onLookupRunIdChange,
   onLoadRun,
-  onRefreshApprovals,
   onResolveApproval,
   onExecuteExternalAction,
   onCancelExternalAction,
@@ -80,7 +78,6 @@ export function PageInspector({
   readonly assistantText: string;
   readonly isRunning: boolean;
   readonly pendingApprovals: readonly ApprovalRequest[];
-  readonly approvalsLoading: boolean;
   readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
   readonly providers: readonly ProviderPreset[];
   readonly selectedProviderId: string;
@@ -102,7 +99,6 @@ export function PageInspector({
   readonly approvalPolicyForm: ApprovalPolicyFormState;
   readonly onLookupRunIdChange: (runId: string) => void;
   readonly onLoadRun: () => void;
-  readonly onRefreshApprovals: () => void;
   readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
   readonly onExecuteExternalAction: (actionId: string) => void;
   readonly onCancelExternalAction: (actionId: string) => void;
@@ -214,9 +210,7 @@ export function PageInspector({
         errorMessage={selectedRun?.errorMessage ?? ""}
         isRunning={isRunning}
         pendingApprovals={pendingApprovals}
-        approvalsLoading={approvalsLoading}
         resolvingApprovals={resolvingApprovals}
-        onRefreshApprovals={onRefreshApprovals}
         onResolveApproval={onResolveApproval}
       />
     </section>

@@ -2,6 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Page, type Route } from "@playwright/test";
 import { mockDaemon } from "./support/mock-daemon";
+import { triggerFocusRevalidation } from "./support/focus-revalidation";
 import { seedImportedQuietOcean } from "./support/media-jobs-fixtures";
 import { createBaseState, createChatProvider, cwd, type MockState } from "./support/mock-state";
 
@@ -50,8 +51,10 @@ test("AUTO-LIST/STATUS/INSPECT handles 100 rows, search, stale refresh, keyboard
   await captureEvidence(page, "1440x960-ling-light-list-inspector.png", { width: 1440, height: 960 });
 
   fixture.failNextList = true;
-  await surface.getByRole("button", { name: "Refresh" }).click();
+  await expect(surface.getByRole("button", { name: "Refresh" })).toHaveCount(0);
+  await triggerFocusRevalidation(page);
   await expect(surface.getByText("Fixture refresh unavailable.")).toBeVisible();
+  await expect(surface.getByRole("button", { name: "Retry" })).toBeVisible();
   await expect(surface.getByRole("option", { name: "Automation 001" })).toBeVisible();
 
   const firstRow = surface.getByRole("option", { name: "Automation 001" });

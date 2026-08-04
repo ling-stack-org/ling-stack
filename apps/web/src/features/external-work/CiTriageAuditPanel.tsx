@@ -52,7 +52,7 @@ export function CiTriageAuditPanel({
         <span className="ci-triage-head-actions">
           <small>{t("{count} records", { count: records.length })}</small>
           {onRefresh ? (
-            <button className="icon-button" type="button" onClick={onRefresh} disabled={loading} aria-label={t("Refresh CI triage")}>
+            <button className="icon-button" type="button" onClick={onRefresh} disabled={loading} aria-label={t("Check CI status")}>
               {loading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
             </button>
           ) : null}

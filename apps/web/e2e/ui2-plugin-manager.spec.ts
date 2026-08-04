@@ -12,6 +12,7 @@ import {
   type MockState,
 } from "./support/mock-daemon";
 import { createBaseState } from "./support/mock-state";
+import { triggerFocusRevalidation } from "./support/focus-revalidation";
 
 const evidenceDir = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -74,19 +75,13 @@ test("retains the last plugin list when refresh fails and recovers through Retry
   await openPluginManager(page);
 
   fixture.failNextRefresh(300);
-  const refresh = page.getByRole("button", { name: "Refresh" });
-  await expectTypedIconAction(page, refresh, "Refresh");
-  await refresh.focus();
-  await expect(refresh).toBeFocused();
-  await refresh.click();
-  await expect(refresh).toHaveAttribute("aria-busy", "true");
-  await expect(refresh).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Refresh" })).toHaveCount(0);
+  await triggerFocusRevalidation(page);
   const retained = page.locator('[data-plugin-refresh-retained="true"]');
   await expect(retained).toBeVisible();
-  await expect(retained).toContainText("Refresh · failed");
+  await expect(retained).toContainText("Plugin list update failed");
   await expect(retained).toContainText("Stale · Showing 3 Plugins");
   await expect(page.locator(".plugin-table-row")).toHaveCount(3);
-  await expect(page.getByRole("button", { name: "Refresh" })).toBeEnabled();
   acknowledgeExpectedPluginFailure(page);
 
   const retry = retained.getByRole("button", { name: "Retry" });
@@ -117,7 +112,7 @@ test("keeps mutation busy and failure feedback scoped to the triggering row", as
   await expect(check).toHaveAttribute("aria-busy", "true");
   await expect(check).toBeDisabled();
   await expect(other.getByRole("button", { name: "Check" })).toBeEnabled();
-  await expect(page.getByRole("button", { name: "Refresh" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Refresh" })).toHaveCount(0);
 
   await expect(target.getByRole("alert")).toHaveText("Check · failed");
   await expect(target.getByRole("button", { name: "Retry" })).toBeVisible();
@@ -280,7 +275,7 @@ test("evidence: captures real Vite Plugin Manager states after functional gates"
   await capture(page, "1440x960-ling-light-list-ready.png");
 
   fixture.failNextRefresh(250);
-  await page.getByRole("button", { name: "Refresh" }).click();
+  await triggerFocusRevalidation(page);
   await expect(page.locator('[data-plugin-refresh-retained="true"]')).toBeVisible();
   acknowledgeExpectedPluginFailure(page);
   await capture(page, "1440x960-ling-light-retained-refresh-failure.png");
@@ -320,7 +315,7 @@ test("evidence: captures real Vite Plugin Manager states after functional gates"
     linkedResources,
     runtimePreview: createMockBundledRuntimePreview({ status: "injectable", packageRecord, linkedResources }),
   });
-  await page.getByRole("button", { name: "Refresh" }).click();
+  await triggerFocusRevalidation(page);
   await pluginRow(page, "bundled:cua-driver").getByRole("button", { name: "Details" }).click();
   detail = page.getByRole("dialog", { name: /Desktop Bridge/ });
   await detail.getByText("Runtime preview", { exact: true }).first().click();

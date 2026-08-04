@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { addExternalActionApproval, mockDaemon } from "./support/mock-daemon";
+import { triggerFocusRevalidation } from "./support/focus-revalidation";
 import {
   createApproval,
   createApprovalsFaultFixture,
@@ -62,7 +63,7 @@ test("APPROVAL-LIST handles 100 rows, keyboard, search, retained refresh failure
   const raceRow = list.getByRole("option", { name: "Approval 070" });
   await raceRow.click();
   await expect(raceRow).toHaveAttribute("aria-selected", "true");
-  await expect(surface.getByRole("button", { name: "Refresh" }).first()).not.toHaveAttribute("aria-busy", "true");
+  await expect(surface.getByRole("button", { name: /Refresh|刷新/ })).toHaveCount(0);
   await expect(raceRow).toHaveAttribute("aria-selected", "true");
 
   await assertNoHorizontalOverflow(page, surface);
@@ -368,12 +369,12 @@ async function openInbox(page: Page): Promise<Locator> {
 }
 
 async function refreshInbox(surface: Locator, waitForCompletion = true): Promise<void> {
-  const refresh = surface.getByRole("button", { name: /Refresh|刷新/ }).first();
-  const response = surface.page().waitForResponse((candidate) => candidate.request().method() === "GET" && new URL(candidate.url()).pathname === "/approvals");
-  await refresh.click();
-  if (waitForCompletion) {
+  const response = waitForCompletion
+    ? surface.page().waitForResponse((candidate) => candidate.request().method() === "GET" && new URL(candidate.url()).pathname === "/approvals")
+    : undefined;
+  await triggerFocusRevalidation(surface.page());
+  if (response) {
     await response;
-    await expect(refresh).not.toHaveAttribute("aria-busy", "true");
   }
 }
 

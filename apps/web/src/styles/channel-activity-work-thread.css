@@ -263,7 +263,7 @@
   padding: 0 8px;
   border: 1px solid var(--border);
   border-radius: 7px;
-  background: var(--surface-panel-strong);
+  background: var(--surface-panel);
   color: var(--text-muted);
   box-shadow: none;
   backdrop-filter: none;
@@ -286,13 +286,13 @@
 
 .activity-filter-chip.active {
   border-color: var(--border-strong);
-  background: var(--surface-selected);
+  background: var(--surface-subtle);
   color: var(--text-strong);
 }
 
 .activity-filter-chip.attention.active {
   border-color: var(--warning-border);
-  background: var(--warning-soft);
+  background: var(--surface-subtle);
   color: var(--warning);
 }
 

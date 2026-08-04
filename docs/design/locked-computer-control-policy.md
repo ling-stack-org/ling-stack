@@ -35,6 +35,9 @@ External opaque runners can be gated before run start, but an already-running ex
 process cannot provide model/tool safe-boundary callbacks unless that runner implements the
 same continuation contract.
 
+The shared implementation and macOS validation are complete. Remaining Windows real-machine validation is a
+release acceptance gate, not unfinished product architecture; its evidence belongs in Desktop release artifacts.
+
 ## Product behavior
 
 The Computer Control settings page shows:

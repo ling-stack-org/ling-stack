@@ -9,22 +9,15 @@ chat, run/thread detail, and future Desktop/PC conversation renderers
 Related docs:
 
 - [Conversation Surface Taxonomy](conversation-surface-taxonomy.md)
-- [Codex-Inspired Conversation Components v1](codex-inspired-conversation-components-v1.md)
-- [Conversation UI Framework And Copy Canon Implementation Plan](conversation-ui-framework-copy-implementation-plan.md)
 - [Conversation Surface Contract Implementation Plan](conversation-surface-contract-implementation-plan.md)
 - [Conversation Composer Unification](conversation-composer-unification.md)
-- [Conversation Composer Unification Implementation Plan](conversation-composer-unification-implementation-plan.md)
-- [Conversation UI Package Extraction Implementation Plan](conversation-ui-package-extraction-implementation-plan.md)
-- [Channel Workspace Design](channel-workspace.md)
 - [AI Teammate Private Workspace](ai-teammate-private-workspace.md)
 - [Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md)
 - [Conversation Right Dock Workspace Tools](conversation-right-dock-workspace-tools.md)
 - [Ling Agent TerminalReport Protocol](ling-agent-terminal-report-protocol.md)
 - [Conversation Shared Capabilities](conversation-shared-capabilities.md)
 - [Conversation Shared Capabilities Detailed Design](conversation-shared-capabilities-detailed-design.md)
-- [Conversation Shared Capabilities Implementation Plan](conversation-shared-capabilities-implementation-plan.md)
 - [Conversation Model Binding And Creation Validation](conversation-model-binding-and-creation-validation.md)
-- [Conversation Model Binding And Creation Validation Implementation Plan](conversation-model-binding-and-creation-validation-implementation-plan.md)
 
 2026-07-30 model ownership update: private chat still has no composer model picker. A
 user-created teammate uses its fixed model; a built-in teammate explicitly follows the
@@ -191,6 +184,11 @@ message/composer/evidence model.
 18. Existing channel topic replies, LingThread forks, and queued run guidance remain the
     authorities for reply, branch, and next-run continuation. Shared-capability work must
     not introduce parallel replacements.
+19. Multi-agent collaboration presentation is a read model over durable proposal,
+    workflow, step, run, approval, lease, and artifact state. Requirement shaping,
+    serial/parallel work, handoffs, and terminal summaries must render inside the one
+    visible work object for the turn; UI projections cannot create a second workflow
+    engine or authorize state transitions.
 
 ## Surface Capability Matrix
 
@@ -239,6 +237,9 @@ authorization but cannot change model from the composer; the effective private m
 owned by teammate settings and may be shown read-only in the composer. The persistent
 private-chat Settings entry opens the full teammate settings surface, where editable
 teammates may switch binding mode or fixed model.
+Teammate Management keeps `Open chat` as the primary row action and exposes `Edit teammate`
+in the row menu. That command opens the same full settings surface on the Profile section;
+it must not create a second teammate editor or bypass protected-field rules.
 
 Channel keeps model selection out of the composer. Channel Settings owns one `Ling Agent
 model` for Ling Agent replies and channel-owned routing. Other built-in teammates continue
@@ -950,7 +951,7 @@ composer systems.
 
 Detailed execution plan:
 
-- [Conversation Composer Unification Implementation Plan](conversation-composer-unification-implementation-plan.md)
+- [Conversation Composer Unification](./conversation-composer-unification.md)
 
 Work:
 
@@ -988,7 +989,7 @@ Goal: complete shared message-body and interaction parity.
 Detailed design and execution plan:
 
 - [Conversation Shared Capabilities Detailed Design](conversation-shared-capabilities-detailed-design.md)
-- [Conversation Shared Capabilities Implementation Plan](conversation-shared-capabilities-implementation-plan.md)
+- [Conversation Shared Capabilities](./conversation-shared-capabilities.md)
 
 Work:
 
@@ -1039,7 +1040,7 @@ composer/message/feed/action/identity/feedback primitives, while Web adapters re
 
 Detailed package boundaries, component migration map, renderer-slot strategy, dependency
 guards, and validation commands are defined in
-[Conversation UI Package Extraction Implementation Plan](conversation-ui-package-extraction-implementation-plan.md).
+[Conversation UI Package Extraction Implementation Plan](./conversation-surface-contract-implementation-plan.md).
 
 ## Open Decisions
 

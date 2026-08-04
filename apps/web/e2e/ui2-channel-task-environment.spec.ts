@@ -134,11 +134,8 @@ test("channel new task keeps fields and advanced context inside the dock at 1280
   await openChannelContextPanel(page);
   const dock = page.getByRole("complementary", { name: "Channel workspace dock" });
   const newTask = dock.getByRole("button", { name: "New task" });
-  const refresh = dock.getByRole("button", { name: "Refresh" });
   await expectTypedIconAction(page, newTask, "New task");
-  await expectTypedIconAction(page, refresh, "Refresh");
-  await expect(refresh).not.toHaveAttribute("aria-busy", "true");
-  await expect(refresh).toBeEnabled();
+  await expect(dock.getByRole("button", { name: "Refresh" })).toHaveCount(0);
   await newTask.focus();
   await expect(newTask).toBeFocused();
   await newTask.click();

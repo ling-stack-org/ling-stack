@@ -9,10 +9,10 @@ This design depends on:
 - [Session persistence](session-persistence.md)
 - [Provider presets](provider-presets.md)
 - [Approval policy](approval-policy.md)
-- [Web UI v0.1](web-ui-v0.1.md)
+- [Ling UI 2.0 整体升级方案](./ui2.0升级/00-UI2.0整体升级方案.md)
 - [Codex-Inspired Runtime Tools](codex-inspired-runtime-tools.md)
 
-The current `packages/cli` package can initialize a workspace, diagnose readiness, manage providers, channels, channel runtime policy, tasks, runs, approvals, approval policy, daemon foreground startup, and Web UI launch through daemon APIs.
+The current `packages/cli` package can initialize a workspace, diagnose readiness, manage providers, channels, channel runtime policy, tasks, runs, approvals, approval policy, daemon lifecycle, shell completion, and Web UI launch through daemon APIs.
 
 ## Goal
 
@@ -41,7 +41,7 @@ v0.1 CLI does not include:
 - Cloud login.
 - Multi-user workspaces.
 - Remote daemon management.
-- Shell plugin/autocomplete generation.
+- Dynamic object-id completion or shell-plugin installation.
 - Full TUI.
 - Desktop installation.
 - Direct bypass of daemon policy.
@@ -53,8 +53,7 @@ Implemented today:
 
 - `ling-stack init`
 - `ling-stack doctor`
-- `ling-stack daemon status`
-- `ling-stack daemon start --foreground`
+- `ling-stack daemon status/start/stop/restart/logs`
 - `ling-stack provider list/add/show/check/update/remove`
 - `ling-stack channel list/create/show/update/remove`
 - `ling-stack task list/create/show/update/run/remove`
@@ -62,17 +61,15 @@ Implemented today:
 - `ling-stack runs list/show/events/cancel`
 - `ling-stack approvals list/show/approve/deny`
 - `ling-stack policy show/set/reset`
+- `ling-stack completion bash|zsh|fish`
 - `ling-stack ui`
 
-Not implemented yet:
+Not implemented in the CLI contract:
 
-- background daemon start,
-- daemon stop,
-- daemon restart and log inspection,
-- shell completion generation,
-- Codex-style check-row doctor output,
-- stdin-aware direct runs,
-- desktop packaging.
+- `daemon logs --follow`,
+- dynamic completion for workspace object ids,
+- structured `--output-schema`,
+- desktop packaging and remote daemon management.
 
 ## Design Principles
 
@@ -152,9 +149,9 @@ The goal is not to clone Codex CLI. Ling Stack should borrow the parts that hard
 
 P0 detailed design lives in [Daemon Lifecycle and Doctor P0](daemon-lifecycle-p0.md).
 P1 detailed design lives in [CLI Run I/O and Completion P1](cli-run-io-completion-p1.md).
-P1 implementation breakdown lives in [CLI Run I/O and Completion P1 Implementation Plan](cli-run-io-completion-p1-implementation-plan.md).
+P1 implementation breakdown lives in [CLI Run I/O and Completion P1](./cli-run-io-completion-p1.md).
 P2 detailed design lives in [MCP Status Boundaries P2](mcp-status-boundaries-p2.md).
-P2 implementation breakdown lives in [MCP Status Boundaries P2 Implementation Plan](mcp-status-boundaries-p2-implementation-plan.md).
+P2 implementation breakdown lives in [MCP Status Boundaries P2](./mcp-status-boundaries-p2.md).
 
 ### P0 Enabler: CLI Module Split
 
@@ -261,7 +258,7 @@ Detailed design: [CLI Run I/O and Completion P1](cli-run-io-completion-p1.md).
 ### P2: MCP Status Boundaries
 
 Detailed design: [MCP Status Boundaries P2](mcp-status-boundaries-p2.md).
-Implementation breakdown: [MCP Status Boundaries P2 Implementation Plan](mcp-status-boundaries-p2-implementation-plan.md).
+Implementation breakdown: [MCP Status Boundaries P2](./mcp-status-boundaries-p2.md).
 
 - Keep persisted MCP server config separate from runtime/auth state.
 - MCP status checks should create a short-lived connection/snapshot, collect server info/tools/resources/auth status, then tear it down.
@@ -604,12 +601,11 @@ ling-stack daemon start --host 127.0.0.1 --port 17891
 ling-stack daemon start --foreground
 ```
 
-v0.1 recommended behavior:
+Current behavior:
 
 - `--foreground` runs daemon in current terminal.
-- without `--foreground`, either start a detached process or print the exact foreground command if detached process management is not implemented yet.
-
-Do not pretend background service management is implemented if it is not.
+- without `--foreground`, Ling starts the governed detached daemon process and persists
+  workspace-scoped lifecycle metadata.
 
 ### `ling-stack daemon status`
 
@@ -643,13 +639,9 @@ Purpose:
 
 - stop a daemon started by Ling Stack.
 
-v0.1 note:
-
-This requires process ownership tracking. If not implemented, return a clear message:
-
-```text
-Daemon stop is not implemented yet. Stop the foreground process with Ctrl-C.
-```
+The command stops only a daemon whose persisted process identity and live process checks
+match. It refuses unsafe ownership or active-work cases unless the explicit force policy
+allows the requested transition.
 
 ## Provider Commands
 
@@ -1321,13 +1313,11 @@ denied request returns a blocked tool result before the side effect
 The CLI must not add a hidden bypass for normal product runs. Any future development-only bypass has to be explicitly labeled and remain outside the default path.
 
 
-## Module Plan
+## Module Boundary
 
-Current gap: the historical implementation grew as a single-file CLI. P0 splits the
-executable entrypoint and isolates the new daemon lifecycle and doctor check-row modules.
-The deeper command-by-command split should happen before completion generation. The P1
-run I/O and completion plan in [CLI Run I/O and Completion P1](cli-run-io-completion-p1.md)
-defines the next run-specific modules and command metadata shape.
+The historical implementation grew as a single-file CLI. P0 and P1 split the executable
+entrypoint, daemon lifecycle, doctor checks, run I/O and completion metadata into focused
+modules. Further extraction should follow ownership pressure rather than old phase numbers.
 
 Implemented P0 file shape:
 
@@ -1340,7 +1330,7 @@ packages/cli/src/daemon/logs.ts
 packages/cli/src/doctor/checks.ts
 ```
 
-Recommended next structural split:
+Current extension rule:
 
 ```text
 packages/cli/src/dispatch.ts

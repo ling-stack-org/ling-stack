@@ -51,8 +51,13 @@ export function ShellSnapshotPanel({ cwd, run, artifacts }: {
 
   return (
     <section className="runs-subsection shell-snapshot-panel">
-      <h4><SquareTerminal size={15} />{t("Shell snapshots")} <small>{t("{count} snapshots", { count: snapshots.length })}</small><Button leadingIcon={<RefreshCw size={13} />} loading={loading} onClick={() => void load()} size="sm">{t("Refresh")}</Button></h4>
-      {error ? <InlineFeedback title={t("Shell snapshot diagnostics unavailable")} tone="warning">{error}</InlineFeedback> : null}
+      <h4><SquareTerminal size={15} />{t("Shell snapshots")} <small>{t("{count} snapshots", { count: snapshots.length })}</small></h4>
+      {error ? (
+        <InlineFeedback title={t("Shell snapshot diagnostics unavailable")} tone="warning">
+          <span>{error}</span>
+          <Button leadingIcon={<RefreshCw size={13} />} loading={loading} onClick={() => void load()} size="sm">{t("Retry")}</Button>
+        </InlineFeedback>
+      ) : null}
       {!loading && snapshots.length === 0 && !error ? <EmptyState compact icon={<SquareTerminal />} title={t("No shell snapshots recorded for this run")} description={t("Approved bash commands will record redacted start and terminal snapshots when the daemon feature is enabled.")} /> : null}
       <div className="runs-snapshot-list">
         {snapshots.map((snapshot) => (

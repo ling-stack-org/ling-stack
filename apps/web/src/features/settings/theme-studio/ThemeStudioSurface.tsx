@@ -41,7 +41,6 @@ export function ThemeStudioSurface({ onBack }: { readonly onBack: () => void }):
         </Button>
         <span>
           <strong>{t("Create theme")}</strong>
-          <small>{t("Generated locally. No model or network request.")}</small>
         </span>
       </header>
 
@@ -54,7 +53,7 @@ export function ThemeStudioSurface({ onBack }: { readonly onBack: () => void }):
       </div>
 
       <footer className="settings-theme-studio-actions">
-        <span>{controller.restoring ? t("Restoring local draft") : t("The source image will not be installed.")}</span>
+        {controller.restoring ? <span>{t("Restoring local draft")}</span> : null}
         <Button disabled={!controller.canPublish} onClick={() => void install(false)}>
           {t("Install only")}
         </Button>

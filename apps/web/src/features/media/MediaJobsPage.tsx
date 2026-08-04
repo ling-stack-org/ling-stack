@@ -68,10 +68,8 @@ export function MediaJobsPage(props: MediaJobsPageProps): JSX.Element {
       <MediaJobsHeader
         {...controller.summary}
         statusFilter={controller.statusFilter}
-        refreshing={state.loadPhase === "refreshing"}
         hasRunnableModel={controller.runnableProviders.length > 0}
         onFilterChange={controller.setStatusFilter}
-        onRefresh={() => void controller.refresh()}
         onPrimaryAction={controller.openCreate}
       />
       {controller.loadError ? (

@@ -27,7 +27,6 @@ export function QuickThemeInputPanel({ controller }: { readonly controller: Quic
     <section className="settings-theme-studio-input" aria-labelledby="settings-theme-studio-input-title">
       <header>
         <span>
-          <small>{t("Quick mode")}</small>
           <h2 id="settings-theme-studio-input-title">{t("Create from an image")}</h2>
         </span>
         <span className="settings-theme-studio-local-note">{t("Local only")}</span>

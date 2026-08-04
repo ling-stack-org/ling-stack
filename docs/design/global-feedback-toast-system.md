@@ -3,11 +3,9 @@
 ## Related Docs
 
 - [Ling Design System](ling-design-system.md)
-- [UI 2.0 Toast 与 InlineFeedback](ui2.0升级/components/07-Toast与InlineFeedback.md)
-- [UI 2.0 全局反馈消息迁移矩阵](ui2.0升级/migration/10-全局反馈消息迁移矩阵.md)
-- [Settings Profile Identity Redesign](settings-profile-identity-redesign.md)
-- [Settings Visual Density Follow-up](settings-visual-density-followup.md)
-- [Settings Full-Surface Productization P10](settings-full-surface-productization-p10.md)
+- [UI 2.0 Toast 与 InlineFeedback](./ui2.0升级/components/02-浮层与反馈.md)
+- [UI 2.0 全局反馈消息迁移矩阵](./ui2.0升级/migration/README.md)
+- [Settings Shell](./ui2.0升级/modules/settings/README.md)
 
 ## Summary
 

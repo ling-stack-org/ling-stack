@@ -1,22 +1,20 @@
-import { Bot, CheckCircle2, CircleAlert, Clock3, Database, FileText, RefreshCw, ShieldCheck, Wrench } from "lucide-react";
+import { Bot, CheckCircle2, CircleAlert, Clock3, Database, FileText, ShieldCheck, Wrench } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApprovalCard } from "../approvals/ApprovalCard.js";
 import type { ApprovalResolution } from "../approvals/types.js";
 import { useI18n } from "../../i18n.js";
 import { buildRunActivities, type RunActivityItem } from "../../lib/run-activity.js";
-import { Button, EmptyState, InlineFeedback, InspectorSection } from "../../shared/ui/index.js";
+import { EmptyState, InlineFeedback, InspectorSection } from "../../shared/ui/index.js";
 import type { ApprovalRequest, RunEventEnvelope } from "../../types.js";
 import { EventRow } from "./EventRow.js";
 
-export function RunTimeline({ events, assistantText, errorMessage, isRunning, pendingApprovals, approvalsLoading, resolvingApprovals, onRefreshApprovals, onResolveApproval }: {
+export function RunTimeline({ events, assistantText, errorMessage, isRunning, pendingApprovals, resolvingApprovals, onResolveApproval }: {
   readonly events: readonly RunEventEnvelope[];
   readonly assistantText: string;
   readonly errorMessage: string;
   readonly isRunning: boolean;
   readonly pendingApprovals: readonly ApprovalRequest[];
-  readonly approvalsLoading: boolean;
   readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
-  readonly onRefreshApprovals: () => void;
   readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
@@ -38,7 +36,7 @@ export function RunTimeline({ events, assistantText, errorMessage, isRunning, pe
     <InspectorSection className="timeline" open summary={t("{count} activities", { count: activities.length })} title={t("Run activity")}>
       {errorMessage ? <InlineFeedback tone="danger">{errorMessage}</InlineFeedback> : null}
       {pendingApprovals.length ? <section className="runs-inline-approvals">
-        <header><strong><ShieldCheck size={16} />{t("Pending approval")}</strong><Button leadingIcon={<RefreshCw size={14} />} loading={approvalsLoading} onClick={onRefreshApprovals} size="sm">{t("Refresh")}</Button></header>
+        <header><strong><ShieldCheck size={16} />{t("Pending approval")}</strong></header>
         {pendingApprovals.map((approval) => <ApprovalCard approval={approval} compact key={approval.id} onResolve={onResolveApproval} resolvingDecision={resolvingApprovals[approval.id]} />)}
       </section> : null}
       <div

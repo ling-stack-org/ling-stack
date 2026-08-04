@@ -5,7 +5,7 @@ Date: 2026-06-07
 Scope: Ling-native memory health diagnostics, self-improving candidate metadata, and multi-agent workflow output fan-in.
 
 Detailed implementation breakdown:
-[Memory Health And Multi-Agent Memory Fan-In Implementation Plan](memory-health-and-fanin-implementation-plan.md).
+Memory Health And Multi-Agent Memory Fan-In.
 
 ## Summary
 

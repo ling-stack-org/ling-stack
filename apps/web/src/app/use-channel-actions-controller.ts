@@ -463,6 +463,11 @@ export function useChannelActionsController(input: {
     const channelId = input.selectedChannelId;
     const selectedChannel = input.channels.find((channel) => channel.id === channelId);
     const firstAiMention = messageInput.mentions.find((mention) => mention.kind === "ai-teammate");
+    const providerPresetId = messageInput.requestAiReply
+      ? selectedChannel?.defaultProviderPresetId
+        || input.form.providerPresetId
+        || input.providers.find(providerPreflightReady)?.id
+      : undefined;
     try {
       clearFeedback("composer", channelId);
       let receivedAiReply = false;
@@ -476,6 +481,7 @@ export function useChannelActionsController(input: {
         linkPreviewIds: messageInput.linkPreviewIds,
         fileRefs: messageInput.fileRefs,
         requestAiReply: messageInput.requestAiReply,
+        ...(providerPresetId ? { providerPresetId } : {}),
         teammateId: firstAiMention?.id || selectedChannel?.defaultTeammateId,
       });
       await readSseResponse(response, (event) => {

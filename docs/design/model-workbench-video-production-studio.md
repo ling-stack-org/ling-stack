@@ -1,6 +1,6 @@
 # 模型工作台视频生产台
 
-状态：active design contract
+状态：active contract；项目、场景、异步执行与结果生命周期已实施
 
 日期：2026-07-13
 
@@ -9,9 +9,8 @@
 相关文档：
 
 - [Provider Generation Runtime](provider-generation-runtime.md)
-- [Provider Generation Runtime Implementation Plan](provider-generation-runtime-implementation-plan.md)
 - [Media Automations Workbench Refinement](media-automations-workbench-refinement.md)
-- [Model Workbench Productization](model-workbench-productization-p13.md)
+- [Model Workbench UI 2.0](./ui2.0升级/modules/09-Model-Workbench.md)
 - [媒体生产体验收口](media-production-experience-refinement.md)
 - [媒体生产第三方工作流接入](media-production-external-workflows.md)
 
@@ -43,6 +42,9 @@ Media Project
 删除项目或场景仅删除项目、场景和关联记录，不删除既有 Media Job、Artifact、审批或审计历史。
 
 ## Experience Contract
+
+当前实现已覆盖：项目/场景 CRUD、`sortOrder`、能力驱动字段、可恢复视频任务、首次成功结果自动采用、
+后续结果手动选择、场景级预览和空提示词就地校验。实现状态不扩大为时间线、剪辑或未验证图片参考能力。
 
 顶部入口名称为“媒体生产”。页面有两个页内视图：
 

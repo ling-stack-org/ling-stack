@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { mockDaemon } from "./support/mock-daemon";
+import { triggerFocusRevalidation } from "./support/focus-revalidation";
 import { createBaseState, createMockTeammate } from "./support/mock-state";
 import { openEngineeringChannel } from "./support/test-helpers";
 
@@ -57,14 +58,12 @@ test("channel header search keeps the toolbar stable and searches channel activi
   const actionIds = await toolbar.locator("[data-conversation-action]").evaluateAll((elements) =>
     elements.map((element) => element.getAttribute("data-conversation-action")),
   );
-  expect(actionIds).toEqual(["search", "refresh", "teammates", "summary", "terminal", "details"]);
+  expect(actionIds).toEqual(["search", "teammates", "summary", "terminal", "details"]);
 
   const searchButton = toolbar.getByRole("button", { name: "Search" });
-  const refreshButton = toolbar.getByRole("button", { name: "Refresh" });
   await expect(searchButton).toHaveAttribute("data-icon-only", "true");
-  await expect(refreshButton).toHaveAttribute("data-icon-only", "true");
   await expectMinimumHitArea(searchButton);
-  await expectMinimumHitArea(refreshButton);
+  await expect(toolbar.getByRole("button", { name: "Refresh" })).toHaveCount(0);
 
   const headerHeight = Math.round((await header.boundingBox())?.height ?? 0);
   await searchButton.click();
@@ -125,7 +124,6 @@ test("channel header refresh and search keep local state and overlays independen
   const header = page.locator(".task-workbench-header");
   const toolbar = page.getByRole("toolbar", { name: "Workspace task toolbar" });
   const searchButton = toolbar.getByRole("button", { name: "Search" });
-  const refreshButton = toolbar.getByRole("button", { name: "Refresh" });
   const summaryButton = toolbar.getByRole("button", { name: "Summary" });
   const teammateButton = toolbar.getByRole("button", { name: "AI teammate management" });
 
@@ -153,15 +151,12 @@ test("channel header refresh and search keep local state and overlays independen
   });
   const initialQueryCount = state.channelMessageQueries?.length ?? 0;
   const headerHeight = Math.round((await header.boundingBox())?.height ?? 0);
-  await refreshButton.click();
-  await expect(refreshButton).toHaveAttribute("aria-busy", "true");
-  await expect(refreshButton).toBeDisabled();
+  await expect(toolbar.getByRole("button", { name: "Refresh" })).toHaveCount(0);
+  await triggerFocusRevalidation(page);
   await expect(summaryButton).toBeEnabled();
   await expect(toolbar).not.toHaveAttribute("aria-busy", "true");
   expect(Math.round((await header.boundingBox())?.height ?? 0)).toBe(headerHeight);
   await expect.poll(() => state.channelMessageQueries?.length ?? 0).toBeGreaterThan(initialQueryCount);
-  await expect(refreshButton).not.toHaveAttribute("aria-busy", "true");
-  await expect(refreshButton).toBeEnabled();
 });
 
 for (const fixture of [

@@ -11,10 +11,6 @@ The source-of-truth design boundaries remain:
 
 - [External Work Orchestration](external-work-orchestration.md)
 - [GitHub Automation](github-automation.md)
-- [External Work Phase 4 Implementation](external-work-phase-4-implementation.md)
-- [External Work Phase 5 Implementation](external-work-phase-5-implementation.md)
-- [External Work Phase 6 Implementation](external-work-phase-6-implementation.md)
-- [External Work Phase 7 Implementation](external-work-phase-7-implementation.md)
 - [External Work Multi-Forge Adapters](external-work-multi-forge-adapters.md)
 - [External Work Phase 8.0 Adapter Registry Implementation](external-work-phase-8.0-adapter-registry-implementation.md)
 - [External Work Phase 8.1 Workspace Git Remote Implementation](external-work-phase-8.1-workspace-git-remote-implementation.md)
@@ -136,7 +132,7 @@ Rules:
   background polling, or edit-and-approve.
 
 The full implementation plan is in
-[External Work Phase 5 Implementation](external-work-phase-5-implementation.md).
+[External Work Orchestration](./external-work-orchestration.md).
 
 ## Phase 6 First Slice
 
@@ -175,7 +171,7 @@ Rules:
 - Webhook ingestion remains a later option if deployment needs it.
 
 The full implementation plan is in
-[External Work Phase 6 Implementation](external-work-phase-6-implementation.md).
+[External Work Orchestration](./external-work-orchestration.md).
 
 ## Completed Phase 4 Closures
 
@@ -301,7 +297,7 @@ Completion criteria:
 - External-work orchestration v1 is complete.
 
 The first Phase 7 implementation plan is in
-[External Work Phase 7 Implementation](external-work-phase-7-implementation.md).
+[External Work Orchestration](./external-work-orchestration.md).
 
 ## After Phase 7: GA Hardening
 

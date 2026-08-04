@@ -115,6 +115,22 @@ test("role and custom setup use the shared dialog and form grammar", async ({ pa
   await expect(dialog.getByRole("button", { name: "Back" })).toHaveClass(/ling-ui-button/);
   await expect(dialog.getByLabel("Teammate name").locator("xpath=..")).toHaveClass(/ling-ui-input/);
   await expect(dialog.getByLabel("Brief description")).toHaveClass(/ling-ui-textarea/);
+  const toneOptions = dialog.getByLabel("Avatar color", { exact: true }).getByRole("button");
+  await expect(toneOptions).toHaveCount(6);
+  const toneColors = await toneOptions.locator(".avatar-initial").evaluateAll((elements) =>
+    elements.map((element) => getComputedStyle(element).backgroundColor),
+  );
+  expect(new Set(toneColors).size).toBe(6);
+  const roseOption = dialog.getByRole("button", { name: "Avatar color rose" });
+  await roseOption.click();
+  await expect(roseOption).toHaveAttribute("aria-pressed", "true");
+  const selectedToneColor = await roseOption.locator(".avatar-initial").evaluate((element) =>
+    getComputedStyle(element).backgroundColor,
+  );
+  await expect(dialog.locator(".teammate-custom-avatar-picker > .avatar-initial")).toHaveCSS(
+    "background-color",
+    selectedToneColor,
+  );
   await dialog.getByLabel("Upload avatar").setInputFiles({
     name: "ui2-avatar.png",
     mimeType: "image/png",

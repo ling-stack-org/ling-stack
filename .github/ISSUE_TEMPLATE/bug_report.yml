@@ -1,0 +1,81 @@
+name: Bug report
+description: Report a reproducible Ling Stack problem
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Ling Stack. Remove credentials, private paths, workspace data, and model content before submitting. Security vulnerabilities belong in the private process described in SECURITY.md.
+  - type: input
+    id: commit
+    attributes:
+      label: Affected version or commit
+      description: Use a release version when available; otherwise provide the commit SHA.
+      placeholder: ea8c40e3 or v0.x.y
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options:
+        - Web UI
+        - Desktop app
+        - CLI
+        - Daemon or API
+        - Model or media provider
+        - Skills or plugins
+        - MCP or tools
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include OS, architecture, Node version, browser or Desktop mode, and relevant provider type. Do not include keys.
+      placeholder: macOS 15 arm64, Node 22.15, Web UI from source
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Provide the smallest deterministic sequence that demonstrates the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Redacted evidence
+      description: Add screenshots, console output, or logs after removing secrets, private paths, and personal data.
+      render: text
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: Explain what work is blocked, whether data is at risk, and whether a workaround exists.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I searched existing issues and pull requests.
+          required: true
+        - label: I removed credentials, private paths, workspace data, and sensitive model content.
+          required: true
+        - label: This is not a security vulnerability requiring private disclosure.
+          required: true

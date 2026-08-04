@@ -84,43 +84,6 @@
   margin-top: var(--ling-space-4);
 }
 
-.teammate-management-list-panel .teammate-council-inline-entry {
-  display: flex;
-  min-width: 0;
-  min-height: 40px;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--ling-space-5);
-  margin: var(--ling-space-5) 0 0;
-  padding: var(--ling-space-3) var(--ling-space-5);
-  border: 1px solid var(--ling-border-default);
-  border-radius: var(--ling-radius-md);
-  background: var(--ling-bg-subtle);
-}
-
-.teammate-management-list-panel .teammate-council-inline-entry > span {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  gap: var(--ling-space-3);
-  color: var(--ling-text-muted);
-}
-
-.teammate-management-list-panel .teammate-council-inline-entry > span > svg {
-  width: 15px;
-  height: 15px;
-  flex: 0 0 auto;
-}
-
-.teammate-management-list-panel .teammate-council-inline-entry small {
-  overflow: hidden;
-  min-width: 0;
-  font-size: var(--ling-font-xs);
-  line-height: var(--ling-line-xs);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .teammate-management-list-panel .teammate-draft-list {
   display: grid;
   min-width: 0;

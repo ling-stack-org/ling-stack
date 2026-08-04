@@ -28,9 +28,9 @@ export function SettingsRunDiagnosticsToolbar({
       <span className="settings-run-diagnostics-actions">
         <IconButton
           icon={RefreshCw}
-          label={t("Refresh run diagnostics")}
+          label={t("Check run status")}
           loading={isLoading}
-          loadingLabel={t("Refreshing run diagnostics")}
+          loadingLabel={t("Checking run status")}
           onClick={onRefresh}
         />
         <IconButton icon={X} label={t("Close run diagnostics")} onClick={onClose} />

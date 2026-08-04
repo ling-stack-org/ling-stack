@@ -1,6 +1,6 @@
 # 媒体生产体验收口
 
-状态：active design contract
+状态：active contract；Web 生产台体验收口已实施
 
 日期：2026-07-14
 
@@ -9,12 +9,12 @@
 相关文档：
 
 - [模型工作台视频生产台](model-workbench-video-production-studio.md)
-- [模型工作台视频生产台实施计划](model-workbench-video-production-studio-implementation-plan.md)
-- [媒体生产画布优先布局](media-production-canvas-first-layout.md)
-- [媒体生产画布优先布局实施计划](media-production-canvas-first-layout-implementation-plan.md)
 - [媒体与自动化工作台收口](media-automations-workbench-refinement.md)
 
 ## 1. 产品问题与目标
+
+当前实现已包含场景准备度、生成前 review、`sceneIds` 选择性批量提交、服务端全部验证后零副作用创建、
+项目/场景顺序管理、真实视频预览和结果选择。后续回归直接以本合同和媒体生产测试为准，不再维护实施流水。
 
 Ling 已经能从模型工作台真实生成视频，但当前生产台仍像一组刚接通的工程控件：项目选择和名称重复、空画布过于空旷、场景没有可扫描的顺序列表、批量生成缺少准备度检查，视频结果也被当作普通文件展示。
 

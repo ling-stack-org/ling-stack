@@ -14,7 +14,7 @@ bootstrap variable allowlists. Registry source overrides manifest source for loc
 
 `.ling-theme` archive parsing、ZIP limits、asset decode/hash verification and published schema migration
 tools remain assigned to Theme import and Compiler slices. Evidence:
-[P2A Theme Registry metadata](../evidence/features/ui2-theme-registry/metadata.md).
+[Ling UI 2.0 验收总规范](../03-UI2.0验收总规范.md).
 
 ## Package Shape
 
@@ -275,3 +275,14 @@ Feature 不得直接读取 manifest 字段，只能消费 CSS semantic variables
 - 主题显示名和描述不经过 `dangerouslySetInnerHTML`。
 - Theme Pack 不包含 Profile definition、slot 坐标、prompt executor 或模型调用配置。
 - AI plan/artwork 输出必须经过 Theme Compiler，不能直接作为 manifest 或 token map 安装。
+
+## Built-In Theme Contract
+
+`ling-light` 与 `ling-dark` 是两个独立、完整且不可删除的 Theme Pack，共用 schema 和组件几何，
+不通过一套 token 的明暗分支实现。
+
+- Light 使用清晰的浅色层级、低阴影和稳定边框，不以纯白吞掉列表、Inspector 或滚动区域边界。
+- Dark 使用分层深灰而不是大面积纯黑；app、panel、elevated、subtle 和 pressed 必须可区分。
+- 两个主题的正文、muted text、focus、disabled、selection 与四类状态都必须独立通过对比度验收。
+- 原生 input、select、scrollbar、titlebar 和菜单使用对应 `color-scheme`，不建立 Feature dark override。
+- 首帧 dataset、CSS variables 和 native `color-scheme` 必须一致，不能先显示另一内置主题再切换。

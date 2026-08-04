@@ -1,4 +1,4 @@
-import { Check, Pin, Plus, RefreshCw, UsersRound, X } from "lucide-react";
+import { Check, Pin, Plus, UsersRound, X } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import {
   Button,
@@ -43,8 +43,6 @@ export interface ChannelCouncilSettingsPanelProps {
   readonly onAddSelectedChannelCouncil: () => void;
   readonly onRemoveChannelCouncil: (councilId: string) => void;
   readonly onSetPreferredChannelCouncil: (councilId: string) => void;
-  readonly onRefreshAiCouncils: () => void;
-  readonly onRefreshChannelCouncil: () => void;
 }
 
 export function ChannelCouncilSettingsPanel({
@@ -65,8 +63,6 @@ export function ChannelCouncilSettingsPanel({
   onAddSelectedChannelCouncil,
   onRemoveChannelCouncil,
   onSetPreferredChannelCouncil,
-  onRefreshAiCouncils,
-  onRefreshChannelCouncil,
 }: ChannelCouncilSettingsPanelProps): JSX.Element {
   const { t } = useI18n();
   const loading = aiCouncilsLoading || channelCouncilLoading;
@@ -184,19 +180,6 @@ export function ChannelCouncilSettingsPanel({
           disabled={!pendingChannelCouncilId || channelCouncilSaving}
         >
           {t("Attach")}
-        </Button>
-        <Button
-          size="sm"
-          leadingIcon={<RefreshCw size={14} />}
-          loading={loading}
-          loadingLabel={t("Refresh")}
-          onClick={() => {
-            onRefreshAiCouncils();
-            onRefreshChannelCouncil();
-          }}
-          disabled={loading}
-        >
-          {t("Refresh")}
         </Button>
       </div>
 

@@ -9,7 +9,7 @@ marketplace or dynamic code loading. The first step is to make internal capabili
 one typed registration model.
 
 The next product-facing layer is [Plugin Manager](plugin-manager.md). Its Stage 1-3
-implementation is detailed in [Plugin Manager Implementation Plan](plugin-manager-implementation-plan.md).
+implementation is detailed in [Plugin Manager](./plugin-manager.md).
 Together, those documents define Codex-like management for internal, bundled, and
 trusted local capabilities without opening a third-party plugin API yet.
 The Plugin Manager design also tracks the Codex-derived follow-up layers for package

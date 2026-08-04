@@ -4,7 +4,7 @@
 
 - [Ling Design System](ling-design-system.md)
 - [AI Teammate Private Workspace](ai-teammate-private-workspace.md)
-- [Product UX System P5](product-ux-system-p5.md)
+- [Ling UI 2.0 整体升级方案](./ui2.0升级/00-UI2.0整体升级方案.md)
 - [Global Feedback Toast System](global-feedback-toast-system.md)
 
 ## Summary

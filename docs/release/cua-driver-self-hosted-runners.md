@@ -1,5 +1,13 @@
 # Cua Driver Self-Hosted Native Runners
 
+Status: protected private release boundary
+Owner: repository maintainers
+Last verified: 2026-08-03
+Document type: release authority
+Code and workflow anchors: `.github/cua-driver-self-hosted-runners.json`,
+`.github/workflows/desktop-artifacts.yml`,
+`apps/desktop/scripts/verify-cua-driver-self-hosted-runner.mjs`
+
 This path builds internal Desktop products without consuming GitHub-hosted macOS or Windows
 minutes. It does not weaken the provider lock, replace Windows real-machine acceptance, or
 turn an internal package into a public release.
@@ -18,9 +26,16 @@ builds the locked provider once and packages it in the same job. The historical
 
 The reviewed identities live in `.github/cua-driver-self-hosted-runners.json`.
 
+The checked-in macOS root is a publication-safe example, not proof of a configured host.
+Personal host paths and runner registration state must not be committed. Before the source
+repository becomes public, unregister these repository-scoped runners and move native
+release execution to a separately reviewed private boundary. A private release boundary
+may maintain its own matching runner manifest; the public branch must retain only generic
+paths.
+
 | Platform | Runner name and only custom label | Runner root | Launch mode | Locked native tools |
 | --- | --- | --- | --- | --- |
-| macOS ARM64 | `ling-cua-driver-macos-arm64-v1` | `/Users/tianxiao/.github-actions/ling-cua-driver-macos-arm64-v1` | interactive Aqua login session | actions/runner 2.336.0, Xcode 26.6 build 17F113, macOS SDK 26.5, Rust 1.97.1, arm64 target |
+| macOS ARM64 | `ling-cua-driver-macos-arm64-v1` | `/Users/example/.github-actions/ling-cua-driver-macos-arm64-v1` | interactive Aqua login session | actions/runner 2.336.0, Xcode 26.6 build 17F113, macOS SDK 26.5, Rust 1.97.1, arm64 target |
 | Windows x64 | `ling-cua-driver-windows-x64-v1` | `C:\actions-runner` | interactive unlocked Windows login session | actions/runner 2.336.0, VS 17.14.37502.11, MSVC 14.44.35211, Windows SDK 10.0.26100.0, Rust 1.97.1 |
 
 Both runners use `--no-default-labels`. A generic `self-hosted`, `macOS`, `Windows`,
@@ -33,8 +48,9 @@ release, or sooner for a critical runner security update.
 
 ## macOS registration
 
-The current Mac runner is registered at the reviewed root. It must execute native evidence
-from a logged-in Aqua terminal with `./run.sh`; `svc.sh start` is forbidden for this lane.
+A private Mac runner must be registered at its separately reviewed root. It must execute
+native evidence from a logged-in Aqua terminal with `./run.sh`; `svc.sh start` is forbidden
+for this lane.
 The GitHub LaunchAgent sets `ACTIONS_RUNNER_SVC=1` and its job descendants do not retain
 the graphic-session capability needed by the upstream cursor integration tests. The
 checked-in verifier rejects that mode before source acquisition or compilation.

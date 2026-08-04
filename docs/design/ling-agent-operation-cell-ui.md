@@ -8,15 +8,10 @@ projection, operation evidence, and interruption entry points
 Related docs:
 
 - [Ling Agent Session Control Plane](ling-agent-session.md)
-- [Codex-Inspired Conversation Experience v1](codex-inspired-conversation-v1.md)
-- [Codex-Inspired Conversation Components v1](codex-inspired-conversation-components-v1.md)
+- [Conversation Surface Contract](./conversation-surface-contract.md)
 - [Run Interruption And Continuation](run-interruption-continuation.md)
 - [Multi-Agent Orchestration Experience](multi-agent-orchestration-experience.md)
 - [Multi-Agent App Detailed Design](multi-agent-app-detailed-design.md)
-- [Conversation UI Framework And Copy Canon Implementation Plan](conversation-ui-framework-copy-implementation-plan.md)
-- [Conversation UI Framework Temporary Implementation Checklist](conversation-ui-framework-implementation-checklist.md)
-- [Conversation Work Cell Operation Records](conversation-work-cell-operation-records.md)
-- [Conversation Operation Bubble And Performance Store](conversation-operation-bubble-and-performance-store.md)
 - [Conversation Performance Deferral And Virtualization](conversation-performance-deferral-and-virtualization.md)
 - [Ling Agent TerminalReport Protocol](ling-agent-terminal-report-protocol.md)
 
@@ -1531,7 +1526,7 @@ after success, failure, cancellation, or blocking.
 history cell adapted to Web typography.
 
 The assistant-ui-inspired visual treatment for this cell is defined by
-[Conversation Operation Bubble And Performance Store](conversation-operation-bubble-and-performance-store.md).
+[Conversation Surface Contract](./conversation-surface-contract.md).
 That document supersedes the older "no outer border" visual rule when implementing the
 next visual polish slice: an `OperationBubble` may use a subtle inline shell, status chip,
 hover/focus action bar, and folded tool-like sections, but it remains the same

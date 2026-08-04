@@ -847,14 +847,12 @@ test("AI teammates page links council management to Council Workspace", async ({
   await expect(page.locator(".teammate-council-home")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Import council to channel" })).toHaveCount(0);
 
-  const councilEntry = page.getByLabel("Council workspace entry");
+  const councilEntry = page.getByLabel("Workspace teammates").getByRole("button", { name: "Open Council Workspace" });
   await expect(councilEntry).toBeVisible();
-  await expect(councilEntry).toContainText("Teammates can join councils for shared management.");
-  await expect(councilEntry.getByRole("button", { name: "Open Council Workspace" })).toBeVisible();
   expect(state.teammateChannelMemberships).toHaveLength(originalChannelMembershipCount);
   expect(state.channelCouncilPolicies).toHaveLength(originalChannelCouncilPolicyCount);
 
-  await councilEntry.getByRole("button", { name: "Open Council Workspace" }).click();
+  await councilEntry.click();
   await expect(page.getByLabel("Settings sections")).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
   await expect(page.locator(".council-workspace-page[aria-label='Council Workspace']")).toBeVisible();
@@ -1214,7 +1212,7 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(privateToolbar).toHaveClass(/workspace-top-right-toolbar/);
   await expect(privateToolbar.locator(".workspace-toolbar-action-label")).toHaveCount(0);
   await expect(privateToolbar.getByRole("button", { name: "Search" })).toHaveClass(/workspace-toolbar-icon-button/);
-  await expect(privateToolbar.getByRole("button", { name: "Refresh" })).toHaveClass(/workspace-toolbar-icon-button/);
+  await expect(privateToolbar.getByRole("button", { name: "Refresh" })).toHaveCount(0);
   await expect(privateToolbar.getByRole("button", { name: "Summary" })).toHaveClass(/workspace-toolbar-icon-button/);
   await expect(privateToolbar.getByRole("button", { name: "Terminal" })).toHaveClass(/workspace-toolbar-icon-button/);
   await expect(privateToolbar.getByRole("button", { name: "Settings" })).toHaveCount(0);

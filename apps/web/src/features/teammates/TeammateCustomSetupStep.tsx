@@ -87,7 +87,6 @@ export function TeammateCustomSetupStep({
           </label>
           <span className="teammate-custom-avatar-copy">
             <strong title={avatarFile?.name}>{avatarFile ? avatarFile.name : t("Custom")}</strong>
-            <small>{avatarFile ? t("Avatar selected") : t("Upload an avatar or use a color.")}</small>
           </span>
         </div>
 

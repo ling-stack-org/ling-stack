@@ -41,12 +41,10 @@ export function RunDetailPanel({
   assistantText,
   turnContext,
   approvals,
-  approvalsLoading,
   resolvingApprovals,
   isRunning,
   cancellingRunId,
   onRefresh,
-  onRefreshApprovals,
   onRerun,
   onCancelRun,
   onResolveApproval,
@@ -67,12 +65,10 @@ export function RunDetailPanel({
   readonly assistantText: string;
   readonly turnContext: WorkHistoryTurnContext | undefined;
   readonly approvals: readonly ApprovalRequest[];
-  readonly approvalsLoading: boolean;
   readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
   readonly isRunning: boolean;
   readonly cancellingRunId: string;
   readonly onRefresh: () => void;
-  readonly onRefreshApprovals: () => void;
   readonly onRerun: (run: RunSession) => void;
   readonly onCancelRun: (run: RunSession) => void;
   readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
@@ -94,7 +90,7 @@ export function RunDetailPanel({
     (transition.entityType === "work_unit" && transition.entityId === run.workUnitId)) : [];
   return (
     <section className="runs-detail-workspace run-detail-panel" aria-labelledby="run-detail-title" aria-label={t("Run detail")}>
-      <RunDetailHeader approvals={approvals} cancellingRunId={cancellingRunId} isRunning={isRunning} onCancelRun={onCancelRun} onRefresh={onRefresh} onRerun={onRerun} run={run} />
+      <RunDetailHeader approvals={approvals} cancellingRunId={cancellingRunId} isRunning={isRunning} onCancelRun={onCancelRun} onRerun={onRerun} run={run} />
       {!run ? <EmptyState icon={<Search />} title={t("Select a run to inspect execution details")} /> : (
         <div className="runs-detail-sections run-detail-content">
           <RunOverviewSection onSelectRun={onSelectRun} run={run} turnContext={turnContext} />
@@ -102,17 +98,15 @@ export function RunDetailPanel({
           {run.errorMessage ? <InlineFeedback title={t("Failed")} tone="danger"><CircleAlert size={16} />{run.errorMessage}</InlineFeedback> : null}
           {run.status === "failed" && repairHint?.target === "run" ? <RuntimeRunRepairPanel events={events} isRunning={isRunning} onEditTask={onEditTask} onReload={onRefresh} onRerun={onRerun} run={run} workspaceCwd={workspaceCwd} /> : null}
           <RunTimeline
-            approvalsLoading={false}
             assistantText=""
             errorMessage=""
             events={events}
             isRunning={isRunning}
-            onRefreshApprovals={onRefreshApprovals}
             onResolveApproval={onResolveApproval}
             pendingApprovals={[]}
             resolvingApprovals={resolvingApprovals}
           />
-          <RunApprovalSection approvals={approvals} loading={approvalsLoading} onRefresh={onRefreshApprovals} onResolve={onResolveApproval} resolvingApprovals={resolvingApprovals} />
+          <RunApprovalSection approvals={approvals} onResolve={onResolveApproval} resolvingApprovals={resolvingApprovals} />
           <RunArtifactSection artifacts={artifacts} cwd={cwd} events={events} run={run} />
           <RunEvidenceSection approvals={approvals} artifacts={artifacts} assistantText={assistantText} cwd={cwd} events={events} memoryById={memoryById} run={run} usedMemoryEvents={usedMemoryEvents} />
           <RunGuidancePanel canRedirect={runCanBeStopped(run)} cwd={cwd} onRefreshRun={onRefresh} run={run} />

@@ -1,0 +1,37 @@
+.avatar-initial {
+  --avatar-initial-background: #64706b;
+
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--avatar-initial-background);
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.avatar-initial.violet {
+  --avatar-initial-background: #7861d8;
+}
+
+.avatar-initial.blue {
+  --avatar-initial-background: #526bb8;
+}
+
+.avatar-initial.teal {
+  --avatar-initial-background: #2f8076;
+}
+
+.avatar-initial.orange {
+  --avatar-initial-background: #a96317;
+}
+
+.avatar-initial.rose {
+  --avatar-initial-background: #b0526a;
+}
+
+.avatar-initial.gray {
+  --avatar-initial-background: #64706b;
+}

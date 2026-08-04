@@ -6,12 +6,10 @@ Last updated: 2026-06-28
 
 Related docs:
 
-- [Channel Workspace Design](channel-workspace.md)
-- [Channel Workspace v1.26 Channel Branches](channel-workspace-v1.26.md)
+- [Conversation Surface Contract](./conversation-surface-contract.md)
 - [Thread-First Work History](thread-first-work-history.md)
 - [Thread-First Work History V2 Detailed Design](thread-first-work-history-v2-detailed-design.md)
 - [AI Teammate Private Workspace](ai-teammate-private-workspace.md)
-- [Conversation Surface Contract](conversation-surface-contract.md)
 - [Channel Context Processing Layer](channel-context-processing-layer.md)
 - [Channel Auto Reply Router](channel-auto-reply-router.md)
 

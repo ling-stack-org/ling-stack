@@ -638,7 +638,7 @@ the GitHub side of that roadmap.
 
 ### Phase 2: Scheduler Claims, Reconciliation, and Workspaces
 
-Implementation plan: [External Work Phase 2 Implementation](external-work-phase-2-implementation.md).
+Implementation plan: [External Work Orchestration](./external-work-orchestration.md).
 
 - Add GitHub polling for candidate PRs and issues.
 - Add source, subject, workspace, and bound path claim leases.
@@ -648,7 +648,7 @@ Implementation plan: [External Work Phase 2 Implementation](external-work-phase-
 
 ### Phase 3: Approval-Gated Comments and Labels
 
-- Implementation plan: [External Work Phase 3 Implementation](external-work-phase-3-implementation.md).
+- Implementation plan: [External Work Orchestration](./external-work-orchestration.md).
 
 - Add proposed action records for comments and labels.
 - Link proposed actions to durable approval requests.
@@ -669,7 +669,7 @@ Implementation plan: [External Work Phase 2 Implementation](external-work-phase-
 
 ### Phase 4: CI Triage and Local Fix Tasks
 
-- Implementation plan: [External Work Phase 4 Implementation](external-work-phase-4-implementation.md).
+- Implementation plan: [External Work Orchestration](./external-work-orchestration.md).
 
 - Import failing check metadata, workflow run/job metadata, and bounded redacted logs.
 - Create Ling tasks from CI failures by default, linked to the originating PR external
@@ -706,7 +706,7 @@ Implementation plan: [External Work Phase 2 Implementation](external-work-phase-
   force-push by default.
 - Keep edit-and-approve out of the first loop. Cancel and re-propose instead.
 - Track the implementation details in
-  [External Work Phase 5 Implementation](external-work-phase-5-implementation.md).
+  [External Work Orchestration](./external-work-orchestration.md).
 
 ### Phase 6: Background GitHub Operation
 
@@ -720,7 +720,7 @@ Implementation plan: [External Work Phase 2 Implementation](external-work-phase-
   GitHub PRs/issues and create or reuse local records, but they must not start runners
   or execute GitHub mutations.
 - Track the implementation details in
-  [External Work Phase 6 Implementation](external-work-phase-6-implementation.md).
+  [External Work Orchestration](./external-work-orchestration.md).
 
 ### Phase 7 and GA
 
@@ -730,7 +730,7 @@ Implementation plan: [External Work Phase 2 Implementation](external-work-phase-
   GitHub feature surface, Linear mutations, background Linear polling, webhook
   ingestion, or runner startup.
 - Track the cross-source implementation details in
-  [External Work Phase 7 Implementation](external-work-phase-7-implementation.md).
+  [External Work Orchestration](./external-work-orchestration.md).
 - After Phase 7, prefer GA hardening over broad new GitHub feature surface: live smoke
   suites, permission audits, audit search/export, policy controls, rate-limit tuning,
   security review, and recovery docs.

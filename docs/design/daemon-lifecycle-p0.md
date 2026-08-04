@@ -2,7 +2,13 @@
 
 ## Status
 
-Proposed for the Codex CLI borrowing P0 slice.
+Status: implemented P0 operator loop
+Owner: CLI and daemon maintainers
+Last verified: 2026-08-03
+
+Background daemon start, status, stop, restart, bounded log reading, process metadata,
+and daemon-independent doctor checks are implemented. `daemon logs --follow`, native
+service installation, and remote daemon management remain outside this P0 contract.
 
 Related design docs:
 
@@ -17,29 +23,23 @@ Reference snapshot:
 - Upstream `openai/codex` at `345cf6e`
 - Relevant Codex areas: `doctor`, `exec`, `app-server`, `mcp`, and `completion`
 
-## Problem
+## Problem Solved
 
-Ling Stack can run a foreground daemon today, and the CLI can call daemon APIs when that daemon is already reachable. That is not enough for a reliable local operator loop.
-
-The current gaps are:
-
-- `ling-stack daemon start` without `--foreground` is not implemented.
-- `ling-stack daemon stop`, `restart`, and `logs` are not implemented.
-- `ling-stack doctor` is an aggregate readiness summary, not a stable check-row diagnostic report.
-- Doctor depends on a reachable daemon before it can explain why the daemon is not reachable.
-- There is no daemon process state file that records pid, host, port, log path, or startup metadata.
-
-This P0 turns daemon lifecycle and doctor into first-class local operations.
+The original foreground-only daemon loop could not diagnose or control a local daemon
+when the HTTP process was unavailable. P0 made lifecycle and doctor first-class local
+operations while keeping product state under the daemon and runtime supervisor.
 
 ## Current Baseline
 
 Implemented today:
 
-- `packages/daemon/src/cli.ts` starts the daemon in the current process and handles `SIGINT` and `SIGTERM`.
-- `packages/cli/src/index.ts` supports:
-  - `ling-stack daemon status`,
-  - `ling-stack daemon start --foreground`,
-  - `ling-stack doctor`.
+- `packages/cli/src/main.ts` owns `daemon start`, `status`, `stop`, `restart`, and
+  bounded `logs` commands, including foreground mode and stale-process handling.
+- `packages/cli/src/local/` owns process metadata, liveness checks, local logs, and
+  launch behavior without mutating product records.
+- `ling-stack doctor` emits stable, redacted check rows and can diagnose a daemon that
+  is not reachable.
+- `packages/daemon/src/cli.ts` still owns foreground daemon execution and signal cleanup.
 - `RuntimeSupervisor` writes `.ling-stack/runtime.lock` when a workspace runtime is opened.
 - `/health` returns daemon reachability and `defaultWorkspaceCwd`.
 - `/runtime/leases`, `/runtime/active`, `/runtime/stuck`, and related endpoints expose runtime diagnostics.
@@ -51,7 +51,7 @@ Important distinction:
 
 Do not merge these files. They answer different questions.
 
-## Goals
+## Durable Contract
 
 - Support background daemon lifecycle:
   - `ling-stack daemon start`,

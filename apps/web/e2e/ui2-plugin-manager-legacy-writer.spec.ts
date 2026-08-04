@@ -10,6 +10,7 @@ import {
   type MockState,
 } from "./support/mock-daemon";
 import { createBaseState } from "./support/mock-state";
+import { triggerFocusRevalidation } from "./support/focus-revalidation";
 
 const repositoryDirectory = fileURLToPath(new URL("../../../", import.meta.url));
 const webSourceDirectory = fileURLToPath(new URL("../src/", import.meta.url));
@@ -33,7 +34,7 @@ interface SourceFile {
   readonly path: string;
 }
 
-test("T13-O.32-D Plugin focused owner excludes every strict blanket and uses only the public feedback slot", async () => {
+test("T13-O.32-D Plugin focused owner has no strict Dark blanket and uses only the public feedback slot", async () => {
   const [strictCss, styles, pluginImports, feedbackCss, inlineFeedback, packageTest, productionSources, pluginStyleSources] = await Promise.all([
     readRepositoryFile("apps/web/src/styles/strict-console.css"),
     readRepositoryFile("apps/web/src/styles.css"),
@@ -46,20 +47,11 @@ test("T13-O.32-D Plugin focused owner excludes every strict blanket and uses onl
   ]);
 
   const strictSelectors = extractCssSelectors(strictCss);
-  const rootBlankets = strictSelectors.filter((selector) => (
-    selector.includes(':root[data-theme="dark"] .workspace:not(.workspace-provider-surface):where(')
+  const darkWorkspaceBlankets = strictSelectors.filter((selector) => (
+    selector.includes(':root[data-theme="dark"] .workspace')
   ));
-  const descendantBlankets = strictSelectors.filter((selector) => (
-    selector.includes(':root[data-theme="dark"] .workspace:where(')
-  ));
-  expect(rootBlankets, "strict must retain exactly one generic Dark root guard").toHaveLength(1);
-  expect(descendantBlankets.length, "strict must retain generic Dark descendant blankets").toBeGreaterThan(0);
-  for (const selector of [...rootBlankets, ...descendantBlankets]) {
-    expect(selector, "every generic Dark blanket must release the Plugin surface")
-      .toContain(":not(.workspace-plugins-surface)");
-  }
-  expect(countOccurrences(strictCss, ":not(.workspace-plugins-surface)"), "one exclusion per remaining strict blanket")
-    .toBe(rootBlankets.length + descendantBlankets.length);
+  expect(darkWorkspaceBlankets, "strict must not restore generic Dark workspace blankets").toHaveLength(0);
+  expect(strictCss).not.toContain(":not(.workspace-plugins-surface)");
 
   const pluginRootOwners = findExactSelectorOwners(productionSources, ".workspace.workspace-plugins-surface");
   expect(pluginRootOwners).toEqual([
@@ -107,10 +99,10 @@ test("T13-O.32-D Light 1440 retains the list and public feedback slot through re
     .toBeGreaterThan(0);
 
   fixture.failNextRefresh(200);
-  await page.getByRole("button", { name: "Refresh" }).click();
+  await triggerFocusRevalidation(page);
   const retained = page.locator('[data-plugin-refresh-retained="true"]');
   await expect(retained).toBeVisible();
-  await expect(retained).toContainText("Refresh · failed");
+  await expect(retained).toContainText("Plugin list update failed");
   await expect(retained).toContainText("Showing 24 Plugins");
   await expect(retained.locator(publicFeedbackSlot)).toBeVisible();
   await expect(page.locator(".plugin-table-row")).toHaveCount(24);

@@ -876,9 +876,9 @@ test("settings skill governance saves policy from a separate section", async ({ 
   await expect(panel).not.toContainText("Control skill recording, generation, and publication policy.");
   await expect(governancePanel).toContainText("Semi-auto");
   await expect(governancePanel).toContainText("User initiated");
-  await expect(governancePanel).toContainText("Create pending candidates after repeated stable success");
-  await expect(governancePanel).toContainText("Users can start skill recording explicitly");
-  await expect(governancePanel).toContainText("Candidate publishing and binding still require manual review.");
+  await expect(governancePanel.getByText("Create pending candidates after repeated stable success", { exact: true })).toHaveCount(0);
+  await expect(governancePanel.getByText("Users can start skill recording explicitly", { exact: true })).toHaveCount(0);
+  await expect(governancePanel.getByText("Candidate publishing and binding still require manual review.", { exact: true })).toHaveCount(0);
   await expect(governancePanel.getByText("Advanced governance", { exact: true })).toHaveCount(0);
   await expect(governancePanel.getByText("Source", { exact: true })).toHaveCount(0);
   await expect(governancePanel.getByText("Stored in workspace settings", { exact: true })).toHaveCount(0);
@@ -1023,7 +1023,7 @@ test("settings external work status renders invalid, missing, and Linear states"
   await expect(panel.getByLabel("Token")).toBeEnabled();
 
   state.externalWorkStatus = createExternalWorkStatus({ workflowExists: false, workflowValid: false, sourceKind: "unknown", workflowError: "WORKFLOW.md was not found" });
-  await panel.getByRole("button", { name: "Refresh external work status" }).click();
+  await panel.getByRole("button", { name: "Check status" }).click();
   await expect(panel).toContainText("Not configured");
   await expect(panel.getByText("WORKFLOW.md was not found", { exact: true })).toBeHidden();
   await panel.getByLabel("Repository").fill("https://github.com/owner/repo");
@@ -1033,7 +1033,7 @@ test("settings external work status renders invalid, missing, and Linear states"
   await expect(panel.getByLabel("Token")).toBeEnabled();
 
   state.externalWorkStatus = createExternalWorkStatus({ sourceKind: "linear" });
-  await panel.getByRole("button", { name: "Refresh external work status" }).click();
+  await panel.getByRole("button", { name: "Check status" }).click();
   await expect(panel).toContainText("Linear");
   await expect(panel).toContainText("ling-stack");
   await expect(panel).toContainText("Unsupported");

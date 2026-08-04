@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { mockDaemon, type MockWorkItem } from "./support/mock-daemon";
+import { triggerFocusRevalidation } from "./support/focus-revalidation";
 import { createBaseState, createChatProvider, cwd } from "./support/mock-state";
 import { openWorkBoardFromInbox } from "./support/open-work-board";
 import { openChannelChatTools } from "./support/test-helpers";
@@ -236,7 +237,8 @@ test.describe("UI2 Work Board", () => {
     await expect(board.getByTitle("Capped record 0")).toBeVisible();
     await expect(board.getByRole("button", { name: /Load more/i })).toHaveCount(0);
     failRuns = true;
-    await board.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect(board.getByRole("button", { name: "Refresh", exact: true })).toHaveCount(0);
+    await triggerFocusRevalidation(page);
     await expect(board.getByText("Showing retained data")).toBeVisible();
     await expect(board.getByTitle("Capped record 0")).toBeVisible();
     await captureEvidence(page, "1280x800-ling-dark-retained-stale.png", "retained capped rows after the runs source refresh fails", errors);
@@ -333,7 +335,7 @@ test.describe("UI2 Work Board", () => {
     await selectedRow.click();
     await expect(selectedRow).toHaveAttribute("aria-selected", "true");
     state.workItems = [];
-    await board.getByRole("button", { name: "Refresh", exact: true }).click();
+    await triggerFocusRevalidation(page);
     await expect(board.getByText("Selected work is no longer available")).toBeVisible();
     await expect(board.getByRole("button", { name: "Clear selection" })).toBeVisible();
     await captureEvidence(page, "1440x960-ling-light-selected-missing.png", "selected work removed by authoritative refresh with explicit recovery actions", errors);

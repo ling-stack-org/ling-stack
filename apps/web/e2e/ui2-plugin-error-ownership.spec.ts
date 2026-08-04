@@ -16,14 +16,16 @@ const controllerPath = fileURLToPath(new URL("../src/features/plugins/usePluginM
 const pagePath = fileURLToPath(new URL("../src/features/plugins/PluginManagerPage.tsx", import.meta.url));
 const appShellPath = fileURLToPath(new URL("../src/app/AppShell.tsx", import.meta.url));
 const guardPath = fileURLToPath(new URL("../scripts/check-ui2-feedback.mjs", import.meta.url));
+const fencePath = fileURLToPath(new URL("../src/domains/plugins/plugin-action-fence.ts", import.meta.url));
 
 test("T13-P.9EF.D releases Plugin generic errors and freezes explicit operation ownership", async () => {
-  const [domain, controller, pluginPage, appShell, guard] = await Promise.all([
+  const [domain, controller, pluginPage, appShell, guard, fence] = await Promise.all([
     readFile(domainPath, "utf8"),
     readFile(controllerPath, "utf8"),
     readFile(pagePath, "utf8"),
     readFile(appShellPath, "utf8"),
     readFile(guardPath, "utf8"),
+    readFile(fencePath, "utf8"),
   ]);
 
   expect(domain).not.toContain("setErrorMessage");
@@ -32,9 +34,10 @@ test("T13-P.9EF.D releases Plugin generic errors and freezes explicit operation 
   expect(guard).not.toContain('["apps/web/src/domains/plugins/use-plugins-domain.ts", 15]');
   expect(domain).toContain('export const PLUGIN_DRAFT_ID = "draft";');
   expect(domain).toContain("pluginId, action, ...request");
-  expect(domain).toContain("latestActionRequestsRef.current.get(pluginActionKey(action)) === action.requestId");
-  expect(domain).toContain('`${action.pluginId}:${action.action}:${action.owner}`');
-  expect(domain).toContain("clearPluginActionErrors({ pluginId, action });");
+  expect(domain).toContain("actionFenceRef.current.isLatest(action)");
+  expect(domain).toContain("actionFenceRef.current.begin(pending)");
+  expect(fence).toContain('`${action.pluginId}:${family}:${action.owner}`');
+  expect(domain).toContain("clearPluginActionErrors(request.owner");
   expect(controller).not.toContain("pluginSnapshotFingerprint");
   expect(controller).toContain("findLatestOwnedAction");
   expect(controller).toContain('requested === "row" && candidate === "detected-connect"');
@@ -42,8 +45,8 @@ test("T13-P.9EF.D releases Plugin generic errors and freezes explicit operation 
     expect(pluginPage, `${action} must pass through the focused owner controller`).toContain(`action: "${action}"`);
   }
   expect(appShell).toContain("loadError={pluginsLoadError}");
-  expect(appShell).toContain("actionErrors={pluginActionErrors}");
-  expect(appShell).toContain("pendingActions={pluginPendingActions}");
+  expect(appShell).toContain("actionErrors={pluginManagerActionErrors}");
+  expect(appShell).toContain("pendingActions={pluginManagerPendingActions}");
 });
 
 test("T13-P.9EF.D detected connect failure belongs to its Plugin row instead of the load owner", async ({ page }) => {

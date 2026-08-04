@@ -141,7 +141,7 @@ checklists for each module.
 
 | Milestone | User-visible result | Detailed slices | Exit gate |
 | --- | --- | --- | --- |
-| M0: baseline | Existing key spike still works on the UI 2.0 baseline | S1 | Expo Doctor 20/20, RN 0.86.2, existing suites green |
+| M0: baseline | Existing key spike still works on the UI 2.0 baseline | S1 | All Expo Doctor checks and existing suites pass on the pinned RN version |
 | M1: fixture app | Pairing, list, detail, My, Light/Dark render from shared fixtures | S1, S5, S6, S8 | All three kinds and every empty/error state render natively |
 | M2: secure read path | A real iPhone pairs and reads live PC conversations | S2-S5, S7 | Identity pin, auth, list/open/read, unread cursor, revoke, resync pass |
 | M3: conversation baseline | The phone sends text, receives replies, edits profile, and survives reconnect | S2-S9 | Durable retry, authority ceiling, profile limits, real-device E2E pass |
@@ -160,7 +160,8 @@ Work:
    lockfile once.
 2. Preserve the secure-device-key spike as a developer diagnostics screen or test harness;
    do not leave it as the production app root.
-3. Record current contract/protocol/core/Mobile test counts as the regression baseline.
+3. Record the required contract/protocol/core/Mobile suites and acceptance semantics; keep
+   individual run counts in CI artifacts.
 4. Add only the native dependencies required by the locked screens: navigation, QR/camera,
    safe local preferences/drafts, and virtualized list support. Do not add a Web renderer.
 
@@ -173,7 +174,7 @@ corepack pnpm --filter @ling-stack/mobile test
 git diff --check
 ```
 
-Done when Expo Doctor reports 20/20 and the secure-key fixture still passes on the real
+Done when all Expo Doctor checks pass and the secure-key fixture still passes on the real
 iPhone. Estimated engineering effort: 0.5-1 day.
 
 ### Phase P1: Generic Conversation and Profile Wire Contract
@@ -1586,23 +1587,3 @@ adapter/renderer, land atomic shared approval resolution, implement bounded appr
 creation facades/UI, prove real Tailscale transport, and complete the iOS E2E matrix.
 Physical Android hardware evidence remains the public Android release gate. A failed
 native-key or local-auth gate is not permission to weaken authentication.
-
-## GSTACK REVIEW REPORT
-
-| Review | Trigger | Why | Runs | Status | Findings |
-| --- | --- | --- | ---: | --- | --- |
-| CEO Review | `/plan-ceo-review` | Scope and strategy | 0 | — | V1 scope and 2026-08-01 amendment were locked directly with the user |
-| Codex Review | `/codex review` | Independent second opinion | 1 | ISSUES FOUND | Claude fallback found 6 gaps; 6/6 folded into the plan |
-| Eng Review | `/plan-eng-review` | Architecture and tests (required) | 3 | CLEAR | Latest run folded 13 amendment findings, 0 critical gaps, 0 unresolved |
-| Design Review | `/plan-design-review` | Mobile UI/UX gaps | 3 | CLEAR | Conversation UI remains 9/10 pending live QA; approval/creation flows are now fully specified |
-| DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | Not required before P0 |
-
-**CROSS-MODEL:** The outside voice added six correctness requirements: protected local
-management, durable projection outbox, bounded retry/tombstone, busy-send rejection,
-workspace-rebind clearing, and activity-sequence unread semantics. All six are now in the
-phase plan, failure matrix, and test map.
-
-**VERDICT:** ENG + DESIGN CLEARED — implement shared message semantics first, then S10-S12
-on the isolated feature branch.
-
-NO UNRESOLVED DECISIONS

@@ -9,7 +9,7 @@ closeout，也不得用 Web/Playwright 结果替代真实安装包和平台实�
 
 | Gate | Platform | Required evidence | Status |
 |---|---|---|---|
-| DESKTOP-RELEASE-MAC-ARM64 | Apple Silicon macOS | packaged launch/restart、Light/Dark、Input/Motion、window restore、main-window Home + collapsed Sidebar drag/no-drag coordinate smoke、0 runtime error | partial；[main-window drag subgate passed](../modules/18-Desktop-Client-Shell-implementation-plan.md#verification-evidence) |
+| DESKTOP-RELEASE-MAC-ARM64 | Apple Silicon macOS | packaged launch/restart、Light/Dark、Input/Motion、window restore、main-window Home + collapsed Sidebar drag/no-drag coordinate smoke、0 runtime error | partial；main-window drag contract implemented，见 [Desktop Client Shell](../modules/18-Desktop-Client-Shell.md) |
 | DESKTOP-RELEASE-MAC-X64 | Intel macOS x64 | clean install、first launch、restart、window chrome、font/control geometry、theme startup、CUA/PiP | pending |
 | DESKTOP-RELEASE-WIN-X64 | Windows 11 x64 | installer、first launch、restart、DPI 100/125/150%、window chrome、font/control geometry、theme startup、CUA/PiP | pending |
 | DESKTOP-RELEASE-AT-MAC | macOS | VoiceOver keyboard path、focus order、Dialog/Drawer/Menu announcements | pending |

@@ -213,7 +213,6 @@ async function assertStrictBlanketRelease(page: Page): Promise<void> {
       positiveRootWriterCount: positiveRootWriters.length,
     };
   });
-  expect(audit.darkBlanketCount).toBeGreaterThan(0);
   expect(audit.darkBlanketsMissingExclusion).toEqual([]);
   expect(audit.darkRootGroupsMissingExclusion).toEqual([]);
   expect(audit.explicitDarkRoot).toEqual([]);

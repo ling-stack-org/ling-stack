@@ -1,5 +1,7 @@
 import { Workflow } from "lucide-react";
+import { useEffect } from "react";
 import { useI18n } from "../../i18n.js";
+import { useFocusRevalidationToken } from "../../shared/hooks/use-focus-revalidation-token.js";
 import { EmptyState } from "../../shared/ui/index.js";
 import { RunHistoryHeader } from "./RunHistoryHeader.js";
 import { ThreadDetailPanel } from "./ThreadDetailPanel.js";
@@ -14,21 +16,25 @@ export function ThreadPage({ cwd, isRunning, initialThreadId, onRefreshRuns, onS
   readonly onSelectRun: (runId: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const focusRevalidationToken = useFocusRevalidationToken();
   const controller = useRunsThreadsPageController({ cwd, runs: [], initialThreadId, autoSelectThread: true, loadTurns: false });
   const { state, actions } = controller;
   function refreshAll(): void {
     onRefreshRuns();
     void actions.refreshThreads();
   }
+  useEffect(() => {
+    if (focusRevalidationToken === 0) return;
+    void actions.refreshThreads();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusRevalidationToken]);
   return (
     <div className="run-history-layout thread-page-layout runs-page-shell">
       <aside className="runs-list-pane runs-panel">
         <RunHistoryHeader
           archivedFilter={state.archivedFilter}
           onArchivedFilterChange={actions.setArchivedFilter}
-          onRefresh={refreshAll}
           onSearchChange={actions.setSearch}
-          refreshing={state.listState === "loading-initial" || state.listState === "refreshing"}
           search={state.search}
           title={t("Threads")}
         />

@@ -29,7 +29,6 @@ export function ThemeStudioPreviewPanel({ state }: { readonly state: QuickThemeS
     <section className="settings-theme-studio-preview" aria-labelledby="settings-theme-studio-preview-title">
       <header>
         <span>
-          <small>{t("Preview")}</small>
           <h2 id="settings-theme-studio-preview-title">{state.name.trim() || t("Untitled theme")}</h2>
         </span>
         <span>{t("Token colors only")}</span>

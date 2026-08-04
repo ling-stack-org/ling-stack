@@ -62,18 +62,18 @@ for (const theme of themes) {
     expect(signals.pageErrors).toEqual([]);
   });
 
-  test(`T13-P.7-F ${theme.id} Council and Plugin Manager expose typed Lucide utility actions`, async ({ page }) => {
+  test(`T13-P.7-F ${theme.id} Council and Plugin Manager keep only product utility actions`, async ({ page }) => {
     const signals = collectBrowserSignals(page);
     await prepareEvidencePage(page, theme);
 
     const council = await openCouncilWorkspace(page);
-    await expectStandardIconButton(council.getByRole("button", { name: "Refresh councils" }), "Refresh councils");
+    await expect(council.getByRole("button", { name: "Refresh councils" })).toHaveCount(0);
     await expectStandardIconButton(council.getByRole("button", { name: "Create council" }).first(), "Create council");
     await expectNoOverflow(page, council);
     await captureIfEnabled(page, `${theme.width}x${theme.height}-ling-${theme.id}-council.png`);
 
     const plugins = await openPluginManager(page);
-    await expectStandardIconButton(plugins.getByRole("button", { name: "Refresh" }), "Refresh");
+    await expect(plugins.getByRole("button", { name: "Refresh" })).toHaveCount(0);
     const cuaRow = plugins.locator('.plugin-table-row[data-plugin-id="trusted-local:cua-driver"]');
     await expect(cuaRow).toBeVisible();
     await expectStandardIconButton(cuaRow.getByRole("button", { name: "Check" }), "Check");
@@ -103,14 +103,15 @@ for (const theme of themes) {
     const channelToolbar = await openChannelToolbar(page);
     const channelActions = [
       ["Search", channelToolbar.getByRole("button", { name: "Search" })],
-      ["Refresh", channelToolbar.getByRole("button", { name: "Refresh" })],
       ["Summary", channelToolbar.getByRole("button", { name: "Summary" })],
       ["Toggle bottom panel", channelToolbar.getByRole("button", { name: "Toggle bottom panel" })],
       ["Show details", channelToolbar.getByRole("button", { name: "Show details" })],
     ] as const;
     for (const [label, action] of channelActions) await expectStandardIconButton(action, label);
     await channelActions[0][1].focus();
-    await page.keyboard.press("Tab");
+    for (let index = 0; index < 3 && !(await channelActions[1][1].evaluate((element) => element.matches(":focus"))); index += 1) {
+      await page.keyboard.press("Tab");
+    }
     await expect(channelActions[1][1]).toBeFocused();
     expect(await channelActions[1][1].evaluate((element) => element.matches(":focus-visible"))).toBe(true);
     await expectNoOverflow(page, page.locator(".workspace-client-surface"));

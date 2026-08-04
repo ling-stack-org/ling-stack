@@ -4,7 +4,8 @@ import { getUserProfile, updateUserProfile } from "../../api/profile.js";
 import { listRuns } from "../../api/runs.js";
 import { listSkills } from "../../api/skills.js";
 import { useI18n, type Locale } from "../../i18n.js";
-import { Field, Input, useLingToast } from "../../shared/ui/index.js";
+import { useFocusRevalidationToken } from "../../shared/hooks/use-focus-revalidation-token.js";
+import { Button, Field, Input, useLingToast } from "../../shared/ui/index.js";
 import type { RunSession, SkillRegistryEntry, UserProfile } from "../../types.js";
 import { AvatarCropDialog } from "./AvatarCropDialog.js";
 import { ProfileSettingsSurface, type ActivityMode, type ProfileMetrics } from "./ProfileSettingsSurface.js";
@@ -19,6 +20,7 @@ export function ProfilePage({
   readonly variant?: "standalone" | "settings";
 }): JSX.Element {
   const { locale, t } = useI18n();
+  const focusRevalidationToken = useFocusRevalidationToken();
   const { showToast } = useLingToast();
   const avatarTriggerRef = useRef<HTMLButtonElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -44,7 +46,7 @@ export function ProfilePage({
 
   useEffect(() => {
     void refresh();
-  }, [cwd]);
+  }, [cwd, focusRevalidationToken]);
 
   async function refresh(): Promise<void> {
     if (!cwd.trim()) {
@@ -186,6 +188,7 @@ export function ProfilePage({
           loading={loading}
           saving={saving}
           errorMessage={message}
+          onRetryLoad={() => void refresh()}
           avatarButtonRef={avatarTriggerRef}
           fileInputRef={fileInputRef}
           onAvatarChange={(event) => void handleAvatarChange(event)}
@@ -213,10 +216,6 @@ export function ProfilePage({
           <h1>{profile?.displayName ?? (displayName || "Ling User")}</h1>
         </div>
         <div className="profile-actions">
-          <button className="secondary-button compact-button" type="button" onClick={() => void refresh()} disabled={loading}>
-            <RefreshCw size={14} />
-            <span>{loading ? "刷新中" : "刷新"}</span>
-          </button>
           <button className="primary-button compact-button" type="button" onClick={() => void saveProfile()} disabled={!hasProfileChanges || saving}>
             {saving ? <RefreshCw size={14} /> : <Check size={14} />}
             <span>{saving ? "保存中" : "保存资料"}</span>
@@ -319,7 +318,12 @@ export function ProfilePage({
         </section>
       </div>
 
-      {message ? <div className={message.includes("已") ? "profile-message ok" : "profile-message"}>{message}</div> : null}
+      {message ? (
+        <div className={message.includes("已") ? "profile-message ok" : "profile-message"}>
+          <span>{message}</span>
+          {!profile ? <Button size="sm" variant="secondary" onClick={() => void refresh()}>{t("Retry")}</Button> : null}
+        </div>
+      ) : null}
       {avatarCropSource ? (
         <AvatarCropDialog
           sourceDataUrl={avatarCropSource}

@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { mockDaemon } from "./support/mock-daemon";
+import { triggerFocusRevalidation } from "./support/focus-revalidation";
 import {
   createBaseState,
   createChatProvider,
@@ -45,7 +46,8 @@ test("Model embedded boundary preserves loading, empty, failure, and exact retur
   await expectWorkspaceToolBoundary(page, surface);
 
   providerMode = "fail";
-  await surface.getByRole("button", { name: "Refresh" }).click();
+  await expect(surface.getByRole("button", { name: "Refresh" })).toHaveCount(0);
+  await triggerFocusRevalidation(page);
   await expect(surface.locator(".inline-error")).toContainText("Synthetic provider list failure");
   await expectWorkspaceToolBoundary(page, surface);
 

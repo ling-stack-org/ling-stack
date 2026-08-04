@@ -1122,7 +1122,7 @@ test("save and check enables a disabled provider before checking", async ({ page
   await page.getByLabel("API key", { exact: true }).fill("disabled-provider-key");
   await page.getByRole("button", { name: "Save changes" }).click();
 
-  await expect(disabledRow).toContainText("Ready");
+  await expect(disabledRow).toContainText("Current default");
   await expect(disabledRow.locator(".provider-primary-status")).toHaveCount(1);
   await expect.poll(() => {
     const provider = state.providers.find((item) => isRecord(item) && item.id === "provider_disabled");
@@ -1157,8 +1157,8 @@ test("disabled chat providers expose enable before their row check", async ({ pa
   await disabledRow.getByRole("button", { name: "Check" }).click();
 
   await expect(disabledRow.locator(".provider-state.run-ready")).toHaveCount(1);
-  await expect(disabledRow.getByRole("button", { name: "Set default" })).toBeVisible();
-  await expect(disabledRow).toContainText("Ready");
+  await expect(disabledRow).toContainText("Current default");
+  await expect(disabledRow.getByRole("button", { name: "Set default" })).toHaveCount(0);
   await expect.poll(() => {
     const provider = state.providers.find((item) => isRecord(item) && item.id === "provider_disabled");
     return isRecord(provider) ? { enabled: provider.enabled, checked: isRecord(provider.lastCheck) && provider.lastCheck.ok } : undefined;

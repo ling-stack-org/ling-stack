@@ -4,10 +4,10 @@
 
 - [Ling UI 2.0](ui2.0升级/README.md)
 - [UI 2.0 Iconography](ui2.0升级/foundations/07-Iconography与图标色系.md)
-- [UI 2.0 CSS Architecture](ui2.0升级/architecture/06-CSS目标目录与加载顺序.md)
-- [UI 2.0 Motion](ui2.0升级/foundations/08-Motion与状态转场.md)
+- [UI 2.0 CSS Architecture](./ui2.0升级/architecture/03-CSS所有权与迁移规则.md)
+- [UI 2.0 Motion](./ui2.0升级/foundations/04-交互动效与无障碍.md)
 - [UI 2.0 Theme Packs](ui2.0升级/themes/README.md)
-- [Model Workbench Productization P13](model-workbench-productization-p13.md)
+- [Model Workbench UI 2.0](./ui2.0升级/modules/09-Model-Workbench.md)
 - [Global Feedback Toast System](global-feedback-toast-system.md)
 
 ## Purpose
@@ -106,8 +106,8 @@ Product states are not raw storage states.
 Use [Global Feedback Toast System](global-feedback-toast-system.md) for transient
 action feedback.
 
-UI 2.0 实施以 [Toast 与 InlineFeedback](ui2.0升级/components/07-Toast与InlineFeedback.md)
-和 [全局反馈消息迁移矩阵](ui2.0升级/migration/10-全局反馈消息迁移矩阵.md) 为准。
+UI 2.0 实施以 [Toast 与 InlineFeedback](./ui2.0升级/components/02-浮层与反馈.md)
+和 [全局反馈消息迁移矩阵](./ui2.0升级/migration/README.md) 为准。
 
 - Lightweight save, copy, apply, created, and queued confirmations use the
   shared top-center `Ling Toast`.

@@ -24,9 +24,7 @@ equally important, what must stay out of the shell snapshot line.
 ## Related Docs
 
 - [Codex-Inspired Runtime Tools](codex-inspired-runtime-tools.md)
-- [Codex-Inspired Runtime Tools P1: Unified Exec For Bash Implementation](codex-inspired-runtime-tools-p1-unified-exec-implementation.md)
 - [Codex-Inspired Runtime Tools P2: Permission Requests And Shell Snapshots](codex-inspired-runtime-tools-p2-permissions-shell-snapshots.md)
-- [Codex-Inspired Runtime Tools P2B: Shell Snapshots Implementation](codex-inspired-runtime-tools-p2b-shell-snapshots-implementation.md)
 - [Core Tools, Runners, MCP Tools, and Plugin Boundary](core-tools-runtime-boundary.md)
 - [CLI v0.1](cli-v0.1.md)
 - [Daemon lifecycle and doctor P0](daemon-lifecycle-p0.md)

@@ -69,7 +69,7 @@ export function runNextStepLabelKey(run: RunSession): string {
     return "Review the failure summary, then repair the model or rerun from the original workspace.";
   }
   if (run.status === "running") {
-    return "This run is still active. Refresh diagnostics to inspect the latest state.";
+    return "This run is still active. Check run status to inspect the latest state.";
   }
   if (run.status === "waiting_for_approval") return "This run is waiting for approval.";
   if (run.status === "queued") return "This run is queued.";

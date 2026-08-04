@@ -14,7 +14,7 @@ Related docs:
 - [Approval Policy](approval-policy.md)
 - [Codex-Like Execution Experience](codex-like-execution.md)
 - [Codex-Inspired Runtime Tools](codex-inspired-runtime-tools.md)
-- [Runtime Control Plane Long-Term Implementation Plan](runtime-control-plane-long-term-implementation-plan.md)
+- [Runtime Control Plane Long-Term Implementation Plan](./runtime-control-plane-roadmap.md)
 - [AI Teammates And Skills](ai-teammates-and-skills.md)
 
 ## Problem

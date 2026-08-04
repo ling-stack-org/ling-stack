@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CI: "true"
+
+jobs:
+  quality:
+    name: Typecheck, unit tests, and Web build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      LING_STACK_HOME: ${{ runner.temp }}/ling-stack-ci-home
+    steps:
+      - name: Check out repository without retained credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.15.0
+
+      - name: Install locked dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack pnpm install --frozen-lockfile
+
+      - name: Check Markdown links
+        run: corepack pnpm check:docs
+
+      - name: Check dependency license policy
+        run: corepack pnpm check:licenses
+
+      - name: Check public repository safety
+        run: corepack pnpm check:public
+
+      - name: Scan Git history for secrets
+        run: >-
+          docker run --rm
+          -v "$GITHUB_WORKSPACE:/repo:ro"
+          zricethezav/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+          git --no-banner --no-color --redact=100
+          --gitleaks-ignore-path /repo/.gitleaksignore
+          --timeout 600
+          /repo
+
+      - name: Check Web architecture and UI rules
+        run: corepack pnpm --filter @ling-stack/web lint
+
+      - name: Check translations
+        run: corepack pnpm --filter @ling-stack/web check:i18n
+
+      - name: Typecheck supported source surfaces
+        run: >-
+          corepack pnpm
+          --filter './packages/**'
+          --filter @ling-stack/web
+          --filter @ling-stack/desktop
+          typecheck
+
+      - name: Run package and Web unit tests
+        run: >-
+          corepack pnpm
+          --filter './packages/**'
+          --filter @ling-stack/web
+          test
+
+      - name: Build Web product
+        run: corepack pnpm --filter @ling-stack/web build
+
+      - name: Check pull request whitespace
+        if: github.event_name == 'pull_request'
+        run: git diff --check "${{ github.event.pull_request.base.sha }}...HEAD"
+
+      - name: Check pushed commit whitespace
+        if: github.event_name == 'push'
+        run: git diff-tree --check --no-commit-id -r HEAD

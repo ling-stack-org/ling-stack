@@ -1,8 +1,9 @@
 # Channel And Agent Governance Notifications
 
-Status: Design direction
+Status: partially implemented active contract
 Date: 2026-06-20
-Updated: 2026-06-21
+Last verified: 2026-08-03
+Owner: Governance notifications and conversation surfaces
 Scope: Routing memory, skill, procedure, and health review events into user-visible
 notification surfaces without polluting channel or private conversation history.
 
@@ -21,8 +22,8 @@ memory promotion inbox
 Those queues are the authoritative state. They should remain the place where users
 approve, reject, edit, archive, quarantine, or publish durable records.
 
-The missing product layer is visibility. Users should see that a channel or teammate has
-something to review without needing to poll Settings, Skill Library, or Memory pages.
+The durable notification model, dedupe and channel-header visibility are implemented.
+Teammate-private delivery and the cross-channel Ling Agent digest remain follow-up work.
 
 The target shape is:
 
@@ -44,12 +45,10 @@ The notification is a pointer and reminder. It is not the source of truth.
 
 This design extends:
 
-- [Channel Workspace Design](channel-workspace.md)
+- [Conversation Surface Contract](./conversation-surface-contract.md)
 - [AI Teammate Private Workspace](ai-teammate-private-workspace.md)
 - [Memory Health And Multi-Agent Memory Fan-In](memory-health-and-fanin.md)
 - [Skill Candidates And Protocol Governance](skill-candidates-and-protocol-governance.md)
-- [Codex-Inspired Conversation Experience v1](codex-inspired-conversation-v1.md)
-- [Codex-Inspired Conversation Components v1](codex-inspired-conversation-components-v1.md)
 - [Daemon API](../daemon-api.md)
 
 ## Product Rule
@@ -71,6 +70,10 @@ notification center.
 
 Already implemented:
 
+- durable governance notification contracts, SQLite records, dedupe keys, status and
+  delivery state;
+- daemon list, summary, seen, dismiss and lifecycle reconciliation routes;
+- channel-scoped projection and the header notification popover;
 - Teammate direct messages support `authorType: "system"` and render as system messages.
 - Direct chat already has durable private threads and message history.
 - Channel header already owns attention/progress affordances and notification row badges.
@@ -82,11 +85,10 @@ Already implemented:
 
 Current gaps:
 
-- No durable notification object for governance events.
-- No routing rule that decides teammate private chat vs channel header vs Ling Agent.
-- No dedupe layer for cluster-backed events.
-- No resolved/dismissed/read state tied to source record lifecycle.
-- No channel header notification surface for memory or skill governance.
+- teammate-private system-message delivery still needs quiet-window and active-reply
+  coordination;
+- cross-channel and workspace-level grouping still needs the Ling Agent digest owner;
+- the current persisted `seen` state remains workspace-local rather than multi-user.
 
 ## Non-Goals
 

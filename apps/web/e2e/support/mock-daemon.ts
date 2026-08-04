@@ -7075,7 +7075,7 @@ export async function handleDaemonRoute(
     await route.fulfill({
       json: {
         cancelled: false,
-        path: "/Users/gsx/minimax-agent-cn/projects",
+        path: "/Users/example/workspace/projects",
         label: "projects",
       },
     });
