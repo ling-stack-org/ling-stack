@@ -42,7 +42,6 @@ export function projectNormalConversationFeedItems(input: {
       normalConversationTerminalReportHasWorkEvidence(terminalReport) ||
       executionActions.length > 0 ||
       linkedRun.status === "queued" ||
-      linkedRun.status === "running" ||
       linkedRun.status === "waiting_for_approval"
     ) ? buildConversationWorkCellViewModel({
       threadId: message.threadId,

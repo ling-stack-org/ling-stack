@@ -16,6 +16,8 @@ release versions will follow [Semantic Versioning](https://semver.org/spec/v2.0.
 
 ### Changed
 
+- Removed the duplicate normal-conversation processing card while Ling Agent is only
+  thinking, while preserving action, approval, and report evidence.
 - Simplified conversation message identity chrome and removed duplicate terminal-report
   artifact and file-reference presentation.
 - Reworked the root README around the current source-first Alpha product and verified
