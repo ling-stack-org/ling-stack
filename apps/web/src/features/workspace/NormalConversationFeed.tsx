@@ -3,7 +3,6 @@ import { ArrowDown, Copy, FileText, Pencil, ThumbsDown, ThumbsUp } from "lucide-
 import { attachmentContentUrl } from "../../api.js";
 import { useI18n } from "../../i18n.js";
 import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js";
-import { UserProfileAvatar } from "../../shared/components/index.js";
 import {
   ConversationAttachmentStrip,
   ConversationFeed,
@@ -14,8 +13,7 @@ import {
   MessageRow,
 } from "../../shared/conversation/index.js";
 import { IconButton, InlineFeedback } from "../../shared/ui/index.js";
-import { publicAssetUrl } from "../../shared/ui/public-asset-url.js";
-import type { RunSession, UserProfile } from "../../types.js";
+import type { RunSession } from "../../types.js";
 import type {
   WorkspaceRightDockFileTarget,
   WorkspaceRightDockReviewTarget,
@@ -30,10 +28,8 @@ import type {
 } from "./normal-conversation-types.js";
 
 const latestThresholdPx = 56;
-const lingAgentAvatarSrc = publicAssetUrl("icons/ling-stack-gpt-image-2-icon.png");
 
 export interface NormalConversationFeedProps {
-  readonly userProfile?: UserProfile;
   readonly messages: readonly ConversationHomeMessage[];
   readonly visibleMessages: readonly ConversationHomeMessage[];
   readonly runById: ReadonlyMap<string, RunSession>;
@@ -57,7 +53,6 @@ export interface NormalConversationFeedProps {
 }
 
 export function NormalConversationFeed({
-  userProfile,
   detailContext,
   editSaving,
   editingMessageId,
@@ -152,7 +147,6 @@ export function NormalConversationFeed({
         renderItem={(item) => (
           <NormalConversationMessageRow
             item={item}
-            userProfile={userProfile}
             feedback={feedbackById[item.message.id]}
             editing={editingMessageId === item.message.id}
             editSaving={editSaving}
@@ -191,7 +185,6 @@ function NormalConversationMessageRow({
   editing,
   feedback,
   item,
-  userProfile,
   onCancelEdit,
   onEdit,
   onOpenFiles,
@@ -207,7 +200,6 @@ function NormalConversationMessageRow({
   workspaceCwd,
 }: {
   readonly item: NormalConversationFeedItem;
-  readonly userProfile?: UserProfile;
   readonly feedback?: "up" | "down";
   readonly editing: boolean;
   readonly editSaving: boolean;
@@ -232,11 +224,6 @@ function NormalConversationMessageRow({
     <MessageRow
       className={item.className}
       authorType={item.authorType}
-      avatar={item.authorType === "local-user"
-        ? <UserProfileAvatar profile={userProfile} fallbackLabel={t("You")} />
-        : item.authorType === "ai-teammate"
-          ? <img className="normal-conversation-agent-avatar" src={lingAgentAvatarSrc} alt="" />
-          : null}
       authorName={item.authorName}
       createdAtLabel={item.createdAtLabel}
       statusNode={message.editedAt ? <span className="conversation-message-edited-label">{t("Edited")}</span> : undefined}

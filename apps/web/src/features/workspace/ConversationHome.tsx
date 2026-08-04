@@ -62,7 +62,6 @@ export type {
   ConversationHomeSendInput,
 } from "./normal-conversation-types.js";
 export function ConversationHome({
-  userProfile,
   conversationTitle = "",
   initialDraft = "",
   initialMessages = [],
@@ -730,7 +729,6 @@ export function ConversationHome({
           },
         }}
         feedProps={{
-          userProfile,
           messages,
           visibleMessages,
           runById,

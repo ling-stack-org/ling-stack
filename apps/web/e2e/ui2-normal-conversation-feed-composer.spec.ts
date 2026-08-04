@@ -68,21 +68,11 @@ for (const fixture of [
     await expect(ownMessage).toHaveClass(/message-bubble-own/);
     await expect(peerMessage).toHaveClass(/message-bubble-chat/);
     await expect(peerMessage).toHaveClass(/message-bubble-peer/);
-    const userAvatar = fixture.theme === "light"
-      ? ownMessage.locator(":scope > .user-profile-avatar")
-      : ownMessage.locator(":scope > .avatar-initial");
-    if (fixture.theme === "light") {
-      await expect(userAvatar).toHaveAttribute("src", configuredAvatarDataUrl);
-    } else {
-      await expect(userAvatar).toBeVisible();
-      await expect(ownMessage.locator(":scope > .user-profile-avatar")).toHaveCount(0);
-    }
-    const agentAvatar = peerMessage.locator(":scope > .normal-conversation-agent-avatar");
-    await expect(agentAvatar).toHaveAttribute("src", "/icons/ling-stack-gpt-image-2-icon.png");
-    await expectSquareAvatar(userAvatar);
-    await expectSquareAvatar(agentAvatar);
-    await expectAvatarAlignedWithFirstContentLine(ownMessage, userAvatar, "own");
-    await expectAvatarAlignedWithFirstContentLine(peerMessage, agentAvatar, "peer");
+    await expect(ownMessage).toHaveAttribute("data-has-avatar", "false");
+    await expect(peerMessage).toHaveAttribute("data-has-avatar", "false");
+    await expect(ownMessage.locator(":scope > :is(.user-profile-avatar, .avatar-initial, img)")).toHaveCount(0);
+    await expect(peerMessage.locator(":scope > :is(.user-profile-avatar, .avatar-initial, img)")).toHaveCount(0);
+    await expect(peerMessage.locator(":scope > .message-content > header")).toBeHidden();
     await expectMessageFrameContained(ownMessage);
     await expectMessageFrameContained(peerMessage);
 
@@ -423,28 +413,6 @@ async function expectInputContained(input: Locator, field: Locator): Promise<voi
   expect(inputBox!.x + inputBox!.width).toBeLessThanOrEqual(fieldBox!.x + fieldBox!.width + 1);
   expect(inputBox!.y).toBeGreaterThanOrEqual(fieldBox!.y - 1);
   expect(inputBox!.y + inputBox!.height).toBeLessThanOrEqual(fieldBox!.y + fieldBox!.height + 1);
-}
-
-async function expectSquareAvatar(avatar: Locator): Promise<void> {
-  await expect.poll(async () => {
-    const box = await avatar.boundingBox();
-    return box ? { width: box.width, height: box.height } : null;
-  }).toEqual({ width: 30, height: 30 });
-}
-
-async function expectAvatarAlignedWithFirstContentLine(
-  row: Locator,
-  avatar: Locator,
-  side: "own" | "peer",
-): Promise<void> {
-  const anchor = side === "own"
-    ? row.locator(":scope > .message-content > .message-body-shell")
-    : row.locator(":scope > .message-content > header");
-  await expect(anchor).toBeVisible();
-  const [avatarBox, anchorBox] = await Promise.all([avatar.boundingBox(), anchor.boundingBox()]);
-  expect(avatarBox).not.toBeNull();
-  expect(anchorBox).not.toBeNull();
-  expect(Math.abs((avatarBox?.y ?? 0) - (anchorBox?.y ?? 0))).toBeLessThanOrEqual(1);
 }
 
 async function prepareSurface(page: Page, theme: "light" | "dark", width: number, height: number): Promise<void> {

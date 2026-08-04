@@ -12,7 +12,6 @@ import type {
   RunSession,
   SessionPermissionMode,
   TerminalReportDto,
-  UserProfile,
   WorkspaceAccessMode,
 } from "../../types.js";
 
@@ -81,7 +80,6 @@ export interface ConversationHomeSendInput {
 }
 
 export interface ConversationHomeProps {
-  readonly userProfile?: UserProfile;
   readonly conversationTitle?: string;
   readonly initialDraft?: string;
   readonly initialMessages?: readonly ConversationHomeMessage[];

@@ -45,11 +45,11 @@
 }
 
 .normal-conversation-feed .normal-conversation-message-row:not(.local-user) {
-  grid-template-columns: var(--conversation-message-avatar-size) minmax(0, min(720px, 78%));
+  grid-template-columns: minmax(0, min(720px, 78%));
 }
 
 .normal-conversation-feed .normal-conversation-message-row.local-user {
-  grid-template-columns: minmax(0, min(640px, 78%)) var(--conversation-message-avatar-size);
+  grid-template-columns: minmax(0, min(640px, 78%));
   justify-content: end;
 }
 
@@ -59,28 +59,15 @@
 }
 
 .normal-conversation-message-row:not(.local-user) > .message-content {
-  grid-column: 2;
+  grid-column: 1;
 }
 
 .normal-conversation-message-row.local-user > .message-content {
   grid-column: 1;
 }
 
-.normal-conversation-message-row > :is(.user-profile-avatar, .avatar-initial, .normal-conversation-agent-avatar) {
-  width: var(--conversation-message-avatar-size);
-  height: var(--conversation-message-avatar-size);
-  min-width: var(--conversation-message-avatar-size);
-  margin-top: var(--ling-space-4);
-}
-
-.normal-conversation-agent-avatar {
-  box-sizing: border-box;
-  display: block;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  background: transparent;
-  object-fit: contain;
+.normal-conversation-message-row.ai-teammate > .message-content > header {
+  display: none;
 }
 
 .normal-conversation-message-row > .message-row-own-actions {
