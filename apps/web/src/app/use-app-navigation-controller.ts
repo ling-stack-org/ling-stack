@@ -1,4 +1,4 @@
-import type { Dispatch, SetStateAction } from "react";
+import { startTransition, type Dispatch, type SetStateAction } from "react";
 import type { DomainEvent } from "./domain-events.js";
 import {
   channelSidebarTarget,
@@ -105,10 +105,12 @@ export function useAppNavigationController(input: {
 
   function selectAiTeammate(teammateId: string): void {
     invalidatePendingRepair();
-    input.setChannelCreateOpen(false);
-    input.setSelectedChannelBranchId("");
-    input.setActiveView("teammates");
-    input.setActiveSidebarTarget(teammateSidebarTarget(teammateId));
+    startTransition(() => {
+      input.setChannelCreateOpen(false);
+      input.setSelectedChannelBranchId("");
+      input.setActiveView("teammates");
+      input.setActiveSidebarTarget(teammateSidebarTarget(teammateId));
+    });
   }
 
   async function openTaskFromWorkBoard(taskId: string): Promise<void> {

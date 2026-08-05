@@ -48,7 +48,6 @@ export interface TeammatePrivateChatSurfaceProps {
   readonly teammate: AiTeammate;
   readonly userProfile?: UserProfile;
   readonly loading: boolean;
-  readonly showLoadingIndicator: boolean;
   readonly visibleMessages: readonly TeammateDirectMessage[];
   readonly normalizedMessageSearchQuery: string;
   readonly privateFeedRef: RefObject<HTMLDivElement>;

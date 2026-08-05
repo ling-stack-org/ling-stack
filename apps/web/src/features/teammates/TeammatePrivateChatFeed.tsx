@@ -60,7 +60,6 @@ export type TeammatePrivateChatFeedProps = Pick<TeammatePrivateChatSurfaceProps,
   | "privateMessageFeedVirtualizer"
   | "providerRecovered"
   | "runs"
-  | "showLoadingIndicator"
   | "taskCreateBusyKeys"
   | "taskCreateErrors"
   | "taskChannelOptions"
@@ -97,7 +96,6 @@ export function TeammatePrivateChatFeed({
   privateMessageFeedVirtualizer,
   providerRecovered,
   runs,
-  showLoadingIndicator,
   taskCreateBusyKeys,
   taskCreateErrors,
   taskChannelOptions,
@@ -128,7 +126,7 @@ export function TeammatePrivateChatFeed({
           ariaLabel={t("Private message feed")}
           feedClassName="message-feed teammate-message-list"
           emptyFeedClassName="message-feed teammate-message-list message-feed-empty"
-          loading={showLoadingIndicator}
+          loading={false}
           empty={!loading && visibleMessages.length === 0}
           loadingLabel={t("Loading teammate workspace...")}
           emptyIcon={<MessageSquare size={18} />}

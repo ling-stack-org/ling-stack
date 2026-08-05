@@ -288,9 +288,6 @@ export function TeammateWorkspace({
   const privateFeedUserScrollIntentRef = useRef(false);
   const directGuidanceOperationSeqRef = useRef(0);
   const attachmentPreviewUrlsRef = useRef(new Set<string>());
-  const loadedWorkspaceCwdRef = useRef("");
-  const teammateSelectionRef = useRef({ cwd: cwd.trim(), teammateId: teammate.id });
-  const switchLoadingSuppressedCwdRef = useRef("");
   const effectivePrivateProviderPresetId = teammate.modelBindingMode === "workspace_default"
     ? workspaceDefaultProviderPresetId
     : teammate.providerPresetId;
@@ -712,16 +709,6 @@ export function TeammateWorkspace({
   }, [teammate]);
 
   useEffect(() => {
-    const nextWorkspaceCwd = cwd.trim();
-    if (
-      teammateSelectionRef.current.cwd === nextWorkspaceCwd &&
-      teammateSelectionRef.current.teammateId !== teammate.id
-    ) {
-      switchLoadingSuppressedCwdRef.current = nextWorkspaceCwd;
-    } else if (teammateSelectionRef.current.cwd !== nextWorkspaceCwd) {
-      switchLoadingSuppressedCwdRef.current = "";
-    }
-    teammateSelectionRef.current = { cwd: nextWorkspaceCwd, teammateId: teammate.id };
     setWorkspaceView("chat");
     setActiveTab("profile");
     setMessageSearchQuery("");
@@ -885,7 +872,6 @@ export function TeammateWorkspace({
       workspaceRequestOwner.commit(request, "conversation", () => {
         setMessages(directResponse.messages);
         setMessageSnapshotIdentity(JSON.stringify([workspaceCwd, request.teammateId]));
-        loadedWorkspaceCwdRef.current = workspaceCwd;
         setHasMoreDirectMessages(Boolean(directResponse.hasMore));
         setNextDirectBeforeMessageId(directResponse.nextBeforeMessageId);
         setDirectRuntime(directRuntimeResponse);
@@ -935,7 +921,6 @@ export function TeammateWorkspace({
           ? upsertDirectMessages(current, directResponse.messages)
           : directResponse.messages);
         setMessageSnapshotIdentity(JSON.stringify([workspaceCwd, request.teammateId]));
-        loadedWorkspaceCwdRef.current = workspaceCwd;
         setHasMoreDirectMessages(Boolean(directResponse.hasMore));
         setNextDirectBeforeMessageId(directResponse.nextBeforeMessageId);
         setDirectRuntime(runtimeResponse);
@@ -1685,11 +1670,6 @@ export function TeammateWorkspace({
           teammate={teammate}
           userProfile={userProfile}
           loading={loading}
-          showLoadingIndicator={
-            loading &&
-            loadedWorkspaceCwdRef.current !== cwd.trim() &&
-            switchLoadingSuppressedCwdRef.current !== cwd.trim()
-          }
           visibleMessages={visibleMessages}
           normalizedMessageSearchQuery={normalizedMessageSearchQuery}
           privateFeedRef={privateFeedRef}
