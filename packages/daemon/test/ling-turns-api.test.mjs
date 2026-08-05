@@ -1178,6 +1178,7 @@ test("daemon queues visible guarded automatic goal continuations", async () => {
     assert.ok(continuationRun);
     assert.equal(continuationRun.parentRunId, result.runId);
     assert.equal(continuationRun.continuationReason, "queue_followup");
+    assert.equal(continuationRun.threadId, threadId);
 
     const secondInterventions = store.listRunInterventions({ sourceRunId: continuationRun.id });
     assert.equal(secondInterventions.length, 1);

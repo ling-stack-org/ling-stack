@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent, type Ref } from "react";
-import { ArrowUp, Brain, Check, ChevronDown, FileText, Loader2, Plus, Search, Square, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type Ref } from "react";
+import { ArrowUp, Brain, Check, ChevronDown, CircleAlert, FileText, Loader2, Plus, Search, SlidersHorizontal, Square, X } from "lucide-react";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
 import { useI18n } from "../../i18n.js";
 import { conversationPermissionPresetMenuOptions } from "../../lib/session-permissions.js";
 import {
   ComposerPermissionMenu,
   ConversationComposerShell,
+  ConversationStatusStrip,
   TokenizedComposerInput,
   type TokenizedComposerInputHandle,
   type TokenizedComposerInputProps,
@@ -20,6 +21,7 @@ import {
   MenuRadioGroup,
   MenuRadioItem,
   MenuTrigger,
+  StatusIndicator,
 } from "../../shared/ui/index.js";
 import { pendingAssetLabel, type ActiveSlashCommandPicker, type PendingAttachmentItem } from "../../shared/components/index.js";
 import type { ConversationAttachment, PermissionPreset, ProviderThinkingMode } from "../../types.js";
@@ -50,12 +52,17 @@ export interface NormalConversationComposerProps {
   readonly stopping: boolean;
   readonly canSend: boolean;
   readonly notice: string;
+  readonly dragActive: boolean;
   readonly onDraftChange: (value: string, caret: number) => void;
   readonly onComposerKeyDown: (event: KeyboardEvent<HTMLDivElement>) => void;
   readonly onComposerPaste: (event: ClipboardEvent<HTMLDivElement>) => void;
   readonly onComposerSelect: (value: string, caret: number) => void;
   readonly onCommitSlashCommand: (option: ComposerSlashCommandOption) => void;
   readonly onAttachFiles: (files: FileList) => void | Promise<void>;
+  readonly onDragOver: (event: DragEvent<HTMLDivElement>) => void;
+  readonly onDragLeave: (event: DragEvent<HTMLDivElement>) => void;
+  readonly onDrop: (event: DragEvent<HTMLDivElement>) => void;
+  readonly onOpenModelWorkbench?: () => void;
   readonly onRemoveAttachment: (localId: string) => void;
   readonly onPermissionPresetChange: (preset: PermissionPreset) => void;
   readonly onModelChange: (option: ConversationHomeModelOption) => void;
@@ -69,18 +76,23 @@ export function NormalConversationComposer({
   canSend,
   defaultProviderLabel,
   defaultProviderPresetId,
+  dragActive,
   draft,
   inputParts,
   inputRef,
   modelOptions,
   notice,
   onAttachFiles,
+  onDragLeave,
+  onDragOver,
+  onDrop,
   onCommitSlashCommand,
   onComposerKeyDown,
   onComposerPaste,
   onComposerSelect,
   onDraftChange,
   onModelChange,
+  onOpenModelWorkbench,
   onPermissionPresetChange,
   onRemoveAttachment,
   onStop,
@@ -104,6 +116,7 @@ export function NormalConversationComposer({
   const modelSearchRef = useRef<HTMLInputElement | null>(null);
   const activeProviderPresetId = selectedProviderPresetId || defaultProviderPresetId;
   const activeModelOption = modelOptions.find((option) => option.id === activeProviderPresetId);
+  const modelReady = Boolean(activeModelOption?.runnable ?? activeModelOption?.enabled);
   const activeModelLabel = activeModelOption ? normalConversationModelLabel(activeModelOption) : defaultProviderLabel;
   const thinkingOptions = useMemo(
     () => normalConversationThinkingOptions(activeModelOption?.thinkingModes ?? []),
@@ -158,10 +171,10 @@ export function NormalConversationComposer({
     setThinkingMenuOpen(false);
   }
 
-  const interactionLocked = sendBusy || activeRun;
-  const stopAvailable = activeRun && Boolean(onStop);
+  const configurationLocked = sendBusy || activeRun;
+  const stopAvailable = activeRun && !canSend && Boolean(onStop);
   const actionLabel = stopAvailable ? (stopping ? t("Stopping") : t("Stop")) : t("Send");
-  const actionLoading = stopping || (sendBusy && !stopAvailable);
+  const actionLoading = stopping || sendBusy;
   const ActionIcon = stopAvailable ? Square : ArrowUp;
 
   return (
@@ -173,6 +186,26 @@ export function NormalConversationComposer({
       toolbarClassName="conversation-home-toolbar normal-conversation-composer-toolbar"
       leftToolsClassName="conversation-home-tools normal-conversation-composer-tools"
       rightToolsClassName="conversation-home-right-tools normal-conversation-composer-actions"
+      statusNode={!modelReady && !activeRun ? (
+        <ConversationStatusStrip
+          className="conversation-composer-status-strip normal-conversation-model-status attention"
+          icon={<CircleAlert size={15} />}
+          title={t("Model needs setup")}
+          description={activeModelOption?.blocker || t("Please configure a chat model before sending.")}
+          statusNode={<StatusIndicator label={t("Blocked")} tone="warning" />}
+          metaItems={[{ id: "model", label: t("Model"), value: activeModelLabel }]}
+          actions={onOpenModelWorkbench ? [{
+            id: "configure-model",
+            label: t("Configure model"),
+            icon: <SlidersHorizontal size={14} />,
+            onClick: onOpenModelWorkbench,
+          }] : []}
+        />
+      ) : null}
+      dropZoneClassName={dragActive ? "active" : undefined}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
       inputNode={(
         <div className="conversation-home-composer-body normal-conversation-composer-body">
           <TokenizedComposerInput
@@ -208,6 +241,9 @@ export function NormalConversationComposer({
           )}
         </div>
       ) : null}
+      dropHintNode={dragActive ? (
+        <div className="composer-drop-hint"><FileText size={16} /><span>{t("Drop files to attach")}</span></div>
+      ) : null}
       previewNode={pendingAttachments.length > 0 ? (
         <div className="pending-assets composer-preview-strip" aria-label={t("Pending message assets")}>
           {pendingAttachments.map((item) => (
@@ -238,8 +274,8 @@ export function NormalConversationComposer({
           <label
             className="icon-button composer-tool-button composer-attach-button"
             aria-label={t("Attach files")}
-            title={interactionLocked ? t("Permission is locked while the current message is running.") : t("Attach files")}
-            aria-disabled={interactionLocked}
+            title={sendBusy ? t("Please wait for the current message to be sent.") : t("Attach files")}
+            aria-disabled={sendBusy}
           >
             <Plus size={17} />
             <input
@@ -247,7 +283,7 @@ export function NormalConversationComposer({
               type="file"
               multiple
               hidden
-              disabled={interactionLocked}
+              disabled={sendBusy}
               accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.xlsx,.pptx,.txt,.md,.csv,.json,.log"
               onChange={(event) => {
                 if (event.currentTarget.files) {
@@ -260,7 +296,7 @@ export function NormalConversationComposer({
           <ComposerPermissionMenu
             preset={permissionPreset}
             options={conversationPermissionPresetMenuOptions(t, fullAccessConfirmed)}
-            disabled={interactionLocked}
+            disabled={configurationLocked}
             disabledReason={t("Permission is locked while the current message is running.")}
             onPresetChange={onPermissionPresetChange}
           />
@@ -281,7 +317,7 @@ export function NormalConversationComposer({
                   title={thinkingOff
                     ? t("Thinking is off; no thinking level will be sent.")
                     : t("This thinking level will be sent with the next message.")}
-                  disabled={interactionLocked}
+                  disabled={configurationLocked}
                 >
                   {thinkingOff ? t("Thinking off") : t("Thinking {label}", { label: activeThinkingLabel })}
                 </Button>
@@ -329,7 +365,7 @@ export function NormalConversationComposer({
                 size="sm"
                 trailingIcon={<ChevronDown className={modelMenuOpen ? "expanded" : ""} size={13} />}
                 aria-label={t("Selected model {label}", { label: activeModelLabel })}
-                disabled={interactionLocked}
+                disabled={configurationLocked}
               >
                 {activeModelLabel}
               </Button>

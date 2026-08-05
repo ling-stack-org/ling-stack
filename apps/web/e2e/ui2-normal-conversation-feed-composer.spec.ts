@@ -10,8 +10,6 @@ const evidenceDirectory = fileURLToPath(new URL(
   "../../../docs/design/ui2.0升级/evidence/conversations/normal-conversation-feed-composer/",
   import.meta.url,
 ));
-const configuredAvatarDataUrl = `data:image/svg+xml;base64,${Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><circle cx="32" cy="32" r="32" fill="#0e7a63"/></svg>').toString("base64")}`;
-
 for (const fixture of [
   { theme: "light" as const, width: 1440, height: 960 },
   { theme: "dark" as const, width: 1280, height: 800 },
@@ -20,10 +18,6 @@ for (const fixture of [
     await prepareSurface(page, fixture.theme, fixture.width, fixture.height);
     const runtimeErrors = collectRuntimeErrors(page);
     const state = createBaseState({ approvalStatus: "expired" });
-    state.userProfile = {
-      ...state.userProfile,
-      avatarDataUrl: fixture.theme === "light" ? configuredAvatarDataUrl : undefined,
-    };
     installProviders(state);
     const threadId = installFeedStateFixture(state);
     await mockDaemon(page, state);
@@ -77,7 +71,8 @@ for (const fixture of [
     await expect(peerMessage).toHaveAttribute("data-has-avatar", "false");
     await expect(ownMessage.locator(":scope > :is(.user-profile-avatar, .avatar-initial, img)")).toHaveCount(0);
     await expect(peerMessage.locator(":scope > :is(.user-profile-avatar, .avatar-initial, img)")).toHaveCount(0);
-    await expect(peerMessage.locator(":scope > .message-content > header")).toBeHidden();
+    await expect(peerMessage).toHaveClass(/message-row-identity-sr-only/);
+    await expect(peerMessage.locator(":scope > .message-content > header")).toHaveCSS("clip-path", "inset(50%)");
     await expectMessageFrameContained(ownMessage);
     await expectMessageFrameContained(peerMessage);
 

@@ -6677,13 +6677,40 @@ function buildMockConversationDetail(state: MockState, cwd: string, thread: Mock
   const runs = runLinks
     .map((link) => state.runs.find((run) => run.id === link.runId))
     .filter((run): run is MockRun => Boolean(run));
-  const messages = turns.flatMap((turn) => {
+  const turnMessages = turns.flatMap((turn) => {
     const runLink = state.turnRunLinks.find((link) => link.turnId === turn.id);
     const run = runLink ? state.runs.find((item) => item.id === runLink.runId) : undefined;
     return run
       ? [createMockConversationUserMessage(state, thread, turn, run), createMockConversationAssistantMessageFromRun(state, thread, turn, run)]
       : [createMockConversationUserMessage(state, thread, turn)];
   });
+  const runIds = new Set(runs.map((run) => run.id));
+  const interventions = state.runInterventions.filter((intervention) => runIds.has(intervention.sourceRunId));
+  const turnMessageIds = new Set(turnMessages.map((message) => message.id));
+  const guidanceMessages = interventions.flatMap((intervention) => {
+    const id = `conversation-user:intervention:${intervention.id}`;
+    if (turnMessageIds.has(id)) {
+      return [];
+    }
+    return [{
+      id,
+      role: "user",
+      content: intervention.messagePayload?.body || intervention.instruction,
+      attachments: state.conversationAttachments.filter((attachment) => intervention.messagePayload?.attachmentIds.includes(attachment.id)),
+      fileRefs: (intervention.messagePayload?.fileRefs ?? []).map((fileRef) => ({
+        path: fileRef.path,
+        ...(fileRef.label ? { label: fileRef.label } : {}),
+        source: "api",
+      })),
+      status: intervention.status === "failed" ? "failed" : intervention.status === "cancelled" ? "cancelled" : "succeeded",
+      threadId: thread.id,
+      revision: 1,
+      createdAt: intervention.createdAt,
+      updatedAt: intervention.updatedAt,
+    }];
+  });
+  const messages = [...turnMessages, ...guidanceMessages]
+    .sort((left, right) => String(left.createdAt).localeCompare(String(right.createdAt)) || String(left.id).localeCompare(String(right.id)));
   const latestRun = runs[runs.length - 1];
   const requestSnapshot = isRecord(latestRun?.requestSnapshot) ? latestRun.requestSnapshot : {};
   const latestProjectPath = latestRun?.cwd && latestRun.cwd !== cwd ? latestRun.cwd : undefined;
@@ -6693,6 +6720,8 @@ function buildMockConversationDetail(state: MockState, cwd: string, thread: Mock
     turns,
     runs,
     executionActions: state.executionActions.filter((action) => action.threadId === thread.id || runs.some((run) => run.id === action.runId)),
+    approvals: state.approvals.filter((approval) => approval.runId && runIds.has(approval.runId)),
+    interventions,
     terminalReports: state.terminalReports.filter((report) => isRecord(report) && report.threadId === thread.id),
     messages,
     defaults: {
@@ -6885,6 +6914,7 @@ export async function mockDaemon(
     readonly channelAutoRouteEnabled?: boolean;
     readonly templates?: readonly unknown[];
     readonly providerModelsUnsupported?: boolean;
+    readonly providerModels?: readonly unknown[];
     readonly providerCheckModelUnsupportedProviderIds?: readonly string[];
     readonly failTeammateAvatarUploads?: boolean;
     readonly failTeammateAvatarDeletes?: boolean;
@@ -6931,6 +6961,7 @@ export async function handleDaemonRoute(
     readonly channelAutoRouteEnabled?: boolean;
     readonly templates?: readonly unknown[];
     readonly providerModelsUnsupported?: boolean;
+    readonly providerModels?: readonly unknown[];
     readonly providerCheckModelUnsupportedProviderIds?: readonly string[];
     readonly failTeammateAvatarUploads?: boolean;
     readonly failTeammateAvatarDeletes?: boolean;
@@ -9846,6 +9877,15 @@ export async function handleDaemonRoute(
   if (request.method() === "POST" && path === "/provider-models") {
     if (options.providerModelsUnsupported) {
       await route.fulfill({ status: 404, json: { error: "not_found", message: "No route for POST /provider-models" } });
+      return;
+    }
+    if (options.providerModels) {
+      await route.fulfill({
+        json: {
+          source: "https://api.example.com/v1/models",
+          models: options.providerModels,
+        },
+      });
       return;
     }
     const body = await request.postDataJSON() as Record<string, unknown>;
@@ -14027,6 +14067,9 @@ export async function handleDaemonRoute(
         mode,
         status: mode === "interrupt_redirect" ? "cancelling_source" : "queued",
         instruction: typeof body.instruction === "string" ? body.instruction : "",
+        messagePayload: isRecord(body.messagePayload)
+          ? body.messagePayload as unknown as MockRunIntervention["messagePayload"]
+          : undefined,
         requestedBy: "local-user",
         idempotencyKey: typeof body.idempotencyKey === "string" ? body.idempotencyKey : `mock_${state.runInterventions.length + 1}`,
         createdAt: now,
@@ -14504,12 +14547,19 @@ export function buildMockTeammateDirectRuntime(
         ...(isRecord(message) ? { message } : {}),
       }
     : undefined;
+  const directRunIds = new Set(state.teammateDirectMessages.flatMap((item) => {
+    if (!isRecord(item) || item.teammateId !== teammateId || item.threadId !== threadId || typeof item.linkedRunId !== "string") {
+      return [];
+    }
+    return [item.linkedRunId];
+  }));
   return {
     cwd,
     teammateId,
     thread,
     ...(activeReply ? { activeReply } : {}),
     interventions: listOpenMockTeammateDirectInterventions(state, teammateId, threadId),
+    approvals: state.approvals.filter((approval) => approval.runId && directRunIds.has(approval.runId)),
   };
 }
 

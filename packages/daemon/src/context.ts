@@ -17,6 +17,7 @@ import type { AutomationSchedulerRegistry } from "./features/automations/schedul
 import type { LingImageVisionSummarizer } from "./features/channels/materialization/registry.js";
 import type { ExternalWorkBackgroundSchedulerRegistry } from "./features/external-work/background-scheduler.js";
 import type { ProviderStartupRefreshService } from "./features/providers/startup-refresh.js";
+import type { ProviderImportPreflightService } from "./features/providers/import-preflight.js";
 import type { ControlPlaneEventHub } from "./features/control-plane/events.js";
 import type { ComputerUsePreviewProjection } from "@ling-stack/contracts";
 import type {
@@ -169,6 +170,7 @@ export interface DaemonContext {
   readonly automationSchedulers: AutomationSchedulerRegistry;
   readonly controlPlaneEvents: ControlPlaneEventHub;
   readonly providerStartupRefresh: ProviderStartupRefreshService;
+  readonly providerImportPreflight: ProviderImportPreflightService;
   readonly startupState: StartupStateRegistry;
   readonly startupOptionalWarmups: StartupOptionalWarmupCoordinator;
   readonly computerUsePreviews: ComputerUseProjectionRegistry;

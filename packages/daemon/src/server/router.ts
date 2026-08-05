@@ -353,6 +353,7 @@ export async function routeRequest(
     backgroundSchedulers,
     automationSchedulers,
     controlPlaneEvents,
+    providerImportPreflight,
     providerStartupRefresh,
     startupState,
     computerUsePreviews,
@@ -550,7 +551,7 @@ export async function routeRequest(
   }
 
   if (url.pathname === "/providers/import-models") {
-    await handleProviderModelImport(request, response, config, storeRegistry, secretResolver, controlPlaneEvents);
+    await handleProviderModelImport(request, response, config, storeRegistry, secretResolver, controlPlaneEvents, providerImportPreflight);
     return;
   }
 

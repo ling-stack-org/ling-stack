@@ -317,6 +317,8 @@ Rules:
 
 - local user messages align right,
 - assistant/teammate/coordinator messages align left,
+- channel and teammate private chat render the local user avatar; normal conversation
+  intentionally renders no user or Ling Agent avatar,
 - repeated actor names are hidden when they add no information,
 - avatar size is compact and close to body text scale,
 - AI labels are not repeated when the teammate avatar and surface already identify the
@@ -537,6 +539,8 @@ All surfaces use the same state vocabulary:
 | `editing` | latest local-user message is in the inline editor | keep row geometry stable and lock duplicate edit actions |
 | `succeeded` | terminal success | quiet terminal state |
 
+For identity switches inside an already loaded workspace, request activity does not automatically become a visible `loading` state. The feed hides the previous identity's snapshot, suppresses the empty state until the new first page commits, and only renders rows whose workspace and conversation owner match the selected surface.
+
 Do not invent page-local labels such as `complete-card`, `experts-running`, or
 `web_search_pending` as UI state. Those may be implementation details inside evidence,
 but the shared renderer receives the common state vocabulary.
@@ -720,7 +724,9 @@ Current first-pass matching:
 
 Rendering rules:
 
-- user messages remain right-aligned and do not show teammate avatar stacks,
+- user messages remain right-aligned and do not show avatars or teammate avatar stacks,
+- assistant messages do not show a Ling Agent avatar or repeat the Ling Agent label on
+  every ordinary reply,
 - assistant rows can show copy/feedback only when the action state exists,
 - compact work/evidence appears only when matched to real detail data,
 - normal conversation does not show topic reply,

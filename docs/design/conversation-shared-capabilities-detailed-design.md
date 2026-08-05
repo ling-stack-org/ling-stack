@@ -92,6 +92,22 @@ supersession. The direct execution service resolves effective authority and dele
 the standard runtime. Neither application service may synthesize UI state from assistant
 copy.
 
+Runtime projection uses existing authorities only:
+
+```text
+ConversationDetailResponse
+  -> runs + executionActions + approvals + interventions + terminalReports
+
+TeammateDirectRuntimeResponse
+  -> activeReply + interventions + approvals for linked private runs
+```
+
+An active normal-conversation follow-up creates a standard `queue_followup`
+`RunIntervention`. Before continuation starts, detail projects the intervention as a user
+message. After continuation starts, its new `LingTurn` stays in the source thread and uses
+the same source message id. The projection de-duplicates by id and never creates a second
+queue or persistence model.
+
 ## 3. Shared Surface View Model
 
 Extend the shared policy contract rather than branching components by route.

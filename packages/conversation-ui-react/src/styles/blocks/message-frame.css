@@ -164,8 +164,32 @@
   background: transparent;
 }
 
+[data-conversation-message-row].message-bubble-chat.message-bubble-peer > .message-content {
+  padding: 0;
+  border-radius: 0;
+}
+
 [data-conversation-message-row].message-bubble-chat.message-bubble-own > .message-content {
   background: var(--conversation-bg-muted, var(--ling-bg-subtle));
+}
+
+[data-conversation-message-row].message-row-identity-sr-only > .message-content > .message-row-peer-identity {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  border: 0;
+  white-space: nowrap;
+}
+
+.message-row-peer-status {
+  color: var(--conversation-text-soft, var(--ling-text-soft));
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
 }
 
 [data-conversation-message-row].message-bubble-chat-blocked > .message-content {

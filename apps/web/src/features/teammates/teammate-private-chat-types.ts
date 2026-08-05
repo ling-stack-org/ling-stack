@@ -10,6 +10,7 @@ import type {
 import type { ComposerInputPart, PendingAttachmentItem } from "../../shared/components/index.js";
 import type {
   AiTeammate,
+  ApprovalRequest,
   Channel,
   ExecutionAction,
   MemoryObject,
@@ -47,6 +48,7 @@ export interface TeammatePrivateChatSurfaceProps {
   readonly teammate: AiTeammate;
   readonly userProfile?: UserProfile;
   readonly loading: boolean;
+  readonly showLoadingIndicator: boolean;
   readonly visibleMessages: readonly TeammateDirectMessage[];
   readonly normalizedMessageSearchQuery: string;
   readonly privateFeedRef: RefObject<HTMLDivElement>;
@@ -56,6 +58,7 @@ export interface TeammatePrivateChatSurfaceProps {
   readonly memoryById: ReadonlyMap<string, MemoryObject>;
   readonly runs: readonly RunSession[];
   readonly executionActions: readonly ExecutionAction[];
+  readonly approvals: readonly ApprovalRequest[];
   readonly terminalReports: readonly TerminalReportDto[];
   readonly providerRecovered: boolean;
   readonly modelNotice?: TeammatePrivateModelNotice;

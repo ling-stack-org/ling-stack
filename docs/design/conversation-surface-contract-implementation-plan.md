@@ -21,6 +21,21 @@ and consumption work.
 - Compact work presentation and focused regression coverage are present.
 - Core-only package extraction has started without moving API, routing or persistence into
   the presentation package.
+- Cross-surface synchronization keeps normal conversation avatar-free, shares model blocker
+  and drag/drop behavior, projects approvals and interventions, carries structured file
+  references, and keeps active-run follow-ups in the original conversation thread.
+
+## Completed Synchronization Slice
+
+- Normal conversation, channel and private chat use policy-owned avatar visibility and
+  shared ordinary-message geometry; normal conversation keeps both avatar flags disabled.
+- Normal conversation and private WorkCells consume real associated approvals.
+- Active normal-conversation messages reuse `queue_followup`, appear immediately as one
+  ordinary user message and do not expose queue-specific chrome.
+- Tool, approval, artifact and intervention events invalidate selected conversation detail
+  through existing SSE/control-plane streams without idle polling.
+- Channel-only teammate routing, topic replies, goals, plans and multi-agent activity remain
+  channel-only.
 
 ## Remaining Work
 

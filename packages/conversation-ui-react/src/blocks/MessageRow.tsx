@@ -1,6 +1,10 @@
 import type { ReactNode } from "react";
 import { Loader2 } from "lucide-react";
-import type { LocalFileReference } from "@ling-stack/conversation-ui-core";
+import {
+  getConversationSurfacePolicy,
+  type ConversationSurfaceKind,
+  type LocalFileReference,
+} from "@ling-stack/conversation-ui-core";
 import { MessageBodyRenderer } from "./MessageBodyRenderer.js";
 
 export type MessageRowAuthorType = "local-user" | "ai-teammate" | "system";
@@ -9,6 +13,7 @@ export type MessageRowTone = "chat" | "chat-blocked" | "system";
 export interface MessageRowProps {
   readonly id?: string;
   readonly className?: string;
+  readonly surface: ConversationSurfaceKind;
   readonly authorType: MessageRowAuthorType;
   readonly avatar?: ReactNode;
   readonly authorName: string;
@@ -16,6 +21,7 @@ export interface MessageRowProps {
   readonly tone?: MessageRowTone;
   readonly statusNode?: ReactNode;
   readonly showOwnAuthor?: boolean;
+  readonly identityLabelMode?: "visible" | "sr-only";
   readonly body?: string;
   readonly bodyCwd?: string;
   readonly bodyCompact?: boolean;
@@ -32,6 +38,7 @@ export interface MessageRowProps {
 export function MessageRow({
   id,
   className,
+  surface,
   authorType,
   avatar,
   authorName,
@@ -39,6 +46,7 @@ export function MessageRow({
   tone,
   statusNode,
   showOwnAuthor = false,
+  identityLabelMode,
   body,
   bodyCwd,
   bodyCompact,
@@ -52,7 +60,15 @@ export function MessageRow({
   actionsNode,
 }: MessageRowProps): JSX.Element {
   const ownMessage = authorType === "local-user";
-  const hasAvatar = avatar !== null && avatar !== undefined && avatar !== false;
+  const surfacePolicy = getConversationSurfacePolicy(surface);
+  const avatarAllowed = authorType === "local-user"
+    ? surfacePolicy.showUserAvatar
+    : authorType === "ai-teammate"
+      ? surfacePolicy.showAgentAvatar
+      : true;
+  const resolvedAvatar = avatarAllowed ? avatar : undefined;
+  const hasAvatar = resolvedAvatar !== null && resolvedAvatar !== undefined && resolvedAvatar !== false;
+  const resolvedIdentityLabelMode = identityLabelMode ?? (authorType === "system" ? "visible" : "sr-only");
   const legacySideClass = authorType === "local-user" ? "message-bubble-own" : "message-bubble-peer";
   const resolvedTone = tone ?? (authorType === "system" ? "system" : "chat");
   const legacyToneClass = `message-bubble-${resolvedTone}`;
@@ -64,6 +80,7 @@ export function MessageRow({
     legacySideClass,
     ownMessage && showOwnAuthor ? "message-bubble-own-with-author" : "",
     bodyStreaming ? "message-bubble-pending" : "",
+    resolvedIdentityLabelMode === "sr-only" ? "message-row-identity-sr-only" : "",
     authorType,
     className,
   ].filter(Boolean).join(" ");
@@ -79,25 +96,27 @@ export function MessageRow({
       id={id}
       className={rootClassName}
       data-conversation-message-row="true"
+      data-conversation-surface={surface}
       data-has-avatar={hasAvatar ? "true" : "false"}
     >
-      {!ownMessage ? avatar : showOwnAuthor ? (
+      {!ownMessage ? resolvedAvatar : showOwnAuthor ? (
         <header className="message-row-own-identity">
           <strong>{authorName}</strong>
           {createdAtLabel ? <time>{createdAtLabel}</time> : null}
           {statusNode}
-          {avatar}
+          {resolvedAvatar}
         </header>
       ) : null}
       <div className="message-content">
         {ownMessage ? null : (
-          <header>
+          <header className="message-row-peer-identity">
             <strong>{authorName}</strong>
             {createdAtLabel ? <time>{createdAtLabel}</time> : null}
-            {statusNode}
+            {resolvedIdentityLabelMode === "visible" ? statusNode : null}
           </header>
         )}
         {resolvedBodyNode}
+        {!ownMessage && resolvedIdentityLabelMode === "sr-only" && statusNode ? <span className="message-row-peer-status">{statusNode}</span> : null}
         {ownMessage && !showOwnAuthor && statusNode ? <span className="message-row-own-status">{statusNode}</span> : null}
         {attachmentsNode}
         {workCellNode}
@@ -105,7 +124,7 @@ export function MessageRow({
         {errorNode}
         {ownMessage ? null : actionsNode}
       </div>
-      {ownMessage && !showOwnAuthor ? avatar : null}
+      {ownMessage && !showOwnAuthor ? resolvedAvatar : null}
       {ownMessage && actionsNode ? <div className="message-row-own-actions">{actionsNode}</div> : null}
     </article>
   );

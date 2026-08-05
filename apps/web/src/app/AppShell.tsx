@@ -131,6 +131,7 @@ import { defaultTools } from "../lib/tools.js";
 import {
   canUseConversationProvider,
   providerPreflightReady,
+  providerRunPreflightBlocker,
   providerModelRouteLabel,
   sortProvidersForWorkbench,
 } from "../lib/providers.js";
@@ -1087,6 +1088,8 @@ export function AppShell(): JSX.Element {
         model: provider.model,
         providerId: provider.providerId,
         enabled: provider.enabled,
+        runnable: providerPreflightReady(provider),
+        blocker: providerRunPreflightBlocker(provider, t),
         thinkingModes: provider.thinkingModes ?? [],
       })),
     [conversationChatProviders, defaultConversationProviderPresetId, providerTemplates],
@@ -1112,6 +1115,7 @@ export function AppShell(): JSX.Element {
       authorLabel: message.authorLabel,
       content: message.content,
       attachments: message.attachments,
+      fileRefs: message.fileRefs,
       status: message.status,
       revision: message.revision,
       editedAt: message.editedAt,
@@ -1709,6 +1713,7 @@ export function AppShell(): JSX.Element {
     channelRunsForArtifacts,
     setSkillLibraryRefreshToken,
     refreshRuns,
+    refreshSelectedConversation,
     refreshRuntimeState,
     refreshApprovals,
     refreshApprovalPolicy,
@@ -2622,6 +2627,8 @@ export function AppShell(): JSX.Element {
                     turns: selectedConversationDetail.turns,
                     runs: selectedConversationDetail.runs,
                     executionActions: selectedConversationDetail.executionActions,
+                    approvals: selectedConversationDetail.approvals,
+                    interventions: selectedConversationDetail.interventions,
                     terminalReports: selectedConversationDetail.terminalReports,
                   } : undefined}
                   conversationIdentity={conversationIdentity}
@@ -2635,6 +2642,7 @@ export function AppShell(): JSX.Element {
                   activeRun={activeConversationRun}
                   stopping={Boolean(activeConversationRun && cancellingRunId === activeConversationRun.id)}
                   onOpenRun={(runId) => void openRunFromWorkspace(runId)}
+                  onOpenModelWorkbench={() => openSettingsWorkspaceTool("providers")}
                   fullAccessConfirmed={fullAccessConfirmation.isConfirmed(normalConversationConfirmationScope)}
                   onConfirmFullAccess={() => fullAccessConfirmation.request(normalConversationConfirmationScope)}
                   onConfirmFullAccessSelection={() => fullAccessConfirmation.confirmExplicitSelection(normalConversationConfirmationScope)}
@@ -2656,6 +2664,7 @@ export function AppShell(): JSX.Element {
                     await sendConversationMessage({
                       message: input.message,
                       attachmentIds: input.attachmentIds,
+                      fileRefs: input.fileRefs,
                       projectPath: input.project.projectPath,
                       providerPresetId: input.model.providerPresetId || defaultConversationProviderPresetId,
                       thinkingLevel: input.model.thinkingLevel,

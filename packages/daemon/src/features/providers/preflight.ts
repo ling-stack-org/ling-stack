@@ -24,6 +24,7 @@ export async function checkProviderPreset(
   store: ProviderStoreFacet,
   preset: ProviderPreset,
   secretResolver: SecretResolver,
+  options: { readonly signal?: AbortSignal } = {},
 ): Promise<ProviderCheckResult> {
   const checkedAt = new Date().toISOString();
   if (preset.baseUrl) {
@@ -77,7 +78,7 @@ export async function checkProviderPreset(
     };
   }
 
-  return await probeChatProvider(store, preset, checkedAt, secretResolver);
+  return await probeChatProvider(store, preset, checkedAt, secretResolver, options.signal);
 }
 
 async function checkMediaProviderPreset(
@@ -169,6 +170,7 @@ async function probeChatProvider(
   preset: ProviderPreset,
   checkedAt: string,
   secretResolver: SecretResolver,
+  signal?: AbortSignal,
 ): Promise<ProviderCheckResult> {
   try {
     const materialized = materializeProviderSecrets({
@@ -181,7 +183,9 @@ async function probeChatProvider(
       method: "POST",
       headers: applyProviderAuthHeaders(materialized.headers, preset, materialized.apiKeySecret.value),
       body: JSON.stringify(buildProviderCheckBody(preset)),
-      signal: AbortSignal.timeout(PROVIDER_CHECK_TIMEOUT_MS),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(PROVIDER_CHECK_TIMEOUT_MS)])
+        : AbortSignal.timeout(PROVIDER_CHECK_TIMEOUT_MS),
     });
 
     if (response.ok) {

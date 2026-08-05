@@ -34,6 +34,7 @@ import {
 import { createDefaultMcpBroker } from "./features/mcp/broker.js";
 import { createSystemKeychainSecretStore } from "./features/providers/keychain-secret-store.js";
 import { ProviderStartupRefreshService } from "./features/providers/startup-refresh.js";
+import { ProviderImportPreflightService } from "./features/providers/import-preflight.js";
 import { ActiveDirectReplyRegistry } from "./features/teammates/direct-reply-active-registry.js";
 import { resumePendingMediaJobExecutions } from "./features/media/executor.js";
 import { ActiveRunRegistry } from "./runtime/active-runs.js";
@@ -180,6 +181,7 @@ export function createDaemonServer(
   const startupState = new StartupStateRegistry();
   const computerUsePreviews = new ComputerUseProjectionRegistry(dependencies.computerUseProjectionOptions);
   const providerStartupRefresh = new ProviderStartupRefreshService({ secretResolver, controlPlaneEvents, startupState });
+  const providerImportPreflight = new ProviderImportPreflightService({ secretResolver, controlPlaneEvents });
   let automationSchedulers: AutomationSchedulerRegistry;
   let startupOptionalWarmups: StartupOptionalWarmupCoordinator;
   const storeRegistry = new RunStoreRegistry(dependencies.storeFactory ?? createDefaultRunStore, {
@@ -339,6 +341,7 @@ export function createDaemonServer(
     automationSchedulers,
     controlPlaneEvents,
     providerStartupRefresh,
+    providerImportPreflight,
     startupState,
     startupOptionalWarmups,
     computerUsePreviews,
@@ -428,6 +431,7 @@ export function createDaemonServer(
     },
     stop: async () => {
       cuaDriverActivationCoordinator.beginShutdown();
+      const providerImportShutdown = providerImportPreflight.shutdown();
       await remoteAccess.stop();
       await new Promise<void>((resolve, reject) => {
         activeRuns.cancelAll();
@@ -450,6 +454,7 @@ export function createDaemonServer(
         server.closeAllConnections();
       });
       await activeRuns.waitForIdle();
+      await providerImportShutdown;
       await cuaDriverActivationCoordinator.shutdown();
       storeRegistry.closeAll();
     },

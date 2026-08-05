@@ -10,6 +10,7 @@ import {
   sessionPermissionModes,
   workspaceAccessModes,
   type AuthorizationMode,
+  type ChannelMessageFileRef,
   type PermissionConfirmation,
   type DirectWorkspaceBinding,
   type DirectWorkspaceSnapshot,
@@ -60,6 +61,7 @@ export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired
   readonly lingConversationTone?: LingConversationTone;
   readonly responseLanguage?: ResponseLanguage;
   readonly conversationAttachmentIds?: readonly string[];
+  readonly conversationFileRefs?: readonly ChannelMessageFileRef[];
   readonly parentRunId?: string;
   readonly interventionId?: string;
   readonly continuationReason?: RunContinuationReason;

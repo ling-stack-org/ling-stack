@@ -348,7 +348,7 @@ export async function maybeStartNextRunInterventionContinuation(input: {
   });
   let continuationRunId: string | undefined;
   try {
-    const continuationRequest = buildRunInterventionContinuationRequest(sourceRun, starting);
+    const continuationRequest = buildRunInterventionContinuationRequest(input.store, sourceRun, starting);
     continuationRunId = await executeRunRequest(
       continuationRequest,
       createDetachedRunExecutionSink(),
@@ -678,7 +678,7 @@ function parseRunInterventionCreateRequest(value: unknown): {
   return { mode, instruction, messagePayload, idempotencyKey };
 }
 
-function buildRunInterventionContinuationRequest(sourceRun: RunSession, intervention: RunIntervention): RunRequest {
+function buildRunInterventionContinuationRequest(store: RunStore, sourceRun: RunSession, intervention: RunIntervention): RunRequest {
   const snapshot = isRecord(sourceRun.requestSnapshot) ? sourceRun.requestSnapshot : {};
   const taskSnapshot = isRecord(sourceRun.taskSnapshot) ? sourceRun.taskSnapshot : {};
   const originalTitle = readSnapshotString(taskSnapshot, "title") ?? readSnapshotString(isRecord(snapshot.task) ? snapshot.task : {}, "title") ?? sourceRun.taskId;
@@ -695,11 +695,13 @@ function buildRunInterventionContinuationRequest(sourceRun: RunSession, interven
   const inlineProvider = providerPresetId ? undefined : isRecord(snapshot.provider) ? snapshot.provider as unknown as PiRunnerProviderConfig : undefined;
   const tools = readSnapshotRunTools(snapshot, "tools");
   const appendSystemPrompt = readSnapshotStringArray(snapshot, "appendSystemPrompt");
+  const sourceThread = sourceRun.threadId ? store.getLingThread(sourceRun.threadId) : undefined;
   return {
     workspaceCwd: readSnapshotString(snapshot, "workspaceCwd") ?? sourceRun.cwd,
     cwd: readSnapshotString(snapshot, "cwd") ?? sourceRun.cwd,
     providerPresetId,
     provider: inlineProvider,
+    threadId: sourceRun.threadId,
     teammateId: readSnapshotString(snapshot, "teammateId") ?? sourceRun.teammateId,
     requestedSkillId,
     skipProviderPreflight: readSnapshotBoolean(snapshot, "skipProviderPreflight") ?? false,
@@ -727,6 +729,11 @@ function buildRunInterventionContinuationRequest(sourceRun: RunSession, interven
     systemPrompt: readSnapshotString(snapshot, "systemPrompt"),
     appendSystemPrompt,
     agentDir: readSnapshotString(snapshot, "agentDir"),
+    conversationAttachmentIds: intervention.messagePayload?.attachmentIds ?? [],
+    sourceMessageId: sourceThread?.kind === "conversation"
+      ? `conversation-user:intervention:${intervention.id}`
+      : undefined,
+    createdByActor: "local-user",
     parentRunId: sourceRun.id,
     interventionId: intervention.id,
     continuationReason: intervention.mode,

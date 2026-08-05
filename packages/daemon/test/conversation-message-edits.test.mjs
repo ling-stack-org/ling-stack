@@ -482,6 +482,103 @@ test("default projections hide superseded turns and response messages while audi
   }
 });
 
+test("conversation detail projects approvals and queued guidance once with structured file references", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-conversation-runtime-projection-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const thread = store.createLingThread({
+      kind: "conversation",
+      teammateId: LING_AGENT_ID,
+      title: "Runtime projection",
+      objective: "Runtime projection",
+    }, "2026-07-12T08:00:00.000Z");
+    const sourceTurn = store.createLingTurn({
+      threadId: thread.id,
+      kind: "initial_request",
+      title: "Inspect the workspace",
+      userInstruction: "Inspect the workspace",
+      teammateId: LING_AGENT_ID,
+      createdByActor: "local-user",
+    }, "2026-07-12T08:00:01.000Z");
+    const sourceRun = store.createRun(createRunInput({
+      id: "run_conversation_projection_source",
+      cwd,
+      threadId: thread.id,
+      turnId: sourceTurn.id,
+      createdAt: "2026-07-12T08:00:02.000Z",
+    }));
+    const approval = store.createApprovalRequest({
+      runId: sourceRun.id,
+      taskId: sourceRun.taskId,
+      toolCallId: "tool_conversation_projection",
+      actionType: "bash",
+      risk: "high",
+      title: "Run workspace check",
+      description: "Confirm the workspace check.",
+      payload: { type: "bash", cwd, command: "git status --short", riskFlags: ["test"] },
+    }, "2026-07-12T08:00:03.000Z");
+    const intervention = store.createRunIntervention({
+      sourceRunId: sourceRun.id,
+      mode: "queue_followup",
+      instruction: "Also inspect the release notes.",
+      messagePayload: {
+        body: "Also inspect the release notes.",
+        attachmentIds: [],
+        linkPreviewIds: [],
+        fileRefs: [{
+          path: "docs/RELEASE.md",
+          label: "Release notes",
+          rootRelation: "inside_workspace",
+          kind: "file",
+          materializationStatus: "not_loaded",
+        }],
+      },
+      requestedBy: "local-user",
+      idempotencyKey: "conversation-projection-guidance",
+    }, "2026-07-12T08:00:04.000Z");
+
+    const queued = buildConversationDetail(store, cwd, thread);
+    assert.deepEqual(queued.approvals.map((item) => item.id), [approval.id]);
+    assert.deepEqual(queued.interventions.map((item) => item.id), [intervention.id]);
+    const guidanceId = `conversation-user:intervention:${intervention.id}`;
+    const queuedGuidance = queued.messages.find((message) => message.id === guidanceId);
+    assert.equal(queuedGuidance?.content, "Also inspect the release notes.");
+    assert.deepEqual(queuedGuidance?.fileRefs, [{ path: "docs/RELEASE.md", label: "Release notes", source: "api" }]);
+
+    const continuationTurn = store.createLingTurn({
+      threadId: thread.id,
+      kind: "manual_followup",
+      title: "Continue the run",
+      userInstruction: "Internal continuation prompt that must not leak into the transcript.",
+      interventionId: intervention.id,
+      sourceMessageId: guidanceId,
+      teammateId: LING_AGENT_ID,
+      createdByActor: "local-user",
+    }, "2026-07-12T08:00:05.000Z");
+    store.createRun({
+      ...createRunInput({
+        id: "run_conversation_projection_continuation",
+        cwd,
+        threadId: thread.id,
+        turnId: continuationTurn.id,
+        createdAt: "2026-07-12T08:00:06.000Z",
+      }),
+      parentRunId: sourceRun.id,
+      interventionId: intervention.id,
+      continuationReason: "queue_followup",
+    });
+
+    const continued = buildConversationDetail(store, cwd, thread);
+    const projectedGuidance = continued.messages.filter((message) => message.id === guidanceId);
+    assert.equal(projectedGuidance.length, 1);
+    assert.equal(projectedGuidance[0].content, "Also inspect the release notes.");
+    assert.equal(projectedGuidance[0].turnId, continuationTurn.id);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 function createRunInput(overrides) {
   return {
     id: overrides.id,

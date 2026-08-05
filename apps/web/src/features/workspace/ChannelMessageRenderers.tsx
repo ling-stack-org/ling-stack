@@ -302,6 +302,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
 
     return (
       <MessageRow
+        surface={channelSurface}
         className="channel-message-row conversation-turn-assistant-row"
         authorType="ai-teammate"
         avatar={anchorMessage ? renderChannelMessageAvatar(anchorMessage) : renderLingAgentAvatar()}
@@ -668,6 +669,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
       return (
         <div className="message-group">
           <MessageRow
+            surface={channelSurface}
             className={message.status === "blocked" ? "channel-message-row blocked" : "channel-message-row"}
             authorType={message.authorType}
             avatar={renderChannelMessageAvatar(message)}
@@ -1033,6 +1035,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
       <div className="message-group channel-pending-send-group">
         {showSentMessage ? (
           <MessageRow
+            surface={channelSurface}
             className="channel-message-row pending-send"
             authorType="local-user"
             avatar={<UserProfileAvatar profile={input.userProfile} fallbackLabel={input.localUserDisplayName} />}

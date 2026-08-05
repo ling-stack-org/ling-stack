@@ -1,6 +1,6 @@
 import type { AuthorizationMode, ConversationPendingReplacement, PermissionConfirmation, PermissionPreset, ToolName, WorkspaceAccessMode } from "./shared.js";
 import type { SkillOptimizationMode } from "./skills.js";
-import type { SkillApprovalProfile } from "./approvals.js";
+import type { ApprovalRequest, SkillApprovalProfile } from "./approvals.js";
 import type {
   ChannelAttachmentKind,
   ChannelLinkPreviewStatus,
@@ -401,6 +401,7 @@ export interface TeammateDirectRuntimeResponse {
     readonly message?: TeammateDirectMessage;
   };
   readonly interventions: readonly TeammateDirectReplyIntervention[];
+  readonly approvals: readonly ApprovalRequest[];
 }
 
 export interface TeammateDirectInterventionListResponse {

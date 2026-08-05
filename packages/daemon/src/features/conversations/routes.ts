@@ -18,6 +18,7 @@ import type {
   ConversationTranscriptMessage,
   ConversationTranscriptStatus,
   AuthorizationMode,
+  ChannelMessageFileRef,
   PermissionPreset,
   ResponseLanguagePreference,
   RunThinkingLevel,
@@ -34,7 +35,7 @@ import { writeJson, writeSse, writeSseHead } from "../../shared/response.js";
 import { isRecord, readOptionalString, readOptionalStringArray, readString } from "../../shared/validation.js";
 import { persistConversationAttachment, CHANNEL_ATTACHMENT_REQUEST_MAX_BYTES } from "../channels/attachments.js";
 import { inferUserLanguage, responseLanguageInstruction } from "../channels/response-language.js";
-import { parseChannelAttachmentRequest } from "../channels/schemas.js";
+import { parseChannelAttachmentRequest, readOptionalChannelMessageFileRefs } from "../channels/schemas.js";
 import { buildEffectiveConfigResponse } from "../settings/effective-config.js";
 import type { LingImageVisionSummarizer } from "../channels/materialization/registry.js";
 import type { RunExecutionSink } from "../runs/orchestrator.js";
@@ -49,6 +50,11 @@ import {
   filterSupersededTerminalReports,
   projectPendingConversationReplacement,
 } from "./supersession-projection.js";
+import {
+  collectConversationRuntimeProjection,
+  projectConversationTurnUserRuntime,
+  projectUnboundConversationInterventionMessages,
+} from "./runtime-projection.js";
 
 type StartConversationRun = (runRequest: RunRequest, sink: RunExecutionSink) => Promise<string | undefined>;
 
@@ -175,7 +181,7 @@ export async function handleConversationStream(
       imageVisionSummarizer,
     });
     const effectiveConfig = await buildEffectiveConfigResponse({ cwd: workspaceCwd, store, runnerRegistry });
-    const userMessage = createUserTranscriptMessage(thread, turn, conversationAttachments);
+    const userMessage = createUserTranscriptMessage(thread, turn, conversationAttachments, input.fileRefs ?? []);
     let assistantMessage = createAssistantTranscriptMessage(thread, turn, undefined, "", "running", now);
     let runId = "";
     let closed = false;
@@ -387,10 +393,23 @@ export function buildConversationDetail(
     .map((link) => store.getRun(link.runId))
     .filter((run): run is RunSession => Boolean(run))
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  const runtimeProjection = collectConversationRuntimeProjection(store, runs);
   const runByTurnId = new Map(runLinks.map((link) => [link.turnId, store.getRun(link.runId)]));
   const messages = turns.flatMap((turn) => {
     const run = runByTurnId.get(turn.id);
-    const rawUser = createUserTranscriptMessage(thread, turn, conversationAttachmentsFromRunSnapshot(store, run));
+    const turnRuntime = projectConversationTurnUserRuntime({
+      store,
+      turn,
+      run,
+      intervention: turn.interventionId ? runtimeProjection.interventionById.get(turn.interventionId) : undefined,
+    });
+    const rawUser = createUserTranscriptMessage(
+      thread,
+      turn,
+      turnRuntime.attachments,
+      turnRuntime.fileRefs,
+      turnRuntime.content,
+    );
     const latestRevision = store.listConversationMessageRevisions({
       surface: "normal_conversation",
       messageId: rawUser.id,
@@ -442,6 +461,15 @@ export function buildConversationDetail(
       updatedAt: revision.createdAt,
     });
   }
+  for (const message of projectUnboundConversationInterventionMessages({
+    store,
+    thread,
+    runs,
+    interventions: runtimeProjection.interventions,
+    existingMessageIds: new Set(messageById.keys()),
+  })) {
+    messageById.set(message.id, message);
+  }
   const latestRun = runs[runs.length - 1];
   const latestSnapshot = readRecord(latestRun?.requestSnapshot);
   const latestProjectPath = latestRun?.cwd && latestRun.cwd !== cwd ? latestRun.cwd : undefined;
@@ -451,6 +479,8 @@ export function buildConversationDetail(
     turns,
     runs,
     executionActions: listExecutionActions(store, { threadId: thread.id, limit: 500 }),
+    approvals: runtimeProjection.approvals,
+    interventions: runtimeProjection.interventions,
     terminalReports: (options.includeSuperseded
       ? store.listTerminalReports({ threadId: thread.id, limit: 200 })
       : filterSupersededTerminalReports(store.listTerminalReports({ threadId: thread.id, limit: 200 }), projection))
@@ -475,8 +505,9 @@ function parseConversationStreamRequest(value: unknown): ConversationStreamReque
   }
   const message = readString(value, "message").trim();
   const attachmentIds = readOptionalStringArray(value, "attachmentIds") ?? [];
-  if (!message && attachmentIds.length === 0) {
-    throw new Error("message or attachmentIds is required.");
+  const fileRefs = readOptionalChannelMessageFileRefs(value, "fileRefs") ?? [];
+  if (!message && attachmentIds.length === 0 && fileRefs.length === 0) {
+    throw new Error("message, attachmentIds, or fileRefs is required.");
   }
   if (attachmentIds.length > 10) {
     throw new Error("A conversation message can reference at most 10 attachments.");
@@ -489,6 +520,7 @@ function parseConversationStreamRequest(value: unknown): ConversationStreamReque
     threadId: readOptionalString(value, "threadId")?.trim() || undefined,
     message,
     attachmentIds: normalizeStringList(attachmentIds),
+    fileRefs,
     projectPath: readOptionalString(value, "projectPath")?.trim() || undefined,
     providerPresetId,
     thinkingLevel: readThinkingLevel(readOptionalString(value, "thinkingLevel")),
@@ -544,7 +576,12 @@ function buildConversationRunRequest(input: {
     task: {
       id: conversationRunTaskId(input.turn.id),
       title: input.turn.title,
-      prompt: buildConversationRunPrompt(input.input.message, input.attachments, input.attachmentMaterializations),
+      prompt: buildConversationRunPrompt(
+        input.input.message,
+        input.attachments,
+        input.attachmentMaterializations,
+        input.input.fileRefs ?? [],
+      ),
     },
     threadId: input.thread.id,
     turnId: input.turn.id,
@@ -561,6 +598,7 @@ function buildConversationRunRequest(input: {
     responseLanguage,
     appendSystemPrompt,
     conversationAttachmentIds: input.attachments.map((attachment) => attachment.id),
+    conversationFileRefs: input.input.fileRefs ?? [],
     idempotencyKey: input.input.idempotencyKey ?? `conversation:${input.turn.id}`,
   };
 }
@@ -569,12 +607,15 @@ function createUserTranscriptMessage(
   thread: LingThread,
   turn: LingTurn,
   attachments: readonly ConversationAttachment[] = [],
+  fileRefs: readonly ChannelMessageFileRef[] = [],
+  content = turn.userInstruction,
 ): ConversationTranscriptMessage {
   return {
     id: turn.sourceMessageId?.startsWith("conversation-user:") ? turn.sourceMessageId : `conversation-user:${turn.id}`,
     role: "user",
-    content: turn.userInstruction,
+    content,
     ...(attachments.length > 0 ? { attachments } : {}),
+    ...(fileRefs.length > 0 ? { fileRefs } : {}),
     status: statusFromTurn(turn),
     threadId: thread.id,
     turnId: turn.id,
@@ -771,13 +812,26 @@ function buildConversationRunPrompt(
   message: string,
   attachments: readonly ConversationAttachment[],
   materializations: ReadonlyMap<string, ConversationAttachmentMaterialization>,
+  fileRefs: readonly ChannelMessageFileRef[],
 ): string {
   const trimmedMessage = message.trim();
   const parts = [
     trimmedMessage || "User attached files.",
     renderConversationAttachmentsForPrompt(attachments, materializations),
+    renderConversationFileRefsForPrompt(fileRefs),
   ].filter((part) => part.trim());
   return parts.join("\n\n");
+}
+
+function renderConversationFileRefsForPrompt(fileRefs: readonly ChannelMessageFileRef[]): string {
+  if (fileRefs.length === 0) {
+    return "";
+  }
+  return [
+    "Workspace file references:",
+    ...fileRefs.map((fileRef, index) => `- ${index + 1}. ${fileRef.label ? `${fileRef.label}: ` : ""}${fileRef.path}${fileRef.line ? `:${fileRef.line}` : ""}`),
+    "Treat these as user-supplied references only. Existing workspace and approval policy still controls access.",
+  ].join("\n");
 }
 
 function renderConversationAttachmentsForPrompt(

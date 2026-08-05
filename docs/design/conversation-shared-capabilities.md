@@ -57,6 +57,25 @@ The implementation must not introduce:
 - a second branch table beside `LingThread` lineage;
 - assistant-copy parsing to infer tools, participants, changes, or final state.
 
+### Active-Run Follow-Ups
+
+Normal conversation reuses the existing `queue_followup` run intervention when the user
+sends another message during active work. The accepted follow-up is projected immediately
+as an ordinary local-user message with stable id
+`conversation-user:intervention:<interventionId>`; normal conversation does not add a
+second visible guidance queue. When continuation starts, the durable turn reuses the same
+message id and remains in the original conversation thread, so refresh cannot duplicate
+or lose the message.
+
+Normal conversation detail includes approvals and run interventions associated with its
+runs. Teammate-private runtime includes approvals associated with linked private runs.
+WorkCell adapters consume these snapshots instead of passing empty approval arrays.
+Approval, artifact, tool and intervention events trigger event-driven detail refresh;
+there is no idle conversation polling.
+
+Structured workspace file references travel with normal stream and transcript messages.
+They remain references only and never expand tools, workspace access or approval policy.
+
 ## Product Model
 
 The shared system has three independent contracts:
@@ -107,7 +126,7 @@ model.
 | --- | --- | --- | --- | --- |
 | Shared message/feed/composer | Required | Required | Required | Shared message/feed subset |
 | User avatar | Yes | No | Yes | Yes |
-| Agent avatar | Actual participating teammates | No default avatar | Selected teammate | Source/reply author |
+| Agent avatar | Actual participating teammates | No | Selected teammate | Source/reply author |
 | Multi-agent participation | Yes | No | No | No by default |
 | Teammate `@` routing | Yes | No | No | Explicit AI mention only |
 | Tool execution | Yes | Yes | Yes | No by default; promote to execution when explicit |
@@ -118,9 +137,9 @@ model.
 | Edit latest user message | Yes | Yes | Yes | Yes for latest own reply |
 | Rich Markdown/Mermaid/math | Yes | Yes | Yes | Yes |
 
-Shared capability does not mean identical chrome. Normal conversation intentionally has
-no assistant avatar. Teammate private chat shows the selected teammate avatar. Channel is
-the only default multi-agent collaboration surface.
+Shared capability does not mean identical chrome. Normal conversation intentionally omits
+avatars and redundant identity labels. Teammate private chat shows the selected teammate
+avatar. Channel is the only default multi-agent collaboration surface.
 
 ## Shared Content Capabilities
 

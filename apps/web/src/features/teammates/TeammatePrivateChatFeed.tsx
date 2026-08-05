@@ -38,6 +38,7 @@ import { formatBytes } from "./teammate-workspace-utils.js";
 import type { TeammatePrivateMessageController } from "./useTeammatePrivateMessageController.js";
 
 export type TeammatePrivateChatFeedProps = Pick<TeammatePrivateChatSurfaceProps,
+  | "approvals"
   | "cwd"
   | "directLinkPreviewById"
   | "executionActions"
@@ -59,6 +60,7 @@ export type TeammatePrivateChatFeedProps = Pick<TeammatePrivateChatSurfaceProps,
   | "privateMessageFeedVirtualizer"
   | "providerRecovered"
   | "runs"
+  | "showLoadingIndicator"
   | "taskCreateBusyKeys"
   | "taskCreateErrors"
   | "taskChannelOptions"
@@ -72,6 +74,7 @@ export type TeammatePrivateChatFeedProps = Pick<TeammatePrivateChatSurfaceProps,
 };
 
 export function TeammatePrivateChatFeed({
+  approvals,
   cwd,
   directLinkPreviewById,
   executionActions,
@@ -94,6 +97,7 @@ export function TeammatePrivateChatFeed({
   privateMessageFeedVirtualizer,
   providerRecovered,
   runs,
+  showLoadingIndicator,
   taskCreateBusyKeys,
   taskCreateErrors,
   taskChannelOptions,
@@ -111,9 +115,10 @@ export function TeammatePrivateChatFeed({
     teammateId: teammate.id,
     runs,
     executionActions,
+    approvals,
     terminalReports,
     t,
-  }), [executionActions, runs, teammate.id, t, terminalReports, visibleMessages]);
+  }), [approvals, executionActions, runs, teammate.id, t, terminalReports, visibleMessages]);
 
   return (
     <div className="teammate-private-feed-owner" data-ui2-teammate-private-feed="true">
@@ -123,7 +128,7 @@ export function TeammatePrivateChatFeed({
           ariaLabel={t("Private message feed")}
           feedClassName="message-feed teammate-message-list"
           emptyFeedClassName="message-feed teammate-message-list message-feed-empty"
-          loading={loading}
+          loading={showLoadingIndicator}
           empty={!loading && visibleMessages.length === 0}
           loadingLabel={t("Loading teammate workspace...")}
           emptyIcon={<MessageSquare size={18} />}
@@ -181,6 +186,7 @@ export function TeammatePrivateChatFeed({
 
             return (
               <MessageRow
+                surface="teammate_direct"
                 className={`teammate-message-row ${projection.authorType}${projection.blocked ? " blocked" : ""}`}
                 authorType={projection.authorType}
                 tone={projection.blocked ? "chat-blocked" : undefined}

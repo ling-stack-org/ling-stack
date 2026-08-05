@@ -6,6 +6,7 @@ import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js"
 import {
   ConversationAttachmentStrip,
   ConversationFeed,
+  ConversationReferenceStrip,
   ConversationReplacementRetry,
   ConversationWorkCell,
   InlineMessageEditor,
@@ -222,6 +223,7 @@ function NormalConversationMessageRow({
   const { message } = item;
   return (
     <MessageRow
+      surface="normal_conversation"
       className={item.className}
       authorType={item.authorType}
       authorName={item.authorName}
@@ -245,9 +247,10 @@ function NormalConversationMessageRow({
       bodyCompact
       bodyStreaming={item.bodyStreaming}
       bodyOnOpenLocalFile={onOpenFiles}
-      attachmentsNode={message.attachments && message.attachments.length > 0 ? (
-        <ConversationAttachmentStrip
-          attachments={message.attachments.map((attachment) => ({
+      attachmentsNode={(message.attachments?.length ?? 0) > 0 || (message.fileRefs?.length ?? 0) > 0 ? (
+        <>
+          <ConversationAttachmentStrip
+            attachments={(message.attachments ?? []).map((attachment) => ({
             id: attachment.id,
             label: attachment.fileName,
             meta: formatBytes(attachment.sizeBytes),
@@ -263,9 +266,22 @@ function NormalConversationMessageRow({
               threadId: message.threadId,
               maxBytes: 64_000,
             } : undefined,
-          }))}
-          loadPreview={loadPreviewContent}
-        />
+            }))}
+            loadPreview={loadPreviewContent}
+          />
+          <ConversationReferenceStrip
+            ariaLabel={t("References")}
+            references={(message.fileRefs ?? []).map((fileRef, index) => ({
+              id: `file:${fileRef.path}:${fileRef.line ?? ""}:${index}`,
+              kind: "workspace_file" as const,
+              label: fileRef.label ?? fileRef.path.split(/[\\/]/u).filter(Boolean).at(-1) ?? fileRef.path,
+              meta: fileRef.line !== undefined ? `${fileRef.path}:${fileRef.line}` : fileRef.path,
+              previewTitle: fileRef.label,
+              previewText: fileRef.path,
+              onOpen: () => onOpenReportFile({ cwd: workspaceCwd.trim(), path: fileRef.path, line: fileRef.line, label: fileRef.label }),
+            }))}
+          />
+        </>
       ) : null}
       workCellNode={item.workCell ? (
         <ConversationWorkCell

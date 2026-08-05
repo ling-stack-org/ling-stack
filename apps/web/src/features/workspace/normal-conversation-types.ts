@@ -1,6 +1,8 @@
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
 import type {
   AuthorizationMode,
+  ApprovalRequest,
+  ChannelMessageFileRef,
   ConversationAttachment,
   ConversationPendingReplacement,
   ConversationTranscriptStatus,
@@ -10,6 +12,7 @@ import type {
   PermissionPreset,
   ProviderThinkingMode,
   RunSession,
+  RunIntervention,
   SessionPermissionMode,
   TerminalReportDto,
   WorkspaceAccessMode,
@@ -27,6 +30,8 @@ export interface ConversationHomeModelOption {
   readonly model: string;
   readonly providerId?: string;
   readonly enabled?: boolean;
+  readonly runnable?: boolean;
+  readonly blocker?: string;
   readonly thinkingModes?: readonly ProviderThinkingMode[];
 }
 
@@ -44,6 +49,7 @@ export interface ConversationHomeMessage {
   readonly authorLabel?: string;
   readonly content: string;
   readonly attachments?: readonly ConversationAttachment[];
+  readonly fileRefs?: readonly ChannelMessageFileRef[];
   readonly status?: ConversationTranscriptStatus;
   readonly revision?: number;
   readonly editedAt?: string;
@@ -57,12 +63,15 @@ export interface ConversationHomeDetailContext {
   readonly turns: readonly LingTurn[];
   readonly runs: readonly RunSession[];
   readonly executionActions: readonly ExecutionAction[];
+  readonly approvals: readonly ApprovalRequest[];
+  readonly interventions: readonly RunIntervention[];
   readonly terminalReports: readonly TerminalReportDto[];
 }
 
 export interface ConversationHomeSendInput {
   readonly message: string;
   readonly attachmentIds: readonly string[];
+  readonly fileRefs: readonly ChannelMessageFileRef[];
   readonly project: ConversationHomeProjectSelection;
   readonly model: ConversationHomeModelSelection;
   readonly authorization: {
@@ -104,6 +113,7 @@ export interface ConversationHomeProps {
   readonly stopping?: boolean;
   readonly fullAccessConfirmed?: boolean;
   readonly onOpenRun?: (runId: string) => void;
+  readonly onOpenModelWorkbench?: () => void;
   readonly onConfirmFullAccess?: () => Promise<PermissionConfirmation | undefined>;
   readonly onConfirmFullAccessSelection?: () => PermissionConfirmation;
   readonly onFullAccessConversationBound?: (threadId: string) => void;

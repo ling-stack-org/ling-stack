@@ -23,6 +23,7 @@ import { readJsonBody, readOptionalJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { listProviderModels } from "./models.js";
 import { checkProviderPreset } from "./preflight.js";
+import type { ProviderImportPreflightService } from "./import-preflight.js";
 import {
   formatProviderDeleteBlockedMessage,
   formatProviderReferenceBlockedMessage,
@@ -113,6 +114,7 @@ export async function handleProviderModelImport(
   storeRegistry: RunStoreRegistry,
   secretResolver: SecretResolver,
   controlPlaneEvents: ControlPlaneEventHub,
+  providerImportPreflight: ProviderImportPreflightService,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -195,7 +197,7 @@ export async function handleProviderModelImport(
         if (input.apiKey) {
           store.setProviderSecret(updated.id, input.apiKey, now);
         }
-        const checked = await checkImportedProviderPreset(store, updated, secretResolver, cwd, controlPlaneEvents);
+        const checked = providerImportPreflight.enqueue(cwd, store, updated);
         imported.push(checked);
         updatedCount += 1;
         appendProviderUpdatedEvent(store, controlPlaneEvents, cwd, checked, now);
@@ -233,7 +235,7 @@ export async function handleProviderModelImport(
         enabled: input.enabled,
       }, now);
       const provider = input.apiKey ? saveLocalProviderSecret(store, created, input.apiKey, now) : created;
-      const checked = await checkImportedProviderPreset(store, provider, secretResolver, cwd, controlPlaneEvents);
+      const checked = providerImportPreflight.enqueue(cwd, store, provider);
       imported.push(checked);
       existingProviders.push(checked);
       createdCount += 1;
@@ -366,35 +368,6 @@ function providerImportCompat(
 
 function removeUndefined<T extends Record<string, unknown>>(value: T): T {
   return Object.fromEntries(Object.entries(value).filter(([, entryValue]) => entryValue !== undefined)) as T;
-}
-
-async function checkImportedProviderPreset(
-  store: RunStore,
-  provider: ProviderPreset,
-  secretResolver: SecretResolver,
-  cwd: string,
-  controlPlaneEvents: ControlPlaneEventHub,
-): Promise<ProviderPreset> {
-  if (provider.api === "media-job") {
-    return provider;
-  }
-  const checkResult = await checkProviderPreset(store, provider, secretResolver);
-  const checked = store.recordProviderCheckResult(provider.id, checkResult) ?? provider;
-  appendControlPlaneEvent(store, controlPlaneEvents, {
-    workspaceId: DEFAULT_WORKSPACE_ID,
-    cwd,
-    domain: "providers",
-    entityType: "provider",
-    entityId: provider.id,
-    action: "provider.preflight_checked",
-    data: {
-      providerId: provider.id,
-      ok: checkResult.ok,
-      code: checkResult.code ?? (checkResult.ok ? "ok" : "failed"),
-      checkedAt: checkResult.checkedAt,
-    },
-  });
-  return checked;
 }
 
 function readOptionalSecretPurposeQuery(url: URL): SecretPurpose | null | undefined {

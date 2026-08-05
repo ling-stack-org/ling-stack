@@ -3,6 +3,7 @@ import { archiveLingThread, getConversation, listLingThreads, streamConversation
 import { readSseResponse } from "../../sse.js";
 import type {
   AuthorizationMode,
+  ChannelMessageFileRef,
   ConversationDetailResponse,
   ConversationStreamBlockedEvent,
   ConversationStreamDoneEvent,
@@ -30,6 +31,7 @@ import { useConversationStreamBusyOwner } from "./use-conversation-stream-busy-o
 export interface ConversationSendInput {
   readonly message: string;
   readonly attachmentIds?: readonly string[];
+  readonly fileRefs?: readonly ChannelMessageFileRef[];
   readonly projectPath?: string;
   readonly providerPresetId: string;
   readonly thinkingLevel?: ProviderThinkingMode;
@@ -402,6 +404,7 @@ export function useConversationDomain(input: {
         threadId: originThreadId || undefined,
         message: message.message,
         attachmentIds: message.attachmentIds,
+        fileRefs: message.fileRefs,
         projectPath: message.projectPath,
         providerPresetId: message.providerPresetId,
         thinkingLevel: normalizeThinkingLevel(message.thinkingLevel),
@@ -481,10 +484,7 @@ export function useConversationDomain(input: {
           if (event.assistantMessage && canCommitToSurface(event.threadId)) {
             setSelectedConversationDetail((current) => mergeConversationMessages(current, workspaceCwd, undefined, [event.assistantMessage as ConversationTranscriptMessage]));
           }
-          if (
-            canCommitToSurface(event.threadId)
-            && (event.event.type === "tool_start" || event.event.type === "tool_update" || event.event.type === "tool_end")
-          ) {
+          if (canCommitToSurface(event.threadId) && conversationEventNeedsDetailRefresh(event.event.type)) {
             scheduleEvidenceRefresh();
           }
           if (canCommitToSurface(event.threadId)) handlers.onRunEvent?.(event);
@@ -615,6 +615,24 @@ export function useConversationDomain(input: {
   };
 }
 
+function conversationEventNeedsDetailRefresh(type: ConversationStreamRunEvent["event"]["type"]): boolean {
+  return type === "tool_start"
+    || type === "tool_update"
+    || type === "tool_end"
+    || type === "approval_requested"
+    || type === "approval_approved"
+    || type === "approval_denied"
+    || type === "approval_expired"
+    || type === "approval_cancelled"
+    || type === "artifact_created"
+    || type === "run_intervention_created"
+    || type === "run_followup_queued"
+    || type === "run_interrupt_requested"
+    || type === "run_continuation_starting"
+    || type === "run_continuation_started"
+    || type === "run_intervention_failed";
+}
+
 function mergeConversationDetailSnapshot(
   current: ConversationDetailResponse | undefined,
   snapshot: ConversationDetailResponse,
@@ -665,6 +683,8 @@ function mergeConversationMessages(
     turns: current?.turns ?? [],
     runs: current?.runs ?? [],
     executionActions: current?.executionActions ?? [],
+    approvals: current?.approvals ?? [],
+    interventions: current?.interventions ?? [],
     terminalReports: current?.terminalReports ?? [],
     messages: [...byId.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
     defaults: current?.defaults ?? {},

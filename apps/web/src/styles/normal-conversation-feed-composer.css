@@ -42,36 +42,16 @@
 
 .normal-conversation-message-row {
   width: 100%;
-}
-
-.normal-conversation-feed .normal-conversation-message-row:not(.local-user) {
-  grid-template-columns: minmax(0, min(720px, 78%));
+  --conversation-message-max-width: 720px;
 }
 
 .normal-conversation-feed .normal-conversation-message-row.local-user {
-  grid-template-columns: minmax(0, min(640px, 78%));
-  justify-content: end;
+  --conversation-message-max-width: 640px;
 }
 
 .normal-conversation-message-row > .message-content {
   width: fit-content;
   max-width: 100%;
-}
-
-.normal-conversation-message-row:not(.local-user) > .message-content {
-  grid-column: 1;
-}
-
-.normal-conversation-message-row.local-user > .message-content {
-  grid-column: 1;
-}
-
-.normal-conversation-message-row.ai-teammate > .message-content > header {
-  display: none;
-}
-
-.normal-conversation-message-row > .message-row-own-actions {
-  grid-column: 1;
 }
 
 .normal-conversation-message-row.blocked > .message-content {

@@ -68,6 +68,35 @@ test("channel removes accepted guidance from the queue while its continuation ru
   expect(runtimeErrors).toEqual([]);
 });
 
+test("normal conversation sends active-run guidance as one ordinary user message", async ({ page }) => {
+  await prepareSurface(page, "light", 1440, 960);
+  const runtimeErrors = collectRuntimeErrors(page);
+  const state = normalRuntimeFeedbackState();
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await page.getByLabel("Ling Stack navigation").locator(".sidebar-recent-row").filter({ hasText: "Normal runtime feedback" }).click();
+
+  const conversation = page.getByLabel("Conversation page");
+  const composer = conversation.locator(".normal-conversation-composer");
+  await expect(composer.getByRole("button", { name: "Stop" })).toBeVisible();
+  const input = composer.getByLabel("Conversation message");
+  await input.fill("Continue with the visible test results.");
+  const send = composer.getByRole("button", { name: "Send" });
+  await expect(send).toBeEnabled();
+  await send.click();
+
+  const guidanceRows = conversation.locator("[data-conversation-message-row].local-user").filter({
+    hasText: "Continue with the visible test results.",
+  });
+  await expect(guidanceRows).toHaveCount(1);
+  await expect(guidanceRows).toHaveAttribute("data-has-avatar", "false");
+  await expect(input).toHaveText("");
+  await expect(conversation.getByLabel("Run guidance")).toHaveCount(0);
+  expect(state.runInterventions).toHaveLength(1);
+  expect(state.runInterventions[0]?.messagePayload?.body).toBe("Continue with the visible test results.");
+  expect(runtimeErrors).toEqual([]);
+});
+
 test("teammate runtime status and queued guidance stay contained in dark reduced motion", async ({ page }) => {
   await prepareSurface(page, "dark", 1280, 800);
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -168,6 +197,62 @@ function teammateRuntimeFeedbackState(): MockState {
     createdAt: "2026-07-23T09:10:01.000Z",
     updatedAt: "2026-07-23T09:10:01.000Z",
   }];
+  return state;
+}
+
+function normalRuntimeFeedbackState(): MockState {
+  const state = createBaseState({ approvalStatus: "expired" });
+  const cwd = state.runs[0]?.cwd ?? "/tmp/ling-stack";
+  const threadId = "thread_normal_runtime_feedback";
+  const turnId = "turn_normal_runtime_feedback";
+  const runId = "run_normal_runtime_feedback";
+  const createdAt = "2026-07-23T09:20:00.000Z";
+  state.threads = [{
+    id: threadId,
+    workspaceId: "workspace_default",
+    kind: "conversation",
+    title: "Normal runtime feedback",
+    objective: "Normal runtime feedback",
+    status: "running",
+    lastRunId: runId,
+    createdAt,
+    updatedAt: createdAt,
+  }];
+  state.turns = [{
+    id: turnId,
+    workspaceId: "workspace_default",
+    threadId,
+    kind: "initial_request",
+    status: "running",
+    title: "Normal runtime feedback",
+    userInstruction: "Start the visible test run.",
+    activeRunId: runId,
+    lastRunId: runId,
+    createdByActor: "local-user",
+    createdAt,
+    updatedAt: createdAt,
+  }];
+  state.turnRunLinks = [{ turnId, runId, attemptNumber: 1, role: "primary", createdAt }];
+  state.runs = [{
+    id: runId,
+    status: "running",
+    cwd,
+    taskId: "task_normal_runtime_feedback",
+    providerPresetId: "provider_local",
+    providerName: "local-relay",
+    providerModel: "gpt-5.5",
+    taskSnapshot: { id: "task_normal_runtime_feedback", title: "Normal runtime feedback" },
+    providerSnapshot: {},
+    requestSnapshot: { providerPresetId: "provider_local" },
+    eventLogPath: `.ling-stack/sessions/${runId}.jsonl`,
+    threadId,
+    turnId,
+    createdAt,
+    startedAt: createdAt,
+    updatedAt: createdAt,
+  }, ...state.runs];
+  state.eventsByRun[runId] = [];
+  state.runInterventions = [];
   return state;
 }
 

@@ -133,12 +133,6 @@
   font-size: var(--ling-font-xs);
 }
 
-.teammate-workspace.chat-mode
-  .teammate-message-row.ai-teammate.message-bubble-chat
-  > :is(.avatar-initial, .teammate-avatar-image.compact) {
-  margin-top: var(--ling-space-4);
-}
-
 .teammate-message-error.ling-ui-inline-feedback {
   width: fit-content;
   max-width: 100%;

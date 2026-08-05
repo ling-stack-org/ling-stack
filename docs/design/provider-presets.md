@@ -52,6 +52,7 @@ Implemented today:
 - Custom OpenAI-compatible providers can be registered dynamically by the Pi runner adapter when `baseUrl` is present.
 - Persistent provider preset storage, daemon CRUD APIs, CLI/Web setup surfaces, built-in templates, and env secret refs are implemented.
 - Provider health checks perform static validation plus live lightweight probes for OpenAI-compatible chat, OpenAI Responses, and Anthropic Messages.
+- Batch model import persists presets immediately and runs chat preflights in a daemon-owned background queue with a maximum concurrency of three. Persisted `checking` state keeps the Web list truthful across refreshes; completed checks continue to publish the existing provider control-plane event.
 - `packages/providers` defines capability interfaces and media vendor adapters for the currently connected generation families.
 - Generation runtime readiness is resolved by [Provider Generation Runtime Resolver](provider-generation-runtime.md), not by page-specific provider checks.
 

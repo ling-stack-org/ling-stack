@@ -7,6 +7,7 @@ import {
 import { providerRunPreflightBlocker } from "../../lib/providers.js";
 import type { LocalFileReference } from "../../shared/conversation/index.js";
 import type {
+  ApprovalRequest,
   AiTeammateModelBindingMode,
   ExecutionAction,
   ProviderPreset,
@@ -137,6 +138,7 @@ export function buildTeammatePrivateWorkCellMap(input: {
   readonly teammateId: string;
   readonly runs: readonly RunSession[];
   readonly executionActions: readonly ExecutionAction[];
+  readonly approvals: readonly ApprovalRequest[];
   readonly terminalReports: readonly TerminalReportDto[];
   readonly t: Translate;
 }): ReadonlyMap<string, { readonly model: ConversationWorkCellViewModel }> {
@@ -154,7 +156,7 @@ export function buildTeammatePrivateWorkCellMap(input: {
       threadId: run.threadId,
       runs: [run],
       allowRunThreadFallback: true,
-      approvals: [],
+      approvals: input.approvals,
       artifactsByRun: {},
       executionActions: input.executionActions.filter((action) => action.runId === run.id),
       t: input.t,

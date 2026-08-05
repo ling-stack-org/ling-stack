@@ -14,7 +14,14 @@
 
 @media (max-width: 980px) {
   .provider-toolbar-controls {
-    grid-template-columns: minmax(0, 1fr) minmax(132px, 0.55fr) auto auto auto;
+    grid-template-columns: minmax(0, 1fr) minmax(132px, 0.55fr) auto auto;
+    grid-template-areas:
+      "search status add check"
+      "capability capability capability capability";
+  }
+
+  .provider-capability-filter {
+    max-width: 100%;
   }
 
   .provider-main-action {

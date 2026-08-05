@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   resolveEffectiveTeammateProviderPresetId,
+  type ApprovalRequest,
   type AiTeammate,
   type ChannelMessageFileRef,
   type RunStore,
@@ -40,6 +41,7 @@ export interface TeammateDirectRuntimeSnapshot {
     readonly message?: TeammateDirectMessage;
   };
   readonly interventions: readonly TeammateDirectReplyIntervention[];
+  readonly approvals: readonly ApprovalRequest[];
 }
 
 export class DirectReplyControlService {
@@ -63,6 +65,7 @@ export class DirectReplyControlService {
       thread,
       activeReply: this.findActiveReply(input.store, teammate.id, thread.id),
       interventions: this.listOpenInterventions(input.store, teammate.id, thread.id),
+      approvals: this.listAssociatedApprovals(input.store, teammate.id, thread.id),
     };
   }
 
@@ -365,6 +368,16 @@ export class DirectReplyControlService {
     return store
       .listTeammateDirectReplyInterventions({ teammateId, threadId, limit: 100 })
       .filter((intervention) => intervention.status !== "started" && intervention.status !== "cancelled" && intervention.status !== "failed");
+  }
+
+  private listAssociatedApprovals(store: RunStore, teammateId: string, threadId: string): readonly ApprovalRequest[] {
+    const runIds = new Set(store
+      .listTeammateDirectMessages({ teammateId, threadId, limit: 500 })
+      .flatMap((message) => message.linkedRunId ? [message.linkedRunId] : []));
+    return [...runIds]
+      .flatMap((runId) => store.listApprovalRequests({ runId, limit: 500 }))
+      .filter((approval, index, all) => all.findIndex((candidate) => candidate.id === approval.id) === index)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
   }
 
   private markLinkedMessageCancelled(store: RunStore, workUnit: WorkUnit, fallbackBody: string): TeammateDirectMessage | undefined {

@@ -1,8 +1,9 @@
 import type { ChannelAttachmentKind, ChannelMention, ChannelMessageFileRef } from "./channels.js";
+import type { ApprovalRequest } from "./approvals.js";
 import type { AuthorizationMode, ConversationPendingReplacement, PermissionConfirmation, PermissionPreset, RunThinkingLevel, RunTool, SessionPermissionMode, WorkspaceAccessMode } from "./shared.js";
 import type { ExecutionAction } from "./execution-actions.js";
 import type { ResponseLanguagePreference } from "./settings.js";
-import type { RunEventEnvelope, RunSession } from "./runtime.js";
+import type { RunEventEnvelope, RunIntervention, RunSession } from "./runtime.js";
 import type { LingThread } from "./threads.js";
 import type { LingTurn } from "./turns.js";
 import type { TerminalReportDto } from "./terminal-reports.js";
@@ -17,6 +18,7 @@ export interface ConversationTranscriptMessage {
   readonly authorLabel?: string;
   readonly content: string;
   readonly attachments?: readonly ConversationAttachment[];
+  readonly fileRefs?: readonly ChannelMessageFileRef[];
   readonly status: ConversationTranscriptStatus;
   readonly threadId: string;
   readonly turnId?: string;
@@ -32,6 +34,7 @@ export interface ConversationStreamRequest {
   readonly threadId?: string;
   readonly message: string;
   readonly attachmentIds?: readonly string[];
+  readonly fileRefs?: readonly ChannelMessageFileRef[];
   readonly projectPath?: string;
   readonly providerPresetId: string;
   readonly thinkingLevel?: RunThinkingLevel;
@@ -82,6 +85,8 @@ export interface ConversationDetailResponse {
   readonly turns: readonly LingTurn[];
   readonly runs: readonly RunSession[];
   readonly executionActions: readonly ExecutionAction[];
+  readonly approvals: readonly ApprovalRequest[];
+  readonly interventions: readonly RunIntervention[];
   readonly terminalReports: readonly TerminalReportDto[];
   readonly messages: readonly ConversationTranscriptMessage[];
   readonly defaults: {

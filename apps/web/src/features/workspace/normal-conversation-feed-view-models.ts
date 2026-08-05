@@ -47,7 +47,7 @@ export function projectNormalConversationFeedItems(input: {
       threadId: message.threadId,
       runs: [linkedRun],
       allowRunThreadFallback: true,
-      approvals: [],
+      approvals: input.detailContext?.approvals ?? [],
       artifactsByRun: {},
       executionActions,
       t: input.t,
