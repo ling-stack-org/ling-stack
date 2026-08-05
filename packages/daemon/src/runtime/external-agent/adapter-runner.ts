@@ -1,5 +1,7 @@
 import { join } from "node:path";
+import { redactSecrets } from "@ling-stack/core";
 import type { PiRunnerEvent, PiRunnerResult, PiRunnerRunOptions } from "@ling-stack/runner-pi";
+import { extractAssistantText } from "../../shared/assistant-text.js";
 import { bridgeExternalToolApproval } from "./approval-bridge.js";
 import { importExternalAgentArtifact, type ExternalArtifactImportInput } from "./artifact-importer.js";
 import { normalizeExternalAgentEvent, type ExternalAgentEvent } from "./event-normalizer.js";
@@ -97,7 +99,14 @@ export async function runExternalAgentTask(input: RunExternalAgentTaskOptions): 
     }
 
     emit({ type: "turn_end" });
-    emit({ type: "message_end", role: "assistant" });
+    const finalText = extractAssistantText(messages);
+    const redactedFinalText = finalText ? String(redactSecrets(finalText, input.extraSecrets ?? [])) : undefined;
+    emit({
+      type: "message_end",
+      role: "assistant",
+      ...(redactedFinalText ? { text: redactedFinalText } : {}),
+      ...(redactedFinalText ? { contentKinds: ["text"] } : {}),
+    });
     emit({ type: "run_end", taskId: options.task.id, messageCount: messages.length });
 
     return {

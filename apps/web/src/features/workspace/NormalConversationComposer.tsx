@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type Ref } from "react";
-import { ArrowUp, Brain, Check, ChevronDown, CircleAlert, FileText, Loader2, Plus, Search, SlidersHorizontal, Square, X } from "lucide-react";
+import { ArrowUp, Brain, Check, ChevronDown, CircleAlert, FileText, Plus, Search, SlidersHorizontal, Square } from "lucide-react";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
 import { useI18n } from "../../i18n.js";
 import { conversationPermissionPresetMenuOptions } from "../../lib/session-permissions.js";
@@ -23,7 +23,7 @@ import {
   MenuTrigger,
   StatusIndicator,
 } from "../../shared/ui/index.js";
-import { pendingAssetLabel, type ActiveSlashCommandPicker, type PendingAttachmentItem } from "../../shared/components/index.js";
+import { ComposerPendingAssetStrip, type ActiveSlashCommandPicker, type PendingAttachmentItem } from "../../shared/components/index.js";
 import type { ConversationAttachment, PermissionPreset, ProviderThinkingMode } from "../../types.js";
 import {
   normalConversationModelLabel,
@@ -245,29 +245,7 @@ export function NormalConversationComposer({
         <div className="composer-drop-hint"><FileText size={16} /><span>{t("Drop files to attach")}</span></div>
       ) : null}
       previewNode={pendingAttachments.length > 0 ? (
-        <div className="pending-assets composer-preview-strip" aria-label={t("Pending message assets")}>
-          {pendingAttachments.map((item) => (
-            <div key={item.localId} className={`composer-preview-card ${item.previewUrl ? "image" : "file"} ${item.state}`}>
-              {item.previewUrl ? (
-                <img className="composer-preview-thumbnail" src={item.previewUrl} alt={item.fileName} />
-              ) : (
-                <span className="composer-preview-file-icon" aria-hidden="true"><FileText size={17} /></span>
-              )}
-              <span className="composer-preview-body">
-                <strong title={item.fileName}>{item.fileName}</strong>
-                <small>{item.error ?? `${t(pendingAssetLabel(item.state))} · ${formatBytes(item.attachment?.sizeBytes ?? item.sizeBytes)}`}</small>
-              </span>
-              {item.state === "uploading" ? <Loader2 className="composer-preview-state-icon spin" size={13} /> : null}
-              <IconButton
-                className="composer-preview-remove"
-                icon={X}
-                label={t("Remove pending attachment")}
-                tooltip=""
-                onClick={() => onRemoveAttachment(item.localId)}
-              />
-            </div>
-          ))}
-        </div>
+        <ComposerPendingAssetStrip attachments={pendingAttachments} onRemoveAttachment={onRemoveAttachment} />
       ) : null}
       leftToolsNode={(
         <>
@@ -437,14 +415,4 @@ export function NormalConversationComposer({
       ) : null}
     />
   );
-}
-
-function formatBytes(value: number): string {
-  if (value < 1024) {
-    return `${value} B`;
-  }
-  if (value < 1024 * 1024) {
-    return `${(value / 1024).toFixed(1)} KB`;
-  }
-  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }

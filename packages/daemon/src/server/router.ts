@@ -1655,13 +1655,13 @@ export async function routeRequest(
           requestedProviderPresetId: editRequest.providerPresetId,
           requestAiReply: true,
           createAiReply: (input) => createAiChannelReply({
-            runnerRegistry,
-            runtimeSupervisor,
+            startRun: startTeammateDirectRun,
             secretResolver,
             webFetch: context.webFetch,
             webResolveHostAddresses: context.webResolveHostAddresses,
             ...input,
             completionMode: "background",
+            trackCompletion: (completion) => activeRuns.trackCompletion(completion),
             teamObserverBusEnabled: config.channels.teamObserverBus === true,
           }),
           startExecutionProposalWorkflow: (input) => confirmAndOrchestrateChannelProposal({
@@ -1940,12 +1940,12 @@ export async function routeRequest(
       const channelMessagesCwd = url.searchParams.get("cwd") ?? "";
       await handleChannelMessagesCollection(request, response, config, storeRegistry, channelRoute.channelId, (input) =>
         createAiChannelReply({
-          runnerRegistry,
-          runtimeSupervisor,
+          startRun: startTeammateDirectRun,
           secretResolver,
           webFetch: context.webFetch,
           webResolveHostAddresses: context.webResolveHostAddresses,
           ...input,
+          trackCompletion: (completion) => activeRuns.trackCompletion(completion),
           teamObserverBusEnabled: config.channels.teamObserverBus === true,
         }),
         (input) => confirmAndOrchestrateChannelProposal({
@@ -1966,12 +1966,12 @@ export async function routeRequest(
       const channelMessagesCwd = url.searchParams.get("cwd") ?? "";
       await handleChannelMessageStream(request, response, config, storeRegistry, channelRoute.channelId, (input) =>
         createAiChannelReply({
-          runnerRegistry,
-          runtimeSupervisor,
+          startRun: startTeammateDirectRun,
           secretResolver,
           webFetch: context.webFetch,
           webResolveHostAddresses: context.webResolveHostAddresses,
           ...input,
+          trackCompletion: (completion) => activeRuns.trackCompletion(completion),
           teamObserverBusEnabled: config.channels.teamObserverBus === true,
         }),
         (input) => confirmAndOrchestrateChannelProposal({

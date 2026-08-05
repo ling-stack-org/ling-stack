@@ -237,6 +237,25 @@ test("T13-O.31-E Dark 1280 Normal keeps slash, permission, reduced motion, long 
   await expect(permissionOverlay).toHaveCount(0);
   await expect(permissionTrigger).toBeFocused();
 
+  await composer.locator('input[type="file"]').setInputFiles(
+    Array.from({ length: 4 }, (_, index) => ({
+      name: `normal-preview-${index + 1}.png`,
+      mimeType: "image/png",
+      buffer: onePixelPng(),
+    })),
+  );
+  const pendingAssets = composer.getByLabel("Pending message assets");
+  await expect(pendingAssets.locator(".composer-preview-card")).toHaveCount(4);
+  await expect(pendingAssets).toHaveCSS("flex-wrap", "nowrap");
+  const normalPreviewGeometry = await pendingAssets.evaluate((element) => ({
+    clientHeight: element.clientHeight,
+    clientWidth: element.clientWidth,
+    scrollHeight: element.scrollHeight,
+    scrollWidth: element.scrollWidth,
+  }));
+  expect(normalPreviewGeometry.scrollWidth).toBeGreaterThan(normalPreviewGeometry.clientWidth);
+  expect(normalPreviewGeometry.scrollHeight).toBeLessThanOrEqual(normalPreviewGeometry.clientHeight + 1);
+
   await input.fill(`Normal-${"unbroken".repeat(100)}`);
   await expectTextControlWraps(input);
   await expectNoHorizontalOverflow(page, [composer, inputZone]);
@@ -265,21 +284,30 @@ test("T13-O.31-E Quiet Ocean 1440 Teammate keeps attachment status, focus, and i
   await expectFocusGeometryStable(input, inputZone, composer);
 
   const longFileName = `${"quiet-ocean-attachment-".repeat(8)}status.png`;
-  await composer.locator('input[type="file"]').setInputFiles({
-    name: longFileName,
-    mimeType: "image/png",
-    buffer: onePixelPng(),
-  });
+  await composer.locator('input[type="file"]').setInputFiles([
+    { name: longFileName, mimeType: "image/png", buffer: onePixelPng() },
+    ...Array.from({ length: 3 }, (_, index) => ({
+      name: `teammate-preview-${index + 2}.png`,
+      mimeType: "image/png",
+      buffer: onePixelPng(),
+    })),
+  ]);
   const pendingAssets = composer.getByLabel("Pending message assets");
+  await expect(pendingAssets.locator(".composer-preview-card")).toHaveCount(4);
   const attachment = pendingAssets.locator(".composer-preview-card").filter({ hasText: longFileName });
   await expect(attachment).toBeVisible();
   await expect(attachment).toHaveClass(/ready/u);
   await expect(attachment.locator(".composer-preview-state-icon.spin")).toHaveCount(0);
   await expect(attachment.locator(".composer-preview-body small")).toContainText("Ready");
+  const teammatePreviewGeometry = await pendingAssets.evaluate((element) => ({
+    clientWidth: element.clientWidth,
+    scrollWidth: element.scrollWidth,
+  }));
+  expect(teammatePreviewGeometry.scrollWidth).toBeGreaterThan(teammatePreviewGeometry.clientWidth);
 
   await input.fill(`Teammate-${"context".repeat(90)}`);
   await expectTextControlWraps(input);
-  await expectNoHorizontalOverflow(page, [composer, inputZone, pendingAssets, attachment]);
+  await expectNoHorizontalOverflow(page, [composer, inputZone, attachment]);
   await captureIfEnabled(page, "1440x960-quiet-ocean-teammate-attachment-status-focus.png");
   expect(signals.consoleErrors).toEqual([]);
   expect(signals.pageErrors).toEqual([]);

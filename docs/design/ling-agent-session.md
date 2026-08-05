@@ -637,6 +637,11 @@ message. It must not be allowed to catch executable requests and respond with "I
 execute"; those requests should become a clarification, an auto-started run, or a
 confirmation card.
 
+A channel `answer` outcome executes through a standard `RunSession`; its
+`channel_ai_reply` WorkUnit is a linked supervision projection rather than a parallel
+runtime authority. This makes ordinary replies compatible with existing stop, queued
+guidance and continuation semantics without adding a channel-specific queue.
+
 `Channel.defaultTeammateId` is not the visible default speaker under this model. It is a
 preferred specialist hint for task assignment, workflow participation, and routing
 evidence. Ordinary root channel messages and Ling clarification questions should render

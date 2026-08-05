@@ -2630,6 +2630,15 @@ test("channel discussion injects web search context before runner reply", async 
     assert.doesNotMatch(JSON.stringify(finalReply.webEvidence), /sk-test-secret-value/);
     const workUnit = store.listWorkUnits({ kind: "channel_ai_reply", linkedMessageId: finalReply.id, limit: 1 })[0];
     assert.ok(workUnit);
+    assert.ok(finalReply.linkedRunId);
+    const run = store.getRun(finalReply.linkedRunId);
+    assert.ok(run);
+    assert.equal(run.status, "succeeded");
+    assert.equal(run.workUnitId, workUnit.id);
+    assert.equal(workUnit.linkedRunId, run.id);
+    assert.equal(workUnit.linkedMessageId, finalReply.id);
+    assert.equal(store.getLingThread(run.threadId)?.kind, "channel_discussion");
+    assert.equal(store.listWorkUnits({ kind: "channel_ai_reply", linkedMessageId: finalReply.id, limit: 10 }).length, 1);
     const webEvidenceEvents = store.listRuntimeEvents(workUnit.id).filter((event) => event.type === "web_evidence_recorded");
     assert.equal(webEvidenceEvents.length, 1);
     assert.equal(webEvidenceEvents[0].data.toolSurface, "web");
@@ -2721,12 +2730,14 @@ test("channel message stream emits visible deltas into a durable AI reply", asyn
 
     assert.equal(response.status, 200);
     const events = parseSseEvents(await response.text());
-    assert.deepEqual(events.map((event) => event.event), ["ready", "ready", "delta", "done"]);
+    assert.deepEqual(events.map((event) => event.event), ["ready", "ready", "run_linked", "delta", "done"]);
     assert.equal(events[0].data.message.body, "@Engineer 请流式回复");
     assert.equal(events[1].data.aiReply.status, "pending");
-    assert.equal(events[2].data.delta, "Streamed channel reply");
-    assert.equal(events[2].data.body, "Streamed channel reply");
-    assert.equal(events[3].data.aiReply.body, "Streamed channel reply");
+    assert.equal(events[2].data.messageId, events[1].data.aiReply.id);
+    assert.ok(events[2].data.linkedRunId);
+    assert.equal(events[3].data.delta, "Streamed channel reply");
+    assert.equal(events[3].data.body, "Streamed channel reply");
+    assert.equal(events[4].data.aiReply.body, "Streamed channel reply");
 
     const listed = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`);
     const finalReply = listed.messages.find((message) => message.id === events[1].data.aiReply.id);
@@ -2831,10 +2842,10 @@ test("channel message stream does not expose hidden task proposal blocks", async
 
     assert.equal(response.status, 200);
     const events = parseSseEvents(await response.text());
-    assert.deepEqual(events.map((event) => event.event), ["ready", "ready", "delta", "done"]);
+    assert.deepEqual(events.map((event) => event.event), ["ready", "ready", "run_linked", "delta", "done"]);
     assert.doesNotMatch(JSON.stringify(events.map((event) => event.data)), /ling_task_proposal/);
-    assert.equal(events[2].data.body, "可以开始。\n");
-    assert.equal(events[3].data.aiReply.body, "可以开始。");
+    assert.equal(events[3].data.body, "可以开始。\n");
+    assert.equal(events[4].data.aiReply.body, "可以开始。");
 
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(proposals.proposals.length, 1);
@@ -3047,7 +3058,11 @@ test("default_teammate routes root messages through Ling Agent without proposals
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}`);
     assert.deepEqual(proposals.proposals, []);
     assert.deepEqual((await getJson(`${daemon.url}/tasks?cwd=${encodeURIComponent(cwd)}`)).tasks, []);
-    assert.deepEqual((await getJson(`${daemon.url}/runs?cwd=${encodeURIComponent(cwd)}`)).runs, []);
+    const firstReplyRuns = (await getJson(`${daemon.url}/runs?cwd=${encodeURIComponent(cwd)}`)).runs;
+    assert.equal(firstReplyRuns.length, 1);
+    assert.equal(firstReplyRuns[0].id, finalReply.linkedRunId);
+    assert.equal(firstReplyRuns[0].status, "succeeded");
+    assert.equal(firstReplyRuns[0].taskId, created.message.id);
 
     const countQuestion = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
       body: "现在频道有多少个队友",
@@ -5568,7 +5583,11 @@ test("auto_route uses the model selector and records accepted route evidence", a
     assert.deepEqual((await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}`)).proposals, []);
     assert.deepEqual((await getJson(`${daemon.url}/tasks?cwd=${encodeURIComponent(cwd)}`)).tasks, []);
     const runs = await getJson(`${daemon.url}/runs?cwd=${encodeURIComponent(cwd)}`);
-    assert.deepEqual(runs.runs.filter((run) => run.id !== oldRun.id), []);
+    const replyRuns = runs.runs.filter((run) => run.id !== oldRun.id);
+    assert.equal(replyRuns.length, 1);
+    assert.equal(replyRuns[0].id, finalReply.linkedRunId);
+    assert.equal(replyRuns[0].status, "succeeded");
+    assert.equal(replyRuns[0].taskId, created.message.id);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -5577,7 +5596,7 @@ test("auto_route uses the model selector and records accepted route evidence", a
 
 test("auto_route falls back to Ling Agent replies on selector failure", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-auto-route-fallback-"));
-  const runner = new ScriptedRunner(["not json"]);
+  const runner = new ScriptedRunner(["not json", "Ling fallback reply 1"]);
   const daemon = await startDaemonForTest(runner, {}, { channels: { autoRoute: true } });
   try {
     const channel = await createAutoRouteTestChannel(daemon.url, cwd);
@@ -5588,6 +5607,7 @@ test("auto_route falls back to Ling Agent replies on selector failure", async ()
 
     assert.equal(created.aiReply.status, "pending");
     assert.equal(created.aiReply.authorId, "ling_agent");
+    await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
     assert.equal(runner.runs.length, 2);
     let decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions[0].status, "accepted");
@@ -5600,12 +5620,13 @@ test("auto_route falls back to Ling Agent replies on selector failure", async ()
       confidence: 0.2,
       reason: "Unsure.",
       alternativesConsidered: [],
-    }));
+    }), "Ling fallback reply 2");
     const lowConfidence = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
       body: "这个 UI 问题可以自动判断吗？",
     });
     assert.equal(lowConfidence.aiReply.status, "pending");
     assert.equal(lowConfidence.aiReply.authorId, "ling_agent");
+    await waitForChannelMessageStatus(daemon.url, cwd, channel.id, lowConfidence.aiReply.id, "ready");
     decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(lowConfidence.message.id)}`);
     assert.equal(decisions.decisions[0].status, "accepted");
     assert.match(decisions.decisions[0].reason, /Route model confidence was below threshold/);
@@ -5616,12 +5637,13 @@ test("auto_route falls back to Ling Agent replies on selector failure", async ()
       confidence: 0.9,
       reason: "Wrapped JSON should fail strict parsing.",
       alternativesConsidered: [],
-    })}`);
+    })}`, "Ling fallback reply 3");
     const wrappedJson = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
       body: "这个带解释的模型输出应该失败吗？",
     });
     assert.equal(wrappedJson.aiReply.status, "pending");
     assert.equal(wrappedJson.aiReply.authorId, "ling_agent");
+    await waitForChannelMessageStatus(daemon.url, cwd, channel.id, wrappedJson.aiReply.id, "ready");
     decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(wrappedJson.message.id)}`);
     assert.equal(decisions.decisions[0].status, "accepted");
     assert.equal(decisions.decisions[0].reason, "Ling Agent fallback replied after automatic teammate selection failed.");
@@ -5632,12 +5654,13 @@ test("auto_route falls back to Ling Agent replies on selector failure", async ()
       confidence: 0.9,
       reason: "Unknown teammate should fail closed.",
       alternativesConsidered: [],
-    }));
+    }), "Ling fallback reply 4");
     const unknownTeammate = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
       body: "这个未知 teammate 应该失败吗？",
     });
     assert.equal(unknownTeammate.aiReply.status, "pending");
     assert.equal(unknownTeammate.aiReply.authorId, "ling_agent");
+    await waitForChannelMessageStatus(daemon.url, cwd, channel.id, unknownTeammate.aiReply.id, "ready");
     decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(unknownTeammate.message.id)}`);
     assert.equal(decisions.decisions[0].status, "accepted");
     assert.equal(decisions.decisions[0].reason, "Ling Agent fallback replied after automatic teammate selection failed.");

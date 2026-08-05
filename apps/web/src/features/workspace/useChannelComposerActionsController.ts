@@ -41,6 +41,7 @@ interface ChannelComposerActionsInput {
   readonly selectedChannelId: string;
   readonly selectedChannelBranchRootThreadId?: string;
   readonly selectedChannel: Channel | undefined;
+  readonly guidanceModeActive: boolean;
   readonly activeConversationRun: RunSession | undefined;
   readonly activeConversationSourceRunId: string;
   readonly isCancellingRun: boolean;
@@ -143,6 +144,7 @@ export function useChannelComposerActionsController({
   composerInputParts,
   cwd,
   focusComposerAt,
+  guidanceModeActive,
   isCancellingRun,
   messageDraft,
   messageFeedScrollToLatest,
@@ -379,7 +381,11 @@ export function useChannelComposerActionsController({
   );
 
   const submitChannelRunGuidanceFromDraft = useCallback(async (): Promise<boolean> => {
-    if (!selectedChannelId || !activeConversationRun || !activeConversationSourceRunId || runGuidanceSubmitting || composerBusy || assetOperationPending) {
+    if (!selectedChannelId || runGuidanceSubmitting || composerBusy || assetOperationPending) {
+      return false;
+    }
+    if (!activeConversationRun || !activeConversationSourceRunId) {
+      setRunGuidanceError(t("Select a teammate before queueing guidance."));
       return false;
     }
     const draftSnapshot = messageDraft;
@@ -753,7 +759,11 @@ export function useChannelComposerActionsController({
   ]);
 
   const handleChannelComposerSubmit = useCallback((): void => {
-    if (activeConversationRun) {
+    if (guidanceModeActive) {
+      if (!activeConversationRun) {
+        setRunGuidanceError(t("Select a teammate before queueing guidance."));
+        return;
+      }
       if (composerHasSendableContent) {
         void submitChannelRunGuidanceFromDraft();
         return;
@@ -762,7 +772,7 @@ export function useChannelComposerActionsController({
       return;
     }
     void sendMessage();
-  }, [activeConversationRun, composerHasSendableContent, onCancelActiveRun, sendMessage, submitChannelRunGuidanceFromDraft]);
+  }, [activeConversationRun, composerHasSendableContent, guidanceModeActive, onCancelActiveRun, sendMessage, submitChannelRunGuidanceFromDraft, t]);
 
   const dismissSendError = useCallback((): void => {
     setSendState("idle");

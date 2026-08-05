@@ -17,6 +17,7 @@ import {
   applyProviderAuthHeaders,
   materializeProviderSecrets,
 } from "./secret-materializer.js";
+import { extractProviderResponseText } from "./response-text.js";
 
 const PROVIDER_CHECK_TIMEOUT_MS = 10_000;
 
@@ -189,6 +190,16 @@ async function probeChatProvider(
     });
 
     if (response.ok) {
+      const bodyText = await readLimitedResponseText(response, 64_000);
+      const responseBody = parseJson(bodyText);
+      if (!extractProviderResponseText(preset.api, responseBody).trim()) {
+        return {
+          ok: false,
+          code: "empty_response",
+          message: "Provider accepted the request but did not return displayable text. Check the API protocol and model response format.",
+          checkedAt,
+        };
+      }
       return {
         ok: true,
         code: "ready",
@@ -284,7 +295,7 @@ function buildProviderCheckBody(preset: ProviderPreset): Record<string, unknown>
   if (preset.api === "anthropic-messages") {
     return {
       model: preset.model,
-      max_tokens: 8,
+      max_tokens: 16,
       messages: [{ role: "user", content: "Reply with OK." }],
     };
   }
@@ -292,16 +303,24 @@ function buildProviderCheckBody(preset: ProviderPreset): Record<string, unknown>
     return {
       model: preset.model,
       input: "Reply with OK.",
-      max_output_tokens: 8,
+      max_output_tokens: 32,
       stream: false,
     };
   }
   return {
     model: preset.model,
     messages: [{ role: "user", content: "Reply with OK." }],
-    max_tokens: 8,
+    max_tokens: 32,
     stream: false,
   };
+}
+
+function parseJson(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return undefined;
+  }
 }
 
 async function providerCheckHttpFailure(response: Response, checkedAt: string): Promise<ProviderCheckResult> {

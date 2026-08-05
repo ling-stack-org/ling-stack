@@ -1,6 +1,7 @@
 import type { ConversationWorkCellViewModel } from "@ling-stack/conversation-ui-core";
 import type { Translate } from "../../i18n.js";
 import { buildConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
+import { conversationRunHasVisibleWork } from "../../lib/conversation-runtime-visibility.js";
 import type { MessageRowAuthorType } from "../../shared/conversation/index.js";
 import type { RunSession, TerminalReportDto } from "../../types.js";
 import type {
@@ -38,12 +39,15 @@ export function projectNormalConversationFeedItems(input: {
     const executionActions = linkedRun
       ? input.detailContext?.executionActions.filter((action) => action.runId === linkedRun.id) ?? []
       : [];
-    const workCell = message.role === "assistant" && message.threadId && linkedRun && (
-      normalConversationTerminalReportHasWorkEvidence(terminalReport) ||
-      executionActions.length > 0 ||
-      linkedRun.status === "queued" ||
-      linkedRun.status === "waiting_for_approval"
-    ) ? buildConversationWorkCellViewModel({
+    const runApprovals = linkedRun
+      ? input.detailContext?.approvals.filter((approval) => approval.runId === linkedRun.id) ?? []
+      : [];
+    const workCell = message.role === "assistant" && message.threadId && linkedRun && conversationRunHasVisibleWork({
+      run: linkedRun,
+      approvals: runApprovals,
+      executionActions,
+      terminalReport,
+    }) ? buildConversationWorkCellViewModel({
       threadId: message.threadId,
       runs: [linkedRun],
       allowRunThreadFallback: true,
@@ -154,26 +158,4 @@ function runMayHaveWorkspaceChanges(run: RunSession | undefined): boolean {
   }
   const tools = "tools" in run.requestSnapshot ? run.requestSnapshot.tools : undefined;
   return Array.isArray(tools) && tools.some((tool) => tool === "edit" || tool === "write" || tool === "bash");
-}
-
-function normalConversationTerminalReportHasWorkEvidence(report: TerminalReportDto | undefined): boolean {
-  if (!report) {
-    return false;
-  }
-  if (
-    report.outcome.corrections.length > 0 ||
-    report.changes.length > 0 ||
-    report.artifacts.length > 0 ||
-    report.risks.length > 0
-  ) {
-    return true;
-  }
-  const hasExecutionReference = (refs: TerminalReportDto["references"]): boolean => refs.some((ref) =>
-    ref.visibility !== "developer_only" &&
-    ref.sensitivity !== "secret_adjacent" &&
-    ["approval", "artifact", "check", "file", "operation"].includes(ref.kind)
-  );
-  return report.verification.some((verification) =>
-    Boolean(verification.command?.trim() || verification.summary?.trim()) || hasExecutionReference(verification.sourceRefs)
-  ) || hasExecutionReference(report.references) || hasExecutionReference(report.outcome.sourceRefs);
 }

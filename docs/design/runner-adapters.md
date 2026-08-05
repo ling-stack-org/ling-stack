@@ -117,6 +117,14 @@ Adapter packages may have richer internal protocols, but they must normalize int
 - cancellation through `AbortSignal`;
 - terminal result or structured error.
 
+`message_end` may carry a sanitized final assistant `text` plus bounded terminal metadata:
+`stopReason`, a generic `errorMessage`, and an allowlisted `contentKinds` list. Consumers
+use streamed `assistant_text_delta` content first and fall back to final text only when no
+deltas were emitted. Adapters must not expose the full raw provider message, provider
+payload fields, secrets, or reasoning text, and must not duplicate final text after a
+streamed response. A chat consumer treats an otherwise successful run with neither delta
+text nor final text as an output-compatibility failure.
+
 ## Runner Metadata
 
 Each registered runner needs stable metadata:

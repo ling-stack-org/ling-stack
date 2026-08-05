@@ -8250,7 +8250,18 @@ test("channel conversation turn shows thinking for empty pending ai replies", as
 
   await expect(channelFeed.getByText(body)).toBeVisible();
   await expect(channelFeed.locator(".channel-send-thinking-row")).toHaveCount(0);
-  await expect(channelFeed.locator(".conversation-turn-assistant-copy").getByText("正在思考...")).toBeVisible();
+  const thinkingBlock = channelFeed.locator(".conversation-turn-assistant-copy.message-body-with-spinner");
+  const thinkingMessage = thinkingBlock.getByText("正在思考...");
+  await expect(thinkingMessage).toBeVisible();
+  await expect(thinkingMessage).toHaveCSS("font-size", "15px");
+  await expect(thinkingMessage).toHaveCSS("font-weight", "550");
+  await expect(thinkingMessage).toHaveCSS("color", "rgb(17, 17, 17)");
+  await expect(thinkingBlock.locator(".message-pending-spinner")).toHaveCSS("margin-top", "5px");
+  const virtualTailClearance = await channelFeed.locator(".message-feed-virtualizer").evaluate((virtualizer) => {
+    const lastRow = virtualizer.querySelector<HTMLElement>(".message-feed-virtual-row:last-child");
+    return lastRow ? Math.round(virtualizer.getBoundingClientRect().bottom - lastRow.getBoundingClientRect().bottom) : 0;
+  });
+  expect(virtualTailClearance).toBeGreaterThanOrEqual(37);
 });
 
 test("channel URL preview blocked state stays in Activity and still allows sending text", async ({ page }) => {
@@ -9802,6 +9813,95 @@ test("Ling Agent session active run guidance queues follow-up from composer and 
   expect(state.runInterventions).toHaveLength(2);
   expect(state.channelMessages).toHaveLength(0);
   expect(state.channelExecutionProposals).toHaveLength(0);
+});
+
+test("ordinary channel replies require a target only when multiple teammates are replying", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  const seed = state.runs[0];
+  state.aiTeammates = [
+    createMockTeammate({ id: "designer", displayName: "Designer", roleKey: "designer", avatarTone: "blue" }),
+    createMockTeammate({ id: "engineer", displayName: "Engineer", roleKey: "engineer", avatarTone: "teal" }),
+  ];
+  state.tasks = [];
+  state.approvals = [];
+  state.runs = [
+    {
+      ...seed,
+      id: "run_channel_reply_designer",
+      status: "running",
+      taskId: "message_source",
+      teammateId: "designer",
+      workUnitId: "wu_channel_reply_designer",
+      errorMessage: undefined,
+      createdAt: "2026-05-22T00:01:00.000Z",
+      startedAt: "2026-05-22T00:01:00.000Z",
+      updatedAt: "2026-05-22T00:01:01.000Z",
+    },
+    {
+      ...seed,
+      id: "run_channel_reply_engineer",
+      status: "running",
+      taskId: "message_source",
+      teammateId: "engineer",
+      workUnitId: "wu_channel_reply_engineer",
+      errorMessage: undefined,
+      createdAt: "2026-05-22T00:01:02.000Z",
+      startedAt: "2026-05-22T00:01:02.000Z",
+      updatedAt: "2026-05-22T00:01:03.000Z",
+    },
+  ];
+  state.workUnits = state.runs.map((run) => ({
+    id: run.workUnitId as string,
+    workspaceId: "workspace_default",
+    kind: "channel_ai_reply",
+    ownerType: "channel_message",
+    ownerId: "message_source",
+    channelId: "channel_engineering",
+    teammateId: run.teammateId,
+    providerPresetId: "provider_local",
+    idempotencyKey: `channel-reply:${run.id}`,
+    status: "running",
+    priority: 0,
+    attemptCount: 1,
+    activeAttemptId: `attempt_${run.id}`,
+    createdByActor: "system",
+    request: { sourceMessageId: "message_source" },
+    timeoutPolicy: { claimTtlMs: 60_000, heartbeatTtlMs: 60_000, cancelGraceMs: 15_000 },
+    linkedRunId: run.id,
+    linkedMessageId: `reply_${run.teammateId}`,
+    createdAt: run.createdAt,
+    updatedAt: run.updatedAt,
+    startedAt: run.startedAt,
+  }));
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  const composer = page.getByLabel("Channel composer");
+  const targetSelector = composer.getByRole("combobox", { name: "Guide whom" });
+  await expect(targetSelector).toBeVisible();
+  await expect(targetSelector).toHaveValue("");
+  await expect(composer.getByRole("button", { name: "Stop run" })).toBeDisabled();
+
+  const input = channelComposerTextbox(composer);
+  await input.fill("只补充错误处理");
+  await input.press("Enter");
+  await expect(composer).toContainText("Select a teammate before queueing guidance.");
+  expect(state.runInterventions).toHaveLength(0);
+  expect(state.channelMessages).toHaveLength(0);
+
+  await targetSelector.selectOption("run_channel_reply_engineer");
+  await expect(composer.getByRole("button", { name: "Queue guidance" })).toBeEnabled();
+  await input.press("Enter");
+  await expect.poll(() => state.runInterventions.length).toBe(1);
+  expect(state.runInterventions[0]).toMatchObject({
+    sourceRunId: "run_channel_reply_engineer",
+    mode: "queue_followup",
+    instruction: "只补充错误处理",
+  });
+  expect(state.channelMessages).toHaveLength(0);
 });
 
 test("composer approval overlay groups multiple local approvals and excludes review queue actions", async ({ page }) => {

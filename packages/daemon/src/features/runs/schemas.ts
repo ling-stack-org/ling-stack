@@ -71,6 +71,8 @@ export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired
   readonly directWorkspaceBinding?: DirectWorkspaceBinding;
   readonly directWorkspaceSnapshot?: DirectWorkspaceSnapshot;
   readonly skipMemoryRecall?: boolean;
+  /** Internal-only override used by trusted multi-reply channel orchestration. */
+  readonly channelParallelLimit?: number;
 }
 
 export function parseRunRequest(value: unknown): RunRequest {

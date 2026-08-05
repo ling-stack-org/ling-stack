@@ -254,6 +254,16 @@ is active, the authorization control stays visible but locked. The active execut
 the request/effective-policy snapshot captured before start; UI changes cannot mutate it
 mid-run.
 
+Active work guidance always targets a real cancellable `RunSession` and persists through
+the existing `RunIntervention` queue. Ordinary channel replies use that standard
+`RunSession` contract; the linked `channel_ai_reply` WorkUnit remains a supervision
+projection and cannot become a second execution authority. When one ordinary reply is
+active, the Composer selects it automatically. When several teammates reply concurrently,
+the Composer stays in guidance mode and requires the user to choose "Guide whom" before
+queueing guidance or stopping a reply. Missing selection must never fall through to an
+ordinary channel send. No second guidance queue, continuation protocol, or business table
+is permitted.
+
 ## Component Contract
 
 ### ConversationShell
@@ -299,6 +309,13 @@ Rules:
 - entering a conversation opens at latest,
 - loading older messages preserves scroll position,
 - active/streaming rows update in place,
+- an optimistic send and its acknowledged conversation turn retain one render identity;
+  domain message and turn IDs remain unchanged,
+- while the user remains pinned to latest, text revisions and measured row-height changes
+  schedule at most one tail reconciliation per animation frame; explicit user scroll
+  disables follow until the user returns to latest,
+- channel Composer clearance is virtual feed `paddingEnd`, not duplicated viewport or row
+  padding,
 - virtualized and non-virtualized feeds must preserve row width and action placement,
 - empty state copy is surface-specific, but the visual component is shared.
 
@@ -324,6 +341,12 @@ Rules:
 - AI labels are not repeated when the teammate avatar and surface already identify the
   speaker,
 - streaming updates mutate one row, not multiple bubbles,
+- optimistic pending state and acknowledged pending state use the same `MessageRow`, body
+  typography and strong text color; only the spinner uses muted color,
+- the shared 13px pending spinner uses a 5px first-line offset; rows must not vertically
+  center the entire text block to compensate,
+- ordinary conversation body text uses 15px, 550 weight and the semantic strong text token
+  on all three desktop surfaces,
 - blocked and failed rows remain visible with an actionable reason.
 
 ### MessageActionBar
@@ -420,6 +443,11 @@ Rules:
 - channel teammate activity belongs above the message action row,
 - normal conversation and private chat may render compact work cells when actual work
   happened,
+- a successful text-only chat run is not visible work. WorkCell appears only for tool or
+  execution actions, non-approved approvals, files/artifacts, durable changes/risks, or a
+  failed/approval-blocked run,
+- generic successful verification summaries such as `1 check passed` do not create a
+  WorkCell by themselves,
 - run/thread detail can render the richest version of the same work contract.
 
 ## Surface Policies
@@ -842,6 +870,9 @@ Shared visual rules:
 - composer shell, toolbar, send button, pending asset strip, popovers, and focus states
   use one shared visual system across normal conversation, channel, and teammate
   private chat,
+- pending images, files, links and file references stay in one non-wrapping row; overflow
+  scrolls horizontally inside the strip and never expands the page or wraps into a second
+  Composer row,
 - user messages align with the same right edge as assistant rows' content column,
 - avatars are compact and actual where available,
 - icon stacks overlap cleanly with stable spacing,
@@ -851,7 +882,8 @@ Shared visual rules:
 - status-critical controls remain visible,
 - titles in evidence/source rows may use semantic accent color, but the surface must not
   collapse into a one-note palette,
-- text must not overlap or require horizontal scrolling outside code/log blocks.
+- text must not overlap or require horizontal scrolling outside code/log blocks,
+- the final visible message keeps at least 38px clearance above the channel composer.
 
 ## Regression Contract
 
@@ -878,6 +910,17 @@ Every future slice touching conversation UI should keep or add focused tests for
 - Mermaid and structured Markdown render through the same body renderer on channel,
   normal, private, and topic surfaces,
 - invalid or incomplete Mermaid falls back to source without breaking the transcript.
+- pending text does not change size, weight or color when the server acknowledges it,
+- optimistic send acknowledgement does not replace the virtual row identity,
+- a pinned channel feed follows in-place streaming growth while user-scrolled history
+  keeps its visible anchor,
+- four pending images remain one internally scrollable Composer row on normal, channel and
+  teammate-private surfaces,
+- successful text-only chat runs do not expose WorkCell status or generic check summaries,
+- runners that emit only final assistant text still produce one visible response without
+  duplicating providers that already emitted text deltas,
+- reasoning-only or structurally empty successful responses never become assistant body
+  text and fail provider readiness with `empty_response`.
 
 ## Implementation Slice Status
 

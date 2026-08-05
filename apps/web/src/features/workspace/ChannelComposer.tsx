@@ -34,7 +34,7 @@ import { conversationPermissionPresetMenuOptions } from "../../lib/session-permi
 import type { InlineApprovalView } from "../../lib/inline-approvals.js";
 import { useI18n } from "../../i18n.js";
 import {
-  pendingAssetLabel,
+  ComposerPendingAssetStrip,
   TokenizedComposerInput,
   type ActiveSlashCommandPicker,
   type PendingAttachmentItem,
@@ -74,7 +74,9 @@ export interface ActiveMentionPicker {
 
 interface ChannelComposerProps {
   readonly statusNode: ReactNode;
-  readonly activeRun: boolean;
+  readonly guidanceModeActive: boolean;
+  readonly guidanceTargetSelected: boolean;
+  readonly guidanceTargetNode?: ReactNode;
   readonly composerBusy: boolean;
   readonly composerDragActive: boolean;
   readonly composerDropZoneStyle: CSSProperties;
@@ -123,7 +125,6 @@ interface ChannelComposerProps {
   readonly submitLabel: string;
   readonly submitTitle: string;
   readonly value: string;
-  readonly formatBytes: (value: number) => string;
   readonly onAttachFiles: (files: FileList | readonly File[]) => void | Promise<void>;
   readonly onCommitMention: (option: ChannelMention) => void;
   readonly onCommitSlashCommand: (option: ComposerSlashCommandOption) => void;
@@ -160,7 +161,6 @@ interface ChannelComposerProps {
 }
 
 export function ChannelComposer({
-  activeRun,
   composerBusy,
   composerDragActive,
   composerDropZoneStyle,
@@ -171,7 +171,6 @@ export function ChannelComposer({
   composerSlashTargetLabel,
   executableSlashCommandId,
   dropZoneClassName,
-  formatBytes,
   inlineApprovalViews,
   inputParts,
   inputRef,
@@ -226,6 +225,9 @@ export function ChannelComposer({
   goalError,
   goalExpanded,
   goalChipVisible,
+  guidanceModeActive,
+  guidanceTargetNode,
+  guidanceTargetSelected,
   channelTeammateIds,
   resolvingApprovals,
   runGuidanceError,
@@ -364,9 +366,14 @@ export function ChannelComposer({
           ) : null}
           {showGuidance ? (
             <>
+          {guidanceTargetNode}
           <ConversationGuidanceStrip
-            title={activeRun ? t("Run guidance") : t("Queued guidance")}
-            description={activeRun ? t("Type guidance in the message box and press Enter to queue it.") : t("Guidance is queued.")}
+            title={guidanceModeActive ? t("Run guidance") : t("Queued guidance")}
+            description={guidanceModeActive
+              ? guidanceTargetSelected
+                ? t("Type guidance in the message box and press Enter to queue it.")
+                : t("Select a teammate reply before adding guidance.")
+              : t("Guidance is queued.")}
             submitting={runGuidanceSubmitting}
             items={runGuidanceItems}
           />
@@ -414,27 +421,7 @@ export function ChannelComposer({
         </button>
       )}
       previewNode={pendingMessageAssetsVisible ? (
-        <div className="pending-assets composer-preview-strip" aria-label={t("Pending message assets")}>
-          {pendingAttachments.map((item) => (
-            <div key={item.localId} className={`composer-preview-card ${item.previewUrl ? "image" : "file"} ${item.state}`}>
-              {item.previewUrl ? (
-                <img className="composer-preview-thumbnail" src={item.previewUrl} alt={item.fileName} />
-              ) : (
-                <span className="composer-preview-file-icon" aria-hidden="true">
-                  <FileText size={17} />
-                </span>
-              )}
-              <span className="composer-preview-body">
-                <strong title={item.fileName}>{item.fileName}</strong>
-                <small>{item.error ?? `${t(pendingAssetLabel(item.state))} · ${formatBytes(item.attachment?.sizeBytes ?? item.sizeBytes)}`}</small>
-              </span>
-              {item.state === "uploading" ? <Loader2 className="composer-preview-state-icon spin" size={13} /> : null}
-              <button className="composer-preview-remove" type="button" onClick={() => onRemovePendingAttachment(item.localId)} aria-label={t("Remove pending attachment")}>
-                <X size={13} />
-              </button>
-            </div>
-          ))}
-        </div>
+        <ComposerPendingAssetStrip attachments={pendingAttachments} onRemoveAttachment={onRemovePendingAttachment} />
       ) : null}
       inputNode={(
         <TokenizedComposerInput
@@ -546,7 +533,7 @@ export function ChannelComposer({
                   className="composer-add-menu-row"
                   type="button"
                   role="menuitem"
-                  disabled={!selectedChannelId || composerBusy || planModeBusy || activeRun}
+                  disabled={!selectedChannelId || composerBusy || planModeBusy || guidanceModeActive}
                   title={planModeActive ? t("Plan Mode is on") : t("Plan first, then implement after review")}
                   onClick={() => {
                     setAddMenuOpen(false);
@@ -596,7 +583,7 @@ export function ChannelComposer({
                 className="conversation-mode-chip-main"
                 type="button"
                 onClick={onTogglePlanMode}
-                disabled={!selectedChannelId || composerBusy || planModeBusy || activeRun}
+                disabled={!selectedChannelId || composerBusy || planModeBusy || guidanceModeActive}
                 aria-label={t("Plan Mode")}
                 title={planModeActive
                   ? t("Plan Mode is on. Click to exit Plan Mode.")
@@ -609,7 +596,7 @@ export function ChannelComposer({
                 className="conversation-mode-chip-close"
                 type="button"
                 onClick={onClosePlanModeChip}
-                disabled={!selectedChannelId || (planModeActive && (composerBusy || planModeBusy || activeRun))}
+                disabled={!selectedChannelId || (planModeActive && (composerBusy || planModeBusy || guidanceModeActive))}
                 aria-label={planModeActive ? t("Exit and hide Plan Mode") : t("Hide Plan Mode")}
                 title={planModeActive ? t("Exit and hide Plan Mode") : t("Hide Plan Mode")}
               >
@@ -653,7 +640,7 @@ export function ChannelComposer({
           aria-label={submitLabel}
           title={submitTitle}
         >
-          {activeRun
+          {guidanceModeActive
             ? composerHasSendableContent
               ? runGuidanceSubmitting === "queue_followup" ? <Loader2 className="spin" size={15} /> : <Send size={15} />
               : isCancellingRun ? <Loader2 className="spin" size={15} /> : <Square size={15} />

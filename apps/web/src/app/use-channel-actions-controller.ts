@@ -50,6 +50,7 @@ import type {
   ChannelMessageStreamDoneEvent,
   ChannelMessageStreamErrorEvent,
   ChannelMessageStreamReadyEvent,
+  ChannelMessageStreamRunLinkedEvent,
   ChannelWorkflow,
   ChannelWorkflowStep,
   ProviderPreset,
@@ -185,6 +186,8 @@ export function useChannelActionsController(input: {
   readonly refreshUsedMemoryAudit: (cwd?: string) => Promise<void>;
   readonly refreshChannelMessageRouteDecisions: (channelId?: string) => Promise<void>;
   readonly refreshChannelIntentDecisions: (channelId?: string) => Promise<void>;
+  readonly refreshRuns: (cwd?: string) => Promise<void>;
+  readonly refreshRuntimeState: (cwd?: string) => Promise<void>;
   readonly refreshChannelActivity: () => Promise<void>;
 }): ChannelActionsController {
   function reportFeedback(
@@ -495,6 +498,18 @@ export function useChannelActionsController(input: {
         if (event.event === "delta") {
           const data = JSON.parse(event.data) as ChannelMessageStreamDeltaEvent;
           input.setChannelMessages((current) => current.map((message) => message.id === data.messageId ? { ...message, body: data.body, status: "pending" } : message));
+          return;
+        }
+        if (event.event === "run_linked") {
+          const data = JSON.parse(event.data) as ChannelMessageStreamRunLinkedEvent;
+          input.setChannelMessages((current) => current.map((message) =>
+            message.id === data.messageId ? { ...message, linkedRunId: data.linkedRunId } : message
+          ));
+          const workspaceCwd = input.form.cwd.trim();
+          void Promise.allSettled([
+            input.refreshRuns(workspaceCwd),
+            input.refreshRuntimeState(workspaceCwd),
+          ]);
           return;
         }
         if (event.event === "done") {

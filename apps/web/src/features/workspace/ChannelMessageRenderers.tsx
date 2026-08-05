@@ -255,7 +255,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
     raw_debug_ref: renderGenericTranscriptBlock,
   });
 
-  function renderConversationTurnItem(turn: ConversationTurnViewModel): ReactNode {
+  function renderConversationTurnItem(turn: ConversationTurnViewModel, pendingReplyPreview?: PendingChannelSendPreview): ReactNode {
     const operationCell = turn.operationCell;
     const operationRef = turn.operationRef;
     let detailsState: ConversationWorkCellDetailsState = { status: "not_loaded" };
@@ -272,6 +272,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
       <div className="conversation-turn" data-conversation-turn-id={turn.id}>
         {renderMessageFeedActivityItem(channelMessageToActivityItem(turn.sourceMessage))}
         {renderConversationTurnAssistantTranscript(turn, detailsState, onLoadDetails)}
+        {pendingReplyPreview ? renderPendingChannelReplyStatus() : null}
       </div>
     );
   }
@@ -1025,7 +1026,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
       return renderPendingChannelSendPreview(feedItem.preview, feedItem.showSentMessage);
     }
     if (feedItem.kind === "turn") {
-      return renderConversationTurnItem(feedItem.turn);
+      return renderConversationTurnItem(feedItem.turn, feedItem.pendingReplyPreview);
     }
     return renderMessageFeedActivityItem(feedItem.item);
   }
@@ -1049,11 +1050,23 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
             attachmentsNode={renderChannelMessageAssets(preview.attachmentIds, preview.fileRefs, preview.linkPreviewIds, preview.channelId)}
           />
         ) : null}
-        <div className="channel-send-thinking-row" role="status" aria-live="polite">
-          <Loader2 className="message-pending-spinner spin" size={13} />
-          <span>{input.t("Thinking...")}</span>
-        </div>
+        {renderPendingChannelReplyStatus()}
       </div>
+    );
+  }
+
+  function renderPendingChannelReplyStatus(): ReactNode {
+    return (
+      <MessageRow
+        surface={channelSurface}
+        className="channel-message-row channel-send-thinking-message"
+        authorType="ai-teammate"
+        avatar={renderLingAgentAvatar()}
+        authorName={input.t("Ling Agent")}
+        body={input.t("Thinking...")}
+        bodyCompact
+        bodyStreaming
+      />
     );
   }
 

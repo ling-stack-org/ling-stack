@@ -21,7 +21,6 @@ import type {
   ChannelLinkPreview,
   ChannelMention,
   ChannelMessageFileRef,
-  RunSession,
 } from "../../types.js";
 import type { ActiveMentionPicker, ChannelComposerSendState } from "./ChannelComposer.js";
 import type { PendingLinkPreviewItem } from "./useChannelComposerDraftController.js";
@@ -30,7 +29,7 @@ import { findMentionsInText, mentionTokenExistsInText, mergeMentions } from "./c
 interface ChannelComposerInputControllerInput {
   readonly cwd: string;
   readonly selectedChannelId: string;
-  readonly activeConversationRun: RunSession | undefined;
+  readonly guidanceModeActive: boolean;
   readonly messageDraft: string;
   readonly setMessageDraft: Dispatch<SetStateAction<string>>;
   readonly pendingAttachments: readonly PendingAttachmentItem<ChannelAttachment>[];
@@ -98,7 +97,7 @@ export interface ChannelComposerInputController {
 type ComposerSlashIntentForInput = ReturnType<typeof parseComposerSlashIntent>;
 
 export function useChannelComposerInputController({
-  activeConversationRun,
+  guidanceModeActive,
   attachmentPreviewUrlsRef,
   autoPreviewUrlsRef,
   composerInputRef,
@@ -444,13 +443,13 @@ export function useChannelComposerInputController({
     [composerInputParts],
   );
   const composerSlashIntent = useMemo(
-    () => activeConversationRun
+    () => guidanceModeActive
       ? { kind: "none" as const }
       : parseComposerSlashIntent(messageDraft.trim(), {
         teammateMentions: teammateOptions.map((teammate) => ({ id: teammate.id, label: teammate.label })),
         commands: slashCommands,
       }),
-    [activeConversationRun, messageDraft, slashCommands, teammateOptions],
+    [guidanceModeActive, messageDraft, slashCommands, teammateOptions],
   );
   const composerSlashCommandActive = composerSlashIntent.kind !== "none";
   const composerSlashTargetLabel = composerSlashCommandActive ? composerSlashCommandTargetLabel(composerSlashIntent, t) : "";
@@ -508,7 +507,7 @@ export function useChannelComposerInputController({
     if (!mentionPicker && !slashPicker) {
       if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
         event.preventDefault();
-        if (activeConversationRun) {
+        if (guidanceModeActive) {
           if (composerHasSendableContent) {
             void actions.submitChannelRunGuidanceFromDraft();
           }
@@ -531,10 +530,10 @@ export function useChannelComposerInputController({
       setSlashActiveIndex(0);
     }
   }, [
-    activeConversationRun,
     commitMention,
     commitSlashCommand,
     composerHasSendableContent,
+    guidanceModeActive,
     mentionActiveIndex,
     mentionPicker,
     mentionPickerOptions,

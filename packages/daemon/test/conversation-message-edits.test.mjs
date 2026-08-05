@@ -579,6 +579,114 @@ test("conversation detail projects approvals and queued guidance once with struc
   }
 });
 
+test("conversation detail uses final assistant message text when no text deltas were emitted", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-conversation-final-output-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const thread = store.createLingThread({
+      kind: "conversation",
+      teammateId: LING_AGENT_ID,
+      title: "Final output fallback",
+      objective: "Final output fallback",
+    }, "2026-07-12T09:00:00.000Z");
+    const turn = store.createLingTurn({
+      threadId: thread.id,
+      kind: "initial_request",
+      title: "Return a final answer",
+      userInstruction: "Return a final answer",
+      teammateId: LING_AGENT_ID,
+      createdByActor: "local-user",
+    }, "2026-07-12T09:00:01.000Z");
+    const run = store.createRun(createRunInput({
+      id: "run_conversation_final_output",
+      cwd,
+      threadId: thread.id,
+      turnId: turn.id,
+      createdAt: "2026-07-12T09:00:02.000Z",
+    }));
+    finishRun(store, run.id, "2026-07-12T09:00:03.000Z");
+    store.appendEvent(run.id, "message_end", {
+      type: "message_end",
+      role: "assistant",
+      text: "Final-only answer",
+    });
+
+    const assistant = buildConversationDetail(store, cwd, thread).messages
+      .find((message) => message.id === `conversation-assistant:${turn.id}`);
+    assert.equal(assistant?.content, "Final-only answer");
+    assert.equal(assistant?.status, "succeeded");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("conversation detail prefers streamed text and treats a completely empty chat result as failed", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-conversation-empty-output-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const thread = store.createLingThread({
+      kind: "conversation",
+      teammateId: LING_AGENT_ID,
+      title: "Output precedence",
+      objective: "Output precedence",
+    }, "2026-07-12T09:10:00.000Z");
+    const streamedTurn = store.createLingTurn({
+      threadId: thread.id,
+      kind: "initial_request",
+      title: "Stream the answer",
+      userInstruction: "Stream the answer",
+      teammateId: LING_AGENT_ID,
+      createdByActor: "local-user",
+    }, "2026-07-12T09:10:01.000Z");
+    const streamedRun = store.createRun(createRunInput({
+      id: "run_conversation_streamed_output",
+      cwd,
+      threadId: thread.id,
+      turnId: streamedTurn.id,
+      createdAt: "2026-07-12T09:10:02.000Z",
+    }));
+    finishRun(store, streamedRun.id, "2026-07-12T09:10:03.000Z");
+    store.appendEvent(streamedRun.id, "assistant_text_delta", { type: "assistant_text_delta", text: "Streamed answer" });
+    store.appendEvent(streamedRun.id, "message_end", { type: "message_end", role: "assistant", text: "Streamed answer" });
+
+    const emptyTurn = store.createLingTurn({
+      threadId: thread.id,
+      kind: "manual_followup",
+      title: "你是谁",
+      userInstruction: "你是谁",
+      teammateId: LING_AGENT_ID,
+      createdByActor: "local-user",
+    }, "2026-07-12T09:10:04.000Z");
+    const emptyRun = store.createRun({
+      ...createRunInput({
+        id: "run_conversation_empty_output",
+        cwd,
+        threadId: thread.id,
+        turnId: emptyTurn.id,
+        createdAt: "2026-07-12T09:10:05.000Z",
+      }),
+      requestSnapshot: {
+        cwd,
+        responseLanguage: "zh-CN",
+        task: { id: "task_run_conversation_empty_output", title: "你是谁", prompt: "你是谁" },
+      },
+    });
+    finishRun(store, emptyRun.id, "2026-07-12T09:10:06.000Z");
+    store.appendEvent(emptyRun.id, "message_end", { type: "message_end", role: "assistant" });
+
+    const detail = buildConversationDetail(store, cwd, thread);
+    const streamed = detail.messages.find((message) => message.id === `conversation-assistant:${streamedTurn.id}`);
+    const empty = detail.messages.find((message) => message.id === `conversation-assistant:${emptyTurn.id}`);
+    assert.equal(streamed?.content, "Streamed answer");
+    assert.equal(empty?.status, "failed");
+    assert.equal(empty?.content, "模型没有返回可显示的内容，请重试或切换模型。");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 function createRunInput(overrides) {
   return {
     id: overrides.id,
@@ -593,4 +701,23 @@ function createRunInput(overrides) {
     turnId: overrides.turnId,
     createdAt: overrides.createdAt,
   };
+}
+
+function finishRun(store, runId, now) {
+  assert.equal(store.transitionRunStatus({
+    runId,
+    expectedStatus: "queued",
+    event: "runner_started",
+    actor: "runner",
+    now,
+    startedAt: now,
+  }).ok, true);
+  assert.equal(store.transitionRunStatus({
+    runId,
+    expectedStatus: "running",
+    event: "runner_succeeded",
+    actor: "runner",
+    now,
+    endedAt: now,
+  }).ok, true);
 }

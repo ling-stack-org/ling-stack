@@ -36,6 +36,12 @@ The current daemon and Web surfaces implement:
 - channel Composer controls that distinguish queued guidance from stop-and-redirect;
 - refresh-safe intervention lists and explicit cancel/edit/promote actions.
 
+Ordinary channel replies are eligible sources because each reply now owns a standard
+`RunSession`. The `channel_ai_reply` WorkUnit only projects supervision state. A single
+active reply is targeted automatically; concurrent teammate replies require explicit
+target selection before queue, redirect, or stop. This reuses the same intervention FIFO
+and does not introduce another queue or persistence table.
+
 Runner-native token-stream prompt injection remains intentionally unsupported. Guidance
 is applied only at an auditable continuation boundary.
 

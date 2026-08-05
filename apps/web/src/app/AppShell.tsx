@@ -1665,6 +1665,8 @@ export function AppShell(): JSX.Element {
     refreshUsedMemoryAudit,
     refreshChannelMessageRouteDecisions,
     refreshChannelIntentDecisions,
+    refreshRuns,
+    refreshRuntimeState,
     refreshChannelActivity,
   });
   const {

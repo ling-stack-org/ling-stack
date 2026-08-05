@@ -27,6 +27,7 @@ const typedActionOwners = [
   "src/features/providers/ProviderRouteActions.tsx",
   "src/features/providers/ProviderRouteList.tsx",
   "src/features/providers/ProviderSecretInput.tsx",
+  "src/shared/components/ComposerPendingAssetStrip.tsx",
   "src/features/settings/ExternalWorkSettingsPanel.tsx",
   "src/features/settings/ArchivedItemList.tsx",
   "src/features/settings/ArchivedItemsToolbar.tsx",

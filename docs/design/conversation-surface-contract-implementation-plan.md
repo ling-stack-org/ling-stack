@@ -2,7 +2,7 @@
 
 Status: active implementation plan
 Owner: conversation UI package and product-surface maintainers
-Last verified: 2026-08-03
+Last verified: 2026-08-05
 
 ## Owning Contracts
 
@@ -34,6 +34,24 @@ and consumption work.
   ordinary user message and do not expose queue-specific chrome.
 - Tool, approval, artifact and intervention events invalidate selected conversation detail
   through existing SSE/control-plane streams without idle polling.
+- Shared message bodies use stable 15px/550 strong text from the first pending frame;
+  the 13px pending spinner uses a shared 5px first-line offset.
+- Channel optimistic sends retain one virtual render identity through acknowledgement and
+  reply start. A measured tail observer follows once per frame only while the user remains
+  at latest, and virtual `paddingEnd` owns the 38px Composer clearance.
+- Channel, normal conversation and teammate private chat use one pending-asset component.
+  Attachments and links stay in one non-wrapping row with internal horizontal scrolling.
+- Successful text-only chat runs stay quiet. WorkCell remains for tools, approvals,
+  artifacts, durable changes/risks and failed or approval-blocked runs.
+- Final assistant text from `message_end` is persisted as a fallback when a compatible
+  provider emits no text deltas; fully empty chat output becomes a localized message-level
+  failure. Provider checks also reject successful HTTP responses with no displayable text
+  as `empty_response`.
+- Ordinary channel replies now execute as standard `RunSession` records. Their
+  `channel_ai_reply` WorkUnit is only the supervision projection linked to that run and
+  message; guidance reuses the existing `RunIntervention`, cancellation and continuation
+  paths. One active teammate reply is selected automatically, while concurrent replies
+  require an explicit "Guide whom" selection. No second guidance queue or table is added.
 - Channel-only teammate routing, topic replies, goals, plans and multi-agent activity remain
   channel-only.
 
@@ -49,7 +67,8 @@ and consumption work.
 ### Evidence And Attachments
 
 - Consolidate source, artifact, diff and command evidence into shared typed projections.
-- Finish attachment rendering, failure and recovery states without exposing raw payloads.
+- Finish sent-attachment rendering, failure and recovery states without exposing raw
+  payloads. Pending Composer previews are already shared across all three Web surfaces.
 - Keep large content lazy and cancellable; stale hydration cannot replace newer content.
 
 ### Package CSS

@@ -41,7 +41,7 @@
   max-height: none;
   flex-direction: column;
   gap: 18px;
-  padding: 0 4px 18px;
+  padding: 0 4px;
   overflow-y: auto;
   overflow-anchor: none;
   overscroll-behavior: contain;
@@ -652,6 +652,33 @@
   border-radius: var(--ling-radius-lg);
   background: var(--ling-bg-composer);
   box-shadow: var(--ling-shadow-medium);
+}
+
+.channel-guidance-target-selector {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(180px, 260px);
+  align-items: center;
+  justify-content: start;
+  gap: 10px;
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-sm);
+}
+
+.channel-guidance-target-selector label {
+  color: var(--ling-text-default);
+  font-weight: 550;
+}
+
+.channel-guidance-target-select {
+  width: 100%;
+}
+
+@media (max-width: 760px) {
+  .channel-guidance-target-selector {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
 }
 
 [data-conversation-composer][data-surface="channel"]:focus-within {

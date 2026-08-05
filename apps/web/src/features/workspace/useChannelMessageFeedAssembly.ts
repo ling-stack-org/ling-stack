@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import type { ChannelActivityItem } from "../../lib/channel-activity.js";
 import type { ConversationTurnViewModel } from "../../lib/conversation-turn-projector.js";
 import type { ChannelMessage, ChannelMessageFileRef } from "../../types.js";
@@ -21,6 +21,7 @@ interface ChannelMessageFeedAssemblyInput {
 
 interface PendingChannelSendState {
   readonly acknowledged: boolean;
+  readonly acknowledgedMessageId?: string;
   readonly aiReplyStarted: boolean;
 }
 
@@ -47,11 +48,33 @@ export function useChannelMessageFeedAssembly({
   selectedChannelBranchRootThreadId,
   selectedChannelId,
 }: ChannelMessageFeedAssemblyInput): ChannelMessageFeedAssembly {
+  const optimisticRenderKeyByMessageIdRef = useRef(new Map<string, string>());
+  const pendingChannelSendState = useMemo(
+    () => derivePendingChannelSendState(channelMessages, pendingChannelSendPreview),
+    [channelMessages, pendingChannelSendPreview],
+  );
+  const pendingRenderKey = pendingChannelSendPreview ? `pending-send:${pendingChannelSendPreview.id}` : undefined;
+  if (pendingChannelSendState.acknowledgedMessageId && pendingRenderKey) {
+    optimisticRenderKeyByMessageIdRef.current.set(pendingChannelSendState.acknowledgedMessageId, pendingRenderKey);
+  }
+
   const conversationFeedBodyItems = useMemo<readonly ChannelMessageFeedItem[]>(
     () => {
       const items: Array<ChannelMessageFeedItem & { readonly createdAt: string }> = [
         ...(!auditActivityVisible
-          ? conversationTurns.map((turn) => ({ id: turn.id, kind: "turn" as const, turn, createdAt: turn.createdAt }))
+          ? conversationTurns.map((turn) => ({
+            id: turn.id,
+            kind: "turn" as const,
+            turn,
+            renderKey: optimisticRenderKeyByMessageIdRef.current.get(turn.sourceMessageId),
+            pendingReplyPreview:
+              pendingChannelSendPreview &&
+              pendingChannelSendState.acknowledgedMessageId === turn.sourceMessageId &&
+              !pendingChannelSendState.aiReplyStarted
+                ? pendingChannelSendPreview
+                : undefined,
+            createdAt: turn.createdAt,
+          }))
           : []),
         ...renderableActivityItems.map((item) => ({ id: item.id, kind: "activity" as const, item, createdAt: item.createdAt })),
       ];
@@ -61,24 +84,15 @@ export function useChannelMessageFeedAssembly({
       });
       return items.map(({ createdAt: _createdAt, ...item }) => item);
     },
-    [auditActivityVisible, conversationTurns, renderableActivityItems],
+    [auditActivityVisible, conversationTurns, pendingChannelSendPreview, pendingChannelSendState, renderableActivityItems],
   );
 
   const messageFeedCanLoadOlder =
     channelMessagesHasOlder && !activityFiltersActive && conversationFeedBodyItems.length > 0;
 
-  const pendingChannelSendState = useMemo(
-    () => derivePendingChannelSendState(channelMessages, pendingChannelSendPreview),
-    [channelMessages, pendingChannelSendPreview],
-  );
-
-  const pendingChannelSendResolved =
-    pendingChannelSendState.acknowledged &&
-    pendingChannelSendState.aiReplyStarted;
-
   const pendingChannelSendVisible = Boolean(
     pendingChannelSendPreview &&
-    !pendingChannelSendResolved &&
+    !pendingChannelSendState.acknowledged &&
     pendingChannelSendPreview.channelId === selectedChannelId &&
     pendingChannelSendPreview.threadId === selectedChannelBranchRootThreadId &&
     !activeWorkThreadId,
@@ -91,9 +105,10 @@ export function useChannelMessageFeedAssembly({
       ...(pendingChannelSendVisible && pendingChannelSendPreview
         ? [{
           id: `pending-send:${pendingChannelSendPreview.id}`,
+          renderKey: pendingRenderKey,
           kind: "pending-send" as const,
           preview: pendingChannelSendPreview,
-          showSentMessage: !pendingChannelSendState.acknowledged,
+          showSentMessage: true,
         }]
         : []),
     ],
@@ -145,6 +160,7 @@ function derivePendingChannelSendState(
   });
   return {
     acknowledged: Boolean(acknowledgedMessage),
+    acknowledgedMessageId: acknowledgedMessage?.id,
     aiReplyStarted,
   };
 }

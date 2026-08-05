@@ -470,6 +470,7 @@ export async function executeRunRequest(
       workUnit,
       attempt,
       channel: preparedConcurrency.channel,
+      channelParallelLimit: runRequest.channelParallelLimit,
       providerKey: runRequest.providerPresetId ?? `${resolvedProvider.provider}:${resolvedProvider.model}`,
       runnerId: runnerResolution.effectiveRunnerId,
       now: createdAt,
@@ -1641,6 +1642,13 @@ function resolveRunWorkUnitOwner(
     return {
       kind: "teammate_direct_reply",
       ownerType: "teammate_direct_message",
+      ownerId: runRequest.sourceMessageId ?? runRequest.task.id,
+    };
+  }
+  if (thread.kind === "channel_discussion") {
+    return {
+      kind: "channel_ai_reply",
+      ownerType: "channel_message",
       ownerId: runRequest.sourceMessageId ?? runRequest.task.id,
     };
   }

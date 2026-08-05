@@ -4,6 +4,7 @@ import {
   buildConversationWorkCellViewModel,
   type ConversationWorkCellViewModel,
 } from "../../lib/conversation-work-cell.js";
+import { conversationRunHasVisibleWork } from "../../lib/conversation-runtime-visibility.js";
 import { providerRunPreflightBlocker } from "../../lib/providers.js";
 import type { LocalFileReference } from "../../shared/conversation/index.js";
 import type {
@@ -152,19 +153,25 @@ export function buildTeammatePrivateWorkCellMap(input: {
     if (!run?.threadId || (run.teammateId && run.teammateId !== input.teammateId)) {
       continue;
     }
+    const executionActions = input.executionActions.filter((action) => action.runId === run.id);
+    const approvals = input.approvals.filter((approval) => approval.runId === run.id);
+    const terminalReport = input.terminalReports.find((report) =>
+      (report.source.kind === "run" && report.source.id === run.id) ||
+      (Boolean(report.threadId) && report.threadId === run.threadId)
+    );
+    if (!conversationRunHasVisibleWork({ run, approvals, executionActions, terminalReport })) {
+      continue;
+    }
     const model = buildConversationWorkCellViewModel({
       threadId: run.threadId,
       runs: [run],
       allowRunThreadFallback: true,
-      approvals: input.approvals,
+      approvals,
       artifactsByRun: {},
-      executionActions: input.executionActions.filter((action) => action.runId === run.id),
+      executionActions,
       t: input.t,
       artifactHref: (artifact) => artifactContentUrl(artifact.id, run.cwd),
-      terminalReport: input.terminalReports.find((report) =>
-        (report.source.kind === "run" && report.source.id === run.id) ||
-        (Boolean(report.threadId) && report.threadId === run.threadId)
-      ),
+      terminalReport,
     });
     if (model) {
       cells.set(message.id, { model });

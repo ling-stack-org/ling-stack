@@ -219,6 +219,17 @@ export async function handleConversationStream(
             status: "running",
             updatedAt: envelope.ts,
           };
+        } else if (
+          envelope.type === "message_end" &&
+          readEventRole(envelope) === "assistant" &&
+          !assistantMessage.content.trim()
+        ) {
+          assistantMessage = {
+            ...assistantMessage,
+            content: readEventText(envelope),
+            status: "running",
+            updatedAt: envelope.ts,
+          };
         } else if (envelope.type === "run_error") {
           assistantMessage = {
             ...assistantMessage,
@@ -251,9 +262,12 @@ export async function handleConversationStream(
         const latestThread = store.getLingThread(thread.id) ?? thread;
         const latestTurn = store.getLingTurn(turn.id) ?? turn;
         const terminalStatus = statusFromRun(latestRun) ?? assistantMessage.status;
+        const finalStatus = terminalStatus === "succeeded" && !assistantMessage.content.trim()
+          ? "failed"
+          : terminalStatus;
         const finalAssistant = {
           ...assistantMessage,
-          status: terminalStatus,
+          status: finalStatus,
           content: assistantMessage.content || fallbackAssistantContent(terminalStatus, input.responseLanguage, input.message),
           updatedAt: latestRun?.updatedAt ?? new Date().toISOString(),
         };
@@ -650,9 +664,14 @@ function createAssistantTranscriptMessage(
 
 function assistantMessageFromRun(store: RunStore, thread: LingThread, turn: LingTurn, run: RunSession): ConversationTranscriptMessage {
   const events = store.listEvents(run.id, { limit: 1000 });
-  const content = events.filter((event) => event.type === "assistant_text_delta").map(readEventText).join("");
+  const streamedContent = events.filter((event) => event.type === "assistant_text_delta").map(readEventText).join("");
+  const finalContent = [...events]
+    .reverse()
+    .find((event) => event.type === "message_end" && readEventRole(event) === "assistant" && readEventText(event).trim());
+  const content = streamedContent || (finalContent ? readEventText(finalContent) : "");
   const error = [...events].reverse().map(readEventError).find(Boolean);
   const status = statusFromRun(run) ?? "running";
+  const projectedStatus = status === "succeeded" && !content.trim() ? "failed" : status;
   const requestSnapshot = readRecord(run.requestSnapshot);
   const responseLanguage = readResponseLanguagePreference(readOptionalRecordString(requestSnapshot, "responseLanguage"));
   return createAssistantTranscriptMessage(
@@ -660,7 +679,7 @@ function assistantMessageFromRun(store: RunStore, thread: LingThread, turn: Ling
     turn,
     run,
     content || error || fallbackAssistantContent(status, responseLanguage, turn.userInstruction),
-    status,
+    projectedStatus,
     run.updatedAt,
   );
 }
@@ -717,9 +736,13 @@ function readEventText(event: RunEventEnvelope): string {
   return readOptionalRecordString(readRecord(event.data), "text") ?? "";
 }
 
+function readEventRole(event: RunEventEnvelope): string {
+  return readOptionalRecordString(readRecord(event.data), "role") ?? "";
+}
+
 function readEventError(event: RunEventEnvelope): string {
   const data = readRecord(event.data);
-  return readOptionalRecordString(data, "message") || readOptionalRecordString(data, "error") || "";
+  return readOptionalRecordString(data, "message") || readOptionalRecordString(data, "errorMessage") || readOptionalRecordString(data, "error") || "";
 }
 
 function readErrorBodyMessage(body: unknown, responseLanguage: ResponseLanguagePreference | undefined, message: string): string {
@@ -735,7 +758,9 @@ function fallbackAssistantContent(status: ConversationTranscriptStatus, response
     return language === "zh-CN" ? "这次运行已取消。" : "Ling Agent run was cancelled.";
   }
   if (status === "succeeded") {
-    return language === "zh-CN" ? "这次运行已完成，但没有返回文本内容。" : "Ling Agent finished without text output.";
+    return language === "zh-CN"
+      ? "模型没有返回可显示的内容，请重试或切换模型。"
+      : "The model returned no displayable content. Retry or choose another model.";
   }
   return conversationRunFailedContent(responseLanguage, message);
 }

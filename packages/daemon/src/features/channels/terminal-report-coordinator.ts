@@ -109,6 +109,9 @@ export function maybeScheduleRunTerminalReport(
   if (!run || run.workflowStepId || !isTerminalRunStatus(run.status)) {
     return;
   }
+  if (run.workUnitId && store.getWorkUnit(run.workUnitId)?.kind === "channel_ai_reply") {
+    return;
+  }
   const turn = store.getLingTurnForRun(run.id);
   const thread = turn ? store.getLingThread(turn.threadId) : undefined;
   if (turn && thread && (thread.kind === "conversation" || thread.kind === "teammate_direct")) {

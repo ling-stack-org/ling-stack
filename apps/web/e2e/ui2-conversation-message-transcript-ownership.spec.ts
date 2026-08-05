@@ -127,6 +127,7 @@ test("1280x800 Ling Dark keeps Normal message states independent from Channel ow
   await expect(ready.locator(":scope > :is(.user-profile-avatar, .avatar-initial, img)")).toHaveCount(0);
   await expect(ready).toHaveClass(/message-row-identity-sr-only/u);
   await expect(ready.locator(":scope > .message-content > header")).toHaveCSS("clip-path", "inset(50%)");
+  await expectSharedConversationBodyTypography(ready);
   await expect(pending).toHaveClass(/message-bubble-pending/u);
   await expect(pending.locator(".message-pending-spinner")).toBeVisible();
   await expect(failed).toHaveClass(/failed/u);
@@ -183,6 +184,7 @@ test("1440x960 imported Quiet Ocean keeps Teammate identity, attachments, Memory
   await expect(own).toHaveClass(/message-bubble-own/u);
   await expectOwnMessageBubble(own);
   await expect(peer).toHaveClass(/message-bubble-peer/u);
+  await expectSharedConversationBodyTypography(peer);
   await expect(blocked).toHaveClass(/message-bubble-chat-blocked/u);
   await expect(blocked.getByRole("alert")).toContainText("Private ownership request is blocked");
   await expect(peer.getByRole("link", { name: "message-ownership-notes.md" })).toBeVisible();
@@ -285,6 +287,28 @@ function installChannelTranscriptFixture(state: MockState): void {
   state.tasks = [];
   state.runs = [];
   state.approvals = [];
+}
+
+async function expectSharedConversationBodyTypography(row: Locator): Promise<void> {
+  const body = row.locator(".message-body-renderer").first();
+  await expect(body).toBeVisible();
+  const styles = await body.evaluate((element) => {
+    const computed = getComputedStyle(element);
+    const probe = document.createElement("span");
+    probe.style.color = "var(--conversation-text)";
+    document.body.append(probe);
+    const expectedColor = getComputedStyle(probe).color;
+    probe.remove();
+    return {
+      color: computed.color,
+      expectedColor,
+      fontSize: computed.fontSize,
+      fontWeight: Number(computed.fontWeight),
+    };
+  });
+  expect(styles.color).toBe(styles.expectedColor);
+  expect(styles.fontSize).toBe("15px");
+  expect(styles.fontWeight).toBe(550);
 }
 
 function installNormalOwnershipFixture(state: MockState): string {

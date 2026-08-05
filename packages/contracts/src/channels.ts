@@ -565,6 +565,11 @@ export interface ChannelMessageStreamDeltaEvent {
   readonly body: string;
 }
 
+export interface ChannelMessageStreamRunLinkedEvent {
+  readonly messageId: string;
+  readonly linkedRunId: string;
+}
+
 export interface ChannelMessageStreamDoneEvent {
   readonly message: ChannelMessage;
   readonly aiReply?: ChannelMessage;

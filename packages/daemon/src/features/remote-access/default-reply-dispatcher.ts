@@ -96,17 +96,31 @@ export class DefaultRemoteReplyDispatcher implements RemoteReplyDispatcher {
       });
     }
     await createAiChannelReply({
-      runnerRegistry: this.options.runnerRegistry,
+      startRun: async (request, sink) => await executeRunRequest(
+        request,
+        sink,
+        this.options.runnerRegistry,
+        this.options.storeRegistry,
+        this.options.activeRuns,
+        this.options.runtimeSupervisor,
+        this.options.secretResolver,
+        this.options.mcpBroker,
+        {
+          controlPlaneEvents: this.options.controlPlaneEvents,
+          startupState: this.options.startupState,
+          computerUsePreviews: this.options.computerUsePreviews,
+        },
+      ),
       store: this.options.store,
       channel,
       sourceMessage,
       ...(providerPresetId ? { providerPresetId } : {}),
       ...(teammateId ? { teammateId } : {}),
       proposalMode: "disabled",
-      runtimeSupervisor: this.options.runtimeSupervisor,
       secretResolver: this.options.secretResolver,
       teamObserverBusEnabled: false,
       completionMode: "background",
+      trackCompletion: (completion) => this.options.activeRuns.trackCompletion(completion),
       replyMessageId: remoteReplyMessageId(intent),
       disableWebEvidence: true,
     });

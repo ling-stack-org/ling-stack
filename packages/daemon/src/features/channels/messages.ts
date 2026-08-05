@@ -44,6 +44,7 @@ export type CreateChannelAiReply = (input: {
   readonly completionMode?: "background" | "inline";
   readonly stream?: {
     readonly onReady: (message: ChannelMessage) => void;
+    readonly onRunLinked?: (message: ChannelMessage) => void;
     readonly onDelta: (message: ChannelMessage, delta: string) => void;
     readonly onDone: (message: ChannelMessage) => void;
     readonly onBlocked: (message: ChannelMessage) => void;
@@ -170,6 +171,12 @@ export async function handleChannelMessageStream(
               onReady: (aiReply) => {
                 const aiReplies = upsertAiReply(aiReply);
                 safeWriteSse("ready", { message, aiReply, aiReplies });
+              },
+              onRunLinked: (aiReply) => {
+                upsertAiReply(aiReply);
+                if (aiReply.linkedRunId) {
+                  safeWriteSse("run_linked", { messageId: aiReply.id, linkedRunId: aiReply.linkedRunId });
+                }
               },
               onDelta: (aiReply, delta) => {
                 upsertAiReply(aiReply);

@@ -118,12 +118,22 @@ test("UI2 model list exposes one state and the exact routine action matrix", asy
 
   const ready = row(page, "ready-model");
   await expect(ready.getByRole("button", { name: "Set default" })).toBeVisible();
+  await expect(ready.getByRole("button", { name: "Set default" }).locator(".lucide-star")).toBeVisible();
+  await expect(ready.locator(".lucide-play")).toHaveCount(0);
   await expect(ready.getByRole("button", { name: "Check", exact: true })).toBeVisible();
   await expect(ready.getByRole("button", { name: "Edit" })).toBeVisible();
 
   const current = row(page, "default-model");
   await expect(current).toContainText("Current default");
   await expect(current.getByRole("button", { name: "Set default" })).toHaveCount(0);
+  const currentDefault = current.getByRole("button", { name: "Current default" });
+  await expect(currentDefault).toBeDisabled();
+  await expect(currentDefault).toHaveAttribute("aria-pressed", "true");
+  const currentStarPaint = await currentDefault.locator(".lucide-star").evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { color: style.color, fill: style.fill };
+  });
+  expect(currentStarPaint.fill).toBe(currentStarPaint.color);
 
   const image = row(page, "image-model");
   await expect(image).toContainText("Image");
@@ -133,7 +143,7 @@ test("UI2 model list exposes one state and the exact routine action matrix", asy
   await expect(disabled.getByRole("button", { name: "Enable" })).toBeVisible();
   await expect(disabled.getByRole("button", { name: "Edit" })).toBeVisible();
 
-  for (const label of ["Check", "Edit", "More"]) {
+  for (const label of ["Current default", "Check", "Edit", "More"]) {
     const box = await current.getByRole("button", { name: label, exact: true }).boundingBox();
     expect(box?.width).toBeGreaterThanOrEqual(32);
     expect(box?.height).toBeGreaterThanOrEqual(32);

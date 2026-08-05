@@ -813,6 +813,9 @@ export function providerCheckStatusLabel(result: ProviderCheckResult, t?: Provid
   if (result.code === "network_failed") {
     return translateProviderText(t, "network failed");
   }
+  if (result.code === "empty_response") {
+    return translateProviderText(t, "empty response");
+  }
   if (result.code === "auth_failed") {
     return translateProviderText(t, "auth failed");
   }
@@ -843,6 +846,9 @@ export function providerCheckMessage(result: ProviderCheckResult, t?: ProviderTr
   }
   if (result.code === "network_failed") {
     return translateProviderText(t, "Provider network check failed. Check Base URL, proxy, and local relay status.");
+  }
+  if (result.code === "empty_response") {
+    return translateProviderText(t, "Provider accepted the request but did not return displayable text.");
   }
   if (result.code === "model_unsupported") {
     return translateProviderText(t, "The configured model is not available from this endpoint.");
@@ -910,6 +916,9 @@ export function providerCheckGuidance(result: ProviderCheckResult, provider: Pic
   }
   if (result.code === "network_failed") {
     return translateProviderText(t, "Check proxy, Base URL, local relay status, and outbound network access from the daemon.");
+  }
+  if (result.code === "empty_response") {
+    return translateProviderText(t, "Check the API protocol and model response format, then run Check again.");
   }
   if (result.code === "model_unsupported") {
     return translateProviderText(t, "Check the model name, API protocol, and Base URL path for this provider.");
