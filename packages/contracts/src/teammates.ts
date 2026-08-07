@@ -13,7 +13,7 @@ import type {
 } from "./channels.js";
 import type { McpToolDefaultApproval } from "./mcp.js";
 import type { RetentionTombstone } from "./retention.js";
-import type { WorkUnit } from "./runtime.js";
+import type { ConversationActiveReplyTarget, WorkUnit } from "./runtime.js";
 
 export interface TeammatePersonaDraftRequest {
   readonly content: string;
@@ -475,6 +475,7 @@ export interface TeammateDirectMessageStreamDeltaEvent {
 export interface TeammateDirectMessageStreamRunLinkedEvent {
   readonly messageId: string;
   readonly linkedRunId?: string;
+  readonly activeReply?: ConversationActiveReplyTarget;
 }
 
 export interface TeammateDirectMessageStreamDoneEvent {

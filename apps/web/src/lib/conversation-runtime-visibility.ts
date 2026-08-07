@@ -1,4 +1,39 @@
-import type { ApprovalRequest, ExecutionAction, RunSession, TerminalReportDto } from "../types.js";
+import type { ApprovalRequest, ExecutionAction, RunSession, TerminalReportDto, WorkUnit } from "../types.js";
+
+export function deriveSilentChannelReplyRunIds(input: {
+  readonly runs: readonly RunSession[];
+  readonly workUnits: readonly WorkUnit[];
+  readonly approvals: readonly ApprovalRequest[];
+  readonly executionActions: readonly ExecutionAction[];
+  readonly terminalReports: readonly TerminalReportDto[];
+}): ReadonlySet<string> {
+  const workUnitById = new Map(input.workUnits.map((workUnit) => [workUnit.id, workUnit]));
+  const terminalReportByRunId = new Map(input.terminalReports.flatMap((report) =>
+    report.source.kind === "run" ? [[report.source.id, report] as const] : []
+  ));
+  const silentRunIds = new Set<string>();
+
+  for (const run of input.runs) {
+    const workUnit = run.workUnitId ? workUnitById.get(run.workUnitId) : undefined;
+    if (run.workUnitId && !workUnit) {
+      silentRunIds.add(run.id);
+      continue;
+    }
+    if (workUnit?.kind !== "channel_ai_reply") {
+      continue;
+    }
+    if (!conversationRunHasVisibleWork({
+      run,
+      approvals: input.approvals.filter((approval) => approval.runId === run.id),
+      executionActions: input.executionActions.filter((action) => action.runId === run.id),
+      terminalReport: terminalReportByRunId.get(run.id),
+    })) {
+      silentRunIds.add(run.id);
+    }
+  }
+
+  return silentRunIds;
+}
 
 export function conversationRunHasVisibleWork(input: {
   readonly run: RunSession;

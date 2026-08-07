@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type UIEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type UIEvent } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Bot,
@@ -88,6 +88,7 @@ import type {
   TerminalReportDto,
 } from "../../types.js";
 import { resolveAuthorizationMode, resolveWorkspaceAccessMode } from "../../lib/conversation-authorization.js";
+import { useConversationSendLifecycle } from "../../shared/conversation/index.js";
 import { TeammateChatHeader } from "./TeammateChatHeader.js";
 import { type ConversationSummaryRow, type WorkspaceRightDockFileTarget, type WorkspaceRightDockPageRequest, type WorkspaceRightDockReviewTarget } from "../workspace/right-dock/index.js";
 import { buildTeammatePrivateDockViewModel } from "./teammate-private-dock.js";
@@ -252,7 +253,7 @@ export function TeammateWorkspace({
   }, [currentDirectWorkspace?.threadId, onDirectConversationChange, workspaceSnapshotCurrent, workspaceView]);
 
   useEffect(() => () => onDirectConversationChange?.(undefined), [onDirectConversationChange]);
-  const [directReplyOptimisticActive, setDirectReplyOptimisticActive] = useState(false);
+  const directSendLifecycle = useConversationSendLifecycle(`teammate:${cwd.trim()}:${teammate.id}`);
   const [directGuidanceSubmitting, setDirectGuidanceSubmitting] = useState<"queue_followup" | "interrupt_redirect" | "stop" | "">("");
   const [directGuidanceCancelingId, setDirectGuidanceCancelingId] = useState("");
   const [directGuidancePromotingId, setDirectGuidancePromotingId] = useState("");
@@ -425,8 +426,8 @@ export function TeammateWorkspace({
       runById,
     }).includes(normalizedMessageSearchQuery));
   }, [currentMessages, directLinkPreviewById, normalizedMessageSearchQuery, privateAttachmentById, runById]);
-  const directReplyActive = Boolean(currentDirectRuntime?.activeReply || directReplyOptimisticActive);
-  const hasDirectRuntimeActivity = Boolean(currentDirectRuntime?.activeReply || directReplyOptimisticActive || (currentDirectRuntime?.interventions.length ?? 0) > 0);
+  const directReplyActive = Boolean(currentDirectRuntime?.activeReply || directSendLifecycle.activeReplies.length > 0);
+  const hasDirectRuntimeActivity = Boolean(currentDirectRuntime?.activeReply || directSendLifecycle.activeReplies.length > 0 || (currentDirectRuntime?.interventions.length ?? 0) > 0);
 
   useEffect(() => {
     const request = workspaceRequestOwner.beginWorkspaceAction("terminal-reports");
@@ -737,7 +738,6 @@ export function TeammateWorkspace({
     setDirectExecutionActions([]);
     setDirectWorkspace(undefined);
     setDirectRuntime(undefined);
-    setDirectReplyOptimisticActive(false);
     setDirectGuidanceSubmitting("");
     setDirectGuidanceCancelingId("");
     setDirectGuidancePromotingId("");
@@ -927,7 +927,6 @@ export function TeammateWorkspace({
         setDirectWorkspace(directWorkspaceResponse);
         setDirectLinkPreviews(linkPreviewsResponse.linkPreviews);
         setPrivateAttachments(privateAttachmentsResponse.attachments);
-        setDirectReplyOptimisticActive(Boolean(runtimeResponse.activeReply));
       });
       if (workspaceRequestOwner.isActionCurrent(request)) workspaceRequestOwner.clearError(request);
       return committed ? "committed" : "stale";
@@ -1003,12 +1002,15 @@ export function TeammateWorkspace({
     if (currentDirectRuntime?.activeReply) {
       return { status: "current" as const, activeReply: currentDirectRuntime.activeReply };
     }
+    const transientReply = directSendLifecycle.activeReplies[0];
+    if (transientReply?.workUnitId) {
+      return { status: "current" as const, activeReply: { workUnitId: transientReply.workUnitId } };
+    }
     try {
       const runtimeResponse = await getTeammateDirectRuntime(cwd.trim(), operation.teammateId);
       if (!workspaceRequestOwner.isActionCurrent(operation)) return { status: "stale" as const };
       workspaceRequestOwner.claimAndCommit(operation, ["conversation"], () => {
         setDirectRuntime(runtimeResponse);
-        setDirectReplyOptimisticActive(Boolean(runtimeResponse.activeReply));
       });
       return { status: "current" as const, activeReply: runtimeResponse.activeReply };
     } catch (error) {
@@ -1062,6 +1064,7 @@ export function TeammateWorkspace({
     const draftSnapshot = messageDraft;
     const attachmentsSnapshot = pendingAttachments;
     const linkPreviewIdsSnapshot = pendingDirectLinkPreviewIds;
+    const sendOperation = directSendLifecycle.begin();
     setSending(true);
     let streamFailed = false;
     try {
@@ -1091,10 +1094,8 @@ export function TeammateWorkspace({
           const data = JSON.parse(event.data) as TeammateDirectMessageStreamReadyEvent;
           workspaceRequestOwner.claimAndCommit(operation, ["conversation"], () => {
             setMessages((current) => upsertDirectMessages(current, [data.message, data.aiReply]));
-            setDirectReplyOptimisticActive(true);
-            setSending(false);
+            directSendLifecycle.accept(sendOperation);
           });
-          void refreshDirectRuntime();
           return;
         }
         if (event.event === "delta") {
@@ -1115,14 +1116,21 @@ export function TeammateWorkspace({
               ...message,
               linkedRunId: data.linkedRunId ?? message.linkedRunId,
             } : message));
+            if (data.activeReply) {
+              directSendLifecycle.accept(sendOperation);
+              directSendLifecycle.link(sendOperation, data.activeReply);
+              setSending(false);
+            }
           });
+          void refreshDirectRuntime();
           return;
         }
         if (event.event === "done") {
           const data = JSON.parse(event.data) as TeammateDirectMessageStreamDoneEvent;
           workspaceRequestOwner.claimAndCommit(operation, ["conversation"], () => {
             setMessages((current) => upsertDirectMessages(current, [data.message, data.aiReply]));
-            setDirectReplyOptimisticActive(false);
+            directSendLifecycle.settle(sendOperation);
+            setSending(false);
           });
           return;
         }
@@ -1130,20 +1138,20 @@ export function TeammateWorkspace({
           const data = JSON.parse(event.data) as TeammateDirectMessageStreamBlockedEvent;
           workspaceRequestOwner.claimAndCommit(operation, ["conversation"], () => {
             setMessages((current) => upsertDirectMessages(current, [data.message, data.aiReply]));
-            setDirectReplyOptimisticActive(false);
+            directSendLifecycle.settle(sendOperation);
             setSending(false);
           });
           return;
         }
         if (event.event === "error") {
           streamFailed = true;
+          directSendLifecycle.fail(sendOperation);
           const data = JSON.parse(event.data) as TeammateDirectMessageStreamErrorEvent;
           const nextMessages = [data.message, data.aiReply].filter((message): message is TeammateDirectMessage => Boolean(message));
           workspaceRequestOwner.claimAndCommit(operation, ["conversation"], () => {
             if (nextMessages.length > 0) {
               setMessages((current) => upsertDirectMessages(current, nextMessages));
             }
-            setDirectReplyOptimisticActive(false);
             setSending(false);
           });
           if (data.error) workspaceRequestOwner.reportError(operation, data.error);
@@ -1162,9 +1170,12 @@ export function TeammateWorkspace({
       }
     } catch (error) {
       if (!workspaceRequestOwner.isActionCurrent(operation)) return;
-      setMessageDraft(draftSnapshot);
-      setPendingAttachments(attachmentsSnapshot);
-      setPendingDirectLinkPreviewIds(linkPreviewIdsSnapshot);
+      const failure = directSendLifecycle.fail(sendOperation);
+      if (failure.restoreInput) {
+        setMessageDraft(draftSnapshot);
+        setPendingAttachments(attachmentsSnapshot);
+        setPendingDirectLinkPreviewIds(linkPreviewIdsSnapshot);
+      }
       workspaceRequestOwner.reportError(operation, error instanceof Error ? error.message : String(error));
     } finally {
       if (workspaceRequestOwner.isActionCurrent(operation)) setSending(false);
@@ -1183,9 +1194,6 @@ export function TeammateWorkspace({
       if (resolution.status === "stale") return;
       const activeReply = resolution.activeReply;
       if (!activeReply) {
-        workspaceRequestOwner.claimAndCommit(operation, ["conversation"], () => {
-          setDirectReplyOptimisticActive(false);
-        });
         workspaceRequestOwner.reportError(operation, t("There is no active private reply right now."));
         return;
       }
@@ -1195,7 +1203,6 @@ export function TeammateWorkspace({
         if (response.message) {
           setMessages((current) => upsertDirectMessages(current, [response.message!]));
         }
-        setDirectReplyOptimisticActive(false);
       });
       await refreshDirectRuntime();
       workspaceRequestOwner.clearError(operation);
@@ -1222,9 +1229,6 @@ export function TeammateWorkspace({
       if (resolution.status === "stale") return false;
       const activeReply = resolution.activeReply;
       if (!activeReply) {
-        workspaceRequestOwner.claimAndCommit(operation, ["conversation"], () => {
-          setDirectReplyOptimisticActive(false);
-        });
         workspaceRequestOwner.reportError(operation, t("There is no active private reply right now."));
         return false;
       }
@@ -1374,12 +1378,8 @@ export function TeammateWorkspace({
     void sendPrivateMessage(authorization);
   }
 
-  function handlePrivateComposerPaste(event: ClipboardEvent<HTMLDivElement>): void {
-    if (event.clipboardData.files.length === 0) {
-      return;
-    }
-    event.preventDefault();
-    void uploadPrivateFiles(Array.from(event.clipboardData.files));
+  function handlePrivateComposerPasteFiles(files: readonly File[]): void {
+    void uploadPrivateFiles(files);
   }
 
   function handlePrivateComposerDragOver(event: DragEvent<HTMLDivElement>): void {
@@ -1728,7 +1728,7 @@ export function TeammateWorkspace({
           onMessageDraftChange={setMessageDraft}
           onComposerSubmit={handlePrivateComposerSubmit}
           onComposerKeyDown={handlePrivateComposerKeyDown}
-          onComposerPaste={handlePrivateComposerPaste}
+          onComposerPasteFiles={handlePrivateComposerPasteFiles}
           onComposerDragOver={handlePrivateComposerDragOver}
           onComposerDragLeave={handlePrivateComposerDragLeave}
           onComposerDrop={handlePrivateComposerDrop}

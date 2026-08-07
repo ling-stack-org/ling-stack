@@ -3,6 +3,7 @@ import type {
   AuthorizationMode,
   ApprovalRequest,
   ChannelMessageFileRef,
+  ConversationActiveReplyTarget,
   ConversationAttachment,
   ConversationPendingReplacement,
   ConversationTranscriptStatus,
@@ -86,6 +87,8 @@ export interface ConversationHomeSendInput {
   readonly failMessage: (message: string) => void;
   readonly onThreadBound: (threadId: string) => void;
   readonly shouldCommit: (threadId?: string) => boolean;
+  readonly onMessageAccepted: () => void;
+  readonly onReplyLinked: (target: ConversationActiveReplyTarget) => void;
 }
 
 export interface ConversationHomeProps {
@@ -118,6 +121,6 @@ export interface ConversationHomeProps {
   readonly onConfirmFullAccessSelection?: () => PermissionConfirmation;
   readonly onFullAccessConversationBound?: (threadId: string) => void;
   readonly onRefreshConversation?: () => void | Promise<void>;
-  readonly onStopConversation?: () => void | Promise<void>;
+  readonly onStopConversation?: (target: ConversationActiveReplyTarget) => void | Promise<void>;
   readonly onSendConversation: (input: ConversationHomeSendInput) => Promise<void>;
 }

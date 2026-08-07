@@ -1,4 +1,5 @@
 import type { ConversationPendingReplacement, RunTool, ToolName } from "./shared.js";
+import type { ConversationActiveReplyTarget, RunIntervention } from "./runtime.js";
 import type { ResponseLanguage, ResponseLanguagePreference } from "./settings.js";
 import type {
   ProcedureObservationCluster,
@@ -545,6 +546,7 @@ export interface ChannelMessageMutationResponse {
   readonly message: ChannelMessage;
   readonly aiReply?: ChannelMessage;
   readonly aiReplies?: readonly ChannelMessage[];
+  readonly replyDispatch?: ChannelReplyDispatch;
   readonly autoStartedWorkflow?: {
     readonly proposal: ChannelExecutionProposal;
     readonly workflow: ChannelWorkflow;
@@ -553,10 +555,23 @@ export interface ChannelMessageMutationResponse {
   };
 }
 
+export interface ChannelReplyDispatch {
+  readonly targetTeammateId: string;
+  readonly disposition: "reply_requested" | "followup_queued";
+  readonly sourceRunId?: string;
+  readonly intervention?: RunIntervention;
+}
+
 export interface ChannelMessageStreamReadyEvent {
   readonly message: ChannelMessage;
   readonly aiReply?: ChannelMessage;
   readonly aiReplies?: readonly ChannelMessage[];
+}
+
+export interface ChannelMessageStreamReplyPendingEvent {
+  readonly sourceMessageId: string;
+  readonly targetTeammateId: string;
+  readonly startedAt: string;
 }
 
 export interface ChannelMessageStreamDeltaEvent {
@@ -568,12 +583,14 @@ export interface ChannelMessageStreamDeltaEvent {
 export interface ChannelMessageStreamRunLinkedEvent {
   readonly messageId: string;
   readonly linkedRunId: string;
+  readonly activeReply?: ConversationActiveReplyTarget;
 }
 
 export interface ChannelMessageStreamDoneEvent {
   readonly message: ChannelMessage;
   readonly aiReply?: ChannelMessage;
   readonly aiReplies?: readonly ChannelMessage[];
+  readonly replyDispatch?: ChannelReplyDispatch;
   readonly autoStartedWorkflow?: ChannelMessageMutationResponse["autoStartedWorkflow"];
 }
 
@@ -581,6 +598,7 @@ export interface ChannelMessageStreamBlockedEvent {
   readonly message: ChannelMessage;
   readonly aiReply?: ChannelMessage;
   readonly aiReplies?: readonly ChannelMessage[];
+  readonly replyDispatch?: ChannelReplyDispatch;
   readonly error?: string;
 }
 
@@ -588,6 +606,7 @@ export interface ChannelMessageStreamErrorEvent {
   readonly message?: ChannelMessage;
   readonly aiReply?: ChannelMessage;
   readonly aiReplies?: readonly ChannelMessage[];
+  readonly replyDispatch?: ChannelReplyDispatch;
   readonly error: string;
 }
 

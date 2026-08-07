@@ -5825,6 +5825,22 @@ function maybeCreateMockWorkflowProposal(
   return {};
 }
 
+function mockChannelMessageRoutesThroughLing(
+  body: Record<string, unknown>,
+  message: Record<string, unknown>,
+): boolean {
+  const aiMentions = Array.isArray(message.mentions)
+    ? message.mentions.filter((mention) => isRecord(mention) && mention.kind === "ai-teammate")
+    : [];
+  if (aiMentions.length > 1) return true;
+  const targetId = aiMentions.length === 1 && typeof aiMentions[0]?.id === "string"
+    ? aiMentions[0].id
+    : typeof body.teammateId === "string"
+      ? body.teammateId
+      : "ling_agent";
+  return targetId === "ling_agent" || targetId === "ling-agent";
+}
+
 function maybeCreateMockMaterializationClarifyReply(
   state: MockState,
   channelId: string,
@@ -9608,7 +9624,20 @@ export async function handleDaemonRoute(
         ]
         : [
           { event: "ready", data: { message, aiReply: pendingReply } },
-          { event: "run_linked", data: { messageId: aiReply.id, linkedRunId } },
+          { event: "run_linked", data: {
+            messageId: aiReply.id,
+            linkedRunId,
+            activeReply: {
+              runId: linkedRunId,
+              sourceRunId: linkedRunId,
+              workUnitId: `wu_${linkedRunId}`,
+              threadId: thread.id,
+              teammateId,
+              status: "queued",
+              createdAt: aiReply.createdAt,
+              updatedAt: aiReply.updatedAt,
+            },
+          } },
           { event: "delta", data: { messageId: aiReply.id, delta: aiReply.body, body: aiReply.body } },
           { event: "done", data: { message, aiReply } },
         ];
@@ -10644,10 +10673,69 @@ export async function handleDaemonRoute(
       updatedAt: "2026-05-25T00:18:00.000Z",
     };
     state.channelMessages.push(message);
+    const aiMentions = message.mentions.filter((mention) => isRecord(mention) && mention.kind === "ai-teammate");
+    const requestedTeammateId = aiMentions.length > 1
+      ? "ling_agent"
+      : aiMentions.length === 1 && typeof aiMentions[0]?.id === "string"
+        ? aiMentions[0].id
+        : typeof body.teammateId === "string"
+          ? body.teammateId
+          : "ling_agent";
+    const replyPending = {
+      sourceMessageId: message.id,
+      targetTeammateId: requestedTeammateId,
+      startedAt: message.createdAt,
+    };
+    const activeTargetRun = state.runs.find((run) => (
+      run.channelId === channelId &&
+      (run.status === "queued" || run.status === "running" || run.status === "waiting_for_approval")
+    ));
+    if (activeTargetRun && (message.body.trim() || message.attachmentIds.length > 0 || message.linkPreviewIds.length > 0 || message.fileRefs.length > 0)) {
+      const sourceRunId = activeTargetRun.parentRunId ?? activeTargetRun.id;
+      const intervention = {
+        id: `intervention_${state.runInterventions.length + 1}`,
+        workspaceId: "workspace_default",
+        sourceRunId,
+        sourceWorkUnitId: activeTargetRun.workUnitId,
+        mode: "queue_followup",
+        status: "queued",
+        instruction: message.body.trim() || "Queued channel reply guidance",
+        messagePayload: {
+          sourceMessageId: message.id,
+          targetTeammateId: requestedTeammateId,
+          body: message.body.trim(),
+          attachmentIds: message.attachmentIds,
+          linkPreviewIds: message.linkPreviewIds,
+          fileRefs: message.fileRefs,
+        },
+        requestedBy: "local-user",
+        idempotencyKey: `channel_message:${message.id}:queue_followup`,
+        createdAt: message.createdAt,
+        updatedAt: message.updatedAt,
+      };
+      state.runInterventions.push(intervention);
+      const replyDispatch = {
+        targetTeammateId: requestedTeammateId,
+        disposition: "followup_queued",
+        sourceRunId,
+        intervention,
+      };
+      const events = [
+        { event: "ready", data: { message } },
+        { event: "done", data: { message, replyDispatch } },
+      ];
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body: events.map((event) => `event: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`).join(""),
+      });
+      return;
+    }
     const materializationClarifyReply = maybeCreateMockMaterializationClarifyReply(state, channelId, message);
     if (materializationClarifyReply) {
       const events = [
         { event: "ready", data: { message } },
+        { event: "reply_pending", data: replyPending },
         { event: "ready", data: { message, aiReply: materializationClarifyReply, aiReplies: [materializationClarifyReply] } },
         { event: "done", data: { message, aiReply: materializationClarifyReply, aiReplies: [materializationClarifyReply] } },
       ];
@@ -10660,12 +10748,13 @@ export async function handleDaemonRoute(
     }
     const channel = state.channels.find((item) => isRecord(item) && item.id === channelId);
     const autoReplyMode = isRecord(channel) && typeof channel.autoReplyMode === "string" ? channel.autoReplyMode : "mentions_only";
-    const mockWorkflowProposal = body.requestAiReply !== true
+    const mockWorkflowProposal = mockChannelMessageRoutesThroughLing(body, message)
       ? maybeCreateMockWorkflowProposal(state, channelId, message, autoReplyMode)
       : undefined;
     if (mockWorkflowProposal) {
       const events = [
         { event: "ready", data: { message } },
+        { event: "reply_pending", data: replyPending },
         { event: "done", data: { message, ...mockWorkflowProposal } },
       ];
       await route.fulfill({
@@ -10675,7 +10764,7 @@ export async function handleDaemonRoute(
       });
       return;
     }
-    const shouldAutoReply = body.requestAiReply === true ||
+    const shouldAutoReply = typeof body.teammateId === "string" || body.requestAiReply === true ||
       (
         typeof message.body === "string" &&
         message.authorType === "local-user" &&
@@ -10685,8 +10774,10 @@ export async function handleDaemonRoute(
         (message.body.includes("?") || message.body.includes("？") || isMockContextualFollowUp(message.body)) &&
         (autoReplyMode === "default_teammate" || autoReplyMode === "auto_route")
       );
-    const routedTeammateId = body.requestAiReply === true
-      ? typeof body.teammateId === "string" ? body.teammateId : "engineer"
+    const routedTeammateId = typeof body.teammateId === "string"
+      ? body.teammateId
+      : body.requestAiReply === true
+        ? "ling_agent"
       : autoReplyMode === "auto_route" ? "designer" : isRecord(channel) && typeof channel.defaultTeammateId === "string" ? channel.defaultTeammateId : undefined;
     const routeDecision = {
       schemaVersion: 1,
@@ -10753,9 +10844,15 @@ export async function handleDaemonRoute(
     }
     const events = [
       { event: "ready", data: { message } },
+      { event: "reply_pending", data: { ...replyPending, targetTeammateId: routedTeammateId ?? requestedTeammateId } },
       ...(pendingReply ? [{ event: "ready", data: { message, aiReply: pendingReply, aiReplies: [pendingReply] } }] : []),
       ...(aiReply && !state.keepChannelAiReplyPending ? [{ event: "delta", data: { messageId: aiReply.id, delta: aiReply.body, body: aiReply.body } }] : []),
-      { event: "done", data: storedAiReply ? { message, aiReply: storedAiReply, aiReplies: [storedAiReply] } : { message } },
+      { event: "done", data: storedAiReply ? {
+        message,
+        aiReply: storedAiReply,
+        aiReplies: [storedAiReply],
+        replyDispatch: { targetTeammateId: routedTeammateId, disposition: "reply_requested" },
+      } : { message } },
     ];
     await route.fulfill({
       status: 200,
@@ -10778,11 +10875,20 @@ export async function handleDaemonRoute(
       beforeMessageId: beforeMessageId ?? undefined,
       threadId: threadId ?? undefined,
     });
+    const hiddenQueuedMessageIds = new Set(state.runInterventions.flatMap((intervention) => {
+      if (!isRecord(intervention) || typeof intervention.startedAt === "string" || !isRecord(intervention.messagePayload)) {
+        return [];
+      }
+      return typeof intervention.messagePayload.sourceMessageId === "string"
+        ? [intervention.messagePayload.sourceMessageId]
+        : [];
+    }));
     const messages = state.channelMessages
       .filter((message) =>
         isRecord(message) &&
         message.channelId === channelId &&
         message.status !== "superseded" &&
+        !hiddenQueuedMessageIds.has(typeof message.id === "string" ? message.id : "") &&
         (!threadId || message.threadId === threadId)
       )
       .sort((left, right) => {
@@ -10899,7 +11005,7 @@ export async function handleDaemonRoute(
     }
     const channel = state.channels.find((item) => isRecord(item) && item.id === channelId);
     const autoReplyMode = isRecord(channel) && typeof channel.autoReplyMode === "string" ? channel.autoReplyMode : "mentions_only";
-    const mockWorkflowProposal = body.requestAiReply !== true
+    const mockWorkflowProposal = mockChannelMessageRoutesThroughLing(body, message)
       ? maybeCreateMockWorkflowProposal(state, channelId, message, autoReplyMode)
       : undefined;
     if (mockWorkflowProposal) {
@@ -10917,7 +11023,7 @@ export async function handleDaemonRoute(
         (autoReplyMode === "default_teammate" || autoReplyMode === "auto_route")
       );
     const routedTeammateId = body.requestAiReply === true
-      ? typeof body.teammateId === "string" ? body.teammateId : "engineer"
+      ? typeof body.teammateId === "string" ? body.teammateId : "ling_agent"
       : autoReplyMode === "auto_route" ? "designer" : isRecord(channel) && typeof channel.defaultTeammateId === "string" ? channel.defaultTeammateId : undefined;
     const routeDecision = {
       schemaVersion: 1,

@@ -70,10 +70,11 @@ was explicitly materialized into the envelope.
 
 ## Current P0 Behavior
 
-The Web composer still derives explicit AI reply requests only from mentions:
+The Web composer sends every ordinary channel Composer submission through the existing Ling
+reply decision path:
 
 ```ts
-const shouldRequestAi = mentions.some((mention) => mention.kind === "ai-teammate");
+const shouldRequestAi = true;
 ```
 
 Then it sends:
@@ -82,11 +83,17 @@ Then it sends:
 requestAiReply: shouldRequestAi
 ```
 
-Under Ling Agent Session, `requestAiReply` is a compatibility signal meaning "the user
-explicitly asked an AI teammate to participate." It is not an instruction to bypass
+Under Ling Agent Session, `requestAiReply` is a compatibility signal meaning "resolve a
+channel reply for this accepted Composer message." Mentions remain the target authority:
+none selects `ling_agent`, one selects that teammate, and multiple return to `ling_agent` for
+coordination. Web does not submit another teammate selector. The flag is not an instruction to bypass
 executable intent detection. The daemon must persist the user message, build the
 TurnEnvelope, run active-session and executable/collaboration handling first, and call
 this router only when the coordinator returns the ordinary `answer` outcome.
+
+The resolved target id is canonical across route evidence, pending message, WorkUnit, Run,
+and pending dispatch lane. `ai-teammate` is an author type only and is never a valid fallback
+executor id.
 
 - `@ProductStrategy hello` can create an explicit AI reply and record route evidence with
   `createdBy: "explicit_mention"` after the coordinator classifies the turn as

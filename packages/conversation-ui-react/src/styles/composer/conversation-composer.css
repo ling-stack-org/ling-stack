@@ -154,7 +154,8 @@
   font-size: var(--ling-font-xs);
   font-weight: 600;
   line-height: 1.2;
-  vertical-align: baseline;
+  transform: translateY(-2px);
+  vertical-align: middle;
 }
 
 .composer-inline-token svg,

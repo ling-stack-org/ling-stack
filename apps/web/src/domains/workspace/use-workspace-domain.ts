@@ -1,4 +1,4 @@
-import { useState, type Dispatch, type SetStateAction } from "react";
+import { useRef, useState, type Dispatch, type SetStateAction } from "react";
 import {
   getChannelCollaborationProtocol,
   getChannelBrief,
@@ -259,6 +259,7 @@ export function useWorkspaceDomain(input: {
   const [channelProtocolLoading, setChannelProtocolLoading] = useState(false);
   const [channelStateTransitions, setChannelStateTransitions] = useState<readonly StateTransitionEvent[]>([]);
   const [channelActivityTransitionsLoading, setChannelActivityTransitionsLoading] = useState(false);
+  const channelActivityTransitionsLoadedScopeRef = useRef("");
   const [channelActivityTransitionError, setChannelActivityTransitionError] = useState("");
   const [channelGovernanceNotifications, setChannelGovernanceNotifications] = useState<readonly GovernanceNotification[]>([]);
   const [channelGovernanceNotificationsLoading, setChannelGovernanceNotificationsLoading] = useState(false);
@@ -672,14 +673,17 @@ export function useWorkspaceDomain(input: {
     channelRuns: readonly RunSession[] = [],
   ): Promise<void> {
     if (!cwd || !channelId) {
+      channelActivityTransitionsLoadedScopeRef.current = "";
       setChannelStateTransitions([]);
       setChannelActivityTransitionError("");
       setChannelActivityTransitionsLoading(false);
       return;
     }
 
+    const scopeKey = `${cwd}:${channelId}`;
     const entities = buildChannelTransitionEntities(channelId, tasks, channelRuns, channelWorkflows, channelWorkflowSteps);
     if (entities.length === 0) {
+      channelActivityTransitionsLoadedScopeRef.current = scopeKey;
       setChannelStateTransitions([]);
       setChannelActivityTransitionError("");
       setChannelActivityTransitionsLoading(false);
@@ -687,7 +691,7 @@ export function useWorkspaceDomain(input: {
     }
 
     const token = loadGuard.next(`activityTransitions:${cwd}:${channelId}`);
-    setChannelActivityTransitionsLoading(true);
+    setChannelActivityTransitionsLoading(channelActivityTransitionsLoadedScopeRef.current !== scopeKey);
     const results = await Promise.all(
       entities.map(async (entity) => {
         try {
@@ -720,6 +724,7 @@ export function useWorkspaceDomain(input: {
 
     setChannelStateTransitions([...nextTransitions.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
     setChannelActivityTransitionError(errors.size > 0 ? [...errors][0] : "");
+    channelActivityTransitionsLoadedScopeRef.current = scopeKey;
     setChannelActivityTransitionsLoading(false);
   }
 
@@ -957,6 +962,7 @@ export function useWorkspaceDomain(input: {
 
   function resetForCwd(cwd: string): void {
     loadGuard.reset();
+    channelActivityTransitionsLoadedScopeRef.current = "";
     setChannels([]);
     setChannelBranches([]);
     setSelectedChannelId("");

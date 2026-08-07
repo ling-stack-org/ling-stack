@@ -2,7 +2,7 @@
 
 Status: implemented product and runtime contract
 Owner: Runtime supervisor, daemon API, Web run surface
-Last verified: 2026-08-03
+Last verified: 2026-08-07
 
 ## Summary
 
@@ -33,14 +33,54 @@ The current daemon and Web surfaces implement:
 - FIFO continuation, explicit source-run lineage, cancellation and late-result guards;
 - preserved partial events, attachments, links, workspace refs, artifacts, approvals,
   and memory evidence;
-- channel Composer controls that distinguish queued guidance from stop-and-redirect;
-- refresh-safe intervention lists and explicit cancel/edit/promote actions.
+- ordinary Composer submissions for queued guidance plus explicit stop controls;
+- refresh-safe intervention lists with cancel and edit actions. Channel guidance cannot be
+  promoted ahead of the FIFO because promotion would interrupt the active reply.
 
 Ordinary channel replies are eligible sources because each reply now owns a standard
-`RunSession`. The `channel_ai_reply` WorkUnit only projects supervision state. A single
-active reply is targeted automatically; concurrent teammate replies require explicit
-target selection before queue, redirect, or stop. This reuses the same intervention FIFO
-and does not introduce another queue or persistence table.
+`RunSession`. The `channel_ai_reply` WorkUnit only projects supervision state. Whenever any
+reply is active, the Composer remains the ordinary channel input with no target selector.
+The daemon resolves no AI mention to Ling Agent, one AI mention to that teammate, and
+multiple AI mentions back to Ling Agent for coordination. The channel owns one reply lane.
+When any reply is active, every later non-empty message becomes a `queue_followup`, including
+a message that targets a different idle teammate. The queued payload retains its resolved
+target so the correct teammate and model are selected only when that FIFO item starts.
+This reuses the same intervention FIFO and does not introduce another queue or persistence
+table. Rapid consecutive submits use independent Web request identities and may reach the
+same daemon FIFO concurrently; transport latency cannot discard the later durable user
+message.
+
+Before the first reply Run is linked, the daemon serializes only dispatch ownership through
+a process-local lane scoped only to workspace and channel. Every later submit waits for the
+real Run id, then creates the standard durable `queue_followup`, regardless of its target.
+Dispatch failure
+releases the lane so the next message can become the owner. This transient lane contains no
+user payload and is neither an intervention queue nor a restart-recovery authority.
+The queued intervention separately stores the canonical target teammate id. No mention uses
+`ling_agent`; the author-type label `ai-teammate` must never be persisted as an executor id.
+This guarantees that rapid later messages join the channel FIFO instead of creating another
+root Run for an idle teammate.
+
+The channel stream emits `reply_pending` only when the accepted message owns the channel lane
+and is actually preparing a new reply. A message that finds an active lane returns
+`followup_queued` directly and must never flash a temporary thinking projection. The event
+carries no Run id and grants no execution or queue authority.
+
+Ordinary channel message text never selects `interrupt_redirect`, including instructions
+such as "stop" or "use another approach". Interruption remains an explicit control: empty
+Composer submit against the one active channel reply, or a Run detail action. It never
+converts a non-empty message into interruption.
+
+When a queued intervention carries a channel `sourceMessageId`, its message is hidden from the
+transcript and shown once in the Composer guidance queue. When the intervention enters
+`starting_continuation`, the queue item disappears and that same durable message enters the
+transcript. A cancelled item never enters the transcript.
+
+Channel, normal conversation, and teammate private chat receive the same compact
+`activeReply` projection after the real RunSession and supervising WorkUnit are durably
+linked. Its first status is normally `queued`; that is already an active, cancellable
+guidance target. The Composer therefore unlocks at durable linkage rather than waiting for
+`running`, the first model delta, or reply completion.
 
 Runner-native token-stream prompt injection remains intentionally unsupported. Guidance
 is applied only at an auditable continuation boundary.
@@ -76,6 +116,11 @@ Expected UI:
 - Primary action: `Queue follow-up`.
 - The active run detail shows pending follow-ups.
 - When the next run starts, it shows `Continues from run_...`.
+
+For conversation surfaces, "remains available" means the initial send is locked only
+until its user message is accepted and its reply target is linked. A subsequent non-empty
+submit creates the existing `RunIntervention`; an empty submit invokes stop. The still-open
+response stream does not own the Composer lock.
 
 ### Interrupt And Redirect
 
@@ -123,6 +168,12 @@ interface RunIntervention {
   mode: RunInterventionMode;
   status: RunInterventionStatus;
   instruction: string;
+  messagePayload?: {
+    sourceMessageId?: string;
+    body: string;
+    attachmentIds: string[];
+    linkPreviewIds: string[];
+  };
   requestedBy: "local-user" | "system";
   createdAt: string;
   updatedAt: string;
@@ -131,6 +182,12 @@ interface RunIntervention {
   failureReason?: string;
 }
 ```
+
+For channel replies, `messagePayload.sourceMessageId` is the authoritative relationship to
+the already-persisted ordinary user message. Idempotency keys remain deduplication material
+and must not be parsed as a foreign key. Before a continuation starts, the daemon creates a
+deterministic pending Agent message; the continuation WorkUnit uses the source user message
+as its owner and that Agent message as `linkedMessageId`.
 
 Run records should gain optional lineage fields:
 
@@ -160,10 +217,20 @@ Queue presentation is narrower than durable intervention history:
   being duplicated in both places until the reply completes.
 - `started`, `failed`, and `cancelled` remain durable audit states but are not active
   queue rows. Failures use their owning run or conversation feedback surface.
+- `completedAt` is written when the continuation Run reaches any terminal state. A
+  successful continuation keeps `status=started` and gains `completedAt`; failed and
+  cancelled continuations also record their terminal status and failure reason. A started
+  row without `completedAt` is still in progress and must remain recoverable after restart.
 - An accepted teammate follow-up is persisted as an ordinary `local-user` message with
   the user's original body. It must not add `排队引导` or another control prefix to the
   model prompt. The continuation system prompt tells the Agent to respond directly and
   not acknowledge receipt, queueing, or continuation mechanics.
+- A channel continuation rebuilds the normal channel Context Pack around that persisted
+  follow-up. The follow-up occupies the current `User message` section; the source Run's
+  prior `task.prompt` must never be copied into the new turn as another current instruction.
+  Earlier channel messages and completed replies from older interventions in the same FIFO
+  chain remain bounded history evidence only. This preserves short-reference continuity
+  without allowing an earlier long request to restart or override the latest guidance.
 
 ## API Shape
 
@@ -240,15 +307,19 @@ instead of partial output.
 
 Queue follow-up:
 
+- Persist the originating channel input as an ordinary user message before dispatch.
 - Record the intervention with `status=queued`.
 - Do not cancel the source work unit.
 - When the source run reaches terminal state, claim the next queued intervention for the
   same source run or task.
 - Start a new run with `parentRunId=sourceRunId` and `interventionId`.
 - Preserve FIFO order per source run.
+- Rebuild channel context for every continuation. The claimed intervention is the current
+  user turn; any earlier completed continuation reply may be included only as prior context.
 
 Interrupt and redirect:
 
+- Never infer this mode from ordinary channel message text.
 - Record the intervention.
 - Transition the source work unit to `cancelling` and the source run to `cancelled` or a
   future `interrupted` state if introduced.
@@ -271,6 +342,14 @@ Task/run surfaces should show:
 
 The UI must not make browser connection state the source of truth. If the page refreshes,
 it should reload interventions and lineage from the daemon.
+
+Before that refresh completes, the client may bridge the gap with the compact SSE target.
+It must reconcile by `runId`, reject stale owner/request events, and never synthesize a
+complete RunSession. A stale fetched Run detail cannot replace a newer terminal list item.
+Transport failure before user-message acceptance restores the draft; failure after
+acceptance does not, because retrying the original payload could duplicate a durable
+message. When no reply remains active, channel target selection returns to Ling Agent.
+These rules reuse RunIntervention persistence and add no queue or table.
 
 ## Relationship To Streaming Private Replies
 

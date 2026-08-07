@@ -3,7 +3,7 @@ import type { ApprovalRequest } from "./approvals.js";
 import type { AuthorizationMode, ConversationPendingReplacement, PermissionConfirmation, PermissionPreset, RunThinkingLevel, RunTool, SessionPermissionMode, WorkspaceAccessMode } from "./shared.js";
 import type { ExecutionAction } from "./execution-actions.js";
 import type { ResponseLanguagePreference } from "./settings.js";
-import type { RunEventEnvelope, RunIntervention, RunSession } from "./runtime.js";
+import type { ConversationActiveReplyTarget, RunEventEnvelope, RunIntervention, RunSession } from "./runtime.js";
 import type { LingThread } from "./threads.js";
 import type { LingTurn } from "./turns.js";
 import type { TerminalReportDto } from "./terminal-reports.js";
@@ -54,6 +54,7 @@ export interface ConversationStreamReadyEvent {
   readonly userMessage: ConversationTranscriptMessage;
   readonly assistantMessage: ConversationTranscriptMessage;
   readonly runId?: string;
+  readonly activeReply?: ConversationActiveReplyTarget;
 }
 
 export interface ConversationStreamRunEvent {

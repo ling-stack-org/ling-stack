@@ -293,7 +293,7 @@ Rules:
 | Thinking mode picker | No by default | Yes when selected model supports it | No from composer; inherited from teammate settings/runtime |
 | Authorization picker | Yes, locked while active | Yes, locked while active | Yes, locked while active |
 | Inline approval strip | Yes | Yes | Yes |
-| Active run guidance strip | Yes | Yes | Yes |
+| Active run guidance mode | Yes | Yes | Yes |
 | Stop active run button | Yes | Yes | Yes when direct reply is running |
 | Send shortcut | Enter sends, Shift+Enter newline | Same | Same |
 | Surface-specific placeholder | Required | Required | Required |
@@ -360,7 +360,18 @@ Requirements:
 - slash command, file reference, URL, and optional mention tokens use the same chip
   colors and shape,
 - disabled mention support means no mention picker and no mention token parsing,
-- drag-over state uses the same accent background and drop hint.
+- drag-over state uses the same accent background and drop hint,
+- the shared input owns clipboard parsing: files are always prevented from entering the
+  contenteditable DOM and are delivered through `onPasteFiles`; file extraction checks
+  `DataTransfer.files` and falls back to file-kind `DataTransfer.items`,
+- text paste inserts `text/plain` only; clipboard HTML, raw `<img>` nodes, and other rich
+  DOM fragments are never inserted,
+- the editable root uses the browser `plaintext-only` contenteditable mode as a native
+  backstop; attachment rendering is exclusively owned by `ComposerPendingAssetStrip`.
+
+Paste, attach-button selection, and drag/drop must converge on the surface attachment
+controller. A surface cannot add a second clipboard parser around the shared input, and
+`TokenizedComposerInput` does not expose a page-level `onPaste` compatibility hook.
 
 ### Toolbar
 
@@ -494,12 +505,84 @@ The shared composer owns these active states:
 - `approval_required`
 - `uploading`
 
+Those presentation states are driven by one request lifecycle shared by channel, normal
+conversation, and teammate private chat:
+
+```text
+idle -> submitting -> message_accepted -> reply_linked -> settled
+                       \-> failed after accept: do not restore the original payload
+       \-> failed_before_accept: restore the original draft and pending assets
+```
+
+`reply_linked` means the daemon has durably linked both the real `RunSession` and its
+supervising WorkUnit. The first active status can be `queued`; the UI must not wait for
+`running` or the first text delta before unlocking guidance. Every submit has an independent
+request identity: two rapid guidance submits may remain in flight together, and completion of
+one cannot invalidate, clear, or restore the other's draft snapshot. Stale events are scoped
+by surface owner, while transient SSE targets reconcile with authoritative runtime data by
+`runId` without constructing a fake full `RunSession`. Older fetched Run details cannot
+overwrite a newer terminal list snapshot.
+
+For a channel send that owns an idle reply lane, `reply_pending` follows `message_accepted`
+before potentially slow materialization, intent selection, provider preparation, or Run
+creation. It carries only the accepted source message id, canonical target teammate id, and
+timestamp. A send that discovers an active lane emits no `reply_pending`; its terminal stream
+result moves the optimistic row into the durable guidance queue. That row adopts the durable
+intervention id and remains visible while the next intervention refresh is in flight; it is
+retired only when the authoritative queue owns the same id or the source message enters the
+transcript.
+
+For channel only, the daemon may temporarily hold dispatch ownership before `reply_linked`
+while the first message is materialized and routed. Every later submit waits for that linkage
+and then enters the existing durable follow-up FIFO, regardless of its target. This process-local lane
+does not create a UI state, a second queue, or another persistence contract.
+The queue payload, pending reply, WorkUnit, and Run must use canonical teammate ids. No
+mention is always `ling_agent`; the generic author type string `ai-teammate` is never a valid
+executor fallback.
+
 When active work exists:
 
-- typed text is explicit guidance,
-- empty send button can become stop only when the run can be stopped,
-- non-empty send queues or submits follow-up guidance,
-- the UI must not silently reroute a normal message into an active run.
+- channel typed text remains a durable message; the daemon's mention resolver records who
+  should handle it when its FIFO turn arrives,
+- no AI mention targets Ling Agent, one AI mention targets that teammate, and multiple AI
+  mentions return to Ling Agent for coordination,
+- the channel has one active reply lane, so every later non-empty message queues even when it
+  targets another idle teammate; empty send may stop the one active reply,
+- message wording never changes queue guidance into interruption,
+- no previous target selection can leak into a later unmentioned message because the Web
+  stores no independent target selection,
+- normal conversation and teammate-private typed text continue to target their one active
+  owner Run.
+
+The default visual projection stays lightweight:
+
+- normal conversation and a channel with active replies do not render a standalone run
+  summary card or an empty guidance panel above the composer;
+- channel targeting stays in the ordinary mention input; no "Guide whom" selector is
+  rendered;
+- approvals, provider blockers, and other actionable exceptions may still render a
+  persistent status strip;
+- accepted channel guidance is projected from its durable `RunIntervention`, not a second
+  client-only queue;
+- if an earlier send is still settling, the next send is projected as guidance immediately;
+  it does not wait for asynchronous active-Run refresh and never flashes as a transcript row;
+- while queued it appears once in the Composer guidance queue and its source message is hidden
+  from the transcript; at `starting_continuation` the same source message enters the transcript;
+- it has no success toast and cannot be promoted ahead of earlier FIFO items;
+- run details remain available from the right-side evidence/detail surfaces and do not
+  return to the composer.
+
+Channel activity transitions use initial-load feedback only. Once a channel scope has
+loaded, control-plane and run updates refresh retained data silently instead of flashing a
+loading row in the message feed. A Run whose referenced WorkUnit is between refresh snapshots
+is also hidden from default chat until ownership resolves, so completed operation status does
+not appear and disappear between polling responses.
+
+Draft recovery follows acceptance, not transport completion. A failure before
+`message_accepted` restores text and pending assets. A failure after acceptance keeps them
+consumed so an uncertain network tail cannot duplicate a durable user message. Network send
+latency does not disable channel text entry or submission; only unresolved attachment or link
+materialization blocks a payload that depends on those assets.
 
 ## Component Boundary
 
@@ -594,6 +677,11 @@ The first Web-local implementation now shares the composer shell and permission 
 across channel, normal conversation, and teammate private chat. Normal conversation and
 teammate private chat use `TokenizedComposerInput`; channel already used it and now routes
 that input through the shared shell.
+
+The shared tokenized input also owns controlled paste, and all three surfaces now use one
+owner-scoped send lifecycle. Message acceptance consumes the optimistic payload;
+durable reply linkage, including `queued`, releases the Composer into guidance mode while
+the original SSE stream continues.
 
 Important boundary:
 

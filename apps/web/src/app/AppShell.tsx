@@ -1024,7 +1024,10 @@ export function AppShell(): JSX.Element {
   const runById = useMemo(() => {
     const items = new Map(runs.map((item) => [item.id, item]));
     if (run) {
-      items.set(run.id, run);
+      const listedRun = items.get(run.id);
+      if (!listedRun || run.updatedAt.localeCompare(listedRun.updatedAt) > 0) {
+        items.set(run.id, run);
+      }
     }
     return items;
   }, [run, runs]);
@@ -2659,9 +2662,14 @@ export function AppShell(): JSX.Element {
                     refreshConversationThreads(form.cwd.trim()),
                     refreshSelectedConversation(form.cwd.trim()),
                   ]).then(() => undefined)}
-                  onStopConversation={activeConversationRun
-                    ? () => cancelRunOrWorkUnit(activeConversationRun)
-                    : undefined}
+                  onStopConversation={(target) => {
+                    const targetRun = selectedConversationDetail?.runs.find((run) => run.id === target.runId);
+                    if (targetRun) {
+                      void cancelRunOrWorkUnit(targetRun);
+                      return;
+                    }
+                    if (target.workUnitId) void runWorkUnitAction(target.workUnitId, "cancel");
+                  }}
                   onSendConversation={async (input) => {
                     await sendConversationMessage({
                       message: input.message,
@@ -2683,6 +2691,8 @@ export function AppShell(): JSX.Element {
                         homeMessageFromTranscript(event.userMessage),
                         homeMessageFromTranscript(event.assistantMessage),
                       ]),
+                      onMessageAccepted: input.onMessageAccepted,
+                      onReplyLinked: input.onReplyLinked,
                       onRunEvent: (event) => {
                         if (event.assistantMessage) {
                           input.upsertMessage(homeMessageFromTranscript(event.assistantMessage));

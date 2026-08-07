@@ -1437,10 +1437,24 @@ POST /channels/:id/messages/stream?cwd=/path/to/project
 `POST /messages/stream` uses the same request body and returns `text/event-stream`.
 It persists the local message, creates durable pending AI reply messages, and streams
 visible assistant text into those same message rows.
+The Web normally sends mentions and `requestAiReply` without a duplicate `teammateId`;
+the daemon resolves no mention to `ling_agent`, one mention to that teammate, and multiple
+mentions back to `ling_agent`.
+
+The channel has one active reply lane. While any `channel_ai_reply` Run is active, every later
+non-empty message returns `replyDispatch.disposition = "followup_queued"`, regardless of the
+resolved target's idle state. Its intervention payload contains `sourceMessageId` and
+`targetTeammateId`; the continuation resolves that target's current channel model binding when
+the FIFO item starts. `GET /channels/:id/messages` excludes queued source messages until their
+intervention has `startedAt`. It also excludes a source message while dispatch classification
+is in flight between message persistence and the authoritative `reply_pending` or
+`followup_queued` state, preventing concurrent refresh from briefly exposing a queued message.
 
 SSE events:
 
 - `ready`: `{ "message": ChannelMessage, "aiReply"?: ChannelMessage, "aiReplies"?: ChannelMessage[] }`
+- `reply_pending`: `{ "sourceMessageId": string, "targetTeammateId": string, "startedAt": string }`
+- `run_linked`: `{ "messageId": string, "linkedRunId": string, "activeReply"?: ConversationActiveReplyTarget }`
 - `delta`: `{ "messageId": string, "delta": string, "body": string }`
 - `done`: `{ "message": ChannelMessage, "aiReply"?: ChannelMessage, "aiReplies"?: ChannelMessage[], "autoStartedWorkflow"?: ... }`
 - `blocked`: `{ "message": ChannelMessage, "aiReply"?: ChannelMessage, "aiReplies"?: ChannelMessage[], "error"?: string }`

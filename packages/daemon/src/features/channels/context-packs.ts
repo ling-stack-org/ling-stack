@@ -30,6 +30,7 @@ import {
   collectChannelStateSource,
   collectMaterializedInputSources,
   collectPriorConversationSources,
+  collectRecentConversationSources,
   collectSelectorConversationSources,
   collectTurnSource,
   listChannelContextMessages,
@@ -145,6 +146,7 @@ interface ChannelReplyContextPackInput {
   readonly teammate: AiTeammate | undefined;
   readonly canonicalTeammateId: string;
   readonly visibleParticipantTeammateIds?: readonly string[];
+  readonly additionalContextMessages?: readonly ChannelMessage[];
   readonly compactedChannelSummary?: ChannelCompactedDiscussionSummary;
   readonly minimal?: boolean;
 }
@@ -415,7 +417,12 @@ export function buildChannelReplyContextPack(input: ChannelReplyContextPackInput
   };
   const recentReplyContextSection = input.minimal
     ? undefined
-    : buildRecentChannelReplyContextSection(input.store, input.channel.id, input.sourceMessage);
+    : buildRecentChannelReplyContextSection(
+        input.store,
+        input.channel.id,
+        input.sourceMessage,
+        input.additionalContextMessages,
+      );
   const compactedSummarySection = input.compactedChannelSummary
     ? [buildCompactedChannelDiscussionSection(input.compactedChannelSummary)]
     : [];
@@ -620,8 +627,12 @@ function buildRecentChannelReplyContextSection(
   store: RunStore,
   channelId: string,
   sourceMessage: ChannelMessage,
+  additionalContextMessages: readonly ChannelMessage[] = [],
 ): ContextSection | undefined {
-  const recentMessages = listPriorChannelMessages(store, channelId, sourceMessage)
+  const recentMessages = uniqueChannelMessages([
+    ...listPriorChannelMessages(store, channelId, sourceMessage),
+    ...additionalContextMessages,
+  ])
     .filter((message) => message.status !== "pending")
     .slice(-CHANNEL_REPLY_RECENT_CONTEXT_LIMIT);
   if (recentMessages.length === 0) {
@@ -651,12 +662,28 @@ function collectReplyRecentMessageSources(
   if (!recentReplyContextSection) {
     return [];
   }
-  return collectPriorConversationSources({
-    store: input.store,
-    channel: input.channel,
-    sourceMessage: input.sourceMessage,
-    limit: CHANNEL_REPLY_RECENT_CONTEXT_LIMIT,
-  });
+  return [
+    ...collectPriorConversationSources({
+      store: input.store,
+      channel: input.channel,
+      sourceMessage: input.sourceMessage,
+      limit: CHANNEL_REPLY_RECENT_CONTEXT_LIMIT,
+    }),
+    ...collectRecentConversationSources({
+      workspaceId: input.channel.workspaceId,
+      channelId: input.channel.id,
+      messages: input.additionalContextMessages ?? [],
+      limit: CHANNEL_REPLY_RECENT_CONTEXT_LIMIT,
+    }),
+  ];
+}
+
+function uniqueChannelMessages(messages: readonly ChannelMessage[]): ChannelMessage[] {
+  const byId = new Map<string, ChannelMessage>();
+  for (const message of messages) {
+    byId.set(message.id, message);
+  }
+  return [...byId.values()];
 }
 
 function collectSelectorRecentMessageSources(input: ChannelIntentSelectorContextPackInput): readonly ChannelContextSource[] {

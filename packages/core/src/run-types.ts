@@ -1126,6 +1126,8 @@ export interface RunIntervention {
 }
 
 export interface RunInterventionMessagePayload {
+  readonly sourceMessageId?: string;
+  readonly targetTeammateId?: string;
   readonly body: string;
   readonly attachmentIds: readonly string[];
   readonly linkPreviewIds: readonly string[];

@@ -1,6 +1,5 @@
 import type { ReactVirtualizer, VirtualItem } from "@tanstack/react-virtual";
 import type {
-  ClipboardEvent,
   DragEvent,
   KeyboardEvent,
   ReactNode,
@@ -117,7 +116,7 @@ export interface TeammatePrivateChatSurfaceProps {
       readonly permissionConfirmation?: PermissionConfirmation;
     },
   ) => void;
-  readonly onComposerPaste: (event: ClipboardEvent<HTMLDivElement>) => void;
+  readonly onComposerPasteFiles: (files: readonly File[]) => void;
   readonly onComposerDragOver: (event: DragEvent<HTMLDivElement>) => void;
   readonly onComposerDragLeave: (event: DragEvent<HTMLDivElement>) => void;
   readonly onComposerDrop: (event: DragEvent<HTMLDivElement>) => void;

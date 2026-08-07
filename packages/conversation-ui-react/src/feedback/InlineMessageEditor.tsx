@@ -59,7 +59,6 @@ export function InlineMessageEditor({
         ariaLabel={ariaLabel}
         onChange={(nextValue) => setValue(nextValue)}
         onKeyDown={handleKeyDown}
-        onPaste={() => {}}
         onSelect={() => {}}
       />
       {warning ? <p className="conversation-inline-message-editor-warning">{warning}</p> : null}

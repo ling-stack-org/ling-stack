@@ -24,7 +24,7 @@ import {
   type ChannelAutoRouteCandidateContext,
   type ContextPack,
 } from "./context-packs.js";
-import { createLingAgentExecutor, LING_AGENT_EXECUTOR_ID } from "./ling-agent-executor.js";
+import { createLingAgentExecutor, isLingAgentExecutorId, LING_AGENT_EXECUTOR_ID } from "./ling-agent-executor.js";
 import {
   buildLingAgentTurnEnvelope,
   turnEnvelopeHasUserInput,
@@ -149,12 +149,17 @@ export async function routeChannelMessageReply(input: ChannelMessageRouteInput):
 }
 
 export function routeExplicitChannelMention(input: ChannelMessageRouteInput): ChannelMessageRouteResult {
-  const teammateId = input.requestedTeammateId ?? input.sourceMessage.mentions.find((mention) => mention.kind === "ai-teammate")?.id;
-  const teammate = teammateId ? resolveAiTeammateReference(input.store, teammateId) : undefined;
+  const requestedTeammateId = input.requestedTeammateId ??
+    input.sourceMessage.mentions.find((mention) => mention.kind === "ai-teammate")?.id ??
+    LING_AGENT_EXECUTOR_ID;
+  const teammate = isLingAgentExecutorId(requestedTeammateId)
+    ? input.store.getAiTeammate(LING_AGENT_EXECUTOR_ID) ?? createLingAgentExecutor()
+    : resolveAiTeammateReference(input.store, requestedTeammateId);
+  const teammateId = teammate?.id ?? requestedTeammateId;
   const providerPresetId = resolveRunnableProviderPresetId(input, teammate);
   const decision = persistRouteDecision(input, {
     action: "reply",
-    teammateId: teammate?.id ?? teammateId,
+    teammateId,
     providerPresetId,
     confidence: 1,
     reason: "Explicit AI teammate mention requested a reply.",
@@ -164,7 +169,7 @@ export function routeExplicitChannelMention(input: ChannelMessageRouteInput): Ch
   return {
     action: "reply",
     decisionId: decision.id,
-    teammateId: teammate?.id ?? teammateId ?? "ai-teammate",
+    teammateId,
     providerPresetId,
     reason: decision.reason,
     createdBy: "explicit_mention",
