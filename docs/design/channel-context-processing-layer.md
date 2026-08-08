@@ -6,6 +6,8 @@ Design baseline.
 
 Related docs:
 
+- [Channel Conversation Continuity v2](channel-conversation-continuity-v2.md)
+- [Channel Conversation Continuity v2 Implementation Plan](channel-conversation-continuity-v2-implementation-plan.md)
 - [Channel Context Budget Manager](channel-context-budget-manager.md)
 - [Channel Context Processing Layer Implementation Plan](channel-context-processing-layer-implementation-plan.md)
 - [Ling Agent Session Control Plane](ling-agent-session.md)
@@ -18,6 +20,12 @@ Related docs:
 This document defines the product and runtime boundary for channel context processing.
 It extends the existing [Channel Context Budget Manager](channel-context-budget-manager.md)
 without replacing the current channel, workflow, memory, or evidence stores.
+
+[Channel Conversation Continuity v2](channel-conversation-continuity-v2.md) is
+authoritative for the canonical Thread/Turn/Item timeline, context segments, shared
+projection version, coverage-aware summaries, and multi-agent recovery. This document
+continues to own source eligibility, per-consumer view shape, filtering, redaction, and
+budget boundaries.
 
 ## Problem
 
@@ -114,6 +122,24 @@ model prompt / runner packet / evidence metadata
 The layer should be deterministic where possible. Model calls may help summarize or
 compact large inputs, but local policy must decide scope, sensitivity, source refs, and
 whether a compacted item can be used.
+
+### Conversation continuity input
+
+Context consumers must not independently scan fixed recent-message windows. The canonical
+input is a versioned projection:
+
+```text
+ConversationItems + domain records + ContextSegment assignment + summaries
+  -> permission and visibility filter
+  -> ConversationContextProjector
+  -> Channel Context View
+  -> Context Budget Manager
+  -> model prompt / runner packet
+```
+
+Selector, reply, TargetResolver, workflow proposal, workflow step, and specialist views
+may request different sections and budgets. They must still share the same thread, turn,
+segment assignment, projection version, and source-ref authority.
 
 ## Candidate Context Sources
 
@@ -308,7 +334,9 @@ Detailed implementation plan:
 
 ## Open Decisions
 
-- Exact threshold for recent visible conversation window per provider class.
+- Exact tuning of the rolling-summary and recent-tail policy after measuring provider
+  budgets. The initial baseline is defined in Channel Conversation Continuity v2; this is
+  a versioned policy parameter, not an ownership decision.
 - Whether ordinary reply context metadata should be persisted for all replies or only
   stored for route/inspect/debug paths.
 - Whether memory public-quoting eligibility needs a new explicit field beyond existing
