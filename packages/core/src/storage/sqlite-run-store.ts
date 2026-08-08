@@ -254,6 +254,7 @@ import type {
 } from "../skill-usage-types.js";
 import {
   type AppendControlPlaneEventInput,
+  type ClaimNextRunInterventionInput,
   type ConversationModeState,
   type CreateLingThreadGoalInput,
   type ControlPlaneEvent,
@@ -274,6 +275,7 @@ import {
   type ListControlPlaneEventsOptions,
   type ListLingThreadsOptions,
   type ListLingTurnsOptions,
+  type ListPriorRunInterventionReplyMessagesInput,
   type ListRunInterventionsOptions,
   type ListRunEventsOptions,
   type ListRunsOptions,
@@ -1384,6 +1386,14 @@ export class SqliteRunStore implements RunStore {
 
   listRunInterventions(options: ListRunInterventionsOptions = {}): RunIntervention[] {
     return this.runInterventions.listRunInterventions(options);
+  }
+
+  claimNextRunIntervention(input: ClaimNextRunInterventionInput): RunIntervention | undefined {
+    return this.runInterventions.claimNextRunIntervention(input);
+  }
+
+  listPriorRunInterventionReplyMessages(input: ListPriorRunInterventionReplyMessagesInput): ChannelMessage[] {
+    return this.runInterventions.listPriorRunInterventionReplyMessages(input);
   }
 
   updateRunInterventionStatus(input: UpdateRunInterventionStatusInput): RunIntervention | undefined {

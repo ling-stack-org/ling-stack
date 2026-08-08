@@ -530,8 +530,14 @@ export interface CreateChannelMessageRequest {
   readonly linkedTaskId?: string;
   readonly linkedRunId?: string;
   readonly requestAiReply?: boolean;
+  readonly replyDisposition?: ChannelReplyDisposition;
   readonly providerPresetId?: string;
   readonly teammateId?: string;
+}
+
+export interface ChannelReplyDisposition {
+  readonly mode: "queue_followup";
+  readonly activeRunId?: string;
 }
 
 export interface ChannelMessageListResponse {

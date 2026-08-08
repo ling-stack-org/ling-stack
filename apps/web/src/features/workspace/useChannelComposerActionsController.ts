@@ -29,6 +29,7 @@ import type {
   ChannelMessage,
   ChannelMessageStreamReplyPendingEvent,
   ChannelReplyDispatch,
+  ChannelReplyDisposition,
   ConversationActiveReplyTarget,
   ChannelLinkPreview,
   ChannelMention,
@@ -126,6 +127,7 @@ interface ChannelComposerActionsInput {
     readonly linkPreviewIds: readonly string[];
     readonly fileRefs: readonly ChannelMessageFileRef[];
     readonly requestAiReply: boolean;
+    readonly replyDisposition?: ChannelReplyDisposition;
     readonly onMessageAccepted?: (message: ChannelMessage) => void;
     readonly onReplyPending?: (pending: ChannelMessageStreamReplyPendingEvent) => void;
     readonly onReplyLinked?: (target: ConversationActiveReplyTarget) => void;
@@ -553,9 +555,15 @@ export function useChannelComposerActionsController({
         createdAt: new Date().toISOString(),
       } satisfies PendingChannelSendPreview;
       pendingSendPreviewId = pendingSendPreview.id;
-      const shouldProjectAsQueuedGuidance = Boolean(
-        activeConversationTarget || sendOperation.hasPendingPredecessor
-      );
+      const replyDisposition: ChannelReplyDisposition | undefined = activeConversationTarget
+        ? {
+            mode: "queue_followup",
+            activeRunId: activeConversationTarget.activeReply.runId,
+          }
+        : sendOperation.hasPendingPredecessor
+          ? { mode: "queue_followup" }
+          : undefined;
+      const shouldProjectAsQueuedGuidance = Boolean(replyDisposition);
       if (shouldProjectAsQueuedGuidance) {
         const aiMentions = mentions.filter((mention) => mention.kind === "ai-teammate");
         const targetTeammateId = aiMentions.length === 1 ? aiMentions[0]?.id : "ling_agent";
@@ -591,6 +599,7 @@ export function useChannelComposerActionsController({
         linkPreviewIds: linkPreviews.map((preview) => preview.id),
         fileRefs,
         requestAiReply: shouldRequestAi,
+        ...(replyDisposition ? { replyDisposition } : {}),
         onMessageAccepted: (message) => {
           if (!sendOperation || !sendLifecycle.accept(sendOperation) || !isChannelCurrent(sendChannelId)) return;
           acceptedSourceMessageId = message.id;

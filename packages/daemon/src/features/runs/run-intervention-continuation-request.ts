@@ -55,7 +55,7 @@ export function buildRunInterventionContinuationRequest(
     cwd: readSnapshotString(snapshot, "cwd") ?? sourceRun.cwd,
     providerPresetId: channelContinuation?.providerPresetId ?? providerPresetId,
     provider: channelContinuation ? undefined : inlineProvider,
-    threadId: sourceRun.threadId,
+    threadId: channelContinuation?.threadId ?? sourceRun.threadId,
     teammateId: channelContinuation?.targetTeammateId ?? readSnapshotString(snapshot, "teammateId") ?? sourceRun.teammateId,
     runnerId: channelContinuation?.runnerId ?? readSnapshotString(snapshot, "runnerId"),
     requestedSkillId,

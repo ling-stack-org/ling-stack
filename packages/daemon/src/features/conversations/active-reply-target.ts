@@ -15,6 +15,7 @@ export function projectConversationActiveReplyTarget(input: {
   if (!run || !isActiveReplyStatus(run.status) || !run.workUnitId) return undefined;
   const workUnit = input.store.getWorkUnit(run.workUnitId);
   if (!workUnit || workUnit.linkedRunId !== run.id) return undefined;
+  const sourceMessageId = readSnapshotString(run.requestSnapshot, "sourceMessageId");
 
   return {
     runId: run.id,
@@ -22,11 +23,20 @@ export function projectConversationActiveReplyTarget(input: {
     workUnitId: workUnit.id,
     channelId: input.channelId ?? run.channelId ?? workUnit.channelId,
     threadId: input.threadId ?? run.threadId,
+    ...(sourceMessageId ? { sourceMessageId } : {}),
     teammateId: input.teammateId ?? run.teammateId ?? workUnit.teammateId,
     status: run.status,
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
   };
+}
+
+function readSnapshotString(value: unknown, key: string): string | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const candidate = (value as Record<string, unknown>)[key];
+  return typeof candidate === "string" && candidate.trim() ? candidate.trim() : undefined;
 }
 
 function isActiveReplyStatus(status: string): status is ConversationActiveReplyStatus {

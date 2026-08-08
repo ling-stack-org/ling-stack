@@ -117,6 +117,9 @@ export class ConversationSendLifecycleStore {
       this.#publish();
       return { accepted: true, restoreInput: false };
     }
+    this.#operations.delete(operation.requestId);
+    this.#terminalPhase = "settled";
+    this.#publish();
     return { accepted: true, restoreInput: false };
   }
 

@@ -1,13 +1,17 @@
 import type { SQLOutputValue } from "node:sqlite";
+import type { ChannelMessage } from "../../workspace-types.js";
 import {
   createRunInterventionId,
+  type ClaimNextRunInterventionInput,
   type CreateRunInterventionInput,
+  type ListPriorRunInterventionReplyMessagesInput,
   type ListRunInterventionsOptions,
   type RunIntervention,
   type RunSession,
   type UpdateRunInterventionStatusInput,
 } from "../../run-types.js";
 import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
+import { mapChannelMessage } from "./channel-message-mappers.js";
 import { stringifyJson } from "./helpers.js";
 import {
   mapRunIntervention,
@@ -122,6 +126,11 @@ export class SqliteRunInterventionStore {
       clauses.push("source_run_id = ?");
       params.push(options.sourceRunId);
     }
+    const sourceMessageIds = [...new Set(options.sourceMessageIds?.filter(Boolean) ?? [])];
+    if (sourceMessageIds.length > 0) {
+      clauses.push(`json_extract(message_payload_json, '$.sourceMessageId') IN (${sourceMessageIds.map(() => "?").join(", ")})`);
+      params.push(...sourceMessageIds);
+    }
     if (options.status) {
       clauses.push("status = ?");
       params.push(options.status);
@@ -138,6 +147,93 @@ export class SqliteRunInterventionStore {
       .map((row) => mapRunIntervention(row as Record<string, SQLOutputValue>));
   }
 
+  claimNextRunIntervention(input: ClaimNextRunInterventionInput): RunIntervention | undefined {
+    const expectedStatuses = [...new Set(input.expectedStatuses)];
+    if (expectedStatuses.length === 0) {
+      return undefined;
+    }
+    const placeholders = expectedStatuses.map(() => "?").join(", ");
+    const row = this.context.database
+      .prepare(`
+        UPDATE run_interventions
+        SET status = ?,
+            updated_at = ?,
+            started_at = ?
+        WHERE id = (
+          SELECT id
+          FROM run_interventions
+          WHERE source_run_id = ?
+            AND status IN (${placeholders})
+          ORDER BY created_at ASC, id ASC
+          LIMIT 1
+        )
+          AND status IN (${placeholders})
+        RETURNING
+          id,
+          workspace_id,
+          source_run_id,
+          source_work_unit_id,
+          source_attempt_id,
+          continuation_run_id,
+          continuation_work_unit_id,
+          mode,
+          status,
+          instruction,
+          message_payload_json,
+          requested_by,
+          idempotency_key,
+          created_at,
+          updated_at,
+          started_at,
+          completed_at,
+          failure_reason
+      `)
+      .get(
+        input.status,
+        input.now,
+        input.startedAt ?? null,
+        input.sourceRunId,
+        ...expectedStatuses,
+        ...expectedStatuses,
+      );
+    return row ? mapRunIntervention(row as Record<string, SQLOutputValue>) : undefined;
+  }
+
+  listPriorRunInterventionReplyMessages(input: ListPriorRunInterventionReplyMessagesInput): ChannelMessage[] {
+    const limit = Math.min(Math.max(input.limit ?? 6, 1), 100);
+    return this.context.database
+      .prepare(`
+        SELECT channel_messages.*
+        FROM run_interventions AS earlier
+        JOIN run_interventions AS current
+          ON current.id = ?
+         AND current.source_run_id = ?
+        JOIN work_units
+          ON work_units.id = earlier.continuation_work_unit_id
+        JOIN channel_messages
+          ON channel_messages.id = work_units.linked_message_id
+        WHERE earlier.source_run_id = ?
+          AND earlier.completed_at IS NOT NULL
+          AND channel_messages.channel_id = ?
+          AND channel_messages.status = 'ready'
+          AND (
+            earlier.created_at < current.created_at
+            OR (earlier.created_at = current.created_at AND earlier.id < current.id)
+          )
+        ORDER BY earlier.created_at DESC, earlier.id DESC
+        LIMIT ?
+      `)
+      .all(
+        input.beforeInterventionId,
+        input.sourceRunId,
+        input.sourceRunId,
+        input.channelId,
+        limit,
+      )
+      .map((row) => mapChannelMessage(row as Record<string, SQLOutputValue>))
+      .reverse();
+  }
+
   updateRunInterventionStatus(input: UpdateRunInterventionStatusInput): RunIntervention | undefined {
     const existing = this.getRunIntervention(input.interventionId);
     if (!existing) {
@@ -148,7 +244,11 @@ export class SqliteRunInterventionStore {
     const startedAt = input.startedAt === undefined ? existing.startedAt ?? null : input.startedAt;
     const completedAt = input.completedAt === undefined ? existing.completedAt ?? null : input.completedAt;
     const failureReason = input.failureReason === undefined ? existing.failureReason ?? null : input.failureReason;
-    this.context.database
+    const expectedStatuses = input.expectedStatuses ? [...new Set(input.expectedStatuses)] : [];
+    const expectedClause = expectedStatuses.length > 0
+      ? ` AND status IN (${expectedStatuses.map(() => "?").join(", ")})`
+      : "";
+    const result = this.context.database
       .prepare(`
         UPDATE run_interventions
         SET status = ?,
@@ -158,7 +258,7 @@ export class SqliteRunInterventionStore {
             started_at = ?,
             completed_at = ?,
             failure_reason = ?
-        WHERE id = ?
+        WHERE id = ?${expectedClause}
       `)
       .run(
         input.status,
@@ -169,7 +269,11 @@ export class SqliteRunInterventionStore {
         completedAt,
         failureReason,
         input.interventionId,
+        ...expectedStatuses,
       );
+    if (result.changes === 0) {
+      return undefined;
+    }
     return this.getRunIntervention(input.interventionId);
   }
 
@@ -183,6 +287,7 @@ export class SqliteRunInterventionStore {
     }
     return this.updateRunInterventionStatus({
       interventionId,
+      expectedStatuses: [existing.status],
       status: "cancelled",
       completedAt: now,
       failureReason: reason ?? "cancelled",

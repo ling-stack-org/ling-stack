@@ -1,3 +1,4 @@
+import type { ChannelReplyDisposition } from "@ling-stack/contracts";
 import {
   channelDecisionStatuses,
   channelContextSummaryAuthorTypes,
@@ -179,6 +180,7 @@ export interface ChannelMessageRequest {
   readonly linkedTaskId?: string;
   readonly linkedRunId?: string;
   readonly requestAiReply: boolean;
+  readonly replyDisposition?: ChannelReplyDisposition;
   readonly providerPresetId?: string;
   readonly teammateId?: string;
 }
@@ -595,6 +597,7 @@ export function parseChannelMessageRequest(value: unknown): ChannelMessageReques
     linkedTaskId: readOptionalString(value, "linkedTaskId"),
     linkedRunId: readOptionalString(value, "linkedRunId"),
     requestAiReply: readOptionalBoolean(value, "requestAiReply") ?? false,
+    replyDisposition: readOptionalChannelReplyDisposition(value),
     providerPresetId: readOptionalString(value, "providerPresetId"),
     teammateId: readOptionalString(value, "teammateId"),
   };
@@ -608,6 +611,24 @@ export function parseChannelMessageRequest(value: unknown): ChannelMessageReques
     throw new Error("A channel message can reference at most 12 workspace files");
   }
   return input;
+}
+
+function readOptionalChannelReplyDisposition(value: Record<string, unknown>): ChannelReplyDisposition | undefined {
+  const disposition = value.replyDisposition;
+  if (disposition === undefined) {
+    return undefined;
+  }
+  if (!isRecord(disposition)) {
+    throw new Error("replyDisposition must be a JSON object");
+  }
+  const mode = readString(disposition, "mode");
+  if (mode !== "queue_followup") {
+    throw new Error("replyDisposition.mode must be queue_followup");
+  }
+  return {
+    mode,
+    activeRunId: readOptionalString(disposition, "activeRunId"),
+  };
 }
 
 export function parseChannelWorkflowRequest(value: unknown): ChannelWorkflowRequest {

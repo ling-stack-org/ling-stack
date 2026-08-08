@@ -1,5 +1,6 @@
 import type { ChannelMessage, RunIntervention, RunSession, RunStore } from "@ling-stack/core";
 import { buildChannelReplyContextPack, renderContextPack } from "./context-packs.js";
+import { ensureChannelReplyThread } from "./channel-reply-execution.js";
 import { resolveChannelReplyExecutionTarget } from "./channel-reply-execution-target.js";
 import { buildLingAgentTurnEnvelope } from "./ling-agent-turn-envelope.js";
 import { resolveChannelResponseLanguage, responseLanguageInstruction } from "./response-language.js";
@@ -10,6 +11,7 @@ export interface ChannelReplyContinuationContext {
   readonly systemPromptInstruction: string;
   readonly targetTeammateId: string;
   readonly providerPresetId: string;
+  readonly threadId: string;
   readonly runnerId?: string;
 }
 
@@ -49,6 +51,7 @@ export function buildChannelReplyContinuationContext(input: {
   if (!target.providerPresetId) {
     throw new Error(`AI teammate is not configured for this channel: ${target.teammateId}`);
   }
+  const threadId = ensureChannelReplyThread(input.store, channel, sourceMessage).id;
   const turnEnvelope = buildLingAgentTurnEnvelope({
     store: input.store,
     channel,
@@ -85,6 +88,7 @@ export function buildChannelReplyContinuationContext(input: {
     ].join("\n"),
     targetTeammateId: target.teammateId,
     providerPresetId: target.providerPresetId,
+    threadId,
     ...(target.teammate?.runnerId ? { runnerId: target.teammate.runnerId } : {}),
   };
 }
@@ -94,23 +98,13 @@ function listEarlierCompletedGuidanceReplies(
   sourceRun: RunSession,
   currentIntervention: RunIntervention,
 ): readonly ChannelMessage[] {
-  const interventions = store.listRunInterventions({ sourceRunId: sourceRun.id, limit: 100 });
-  const currentIndex = interventions.findIndex((intervention) => intervention.id === currentIntervention.id);
-  if (currentIndex <= 0) {
+  if (!sourceRun.channelId) {
     return [];
   }
-  return interventions
-    .slice(0, currentIndex)
-    .flatMap((intervention): ChannelMessage[] => {
-      if (!intervention.completedAt || !intervention.continuationWorkUnitId) {
-        return [];
-      }
-      const workUnit = store.getWorkUnit(intervention.continuationWorkUnitId);
-      const reply = workUnit?.linkedMessageId ? store.getChannelMessage(workUnit.linkedMessageId) : undefined;
-      if (!reply || reply.channelId !== sourceRun.channelId || reply.status !== "ready") {
-        return [];
-      }
-      return [reply];
-    })
-    .slice(-6);
+  return store.listPriorRunInterventionReplyMessages({
+    sourceRunId: sourceRun.id,
+    beforeInterventionId: currentIntervention.id,
+    channelId: sourceRun.channelId,
+    limit: 6,
+  });
 }

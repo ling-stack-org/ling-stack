@@ -8,6 +8,7 @@ import type {
 import { resolveAiTeammateReference } from "../teammates/identity.js";
 import { isLingAgentExecutorId, LING_AGENT_EXECUTOR_ID } from "./ling-agent-executor.js";
 import type { LingAgentTurnEnvelope } from "./ling-agent-turn-envelope.js";
+import { resolveChannelConversationLineKey } from "./conversation-surface.js";
 
 export function resolveChannelReplyTargetTeammateId(input: {
   readonly store: RunStore;
@@ -28,17 +29,33 @@ export function resolveChannelReplyTargetTeammateId(input: {
 export function findActiveChannelReplyRun(input: {
   readonly store: RunStore;
   readonly channelId: string;
+  readonly sourceMessage: ChannelMessage;
+  readonly activeRunId?: string;
 }): RunSession | undefined {
-  return input.store
-    .listRuns({ limit: 500 })
-    .find((run) => {
-      if (run.channelId !== input.channelId || !isActiveReplyStatus(run.status)) {
-        return false;
-      }
-      if (!run.workUnitId) return false;
-      const workUnit = input.store.getWorkUnit(run.workUnitId);
-      return workUnit?.kind === "channel_ai_reply" && workUnit.linkedRunId === run.id;
-    });
+  const requestedLineKey = resolveChannelConversationLineKey(
+    input.store,
+    input.channelId,
+    input.sourceMessage,
+  );
+  const runs = input.activeRunId
+    ? [input.store.getRun(input.activeRunId)].filter((run): run is RunSession => Boolean(run))
+    : input.store.listRuns({ limit: 500 });
+  return runs.find((run) => {
+    if (run.channelId !== input.channelId || !isActiveReplyStatus(run.status)) {
+      return false;
+    }
+    if (!run.workUnitId) return false;
+    const workUnit = input.store.getWorkUnit(run.workUnitId);
+    if (workUnit?.kind !== "channel_ai_reply" || workUnit.linkedRunId !== run.id) {
+      return false;
+    }
+    const sourceMessageId = readRequestSnapshotString(run.requestSnapshot, "sourceMessageId");
+    const sourceMessage = sourceMessageId ? input.store.getChannelMessage(sourceMessageId) : undefined;
+    if (!sourceMessage || sourceMessage.channelId !== input.channelId) {
+      return false;
+    }
+    return resolveChannelConversationLineKey(input.store, input.channelId, sourceMessage) === requestedLineKey;
+  });
 }
 
 export function queueChannelReplyFollowup(input: {
@@ -90,6 +107,14 @@ export function queueChannelReplyFollowup(input: {
 
 function isActiveReplyStatus(status: string): boolean {
   return status === "queued" || status === "running" || status === "waiting_for_approval";
+}
+
+function readRequestSnapshotString(value: unknown, key: string): string | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const candidate = (value as Record<string, unknown>)[key];
+  return typeof candidate === "string" && candidate.length > 0 ? candidate : undefined;
 }
 
 function appendInterventionEvent(

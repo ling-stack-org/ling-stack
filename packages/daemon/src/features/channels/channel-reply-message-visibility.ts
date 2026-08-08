@@ -5,8 +5,15 @@ export function filterQueuedChannelReplyMessages(
   messages: readonly ChannelMessage[],
   isClassificationPending: (message: ChannelMessage) => boolean = () => false,
 ): readonly ChannelMessage[] {
+  if (messages.length === 0) {
+    return messages;
+  }
   const hiddenMessageIds = new Set(
-    store.listRunInterventions({ mode: "queue_followup", limit: 500 })
+    store.listRunInterventions({
+      mode: "queue_followup",
+      sourceMessageIds: messages.map((message) => message.id),
+      limit: Math.min(messages.length, 500),
+    })
       .filter((intervention) => (
         !intervention.startedAt &&
         intervention.idempotencyKey.startsWith("channel_message:") &&

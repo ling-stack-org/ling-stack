@@ -187,6 +187,7 @@ import type {
   ChannelMessageStreamReplyPendingEvent,
   ChannelMessageRouteDecision,
   ChannelReplyDispatch,
+  ChannelReplyDisposition,
   ConversationActiveReplyTarget,
   ChannelTeamMetricsProjection,
   ChannelExecutionProposal,
@@ -659,6 +660,7 @@ export function WorkspaceClientView({
     readonly linkPreviewIds: readonly string[];
     readonly fileRefs: readonly ChannelMessageFileRef[];
     readonly requestAiReply: boolean;
+    readonly replyDisposition?: ChannelReplyDisposition;
     readonly onMessageAccepted?: (message: ChannelMessage) => void;
     readonly onReplyPending?: (pending: ChannelMessageStreamReplyPendingEvent) => void;
     readonly onReplyLinked?: (target: ConversationActiveReplyTarget) => void;
@@ -1801,6 +1803,8 @@ export function WorkspaceClientView({
   );
   const channelGuidanceTarget = useChannelGuidanceTargetController({
     selectedChannelId,
+    conversationLineThreadId: selectedChannelBranchRootThreadId,
+    channelMessages,
     channelRuns,
     workUnits,
     transientReplies: channelSendLifecycle.activeReplies,
@@ -1812,7 +1816,11 @@ export function WorkspaceClientView({
   const guidanceModeActive = channelGuidanceTarget.guidanceModeActive;
   const activeConversationSourceRunId = channelGuidanceTarget.sourceRunId;
   const threadReplyController = useChannelThreadReplyController({
+    selectedChannelId,
     channelMessages,
+    channelRuns,
+    workUnits,
+    transientReplies: channelSendLifecycle.activeReplies,
     teammateOptions,
     onSendMessage,
   });

@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { ChannelMessageStreamReplyPendingEvent, ChannelReplyDispatch } from "@ling-stack/contracts";
+import type { ChannelMessageStreamReplyPendingEvent, ChannelReplyDispatch, ChannelReplyDisposition } from "@ling-stack/contracts";
 import type { Channel, ChannelExecutionProposal, ChannelMessage, ChannelWorkflow, ChannelWorkflowStep, RunSession, RunStore } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
@@ -16,7 +16,6 @@ import { decideLingAgentAutoStart, type LingAutoStartDecision } from "./ling-age
 import { LING_AGENT_EXECUTOR_ID } from "./ling-agent-executor.js";
 import { buildLingAgentTurnEnvelope, type LingAgentTurnEnvelope } from "./ling-agent-turn-envelope.js";
 import {
-  findActiveChannelReplyRun,
   queueChannelReplyFollowup,
   resolveChannelReplyTargetTeammateId,
 } from "./channel-reply-dispatch.js";
@@ -63,6 +62,7 @@ interface LingAgentChannelMessageInput {
   readonly requestedProviderPresetId?: string;
   readonly requestedTeammateId?: string;
   readonly requestAiReply: boolean;
+  readonly replyDisposition?: ChannelReplyDisposition;
   readonly createAiReply: CreateChannelAiReply;
   readonly startExecutionProposalWorkflow?: StartChannelExecutionProposalWorkflow;
   readonly config: ResolvedDaemonConfig;
@@ -163,6 +163,7 @@ export async function handleChannelMessageStream(
         requestedProviderPresetId: input.providerPresetId,
         requestedTeammateId: input.teammateId,
         requestAiReply: Boolean(input.requestAiReply),
+        replyDisposition: input.replyDisposition,
         createAiReply: async (replyInput) =>
           await createAiReply({
             ...replyInput,
@@ -179,7 +180,6 @@ export async function handleChannelMessageStream(
                     store,
                     runId: aiReply.linkedRunId,
                     channelId,
-                    threadId: aiReply.threadId ?? message.threadId,
                     teammateId: aiReply.authorType === "ai-teammate" ? aiReply.authorId : undefined,
                   });
                   safeWriteSse("run_linked", {
@@ -389,6 +389,7 @@ export async function handleChannelMessagesCollection(
           requestedProviderPresetId: input.providerPresetId,
           requestedTeammateId: input.teammateId,
           requestAiReply: Boolean(input.requestAiReply),
+          replyDisposition: input.replyDisposition,
           createAiReply,
           startExecutionProposalWorkflow,
           config,
@@ -439,6 +440,7 @@ export async function handleLingAgentChannelMessage(input: LingAgentChannelMessa
     store: input.store,
     sourceMessage: input.sourceMessage,
     channelId: input.channel.id,
+    replyDisposition: input.replyDisposition,
   });
   if (!lane.activeRun && canDispatchChannelReply(input.sourceMessage)) {
     notifyReplyPending(input.onReplyPending, {
@@ -489,21 +491,20 @@ async function dispatchLingAgentChannelMessage(
     channel: input.channel,
     sourceMessage: input.sourceMessage,
   });
-  if (canDispatchChannelReply(input.sourceMessage) && hasChannelReplyPayload(input.sourceMessage, turnEnvelope)) {
-    const activeRun = activeReplyRun ?? findActiveChannelReplyRun({
+  if (
+    input.replyDisposition?.mode === "queue_followup" &&
+    activeReplyRun &&
+    canDispatchChannelReply(input.sourceMessage) &&
+    hasChannelReplyPayload(input.sourceMessage, turnEnvelope)
+  ) {
+    const replyDispatch = queueChannelReplyFollowup({
       store: input.store,
-      channelId: input.channel.id,
+      activeRun: activeReplyRun,
+      sourceMessage: input.sourceMessage,
+      targetTeammateId,
+      turnEnvelope,
     });
-    if (activeRun) {
-      const replyDispatch = queueChannelReplyFollowup({
-        store: input.store,
-        activeRun,
-        sourceMessage: input.sourceMessage,
-        targetTeammateId,
-        turnEnvelope,
-      });
-      return { replyDispatch };
-    }
+    return { replyDispatch };
   }
 
   if (targetTeammateId !== LING_AGENT_EXECUTOR_ID) {

@@ -52,9 +52,11 @@ generic `Thinking...` status with a spinner. As soon as `delta.body` is non-empt
 the same bubble must render that body instead of a generic pending label.
 The initial optimistic row remains visible after user-message acknowledgement only while
 dispatch is unresolved. The daemon emits `reply_pending` before slow routing work only for a
-message that owns an idle channel lane. If an active reply exists, the terminal stream event
-returns `followup_queued`; Web removes the optimistic transcript row and projects the durable
-intervention in the guidance queue instead.
+message that owns an idle conversation-line lane. If the Web sends an explicit same-line
+`queue_followup` disposition and the daemon validates it, the terminal stream event returns
+`followup_queued`; Web removes the optimistic transcript row and projects the durable
+intervention in the guidance queue instead. Other active replies in the same Channel do not
+capture Root, Branch, or Topic messages from a different line.
 
 If the channel feed is already pinned to the latest item, streamed `delta.body`
 updates must keep the feed pinned to the bottom as the same message grows. If
@@ -79,8 +81,8 @@ SSE events:
 | Event | Payload | Semantics |
 | --- | --- | --- |
 | `ready` | `{ message, aiReply?, aiReplies? }` | The local user message and one or more pending durable AI messages now exist. |
-| `reply_pending` | `{ sourceMessageId, targetTeammateId, startedAt }` | The accepted message owns the idle channel lane and is preparing a reply. Queued follow-ups do not emit it. This is not a Run or persistence object. |
-| `run_linked` | `{ messageId, linkedRunId, activeReply? }` | The durable pending AI message is linked to its real Run and supervising WorkUnit. |
+| `reply_pending` | `{ sourceMessageId, targetTeammateId, startedAt }` | The accepted message owns the idle conversation-line lane and is preparing a reply. Queued follow-ups do not emit it. This is not a Run or persistence object. |
+| `run_linked` | `{ messageId, linkedRunId, activeReply? }` | The durable pending AI message is linked to its real Run and supervising WorkUnit. Channel `activeReply.sourceMessageId` identifies the source Channel message; `activeReply.threadId` remains the canonical LingThread id. |
 | `delta` | `{ messageId, delta, body }` | A visible text delta was appended to the durable AI message. `body` is the full visible body so far. |
 | `done` | `{ message, aiReply?, aiReplies?, replyDispatch?, autoStartedWorkflow? }` | The channel turn reached its persisted dispatch state. `followup_queued` keeps the message out of the transcript until continuation start. |
 | `blocked` | `{ message, aiReply?, aiReplies?, error? }` | The reply could not continue because of provider, teammate, or runtime blocking. |

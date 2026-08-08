@@ -2,7 +2,7 @@
 
 Status: implemented product and runtime contract
 Owner: Runtime supervisor, daemon API, Web run surface
-Last verified: 2026-08-07
+Last verified: 2026-08-08
 
 ## Summary
 
@@ -41,27 +41,31 @@ Ordinary channel replies are eligible sources because each reply now owns a stan
 `RunSession`. The `channel_ai_reply` WorkUnit only projects supervision state. Whenever any
 reply is active, the Composer remains the ordinary channel input with no target selector.
 The daemon resolves no AI mention to Ling Agent, one AI mention to that teammate, and
-multiple AI mentions back to Ling Agent for coordination. The channel owns one reply lane.
-When any reply is active, every later non-empty message becomes a `queue_followup`, including
-a message that targets a different idle teammate. The queued payload retains its resolved
-target so the correct teammate and model are selected only when that FIFO item starts.
+multiple AI mentions back to Ling Agent for coordination. Each Channel conversation line owns
+its own reply lane: Root, Branch, message-keyed Topic, or explicit Thread. A later non-empty
+message becomes a `queue_followup` only when the Web sends an explicit typed disposition and
+the daemon verifies the exact active Run against that same line. A related message may target
+a different idle teammate; the queued payload retains its resolved target so the correct
+teammate and model are selected only when that FIFO item starts. An absent, stale, terminal,
+cross-channel, or cross-line disposition goes through normal intent routing.
 This reuses the same intervention FIFO and does not introduce another queue or persistence
 table. Rapid consecutive submits use independent Web request identities and may reach the
 same daemon FIFO concurrently; transport latency cannot discard the later durable user
 message.
 
 Before the first reply Run is linked, the daemon serializes only dispatch ownership through
-a process-local lane scoped only to workspace and channel. Every later submit waits for the
-real Run id, then creates the standard durable `queue_followup`, regardless of its target.
-Dispatch failure
-releases the lane so the next message can become the owner. This transient lane contains no
+a process-local lane scoped to workspace, channel, and conversation line. A mode-only
+`queue_followup` may follow that specific in-flight predecessor and wait for its real Run id.
+If no predecessor lane exists, the daemon does not attach the message to another active Run;
+normal intent routing continues. Dispatch failure releases the lane so the next message can
+become the owner. This transient lane contains no
 user payload and is neither an intervention queue nor a restart-recovery authority.
 The queued intervention separately stores the canonical target teammate id. No mention uses
 `ling_agent`; the author-type label `ai-teammate` must never be persisted as an executor id.
 This guarantees that rapid later messages join the channel FIFO instead of creating another
 root Run for an idle teammate.
 
-The channel stream emits `reply_pending` only when the accepted message owns the channel lane
+The channel stream emits `reply_pending` only when the accepted message owns its conversation-line lane
 and is actually preparing a new reply. A message that finds an active lane returns
 `followup_queued` directly and must never flash a temporary thinking projection. The event
 carries no Run id and grants no execution or queue authority.
@@ -263,6 +267,11 @@ Interrupt input:
 
 The daemon should return the intervention immediately. For interrupt mode, it can also
 return the cancellation state and eventually the continuation run id.
+
+The public Run-intervention API accepts content payload fields such as body, attachments,
+links, and workspace refs. Channel lineage fields `sourceMessageId` and `targetTeammateId`
+are daemon-managed and are rejected on this public endpoint; only the Channel reply-dispatch
+path may persist them after same-line validation.
 
 ## Continuation Context
 

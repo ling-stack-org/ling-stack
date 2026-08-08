@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { ChannelMention, ConversationActiveReplyTarget, RunSession, WorkUnit } from "../../types.js";
+import type { ChannelMention, ChannelMessage, ConversationActiveReplyTarget, RunSession, WorkUnit } from "../../types.js";
 import {
   deriveChannelReplyGuidanceTargets,
   resolveChannelMessageTargetTeammateId,
@@ -18,6 +18,8 @@ export interface ChannelGuidanceTargetController {
 
 export function useChannelGuidanceTargetController(input: {
   readonly selectedChannelId: string;
+  readonly conversationLineThreadId?: string;
+  readonly channelMessages: readonly ChannelMessage[];
   readonly channelRuns: readonly RunSession[];
   readonly workUnits: readonly WorkUnit[];
   readonly transientReplies?: readonly ConversationActiveReplyTarget[];
@@ -28,20 +30,22 @@ export function useChannelGuidanceTargetController(input: {
   const replyTargets = useMemo(
     () => deriveChannelReplyGuidanceTargets({
       channelId: input.selectedChannelId,
-      runs: input.channelRuns,
+      conversationLineThreadId: input.conversationLineThreadId,
+      channelMessages: input.channelMessages,
+      runs: input.fallbackRun
+        ? [input.fallbackRun, ...input.channelRuns.filter((run) => run.id !== input.fallbackRun?.id)]
+        : input.channelRuns,
       workUnits: input.workUnits,
       transientReplies: input.transientReplies,
       teammateLabel: input.teammateLabel,
     }),
-    [input.channelRuns, input.selectedChannelId, input.teammateLabel, input.transientReplies, input.workUnits],
+    [input.channelMessages, input.channelRuns, input.conversationLineThreadId, input.fallbackRun, input.selectedChannelId, input.teammateLabel, input.transientReplies, input.workUnits],
   );
-  const guidanceModeActive = replyTargets.length > 0 || Boolean(input.fallbackRun);
+  const guidanceModeActive = replyTargets.length > 0;
   const targetTeammateId = resolveChannelMessageTargetTeammateId({ mentions: input.messageMentions });
 
   const activeTarget = resolveChannelGuidanceTarget({
     replyTargets,
-    fallbackRun: input.fallbackRun,
-    teammateLabel: input.teammateLabel,
   });
 
   return {

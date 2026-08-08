@@ -1,9 +1,11 @@
+import type { ChannelReplyDisposition } from "@ling-stack/contracts";
 import type { Channel, ChannelMessage, RunSession, RunStore } from "@ling-stack/core";
 import {
   type ChannelReplyDispatchCoordinator,
   type ChannelReplyLaneOwner,
 } from "./channel-reply-dispatch-coordinator.js";
 import { findActiveChannelReplyRun } from "./channel-reply-dispatch.js";
+import { resolveChannelConversationLineKey } from "./conversation-surface.js";
 import type { LingAgentTurnEnvelope } from "./ling-agent-turn-envelope.js";
 
 export type CreateChannelAiReply = (input: {
@@ -33,35 +35,56 @@ export async function acquireChannelReplyLane(input: {
   readonly store: RunStore;
   readonly sourceMessage: ChannelMessage;
   readonly channelId: string;
+  readonly replyDisposition?: ChannelReplyDisposition;
 }): Promise<{ readonly activeRun?: RunSession; readonly owner?: ChannelReplyLaneOwner }> {
-  const current = findActiveChannelReplyRun({
-    store: input.store,
-    channelId: input.channelId,
-  });
+  const current = input.replyDisposition?.activeRunId
+    ? findActiveChannelReplyRun({
+        store: input.store,
+        channelId: input.channelId,
+        sourceMessage: input.sourceMessage,
+        activeRunId: input.replyDisposition.activeRunId,
+      })
+    : undefined;
   if (current || !input.coordinator || !canDispatchChannelReply(input.sourceMessage)) {
     return { activeRun: current };
   }
+  if (input.replyDisposition?.activeRunId) {
+    return {};
+  }
+
+
+  const laneKey = {
+    workspaceId: input.sourceMessage.workspaceId,
+    channelId: input.channelId,
+    conversationLineKey: resolveChannelConversationLineKey(
+      input.store,
+      input.channelId,
+      input.sourceMessage,
+    ),
+  };
+  if (input.replyDisposition) {
+    const follower = input.coordinator.follow(laneKey);
+    if (!follower) {
+      return {};
+    }
+    const runId = await follower.waitForRun();
+    const linkedRun = runId
+      ? findActiveChannelReplyRun({
+          store: input.store,
+          channelId: input.channelId,
+          sourceMessage: input.sourceMessage,
+          activeRunId: runId,
+        })
+      : undefined;
+    return { activeRun: linkedRun };
+  }
 
   while (true) {
-    const claim = input.coordinator.claim({
-      workspaceId: input.sourceMessage.workspaceId,
-      channelId: input.channelId,
-    }, input.sourceMessage.id);
+    const claim = input.coordinator.claim(laneKey, input.sourceMessage.id);
     if (claim.kind === "owner") {
       return { owner: claim };
     }
-    const runId = await claim.waitForRun();
-    const linkedRun = runId ? input.store.getRun(runId) : undefined;
-    if (linkedRun?.channelId === input.channelId) {
-      return { activeRun: linkedRun };
-    }
-    const newlyActive = findActiveChannelReplyRun({
-      store: input.store,
-      channelId: input.channelId,
-    });
-    if (newlyActive) {
-      return { activeRun: newlyActive };
-    }
+    return {};
   }
 }
 

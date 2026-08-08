@@ -275,20 +275,23 @@ Agent, one AI mention targets that teammate, and multiple AI mentions return to 
 for coordination rather than fan-out. The Web may project the resolved active reply for
 stop-button state, but it must not send an independent teammate selection.
 
-Every non-empty Composer submission is persisted as an ordinary channel user message, but a
-channel exposes only one active reply lane. If any teammate is still replying, the daemon
-appends a FIFO `queue_followup` to that lane's root source Run even when the new message
-targets a different idle teammate. The intervention persists the new target id; when its turn
-starts, the daemon resolves that teammate's current model binding and creates the continuation
-for that teammate. Message text never implies interruption. Only an empty Composer submit or
-an explicit Run detail action can stop the one active reply. No second guidance queue,
+Every non-empty Composer submission is persisted as an ordinary channel user message. Root,
+each Branch, each message-keyed Topic, and each explicit Thread expose independent reply lanes.
+The Web sends an explicit `queue_followup` disposition only for the currently projected active
+reply on that line. The daemon validates the exact `activeRunId` against the Run's persisted
+`requestSnapshot.sourceMessageId`; a different line cannot capture the message. Within one line,
+the FIFO still follows the root source Run even when the message targets a different idle
+teammate. Message text never implies interruption. Only an empty Composer submit or an explicit
+Run detail action can stop the active reply on that line. No second guidance queue,
 continuation protocol, business table, or per-teammate parallel lane is permitted.
 
 The first targeted reply may spend time materializing attachments, links, or routing intent
 before its `RunSession` exists. During only that pre-link window, the daemon holds a
-process-local pending-reply lane keyed by workspace and channel. Every later submission waits
-for the owner's real Run linkage and then appends its normal durable `queue_followup`; target
-identity never creates another lane. The lane stores
+process-local pending-reply lane keyed by workspace, channel, and conversation line. A rapid
+later submission may follow that existing predecessor without an `activeRunId`, wait for the
+owner's real Run linkage, and then append its normal durable `queue_followup`; target identity
+never creates another lane. A mode-only request with no live predecessor does not search for an
+arbitrary active Run and returns to normal intent routing. The lane stores
 no message body, is released when dispatch fails or produces no Run, and is cleared during
 daemon shutdown. It is concurrency coordination only: channel messages, `RunSession`, and
 `RunIntervention` remain the sole durable sources of truth.
@@ -331,7 +334,9 @@ The daemon publishes the compact active-reply target only after both the `RunSes
 its supervising WorkUnit are durably linked. `queued`, `running`, and
 `waiting_for_approval` are all active reply states; `queued` is expected at the first
 `reply_linked` event and must already unlock the Composer for guidance or stop. This event
-contains only identifiers, scope, status, and timestamps. It cannot contain prompts,
+contains only identifiers, scope, status, and timestamps. Channel targets include
+`sourceMessageId` for conversation-line projection while `threadId` remains the canonical
+LingThread id. It cannot contain prompts,
 provider snapshots, raw output, or credentials.
 
 The Web may use that SSE target while the authoritative conversation/channel/private

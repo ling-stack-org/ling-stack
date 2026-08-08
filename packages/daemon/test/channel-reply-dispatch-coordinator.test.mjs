@@ -5,25 +5,25 @@ import { ChannelReplyDispatchCoordinator } from "../dist/features/channels/chann
 const lingLane = {
   workspaceId: "workspace_default",
   channelId: "channel_engineering",
-  teammateId: "ling_agent",
+  conversationLineKey: "root",
 };
 
-test("pending channel reply followers join one channel lane regardless of target teammate", async () => {
+test("pending channel reply followers join one conversation line lane", async () => {
   const coordinator = new ChannelReplyDispatchCoordinator();
   const owner = coordinator.claim(lingLane, "message_root");
   const follower = coordinator.claim(lingLane, "message_guidance");
-  const otherTeammate = coordinator.claim({ ...lingLane, teammateId: "teammate_engineer" }, "message_engineer");
+  const branchOwner = coordinator.claim({ ...lingLane, conversationLineKey: "branch:thread_engineering" }, "message_branch");
 
   assert.equal(owner.kind, "owner");
   assert.equal(follower.kind, "follower");
   assert.equal(follower.sourceMessageId, "message_root");
-  assert.equal(otherTeammate.kind, "follower");
-  assert.equal(otherTeammate.sourceMessageId, "message_root");
+  assert.equal(branchOwner.kind, "owner");
+  assert.equal(branchOwner.sourceMessageId, "message_branch");
 
   owner.linkRun("run_root");
   assert.equal(await follower.waitForRun(), "run_root");
-  assert.equal(await otherTeammate.waitForRun(), "run_root");
   assert.equal(coordinator.claim(lingLane, "message_after_link").kind, "owner");
+  branchOwner.release();
   coordinator.close();
 });
 
@@ -37,6 +37,19 @@ test("releasing a pending channel reply lane lets the next message own it", asyn
   owner.release();
   assert.equal(await follower.waitForRun(), undefined);
   assert.equal(coordinator.claim(lingLane, "message_next").kind, "owner");
+  coordinator.close();
+});
+
+test("mode-only followers can join only an existing coordinator predecessor", async () => {
+  const coordinator = new ChannelReplyDispatchCoordinator();
+  assert.equal(coordinator.follow(lingLane), undefined);
+
+  const owner = coordinator.claim(lingLane, "message_predecessor");
+  const follower = coordinator.follow(lingLane);
+  assert.equal(follower?.sourceMessageId, "message_predecessor");
+  owner.linkRun("run_predecessor");
+  assert.equal(await follower?.waitForRun(), "run_predecessor");
+  assert.equal(coordinator.follow(lingLane), undefined);
   coordinator.close();
 });
 

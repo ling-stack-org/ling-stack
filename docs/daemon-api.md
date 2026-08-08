@@ -1429,6 +1429,7 @@ POST /channels/:id/messages/stream?cwd=/path/to/project
   "attachmentIds": ["att_..."],
   "linkPreviewIds": ["link_..."],
   "requestAiReply": true,
+  "replyDisposition": { "mode": "queue_followup", "activeRunId": "run_..." },
   "providerPresetId": "provider_...",
   "teammateId": "engineer"
 }
@@ -1441,12 +1442,21 @@ The Web normally sends mentions and `requestAiReply` without a duplicate `teamma
 the daemon resolves no mention to `ling_agent`, one mention to that teammate, and multiple
 mentions back to `ling_agent`.
 
-The channel has one active reply lane. While any `channel_ai_reply` Run is active, every later
-non-empty message returns `replyDispatch.disposition = "followup_queued"`, regardless of the
-resolved target's idle state. Its intervention payload contains `sourceMessageId` and
-`targetTeammateId`; the continuation resolves that target's current channel model binding when
-the FIFO item starts. `GET /channels/:id/messages` excludes queued source messages until their
-intervention has `startedAt`. It also excludes a source message while dispatch classification
+Channel reply supervision is scoped to a conversation line: Root, a Branch root, a message-keyed
+Topic, or an explicit Thread. The Web sends `replyDisposition.mode = "queue_followup"` only when
+the message is structurally related to an active reply. With `activeRunId`, the daemon accepts the
+disposition only when that exact active `channel_ai_reply` Run belongs to the same channel and
+conversation line. Without `activeRunId`, the request may follow only a process-local predecessor
+whose reply Run has not linked yet; it never scans for an arbitrary active Run. A missing, stale,
+terminal, cross-channel, or cross-line target falls back to normal intent routing.
+
+When accepted, the response contains `replyDispatch.disposition = "followup_queued"`. The daemon,
+not the public Run-intervention request body, writes the intervention's channel lineage fields
+`sourceMessageId` and `targetTeammateId`. Continuations resolve the target's current channel model
+binding when their FIFO item starts. `RunSession.threadId` remains the canonical LingThread id;
+`ConversationActiveReplyTarget.sourceMessageId` identifies the Channel message used for Root,
+Branch, and Topic projection. `GET /channels/:id/messages` excludes queued source messages until
+their intervention has `startedAt`. It also excludes a source message while dispatch classification
 is in flight between message persistence and the authoritative `reply_pending` or
 `followup_queued` state, preventing concurrent refresh from briefly exposing a queued message.
 

@@ -143,9 +143,18 @@ export async function handleRunInterventions(
 
   const updated = store.updateRunInterventionStatus({
     interventionId: intervention.id,
+    expectedStatuses: ["queued"],
     status: "cancelling_source",
     now,
-  }) ?? intervention;
+  });
+  if (!updated) {
+    writeJson(response, 409, {
+      error: "run_intervention_state_changed",
+      message: "Run intervention state changed before redirect cancellation could start.",
+      intervention: store.getRunIntervention(intervention.id) ?? intervention,
+    });
+    return;
+  }
   streamRunEventIfPossible(store, activeRuns, sourceRunId, "run_interrupt_requested", {
     interventionId: updated.id,
     instruction: updated.instruction,
@@ -267,9 +276,18 @@ export function handleRunInterventionPromote(
   const now = new Date().toISOString();
   const promoted = resolved.store.updateRunInterventionStatus({
     interventionId: intervention.id,
+    expectedStatuses: ["queued"],
     status: "cancelling_source",
     now,
-  }) ?? intervention;
+  });
+  if (!promoted) {
+    writeJson(response, 409, {
+      error: "run_intervention_state_changed",
+      message: "Run intervention state changed before promotion could start.",
+      intervention: resolved.store.getRunIntervention(intervention.id) ?? intervention,
+    });
+    return;
+  }
   streamRunEventIfPossible(resolved.store, activeRuns, intervention.sourceRunId, "run_interrupt_requested", {
     interventionId: promoted.id,
     instruction: promoted.instruction,
@@ -323,111 +341,115 @@ export async function maybeStartNextRunInterventionContinuation(input: {
   if (!sourceRun || !isTerminalRunStatus(sourceRun.status)) {
     return;
   }
-  const next = input.store
-    .listRunInterventions({ sourceRunId: input.sourceRunId, limit: 100 })
-    .find((intervention) => intervention.status === "cancelling_source" || intervention.status === "queued");
-  if (!next) {
+  while (true) {
+    const now = new Date().toISOString();
+    const starting = input.store.claimNextRunIntervention({
+      sourceRunId: input.sourceRunId,
+      expectedStatuses: ["cancelling_source", "queued"],
+      status: "starting_continuation",
+      startedAt: now,
+      now,
+    });
+    if (!starting) {
+      return;
+    }
+    streamRunEventIfPossible(input.store, input.activeRuns, input.sourceRunId, "run_continuation_starting", {
+      interventionId: starting.id,
+      mode: starting.mode,
+    });
+    let continuationRunId: string | undefined;
+    let channelProjection: ReturnType<typeof createChannelReplyContinuationProjection> = undefined;
+    try {
+      channelProjection = createChannelReplyContinuationProjection({
+        store: input.store,
+        sourceRun,
+        intervention: starting,
+      });
+      const continuationRequest = buildRunInterventionContinuationRequest(input.store, sourceRun, starting, {
+        sourceMessageId: channelProjection?.sourceMessageId,
+        linkedMessageId: channelProjection?.replyMessageId,
+      });
+      continuationRunId = await executeRunRequest(
+        continuationRequest,
+        channelProjection?.sink ?? createDetachedRunExecutionSink(),
+        input.runnerRegistry,
+        input.storeRegistry,
+        input.activeRuns,
+        input.runtimeSupervisor,
+        input.secretResolver,
+        input.mcpBroker,
+        {
+          controlPlaneEvents: input.controlPlaneEvents,
+          startupState: input.startupState,
+          computerUsePreviews: input.computerUsePreviews,
+          onRunReady: (runId) => {
+            const run = input.store.getRun(runId);
+            const started = input.store.updateRunInterventionStatus({
+              interventionId: starting.id,
+              expectedStatuses: ["starting_continuation"],
+              status: "started",
+              continuationRunId: runId,
+              continuationWorkUnitId: run?.workUnitId ?? null,
+              now: new Date().toISOString(),
+            });
+            if (!started) {
+              return;
+            }
+            streamRunEventIfPossible(input.store, input.activeRuns, input.sourceRunId, "run_continuation_started", {
+              interventionId: starting.id,
+              continuationRunId: runId,
+              continuationWorkUnitId: run?.workUnitId,
+            });
+          },
+          afterRunTerminal: async (terminalRun) => {
+            const sourceRunId = terminalRun.parentRunId ?? terminalRun.id;
+            const goalContinuation = maybeQueueGoalContinuation({
+              terminalRun,
+              store: input.store,
+              activeRuns: input.activeRuns,
+            });
+            await maybeStartNextRunInterventionContinuation({
+              ...input,
+              sourceRunId: goalContinuation?.sourceRunId ?? sourceRunId,
+              terminalRun,
+            });
+          },
+        },
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      channelProjection?.finalize(undefined, message);
+      failRunIntervention(input, starting.id, message);
+      continue;
+    }
+    if (!continuationRunId) {
+      const message = "Continuation run failed to start.";
+      channelProjection?.finalize(undefined, message);
+      failRunIntervention(input, starting.id, message);
+      continue;
+    }
     return;
   }
+}
+
+function failRunIntervention(
+  input: Pick<Parameters<typeof maybeStartNextRunInterventionContinuation>[0], "store" | "activeRuns" | "sourceRunId">,
+  interventionId: string,
+  message: string,
+): void {
   const now = new Date().toISOString();
-  const starting = input.store.updateRunInterventionStatus({
-    interventionId: next.id,
-    status: "starting_continuation",
-    startedAt: now,
+  input.store.updateRunInterventionStatus({
+    interventionId,
+    expectedStatuses: ["starting_continuation", "started"],
+    status: "failed",
+    completedAt: now,
+    failureReason: message,
     now,
   });
-  if (!starting) {
-    return;
-  }
-  streamRunEventIfPossible(input.store, input.activeRuns, input.sourceRunId, "run_continuation_starting", {
-    interventionId: starting.id,
-    mode: starting.mode,
+  streamRunEventIfPossible(input.store, input.activeRuns, input.sourceRunId, "run_intervention_failed", {
+    interventionId,
+    message,
   });
-  let continuationRunId: string | undefined;
-  let channelProjection: ReturnType<typeof createChannelReplyContinuationProjection> = undefined;
-  try {
-    channelProjection = createChannelReplyContinuationProjection({
-      store: input.store,
-      sourceRun,
-      intervention: starting,
-    });
-    const continuationRequest = buildRunInterventionContinuationRequest(input.store, sourceRun, starting, {
-      sourceMessageId: channelProjection?.sourceMessageId,
-      linkedMessageId: channelProjection?.replyMessageId,
-    });
-    continuationRunId = await executeRunRequest(
-      continuationRequest,
-      channelProjection?.sink ?? createDetachedRunExecutionSink(),
-      input.runnerRegistry,
-      input.storeRegistry,
-      input.activeRuns,
-      input.runtimeSupervisor,
-      input.secretResolver,
-      input.mcpBroker,
-      {
-        controlPlaneEvents: input.controlPlaneEvents,
-        startupState: input.startupState,
-        computerUsePreviews: input.computerUsePreviews,
-        onRunReady: (runId) => {
-          const run = input.store.getRun(runId);
-          input.store.updateRunInterventionStatus({
-            interventionId: starting.id,
-            status: "started",
-            continuationRunId: runId,
-            continuationWorkUnitId: run?.workUnitId ?? null,
-            now: new Date().toISOString(),
-          });
-          streamRunEventIfPossible(input.store, input.activeRuns, input.sourceRunId, "run_continuation_started", {
-            interventionId: starting.id,
-            continuationRunId: runId,
-            continuationWorkUnitId: run?.workUnitId,
-          });
-        },
-        afterRunTerminal: async (terminalRun) => {
-          const sourceRunId = terminalRun.parentRunId ?? terminalRun.id;
-          const goalContinuation = maybeQueueGoalContinuation({
-            terminalRun,
-            store: input.store,
-            activeRuns: input.activeRuns,
-          });
-          await maybeStartNextRunInterventionContinuation({
-            ...input,
-            sourceRunId: goalContinuation?.sourceRunId ?? sourceRunId,
-            terminalRun,
-          });
-        },
-      },
-    );
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    channelProjection?.finalize(undefined, message);
-    input.store.updateRunInterventionStatus({
-      interventionId: starting.id,
-      status: "failed",
-      completedAt: new Date().toISOString(),
-      failureReason: message,
-      now: new Date().toISOString(),
-    });
-    streamRunEventIfPossible(input.store, input.activeRuns, input.sourceRunId, "run_intervention_failed", {
-      interventionId: starting.id,
-      message,
-    });
-    return;
-  }
-  if (!continuationRunId) {
-    channelProjection?.finalize(undefined, "Continuation run failed to start.");
-    input.store.updateRunInterventionStatus({
-      interventionId: starting.id,
-      status: "failed",
-      completedAt: new Date().toISOString(),
-      failureReason: "Continuation run failed to start.",
-      now: new Date().toISOString(),
-    });
-    streamRunEventIfPossible(input.store, input.activeRuns, input.sourceRunId, "run_intervention_failed", {
-      interventionId: starting.id,
-      message: "Continuation run failed to start.",
-    });
-  }
 }
 
 function completeTerminalRunIntervention(store: RunStore, terminalRun: RunSession): void {
@@ -730,6 +752,9 @@ function parseRunInterventionMessagePayload(value: unknown): RunInterventionMess
   const body = typeof value.body === "string" ? value.body.trim() : "";
   const sourceMessageId = readOptionalString(value, "sourceMessageId");
   const targetTeammateId = readOptionalString(value, "targetTeammateId");
+  if (sourceMessageId || targetTeammateId) {
+    throw new Error("messagePayload sourceMessageId and targetTeammateId are daemon-managed channel lineage fields");
+  }
   const attachmentIds = readOptionalStringArray(value, "attachmentIds") ?? [];
   const linkPreviewIds = readOptionalStringArray(value, "linkPreviewIds") ?? [];
   const attachments = readOptionalRunInterventionAttachmentPayloads(value, "attachments");
@@ -739,8 +764,6 @@ function parseRunInterventionMessagePayload(value: unknown): RunInterventionMess
     throw new Error("messagePayload must include body, attachments, link previews, or file refs");
   }
   return {
-    ...(sourceMessageId ? { sourceMessageId } : {}),
-    ...(targetTeammateId ? { targetTeammateId } : {}),
     body,
     attachmentIds,
     linkPreviewIds,

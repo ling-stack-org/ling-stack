@@ -28,7 +28,7 @@ test("channel reply target defaults to Ling and multiple mentions return to Ling
   }
 });
 
-test("active channel replies occupy the whole channel and queue the requested target", async () => {
+test("active channel replies are scoped to their conversation line", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-channel-reply-queue-"));
   const store = createSqliteRunStore(cwd);
   try {
@@ -47,10 +47,13 @@ test("active channel replies occupy the whole channel and queue the requested ta
       createdAt: "2026-08-06T00:00:00.100Z",
     });
     store.markRunStarted(unrelatedRun.id, "2026-08-06T00:00:00.200Z");
-    const engineerRun = createActiveReplyRun(store, channel.id, "teammate_engineer", "engineer");
+    const { run: engineerRun, sourceMessage: engineerSource } = createActiveReplyRun(store, channel.id, "teammate_engineer", "engineer");
 
-    assert.equal(findActiveChannelReplyRun({ store, channelId: channel.id, teammateId: "teammate_engineer" })?.id, engineerRun.id);
-    assert.equal(findActiveChannelReplyRun({ store, channelId: channel.id, teammateId: "teammate_docs" })?.id, engineerRun.id);
+    assert.equal(findActiveChannelReplyRun({ store, channelId: channel.id, sourceMessage: engineerSource })?.id, engineerRun.id);
+    assert.equal(findActiveChannelReplyRun({ store, channelId: channel.id, sourceMessage: engineerSource, activeRunId: engineerRun.id })?.id, engineerRun.id);
+    const branchMessage = createMessage(store, channel.id, [], { threadId: "thread_branch" });
+    assert.equal(findActiveChannelReplyRun({ store, channelId: channel.id, sourceMessage: branchMessage }), undefined);
+    assert.equal(findActiveChannelReplyRun({ store, channelId: channel.id, sourceMessage: branchMessage, activeRunId: engineerRun.id }), undefined);
 
     const sourceMessage = createMessage(store, channel.id, [mention("teammate_designer")], {
       body: "完成后补充错误处理",
@@ -87,8 +90,12 @@ test("active channel replies occupy the whole channel and queue the requested ta
 });
 
 function createActiveReplyRun(store, channelId, teammateId, suffix) {
+  const sourceMessage = createMessage(store, channelId, [], {
+    body: `source ${suffix}`,
+  });
   const replyMessage = store.createChannelMessage({
     channelId,
+    threadId: sourceMessage.id,
     kind: "ai_reply",
     authorType: "ai-teammate",
     authorId: teammateId,
@@ -100,12 +107,12 @@ function createActiveReplyRun(store, channelId, teammateId, suffix) {
     workspaceId: DEFAULT_WORKSPACE_ID,
     kind: "channel_ai_reply",
     ownerType: "channel_message",
-    ownerId: replyMessage.id,
+    ownerId: sourceMessage.id,
     channelId,
     teammateId,
     idempotencyKey: `reply-${suffix}`,
     createdByActor: "local-user",
-    request: { messageId: replyMessage.id },
+    request: { sourceMessageId: sourceMessage.id },
     linkedMessageId: replyMessage.id,
     now: `2026-08-06T00:00:1${suffix.length}.000Z`,
   });
@@ -119,13 +126,13 @@ function createActiveReplyRun(store, channelId, teammateId, suffix) {
     providerModel: "test",
     taskSnapshot: {},
     providerSnapshot: {},
-    requestSnapshot: {},
+    requestSnapshot: { sourceMessageId: sourceMessage.id },
     workUnitId: workUnit.id,
     createdAt: `2026-08-06T00:00:2${suffix.length}.000Z`,
   });
   store.linkRunToWorkUnit(run.id, workUnit.id, `2026-08-06T00:00:3${suffix.length}.000Z`);
   store.markRunStarted(run.id, `2026-08-06T00:00:4${suffix.length}.000Z`);
-  return store.getRun(run.id);
+  return { run: store.getRun(run.id), sourceMessage };
 }
 
 function createMessage(store, channelId, mentions, overrides = {}) {

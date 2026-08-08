@@ -1,4 +1,4 @@
-import type { ChannelMention, ConversationActiveReplyTarget, RunIntervention, RunSession, WorkUnit } from "../../types.js";
+import type { ChannelMention, ChannelMessage, ConversationActiveReplyTarget, RunIntervention, RunSession, WorkUnit } from "../../types.js";
 
 export interface ChannelGuidanceTarget {
   readonly activeReply: ConversationActiveReplyTarget;
@@ -8,6 +8,8 @@ export interface ChannelGuidanceTarget {
 
 export function deriveChannelReplyGuidanceTargets(input: {
   readonly channelId: string;
+  readonly conversationLineThreadId?: string;
+  readonly channelMessages: readonly ChannelMessage[];
   readonly runs: readonly RunSession[];
   readonly workUnits: readonly WorkUnit[];
   readonly transientReplies?: readonly ConversationActiveReplyTarget[];
@@ -15,9 +17,10 @@ export function deriveChannelReplyGuidanceTargets(input: {
 }): readonly ChannelGuidanceTarget[] {
   if (!input.channelId) return [];
 
+  const channelMessageById = new Map(input.channelMessages.map((message) => [message.id, message]));
   const byRunId = new Map<string, ChannelGuidanceTarget>();
   for (const reply of input.transientReplies ?? []) {
-    if (reply.channelId !== input.channelId || !activeReplyStatus(reply.status)) continue;
+    if (!activeReplyBelongsToConversationLine(reply, input, channelMessageById)) continue;
     byRunId.set(reply.runId, {
       activeReply: reply,
       label: input.teammateLabel(reply.teammateId),
@@ -29,18 +32,22 @@ export function deriveChannelReplyGuidanceTargets(input: {
     if (run.channelId !== input.channelId || !activeReplyStatus(run.status)) continue;
     const workUnit = run.workUnitId ? workUnitById.get(run.workUnitId) : undefined;
     if (!workUnit || workUnit.kind !== "channel_ai_reply") continue;
+    const sourceMessageId = readSnapshotString(run.requestSnapshot, "sourceMessageId");
+    const activeReply: ConversationActiveReplyTarget = {
+      runId: run.id,
+      sourceRunId: run.parentRunId ?? run.id,
+      workUnitId: workUnit.id,
+      channelId: run.channelId,
+      threadId: run.threadId,
+      ...(sourceMessageId ? { sourceMessageId } : {}),
+      teammateId: run.teammateId ?? workUnit.teammateId,
+      status: run.status,
+      createdAt: run.createdAt,
+      updatedAt: run.updatedAt,
+    };
+    if (!activeReplyBelongsToConversationLine(activeReply, input, channelMessageById)) continue;
     byRunId.set(run.id, {
-      activeReply: {
-        runId: run.id,
-        sourceRunId: run.parentRunId ?? run.id,
-        workUnitId: workUnit.id,
-        channelId: run.channelId,
-        threadId: run.threadId,
-        teammateId: run.teammateId ?? workUnit.teammateId,
-        status: run.status,
-        createdAt: run.createdAt,
-        updatedAt: run.updatedAt,
-      },
+      activeReply,
       run,
       label: input.teammateLabel(run.teammateId ?? workUnit.teammateId),
     });
@@ -53,30 +60,8 @@ export function deriveChannelReplyGuidanceTargets(input: {
 
 export function resolveChannelGuidanceTarget(input: {
   readonly replyTargets: readonly ChannelGuidanceTarget[];
-  readonly fallbackRun?: RunSession;
-  readonly teammateLabel: (teammateId: string | undefined) => string;
 }): ChannelGuidanceTarget | undefined {
-  const selectedTarget = input.replyTargets[0];
-  if (selectedTarget) return selectedTarget;
-  if (
-    !input.fallbackRun ||
-    !activeReplyStatus(input.fallbackRun.status)
-  ) return undefined;
-  return {
-    activeReply: {
-      runId: input.fallbackRun.id,
-      sourceRunId: input.fallbackRun.parentRunId ?? input.fallbackRun.id,
-      workUnitId: input.fallbackRun.workUnitId,
-      channelId: input.fallbackRun.channelId,
-      threadId: input.fallbackRun.threadId,
-      teammateId: input.fallbackRun.teammateId ?? "ling_agent",
-      status: input.fallbackRun.status,
-      createdAt: input.fallbackRun.createdAt,
-      updatedAt: input.fallbackRun.updatedAt,
-    },
-    run: input.fallbackRun,
-    label: input.teammateLabel(input.fallbackRun.teammateId),
-  };
+  return input.replyTargets[0];
 }
 
 export function resolveChannelMessageTargetTeammateId(input: {
@@ -99,6 +84,32 @@ export function filterQueuedChannelGuidanceInterventions(
 
 function activeReplyStatus(status: string): status is ConversationActiveReplyTarget["status"] {
   return status === "queued" || status === "running" || status === "waiting_for_approval";
+}
+
+function activeReplyBelongsToConversationLine(
+  reply: ConversationActiveReplyTarget,
+  input: {
+    readonly channelId: string;
+    readonly conversationLineThreadId?: string;
+  },
+  channelMessageById: ReadonlyMap<string, ChannelMessage>,
+): boolean {
+  if (reply.channelId !== input.channelId || !activeReplyStatus(reply.status) || !reply.sourceMessageId) {
+    return false;
+  }
+  const sourceMessage = channelMessageById.get(reply.sourceMessageId);
+  if (!sourceMessage || sourceMessage.channelId !== input.channelId) {
+    return false;
+  }
+  return (sourceMessage.threadId ?? undefined) === input.conversationLineThreadId;
+}
+
+function readSnapshotString(value: unknown, key: string): string | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const candidate = (value as Record<string, unknown>)[key];
+  return typeof candidate === "string" && candidate.trim() ? candidate.trim() : undefined;
 }
 
 function normalizeLingAgentId(teammateId: string | undefined): string {

@@ -1188,6 +1188,7 @@ export interface CreateRunInterventionInput {
 
 export interface ListRunInterventionsOptions {
   readonly sourceRunId?: string;
+  readonly sourceMessageIds?: readonly string[];
   readonly status?: RunInterventionStatus;
   readonly mode?: RunInterventionMode;
   readonly limit?: number;
@@ -1195,6 +1196,7 @@ export interface ListRunInterventionsOptions {
 
 export interface UpdateRunInterventionStatusInput {
   readonly interventionId: string;
+  readonly expectedStatuses?: readonly RunInterventionStatus[];
   readonly status: RunInterventionStatus;
   readonly continuationRunId?: string | null;
   readonly continuationWorkUnitId?: string | null;
@@ -1202,6 +1204,21 @@ export interface UpdateRunInterventionStatusInput {
   readonly completedAt?: string | null;
   readonly failureReason?: string | null;
   readonly now: string;
+}
+
+export interface ClaimNextRunInterventionInput {
+  readonly sourceRunId: string;
+  readonly expectedStatuses: readonly RunInterventionStatus[];
+  readonly status: RunInterventionStatus;
+  readonly startedAt?: string | null;
+  readonly now: string;
+}
+
+export interface ListPriorRunInterventionReplyMessagesInput {
+  readonly sourceRunId: string;
+  readonly beforeInterventionId: string;
+  readonly channelId: string;
+  readonly limit?: number;
 }
 
 export interface ListRunEventsOptions {
@@ -1420,6 +1437,8 @@ export interface RunStore {
   createRunIntervention(input: CreateRunInterventionInput, now: string): RunIntervention;
   getRunIntervention(interventionId: string): RunIntervention | undefined;
   listRunInterventions(options?: ListRunInterventionsOptions): RunIntervention[];
+  claimNextRunIntervention(input: ClaimNextRunInterventionInput): RunIntervention | undefined;
+  listPriorRunInterventionReplyMessages(input: ListPriorRunInterventionReplyMessagesInput): ChannelMessage[];
   updateRunInterventionStatus(input: UpdateRunInterventionStatusInput): RunIntervention | undefined;
   cancelRunIntervention(interventionId: string, now: string, reason?: string): RunIntervention | undefined;
   createWorkUnit(input: CreateWorkUnitInput): WorkUnit;
@@ -2038,6 +2057,8 @@ export type RunExecutionStoreFacet = RunStoreFacet<
   | "createRunIntervention"
   | "getRunIntervention"
   | "listRunInterventions"
+  | "claimNextRunIntervention"
+  | "listPriorRunInterventionReplyMessages"
   | "updateRunInterventionStatus"
   | "cancelRunIntervention"
   | "createArtifact"

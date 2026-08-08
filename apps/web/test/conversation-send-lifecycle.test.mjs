@@ -35,10 +35,9 @@ test("reply linkage unlocks guidance before the response stream settles", () => 
   assert.deepEqual(store.snapshot().activeReplies.map((reply) => reply.runId), ["run_1"]);
 
   assert.deepEqual(store.fail(operation), { accepted: true, restoreInput: false });
-  assert.equal(store.snapshot().phase, "reply_linked");
-  assert.equal(store.settle(operation), true);
   assert.equal(store.snapshot().phase, "settled");
   assert.deepEqual(store.snapshot().activeReplies, []);
+  assert.equal(store.settle(operation), false);
 });
 
 test("concurrent submissions keep independent acceptance and reply linkage", () => {

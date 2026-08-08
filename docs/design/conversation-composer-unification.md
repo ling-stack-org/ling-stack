@@ -533,8 +533,10 @@ retired only when the authoritative queue owns the same id or the source message
 transcript.
 
 For channel only, the daemon may temporarily hold dispatch ownership before `reply_linked`
-while the first message is materialized and routed. Every later submit waits for that linkage
-and then enters the existing durable follow-up FIFO, regardless of its target. This process-local lane
+while the first message is materialized and routed. That process-local lane is keyed by
+workspace, channel, and conversation line. A rapid submit may follow only the existing
+predecessor, wait for linkage, and then enter the durable follow-up FIFO; a mode-only request
+without a predecessor returns to normal intent routing. This process-local lane
 does not create a UI state, a second queue, or another persistence contract.
 The queue payload, pending reply, WorkUnit, and Run must use canonical teammate ids. No
 mention is always `ling_agent`; the generic author type string `ai-teammate` is never a valid
@@ -546,8 +548,9 @@ When active work exists:
   should handle it when its FIFO turn arrives,
 - no AI mention targets Ling Agent, one AI mention targets that teammate, and multiple AI
   mentions return to Ling Agent for coordination,
-- the channel has one active reply lane, so every later non-empty message queues even when it
-  targets another idle teammate; empty send may stop the one active reply,
+- Root, Branch, Topic, and explicit Thread lines have independent active reply lanes; only an
+  explicit same-line disposition queues, even when it targets another idle teammate; empty
+  send may stop the active reply on that line,
 - message wording never changes queue guidance into interruption,
 - no previous target selection can leak into a later unmentioned message because the Web
   stores no independent target selection,

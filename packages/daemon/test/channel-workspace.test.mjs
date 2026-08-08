@@ -11,6 +11,7 @@ import { buildContextPack, resolveProviderContextBudget } from "../dist/features
 import { routeChannelMessageReply } from "../dist/features/channels/channel-message-router.js";
 import { buildLingAgentSessionViewForChannel } from "../dist/features/channels/ling-agent-session-view.js";
 import { buildLingAgentTurnEnvelope } from "../dist/features/channels/ling-agent-turn-envelope.js";
+import { findActiveChannelReplyRun } from "../dist/features/channels/channel-reply-dispatch.js";
 import { availabilityIncidentInputForProviderRuntimeFailure } from "../dist/features/channels/provider-runtime-observations.js";
 import { linkBodyExtractorV1 } from "../dist/features/channels/materialization/extractors/link-body.js";
 import { officeExtractorV1 } from "../dist/features/channels/materialization/extractors/office.js";
@@ -882,6 +883,7 @@ test("ling agent coordinator queues active run follow-up before ordinary routing
 
     const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
       body: "完成后也更新 docs",
+      replyDisposition: { mode: "queue_followup", activeRunId: run.id },
     });
 
     assert.equal(created.aiReply, undefined);
@@ -897,6 +899,227 @@ test("ling agent coordinator queues active run follow-up before ordinary routing
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(proposals.proposals, []);
   } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("active channel reply does not intercept an unmarked direct workflow request", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-active-reply-direct-workflow-"));
+  const runner = new RecordingRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    await setWorkspaceDefaultProvider(daemon.url, cwd, provider.id);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Direct workflow while reply is active",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read", "grep", "find", "ls", "write"],
+    })).channel;
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const activeRun = createActiveChannelReplyRunFixture(store, {
+      cwd,
+      channelId: channel.id,
+      runId: "run_active_reply_before_direct_workflow",
+      taskId: "task_active_reply_before_direct_workflow",
+    });
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: `在 ${cwd} 下创建 README.md`,
+    });
+
+    assertCoordinatorWorkflowStartReply(created);
+    assert.equal(created.replyDispatch, undefined);
+    assert.equal(created.autoStartedWorkflow.workflowSteps.length, 1);
+    assert.deepEqual(created.autoStartedWorkflow.workflowSteps[0].metadata.requiredTools, ["write"]);
+    assert.deepEqual(store.listRunInterventions({ sourceRunId: activeRun.id }), []);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(decisions.decisions.some((decision) => decision.action === "direct_workflow" && decision.status === "accepted"), true);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("root reply guidance cannot capture a branch turn and branch continuation stays on its thread", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-reply-branch-lineage-"));
+  await ensureGitRepo(cwd);
+  const runner = new AbortableDelayedRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    await setWorkspaceDefaultProvider(daemon.url, cwd, provider.id);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Reply branch lineage",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read"],
+      runtimePolicy: {
+        maxConcurrentRuns: 4,
+        schedulingMode: "smart",
+        writeLockScope: "channel",
+        allowReadOnlyParallel: true,
+        queueOnConflict: true,
+      },
+    })).channel;
+    const branch = (await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/branches?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Independent branch",
+    })).branch;
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const rootRun = createActiveChannelReplyRunFixture(store, {
+      cwd,
+      channelId: channel.id,
+      runId: "run_root_reply_before_branch",
+      taskId: "task_root_reply_before_branch",
+    });
+
+    const branchSource = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      threadId: branch.rootThreadId,
+      body: "Start an independent branch reply.",
+      requestAiReply: true,
+      providerPresetId: provider.id,
+      replyDisposition: { mode: "queue_followup", activeRunId: rootRun.id },
+    });
+
+    assert.equal(branchSource.replyDispatch.disposition, "reply_requested");
+    assert.equal(branchSource.aiReply.threadId, branch.rootThreadId);
+    assert.deepEqual(store.listRunInterventions({ sourceRunId: rootRun.id }), []);
+    await waitForCondition(() => runner.runs.length === 1, "branch reply run to start");
+    const branchRun = store.listRuns({ limit: 20 }).find((run) =>
+      run.channelId === channel.id && run.threadId === branch.rootThreadId && run.id !== rootRun.id
+    );
+    assert.ok(branchRun);
+    assert.equal(branchRun.threadId, branch.rootThreadId);
+
+    const guidance = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      threadId: branch.rootThreadId,
+      body: "Continue only inside this branch.",
+      requestAiReply: true,
+      providerPresetId: provider.id,
+      replyDisposition: { mode: "queue_followup", activeRunId: branchRun.id },
+    });
+    assert.equal(guidance.replyDispatch.disposition, "followup_queued");
+    assert.equal(guidance.replyDispatch.sourceRunId, branchRun.id);
+
+    runner.resolve("Initial branch reply");
+    await waitForCondition(() => runner.runs.length === 2, "branch continuation to start");
+    await waitForCondition(
+      () => store.getRunIntervention(guidance.replyDispatch.intervention.id)?.continuationRunId,
+      "branch continuation to link",
+    );
+    const intervention = store.getRunIntervention(guidance.replyDispatch.intervention.id);
+    const continuationRun = store.getRun(intervention.continuationRunId);
+    assert.ok(continuationRun);
+    assert.equal(continuationRun.threadId, branch.rootThreadId);
+    runner.resolve("Branch continuation reply");
+  } finally {
+    for (let index = 0; index < 3; index += 1) {
+      runner.resolve("cleanup");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("topic channel replies keep canonical LingThread identity and isolate guidance by source message lineage", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-topic-reply-lineage-"));
+  const runner = new AbortableDelayedRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    await setWorkspaceDefaultProvider(daemon.url, cwd, provider.id);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Topic reply lineage",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read"],
+    })).channel;
+    const store = stores.get(cwd);
+    assert.ok(store);
+
+    const topicRoot = store.createChannelMessage({
+      channelId: channel.id,
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      body: "Topic root message.",
+      status: "ready",
+    }, "2026-08-08T00:00:00.000Z");
+    const topicSource = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      threadId: topicRoot.id,
+      body: "Start a reply inside this topic.",
+      requestAiReply: true,
+      providerPresetId: provider.id,
+    });
+    await waitForCondition(() => runner.runs.length === 1, "topic reply run to start");
+    const topicRun = store.listRuns({ limit: 20 }).find((run) =>
+      run.channelId === channel.id && !run.parentRunId
+    );
+    assert.ok(topicRun);
+    assert.equal(topicRun.requestSnapshot.sourceMessageId, topicSource.message.id);
+    assert.match(topicRun.threadId, /^thread_/);
+    assert.notEqual(topicRun.threadId, topicRoot.id);
+
+    const guidance = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      threadId: topicRoot.id,
+      body: "Continue only inside this topic.",
+      requestAiReply: true,
+      providerPresetId: provider.id,
+      replyDisposition: { mode: "queue_followup", activeRunId: topicRun.id },
+    });
+    assert.equal(guidance.replyDispatch.disposition, "followup_queued");
+    assert.equal(guidance.replyDispatch.sourceRunId, topicRun.id);
+
+    runner.resolve("Initial topic reply");
+    await waitForCondition(() => runner.runs.length === 2, "topic continuation to start");
+    await waitForCondition(
+      () => store.getRunIntervention(guidance.replyDispatch.intervention.id)?.continuationRunId,
+      "topic continuation to link",
+    );
+    const intervention = store.getRunIntervention(guidance.replyDispatch.intervention.id);
+    const continuationRun = store.getRun(intervention.continuationRunId);
+    assert.equal(continuationRun.threadId, topicRun.threadId);
+    assert.equal(continuationRun.requestSnapshot.sourceMessageId, guidance.message.id);
+    runner.resolve("Topic continuation reply");
+  } finally {
+    for (let index = 0; index < 3; index += 1) {
+      runner.resolve("cleanup");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
   }
@@ -938,6 +1161,7 @@ test("ling agent coordinator queues attachment-only active run guidance", async 
     const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
       body: "",
       attachmentIds: [attachment.id],
+      replyDisposition: { mode: "queue_followup", activeRunId: run.id },
     });
 
     assert.equal(created.aiReply, undefined);
@@ -986,6 +1210,7 @@ test("ling agent coordinator queues file-ref-only active run guidance", async ()
     const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
       body: "",
       fileRefs: [{ path: "README.md", label: "README.md", source: "composer" }],
+      replyDisposition: { mode: "queue_followup", activeRunId: run.id },
     });
 
     assert.equal(created.aiReply, undefined);
@@ -2049,6 +2274,7 @@ test("ling agent coordinator preserves materialized guidance metadata for active
       body: "另外也更新 file:README.md",
       attachmentIds: [attachment.id],
       linkPreviewIds: [linkPreview.id],
+      replyDisposition: { mode: "queue_followup", activeRunId: run.id },
     });
 
     assert.equal(created.aiReply, undefined);
@@ -2102,6 +2328,7 @@ test("ling agent coordinator treats redirect-like text as queued guidance", asyn
 
     const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
       body: "停，改用 daemon API",
+      replyDisposition: { mode: "queue_followup", activeRunId: run.id },
     });
 
     assert.equal(created.aiReply, undefined);
@@ -2169,6 +2396,17 @@ test("channel reply guidance drains FIFO without interrupting and projects every
     });
     assert.equal(source.aiReply.status, "pending");
     await waitForCondition(() => runner.runs.length === 1, "source channel reply to start");
+    const sourceRun = store.listRuns({ limit: 20 })
+      .find((run) => run.channelId === channel.id && !run.parentRunId);
+    assert.ok(sourceRun);
+    const sourceMessage = store.getChannelMessage(sourceRun.requestSnapshot.sourceMessageId);
+    assert.ok(sourceMessage);
+    assert.equal(findActiveChannelReplyRun({
+      store,
+      channelId: channel.id,
+      sourceMessage,
+      activeRunId: sourceRun.id,
+    })?.id, sourceRun.id);
 
     const queuedInputs = [
       {
@@ -2189,6 +2427,7 @@ test("channel reply guidance drains FIFO without interrupting and projects every
         mentions: queuedInput.mentions,
         requestAiReply: true,
         providerPresetId: provider.id,
+        replyDisposition: { mode: "queue_followup", activeRunId: sourceRun.id },
       });
       assert.equal(response.replyDispatch.disposition, "followup_queued");
       assert.equal(response.replyDispatch.targetTeammateId, queuedInput.targetTeammateId);
@@ -2278,6 +2517,88 @@ test("channel reply guidance drains FIFO without interrupting and projects every
   }
 });
 
+test("channel reply guidance continues draining after the first continuation fails to start", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-reply-guidance-start-failure-"));
+  const runner = new AbortableDelayedRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    await setWorkspaceDefaultProvider(daemon.url, cwd, provider.id);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Channel reply guidance start failure",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read"],
+    })).channel;
+    const store = stores.get(cwd);
+    assert.ok(store);
+
+    await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "Start a delayed reply before draining guidance.",
+      requestAiReply: true,
+      providerPresetId: provider.id,
+    });
+    await waitForCondition(() => runner.runs.length === 1, "source reply to start before failure drain");
+    const sourceRun = store.listRuns({ limit: 20 }).find((run) => run.channelId === channel.id && !run.parentRunId);
+    assert.ok(sourceRun);
+
+    const invalid = store.createRunIntervention({
+      sourceRunId: sourceRun.id,
+      mode: "queue_followup",
+      instruction: "This source message is intentionally missing.",
+      messagePayload: {
+        sourceMessageId: "msg_missing_guidance_source",
+        targetTeammateId: "ling_agent",
+        body: "This source message is intentionally missing.",
+        attachmentIds: [],
+        linkPreviewIds: [],
+      },
+      idempotencyKey: "channel_message:msg_missing_guidance_source:queue_followup",
+      requestedBy: "local-user",
+    }, "2026-08-08T00:00:00.000Z");
+    const valid = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "This second queued message must still run.",
+      requestAiReply: true,
+      providerPresetId: provider.id,
+      replyDisposition: { mode: "queue_followup", activeRunId: sourceRun.id },
+    });
+    assert.equal(valid.replyDispatch.disposition, "followup_queued");
+
+    runner.resolve("Initial reply before failure drain");
+    await waitForCondition(
+      () => store.getRunIntervention(invalid.id)?.status === "failed",
+      "invalid first guidance to fail",
+    );
+    await waitForCondition(() => runner.runs.length === 2, "second guidance to start after first failure");
+    assert.match(runner.runs[1].task.prompt, /This second queued message must still run\./);
+    const validInterventionId = valid.replyDispatch.intervention.id;
+    await waitForCondition(
+      () => Boolean(store.getRunIntervention(validInterventionId)?.continuationRunId),
+      "second guidance continuation to link after first failure",
+    );
+    assert.equal(store.getRunIntervention(invalid.id)?.failureReason.includes("invalid"), true);
+    assert.equal(store.getRunIntervention(validInterventionId)?.status, "started");
+    runner.resolve("Second guidance completed");
+  } finally {
+    for (let index = 0; index < 3; index += 1) {
+      runner.resolve("cleanup");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("queued channel source stays hidden while dispatch classification is still in flight", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-reply-classification-visibility-"));
   await ensureGitRepo(cwd);
@@ -2326,6 +2647,9 @@ test("queued channel source stays hidden while dispatch classification is still 
 
     const store = stores.get(cwd);
     assert.ok(store);
+    const sourceRun = store.listRuns({ limit: 20 })
+      .find((run) => run.channelId === channel.id && run.requestSnapshot.sourceMessageId === source.message.id);
+    assert.ok(sourceRun);
     await mkdir(store.paths.attachmentsDir, { recursive: true });
     await writeFile(resolve(store.paths.attachmentsDir, "classification.png"), Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
     const attachment = store.createChannelAttachment({
@@ -2345,6 +2669,7 @@ test("queued channel source stays hidden while dispatch classification is still 
         body: queuedBody,
         attachmentIds: [attachment.id],
         requestAiReply: true,
+        replyDisposition: { mode: "queue_followup", activeRunId: sourceRun.id },
       }),
     });
     assert.equal(streamResponse.status, 200);
@@ -2436,6 +2761,7 @@ test("unmentioned channel guidance joins the pending Ling reply lane before its 
       body: "After that, reply only with pending lane guidance.",
       requestAiReply: true,
       providerPresetId: provider.id,
+      replyDisposition: { mode: "queue_followup" },
     });
 
     releaseWebSearch();
@@ -3054,17 +3380,20 @@ test("channel message stream emits visible deltas into a durable AI reply", asyn
     assert.equal(events[2].data.aiReply.status, "pending");
     assert.equal(events[3].data.messageId, events[2].data.aiReply.id);
     assert.ok(events[3].data.linkedRunId);
-    assert.deepEqual(events[3].data.activeReply, {
+    const { threadId, sourceMessageId, ...activeReplyWithoutLineage } = events[3].data.activeReply;
+    assert.deepEqual(activeReplyWithoutLineage, {
       runId: events[3].data.linkedRunId,
       sourceRunId: events[3].data.linkedRunId,
       workUnitId: events[3].data.activeReply.workUnitId,
       channelId: channel.id,
-      threadId: events[2].data.aiReply.threadId,
       teammateId: "teammate_builtin_engineer",
       status: "queued",
       createdAt: events[3].data.activeReply.createdAt,
       updatedAt: events[3].data.activeReply.updatedAt,
     });
+    assert.match(threadId, /^thread_/);
+    assert.equal(sourceMessageId, events[0].data.message.id);
+    assert.notEqual(threadId, events[2].data.aiReply.threadId);
     assert.ok(events[3].data.activeReply.workUnitId);
     assert.equal(JSON.stringify(events[3].data.activeReply).includes("prompt"), false);
     assert.equal(events[4].data.delta, "Streamed channel reply");

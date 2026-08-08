@@ -1,6 +1,7 @@
 export interface ChannelReplyLaneKey {
   readonly workspaceId: string;
   readonly channelId: string;
+  readonly conversationLineKey: string;
 }
 
 export type ChannelReplyLaneClaim = ChannelReplyLaneOwner | ChannelReplyLaneFollower;
@@ -83,6 +84,18 @@ export class ChannelReplyDispatchCoordinator {
     };
   }
 
+  follow(key: ChannelReplyLaneKey): ChannelReplyLaneFollower | undefined {
+    const existing = this.lanes.get(serializeLaneKey(key));
+    if (!existing) {
+      return undefined;
+    }
+    return {
+      kind: "follower",
+      sourceMessageId: existing.sourceMessageId,
+      waitForRun: () => existing.outcome,
+    };
+  }
+
   close(): void {
     for (const lane of [...this.lanes.values()]) {
       lane.settle();
@@ -93,7 +106,7 @@ export class ChannelReplyDispatchCoordinator {
 }
 
 function serializeLaneKey(key: ChannelReplyLaneKey): string {
-  return JSON.stringify([key.workspaceId, key.channelId]);
+  return JSON.stringify([key.workspaceId, key.channelId, key.conversationLineKey]);
 }
 
 function serializeMessageKey(workspaceId: string, sourceMessageId: string): string {

@@ -9,12 +9,17 @@ import {
 
 const teammateLabel = (teammateId) => teammateId ?? "AI teammate";
 
-test("an active channel reply occupies the channel regardless of the next message target", () => {
-  const replyRun = run("run_reply", "wu_reply", "teammate_designer");
+test("an active channel reply only occupies its conversation thread", () => {
+  const replyRun = run("run_reply", "wu_reply", "teammate_designer", "ling_thread_root", "message_root");
+  const branchRun = run("run_branch", "wu_branch", "teammate_engineer", "ling_thread_branch", "message_branch");
   const targets = deriveChannelReplyGuidanceTargets({
     channelId: "channel_main",
-    runs: [replyRun],
-    workUnits: [workUnit("wu_reply", "channel_ai_reply")],
+    channelMessages: [message("message_root"), message("message_branch", "branch_root")],
+    runs: [replyRun, branchRun],
+    workUnits: [
+      workUnit("wu_reply", "channel_ai_reply"),
+      workUnit("wu_branch", "channel_ai_reply"),
+    ],
     teammateLabel: (teammateId) => teammateId === "teammate_designer" ? "Designer" : "AI teammate",
   });
 
@@ -22,7 +27,6 @@ test("an active channel reply occupies the channel regardless of the next messag
   assert.equal(targets[0].label, "Designer");
   const target = resolveChannelGuidanceTarget({
     replyTargets: targets,
-    teammateLabel,
   });
   assert.equal(target?.run, replyRun);
   assert.equal(target?.activeReply.runId, replyRun.id);
@@ -30,10 +34,11 @@ test("an active channel reply occupies the channel regardless of the next messag
 });
 
 test("legacy overlapping channel reply runs resolve to the oldest channel lane", () => {
-  const designer = run("run_designer", "wu_designer", "teammate_designer");
-  const engineer = run("run_engineer", "wu_engineer", "teammate_engineer");
+  const designer = run("run_designer", "wu_designer", "teammate_designer", "ling_thread_root", "message_designer");
+  const engineer = run("run_engineer", "wu_engineer", "teammate_engineer", "ling_thread_root", "message_engineer");
   const targets = deriveChannelReplyGuidanceTargets({
     channelId: "channel_main",
+    channelMessages: [message("message_designer"), message("message_engineer")],
     runs: [designer, engineer],
     workUnits: [
       workUnit("wu_designer", "channel_ai_reply"),
@@ -44,16 +49,15 @@ test("legacy overlapping channel reply runs resolve to the oldest channel lane",
 
   assert.equal(resolveChannelGuidanceTarget({
     replyTargets: targets,
-    teammateLabel,
   })?.run, designer);
 });
 
 test("task and terminal reply runs do not become ordinary reply targets", () => {
-  const terminalReply = { ...run("run_done", "wu_done", "teammate_designer"), status: "succeeded" };
-  const taskRun = run("run_task", "wu_task", "teammate_engineer");
-  const fallbackRun = run("run_fallback", "wu_fallback", "teammate_product");
+  const terminalReply = { ...run("run_done", "wu_done", "teammate_designer", "ling_thread_root", "message_done"), status: "succeeded" };
+  const taskRun = run("run_task", "wu_task", "teammate_engineer", "ling_thread_root", "message_task");
   const targets = deriveChannelReplyGuidanceTargets({
     channelId: "channel_main",
+    channelMessages: [message("message_done"), message("message_task")],
     runs: [terminalReply, taskRun],
     workUnits: [
       workUnit("wu_done", "channel_ai_reply"),
@@ -63,11 +67,36 @@ test("task and terminal reply runs do not become ordinary reply targets", () => 
   });
 
   assert.deepEqual(targets, []);
-  assert.equal(resolveChannelGuidanceTarget({
-    replyTargets: targets,
-    fallbackRun,
+  assert.equal(resolveChannelGuidanceTarget({ replyTargets: targets }), undefined);
+});
+
+test("topic replies use source message lineage instead of the canonical LingThread id", () => {
+  const rootRun = run("run_root", "wu_root", "teammate_designer", "ling_thread_root", "message_root");
+  const topicRun = run("run_topic", "wu_topic", "teammate_engineer", "ling_thread_root", "message_topic_reply");
+  const messages = [
+    message("message_root"),
+    message("message_topic_root"),
+    message("message_topic_reply", "message_topic_root"),
+  ];
+
+  const rootTargets = deriveChannelReplyGuidanceTargets({
+    channelId: "channel_main",
+    channelMessages: messages,
+    runs: [rootRun, topicRun],
+    workUnits: [workUnit("wu_root", "channel_ai_reply"), workUnit("wu_topic", "channel_ai_reply")],
     teammateLabel,
-  })?.run, fallbackRun);
+  });
+  const topicTargets = deriveChannelReplyGuidanceTargets({
+    channelId: "channel_main",
+    conversationLineThreadId: "message_topic_root",
+    channelMessages: messages,
+    runs: [rootRun, topicRun],
+    workUnits: [workUnit("wu_root", "channel_ai_reply"), workUnit("wu_topic", "channel_ai_reply")],
+    teammateLabel,
+  });
+
+  assert.deepEqual(rootTargets.map((target) => target.activeReply.runId), [rootRun.id]);
+  assert.deepEqual(topicTargets.map((target) => target.activeReply.runId), [topicRun.id]);
 });
 
 test("message targeting is derived only from mentions", () => {
@@ -79,9 +108,10 @@ test("message targeting is derived only from mentions", () => {
 });
 
 test("transient linked replies bridge runtime refresh and authoritative runs replace them by run id", () => {
-  const transientReply = activeReply("run_reply", "wu_reply", "teammate_designer", "queued");
+  const transientReply = activeReply("run_reply", "wu_reply", "teammate_designer", "queued", "ling_thread_root", "message_root");
   const beforeRefresh = deriveChannelReplyGuidanceTargets({
     channelId: "channel_main",
+    channelMessages: [message("message_root")],
     runs: [],
     workUnits: [],
     transientReplies: [transientReply],
@@ -92,9 +122,10 @@ test("transient linked replies bridge runtime refresh and authoritative runs rep
   assert.equal(beforeRefresh[0].run, undefined);
   assert.equal(beforeRefresh[0].activeReply, transientReply);
 
-  const authoritativeRun = run("run_reply", "wu_reply", "teammate_designer");
+  const authoritativeRun = run("run_reply", "wu_reply", "teammate_designer", "ling_thread_root", "message_root");
   const afterRefresh = deriveChannelReplyGuidanceTargets({
     channelId: "channel_main",
+    channelMessages: [message("message_root")],
     runs: [authoritativeRun],
     workUnits: [workUnit("wu_reply", "channel_ai_reply")],
     transientReplies: [transientReply],
@@ -127,23 +158,43 @@ test("guidance leaves the queue as soon as its source message enters the transcr
   );
 });
 
-function run(id, workUnitId, teammateId) {
+function run(id, workUnitId, teammateId, threadId, sourceMessageId) {
   return {
     id,
     status: "running",
     cwd: "/tmp/ling",
     taskId: `task_${id}`,
     channelId: "channel_main",
+    threadId,
     teammateId,
     providerName: "OpenAI",
     providerModel: "gpt-test",
     taskSnapshot: {},
     providerSnapshot: {},
-    requestSnapshot: {},
+    requestSnapshot: { sourceMessageId },
     eventLogPath: `/tmp/${id}.jsonl`,
     workUnitId,
     createdAt: `2026-08-05T00:00:0${id.length % 10}.000Z`,
     updatedAt: "2026-08-05T00:00:10.000Z",
+  };
+}
+
+function message(id, threadId) {
+  return {
+    id,
+    channelId: "channel_main",
+    threadId,
+    kind: "message",
+    intent: "discuss",
+    authorType: "local-user",
+    body: id,
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "ready",
+    createdAt: "2026-08-05T00:00:00.000Z",
+    updatedAt: "2026-08-05T00:00:00.000Z",
   };
 }
 
@@ -167,12 +218,14 @@ function workUnit(id, kind) {
   };
 }
 
-function activeReply(runId, workUnitId, teammateId, status) {
+function activeReply(runId, workUnitId, teammateId, status, threadId, sourceMessageId) {
   return {
     runId,
     sourceRunId: runId,
     workUnitId,
     channelId: "channel_main",
+    threadId,
+    sourceMessageId,
     teammateId,
     status,
     createdAt: "2026-08-05T00:00:00.000Z",

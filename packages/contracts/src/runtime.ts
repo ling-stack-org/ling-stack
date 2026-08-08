@@ -445,6 +445,7 @@ export interface ConversationActiveReplyTarget {
   readonly workUnitId?: string;
   readonly channelId?: string;
   readonly threadId?: string;
+  readonly sourceMessageId?: string;
   readonly teammateId?: string;
   readonly status: ConversationActiveReplyStatus;
   readonly createdAt: string;

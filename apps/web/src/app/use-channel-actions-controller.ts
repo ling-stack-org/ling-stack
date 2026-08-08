@@ -45,6 +45,7 @@ import type {
   ChannelLinkPreview,
   ChannelMessage,
   ChannelReplyDispatch,
+  ChannelReplyDisposition,
   ConversationActiveReplyTarget,
   ChannelMessageFileRef,
   ChannelMessageStreamBlockedEvent,
@@ -131,6 +132,7 @@ interface SendChannelMessageInput {
   readonly linkPreviewIds: readonly string[];
   readonly fileRefs: readonly ChannelMessageFileRef[];
   readonly requestAiReply: boolean;
+  readonly replyDisposition?: ChannelReplyDisposition;
   readonly onMessageAccepted?: (message: ChannelMessage) => void;
   readonly onReplyPending?: (pending: ChannelMessageStreamReplyPendingEvent) => void;
   readonly onReplyLinked?: (target: ConversationActiveReplyTarget) => void;
@@ -494,6 +496,7 @@ export function useChannelActionsController(input: {
         linkPreviewIds: messageInput.linkPreviewIds,
         fileRefs: messageInput.fileRefs,
         requestAiReply: messageInput.requestAiReply,
+        ...(messageInput.replyDisposition ? { replyDisposition: messageInput.replyDisposition } : {}),
         ...(providerPresetId ? { providerPresetId } : {}),
       });
       await readSseResponse(response, (event) => {
