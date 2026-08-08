@@ -134,18 +134,20 @@ function derivePendingChannelSendState(
   if (!pendingChannelSendPreview) {
     return { acknowledged: false, aiReplyStarted: false };
   }
-  const acknowledgedMessage = [...channelMessages]
-    .reverse()
-    .find((message) =>
-      message.channelId === pendingChannelSendPreview.channelId &&
-      message.threadId === pendingChannelSendPreview.threadId &&
-      message.kind === "message" &&
-      message.authorType === "local-user" &&
-      message.body === pendingChannelSendPreview.body &&
-      sameStringList(message.attachmentIds, pendingChannelSendPreview.attachmentIds) &&
-      sameStringList(message.linkPreviewIds, pendingChannelSendPreview.linkPreviewIds) &&
-      sameFileRefList(message.fileRefs ?? [], pendingChannelSendPreview.fileRefs)
-    );
+  const acknowledgedMessage = pendingChannelSendPreview.sourceMessageId
+    ? channelMessages.find((message) => message.id === pendingChannelSendPreview.sourceMessageId)
+    : [...channelMessages]
+        .reverse()
+        .find((message) =>
+          message.channelId === pendingChannelSendPreview.channelId &&
+          message.threadId === pendingChannelSendPreview.threadId &&
+          message.kind === "message" &&
+          message.authorType === "local-user" &&
+          message.body === pendingChannelSendPreview.body &&
+          sameStringList(message.attachmentIds, pendingChannelSendPreview.attachmentIds) &&
+          sameStringList(message.linkPreviewIds, pendingChannelSendPreview.linkPreviewIds) &&
+          sameFileRefList(message.fileRefs ?? [], pendingChannelSendPreview.fileRefs)
+        );
   const replyThreadId = acknowledgedMessage ? acknowledgedMessage.threadId ?? acknowledgedMessage.id : pendingChannelSendPreview.threadId;
   const previewCreatedAt = Date.parse(pendingChannelSendPreview.createdAt);
   const aiReplyStarted = channelMessages.some((message) => {

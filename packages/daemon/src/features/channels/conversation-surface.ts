@@ -32,3 +32,21 @@ export function resolveChannelConversationSurface(
   }
   return { kind: "thread", threadId };
 }
+
+export function resolveChannelConversationLineKey(
+  store: Pick<ChannelStoreFacet, "getChannelMessage" | "listChannelBranches">,
+  channelId: string,
+  sourceMessage: ChannelMessage,
+): string {
+  const surface = resolveChannelConversationSurface(store, channelId, sourceMessage);
+  switch (surface.kind) {
+    case "root":
+      return "root";
+    case "branch":
+      return `branch:${surface.rootThreadId}`;
+    case "topic":
+      return `topic:${surface.sourceMessageId}`;
+    case "thread":
+      return `thread:${surface.threadId}`;
+  }
+}

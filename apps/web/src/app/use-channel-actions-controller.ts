@@ -44,11 +44,15 @@ import type {
   ChannelHandoffStatus,
   ChannelLinkPreview,
   ChannelMessage,
+  ChannelReplyDispatch,
+  ChannelReplyDisposition,
+  ConversationActiveReplyTarget,
   ChannelMessageFileRef,
   ChannelMessageStreamBlockedEvent,
   ChannelMessageStreamDeltaEvent,
   ChannelMessageStreamDoneEvent,
   ChannelMessageStreamErrorEvent,
+  ChannelMessageStreamReplyPendingEvent,
   ChannelMessageStreamReadyEvent,
   ChannelMessageStreamRunLinkedEvent,
   ChannelWorkflow,
@@ -65,7 +69,6 @@ import { channelSidebarTarget, type SidebarTarget, type ViewId } from "./view-ty
 import {
   buildContextTaskPrompt,
   splitTextLines,
-  upsertChannelMessages,
 } from "./app-shell-selectors.js";
 import { defaultTaskForm } from "../domains/workspace/use-workspace-domain.js";
 import {
@@ -74,6 +77,10 @@ import {
   createSidebarChannelBranchWithState,
   removeSidebarChannelWithState,
 } from "./channel-sidebar-archive-actions.js";
+import {
+  projectChannelStreamReady,
+  projectChannelStreamTerminal,
+} from "./channel-message-stream-projection.js";
 
 export interface ChannelActionsController {
   readonly saveChannel: () => Promise<void>;
@@ -125,6 +132,11 @@ interface SendChannelMessageInput {
   readonly linkPreviewIds: readonly string[];
   readonly fileRefs: readonly ChannelMessageFileRef[];
   readonly requestAiReply: boolean;
+  readonly replyDisposition?: ChannelReplyDisposition;
+  readonly onMessageAccepted?: (message: ChannelMessage) => void;
+  readonly onReplyPending?: (pending: ChannelMessageStreamReplyPendingEvent) => void;
+  readonly onReplyLinked?: (target: ConversationActiveReplyTarget) => void;
+  readonly onReplyDispatch?: (dispatch: ChannelReplyDispatch) => void;
 }
 
 interface CreateTaskFromSlashCommandInput {
@@ -465,7 +477,6 @@ export function useChannelActionsController(input: {
     }
     const channelId = input.selectedChannelId;
     const selectedChannel = input.channels.find((channel) => channel.id === channelId);
-    const firstAiMention = messageInput.mentions.find((mention) => mention.kind === "ai-teammate");
     const providerPresetId = messageInput.requestAiReply
       ? selectedChannel?.defaultProviderPresetId
         || input.form.providerPresetId
@@ -474,6 +485,7 @@ export function useChannelActionsController(input: {
     try {
       clearFeedback("composer", channelId);
       let receivedAiReply = false;
+      let messageAccepted = false;
       let autoStartedWorkflow = false;
       let streamErrorMessage = "";
       const response = await streamChannelMessage(input.form.cwd.trim(), channelId, {
@@ -484,15 +496,24 @@ export function useChannelActionsController(input: {
         linkPreviewIds: messageInput.linkPreviewIds,
         fileRefs: messageInput.fileRefs,
         requestAiReply: messageInput.requestAiReply,
+        ...(messageInput.replyDisposition ? { replyDisposition: messageInput.replyDisposition } : {}),
         ...(providerPresetId ? { providerPresetId } : {}),
-        teammateId: firstAiMention?.id || selectedChannel?.defaultTeammateId,
       });
       await readSseResponse(response, (event) => {
         if (event.event === "ready") {
           const data = JSON.parse(event.data) as ChannelMessageStreamReadyEvent;
           const aiReplies = data.aiReplies?.length ? data.aiReplies : data.aiReply ? [data.aiReply] : [];
           receivedAiReply = receivedAiReply || aiReplies.length > 0;
-          input.setChannelMessages((current) => upsertChannelMessages(current, [data.message, ...aiReplies]));
+          input.setChannelMessages((current) => projectChannelStreamReady(current, data));
+          if (!messageAccepted) {
+            messageAccepted = true;
+            messageInput.onMessageAccepted?.(data.message);
+          }
+          return;
+        }
+        if (event.event === "reply_pending") {
+          const data = JSON.parse(event.data) as ChannelMessageStreamReplyPendingEvent;
+          messageInput.onReplyPending?.(data);
           return;
         }
         if (event.event === "delta") {
@@ -505,6 +526,9 @@ export function useChannelActionsController(input: {
           input.setChannelMessages((current) => current.map((message) =>
             message.id === data.messageId ? { ...message, linkedRunId: data.linkedRunId } : message
           ));
+          if (data.activeReply) {
+            messageInput.onReplyLinked?.(data.activeReply);
+          }
           const workspaceCwd = input.form.cwd.trim();
           void Promise.allSettled([
             input.refreshRuns(workspaceCwd),
@@ -517,17 +541,19 @@ export function useChannelActionsController(input: {
           const aiReplies = data.aiReplies?.length ? data.aiReplies : data.aiReply ? [data.aiReply] : [];
           receivedAiReply = receivedAiReply || aiReplies.length > 0;
           autoStartedWorkflow = Boolean(data.autoStartedWorkflow);
-          input.setChannelMessages((current) => upsertChannelMessages(current, [data.message, ...aiReplies]));
+          input.setChannelMessages((current) => projectChannelStreamTerminal(current, data));
+          if (data.replyDispatch) messageInput.onReplyDispatch?.(data.replyDispatch);
           return;
         }
         if (event.event === "blocked") {
           const data = JSON.parse(event.data) as ChannelMessageStreamBlockedEvent;
           const aiReplies = data.aiReplies?.length ? data.aiReplies : data.aiReply ? [data.aiReply] : [];
           receivedAiReply = receivedAiReply || aiReplies.length > 0;
-          input.setChannelMessages((current) => upsertChannelMessages(current, [data.message, ...aiReplies]));
+          input.setChannelMessages((current) => projectChannelStreamTerminal(current, data));
           if (data.error) {
             streamErrorMessage = data.error;
           }
+          if (data.replyDispatch) messageInput.onReplyDispatch?.(data.replyDispatch);
           return;
         }
         if (event.event === "error") {
@@ -535,12 +561,11 @@ export function useChannelActionsController(input: {
           const messages = [data.message, ...(data.aiReplies?.length ? data.aiReplies : data.aiReply ? [data.aiReply] : [])]
             .filter((message): message is ChannelMessage => Boolean(message));
           receivedAiReply = receivedAiReply || messages.some((message) => message.kind === "ai_reply");
-          if (messages.length > 0) {
-            input.setChannelMessages((current) => upsertChannelMessages(current, messages));
-          }
+          input.setChannelMessages((current) => projectChannelStreamTerminal(current, data));
           if (data.error) {
             streamErrorMessage = data.error;
           }
+          if (data.replyDispatch) messageInput.onReplyDispatch?.(data.replyDispatch);
         }
       });
       await input.refreshChannelExecutionProposals(channelId);

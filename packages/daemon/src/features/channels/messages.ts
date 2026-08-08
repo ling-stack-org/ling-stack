@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { Channel, ChannelExecutionProposal, ChannelMessage, ChannelWorkflow, ChannelWorkflowStep, RunIntervention, RunInterventionMessagePayload, RunSession, RunStore } from "@ling-stack/core";
+import type { ChannelMessageStreamReplyPendingEvent, ChannelReplyDispatch, ChannelReplyDisposition } from "@ling-stack/contracts";
+import type { Channel, ChannelExecutionProposal, ChannelMessage, ChannelWorkflow, ChannelWorkflowStep, RunSession, RunStore } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
@@ -13,9 +14,19 @@ import {
 import { selectChannelWorkflowIntent } from "./channel-intent-selector.js";
 import { decideLingAgentAutoStart, type LingAutoStartDecision } from "./ling-agent-auto-start.js";
 import { LING_AGENT_EXECUTOR_ID } from "./ling-agent-executor.js";
-import { buildLingAgentSessionViewForChannel } from "./ling-agent-session-view.js";
 import { buildLingAgentTurnEnvelope, type LingAgentTurnEnvelope } from "./ling-agent-turn-envelope.js";
+import {
+  queueChannelReplyFollowup,
+  resolveChannelReplyTargetTeammateId,
+} from "./channel-reply-dispatch.js";
+import type { ChannelReplyDispatchCoordinator } from "./channel-reply-dispatch-coordinator.js";
+import {
+  acquireChannelReplyLane,
+  createLaneTrackedAiReply,
+  type CreateChannelAiReply,
+} from "./channel-reply-dispatch-lane.js";
 import { listChannelBranchRootThreadIds } from "./conversation-surface.js";
+import { filterQueuedChannelReplyMessages } from "./channel-reply-message-visibility.js";
 import { materializeInlineChannelInputs } from "./materialization/inline.js";
 import { createProviderBackedImageVisionSummarizer } from "./materialization/provider-vision.js";
 import type { LingImageVisionSummarizer } from "./materialization/registry.js";
@@ -30,26 +41,7 @@ import {
   filterSupersededChannelMessages,
   projectChannelMessageRevisionMetadata,
 } from "../conversations/supersession-projection.js";
-
-export type CreateChannelAiReply = (input: {
-  readonly store: RunStore;
-  readonly channel: Channel;
-  readonly sourceMessage: ChannelMessage;
-  readonly turnEnvelope?: LingAgentTurnEnvelope;
-  readonly providerPresetId?: string;
-  readonly teammateId?: string;
-  readonly proposalMode?: "allow" | "disabled";
-  readonly channelParallelLimit?: number;
-  readonly visibleParticipantTeammateIds?: readonly string[];
-  readonly completionMode?: "background" | "inline";
-  readonly stream?: {
-    readonly onReady: (message: ChannelMessage) => void;
-    readonly onRunLinked?: (message: ChannelMessage) => void;
-    readonly onDelta: (message: ChannelMessage, delta: string) => void;
-    readonly onDone: (message: ChannelMessage) => void;
-    readonly onBlocked: (message: ChannelMessage) => void;
-  };
-}) => Promise<ChannelMessage>;
+import { projectConversationActiveReplyTarget } from "../conversations/active-reply-target.js";
 
 export type StartChannelExecutionProposalWorkflow = (input: {
   readonly store: RunStore;
@@ -70,11 +62,14 @@ interface LingAgentChannelMessageInput {
   readonly requestedProviderPresetId?: string;
   readonly requestedTeammateId?: string;
   readonly requestAiReply: boolean;
+  readonly replyDisposition?: ChannelReplyDisposition;
   readonly createAiReply: CreateChannelAiReply;
   readonly startExecutionProposalWorkflow?: StartChannelExecutionProposalWorkflow;
   readonly config: ResolvedDaemonConfig;
   readonly routeDependencies: Omit<ChannelMessageRouteInput, "store" | "channel" | "sourceMessage" | "requestedProviderPresetId" | "requestedTeammateId">;
   readonly imageVisionSummarizer?: LingImageVisionSummarizer;
+  readonly replyDispatchCoordinator?: ChannelReplyDispatchCoordinator;
+  readonly onReplyPending?: (pending: ChannelMessageStreamReplyPendingEvent) => void;
 }
 
 export async function handleChannelMessageStream(
@@ -87,6 +82,7 @@ export async function handleChannelMessageStream(
   startExecutionProposalWorkflow: StartChannelExecutionProposalWorkflow | undefined,
   routeDependencies: Omit<ChannelMessageRouteInput, "store" | "channel" | "sourceMessage" | "requestedProviderPresetId" | "requestedTeammateId">,
   imageVisionSummarizer?: LingImageVisionSummarizer,
+  replyDispatchCoordinator?: ChannelReplyDispatchCoordinator,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -137,6 +133,10 @@ export async function handleChannelMessageStream(
       },
       now,
     );
+    const releaseMessageClassification = beginChannelMessageClassification(
+      replyDispatchCoordinator,
+      message,
+    );
 
     let closed = false;
     response.on("close", () => {
@@ -163,6 +163,7 @@ export async function handleChannelMessageStream(
         requestedProviderPresetId: input.providerPresetId,
         requestedTeammateId: input.teammateId,
         requestAiReply: Boolean(input.requestAiReply),
+        replyDisposition: input.replyDisposition,
         createAiReply: async (replyInput) =>
           await createAiReply({
             ...replyInput,
@@ -175,7 +176,17 @@ export async function handleChannelMessageStream(
               onRunLinked: (aiReply) => {
                 upsertAiReply(aiReply);
                 if (aiReply.linkedRunId) {
-                  safeWriteSse("run_linked", { messageId: aiReply.id, linkedRunId: aiReply.linkedRunId });
+                  const activeReply = projectConversationActiveReplyTarget({
+                    store,
+                    runId: aiReply.linkedRunId,
+                    channelId,
+                    teammateId: aiReply.authorType === "ai-teammate" ? aiReply.authorId : undefined,
+                  });
+                  safeWriteSse("run_linked", {
+                    messageId: aiReply.id,
+                    linkedRunId: aiReply.linkedRunId,
+                    ...(activeReply ? { activeReply } : {}),
+                  });
                 }
               },
               onDelta: (aiReply, delta) => {
@@ -194,7 +205,13 @@ export async function handleChannelMessageStream(
         config,
         routeDependencies,
         imageVisionSummarizer,
+        replyDispatchCoordinator,
+        onReplyPending: (pending) => {
+          releaseMessageClassification();
+          safeWriteSse("reply_pending", pending);
+        },
       });
+      releaseMessageClassification();
 
       if (result.routeDecisionId && result.aiReply) {
         store.updateChannelMessageRouteDecision(result.routeDecisionId, {
@@ -218,6 +235,7 @@ export async function handleChannelMessageStream(
         message,
         ...(aiReply ? { aiReply } : {}),
         ...(aiReplies.length > 0 ? { aiReplies } : {}),
+        ...(result.replyDispatch ? { replyDispatch: result.replyDispatch } : {}),
         ...(result.autoStartedWorkflow ? { autoStartedWorkflow: result.autoStartedWorkflow } : {}),
       };
       const failedReply = aiReplies.find((reply) => reply.status === "failed");
@@ -230,6 +248,7 @@ export async function handleChannelMessageStream(
         safeWriteSse("done", streamPayload);
       }
     } catch (error) {
+      releaseMessageClassification();
       const aiReplies = Array.from(aiRepliesById.values());
       safeWriteSse("error", {
         message,
@@ -238,6 +257,7 @@ export async function handleChannelMessageStream(
         error: error instanceof Error ? error.message : String(error),
       });
     } finally {
+      releaseMessageClassification();
       if (!closed && !response.destroyed) {
         response.end();
       }
@@ -254,20 +274,11 @@ export async function handleChannelMessageStream(
   }
 }
 
-interface LingAgentActiveSessionAction {
-  readonly mode: "queue_followup" | "interrupt_redirect";
-  readonly status: "created" | "requires_confirmation";
-  readonly sourceRunId: string;
-  readonly interventionId?: string;
-  readonly instruction: string;
-}
-
 interface LingAgentChannelMessageResult {
   readonly aiReply?: ChannelMessage;
   readonly aiReplies?: readonly ChannelMessage[];
   readonly routeDecisionId?: string;
-  readonly intervention?: RunIntervention;
-  readonly activeSessionAction?: LingAgentActiveSessionAction;
+  readonly replyDispatch?: ChannelReplyDispatch;
   readonly autoStartedWorkflow?: Awaited<ReturnType<StartChannelExecutionProposalWorkflow>>;
 }
 
@@ -281,6 +292,7 @@ export async function handleChannelMessagesCollection(
   startExecutionProposalWorkflow: StartChannelExecutionProposalWorkflow | undefined,
   routeDependencies: Omit<ChannelMessageRouteInput, "store" | "channel" | "sourceMessage" | "requestedProviderPresetId" | "requestedTeammateId">,
   imageVisionSummarizer?: LingImageVisionSummarizer,
+  replyDispatchCoordinator?: ChannelReplyDispatchCoordinator,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -312,7 +324,18 @@ export async function handleChannelMessagesCollection(
             surfaces: ["channel_root", "channel_branch", "topic_reply"],
             ownerId: channelId,
           }));
-      const messages = enrichChannelMessagesWithWebEvidence(store, visibleMessages.map((message) => projectChannelMessageRevisionMetadata(store, message)));
+      const messages = enrichChannelMessagesWithWebEvidence(
+        store,
+        filterQueuedChannelReplyMessages(
+          store,
+          visibleMessages,
+          (message) => Boolean(replyDispatchCoordinator?.isMessageClassificationPending(
+            message.workspaceId,
+            message.id,
+          )),
+        )
+          .map((message) => projectChannelMessageRevisionMetadata(store, message)),
+      );
       writeJson(response, 200, {
         cwd,
         channelId,
@@ -353,20 +376,31 @@ export async function handleChannelMessagesCollection(
         },
         now,
       );
-
-      const result = await handleLingAgentChannelMessage({
-        store,
-        channel,
-        sourceMessage: message,
-        requestedProviderPresetId: input.providerPresetId,
-        requestedTeammateId: input.teammateId,
-        requestAiReply: Boolean(input.requestAiReply),
-        createAiReply,
-        startExecutionProposalWorkflow,
-        config,
-        routeDependencies,
-        imageVisionSummarizer,
-      });
+      const releaseMessageClassification = beginChannelMessageClassification(
+        replyDispatchCoordinator,
+        message,
+      );
+      let result: LingAgentChannelMessageResult;
+      try {
+        result = await handleLingAgentChannelMessage({
+          store,
+          channel,
+          sourceMessage: message,
+          requestedProviderPresetId: input.providerPresetId,
+          requestedTeammateId: input.teammateId,
+          requestAiReply: Boolean(input.requestAiReply),
+          replyDisposition: input.replyDisposition,
+          createAiReply,
+          startExecutionProposalWorkflow,
+          config,
+          routeDependencies,
+          imageVisionSummarizer,
+          replyDispatchCoordinator,
+          onReplyPending: releaseMessageClassification,
+        });
+      } finally {
+        releaseMessageClassification();
+      }
 
       if (result.routeDecisionId && result.aiReply) {
         store.updateChannelMessageRouteDecision(result.routeDecisionId, {
@@ -380,8 +414,7 @@ export async function handleChannelMessagesCollection(
         message,
         ...(aiReply ? { aiReply } : {}),
         ...(aiReplies ? { aiReplies } : {}),
-        ...(result.intervention ? { intervention: result.intervention } : {}),
-        ...(result.activeSessionAction ? { activeSessionAction: result.activeSessionAction } : {}),
+        ...(result.replyDispatch ? { replyDispatch: result.replyDispatch } : {}),
         ...(result.autoStartedWorkflow ? { autoStartedWorkflow: result.autoStartedWorkflow } : {}),
       });
       return;
@@ -397,6 +430,49 @@ export async function handleChannelMessagesCollection(
 }
 
 export async function handleLingAgentChannelMessage(input: LingAgentChannelMessageInput): Promise<LingAgentChannelMessageResult> {
+  const targetTeammateId = resolveChannelReplyTargetTeammateId({
+    store: input.store,
+    sourceMessage: input.sourceMessage,
+    requestedTeammateId: input.requestedTeammateId,
+  });
+  const lane = await acquireChannelReplyLane({
+    coordinator: input.replyDispatchCoordinator,
+    store: input.store,
+    sourceMessage: input.sourceMessage,
+    channelId: input.channel.id,
+    replyDisposition: input.replyDisposition,
+  });
+  if (!lane.activeRun && canDispatchChannelReply(input.sourceMessage)) {
+    notifyReplyPending(input.onReplyPending, {
+      sourceMessageId: input.sourceMessage.id,
+      targetTeammateId,
+      startedAt: new Date().toISOString(),
+    });
+  }
+  const trackedReply = createLaneTrackedAiReply({
+    createAiReply: input.createAiReply,
+    owner: lane.owner,
+    store: input.store,
+    teammateId: targetTeammateId,
+  });
+  try {
+    return await dispatchLingAgentChannelMessage(
+      input,
+      targetTeammateId,
+      lane.activeRun,
+      trackedReply.createAiReply,
+    );
+  } finally {
+    trackedReply.releaseIfUnused();
+  }
+}
+
+async function dispatchLingAgentChannelMessage(
+  input: LingAgentChannelMessageInput,
+  targetTeammateId: string,
+  activeReplyRun: RunSession | undefined,
+  createAiReply: CreateChannelAiReply,
+): Promise<LingAgentChannelMessageResult> {
   const imageVisionSummarizer = input.imageVisionSummarizer ?? createProviderBackedImageVisionSummarizer({
     store: input.store,
     channel: input.channel,
@@ -415,11 +491,48 @@ export async function handleLingAgentChannelMessage(input: LingAgentChannelMessa
     channel: input.channel,
     sourceMessage: input.sourceMessage,
   });
-  const envelopeInput = { ...input, turnEnvelope };
+  if (
+    input.replyDisposition?.mode === "queue_followup" &&
+    activeReplyRun &&
+    canDispatchChannelReply(input.sourceMessage) &&
+    hasChannelReplyPayload(input.sourceMessage, turnEnvelope)
+  ) {
+    const replyDispatch = queueChannelReplyFollowup({
+      store: input.store,
+      activeRun: activeReplyRun,
+      sourceMessage: input.sourceMessage,
+      targetTeammateId,
+      turnEnvelope,
+    });
+    return { replyDispatch };
+  }
 
-  const activeSession = maybeHandleActiveSessionMessage(envelopeInput);
-  if (activeSession) {
-    return activeSession;
+  if (targetTeammateId !== LING_AGENT_EXECUTOR_ID) {
+    const route = routeExplicitChannelMention({
+      ...input.routeDependencies,
+      store: input.store,
+      channel: input.channel,
+      sourceMessage: input.sourceMessage,
+      turnEnvelope,
+      requestedProviderPresetId: input.requestedProviderPresetId,
+      requestedTeammateId: targetTeammateId,
+    });
+    return {
+      routeDecisionId: route.decisionId,
+      aiReply: await createAiReply({
+        store: input.store,
+        channel: input.channel,
+        sourceMessage: input.sourceMessage,
+        turnEnvelope,
+        providerPresetId: route.action === "reply" ? route.providerPresetId ?? input.requestedProviderPresetId : input.requestedProviderPresetId,
+        teammateId: targetTeammateId,
+        proposalMode: "allow",
+      }),
+      replyDispatch: {
+        targetTeammateId,
+        disposition: "reply_requested",
+      },
+    };
   }
 
   const workflowIntent = await selectChannelWorkflowIntent({
@@ -501,7 +614,24 @@ export async function handleLingAgentChannelMessage(input: LingAgentChannelMessa
     return {};
   }
   if (workflowIntent.action === "visible_multi_reply") {
-    const aiReplies = workflowIntent.aiReplies ?? await Promise.all(workflowIntent.teammateIds.map((teammateId) => input.createAiReply({
+    if (input.sourceMessage.mentions.filter((mention) => mention.kind === "ai-teammate").length > 1) {
+      return {
+        aiReply: await createAiReply({
+          store: input.store,
+          channel: input.channel,
+          sourceMessage: input.sourceMessage,
+          turnEnvelope,
+          providerPresetId: input.requestedProviderPresetId,
+          teammateId: LING_AGENT_EXECUTOR_ID,
+          proposalMode: "allow",
+        }),
+        replyDispatch: {
+          targetTeammateId: LING_AGENT_EXECUTOR_ID,
+          disposition: "reply_requested",
+        },
+      };
+    }
+    const aiReplies = workflowIntent.aiReplies ?? await Promise.all(workflowIntent.teammateIds.map((teammateId) => createAiReply({
       store: input.store,
       channel: input.channel,
       sourceMessage: input.sourceMessage,
@@ -538,19 +668,23 @@ export async function handleLingAgentChannelMessage(input: LingAgentChannelMessa
       sourceMessage: input.sourceMessage,
       turnEnvelope,
       requestedProviderPresetId: input.requestedProviderPresetId,
-      requestedTeammateId: input.requestedTeammateId,
+      requestedTeammateId: targetTeammateId,
     });
     return {
       routeDecisionId: route.decisionId,
-      aiReply: await input.createAiReply({
+      aiReply: await createAiReply({
         store: input.store,
         channel: input.channel,
         sourceMessage: input.sourceMessage,
         turnEnvelope,
         providerPresetId: route.action === "reply" ? route.providerPresetId ?? input.requestedProviderPresetId : input.requestedProviderPresetId,
-        teammateId: route.action === "reply" ? route.teammateId : input.requestedTeammateId,
+        teammateId: route.action === "reply" ? route.teammateId : targetTeammateId,
         proposalMode: "allow",
       }),
+      replyDispatch: {
+        targetTeammateId: route.action === "reply" ? route.teammateId : targetTeammateId,
+        disposition: "reply_requested",
+      },
     };
   }
 
@@ -568,7 +702,7 @@ export async function handleLingAgentChannelMessage(input: LingAgentChannelMessa
   }
   return {
     routeDecisionId: route.decisionId,
-    aiReply: await input.createAiReply({
+    aiReply: await createAiReply({
       store: input.store,
       channel: input.channel,
       sourceMessage: input.sourceMessage,
@@ -577,6 +711,10 @@ export async function handleLingAgentChannelMessage(input: LingAgentChannelMessa
       teammateId: route.teammateId,
       proposalMode: "disabled",
     }),
+    replyDispatch: {
+      targetTeammateId: route.teammateId ?? LING_AGENT_EXECUTOR_ID,
+      disposition: "reply_requested",
+    },
   };
 }
 
@@ -621,161 +759,36 @@ function coordinatorWorkflowStartFailedBody(proposal: ChannelExecutionProposal, 
   return `我尝试开始这次 workflow，但执行前被阻塞：${message}`;
 }
 
-function maybeHandleActiveSessionMessage(input: LingAgentChannelMessageInput): LingAgentChannelMessageResult | undefined {
-  if (!canTreatAsActiveSessionInput(input.sourceMessage)) {
-    return undefined;
-  }
-  const text = normalizeWhitespace(input.sourceMessage.body);
-  const activeRun = findActiveSessionRun(input.store, input.channel.id);
-  if (!activeRun) {
-    return undefined;
-  }
-  const hasGuidanceAssets = (input.turnEnvelope?.attachments.length ?? input.sourceMessage.attachmentIds.length) > 0 ||
-    (input.turnEnvelope?.linkPreviews.length ?? input.sourceMessage.linkPreviewIds.length) > 0 ||
-    (input.turnEnvelope?.fileRefs.length ?? input.sourceMessage.fileRefs.length) > 0;
-  if (!text && !hasGuidanceAssets) {
-    return undefined;
-  }
-  if (looksLikeInterruptRedirect(text)) {
-    return {
-      activeSessionAction: {
-        mode: "interrupt_redirect",
-        status: "requires_confirmation",
-        sourceRunId: activeRun.id,
-        instruction: text,
-      },
-    };
-  }
-  if (text && !looksLikeQueuedFollowUp(text)) {
-    return undefined;
-  }
-  const instruction = text || "User added attachments, link previews, or workspace file refs for the active run.";
-  const now = new Date().toISOString();
-  const intervention = input.store.createRunIntervention({
-    sourceRunId: activeRun.id,
-    sourceWorkUnitId: activeRun.workUnitId,
-    mode: "queue_followup",
-    instruction,
-    messagePayload: buildRunInterventionMessagePayload(text, input.sourceMessage, input.turnEnvelope),
-    requestedBy: "local-user",
-    idempotencyKey: `channel_message:${input.sourceMessage.id}:queue_followup`,
-  }, now);
-  appendRunInterventionEvent(input.store, activeRun.id, "run_intervention_created", {
-    interventionId: intervention.id,
-    mode: intervention.mode,
-    status: intervention.status,
-  });
-  appendRunInterventionEvent(input.store, activeRun.id, "run_followup_queued", {
-    interventionId: intervention.id,
-    instruction: intervention.instruction,
-  });
-  return {
-    intervention,
-    activeSessionAction: {
-      mode: "queue_followup",
-      status: "created",
-      sourceRunId: activeRun.id,
-      interventionId: intervention.id,
-      instruction: intervention.instruction,
-    },
-  };
-}
-
-function canTreatAsActiveSessionInput(message: ChannelMessage): boolean {
+function canDispatchChannelReply(message: ChannelMessage): boolean {
   return message.authorType === "local-user" && message.kind === "message" && message.intent === "discuss";
 }
 
-function findActiveSessionRun(store: RunStore, channelId: string): RunSession | undefined {
-  const session = buildLingAgentSessionViewForChannel({ store, channelId });
-  if (!session.activeRunId) {
-    return undefined;
+function beginChannelMessageClassification(
+  coordinator: ChannelReplyDispatchCoordinator | undefined,
+  message: ChannelMessage,
+): () => void {
+  if (!coordinator || !canDispatchChannelReply(message)) {
+    return () => undefined;
   }
-  const run = store.getRun(session.activeRunId);
-  if (!run || !isActiveRunStatus(run.status)) {
-    return undefined;
-  }
-  return run;
+  return coordinator.beginMessageClassification(message.workspaceId, message.id);
 }
 
-function isActiveRunStatus(status: RunSession["status"]): boolean {
-  return status === "queued" || status === "running" || status === "waiting_for_approval";
+function hasChannelReplyPayload(message: ChannelMessage, turnEnvelope: LingAgentTurnEnvelope): boolean {
+  return Boolean(
+    message.body.trim() ||
+    turnEnvelope.attachments.length ||
+    turnEnvelope.linkPreviews.length ||
+    turnEnvelope.fileRefs.length
+  );
 }
 
-function looksLikeQueuedFollowUp(text: string): boolean {
-  if (/(完成后|结束后|跑完|做完|之后|随后|接着|顺便|另外|同时|记得|回头|after (that|this|it)|when (you|this|it).*(done|finishes|finished)|also|follow-?up|then|next)/iu.test(text)) {
-    return true;
-  }
-  return /(也|再)/iu.test(text) && /(更新|修改|检查|验证|跑|补|添加|追加|实现|修复|review|update|check|verify|run|add|append|fix)/iu.test(text);
-}
-
-function looksLikeInterruptRedirect(text: string): boolean {
-  return /(停|停止|先别|别继续|不要继续|取消当前|打断|中断|改用|换成|stop|cancel|interrupt|redirect|use .* instead|switch to)/iu.test(text);
-}
-
-function appendRunInterventionEvent(store: RunStore, runId: string, type: "run_intervention_created" | "run_followup_queued", data: unknown): void {
+function notifyReplyPending(
+  callback: ((pending: ChannelMessageStreamReplyPendingEvent) => void) | undefined,
+  pending: ChannelMessageStreamReplyPendingEvent,
+): void {
   try {
-    store.appendEvent(runId, type, data);
+    callback?.(pending);
   } catch {
-    // The intervention row is authoritative; run events are audit hints.
+    // Dispatch remains authoritative if an SSE observer disconnects after message acceptance.
   }
-}
-
-function buildRunInterventionMessagePayload(
-  body: string,
-  sourceMessage: ChannelMessage,
-  turnEnvelope: LingAgentTurnEnvelope | undefined,
-): RunInterventionMessagePayload {
-  return {
-    body,
-    attachmentIds: sourceMessage.attachmentIds,
-    linkPreviewIds: sourceMessage.linkPreviewIds,
-    ...(turnEnvelope?.attachments.length
-      ? {
-          attachments: turnEnvelope.attachments.map((attachment) => ({
-            id: attachment.id,
-            fileName: attachment.fileName,
-            kind: attachment.kind,
-            contentType: attachment.contentType,
-            sizeBytes: attachment.sizeBytes,
-            materializationStatus: attachment.materializationStatus,
-            previewStatus: attachment.previewStatus,
-            ...(attachment.previewText ? { previewText: attachment.previewText } : {}),
-            ...(attachment.reason ? { reason: attachment.reason } : {}),
-          })),
-        }
-      : {}),
-    ...(turnEnvelope?.linkPreviews.length
-      ? {
-          linkPreviews: turnEnvelope.linkPreviews.map((preview) => ({
-            id: preview.id,
-            url: preview.url,
-            normalizedUrl: preview.normalizedUrl,
-            ...(preview.title ? { title: preview.title } : {}),
-            ...(preview.description ? { description: preview.description } : {}),
-            ...(preview.siteName ? { siteName: preview.siteName } : {}),
-            status: preview.status,
-            materializationStatus: preview.materializationStatus,
-            ...(preview.previewText ? { previewText: preview.previewText } : {}),
-            ...(preview.reason ? { reason: preview.reason } : {}),
-          })),
-        }
-      : {}),
-    ...(turnEnvelope?.fileRefs.length
-      ? {
-          fileRefs: turnEnvelope.fileRefs.map((ref) => ({
-            path: ref.path,
-            ...(ref.label ? { label: ref.label } : {}),
-            rootRelation: ref.rootRelation,
-            kind: ref.kind,
-            materializationStatus: ref.materializationStatus,
-            ...(ref.previewText ? { previewText: ref.previewText } : {}),
-            ...(ref.blockedReason ? { blockedReason: ref.blockedReason } : {}),
-          })),
-        }
-      : {}),
-  };
-}
-
-function normalizeWhitespace(value: string): string {
-  return value.replace(/\s+/gu, " ").trim();
 }

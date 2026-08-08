@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { conversationRunHasVisibleWork } from "../src/lib/conversation-runtime-visibility.ts";
+import {
+  conversationRunHasVisibleWork,
+  deriveSilentChannelReplyRunIds,
+} from "../src/lib/conversation-runtime-visibility.ts";
 
 const run = {
   id: "run_chat",
@@ -41,6 +44,59 @@ test("tools, approvals, failures, and durable work evidence remain visible", () 
     executionActions: [],
     terminalReport: terminalReport({ changes: [{ id: "change", title: "Changed", summary: "Changed", paths: [], sourceRefs: [] }] }),
   }), true);
+});
+
+test("plain channel reply supervision runs stay out of default chat", () => {
+  const plainReply = { ...run, id: "run_channel_reply", status: "running", workUnitId: "wu_channel_reply" };
+  const failedReply = { ...plainReply, id: "run_channel_reply_failed", status: "failed", workUnitId: "wu_channel_reply_failed" };
+  const taskRun = { ...plainReply, id: "run_task", workUnitId: "wu_task" };
+  const silent = deriveSilentChannelReplyRunIds({
+    runs: [plainReply, failedReply, taskRun],
+    workUnits: [
+      { id: "wu_channel_reply", kind: "channel_ai_reply" },
+      { id: "wu_channel_reply_failed", kind: "channel_ai_reply" },
+      { id: "wu_task", kind: "task_run" },
+    ],
+    approvals: [],
+    executionActions: [],
+    terminalReports: [],
+  });
+
+  assert.deepEqual([...silent], [plainReply.id]);
+});
+
+test("run visibility fails closed while work-unit ownership is still loading", () => {
+  const unresolvedRun = {
+    ...run,
+    id: "run_unresolved_work_unit",
+    workUnitId: "wu_still_loading",
+  };
+  const silent = deriveSilentChannelReplyRunIds({
+    runs: [unresolvedRun],
+    workUnits: [],
+    approvals: [],
+    executionActions: [],
+    terminalReports: [],
+  });
+
+  assert.deepEqual([...silent], [unresolvedRun.id]);
+});
+
+test("channel reply supervision remains visible when user-actionable evidence exists", () => {
+  const replyWithAction = { ...run, id: "run_channel_reply_action", workUnitId: "wu_channel_reply_action" };
+  const replyWithApproval = { ...run, id: "run_channel_reply_approval", workUnitId: "wu_channel_reply_approval" };
+  const silent = deriveSilentChannelReplyRunIds({
+    runs: [replyWithAction, replyWithApproval],
+    workUnits: [
+      { id: "wu_channel_reply_action", kind: "channel_ai_reply" },
+      { id: "wu_channel_reply_approval", kind: "channel_ai_reply" },
+    ],
+    approvals: [{ id: "approval_reply", runId: replyWithApproval.id, status: "pending" }],
+    executionActions: [{ id: "action_reply", runId: replyWithAction.id }],
+    terminalReports: [],
+  });
+
+  assert.deepEqual([...silent], []);
 });
 
 function terminalReport(overrides = {}) {

@@ -37,6 +37,10 @@
   text-align: right;
 }
 
+.channel-message-row.local-user > .message-content {
+  padding-inline-end: calc(var(--ling-space-5) - 1px);
+}
+
 .channel-message-row.local-user > .message-content > p,
 .channel-message-row.local-user .message-body-paragraph {
   color: var(--conversation-text-strong);

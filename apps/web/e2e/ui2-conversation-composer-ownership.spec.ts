@@ -201,6 +201,47 @@ test("T13-O.31-E Light 1440 Channel keeps mention, pending asset, long text, and
   expect(signals.pageErrors).toEqual([]);
 });
 
+test("channel mention keyboard navigation keeps the selected teammate after keyup", async ({ page }) => {
+  await prepareSurface(page, { height: 960, theme: "light", width: 1440 });
+  const state = createBaseState({ approvalStatus: "expired" });
+  installChannelComposerFixture(state);
+  state.aiTeammates.push(
+    createMockTeammate({ id: "designer", displayName: "Designer" }),
+    createMockTeammate({ id: "qa", displayName: "QA" }),
+  );
+  await mockDaemon(page, state);
+
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  const composer = page.getByLabel("Channel composer");
+  const input = composer.getByRole("textbox", {
+    name: "Message this channel or @ an AI teammate",
+    exact: true,
+  });
+  await input.fill("@");
+
+  const options = composer.getByRole("listbox", { name: "Mention teammate" }).getByRole("option");
+  await expect(options).toHaveCount(3);
+  await expect(options.nth(0)).toHaveAttribute("aria-selected", "true");
+
+  await input.press("ArrowDown");
+
+  await expect(options.nth(1)).toHaveAttribute("aria-selected", "true");
+  await page.waitForTimeout(100);
+  await expect(options.nth(1)).toHaveAttribute("aria-selected", "true");
+  await expect(options.nth(0)).toHaveAttribute("aria-selected", "false");
+
+  await input.press("ArrowUp");
+  await expect(options.nth(0)).toHaveAttribute("aria-selected", "true");
+  await input.press("ArrowUp");
+  await page.waitForTimeout(100);
+  await expect(options.nth(2)).toHaveAttribute("aria-selected", "true");
+
+  await input.press("Enter");
+  await expect(input).toHaveText("@QA ");
+});
+
 test("T13-O.31-E Dark 1280 Normal keeps slash, permission, reduced motion, long text, and focus contained", async ({ page }) => {
   await prepareSurface(page, { height: 800, reducedMotion: true, theme: "dark", width: 1280 });
   const signals = collectBrowserSignals(page);
@@ -236,6 +277,32 @@ test("T13-O.31-E Dark 1280 Normal keeps slash, permission, reduced motion, long 
   await page.keyboard.press("Escape");
   await expect(permissionOverlay).toHaveCount(0);
   await expect(permissionTrigger).toBeFocused();
+
+  const pastedImageName = "normal-pasted-preview.png";
+  const pasteWasPrevented = await pasteFilesIntoComposer(input, [{
+    name: pastedImageName,
+    type: "image/png",
+    bytes: [...onePixelPng()],
+  }]);
+  expect(pasteWasPrevented).toBe(true);
+  const pastedAssets = composer.getByLabel("Pending message assets");
+  await expect(pastedAssets.locator(`.composer-preview-thumbnail[alt='${pastedImageName}']`)).toBeVisible();
+  await expect(input.locator("img")).toHaveCount(0);
+  await pastedAssets.getByRole("button", { name: "Remove pending attachment" }).click();
+  await expect(pastedAssets).toHaveCount(0);
+
+  await expect(input).toHaveAttribute("contenteditable", "plaintext-only");
+  const itemOnlyImageName = "normal-item-only-preview.png";
+  const itemOnlyPasteWasPrevented = await pasteItemOnlyFileIntoComposer(input, {
+    name: itemOnlyImageName,
+    type: "image/png",
+    bytes: [...onePixelPng()],
+  });
+  expect(itemOnlyPasteWasPrevented).toBe(true);
+  await expect(pastedAssets.locator(`.composer-preview-thumbnail[alt='${itemOnlyImageName}']`)).toBeVisible();
+  await expect(input.locator("img")).toHaveCount(0);
+  await pastedAssets.getByRole("button", { name: "Remove pending attachment" }).click();
+  await expect(pastedAssets).toHaveCount(0);
 
   await composer.locator('input[type="file"]').setInputFiles(
     Array.from({ length: 4 }, (_, index) => ({
@@ -580,4 +647,42 @@ function onePixelPng(): Buffer {
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
     "base64",
   );
+}
+
+async function pasteFilesIntoComposer(
+  input: Locator,
+  files: readonly { readonly name: string; readonly type: string; readonly bytes: readonly number[] }[],
+): Promise<boolean> {
+  return input.evaluate((element, inputFiles) => {
+    const dataTransfer = new DataTransfer();
+    inputFiles.forEach((file) => {
+      dataTransfer.items.add(new File([new Uint8Array(file.bytes)], file.name, { type: file.type }));
+    });
+    const event = new ClipboardEvent("paste", {
+      bubbles: true,
+      cancelable: true,
+      clipboardData: dataTransfer,
+    });
+    element.dispatchEvent(event);
+    return event.defaultPrevented;
+  }, files);
+}
+
+async function pasteItemOnlyFileIntoComposer(
+  input: Locator,
+  file: { readonly name: string; readonly type: string; readonly bytes: readonly number[] },
+): Promise<boolean> {
+  return input.evaluate((element, inputFile) => {
+    const pastedFile = new File([new Uint8Array(inputFile.bytes)], inputFile.name, { type: inputFile.type });
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", {
+      value: {
+        files: [],
+        items: [{ kind: "file", type: inputFile.type, getAsFile: () => pastedFile }],
+        getData: () => "",
+      },
+    });
+    element.dispatchEvent(event);
+    return event.defaultPrevented;
+  }, file);
 }

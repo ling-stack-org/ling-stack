@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type Ref } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type Ref } from "react";
 import { ArrowUp, Brain, Check, ChevronDown, CircleAlert, FileText, Plus, Search, SlidersHorizontal, Square } from "lucide-react";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
 import { useI18n } from "../../i18n.js";
@@ -55,7 +55,7 @@ export interface NormalConversationComposerProps {
   readonly dragActive: boolean;
   readonly onDraftChange: (value: string, caret: number) => void;
   readonly onComposerKeyDown: (event: KeyboardEvent<HTMLDivElement>) => void;
-  readonly onComposerPaste: (event: ClipboardEvent<HTMLDivElement>) => void;
+  readonly onComposerPasteFiles: (files: readonly File[]) => void;
   readonly onComposerSelect: (value: string, caret: number) => void;
   readonly onCommitSlashCommand: (option: ComposerSlashCommandOption) => void;
   readonly onAttachFiles: (files: FileList) => void | Promise<void>;
@@ -88,7 +88,7 @@ export function NormalConversationComposer({
   onDrop,
   onCommitSlashCommand,
   onComposerKeyDown,
-  onComposerPaste,
+  onComposerPasteFiles,
   onComposerSelect,
   onDraftChange,
   onModelChange,
@@ -214,7 +214,7 @@ export function NormalConversationComposer({
             parts={inputParts}
             onChange={onDraftChange}
             onKeyDown={onComposerKeyDown}
-            onPaste={onComposerPaste}
+            onPasteFiles={onComposerPasteFiles}
             onSelect={onComposerSelect}
             placeholder={t("Message Ling Stack... (type / for commands)")}
             ariaLabel={t("Conversation message")}

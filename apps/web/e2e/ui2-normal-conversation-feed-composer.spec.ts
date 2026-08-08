@@ -181,6 +181,176 @@ test("normal conversation composer uses Radix menus and preserves draft, upload,
   expect(runtimeErrors).toEqual([]);
 });
 
+test("normal conversation unlocks into guidance when the reply run is linked", async ({ page }) => {
+  await prepareSurface(page, "light", 1440, 960);
+  await page.addInitScript(() => {
+    const originalFetch = globalThis.fetch.bind(globalThis);
+    let streamCalls = 0;
+    (globalThis as typeof globalThis & { __normalReplyStreamCalls?: () => number }).__normalReplyStreamCalls = () => streamCalls;
+    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const request = new Request(input, init);
+      const url = new URL(request.url);
+      if (request.method !== "POST" || !url.pathname.endsWith("/conversations/stream")) {
+        return originalFetch(input, init);
+      }
+      streamCalls += 1;
+      const body = await request.clone().json() as Record<string, unknown>;
+      const threadId = String(body.threadId ?? "thread_ui2_normal_composer_controls");
+      const turnId = "turn_chunked_normal_reply";
+      const runId = "run_chunked_normal_reply";
+      const createdAt = "2026-08-05T09:00:00.000Z";
+      const thread = {
+        id: threadId,
+        workspaceId: "workspace_default",
+        kind: "conversation",
+        title: "UI2 composer controls",
+        status: "open",
+        createdAt,
+        updatedAt: createdAt,
+      };
+      const turn = {
+        id: turnId,
+        workspaceId: "workspace_default",
+        threadId,
+        kind: "manual_followup",
+        status: "running",
+        title: "Chunked normal reply",
+        userInstruction: String(body.message ?? ""),
+        teammateId: "ling_agent",
+        activeRunId: runId,
+        createdByActor: "local-user",
+        createdAt,
+        updatedAt: createdAt,
+      };
+      const userMessage = {
+        id: "user_chunked_normal_reply",
+        role: "user",
+        content: String(body.message ?? ""),
+        status: "succeeded",
+        threadId,
+        turnId,
+        runId,
+        createdAt,
+        updatedAt: createdAt,
+      };
+      const pendingAssistant = {
+        id: "assistant_chunked_normal_reply",
+        role: "assistant",
+        authorId: "ling_agent",
+        authorLabel: "Ling Agent",
+        content: "",
+        status: "running",
+        threadId,
+        turnId,
+        runId,
+        createdAt,
+        updatedAt: createdAt,
+      };
+      const doneAssistant = { ...pendingAssistant, content: "The first reply is complete.", status: "succeeded" };
+      const run = {
+        id: runId,
+        status: "succeeded",
+        cwd: String(body.projectPath ?? ""),
+        taskId: `conversation:${turnId}`,
+        providerPresetId: String(body.providerPresetId ?? "provider_ui2_normal_primary"),
+        providerName: "local-relay",
+        providerModel: "gpt-5.5",
+        taskSnapshot: {},
+        providerSnapshot: {},
+        requestSnapshot: {},
+        eventLogPath: `.ling-stack/sessions/${runId}.jsonl`,
+        threadId,
+        workUnitId: "wu_chunked_normal_reply",
+        createdAt,
+        startedAt: createdAt,
+        endedAt: createdAt,
+        updatedAt: createdAt,
+      };
+      const encoder = new TextEncoder();
+      const timers: number[] = [];
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          const emit = (event: string, data: unknown): void => {
+            controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+          };
+          emit("ready", { thread, turn, userMessage, assistantMessage: pendingAssistant });
+          timers.push(globalThis.setTimeout(() => emit("ready", {
+            thread,
+            turn,
+            userMessage,
+            assistantMessage: pendingAssistant,
+            runId,
+            activeReply: {
+              runId,
+              sourceRunId: runId,
+              workUnitId: "wu_chunked_normal_reply",
+              threadId,
+              teammateId: "ling_agent",
+              status: "queued",
+              createdAt,
+              updatedAt: createdAt,
+            },
+          }), 400));
+          timers.push(globalThis.setTimeout(() => emit("run_event", {
+            threadId,
+            turnId,
+            runId,
+            event: { id: "event_chunked_normal_reply", runId, seq: 1, ts: createdAt, type: "assistant_text_delta", data: { text: doneAssistant.content } },
+            assistantMessage: doneAssistant,
+          }), 1_400));
+          timers.push(globalThis.setTimeout(() => {
+            emit("done", { thread: { ...thread, status: "succeeded" }, turn: { ...turn, status: "succeeded" }, run, assistantMessage: doneAssistant });
+            controller.close();
+          }, 1_800));
+        },
+        cancel() {
+          timers.forEach((timer) => globalThis.clearTimeout(timer));
+        },
+      });
+      return new Response(stream, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+    };
+  });
+
+  const state = createBaseState({ approvalStatus: "expired" });
+  installProviders(state);
+  installStableConversationFixture(state);
+  const runSeed = state.runs[0];
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openConversation(page, "UI2 composer controls");
+
+  const composer = page.getByLabel("New conversation composer");
+  const input = composer.getByRole("textbox", { name: "Conversation message" });
+  await input.fill("Start a reply that remains active");
+  await input.press("Enter");
+
+  state.runs.push({
+    ...runSeed,
+    id: "run_chunked_normal_reply",
+    status: "running",
+    taskId: "conversation:turn_chunked_normal_reply",
+    threadId: "thread_ui2_normal_composer_controls",
+    workUnitId: "wu_chunked_normal_reply",
+    endedAt: undefined,
+    createdAt: "2026-08-05T09:00:00.000Z",
+    startedAt: "2026-08-05T09:00:00.000Z",
+    updatedAt: "2026-08-05T09:00:00.000Z",
+  });
+
+  await expect(composer.getByRole("button", { name: "Stop" })).toBeVisible({ timeout: 1_000 });
+  await input.fill("Also cover the accepted-message failure path");
+  await input.press("Enter");
+  await expect.poll(() => state.runInterventions.length).toBe(1);
+  expect(state.runInterventions[0]).toMatchObject({
+    sourceRunId: "run_chunked_normal_reply",
+    mode: "queue_followup",
+    instruction: "Also cover the accepted-message failure path",
+  });
+  await expect.poll(() => page.evaluate(() => (
+    (globalThis as typeof globalThis & { __normalReplyStreamCalls?: () => number }).__normalReplyStreamCalls?.() ?? 0
+  ))).toBe(1);
+});
+
 test("normal conversation replacement retry keeps the original idempotency key", async ({ page }) => {
   await prepareSurface(page, "dark", 1280, 800);
   const state = createBaseState({ approvalStatus: "expired" });

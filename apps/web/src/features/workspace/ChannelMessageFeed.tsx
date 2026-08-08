@@ -39,6 +39,8 @@ export type ChannelMessageFeedItem =
 
 export interface PendingChannelSendPreview {
   readonly id: string;
+  readonly sourceMessageId?: string;
+  readonly targetTeammateId?: string;
   readonly channelId: string;
   readonly threadId?: string;
   readonly body: string;
@@ -142,6 +144,7 @@ export function useChannelMessageFeed({
     count: items.length,
     getScrollElement: () => scrollRef.current,
     estimateSize: (index) => items[index]?.kind === "older-loader" ? 48 : 128,
+    measureElement: measureChannelMessageFeedRow,
     overscan: 10,
     paddingEnd: 38,
     getItemKey: (index) => items[index]?.renderKey ?? items[index]?.id ?? index,
@@ -263,7 +266,6 @@ export function useChannelMessageFeed({
         pinnedFollowFrameRef.current = undefined;
         return;
       }
-      virtualizer.measure();
       if (items.length > 0) {
         virtualizer.scrollToIndex(items.length - 1, { align: "end" });
       }
@@ -546,6 +548,14 @@ export function useChannelMessageFeed({
 function channelMessageFeedIsPinnedToLatest(feed: HTMLDivElement): boolean {
   const maxScrollTop = feed.scrollHeight - feed.clientHeight;
   return maxScrollTop <= 0 || maxScrollTop - feed.scrollTop <= 24;
+}
+
+function measureChannelMessageFeedRow(
+  element: HTMLDivElement,
+  entry: ResizeObserverEntry | undefined,
+): number {
+  const borderBox = entry?.borderBoxSize[0];
+  return Math.ceil(borderBox?.blockSize ?? element.getBoundingClientRect().height);
 }
 
 export function ChannelMessageFeed({

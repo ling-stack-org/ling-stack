@@ -1,5 +1,4 @@
 import type {
-  ClipboardEvent,
   CSSProperties,
   DragEvent,
   KeyboardEvent as ReactKeyboardEvent,
@@ -75,8 +74,7 @@ export interface ActiveMentionPicker {
 interface ChannelComposerProps {
   readonly statusNode: ReactNode;
   readonly guidanceModeActive: boolean;
-  readonly guidanceTargetSelected: boolean;
-  readonly guidanceTargetNode?: ReactNode;
+  readonly replyTargetActive: boolean;
   readonly composerBusy: boolean;
   readonly composerDragActive: boolean;
   readonly composerDropZoneStyle: CSSProperties;
@@ -117,7 +115,6 @@ interface ChannelComposerProps {
   readonly selectedChannelId: string;
   readonly sendError: string;
   readonly sendState: ChannelComposerSendState;
-  readonly showGuidance: boolean;
   readonly slashActiveIndex: number;
   readonly slashCommandPickerOptions: readonly ComposerSlashCommandOption[];
   readonly slashPicker: ActiveSlashCommandPicker | undefined;
@@ -134,7 +131,7 @@ interface ChannelComposerProps {
   readonly onDrop: (event: DragEvent<HTMLElement>) => void;
   readonly onInputChange: (value: string, caret: number) => void;
   readonly onInputKeyDown: (event: ReactKeyboardEvent<HTMLDivElement>) => void;
-  readonly onInputPaste: (event: ClipboardEvent<HTMLDivElement>) => void;
+  readonly onInputPasteFiles: (files: readonly File[]) => void;
   readonly onInputSelect: (value: string, caret: number) => void;
   readonly onInsertMentionTrigger: () => void;
   readonly onOpenApproval: (approvalId: string) => void;
@@ -187,7 +184,7 @@ export function ChannelComposer({
   onDrop,
   onInputChange,
   onInputKeyDown,
-  onInputPaste,
+  onInputPasteFiles,
   onInputSelect,
   onInsertMentionTrigger,
   onOpenApproval,
@@ -226,8 +223,7 @@ export function ChannelComposer({
   goalExpanded,
   goalChipVisible,
   guidanceModeActive,
-  guidanceTargetNode,
-  guidanceTargetSelected,
+  replyTargetActive,
   channelTeammateIds,
   resolvingApprovals,
   runGuidanceError,
@@ -237,7 +233,6 @@ export function ChannelComposer({
   selectedChannelId,
   sendError,
   sendState,
-  showGuidance,
   slashActiveIndex,
   slashCommandPickerOptions,
   slashPicker,
@@ -308,7 +303,7 @@ export function ChannelComposer({
       ariaLabel={t("Channel composer")}
       leftToolsAriaLabel={t("Message tools")}
       statusNode={statusNode}
-      guidanceNode={(goal || goalLoading || goalError || showGuidance) ? (
+      guidanceNode={(goal || goalLoading || goalError || runGuidanceItems.length > 0 || runGuidanceError || runGuidanceLoading) ? (
         <>
           {goal ? (
             <div className={`goal-floating-panel status-${goal.status}`} role="region" aria-label={t("Goal")}>
@@ -364,19 +359,15 @@ export function ChannelComposer({
               {goalError}
             </div>
           ) : null}
-          {showGuidance ? (
-            <>
-          {guidanceTargetNode}
-          <ConversationGuidanceStrip
-            title={guidanceModeActive ? t("Run guidance") : t("Queued guidance")}
-            description={guidanceModeActive
-              ? guidanceTargetSelected
-                ? t("Type guidance in the message box and press Enter to queue it.")
-                : t("Select a teammate reply before adding guidance.")
-              : t("Guidance is queued.")}
-            submitting={runGuidanceSubmitting}
-            items={runGuidanceItems}
-          />
+          {runGuidanceItems.length > 0 ? (
+            <ConversationGuidanceStrip
+              title={t("Run guidance")}
+              description={t("Guidance is queued.")}
+              submitting={runGuidanceSubmitting}
+              stopDisabled={!replyTargetActive}
+              items={runGuidanceItems}
+            />
+          ) : null}
           {runGuidanceError ? (
             <div className="inline-error compact-inline-error">
               <CircleAlert size={14} />
@@ -388,8 +379,6 @@ export function ChannelComposer({
               <Loader2 className="spin" size={13} />
               <span>{t("Loading guidance...")}</span>
             </div>
-          ) : null}
-            </>
           ) : null}
         </>
       ) : null}
@@ -430,7 +419,7 @@ export function ChannelComposer({
           parts={inputParts}
           onChange={onInputChange}
           onKeyDown={onInputKeyDown}
-          onPaste={onInputPaste}
+          onPasteFiles={onInputPasteFiles}
           onSelect={onInputSelect}
           placeholder={t("Message this channel or @ an AI teammate")}
           ariaLabel={t("Message this channel or @ an AI teammate")}
@@ -640,9 +629,9 @@ export function ChannelComposer({
           aria-label={submitLabel}
           title={submitTitle}
         >
-          {guidanceModeActive
+          {replyTargetActive
             ? composerHasSendableContent
-              ? runGuidanceSubmitting === "queue_followup" ? <Loader2 className="spin" size={15} /> : <Send size={15} />
+              ? sendState === "sending" ? <Loader2 className="spin" size={15} /> : <Send size={15} />
               : isCancellingRun ? <Loader2 className="spin" size={15} /> : <Square size={15} />
             : sendState === "sending" ? <Loader2 className="spin" size={15} /> : composerSlashCommandActive ? <ListChecks size={15} /> : <Send size={15} />}
         </button>

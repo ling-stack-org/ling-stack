@@ -344,6 +344,7 @@ export async function routeRequest(
     storeRegistry,
     activeRuns,
     activeDirectReplies,
+    channelReplyDispatchCoordinator,
     runtimeSupervisor,
     secretResolver,
     externalSecretStore,
@@ -383,6 +384,7 @@ export async function routeRequest(
     });
     await maybeStartNextRunInterventionContinuation({
       sourceRunId: goalContinuation?.sourceRunId ?? sourceRunId,
+      terminalRun,
       store,
       runnerRegistry,
       storeRegistry,
@@ -1672,6 +1674,7 @@ export async function routeRequest(
           config,
           routeDependencies: { runnerRegistry, secretResolver, config },
           imageVisionSummarizer,
+          replyDispatchCoordinator: channelReplyDispatchCoordinator,
         });
         return {};
       },
@@ -1959,6 +1962,7 @@ export async function routeRequest(
           config,
         },
         imageVisionSummarizer,
+        channelReplyDispatchCoordinator,
       );
       return;
     }
@@ -1985,6 +1989,7 @@ export async function routeRequest(
           config,
         },
         imageVisionSummarizer,
+        channelReplyDispatchCoordinator,
       );
       return;
     }

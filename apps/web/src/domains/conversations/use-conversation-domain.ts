@@ -46,6 +46,8 @@ export interface ConversationSendInput {
 
 export interface ConversationStreamHandlers {
   readonly onReady?: (event: ConversationStreamReadyEvent) => void;
+  readonly onMessageAccepted?: (event: ConversationStreamReadyEvent) => void;
+  readonly onReplyLinked?: (target: NonNullable<ConversationStreamReadyEvent["activeReply"]>) => void;
   readonly onRunEvent?: (event: ConversationStreamRunEvent) => void;
   readonly onDone?: (event: ConversationStreamDoneEvent) => void;
   readonly onBlocked?: (event: ConversationStreamBlockedEvent) => void;
@@ -466,6 +468,9 @@ export function useConversationDomain(input: {
           activeThreadId = event.thread.id;
           handlers.onThreadBound?.(activeThreadId);
           retargetStreamOperation(activeThreadId);
+          if (event.activeReply) {
+            conversationStreamBusyOwner.finish(busyOperation);
+          }
           if (canCommitToSurface(activeThreadId)) {
             commitSelectedConversationThreadId(activeThreadId);
             commitConversationSurfaceIdentity(activeThreadId);
@@ -475,6 +480,8 @@ export function useConversationDomain(input: {
             ]));
             scheduleEvidenceRefresh();
             handlers.onReady?.(event);
+            handlers.onMessageAccepted?.(event);
+            if (event.activeReply) handlers.onReplyLinked?.(event.activeReply);
           }
           return;
         }

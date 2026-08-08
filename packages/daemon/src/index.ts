@@ -31,6 +31,7 @@ import {
   configureTerminalReportStore,
   recoverTerminalReports,
 } from "./features/channels/terminal-report-coordinator.js";
+import { ChannelReplyDispatchCoordinator } from "./features/channels/channel-reply-dispatch-coordinator.js";
 import { createDefaultMcpBroker } from "./features/mcp/broker.js";
 import { createSystemKeychainSecretStore } from "./features/providers/keychain-secret-store.js";
 import { ProviderStartupRefreshService } from "./features/providers/startup-refresh.js";
@@ -91,6 +92,7 @@ export {
 export type { RunnerFallbackReason } from "@ling-stack/core";
 export { ActiveRunRegistry } from "./runtime/active-runs.js";
 export { ActiveDirectReplyRegistry } from "./features/teammates/direct-reply-active-registry.js";
+export { ChannelReplyDispatchCoordinator } from "./features/channels/channel-reply-dispatch-coordinator.js";
 export { RunStoreRegistry } from "./runtime/store-registry.js";
 export { RuntimeSupervisor } from "./runtime/supervisor.js";
 export { StartupStateRegistry } from "./startup/state.js";
@@ -294,6 +296,7 @@ export function createDaemonServer(
     automationSchedulers,
   });
   const activeDirectReplies = new ActiveDirectReplyRegistry();
+  const channelReplyDispatchCoordinator = new ChannelReplyDispatchCoordinator();
   const remoteAccessManagementCapability = dependencies.remoteAccessManagementCapability
     ?? process.env.LING_MOBILE_ACCESS_MANAGEMENT_CAPABILITY
     ?? randomBytes(32).toString("base64url");
@@ -329,6 +332,7 @@ export function createDaemonServer(
     storeRegistry,
     activeRuns,
     activeDirectReplies,
+    channelReplyDispatchCoordinator,
     runtimeSupervisor,
     secretResolver,
     externalSecretStore,
@@ -436,6 +440,7 @@ export function createDaemonServer(
       await new Promise<void>((resolve, reject) => {
         activeRuns.cancelAll();
         activeDirectReplies.cancelAll();
+        channelReplyDispatchCoordinator.close();
         runtimeSupervisor.releaseAll();
         backgroundSchedulers.stopAll();
         automationSchedulers.stopAll();

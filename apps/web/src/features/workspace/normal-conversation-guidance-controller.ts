@@ -1,4 +1,4 @@
-import type { ChannelMessageFileRef, ConversationAttachment, RunSession } from "../../types.js";
+import type { ChannelMessageFileRef, ConversationActiveReplyTarget, ConversationAttachment } from "../../types.js";
 import type { useNormalConversationActionFeedback } from "./useNormalConversationActionFeedback.js";
 import type { useNormalConversationAttachmentController } from "./useNormalConversationAttachmentController.js";
 import type { useNormalConversationIdentityController } from "./useNormalConversationIdentityController.js";
@@ -15,7 +15,7 @@ type IdentityController = ReturnType<typeof useNormalConversationIdentityControl
 type OperationOwner = ReturnType<typeof useNormalConversationOperationOwner<boolean>>;
 
 export async function submitNormalConversationGuidance(input: {
-  readonly activeRun: RunSession | undefined;
+  readonly activeReply: ConversationActiveReplyTarget | undefined;
   readonly threadId?: string;
   readonly workspaceCwd: string;
   readonly body: string;
@@ -28,10 +28,10 @@ export async function submitNormalConversationGuidance(input: {
   readonly onAccepted: (message: ConversationHomeMessage) => void;
   readonly refresh: () => Promise<void>;
 }): Promise<void> {
-  if (!input.activeRun || input.operationOwner.busy) {
+  if (!input.activeReply || input.operationOwner.busy) {
     return;
   }
-  const threadId = input.threadId || input.activeRun.threadId;
+  const threadId = input.threadId || input.activeReply.threadId;
   if (!threadId) {
     input.actionFeedback.report("stream", input.notReadyMessage);
     return;
@@ -48,9 +48,9 @@ export async function submitNormalConversationGuidance(input: {
   try {
     const intervention = await queueNormalConversationGuidance({
       cwd: input.workspaceCwd.trim(),
-      sourceRun: input.activeRun,
+      sourceReply: input.activeReply,
       draft: { body: input.body, attachments, fileRefs: input.fileRefs },
-      idempotencyKey: `web-conversation:${input.activeRun.id}:queue_followup:${Date.now()}:${Math.random().toString(36).slice(2)}`,
+      idempotencyKey: `web-conversation:${input.activeReply.runId}:queue_followup:${Date.now()}:${Math.random().toString(36).slice(2)}`,
     });
     if (!commitGuard(threadId)) {
       input.attachmentController.abandonSend(pendingAttachments);

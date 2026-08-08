@@ -1,5 +1,14 @@
 import { useCallback, useMemo, useState } from "react";
-import type { ChannelMention, ChannelMessage, ChannelMessageFileRef } from "../../types.js";
+import type {
+  ChannelMention,
+  ChannelMessage,
+  ChannelMessageFileRef,
+  ChannelReplyDisposition,
+  ConversationActiveReplyTarget,
+  RunSession,
+  WorkUnit,
+} from "../../types.js";
+import { deriveChannelReplyGuidanceTargets } from "./channel-guidance-targets.js";
 import { findMentionsInText } from "./channelMentionText.js";
 
 export interface ChannelThreadReplySnapshot {
@@ -9,7 +18,11 @@ export interface ChannelThreadReplySnapshot {
 }
 
 interface ChannelThreadReplyControllerInput {
+  readonly selectedChannelId: string;
   readonly channelMessages: readonly ChannelMessage[];
+  readonly channelRuns: readonly RunSession[];
+  readonly workUnits: readonly WorkUnit[];
+  readonly transientReplies?: readonly ConversationActiveReplyTarget[];
   readonly teammateOptions: readonly ChannelMention[];
   readonly onSendMessage: (input: {
     readonly threadId?: string;
@@ -19,6 +32,7 @@ interface ChannelThreadReplyControllerInput {
     readonly linkPreviewIds: readonly string[];
     readonly fileRefs: readonly ChannelMessageFileRef[];
     readonly requestAiReply: boolean;
+    readonly replyDisposition?: ChannelReplyDisposition;
   }) => Promise<{ readonly errorMessage?: string }>;
 }
 
@@ -37,7 +51,11 @@ export interface ChannelThreadReplyController {
 }
 
 export function useChannelThreadReplyController({
+  selectedChannelId,
   channelMessages,
+  channelRuns,
+  workUnits,
+  transientReplies,
   teammateOptions,
   onSendMessage,
 }: ChannelThreadReplyControllerInput): ChannelThreadReplyController {
@@ -53,6 +71,20 @@ export function useChannelThreadReplyController({
   const activeThreadMessages = useMemo(
     () => activeThreadId ? channelMessages.filter((message) => message.threadId === activeThreadId) : [],
     [activeThreadId, channelMessages],
+  );
+  const activeReplyTarget = useMemo(
+    () => activeThreadId
+      ? deriveChannelReplyGuidanceTargets({
+          channelId: selectedChannelId,
+          conversationLineThreadId: activeThreadId,
+          channelMessages,
+          runs: channelRuns,
+          workUnits,
+          transientReplies,
+          teammateLabel: (teammateId) => teammateId ?? "",
+        })[0]?.activeReply
+      : undefined,
+    [activeThreadId, channelMessages, channelRuns, selectedChannelId, transientReplies, workUnits],
   );
 
   const openThreadForMessage = useCallback((message: ChannelMessage): void => {
@@ -83,7 +115,7 @@ export function useChannelThreadReplyController({
       return;
     }
     const mentions = findMentionsInText(body, teammateOptions);
-    const shouldRequestAi = mentions.some((mention) => mention.kind === "ai-teammate");
+    const shouldRequestAi = Boolean(activeReplyTarget) || mentions.some((mention) => mention.kind === "ai-teammate");
     setPending(true);
     setError("");
     try {
@@ -95,6 +127,14 @@ export function useChannelThreadReplyController({
         linkPreviewIds: [],
         fileRefs: [],
         requestAiReply: shouldRequestAi,
+        ...(activeReplyTarget
+          ? {
+              replyDisposition: {
+                mode: "queue_followup",
+                activeRunId: activeReplyTarget.runId,
+              },
+            }
+          : {}),
       });
       if (result.errorMessage) {
         setError(result.errorMessage);
@@ -106,7 +146,7 @@ export function useChannelThreadReplyController({
     } finally {
       setPending(false);
     }
-  }, [activeThreadId, draft, onSendMessage, pending, teammateOptions]);
+  }, [activeReplyTarget, activeThreadId, draft, onSendMessage, pending, teammateOptions]);
 
   const snapshot = useMemo<ChannelThreadReplySnapshot>(
     () => ({ activeThreadId, draft, error }),

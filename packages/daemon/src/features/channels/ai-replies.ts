@@ -1,13 +1,13 @@
-import { resolveEffectiveTeammateProviderPresetId, type Channel, type ChannelMessage, type RunSession, type RunStore, type SecretResolver } from "@ling-stack/core";
+import { type Channel, type ChannelMessage, type RunSession, type RunStore, type SecretResolver } from "@ling-stack/core";
 import { renderUsedMemoryPromptForView } from "../memory/prompt.js";
 import { isRunTool } from "../runs/approvals.js";
 import type { RunExecutionSink } from "../runs/orchestrator.js";
 import type { RunRequest } from "../runs/schemas.js";
-import { resolveAiTeammateReference } from "../teammates/identity.js";
 import { extractChannelExecutionProposal } from "./ai-proposals.js";
 import { compactChannelDiscussionForNoToolsRetry, isContextLengthError } from "./context-compaction.js";
 import { buildChannelReplyContextPack, renderContextPack } from "./context-packs.js";
-import { createLingAgentExecutor, isLingAgentExecutorId, LING_AGENT_EXECUTOR_ID } from "./ling-agent-executor.js";
+import { LING_AGENT_EXECUTOR_ID } from "./ling-agent-executor.js";
+import { resolveChannelReplyExecutionTarget } from "./channel-reply-execution-target.js";
 import {
   buildLingAgentTurnEnvelope,
   renderLingAgentTurnEnvelopeSearchText,
@@ -55,6 +55,8 @@ export async function createAiChannelReply(input: {
   readonly trackCompletion?: (completion: Promise<unknown>) => void;
   readonly replyMessageId?: string;
   readonly disableWebEvidence?: boolean;
+  readonly onRunLinked?: (runId: string) => void;
+  readonly onDispatchSettled?: () => void;
   readonly stream?: {
     readonly onReady: (message: ChannelMessage) => void;
     readonly onRunLinked?: (message: ChannelMessage) => void;
@@ -66,6 +68,7 @@ export async function createAiChannelReply(input: {
   if (input.replyMessageId) {
     const existing = input.store.getChannelMessage(input.replyMessageId);
     if (existing) {
+      notifyDispatchSettled(input.onDispatchSettled);
       return existing;
     }
   }
@@ -74,19 +77,14 @@ export async function createAiChannelReply(input: {
     input.teammateId ??
     input.sourceMessage.mentions.find((mention) => mention.kind === "ai-teammate")?.id ??
     LING_AGENT_EXECUTOR_ID;
-  const teammate = isLingAgentExecutorId(teammateId)
-    ? input.store.getAiTeammate(teammateId) ?? createLingAgentExecutor(now)
-    : resolveAiTeammateReference(input.store, teammateId);
-  const canonicalTeammateId = teammate?.id ?? teammateId;
-  const providerPresetId = teammate
-    ? resolveEffectiveTeammateProviderPresetId({
-        teammate,
-        surface: "channel",
-        requestedProviderPresetId: input.providerPresetId,
-        workspaceDefaultProviderPresetId: input.store.getWorkspaceSettings().defaultProviderPresetId,
-        channelDefaultProviderPresetId: input.channel.defaultProviderPresetId,
-      })
-    : input.providerPresetId ?? input.channel.defaultProviderPresetId;
+  const target = resolveChannelReplyExecutionTarget({
+    store: input.store,
+    channel: input.channel,
+    requestedTeammateId: teammateId,
+    requestedProviderPresetId: input.providerPresetId,
+    now,
+  });
+  const { teammate, teammateId: canonicalTeammateId, providerPresetId } = target;
   const pending = input.store.createChannelMessage(
     {
       ...(input.replyMessageId ? { id: input.replyMessageId } : {}),
@@ -110,7 +108,7 @@ export async function createAiChannelReply(input: {
     canonicalTeammateId,
     providerPresetId,
     now,
-  });
+  }).finally(() => notifyDispatchSettled(input.onDispatchSettled));
   if (input.completionMode === "inline") {
     return await completion;
   }
@@ -135,8 +133,9 @@ async function completeAiChannelReply(input: {
   readonly webResolveHostAddresses?: (hostname: string) => Promise<readonly string[]>;
   readonly teamObserverBusEnabled?: boolean;
   readonly disableWebEvidence?: boolean;
+  readonly onRunLinked?: (runId: string) => void;
   readonly pending: ChannelMessage;
-  readonly teammate: ReturnType<typeof resolveAiTeammateReference>;
+  readonly teammate: ReturnType<typeof resolveChannelReplyExecutionTarget>["teammate"];
   readonly canonicalTeammateId: string;
   readonly now: string;
   readonly stream?: {
@@ -476,7 +475,7 @@ async function startProjectedChannelReplyRun(input: {
     store: input.input.store,
     pendingMessageId: input.input.pending.id,
     stream: input.input.stream,
-    onRunLinked: ({ workUnitId, attemptId }) => {
+    onRunLinked: ({ runId, workUnitId, attemptId }) => {
       recordBufferedChannelWebEvidence({
         store: input.input.store,
         workUnitId,
@@ -499,6 +498,7 @@ async function startProjectedChannelReplyRun(input: {
           },
         });
       }
+      notifyRunLinked(input.input.onRunLinked, runId);
     },
   });
   const startedRunId = await input.input.startRun(buildChannelReplyRunRequest({
@@ -524,6 +524,22 @@ async function startProjectedChannelReplyRun(input: {
     throw new Error(`Channel reply run was not persisted: ${runId}`);
   }
   return { run, projection };
+}
+
+function notifyRunLinked(callback: ((runId: string) => void) | undefined, runId: string): void {
+  try {
+    callback?.(runId);
+  } catch {
+    // Reply execution remains authoritative when an in-memory dispatch observer closes early.
+  }
+}
+
+function notifyDispatchSettled(callback: (() => void) | undefined): void {
+  try {
+    callback?.();
+  } catch {
+    // Reply execution remains authoritative when an in-memory dispatch observer closes early.
+  }
 }
 
 function channelReplyRunFailure(run: RunSession, projectionError: string | undefined): string | undefined {

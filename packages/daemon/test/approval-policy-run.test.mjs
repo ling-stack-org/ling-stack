@@ -3511,6 +3511,25 @@ test("queued run guidance starts FIFO continuation after the source run finishes
     const sourceRunId = ready.data.runId;
     await runner.waitUntilStarted();
 
+    const rejectedChannelLineage = await fetch(`${daemon.url}/runs/${encodeURIComponent(sourceRunId)}/interventions?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mode: "queue_followup",
+        instruction: "Attempt to inject channel lineage.",
+        messagePayload: {
+          sourceMessageId: "msg_untrusted_channel_source",
+          targetTeammateId: "teammate_untrusted",
+          body: "Attempt to inject channel lineage.",
+          attachmentIds: [],
+          linkPreviewIds: [],
+        },
+        idempotencyKey: "reject-channel-lineage",
+      }),
+    });
+    assert.equal(rejectedChannelLineage.status, 400);
+    assert.match((await rejectedChannelLineage.json()).message, /daemon-managed channel lineage fields/);
+
     const first = await postJson(`${daemon.url}/runs/${encodeURIComponent(sourceRunId)}/interventions?cwd=${encodeURIComponent(cwd)}`, {
       mode: "queue_followup",
       instruction: "After that, verify the memory audit UI.",

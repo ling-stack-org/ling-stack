@@ -41,7 +41,7 @@ export type TeammatePrivateChatComposerProps = Pick<TeammatePrivateChatSurfacePr
   | "onComposerDragLeave"
   | "onComposerDragOver"
   | "onComposerDrop"
-  | "onComposerPaste"
+  | "onComposerPasteFiles"
   | "onEditDirectGuidance"
   | "onOpenModelSettings"
   | "onPromoteDirectGuidance"
@@ -83,7 +83,7 @@ export function TeammatePrivateChatComposer({
   onComposerDragLeave,
   onComposerDragOver,
   onComposerDrop,
-  onComposerPaste,
+  onComposerPasteFiles,
   onEditDirectGuidance,
   onOpenModelSettings,
   onPromoteDirectGuidance,
@@ -213,7 +213,7 @@ export function TeammatePrivateChatComposer({
             parts={composerInputParts}
             onChange={controller.handleComposerValueChange}
             onKeyDown={controller.handleComposerInputKeyDown}
-            onPaste={onComposerPaste}
+            onPasteFiles={onComposerPasteFiles}
             onSelect={controller.updateSlashPicker}
             placeholder={privateComposerPlaceholder}
             ariaLabel={privateComposerPlaceholder}

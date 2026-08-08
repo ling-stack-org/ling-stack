@@ -50,6 +50,13 @@ portable to Desktop and CLI before the projection becomes a permanent API.
 While a pending AI reply has no visible text yet, the Web feed should show a
 generic `Thinking...` status with a spinner. As soon as `delta.body` is non-empty,
 the same bubble must render that body instead of a generic pending label.
+The initial optimistic row remains visible after user-message acknowledgement only while
+dispatch is unresolved. The daemon emits `reply_pending` before slow routing work only for a
+message that owns an idle conversation-line lane. If the Web sends an explicit same-line
+`queue_followup` disposition and the daemon validates it, the terminal stream event returns
+`followup_queued`; Web removes the optimistic transcript row and projects the durable
+intervention in the guidance queue instead. Other active replies in the same Channel do not
+capture Root, Branch, or Topic messages from a different line.
 
 If the channel feed is already pinned to the latest item, streamed `delta.body`
 updates must keep the feed pinned to the bottom as the same message grows. If
@@ -74,8 +81,10 @@ SSE events:
 | Event | Payload | Semantics |
 | --- | --- | --- |
 | `ready` | `{ message, aiReply?, aiReplies? }` | The local user message and one or more pending durable AI messages now exist. |
+| `reply_pending` | `{ sourceMessageId, targetTeammateId, startedAt }` | The accepted message owns the idle conversation-line lane and is preparing a reply. Queued follow-ups do not emit it. This is not a Run or persistence object. |
+| `run_linked` | `{ messageId, linkedRunId, activeReply? }` | The durable pending AI message is linked to its real Run and supervising WorkUnit. Channel `activeReply.sourceMessageId` identifies the source Channel message; `activeReply.threadId` remains the canonical LingThread id. |
 | `delta` | `{ messageId, delta, body }` | A visible text delta was appended to the durable AI message. `body` is the full visible body so far. |
-| `done` | `{ message, aiReply?, aiReplies?, autoStartedWorkflow? }` | The channel turn reached its terminal persisted state. |
+| `done` | `{ message, aiReply?, aiReplies?, replyDispatch?, autoStartedWorkflow? }` | The channel turn reached its persisted dispatch state. `followup_queued` keeps the message out of the transcript until continuation start. |
 | `blocked` | `{ message, aiReply?, aiReplies?, error? }` | The reply could not continue because of provider, teammate, or runtime blocking. |
 | `error` | `{ message?, aiReply?, aiReplies?, error }` | The stream itself failed after the request started. Persisted messages, if any, are included. |
 
@@ -176,7 +185,9 @@ for the current product-level transcript behavior.
 
 ## Acceptance
 
-- `POST /channels/:id/messages/stream` streams `ready -> delta -> done` for a normal Ling Agent reply.
+- `POST /channels/:id/messages/stream` streams `ready -> reply_pending -> ready -> run_linked -> delta -> done` for a normal Ling Agent reply.
+- `reply_pending.targetTeammateId`, the pending AI message author, WorkUnit, Run, and daemon
+  dispatch lane use the same canonical identity; no mention is `ling_agent`.
 - The visible AI message body updates during generation and is persisted through `GET /channels/:id/messages`.
 - Hidden proposal blocks are not present in any streamed `delta` body.
 - Existing non-streaming `POST /channels/:id/messages` continues to work.

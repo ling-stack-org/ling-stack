@@ -2,7 +2,7 @@
 
 Status: active UI2 component contract
 Owner: conversation UI packages
-Last verified: 2026-08-05
+Last verified: 2026-08-07
 Code anchors: `packages/conversation-ui-core/src/`, `packages/conversation-ui-react/src/`
 Test anchors: `packages/conversation-ui-core/test/`, `packages/conversation-ui-react/test/`
 
@@ -28,7 +28,18 @@ Test anchors: `packages/conversation-ui-core/test/`, `packages/conversation-ui-r
 - 缺少模型或权限时在 Composer 上方使用共享状态条；阻断不清空草稿。
 - 发送、停止和附件操作具有稳定尺寸，输入增长达到上限后内部滚动。
 - 图片、文件、链接和文件引用复用一个附件条，保持单行；超出宽度时附件条内部横向滚动，不能换行撑高 Composer。
-- 频道普通回复使用标准 `RunSession` 引导：单个活动回复自动成为目标，多个并发回复在引导区显示“引导给谁”下拉框；选择前发送键保持在引导模式，不得把引导草稿误发为频道消息。
+- 粘贴文件由共享输入组件统一接管，同时识别剪贴板 `files` 与文件类型 `items`，进入与选择/拖入相同的附件上传链路；正文使用 `plaintext-only`，不允许剪贴板 HTML 或原始图片节点进入输入区，三个会话表面统一渲染同一个缩略附件条。
+- 频道普通回复使用标准 `RunSession` 引导，但不显示“引导给谁”选择器。目标只由 daemon 的既有消息路由决定：不 `@` 交给 Ling Agent，单个 `@` 交给对应队友，多个 `@` 交由 Ling Agent 协调，不并发扇出；Web 不额外提交目标选择值。
+- 频道只有一条活动回复车道。只要任一 Agent 尚未回复完成，之后所有非空输入都进入同一个 FIFO，引导中保留 `@` 解析出的目标；即使目标 Agent 空闲也不能启动第二条回复。消息文字不得触发打断；空输入停止当前唯一的活动回复。
+- 同一回复期间可连续发送多条引导。每次提交使用独立请求身份并只清空自己的输入快照；前一请求尚未返回时，后一条也必须进入 daemon 的同一 FIFO，不能因网络发送状态被吞掉或覆盖。
+- 任何活动回复都不得在 Composer 上方常驻“运行中”大卡或空面板。排队 intervention 在紧凑引导队列中只显示一次；其来源消息轮到执行前不进入 transcript，进入 `starting_continuation` 后才从队列移入普通用户消息流。
+- 后一条提交必须在第一帧直接进入引导队列，不能等待异步 Run 刷新后再把普通消息气泡搬入队列。daemon 在消息落库到调度归属落库之间设置读取栅栏，任何频道刷新都不得短暂暴露这条排队消息。
+- `runs` 与 `workUnits` 分批刷新时，尚未解析 WorkUnit 归属的 Run 不进入默认消息流；归属数据到达后再按可见工作规则决定是否展示，禁止“已处理 Ns”完成卡片单帧闪现。
+- “打开运行”、模型供应商、审批数量等技术摘要不占用正常引导界面；仅审批、模型阻断或其他需要用户处理的异常可显示共享状态条。
+- 引导创建成功后不显示成功 Toast，也不允许“立即运行”越过前序队列；编辑或删除只作用于尚未开始的队列项。运行详情继续由右侧详情承接。
+- 初始消息只锁定到服务端确认消息并持久关联回复；只有真正拥有空闲频道车道、正在准备首个回复的消息才发出 `reply_pending`。发现活动回复后直接返回 `followup_queued`，不得先闪现思考状态。确认前失败恢复草稿，确认后失败不恢复原消息，避免重复发送。
+- 首个频道回复尚在素材解析、路由且未关联真实 Run 时，由 daemon 按工作区和频道持有短暂回复车道；所有后续目标都等待同一真实 Run 关联后进入既有 `queue_followup`。队列 payload 持久化规范目标；不 `@` 固定为 `ling_agent`，不能把作者类型 `ai-teammate` 当成执行者 ID。该车道不保存消息内容、不形成新队列，也不作为重启恢复依据。
+- 频道活动事件只在首次空载时显示加载状态；已有内容后的后台刷新保持静默，不得反复闪烁“正在加载活动事件”。
 
 ## Accessibility
 

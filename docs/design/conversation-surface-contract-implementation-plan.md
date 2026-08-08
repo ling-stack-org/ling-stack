@@ -2,7 +2,7 @@
 
 Status: active implementation plan
 Owner: conversation UI package and product-surface maintainers
-Last verified: 2026-08-05
+Last verified: 2026-08-07
 
 ## Owning Contracts
 
@@ -37,8 +37,10 @@ and consumption work.
 - Shared message bodies use stable 15px/550 strong text from the first pending frame;
   the 13px pending spinner uses a shared 5px first-line offset.
 - Channel optimistic sends retain one virtual render identity through acknowledgement and
-  reply start. A measured tail observer follows once per frame only while the user remains
-  at latest, and virtual `paddingEnd` owns the 38px Composer clearance.
+  reply start. The daemon emits canonical `reply_pending` only for a message that owns an idle
+  lane; queued follow-ups return durable dispatch directly and move out of the transcript.
+  A measured tail observer follows once per frame only while
+  the user remains at latest, and virtual `paddingEnd` owns the 38px Composer clearance.
 - Channel, normal conversation and teammate private chat use one pending-asset component.
   Attachments and links stay in one non-wrapping row with internal horizontal scrolling.
 - Successful text-only chat runs stay quiet. WorkCell remains for tools, approvals,
@@ -50,8 +52,52 @@ and consumption work.
 - Ordinary channel replies now execute as standard `RunSession` records. Their
   `channel_ai_reply` WorkUnit is only the supervision projection linked to that run and
   message; guidance reuses the existing `RunIntervention`, cancellation and continuation
-  paths. One active teammate reply is selected automatically, while concurrent replies
-  require an explicit "Guide whom" selection. No second guidance queue or table is added.
+  paths. The Composer has no target selector. The daemon resolves no mention to Ling Agent,
+  one mention to that teammate, and multiple mentions back to Ling Agent for coordination;
+  Web does not submit a second teammate-selection field. No second guidance queue or table
+  is added.
+- Channel guidance now uses the same lightweight composer projection as normal
+  conversation: active replies add no standalone run card or empty guidance panel, the
+  ordinary mention input is the only targeting control, and actionable approval/provider
+  exceptions retain their shared status strips.
+- Every non-empty submission is persisted through the ordinary channel-message path. If the
+  channel has any active reply, it returns `replyDispatch.disposition=followup_queued`
+  regardless of target availability; only an idle channel may return `reply_requested`.
+- Message-backed interventions remain durable and appear once in the Composer queue while
+  their source messages stay out of the transcript. At `starting_continuation`, the queue item
+  leaves and the durable source message enters the transcript. Activity-transition refreshes
+  are silent after the selected channel has completed its first load.
+- A daemon-local pending-reply lane closes the materialization-to-Run-link race for rapid
+  submits. It is keyed by workspace and channel, releases on failed or no-Run dispatch, and
+  never replaces durable messages or `RunIntervention` rows.
+- Target identity remains canonical across mention resolution, queue payload, pending reply,
+  WorkUnit and Run. No mention resolves to `ling_agent`; no ordinary dispatch path may
+  manufacture `ai-teammate` as an executor id. A later message joins the existing channel
+  lane and creates `queue_followup` instead of starting a second root Run.
+- Channel intervention payloads persist the source user-message id and resolved target
+  teammate id explicitly. Every continuation re-resolves that target's current model binding,
+  pre-creates its Agent reply, links the continuation WorkUnit from source user message to
+  Agent reply, projects the run output into that reply, and writes
+  `completedAt` for every terminal outcome.
+- Channel continuation prompt ownership now matches ordinary channel replies: the durable
+  guidance message is rebuilt as the Context Pack's current `User message`, while the
+  source Run prompt and earlier completed continuation replies are reference context only.
+  The old source prompt is never wrapped around the new guidance as the active instruction.
+- Channel message text never selects `interrupt_redirect`. Empty submit stops the one active
+  channel reply. While that reply exists, no idle target may start a parallel normal reply;
+  every later message becomes the next FIFO intervention while retaining its own target.
+- All three conversation surfaces now use one owner-scoped send lifecycle. The initial
+  payload is accepted once, a durable `reply_linked` target unlocks the Composer even when
+  its status is still `queued`, and each rapid follow-up retains an independent request
+  identity until accepted or failed. A later send cannot invalidate an earlier in-flight
+  request or clear newly entered text. Owner changes still reject stale SSE events. Older Run
+  detail snapshots cannot overwrite newer list state, and every unmentioned channel message
+  resolves to Ling Agent without inheriting a previous target.
+- File paste is controlled inside `TokenizedComposerInput`: files use the existing shared
+  attachment controller and text paste uses `text/plain` only, so clipboard HTML cannot
+  create oversized raw image nodes.
+- Pre-accept failures restore the draft and pending assets. Post-accept failures keep the
+  payload consumed to avoid duplicating a message that may already be durable.
 - Channel-only teammate routing, topic replies, goals, plans and multi-agent activity remain
   channel-only.
 

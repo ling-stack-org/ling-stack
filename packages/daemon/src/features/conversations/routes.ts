@@ -42,6 +42,7 @@ import type { RunExecutionSink } from "../runs/orchestrator.js";
 import type { RunRequest } from "../runs/schemas.js";
 import { materializeInlineConversationAttachments, type ConversationAttachmentMaterialization } from "./materialization.js";
 import { lingConversationToneInstruction } from "./conversation-tone.js";
+import { projectConversationActiveReplyTarget } from "./active-reply-target.js";
 import { projectTerminalReportDto } from "../channels/terminal-report-routes.js";
 import { listExecutionActions } from "../runs/execution-actions.js";
 import {
@@ -208,7 +209,20 @@ export async function handleConversationStream(
           runId = ready.runId;
           assistantMessage = { ...assistantMessage, runId };
         }
-        safeWrite("ready", { thread, turn, userMessage, assistantMessage, runId: runId || undefined });
+        const activeReply = projectConversationActiveReplyTarget({
+          store,
+          runId: runId || undefined,
+          threadId: thread.id,
+          teammateId: LING_AGENT_ID,
+        });
+        safeWrite("ready", {
+          thread,
+          turn,
+          userMessage,
+          assistantMessage,
+          runId: runId || undefined,
+          ...(activeReply ? { activeReply } : {}),
+        });
       },
       writeEvent(_event, data) {
         const envelope = data as RunEventEnvelope;

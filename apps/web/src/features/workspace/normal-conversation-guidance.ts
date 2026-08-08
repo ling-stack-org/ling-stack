@@ -2,8 +2,8 @@ import { createRunIntervention } from "../../api.js";
 import type {
   ChannelMessageFileRef,
   ConversationAttachment,
+  ConversationActiveReplyTarget,
   RunIntervention,
-  RunSession,
 } from "../../types.js";
 import type { ConversationHomeMessage } from "./normal-conversation-types.js";
 
@@ -15,14 +15,14 @@ export interface NormalConversationGuidanceDraft {
 
 export async function queueNormalConversationGuidance(input: {
   readonly cwd: string;
-  readonly sourceRun: RunSession;
+  readonly sourceReply: ConversationActiveReplyTarget;
   readonly draft: NormalConversationGuidanceDraft;
   readonly idempotencyKey: string;
 }): Promise<RunIntervention> {
   const body = input.draft.body.trim();
   const attachmentIds = input.draft.attachments.map((attachment) => attachment.id);
   const instruction = body || summarizeGuidanceAttachments(input.draft.attachments, input.draft.fileRefs);
-  const response = await createRunIntervention(input.cwd, input.sourceRun.id, {
+  const response = await createRunIntervention(input.cwd, input.sourceReply.sourceRunId, {
     mode: "queue_followup",
     instruction,
     messagePayload: {
