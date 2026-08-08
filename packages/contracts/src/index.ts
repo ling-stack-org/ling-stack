@@ -6,6 +6,8 @@ export type * from "./runtime.js";
 export type * from "./runner-readiness.js";
 export * from "./threads.js";
 export type * from "./conversations.js";
+export * from "./conversation-continuity.js";
+export * from "./conversation-continuity-validation.js";
 export type * from "./traces.js";
 export type * from "./turns.js";
 export type * from "./automations.js";

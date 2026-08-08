@@ -1,7 +1,8 @@
 # Channel Conversation Continuity v2
 
-Status: approved design baseline; S-1 reply-supervision bridge merged in #422; S0 ready; S1-S7 pending
+Status: approved design baseline; S-1 merged in #422; S0 contracts and golden fixtures implemented; S1-S7 pending
 Date: 2026-08-08
+Last verified: 2026-08-09
 Scope: channel conversation persistence, Thread/Turn/Item topology, context segmentation,
 context projection, rolling summaries, multi-agent recovery, and Channel Intent Decision v2
 

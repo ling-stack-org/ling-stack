@@ -1,8 +1,9 @@
 # Channel Conversation Continuity v2 Implementation Plan
 
-Status: S-1 merged in #422; S0 ready; S1-S7 pending
+Status: S-1 merged in #422; S0 implemented; S1-S7 pending
 Owner: conversation, channel context, Ling Agent Session, and storage maintainers
 Date: 2026-08-08
+Last verified: 2026-08-09
 
 ## Owning Contract
 
@@ -173,6 +174,9 @@ canonical `LingThread` ownership without changing this request boundary.
   and starting S0.
 
 ## Slice S0: Freeze Contracts And Golden Scenarios
+
+Status: implemented on `codex/channel-intent-v2`; contracts, runtime guards, public JSON
+fixture, and cross-package consumption checks pass.
 
 ### Changes
 
@@ -704,7 +708,7 @@ interfaces at the end of S3 and keep implementation files separate before parall
   follow-up routing and target Thread lineage.
   - Verify: focused daemon dispatch/integration tests, Web guidance tests, builds/typecheck,
     lint, i18n, and full-suite regression audit.
-- [ ] **T1 (P1, human: ~1 day / Codex: ~1-2 hours)**: define v2 contracts and golden fixtures.
+- [x] **T1 (P1, human: ~1 day / Codex: ~1-2 hours)**: define v2 contracts and golden fixtures.
   - Verify: contracts build and fixture parser tests.
 - [ ] **T2 (P1, human: ~3 days / Codex: ~4-6 hours)**: implement transactional schema migration and `ConversationItemStore`.
   - Verify: core migration, rollback, sequence, idempotency, paging, and supersession tests.
@@ -766,7 +770,7 @@ schema.
 | Design Review | `/plan-design-review` | UI and UX gaps | 0 | not run | UI changes are limited to later advanced Context details |
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | not run | Not required for the design baseline |
 
-**VERDICT:** ENG CLEARED. The design and plan are ready for implementation; no code has
-been implemented by this document change.
+**VERDICT:** ENG CLEARED. S-1 and S0 are implemented; S1-S7 retain the reviewed delivery
+order and exit criteria.
 
 NO UNRESOLVED DECISIONS
