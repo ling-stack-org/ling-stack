@@ -113,7 +113,7 @@ test("effective packaged gate fails closed before external connect/broker work",
     },
   });
   assert.throws(
-    () => assertBundledCuaDriverRuntimeAvailable(config),
+    () => assertBundledCuaDriverRuntimeAvailable(config, "darwin"),
     (error) => error?.code === "cua_desktop_lease_unavailable" && error?.statusCode === 409,
   );
 });

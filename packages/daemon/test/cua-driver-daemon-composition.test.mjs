@@ -136,7 +136,7 @@ test("lease publication rejects authority and retries after a durable projection
     desktopInstanceEpoch: 1,
     bridgeConnectionId: "bridge-retry",
     daemonAuthorityEpoch: "authority-retry",
-  }, workspaceCwd);
+  }, workspaceCwd, { platform: "darwin", architecture: "arm64" });
 
   assert.equal(leaseRegistry.publish(currentLease).accepted, true);
   assert.equal(coordinator.handleLeasePublished(currentLease), false);
@@ -225,7 +225,7 @@ test("failed retirement projection cannot let a same-generation renewal bypass t
     desktopInstanceEpoch: 1,
     bridgeConnectionId: "bridge-retirement",
     daemonAuthorityEpoch: "authority-retirement",
-  }, workspaceCwd);
+  }, workspaceCwd, { platform: "darwin", architecture: "arm64" });
 
   assert.equal(leaseRegistry.publish(currentLease).accepted, true);
   assert.equal(coordinator.handleLeasePublished(currentLease), true);
@@ -280,7 +280,7 @@ test("lease retirement retries its durable projection after storage recovers", a
     desktopInstanceEpoch: 1,
     bridgeConnectionId: "bridge-background-retry",
     daemonAuthorityEpoch: "authority-background-retry",
-  }, workspaceCwd);
+  }, workspaceCwd, { platform: "darwin", architecture: "arm64" });
 
   try {
     assert.equal(leaseRegistry.publish(currentLease).accepted, true);
