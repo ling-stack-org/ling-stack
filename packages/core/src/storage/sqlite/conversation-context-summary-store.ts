@@ -128,7 +128,7 @@ export class SqliteConversationContextSummaryStore {
       this.context.database.exec("COMMIT");
       return replacement;
     } catch (error) {
-      if (this.context.database.isTransaction) this.context.database.exec("ROLLBACK");
+      this.context.database.exec("ROLLBACK");
       throw error;
     }
   }

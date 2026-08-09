@@ -28,7 +28,7 @@ export function withSqliteRunStoreMigrationLock<T>(
       coordinator.exec("COMMIT;");
       return result;
     } catch (error) {
-      if (coordinator.isTransaction) coordinator.exec("ROLLBACK;");
+      coordinator.exec("ROLLBACK;");
       throw error;
     }
   } finally {

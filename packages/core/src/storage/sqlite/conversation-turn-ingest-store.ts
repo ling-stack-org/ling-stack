@@ -24,7 +24,7 @@ export class SqliteConversationTurnIngestStore {
       this.context.database.exec("COMMIT");
       return result;
     } catch (error) {
-      if (this.context.database.isTransaction) this.context.database.exec("ROLLBACK");
+      this.context.database.exec("ROLLBACK");
       throw error;
     }
   }

@@ -50,7 +50,7 @@ export function applyContinuityV2StorageMigration(
     context.database.exec("COMMIT;");
     return { migrationVersion: CONTINUITY_V2_STORAGE_MIGRATION_VERSION, ...report };
   } catch (error) {
-    if (context.database.isTransaction) context.database.exec("ROLLBACK;");
+    context.database.exec("ROLLBACK;");
     throw error;
   } finally {
     context.database.exec(`PRAGMA legacy_alter_table = ${legacyAlterTableEnabled ? "ON" : "OFF"};`);
