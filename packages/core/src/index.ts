@@ -94,3 +94,4 @@ export * from "./storage/workspace-registry-store.js";
 export * from "./storage/sqlite-run-store.js";
 export * from "./storage/sqlite/continuity-recovery.js";
 export * from "./storage/sqlite/conversation-item-store.js";
+export * from "./storage/sqlite/continuity-v2-migration.js";
