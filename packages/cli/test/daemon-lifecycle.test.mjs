@@ -13,16 +13,21 @@ test("daemon lifecycle starts, reports status, reads logs, and stops a managed d
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-daemon-"));
   const port = await getFreePort();
   const daemonUrl = `http://127.0.0.1:${port}`;
+  const daemonEnv = {
+    LING_MOBILE_GATEWAY_PORT: String(await getFreePort()),
+    LING_STACK_HOME: resolve(cwd, ".ling-stack-user"),
+  };
+  const runDaemonCli = (args) => runCli(daemonUrl, cwd, args, daemonEnv);
   let started = false;
   try {
-    const start = await runCli(daemonUrl, cwd, ["daemon", "start", "--timeout", "10000"]);
+    const start = await runDaemonCli(["daemon", "start", "--timeout", "10000"]);
     started = start.code === 0;
     assert.equal(start.code, 0, start.stderr);
     assert.match(start.stdout, /Daemon started/);
     assert.match(start.stdout, /PID:/);
     assert.match(start.stdout, /Log:/);
 
-    const status = await runCli(daemonUrl, cwd, ["daemon", "status", "--json"]);
+    const status = await runDaemonCli(["daemon", "status", "--json"]);
     assert.equal(status.code, 0, status.stderr);
     const statusBody = JSON.parse(status.stdout);
     assert.equal(statusBody.ok, true);
@@ -30,29 +35,29 @@ test("daemon lifecycle starts, reports status, reads logs, and stops a managed d
     assert.equal(statusBody.daemonUrl, daemonUrl);
     assert.equal(statusBody.health.service, "ling-stack-daemon");
 
-    const logs = await runCli(daemonUrl, cwd, ["daemon", "logs", "--lines", "20"]);
+    const logs = await runDaemonCli(["daemon", "logs", "--lines", "20"]);
     assert.equal(logs.code, 0, logs.stderr);
     assert.match(logs.stdout, /Ling Stack daemon listening/);
 
-    const restart = await runCli(daemonUrl, cwd, ["daemon", "restart", "--timeout", "10000"]);
+    const restart = await runDaemonCli(["daemon", "restart", "--timeout", "10000"]);
     assert.equal(restart.code, 0, restart.stderr);
     assert.match(restart.stdout, /Daemon restarted/);
 
-    const restartedStatus = await runCli(daemonUrl, cwd, ["daemon", "status", "--json"]);
+    const restartedStatus = await runDaemonCli(["daemon", "status", "--json"]);
     assert.equal(restartedStatus.code, 0, restartedStatus.stderr);
     assert.equal(JSON.parse(restartedStatus.stdout).status, "running");
 
-    const stop = await runCli(daemonUrl, cwd, ["daemon", "stop", "--timeout", "10000"]);
+    const stop = await runDaemonCli(["daemon", "stop", "--timeout", "10000"]);
     started = false;
     assert.equal(stop.code, 0, stop.stderr);
     assert.match(stop.stdout, /Daemon stopped:/);
 
-    const stoppedStatus = await runCli(daemonUrl, cwd, ["daemon", "status", "--json"]);
+    const stoppedStatus = await runDaemonCli(["daemon", "status", "--json"]);
     assert.equal(stoppedStatus.code, 3);
     assert.equal(JSON.parse(stoppedStatus.stdout).status, "not_running");
   } finally {
     if (started) {
-      await runCli(daemonUrl, cwd, ["daemon", "stop", "--force", "--timeout", "10000"]);
+      await runDaemonCli(["daemon", "stop", "--force", "--timeout", "10000"]);
     }
     await rm(cwd, { recursive: true, force: true });
   }
@@ -62,16 +67,21 @@ test("daemon restart removes stale pid metadata and starts a fresh daemon", asyn
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-daemon-stale-"));
   const port = await getFreePort();
   const daemonUrl = `http://127.0.0.1:${port}`;
+  const daemonEnv = {
+    LING_MOBILE_GATEWAY_PORT: String(await getFreePort()),
+    LING_STACK_HOME: resolve(cwd, ".ling-stack-user"),
+  };
+  const runDaemonCli = (args) => runCli(daemonUrl, cwd, args, daemonEnv);
   let started = false;
   try {
     await writeStaleDaemonState(cwd, daemonUrl, port);
 
-    const restart = await runCli(daemonUrl, cwd, ["daemon", "restart", "--timeout", "10000"]);
+    const restart = await runDaemonCli(["daemon", "restart", "--timeout", "10000"]);
     started = restart.code === 0;
     assert.equal(restart.code, 0, restart.stderr);
     assert.match(restart.stdout, /Daemon restarted/);
 
-    const status = await runCli(daemonUrl, cwd, ["daemon", "status", "--json"]);
+    const status = await runDaemonCli(["daemon", "status", "--json"]);
     assert.equal(status.code, 0, status.stderr);
     const statusBody = JSON.parse(status.stdout);
     assert.equal(statusBody.status, "running");
@@ -80,7 +90,7 @@ test("daemon restart removes stale pid metadata and starts a fresh daemon", asyn
     assert.notEqual(statusBody.pid, 999999999);
   } finally {
     if (started) {
-      await runCli(daemonUrl, cwd, ["daemon", "stop", "--force", "--timeout", "10000"]);
+      await runDaemonCli(["daemon", "stop", "--force", "--timeout", "10000"]);
     }
     await rm(cwd, { recursive: true, force: true });
   }
@@ -102,9 +112,11 @@ test("daemon restart refuses active work before stopping the daemon", async () =
   }
 });
 
-function runCli(daemonUrl, cwd, args) {
+function runCli(daemonUrl, cwd, args, env = {}) {
   return new Promise((resolveResult) => {
-    execFile(process.execPath, [cliPath, "--daemon-url", daemonUrl, "--cwd", cwd, ...args], (error, stdout, stderr) => {
+    execFile(process.execPath, [cliPath, "--daemon-url", daemonUrl, "--cwd", cwd, ...args], {
+      env: { ...process.env, ...env },
+    }, (error, stdout, stderr) => {
       resolveResult({
         code: typeof error?.code === "number" ? error.code : 0,
         stdout,

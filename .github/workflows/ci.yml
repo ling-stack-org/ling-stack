@@ -21,8 +21,6 @@ jobs:
     name: Typecheck, unit tests, and Web build
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    env:
-      LING_STACK_HOME: ${{ runner.temp }}/ling-stack-ci-home
     steps:
       - name: Check out repository without retained credentials
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -34,6 +32,10 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.15.0
+
+      - name: Configure isolated Ling home
+        shell: bash
+        run: printf 'LING_STACK_HOME=%s/ling-stack-ci-home\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
 
       - name: Install locked dependencies
         shell: bash
