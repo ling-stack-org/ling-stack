@@ -779,7 +779,7 @@ interfaces at the end of S3 and keep implementation files separate before parall
     lint, i18n, and full-suite regression audit.
 - [ ] **T1 (P1, implementation complete; ship pending, human: ~1 day / Codex: ~1-2 hours)**:
   define v2 contracts and golden fixtures, then push, review, and merge PR-A after G0.
-  - Verify: contracts build and 34 fixture/parser tests.
+  - Verify: contracts build and 35 fixture/parser/export tests.
 - [ ] **T2 (P1, human: ~3 days / Codex: ~4-6 hours)**: implement the validated
   `VACUUM INTO` recovery point, transactional schema migration, and `ConversationItemStore`.
   - Verify: snapshot/WAL consistency, restore drill, core migration, rollback, sequence,

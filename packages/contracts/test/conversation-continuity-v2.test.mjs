@@ -20,6 +20,15 @@ const now = "2026-08-09T00:00:00.000Z";
 const later = "2026-08-09T00:01:00.000Z";
 const fixturePath = new URL("../fixtures/channel-conversation-continuity-v2.json", import.meta.url);
 const goldenFixture = JSON.parse(await readFile(fixturePath, "utf8"));
+const exportedGoldenFixture = (
+  await import("@ling-stack/contracts/fixtures/channel-conversation-continuity-v2.json", {
+    with: { type: "json" },
+  })
+).default;
+
+test("Continuity v2 golden fixture is consumable through the public package export", () => {
+  assert.deepEqual(exportedGoldenFixture, goldenFixture);
+});
 
 test("Continuity v2 golden fixture freezes the ten approved scenarios", () => {
   assert.equal(isConversationContinuityGoldenFixtureV1(goldenFixture), true);
