@@ -1,6 +1,6 @@
 # Channel Conversation Continuity v2 Implementation Plan
 
-Status: S-1 merged in #422; S0 implemented; S1-S7 pending
+Status: G0 complete; S-1 merged in #422; S0 implemented but not shipped; S1-S7 pending
 Owner: conversation, channel context, Ling Agent Session, and storage maintainers
 Date: 2026-08-08
 Last verified: 2026-08-09
@@ -76,11 +76,27 @@ boring and correct foundation.
 
 ## Delivery Strategy
 
-Use one feature branch until the clean-break migration and runtime switch are both
-complete. S1 and S2 are one non-shippable authority-cutover unit: S1 may develop the
-migration/store behind tests, but the migration is registered only when S2 switches all
-ingest and read paths. Every review checkpoint must pass its listed tests. Do not release
-a build that writes both `channel_messages` and `conversation_items`.
+Use short-lived isolated branches and reviewable PRs. Start each sequential slice from the
+latest verified `main`; do not accumulate S0-S7 on one long-lived feature branch. S1 and
+S2 remain one non-shippable authority-cutover PR: S1 may develop the migration/store behind
+tests, but the migration is registered only when S2 switches all ingest and read paths.
+Every review checkpoint must pass its listed tests. Do not release a build that writes both
+`channel_messages` and `conversation_items`.
+
+The seven Continuity PRs are PR-A through PR-G. G0 is an independent prerequisite CI-fix
+PR and is not counted as a Continuity slice:
+
+```text
+G0 isolated CI gate repair
+  -> PR-A S0 contracts and golden fixtures
+  -> PR-B S1 + S2 atomic storage and runtime authority cutover
+  -> PR-C S3 segmentation and shared projector
+  -> PR-D S4 intent v2              (parallel after PR-C)
+     PR-E S5 summaries/snapshots    (parallel after PR-C)
+  -> PR-F S6 multi-agent consistency
+  -> PR-G S7 transcript/API/Web cleanup
+  -> final migration, recovery, performance, security, eval, and E2E proof
+```
 
 ```text
 S-1 align #422 reply supervision with conversation-line semantics
@@ -93,6 +109,32 @@ S-1 align #422 reply supervision with conversation-line semantics
   -> S6 multi-agent version consistency
   -> S7 transcript/API cleanup and old authority removal
 ```
+
+## Gate G0: Restore Remote CI Before Authority Cutover
+
+Status: complete. PR #423 was squash-merged as `3057b2af`. The zero-job failure was
+confirmed: `.github/workflows/ci.yml`
+used the `runner` context in job-level `env`, where GitHub Actions rejects it before job
+creation. Moving runner-scoped state setup into a step through `GITHUB_ENV` restored the
+real quality job. The final PR run `31308500997` passed at `d8763913`, and the post-merge
+`main` run `31309400982` created the real quality job and passed in 20 minutes 3 seconds.
+
+### Changes
+
+- Confirm the failure class from workflow metadata, repository Actions settings, local
+  workflow validation, and the first commit where zero-job failures appear.
+- Make the smallest confirmed correction in a clean sibling worktree from `origin/main`.
+- Keep the CI repair isolated from Continuity contracts, migrations, and runtime changes.
+- Add a local or workflow-level regression check that rejects the confirmed invalid state.
+
+### Exit criteria
+
+- The CI-fix PR is merged independently.
+- A new `main` run creates and executes the real quality job instead of terminating with
+  zero jobs.
+- The quality job completes successfully, or any ordinary test failure has actionable job
+  logs and is fixed before PR-A merges.
+- PR-A and the S1+S2 authority cutover cannot merge while this gate is red.
 
 ## Slice S-1: Align PR #422 Reply Supervision Bridge
 
@@ -248,7 +290,26 @@ conversation_context_summaries(thread_id, segment_id, status, covered_through_se
 ### Migration algorithm
 
 Develop and test the migration in S1, but register it only with the S2 runtime cutover.
-When activated, run it in one SQLite transaction:
+Before the destructive transaction, create and validate a recovery point:
+
+1. Run `PRAGMA integrity_check` against the source database and abort on any result other
+   than `ok`.
+2. Use synchronous `VACUUM INTO ?` on the configured `DatabaseSync` connection to create a
+   standalone snapshot that includes committed WAL state. The destination must be a new,
+   non-existing file under the workspace's Ling recovery directory.
+3. Open the snapshot independently, rerun `PRAGMA integrity_check`, and verify the legacy
+   timeline tables plus source row counts needed by migration validation.
+4. Persist a sidecar recovery manifest containing the source database path, migration id,
+   creation time, source schema version, and expected legacy counts. Never log item bodies.
+5. If snapshot creation or validation fails, do not begin the migration. Keep the validated
+   snapshot after success until the migrated store has reopened and passed the post-cutover
+   smoke; it is disaster recovery, not a runtime v1 read path.
+
+`node:sqlite`'s top-level `backup()` returns `Promise<void>` in the current Node runtime and
+does not fit the synchronous store constructor. Do not block or hide that asynchronous call
+inside migration startup. `VACUUM INTO` is the approved synchronous recovery-point mechanism.
+
+When activated, run the authority cutover in one SQLite transaction:
 
 1. Create the new tables and thread columns.
 2. Ensure each channel has exactly one root `channel_discussion` thread and mark it
@@ -287,6 +348,10 @@ tables once; production runtime code after migration cannot.
 
 ### Exit criteria
 
+- Recovery-point creation, integrity failure, snapshot validation, source/snapshot WAL
+  consistency, reuse refusal, and restore tests pass.
+- A restore drill can close all store connections, preserve the failed migrated database
+  for diagnosis, atomically restore the validated snapshot, and reopen the legacy store.
 - Core migration fixtures cover empty, root-only, topic, branch, mixed, and partially
   linked legacy data.
 - A failed validation rolls back the entire migration.
@@ -704,14 +769,21 @@ interfaces at the end of S3 and keep implementation files separate before parall
 
 ## Implementation Tasks
 
+- [x] **G0 (P0)**: identify and repair the remote zero-job CI failure in an
+  isolated PR.
+  - Verified: PR #423 merged as `3057b2af`; post-merge `main` run `31309400982`
+    created the quality job and finished successfully.
 - [x] **T0 (P0)**: align #422 supervised reply Runs with typed, conversation-line scoped
   follow-up routing and target Thread lineage.
   - Verify: focused daemon dispatch/integration tests, Web guidance tests, builds/typecheck,
     lint, i18n, and full-suite regression audit.
-- [x] **T1 (P1, human: ~1 day / Codex: ~1-2 hours)**: define v2 contracts and golden fixtures.
-  - Verify: contracts build and fixture parser tests.
-- [ ] **T2 (P1, human: ~3 days / Codex: ~4-6 hours)**: implement transactional schema migration and `ConversationItemStore`.
-  - Verify: core migration, rollback, sequence, idempotency, paging, and supersession tests.
+- [ ] **T1 (P1, implementation complete; ship pending, human: ~1 day / Codex: ~1-2 hours)**:
+  define v2 contracts and golden fixtures, then push, review, and merge PR-A after G0.
+  - Verify: contracts build and 34 fixture/parser tests.
+- [ ] **T2 (P1, human: ~3 days / Codex: ~4-6 hours)**: implement the validated
+  `VACUUM INTO` recovery point, transactional schema migration, and `ConversationItemStore`.
+  - Verify: snapshot/WAL consistency, restore drill, core migration, rollback, sequence,
+    idempotency, paging, and supersession tests.
 - [ ] **T3 (P1, human: ~2 days / Codex: ~3-4 hours)**: create every user `LingTurn` and map root/topic/branch explicitly.
   - Verify: daemon ingest and thread-lineage tests.
 - [ ] **T4 (P1, human: ~3 days / Codex: ~5-7 hours)**: implement segmentation policy and shared projector; remove raw fixed-window consumers.
