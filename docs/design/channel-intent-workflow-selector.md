@@ -1,10 +1,12 @@
 # Channel Intent To Workflow Selector
 
-Status: P0-P10 and bounded `visible_multi_reply` implemented behind Ling Agent Session boundaries; model-assisted selection is enabled by default with deterministic fallback
+Status: current v1 implementation reference; v2 clean-break contract approved in Channel Conversation Continuity v2
 Date: 2026-06-10
 
 Related docs:
 
+- [Channel Conversation Continuity v2](channel-conversation-continuity-v2.md)
+- [Channel Conversation Continuity v2 Implementation Plan](channel-conversation-continuity-v2-implementation-plan.md)
 - [Conversation Surface Contract](./conversation-surface-contract.md)
 - [Ling Agent Session Control Plane](ling-agent-session.md)
 - [Channel Auto Reply Router](channel-auto-reply-router.md)
@@ -280,6 +282,27 @@ Ling should borrow the design pattern, not the runtime.
 | GraphFlow | Work should be graph-controlled: order, parallelism, branch conditions, joins, loops. | Do not let ordinary channel messages bypass Ling's workflow graph/state machines. |
 
 ## Decision Contract
+
+### V2 supersession
+
+[Channel Conversation Continuity v2](channel-conversation-continuity-v2.md) supersedes
+the durable decision names and context input boundary below:
+
+```text
+schemaVersion: 2
+single_reply   -> reply
+direct_workflow -> execute
+sourceMessageId -> sourceTurnId + sourceItemId
+recent message window -> contextSegmentId + contextProjectionVersion
+```
+
+V2 also makes `no_reply` terminal, requires structured missing fields for `clarify`, and
+invokes TargetResolver only for validated executable/proposal target kinds. Because Ling
+is pre-release, implementation will not add v1 aliases or runtime dual reads.
+
+The remainder of this document records the currently implemented v1 selector and its
+historical slices until the v2 cutover is complete. New implementation work must follow
+the v2 owning contract and plan rather than extending the v1 enum or fixed context window.
 
 The channel intent selector returns a validated structured decision:
 

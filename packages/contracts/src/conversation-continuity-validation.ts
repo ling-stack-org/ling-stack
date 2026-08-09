@@ -1,0 +1,715 @@
+import {
+  channelIntentDecisionV2Actions,
+  channelIntentDecisionV2CreatedByValues,
+  channelIntentDecisionV2Statuses,
+  conversationAssistantDeliveryStatusesV1,
+  contextSegmentStates,
+  conversationContextSummaryScopes,
+  conversationContextSummaryStatuses,
+  conversationDomainRefTypes,
+  conversationItemActorTypesV1,
+  conversationItemKindsV1,
+  conversationItemStatusesV1,
+  conversationItemVisibilitiesV1,
+  conversationMessageMentionKindsV1,
+  conversationWorkspaceFileRefSourcesV1,
+  goldenContextSegmentActionsV1,
+  lingThreadRelationKindsV2,
+  lingThreadSurfaceKindsV2,
+  turnContextAssignmentStatuses,
+  turnContextDecisionSources,
+  type ChannelIntentDecisionV2,
+  type ChannelIntentDecisionV2Action,
+  type ContextSegment,
+  type ConversationContextProjectionMetadata,
+  type ConversationContextSnapshot,
+  type ConversationContextSummary,
+  type ConversationContinuityGoldenExpectedV1,
+  type ConversationContinuityGoldenFixtureV1,
+  type ConversationDomainRef,
+  type ConversationItemKindV1,
+  type ConversationItemV1,
+  type LingThreadContinuityV2,
+  type TurnContextAssignment,
+} from "./conversation-continuity.js";
+
+const ITEM_KEYS = new Set([
+  "schemaVersion",
+  "id",
+  "workspaceId",
+  "channelId",
+  "threadId",
+  "turnId",
+  "sequence",
+  "kind",
+  "status",
+  "actorType",
+  "actorId",
+  "visibility",
+  "visibilityOwnerId",
+  "payload",
+  "domainRefs",
+  "idempotencyKey",
+  "revision",
+  "supersedesItemId",
+  "createdAt",
+  "updatedAt",
+  "committedAt",
+]);
+
+const PAYLOAD_KEYS: Readonly<Record<ConversationItemKindV1, ReadonlySet<string>>> = {
+  user_message: new Set([
+    "body",
+    "format",
+    "mentions",
+    "attachmentIds",
+    "linkPreviewIds",
+    "fileRefs",
+    "replyToItemId",
+    "quotedItemIds",
+  ]),
+  assistant_message: new Set(["body", "format", "streaming", "deliveryStatus", "errorMessage"]),
+  tool_call: new Set(["toolCallId", "toolName", "title", "inputSummary"]),
+  tool_result: new Set(["toolCallId", "status", "outputSummary", "errorCode"]),
+  approval_request: new Set(["approvalRequestId", "title", "summary"]),
+  approval_decision: new Set(["approvalRequestId", "decision", "reason"]),
+  handoff: new Set(["handoffId", "targetTeammateId", "summary"]),
+  operation_state: new Set(["operationId", "state", "title", "summary"]),
+  artifact_ref: new Set(["artifactId", "title", "artifactKind"]),
+  system_event: new Set(["eventType", "summary"]),
+};
+
+const THREAD_CONTINUITY_KEYS = new Set([
+  "surfaceKind",
+  "relationKind",
+  "parentThreadId",
+  "parentTurnId",
+  "anchorItemId",
+  "forkContextSnapshotId",
+]);
+
+const SEGMENT_KEYS = new Set([
+  "id",
+  "threadId",
+  "state",
+  "label",
+  "createdFromTurnId",
+  "lastActiveTurnId",
+  "mergedIntoSegmentId",
+  "revision",
+  "createdAt",
+  "updatedAt",
+]);
+
+const ASSIGNMENT_KEYS = new Set([
+  "id",
+  "turnId",
+  "segmentId",
+  "status",
+  "revision",
+  "decisionSource",
+  "confidence",
+  "antecedentTurnId",
+  "evidenceRefs",
+  "policyVersion",
+  "supersedesAssignmentId",
+  "createdAt",
+]);
+
+const SUMMARY_KEYS = new Set([
+  "id",
+  "threadId",
+  "segmentId",
+  "scope",
+  "status",
+  "version",
+  "coveredFromSequence",
+  "coveredThroughSequence",
+  "objective",
+  "decisions",
+  "constraints",
+  "openQuestions",
+  "activeWorkRefs",
+  "sourceRefs",
+  "supersedesSummaryId",
+  "policyVersion",
+  "createdAt",
+]);
+
+const SNAPSHOT_KEYS = new Set([
+  "id",
+  "threadId",
+  "segmentId",
+  "projectionVersion",
+  "throughItemSequence",
+  "summaryIds",
+  "sourceRefs",
+  "policyVersion",
+  "createdAt",
+]);
+
+const PROJECTION_KEYS = new Set([
+  "projectionVersion",
+  "threadId",
+  "turnId",
+  "segmentId",
+  "throughItemSequence",
+  "summaryIds",
+  "sourceRefs",
+  "policyVersion",
+  "visibilityFingerprint",
+]);
+
+const INTENT_KEYS = new Set([
+  "schemaVersion",
+  "id",
+  "workspaceId",
+  "channelId",
+  "sourceTurnId",
+  "sourceItemId",
+  "contextSegmentId",
+  "contextProjectionVersion",
+  "action",
+  "selectedTeammateIds",
+  "proposalId",
+  "resultItemIds",
+  "workflowId",
+  "reason",
+  "clarification",
+  "execution",
+  "status",
+  "createdBy",
+  "errorCode",
+  "createdAt",
+  "updatedAt",
+]);
+
+const GOLDEN_FIXTURE_KEYS = new Set(["schemaVersion", "contractSchemaVersion", "scenarios"]);
+const GOLDEN_SCENARIO_KEYS = new Set(["id", "title", "description", "initialSegments", "turns"]);
+const GOLDEN_SEGMENT_KEYS = new Set(["id", "label", "state"]);
+const GOLDEN_TURN_KEYS = new Set(["id", "actor", "body", "relation", "expected"]);
+const GOLDEN_RELATION_KEYS = new Set(["kind", "targetTurnId"]);
+const GOLDEN_EXPECTED_KEYS = new Set([
+  "segmentAction",
+  "segmentId",
+  "intentAction",
+  "targetResolver",
+  "missingFields",
+  "threadSurface",
+  "forkCopiesParentItems",
+  "forbiddenSourceRefTypes",
+  "staleResultDisposition",
+]);
+
+export function isConversationDomainRef(value: unknown): value is ConversationDomainRef {
+  return isRecordWithOnlyKeys(value, new Set(["type", "id", "label"]))
+    && includes(conversationDomainRefTypes, value.type)
+    && isText(value.id)
+    && isOptionalText(value.label);
+}
+
+export function isLingThreadContinuityV2(value: unknown): value is LingThreadContinuityV2 {
+  if (!isRecordWithOnlyKeys(value, THREAD_CONTINUITY_KEYS)
+    || !includes(lingThreadSurfaceKindsV2, value.surfaceKind)
+    || !includes(lingThreadRelationKindsV2, value.relationKind)
+    || !isOptionalText(value.parentThreadId)
+    || !isOptionalText(value.parentTurnId)
+    || !isOptionalText(value.anchorItemId)
+    || !isOptionalText(value.forkContextSnapshotId)) {
+    return false;
+  }
+  if (value.relationKind === "topic") {
+    return value.surfaceKind === "topic"
+      && isText(value.parentThreadId)
+      && isText(value.parentTurnId)
+      && isText(value.anchorItemId)
+      && value.forkContextSnapshotId === undefined;
+  }
+  if (value.relationKind === "branch") {
+    return value.surfaceKind === "branch"
+      && isText(value.parentThreadId)
+      && isText(value.parentTurnId)
+      && value.anchorItemId === undefined
+      && isText(value.forkContextSnapshotId);
+  }
+  return value.surfaceKind !== "topic"
+    && value.surfaceKind !== "branch"
+    && value.parentThreadId === undefined
+    && value.parentTurnId === undefined
+    && value.anchorItemId === undefined
+    && value.forkContextSnapshotId === undefined;
+}
+
+export function isConversationItemV1(value: unknown): value is ConversationItemV1 {
+  if (!isRecordWithOnlyKeys(value, ITEM_KEYS)
+    || value.schemaVersion !== 1
+    || !isText(value.id)
+    || !isText(value.workspaceId)
+    || !isOptionalText(value.channelId)
+    || !isText(value.threadId)
+    || !isOptionalText(value.turnId)
+    || !isPositiveInteger(value.sequence)
+    || !includes(conversationItemKindsV1, value.kind)
+    || !includes(conversationItemStatusesV1, value.status)
+    || !includes(conversationItemActorTypesV1, value.actorType)
+    || !isOptionalText(value.actorId)
+    || !includes(conversationItemVisibilitiesV1, value.visibility)
+    || !isOptionalText(value.visibilityOwnerId)
+    || !isConversationItemPayloadV1(value.kind, value.payload)
+    || !isArrayOf(value.domainRefs, isConversationDomainRef)
+    || !isOptionalText(value.idempotencyKey)
+    || !isNonNegativeInteger(value.revision)
+    || !isOptionalText(value.supersedesItemId)
+    || !isCanonicalTimestamp(value.createdAt)
+    || !isCanonicalTimestamp(value.updatedAt)
+    || !isOptionalCanonicalTimestamp(value.committedAt)) {
+    return false;
+  }
+  if (value.visibility === "agent_private") {
+    if (!isText(value.visibilityOwnerId)) return false;
+  } else if (value.visibilityOwnerId !== undefined) {
+    return false;
+  }
+  if (value.actorType === "teammate" && !isText(value.actorId)) return false;
+  if (value.status === "committed") {
+    if (!isCanonicalTimestamp(value.committedAt)) return false;
+  } else if (value.committedAt !== undefined) {
+    return false;
+  }
+  if (value.kind === "assistant_message" && !isAssistantItemStateConsistent(value)) {
+    return false;
+  }
+  return value.supersedesItemId !== value.id
+    && Date.parse(value.updatedAt) >= Date.parse(value.createdAt);
+}
+
+export function isContextSegment(value: unknown): value is ContextSegment {
+  if (!isRecordWithOnlyKeys(value, SEGMENT_KEYS)
+    || !isText(value.id)
+    || !isText(value.threadId)
+    || !includes(contextSegmentStates, value.state)
+    || !isOptionalText(value.label)
+    || !isText(value.createdFromTurnId)
+    || !isText(value.lastActiveTurnId)
+    || !isOptionalText(value.mergedIntoSegmentId)
+    || !isPositiveInteger(value.revision)
+    || !isCanonicalTimestamp(value.createdAt)
+    || !isCanonicalTimestamp(value.updatedAt)) {
+    return false;
+  }
+  return value.state === "merged"
+    ? isText(value.mergedIntoSegmentId) && value.mergedIntoSegmentId !== value.id
+    : value.mergedIntoSegmentId === undefined;
+}
+
+export function isTurnContextAssignment(value: unknown): value is TurnContextAssignment {
+  return isRecordWithOnlyKeys(value, ASSIGNMENT_KEYS)
+    && isText(value.id)
+    && isText(value.turnId)
+    && isText(value.segmentId)
+    && includes(turnContextAssignmentStatuses, value.status)
+    && isPositiveInteger(value.revision)
+    && includes(turnContextDecisionSources, value.decisionSource)
+    && isOptionalConfidence(value.confidence)
+    && isOptionalText(value.antecedentTurnId)
+    && isArrayOf(value.evidenceRefs, isConversationDomainRef)
+    && isText(value.policyVersion)
+    && isOptionalText(value.supersedesAssignmentId)
+    && value.supersedesAssignmentId !== value.id
+    && isCanonicalTimestamp(value.createdAt);
+}
+
+export function isConversationContextSummary(value: unknown): value is ConversationContextSummary {
+  if (!isRecordWithOnlyKeys(value, SUMMARY_KEYS)
+    || !isText(value.id)
+    || !isText(value.threadId)
+    || !isOptionalText(value.segmentId)
+    || !includes(conversationContextSummaryScopes, value.scope)
+    || !includes(conversationContextSummaryStatuses, value.status)
+    || !isPositiveInteger(value.version)
+    || !isPositiveInteger(value.coveredFromSequence)
+    || !isPositiveInteger(value.coveredThroughSequence)
+    || value.coveredThroughSequence < value.coveredFromSequence
+    || !isOptionalText(value.objective, 8_192)
+    || !isTextArray(value.decisions, 8_192)
+    || !isTextArray(value.constraints, 8_192)
+    || !isTextArray(value.openQuestions, 8_192)
+    || !isArrayOf(value.activeWorkRefs, isConversationDomainRef)
+    || !isArrayOf(value.sourceRefs, isConversationDomainRef)
+    || !isOptionalText(value.supersedesSummaryId)
+    || value.supersedesSummaryId === value.id
+    || !isText(value.policyVersion)
+    || !isCanonicalTimestamp(value.createdAt)) {
+    return false;
+  }
+  return value.scope === "segment" ? isText(value.segmentId) : true;
+}
+
+export function isConversationContextSnapshot(value: unknown): value is ConversationContextSnapshot {
+  return isRecordWithOnlyKeys(value, SNAPSHOT_KEYS)
+    && isText(value.id)
+    && isText(value.threadId)
+    && isText(value.segmentId)
+    && isText(value.projectionVersion)
+    && isNonNegativeInteger(value.throughItemSequence)
+    && isTextArray(value.summaryIds)
+    && isArrayOf(value.sourceRefs, isConversationDomainRef)
+    && isText(value.policyVersion)
+    && isCanonicalTimestamp(value.createdAt);
+}
+
+export function isConversationContextProjectionMetadata(
+  value: unknown,
+): value is ConversationContextProjectionMetadata {
+  return isRecordWithOnlyKeys(value, PROJECTION_KEYS)
+    && isText(value.projectionVersion)
+    && isText(value.threadId)
+    && isText(value.turnId)
+    && isText(value.segmentId)
+    && isNonNegativeInteger(value.throughItemSequence)
+    && isTextArray(value.summaryIds)
+    && isArrayOf(value.sourceRefs, isConversationDomainRef)
+    && isText(value.policyVersion)
+    && isText(value.visibilityFingerprint);
+}
+
+export function isChannelIntentDecisionV2(value: unknown): value is ChannelIntentDecisionV2 {
+  if (!isRecordWithOnlyKeys(value, INTENT_KEYS)
+    || value.schemaVersion !== 2
+    || !isText(value.id)
+    || !isText(value.workspaceId)
+    || !isText(value.channelId)
+    || !isText(value.sourceTurnId)
+    || !isText(value.sourceItemId)
+    || !isText(value.contextSegmentId)
+    || !isText(value.contextProjectionVersion)
+    || !includes(channelIntentDecisionV2Actions, value.action)
+    || !isUniqueTextArray(value.selectedTeammateIds)
+    || !isOptionalText(value.proposalId)
+    || !isUniqueTextArray(value.resultItemIds)
+    || !isOptionalText(value.workflowId)
+    || !isText(value.reason, 8_192)
+    || !includes(channelIntentDecisionV2Statuses, value.status)
+    || !includes(channelIntentDecisionV2CreatedByValues, value.createdBy)
+    || !isOptionalText(value.errorCode)
+    || !isCanonicalTimestamp(value.createdAt)
+    || !isCanonicalTimestamp(value.updatedAt)
+    || Date.parse(value.updatedAt) < Date.parse(value.createdAt)) {
+    return false;
+  }
+  if (value.action === "clarify") {
+    return isClarification(value.clarification) && value.execution === undefined;
+  }
+  if (value.action === "execute") {
+    return value.clarification === undefined && isExecution(value.execution);
+  }
+  return value.clarification === undefined && value.execution === undefined;
+}
+
+export function isConversationContinuityGoldenFixtureV1(
+  value: unknown,
+): value is ConversationContinuityGoldenFixtureV1 {
+  if (!isRecordWithOnlyKeys(value, GOLDEN_FIXTURE_KEYS)
+    || value.schemaVersion !== 1
+    || value.contractSchemaVersion !== 2
+    || !Array.isArray(value.scenarios)
+    || value.scenarios.length === 0) {
+    return false;
+  }
+  const scenarioIds = new Set<string>();
+  for (const scenario of value.scenarios) {
+    if (!isRecordWithOnlyKeys(scenario, GOLDEN_SCENARIO_KEYS)
+      || !isText(scenario.id)
+      || scenarioIds.has(scenario.id)
+      || !isText(scenario.title)
+      || !isText(scenario.description, 8_192)
+      || !isGoldenInitialSegments(scenario.initialSegments)
+      || !Array.isArray(scenario.turns)
+      || scenario.turns.length === 0) {
+      return false;
+    }
+    scenarioIds.add(scenario.id);
+    const turnIds = new Set<string>();
+    for (const turn of scenario.turns) {
+      if (!isRecordWithOnlyKeys(turn, GOLDEN_TURN_KEYS)
+        || !isText(turn.id)
+        || turnIds.has(turn.id)
+        || (turn.actor !== "local_user" && turn.actor !== "teammate" && turn.actor !== "system")
+        || !isText(turn.body, 32_768)
+        || !isGoldenRelation(turn.relation)
+        || !isGoldenExpected(turn.expected)) {
+        return false;
+      }
+      if (turn.relation !== undefined && !turnIds.has(turn.relation.targetTurnId)) {
+        return false;
+      }
+      turnIds.add(turn.id);
+    }
+  }
+  return true;
+}
+
+export function serializeConversationContinuityGoldenFixtureV1(
+  value: ConversationContinuityGoldenFixtureV1,
+): string {
+  if (!isConversationContinuityGoldenFixtureV1(value)) {
+    throw new TypeError("Invalid Channel Conversation Continuity v2 golden fixture.");
+  }
+  return `${JSON.stringify(sortJsonValue(value), null, 2)}\n`;
+}
+
+function isConversationItemPayloadV1(kind: ConversationItemKindV1, value: unknown): boolean {
+  if (!isRecordWithOnlyKeys(value, PAYLOAD_KEYS[kind])) return false;
+  switch (kind) {
+    case "user_message":
+      return typeof value.body === "string"
+        && value.body.length <= 32_768
+        && (value.format === "plain_text" || value.format === "markdown")
+        && isUniqueArrayOf(value.mentions, isConversationMessageMention, (mention) => `${mention.kind}:${mention.id}`)
+        && isUniqueTextArray(value.attachmentIds)
+        && isUniqueTextArray(value.linkPreviewIds)
+        && isUniqueArrayOf(value.fileRefs, isConversationWorkspaceFileRef, (fileRef) => `${fileRef.path}:${fileRef.line ?? ""}`)
+        && (value.body.trim().length > 0
+          || value.attachmentIds.length > 0
+          || value.linkPreviewIds.length > 0
+          || value.fileRefs.length > 0)
+        && isOptionalText(value.replyToItemId)
+        && (value.quotedItemIds === undefined || isUniqueTextArray(value.quotedItemIds));
+    case "assistant_message":
+      return typeof value.body === "string"
+        && value.body.length <= 128_000
+        && (value.format === "plain_text" || value.format === "markdown")
+        && typeof value.streaming === "boolean"
+        && includes(conversationAssistantDeliveryStatusesV1, value.deliveryStatus)
+        && isOptionalText(value.errorMessage, 8_192);
+    case "tool_call":
+      return isText(value.toolCallId)
+        && isText(value.toolName)
+        && isOptionalText(value.title)
+        && isOptionalText(value.inputSummary, 8_192);
+    case "tool_result":
+      return isText(value.toolCallId)
+        && (value.status === "succeeded" || value.status === "failed" || value.status === "cancelled")
+        && isOptionalText(value.outputSummary, 32_768)
+        && isOptionalText(value.errorCode);
+    case "approval_request":
+      return isText(value.approvalRequestId)
+        && isText(value.title)
+        && isOptionalText(value.summary, 8_192);
+    case "approval_decision":
+      return isText(value.approvalRequestId)
+        && (value.decision === "approved" || value.decision === "denied" || value.decision === "cancelled")
+        && isOptionalText(value.reason, 8_192);
+    case "handoff":
+      return isText(value.handoffId)
+        && isText(value.targetTeammateId)
+        && isText(value.summary, 8_192);
+    case "operation_state":
+      return isText(value.operationId)
+        && (value.state === "pending" || value.state === "running" || value.state === "succeeded" || value.state === "failed" || value.state === "cancelled")
+        && isText(value.title)
+        && isOptionalText(value.summary, 8_192);
+    case "artifact_ref":
+      return isText(value.artifactId)
+        && isOptionalText(value.title)
+        && isOptionalText(value.artifactKind);
+    case "system_event":
+      return isText(value.eventType)
+        && isText(value.summary, 8_192);
+  }
+}
+
+function isAssistantItemStateConsistent(item: Record<string, unknown>): boolean {
+  if (!isRecord(item.payload)) return false;
+  const payload = item.payload;
+  if (item.status === "pending") {
+    return payload.streaming === true
+      && payload.deliveryStatus === "pending"
+      && payload.errorMessage === undefined;
+  }
+  if (item.status === "failed") {
+    return payload.streaming === false && payload.deliveryStatus === "failed";
+  }
+  return payload.streaming === false
+    && (payload.deliveryStatus === "ready" || payload.deliveryStatus === "blocked")
+    && (payload.deliveryStatus === "blocked" || payload.errorMessage === undefined);
+}
+
+function isConversationMessageMention(value: unknown): value is {
+  readonly id: string;
+  readonly label: string;
+  readonly kind: (typeof conversationMessageMentionKindsV1)[number];
+} {
+  return isRecordWithOnlyKeys(value, new Set(["id", "label", "kind"]))
+    && isText(value.id)
+    && isText(value.label)
+    && includes(conversationMessageMentionKindsV1, value.kind);
+}
+
+function isConversationWorkspaceFileRef(value: unknown): value is {
+  readonly path: string;
+  readonly label?: string;
+  readonly source?: (typeof conversationWorkspaceFileRefSourcesV1)[number];
+  readonly line?: number;
+} {
+  return isRecordWithOnlyKeys(value, new Set(["path", "label", "source", "line"]))
+    && isText(value.path, 4_096)
+    && isOptionalText(value.label)
+    && (value.source === undefined || includes(conversationWorkspaceFileRefSourcesV1, value.source))
+    && (value.line === undefined || isPositiveInteger(value.line));
+}
+
+function isClarification(value: unknown): boolean {
+  return isRecordWithOnlyKeys(value, new Set(["missingFields", "question"]))
+    && isUniqueTextArray(value.missingFields)
+    && value.missingFields.length > 0
+    && isText(value.question, 8_192);
+}
+
+function isExecution(value: unknown): boolean {
+  return isRecordWithOnlyKeys(value, new Set(["kind", "targetKind", "targetRef"]))
+    && (value.kind === "file_create" || value.kind === "file_edit" || value.kind === "open_local_target" || value.kind === "run_command")
+    && (value.targetKind === "file" || value.targetKind === "directory" || value.targetKind === "command" || value.targetKind === "workspace")
+    && (value.targetRef === undefined || isConversationDomainRef(value.targetRef));
+}
+
+function isGoldenInitialSegments(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (!Array.isArray(value)) return false;
+  const ids = new Set<string>();
+  for (const segment of value) {
+    if (!isRecordWithOnlyKeys(segment, GOLDEN_SEGMENT_KEYS)
+      || !isText(segment.id)
+      || ids.has(segment.id)
+      || !isText(segment.label)
+      || (segment.state !== "active" && segment.state !== "provisional")) {
+      return false;
+    }
+    ids.add(segment.id);
+  }
+  return true;
+}
+
+function isGoldenRelation(value: unknown): value is { readonly kind: string; readonly targetTurnId: string } | undefined {
+  return value === undefined
+    || (isRecordWithOnlyKeys(value, GOLDEN_RELATION_KEYS)
+      && (value.kind === "reply" || value.kind === "quote" || value.kind === "approval" || value.kind === "followup" || value.kind === "fork")
+      && isText(value.targetTurnId));
+}
+
+function isGoldenExpected(value: unknown): value is ConversationContinuityGoldenExpectedV1 {
+  if (!isRecordWithOnlyKeys(value, GOLDEN_EXPECTED_KEYS)
+    || !includes(goldenContextSegmentActionsV1, value.segmentAction)
+    || !isOptionalText(value.segmentId)
+    || (value.intentAction !== undefined && !includes(channelIntentDecisionV2Actions, value.intentAction))
+    || (value.targetResolver !== "skip" && value.targetResolver !== "run")
+    || !isOptionalTextArray(value.missingFields)
+    || (value.threadSurface !== undefined && !includes(lingThreadSurfaceKindsV2, value.threadSurface))
+    || (value.forkCopiesParentItems !== undefined && typeof value.forkCopiesParentItems !== "boolean")
+    || !isOptionalDomainRefTypeArray(value.forbiddenSourceRefTypes)
+    || (value.staleResultDisposition !== undefined
+      && value.staleResultDisposition !== "accept"
+      && value.staleResultDisposition !== "rebase"
+      && value.staleResultDisposition !== "reject")) {
+    return false;
+  }
+  const action = value.intentAction as ChannelIntentDecisionV2Action | undefined;
+  if (action === "clarify") {
+    if (!Array.isArray(value.missingFields) || value.missingFields.length === 0) return false;
+  } else if (value.missingFields !== undefined) {
+    return false;
+  }
+  if (action === "execute") {
+    if (value.targetResolver !== "run") return false;
+  } else if (action !== "workflow_proposal" && value.targetResolver !== "skip") {
+    return false;
+  }
+  if (value.segmentAction === "new_thread") {
+    return value.threadSurface === "topic" || value.threadSurface === "branch";
+  }
+  return value.threadSurface !== "topic" && value.threadSurface !== "branch";
+}
+
+function isOptionalDomainRefTypeArray(value: unknown): boolean {
+  return value === undefined
+    || (Array.isArray(value)
+      && new Set(value).size === value.length
+      && value.every((item) => includes(conversationDomainRefTypes, item)));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isRecordWithOnlyKeys(value: unknown, allowedKeys: ReadonlySet<string>): value is Record<string, unknown> {
+  return isRecord(value) && Object.keys(value).every((key) => allowedKeys.has(key));
+}
+
+function includes<const T extends readonly unknown[]>(values: T, value: unknown): value is T[number] {
+  return values.includes(value);
+}
+
+function isText(value: unknown, maxLength = 512): value is string {
+  return typeof value === "string" && value.trim().length > 0 && value.length <= maxLength;
+}
+
+function isOptionalText(value: unknown, maxLength = 512): value is string | undefined {
+  return value === undefined || isText(value, maxLength);
+}
+
+function isTextArray(value: unknown, maxItemLength = 512): value is readonly string[] {
+  return Array.isArray(value) && value.every((item) => isText(item, maxItemLength));
+}
+
+function isOptionalTextArray(value: unknown): value is readonly string[] | undefined {
+  return value === undefined || isTextArray(value);
+}
+
+function isUniqueTextArray(value: unknown): value is readonly string[] {
+  return isTextArray(value) && new Set(value).size === value.length;
+}
+
+function isArrayOf<T>(value: unknown, predicate: (item: unknown) => item is T): value is readonly T[] {
+  return Array.isArray(value) && value.every(predicate);
+}
+
+function isUniqueArrayOf<T>(
+  value: unknown,
+  predicate: (item: unknown) => item is T,
+  key: (item: T) => string,
+): value is readonly T[] {
+  if (!isArrayOf(value, predicate)) return false;
+  return new Set(value.map(key)).size === value.length;
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && Number(value) > 0;
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && Number(value) >= 0;
+}
+
+function isOptionalConfidence(value: unknown): value is number | undefined {
+  return value === undefined || (typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1);
+}
+
+function isCanonicalTimestamp(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
+}
+
+function isOptionalCanonicalTimestamp(value: unknown): value is string | undefined {
+  return value === undefined || isCanonicalTimestamp(value);
+}
+
+function sortJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJsonValue);
+  if (!isRecord(value)) return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => [key, sortJsonValue(entry)]),
+  );
+}

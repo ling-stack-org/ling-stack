@@ -5,6 +5,8 @@ Date: 2026-06-12
 
 Related docs:
 
+- [Channel Conversation Continuity v2](channel-conversation-continuity-v2.md)
+- [Channel Conversation Continuity v2 Implementation Plan](channel-conversation-continuity-v2-implementation-plan.md)
 - [Ling Agent Session Implementation Plan](ling-agent-session-implementation-plan.md)
 - [Channel Intent To Workflow Selector](channel-intent-workflow-selector.md)
 - [Channel Auto Reply Router](channel-auto-reply-router.md)
@@ -46,16 +48,23 @@ The canonical final result contract, evidence boundary, synthesis lifecycle, and
 deterministic fallback are defined in
 [Ling Agent TerminalReport Protocol](ling-agent-terminal-report-protocol.md).
 
+The canonical durable conversation and recovery model is defined in
+[Channel Conversation Continuity v2](channel-conversation-continuity-v2.md). It makes
+every accepted user input a `LingTurn`, stores ordered observable events as
+`ConversationItem`, and gives every session consumer one shared context-segment and
+projection version. Ling Agent Session owns the response; it does not construct its own
+recent-message window.
+
 Target user experience:
 
 ```text
 user sends a turn with text, mentions, attachments, links, file refs, or guidance
 -> Ling Agent builds one TurnEnvelope
--> Context Processing Layer builds the relevant Channel Context View
--> TargetResolver resolves the referenced thing: current text, prior message,
-   attachment, file ref, active proposal, workflow, run, or approval
--> IntentRouter decides one outcome: answer, clarify, direct workflow, workflow
+-> Conversation Context Projector builds the versioned Channel Context View
+-> ReferenceResolver binds structural reply, quote, active work, run, or approval refs
+-> IntentRouter decides one outcome: reply, clarify, execute, workflow
    proposal, visible multi-reply, active-session follow-up, approval response, or no-reply
+-> TargetResolver runs only when execute/proposal needs a typed local or workspace target
 -> @mentions, selected teammates, and requestAiReply are preference signals, not
    top-level route branches
 -> Ling Agent auto-starts clearly scoped safe work, or asks one clarifying question
@@ -152,7 +161,7 @@ Ling Agent owns the conversation session. It is the product-level coordinator th
 - appears as a built-in teammate in workspace roster, channel membership, mentions, and
   private chat;
 - resolves what the user is referring to before deciding how to respond;
-- decides one structured turn outcome: answer, clarify, direct workflow, workflow
+- decides one structured turn outcome: reply, clarify, execute, workflow
   proposal, visible multi-reply, active-session follow-up, approval response, no-reply;
 - chooses one or more specialist teammates when they improve the work;
 - falls back to direct execution when no specialist is required or available;
@@ -166,20 +175,21 @@ Ling Agent owns the conversation session. It is the product-level coordinator th
 ## Coordinator Decision Contract
 
 Ling Agent Coordinator is the only first-class channel turn entry point. "Ordinary chat"
-is not an entry mode. It is the `answer` outcome after higher-priority session, target,
+is not an entry mode. It is the `reply` outcome after higher-priority session,
 execution, approval, and clarification paths decline the turn.
 
-Channel thread shape is not an execution boundary. A `ChannelMessage.threadId` only
-identifies the discussion thread used for rendering, context lookup, and reply placement.
-It may narrow ambient auto-reply and auto-start policy, but it must not prevent the
+Channel thread shape is not an execution boundary. `ConversationItem.threadId` identifies
+the durable conversation line used for rendering, context projection, and reply
+placement. The current v1 implementation carries this through `ChannelMessage.threadId`.
+Thread scope may narrow ambient reply and auto-start policy, but it must not prevent the
 coordinator from evaluating active-session follow-ups, approval responses, target
-resolution, clarification, or direct executable work.
+resolution, clarification, or executable work.
 
 ```ts
 type TurnDecision =
-  | { kind: "answer"; responderHint?: string }
+  | { kind: "reply"; responderHint?: string }
   | { kind: "clarify"; question: string; missing: readonly string[] }
-  | { kind: "direct_workflow"; target: ResolvedTarget; requiredTools: readonly RunTool[] }
+  | { kind: "execute"; target: ResolvedTarget; requiredTools: readonly RunTool[] }
   | { kind: "workflow_proposal"; target?: ResolvedTarget; steps: readonly WorkflowStepDraft[] }
   | { kind: "visible_multi_reply"; teammateIds: readonly string[] }
   | { kind: "active_session_followup"; mode: "queue" | "interrupt"; targetRunId: string }
@@ -192,32 +202,39 @@ that every user-visible response is derived from one coordinator decision. Lower
 selector, router, workflow, run, approval, and evidence records may be created, but they
 must not become competing top-level conversation concepts.
 
-### TargetResolver
+### Reference and Target Resolution
 
-Target resolution runs before answer routing. It may resolve targets from:
+Reference resolution runs before intent routing only for structural relationships such as
+reply, quote, active turn, approval, run, proposal, and explicit item refs. It may resolve
+candidate targets from:
 
 - explicit current-turn text, such as `login.html`, `/Users/.../README.md`, a command, or
   a quoted file ref;
 - uploaded or pasted assets in the TurnEnvelope;
 - the latest active proposal, workflow step, run, pending approval, or queued
   intervention;
-- recent same-session messages when the current turn is a follow-up such as "直接做好",
+- active-segment projection items when the current turn is a follow-up such as "直接做好",
   "落到工作区", "按刚才那个改", or "帮我保存";
 - recent workflow/proposal evidence when the user gives a filename-only follow-up such
   as "在 README.md 里加一句".
 
-When the source turn is inside a channel thread, same-thread messages and the thread root
-are searched before broader channel history. This keeps follow-ups such as "写到里面"
-bound to the file target established in that discussion instead of drifting to unrelated
-recent channel work.
+When the source turn is inside a channel thread, explicit refs, the active segment, and
+the thread shared core are considered before any cross-segment candidate. This keeps
+follow-ups such as "写到里面" bound to the file target established in that discussion
+instead of drifting to unrelated recent channel work.
 
-TargetResolver must be conservative:
+The typed side-effect `TargetResolver` runs only after intent v2 returns `execute`, or a
+workflow proposal explicitly requires a local/workspace target. It must be conservative:
 
 - one clear target -> pass it to IntentRouter with a source ref;
 - multiple plausible targets -> `clarify`;
-- no target and the request is execution-shaped -> `clarify`;
-- no target and the request is informational -> `answer`;
+- no target and the request is execution-shaped -> `clarify` with structured missing fields;
+- no target and the request is informational or in-conversation content generation -> `reply`;
 - never infer broad workspace mutation from a vague acknowledgement.
+
+A conversation subject is not a filesystem target. Article, report, analysis, and code
+content stay in `reply` unless the user explicitly requests a file, workspace mutation,
+command, or other external side effect.
 
 ### IntentRouter
 
@@ -229,9 +246,14 @@ deploy authority, external-send authority, or memory authority.
 
 `@Ling Agent`, `@Designer`, selected teammate chips, and `requestAiReply` are input
 signals. They may influence `responderHint`, participant selection, or whether an
-ordinary `answer` is expected. They must not short-circuit executable intent handling.
+ordinary `reply` is expected. They must not short-circuit executable intent handling.
 
-### Model-Assisted Turn Decision Migration
+### Current v1 model-assisted implementation reference
+
+The section below records the currently implemented v1 action names and migration logic.
+It is superseded for new work by Channel Conversation Continuity v2. The clean-break v2
+implementation uses `reply` and `execute`, one context projection version, structured
+clarification fields, and post-intent TargetResolver gating.
 
 The implementation must treat model-assisted intent classification as part of the Ling
 Agent Session turn loop, not as a separate optional auto-reply feature. The model may
