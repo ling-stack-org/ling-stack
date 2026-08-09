@@ -91,3 +91,4 @@ export * from "./exec/shell-snapshot-types.js";
 export * from "./storage/event-log.js";
 export * from "./storage/workspace-registry-store.js";
 export * from "./storage/sqlite-run-store.js";
+export * from "./storage/sqlite/continuity-recovery.js";
