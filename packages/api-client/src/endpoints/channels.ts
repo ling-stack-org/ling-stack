@@ -349,11 +349,11 @@ export const channelEndpoints = {
   async listChannelIntentDecisions(this: LingDaemonEndpointContext,
       cwd: string,
       channelId: string,
-      options: { readonly sourceMessageId?: string; readonly action?: string; readonly status?: string; readonly limit?: number } = {},
+      options: { readonly sourceItemId?: string; readonly action?: string; readonly status?: string; readonly limit?: number } = {},
     ): Promise<ChannelIntentDecisionListResponse> {
       return this._get(`/channels/${encodeURIComponent(channelId)}/intent-decisions`, {
         cwd,
-        sourceMessageId: options.sourceMessageId,
+        sourceItemId: options.sourceItemId,
         action: options.action,
         status: options.status,
         limit: options.limit,

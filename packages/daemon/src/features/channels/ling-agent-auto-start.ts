@@ -147,8 +147,8 @@ function isDirectWorkflowProposal(
   return store
     .listChannelIntentDecisions({
       channelId: proposal.channelId,
-      sourceMessageId: sourceMessage.id,
-      action: "direct_workflow",
+      sourceItemId: sourceMessage.id,
+      action: "execute",
       status: "accepted",
       limit: 10,
     })

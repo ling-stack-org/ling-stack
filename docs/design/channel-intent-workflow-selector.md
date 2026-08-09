@@ -1,6 +1,6 @@
 # Channel Intent To Workflow Selector
 
-Status: current v1 implementation reference; v2 clean-break contract approved in Channel Conversation Continuity v2
+Status: superseded v1 implementation reference; S4 runtime now uses the v2 clean-break contract in Channel Conversation Continuity v2
 Date: 2026-06-10
 
 Related docs:

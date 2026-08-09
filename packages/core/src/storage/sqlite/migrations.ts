@@ -1514,8 +1514,9 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       }
     }
 
-    const hasChannelIntentDecisionsMigration = context.hasMigration(CHANNEL_INTENT_DECISIONS_MIGRATION_VERSION);
-    if (!hasChannelIntentDecisionsMigration || !context.hasTable("channel_intent_decisions")) {
+    if (!continuityV2Active) {
+      const hasChannelIntentDecisionsMigration = context.hasMigration(CHANNEL_INTENT_DECISIONS_MIGRATION_VERSION);
+      if (!hasChannelIntentDecisionsMigration || !context.hasTable("channel_intent_decisions")) {
       database.exec(`
         CREATE TABLE IF NOT EXISTS channel_intent_decisions (
           id TEXT PRIMARY KEY,
@@ -1556,22 +1557,23 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       if (!hasChannelIntentDecisionsMigration) {
         context.recordMigration(CHANNEL_INTENT_DECISIONS_MIGRATION_VERSION, CHANNEL_INTENT_DECISIONS_MIGRATION_NAME);
       }
-    }
+      }
 
-    const hasChannelVisibleMultiReplyIntentMigration = context.hasMigration(CHANNEL_VISIBLE_MULTI_REPLY_INTENT_MIGRATION_VERSION);
-    if (
-      !hasChannelVisibleMultiReplyIntentMigration ||
-      !context.hasColumn("channel_intent_decisions", "selected_teammate_ids_json") ||
-      !context.hasColumn("channel_intent_decisions", "reply_message_ids_json")
-    ) {
-      if (context.hasTable("channel_intent_decisions") && !context.hasColumn("channel_intent_decisions", "selected_teammate_ids_json")) {
-        database.exec("ALTER TABLE channel_intent_decisions ADD COLUMN selected_teammate_ids_json TEXT;");
-      }
-      if (context.hasTable("channel_intent_decisions") && !context.hasColumn("channel_intent_decisions", "reply_message_ids_json")) {
-        database.exec("ALTER TABLE channel_intent_decisions ADD COLUMN reply_message_ids_json TEXT;");
-      }
-      if (!hasChannelVisibleMultiReplyIntentMigration) {
-        context.recordMigration(CHANNEL_VISIBLE_MULTI_REPLY_INTENT_MIGRATION_VERSION, CHANNEL_VISIBLE_MULTI_REPLY_INTENT_MIGRATION_NAME);
+      const hasChannelVisibleMultiReplyIntentMigration = context.hasMigration(CHANNEL_VISIBLE_MULTI_REPLY_INTENT_MIGRATION_VERSION);
+      if (
+        !hasChannelVisibleMultiReplyIntentMigration ||
+        !context.hasColumn("channel_intent_decisions", "selected_teammate_ids_json") ||
+        !context.hasColumn("channel_intent_decisions", "reply_message_ids_json")
+      ) {
+        if (context.hasTable("channel_intent_decisions") && !context.hasColumn("channel_intent_decisions", "selected_teammate_ids_json")) {
+          database.exec("ALTER TABLE channel_intent_decisions ADD COLUMN selected_teammate_ids_json TEXT;");
+        }
+        if (context.hasTable("channel_intent_decisions") && !context.hasColumn("channel_intent_decisions", "reply_message_ids_json")) {
+          database.exec("ALTER TABLE channel_intent_decisions ADD COLUMN reply_message_ids_json TEXT;");
+        }
+        if (!hasChannelVisibleMultiReplyIntentMigration) {
+          context.recordMigration(CHANNEL_VISIBLE_MULTI_REPLY_INTENT_MIGRATION_VERSION, CHANNEL_VISIBLE_MULTI_REPLY_INTENT_MIGRATION_NAME);
+        }
       }
     }
 

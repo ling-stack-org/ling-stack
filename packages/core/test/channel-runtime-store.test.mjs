@@ -341,10 +341,11 @@ test("sqlite channel intent decisions round trip visible multi-reply ids", async
     const decision = store.createChannelIntentDecision(
       {
         channelId: channel.id,
-        sourceMessageId: message.id,
+        sourceItemId: message.id,
+        contextProjection: contextProjectionForItem(store, message.id),
         action: "visible_multi_reply",
         selectedTeammateIds: ["teammate_builtin_architect", "teammate_builtin_engineer"],
-        replyMessageIds: [architectReply.id, engineerReply.id],
+        resultItemIds: [architectReply.id, engineerReply.id],
         reason: "Visible multi-reply created for discussion.",
         status: "accepted",
         createdBy: "deterministic",
@@ -354,16 +355,39 @@ test("sqlite channel intent decisions round trip visible multi-reply ids", async
 
     assert.equal(decision.action, "visible_multi_reply");
     assert.deepEqual(decision.selectedTeammateIds, ["teammate_builtin_architect", "teammate_builtin_engineer"]);
-    assert.deepEqual(decision.replyMessageIds, [architectReply.id, engineerReply.id]);
-    const [listed] = store.listChannelIntentDecisions({ channelId: channel.id, sourceMessageId: message.id });
+    assert.deepEqual(decision.resultItemIds, [architectReply.id, engineerReply.id]);
+    assert.equal(decision.schemaVersion, 2);
+    const [listed] = store.listChannelIntentDecisions({ channelId: channel.id, sourceItemId: message.id });
     assert.equal(listed.id, decision.id);
     assert.deepEqual(listed.selectedTeammateIds, decision.selectedTeammateIds);
-    assert.deepEqual(listed.replyMessageIds, decision.replyMessageIds);
+    assert.deepEqual(listed.resultItemIds, decision.resultItemIds);
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });
   }
 });
+
+function contextProjectionForItem(store, itemId) {
+  const item = store.getConversationItem(itemId);
+  assert.ok(item?.turnId);
+  const assignment = store.getEffectiveTurnContextAssignment(item.turnId);
+  assert.ok(assignment);
+  return {
+    projectionVersion: `projection:${item.id}:${assignment.revision}`,
+    threadId: item.threadId,
+    turnId: item.turnId,
+    segmentId: assignment.segmentId,
+    throughItemSequence: item.sequence,
+    summaryIds: [],
+    sourceRefs: [
+      { type: "thread", id: item.threadId },
+      { type: "turn", id: item.turnId },
+      { type: "conversation_item", id: item.id },
+    ],
+    policyVersion: "test-projector-v1",
+    visibilityFingerprint: "channel_shared",
+  };
+}
 
 test("sqlite channels persist workspace binding and workspace settings", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workspace-binding-"));

@@ -770,7 +770,6 @@ function ChannelIntentInspectContent({
   readonly teammates: readonly ChannelMention[];
   readonly t: Translate;
 }): JSX.Element {
-  const replyMessageIds = uniqueStrings([decision.replyMessageId, ...(decision.replyMessageIds ?? [])].filter((id): id is string => Boolean(id)));
   return (
     <>
       <p>{channelIntentDecisionUserReason(decision, t)}</p>
@@ -792,13 +791,49 @@ function ChannelIntentInspectContent({
           <dd>{channelIntentDecisionCreatedByLabel(decision, t)}</dd>
         </div>
         <div>
-          <dt>{t("Source message")}</dt>
-          <dd>{decision.sourceMessageId}</dd>
+          <dt>{t("Source item")}</dt>
+          <dd>{decision.sourceItemId}</dd>
         </div>
         <div>
-          <dt>{t("Reply messages")}</dt>
-          <dd>{formatOptionalIdList(replyMessageIds, t)}</dd>
+          <dt>{t("Source turn")}</dt>
+          <dd>{decision.sourceTurnId}</dd>
         </div>
+        <div>
+          <dt>{t("Context segment")}</dt>
+          <dd>{decision.contextSegmentId}</dd>
+        </div>
+        <div>
+          <dt>{t("Projection version")}</dt>
+          <dd>{decision.contextProjectionVersion}</dd>
+        </div>
+        <div>
+          <dt>{t("Result items")}</dt>
+          <dd>{formatOptionalIdList(decision.resultItemIds, t)}</dd>
+        </div>
+        {decision.clarification ? (
+          <>
+            <div>
+              <dt>{t("Missing fields")}</dt>
+              <dd>{formatOptionalIdList(decision.clarification.missingFields, t)}</dd>
+            </div>
+            <div>
+              <dt>{t("Clarification question")}</dt>
+              <dd>{decision.clarification.question}</dd>
+            </div>
+          </>
+        ) : null}
+        {decision.execution ? (
+          <>
+            <div>
+              <dt>{t("Execution kind")}</dt>
+              <dd>{decision.execution.kind}</dd>
+            </div>
+            <div>
+              <dt>{t("Target kind")}</dt>
+              <dd>{decision.execution.targetKind}</dd>
+            </div>
+          </>
+        ) : null}
         <div>
           <dt>{t("Proposal")}</dt>
           <dd>{decision.proposalId || t("None")}</dd>
@@ -807,10 +842,10 @@ function ChannelIntentInspectContent({
           <dt>{t("Workflow")}</dt>
           <dd>{decision.workflowId || t("None")}</dd>
         </div>
-        {decision.errorMessage ? (
+        {decision.errorCode ? (
           <div>
             <dt>{t("Error")}</dt>
-            <dd>{decision.errorMessage}</dd>
+            <dd>{decision.errorCode}</dd>
           </div>
         ) : null}
       </dl>
@@ -913,25 +948,25 @@ function channelIntentDecisionActionLabel(action: ChannelIntentDecision["action"
   switch (action) {
     case "no_reply":
       return t("No reply");
-    case "single_reply":
-      return t("Single reply");
+    case "reply":
+      return t("Reply");
     case "visible_multi_reply":
       return t("Visible multi-reply");
     case "clarify":
       return t("Clarify");
     case "workflow_proposal":
       return t("Workflow proposal");
-    case "direct_workflow":
-      return t("Direct workflow proposal");
+    case "execute":
+      return t("Execute");
   }
 }
 
 function channelIntentDecisionCreatedByLabel(decision: ChannelIntentDecision, t: Translate): string {
-  return decision.createdBy === "model" ? t("Model selector") : t("Deterministic rule");
+  return decision.createdBy === "model_policy" ? t("Model selector") : t("Deterministic rule");
 }
 
 function channelIntentDecisionUserReason(decision: ChannelIntentDecision, t: Translate): string {
-  if (decision.errorMessage) {
+  if (decision.errorCode) {
     return t("Ling could not safely handle this channel intent.");
   }
   return decision.reason || channelIntentDecisionActionLabel(decision.action, t);
@@ -949,7 +984,7 @@ function formatIntentDecisionTeammates(
   teammates: readonly ChannelMention[],
   t: Translate,
 ): string {
-  const ids = uniqueStrings([decision.selectedTeammateId, ...(decision.selectedTeammateIds ?? [])].filter((id): id is string => Boolean(id)));
+  const ids = decision.selectedTeammateIds;
   if (ids.length === 0) {
     return t("None");
   }
