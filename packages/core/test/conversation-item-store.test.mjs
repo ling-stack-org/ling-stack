@@ -107,6 +107,73 @@ test("ConversationItemStore updates only the expected pending revision and then 
   }
 });
 
+test("ConversationItemStore lists the complete effective committed turn without a paging cap", () => {
+  const { database, store } = createStore();
+  try {
+    const user = store.appendConversationItem(userInput({ idempotencyKey: "turn-user" }), now);
+    const assistant = store.appendConversationItem({
+      channelId: "channel-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      kind: "assistant_message",
+      status: "committed",
+      actorType: "ling_agent",
+      actorId: "ling-agent",
+      visibility: "channel",
+      payload: {
+        body: "First answer.",
+        format: "markdown",
+        streaming: false,
+        deliveryStatus: "ready",
+      },
+      idempotencyKey: "turn-assistant",
+    }, now);
+    const replacement = store.appendConversationItem({
+      channelId: "channel-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      kind: "assistant_message",
+      status: "committed",
+      actorType: "ling_agent",
+      actorId: "ling-agent",
+      visibility: "channel",
+      payload: {
+        body: "Corrected answer.",
+        format: "markdown",
+        streaming: false,
+        deliveryStatus: "ready",
+      },
+      supersedesItemId: assistant.id,
+      idempotencyKey: "turn-assistant-corrected",
+    }, later);
+    store.appendConversationItem({
+      channelId: "channel-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      kind: "assistant_message",
+      status: "pending",
+      actorType: "ling_agent",
+      actorId: "ling-agent",
+      visibility: "channel",
+      payload: {
+        body: "Pending answer.",
+        format: "markdown",
+        streaming: true,
+        deliveryStatus: "pending",
+      },
+      idempotencyKey: "turn-assistant-pending",
+    }, later);
+
+    assert.deepEqual(store.listConversationItemsForTurn({ turnId: "turn-1" }).map((item) => item.id), [
+      user.id,
+      replacement.id,
+    ]);
+    assert.throws(() => store.listConversationItemsForTurn({ turnId: "" }), RangeError);
+  } finally {
+    database.close();
+  }
+});
+
 test("ConversationItemStore supersedes committed items once and pages with stable sequence cursors", () => {
   const { database, store } = createStore();
   try {

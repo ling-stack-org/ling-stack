@@ -103,6 +103,7 @@ export interface WorkflowStepRunContextPackSnapshot {
     readonly metadata?: Record<string, unknown>;
   }[];
   readonly sourceRefs: ContextPack["sourceRefs"];
+  readonly contextProjection?: ContextPack["contextProjection"];
 }
 
 export type ValidateWorkflowStepRunRequest = (runRequest: WorkflowStepRunRequest) => void;
@@ -1117,6 +1118,7 @@ function snapshotWorkflowStepContextPack(pack: ContextPack): WorkflowStepRunCont
       metadata: section.metadata,
     })),
     sourceRefs: pack.sourceRefs,
+    contextProjection: pack.contextProjection,
   };
 }
 

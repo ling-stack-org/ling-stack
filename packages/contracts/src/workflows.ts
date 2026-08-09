@@ -7,6 +7,7 @@ import type { RunSession, RunnerFallbackReason, RunnerRequestSource } from "./ru
 import type { ResponseLanguage } from "./settings.js";
 import type { RunTool } from "./shared.js";
 import type { Task } from "./tasks.js";
+import type { ConversationContextProjectionMetadata } from "./conversation-continuity.js";
 
 export type ChannelWorkflowStatus =
   | "draft"
@@ -258,6 +259,7 @@ export interface WorkflowStepContextPackSnapshot {
     readonly id: string;
     readonly label?: string;
   }[];
+  readonly contextProjection?: ConversationContextProjectionMetadata;
 }
 
 export interface ChannelWorkflowStepOutputPacket {

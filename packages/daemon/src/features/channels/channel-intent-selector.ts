@@ -22,6 +22,10 @@ import { resolveEffectiveChannelCollaborationProtocol } from "./collaboration-pr
 import { compactChannelDiscussionForNoToolsRetry, isContextLengthError } from "./context-compaction.js";
 import { buildChannelIntentSelectorContextPack, renderContextPack } from "./context-packs.js";
 import { buildWorkflowProposalContextView, proposalSourceRefsFromContextView } from "./context-processing/proposals.js";
+import {
+  buildConversationContextProjection,
+  projectConversationContextMessages,
+} from "./context-processing/conversation-context-projector.js";
 import { createLingAgentExecutor, isLingAgentExecutorId, LING_AGENT_EXECUTOR_ID } from "./ling-agent-executor.js";
 import {
   buildLingAgentTurnEnvelope,
@@ -40,7 +44,6 @@ import {
   appendChannelAssistantMessage,
   findChannelAssistantReplyForSource,
   getChannelMessageView,
-  listChannelMessageViewsPage,
 } from "./conversation-item-messages.js";
 
 export interface ChannelIntentSelectorInput {
@@ -1284,27 +1287,15 @@ function extractRecentThreadCodeBlockContent(input: ChannelIntentSelectorInput, 
 }
 
 function recentFileContentMessages(input: ChannelIntentSelectorInput): readonly ChannelMessage[] {
-  const sourceItem = input.store.getConversationItem(input.sourceMessage.id);
-  const scopedMessages = sourceItem
-    ? listChannelMessageViewsPage({
-        store: input.store,
-        channelId: input.channel.id,
-        threadId: sourceItem.threadId,
-        limit: 30,
-      }).messages
-    : [];
-  const explicitRefs = sourceItem?.kind === "user_message"
-    ? [sourceItem.payload.replyToItemId, ...(sourceItem.payload.quotedItemIds ?? [])]
-        .filter((id): id is string => Boolean(id))
-        .map((id) => getChannelMessageView(input.store, id))
-        .filter((message): message is ChannelMessage => Boolean(message))
-    : [];
-  return uniqueMessages([
-    ...scopedMessages,
-    ...explicitRefs,
-  ])
-    .filter((message) => message.id !== input.sourceMessage.id && message.createdAt <= input.sourceMessage.createdAt && message.status !== "failed")
-    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  const projection = buildConversationContextProjection({
+    store: input.store,
+    sourceItemId: input.sourceMessage.id,
+    view: "resolver",
+  });
+  return projectConversationContextMessages(projection, input.store)
+    .filter((message) => message.id !== input.sourceMessage.id && message.status !== "failed")
+    .slice()
+    .reverse();
 }
 
 function extractRecentFileObjective(input: ChannelIntentSelectorInput): FileContentResolution | undefined {
@@ -1323,19 +1314,6 @@ function extractRecentFileObjective(input: ChannelIntentSelectorInput): FileCont
     };
   }
   return undefined;
-}
-
-function uniqueMessages(messages: readonly ChannelMessage[]): readonly ChannelMessage[] {
-  const seen = new Set<string>();
-  const unique: ChannelMessage[] = [];
-  for (const message of messages) {
-    if (seen.has(message.id)) {
-      continue;
-    }
-    seen.add(message.id);
-    unique.push(message);
-  }
-  return unique;
 }
 
 function extractMarkdownCodeBlocks(text: string): readonly { readonly language: string; readonly content: string }[] {

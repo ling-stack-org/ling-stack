@@ -6,6 +6,7 @@ import type { AuthorizationMode, PermissionPreset, SessionPermissionMode, Worksp
 import type { SkillCandidateSourceRef } from "./skill-candidate-types.js";
 import type { AiTeammateRoleKey, SkillApprovalProfile } from "./skill-types.js";
 import type { WorkflowTerminationPolicy } from "./workflow-graph-types.js";
+import type { ConversationContextProjectionMetadata } from "@ling-stack/contracts";
 
 export const DEFAULT_WORKSPACE_ID = "workspace_default";
 
@@ -1357,6 +1358,7 @@ export interface ChannelMessageRouteContextPackMetadata {
   readonly droppedSectionIds: readonly string[];
   readonly sourceRefCounts: Readonly<Record<string, number>>;
   readonly compactionIds: readonly string[];
+  readonly contextProjection?: ConversationContextProjectionMetadata;
 }
 
 export interface ChannelMessageRouteDecision {
@@ -2288,6 +2290,7 @@ export interface WorkflowStepContextPackSnapshot {
     readonly id: string;
     readonly label?: string;
   }[];
+  readonly contextProjection?: ConversationContextProjectionMetadata;
 }
 
 export interface ChannelWorkflowStepOutputPacket {

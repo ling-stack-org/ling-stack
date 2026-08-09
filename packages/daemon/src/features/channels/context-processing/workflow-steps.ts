@@ -1,22 +1,16 @@
 import type {
   Channel,
-  ChannelStoreFacet,
   ChannelWorkflow,
   ChannelWorkflowStep,
-  ProviderStoreFacet,
-  RunExecutionStoreFacet,
+  RunStore,
   SkillApprovalProfile,
-  WorkspaceStoreFacet,
 } from "@ling-stack/core";
 import { collectChannelStateSource, collectWorkflowEvidenceSources, collectWorkflowStepSource } from "./sources.js";
+import { buildProjectedConversationContextSlice } from "./conversation-context-adapter.js";
 import type { ChannelContextBudgetSnapshot, ChannelContextSection, ChannelContextSourceRef, ChannelContextView } from "./types.js";
 import { buildChannelContextView } from "./views.js";
 
-type WorkflowStepContextPackStore =
-  ChannelStoreFacet &
-  RunExecutionStoreFacet &
-  ProviderStoreFacet &
-  WorkspaceStoreFacet;
+type WorkflowStepContextPackStore = RunStore;
 
 export interface WorkflowStepContextPackInput {
   readonly store: WorkflowStepContextPackStore;
@@ -43,6 +37,14 @@ export interface BuildWorkflowStepContextViewInput extends WorkflowStepContextPa
 
 export function buildWorkflowStepContextView(input: BuildWorkflowStepContextViewInput): ChannelContextView {
   const sourceRefs = buildWorkflowStepContextSourceRefs(input);
+  const sourceItemId = input.step.metadata?.sourceMessageId ?? input.workflow.metadata?.sourceMessageId;
+  const projectedContext = sourceItemId ? buildProjectedConversationContextSlice({
+    store: input.store,
+    channel: input.channel,
+    sourceItemId,
+    view: "workflow_step",
+    consumerTeammateId: input.step.toParticipantId,
+  }) : undefined;
   const dependencySections = input.compactedDependencySummary
     ? [buildCompactedWorkflowDependencySection(input.compactedDependencySummary)]
     : buildWorkflowStepDependencySections(input);
@@ -123,6 +125,7 @@ export function buildWorkflowStepContextView(input: BuildWorkflowStepContextView
     },
     ...dependencySections,
     ...formatWorkflowDecisionAndHandoffSections(input),
+    ...(projectedContext?.sections ?? []),
     ...(contextSummary
       ? [{
           id: "workflow_context_summary",
@@ -148,7 +151,11 @@ export function buildWorkflowStepContextView(input: BuildWorkflowStepContextView
     channelId: input.channel.id,
     consumerTeammateId: input.step.toParticipantId,
     sections,
-    sourceRefs: compactedSourceRefs,
+    sourceRefs: uniqueContextSourceRefs([
+      ...compactedSourceRefs,
+      ...(projectedContext?.sourceRefs ?? []),
+    ]),
+    contextProjection: projectedContext?.projection.metadata,
     compactionIds: input.compactedDependencySummary ? [input.compactedDependencySummary.id] : undefined,
     budget: input.budget,
     sources: [
@@ -158,6 +165,7 @@ export function buildWorkflowStepContextView(input: BuildWorkflowStepContextView
         metadata: input.protocolSection.metadata,
       }),
       collectWorkflowStepSource({ channel: input.channel, workflow: input.workflow, step: input.step }),
+      ...(projectedContext?.sources ?? []),
       ...collectWorkflowEvidenceSources({
         store: input.store,
         channel: input.channel,

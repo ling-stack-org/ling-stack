@@ -26,6 +26,7 @@ import {
   type WorkspaceAccessMode,
 } from "@ling-stack/core";
 import type { PiRunnerProviderConfig, PiRunnerRunOptions } from "@ling-stack/runner-pi";
+import type { ConversationContextProjectionMetadata } from "@ling-stack/contracts";
 import { HttpError } from "../../errors.js";
 import { parseApprovalProfileObject } from "../../shared/approval-profile.js";
 import {
@@ -71,6 +72,8 @@ export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired
   readonly directWorkspaceBinding?: DirectWorkspaceBinding;
   readonly directWorkspaceSnapshot?: DirectWorkspaceSnapshot;
   readonly skipMemoryRecall?: boolean;
+  /** Internal-only evidence version for conversation-derived runs. External request parsing does not accept it. */
+  readonly contextProjection?: ConversationContextProjectionMetadata;
   /** Internal-only override used by trusted multi-reply channel orchestration. */
   readonly channelParallelLimit?: number;
 }

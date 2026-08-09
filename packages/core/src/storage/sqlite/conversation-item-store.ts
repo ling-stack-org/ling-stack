@@ -11,7 +11,10 @@ import {
   type AppendConversationItem,
   type ConversationItemChannelListPage,
   type ConversationItemListPage,
+  type FindConversationItemByDomainRefInput,
   type ListConversationItemsByChannelOptions,
+  type ListConversationItemsForSegmentOptions,
+  type ListConversationItemsForTurnOptions,
   type ListConversationItemsOptions,
   type UpdatePendingConversationItemInput,
 } from "../../conversation-item-store-types.js";
@@ -213,6 +216,60 @@ export class SqliteConversationItemStore {
     return row ? mapConversationItem(row as Record<string, SQLOutputValue>) : undefined;
   }
 
+  findConversationItemByDomainRef(
+    input: FindConversationItemByDomainRefInput,
+  ): ConversationItemV1 | undefined {
+    const beforeSequence = input.beforeSequence ?? Number.MAX_SAFE_INTEGER;
+    if (!Number.isSafeInteger(beforeSequence) || beforeSequence < 1) {
+      throw new RangeError(`Invalid conversation domain-ref watermark: ${beforeSequence}`);
+    }
+    const row = this.context.database.prepare(`
+      ${conversationItemSelectSql}
+      WHERE workspace_id = ?
+        AND thread_id = ?
+        AND sequence < ?
+        AND status = 'committed'
+        AND EXISTS (
+          SELECT 1 FROM json_each(domain_refs_json)
+          WHERE json_extract(value, '$.type') = ?
+            AND json_extract(value, '$.id') = ?
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM conversation_items AS replacement
+          WHERE replacement.supersedes_item_id = conversation_items.id
+        )
+      ORDER BY sequence DESC
+      LIMIT 1
+    `).get(
+      DEFAULT_WORKSPACE_ID,
+      input.threadId,
+      beforeSequence,
+      input.ref.type,
+      input.ref.id,
+    );
+    return row ? mapConversationItem(row as Record<string, SQLOutputValue>) : undefined;
+  }
+
+  listConversationItemsForTurn(
+    options: ListConversationItemsForTurnOptions,
+  ): readonly ConversationItemV1[] {
+    if (!options.turnId.trim()) {
+      throw new RangeError("Conversation turn id must not be empty");
+    }
+    return this.context.database.prepare(`
+      ${conversationItemSelectSql}
+      WHERE workspace_id = ?
+        AND turn_id = ?
+        AND status = 'committed'
+        AND NOT EXISTS (
+          SELECT 1 FROM conversation_items AS replacement
+          WHERE replacement.supersedes_item_id = conversation_items.id
+        )
+      ORDER BY sequence ASC
+    `).all(DEFAULT_WORKSPACE_ID, options.turnId)
+      .map((row) => mapConversationItem(row as Record<string, SQLOutputValue>));
+  }
+
   listConversationItemsPage(options: ListConversationItemsOptions): ConversationItemListPage {
     const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
     const beforeSequence = options.beforeSequence ?? Number.MAX_SAFE_INTEGER;
@@ -302,6 +359,52 @@ export class SqliteConversationItemStore {
       hasMore,
       ...(hasMore && items[0] ? { nextBeforeItemId: items[0].id } : {}),
     };
+  }
+
+  listConversationItemsForSegment(
+    options: ListConversationItemsForSegmentOptions,
+  ): readonly ConversationItemV1[] {
+    if (!Number.isSafeInteger(options.throughSequence) || options.throughSequence < 1) {
+      throw new RangeError(`Invalid conversation projection watermark: ${options.throughSequence}`);
+    }
+    const afterSequence = options.afterSequence ?? 0;
+    if (!Number.isSafeInteger(afterSequence) || afterSequence < 0 || afterSequence > options.throughSequence) {
+      throw new RangeError(`Invalid conversation projection lower watermark: ${afterSequence}`);
+    }
+    const limit = Math.min(Math.max(options.limit ?? 500, 1), 500);
+    const rows = this.context.database.prepare(`
+      SELECT items.*
+      FROM conversation_items AS items
+      INNER JOIN turn_context_assignments AS assignments
+        ON assignments.turn_id = items.turn_id
+       AND assignments.revision = (
+         SELECT MAX(candidate.revision)
+         FROM turn_context_assignments AS candidate
+         WHERE candidate.turn_id = items.turn_id
+       )
+      WHERE items.workspace_id = ?
+        AND items.thread_id = ?
+        AND assignments.segment_id = ?
+        AND items.sequence > ?
+        AND items.sequence <= ?
+        AND items.status = 'committed'
+        AND NOT EXISTS (
+          SELECT 1 FROM conversation_items AS replacement
+          WHERE replacement.supersedes_item_id = items.id
+        )
+      ORDER BY items.sequence DESC
+      LIMIT ?
+    `).all(
+      DEFAULT_WORKSPACE_ID,
+      options.threadId,
+      options.segmentId,
+      afterSequence,
+      options.throughSequence,
+      limit,
+    );
+    return rows
+      .map((row) => mapConversationItem(row as Record<string, SQLOutputValue>))
+      .reverse();
   }
 
   updatePendingConversationItem<K extends ConversationItemKindV1>(

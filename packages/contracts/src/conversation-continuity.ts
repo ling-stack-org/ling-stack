@@ -273,6 +273,32 @@ export interface TurnContextAssignment {
   readonly createdAt: string;
 }
 
+export type ContextSegmentProposal =
+  | {
+      readonly action: "continue";
+      readonly segmentId: string;
+      readonly antecedentTurnId?: string;
+      readonly confidence: number;
+      readonly evidenceItemIds: readonly string[];
+    }
+  | {
+      readonly action: "switch_existing";
+      readonly segmentId: string;
+      readonly antecedentTurnId?: string;
+      readonly confidence: number;
+      readonly evidenceItemIds: readonly string[];
+    }
+  | {
+      readonly action: "propose_new";
+      readonly confidence: number;
+      readonly relatedSegmentIds: readonly string[];
+      readonly reason: string;
+    }
+  | {
+      readonly action: "uncertain";
+      readonly candidateSegmentIds: readonly string[];
+    };
+
 export const conversationContextSummaryScopes = ["segment", "thread_core", "work"] as const;
 export type ConversationContextSummaryScope = (typeof conversationContextSummaryScopes)[number];
 

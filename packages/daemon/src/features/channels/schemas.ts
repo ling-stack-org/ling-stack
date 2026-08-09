@@ -169,6 +169,7 @@ export interface ChannelAttachmentRequest {
 export interface ChannelMessageRequest {
   readonly idempotencyKey?: string;
   readonly threadId?: string;
+  readonly contextSegmentId?: string;
   readonly kind?: ChannelMessageKind;
   readonly intent?: ChannelMessageIntent;
   readonly authorType: ChannelMessageAuthorType;
@@ -587,6 +588,7 @@ export function parseChannelMessageRequest(value: unknown): ChannelMessageReques
   const input: ChannelMessageRequest = {
     idempotencyKey: readOptionalString(value, "idempotencyKey"),
     threadId: readOptionalString(value, "threadId"),
+    contextSegmentId: readOptionalString(value, "contextSegmentId"),
     kind: readOptionalChannelMessageKind(value, "kind"),
     intent: readOptionalChannelMessageIntent(value, "intent") ?? "discuss",
     authorType: readOptionalChannelMessageAuthorType(value, "authorType") ?? "local-user",

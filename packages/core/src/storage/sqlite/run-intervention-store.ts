@@ -202,9 +202,10 @@ export class SqliteRunInterventionStore {
   }
 
   listPriorRunInterventionReplyMessages(input: ListPriorRunInterventionReplyMessagesInput): ChannelMessage[] {
-    const limit = Math.min(Math.max(input.limit ?? 6, 1), 100);
-    return this.context.database
-      .prepare(`
+    const limit = input.limit === undefined
+      ? undefined
+      : Math.min(Math.max(input.limit, 1), 100);
+    const statement = this.context.database.prepare(`
         SELECT items.id AS item_id
         FROM run_interventions AS earlier
         JOIN run_interventions AS current
@@ -224,15 +225,17 @@ export class SqliteRunInterventionStore {
             OR (earlier.created_at = current.created_at AND earlier.id < current.id)
           )
         ORDER BY earlier.created_at DESC, earlier.id DESC
-        LIMIT ?
-      `)
-      .all(
-        input.beforeInterventionId,
-        input.sourceRunId,
-        input.sourceRunId,
-        input.channelId,
-        limit,
-      )
+        ${limit === undefined ? "" : "LIMIT ?"}
+      `);
+    const parameters: readonly (string | number)[] = [
+      input.beforeInterventionId,
+      input.sourceRunId,
+      input.sourceRunId,
+      input.channelId,
+      ...(limit === undefined ? [] : [limit]),
+    ];
+    return statement
+      .all(...parameters)
       .map((row) => this.ports.getConversationItem(readString(row as Record<string, SQLOutputValue>, "item_id")))
       .filter((item): item is ConversationItemV1 => Boolean(item))
       .map((item) => projectConversationItemToChannelMessage(item))

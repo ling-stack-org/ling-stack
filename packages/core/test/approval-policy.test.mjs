@@ -615,6 +615,14 @@ test("sqlite store loads only the latest completed intervention replies before t
       }).map((message) => message.id),
       replyIds.slice(-6),
     );
+    assert.deepEqual(
+      store.listPriorRunInterventionReplyMessages({
+        sourceRunId: "run_reply_context_source",
+        beforeInterventionId: current.id,
+        channelId: channel.id,
+      }).map((message) => message.id),
+      replyIds,
+    );
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });

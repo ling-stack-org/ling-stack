@@ -6,6 +6,7 @@ import {
   type LingThread,
   type RunStore,
 } from "@ling-stack/core";
+import type { ConversationContextProjectionMetadata } from "@ling-stack/contracts";
 import type { RunRequest } from "../runs/schemas.js";
 
 export function buildChannelReplyRunRequest(input: {
@@ -21,6 +22,7 @@ export function buildChannelReplyRunRequest(input: {
   readonly channelParallelLimit?: number;
   readonly parentRunId?: string;
   readonly compactedRetry?: boolean;
+  readonly contextProjection: ConversationContextProjectionMetadata;
 }): RunRequest {
   const thread = ensureChannelReplyThread(input.store, input.channel, input.sourceMessage);
   const sourceItem = input.store.getConversationItem(input.sourceMessage.id);
@@ -47,6 +49,7 @@ export function buildChannelReplyRunRequest(input: {
     thinkingLevel: "medium",
     systemPrompt: input.systemPrompt,
     skipMemoryRecall: true,
+    contextProjection: input.contextProjection,
     channelParallelLimit: input.channelParallelLimit,
     parentRunId: input.parentRunId,
     idempotencyKey: input.compactedRetry

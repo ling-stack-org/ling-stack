@@ -1686,15 +1686,41 @@ export interface RunStore {
   getConversationItem(id: string): ConversationItemV1 | undefined;
   getEffectiveConversationItem(id: string): ConversationItemV1 | undefined;
   getConversationItemByIdempotencyKey(threadId: string, idempotencyKey: string): ConversationItemV1 | undefined;
+  findConversationItemByDomainRef(
+    input: import("./conversation-item-store-types.js").FindConversationItemByDomainRefInput,
+  ): ConversationItemV1 | undefined;
+  listConversationItemsForTurn(
+    options: import("./conversation-item-store-types.js").ListConversationItemsForTurnOptions,
+  ): readonly ConversationItemV1[];
   listConversationItemsPage(options: ListConversationItemsOptions): ConversationItemListPage;
   listConversationItemsByChannelPage(
     options: ListConversationItemsByChannelOptions,
   ): ConversationItemChannelListPage;
+  listConversationItemsForSegment(
+    options: import("./conversation-item-store-types.js").ListConversationItemsForSegmentOptions,
+  ): readonly ConversationItemV1[];
   updatePendingConversationItem(
     itemId: string,
     input: UpdatePendingConversationItemInput,
     now: string,
   ): ConversationItemV1;
+  getContextSegment(id: string): import("@ling-stack/contracts").ContextSegment | undefined;
+  listContextSegments(
+    options: import("./conversation-context-store-types.js").ListContextSegmentsOptions,
+  ): readonly import("@ling-stack/contracts").ContextSegment[];
+  getEffectiveTurnContextAssignment(
+    turnId: string,
+  ): import("@ling-stack/contracts").TurnContextAssignment | undefined;
+  applyTurnContextAssignment(
+    input: import("./conversation-context-store-types.js").ApplyTurnContextAssignmentInput,
+    now: string,
+  ): import("./conversation-context-store-types.js").ApplyTurnContextAssignmentResult;
+  getConversationContextSummary(
+    id: string,
+  ): import("@ling-stack/contracts").ConversationContextSummary | undefined;
+  listConversationContextSummaries(
+    options: import("./conversation-context-store-types.js").ListConversationContextSummariesOptions,
+  ): readonly import("@ling-stack/contracts").ConversationContextSummary[];
   createChannelMessageRouteDecision(input: CreateChannelMessageRouteDecisionInput, now: string): ChannelMessageRouteDecision;
   getChannelMessageRouteDecision(id: string): ChannelMessageRouteDecision | undefined;
   listChannelMessageRouteDecisions(options?: ListChannelMessageRouteDecisionsOptions): ChannelMessageRouteDecision[];
@@ -2240,9 +2266,18 @@ export type ChannelStoreFacet = RunStoreFacet<
   | "getConversationItem"
   | "getEffectiveConversationItem"
   | "getConversationItemByIdempotencyKey"
+  | "findConversationItemByDomainRef"
+  | "listConversationItemsForTurn"
   | "listConversationItemsPage"
   | "listConversationItemsByChannelPage"
+  | "listConversationItemsForSegment"
   | "updatePendingConversationItem"
+  | "getContextSegment"
+  | "listContextSegments"
+  | "getEffectiveTurnContextAssignment"
+  | "applyTurnContextAssignment"
+  | "getConversationContextSummary"
+  | "listConversationContextSummaries"
   | "createChannelMessageRouteDecision"
   | "getChannelMessageRouteDecision"
   | "listChannelMessageRouteDecisions"

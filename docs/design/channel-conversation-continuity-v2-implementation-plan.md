@@ -1,6 +1,6 @@
 # Channel Conversation Continuity v2 Implementation Plan
 
-Status: G0 complete; S-1 and S0 merged; S1+S2 implemented and locally verified; S3-S7 pending
+Status: G0 complete; S-1 and S0 merged; S1+S2 and S3 implemented and locally verified; S4-S7 pending
 Owner: conversation, channel context, Ling Agent Session, and storage maintainers
 Date: 2026-08-08
 Last verified: 2026-08-10
@@ -399,6 +399,12 @@ input accepted
 - No runtime store interface exposes `createChannelMessage` or `listChannelMessages`.
 
 ## Slice S3: Context Segmentation And Shared Projection
+
+Status: implemented on `codex/continuity-v2-context-projector` and locally verified.
+Contracts (`35/35`), Core (`355/355`), Daemon (`888/888`), Remote Protocol
+(`40/40`), and Web (`42/42`) tests pass; Web typecheck and `git diff --check` pass.
+Model-facing Channel consumers use the shared projector, including causally later queued
+reply results without a fixed message-count window.
 
 ### Components
 
@@ -842,7 +848,7 @@ schema.
 | Design Review | `/plan-design-review` | UI and UX gaps | 0 | not run | UI changes are limited to later advanced Context details |
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | not run | Not required for the design baseline |
 
-**VERDICT:** ENG CLEARED. S-1 and S0 are merged; S1+S2 are implemented and locally
-verified; S3-S7 retain the reviewed delivery order and exit criteria.
+**VERDICT:** ENG CLEARED. S-1 and S0 are merged; S1+S2 and S3 are implemented and
+locally verified; S4-S7 retain the reviewed delivery order and exit criteria.
 
 NO UNRESOLVED DECISIONS
