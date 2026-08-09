@@ -2,6 +2,7 @@ import {
   channelIntentDecisionV2Actions,
   channelIntentDecisionV2CreatedByValues,
   channelIntentDecisionV2Statuses,
+  conversationAssistantDeliveryStatusesV1,
   contextSegmentStates,
   conversationContextSummaryScopes,
   conversationContextSummaryStatuses,
@@ -10,6 +11,8 @@ import {
   conversationItemKindsV1,
   conversationItemStatusesV1,
   conversationItemVisibilitiesV1,
+  conversationMessageMentionKindsV1,
+  conversationWorkspaceFileRefSourcesV1,
   goldenContextSegmentActionsV1,
   lingThreadRelationKindsV2,
   lingThreadSurfaceKindsV2,
@@ -55,8 +58,17 @@ const ITEM_KEYS = new Set([
 ]);
 
 const PAYLOAD_KEYS: Readonly<Record<ConversationItemKindV1, ReadonlySet<string>>> = {
-  user_message: new Set(["body", "format", "replyToItemId", "quotedItemIds", "attachmentIds"]),
-  assistant_message: new Set(["body", "format", "streaming"]),
+  user_message: new Set([
+    "body",
+    "format",
+    "mentions",
+    "attachmentIds",
+    "linkPreviewIds",
+    "fileRefs",
+    "replyToItemId",
+    "quotedItemIds",
+  ]),
+  assistant_message: new Set(["body", "format", "streaming", "deliveryStatus", "errorMessage"]),
   tool_call: new Set(["toolCallId", "toolName", "title", "inputSummary"]),
   tool_result: new Set(["toolCallId", "status", "outputSummary", "errorCode"]),
   approval_request: new Set(["approvalRequestId", "title", "summary"]),
@@ -264,6 +276,9 @@ export function isConversationItemV1(value: unknown): value is ConversationItemV
   } else if (value.committedAt !== undefined) {
     return false;
   }
+  if (value.kind === "assistant_message" && !isAssistantItemStateConsistent(value)) {
+    return false;
+  }
   return value.supersedesItemId !== value.id
     && Date.parse(value.updatedAt) >= Date.parse(value.createdAt);
 }
@@ -447,16 +462,26 @@ function isConversationItemPayloadV1(kind: ConversationItemKindV1, value: unknow
   if (!isRecordWithOnlyKeys(value, PAYLOAD_KEYS[kind])) return false;
   switch (kind) {
     case "user_message":
-      return isText(value.body, 32_768)
+      return typeof value.body === "string"
+        && value.body.length <= 32_768
         && (value.format === "plain_text" || value.format === "markdown")
+        && isUniqueArrayOf(value.mentions, isConversationMessageMention, (mention) => `${mention.kind}:${mention.id}`)
+        && isUniqueTextArray(value.attachmentIds)
+        && isUniqueTextArray(value.linkPreviewIds)
+        && isUniqueArrayOf(value.fileRefs, isConversationWorkspaceFileRef, (fileRef) => `${fileRef.path}:${fileRef.line ?? ""}`)
+        && (value.body.trim().length > 0
+          || value.attachmentIds.length > 0
+          || value.linkPreviewIds.length > 0
+          || value.fileRefs.length > 0)
         && isOptionalText(value.replyToItemId)
-        && isOptionalTextArray(value.quotedItemIds)
-        && isOptionalTextArray(value.attachmentIds);
+        && (value.quotedItemIds === undefined || isUniqueTextArray(value.quotedItemIds));
     case "assistant_message":
       return typeof value.body === "string"
         && value.body.length <= 128_000
         && (value.format === "plain_text" || value.format === "markdown")
-        && typeof value.streaming === "boolean";
+        && typeof value.streaming === "boolean"
+        && includes(conversationAssistantDeliveryStatusesV1, value.deliveryStatus)
+        && isOptionalText(value.errorMessage, 8_192);
     case "tool_call":
       return isText(value.toolCallId)
         && isText(value.toolName)
@@ -492,6 +517,46 @@ function isConversationItemPayloadV1(kind: ConversationItemKindV1, value: unknow
       return isText(value.eventType)
         && isText(value.summary, 8_192);
   }
+}
+
+function isAssistantItemStateConsistent(item: Record<string, unknown>): boolean {
+  if (!isRecord(item.payload)) return false;
+  const payload = item.payload;
+  if (item.status === "pending") {
+    return payload.streaming === true
+      && payload.deliveryStatus === "pending"
+      && payload.errorMessage === undefined;
+  }
+  if (item.status === "failed") {
+    return payload.streaming === false && payload.deliveryStatus === "failed";
+  }
+  return payload.streaming === false
+    && (payload.deliveryStatus === "ready" || payload.deliveryStatus === "blocked")
+    && (payload.deliveryStatus === "blocked" || payload.errorMessage === undefined);
+}
+
+function isConversationMessageMention(value: unknown): value is {
+  readonly id: string;
+  readonly label: string;
+  readonly kind: (typeof conversationMessageMentionKindsV1)[number];
+} {
+  return isRecordWithOnlyKeys(value, new Set(["id", "label", "kind"]))
+    && isText(value.id)
+    && isText(value.label)
+    && includes(conversationMessageMentionKindsV1, value.kind);
+}
+
+function isConversationWorkspaceFileRef(value: unknown): value is {
+  readonly path: string;
+  readonly label?: string;
+  readonly source?: (typeof conversationWorkspaceFileRefSourcesV1)[number];
+  readonly line?: number;
+} {
+  return isRecordWithOnlyKeys(value, new Set(["path", "label", "source", "line"]))
+    && isText(value.path, 4_096)
+    && isOptionalText(value.label)
+    && (value.source === undefined || includes(conversationWorkspaceFileRefSourcesV1, value.source))
+    && (value.line === undefined || isPositiveInteger(value.line));
 }
 
 function isClarification(value: unknown): boolean {
@@ -606,6 +671,15 @@ function isUniqueTextArray(value: unknown): value is readonly string[] {
 
 function isArrayOf<T>(value: unknown, predicate: (item: unknown) => item is T): value is readonly T[] {
   return Array.isArray(value) && value.every(predicate);
+}
+
+function isUniqueArrayOf<T>(
+  value: unknown,
+  predicate: (item: unknown) => item is T,
+  key: (item: T) => string,
+): value is readonly T[] {
+  if (!isArrayOf(value, predicate)) return false;
+  return new Set(value.map(key)).size === value.length;
 }
 
 function isPositiveInteger(value: unknown): value is number {

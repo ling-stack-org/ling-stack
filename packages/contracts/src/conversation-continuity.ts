@@ -86,18 +86,61 @@ export const conversationItemActorTypesV1 = [
 
 export type ConversationItemActorTypeV1 = (typeof conversationItemActorTypesV1)[number];
 
+export const conversationMessageMentionKindsV1 = [
+  "ai_teammate",
+  "local_user",
+  "channel",
+] as const;
+
+export type ConversationMessageMentionKindV1 = (typeof conversationMessageMentionKindsV1)[number];
+
+export interface ConversationMessageMentionV1 {
+  readonly id: string;
+  readonly label: string;
+  readonly kind: ConversationMessageMentionKindV1;
+}
+
+export const conversationWorkspaceFileRefSourcesV1 = [
+  "composer",
+  "explicit_text",
+  "api",
+] as const;
+
+export type ConversationWorkspaceFileRefSourceV1 = (typeof conversationWorkspaceFileRefSourcesV1)[number];
+
+export interface ConversationWorkspaceFileRefV1 {
+  readonly path: string;
+  readonly label?: string;
+  readonly source?: ConversationWorkspaceFileRefSourceV1;
+  readonly line?: number;
+}
+
 export interface ConversationUserMessagePayloadV1 {
   readonly body: string;
   readonly format: "plain_text" | "markdown";
+  readonly mentions: readonly ConversationMessageMentionV1[];
+  readonly attachmentIds: readonly string[];
+  readonly linkPreviewIds: readonly string[];
+  readonly fileRefs: readonly ConversationWorkspaceFileRefV1[];
   readonly replyToItemId?: string;
   readonly quotedItemIds?: readonly string[];
-  readonly attachmentIds?: readonly string[];
 }
+
+export const conversationAssistantDeliveryStatusesV1 = [
+  "pending",
+  "ready",
+  "blocked",
+  "failed",
+] as const;
+
+export type ConversationAssistantDeliveryStatusV1 = (typeof conversationAssistantDeliveryStatusesV1)[number];
 
 export interface ConversationAssistantMessagePayloadV1 {
   readonly body: string;
   readonly format: "plain_text" | "markdown";
   readonly streaming: boolean;
+  readonly deliveryStatus: ConversationAssistantDeliveryStatusV1;
+  readonly errorMessage?: string;
 }
 
 export interface ConversationToolCallPayloadV1 {

@@ -354,6 +354,13 @@ interface ConversationItem {
 Typed payloads live in shared contracts. Runtime code switches on `kind`; it does not
 inspect arbitrary JSON fields or generated prose to infer structure.
 
+The user-message payload preserves mentions, attachment ids, link-preview ids, and typed
+workspace file refs so migration never discards materialized-input or routing evidence. An
+empty body is valid only when one of those input refs is present. The assistant-message
+payload keeps `pending | ready | blocked | failed` delivery state separate from the item
+commit state so streaming and visible blocker rows can be projected without overloading
+timeline persistence semantics.
+
 ### Ordering and mutation
 
 - `sequence` is monotonic within a thread and unique with `thread_id`.

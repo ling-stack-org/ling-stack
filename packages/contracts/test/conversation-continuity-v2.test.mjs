@@ -65,14 +65,18 @@ test("ConversationItem v1 validates every typed payload kind", () => {
     user_message: {
       body: "需要，开始吧",
       format: "plain_text",
+      mentions: [{ id: "teammate-1", label: "Reviewer", kind: "ai_teammate" }],
+      attachmentIds: ["attachment-1"],
+      linkPreviewIds: ["link-preview-1"],
+      fileRefs: [{ path: "README.md", source: "explicit_text", line: 1 }],
       replyToItemId: "item-source",
       quotedItemIds: ["item-quote"],
-      attachmentIds: ["attachment-1"],
     },
     assistant_message: {
       body: "继续完成文章正文。",
       format: "markdown",
       streaming: false,
+      deliveryStatus: "ready",
     },
     tool_call: {
       toolCallId: "tool-call-1",
@@ -128,6 +132,7 @@ test("ConversationItem v1 rejects mixed payloads, ambiguous privacy and mutable 
     body: "Done.",
     format: "plain_text",
     streaming: false,
+    deliveryStatus: "ready",
   });
   assert.equal(isConversationItemV1({ ...item, schemaVersion: 2 }), false);
   assert.equal(isConversationItemV1({ ...item, payload: { body: "Done.", format: "plain_text" } }), false);
@@ -142,6 +147,68 @@ test("ConversationItem v1 rejects mixed payloads, ambiguous privacy and mutable 
   assert.equal(isConversationItemV1({ ...item, committedAt: undefined }), false);
   assert.equal(isConversationItemV1({ ...item, status: "pending" }), false);
   assert.equal(isConversationItemV1({ ...item, supersedesItemId: item.id }), false);
+});
+
+test("ConversationItem v1 preserves attachment-only inputs and assistant delivery states", () => {
+  const attachmentOnly = buildItem("user_message", {
+    body: "",
+    format: "plain_text",
+    mentions: [],
+    attachmentIds: ["attachment-1"],
+    linkPreviewIds: [],
+    fileRefs: [],
+  });
+  assert.equal(isConversationItemV1(attachmentOnly), true);
+  assert.equal(isConversationItemV1({
+    ...attachmentOnly,
+    payload: { ...attachmentOnly.payload, attachmentIds: [] },
+  }), false);
+  assert.equal(isConversationItemV1({
+    ...attachmentOnly,
+    payload: { ...attachmentOnly.payload, attachmentIds: ["attachment-1", "attachment-1"] },
+  }), false);
+  assert.equal(isConversationItemV1({
+    ...attachmentOnly,
+    payload: {
+      ...attachmentOnly.payload,
+      mentions: [{ id: "teammate-1", label: "Reviewer", kind: "ai-teammate" }],
+    },
+  }), false);
+  assert.equal(isConversationItemV1({
+    ...attachmentOnly,
+    payload: {
+      ...attachmentOnly.payload,
+      attachmentIds: [],
+      fileRefs: [{ path: "README.md", line: 0 }],
+    },
+  }), false);
+
+  const ready = buildItem("assistant_message", {
+    body: "Done.",
+    format: "plain_text",
+    streaming: false,
+    deliveryStatus: "ready",
+  });
+  assert.equal(isConversationItemV1({
+    ...ready,
+    status: "pending",
+    committedAt: undefined,
+    payload: { ...ready.payload, streaming: true, deliveryStatus: "pending" },
+  }), true);
+  assert.equal(isConversationItemV1({
+    ...ready,
+    payload: { ...ready.payload, deliveryStatus: "blocked", errorMessage: "Provider unavailable." },
+  }), true);
+  assert.equal(isConversationItemV1({
+    ...ready,
+    status: "failed",
+    committedAt: undefined,
+    payload: { ...ready.payload, deliveryStatus: "failed", errorMessage: "Stream failed." },
+  }), true);
+  assert.equal(isConversationItemV1({
+    ...ready,
+    payload: { ...ready.payload, streaming: true },
+  }), false);
 });
 
 test("thread continuity requires explicit root, topic and branch lineage", () => {
