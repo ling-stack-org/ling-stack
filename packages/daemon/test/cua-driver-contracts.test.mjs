@@ -105,17 +105,18 @@ test("bundled V2 setup projection never probes PATH and maps included to connect
   assert.equal(setup.effectiveEnabled, false);
 });
 
-test("effective packaged gate fails closed before external connect/broker work", () => {
+test("effective packaged gate honors the explicit platform before external connect/broker work", () => {
   const config = resolveConfig({
     cuaDriver: {
-      bundledEmbedded: { darwin: true, win32: true },
-      packagedProvider: { darwin: true, win32: true },
+      bundledEmbedded: { darwin: true, win32: false },
+      packagedProvider: { darwin: true, win32: false },
     },
   });
   assert.throws(
     () => assertBundledCuaDriverRuntimeAvailable(config, "darwin"),
     (error) => error?.code === "cua_desktop_lease_unavailable" && error?.statusCode === 409,
   );
+  assert.doesNotThrow(() => assertBundledCuaDriverRuntimeAvailable(config, "win32"));
 });
 
 test("canonical external and hidden bundled IDs remain distinct and stable", () => {
