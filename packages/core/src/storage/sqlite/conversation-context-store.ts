@@ -2,10 +2,12 @@ import { randomUUID } from "node:crypto";
 import type { SQLOutputValue } from "node:sqlite";
 import {
   isContextSegment,
+  isConversationContextSnapshot,
   isConversationContextSummary,
   isConversationDomainRef,
   isTurnContextAssignment,
   type ContextSegment,
+  type ConversationContextSnapshot,
   type ConversationContextSummary,
   type ConversationDomainRef,
   type TurnContextAssignment,
@@ -13,7 +15,13 @@ import {
 import type {
   ApplyTurnContextAssignmentInput,
   ApplyTurnContextAssignmentResult,
+  CommitConversationContextSummaryInput,
+  CommitConversationContextSummaryResult,
+  ConversationContextSummaryDiscardReason,
+  ConversationContextSummarySourceFence,
+  CreateConversationContextSnapshotInput,
   ListContextSegmentsOptions,
+  ListConversationContextSnapshotsOptions,
   ListConversationContextSummariesOptions,
 } from "../../conversation-context-store-types.js";
 import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
@@ -167,7 +175,7 @@ export class SqliteConversationContextStore {
         idempotentReplay: false,
       };
     } catch (error) {
-      if (this.context.database.isTransaction) this.context.database.exec("ROLLBACK");
+      this.context.database.exec("ROLLBACK");
       throw error;
     }
   }
@@ -205,6 +213,290 @@ export class SqliteConversationContextStore {
       ORDER BY covered_through_sequence DESC, version DESC, created_at DESC
       LIMIT ?
     `).all(...params).map((row) => mapConversationContextSummary(row as Record<string, SQLOutputValue>));
+  }
+
+  commitConversationContextSummary(
+    input: CommitConversationContextSummaryInput,
+    now: string,
+  ): CommitConversationContextSummaryResult {
+    assertCanonicalTimestamp(now);
+    assertValidSummaryCommitInput(input);
+    this.context.database.exec("BEGIN IMMEDIATE");
+    try {
+      const staleReason = this.validateSummaryCommitFence(input);
+      if (staleReason) {
+        this.context.database.exec("COMMIT");
+        return { status: "discarded_stale", reason: staleReason };
+      }
+      const active = this.readActiveSummary(input.threadId, input.segmentId, input.scope);
+      if (active) {
+        if (input.coveredFromSequence !== active.coveredFromSequence) {
+          throw new Error("Replacement context summary must preserve the original coverage start.");
+        }
+        if (input.coveredThroughSequence <= active.coveredThroughSequence) {
+          throw new Error("Replacement context summary must advance its coverage watermark.");
+        }
+        if (!input.sourceRefs.some((ref) => ref.type === "context_summary" && ref.id === active.id)) {
+          throw new Error(`Replacement context summary must reference its predecessor: ${active.id}`);
+        }
+      }
+      const summary: ConversationContextSummary = {
+        id: `context_summary_${randomUUID()}`,
+        threadId: input.threadId,
+        ...(input.segmentId ? { segmentId: input.segmentId } : {}),
+        scope: input.scope,
+        status: "active",
+        version: (active?.version ?? 0) + 1,
+        coveredFromSequence: input.coveredFromSequence,
+        coveredThroughSequence: input.coveredThroughSequence,
+        ...(input.objective?.trim() ? { objective: input.objective.trim() } : {}),
+        decisions: normalizeStrings(input.decisions),
+        constraints: normalizeStrings(input.constraints),
+        openQuestions: normalizeStrings(input.openQuestions),
+        activeWorkRefs: uniqueDomainRefs(input.activeWorkRefs ?? []),
+        sourceRefs: uniqueDomainRefs(input.sourceRefs),
+        ...(active ? { supersedesSummaryId: active.id } : {}),
+        policyVersion: input.policyVersion,
+        createdAt: now,
+      };
+      if (!isConversationContextSummary(summary)) {
+        throw new Error("Conversation context summary failed schema validation.");
+      }
+      if (active) {
+        this.context.database.prepare(`
+          UPDATE conversation_context_summaries
+          SET status = 'superseded'
+          WHERE workspace_id = ? AND id = ? AND status = 'active'
+        `).run(DEFAULT_WORKSPACE_ID, active.id);
+      }
+      this.context.database.prepare(`
+        INSERT INTO conversation_context_summaries (
+          id, workspace_id, thread_id, segment_id, scope, status, version,
+          covered_from_sequence, covered_through_sequence, objective, decisions_json,
+          constraints_json, open_questions_json, active_work_refs_json, source_refs_json,
+          supersedes_summary_id, policy_version, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        summary.id,
+        DEFAULT_WORKSPACE_ID,
+        summary.threadId,
+        summary.segmentId ?? null,
+        summary.scope,
+        summary.status,
+        summary.version,
+        summary.coveredFromSequence,
+        summary.coveredThroughSequence,
+        summary.objective ?? null,
+        stringifyJson(summary.decisions),
+        stringifyJson(summary.constraints),
+        stringifyJson(summary.openQuestions),
+        stringifyJson(summary.activeWorkRefs),
+        stringifyJson(summary.sourceRefs),
+        summary.supersedesSummaryId ?? null,
+        summary.policyVersion,
+        summary.createdAt,
+      );
+      this.context.database.exec("COMMIT");
+      return { status: "committed", summary };
+    } catch (error) {
+      this.context.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  createConversationContextSnapshot(
+    input: CreateConversationContextSnapshotInput,
+    now: string,
+  ): ConversationContextSnapshot {
+    assertCanonicalTimestamp(now);
+    this.context.database.exec("BEGIN IMMEDIATE");
+    try {
+      const snapshot = this.createConversationContextSnapshotWithinTransaction(input, now);
+      this.context.database.exec("COMMIT");
+      return snapshot;
+    } catch (error) {
+      this.context.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  createConversationContextSnapshotWithinTransaction(
+    input: CreateConversationContextSnapshotInput,
+    now: string,
+  ): ConversationContextSnapshot {
+    assertCanonicalTimestamp(now);
+    assertValidSnapshotInput(input);
+    const thread = this.context.database.prepare(`
+      SELECT status FROM ling_threads WHERE workspace_id = ? AND id = ?
+    `).get(DEFAULT_WORKSPACE_ID, input.threadId) as Record<string, SQLOutputValue> | undefined;
+    if (!thread) throw new Error(`Conversation snapshot thread not found: ${input.threadId}`);
+    const segment = this.context.database.prepare(`
+      SELECT thread_id, state FROM context_segments WHERE workspace_id = ? AND id = ?
+    `).get(DEFAULT_WORKSPACE_ID, input.segmentId) as Record<string, SQLOutputValue> | undefined;
+    if (!segment || readString(segment, "thread_id") !== input.threadId) {
+      throw new Error(`Conversation snapshot segment does not belong to thread: ${input.segmentId}`);
+    }
+    const watermark = this.context.database.prepare(`
+      SELECT id FROM conversation_items
+      WHERE workspace_id = ? AND thread_id = ? AND sequence = ? AND status = 'committed'
+    `).get(DEFAULT_WORKSPACE_ID, input.threadId, input.throughItemSequence);
+    if (!watermark) {
+      throw new Error(`Conversation snapshot watermark item not found: ${input.threadId}/${input.throughItemSequence}`);
+    }
+    const summaryIds = [...new Set(input.summaryIds ?? [])];
+    for (const summaryId of summaryIds) {
+      const summary = this.getConversationContextSummary(summaryId);
+      if (!summary || summary.threadId !== input.threadId || summary.coveredThroughSequence > input.throughItemSequence) {
+        throw new Error(`Conversation snapshot summary is outside the fork boundary: ${summaryId}`);
+      }
+    }
+    const snapshot: ConversationContextSnapshot = {
+      id: input.id ?? `context_snapshot_${randomUUID()}`,
+      threadId: input.threadId,
+      segmentId: input.segmentId,
+      projectionVersion: input.projectionVersion,
+      throughItemSequence: input.throughItemSequence,
+      summaryIds,
+      sourceRefs: uniqueDomainRefs(input.sourceRefs),
+      policyVersion: input.policyVersion,
+      createdAt: now,
+    };
+    if (!isConversationContextSnapshot(snapshot)) {
+      throw new Error("Conversation context snapshot failed schema validation.");
+    }
+    this.context.database.prepare(`
+      INSERT INTO conversation_context_snapshots (
+        id, workspace_id, thread_id, segment_id, projection_version,
+        through_item_sequence, summary_ids_json, source_refs_json, policy_version, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      snapshot.id,
+      DEFAULT_WORKSPACE_ID,
+      snapshot.threadId,
+      snapshot.segmentId,
+      snapshot.projectionVersion,
+      snapshot.throughItemSequence,
+      stringifyJson(snapshot.summaryIds),
+      stringifyJson(snapshot.sourceRefs),
+      snapshot.policyVersion,
+      snapshot.createdAt,
+    );
+    return snapshot;
+  }
+
+  getConversationContextSnapshot(snapshotId: string): ConversationContextSnapshot | undefined {
+    const row = this.context.database.prepare(`${conversationContextSnapshotSelectSql} WHERE id = ?`).get(snapshotId);
+    return row ? mapConversationContextSnapshot(row as Record<string, SQLOutputValue>) : undefined;
+  }
+
+  listConversationContextSnapshots(
+    options: ListConversationContextSnapshotsOptions,
+  ): readonly ConversationContextSnapshot[] {
+    const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
+    return this.context.database.prepare(`
+      ${conversationContextSnapshotSelectSql}
+      WHERE workspace_id = ? AND thread_id = ?
+      ORDER BY created_at DESC, id DESC
+      LIMIT ?
+    `).all(DEFAULT_WORKSPACE_ID, options.threadId, limit)
+      .map((row) => mapConversationContextSnapshot(row as Record<string, SQLOutputValue>));
+  }
+
+  private validateSummaryCommitFence(
+    input: CommitConversationContextSummaryInput,
+  ): ConversationContextSummaryDiscardReason | undefined {
+    const active = this.readActiveSummary(input.threadId, input.segmentId, input.scope);
+    if ((active?.id ?? null) !== input.expectedActiveSummaryId) return "active_summary_changed";
+    const thread = this.context.database.prepare(`
+      SELECT status FROM ling_threads WHERE workspace_id = ? AND id = ?
+    `).get(DEFAULT_WORKSPACE_ID, input.threadId) as Record<string, SQLOutputValue> | undefined;
+    if (!thread) throw new Error(`Conversation summary thread not found: ${input.threadId}`);
+    if (input.segmentId) {
+      const segment = this.context.database.prepare(`
+        SELECT thread_id, state FROM context_segments WHERE workspace_id = ? AND id = ?
+      `).get(DEFAULT_WORKSPACE_ID, input.segmentId) as Record<string, SQLOutputValue> | undefined;
+      if (!segment || readString(segment, "thread_id") !== input.threadId) {
+        throw new Error(`Conversation summary segment does not belong to thread: ${input.segmentId}`);
+      }
+      const state = readString(segment, "state");
+      if (state === "archived" || state === "merged") return "segment_changed";
+    }
+    const current = this.readSummaryFenceRows(input);
+    if (current.length !== input.sourceFence.length) return "source_items_changed";
+    for (let index = 0; index < current.length; index += 1) {
+      const row = current[index];
+      const expected = input.sourceFence[index];
+      if (!row || !expected) return "source_items_changed";
+      if (
+        readString(row, "item_id") !== expected.itemId
+        || readNumber(row, "sequence") !== expected.sequence
+        || readNumber(row, "item_revision") !== expected.revision
+        || readString(row, "updated_at") !== expected.updatedAt
+      ) return "source_items_changed";
+      if (
+        readString(row, "turn_id") !== expected.turnId
+        || readString(row, "assignment_id") !== expected.assignmentId
+        || readNumber(row, "assignment_revision") !== expected.assignmentRevision
+      ) return "assignments_changed";
+      if (
+        readString(row, "visibility") !== expected.visibility
+        || readNullableString(row, "visibility_owner_id") !== expected.visibilityOwnerId
+      ) return "visibility_changed";
+    }
+    return undefined;
+  }
+
+  private readSummaryFenceRows(
+    input: CommitConversationContextSummaryInput,
+  ): readonly Record<string, SQLOutputValue>[] {
+    const segmentClause = input.segmentId ? "AND assignments.segment_id = ?" : "";
+    const params: (string | number)[] = [
+      DEFAULT_WORKSPACE_ID,
+      input.threadId,
+      input.sourceFence[0]?.sequence ?? input.coveredFromSequence,
+      input.coveredThroughSequence,
+    ];
+    if (input.segmentId) params.push(input.segmentId);
+    return this.context.database.prepare(`
+      SELECT items.id AS item_id, items.sequence, items.revision AS item_revision,
+             items.updated_at, items.visibility, items.visibility_owner_id, items.turn_id,
+             assignments.id AS assignment_id, assignments.revision AS assignment_revision
+      FROM conversation_items AS items
+      INNER JOIN turn_context_assignments AS assignments
+        ON assignments.turn_id = items.turn_id
+       AND assignments.revision = (
+         SELECT MAX(candidate.revision)
+         FROM turn_context_assignments AS candidate
+         WHERE candidate.turn_id = items.turn_id
+       )
+      WHERE items.workspace_id = ? AND items.thread_id = ?
+        AND items.sequence >= ? AND items.sequence <= ?
+        AND items.status = 'committed'
+        AND items.visibility IN ('channel', 'thread_participants')
+        AND NOT EXISTS (
+          SELECT 1 FROM conversation_items AS replacement
+          WHERE replacement.supersedes_item_id = items.id
+        )
+        ${segmentClause}
+      ORDER BY items.sequence ASC, items.id ASC
+    `).all(...params) as Record<string, SQLOutputValue>[];
+  }
+
+  private readActiveSummary(
+    threadId: string,
+    segmentId: string | undefined,
+    scope: ConversationContextSummary["scope"],
+  ): ConversationContextSummary | undefined {
+    const rows = this.context.database.prepare(`
+      ${conversationContextSummarySelectSql}
+      WHERE workspace_id = ? AND thread_id = ? AND segment_id IS ? AND scope = ? AND status = 'active'
+      ORDER BY version DESC, covered_through_sequence DESC, created_at DESC
+      LIMIT 2
+    `).all(DEFAULT_WORKSPACE_ID, threadId, segmentId ?? null, scope) as Record<string, SQLOutputValue>[];
+    if (rows.length > 1) {
+      throw new Error(`Multiple active conversation summaries found for ${threadId}/${segmentId ?? scope}.`);
+    }
+    return rows[0] ? mapConversationContextSummary(rows[0]) : undefined;
   }
 
   private resolveAssignmentSegment(
@@ -299,6 +591,12 @@ const conversationContextSummarySelectSql = `
   FROM conversation_context_summaries
 `;
 
+const conversationContextSnapshotSelectSql = `
+  SELECT id, workspace_id, thread_id, segment_id, projection_version,
+         through_item_sequence, summary_ids_json, source_refs_json, policy_version, created_at
+  FROM conversation_context_snapshots
+`;
+
 function mapContextSegment(row: Record<string, SQLOutputValue>): ContextSegment {
   const value = {
     id: readString(row, "id"),
@@ -372,6 +670,25 @@ function mapConversationContextSummary(row: Record<string, SQLOutputValue>): Con
   return value;
 }
 
+function mapConversationContextSnapshot(row: Record<string, SQLOutputValue>): ConversationContextSnapshot {
+  const summaryIds = parseJsonStringArray(readString(row, "summary_ids_json"));
+  const value = {
+    id: readString(row, "id"),
+    threadId: readString(row, "thread_id"),
+    segmentId: readString(row, "segment_id"),
+    projectionVersion: readString(row, "projection_version"),
+    throughItemSequence: readNumber(row, "through_item_sequence"),
+    summaryIds,
+    sourceRefs: parseDomainRefs(readString(row, "source_refs_json")),
+    policyVersion: readString(row, "policy_version"),
+    createdAt: readString(row, "created_at"),
+  } as unknown;
+  if (!isConversationContextSnapshot(value)) {
+    throw new Error(`Invalid conversation context snapshot row: ${readString(row, "id")}`);
+  }
+  return value;
+}
+
 function parseDomainRefs(value: string): ConversationDomainRef[] {
   const parsed = parseJson(value);
   if (!Array.isArray(parsed) || parsed.some((ref) => !isConversationDomainRef(ref))) {
@@ -393,6 +710,102 @@ function assignmentMatches(
     && assignment.antecedentTurnId === input.antecedentTurnId
     && assignment.policyVersion === input.policyVersion
     && stringifyJson(assignment.evidenceRefs) === stringifyJson(evidenceRefs);
+}
+
+function assertValidSummaryCommitInput(input: CommitConversationContextSummaryInput): void {
+  if (!input.threadId.trim()) throw new Error("Conversation summary thread id is required.");
+  if (input.scope === "segment" && !input.segmentId?.trim()) {
+    throw new Error("Segment context summary requires a segment id.");
+  }
+  if (!Number.isSafeInteger(input.coveredFromSequence) || input.coveredFromSequence < 1) {
+    throw new RangeError(`Invalid context summary coverage start: ${input.coveredFromSequence}`);
+  }
+  if (
+    !Number.isSafeInteger(input.coveredThroughSequence)
+    || input.coveredThroughSequence < input.coveredFromSequence
+  ) {
+    throw new RangeError(`Invalid context summary coverage end: ${input.coveredThroughSequence}`);
+  }
+  if (!input.policyVersion.trim() || !input.projectionVersion.trim() || !input.visibilityFingerprint.trim()) {
+    throw new Error("Conversation summary policy and projection fence values are required.");
+  }
+  if (input.sourceRefs.some((ref) => !isConversationDomainRef(ref))) {
+    throw new Error("Conversation summary contains an invalid source ref.");
+  }
+  if ((input.activeWorkRefs ?? []).some((ref) => !isConversationDomainRef(ref))) {
+    throw new Error("Conversation summary contains an invalid active-work ref.");
+  }
+  if (input.sourceFence.length === 0) {
+    throw new Error("Conversation summary source fence must not be empty.");
+  }
+  const itemIds = new Set<string>();
+  let priorSequence = 0;
+  for (const source of input.sourceFence) {
+    assertValidSummarySourceFence(source);
+    if (itemIds.has(source.itemId)) throw new Error(`Duplicate conversation summary source item: ${source.itemId}`);
+    if (source.sequence <= priorSequence) {
+      throw new Error("Conversation summary source fence must be ordered by increasing sequence.");
+    }
+    itemIds.add(source.itemId);
+    priorSequence = source.sequence;
+  }
+  if (
+    (input.sourceFence[0]?.sequence ?? 0) < input.coveredFromSequence
+    || input.sourceFence.at(-1)?.sequence !== input.coveredThroughSequence
+  ) {
+    throw new Error("Conversation summary coverage must contain its fenced source range.");
+  }
+  const sourceRefItemIds = new Set(
+    input.sourceRefs
+      .filter((ref) => ref.type === "conversation_item")
+      .map((ref) => ref.id),
+  );
+  for (const itemId of itemIds) {
+    if (!sourceRefItemIds.has(itemId)) {
+      throw new Error(`Conversation summary source ref is missing item: ${itemId}`);
+    }
+  }
+}
+
+function assertValidSummarySourceFence(source: ConversationContextSummarySourceFence): void {
+  if (!source.itemId.trim() || !source.turnId.trim() || !source.assignmentId.trim()) {
+    throw new Error("Conversation summary source fence ids are required.");
+  }
+  if (!Number.isSafeInteger(source.sequence) || source.sequence < 1) {
+    throw new RangeError(`Invalid conversation summary source sequence: ${source.sequence}`);
+  }
+  if (!Number.isSafeInteger(source.revision) || source.revision < 0) {
+    throw new RangeError(`Invalid conversation summary source revision: ${source.revision}`);
+  }
+  if (!Number.isSafeInteger(source.assignmentRevision) || source.assignmentRevision < 1) {
+    throw new RangeError(`Invalid conversation summary assignment revision: ${source.assignmentRevision}`);
+  }
+  assertCanonicalTimestamp(source.updatedAt);
+}
+
+function assertValidSnapshotInput(input: CreateConversationContextSnapshotInput): void {
+  if (!input.threadId.trim() || !input.segmentId.trim()) {
+    throw new Error("Conversation snapshot thread and segment ids are required.");
+  }
+  if (!input.projectionVersion.trim() || !input.policyVersion.trim()) {
+    throw new Error("Conversation snapshot projection and policy versions are required.");
+  }
+  if (!Number.isSafeInteger(input.throughItemSequence) || input.throughItemSequence < 1) {
+    throw new RangeError(`Invalid conversation snapshot watermark: ${input.throughItemSequence}`);
+  }
+  if (input.sourceRefs.some((ref) => !isConversationDomainRef(ref))) {
+    throw new Error("Conversation snapshot contains an invalid source ref.");
+  }
+}
+
+function normalizeStrings(values: readonly string[] | undefined): string[] {
+  return [...new Set((values ?? []).map((value) => value.trim()).filter(Boolean))];
+}
+
+function uniqueDomainRefs(refs: readonly ConversationDomainRef[]): ConversationDomainRef[] {
+  const byKey = new Map<string, ConversationDomainRef>();
+  for (const ref of refs) byKey.set(`${ref.type}:${ref.id}`, ref);
+  return [...byKey.values()];
 }
 
 function assertValidContextSegment(value: unknown): asserts value is ContextSegment {

@@ -604,6 +604,8 @@ test("sqlite channel message root pages can exclude channel branch lanes while k
     );
     const rootItem = store.getConversationItem(rootMessage.id);
     assert.ok(rootItem?.turnId);
+    const rootAssignment = store.getEffectiveTurnContextAssignment(rootItem.turnId);
+    assert.ok(rootAssignment);
     const branchThread = store.resolveOrCreateConversationThread({
       id: "thread_branch_lane",
       surfaceKind: "branch",
@@ -612,6 +614,15 @@ test("sqlite channel message root pages can exclude channel branch lanes while k
       parentTurnId: rootItem.turnId,
       title: "Branch lane",
       objective: "Test branch isolation.",
+      forkContextSnapshot: {
+        id: "snapshot_branch_lane",
+        segmentId: rootAssignment.segmentId,
+        projectionVersion: "ctxv2_branch_lane",
+        throughItemSequence: rootItem.sequence,
+        summaryIds: [],
+        sourceRefs: [{ type: "conversation_item", id: rootItem.id }],
+        policyVersion: "continuity-v2-snapshot-v1",
+      },
     }, "2026-05-29T00:00:02.500Z").thread;
     const branch = store.createChannelBranch(
       {

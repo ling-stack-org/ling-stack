@@ -9,6 +9,7 @@ import { createSqliteRunStore, lingThreadKinds as coreLingThreadKinds } from "@l
 import { createDaemonServer } from "../dist/index.js";
 import { maybeQueueGoalContinuation } from "../dist/features/runs/interventions.js";
 import { syncLingThreadForTerminalRun } from "../dist/features/runs/threads.js";
+import { buildConversationContextProjection } from "../dist/features/channels/context-processing/conversation-context-projector.js";
 import { prepareChannelCreateBody } from "./conversation-model-test-fixture.mjs";
 import { ensureGitRepoForChannelPost } from "./git-test-helpers.mjs";
 
@@ -292,6 +293,89 @@ test("daemon fork creates child thread lineage without copying runs", async () =
     });
     assert.equal(archivedFork.status, 409);
     assert.equal(archivedFork.body.error, "source_thread_archived");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("daemon channel conversation fork atomically binds an immutable context snapshot", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-channel-fork-snapshot-"));
+  const stores = new Map();
+  const daemon = await startDaemonForTest(new SuccessfulRunner(), stores);
+  try {
+    const channel = (await createChannel(daemon.url, cwd)).channel;
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const root = store.resolveOrCreateConversationThread({
+      surfaceKind: "channel_root",
+      channelId: channel.id,
+      title: "Channel root",
+      objective: "Fork with continuity",
+    }, "2026-08-10T05:00:00.000Z").thread;
+    const source = store.appendConversationUserTurn({
+      itemId: "item_channel_fork_source",
+      turnId: "turn_channel_fork_source",
+      channelId: channel.id,
+      threadId: root.id,
+      title: "Keep this fact",
+      userInstruction: "Keep this fact",
+      payload: {
+        body: "Keep this fact",
+        format: "plain_text",
+        mentions: [],
+        attachmentIds: [],
+        linkPreviewIds: [],
+        fileRefs: [],
+      },
+      idempotencyKey: "channel-fork-source",
+    }, "2026-08-10T05:00:01.000Z");
+    const run = store.createRun({
+      id: "run_channel_fork_source",
+      cwd,
+      taskId: "task_channel_fork_source",
+      channelId: channel.id,
+      threadId: root.id,
+      turnId: source.turnId,
+      providerName: "test",
+      providerModel: "test",
+      taskSnapshot: { id: "task_channel_fork_source", title: "Keep this fact", prompt: "Keep this fact" },
+      providerSnapshot: { provider: "test", model: "test" },
+      requestSnapshot: { cwd, task: { id: "task_channel_fork_source", title: "Keep this fact", prompt: "Keep this fact" } },
+      createdAt: "2026-08-10T05:00:02.000Z",
+    });
+    store.markRunStarted(run.id, "2026-08-10T05:00:03.000Z");
+    store.markRunSucceeded(run.id, "2026-08-10T05:00:04.000Z");
+    const parentProjection = buildConversationContextProjection({
+      store,
+      sourceItemId: source.item.id,
+      view: "reply",
+    });
+
+    const forked = await postJson(`${daemon.url}/threads/${encodeURIComponent(root.id)}/fork?cwd=${encodeURIComponent(cwd)}`, {
+      turnId: source.turnId,
+      sourceRunId: run.id,
+      idempotencyKey: "channel-context-fork",
+    });
+    assert.equal(forked.childThread.surfaceKind, "branch");
+    assert.ok(forked.childThread.forkContextSnapshotId);
+    const snapshot = store.getConversationContextSnapshot(forked.childThread.forkContextSnapshotId);
+    assert.ok(snapshot);
+    assert.equal(snapshot.threadId, root.id);
+    assert.equal(snapshot.segmentId, parentProjection.metadata.segmentId);
+    assert.equal(snapshot.projectionVersion, parentProjection.metadata.projectionVersion);
+    assert.equal(snapshot.throughItemSequence, source.item.sequence);
+    assert.equal(snapshot.sourceRefs.some((ref) => ref.type === "conversation_item" && ref.id === source.item.id), true);
+    assert.equal(store.listConversationItemsPage({ threadId: forked.childThread.id, limit: 10 }).items.length, 0);
+
+    const repeated = await postJson(`${daemon.url}/threads/${encodeURIComponent(root.id)}/fork?cwd=${encodeURIComponent(cwd)}`, {
+      turnId: source.turnId,
+      sourceRunId: run.id,
+      idempotencyKey: "channel-context-fork",
+    });
+    assert.equal(repeated.childThread.id, forked.childThread.id);
+    assert.equal(repeated.childThread.forkContextSnapshotId, snapshot.id);
+    assert.equal(store.listConversationContextSnapshots({ threadId: root.id }).length, 1);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });

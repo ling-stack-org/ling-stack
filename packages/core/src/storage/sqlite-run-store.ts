@@ -746,6 +746,8 @@ export class SqliteRunStore implements RunStore {
       {
         createLingThread: (input, now) => this.lingThreads.createLingThread(input, now),
         getLingThread: (threadId) => this.lingThreads.getLingThread(threadId),
+        createConversationContextSnapshotWithinTransaction: (input, now) =>
+          this.conversationContext.createConversationContextSnapshotWithinTransaction(input, now),
       },
     );
     this.lingThreadCleanup = new SqliteLingThreadCleanupStore(
@@ -2545,6 +2547,32 @@ export class SqliteRunStore implements RunStore {
     options: import("../conversation-context-store-types.js").ListConversationContextSummariesOptions,
   ): readonly import("@ling-stack/contracts").ConversationContextSummary[] {
     return this.conversationContext.listConversationContextSummaries(options);
+  }
+
+  commitConversationContextSummary(
+    input: import("../conversation-context-store-types.js").CommitConversationContextSummaryInput,
+    now: string,
+  ): import("../conversation-context-store-types.js").CommitConversationContextSummaryResult {
+    return this.conversationContext.commitConversationContextSummary(input, now);
+  }
+
+  createConversationContextSnapshot(
+    input: import("../conversation-context-store-types.js").CreateConversationContextSnapshotInput,
+    now: string,
+  ): import("@ling-stack/contracts").ConversationContextSnapshot {
+    return this.conversationContext.createConversationContextSnapshot(input, now);
+  }
+
+  getConversationContextSnapshot(
+    id: string,
+  ): import("@ling-stack/contracts").ConversationContextSnapshot | undefined {
+    return this.conversationContext.getConversationContextSnapshot(id);
+  }
+
+  listConversationContextSnapshots(
+    options: import("../conversation-context-store-types.js").ListConversationContextSnapshotsOptions,
+  ): readonly import("@ling-stack/contracts").ConversationContextSnapshot[] {
+    return this.conversationContext.listConversationContextSnapshots(options);
   }
 
   createChannelMessage(input: CreateChannelMessageInput, now: string): ChannelMessage {

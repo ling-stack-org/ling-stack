@@ -59,6 +59,17 @@ import {
   projectChannelMessageRevisionMetadata,
 } from "../conversations/supersession-projection.js";
 import { projectConversationActiveReplyTarget } from "../conversations/active-reply-target.js";
+import { resolveChannelReplyExecutionTarget } from "./channel-reply-execution-target.js";
+import { resolveProviderContextBudget } from "./context-packs.js";
+import { createModelConversationSummaryGenerator } from "./context-processing/conversation-summary-model.js";
+import {
+  executeConversationSummaryPlan,
+  planConversationContextSummary,
+  type ConversationSummaryPlan,
+  type GenerateConversationSummary,
+} from "./context-processing/conversation-summary-coordinator.js";
+
+const inFlightConversationSummaries = new Map<string, Promise<void>>();
 
 export type StartChannelExecutionProposalWorkflow = (input: {
   readonly store: RunStore;
@@ -463,6 +474,28 @@ export async function handleLingAgentChannelMessage(input: LingAgentChannelMessa
     sourceMessage: input.sourceMessage,
     requestedTeammateId: input.requestedTeammateId,
   });
+  const summaryProviderPresetId = resolveChannelReplyExecutionTarget({
+    store: input.store,
+    channel: input.channel,
+    requestedTeammateId: targetTeammateId,
+    requestedProviderPresetId: input.requestedProviderPresetId,
+  }).providerPresetId;
+  let summaryPlan = prepareConversationSummaryPlan(input, summaryProviderPresetId);
+  const summaryGenerator = createModelConversationSummaryGenerator({
+    store: input.store,
+    channel: input.channel,
+    runnerRegistry: input.routeDependencies.runnerRegistry,
+    secretResolver: input.routeDependencies.secretResolver,
+    requestedProviderPresetId: summaryProviderPresetId,
+  });
+  if (summaryPlan?.trigger === "hard") {
+    const summaryKey = conversationSummaryPlanKey(input.store, summaryPlan);
+    await inFlightConversationSummaries.get(summaryKey);
+    summaryPlan = prepareConversationSummaryPlan(input, summaryProviderPresetId);
+    if (summaryPlan?.trigger === "hard") {
+      await executeConversationSummaryPlanOnce(input.store, summaryPlan, summaryGenerator);
+    }
+  }
   const lane = await acquireChannelReplyLane({
     coordinator: input.replyDispatchCoordinator,
     store: input.store,
@@ -492,6 +525,50 @@ export async function handleLingAgentChannelMessage(input: LingAgentChannelMessa
     );
   } finally {
     trackedReply.releaseIfUnused();
+    if (summaryPlan?.trigger === "soft") {
+      void executeConversationSummaryPlanOnce(input.store, summaryPlan, summaryGenerator);
+    }
+  }
+}
+
+function executeConversationSummaryPlanOnce(
+  store: RunStore,
+  plan: ConversationSummaryPlan,
+  generate: GenerateConversationSummary | undefined,
+): Promise<void> {
+  const key = conversationSummaryPlanKey(store, plan);
+  const existing = inFlightConversationSummaries.get(key);
+  if (existing) return existing;
+  const execution = executeConversationSummaryPlan({ store, plan, generate })
+    .then(() => undefined)
+    .catch(() => undefined)
+    .finally(() => {
+      if (inFlightConversationSummaries.get(key) === execution) {
+        inFlightConversationSummaries.delete(key);
+      }
+    });
+  inFlightConversationSummaries.set(key, execution);
+  return execution;
+}
+
+function conversationSummaryPlanKey(store: RunStore, plan: ConversationSummaryPlan): string {
+  return `${store.paths.databasePath}:${plan.projection.metadata.threadId}:${plan.projection.metadata.segmentId}`;
+}
+
+function prepareConversationSummaryPlan(
+  input: LingAgentChannelMessageInput,
+  providerPresetId: string | undefined,
+): ConversationSummaryPlan | undefined {
+  try {
+    const providerPreset = providerPresetId ? input.store.getProviderPreset(providerPresetId) : undefined;
+    const budget = resolveProviderContextBudget(providerPreset, "channel_reply");
+    return planConversationContextSummary({
+      store: input.store,
+      sourceItemId: input.sourceMessage.id,
+      inputBudgetTokens: budget.inputBudgetTokens,
+    });
+  } catch {
+    return undefined;
   }
 }
 

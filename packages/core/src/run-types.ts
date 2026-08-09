@@ -1721,6 +1721,20 @@ export interface RunStore {
   listConversationContextSummaries(
     options: import("./conversation-context-store-types.js").ListConversationContextSummariesOptions,
   ): readonly import("@ling-stack/contracts").ConversationContextSummary[];
+  commitConversationContextSummary(
+    input: import("./conversation-context-store-types.js").CommitConversationContextSummaryInput,
+    now: string,
+  ): import("./conversation-context-store-types.js").CommitConversationContextSummaryResult;
+  createConversationContextSnapshot(
+    input: import("./conversation-context-store-types.js").CreateConversationContextSnapshotInput,
+    now: string,
+  ): import("@ling-stack/contracts").ConversationContextSnapshot;
+  getConversationContextSnapshot(
+    id: string,
+  ): import("@ling-stack/contracts").ConversationContextSnapshot | undefined;
+  listConversationContextSnapshots(
+    options: import("./conversation-context-store-types.js").ListConversationContextSnapshotsOptions,
+  ): readonly import("@ling-stack/contracts").ConversationContextSnapshot[];
   createChannelMessageRouteDecision(input: CreateChannelMessageRouteDecisionInput, now: string): ChannelMessageRouteDecision;
   getChannelMessageRouteDecision(id: string): ChannelMessageRouteDecision | undefined;
   listChannelMessageRouteDecisions(options?: ListChannelMessageRouteDecisionsOptions): ChannelMessageRouteDecision[];
@@ -2278,6 +2292,10 @@ export type ChannelStoreFacet = RunStoreFacet<
   | "applyTurnContextAssignment"
   | "getConversationContextSummary"
   | "listConversationContextSummaries"
+  | "commitConversationContextSummary"
+  | "createConversationContextSnapshot"
+  | "getConversationContextSnapshot"
+  | "listConversationContextSnapshots"
   | "createChannelMessageRouteDecision"
   | "getChannelMessageRouteDecision"
   | "listChannelMessageRouteDecisions"

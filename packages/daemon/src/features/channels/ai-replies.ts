@@ -307,10 +307,11 @@ async function completeAiChannelReply(input: {
         error: firstRunFailure,
         now: observedAt,
       });
-      const compaction = compactChannelDiscussionForNoToolsRetry({
+      const compaction = await compactChannelDiscussionForNoToolsRetry({
         store: input.store,
         channel: input.channel,
         sourceMessage: input.sourceMessage,
+        inputBudgetTokens: discussionContextPack.budget.inputBudgetTokens,
         now: observedAt,
       });
       discussionContextPack = buildChannelReplyContextPack({
