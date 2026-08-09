@@ -492,6 +492,9 @@ import { SqliteProviderStore } from "./sqlite/provider-store.js";
 import { SqliteMcpStore } from "./sqlite/mcp-store.js";
 import { SqliteManagedPluginStore } from "./sqlite/managed-plugin-store.js";
 import { SqliteCuaDriverActivationStore } from "./sqlite/cua-driver-activation-store.js";
+import { SqliteConversationItemStore } from "./sqlite/conversation-item-store.js";
+import { SqliteConversationTurnIngestStore } from "./sqlite/conversation-turn-ingest-store.js";
+import { SqliteConversationThreadTopologyStore } from "./sqlite/conversation-thread-topology-store.js";
 import { SqliteMediaStore } from "./sqlite/media-store.js";
 import { SqliteMediaWorkflowStore } from "./sqlite/media-workflow-store.js";
 import { SqliteApprovalPolicyStore } from "./sqlite/approval-policy-store.js";
@@ -613,6 +616,9 @@ export class SqliteRunStore implements RunStore {
   private readonly memoryRetrieval: SqliteMemoryRetrievalStore;
   private readonly governanceNotifications: SqliteGovernanceNotificationStore;
   private readonly channelReferences: SqliteChannelReferenceValidator;
+  private readonly conversationItems: SqliteConversationItemStore;
+  private readonly conversationTurnIngest: SqliteConversationTurnIngestStore;
+  private readonly conversationThreadTopology: SqliteConversationThreadTopologyStore;
   private readonly channelMessages: SqliteChannelMessageStore;
   private readonly channelRouteDecisions: SqliteChannelRouteDecisionStore;
   private readonly channelIntentDecisions: SqliteChannelIntentDecisionStore;
@@ -640,6 +646,11 @@ export class SqliteRunStore implements RunStore {
     ensureRuntimePaths(this.paths);
     const existed = existsSync(this.paths.databasePath);
     this.database = new DatabaseSync(this.paths.databasePath);
+    this.conversationItems = new SqliteConversationItemStore({ database: this.database });
+    this.conversationTurnIngest = new SqliteConversationTurnIngestStore(
+      { database: this.database },
+      this.conversationItems,
+    );
     this.automations = new SqliteAutomationStore({ database: this.database });
     this.providers = new SqliteProviderStore({ database: this.database });
     this.mcps = new SqliteMcpStore(
@@ -700,6 +711,13 @@ export class SqliteRunStore implements RunStore {
     this.lingThreads = new SqliteLingThreadStore(
       { database: this.database },
       { rebuildLingThreadMetadata: (threadId, now) => this.tryRebuildLingThreadMetadata(threadId, now) },
+    );
+    this.conversationThreadTopology = new SqliteConversationThreadTopologyStore(
+      { database: this.database },
+      {
+        createLingThread: (input, now) => this.lingThreads.createLingThread(input, now),
+        getLingThread: (threadId) => this.lingThreads.getLingThread(threadId),
+      },
     );
     this.lingThreadCleanup = new SqliteLingThreadCleanupStore(
       { database: this.database },
@@ -1026,6 +1044,13 @@ export class SqliteRunStore implements RunStore {
 
   createLingThread(input: CreateLingThreadInput, now: string): LingThread {
     return this.lingThreads.createLingThread(input, now);
+  }
+
+  resolveOrCreateConversationThread(
+    input: import("../conversation-thread-topology-types.js").ResolveOrCreateConversationThreadInput,
+    now: string,
+  ): import("../conversation-thread-topology-types.js").ResolveOrCreateConversationThreadResult {
+    return this.conversationThreadTopology.resolveOrCreate(input, now);
   }
 
   commitRemoteConversationSend(
@@ -2340,6 +2365,45 @@ export class SqliteRunStore implements RunStore {
 
   deleteTeammatePrivateAttachment(id: string): boolean {
     return this.teammateDirect.deleteTeammatePrivateAttachment(id);
+  }
+
+  appendConversationItem(
+    input: import("../conversation-item-store-types.js").AppendConversationItem,
+    now: string,
+  ): import("@ling-stack/contracts").ConversationItemV1 {
+    return this.conversationItems.appendConversationItem(input, now);
+  }
+
+  appendConversationUserTurn(
+    input: import("../conversation-turn-ingest-types.js").AppendConversationUserTurnInput,
+    now: string,
+  ): import("../conversation-turn-ingest-types.js").AppendConversationUserTurnResult {
+    return this.conversationTurnIngest.appendUserTurn(input, now);
+  }
+
+  getConversationItem(id: string): import("@ling-stack/contracts").ConversationItemV1 | undefined {
+    return this.conversationItems.getConversationItem(id);
+  }
+
+  getConversationItemByIdempotencyKey(
+    threadId: string,
+    idempotencyKey: string,
+  ): import("@ling-stack/contracts").ConversationItemV1 | undefined {
+    return this.conversationItems.getConversationItemByIdempotencyKey(threadId, idempotencyKey);
+  }
+
+  listConversationItemsPage(
+    options: import("../conversation-item-store-types.js").ListConversationItemsOptions,
+  ): import("../conversation-item-store-types.js").ConversationItemListPage {
+    return this.conversationItems.listConversationItemsPage(options);
+  }
+
+  updatePendingConversationItem(
+    itemId: string,
+    input: import("../conversation-item-store-types.js").UpdatePendingConversationItemInput,
+    now: string,
+  ): import("@ling-stack/contracts").ConversationItemV1 {
+    return this.conversationItems.updatePendingConversationItem(itemId, input, now);
   }
 
   createChannelMessage(input: CreateChannelMessageInput, now: string): ChannelMessage {

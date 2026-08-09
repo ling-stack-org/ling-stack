@@ -396,11 +396,12 @@ test("Continuity v2 migration rolls back all schema and data changes on an unrep
 
   const database = new DatabaseSync(resolveRuntimePaths(cwd).databasePath);
   database.exec("PRAGMA foreign_keys = ON;");
+  const hadSurfaceKind = hasColumn(database, "ling_threads", "surface_kind");
   assert.throws(() => migrate(database), /cannot represent legacy message without loss/);
   assert.equal(hasTable(database, "channel_messages"), true);
   assert.equal(hasTable(database, "conversation_items"), false);
   assert.equal(hasColumn(database, "ling_turns", "source_message_id"), true);
-  assert.equal(hasColumn(database, "ling_threads", "surface_kind"), false);
+  assert.equal(hasColumn(database, "ling_threads", "surface_kind"), hadSurfaceKind);
   assert.equal(database.prepare("PRAGMA foreign_keys").get().foreign_keys, 1);
   assert.equal(database.prepare("SELECT 1 FROM schema_migrations WHERE version = ?").get(CONTINUITY_V2_STORAGE_MIGRATION_VERSION), undefined);
   assert.equal(database.prepare("SELECT COUNT(*) AS count FROM channel_messages").get().count, 1);

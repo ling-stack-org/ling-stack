@@ -190,7 +190,12 @@ export function lingThreadSelectSql(whereClause: string): string {
       updated_at,
       pinned_at,
       archived_at,
-      archived_reason
+      archived_reason,
+      surface_kind,
+      relation_kind,
+      anchor_item_id,
+      fork_context_snapshot_id,
+      next_item_sequence
     FROM ling_threads
     ${whereClause}
   `;

@@ -2,6 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { normalizeChannelRuntimePolicy } from "../../workspace-types.js";
 import { stringifyJson } from "./helpers.js";
 import { removeLegacySkillWorkflowPhaseMetadata } from "./skill-capability-migration.js";
+import { CONTINUITY_V2_STORAGE_MIGRATION_VERSION } from "./continuity-v2-migration.js";
 
 export interface SqliteRunStoreMigrationContext {
   readonly database: DatabaseSync;
@@ -241,6 +242,7 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
         applied_at TEXT NOT NULL
       );
     `);
+    const continuityV2Active = context.hasMigration(CONTINUITY_V2_STORAGE_MIGRATION_VERSION);
 
     if (!context.hasMigration(INITIAL_MIGRATION_VERSION)) {
       database.exec(`
@@ -701,14 +703,15 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
     }
 
     const hasChannelWorkspaceMigration = context.hasMigration(CHANNEL_WORKSPACE_MIGRATION_VERSION);
-    if (
-      !hasChannelWorkspaceMigration ||
+    const channelWorkspaceBaseMissing =
       !context.hasColumn("channels", "default_teammate_id") ||
-      !context.hasColumn("tasks", "assignee_teammate_id") ||
+      !context.hasColumn("tasks", "assignee_teammate_id");
+    const legacyChannelWorkspaceMissing = !continuityV2Active && (
       !context.hasTable("channel_messages") ||
       !context.hasTable("channel_attachments") ||
       !context.hasTable("channel_link_previews")
-    ) {
+    );
+    if (!hasChannelWorkspaceMigration || channelWorkspaceBaseMissing || legacyChannelWorkspaceMissing) {
       if (!context.hasColumn("channels", "default_teammate_id")) {
         database.exec("ALTER TABLE channels ADD COLUMN default_teammate_id TEXT;");
       }
@@ -716,7 +719,7 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
         database.exec("ALTER TABLE tasks ADD COLUMN assignee_teammate_id TEXT;");
       }
 
-      database.exec(`
+      if (!continuityV2Active) database.exec(`
         CREATE TABLE IF NOT EXISTS channel_messages (
           id TEXT PRIMARY KEY,
           workspace_id TEXT NOT NULL,
@@ -804,7 +807,7 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       !context.hasTable("channel_briefs") ||
       !context.hasTable("channel_decisions") ||
       !context.hasTable("channel_handoffs") ||
-      !context.hasTable("channel_context_summaries")
+      (!continuityV2Active && !context.hasTable("channel_context_summaries"))
     ) {
       database.exec(`
         CREATE TABLE IF NOT EXISTS channel_briefs (
@@ -887,28 +890,33 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
         CREATE INDEX IF NOT EXISTS idx_channel_handoffs_channel_status_created
         ON channel_handoffs(channel_id, status, created_at);
 
-        CREATE TABLE IF NOT EXISTS channel_context_summaries (
-          id TEXT PRIMARY KEY,
-          workspace_id TEXT NOT NULL,
-          channel_id TEXT NOT NULL,
-          target_type TEXT NOT NULL,
-          target_id TEXT NOT NULL,
-          source_message_ids_json TEXT NOT NULL,
-          decision_ids_json TEXT NOT NULL,
-          summary TEXT NOT NULL,
-          acceptance_criteria_json TEXT NOT NULL,
-          open_questions_json TEXT NOT NULL,
-          author_type TEXT NOT NULL,
-          author_id TEXT,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL,
-          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
-          FOREIGN KEY(channel_id) REFERENCES channels(id) ON DELETE CASCADE
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_channel_context_summaries_target_updated
-        ON channel_context_summaries(channel_id, target_type, target_id, updated_at);
       `);
+
+      if (!continuityV2Active) {
+        database.exec(`
+          CREATE TABLE IF NOT EXISTS channel_context_summaries (
+            id TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL,
+            channel_id TEXT NOT NULL,
+            target_type TEXT NOT NULL,
+            target_id TEXT NOT NULL,
+            source_message_ids_json TEXT NOT NULL,
+            decision_ids_json TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            acceptance_criteria_json TEXT NOT NULL,
+            open_questions_json TEXT NOT NULL,
+            author_type TEXT NOT NULL,
+            author_id TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+            FOREIGN KEY(channel_id) REFERENCES channels(id) ON DELETE CASCADE
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_channel_context_summaries_target_updated
+          ON channel_context_summaries(channel_id, target_type, target_id, updated_at);
+        `);
+      }
 
       if (!hasChannelProtocolMigration) {
         context.recordMigration(CHANNEL_PROTOCOL_MIGRATION_VERSION, CHANNEL_PROTOCOL_MIGRATION_NAME);
@@ -2660,6 +2668,11 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
           pinned_at TEXT,
           archived_at TEXT,
           archived_reason TEXT,
+          surface_kind TEXT NOT NULL DEFAULT 'work',
+          relation_kind TEXT NOT NULL DEFAULT 'root',
+          anchor_item_id TEXT,
+          fork_context_snapshot_id TEXT,
+          next_item_sequence INTEGER NOT NULL DEFAULT 1,
           FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
           FOREIGN KEY(active_run_id) REFERENCES run_sessions(id) ON DELETE SET NULL,
           FOREIGN KEY(last_run_id) REFERENCES run_sessions(id) ON DELETE SET NULL,
@@ -5235,42 +5248,6 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
         ) VALUES (OLD.workspace_id, 'channel', OLD.id, 'channel', OLD.id, 'delete', 0, OLD.updated_at);
       END;
 
-      CREATE TRIGGER IF NOT EXISTS trg_remote_outbox_channel_message_insert
-      AFTER INSERT ON channel_messages
-      BEGIN
-        INSERT INTO remote_projection_outbox (
-          workspace_id, conversation_kind, conversation_id, entity_type, entity_id,
-          operation, affects_unread, occurred_at
-        ) VALUES (
-          NEW.workspace_id, 'channel', NEW.channel_id, 'channel_message', NEW.id,
-          'insert', CASE WHEN NEW.author_type = 'local-user' THEN 0 ELSE 1 END, NEW.updated_at
-        );
-      END;
-
-      CREATE TRIGGER IF NOT EXISTS trg_remote_outbox_channel_message_update
-      AFTER UPDATE ON channel_messages
-      BEGIN
-        INSERT INTO remote_projection_outbox (
-          workspace_id, conversation_kind, conversation_id, entity_type, entity_id,
-          operation, affects_unread, occurred_at
-        ) VALUES (
-          NEW.workspace_id, 'channel', NEW.channel_id, 'channel_message', NEW.id,
-          'update', CASE WHEN NEW.author_type = 'local-user' THEN 0 ELSE 1 END, NEW.updated_at
-        );
-      END;
-
-      CREATE TRIGGER IF NOT EXISTS trg_remote_outbox_channel_message_delete
-      AFTER DELETE ON channel_messages
-      BEGIN
-        INSERT INTO remote_projection_outbox (
-          workspace_id, conversation_kind, conversation_id, entity_type, entity_id,
-          operation, affects_unread, occurred_at
-        ) VALUES (
-          OLD.workspace_id, 'channel', OLD.channel_id, 'channel_message', OLD.id,
-          'delete', CASE WHEN OLD.author_type = 'local-user' THEN 0 ELSE 1 END, OLD.updated_at
-        );
-      END;
-
       CREATE TRIGGER IF NOT EXISTS trg_remote_outbox_direct_thread_insert
       AFTER INSERT ON teammate_direct_threads
       BEGIN
@@ -5474,6 +5451,45 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
         );
       END;
     `);
+  if (!continuityV2Active) {
+    database.exec(`
+      CREATE TRIGGER IF NOT EXISTS trg_remote_outbox_channel_message_insert
+      AFTER INSERT ON channel_messages
+      BEGIN
+        INSERT INTO remote_projection_outbox (
+          workspace_id, conversation_kind, conversation_id, entity_type, entity_id,
+          operation, affects_unread, occurred_at
+        ) VALUES (
+          NEW.workspace_id, 'channel', NEW.channel_id, 'channel_message', NEW.id,
+          'insert', CASE WHEN NEW.author_type = 'local-user' THEN 0 ELSE 1 END, NEW.updated_at
+        );
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_remote_outbox_channel_message_update
+      AFTER UPDATE ON channel_messages
+      BEGIN
+        INSERT INTO remote_projection_outbox (
+          workspace_id, conversation_kind, conversation_id, entity_type, entity_id,
+          operation, affects_unread, occurred_at
+        ) VALUES (
+          NEW.workspace_id, 'channel', NEW.channel_id, 'channel_message', NEW.id,
+          'update', CASE WHEN NEW.author_type = 'local-user' THEN 0 ELSE 1 END, NEW.updated_at
+        );
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_remote_outbox_channel_message_delete
+      AFTER DELETE ON channel_messages
+      BEGIN
+        INSERT INTO remote_projection_outbox (
+          workspace_id, conversation_kind, conversation_id, entity_type, entity_id,
+          operation, affects_unread, occurred_at
+        ) VALUES (
+          OLD.workspace_id, 'channel', OLD.channel_id, 'channel_message', OLD.id,
+          'delete', CASE WHEN OLD.author_type = 'local-user' THEN 0 ELSE 1 END, OLD.updated_at
+        );
+      END;
+    `);
+  }
   const hasTeammateModelBindingMigration = context.hasMigration(TEAMMATE_MODEL_BINDING_MIGRATION_VERSION);
   if (!hasTeammateModelBindingMigration || !context.hasColumn("ai_teammates", "model_binding_mode")) {
     if (!context.hasColumn("ai_teammates", "model_binding_mode")) {

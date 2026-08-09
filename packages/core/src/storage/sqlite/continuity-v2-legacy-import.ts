@@ -203,6 +203,10 @@ function materializeThreadTopology(
     CREATE UNIQUE INDEX idx_ling_threads_active_channel_root
     ON ling_threads(channel_id)
     WHERE surface_kind = 'channel_root' AND archived_at IS NULL;
+
+    CREATE UNIQUE INDEX idx_ling_threads_active_topic_anchor
+    ON ling_threads(anchor_item_id)
+    WHERE surface_kind = 'topic' AND archived_at IS NULL;
   `);
 
   return {
