@@ -36,7 +36,7 @@ export interface LingTurn {
   readonly workflowStepId?: string;
   readonly externalWorkId?: string;
   readonly automationId?: string;
-  readonly sourceMessageId?: string;
+  readonly sourceItemId?: string;
   readonly sourceTurnId?: string;
   readonly interventionId?: string;
   readonly activeRunId?: string;
@@ -66,7 +66,7 @@ export interface CreateLingTurnRequest {
   readonly workflowStepId?: string;
   readonly externalWorkId?: string;
   readonly automationId?: string;
-  readonly sourceMessageId?: string;
+  readonly sourceItemId?: string;
   readonly sourceTurnId?: string;
   readonly interventionId?: string;
   readonly createdByActor?: LingTurnCreatedByActor;

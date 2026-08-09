@@ -25,21 +25,26 @@ export class SqliteConversationThreadTopologyStore {
   ): ResolveOrCreateConversationThreadResult {
     this.context.database.exec("BEGIN IMMEDIATE");
     try {
-      const existing = this.findExisting(input);
-      if (existing) {
-        this.assertExistingMatches(input, existing);
-        this.context.database.exec("COMMIT");
-        return { thread: existing, created: false };
-      }
-
-      const createInput = this.buildCreateInput(input);
-      const thread = this.ports.createLingThread(createInput, now);
+      const result = this.resolveOrCreateWithinTransaction(input, now);
       this.context.database.exec("COMMIT");
-      return { thread, created: true };
+      return result;
     } catch (error) {
       if (this.context.database.isTransaction) this.context.database.exec("ROLLBACK");
       throw error;
     }
+  }
+
+  resolveOrCreateWithinTransaction(
+    input: ResolveOrCreateConversationThreadInput,
+    now: string,
+  ): ResolveOrCreateConversationThreadResult {
+    const existing = this.findExisting(input);
+    if (existing) {
+      this.assertExistingMatches(input, existing);
+      return { thread: existing, created: false };
+    }
+    const createInput = this.buildCreateInput(input);
+    return { thread: this.ports.createLingThread(createInput, now), created: true };
   }
 
   private findExisting(input: ResolveOrCreateConversationThreadInput): LingThread | undefined {

@@ -3083,7 +3083,7 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
           workflow_step_id TEXT,
           external_work_id TEXT,
           automation_id TEXT,
-          source_message_id TEXT,
+          source_item_id TEXT,
           source_turn_id TEXT,
           intervention_id TEXT,
           active_run_id TEXT,

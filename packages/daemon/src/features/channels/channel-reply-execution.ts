@@ -23,6 +23,10 @@ export function buildChannelReplyRunRequest(input: {
   readonly compactedRetry?: boolean;
 }): RunRequest {
   const thread = ensureChannelReplyThread(input.store, input.channel, input.sourceMessage);
+  const sourceItem = input.store.getConversationItem(input.sourceMessage.id);
+  if (!sourceItem?.turnId || sourceItem.threadId !== thread.id) {
+    throw new Error(`Channel reply source item has no owning turn: ${input.sourceMessage.id}`);
+  }
   const permissionPreset = "read_only" as const;
   return {
     cwd: input.store.paths.cwd,
@@ -31,6 +35,7 @@ export function buildChannelReplyRunRequest(input: {
     teammateId: input.teammateId,
     runnerId: input.teammate?.runnerId,
     threadId: thread.id,
+    turnId: sourceItem.turnId,
     sourceMessageId: input.sourceMessage.id,
     linkedMessageId: input.replyMessage.id,
     createdByActor: input.sourceMessage.authorType === "local-user" ? "local-user" : "system",
@@ -68,25 +73,10 @@ export function ensureChannelReplyThread(
     }
   }
 
-  const existing = store
-    .listLingThreads({ kind: "channel_discussion", channelId: channel.id, archived: "exclude", limit: 100 })
-    .find((thread) =>
-      !thread.parentThreadId &&
-      !thread.taskId &&
-      !thread.teammateId &&
-      !thread.workflowId &&
-      !thread.workflowStepId &&
-      !thread.externalWorkId
-    );
-  if (existing) {
-    return existing;
-  }
-
-  return store.createLingThread({
-    kind: "channel_discussion",
+  return store.resolveOrCreateConversationThread({
+    surfaceKind: "channel_root",
     channelId: channel.id,
-    title: "Main branch",
-    objective: `Main conversation branch for ${channel.name}.`,
-    status: "open",
-  }, new Date().toISOString());
+    title: `${channel.name} conversation`,
+    objective: `Root conversation for ${channel.name}.`,
+  }, new Date().toISOString()).thread;
 }

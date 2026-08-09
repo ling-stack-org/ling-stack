@@ -9,6 +9,7 @@ import { resolveAiTeammateReference } from "../teammates/identity.js";
 import { isLingAgentExecutorId, LING_AGENT_EXECUTOR_ID } from "./ling-agent-executor.js";
 import type { LingAgentTurnEnvelope } from "./ling-agent-turn-envelope.js";
 import { resolveChannelConversationLineKey } from "./conversation-surface.js";
+import { getChannelMessageView } from "./conversation-item-messages.js";
 
 export function resolveChannelReplyTargetTeammateId(input: {
   readonly store: RunStore;
@@ -50,7 +51,7 @@ export function findActiveChannelReplyRun(input: {
       return false;
     }
     const sourceMessageId = readRequestSnapshotString(run.requestSnapshot, "sourceMessageId");
-    const sourceMessage = sourceMessageId ? input.store.getChannelMessage(sourceMessageId) : undefined;
+    const sourceMessage = sourceMessageId ? getChannelMessageView(input.store, sourceMessageId) : undefined;
     if (!sourceMessage || sourceMessage.channelId !== input.channelId) {
       return false;
     }

@@ -5,10 +5,11 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import {
-  applyContinuityV2StorageMigration,
+  createLegacySqliteRunStoreForMigrationTest,
   createSqliteRunStore,
   resolveRuntimePaths,
 } from "../dist/index.js";
+import { applyContinuityV2StorageMigration } from "../dist/storage/sqlite/continuity-v2-migration.js";
 
 const now = "2026-08-09T15:00:00.000Z";
 
@@ -102,7 +103,7 @@ function appendUserTurn(fixture, suffix, body) {
 
 async function createMigratedFixture(t) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-conversation-topology-"));
-  const legacyStore = createSqliteRunStore(cwd);
+  const legacyStore = createLegacySqliteRunStoreForMigrationTest(cwd);
   const channel = legacyStore.createChannel({ name: "Topology", boundPath: cwd }, "2026-08-09T13:00:00.000Z");
   const rootThread = legacyStore.createLingThread({
     id: "thread-topology-root",
@@ -128,6 +129,8 @@ async function createMigratedFixture(t) {
   const store = createSqliteRunStore(cwd);
   const reopened = new DatabaseSync(resolveRuntimePaths(cwd).databasePath);
   reopened.exec("PRAGMA foreign_keys = ON;");
+  assert.equal(reopened.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
+  assert.deepEqual(reopened.prepare("PRAGMA foreign_key_check").all(), []);
   t.after(async () => {
     store.close();
     reopened.close();

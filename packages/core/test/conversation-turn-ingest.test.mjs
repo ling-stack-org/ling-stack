@@ -5,12 +5,12 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import {
-  applyContinuityV2StorageMigration,
   createSqliteRunStore,
   resolveRuntimePaths,
-  SqliteConversationItemStore,
-  SqliteConversationTurnIngestStore,
 } from "../dist/index.js";
+import { SqliteConversationItemStore } from "../dist/storage/sqlite/conversation-item-store.js";
+import { SqliteConversationTurnIngestStore } from "../dist/storage/sqlite/conversation-turn-ingest-store.js";
+import { applyContinuityV2StorageMigration } from "../dist/storage/sqlite/continuity-v2-migration.js";
 
 const now = "2026-08-09T14:00:00.000Z";
 

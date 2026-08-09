@@ -98,7 +98,7 @@ export async function startConversationReplacementRun(input: {
     title: conversationTitle(input.message),
     userInstruction: input.message,
     teammateId: LING_AGENT_ID,
-    sourceMessageId: input.messageId,
+    sourceItemId: input.messageId,
     createdByActor: "local-user",
   }, now);
   const streamInput: ConversationStreamRequest = {
@@ -639,7 +639,7 @@ function createUserTranscriptMessage(
   content = turn.userInstruction,
 ): ConversationTranscriptMessage {
   return {
-    id: turn.sourceMessageId?.startsWith("conversation-user:") ? turn.sourceMessageId : `conversation-user:${turn.id}`,
+    id: turn.sourceItemId?.startsWith("conversation-user:") ? turn.sourceItemId : `conversation-user:${turn.id}`,
     role: "user",
     content,
     ...(attachments.length > 0 ? { attachments } : {}),

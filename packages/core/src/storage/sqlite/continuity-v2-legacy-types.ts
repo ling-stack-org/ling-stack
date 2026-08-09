@@ -74,17 +74,24 @@ export function insertContinuitySyntheticTurn(
     | undefined;
   if (!thread) throw new Error(`Continuity v2 migration cannot create a synthetic turn for missing thread: ${threadId}`);
   const turnId = continuityV2ImportId("turn_import", `${threadId}:${sourceKey}`);
+  const sourceItemColumn = lingTurnSourceItemColumn(database);
   database.prepare(`
     INSERT OR IGNORE INTO ling_turns (
       id, workspace_id, thread_id, kind, status, title, user_instruction, channel_id,
       task_id, teammate_id, workflow_step_id, external_work_id, automation_id,
-      source_message_id, source_turn_id, intervention_id, active_run_id, last_run_id,
+      ${sourceItemColumn}, source_turn_id, intervention_id, active_run_id, last_run_id,
       created_by_actor, created_at, updated_at, completed_at
     ) VALUES (?, ?, ?, 'initial_request', 'succeeded', 'Imported conversation boundary',
       'Imported Continuity v2 conversation boundary.', ?, NULL, NULL, NULL, NULL, NULL,
       NULL, NULL, NULL, NULL, NULL, 'system', ?, ?, ?)
   `).run(turnId, readString(thread, "workspace_id"), threadId, channelId ?? null, timestamp, timestamp, timestamp);
   return turnId;
+}
+
+export function lingTurnSourceItemColumn(database: DatabaseSync): "source_item_id" | "source_message_id" {
+  return database.prepare("PRAGMA table_info(ling_turns)").all().some((row) => {
+    return typeof row === "object" && row !== null && "name" in row && row.name === "source_item_id";
+  }) ? "source_item_id" : "source_message_id";
 }
 
 export function isContinuityJsonRecord(value: unknown): value is Record<string, unknown> {

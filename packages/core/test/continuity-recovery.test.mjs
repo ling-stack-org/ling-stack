@@ -11,7 +11,7 @@ import {
   createContinuityMigrationRecoveryPoint,
   restoreContinuityMigrationRecoveryPoint,
   verifyContinuityMigrationRecoveryPoint,
-} from "../dist/index.js";
+} from "../dist/storage/sqlite/continuity-recovery.js";
 
 const now = "2026-08-09T12:00:00.000Z";
 

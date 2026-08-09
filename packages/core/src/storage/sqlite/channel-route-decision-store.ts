@@ -1,11 +1,11 @@
 import type { SQLOutputValue } from "node:sqlite";
+import type { ConversationItemV1 } from "@ling-stack/contracts";
 import {
   DEFAULT_WORKSPACE_ID,
   channelAutoReplyModes,
   channelMessageRouteDecisionCreatedByValues,
   channelMessageRouteDecisionStatuses,
   createChannelMessageRouteDecisionId,
-  type ChannelMessage,
   type ChannelMessageRouteContextPackMetadata,
   type ChannelMessageRouteDecision,
   type CreateChannelMessageRouteDecisionInput,
@@ -19,7 +19,7 @@ import type { SqliteStoreContext } from "./store-context.js";
 
 export interface SqliteChannelRouteDecisionStorePorts {
   readonly hasChannel: (id: string) => boolean;
-  readonly getChannelMessage: (id: string) => ChannelMessage | undefined;
+  readonly getConversationItem: (id: string) => ConversationItemV1 | undefined;
 }
 
 export class SqliteChannelRouteDecisionStore {
@@ -33,14 +33,14 @@ export class SqliteChannelRouteDecisionStore {
     if (!this.ports.hasChannel(input.channelId)) {
       throw new Error(`Channel not found: ${input.channelId}`);
     }
-    const sourceMessage = this.ports.getChannelMessage(input.sourceMessageId);
-    if (!sourceMessage || sourceMessage.channelId !== input.channelId) {
-      throw new Error(`Source message does not belong to channel: ${input.sourceMessageId}`);
+    const sourceItem = this.ports.getConversationItem(input.sourceMessageId);
+    if (!sourceItem || sourceItem.channelId !== input.channelId) {
+      throw new Error(`Source item does not belong to channel: ${input.sourceMessageId}`);
     }
     if (input.replyMessageId) {
-      const replyMessage = this.ports.getChannelMessage(input.replyMessageId);
-      if (!replyMessage || replyMessage.channelId !== input.channelId) {
-        throw new Error(`Reply message does not belong to channel: ${input.replyMessageId}`);
+      const replyItem = this.ports.getConversationItem(input.replyMessageId);
+      if (!replyItem || replyItem.channelId !== input.channelId) {
+        throw new Error(`Reply item does not belong to channel: ${input.replyMessageId}`);
       }
     }
     const decision: ChannelMessageRouteDecision = {
@@ -72,8 +72,8 @@ export class SqliteChannelRouteDecisionStore {
           schema_version,
           workspace_id,
           channel_id,
-          source_message_id,
-          reply_message_id,
+          source_item_id,
+          reply_item_id,
           mode,
           action,
           selected_teammate_id,
@@ -131,7 +131,7 @@ export class SqliteChannelRouteDecisionStore {
       params.push(options.channelId);
     }
     if (options.sourceMessageId) {
-      clauses.push("source_message_id = ?");
+      clauses.push("source_item_id = ?");
       params.push(options.sourceMessageId);
     }
     if (options.status) {
@@ -169,9 +169,9 @@ export class SqliteChannelRouteDecisionStore {
     };
     validateChannelMessageRouteDecisionInput(next);
     if (next.replyMessageId) {
-      const replyMessage = this.ports.getChannelMessage(next.replyMessageId);
-      if (!replyMessage || replyMessage.channelId !== next.channelId) {
-        throw new Error(`Reply message does not belong to channel: ${next.replyMessageId}`);
+      const replyItem = this.ports.getConversationItem(next.replyMessageId);
+      if (!replyItem || replyItem.channelId !== next.channelId) {
+        throw new Error(`Reply item does not belong to channel: ${next.replyMessageId}`);
       }
     }
 
@@ -179,7 +179,7 @@ export class SqliteChannelRouteDecisionStore {
       .prepare(`
         UPDATE channel_message_route_decisions
         SET
-          reply_message_id = ?,
+          reply_item_id = ?,
           selected_provider_preset_id = ?,
           confidence = ?,
           reason = ?,

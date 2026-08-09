@@ -7,6 +7,10 @@ import {
   isChannelReplyPromptLeak,
   visibleChannelReplyText,
 } from "./channel-reply-run-projection.js";
+import {
+  getChannelMessageView,
+  updatePendingAssistantMessage,
+} from "./conversation-item-messages.js";
 
 export interface ChannelReplyContinuationProjection {
   readonly sourceMessageId: string;
@@ -25,7 +29,7 @@ export function createChannelReplyContinuationProjection(input: {
   if (!channelId || !sourceMessageId) {
     return undefined;
   }
-  const sourceMessage = input.store.getChannelMessage(sourceMessageId);
+  const sourceMessage = getChannelMessageView(input.store, sourceMessageId);
   if (
     !sourceMessage ||
     sourceMessage.channelId !== channelId ||
@@ -36,7 +40,7 @@ export function createChannelReplyContinuationProjection(input: {
   }
 
   const replyMessageId = channelContinuationReplyMessageId(input.intervention.id);
-  const existingReply = input.store.getChannelMessage(replyMessageId);
+  const existingReply = getChannelMessageView(input.store, replyMessageId);
   const channel = input.store.getChannel(channelId);
   if (!channel) {
     throw new Error(`Channel continuation channel was not found: ${channelId}`);
@@ -48,16 +52,28 @@ export function createChannelReplyContinuationProjection(input: {
     now: input.intervention.createdAt,
   }).teammateId;
   if (!existingReply) {
-    input.store.createChannelMessage({
+    const sourceItem = input.store.getConversationItem(sourceMessageId);
+    if (!sourceItem?.turnId) {
+      throw new Error(`Channel guidance source item has no owning turn: ${sourceMessageId}`);
+    }
+    input.store.appendConversationItem({
       id: replyMessageId,
       channelId,
-      threadId: sourceMessage.threadId ?? sourceMessage.id,
-      kind: "ai_reply",
-      intent: "discuss",
-      authorType: "ai-teammate",
-      authorId: teammateId,
-      body: "",
+      threadId: sourceItem.threadId,
+      turnId: sourceItem.turnId,
+      kind: "assistant_message",
       status: "pending",
+      actorType: teammateId === "ling_agent" ? "ling_agent" : "teammate",
+      actorId: teammateId,
+      visibility: "channel",
+      payload: {
+        body: "",
+        format: "markdown",
+        streaming: true,
+        deliveryStatus: "pending",
+      },
+      domainRefs: [{ type: "conversation_item", id: sourceItem.id }],
+      idempotencyKey: `assistant-reply:${replyMessageId}`,
     }, new Date().toISOString());
   }
 
@@ -70,7 +86,7 @@ export function createChannelReplyContinuationProjection(input: {
     replyMessageId,
     sink: projection.sink,
     finalize(run, fallbackError) {
-      const current = input.store.getChannelMessage(replyMessageId);
+      const current = getChannelMessageView(input.store, replyMessageId);
       if (!run) {
         return finishContinuationReply(input.store, replyMessageId, {
           body: "Agent 回复未能启动，请重试。",
@@ -156,6 +172,12 @@ function finishContinuationReply(
     readonly errorMessage: string | null;
   },
 ): ChannelMessage {
-  return store.updateChannelMessageRuntime(messageId, input, new Date().toISOString())
-    ?? store.getChannelMessage(messageId)!;
+  return updatePendingAssistantMessage({
+    store,
+    itemId: messageId,
+    body: input.body,
+    status: input.status,
+    errorMessage: input.errorMessage,
+    now: new Date().toISOString(),
+  });
 }

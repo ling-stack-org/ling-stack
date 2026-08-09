@@ -1,22 +1,26 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import {
-  applyContinuityV2StorageMigration,
-  CONTINUITY_V2_STORAGE_MIGRATION_VERSION,
-  createSqliteRunStore,
+  createLegacySqliteRunStoreForMigrationTest,
   resolveRuntimePaths,
 } from "../dist/index.js";
+import {
+  applyContinuityV2StorageMigration,
+  CONTINUITY_V2_STORAGE_MIGRATION_VERSION,
+} from "../dist/storage/sqlite/continuity-v2-migration.js";
 
 const migrationTime = "2026-08-09T13:00:00.000Z";
 
 test("Continuity v2 migration atomically imports root, topic and branch timelines with references", async (t) => {
   const cwd = await mkdtemp(join(tmpdir(), "ling-continuity-v2-migration-"));
   t.after(() => rm(cwd, { recursive: true, force: true }));
-  const store = createSqliteRunStore(cwd);
+  const store = createLegacySqliteRunStoreForMigrationTest(cwd);
   const channel = store.createChannel({ name: "Continuity", boundPath: cwd }, "2026-08-09T12:00:00.000Z");
   const rootThread = store.createLingThread({
     id: "thread-root",
@@ -96,7 +100,7 @@ test("Continuity v2 migration atomically imports root, topic and branch timeline
     title: rootUser.body,
     userInstruction: rootUser.body,
     channelId: channel.id,
-    sourceMessageId: rootUser.id,
+    sourceItemId: rootUser.id,
   }, rootUser.createdAt);
   store.createLingTurn({
     id: "turn-topic-user-legacy-root",
@@ -105,7 +109,7 @@ test("Continuity v2 migration atomically imports root, topic and branch timeline
     title: topicUser.body,
     userInstruction: topicUser.body,
     channelId: channel.id,
-    sourceMessageId: topicUser.id,
+    sourceItemId: topicUser.id,
   }, topicUser.createdAt);
   store.createLingTurn({
     id: "turn-branch-user",
@@ -114,7 +118,7 @@ test("Continuity v2 migration atomically imports root, topic and branch timeline
     title: branchUser.body,
     userInstruction: branchUser.body,
     channelId: channel.id,
-    sourceMessageId: branchUser.id,
+    sourceItemId: branchUser.id,
   }, branchUser.createdAt);
   const task = store.createTask({
     id: "task-continuity",
@@ -330,6 +334,7 @@ test("Continuity v2 migration atomically imports root, topic and branch timeline
     [thirdSummary.id, 3, "active", secondSummary.id],
   ]);
   assert.deepEqual(database.prepare("PRAGMA foreign_key_check").all(), []);
+  assert.equal(database.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
   assert.equal(hasColumn(database, "ling_turns", "source_item_id"), true);
   assert.equal(hasColumn(database, "ling_turns", "source_message_id"), false);
   assert.equal(hasColumn(database, "channel_intent_decisions", "source_item_id"), true);
@@ -341,7 +346,7 @@ test("Continuity v2 migration atomically imports root, topic and branch timeline
 test("Continuity v2 migration creates distinct lineage and context turns for an empty branch", async (t) => {
   const cwd = await mkdtemp(join(tmpdir(), "ling-continuity-v2-empty-branch-"));
   t.after(() => rm(cwd, { recursive: true, force: true }));
-  const store = createSqliteRunStore(cwd);
+  const store = createLegacySqliteRunStoreForMigrationTest(cwd);
   const channel = store.createChannel({ name: "Empty", boundPath: cwd }, "2026-08-09T12:00:00.000Z");
   const rootThread = store.createLingThread({
     id: "thread-empty-root",
@@ -378,13 +383,14 @@ test("Continuity v2 migration creates distinct lineage and context turns for an 
   assert.notEqual(rootTurns[0].id, branchTurns[0].id);
   assert.equal(database.prepare("SELECT parent_turn_id FROM ling_threads WHERE id = ?").get(branchThread.id).parent_turn_id, rootTurns[0].id);
   assert.deepEqual(database.prepare("PRAGMA foreign_key_check").all(), []);
+  assert.equal(database.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
   database.close();
 });
 
 test("Continuity v2 migration rolls back all schema and data changes on an unrepresentable legacy message", async (t) => {
   const cwd = await mkdtemp(join(tmpdir(), "ling-continuity-v2-rollback-"));
   t.after(() => rm(cwd, { recursive: true, force: true }));
-  const store = createSqliteRunStore(cwd);
+  const store = createLegacySqliteRunStoreForMigrationTest(cwd);
   const channel = store.createChannel({ name: "Rollback", boundPath: cwd }, "2026-08-09T12:00:00.000Z");
   store.createChannelMessage({
     id: "message-too-large",
@@ -397,14 +403,73 @@ test("Continuity v2 migration rolls back all schema and data changes on an unrep
   const database = new DatabaseSync(resolveRuntimePaths(cwd).databasePath);
   database.exec("PRAGMA foreign_keys = ON;");
   const hadSurfaceKind = hasColumn(database, "ling_threads", "surface_kind");
+  const hadSourceMessageId = hasColumn(database, "ling_turns", "source_message_id");
   assert.throws(() => migrate(database), /cannot represent legacy message without loss/);
   assert.equal(hasTable(database, "channel_messages"), true);
   assert.equal(hasTable(database, "conversation_items"), false);
-  assert.equal(hasColumn(database, "ling_turns", "source_message_id"), true);
+  assert.equal(hasColumn(database, "ling_turns", "source_message_id"), hadSourceMessageId);
   assert.equal(hasColumn(database, "ling_threads", "surface_kind"), hadSurfaceKind);
   assert.equal(database.prepare("PRAGMA foreign_keys").get().foreign_keys, 1);
   assert.equal(database.prepare("SELECT 1 FROM schema_migrations WHERE version = ?").get(CONTINUITY_V2_STORAGE_MIGRATION_VERSION), undefined);
   assert.equal(database.prepare("SELECT COUNT(*) AS count FROM channel_messages").get().count, 1);
+  database.close();
+});
+
+test("SqliteRunStore serializes Continuity migration startup across processes", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "ling-continuity-v2-startup-lock-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const legacyStore = createLegacySqliteRunStoreForMigrationTest(cwd);
+  legacyStore.close();
+
+  const runtimePaths = resolveRuntimePaths(cwd);
+  const coordinatorUrl = new URL("../dist/storage/sqlite/migration-coordinator.js", import.meta.url).href;
+  const coreUrl = new URL("../dist/index.js", import.meta.url).href;
+  const holder = spawn(process.execPath, [
+    "--input-type=module",
+    "--eval",
+    [
+      `import { readFileSync } from "node:fs";`,
+      `import { withSqliteRunStoreMigrationLock } from ${JSON.stringify(coordinatorUrl)};`,
+      `withSqliteRunStoreMigrationLock(${JSON.stringify(runtimePaths.rootDir)}, () => {`,
+      `  process.stdout.write("locked\\n");`,
+      `  readFileSync(0, "utf8");`,
+      `});`,
+    ].join("\n"),
+  ], { stdio: ["pipe", "pipe", "pipe"] });
+  const holderOutput = observeProcess(holder);
+  t.after(() => stopProcess(holder));
+  await holderOutput.waitFor("locked\n");
+
+  const migrator = spawn(process.execPath, [
+    "--input-type=module",
+    "--eval",
+    [
+      `import { createSqliteRunStore } from ${JSON.stringify(coreUrl)};`,
+      `process.stdout.write("starting\\n");`,
+      `const store = createSqliteRunStore(${JSON.stringify(cwd)});`,
+      `store.close();`,
+      `process.stdout.write("done\\n");`,
+    ].join("\n"),
+  ], { stdio: ["ignore", "pipe", "pipe"] });
+  const migratorOutput = observeProcess(migrator);
+  t.after(() => stopProcess(migrator));
+  await migratorOutput.waitFor("starting\n");
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert.equal(migratorOutput.stdout().includes("done\n"), false, "store startup must wait for the migration coordinator");
+
+  holder.stdin.end();
+  const [holderExit] = await once(holder, "exit");
+  assert.equal(holderExit, 0, holderOutput.stderr());
+  await migratorOutput.waitFor("done\n");
+  const [migratorExit] = await once(migrator, "exit");
+  assert.equal(migratorExit, 0, migratorOutput.stderr());
+
+  const database = new DatabaseSync(runtimePaths.databasePath, { readOnly: true });
+  assert.equal(hasTable(database, "channel_messages"), false);
+  assert.equal(hasTable(database, "conversation_items"), true);
+  assert.ok(database.prepare("SELECT 1 FROM schema_migrations WHERE version = ?").get(CONTINUITY_V2_STORAGE_MIGRATION_VERSION));
+  assert.deepEqual(database.prepare("PRAGMA foreign_key_check").all(), []);
+  assert.equal(database.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
   database.close();
 });
 
@@ -434,4 +499,40 @@ function hasTable(database, table) {
 
 function hasColumn(database, table, column) {
   return database.prepare(`PRAGMA table_info(${table})`).all().some((row) => row.name === column);
+}
+
+function observeProcess(child) {
+  let stdout = "";
+  let stderr = "";
+  const waiters = [];
+  child.stdout.on("data", (chunk) => {
+    stdout += String(chunk);
+    for (const waiter of [...waiters]) {
+      if (!stdout.includes(waiter.text)) continue;
+      waiters.splice(waiters.indexOf(waiter), 1);
+      waiter.resolve();
+    }
+  });
+  child.stderr.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
+  return {
+    stdout: () => stdout,
+    stderr: () => stderr,
+    waitFor: (text) => stdout.includes(text)
+      ? Promise.resolve()
+      : new Promise((resolve, reject) => {
+          const waiter = { text, resolve, reject };
+          waiters.push(waiter);
+          child.once("exit", (code) => {
+            if (stdout.includes(text)) return;
+            waiters.splice(waiters.indexOf(waiter), 1);
+            reject(new Error(`Child exited ${String(code)} before output ${JSON.stringify(text)}. stderr: ${stderr}`));
+          });
+        }),
+  };
+}
+
+function stopProcess(child) {
+  if (child.exitCode === null && child.signalCode === null) child.kill();
 }

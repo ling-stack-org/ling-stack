@@ -1,5 +1,9 @@
 import type { ChannelMessage, RunStore, TerminalReport } from "@ling-stack/core";
 import { LING_AGENT_EXECUTOR_ID } from "./ling-agent-executor.js";
+import {
+  appendChannelAssistantMessage,
+  getChannelMessageView,
+} from "./conversation-item-messages.js";
 
 export function publishTerminalReport(input: {
   readonly store: RunStore;
@@ -10,29 +14,28 @@ export function publishTerminalReport(input: {
   if (!input.report.channelId || !input.report.sourceMessageId) {
     return undefined;
   }
-  const sourceMessage = input.store.getChannelMessage(input.report.sourceMessageId);
+  const sourceMessage = getChannelMessageView(input.store, input.report.sourceMessageId);
   if (!sourceMessage || sourceMessage.channelId !== input.report.channelId) {
     return undefined;
   }
   const currentRecord = input.store.getTerminalReport(input.report.id);
   if (currentRecord?.publishedMessageId) {
-    return input.store.getChannelMessage(currentRecord.publishedMessageId);
+    return getChannelMessageView(input.store, currentRecord.publishedMessageId);
   }
 
   const messageId = terminalReportMessageId(input.report.id);
-  const existing = input.store.getChannelMessage(messageId);
-  const message = existing ?? input.store.createChannelMessage({
-    id: messageId,
-    channelId: input.report.channelId,
-    threadId: sourceMessage.threadId ?? sourceMessage.id,
-    kind: "ai_reply",
-    intent: "discuss",
-    authorType: "ai-teammate",
-    authorId: LING_AGENT_EXECUTOR_ID,
+  const existing = getChannelMessageView(input.store, messageId);
+  const message = existing ?? appendChannelAssistantMessage({
+    store: input.store,
+    sourceItemId: sourceMessage.id,
+    itemId: messageId,
+    idempotencyKey: `terminal-report:${input.report.id}`,
+    actorId: LING_AGENT_EXECUTOR_ID,
     body: renderTerminalReportMarkdown(input.report),
     status: "ready",
     linkedRunId: input.linkedRunId,
-  }, input.now);
+    now: input.now,
+  });
   input.store.markTerminalReportPublished({
     reportId: input.report.id,
     messageId: message.id,

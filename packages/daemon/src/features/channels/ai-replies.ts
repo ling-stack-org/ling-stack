@@ -1,4 +1,11 @@
-import { type Channel, type ChannelMessage, type RunSession, type RunStore, type SecretResolver } from "@ling-stack/core";
+import {
+  projectConversationItemToChannelMessage,
+  type Channel,
+  type ChannelMessage,
+  type RunSession,
+  type RunStore,
+  type SecretResolver,
+} from "@ling-stack/core";
 import { renderUsedMemoryPromptForView } from "../memory/prompt.js";
 import { isRunTool } from "../runs/approvals.js";
 import type { RunExecutionSink } from "../runs/orchestrator.js";
@@ -33,6 +40,10 @@ import {
   isChannelReplyPromptLeak,
   visibleChannelReplyText,
 } from "./channel-reply-run-projection.js";
+import {
+  getChannelMessageView,
+  updatePendingAssistantMessage,
+} from "./conversation-item-messages.js";
 
 export type StartChannelReplyRun = (runRequest: RunRequest, sink: RunExecutionSink) => Promise<string | undefined>;
 
@@ -66,7 +77,7 @@ export async function createAiChannelReply(input: {
   };
 }): Promise<ChannelMessage> {
   if (input.replyMessageId) {
-    const existing = input.store.getChannelMessage(input.replyMessageId);
+    const existing = getChannelMessageView(input.store, input.replyMessageId);
     if (existing) {
       notifyDispatchSettled(input.onDispatchSettled);
       return existing;
@@ -85,20 +96,30 @@ export async function createAiChannelReply(input: {
     now,
   });
   const { teammate, teammateId: canonicalTeammateId, providerPresetId } = target;
-  const pending = input.store.createChannelMessage(
-    {
-      ...(input.replyMessageId ? { id: input.replyMessageId } : {}),
-      channelId: input.channel.id,
-      threadId: input.sourceMessage.threadId ?? input.sourceMessage.id,
-      kind: "ai_reply",
-      intent: "discuss",
-      authorType: "ai-teammate",
-      authorId: canonicalTeammateId,
+  const sourceItem = input.store.getConversationItem(input.sourceMessage.id);
+  if (!sourceItem?.turnId || sourceItem.channelId !== input.channel.id) {
+    throw new Error(`Channel reply source item has no owning turn: ${input.sourceMessage.id}`);
+  }
+  const pendingItem = input.store.appendConversationItem({
+    ...(input.replyMessageId ? { id: input.replyMessageId } : {}),
+    channelId: input.channel.id,
+    threadId: sourceItem.threadId,
+    turnId: sourceItem.turnId,
+    kind: "assistant_message",
+    status: "pending",
+    actorType: canonicalTeammateId === LING_AGENT_EXECUTOR_ID ? "ling_agent" : "teammate",
+    actorId: canonicalTeammateId,
+    visibility: "channel",
+    payload: {
       body: input.completionMode === "inline" ? "" : "AI teammate is preparing a reply...",
-      status: "pending",
+      format: "markdown",
+      streaming: true,
+      deliveryStatus: "pending",
     },
-    now,
-  );
+    domainRefs: [{ type: "conversation_item", id: sourceItem.id, label: "reply source" }],
+    ...(input.replyMessageId ? { idempotencyKey: `assistant-reply:${input.replyMessageId}` } : {}),
+  }, now);
+  const pending = projectConversationItemToChannelMessage(pendingItem);
   input.stream?.onReady(pending);
 
   const completion = completeAiChannelReply({
@@ -304,18 +325,15 @@ async function completeAiChannelReply(input: {
         minimal: true,
       });
       discussionPrompt = prependChannelWebContext(renderContextPack(discussionContextPack), webContext);
-      const reset = input.store.updateChannelMessageRuntime(
-        input.pending.id,
-        {
-          body: "",
-          status: "pending",
-          errorMessage: null,
-        },
-        new Date().toISOString(),
-      );
-      if (reset) {
-        input.stream?.onDelta(reset, "");
-      }
+      const reset = updatePendingAssistantMessage({
+        store: input.store,
+        itemId: input.pending.id,
+        body: "",
+        status: "pending",
+        errorMessage: null,
+        now: new Date().toISOString(),
+      });
+      input.stream?.onDelta(reset, "");
       execution = await startProjectedChannelReplyRun({
         input,
         prompt: discussionPrompt,
@@ -328,7 +346,7 @@ async function completeAiChannelReply(input: {
       });
     }
     if (execution.run.status === "queued" || execution.run.status === "running" || execution.run.status === "waiting_for_approval") {
-      return input.store.getChannelMessage(input.pending.id) ?? input.pending;
+      return getChannelMessageView(input.store, input.pending.id) ?? input.pending;
     }
     if (execution.run.status === "cancelled") {
       const stopped = finishChannelMessage(input.store, input.pending.id, {
@@ -353,7 +371,7 @@ async function completeAiChannelReply(input: {
     const fallbackReplyText = input.stream ? visibleChannelReplyText(rawReplyText) : rawReplyText;
     const replyText = extractedProposal?.visibleBody ?? (fallbackReplyText || rawReplyText);
     const replyReference = {
-      ...(input.store.getChannelMessage(input.pending.id) ?? input.pending),
+      ...(getChannelMessageView(input.store, input.pending.id) ?? input.pending),
       body: replyText,
     };
     if (renderedMemory.memoryIds.length > 0) {
@@ -555,18 +573,15 @@ function updateChannelWebEvidenceProgress(
 ): void {
   const now = new Date().toISOString();
   const body = renderWebEvidenceProgressPendingBody(progress, input.sourceMessage.body);
-  const updated = input.store.updateChannelMessageRuntime(
-    input.pending.id,
-    {
-      body,
-      status: "pending",
-      errorMessage: null,
-    },
+  const updated = updatePendingAssistantMessage({
+    store: input.store,
+    itemId: input.pending.id,
+    body,
+    status: "pending",
+    errorMessage: null,
     now,
-  );
-  if (updated) {
-    input.stream?.onDelta(updated, "");
-  }
+  });
+  input.stream?.onDelta(updated, "");
 }
 
 function recordBufferedChannelWebEvidence(input: {
@@ -606,15 +621,12 @@ function finishChannelMessage(
   input: { readonly body: string; readonly status: ChannelMessage["status"]; readonly errorMessage?: string | null },
 ): ChannelMessage {
   const now = new Date().toISOString();
-  return (
-    store.updateChannelMessageRuntime(
-      messageId,
-      {
-        body: input.body,
-        status: input.status,
-        errorMessage: input.errorMessage ?? null,
-      },
-      now,
-    ) ?? store.getChannelMessage(messageId)!
-  );
+  return updatePendingAssistantMessage({
+    store,
+    itemId: messageId,
+    body: input.body,
+    status: input.status,
+    errorMessage: input.errorMessage ?? null,
+    now,
+  });
 }

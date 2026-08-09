@@ -167,6 +167,7 @@ export interface ChannelAttachmentRequest {
 }
 
 export interface ChannelMessageRequest {
+  readonly idempotencyKey?: string;
   readonly threadId?: string;
   readonly kind?: ChannelMessageKind;
   readonly intent?: ChannelMessageIntent;
@@ -584,6 +585,7 @@ export function parseChannelMessageRequest(value: unknown): ChannelMessageReques
     throw new Error("Channel message request must be a JSON object");
   }
   const input: ChannelMessageRequest = {
+    idempotencyKey: readOptionalString(value, "idempotencyKey"),
     threadId: readOptionalString(value, "threadId"),
     kind: readOptionalChannelMessageKind(value, "kind"),
     intent: readOptionalChannelMessageIntent(value, "intent") ?? "discuss",

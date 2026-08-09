@@ -38,12 +38,29 @@ export interface UpdatePendingConversationItemInput<K extends ConversationItemKi
 export interface ListConversationItemsOptions {
   readonly threadId: string;
   readonly beforeSequence?: number;
+  readonly effectiveOnly?: boolean;
   readonly limit?: number;
 }
 
 export interface ConversationItemListPage {
   readonly items: readonly ConversationItemV1[];
   readonly nextBeforeSequence?: number;
+}
+
+export interface ListConversationItemsByChannelOptions {
+  readonly channelId: string;
+  readonly threadId?: string;
+  readonly excludeThreadIds?: readonly string[];
+  readonly beforeItemId?: string;
+  readonly kinds?: readonly ConversationItemKindV1[];
+  readonly effectiveOnly?: boolean;
+  readonly limit?: number;
+}
+
+export interface ConversationItemChannelListPage {
+  readonly items: readonly ConversationItemV1[];
+  readonly hasMore: boolean;
+  readonly nextBeforeItemId?: string;
 }
 
 export type ConversationItemStoreErrorCode =

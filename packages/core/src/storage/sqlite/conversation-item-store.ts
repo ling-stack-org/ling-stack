@@ -9,7 +9,9 @@ import {
 import {
   ConversationItemStoreError,
   type AppendConversationItem,
+  type ConversationItemChannelListPage,
   type ConversationItemListPage,
+  type ListConversationItemsByChannelOptions,
   type ListConversationItemsOptions,
   type UpdatePendingConversationItemInput,
 } from "../../conversation-item-store-types.js";
@@ -184,6 +186,26 @@ export class SqliteConversationItemStore {
     return row ? mapConversationItem(row as Record<string, SQLOutputValue>) : undefined;
   }
 
+  getEffectiveConversationItem(itemId: string): ConversationItemV1 | undefined {
+    let current = this.getConversationItem(itemId);
+    const visited = new Set<string>();
+    while (current) {
+      if (visited.has(current.id)) {
+        throw new ConversationItemStoreError(
+          "supersession_conflict",
+          `Conversation item supersession cycle detected: ${current.id}`,
+        );
+      }
+      visited.add(current.id);
+      const row = this.context.database
+        .prepare(`${conversationItemSelectSql} WHERE supersedes_item_id = ?`)
+        .get(current.id);
+      if (!row) return current;
+      current = mapConversationItem(row as Record<string, SQLOutputValue>);
+    }
+    return undefined;
+  }
+
   getConversationItemByIdempotencyKey(threadId: string, idempotencyKey: string): ConversationItemV1 | undefined {
     const row = this.context.database
       .prepare(`${conversationItemSelectSql} WHERE workspace_id = ? AND thread_id = ? AND idempotency_key = ?`)
@@ -197,10 +219,14 @@ export class SqliteConversationItemStore {
     if (!Number.isSafeInteger(beforeSequence) || beforeSequence < 1) {
       throw new RangeError(`Invalid conversation item cursor: ${beforeSequence}`);
     }
+    const effectiveClause = options.effectiveOnly
+      ? "AND NOT EXISTS (SELECT 1 FROM conversation_items AS replacement WHERE replacement.supersedes_item_id = conversation_items.id)"
+      : "";
     const rows = this.context.database
       .prepare(`
         ${conversationItemSelectSql}
         WHERE workspace_id = ? AND thread_id = ? AND sequence < ?
+        ${effectiveClause}
         ORDER BY sequence DESC
         LIMIT ?
       `)
@@ -211,6 +237,70 @@ export class SqliteConversationItemStore {
     return {
       items,
       ...(hasMore && items.length > 0 ? { nextBeforeSequence: items[0]?.sequence } : {}),
+    };
+  }
+
+  listConversationItemsByChannelPage(
+    options: ListConversationItemsByChannelOptions,
+  ): ConversationItemChannelListPage {
+    const clauses = ["workspace_id = ?", "channel_id = ?"];
+    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID, options.channelId];
+    const excludedThreadIds = [...new Set(options.excludeThreadIds ?? [])]
+      .filter((threadId) => threadId.trim().length > 0);
+    if (options.threadId) {
+      clauses.push("thread_id = ?");
+      params.push(options.threadId);
+    } else if (excludedThreadIds.length > 0) {
+      clauses.push(`thread_id NOT IN (${excludedThreadIds.map(() => "?").join(", ")})`);
+      params.push(...excludedThreadIds);
+    }
+    const kinds = [...new Set(options.kinds ?? [])];
+    if (kinds.length > 0) {
+      clauses.push(`kind IN (${kinds.map(() => "?").join(", ")})`);
+      params.push(...kinds);
+    }
+    if (options.effectiveOnly) {
+      clauses.push("NOT EXISTS (SELECT 1 FROM conversation_items AS replacement WHERE replacement.supersedes_item_id = conversation_items.id)");
+    }
+    if (options.beforeItemId) {
+      const cursor = this.context.database
+        .prepare(`
+          SELECT channel_id, thread_id, created_at, rowid
+          FROM conversation_items
+          WHERE workspace_id = ? AND id = ?
+        `)
+        .get(DEFAULT_WORKSPACE_ID, options.beforeItemId) as Record<string, SQLOutputValue> | undefined;
+      if (!cursor || readNullableString(cursor.channel_id) !== options.channelId) {
+        throw new Error(`Invalid conversation item cursor: ${options.beforeItemId}`);
+      }
+      const cursorThreadId = readNullableString(cursor.thread_id);
+      if (options.threadId !== undefined && options.threadId !== cursorThreadId) {
+        throw new Error(`Invalid conversation item cursor: ${options.beforeItemId}`);
+      }
+      if (options.threadId === undefined && cursorThreadId && excludedThreadIds.includes(cursorThreadId)) {
+        throw new Error(`Invalid conversation item cursor: ${options.beforeItemId}`);
+      }
+      clauses.push("(created_at < ? OR (created_at = ? AND rowid < ?))");
+      const cursorCreatedAt = readString(cursor.created_at, "created_at");
+      params.push(cursorCreatedAt, cursorCreatedAt, readSafeInteger(cursor.rowid, "rowid"));
+    }
+    const limit = Math.min(Math.max(options.limit ?? 200, 1), 500);
+    params.push(limit + 1);
+    const rows = this.context.database
+      .prepare(`
+        ${conversationItemSelectSql}
+        WHERE ${clauses.join(" AND ")}
+        ORDER BY created_at DESC, rowid DESC
+        LIMIT ?
+      `)
+      .all(...params)
+      .map((row) => mapConversationItem(row as Record<string, SQLOutputValue>));
+    const hasMore = rows.length > limit;
+    const items = rows.slice(0, limit).reverse();
+    return {
+      items,
+      hasMore,
+      ...(hasMore && items[0] ? { nextBeforeItemId: items[0].id } : {}),
     };
   }
 

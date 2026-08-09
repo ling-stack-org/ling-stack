@@ -14,6 +14,7 @@ export type TerminalReportRiskStatus = "unresolved" | "mitigated" | "accepted" |
 
 export type TerminalReportSourceRefKind =
   | "message"
+  | "conversation_item"
   | "turn"
   | "task"
   | "run"

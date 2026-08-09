@@ -6,6 +6,7 @@ import {
   continuityV2ImportId,
   insertContinuitySyntheticTurn,
   legacyContinuityTitle,
+  lingTurnSourceItemColumn,
   requiredContinuityMapValue,
   type ContinuityV2LegacyImportReport,
   type ContinuityV2ThreadTopology,
@@ -225,15 +226,16 @@ function materializeTurns(
   replyToSource: ReadonlyMap<string, string>,
 ): Map<string, string> {
   const turnByMessage = new Map<string, string>();
+  const sourceItemColumn = lingTurnSourceItemColumn(database);
   const existingTurns = database.prepare(`
-    SELECT id, thread_id, source_message_id, created_at
+    SELECT id, thread_id, ${sourceItemColumn} AS source_item_id, created_at
     FROM ling_turns
-    WHERE source_message_id IS NOT NULL
+    WHERE ${sourceItemColumn} IS NOT NULL
     ORDER BY created_at ASC, id ASC
   `).all() as Record<string, SQLOutputValue>[];
   const turnsBySource = new Map<string, Record<string, SQLOutputValue>[] >();
   for (const turn of existingTurns) {
-    const sourceId = readString(turn, "source_message_id");
+    const sourceId = readString(turn, "source_item_id");
     const group = turnsBySource.get(sourceId) ?? [];
     group.push(turn);
     turnsBySource.set(sourceId, group);
@@ -418,11 +420,12 @@ function insertImportedTurn(
   createdByActor: "local-user" | "system",
 ): string {
   const turnId = continuityV2ImportId("turn", `${threadId}:${message.id}`);
+  const sourceItemColumn = lingTurnSourceItemColumn(database);
   database.prepare(`
     INSERT INTO ling_turns (
       id, workspace_id, thread_id, kind, status, title, user_instruction, channel_id,
       task_id, teammate_id, workflow_step_id, external_work_id, automation_id,
-      source_message_id, source_turn_id, intervention_id, active_run_id, last_run_id,
+      ${sourceItemColumn}, source_turn_id, intervention_id, active_run_id, last_run_id,
       created_by_actor, created_at, updated_at, completed_at
     ) VALUES (?, ?, ?, 'initial_request', ?, ?, ?, ?, NULL, ?, NULL, NULL, NULL, ?, NULL,
       NULL, NULL, ?, ?, ?, ?, ?)
@@ -444,6 +447,7 @@ function insertImportedTurn(
   );
   return turnId;
 }
+
 
 function moveTurnToThread(database: DatabaseSync, turnId: string, threadId: string, channelId: string): void {
   database.prepare(`

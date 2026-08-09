@@ -517,6 +517,7 @@ export interface ChannelMessage {
 }
 
 export interface CreateChannelMessageRequest {
+  readonly idempotencyKey?: string;
   readonly threadId?: string;
   readonly kind?: ChannelMessageKind;
   readonly intent?: ChannelMessageIntent;

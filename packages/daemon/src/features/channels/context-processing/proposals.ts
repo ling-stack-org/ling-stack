@@ -5,6 +5,7 @@ import type {
   ChannelProtocolSourceRef,
   ChannelStoreFacet,
   RunExecutionStoreFacet,
+  RunStore,
   RunStorePathsFacet,
 } from "@ling-stack/core";
 import {
@@ -22,7 +23,7 @@ import {
 import type { ChannelContextSection, ChannelContextSourceRef, ChannelContextView } from "./types.js";
 import { buildChannelContextView } from "./views.js";
 
-type WorkflowProposalContextStore = ChannelStoreFacet & RunExecutionStoreFacet & ApprovalStoreFacet & RunStorePathsFacet;
+type WorkflowProposalContextStore = ChannelStoreFacet & RunExecutionStoreFacet & ApprovalStoreFacet & RunStorePathsFacet & Pick<RunStore, "getLingTurn">;
 
 export interface BuildWorkflowProposalContextViewInput {
   readonly store: WorkflowProposalContextStore;

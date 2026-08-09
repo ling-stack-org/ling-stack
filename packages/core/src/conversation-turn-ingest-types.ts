@@ -1,4 +1,8 @@
-import type { ConversationItemV1, ConversationUserMessagePayloadV1 } from "@ling-stack/contracts";
+import type {
+  ConversationDomainRef,
+  ConversationItemV1,
+  ConversationUserMessagePayloadV1,
+} from "@ling-stack/contracts";
 import type { LingTurnKind } from "./run-types.js";
 
 export interface AppendConversationUserTurnInput {
@@ -11,7 +15,9 @@ export interface AppendConversationUserTurnInput {
   readonly userInstruction: string;
   readonly actorId?: string;
   readonly payload: ConversationUserMessagePayloadV1;
+  readonly domainRefs?: readonly ConversationDomainRef[];
   readonly sourceTurnId?: string;
+  readonly supersedesItemId?: string;
   readonly idempotencyKey: string;
 }
 

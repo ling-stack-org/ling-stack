@@ -1,10 +1,8 @@
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import {
-  ConversationItemStoreError,
-  SqliteConversationItemStore,
-} from "../dist/index.js";
+import { ConversationItemStoreError } from "../dist/conversation-item-store-types.js";
+import { SqliteConversationItemStore } from "../dist/storage/sqlite/conversation-item-store.js";
 
 const now = "2026-08-09T12:00:00.000Z";
 const later = "2026-08-09T12:01:00.000Z";

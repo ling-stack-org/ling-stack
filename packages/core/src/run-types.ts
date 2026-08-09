@@ -102,6 +102,8 @@ import type {
 import type {
   AppendConversationItem,
   ConversationItemListPage,
+  ConversationItemChannelListPage,
+  ListConversationItemsByChannelOptions,
   ListConversationItemsOptions,
   UpdatePendingConversationItemInput,
 } from "./conversation-item-store-types.js";
@@ -519,7 +521,7 @@ export interface LingTurn {
   readonly workflowStepId?: string;
   readonly externalWorkId?: string;
   readonly automationId?: string;
-  readonly sourceMessageId?: string;
+  readonly sourceItemId?: string;
   readonly sourceTurnId?: string;
   readonly interventionId?: string;
   readonly activeRunId?: string;
@@ -551,7 +553,7 @@ export interface CreateLingTurnInput {
   readonly workflowStepId?: string;
   readonly externalWorkId?: string;
   readonly automationId?: string;
-  readonly sourceMessageId?: string;
+  readonly sourceItemId?: string;
   readonly sourceTurnId?: string;
   readonly interventionId?: string;
   readonly activeRunId?: string;
@@ -1682,27 +1684,17 @@ export interface RunStore {
   appendConversationItem(input: AppendConversationItem, now: string): ConversationItemV1;
   appendConversationUserTurn(input: AppendConversationUserTurnInput, now: string): AppendConversationUserTurnResult;
   getConversationItem(id: string): ConversationItemV1 | undefined;
+  getEffectiveConversationItem(id: string): ConversationItemV1 | undefined;
   getConversationItemByIdempotencyKey(threadId: string, idempotencyKey: string): ConversationItemV1 | undefined;
   listConversationItemsPage(options: ListConversationItemsOptions): ConversationItemListPage;
+  listConversationItemsByChannelPage(
+    options: ListConversationItemsByChannelOptions,
+  ): ConversationItemChannelListPage;
   updatePendingConversationItem(
     itemId: string,
     input: UpdatePendingConversationItemInput,
     now: string,
   ): ConversationItemV1;
-  createChannelMessage(input: CreateChannelMessageInput, now: string): ChannelMessage;
-  updateChannelMessageRuntime(
-    id: string,
-    input: {
-      readonly body?: string;
-      readonly status?: ChannelMessage["status"];
-      readonly errorMessage?: string | null;
-      readonly linkedRunId?: string | null;
-    },
-    now: string,
-  ): ChannelMessage | undefined;
-  getChannelMessage(id: string): ChannelMessage | undefined;
-  listChannelMessages(options: ListChannelMessagesOptions): ChannelMessage[];
-  listChannelMessagesPage(options: ListChannelMessagesOptions): ChannelMessageListPage;
   createChannelMessageRouteDecision(input: CreateChannelMessageRouteDecisionInput, now: string): ChannelMessageRouteDecision;
   getChannelMessageRouteDecision(id: string): ChannelMessageRouteDecision | undefined;
   listChannelMessageRouteDecisions(options?: ListChannelMessageRouteDecisionsOptions): ChannelMessageRouteDecision[];
@@ -2240,18 +2232,17 @@ export type MemoryStoreFacet = RunStoreFacet<
 
 export type ChannelStoreFacet = RunStoreFacet<
   | "listChannelBranches"
+  | "getLingThread"
+  | "listLingThreads"
   | "resolveOrCreateConversationThread"
   | "appendConversationItem"
   | "appendConversationUserTurn"
   | "getConversationItem"
+  | "getEffectiveConversationItem"
   | "getConversationItemByIdempotencyKey"
   | "listConversationItemsPage"
+  | "listConversationItemsByChannelPage"
   | "updatePendingConversationItem"
-  | "createChannelMessage"
-  | "updateChannelMessageRuntime"
-  | "getChannelMessage"
-  | "listChannelMessages"
-  | "listChannelMessagesPage"
   | "createChannelMessageRouteDecision"
   | "getChannelMessageRouteDecision"
   | "listChannelMessageRouteDecisions"

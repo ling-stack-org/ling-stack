@@ -1,4 +1,8 @@
-import type { Channel, ChannelMessage, ChannelStoreFacet } from "@ling-stack/core";
+import type { Channel, ChannelMessage, ChannelStoreFacet, RunStore } from "@ling-stack/core";
+import {
+  getChannelMessageView,
+  listChannelMessageViews,
+} from "./conversation-item-messages.js";
 
 export type ResolvedExecutableFileTarget =
   | {
@@ -17,7 +21,7 @@ export type ResolvedExecutableFileTarget =
     };
 
 export interface ResolveExecutableFileTargetInput {
-  readonly store: ChannelStoreFacet;
+  readonly store: ChannelStoreFacet & Pick<RunStore, "getLingTurn">;
   readonly channel: Channel;
   readonly sourceMessage: ChannelMessage;
   readonly target?: string;
@@ -143,7 +147,7 @@ function resolveRecentChannelMessageFileTarget(input: ResolveExecutableFileTarge
 function recentMessageTargetScope(input: ResolveExecutableFileTargetInput): readonly ChannelMessage[] {
   const scopedMessages = input.sourceMessage.threadId
     ? recentThreadMessageTargetScope(input)
-    : input.store.listChannelMessages({ channelId: input.channel.id, limit: 30 });
+    : listChannelMessageViews({ store: input.store, channelId: input.channel.id, limit: 30 });
   return scopedMessages
     .filter((message) => message.id !== input.sourceMessage.id && message.createdAt <= input.sourceMessage.createdAt && message.status !== "failed")
     .slice()
@@ -156,10 +160,16 @@ function recentThreadMessageTargetScope(input: ResolveExecutableFileTargetInput)
   if (!threadId) {
     return [];
   }
-  const messages = input.store.listChannelMessages({ channelId: input.channel.id, threadId, limit: 30 });
-  const rootMessage = input.store.getChannelMessage(threadId);
-  if (rootMessage && rootMessage.channelId === input.channel.id) {
-    return uniqueMessages([...messages, rootMessage]);
+  const messages = listChannelMessageViews({
+    store: input.store,
+    channelId: input.channel.id,
+    threadId,
+    limit: 30,
+  });
+  const anchorItemId = input.store.getLingThread(threadId)?.anchorItemId;
+  const anchorMessage = anchorItemId ? getChannelMessageView(input.store, anchorItemId) : undefined;
+  if (anchorMessage?.channelId === input.channel.id) {
+    return uniqueMessages([...messages, anchorMessage]);
   }
   return messages;
 }

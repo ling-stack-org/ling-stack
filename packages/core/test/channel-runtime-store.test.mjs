@@ -553,14 +553,6 @@ test("sqlite channel message root pages can exclude channel branch lanes while k
       },
       "2026-05-29T00:00:00.000Z",
     );
-    const branch = store.createChannelBranch(
-      {
-        channelId: channel.id,
-        name: "Branch lane",
-        rootThreadId: "thread_branch_lane",
-      },
-      "2026-05-29T00:00:01.000Z",
-    );
     const rootMessage = store.createChannelMessage(
       {
         channelId: channel.id,
@@ -568,6 +560,25 @@ test("sqlite channel message root pages can exclude channel branch lanes while k
         body: "Root message",
       },
       "2026-05-29T00:00:02.000Z",
+    );
+    const rootItem = store.getConversationItem(rootMessage.id);
+    assert.ok(rootItem?.turnId);
+    const branchThread = store.resolveOrCreateConversationThread({
+      id: "thread_branch_lane",
+      surfaceKind: "branch",
+      channelId: channel.id,
+      parentThreadId: rootItem.threadId,
+      parentTurnId: rootItem.turnId,
+      title: "Branch lane",
+      objective: "Test branch isolation.",
+    }, "2026-05-29T00:00:02.500Z").thread;
+    const branch = store.createChannelBranch(
+      {
+        channelId: channel.id,
+        name: "Branch lane",
+        rootThreadId: branchThread.id,
+      },
+      "2026-05-29T00:00:02.750Z",
     );
     store.createChannelMessage(
       {
@@ -1339,11 +1350,10 @@ test("sqlite channel workspace migration self-heals old channel and task columns
       database.exec(`
         ALTER TABLE channels DROP COLUMN default_teammate_id;
         ALTER TABLE tasks DROP COLUMN assignee_teammate_id;
-        DROP TABLE channel_messages;
         DROP TABLE channel_attachments;
         DROP TABLE channel_link_previews;
       `);
-      assert.equal(Boolean(database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'channel_messages'").get()), false);
+      assert.equal(Boolean(database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'conversation_items'").get()), true);
     } finally {
       database.close();
     }
@@ -1401,7 +1411,6 @@ test("sqlite channel protocol migration self-heals missing protocol tables", asy
         DROP TABLE channel_briefs;
         DROP TABLE channel_decisions;
         DROP TABLE channel_handoffs;
-        DROP TABLE channel_context_summaries;
       `);
       assert.equal(Boolean(database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'channel_briefs'").get()), false);
     } finally {

@@ -413,6 +413,7 @@ test("channel team metrics exposes visible evidence total separately from team e
     const webMessage = store.createChannelMessage({
       channelId: channel.id,
       authorType: "ai-teammate",
+      authorId: "ling_agent",
       body: "web evidence",
       fileRefs: [{ path: `${cwd}/README.md`, line: 12 }],
     }, "2026-06-11T00:02:00.000Z");
@@ -2954,7 +2955,7 @@ test("channel observer bus stays inert when the feature flag is disabled", async
       requestAiReply: true,
     });
 
-    await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
+    await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready", created.message.threadId);
     const store = stores.get(cwd);
     assert.ok(store);
     assert.deepEqual(store.listChannelTeamEvidenceItems({ channelId: channel.id, limit: 10 }), []);
@@ -3393,7 +3394,7 @@ test("channel message stream emits visible deltas into a durable AI reply", asyn
     });
     assert.match(threadId, /^thread_/);
     assert.equal(sourceMessageId, events[0].data.message.id);
-    assert.notEqual(threadId, events[2].data.aiReply.threadId);
+    assert.equal(threadId, events[2].data.aiReply.threadId);
     assert.ok(events[3].data.activeReply.workUnitId);
     assert.equal(JSON.stringify(events[3].data.activeReply).includes("prompt"), false);
     assert.equal(events[4].data.delta, "Streamed channel reply");
@@ -3589,7 +3590,7 @@ test("channel AI reply injects Plan Mode instructions for plan threads", async (
       teammateId: "ling_agent",
       requestAiReply: true,
     });
-    await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
+    await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready", created.message.threadId);
 
     assert.equal(runner.runs.length, 1);
     assert.match(runner.runs[0].systemPrompt, /Plan Mode is active/);
@@ -4066,7 +4067,7 @@ test("channel intent selector asks one clarify question for underspecified work 
     assert.equal(created.message.body, "做一下吧");
     assert.equal(created.aiReply.kind, "ai_reply");
     assert.equal(created.aiReply.status, "ready");
-    assert.equal(created.aiReply.threadId, created.message.id);
+    assert.equal(created.aiReply.threadId, created.message.threadId);
     assert.equal(created.aiReply.authorId, "ling_agent");
     assert.match(created.aiReply.body, /确认范围/);
     assert.equal(runner.runs.length, 0);
@@ -4354,7 +4355,7 @@ test("workspace follow-up can create the single file named by the previous Ling 
     store.createChannelMessage(
       {
         channelId: channel.id,
-        threadId: previousUser.id,
+        threadId: previousUser.threadId,
         kind: "ai_reply",
         intent: "discuss",
         authorType: "ai-teammate",
@@ -4452,8 +4453,9 @@ test("thread follow-up can create the single file named by the previous Ling Age
     });
 
     assertCoordinatorWorkflowStartReply(created, previousUser.id);
-    assert.equal(created.message.threadId, previousUser.id);
-    assert.equal(created.aiReply.threadId, previousUser.id);
+    assert.notEqual(created.message.threadId, previousUser.id);
+    assert.equal(store.getLingThread(created.message.threadId)?.anchorItemId, previousUser.id);
+    assert.equal(created.aiReply.threadId, created.message.threadId);
     assert.equal(created.autoStartedWorkflow.workflowSteps.length, 1);
     assert.doesNotMatch(created.aiReply.body, /不能直接修改工作区|cannot directly modify|没有被授权执行工作区写入/i);
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
@@ -4870,7 +4872,7 @@ test("workspace follow-up clarifies when the previous Ling Agent reply names mul
     store.createChannelMessage(
       {
         channelId: channel.id,
-        threadId: previousUser.id,
+        threadId: previousUser.threadId,
         kind: "ai_reply",
         intent: "discuss",
         authorType: "ai-teammate",
@@ -4962,7 +4964,7 @@ test("thread follow-up clarifies when the previous Ling Agent reply names multip
 
     assert.equal(created.autoStartedWorkflow, undefined);
     assert.equal(created.aiReply.status, "ready");
-    assert.equal(created.aiReply.threadId, previousUser.id);
+    assert.equal(created.aiReply.threadId, created.message.threadId);
     assert.match(created.aiReply.body, /多个可能的文件目标|多个可能目标/);
     assert.match(created.aiReply.body, /login\.html/);
     assert.match(created.aiReply.body, /README\.md/);
@@ -5862,11 +5864,33 @@ test("default_teammate route treats channel branches and topic replies as separa
       },
       now,
     );
+    const rootThread = store.resolveOrCreateConversationThread({
+      surfaceKind: "channel_root",
+      channelId: channel.id,
+      title: "Root",
+      objective: "Root conversation",
+    }, now).thread;
+    const rootTurn = store.createLingTurn({
+      threadId: rootThread.id,
+      kind: "initial_request",
+      title: "Branch parent",
+      userInstruction: "Create a branch",
+      channelId: channel.id,
+    }, now);
+    const branchThread = store.resolveOrCreateConversationThread({
+      id: "thread_branch_root",
+      surfaceKind: "branch",
+      channelId: channel.id,
+      parentThreadId: rootThread.id,
+      parentTurnId: rootTurn.id,
+      title: "Branch",
+      objective: "Branch conversation",
+    }, now).thread;
     const branch = store.createChannelBranch(
       {
         channelId: channel.id,
         name: "test",
-        rootThreadId: "thread_branch_root",
+        rootThreadId: branchThread.id,
       },
       now,
     );
@@ -11009,7 +11033,7 @@ test("teammate direct execution creates a supervised run and projects tool event
     const thread = store.getLingThread(run.threadId);
     const turn = store.getLingTurnForRun(run.id);
     assert.equal(thread?.kind, "teammate_direct");
-    assert.equal(turn?.sourceMessageId, run.taskId);
+    assert.equal(turn?.sourceItemId, run.taskId);
     const workUnit = store.getWorkUnit(run.workUnitId);
     assert.equal(workUnit?.kind, "teammate_direct_reply");
     assert.equal(workUnit?.linkedRunId, run.id);
@@ -12390,10 +12414,10 @@ async function getArtifactJson(baseUrl, cwd, artifactId) {
   return await response.json();
 }
 
-function assertCoordinatorWorkflowStartReply(result, expectedThreadId = result.message.id) {
+function assertCoordinatorWorkflowStartReply(result) {
   assert.equal(result.aiReply.kind, "ai_reply");
   assert.equal(result.aiReply.status, "ready");
-  assert.equal(result.aiReply.threadId, expectedThreadId);
+  assert.equal(result.aiReply.threadId, result.message.threadId);
   assert.equal(result.aiReply.authorId, "ling_agent");
   assert.match(result.aiReply.body, /确认需求/);
   assert.match(result.aiReply.body, /开始处理/);
@@ -12463,11 +12487,11 @@ function assertIntentDecisionInspectPayloadIsSafe(decision) {
   }
 }
 
-async function waitForChannelMessageStatus(baseUrl, cwd, channelId, messageId, status) {
+async function waitForChannelMessageStatus(baseUrl, cwd, channelId, messageId, status, threadId) {
   const deadline = Date.now() + 2_000;
   let latest;
   while (Date.now() < deadline) {
-    latest = await getJson(`${baseUrl}/channels/${encodeURIComponent(channelId)}/messages?cwd=${encodeURIComponent(cwd)}`);
+    latest = await getJson(`${baseUrl}/channels/${encodeURIComponent(channelId)}/messages?cwd=${encodeURIComponent(cwd)}${threadId ? `&threadId=${encodeURIComponent(threadId)}` : ""}`);
     const message = latest.messages.find((item) => item.id === messageId);
     if (message?.status === status) {
       return latest;

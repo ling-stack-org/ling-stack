@@ -5,6 +5,7 @@ import {
   type ContextSourceRef,
   type WorkflowStepContextPackInput,
 } from "./context-packs.js";
+import { listChannelMessageViews } from "./conversation-item-messages.js";
 
 export interface WorkflowStepContextCompactionSummary {
   readonly schemaVersion: 1;
@@ -132,7 +133,12 @@ function shouldCompactWorkflowStepContext(pack: ContextPack): boolean {
 
 function selectChannelSummaryMessages(store: RunStore, channel: Channel, sourceMessage: ChannelMessage): readonly ChannelMessage[] {
   const byId = new Map<string, ChannelMessage>();
-  for (const message of store.listChannelMessages({ channelId: channel.id, limit: 30 })) {
+  for (const message of listChannelMessageViews({
+    store,
+    channelId: channel.id,
+    ...(sourceMessage.threadId ? { threadId: sourceMessage.threadId } : {}),
+    limit: 30,
+  })) {
     if (message.status === "pending" || !message.body.trim()) {
       continue;
     }

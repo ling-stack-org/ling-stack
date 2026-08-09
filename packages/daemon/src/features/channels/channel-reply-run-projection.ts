@@ -1,5 +1,11 @@
-import type { ChannelMessage, RunEventEnvelope, RunStore } from "@ling-stack/core";
+import {
+  projectConversationItemToChannelMessage,
+  type ChannelMessage,
+  type RunEventEnvelope,
+  type RunStore,
+} from "@ling-stack/core";
 import type { RunExecutionSink } from "../runs/orchestrator.js";
+import { updatePendingAssistantMessage } from "./conversation-item-messages.js";
 
 export interface ChannelReplyRunProjection {
   readonly sink: RunExecutionSink;
@@ -40,11 +46,10 @@ export function createChannelReplyRunProjection(input: {
         return;
       }
       runId = linkedRunId;
-      const linked = input.store.updateChannelMessageRuntime(
-        input.pendingMessageId,
-        { linkedRunId, status: "pending", errorMessage: null },
-        new Date().toISOString(),
-      );
+      const pendingItem = input.store.getConversationItem(input.pendingMessageId);
+      const linked = pendingItem
+        ? projectConversationItemToChannelMessage(pendingItem, { linkedRunId })
+        : undefined;
       const run = input.store.getRun(linkedRunId);
       const workUnit = run?.workUnitId ? input.store.getWorkUnit(run.workUnitId) : undefined;
       if (workUnit) {
@@ -100,14 +105,15 @@ export function createChannelReplyRunProjection(input: {
   }
 
   function updatePendingBody(body: string, delta: string): void {
-    const updated = input.store.updateChannelMessageRuntime(
-      input.pendingMessageId,
-      { body, status: "pending", errorMessage: null },
-      new Date().toISOString(),
-    );
-    if (updated) {
-      input.stream?.onDelta(updated, delta);
-    }
+    const updated = updatePendingAssistantMessage({
+      store: input.store,
+      itemId: input.pendingMessageId,
+      body,
+      status: "pending",
+      errorMessage: null,
+      now: new Date().toISOString(),
+    });
+    input.stream?.onDelta(updated, delta);
   }
 
   return {

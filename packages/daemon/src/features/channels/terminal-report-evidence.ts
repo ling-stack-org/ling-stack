@@ -143,7 +143,7 @@ export function collectRunTerminalReportEvidence(
     channelId: run.channelId ?? turn?.channelId ?? thread?.channelId,
     threadId: turn?.threadId ?? run.threadId,
     turnId: turn?.id,
-    sourceMessageId: turn?.sourceMessageId,
+    sourceMessageId: turn?.sourceItemId,
     source: { kind: "run", id: run.id },
     objective: boundedText(task?.prompt || task?.title || turn?.userInstruction || turn?.title || "Complete the run.", budgets.summaryCharacters),
     language: options.language ?? languageForRun(run, turn?.userInstruction ?? task?.prompt ?? task?.title) ?? "en-US",
@@ -183,7 +183,7 @@ export function collectRunTerminalReportEvidence(
     references: [
       sourceRef,
       ...(turn ? [sourceRefFor("turn", turn.id, turn.title)] : []),
-      ...(turn?.sourceMessageId ? [sourceRefFor("message", turn.sourceMessageId, "Source message")] : []),
+      ...(turn?.sourceItemId ? [sourceRefFor("conversation_item", turn.sourceItemId, "Source item")] : []),
     ],
   }, options, budgets, sourceRef);
 }
@@ -218,7 +218,7 @@ export function collectTurnTerminalReportEvidence(
     channelId: turn.channelId ?? thread?.channelId,
     threadId: turn.threadId,
     turnId: turn.id,
-    sourceMessageId: turn.sourceMessageId,
+    sourceMessageId: turn.sourceItemId,
     source: { kind: "turn", id: turn.id },
     objective: boundedText(turn.userInstruction || turn.title, budgets.summaryCharacters),
     language: options.language ?? runs.map((run) => languageForRun(run, turn.userInstruction)).find(Boolean) ?? inferUserLanguage(turn.userInstruction),
@@ -244,7 +244,7 @@ export function collectTurnTerminalReportEvidence(
     risks: collectTurnRisks(turn, runs, actions, approvalsRaw, sourceRef, budgets.summaryCharacters),
     references: [
       sourceRef,
-      ...(turn.sourceMessageId ? [sourceRefFor("message", turn.sourceMessageId, "Source message")] : []),
+      ...(turn.sourceItemId ? [sourceRefFor("conversation_item", turn.sourceItemId, "Source item")] : []),
       ...runs.map((run) => sourceRefFor("run", run.id, store.getTask(run.taskId)?.title ?? "Run")),
     ],
   }, options, budgets, sourceRef);

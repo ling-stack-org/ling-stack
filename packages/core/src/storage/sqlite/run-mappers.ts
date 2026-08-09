@@ -180,7 +180,7 @@ export function mapLingTurn(row: Record<string, SQLOutputValue>): LingTurn {
     workflowStepId: readNullableString(row, "workflow_step_id"),
     externalWorkId: readNullableString(row, "external_work_id"),
     automationId: readNullableString(row, "automation_id"),
-    sourceMessageId: readNullableString(row, "source_message_id"),
+    sourceItemId: readNullableString(row, "source_item_id"),
     sourceTurnId: readNullableString(row, "source_turn_id"),
     interventionId: readNullableString(row, "intervention_id"),
     activeRunId: readNullableString(row, "active_run_id"),

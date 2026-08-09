@@ -1,4 +1,6 @@
 import type { SQLOutputValue } from "node:sqlite";
+import type { ConversationItemV1 } from "@ling-stack/contracts";
+import { projectConversationItemToChannelMessage } from "../../conversation-item-channel-view.js";
 import type { ChannelMessage } from "../../workspace-types.js";
 import {
   createRunInterventionId,
@@ -11,8 +13,7 @@ import {
   type UpdateRunInterventionStatusInput,
 } from "../../run-types.js";
 import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
-import { mapChannelMessage } from "./channel-message-mappers.js";
-import { stringifyJson } from "./helpers.js";
+import { readString, stringifyJson } from "./helpers.js";
 import {
   mapRunIntervention,
   normalizeRunInterventionMessagePayload,
@@ -22,6 +23,7 @@ import type { SqliteStoreContext } from "./store-context.js";
 
 export interface SqliteRunInterventionStorePorts {
   readonly getRun: (runId: string) => RunSession | undefined;
+  readonly getConversationItem: (itemId: string) => ConversationItemV1 | undefined;
   readonly assertAttachmentInChannel: (channelId: string, attachmentId: string) => void;
   readonly assertLinkPreviewInChannel: (channelId: string, linkPreviewId: string) => void;
 }
@@ -203,19 +205,20 @@ export class SqliteRunInterventionStore {
     const limit = Math.min(Math.max(input.limit ?? 6, 1), 100);
     return this.context.database
       .prepare(`
-        SELECT channel_messages.*
+        SELECT items.id AS item_id
         FROM run_interventions AS earlier
         JOIN run_interventions AS current
           ON current.id = ?
          AND current.source_run_id = ?
         JOIN work_units
           ON work_units.id = earlier.continuation_work_unit_id
-        JOIN channel_messages
-          ON channel_messages.id = work_units.linked_message_id
+        JOIN conversation_items AS items
+          ON items.id = work_units.linked_message_id
         WHERE earlier.source_run_id = ?
           AND earlier.completed_at IS NOT NULL
-          AND channel_messages.channel_id = ?
-          AND channel_messages.status = 'ready'
+          AND items.channel_id = ?
+          AND items.status = 'committed'
+          AND items.kind IN ('assistant_message', 'system_event')
           AND (
             earlier.created_at < current.created_at
             OR (earlier.created_at = current.created_at AND earlier.id < current.id)
@@ -230,7 +233,9 @@ export class SqliteRunInterventionStore {
         input.channelId,
         limit,
       )
-      .map((row) => mapChannelMessage(row as Record<string, SQLOutputValue>))
+      .map((row) => this.ports.getConversationItem(readString(row as Record<string, SQLOutputValue>, "item_id")))
+      .filter((item): item is ConversationItemV1 => Boolean(item))
+      .map((item) => projectConversationItemToChannelMessage(item))
       .reverse();
   }
 

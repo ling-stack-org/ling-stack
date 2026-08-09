@@ -20,7 +20,20 @@ export class SqliteConversationTurnIngestStore {
   appendUserTurn(input: AppendConversationUserTurnInput, now: string): AppendConversationUserTurnResult {
     this.context.database.exec("BEGIN IMMEDIATE");
     try {
-      const replay = this.items.getConversationItemByIdempotencyKey(input.threadId, input.idempotencyKey);
+      const result = this.appendUserTurnWithinTransaction(input, now);
+      this.context.database.exec("COMMIT");
+      return result;
+    } catch (error) {
+      if (this.context.database.isTransaction) this.context.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  appendUserTurnWithinTransaction(
+    input: AppendConversationUserTurnInput,
+    now: string,
+  ): AppendConversationUserTurnResult {
+    const replay = this.items.getConversationItemByIdempotencyKey(input.threadId, input.idempotencyKey);
       if (replay) {
         if (replay.kind !== "user_message" || !replay.turnId || replay.channelId !== input.channelId) {
           throw new Error(`Conversation turn idempotency key belongs to another input: ${input.idempotencyKey}`);
@@ -35,7 +48,6 @@ export class SqliteConversationTurnIngestStore {
         if (!assignment) {
           throw new Error(`Conversation turn replay is missing its context assignment: ${replay.turnId}`);
         }
-        this.context.database.exec("COMMIT");
         return {
           turnId: replay.turnId,
           item: replay,
@@ -100,8 +112,9 @@ export class SqliteConversationTurnIngestStore {
         ...(input.actorId ? { actorId: input.actorId } : {}),
         visibility: "channel",
         payload: input.payload,
-        domainRefs: [],
+        domainRefs: input.domainRefs ?? [],
         idempotencyKey: input.idempotencyKey,
+        ...(input.supersedesItemId ? { supersedesItemId: input.supersedesItemId } : {}),
       }, now);
       const segmentId = this.resolveOrCreateSegment(turnId, input.threadId, now);
       this.context.database.prepare(`
@@ -125,12 +138,7 @@ export class SqliteConversationTurnIngestStore {
         BOOTSTRAP_SEGMENT_POLICY_VERSION,
         now,
       );
-      this.context.database.exec("COMMIT");
       return { turnId, item, contextSegmentId: segmentId, idempotentReplay: false };
-    } catch (error) {
-      if (this.context.database.isTransaction) this.context.database.exec("ROLLBACK");
-      throw error;
-    }
   }
 
   private resolveOrCreateSegment(turnId: string, threadId: string, now: string): string {

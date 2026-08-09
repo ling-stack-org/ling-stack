@@ -1375,7 +1375,7 @@ function parseCreateLingTurnBody(body: unknown, thread: LingThread): CreateLingT
     workflowStepId: readOptionalString(body, "workflowStepId") ?? thread.workflowStepId,
     externalWorkId: readOptionalString(body, "externalWorkId") ?? thread.externalWorkId,
     automationId: readOptionalString(body, "automationId"),
-    sourceMessageId: readOptionalString(body, "sourceMessageId"),
+    sourceItemId: readOptionalString(body, "sourceItemId"),
     sourceTurnId: readOptionalString(body, "sourceTurnId"),
     interventionId: readOptionalString(body, "interventionId"),
     createdByActor: readOptionalLingTurnActor(body, "createdByActor"),

@@ -4,6 +4,7 @@ import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
+import { listChannelMessageViews } from "./conversation-item-messages.js";
 
 export async function handleChannelTeamAuthorityLedger(
   request: IncomingMessage,
@@ -42,7 +43,7 @@ export async function handleChannelTeamAuthorityLedger(
       limit,
       runs,
       approvals,
-      messages: store.listChannelMessages({ channelId, limit: readLimit }),
+      messages: listChannelMessageViews({ store, channelId, limit: readLimit }),
       resourceLeases: store.listResourceLeases({ limit: readLimit }),
     });
     writeJson(response, 200, { cwd, channelId, ledger });

@@ -51,6 +51,10 @@ import {
 import { assertChannelWorkspaceReady } from "./workspace.js";
 import { LING_AGENT_EXECUTOR_ID } from "./ling-agent-executor.js";
 import {
+  appendChannelAssistantMessage,
+  getChannelMessageView,
+} from "./conversation-item-messages.js";
+import {
   maybeScheduleWorkflowTerminalReport,
   terminalReportsEnabledForStore,
 } from "./terminal-report-coordinator.js";
@@ -993,32 +997,27 @@ export function maybeCreateWorkflowTerminalCoordinatorReply(
   if (!sourceMessageId) {
     return undefined;
   }
-  const sourceMessage = store.getChannelMessage(sourceMessageId);
+  const sourceMessage = getChannelMessageView(store, sourceMessageId);
   if (!sourceMessage) {
     return undefined;
   }
-  const threadId = sourceMessage.threadId ?? sourceMessage.id;
   const messageId = legacyWorkflowTerminalMessageId(workflow.id);
-  const existing = store.getChannelMessage(messageId);
+  const existing = getChannelMessageView(store, messageId);
   if (existing) {
     return existing;
   }
   const steps = store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 });
-  return store.createChannelMessage(
-    {
-      id: messageId,
-      channelId: workflow.channelId,
-      threadId,
-      kind: "ai_reply",
-      intent: "discuss",
-      authorType: "ai-teammate",
-      authorId: LING_AGENT_EXECUTOR_ID,
-      body: workflowTerminalCoordinatorReplyBody(workflow, steps),
-      status: "ready",
-      linkedRunId: input.linkedRunId,
-    },
-    input.now ?? new Date().toISOString(),
-  );
+  return appendChannelAssistantMessage({
+    store,
+    sourceItemId: sourceMessage.id,
+    itemId: messageId,
+    idempotencyKey: `workflow-terminal:${workflow.id}`,
+    actorId: LING_AGENT_EXECUTOR_ID,
+    body: workflowTerminalCoordinatorReplyBody(workflow, steps),
+    status: "ready",
+    linkedRunId: input.linkedRunId,
+    now: input.now ?? new Date().toISOString(),
+  });
 }
 
 function workflowCoordinatorReplyStatusIsTerminal(status: ChannelWorkflowStatus): boolean {

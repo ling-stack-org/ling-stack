@@ -51,7 +51,29 @@ test("active channel replies are scoped to their conversation line", async () =>
 
     assert.equal(findActiveChannelReplyRun({ store, channelId: channel.id, sourceMessage: engineerSource })?.id, engineerRun.id);
     assert.equal(findActiveChannelReplyRun({ store, channelId: channel.id, sourceMessage: engineerSource, activeRunId: engineerRun.id })?.id, engineerRun.id);
-    const branchMessage = createMessage(store, channel.id, [], { threadId: "thread_branch" });
+    const rootThread = store.resolveOrCreateConversationThread({
+      surfaceKind: "channel_root",
+      channelId: channel.id,
+      title: "Reply lanes",
+      objective: "Verify active reply scoping",
+    }, "2026-08-06T00:00:05.000Z").thread;
+    const rootTurn = store.createLingTurn({
+      threadId: rootThread.id,
+      kind: "follow_up",
+      title: "Branch parent",
+      userInstruction: "Open an independent branch",
+      channelId: channel.id,
+    }, "2026-08-06T00:00:06.000Z");
+    const branchThread = store.resolveOrCreateConversationThread({
+      id: "thread_branch",
+      surfaceKind: "branch",
+      channelId: channel.id,
+      parentThreadId: rootThread.id,
+      parentTurnId: rootTurn.id,
+      title: "Independent branch",
+      objective: "Verify active reply scoping",
+    }, "2026-08-06T00:00:07.000Z").thread;
+    const branchMessage = createMessage(store, channel.id, [], { threadId: branchThread.id });
     assert.equal(findActiveChannelReplyRun({ store, channelId: channel.id, sourceMessage: branchMessage }), undefined);
     assert.equal(findActiveChannelReplyRun({ store, channelId: channel.id, sourceMessage: branchMessage, activeRunId: engineerRun.id }), undefined);
 
