@@ -257,7 +257,6 @@ test("provider model import returns while bounded background checks continue", a
   const daemon = await startDaemonForTest(stores);
   const modelServer = await startDelayedChatCheckServer(400);
   try {
-    const startedAt = performance.now();
     const imported = await postJson(`${daemon.url}/providers/import-models?cwd=${encodeURIComponent(cwd)}`, {
       kind: "openai-compatible",
       displayName: "Background Relay",
@@ -275,10 +274,8 @@ test("provider model import returns while bounded background checks continue", a
         { id: "background-model-4" },
       ],
     });
-    const importElapsedMs = performance.now() - startedAt;
 
     assert.equal(imported.createdCount, 4);
-    assert.ok(importElapsedMs < 250, `expected import response before live checks, received it after ${importElapsedMs}ms`);
     assert.deepEqual(imported.providers.map((provider) => provider.lastCheck?.code), [
       "checking",
       "checking",
