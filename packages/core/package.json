@@ -51,12 +51,13 @@
     }
   },
   "scripts": {
-    "build": "corepack pnpm --filter @ling-stack/plugin-sdk build && tsc -p tsconfig.json",
-    "typecheck": "corepack pnpm --filter @ling-stack/plugin-sdk build && tsc -p tsconfig.json --noEmit",
+    "build": "corepack pnpm --filter @ling-stack/contracts build && corepack pnpm --filter @ling-stack/plugin-sdk build && tsc -p tsconfig.json",
+    "typecheck": "corepack pnpm --filter @ling-stack/contracts build && corepack pnpm --filter @ling-stack/plugin-sdk build && tsc -p tsconfig.json --noEmit",
     "lint": "echo \"lint not configured yet\"",
-    "test": "corepack pnpm --filter @ling-stack/plugin-sdk build && tsc -p tsconfig.json && node --test test/*.test.mjs"
+    "test": "corepack pnpm --filter @ling-stack/contracts build && corepack pnpm --filter @ling-stack/plugin-sdk build && tsc -p tsconfig.json && node --test test/*.test.mjs"
   },
   "dependencies": {
+    "@ling-stack/contracts": "workspace:*",
     "@ling-stack/plugin-sdk": "workspace:*",
     "yaml": "^2.9.0"
   }

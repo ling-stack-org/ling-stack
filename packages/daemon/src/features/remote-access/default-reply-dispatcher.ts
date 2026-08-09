@@ -21,6 +21,7 @@ import type { StartupStateRegistry } from "../../startup/state.js";
 import type { ComputerUseProjectionRegistry } from "../computer-use/registry.js";
 import type { ControlPlaneEventHub } from "../control-plane/events.js";
 import { createAiChannelReply } from "../channels/ai-replies.js";
+import { getChannelMessageView } from "../channels/conversation-item-messages.js";
 import { createDetachedRunExecutionSink, executeRunRequest } from "../runs/orchestrator.js";
 import type { RunRequest } from "../runs/schemas.js";
 import { startDetachedRunAndResolveReady } from "../runs/detached.js";
@@ -75,7 +76,7 @@ export class DefaultRemoteReplyDispatcher implements RemoteReplyDispatcher {
 
   private async dispatchChannel(intent: RemoteDispatchIntent): Promise<void> {
     const channel = this.options.store.getChannel(intent.conversationId);
-    const sourceMessage = this.options.store.getChannelMessage(intent.messageId);
+    const sourceMessage = getChannelMessageView(this.options.store, intent.messageId);
     if (!channel || channel.workspaceId !== intent.workspaceId || !sourceMessage || sourceMessage.channelId !== channel.id) {
       throw new Error(`Remote channel reply source is unavailable: ${intent.id}`);
     }

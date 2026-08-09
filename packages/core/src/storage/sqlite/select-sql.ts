@@ -190,7 +190,12 @@ export function lingThreadSelectSql(whereClause: string): string {
       updated_at,
       pinned_at,
       archived_at,
-      archived_reason
+      archived_reason,
+      surface_kind,
+      relation_kind,
+      anchor_item_id,
+      fork_context_snapshot_id,
+      next_item_sequence
     FROM ling_threads
     ${whereClause}
   `;
@@ -212,7 +217,7 @@ export function lingTurnSelectSql(whereClause: string): string {
       ling_turns.workflow_step_id,
       ling_turns.external_work_id,
       ling_turns.automation_id,
-      ling_turns.source_message_id,
+      ling_turns.source_item_id,
       ling_turns.source_turn_id,
       ling_turns.intervention_id,
       ling_turns.active_run_id,
@@ -1034,33 +1039,6 @@ export function teammatePrivateAttachmentSelectSql(whereClause: string): string 
   `;
 }
 
-export function channelMessageSelectSql(whereClause: string): string {
-  return `
-    SELECT
-      id,
-      workspace_id,
-      channel_id,
-      thread_id,
-      kind,
-      intent,
-      author_type,
-      author_id,
-      body,
-      mentions_json,
-      attachment_ids_json,
-      link_preview_ids_json,
-      file_refs_json,
-      linked_task_id,
-      linked_run_id,
-      status,
-      error_message,
-      created_at,
-      updated_at
-    FROM channel_messages
-    ${whereClause}
-  `;
-}
-
 export function channelMessageRouteDecisionSelectSql(whereClause: string): string {
   return `
     SELECT
@@ -1068,8 +1046,8 @@ export function channelMessageRouteDecisionSelectSql(whereClause: string): strin
       schema_version,
       workspace_id,
       channel_id,
-      source_message_id,
-      reply_message_id,
+      source_item_id AS source_message_id,
+      reply_item_id AS reply_message_id,
       mode,
       action,
       selected_teammate_id,
@@ -1095,13 +1073,13 @@ export function channelIntentDecisionSelectSql(whereClause: string): string {
       id,
       workspace_id,
       channel_id,
-      source_message_id,
+      source_item_id AS source_message_id,
       action,
       selected_teammate_id,
       selected_teammate_ids_json,
       proposal_id,
-      reply_message_id,
-      reply_message_ids_json,
+      reply_item_id AS reply_message_id,
+      reply_item_ids_json AS reply_message_ids_json,
       workflow_id,
       reason,
       status,
@@ -1120,7 +1098,7 @@ export function channelExecutionProposalSelectSql(whereClause: string): string {
       id,
       workspace_id,
       channel_id,
-      source_message_id,
+      source_item_id AS source_message_id,
       proposed_by_teammate_id,
       title,
       prompt,
@@ -1149,7 +1127,7 @@ export function channelAttachmentSelectSql(whereClause: string): string {
       id,
       workspace_id,
       channel_id,
-      message_id,
+      item_id AS message_id,
       kind,
       file_name,
       content_type,
@@ -1185,7 +1163,7 @@ export function channelLinkPreviewSelectSql(whereClause: string): string {
       id,
       workspace_id,
       channel_id,
-      message_id,
+      item_id AS message_id,
       url,
       normalized_url,
       title,
@@ -1258,7 +1236,7 @@ export function channelDecisionSelectSql(whereClause: string): string {
       id,
       workspace_id,
       channel_id,
-      source_message_id,
+      source_item_id AS source_message_id,
       source_task_id,
       source_run_id,
       title,
@@ -1281,7 +1259,7 @@ export function channelHandoffSelectSql(whereClause: string): string {
       id,
       workspace_id,
       channel_id,
-      source_message_id,
+      source_item_id AS source_message_id,
       source_task_id,
       source_run_id,
       from_participant_id,
@@ -1355,28 +1333,6 @@ export function workflowSelectorDecisionSelectSql(whereClause: string): string {
       created_at,
       updated_at
     FROM workflow_selector_decisions
-    ${whereClause}
-  `;
-}
-
-export function channelContextSummarySelectSql(whereClause: string): string {
-  return `
-    SELECT
-      id,
-      workspace_id,
-      channel_id,
-      target_type,
-      target_id,
-      source_message_ids_json,
-      decision_ids_json,
-      summary,
-      acceptance_criteria_json,
-      open_questions_json,
-      author_type,
-      author_id,
-      created_at,
-      updated_at
-    FROM channel_context_summaries
     ${whereClause}
   `;
 }

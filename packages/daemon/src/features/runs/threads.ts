@@ -113,7 +113,7 @@ export function ensureLingTurnForRun(store: RunStore, thread: LingThread, runReq
       externalWorkId: thread.externalWorkId,
       sourceTurnId: sourceTurn?.id,
       interventionId: runRequest.interventionId,
-      sourceMessageId: runRequest.sourceMessageId,
+      sourceItemId: runRequest.sourceMessageId,
       createdByActor: runRequest.createdByActor ?? inferLingTurnActor(thread),
     },
     now,

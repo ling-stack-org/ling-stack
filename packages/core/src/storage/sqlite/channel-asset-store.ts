@@ -1,4 +1,5 @@
 import type { SQLOutputValue } from "node:sqlite";
+import type { ConversationItemV1 } from "@ling-stack/contracts";
 import {
   createChannelInputMaterializationId,
   type ChannelInputMaterialization,
@@ -32,6 +33,7 @@ import type { SqliteStoreContext } from "./store-context.js";
 
 export interface SqliteChannelAssetStorePorts {
   readonly hasChannel: (id: string) => boolean;
+  readonly getConversationItem: (id: string) => ConversationItemV1 | undefined;
 }
 
 export class SqliteChannelAssetStore {
@@ -44,6 +46,7 @@ export class SqliteChannelAssetStore {
     if (!this.ports.hasChannel(input.channelId)) {
       throw new Error(`Channel not found: ${input.channelId}`);
     }
+    this.assertItemInChannel(input.channelId, input.messageId);
     const attachment: ChannelAttachment = {
       id: createChannelAttachmentId(),
       workspaceId: DEFAULT_WORKSPACE_ID,
@@ -62,7 +65,7 @@ export class SqliteChannelAssetStore {
           id,
           workspace_id,
           channel_id,
-          message_id,
+          item_id,
           kind,
           file_name,
           content_type,
@@ -113,6 +116,7 @@ export class SqliteChannelAssetStore {
     if (!this.ports.hasChannel(input.channelId)) {
       throw new Error(`Channel not found: ${input.channelId}`);
     }
+    this.assertItemInChannel(input.channelId, input.messageId);
     const preview: ChannelLinkPreview = {
       id: createChannelLinkPreviewId(),
       workspaceId: DEFAULT_WORKSPACE_ID,
@@ -135,7 +139,7 @@ export class SqliteChannelAssetStore {
           id,
           workspace_id,
           channel_id,
-          message_id,
+          item_id,
           url,
           normalized_url,
           title,
@@ -224,6 +228,14 @@ export class SqliteChannelAssetStore {
         id,
       );
     return this.getChannelLinkPreview(id);
+  }
+
+  private assertItemInChannel(channelId: string, itemId: string | undefined): void {
+    if (!itemId) return;
+    const item = this.ports.getConversationItem(itemId);
+    if (!item || item.channelId !== channelId) {
+      throw new Error(`Conversation item does not belong to channel: ${itemId}`);
+    }
   }
 
   createChannelInputMaterialization(

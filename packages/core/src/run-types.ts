@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type {
+  ConversationItemV1,
+  LingThreadRelationKindV2,
+  LingThreadSurfaceKindV2,
+} from "@ling-stack/contracts";
+import type {
   ApprovalActionType,
   ApprovalRequest,
   ApprovalRisk,
@@ -94,6 +99,22 @@ import type {
   ListConversationMessageRevisionsOptions,
   ListConversationTurnSupersessionsOptions,
 } from "./conversation-revision-types.js";
+import type {
+  AppendConversationItem,
+  ConversationItemListPage,
+  ConversationItemChannelListPage,
+  ListConversationItemsByChannelOptions,
+  ListConversationItemsOptions,
+  UpdatePendingConversationItemInput,
+} from "./conversation-item-store-types.js";
+import type {
+  AppendConversationUserTurnInput,
+  AppendConversationUserTurnResult,
+} from "./conversation-turn-ingest-types.js";
+import type {
+  ResolveOrCreateConversationThreadInput,
+  ResolveOrCreateConversationThreadResult,
+} from "./conversation-thread-topology-types.js";
 import type {
   AvailabilityIncident,
   ChannelTeamEvidenceItem,
@@ -500,7 +521,7 @@ export interface LingTurn {
   readonly workflowStepId?: string;
   readonly externalWorkId?: string;
   readonly automationId?: string;
-  readonly sourceMessageId?: string;
+  readonly sourceItemId?: string;
   readonly sourceTurnId?: string;
   readonly interventionId?: string;
   readonly activeRunId?: string;
@@ -532,7 +553,7 @@ export interface CreateLingTurnInput {
   readonly workflowStepId?: string;
   readonly externalWorkId?: string;
   readonly automationId?: string;
-  readonly sourceMessageId?: string;
+  readonly sourceItemId?: string;
   readonly sourceTurnId?: string;
   readonly interventionId?: string;
   readonly activeRunId?: string;
@@ -878,6 +899,11 @@ export interface LingThread {
   readonly pinnedAt?: string;
   readonly archivedAt?: string;
   readonly archivedReason?: string;
+  readonly surfaceKind: LingThreadSurfaceKindV2;
+  readonly relationKind: LingThreadRelationKindV2;
+  readonly anchorItemId?: string;
+  readonly forkContextSnapshotId?: string;
+  readonly nextItemSequence: number;
 }
 
 export interface CreateLingThreadInput {
@@ -901,6 +927,10 @@ export interface CreateLingThreadInput {
   readonly pinnedAt?: string;
   readonly archivedAt?: string;
   readonly archivedReason?: string;
+  readonly surfaceKind?: LingThreadSurfaceKindV2;
+  readonly relationKind?: LingThreadRelationKindV2;
+  readonly anchorItemId?: string;
+  readonly forkContextSnapshotId?: string;
 }
 
 export interface UpdateLingThreadInput {
@@ -1345,6 +1375,10 @@ export interface RunStore {
     now: string,
   ): ConversationTurnSupersession | undefined;
   createLingThread(input: CreateLingThreadInput, now: string): LingThread;
+  resolveOrCreateConversationThread(
+    input: ResolveOrCreateConversationThreadInput,
+    now: string,
+  ): ResolveOrCreateConversationThreadResult;
   getLingThread(threadId: string): LingThread | undefined;
   hardDeleteLingThread(threadId: string, input: HardDeleteLingThreadInput, now: string): HardDeleteLingThreadResult | undefined;
   findLingThreadByOwner(input: {
@@ -1647,20 +1681,20 @@ export interface RunStore {
   getTeammatePrivateAttachment(id: string): TeammatePrivateAttachment | undefined;
   listTeammatePrivateAttachments(options: ListTeammatePrivateAttachmentsOptions): TeammatePrivateAttachment[];
   deleteTeammatePrivateAttachment(id: string): boolean;
-  createChannelMessage(input: CreateChannelMessageInput, now: string): ChannelMessage;
-  updateChannelMessageRuntime(
-    id: string,
-    input: {
-      readonly body?: string;
-      readonly status?: ChannelMessage["status"];
-      readonly errorMessage?: string | null;
-      readonly linkedRunId?: string | null;
-    },
+  appendConversationItem(input: AppendConversationItem, now: string): ConversationItemV1;
+  appendConversationUserTurn(input: AppendConversationUserTurnInput, now: string): AppendConversationUserTurnResult;
+  getConversationItem(id: string): ConversationItemV1 | undefined;
+  getEffectiveConversationItem(id: string): ConversationItemV1 | undefined;
+  getConversationItemByIdempotencyKey(threadId: string, idempotencyKey: string): ConversationItemV1 | undefined;
+  listConversationItemsPage(options: ListConversationItemsOptions): ConversationItemListPage;
+  listConversationItemsByChannelPage(
+    options: ListConversationItemsByChannelOptions,
+  ): ConversationItemChannelListPage;
+  updatePendingConversationItem(
+    itemId: string,
+    input: UpdatePendingConversationItemInput,
     now: string,
-  ): ChannelMessage | undefined;
-  getChannelMessage(id: string): ChannelMessage | undefined;
-  listChannelMessages(options: ListChannelMessagesOptions): ChannelMessage[];
-  listChannelMessagesPage(options: ListChannelMessagesOptions): ChannelMessageListPage;
+  ): ConversationItemV1;
   createChannelMessageRouteDecision(input: CreateChannelMessageRouteDecisionInput, now: string): ChannelMessageRouteDecision;
   getChannelMessageRouteDecision(id: string): ChannelMessageRouteDecision | undefined;
   listChannelMessageRouteDecisions(options?: ListChannelMessageRouteDecisionsOptions): ChannelMessageRouteDecision[];
@@ -2198,11 +2232,17 @@ export type MemoryStoreFacet = RunStoreFacet<
 
 export type ChannelStoreFacet = RunStoreFacet<
   | "listChannelBranches"
-  | "createChannelMessage"
-  | "updateChannelMessageRuntime"
-  | "getChannelMessage"
-  | "listChannelMessages"
-  | "listChannelMessagesPage"
+  | "getLingThread"
+  | "listLingThreads"
+  | "resolveOrCreateConversationThread"
+  | "appendConversationItem"
+  | "appendConversationUserTurn"
+  | "getConversationItem"
+  | "getEffectiveConversationItem"
+  | "getConversationItemByIdempotencyKey"
+  | "listConversationItemsPage"
+  | "listConversationItemsByChannelPage"
+  | "updatePendingConversationItem"
   | "createChannelMessageRouteDecision"
   | "getChannelMessageRouteDecision"
   | "listChannelMessageRouteDecisions"

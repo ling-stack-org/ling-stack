@@ -1,6 +1,16 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { randomUUID } from "node:crypto";
 import type { ChannelMessageStreamReplyPendingEvent, ChannelReplyDispatch, ChannelReplyDisposition } from "@ling-stack/contracts";
-import type { Channel, ChannelExecutionProposal, ChannelMessage, ChannelWorkflow, ChannelWorkflowStep, RunSession, RunStore } from "@ling-stack/core";
+import {
+  projectConversationItemToChannelMessage,
+  type Channel,
+  type ChannelExecutionProposal,
+  type ChannelMessage,
+  type ChannelWorkflow,
+  type ChannelWorkflowStep,
+  type RunSession,
+  type RunStore,
+} from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
@@ -25,7 +35,11 @@ import {
   createLaneTrackedAiReply,
   type CreateChannelAiReply,
 } from "./channel-reply-dispatch-lane.js";
-import { listChannelBranchRootThreadIds } from "./conversation-surface.js";
+import { resolveChannelConversationThread } from "./conversation-thread-resolution.js";
+import {
+  listChannelMessageViewsPage,
+  updatePendingAssistantMessage,
+} from "./conversation-item-messages.js";
 import { filterQueuedChannelReplyMessages } from "./channel-reply-message-visibility.js";
 import { materializeInlineChannelInputs } from "./materialization/inline.js";
 import { createProviderBackedImageVisionSummarizer } from "./materialization/provider-vision.js";
@@ -115,24 +129,13 @@ export async function handleChannelMessageStream(
     }
 
     const now = new Date().toISOString();
-    const message = store.createChannelMessage(
-      {
-        channelId,
-        threadId: input.threadId,
-        kind: input.kind ?? "message",
-        intent: input.intent ?? "discuss",
-        authorType: input.authorType,
-        authorId: input.authorId,
-        body: input.body,
-        mentions: input.mentions,
-        attachmentIds: input.attachmentIds,
-        linkPreviewIds: input.linkPreviewIds,
-        fileRefs: input.fileRefs,
-        linkedTaskId: input.linkedTaskId,
-        linkedRunId: input.linkedRunId,
-      },
+    const message = persistChannelUserMessage({
+      store,
+      channel,
+      input,
+      requestIdempotencyKey: readIdempotencyKey(request),
       now,
-    );
+    });
     const releaseMessageClassification = beginChannelMessageClassification(
       replyDispatchCoordinator,
       message,
@@ -310,12 +313,17 @@ export async function handleChannelMessagesCollection(
     }
 
     if (request.method === "GET") {
-      const threadId = url.searchParams.get("threadId") ?? undefined;
-      const page = store.listChannelMessagesPage({
+      const thread = resolveChannelConversationThread({
+        store,
+        channel,
+        surfaceRefId: url.searchParams.get("threadId") ?? undefined,
+        now: new Date().toISOString(),
+      });
+      const page = listChannelMessageViewsPage({
+        store,
         channelId,
-        threadId,
-        excludeThreadIds: threadId ? undefined : listChannelBranchRootThreadIds(store, channelId),
-        beforeMessageId: url.searchParams.get("beforeMessageId") ?? undefined,
+        threadId: thread.id,
+        beforeItemId: url.searchParams.get("beforeMessageId") ?? undefined,
         limit: readOptionalIntegerQuery(url, "limit", 1),
       });
       const visibleMessages = url.searchParams.get("includeSuperseded") === "true"
@@ -358,24 +366,13 @@ export async function handleChannelMessagesCollection(
         return;
       }
       const now = new Date().toISOString();
-      const message = store.createChannelMessage(
-        {
-          channelId,
-          threadId: input.threadId,
-          kind: input.kind ?? "message",
-          intent: input.intent ?? "discuss",
-          authorType: input.authorType,
-          authorId: input.authorId,
-          body: input.body,
-          mentions: input.mentions,
-          attachmentIds: input.attachmentIds,
-          linkPreviewIds: input.linkPreviewIds,
-          fileRefs: input.fileRefs,
-          linkedTaskId: input.linkedTaskId,
-          linkedRunId: input.linkedRunId,
-        },
+      const message = persistChannelUserMessage({
+        store,
+        channel,
+        input,
+        requestIdempotencyKey: readIdempotencyKey(request),
         now,
-      );
+      });
       const releaseMessageClassification = beginChannelMessageClassification(
         replyDispatchCoordinator,
         message,
@@ -565,6 +562,13 @@ async function dispatchLingAgentChannelMessage(
           proposalId: workflowIntent.proposal.id,
           autoStartDecision,
         });
+        coordinatorReply = updatePendingAssistantMessage({
+          store: input.store,
+          itemId: coordinatorReply.id,
+          body: coordinatorWorkflowStartBody(autoStartedWorkflow.proposal, input.sourceMessage),
+          status: "ready",
+          now: new Date().toISOString(),
+        });
         input.store.createChannelIntentDecision({
           channelId: input.channel.id,
           sourceMessageId: input.sourceMessage.id,
@@ -577,15 +581,14 @@ async function dispatchLingAgentChannelMessage(
         }, new Date().toISOString());
         return { aiReply: coordinatorReply, autoStartedWorkflow };
       } catch (error) {
-        coordinatorReply = input.store.updateChannelMessageRuntime(
-          coordinatorReply.id,
-          {
-            body: coordinatorWorkflowStartFailedBody(workflowIntent.proposal, error),
-            status: "failed",
-            errorMessage: error instanceof Error ? error.message : String(error),
-          },
-          new Date().toISOString(),
-        ) ?? coordinatorReply;
+        coordinatorReply = updatePendingAssistantMessage({
+          store: input.store,
+          itemId: coordinatorReply.id,
+          body: coordinatorWorkflowStartFailedBody(workflowIntent.proposal, error),
+          status: "failed",
+          errorMessage: error instanceof Error ? error.message : String(error),
+          now: new Date().toISOString(),
+        });
         input.store.createChannelIntentDecision({
           channelId: input.channel.id,
           sourceMessageId: input.sourceMessage.id,
@@ -725,19 +728,28 @@ function createCoordinatorWorkflowStartReply(input: {
   readonly proposal: ChannelExecutionProposal;
 }): ChannelMessage {
   const now = new Date().toISOString();
-  return input.store.createChannelMessage(
-    {
-      channelId: input.channel.id,
-      threadId: input.sourceMessage.threadId ?? input.sourceMessage.id,
-      kind: "ai_reply",
-      intent: "discuss",
-      authorType: "ai-teammate",
-      authorId: LING_AGENT_EXECUTOR_ID,
+  const sourceItem = input.store.getConversationItem(input.sourceMessage.id);
+  if (!sourceItem?.turnId || sourceItem.channelId !== input.channel.id) {
+    throw new Error(`Coordinator reply source item has no owning turn: ${input.sourceMessage.id}`);
+  }
+  const item = input.store.appendConversationItem({
+    channelId: input.channel.id,
+    threadId: sourceItem.threadId,
+    turnId: sourceItem.turnId,
+    kind: "assistant_message",
+    status: "pending",
+    actorType: "ling_agent",
+    actorId: LING_AGENT_EXECUTOR_ID,
+    visibility: "channel",
+    payload: {
       body: coordinatorWorkflowStartBody(input.proposal, input.sourceMessage),
-      status: "ready",
+      format: "markdown",
+      streaming: true,
+      deliveryStatus: "pending",
     },
-    now,
-  );
+    domainRefs: [{ type: "conversation_item", id: sourceItem.id }],
+  }, now);
+  return projectConversationItemToChannelMessage(item);
 }
 
 function coordinatorWorkflowStartBody(
@@ -791,4 +803,66 @@ function notifyReplyPending(
   } catch {
     // Dispatch remains authoritative if an SSE observer disconnects after message acceptance.
   }
+}
+
+function persistChannelUserMessage(input: {
+  readonly store: RunStore;
+  readonly channel: Channel;
+  readonly input: import("./schemas.js").ChannelMessageRequest;
+  readonly requestIdempotencyKey?: string;
+  readonly now: string;
+}): ChannelMessage {
+  if (input.input.authorType !== "local-user" || (input.input.kind && input.input.kind !== "message")) {
+    throw new Error("Channel message ingest accepts local-user messages only");
+  }
+  const thread = resolveChannelConversationThread({
+    store: input.store,
+    channel: input.channel,
+    surfaceRefId: input.input.threadId,
+    now: input.now,
+  });
+  const anchor = input.input.threadId ? input.store.getConversationItem(input.input.threadId) : undefined;
+  const result = input.store.appendConversationUserTurn({
+    channelId: input.channel.id,
+    threadId: thread.id,
+    turnKind: thread.nextItemSequence > 1 ? "manual_followup" : "initial_request",
+    title: channelTurnTitle(input.input.body),
+    userInstruction: input.input.body || "Channel input with materialized references.",
+    ...(input.input.authorId ? { actorId: input.input.authorId } : {}),
+    payload: {
+      body: input.input.body,
+      format: "plain_text",
+      mentions: input.input.mentions.map((mention) => ({
+        id: mention.id,
+        label: mention.label,
+        kind: mention.kind === "ai-teammate"
+          ? "ai_teammate" as const
+          : mention.kind === "local-user"
+            ? "local_user" as const
+            : "channel" as const,
+      })),
+      attachmentIds: input.input.attachmentIds,
+      linkPreviewIds: input.input.linkPreviewIds,
+      fileRefs: input.input.fileRefs,
+      ...(anchor ? { replyToItemId: anchor.id } : {}),
+    },
+    domainRefs: [
+      ...(input.input.linkedTaskId ? [{ type: "task" as const, id: input.input.linkedTaskId }] : []),
+      ...(input.input.linkedRunId ? [{ type: "run" as const, id: input.input.linkedRunId }] : []),
+    ],
+    idempotencyKey: input.input.idempotencyKey
+      ?? input.requestIdempotencyKey
+      ?? `channel-request:${randomUUID()}`,
+  }, input.now);
+  return projectConversationItemToChannelMessage(result.item);
+}
+
+function readIdempotencyKey(request: IncomingMessage): string | undefined {
+  const value = request.headers["idempotency-key"];
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function channelTurnTitle(body: string): string {
+  const compact = body.replace(/\s+/gu, " ").trim();
+  return compact ? compact.slice(0, 160) : "Channel input";
 }

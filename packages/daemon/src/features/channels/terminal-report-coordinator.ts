@@ -16,6 +16,7 @@ import type { RunnerRegistry } from "../../runtime/runners.js";
 import { buildWorkflowEvidence } from "./workflow-evidence.js";
 import { collectRunTerminalReportEvidence, collectTurnTerminalReportEvidence, collectWorkflowTerminalReportEvidence } from "./terminal-report-evidence.js";
 import { publishTerminalReport } from "./terminal-report-publisher.js";
+import { getChannelMessageView } from "./conversation-item-messages.js";
 import { TERMINAL_REPORT_PROMPT_VERSION } from "./terminal-report-prompt.js";
 import { synthesizeTerminalReportContent } from "./terminal-report-synthesis.js";
 
@@ -84,7 +85,7 @@ export function maybeScheduleWorkflowTerminalReport(
   }
   const published = latestCommittedReport(store, "workflow", workflowId);
   if (published?.publishedMessageId) {
-    return store.getChannelMessage(published.publishedMessageId);
+    return getChannelMessageView(store, published.publishedMessageId);
   }
   const active = activeMap(store);
   const activeKey = terminalSourceKey("workflow", workflowId);

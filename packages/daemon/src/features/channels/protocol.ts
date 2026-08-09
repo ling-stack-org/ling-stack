@@ -11,15 +11,15 @@ export function validateChannelMessageOwner(
   channelId: string,
   messageId: string,
 ): ChannelValidationError | undefined {
-  const message = store.getChannelMessage(messageId);
-  if (!message) {
+  const item = store.getConversationItem(messageId);
+  if (!item) {
     return {
       statusCode: 404,
       code: "message_not_found",
       message: `Channel message not found: ${messageId}`,
     };
   }
-  if (message.channelId !== channelId) {
+  if (item.channelId !== channelId) {
     return {
       statusCode: 400,
       code: "message_channel_mismatch",
@@ -213,9 +213,7 @@ export function createEmptyChannelBrief(channel: Channel): ChannelBrief {
 }
 
 function isThreadTargetInChannel(store: RunStore, channelId: string, targetId: string): boolean {
-  const directMessage = store.getChannelMessage(targetId);
-  if (directMessage) {
-    return directMessage.channelId === channelId;
-  }
-  return store.listChannelMessages({ channelId, threadId: targetId, limit: 1 }).length > 0;
+  const item = store.getConversationItem(targetId);
+  if (item) return item.channelId === channelId;
+  return store.getLingThread(targetId)?.channelId === channelId;
 }

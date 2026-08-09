@@ -32,10 +32,11 @@ test("daemon-owned read cursor is monotonic and later message revisions become u
       authorId: createBuiltinAiTeammateId("engineer"),
       body: "Please review this.",
       mentions: [{ id: "local-user", label: "You", kind: "local-user" }],
+      status: "pending",
     }, "2026-07-31T03:00:01.000Z");
     const unread = store.getConversationReadState(readKey, "2026-07-31T03:00:01.000Z");
     assert.equal(unread.unreadCount, 1);
-    assert.equal(unread.mentioned, true);
+    assert.equal(unread.mentioned, false);
 
     const marked = store.markConversationRead({
       ...readKey,
@@ -51,11 +52,14 @@ test("daemon-owned read cursor is monotonic and later message revisions become u
     }, "2026-07-31T03:00:03.000Z");
     assert.equal(backwards.readThroughActivitySeq, unread.activitySeq);
 
-    store.updateChannelMessageRuntime(reply.id, { body: "Please review the edited answer." }, "2026-07-31T03:00:04.000Z");
+    store.updateChannelMessageRuntime(reply.id, {
+      body: "Please review the completed answer.",
+      status: "ready",
+    }, "2026-07-31T03:00:04.000Z");
     const editedUnread = store.getConversationReadState(readKey, "2026-07-31T03:00:04.000Z");
     assert.equal(editedUnread.unreadCount, 1);
     assert.ok(editedUnread.activitySeq > editedUnread.readThroughActivitySeq);
-    assert.equal(editedUnread.mentioned, true);
+    assert.equal(editedUnread.mentioned, false);
 
     const capped = store.markConversationRead({
       ...readKey,

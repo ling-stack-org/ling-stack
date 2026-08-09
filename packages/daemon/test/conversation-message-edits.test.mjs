@@ -424,12 +424,13 @@ test("default projections hide superseded turns and response messages while audi
       channelId: channel.id,
       threadId: source.id,
       authorType: "ai-teammate",
+      authorId: LING_AGENT_ID,
       body: "Old reply",
     }, "2026-07-12T07:01:02.000Z");
     store.commitConversationMessageEdit({
       surface: "channel_root",
       ownerId: channel.id,
-      laneId: channel.id,
+      laneId: source.threadId,
       messageId: source.id,
       expectedRevision: 1,
       current: { ...emptyEditFields, body: "Source" },
@@ -551,7 +552,7 @@ test("conversation detail projects approvals and queued guidance once with struc
       title: "Continue the run",
       userInstruction: "Internal continuation prompt that must not leak into the transcript.",
       interventionId: intervention.id,
-      sourceMessageId: guidanceId,
+      sourceItemId: guidanceId,
       teammateId: LING_AGENT_ID,
       createdByActor: "local-user",
     }, "2026-07-12T08:00:05.000Z");

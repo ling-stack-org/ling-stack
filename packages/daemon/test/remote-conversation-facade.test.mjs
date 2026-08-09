@@ -70,7 +70,7 @@ test("remote facade lists and opens only normalized channel, normal, and teammat
     const facade = createFacade(store);
     const listed = facade.listConversations(DEFAULT_WORKSPACE_ID);
     assert.deepEqual(new Set(listed.conversations.map((item) => item.kind)), new Set(["channel", "conversation", "teammate_direct"]));
-    assert.equal(listed.conversations.find((item) => item.conversationId === channel.id)?.mentioned, true);
+    assert.equal(listed.conversations.find((item) => item.conversationId === channel.id)?.mentioned, false);
 
     const channelSnapshot = facade.openConversation(DEFAULT_WORKSPACE_ID, channel.id);
     assert.equal(channelSnapshot.conversation.kind, "channel");
@@ -140,6 +140,7 @@ test("remote projections keep advancing after more than one thousand conversatio
       authorType: "ai-teammate",
       authorId: LING_AGENT_ID,
       body: "Initial projected reply.",
+      status: "pending",
     }, "2026-07-31T05:01:00.000Z");
     store.updateChannelMessageRuntime(target.id, {
       body: "Updated projected reply.",
@@ -154,7 +155,7 @@ test("remote projections keep advancing after more than one thousand conversatio
       workspaceId: DEFAULT_WORKSPACE_ID,
       conversationKind: "channel",
       conversationId: channel.id,
-      entityType: "channel_message",
+      entityType: "conversation_item",
       entityId: target.id,
     });
     const snapshot = createFacade(store).openConversation(DEFAULT_WORKSPACE_ID, channel.id);

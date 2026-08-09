@@ -15,7 +15,7 @@ import { channelIntentDecisionSelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
 
 export interface SqliteChannelIntentDecisionStorePorts {
-  readonly assertMessageInChannel: (channelId: string, messageId: string) => void;
+  readonly assertItemInChannel: (channelId: string, itemId: string) => void;
   readonly assertProposalInChannel: (channelId: string, proposalId: string) => void;
   readonly assertWorkflowInChannel: (channelId: string, workflowId: string) => void;
   readonly hasAiTeammate: (id: string) => boolean;
@@ -28,7 +28,7 @@ export class SqliteChannelIntentDecisionStore {
   ) {}
 
   createChannelIntentDecision(input: CreateChannelIntentDecisionInput, now: string): ChannelIntentDecision {
-    this.ports.assertMessageInChannel(input.channelId, input.sourceMessageId);
+    this.ports.assertItemInChannel(input.channelId, input.sourceMessageId);
     this.assertChannelIntentDecisionRefsInChannel(input.channelId, input);
     const decision: ChannelIntentDecision = {
       schemaVersion: 1,
@@ -58,13 +58,13 @@ export class SqliteChannelIntentDecisionStore {
           schema_version,
           workspace_id,
           channel_id,
-          source_message_id,
+          source_item_id,
           action,
           selected_teammate_id,
           selected_teammate_ids_json,
           proposal_id,
-          reply_message_id,
-          reply_message_ids_json,
+          reply_item_id,
+          reply_item_ids_json,
           workflow_id,
           reason,
           status,
@@ -114,7 +114,7 @@ export class SqliteChannelIntentDecisionStore {
       params.push(options.channelId);
     }
     if (options.sourceMessageId) {
-      clauses.push("source_message_id = ?");
+      clauses.push("source_item_id = ?");
       params.push(options.sourceMessageId);
     }
     if (options.action) {
@@ -149,10 +149,10 @@ export class SqliteChannelIntentDecisionStore {
       this.ports.assertProposalInChannel(channelId, input.proposalId);
     }
     if (input.replyMessageId) {
-      this.ports.assertMessageInChannel(channelId, input.replyMessageId);
+      this.ports.assertItemInChannel(channelId, input.replyMessageId);
     }
     for (const replyMessageId of input.replyMessageIds ?? []) {
-      this.ports.assertMessageInChannel(channelId, replyMessageId);
+      this.ports.assertItemInChannel(channelId, replyMessageId);
     }
     if (input.workflowId) {
       this.ports.assertWorkflowInChannel(channelId, input.workflowId);

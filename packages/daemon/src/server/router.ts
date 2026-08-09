@@ -31,6 +31,7 @@ import {
   handleChannelAttachmentsCollection,
 } from "../features/channels/attachments.js";
 import { createAiChannelReply } from "../features/channels/ai-replies.js";
+import { getChannelMessageView } from "../features/channels/conversation-item-messages.js";
 import { handleChannelCollaborationProtocol } from "../features/channels/collaboration-protocol.js";
 import { handleChannelPlaybookCandidates } from "../features/channels/playbooks.js";
 import { handleChannelLinkPreviewItem, handleChannelLinkPreviewsCollection } from "../features/channels/link-previews.js";
@@ -1646,7 +1647,7 @@ export async function routeRequest(
           });
         }
 
-        const sourceMessage = store.getChannelMessage(editable.messageId);
+        const sourceMessage = getChannelMessageView(store, editable.messageId);
         if (!sourceMessage) {
           throw new HttpError(404, "message_not_found", "The edited channel message is no longer available.");
         }

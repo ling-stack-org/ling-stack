@@ -1,9 +1,9 @@
 # Channel Conversation Continuity v2 Implementation Plan
 
-Status: G0 complete; S-1 merged in #422; S0 implemented but not shipped; S1-S7 pending
+Status: G0 complete; S-1 and S0 merged; S1+S2 implemented and locally verified; S3-S7 pending
 Owner: conversation, channel context, Ling Agent Session, and storage maintainers
 Date: 2026-08-08
-Last verified: 2026-08-09
+Last verified: 2026-08-10
 
 ## Owning Contract
 
@@ -777,14 +777,14 @@ interfaces at the end of S3 and keep implementation files separate before parall
   follow-up routing and target Thread lineage.
   - Verify: focused daemon dispatch/integration tests, Web guidance tests, builds/typecheck,
     lint, i18n, and full-suite regression audit.
-- [ ] **T1 (P1, implementation complete; ship pending, human: ~1 day / Codex: ~1-2 hours)**:
-  define v2 contracts and golden fixtures, then push, review, and merge PR-A after G0.
+- [x] **T1 (P1, human: ~1 day / Codex: ~1-2 hours)**: define v2 contracts and
+  golden fixtures, then push, review, and merge PR-A after G0.
   - Verify: contracts build and 35 fixture/parser/export tests.
-- [ ] **T2 (P1, human: ~3 days / Codex: ~4-6 hours)**: implement the validated
+- [x] **T2 (P1, human: ~3 days / Codex: ~4-6 hours)**: implement the validated
   `VACUUM INTO` recovery point, transactional schema migration, and `ConversationItemStore`.
   - Verify: snapshot/WAL consistency, restore drill, core migration, rollback, sequence,
     idempotency, paging, and supersession tests.
-- [ ] **T3 (P1, human: ~2 days / Codex: ~3-4 hours)**: create every user `LingTurn` and map root/topic/branch explicitly.
+- [x] **T3 (P1, human: ~2 days / Codex: ~3-4 hours)**: create every user `LingTurn` and map root/topic/branch explicitly.
   - Verify: daemon ingest and thread-lineage tests.
 - [ ] **T4 (P1, human: ~3 days / Codex: ~5-7 hours)**: implement segmentation policy and shared projector; remove raw fixed-window consumers.
   - Verify: projection consistency, permission, correction, and consumer adapter tests.
@@ -842,7 +842,7 @@ schema.
 | Design Review | `/plan-design-review` | UI and UX gaps | 0 | not run | UI changes are limited to later advanced Context details |
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | not run | Not required for the design baseline |
 
-**VERDICT:** ENG CLEARED. S-1 and S0 are implemented; S1-S7 retain the reviewed delivery
-order and exit criteria.
+**VERDICT:** ENG CLEARED. S-1 and S0 are merged; S1+S2 are implemented and locally
+verified; S3-S7 retain the reviewed delivery order and exit criteria.
 
 NO UNRESOLVED DECISIONS

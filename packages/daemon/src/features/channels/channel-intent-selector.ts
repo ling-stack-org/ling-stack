@@ -34,7 +34,14 @@ import {
   recordProviderRuntimeAvailabilityIncident,
 } from "./provider-runtime-observations.js";
 import { resolveChannelResponseLanguage } from "./response-language.js";
+import { resolveChannelConversationSurface } from "./conversation-surface.js";
 import { extractFileTargetCandidate, resolveExecutableFileTarget } from "./target-resolver.js";
+import {
+  appendChannelAssistantMessage,
+  findChannelAssistantReplyForSource,
+  getChannelMessageView,
+  listChannelMessageViewsPage,
+} from "./conversation-item-messages.js";
 
 export interface ChannelIntentSelectorInput {
   readonly store: RunStore;
@@ -238,7 +245,7 @@ export async function selectChannelWorkflowIntent(input: ChannelIntentSelectorIn
   if (hasNonLingExplicitAiMention(input.sourceMessage)) {
     return { action: "continue" };
   }
-  if (input.sourceMessage.threadId) {
+  if (resolveChannelConversationSurface(input.store, input.channel.id, input.sourceMessage).kind !== "root") {
     return { action: "continue" };
   }
   return selectDeterministicChannelWorkflowIntent(input);
@@ -622,7 +629,7 @@ function selectVisibleMultiReply(
     [0];
   if (existingDecision) {
     const aiReplies = (existingDecision.replyMessageIds ?? [])
-      .map((replyMessageId) => input.store.getChannelMessage(replyMessageId))
+      .map((replyMessageId) => getChannelMessageView(input.store, replyMessageId))
       .filter((message): message is ChannelMessage => Boolean(message && message.channelId === input.channel.id));
     return {
       action: "visible_multi_reply",
@@ -823,10 +830,10 @@ function createClarifyReply(
   modelReason?: string,
   bodyOverride?: string,
 ): ChannelIntentSelectorResult {
-  const replyThreadId = input.sourceMessage.threadId ?? input.sourceMessage.id;
-  const existingReply = input.store
-    .listChannelMessages({ channelId: input.channel.id, threadId: input.sourceMessage.id, limit: 20 })
-    .find((message) => message.kind === "ai_reply" && message.status !== "failed");
+  const existingReply = findChannelAssistantReplyForSource({
+    store: input.store,
+    sourceItemId: input.sourceMessage.id,
+  });
   if (existingReply) {
     const decision = persistIntentDecision(input, {
       action: "clarify",
@@ -849,19 +856,14 @@ function createClarifyReply(
     sourceText: input.sourceMessage.body,
   }).language;
   const now = new Date().toISOString();
-  const aiReply = input.store.createChannelMessage(
-    {
-      channelId: input.channel.id,
-      threadId: replyThreadId,
-      kind: "ai_reply",
-      intent: "discuss",
-      authorType: "ai-teammate",
-      authorId: teammate.id,
-      body: bodyOverride ?? buildClarifyQuestion(reasonCode, responseLanguage),
-      status: "ready",
-    },
+  const aiReply = appendChannelAssistantMessage({
+    store: input.store,
+    sourceItemId: input.sourceMessage.id,
+    actorId: teammate.id,
+    body: bodyOverride ?? buildClarifyQuestion(reasonCode, responseLanguage),
+    idempotencyKey: `clarify:${input.sourceMessage.id}:${reasonCode}`,
     now,
-  );
+  });
   const decision = persistIntentDecision(input, {
     action: "clarify",
     selectedTeammateId: teammate.id,
@@ -878,10 +880,10 @@ function createMaterializationClarifyReply(
   clarify: MaterializationClarifyReason,
   createdBy: "deterministic" | "model" = "deterministic",
 ): ChannelIntentSelectorResult {
-  const replyThreadId = input.sourceMessage.threadId ?? input.sourceMessage.id;
-  const existingReply = input.store
-    .listChannelMessages({ channelId: input.channel.id, threadId: input.sourceMessage.id, limit: 20 })
-    .find((message) => message.kind === "ai_reply" && message.status !== "failed");
+  const existingReply = findChannelAssistantReplyForSource({
+    store: input.store,
+    sourceItemId: input.sourceMessage.id,
+  });
   if (existingReply) {
     const decision = persistIntentDecision(input, {
       action: "clarify",
@@ -899,19 +901,14 @@ function createMaterializationClarifyReply(
     return { action: "continue" };
   }
   const now = new Date().toISOString();
-  const aiReply = input.store.createChannelMessage(
-    {
-      channelId: input.channel.id,
-      threadId: replyThreadId,
-      kind: "ai_reply",
-      intent: "discuss",
-      authorType: "ai-teammate",
-      authorId: teammate.id,
-      body: clarify.body,
-      status: "ready",
-    },
+  const aiReply = appendChannelAssistantMessage({
+    store: input.store,
+    sourceItemId: input.sourceMessage.id,
+    actorId: teammate.id,
+    body: clarify.body,
+    idempotencyKey: `materialization-clarify:${input.sourceMessage.id}`,
     now,
-  );
+  });
   const decision = persistIntentDecision(input, {
     action: "clarify",
     selectedTeammateId: teammate.id,
@@ -1287,13 +1284,24 @@ function extractRecentThreadCodeBlockContent(input: ChannelIntentSelectorInput, 
 }
 
 function recentFileContentMessages(input: ChannelIntentSelectorInput): readonly ChannelMessage[] {
-  const scopedMessages = input.sourceMessage.threadId
-    ? input.store.listChannelMessages({ channelId: input.channel.id, threadId: input.sourceMessage.threadId, limit: 30 })
-    : input.store.listChannelMessages({ channelId: input.channel.id, limit: 30 });
-  const rootMessage = input.sourceMessage.threadId ? input.store.getChannelMessage(input.sourceMessage.threadId) : undefined;
+  const sourceItem = input.store.getConversationItem(input.sourceMessage.id);
+  const scopedMessages = sourceItem
+    ? listChannelMessageViewsPage({
+        store: input.store,
+        channelId: input.channel.id,
+        threadId: sourceItem.threadId,
+        limit: 30,
+      }).messages
+    : [];
+  const explicitRefs = sourceItem?.kind === "user_message"
+    ? [sourceItem.payload.replyToItemId, ...(sourceItem.payload.quotedItemIds ?? [])]
+        .filter((id): id is string => Boolean(id))
+        .map((id) => getChannelMessageView(input.store, id))
+        .filter((message): message is ChannelMessage => Boolean(message))
+    : [];
   return uniqueMessages([
     ...scopedMessages,
-    ...(rootMessage && rootMessage.channelId === input.channel.id ? [rootMessage] : []),
+    ...explicitRefs,
   ])
     .filter((message) => message.id !== input.sourceMessage.id && message.createdAt <= input.sourceMessage.createdAt && message.status !== "failed")
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt));

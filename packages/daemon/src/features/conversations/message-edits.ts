@@ -35,6 +35,10 @@ import {
   readString,
 } from "../../shared/validation.js";
 import { resolveChannelConversationSurface } from "../channels/conversation-surface.js";
+import {
+  getChannelMessageView,
+  listChannelMessageViews,
+} from "../channels/conversation-item-messages.js";
 import { assertDirectFileRefsWithinWorkspace } from "../teammates/direct-workspace.js";
 
 export type EditableConversationMessage =
@@ -288,7 +292,7 @@ function resolveNormalConversationMessage(store: RunStore, input: EditConversati
 
 function resolveChannelMessage(store: RunStore, input: EditConversationMessageRequest, skipLatestCheck: boolean): EditableConversationMessage {
   const channel = store.getChannel(input.ownerId);
-  const message = store.getChannelMessage(input.messageId);
+  const message = getChannelMessageView(store, input.messageId);
   if (!channel || !message || message.channelId !== channel.id) {
     throw new HttpError(404, "message_not_found", `Channel message not found: ${input.messageId}`);
   }
@@ -307,7 +311,12 @@ function resolveChannelMessage(store: RunStore, input: EditConversationMessageRe
     throw new HttpError(409, "surface_owner_mismatch", "The message does not belong to the requested conversation surface.");
   }
   const laneId = message.threadId ?? channel.id;
-  const latest = store.listChannelMessages({ channelId: channel.id, threadId: message.threadId, limit: 500 })
+  const latest = listChannelMessageViews({
+    store,
+    channelId: channel.id,
+    ...(message.threadId ? { threadId: message.threadId } : {}),
+    limit: 500,
+  })
     .filter((candidate) => candidate.authorType === "local-user" && (message.threadId ? candidate.threadId === message.threadId : !candidate.threadId))
     .at(-1);
   if (!skipLatestCheck && (!latest || latest.id !== message.id)) {
@@ -604,7 +613,7 @@ function readStringArrayFromRecord(value: unknown, key: string): string[] {
 }
 
 function normalConversationMessageId(turn: LingTurn): string {
-  return turn.sourceMessageId?.startsWith("conversation-user:") ? turn.sourceMessageId : `conversation-user:${turn.id}`;
+  return turn.sourceItemId?.startsWith("conversation-user:") ? turn.sourceItemId : `conversation-user:${turn.id}`;
 }
 
 function normalizeStrings(values: readonly (string | undefined)[]): string[] {

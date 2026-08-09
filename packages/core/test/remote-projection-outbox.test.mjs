@@ -81,7 +81,7 @@ test("existing conversation and profile writes durably enqueue lightweight proje
       limit: 1_000,
     });
     assert.ok(changes.some((item) => item.entityType === "channel" && item.entityId === channel.id));
-    assert.ok(changes.some((item) => item.entityType === "channel_message" && item.entityId === channelMessage.id && item.affectsUnread));
+    assert.ok(changes.some((item) => item.entityType === "conversation_item" && item.entityId === channelMessage.id && item.affectsUnread));
     assert.ok(changes.some((item) => item.entityType === "teammate_direct_thread" && item.entityId === direct.id));
     assert.ok(changes.some((item) => item.entityType === "teammate_direct_message" && item.entityId === directMessage.id && item.affectsUnread));
     assert.ok(changes.some((item) => item.entityType === "ling_thread" && item.entityId === conversation.id));
