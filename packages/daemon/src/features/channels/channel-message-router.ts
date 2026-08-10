@@ -685,6 +685,7 @@ function summarizeContextPack(pack: ContextPack): ChannelMessageRouteContextPack
     droppedSectionIds: pack.droppedSectionIds,
     sourceRefCounts,
     compactionIds: pack.compactionIds,
+    contextProjection: pack.contextProjection,
   };
 }
 

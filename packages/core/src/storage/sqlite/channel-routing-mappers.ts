@@ -1,4 +1,5 @@
 import type { SQLOutputValue } from "node:sqlite";
+import { isConversationContextProjectionMetadata } from "@ling-stack/contracts";
 import {
   type ChannelIntentDecision,
   type ChannelIntentDecisionAction,
@@ -128,6 +129,10 @@ function parseOptionalChannelMessageRouteContextPackMetadata(
         normalizedSourceRefCounts[key] = count;
       }
     }
+    if (record.contextProjection !== undefined
+      && !isConversationContextProjectionMetadata(record.contextProjection)) {
+      return undefined;
+    }
     return omitUndefined({
       schemaVersion: 1 as const,
       kind: record.kind,
@@ -137,6 +142,7 @@ function parseOptionalChannelMessageRouteContextPackMetadata(
       droppedSectionIds: record.droppedSectionIds,
       sourceRefCounts: normalizedSourceRefCounts,
       compactionIds: record.compactionIds,
+      contextProjection: record.contextProjection,
     });
   } catch {
     return undefined;

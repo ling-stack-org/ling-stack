@@ -21,6 +21,7 @@ import {
   type ChannelIntentDecisionV2,
   type ChannelIntentDecisionV2Action,
   type ContextSegment,
+  type ContextSegmentProposal,
   type ConversationContextProjectionMetadata,
   type ConversationContextSnapshot,
   type ConversationContextSummary,
@@ -115,6 +116,13 @@ const ASSIGNMENT_KEYS = new Set([
   "supersedesAssignmentId",
   "createdAt",
 ]);
+
+const SEGMENT_PROPOSAL_KEYS = {
+  continue: new Set(["action", "segmentId", "antecedentTurnId", "confidence", "evidenceItemIds"]),
+  switch_existing: new Set(["action", "segmentId", "antecedentTurnId", "confidence", "evidenceItemIds"]),
+  propose_new: new Set(["action", "confidence", "relatedSegmentIds", "reason"]),
+  uncertain: new Set(["action", "candidateSegmentIds"]),
+} as const;
 
 const SUMMARY_KEYS = new Set([
   "id",
@@ -317,6 +325,28 @@ export function isTurnContextAssignment(value: unknown): value is TurnContextAss
     && isOptionalText(value.supersedesAssignmentId)
     && value.supersedesAssignmentId !== value.id
     && isCanonicalTimestamp(value.createdAt);
+}
+
+export function isContextSegmentProposal(value: unknown): value is ContextSegmentProposal {
+  if (!isRecord(value)) return false;
+  if (value.action === "continue" || value.action === "switch_existing") {
+    return isRecordWithOnlyKeys(value, SEGMENT_PROPOSAL_KEYS[value.action])
+      && isText(value.segmentId)
+      && isOptionalText(value.antecedentTurnId)
+      && value.confidence !== undefined
+      && isOptionalConfidence(value.confidence)
+      && isUniqueTextArray(value.evidenceItemIds);
+  }
+  if (value.action === "propose_new") {
+    return isRecordWithOnlyKeys(value, SEGMENT_PROPOSAL_KEYS.propose_new)
+      && value.confidence !== undefined
+      && isOptionalConfidence(value.confidence)
+      && isUniqueTextArray(value.relatedSegmentIds)
+      && isText(value.reason, 8_192);
+  }
+  return value.action === "uncertain"
+    && isRecordWithOnlyKeys(value, SEGMENT_PROPOSAL_KEYS.uncertain)
+    && isUniqueTextArray(value.candidateSegmentIds);
 }
 
 export function isConversationContextSummary(value: unknown): value is ConversationContextSummary {

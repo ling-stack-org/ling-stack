@@ -211,6 +211,21 @@ test("sqlite channel auto reply mode and route decisions round trip", async () =
       },
       "2026-06-09T00:04:00.000Z",
     );
+    const sourceItem = store.getConversationItem(message.id);
+    assert.ok(sourceItem?.turnId);
+    const sourceAssignment = store.getEffectiveTurnContextAssignment(sourceItem.turnId);
+    assert.ok(sourceAssignment);
+    const contextProjection = {
+      projectionVersion: "ctxv2_route_test",
+      threadId: sourceItem.threadId,
+      turnId: sourceItem.turnId,
+      segmentId: sourceAssignment.segmentId,
+      throughItemSequence: sourceItem.sequence,
+      summaryIds: [],
+      sourceRefs: [{ type: "conversation_item", id: sourceItem.id }],
+      policyVersion: "continuity-v2-projector-v1",
+      visibilityFingerprint: "visibility-route-test",
+    };
     const decision = store.createChannelMessageRouteDecision(
       {
         channelId: channel.id,
@@ -239,6 +254,7 @@ test("sqlite channel auto reply mode and route decisions round trip", async () =
           droppedSectionIds: [],
           sourceRefCounts: { channel: 1, message: 1 },
           compactionIds: [],
+          contextProjection,
         },
         status: "accepted",
         createdBy: "deterministic",
@@ -256,6 +272,7 @@ test("sqlite channel auto reply mode and route decisions round trip", async () =
       droppedSectionIds: [],
       sourceRefCounts: { channel: 1, message: 1 },
       compactionIds: [],
+      contextProjection,
     });
     assert.deepEqual(store.listChannelMessageRouteDecisions({ channelId: channel.id, sourceMessageId: message.id }).map((item) => item.id), [decision.id]);
     const failed = store.updateChannelMessageRouteDecision(

@@ -12,6 +12,10 @@ import {
   type RunStore,
   type WorkspaceStoreFacet,
 } from "@ling-stack/core";
+import type {
+  ConversationContextProjectionMetadata,
+  ConversationDomainRefType,
+} from "@ling-stack/contracts";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
 import { formatChannelDiscussionPrompt, type ChannelDiscussionPromptContext, type ChannelDiscussionPromptTeammate } from "./ai-prompts.js";
 import {
@@ -29,13 +33,9 @@ import {
   collectActiveWorkSources,
   collectChannelStateSource,
   collectMaterializedInputSources,
-  collectPriorConversationSources,
-  collectRecentConversationSources,
-  collectSelectorConversationSources,
   collectTurnSource,
-  listChannelContextMessages,
-  listPriorChannelContextMessages,
 } from "./context-processing/sources.js";
+import { buildProjectedConversationContextSlice } from "./context-processing/conversation-context-adapter.js";
 import { buildChannelContextView } from "./context-processing/views.js";
 import {
   buildWorkflowStepContextView,
@@ -84,23 +84,16 @@ export interface ContextBudget {
 
 export interface ContextSourceRef {
   readonly type:
-    | "message"
-    | "channel"
+    | ConversationDomainRefType
     | "teammate"
+    | "channel"
     | "provider"
-    | "memory"
-    | "artifact"
     | "attachment"
     | "link_preview"
-    | "run"
     | "decision"
-    | "handoff"
     | "summary"
-    | "workflow"
-    | "workflow_step"
     | "workflow_selector_decision"
     | "workflow_handoff_intent"
-    | "context_summary"
     | "workflow_packet_summary";
   readonly id: string;
   readonly label?: string;
@@ -127,6 +120,7 @@ export interface ContextPack {
   readonly compactionIds: readonly string[];
   readonly estimatedInputTokens: number;
   readonly overBudget: boolean;
+  readonly contextProjection?: ConversationContextProjectionMetadata;
 }
 
 interface BuildContextPackInput {
@@ -135,6 +129,7 @@ interface BuildContextPackInput {
   readonly sections: readonly ContextSection[];
   readonly sourceRefs?: readonly ContextSourceRef[];
   readonly compactionIds?: readonly string[];
+  readonly contextProjection?: ConversationContextProjectionMetadata;
 }
 
 interface ChannelReplyContextPackInput {
@@ -189,8 +184,6 @@ const DEFAULT_OUTPUT_TOKENS = 1_024;
 const SELECTOR_OUTPUT_TOKENS = 512;
 const RUNTIME_OVERHEAD_TOKENS = 512;
 const MIN_INPUT_BUDGET_TOKENS = 1_024;
-const CHANNEL_REPLY_RECENT_CONTEXT_LIMIT = 6;
-const CHANNEL_REPLY_RECENT_CONTEXT_BODY_CHARS = 1_200;
 
 export function resolveProviderContextCapabilities(providerPreset?: ProviderPreset): ProviderContextCapabilities {
   const snapshot = resolveProviderModelCapabilitySnapshot(providerPreset, {
@@ -263,6 +256,7 @@ export function buildContextPack(input: BuildContextPackInput): ContextPack {
     compactionIds: input.compactionIds ?? [],
     estimatedInputTokens,
     overBudget: estimatedInputTokens > budget.inputBudgetTokens,
+    contextProjection: input.contextProjection,
   };
 }
 
@@ -303,6 +297,7 @@ function buildCompatContextView(input: {
   readonly sourceRefs: readonly ContextSourceRef[];
   readonly sources?: readonly ChannelContextSource[];
   readonly compactionIds?: readonly string[];
+  readonly contextProjection?: ConversationContextProjectionMetadata;
 }): CompatContextView {
   const budget = resolveProviderContextBudget(input.providerPreset, input.kind);
   return {
@@ -324,6 +319,7 @@ function buildCompatContextView(input: {
         capabilitySource: budget.capabilitySource,
         capabilityConfidence: budget.capabilityConfidence,
       },
+      contextProjection: input.contextProjection,
     }),
   };
 }
@@ -335,6 +331,7 @@ function buildContextPackFromContextView(input: CompatContextView): ContextPack 
     sections: promptSectionsFromContextView(input.view).map(channelContextSectionToContextSection),
     sourceRefs: uniqueContextSourceRefs(input.legacySourceRefs),
     compactionIds: input.view.metadata.compactionIds,
+    contextProjection: input.view.contextProjection,
   });
 }
 
@@ -415,21 +412,22 @@ export function buildChannelReplyContextPack(input: ChannelReplyContextPackInput
     ...sourceMessage,
     body: renderLingAgentTurnEnvelopeForPrompt(envelope),
   };
-  const recentReplyContextSection = input.minimal
-    ? undefined
-    : buildRecentChannelReplyContextSection(
-        input.store,
-        input.channel.id,
-        input.sourceMessage,
-        input.additionalContextMessages,
-      );
+  const projectedContext = buildProjectedConversationContextSlice({
+    store: input.store,
+    channel: input.channel,
+    sourceItemId: input.sourceMessage.id,
+    view: "reply",
+    consumerTeammateId: input.canonicalTeammateId,
+    explicitItemIds: input.additionalContextMessages?.map((message) => message.id),
+    minimal: input.minimal,
+  });
   const compactedSummarySection = input.compactedChannelSummary
     ? [buildCompactedChannelDiscussionSection(input.compactedChannelSummary)]
     : [];
   const sections: readonly ContextSection[] = [
     protocolSection,
     ...compactedSummarySection,
-    ...(recentReplyContextSection ? [recentReplyContextSection] : []),
+    ...projectedContext.sections.map(channelContextSectionToContextSection),
     {
       id: "channel_discussion",
       role: "user",
@@ -441,11 +439,7 @@ export function buildChannelReplyContextPack(input: ChannelReplyContextPackInput
   const sourceRefs: readonly ContextSourceRef[] = [
     { type: "channel", id: input.channel.id, label: input.channel.name },
     { type: "message", id: sourceMessage.id, label: "Source message" },
-    ...(recentReplyContextSection?.sourceRefIds ?? []).map((messageId): ContextSourceRef => ({
-      type: "message",
-      id: messageId,
-      label: "Recent context message",
-    })),
+    ...projectedContext.sourceRefs,
     ...turnEnvelopeSourceRefs(envelope),
     ...(input.compactedChannelSummary ? [{ type: "context_summary" as const, id: input.compactedChannelSummary.id, label: "Compacted channel discussion" }] : []),
   ];
@@ -458,11 +452,12 @@ export function buildChannelReplyContextPack(input: ChannelReplyContextPackInput
     sections,
     sourceRefs,
     compactionIds: input.compactedChannelSummary ? [input.compactedChannelSummary.id] : undefined,
+    contextProjection: projectedContext.projection.metadata,
     sources: [
       collectChannelStateSource({ channel: input.channel, text: protocolSection.text, metadata: protocolSection.metadata }),
       collectTurnSource({ channel: input.channel, envelope }),
       ...collectMaterializedInputSources({ channel: input.channel, envelope }),
-      ...collectReplyRecentMessageSources(input, recentReplyContextSection),
+      ...projectedContext.sources,
       ...collectActiveWorkSources({ store: input.store, channel: input.channel }),
     ],
   });
@@ -473,12 +468,13 @@ export function buildChannelIntentSelectorContextPack(input: ChannelIntentSelect
   const protocolSection = buildChannelProtocolContextSection(input);
   const envelope = resolveTurnEnvelope(input);
   const sourceMessage = contextSourceMessage(input.sourceMessage, input.minimal ? 1_200 : undefined);
-  const recentMessages = input.minimal
-    ? ""
-    : listRecentContextMessages(input.store, input.channel.id, input.sourceMessage)
-      .filter((message) => message.id !== input.sourceMessage.id)
-      .map((message) => `${message.authorType}: ${message.body.slice(0, 180)}`)
-      .join("\n");
+  const projectedContext = buildProjectedConversationContextSlice({
+    store: input.store,
+    channel: input.channel,
+    sourceItemId: input.sourceMessage.id,
+    view: "selector",
+    minimal: input.minimal,
+  });
   const teammateRoles = input.store
     .listAiTeammates({ status: "active", includeHidden: false, limit: 20 })
     .map((teammate) => ({ id: teammate.id, role: teammate.roleKey, label: teammate.displayName }))
@@ -504,18 +500,13 @@ export function buildChannelIntentSelectorContextPack(input: ChannelIntentSelect
     },
     protocolSection,
     ...(input.compactedChannelSummary ? [buildCompactedChannelDiscussionSection(input.compactedChannelSummary)] : []),
+    ...projectedContext.sections.map(channelContextSectionToContextSection),
     {
       id: "selector_source_message",
       role: "user",
       priority: "must_keep",
       text: [`Channel: ${input.channel.name}`, "Latest user turn:", renderLingAgentTurnEnvelopeForPrompt(envelope)].join("\n"),
       sourceRefIds: [input.channel.id, sourceMessage.id],
-    },
-    {
-      id: "selector_recent_context",
-      role: "evidence",
-      priority: "low",
-      text: recentMessages ? `Recent context:\n${recentMessages}` : "Recent context: none",
     },
     {
       id: "selector_teammate_roles",
@@ -527,6 +518,7 @@ export function buildChannelIntentSelectorContextPack(input: ChannelIntentSelect
   const sourceRefs: readonly ContextSourceRef[] = [
     { type: "channel", id: input.channel.id, label: input.channel.name },
     { type: "message", id: sourceMessage.id, label: "Latest user message" },
+    ...projectedContext.sourceRefs,
     ...turnEnvelopeSourceRefs(envelope),
     ...(input.compactedChannelSummary ? [{ type: "context_summary" as const, id: input.compactedChannelSummary.id, label: "Compacted channel discussion" }] : []),
   ];
@@ -538,11 +530,12 @@ export function buildChannelIntentSelectorContextPack(input: ChannelIntentSelect
     sections,
     sourceRefs,
     compactionIds: input.compactedChannelSummary ? [input.compactedChannelSummary.id] : undefined,
+    contextProjection: projectedContext.projection.metadata,
     sources: [
       collectChannelStateSource({ channel: input.channel, text: protocolSection.text, metadata: protocolSection.metadata }),
       collectTurnSource({ channel: input.channel, envelope }),
       ...collectMaterializedInputSources({ channel: input.channel, envelope }),
-      ...collectSelectorRecentMessageSources(input),
+      ...projectedContext.sources,
       ...collectActiveWorkSources({ store: input.store, channel: input.channel }),
     ],
   });
@@ -553,12 +546,13 @@ export function buildChannelAutoRouteContextPack(input: ChannelAutoRouteContextP
   const protocolSection = buildChannelProtocolContextSection(input);
   const envelope = resolveTurnEnvelope(input);
   const sourceMessage = contextSourceMessage(input.sourceMessage, input.minimal ? 1_200 : undefined);
-  const recentMessages = input.minimal
-    ? ""
-    : listRecentContextMessages(input.store, input.channel.id, input.sourceMessage)
-    .filter((message) => message.id !== input.sourceMessage.id)
-    .map((message) => `${message.authorType}: ${message.body.slice(0, 180)}`)
-    .join("\n");
+  const projectedContext = buildProjectedConversationContextSlice({
+    store: input.store,
+    channel: input.channel,
+    sourceItemId: input.sourceMessage.id,
+    view: "selector",
+    minimal: input.minimal,
+  });
   const sections: readonly ContextSection[] = [
     {
       id: "auto_route_instructions",
@@ -574,18 +568,13 @@ export function buildChannelAutoRouteContextPack(input: ChannelAutoRouteContextP
     },
     protocolSection,
     ...(input.compactedChannelSummary ? [buildCompactedChannelDiscussionSection(input.compactedChannelSummary)] : []),
+    ...projectedContext.sections.map(channelContextSectionToContextSection),
     {
       id: "auto_route_source_message",
       role: "user",
       priority: "must_keep",
       text: [`Channel: ${input.channel.name}`, "Latest user turn:", renderLingAgentTurnEnvelopeForPrompt(envelope)].join("\n"),
       sourceRefIds: [input.channel.id, sourceMessage.id],
-    },
-    {
-      id: "auto_route_recent_context",
-      role: "evidence",
-      priority: "low",
-      text: recentMessages ? `Recent context:\n${recentMessages}` : "Recent context: none",
     },
     {
       id: "auto_route_candidates",
@@ -597,6 +586,7 @@ export function buildChannelAutoRouteContextPack(input: ChannelAutoRouteContextP
   const sourceRefs: readonly ContextSourceRef[] = [
     { type: "channel", id: input.channel.id, label: input.channel.name },
     { type: "message", id: sourceMessage.id, label: "Latest user message" },
+    ...projectedContext.sourceRefs,
     ...turnEnvelopeSourceRefs(envelope),
     ...(input.compactedChannelSummary ? [{ type: "context_summary" as const, id: input.compactedChannelSummary.id, label: "Compacted channel discussion" }] : []),
   ];
@@ -608,124 +598,16 @@ export function buildChannelAutoRouteContextPack(input: ChannelAutoRouteContextP
     sections,
     sourceRefs,
     compactionIds: input.compactedChannelSummary ? [input.compactedChannelSummary.id] : undefined,
+    contextProjection: projectedContext.projection.metadata,
     sources: [
       collectChannelStateSource({ channel: input.channel, text: protocolSection.text, metadata: protocolSection.metadata }),
       collectTurnSource({ channel: input.channel, envelope }),
       ...collectMaterializedInputSources({ channel: input.channel, envelope }),
-      ...collectSelectorRecentMessageSources(input),
+      ...projectedContext.sources,
       ...collectActiveWorkSources({ store: input.store, channel: input.channel }),
     ],
   });
   return buildContextPackFromContextView(view);
-}
-
-function listRecentContextMessages(store: RunStore, channelId: string, sourceMessage: ChannelMessage): readonly ChannelMessage[] {
-  return listChannelContextMessages({ store, channelId, sourceMessage, limit: 8 });
-}
-
-function buildRecentChannelReplyContextSection(
-  store: RunStore,
-  channelId: string,
-  sourceMessage: ChannelMessage,
-  additionalContextMessages: readonly ChannelMessage[] = [],
-): ContextSection | undefined {
-  const recentMessages = uniqueChannelMessages([
-    ...listPriorChannelMessages(store, channelId, sourceMessage),
-    ...additionalContextMessages,
-  ])
-    .filter((message) => message.status !== "pending")
-    .slice(-CHANNEL_REPLY_RECENT_CONTEXT_LIMIT);
-  if (recentMessages.length === 0) {
-    return undefined;
-  }
-  return {
-    id: "channel_recent_context",
-    role: "evidence",
-    priority: "high",
-    text: [
-      "Recent channel context before the latest turn:",
-      "Use this context to resolve short follow-ups, edits, continuations, and references like \"继续\", \"改成400字\", \"上面那个\", or \"这个\". If the latest turn is unrelated, answer the latest turn normally.",
-      ...recentMessages.map((message) => formatRecentContextMessage(store, message)),
-    ].join("\n\n"),
-    sourceRefIds: recentMessages.map((message) => message.id),
-  };
-}
-
-function listPriorChannelMessages(store: RunStore, channelId: string, sourceMessage: ChannelMessage): readonly ChannelMessage[] {
-  return listPriorChannelContextMessages({ store, channelId, sourceMessage, limit: 8 });
-}
-
-function collectReplyRecentMessageSources(
-  input: ChannelReplyContextPackInput,
-  recentReplyContextSection: ContextSection | undefined,
-): readonly ChannelContextSource[] {
-  if (!recentReplyContextSection) {
-    return [];
-  }
-  return [
-    ...collectPriorConversationSources({
-      store: input.store,
-      channel: input.channel,
-      sourceMessage: input.sourceMessage,
-      limit: CHANNEL_REPLY_RECENT_CONTEXT_LIMIT,
-    }),
-    ...collectRecentConversationSources({
-      workspaceId: input.channel.workspaceId,
-      channelId: input.channel.id,
-      messages: input.additionalContextMessages ?? [],
-      limit: CHANNEL_REPLY_RECENT_CONTEXT_LIMIT,
-    }),
-  ];
-}
-
-function uniqueChannelMessages(messages: readonly ChannelMessage[]): ChannelMessage[] {
-  const byId = new Map<string, ChannelMessage>();
-  for (const message of messages) {
-    byId.set(message.id, message);
-  }
-  return [...byId.values()];
-}
-
-function collectSelectorRecentMessageSources(input: ChannelIntentSelectorContextPackInput): readonly ChannelContextSource[] {
-  if (input.minimal) {
-    return [];
-  }
-  return collectSelectorConversationSources({
-    store: input.store,
-    channel: input.channel,
-    sourceMessage: input.sourceMessage,
-    limit: 8,
-  });
-}
-
-function formatRecentContextMessage(store: RunStore, message: ChannelMessage): string {
-  const status = message.status === "ready" ? "" : `, status=${message.status}`;
-  return [
-    `Message ${message.id} (${message.authorType}${status})`,
-    `${formatRecentContextAuthor(store, message)}:`,
-    truncateRecentContextBody(message.body, CHANNEL_REPLY_RECENT_CONTEXT_BODY_CHARS),
-  ].join("\n");
-}
-
-function formatRecentContextAuthor(store: RunStore, message: ChannelMessage): string {
-  if (message.authorType === "local-user") {
-    return "User";
-  }
-  if (message.authorType === "system") {
-    return "System";
-  }
-  if (!message.authorId) {
-    return "AI teammate";
-  }
-  return resolveAiTeammateReference(store, message.authorId)?.displayName ?? `AI teammate ${message.authorId}`;
-}
-
-function truncateRecentContextBody(body: string, maxLength: number): string {
-  const trimmed = body.trim();
-  if (trimmed.length <= maxLength) {
-    return trimmed || "[empty]";
-  }
-  return `${trimmed.slice(0, Math.max(0, maxLength - 48))}\n[truncated for recent channel context]`;
 }
 
 function resolveTurnEnvelope(input: {

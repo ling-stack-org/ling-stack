@@ -564,6 +564,7 @@ import { SqliteChannelProposalStore } from "./sqlite/channel-proposal-store.js";
 import { SqliteChannelAssetStore } from "./sqlite/channel-asset-store.js";
 import { SqliteConversationAssetStore } from "./sqlite/conversation-asset-store.js";
 import { SqliteConversationRevisionStore } from "./sqlite/conversation-revision-store.js";
+import { SqliteConversationContextStore } from "./sqlite/conversation-context-store.js";
 import { SqliteRemoteAccessStore } from "./sqlite/remote-access-store.js";
 import { SqliteChannelCollaborationStore } from "./sqlite/channel-collaboration-store.js";
 import { SqliteConversationContextSummaryStore } from "./sqlite/conversation-context-summary-store.js";
@@ -644,6 +645,7 @@ export class SqliteRunStore implements RunStore {
   private readonly conversationItems: SqliteConversationItemStore;
   private readonly conversationTurnIngest: SqliteConversationTurnIngestStore;
   private readonly conversationThreadTopology: SqliteConversationThreadTopologyStore;
+  private readonly conversationContext: SqliteConversationContextStore;
   private readonly channelRouteDecisions: SqliteChannelRouteDecisionStore;
   private readonly channelIntentDecisions: SqliteChannelIntentDecisionStore;
   private readonly channelProposals: SqliteChannelProposalStore;
@@ -677,6 +679,7 @@ export class SqliteRunStore implements RunStore {
       { database: this.database },
       this.conversationItems,
     );
+    this.conversationContext = new SqliteConversationContextStore({ database: this.database });
     this.automations = new SqliteAutomationStore({ database: this.database });
     this.providers = new SqliteProviderStore({ database: this.database });
     this.mcps = new SqliteMcpStore(
@@ -2463,6 +2466,18 @@ export class SqliteRunStore implements RunStore {
     return this.conversationItems.getConversationItemByIdempotencyKey(threadId, idempotencyKey);
   }
 
+  findConversationItemByDomainRef(
+    input: import("../conversation-item-store-types.js").FindConversationItemByDomainRefInput,
+  ): import("@ling-stack/contracts").ConversationItemV1 | undefined {
+    return this.conversationItems.findConversationItemByDomainRef(input);
+  }
+
+  listConversationItemsForTurn(
+    options: import("../conversation-item-store-types.js").ListConversationItemsForTurnOptions,
+  ): readonly import("@ling-stack/contracts").ConversationItemV1[] {
+    return this.conversationItems.listConversationItemsForTurn(options);
+  }
+
   listConversationItemsPage(
     options: import("../conversation-item-store-types.js").ListConversationItemsOptions,
   ): import("../conversation-item-store-types.js").ConversationItemListPage {
@@ -2475,12 +2490,53 @@ export class SqliteRunStore implements RunStore {
     return this.conversationItems.listConversationItemsByChannelPage(options);
   }
 
+  listConversationItemsForSegment(
+    options: import("../conversation-item-store-types.js").ListConversationItemsForSegmentOptions,
+  ): readonly import("@ling-stack/contracts").ConversationItemV1[] {
+    return this.conversationItems.listConversationItemsForSegment(options);
+  }
+
   updatePendingConversationItem(
     itemId: string,
     input: import("../conversation-item-store-types.js").UpdatePendingConversationItemInput,
     now: string,
   ): import("@ling-stack/contracts").ConversationItemV1 {
     return this.conversationItems.updatePendingConversationItem(itemId, input, now);
+  }
+
+  getContextSegment(id: string): import("@ling-stack/contracts").ContextSegment | undefined {
+    return this.conversationContext.getContextSegment(id);
+  }
+
+  listContextSegments(
+    options: import("../conversation-context-store-types.js").ListContextSegmentsOptions,
+  ): readonly import("@ling-stack/contracts").ContextSegment[] {
+    return this.conversationContext.listContextSegments(options);
+  }
+
+  getEffectiveTurnContextAssignment(
+    turnId: string,
+  ): import("@ling-stack/contracts").TurnContextAssignment | undefined {
+    return this.conversationContext.getEffectiveTurnContextAssignment(turnId);
+  }
+
+  applyTurnContextAssignment(
+    input: import("../conversation-context-store-types.js").ApplyTurnContextAssignmentInput,
+    now: string,
+  ): import("../conversation-context-store-types.js").ApplyTurnContextAssignmentResult {
+    return this.conversationContext.applyTurnContextAssignment(input, now);
+  }
+
+  getConversationContextSummary(
+    id: string,
+  ): import("@ling-stack/contracts").ConversationContextSummary | undefined {
+    return this.conversationContext.getConversationContextSummary(id);
+  }
+
+  listConversationContextSummaries(
+    options: import("../conversation-context-store-types.js").ListConversationContextSummariesOptions,
+  ): readonly import("@ling-stack/contracts").ConversationContextSummary[] {
+    return this.conversationContext.listConversationContextSummaries(options);
   }
 
   createChannelMessage(input: CreateChannelMessageInput, now: string): ChannelMessage {

@@ -5,7 +5,10 @@ import {
   type ContextSourceRef,
   type WorkflowStepContextPackInput,
 } from "./context-packs.js";
-import { listChannelMessageViews } from "./conversation-item-messages.js";
+import {
+  buildConversationContextProjection,
+  projectConversationContextMessages,
+} from "./context-processing/conversation-context-projector.js";
 
 export interface WorkflowStepContextCompactionSummary {
   readonly schemaVersion: 1;
@@ -132,26 +135,18 @@ function shouldCompactWorkflowStepContext(pack: ContextPack): boolean {
 }
 
 function selectChannelSummaryMessages(store: RunStore, channel: Channel, sourceMessage: ChannelMessage): readonly ChannelMessage[] {
-  const byId = new Map<string, ChannelMessage>();
-  for (const message of listChannelMessageViews({
+  const projection = buildConversationContextProjection({
     store,
-    channelId: channel.id,
-    ...(sourceMessage.threadId ? { threadId: sourceMessage.threadId } : {}),
-    limit: 30,
-  })) {
-    if (message.status === "pending" || !message.body.trim()) {
-      continue;
-    }
-    byId.set(message.id, message);
-  }
-  byId.set(sourceMessage.id, sourceMessage);
-  return [...byId.values()]
-    .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
-    .slice(-20);
+    sourceItemId: sourceMessage.id,
+    view: "reply",
+    maxTailTextChars: 8_192,
+  });
+  return projectConversationContextMessages(projection, store)
+    .filter((message) => message.status !== "pending" && Boolean(message.body.trim()));
 }
 
 function renderChannelDiscussionSummary(channel: Channel, sourceMessage: ChannelMessage, messages: readonly ChannelMessage[]): string {
-  const recentLines = messages.slice(-12).map((message) => [
+  const projectedLines = messages.map((message) => [
     `- ${message.createdAt} ${message.authorType}${message.authorId ? `:${message.authorId}` : ""}`,
     message.threadId ? `thread=${message.threadId}` : undefined,
     `kind=${message.kind}`,
@@ -161,9 +156,8 @@ function renderChannelDiscussionSummary(channel: Channel, sourceMessage: Channel
     `Channel: ${channel.name} (${channel.id})`,
     `Source message: ${sourceMessage.id}`,
     `Compacted visible message count: ${messages.length}.`,
-    "Recent visible channel messages:",
-    ...recentLines,
-    messages.length > recentLines.length ? `- ${messages.length - recentLines.length} older visible messages omitted from retry prompt; source refs remain on the summary record.` : undefined,
+    "Projected visible conversation items:",
+    ...projectedLines,
   ].filter((line): line is string => line !== undefined).join("\n");
 }
 

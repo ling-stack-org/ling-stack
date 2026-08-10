@@ -2477,7 +2477,10 @@ test("channel reply guidance drains FIFO without interrupting and projects every
     assert.equal(secondContinuation.providerPresetId, provider.id);
     assert.doesNotMatch(runner.runs[2].task.prompt, /Continue a Ling Stack supervised run from preserved context\./);
     assert.match(runner.runs[2].systemPrompt, /Treat the latest queued follow-up as the current user message/);
-    assert.match(runner.runs[2].task.prompt, /Recent channel context before the latest turn:[\s\S]*First channel continuation reply/);
+    assert.match(
+      runner.runs[2].task.prompt,
+      /Conversation context selected by Continuity v2[\s\S]*First channel continuation reply/,
+    );
     runner.resolve("Second channel continuation reply");
 
     await waitForCondition(
@@ -3527,7 +3530,7 @@ test("channel message stream does not expose hidden task proposal blocks", async
   }
 });
 
-test("channel AI reply prompt carries recent context for short follow-ups", async () => {
+test("channel AI reply prompt carries projected segment context for short follow-ups", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-reply-followup-context-"));
   const runner = new ScriptedRunner([
     "雨下到第三天，城里的钟停了。修表匠阿岚把怀表放进钟芯，世界重新开始走动。",
@@ -3556,7 +3559,8 @@ test("channel AI reply prompt carries recent context for short follow-ups", asyn
     await waitForChannelMessageStatus(daemon.url, cwd, channel.id, second.aiReply.id, "ready");
 
     assert.equal(runner.runs.length, 2);
-    assert.match(runner.runs[1].task.prompt, /Recent channel context before the latest turn/);
+    assert.equal(runner.segmentationRuns.length, 1);
+    assert.match(runner.runs[1].task.prompt, /Conversation context selected by Continuity v2/);
     assert.match(runner.runs[1].task.prompt, /300字的小说/);
     assert.match(runner.runs[1].task.prompt, /雨下到第三天，城里的钟停了/);
     assert.match(runner.runs[1].task.prompt, /User message:[\s\S]*400字/);
@@ -4427,7 +4431,7 @@ test("thread follow-up can create the single file named by the previous Ling Age
     store.createChannelMessage(
       {
         channelId: channel.id,
-        threadId: previousUser.id,
+        threadId: previousUser.threadId,
         kind: "ai_reply",
         intent: "discuss",
         authorType: "ai-teammate",
@@ -4513,7 +4517,7 @@ test("thread follow-up opens the recent HTML target with bounded bash tools", as
     store.createChannelMessage(
       {
         channelId: channel.id,
-        threadId: previousUser.id,
+        threadId: previousUser.threadId,
         kind: "ai_reply",
         intent: "discuss",
         authorType: "ai-teammate",
@@ -4589,7 +4593,7 @@ test("model-assisted thread follow-up opens recent target from typed operation k
     store.createChannelMessage(
       {
         channelId: channel.id,
-        threadId: previousUser.id,
+        threadId: previousUser.threadId,
         kind: "ai_reply",
         intent: "discuss",
         authorType: "ai-teammate",
@@ -4670,7 +4674,7 @@ test("model-assisted thread follow-up writes the recent local target without phr
     store.createChannelMessage(
       {
         channelId: channel.id,
-        threadId: previousUser.id,
+        threadId: previousUser.threadId,
         kind: "ai_reply",
         intent: "discuss",
         authorType: "ai-teammate",
@@ -4760,7 +4764,7 @@ test("model-assisted thread follow-up clarifies instead of creating empty recent
     store.createChannelMessage(
       {
         channelId: channel.id,
-        threadId: previousUser.id,
+        threadId: previousUser.threadId,
         kind: "ai_reply",
         intent: "discuss",
         authorType: "ai-teammate",
@@ -4944,7 +4948,7 @@ test("thread follow-up clarifies when the previous Ling Agent reply names multip
     store.createChannelMessage(
       {
         channelId: channel.id,
-        threadId: previousUser.id,
+        threadId: previousUser.threadId,
         kind: "ai_reply",
         intent: "discuss",
         authorType: "ai-teammate",
@@ -6272,10 +6276,20 @@ test("auto_route uses the model selector and records accepted route evidence", a
       "auto_route_instructions",
       "channel_collaboration_protocol",
       "auto_route_source_message",
-      "auto_route_recent_context",
       "auto_route_candidates",
     ]);
-    assert.deepEqual(decisions.decisions[0].contextPack.sourceRefCounts, { channel: 1, message: 1 });
+    assert.deepEqual(decisions.decisions[0].contextPack.sourceRefCounts, {
+      channel: 1,
+      message: 1,
+      thread: 1,
+      turn: 1,
+      conversation_item: 1,
+    });
+    const createdItem = store.getConversationItem(created.message.id);
+    assert.ok(createdItem?.turnId);
+    assert.equal(decisions.decisions[0].contextPack.contextProjection.threadId, createdItem.threadId);
+    assert.equal(decisions.decisions[0].contextPack.contextProjection.turnId, createdItem.turnId);
+    assert.equal(typeof decisions.decisions[0].contextPack.contextProjection.projectionVersion, "string");
     assert.equal(decisions.decisions[0].contextPack.providerPresetId, provider.id);
     assert.deepEqual((await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}`)).proposals, []);
     assert.deepEqual((await getJson(`${daemon.url}/tasks?cwd=${encodeURIComponent(cwd)}`)).tasks, []);
@@ -6285,6 +6299,11 @@ test("auto_route uses the model selector and records accepted route evidence", a
     assert.equal(replyRuns[0].id, finalReply.linkedRunId);
     assert.equal(replyRuns[0].status, "succeeded");
     assert.equal(replyRuns[0].taskId, created.message.id);
+    const persistedReplyRun = store.getRun(replyRuns[0].id);
+    assert.equal(
+      persistedReplyRun.requestSnapshot.contextProjection.projectionVersion,
+      decisions.decisions[0].contextPack.contextProjection.projectionVersion,
+    );
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -12115,6 +12134,7 @@ function unusedRunnerRegistry() {
 
 async function startDaemonForTest(runner, dependencies = {}, config = {}) {
   const { channels, ...restConfig } = config;
+  const routedRunner = wrapTestRunnerContextSegmentation(runner);
   const daemon = createDaemonServer({
     host: "127.0.0.1",
     port: 0,
@@ -12122,7 +12142,7 @@ async function startDaemonForTest(runner, dependencies = {}, config = {}) {
     channels: { intentSelector: false, terminalReports: false, ...channels },
   }, {
     ...dependencies,
-    ...(runner ? { runner } : {}),
+    ...(routedRunner ? { runner: routedRunner } : {}),
   });
   await daemon.start();
   const address = daemon.server.address();
@@ -12131,6 +12151,28 @@ async function startDaemonForTest(runner, dependencies = {}, config = {}) {
     url: `http://127.0.0.1:${address.port}`,
     close: () => daemon.stop(),
   };
+}
+
+function wrapTestRunnerContextSegmentation(runner) {
+  if (!runner) {
+    return undefined;
+  }
+  runner.segmentationRuns ??= [];
+  const routed = Object.create(runner);
+  routed.runTask = async (options) => {
+    if (!/context segmentation policy proposer/i.test(options.systemPrompt ?? "")) {
+      return runner.runTask(options);
+    }
+    runner.segmentationRuns.push(options);
+    const text = JSON.stringify({ action: "uncertain", candidateSegmentIds: [] });
+    options.onEvent?.({ type: "assistant_text_delta", text });
+    return {
+      taskId: options.task.id,
+      messages: [text],
+      events: [],
+    };
+  };
+  return routed;
 }
 
 function createParallelWorkflowStep(store, workflowId, title, metadata = {}) {

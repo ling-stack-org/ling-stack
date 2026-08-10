@@ -40,6 +40,8 @@ import {
   listChannelMessageViewsPage,
   updatePendingAssistantMessage,
 } from "./conversation-item-messages.js";
+import { assignContextSegmentForTurn } from "./context-processing/context-segmentation-policy.js";
+import { createModelContextSegmentProposer } from "./context-processing/context-segmentation-model.js";
 import { filterQueuedChannelReplyMessages } from "./channel-reply-message-visibility.js";
 import { materializeInlineChannelInputs } from "./materialization/inline.js";
 import { createProviderBackedImageVisionSummarizer } from "./materialization/provider-vision.js";
@@ -75,6 +77,7 @@ interface LingAgentChannelMessageInput {
   readonly turnEnvelope?: LingAgentTurnEnvelope;
   readonly requestedProviderPresetId?: string;
   readonly requestedTeammateId?: string;
+  readonly explicitContextSegmentId?: string;
   readonly requestAiReply: boolean;
   readonly replyDisposition?: ChannelReplyDisposition;
   readonly createAiReply: CreateChannelAiReply;
@@ -165,6 +168,7 @@ export async function handleChannelMessageStream(
         sourceMessage: message,
         requestedProviderPresetId: input.providerPresetId,
         requestedTeammateId: input.teammateId,
+        explicitContextSegmentId: input.contextSegmentId,
         requestAiReply: Boolean(input.requestAiReply),
         replyDisposition: input.replyDisposition,
         createAiReply: async (replyInput) =>
@@ -385,6 +389,7 @@ export async function handleChannelMessagesCollection(
           sourceMessage: message,
           requestedProviderPresetId: input.providerPresetId,
           requestedTeammateId: input.teammateId,
+          explicitContextSegmentId: input.contextSegmentId,
           requestAiReply: Boolean(input.requestAiReply),
           replyDisposition: input.replyDisposition,
           createAiReply,
@@ -427,6 +432,31 @@ export async function handleChannelMessagesCollection(
 }
 
 export async function handleLingAgentChannelMessage(input: LingAgentChannelMessageInput): Promise<LingAgentChannelMessageResult> {
+  const modelProposer = createModelContextSegmentProposer({
+    store: input.store,
+    channel: input.channel,
+    runnerRegistry: input.routeDependencies.runnerRegistry,
+    secretResolver: input.routeDependencies.secretResolver,
+    requestedProviderPresetId: input.requestedProviderPresetId,
+  });
+  await assignContextSegmentForTurn({
+    store: input.store,
+    sourceItemId: input.sourceMessage.id,
+    explicitSegmentId: input.explicitContextSegmentId,
+    propose: modelProposer
+      ? async (view) => {
+          try {
+            return await modelProposer(view);
+          } catch {
+            return {
+              action: "uncertain" as const,
+              candidateSegmentIds: view.candidates.map((candidate) => candidate.segmentId),
+            };
+          }
+        }
+      : undefined,
+    now: new Date().toISOString(),
+  });
   const targetTeammateId = resolveChannelReplyTargetTeammateId({
     store: input.store,
     sourceMessage: input.sourceMessage,
@@ -825,7 +855,11 @@ function persistChannelUserMessage(input: {
   const result = input.store.appendConversationUserTurn({
     channelId: input.channel.id,
     threadId: thread.id,
-    turnKind: thread.nextItemSequence > 1 ? "manual_followup" : "initial_request",
+    turnKind: input.input.replyDisposition?.mode === "queue_followup"
+      ? "queued_followup"
+      : thread.nextItemSequence > 1
+        ? "manual_followup"
+        : "initial_request",
     title: channelTurnTitle(input.input.body),
     userInstruction: input.input.body || "Channel input with materialized references.",
     ...(input.input.authorId ? { actorId: input.input.authorId } : {}),
@@ -850,6 +884,9 @@ function persistChannelUserMessage(input: {
       ...(input.input.linkedTaskId ? [{ type: "task" as const, id: input.input.linkedTaskId }] : []),
       ...(input.input.linkedRunId ? [{ type: "run" as const, id: input.input.linkedRunId }] : []),
     ],
+    ...(input.input.replyDisposition?.activeRunId && input.store.getLingTurnForRun(input.input.replyDisposition.activeRunId)
+      ? { sourceTurnId: input.store.getLingTurnForRun(input.input.replyDisposition.activeRunId)!.id }
+      : {}),
     idempotencyKey: input.input.idempotencyKey
       ?? input.requestIdempotencyKey
       ?? `channel-request:${randomUUID()}`,

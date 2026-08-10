@@ -1,5 +1,6 @@
 import type { ConversationPendingReplacement, RunTool, ToolName } from "./shared.js";
 import type { ConversationActiveReplyTarget, RunIntervention } from "./runtime.js";
+import type { ConversationContextProjectionMetadata } from "./conversation-continuity.js";
 import type { ResponseLanguage, ResponseLanguagePreference } from "./settings.js";
 import type {
   ProcedureObservationCluster,
@@ -519,6 +520,7 @@ export interface ChannelMessage {
 export interface CreateChannelMessageRequest {
   readonly idempotencyKey?: string;
   readonly threadId?: string;
+  readonly contextSegmentId?: string;
   readonly kind?: ChannelMessageKind;
   readonly intent?: ChannelMessageIntent;
   readonly authorType?: ChannelMessageAuthorType;
@@ -639,6 +641,7 @@ export interface ChannelMessageRouteContextPackMetadata {
   readonly droppedSectionIds: readonly string[];
   readonly sourceRefCounts: Readonly<Record<string, number>>;
   readonly compactionIds: readonly string[];
+  readonly contextProjection?: ConversationContextProjectionMetadata;
 }
 
 export interface ChannelMessageRouteDecision {
