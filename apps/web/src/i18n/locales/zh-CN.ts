@@ -2269,6 +2269,7 @@ export const zhCN = {
     "Redacted items": "已脱敏条目",
     "Correct context segment": "修正上下文分段",
     "Apply context correction": "应用上下文修正",
+    "Context changed while you were editing. Review the latest segment and try again.": "你编辑期间上下文已经变化。请检查最新分段后重试。",
     "Context diagnostics never include raw prompts, hidden reasoning, private memory bodies, or secret values.": "上下文诊断绝不会包含原始提示词、隐藏推理、私有记忆正文或密钥值。",
     "Budget": "预算",
     "Budget diagnostics": "预算诊断",

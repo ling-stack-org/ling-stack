@@ -247,6 +247,29 @@ test("ConversationItemStore enforces thread, turn, channel and visibility bounda
   }
 });
 
+test("ConversationItemStore paging uses the thread-sequence index instead of scanning the timeline", () => {
+  const { database } = createStore();
+  try {
+    const plan = database.prepare(`
+      EXPLAIN QUERY PLAN
+      SELECT *
+      FROM conversation_items
+      WHERE workspace_id = ? AND thread_id = ? AND sequence < ?
+        AND NOT EXISTS (
+          SELECT 1 FROM conversation_items AS replacement
+          WHERE replacement.supersedes_item_id = conversation_items.id
+        )
+      ORDER BY sequence DESC
+      LIMIT ?
+    `).all("workspace_default", "thread-1", Number.MAX_SAFE_INTEGER, 101);
+    const detail = plan.map((row) => String(row.detail ?? "")).join("\n");
+    assert.match(detail, /SEARCH conversation_items USING INDEX .*\(thread_id=\? AND sequence<\?\)/);
+    assert.doesNotMatch(detail, /SCAN conversation_items(?:\s|$)/);
+  } finally {
+    database.close();
+  }
+});
+
 function createStore() {
   const database = new DatabaseSync(":memory:");
   database.exec(`

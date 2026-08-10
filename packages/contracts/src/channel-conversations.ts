@@ -4,6 +4,7 @@ import type {
   ConversationContextSummary,
   ConversationDomainRef,
   ConversationItemV1,
+  LingThreadContinuityV2,
   TurnContextAssignment,
 } from "./conversation-continuity.js";
 import type {
@@ -18,6 +19,26 @@ import type { ConversationActiveReplyTarget } from "./runtime.js";
 import type { LingThread } from "./threads.js";
 import type { LingTurn } from "./turns.js";
 import type { ChannelWorkflow, ChannelWorkflowOrchestrationResponse, ChannelWorkflowStep } from "./workflows.js";
+
+export type ChannelConversationThread = LingThread & LingThreadContinuityV2 & {
+  readonly nextItemSequence: number;
+};
+
+/**
+ * Identifies the conversation surface without overloading canonical Thread ids
+ * with ConversationItem anchor ids.
+ */
+export type ChannelConversationSurface =
+  | { readonly kind: "channel_root" }
+  | { readonly kind: "thread"; readonly threadId: string }
+  | { readonly kind: "topic"; readonly anchorItemId: string };
+
+export interface ListChannelConversationItemsOptions {
+  readonly limit?: number;
+  readonly beforeSequence?: number;
+  /** Omitted and `channel_root` both select the Channel Root conversation. */
+  readonly surface?: ChannelConversationSurface;
+}
 
 /**
  * Non-authoritative display metadata that cannot be reconstructed from an item alone.
@@ -34,7 +55,7 @@ export interface ChannelConversationItemDecoration {
 export interface ChannelConversationItemPageResponse {
   readonly cwd: string;
   readonly channelId: string;
-  readonly thread: LingThread;
+  readonly thread: ChannelConversationThread;
   readonly turns: readonly LingTurn[];
   readonly items: readonly ConversationItemV1[];
   readonly decorations: readonly ChannelConversationItemDecoration[];
@@ -45,7 +66,8 @@ export interface ChannelConversationItemPageResponse {
 
 export interface CreateChannelTurnRequest {
   readonly idempotencyKey?: string;
-  readonly threadId?: string;
+  /** Omitted and `channel_root` both append to the Channel Root conversation. */
+  readonly surface?: ChannelConversationSurface;
   readonly contextSegmentId?: string;
   readonly body: string;
   readonly mentions?: readonly ChannelMention[];
@@ -62,7 +84,7 @@ export interface CreateChannelTurnRequest {
 }
 
 export interface ChannelConversationTurnResponse {
-  readonly thread: LingThread;
+  readonly thread: ChannelConversationThread;
   readonly turn: LingTurn;
   readonly userItem: ConversationItemV1;
   readonly assistantItems?: readonly ConversationItemV1[];
@@ -77,7 +99,7 @@ export interface ChannelConversationTurnResponse {
 }
 
 export interface ChannelConversationStreamReadyEvent {
-  readonly thread: LingThread;
+  readonly thread: ChannelConversationThread;
   readonly turn: LingTurn;
   readonly userItem: ConversationItemV1;
   readonly assistantItems?: readonly ConversationItemV1[];
@@ -109,7 +131,7 @@ export interface ChannelConversationStreamBlockedEvent extends ChannelConversati
 }
 
 export interface ChannelConversationStreamErrorEvent {
-  readonly thread?: LingThread;
+  readonly thread?: ChannelConversationThread;
   readonly turn?: LingTurn;
   readonly userItem?: ConversationItemV1;
   readonly assistantItems?: readonly ConversationItemV1[];
@@ -121,7 +143,7 @@ export interface ChannelConversationStreamErrorEvent {
 export interface ChannelConversationContextInspectResponse {
   readonly cwd: string;
   readonly channelId: string;
-  readonly thread: LingThread;
+  readonly thread: ChannelConversationThread;
   readonly turn: LingTurn;
   readonly sourceItemId: string;
   readonly segment: ContextSegment;
@@ -148,7 +170,7 @@ export interface CorrectChannelTurnContextRequest {
 export interface CorrectChannelTurnContextResponse {
   readonly cwd: string;
   readonly channelId: string;
-  readonly thread: LingThread;
+  readonly thread: ChannelConversationThread;
   readonly turn: LingTurn;
   readonly segment: ContextSegment;
   readonly assignment: TurnContextAssignment;

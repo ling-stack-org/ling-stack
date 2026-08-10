@@ -1,3 +1,4 @@
+import { appendChannelItemFixture, getChannelItemViewFixture, listChannelItemViewsFixture, updateChannelItemFixture } from "../../core/test/channel-conversation-fixture.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -36,7 +37,7 @@ test("remote facade lists and opens only normalized channel, normal, and teammat
   const store = createSqliteRunStore(cwd);
   try {
     const channel = store.createChannel({ name: "Mobile Channel", boundPath: cwd }, "2026-07-31T05:00:00.000Z");
-    store.createChannelMessage({
+    appendChannelItemFixture(store, {
       channelId: channel.id,
       authorType: "ai-teammate",
       authorId: LING_AGENT_ID,
@@ -128,21 +129,21 @@ test("remote projections keep advancing after more than one thousand conversatio
   try {
     const channel = store.createChannel({ name: "Large Outbox", boundPath: cwd }, "2026-07-31T05:00:00.000Z");
     for (let index = 0; index < 1_000; index += 1) {
-      store.createChannelMessage({
+      appendChannelItemFixture(store, {
         channelId: channel.id,
         authorType: "local-user",
         authorId: "local-user",
         body: `Filler ${index}`,
       }, new Date(Date.parse("2026-07-31T05:00:01.000Z") + index).toISOString());
     }
-    const target = store.createChannelMessage({
+    const target = appendChannelItemFixture(store, {
       channelId: channel.id,
       authorType: "ai-teammate",
       authorId: LING_AGENT_ID,
       body: "Initial projected reply.",
       status: "pending",
     }, "2026-07-31T05:01:00.000Z");
-    store.updateChannelMessageRuntime(target.id, {
+    updateChannelItemFixture(store, target.id, {
       body: "Updated projected reply.",
     }, "2026-07-31T05:01:01.000Z");
 
@@ -190,7 +191,7 @@ test("remote send is at-most-once and rejects a second command while dispatch is
     const first = facade.sendText(command, context);
     const replay = facade.sendText(command, context);
     assert.deepEqual(replay, first);
-    assert.equal(store.listChannelMessages({ channelId: channel.id }).filter((message) => message.id === first.messageId).length, 1);
+    assert.equal(listChannelItemViewsFixture(store, { channelId: channel.id }).filter((message) => message.id === first.messageId).length, 1);
 
     assert.throws(
       () => facade.sendText({ ...command, commandId: "second_command", body: "Do not queue this." }, {
@@ -211,7 +212,7 @@ test("facade mark-read and profile update expose the narrow Mobile fields", asyn
   const store = createSqliteRunStore(cwd);
   try {
     const channel = store.createChannel({ name: "Read", boundPath: cwd }, "2026-07-31T05:00:00.000Z");
-    store.createChannelMessage({
+    appendChannelItemFixture(store, {
       channelId: channel.id,
       authorType: "ai-teammate",
       authorId: LING_AGENT_ID,
@@ -264,7 +265,7 @@ test("projection worker acknowledges rows only after sanitized events publish", 
   const store = createSqliteRunStore(cwd);
   try {
     const channel = store.createChannel({ name: "Outbox", boundPath: cwd }, "2026-07-31T05:00:00.000Z");
-    store.createChannelMessage({
+    appendChannelItemFixture(store, {
       channelId: channel.id,
       authorType: "ai-teammate",
       authorId: LING_AGENT_ID,

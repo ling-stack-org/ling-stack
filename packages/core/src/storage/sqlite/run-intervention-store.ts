@@ -1,6 +1,8 @@
 import type { SQLOutputValue } from "node:sqlite";
-import type { ConversationItemV1 } from "@ling-stack/contracts";
-import { projectConversationItemToChannelMessage } from "../../conversation-item-channel-view.js";
+import {
+  projectConversationItemToChannelMessage,
+  type ConversationItemV1,
+} from "@ling-stack/contracts";
 import type { ChannelMessage } from "../../workspace-types.js";
 import {
   createRunInterventionId,

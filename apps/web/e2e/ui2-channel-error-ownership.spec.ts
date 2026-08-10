@@ -66,7 +66,7 @@ test("T13-P.9D a late Engineering send failure cannot leak into Research", async
   const requestStarted = createDeferred<void>();
   const releaseFailure = createDeferred<void>();
   const failureMessage = "Late Engineering message failed.";
-  await page.route(/\/channels\/channel_engineering\/messages\/stream(?:\?.*)?$/u, async (route) => {
+  await page.route(/\/channels\/channel_engineering\/turns\/stream(?:\?.*)?$/u, async (route) => {
     if (route.request().method() !== "POST") {
       await route.fallback();
       return;
@@ -95,7 +95,7 @@ test("T13-P.9D a late Engineering send failure cannot leak into Research", async
 
   const failedResponse = page.waitForResponse((response) =>
     response.status() === 503 &&
-    /\/channels\/channel_engineering\/messages\/stream(?:\?.*)?$/u.test(response.url())
+    /\/channels\/channel_engineering\/turns\/stream(?:\?.*)?$/u.test(response.url())
   );
   releaseFailure.resolve();
   await failedResponse;

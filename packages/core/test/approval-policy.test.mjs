@@ -1,3 +1,4 @@
+import { appendChannelItemFixture, getChannelItemViewFixture, listChannelItemViewsFixture, updateChannelItemFixture } from "./channel-conversation-fixture.mjs";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -558,7 +559,7 @@ test("sqlite store loads only the latest completed intervention replies before t
     const replyIds = [];
     for (let index = 0; index < 8; index += 1) {
       const timestamp = new Date(Date.parse("2026-08-08T00:00:00.000Z") + index * 1_000).toISOString();
-      const reply = store.createChannelMessage({
+      const reply = appendChannelItemFixture(store, {
         channelId: channel.id,
         kind: "ai_reply",
         intent: "discuss",

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { appendLegacyChannelMessageFixture } from "./legacy-continuity-fixture.mjs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,7 +17,7 @@ test("Channel Intent v2 migration deletes v1 rows and preserves new v2 decisions
   t.after(() => rm(cwd, { recursive: true, force: true }));
   const legacy = createLegacySqliteRunStoreForMigrationTest(cwd);
   const channel = legacy.createChannel({ name: "Intent v2", boundPath: cwd }, "2026-08-10T10:00:00.000Z");
-  const message = legacy.createChannelMessage({
+  const message = appendLegacyChannelMessageFixture(legacy, {
     channelId: channel.id,
     authorType: "local-user",
     body: "Write an article",

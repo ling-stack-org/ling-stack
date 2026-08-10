@@ -8,6 +8,7 @@ export * from "./threads.js";
 export type * from "./conversations.js";
 export * from "./conversation-continuity.js";
 export * from "./conversation-continuity-validation.js";
+export * from "./channel-conversation-projection.js";
 export type * from "./traces.js";
 export type * from "./turns.js";
 export type * from "./automations.js";

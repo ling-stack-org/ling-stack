@@ -1,3 +1,4 @@
+import { appendChannelItemFixture, getChannelItemViewFixture, listChannelItemViewsFixture, updateChannelItemFixture } from "../../core/test/channel-conversation-fixture.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -27,11 +28,20 @@ test("channel team authority ledger API exposes read-only authority facts", asyn
     requestSnapshot: { cwd },
     createdAt: "2026-06-27T00:01:00.000Z",
   });
-  const reply = store.createChannelMessage(
+  const source = appendChannelItemFixture(store,
+    {
+      id: "source_authority_message",
+      channelId: channel.id,
+      authorType: "local-user",
+      body: "Source authority request.",
+    },
+    "2026-06-27T00:01:30.000Z",
+  );
+  const reply = appendChannelItemFixture(store,
     {
       id: "reply_authority_demo",
       channelId: channel.id,
-      threadId: "source_authority_message",
+      replyToItemId: source.id,
       kind: "ai_reply",
       intent: "discuss",
       authorType: "ai-teammate",

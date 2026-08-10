@@ -71,6 +71,7 @@ import type {
   CreateChannelWorkflowStepRequest,
   CreateChannelWorkflowTemplateCompileRequest,
   StartChannelWorkflowStepRequest,
+  ListChannelConversationItemsOptions,
   Task,
   TaskEditFormState,
   TaskListResponse,
@@ -286,7 +287,7 @@ export async function openChannelWorkspace(cwd: string, channelId: string): Prom
 export async function listChannelConversationItems(
   cwd: string,
   channelId: string,
-  options: { readonly limit?: number; readonly beforeSequence?: number; readonly threadId?: string } = {},
+  options: ListChannelConversationItemsOptions = {},
 ): Promise<ChannelConversationItemPageResponse> {
   return daemonClient.listChannelConversationItems(cwd, channelId, options);
 }

@@ -1,9 +1,9 @@
 import type {
   ChannelConversationItemDecoration,
   ChannelConversationItemPageResponse,
+  ChannelConversationThread,
   ChannelConversationTurnResponse,
   ConversationItemV1,
-  LingThread,
   LingTurn,
 } from "@ling-stack/contracts";
 import type { Channel, ChannelMessage, RunStore } from "@ling-stack/core";
@@ -24,7 +24,7 @@ export function listChannelConversationItems(input: {
   readonly store: RunStore;
   readonly cwd: string;
   readonly channel: Channel;
-  readonly thread: LingThread;
+  readonly thread: ChannelConversationThread;
   readonly beforeSequence?: number;
   readonly limit?: number;
   readonly replyDispatchCoordinator?: ChannelReplyDispatchCoordinator;
@@ -174,7 +174,7 @@ function requiredEffectiveItem(
   return item;
 }
 
-function assertChannelThread(channelId: string, thread: LingThread): void {
+function assertChannelThread(channelId: string, thread: ChannelConversationThread): void {
   if (thread.channelId !== channelId) {
     throw new Error(`Conversation thread does not belong to channel: ${thread.id}`);
   }

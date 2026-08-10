@@ -116,6 +116,10 @@ test("channel Web domain projects canonical items and discardable decorations", 
     ["item-user", "message"],
     ["item-assistant", "ai_reply"],
   ]);
+  assert.equal(page.messages[0].threadId, thread.id);
+  assert.equal(page.messages[0].turnId, turn.id);
+  assert.equal(page.messages[0].threadSurfaceKind, "channel_root");
+  assert.equal(page.messages[0].threadRelationKind, "root");
   assert.equal(page.messages[1].linkedRunId, "run-1");
   assert.equal(page.messages[1].editedAt, "2026-08-10T00:00:03.000Z");
   assert.equal(page.messages[1].webEvidence.sources[0].url, "https://example.com");

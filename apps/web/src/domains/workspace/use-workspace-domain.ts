@@ -463,7 +463,10 @@ export function useWorkspaceDomain(input: {
     try {
       clearScopedFeedback("composer", channelId);
       setError(undefined);
-      const response = await listChannelConversationItems(cwd, channelId, { limit: channelMessageInitialLimit, threadId });
+      const response = await listChannelConversationItems(cwd, channelId, {
+        limit: channelMessageInitialLimit,
+        surface: threadId ? { kind: "thread", threadId } : { kind: "channel_root" },
+      });
       if (!loadGuard.isCurrent(guardKey, token)) {
         return;
       }
@@ -497,7 +500,7 @@ export function useWorkspaceDomain(input: {
       const response = await listChannelConversationItems(cwd, channelId, {
         limit: channelMessageOlderLimit,
         beforeSequence: channelItemsBeforeSequence,
-        threadId,
+        surface: threadId ? { kind: "thread", threadId } : { kind: "channel_root" },
       });
       if (!loadGuard.isCurrent(guardKey, token)) {
         return;

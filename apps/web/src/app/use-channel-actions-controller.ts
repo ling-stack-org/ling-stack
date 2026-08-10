@@ -496,7 +496,9 @@ export function useChannelActionsController(input: {
       let autoStartedWorkflow = false;
       let streamErrorMessage = "";
       const response = await streamChannelTurn(input.form.cwd.trim(), channelId, {
-        threadId: messageInput.threadId,
+        surface: messageInput.threadId
+          ? { kind: "thread", threadId: messageInput.threadId }
+          : { kind: "channel_root" },
         body: messageInput.body,
         mentions: messageInput.mentions,
         attachmentIds: messageInput.attachmentIds,

@@ -6,6 +6,8 @@ import type {
   ChannelIntentDecisionV2CreatedBy,
   ChannelIntentDecisionV2Status,
   ConversationContextProjectionMetadata,
+  LingThreadRelationKindV2,
+  LingThreadSurfaceKindV2,
 } from "./conversation-continuity.js";
 import type { ResponseLanguage, ResponseLanguagePreference } from "./settings.js";
 import type {
@@ -500,7 +502,13 @@ export interface ChannelMessage {
   readonly id: string;
   readonly workspaceId: string;
   readonly channelId: string;
+  /** Canonical LingThread identity. Never overloaded with a parent item id. */
   readonly threadId?: string;
+  readonly turnId?: string;
+  readonly threadSurfaceKind?: LingThreadSurfaceKindV2;
+  readonly threadRelationKind?: LingThreadRelationKindV2;
+  readonly threadAnchorItemId?: string;
+  readonly replyToItemId?: string;
   readonly kind: ChannelMessageKind;
   readonly intent: ChannelMessageIntent;
   readonly authorType: ChannelMessageAuthorType;

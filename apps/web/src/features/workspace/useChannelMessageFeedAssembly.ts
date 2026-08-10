@@ -19,7 +19,7 @@ interface ChannelMessageFeedAssemblyInput {
   readonly selectedChannelId: string;
 }
 
-interface PendingChannelSendState {
+export interface PendingChannelSendState {
   readonly acknowledged: boolean;
   readonly acknowledgedMessageId?: string;
   readonly aiReplyStarted: boolean;
@@ -127,7 +127,7 @@ export function useChannelMessageFeedAssembly({
   };
 }
 
-function derivePendingChannelSendState(
+export function derivePendingChannelSendState(
   channelMessages: readonly ChannelMessage[],
   pendingChannelSendPreview: PendingChannelSendPreview | undefined,
 ): PendingChannelSendState {
@@ -140,7 +140,7 @@ function derivePendingChannelSendState(
         .reverse()
         .find((message) =>
           message.channelId === pendingChannelSendPreview.channelId &&
-          message.threadId === pendingChannelSendPreview.threadId &&
+          messageMatchesPendingSurface(message, pendingChannelSendPreview.threadId) &&
           message.kind === "message" &&
           message.authorType === "local-user" &&
           message.body === pendingChannelSendPreview.body &&
@@ -148,13 +148,14 @@ function derivePendingChannelSendState(
           sameStringList(message.linkPreviewIds, pendingChannelSendPreview.linkPreviewIds) &&
           sameFileRefList(message.fileRefs ?? [], pendingChannelSendPreview.fileRefs)
         );
-  const replyThreadId = acknowledgedMessage ? acknowledgedMessage.threadId ?? acknowledgedMessage.id : pendingChannelSendPreview.threadId;
+  const replyThreadId = acknowledgedMessage?.threadId ?? pendingChannelSendPreview.threadId;
+  const replyTurnId = acknowledgedMessage?.turnId;
   const previewCreatedAt = Date.parse(pendingChannelSendPreview.createdAt);
   const aiReplyStarted = channelMessages.some((message) => {
     if (message.channelId !== pendingChannelSendPreview.channelId || message.kind !== "ai_reply") {
       return false;
     }
-    if (replyThreadId && message.threadId !== replyThreadId) {
+    if (replyTurnId ? message.turnId !== replyTurnId : replyThreadId && message.threadId !== replyThreadId) {
       return false;
     }
     const messageCreatedAt = Date.parse(message.createdAt);
@@ -165,6 +166,15 @@ function derivePendingChannelSendState(
     acknowledgedMessageId: acknowledgedMessage?.id,
     aiReplyStarted,
   };
+}
+
+function messageMatchesPendingSurface(message: ChannelMessage, requestedThreadId: string | undefined): boolean {
+  if (message.threadSurfaceKind) {
+    return requestedThreadId
+      ? message.threadId === requestedThreadId
+      : message.threadSurfaceKind === "channel_root";
+  }
+  return message.threadId === requestedThreadId;
 }
 
 function sameStringList(left: readonly string[], right: readonly string[]): boolean {

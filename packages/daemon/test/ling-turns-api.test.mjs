@@ -97,7 +97,7 @@ test("channel conversation API pages canonical items by stable thread sequence",
       idempotencyKey: "channel-turn-first",
     });
     const second = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
-      threadId: first.thread.id,
+      surface: { kind: "thread", threadId: first.thread.id },
       body: "second canonical item",
       requestAiReply: false,
       idempotencyKey: "channel-turn-second",
@@ -106,6 +106,64 @@ test("channel conversation API pages canonical items by stable thread sequence",
     assert.equal(first.turn.sourceItemId, first.userItem.id);
     assert.equal(second.userItem.sequence > first.userItem.sequence, true);
     assert.equal("message" in second, false);
+
+    const topic = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      surface: { kind: "topic", anchorItemId: first.userItem.id },
+      body: "topic canonical item",
+      requestAiReply: false,
+    });
+    assert.equal(topic.thread.surfaceKind, "topic");
+    assert.equal(topic.thread.anchorItemId, first.userItem.id);
+    assert.notEqual(topic.thread.id, first.userItem.id);
+    const topicContinuation = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      surface: { kind: "thread", threadId: topic.thread.id },
+      body: "topic continuation",
+      requestAiReply: false,
+    });
+    assert.equal(topicContinuation.thread.id, topic.thread.id);
+    assert.equal(topicContinuation.userItem.threadId, topic.thread.id);
+
+    const topicPage = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/items?cwd=${encodeURIComponent(cwd)}&anchorItemId=${encodeURIComponent(first.userItem.id)}`);
+    assert.equal(topicPage.thread.id, topic.thread.id);
+    assert.deepEqual(topicPage.items.map((item) => item.id), [topic.userItem.id, topicContinuation.userItem.id]);
+
+    const conflictingSurface = await getJsonAllowError(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/items?cwd=${encodeURIComponent(cwd)}&threadId=${encodeURIComponent(first.thread.id)}&anchorItemId=${encodeURIComponent(first.userItem.id)}`);
+    assert.equal(conflictingSurface.status, 400);
+    assert.match(conflictingSurface.body.message, /cannot be used together/);
+    const legacyTurnSelector = await postJsonAllowError(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      threadId: first.thread.id,
+      body: "legacy overloaded selector",
+    });
+    assert.equal(legacyTurnSelector.status, 400);
+    assert.match(legacyTurnSelector.body.message, /threadId is not supported/);
+    const forbiddenAuthorityFields = {
+      authorType: "system",
+      authorId: "forged_actor",
+      kind: "system",
+      intent: "task",
+      linkedTaskId: "task_forged",
+      linkedRunId: "run_forged",
+    };
+    for (const [field, value] of Object.entries(forbiddenAuthorityFields)) {
+      const forgedLinkage = await postJsonAllowError(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+        body: `forged authority linkage: ${field}`,
+        [field]: value,
+      });
+      assert.equal(forgedLinkage.status, 400);
+      assert.match(forgedLinkage.body.message, new RegExp(`unsupported field: ${field}`));
+    }
+    const forgedSurface = await postJsonAllowError(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      surface: { kind: "thread", threadId: first.thread.id, anchorItemId: first.userItem.id },
+      body: "forged mixed surface",
+    });
+    assert.equal(forgedSurface.status, 400);
+    assert.match(forgedSurface.body.message, /surface contains unsupported field: anchorItemId/);
+    const itemAsThread = await postJsonAllowError(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      surface: { kind: "thread", threadId: first.userItem.id },
+      body: "item id is not a thread id",
+    });
+    assert.equal(itemAsThread.status, 400);
+    assert.match(itemAsThread.body.message, /Conversation thread not found/);
 
     const pagedItems = [];
     let beforeSequence;
@@ -143,13 +201,27 @@ test("channel context inspect is metadata-only and corrections are revision fenc
       body: "architecture baseline",
       requestAiReply: false,
     });
-    const second = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+    const store = stores.get(cwd);
+    assert.ok(store);
+    store.appendConversationItem({
+      channelId: channel.id,
       threadId: first.thread.id,
+      turnId: first.turn.id,
+      kind: "system_event",
+      status: "committed",
+      actorType: "system",
+      visibility: "agent_private",
+      visibilityOwnerId: "teammate_private",
+      payload: {
+        eventType: "private_context_fixture",
+        summary: "RAW_PROMPT_SENTINEL HIDDEN_REASONING_SENTINEL PRIVATE_MEMORY_SENTINEL SECRET_VALUE_SENTINEL",
+      },
+    }, "2026-08-10T05:59:59.000Z");
+    const second = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      surface: { kind: "thread", threadId: first.thread.id },
       body: "unrelated implementation topic",
       requestAiReply: false,
     });
-    const store = stores.get(cwd);
-    assert.ok(store);
     const firstAssignment = store.getEffectiveTurnContextAssignment(first.turn.id);
     const secondAssignment = store.getEffectiveTurnContextAssignment(second.turn.id);
     assert.ok(firstAssignment);
@@ -162,6 +234,14 @@ test("channel context inspect is metadata-only and corrections are revision fenc
       evidenceRefs: [{ type: "conversation_item", id: second.userItem.id }],
       policyVersion: "continuity-v2-segmentation-v1",
     }, "2026-08-10T06:00:00.000Z");
+    store.applyTurnContextAssignment({
+      turnId: first.turn.id,
+      target: { kind: "existing", segmentId: moved.segment.id },
+      status: "committed",
+      decisionSource: "model_policy",
+      evidenceRefs: [{ type: "turn", id: second.turn.id }],
+      policyVersion: "continuity-v2-segmentation-v1",
+    }, "2026-08-10T06:00:00.100Z");
 
     const inspect = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns/${encodeURIComponent(second.turn.id)}/context?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(inspect.assignment.id, moved.assignment.id);
@@ -172,7 +252,12 @@ test("channel context inspect is metadata-only and corrections are revision fenc
       privateMemoryBodiesIncluded: false,
       secretValuesIncluded: false,
     });
-    assert.equal(JSON.stringify(inspect).includes("raw prompt"), false);
+    const serializedInspect = JSON.stringify(inspect);
+    assert.equal(serializedInspect.includes("RAW_PROMPT_SENTINEL"), false);
+    assert.equal(serializedInspect.includes("HIDDEN_REASONING_SENTINEL"), false);
+    assert.equal(serializedInspect.includes("PRIVATE_MEMORY_SENTINEL"), false);
+    assert.equal(serializedInspect.includes("SECRET_VALUE_SENTINEL"), false);
+    assert.equal(inspect.redactedItemCount, 1);
 
     const corrected = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns/${encodeURIComponent(second.turn.id)}/context/corrections?cwd=${encodeURIComponent(cwd)}`, {
       segmentId: firstAssignment.segmentId,

@@ -133,7 +133,11 @@ test("builds URL query parameters for list endpoints", async () => {
   const client = new LingDaemonClient({ baseUrl: "http://daemon.test/", fetch: mock.fetch });
 
   await client.listRuns("/repo path", 25);
-  await client.listChannelConversationItems("/repo", "channel 1", { limit: 15, beforeSequence: 40, threadId: "thread 1" });
+  await client.listChannelConversationItems("/repo", "channel 1", {
+    limit: 15,
+    beforeSequence: 40,
+    surface: { kind: "thread", threadId: "thread 1" },
+  });
   await client.listChannelAttachments("/repo", "channel 1", 16);
   await client.listChannelLinkPreviews("/repo", "channel 1", 17);
   await client.getChannelBrief("/repo", "channel 1");
@@ -1249,6 +1253,31 @@ test("creates, streams, inspects, and corrects channel turns through item APIs",
   assert.equal(mock.calls[2].url, "http://daemon.test/channels/channel%201/turns/turn%201/context?cwd=%2Frepo");
   assert.equal(mock.calls[3].url, "http://daemon.test/channels/channel%201/turns/turn%201/context/corrections?cwd=%2Frepo");
   assert.deepEqual(JSON.parse(mock.calls[3].body), { segmentId: "segment 2", expectedAssignmentRevision: 3 });
+});
+
+test("serializes canonical Thread ids and Topic anchor item ids separately", async () => {
+  const mock = createFetchMock({ ok: true });
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
+
+  await client.listChannelConversationItems("/repo", "channel 1");
+  await client.listChannelConversationItems("/repo", "channel 1", {
+    surface: { kind: "thread", threadId: "thread 1" },
+  });
+  await client.listChannelConversationItems("/repo", "channel 1", {
+    surface: { kind: "topic", anchorItemId: "item 1" },
+  });
+  await client.createChannelTurn("/repo", "channel 1", {
+    surface: { kind: "topic", anchorItemId: "item 1" },
+    body: "start topic",
+  });
+
+  assert.equal(mock.calls[0].url, "http://daemon.test/channels/channel%201/items?cwd=%2Frepo");
+  assert.equal(mock.calls[1].url, "http://daemon.test/channels/channel%201/items?cwd=%2Frepo&threadId=thread+1");
+  assert.equal(mock.calls[2].url, "http://daemon.test/channels/channel%201/items?cwd=%2Frepo&anchorItemId=item+1");
+  assert.deepEqual(JSON.parse(mock.calls[3].body), {
+    surface: { kind: "topic", anchorItemId: "item 1" },
+    body: "start topic",
+  });
 });
 
 test("uses expected managed plugin routes", async () => {

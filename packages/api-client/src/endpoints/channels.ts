@@ -26,6 +26,7 @@ import type {
   ChannelListResponse,
   ChannelConversationContextInspectResponse,
   ChannelConversationItemPageResponse,
+  ChannelConversationSurface,
   ChannelConversationTurnResponse,
   ChannelPlaybookCandidateListResponse,
   ChannelPlaybookCandidateMutationResponse,
@@ -89,6 +90,7 @@ import type {
   CreateChannelWorkflowStepRequest,
   CorrectChannelTurnContextRequest,
   CorrectChannelTurnContextResponse,
+  ListChannelConversationItemsOptions,
   PreviewContentResponse,
   UpdateChannelBriefRequest,
   UpdateChannelBranchRequest,
@@ -105,6 +107,18 @@ import type {
 import { LingDaemonError } from "../errors.js";
 import { readErrorMessage } from "../transport.js";
 import type { LingDaemonEndpointContext, PublicEndpointGroup } from "../transport.js";
+
+function channelConversationSurfaceQuery(surface: ChannelConversationSurface | undefined): {
+  readonly threadId?: string;
+  readonly anchorItemId?: string;
+} {
+  if (!surface || surface.kind === "channel_root") {
+    return {};
+  }
+  return surface.kind === "thread"
+    ? { threadId: surface.threadId }
+    : { anchorItemId: surface.anchorItemId };
+}
 
 export const channelEndpoints = {
   async listChannels(this: LingDaemonEndpointContext, cwd: string, options: { readonly archived?: boolean; readonly limit?: number } = {}): Promise<ChannelListResponse> {
@@ -299,13 +313,14 @@ export const channelEndpoints = {
   async listChannelConversationItems(this: LingDaemonEndpointContext,
       cwd: string,
       channelId: string,
-      options: { readonly limit?: number; readonly beforeSequence?: number; readonly threadId?: string } = {},
+      options: ListChannelConversationItemsOptions = {},
     ): Promise<ChannelConversationItemPageResponse> {
+      const surfaceQuery = channelConversationSurfaceQuery(options.surface);
       return this._get(`/channels/${encodeURIComponent(channelId)}/items`, {
         cwd,
         limit: options.limit,
         beforeSequence: options.beforeSequence,
-        threadId: options.threadId,
+        ...surfaceQuery,
       });
     },
 

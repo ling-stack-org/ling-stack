@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { LingDaemonError } from "@ling-stack/api-client";
 import {
   Check,
   CircleAlert,
@@ -924,7 +925,18 @@ function ChannelContextInspectDetails({
       setInspect(refreshed);
       setSelectedSegmentId(refreshed.assignment.segmentId);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
+      if (caught instanceof LingDaemonError && caught.code === "context_assignment_revision_conflict") {
+        try {
+          const refreshed = await getChannelTurnContext(cwd, channelId, decision.sourceTurnId);
+          setInspect(refreshed);
+          setSelectedSegmentId(refreshed.assignment.segmentId);
+          setError(t("Context changed while you were editing. Review the latest segment and try again."));
+        } catch (refreshError) {
+          setError(refreshError instanceof Error ? refreshError.message : String(refreshError));
+        }
+      } else {
+        setError(caught instanceof Error ? caught.message : String(caught));
+      }
     } finally {
       setSaving(false);
     }

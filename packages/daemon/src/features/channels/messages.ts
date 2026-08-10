@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
 import type {
+  ChannelConversationSurface,
   ChannelReplyPendingEvent,
   ChannelReplyDispatch,
   ChannelReplyDisposition,
@@ -53,7 +54,7 @@ import { materializeInlineChannelInputs } from "./materialization/inline.js";
 import { createProviderBackedImageVisionSummarizer } from "./materialization/provider-vision.js";
 import type { LingImageVisionSummarizer } from "./materialization/registry.js";
 import { validateChannelMessageReferences } from "./protocol.js";
-import { parseChannelMessageRequest } from "./schemas.js";
+import { parseChannelTurnRequest } from "./schemas.js";
 import {
   enrichChannelMessageWithWebEvidence,
   enrichChannelMessagesWithWebEvidence,
@@ -133,7 +134,7 @@ export async function handleChannelTurnStream(
     }
 
     const body = await readJsonBody(request, config.maxBodyBytes);
-    const input = parseChannelMessageRequest(body);
+    const input = parseChannelTurnRequest(body);
     const referenceError = validateChannelMessageReferences(store, channelId, input.attachmentIds, input.linkPreviewIds);
     if (referenceError) {
       writeJson(response, referenceError.statusCode, {
@@ -339,7 +340,7 @@ export async function handleChannelItemsCollection(
     const thread = resolveChannelConversationThread({
       store,
       channel,
-      surfaceRefId: url.searchParams.get("threadId") ?? undefined,
+      surface: readChannelConversationSurfaceQuery(url),
       now: new Date().toISOString(),
     });
     writeJson(response, 200, listChannelConversationItems({
@@ -388,7 +389,7 @@ export async function handleChannelTurnsCollection(
 
     if (request.method === "POST") {
       const body = await readJsonBody(request, config.maxBodyBytes);
-      const input = parseChannelMessageRequest(body);
+      const input = parseChannelTurnRequest(body);
       const referenceError = validateChannelMessageReferences(store, channelId, input.attachmentIds, input.linkPreviewIds);
       if (referenceError) {
         writeJson(response, referenceError.statusCode, {
@@ -952,31 +953,51 @@ function notifyReplyPending(
 function persistChannelUserMessage(input: {
   readonly store: RunStore;
   readonly channel: Channel;
-  readonly input: import("./schemas.js").ChannelMessageRequest;
+  readonly input: import("./schemas.js").ChannelTurnRequest;
   readonly requestIdempotencyKey?: string;
   readonly now: string;
 }): ChannelMessage {
-  if (input.input.authorType !== "local-user" || (input.input.kind && input.input.kind !== "message")) {
-    throw new Error("Channel message ingest accepts local-user messages only");
-  }
   const thread = resolveChannelConversationThread({
     store: input.store,
     channel: input.channel,
-    surfaceRefId: input.input.threadId,
+    surface: input.input.surface,
     now: input.now,
   });
-  const anchor = input.input.threadId ? input.store.getConversationItem(input.input.threadId) : undefined;
+  const anchor = input.input.surface?.kind === "topic"
+    ? input.store.getConversationItem(input.input.surface.anchorItemId)
+    : undefined;
+  const requestedActiveRunId = input.input.replyDisposition?.mode === "queue_followup"
+    ? input.input.replyDisposition.activeRunId
+    : undefined;
+  const requestedActiveRun = requestedActiveRunId
+    ? input.store.getRun(requestedActiveRunId)
+    : undefined;
+  const requestedActiveWorkUnit = requestedActiveRun?.workUnitId
+    ? input.store.getWorkUnit(requestedActiveRun.workUnitId)
+    : undefined;
+  const requestedSourceTurn = requestedActiveRun
+    ? input.store.getLingTurnForRun(requestedActiveRun.id)
+    : undefined;
+  const validatedFollowupSourceTurn = requestedActiveRun?.channelId === input.channel.id
+    && requestedActiveRun.threadId === thread.id
+    && (requestedActiveRun.status === "queued"
+      || requestedActiveRun.status === "running"
+      || requestedActiveRun.status === "waiting_for_approval")
+    && requestedActiveWorkUnit?.kind === "channel_ai_reply"
+    && requestedActiveWorkUnit.linkedRunId === requestedActiveRun.id
+    && requestedSourceTurn?.threadId === thread.id
+    ? requestedSourceTurn
+    : undefined;
   const result = input.store.appendConversationUserTurn({
     channelId: input.channel.id,
     threadId: thread.id,
-    turnKind: input.input.replyDisposition?.mode === "queue_followup"
+    turnKind: validatedFollowupSourceTurn
       ? "queued_followup"
       : thread.nextItemSequence > 1
         ? "manual_followup"
         : "initial_request",
     title: channelTurnTitle(input.input.body),
     userInstruction: input.input.body || "Channel input with materialized references.",
-    ...(input.input.authorId ? { actorId: input.input.authorId } : {}),
     payload: {
       body: input.input.body,
       format: "plain_text",
@@ -994,18 +1015,32 @@ function persistChannelUserMessage(input: {
       fileRefs: input.input.fileRefs,
       ...(anchor ? { replyToItemId: anchor.id } : {}),
     },
-    domainRefs: [
-      ...(input.input.linkedTaskId ? [{ type: "task" as const, id: input.input.linkedTaskId }] : []),
-      ...(input.input.linkedRunId ? [{ type: "run" as const, id: input.input.linkedRunId }] : []),
-    ],
-    ...(input.input.replyDisposition?.activeRunId && input.store.getLingTurnForRun(input.input.replyDisposition.activeRunId)
-      ? { sourceTurnId: input.store.getLingTurnForRun(input.input.replyDisposition.activeRunId)!.id }
+    domainRefs: [],
+    ...(validatedFollowupSourceTurn
+      ? { sourceTurnId: validatedFollowupSourceTurn.id }
       : {}),
     idempotencyKey: input.input.idempotencyKey
       ?? input.requestIdempotencyKey
       ?? `channel-request:${randomUUID()}`,
   }, input.now);
   return projectConversationItemToChannelMessage(result.item);
+}
+
+function readChannelConversationSurfaceQuery(url: URL): ChannelConversationSurface | undefined {
+  const threadId = url.searchParams.get("threadId");
+  const anchorItemId = url.searchParams.get("anchorItemId");
+  if (threadId !== null && anchorItemId !== null) {
+    throw new Error("threadId and anchorItemId cannot be used together");
+  }
+  if (threadId !== null) {
+    if (!threadId.trim()) throw new Error("threadId must be a non-empty string");
+    return { kind: "thread", threadId };
+  }
+  if (anchorItemId !== null) {
+    if (!anchorItemId.trim()) throw new Error("anchorItemId must be a non-empty string");
+    return { kind: "topic", anchorItemId };
+  }
+  return undefined;
 }
 
 function readIdempotencyKey(request: IncomingMessage): string | undefined {

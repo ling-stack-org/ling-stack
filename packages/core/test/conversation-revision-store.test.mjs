@@ -1,3 +1,4 @@
+import { appendChannelItemFixture, getChannelItemViewFixture, listChannelItemViewsFixture, updateChannelItemFixture } from "./channel-conversation-fixture.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -43,7 +44,7 @@ test("channel message edits create revisions, supersede the old turn, and replay
   const now = "2026-07-12T01:00:00.000Z";
   try {
     const channel = store.createChannel({ name: "Engineering", boundPath: cwd }, now);
-    const message = store.createChannelMessage({
+    const message = appendChannelItemFixture(store, {
       channelId: channel.id,
       authorType: "local-user",
       body: "Review the old implementation.",
@@ -92,7 +93,7 @@ test("channel message edits create revisions, supersede the old turn, and replay
         [2, "Review and fix the current implementation."],
       ],
     );
-    assert.equal(store.getChannelMessage(message.id)?.body, input.replacement.body);
+    assert.equal(getChannelItemViewFixture(store, message.id)?.body, input.replacement.body);
     assert.equal(store.getLingTurn(turn.id)?.status, "superseded");
 
     const replay = store.commitConversationMessageEdit(input, "2026-07-12T01:02:00.000Z");

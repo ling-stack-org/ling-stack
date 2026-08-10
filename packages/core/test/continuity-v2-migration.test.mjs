@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { appendLegacyChannelMessageFixture, updateLegacyChannelMessageFixture } from "./legacy-continuity-fixture.mjs";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -43,7 +44,7 @@ test("Continuity v2 migration atomically imports root, topic and branch timeline
     rootThreadId: branchThread.id,
   }, "2026-08-09T12:00:03.000Z");
 
-  const rootUser = store.createChannelMessage({
+  const rootUser = appendLegacyChannelMessageFixture(store, {
     id: "message-root-user",
     channelId: channel.id,
     authorType: "local-user",
@@ -51,7 +52,7 @@ test("Continuity v2 migration atomically imports root, topic and branch timeline
     mentions: [{ id: "ling_agent", label: "Ling", kind: "ai-teammate" }],
     fileRefs: [{ path: "README.md", source: "explicit_text", line: 1 }],
   }, "2026-08-09T12:01:00.000Z");
-  const rootReply = store.createChannelMessage({
+  const rootReply = appendLegacyChannelMessageFixture(store, {
     id: "message-root-reply",
     channelId: channel.id,
     threadId: rootUser.id,
@@ -60,14 +61,14 @@ test("Continuity v2 migration atomically imports root, topic and branch timeline
     authorId: "ling_agent",
     body: "Use Thread, Turn and Item.",
   }, "2026-08-09T12:01:01.000Z");
-  const topicUser = store.createChannelMessage({
+  const topicUser = appendLegacyChannelMessageFixture(store, {
     id: "message-topic-user",
     channelId: channel.id,
     threadId: rootUser.id,
     authorType: "local-user",
     body: "Proceed with option B.",
   }, "2026-08-09T12:01:02.000Z");
-  const topicReply = store.createChannelMessage({
+  const topicReply = appendLegacyChannelMessageFixture(store, {
     id: "message-topic-reply",
     channelId: channel.id,
     threadId: rootUser.id,
@@ -76,14 +77,14 @@ test("Continuity v2 migration atomically imports root, topic and branch timeline
     authorId: "teammate_builtin_architect",
     body: "Option B is recorded.",
   }, "2026-08-09T12:01:03.000Z");
-  const branchUser = store.createChannelMessage({
+  const branchUser = appendLegacyChannelMessageFixture(store, {
     id: "message-branch-user",
     channelId: channel.id,
     threadId: branchThread.id,
     authorType: "local-user",
     body: "Implement in the branch.",
   }, "2026-08-09T12:02:00.000Z");
-  const branchReply = store.createChannelMessage({
+  const branchReply = appendLegacyChannelMessageFixture(store, {
     id: "message-branch-reply",
     channelId: channel.id,
     threadId: branchThread.id,
@@ -145,7 +146,7 @@ test("Continuity v2 migration atomically imports root, topic and branch timeline
     turnId: rootTurn.id,
     createdAt: rootReply.createdAt,
   });
-  store.updateChannelMessageRuntime(rootReply.id, { linkedRunId: replyRun.id }, rootReply.updatedAt);
+  updateLegacyChannelMessageFixture(store, rootReply.id, { linkedRunId: replyRun.id }, rootReply.updatedAt);
 
   const attachment = store.createChannelAttachment({
     channelId: channel.id,
@@ -396,7 +397,7 @@ test("Continuity v2 migration rolls back all schema and data changes on an unrep
   t.after(() => rm(cwd, { recursive: true, force: true }));
   const store = createLegacySqliteRunStoreForMigrationTest(cwd);
   const channel = store.createChannel({ name: "Rollback", boundPath: cwd }, "2026-08-09T12:00:00.000Z");
-  store.createChannelMessage({
+  appendLegacyChannelMessageFixture(store, {
     id: "message-too-large",
     channelId: channel.id,
     authorType: "local-user",
