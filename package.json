@@ -18,8 +18,8 @@
     "test": "corepack pnpm -r test"
   },
   "devDependencies": {
-    "@types/node": "^22.15.0",
-    "typescript": "^5.8.0"
+    "@types/node": "^26.1.2",
+    "typescript": "^7.0.2"
   },
   "keywords": [
     "ai",
