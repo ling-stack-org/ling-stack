@@ -1240,8 +1240,8 @@ limit=1..500
 
 Surface semantics:
 
-- `channel` is a channel-header notification projection. It never writes rows into
-  `channel_messages`.
+- `channel` is a channel-header notification projection. It never writes ordinary
+  notification rows into `conversation_items`.
 - `teammate_direct` is a single teammate private-thread projection. Delivery is quiet
   window gated and writes a short direct `system` message only after the thread is idle.
 - `ling_agent` is for workspace or cross-owner review pressure with no safer local
@@ -1404,7 +1404,7 @@ GET /teammates/:id/activity?cwd=/path/to/project&limit=100
 messages, assigned tasks, teammate runs, approvals attached to teammate runs, and channel
 messages that mention the teammate.
 
-## Channel Messages, Attachments, and Links
+## Channel Conversation Items, Turns, Attachments, and Links
 
 Channel discussion is durable in the workspace SQLite database. Uploaded files are stored under:
 
@@ -1412,18 +1412,36 @@ Channel discussion is durable in the workspace SQLite database. Uploaded files a
 .ling-stack/attachments
 ```
 
-### Messages
+### Conversation Items And Turns
 
 ```http
-GET /channels/:id/messages?cwd=/path/to/project&limit=100
-POST /channels/:id/messages?cwd=/path/to/project
-POST /channels/:id/messages/stream?cwd=/path/to/project
+GET /channels/:id/items?cwd=/path/to/project&limit=100&beforeSequence=123
+GET /channels/:id/items?cwd=/path/to/project&threadId=thread_...
+GET /channels/:id/items?cwd=/path/to/project&anchorItemId=item_...
+POST /channels/:id/turns?cwd=/path/to/project
+POST /channels/:id/turns/stream?cwd=/path/to/project
 ```
 
-`POST` accepts a local/user/system message plus structured mentions, attachment ids, link preview ids, and optional `requestAiReply`. Referenced attachments and link previews must belong to the same channel. When AI reply is requested, the daemon uses the selected provider preset or the channel default provider in text-only, no-tools mode. If no provider is ready, the user message is still persisted and the AI reply is stored with `status: "blocked"`.
+`conversation_items` is the only Channel timeline authority. `GET /items` returns the
+resolved `LingThread`, owning `LingTurn` records, ordered canonical items, and discardable
+presentation decorations. Pagination uses the stable per-Thread `sequence` cursor.
+
+The read surface is explicit:
+
+- no selector selects Channel Root;
+- `threadId` is a canonical `LingThread.id` for Root, Topic, or Branch reads;
+- `anchorItemId` materializes or reuses a Topic from a committed item;
+- both selectors together return `400 bad_request`.
+
+`POST /turns` accepts one local user turn plus structured mentions, attachment ids, link
+preview ids, file refs, optional reply supervision, and optional `requestAiReply`.
+Referenced attachments and link previews must belong to the same channel. The user item
+and owning `LingTurn` are committed atomically. If no provider is ready, the accepted user
+item remains durable and any requested assistant item becomes blocked.
 
 ```json
 {
+  "surface": { "kind": "thread", "threadId": "thread_..." },
   "body": "请 @Engineer 完善需求",
   "mentions": [{ "id": "engineer", "label": "Engineer", "kind": "ai-teammate" }],
   "attachmentIds": ["att_..."],
@@ -1435,9 +1453,14 @@ POST /channels/:id/messages/stream?cwd=/path/to/project
 }
 ```
 
-`POST /messages/stream` uses the same request body and returns `text/event-stream`.
-It persists the local message, creates durable pending AI reply messages, and streams
-visible assistant text into those same message rows.
+`surface` is one of `{ "kind": "channel_root" }`,
+`{ "kind": "thread", "threadId": "..." }`, or
+`{ "kind": "topic", "anchorItemId": "..." }`. Omission selects Channel Root. The Turn
+request has no top-level `threadId` compatibility alias.
+
+`POST /turns/stream` uses the same body and returns `text/event-stream`. It persists the
+user Item and Turn, creates durable pending assistant Items, and streams visible text into
+those same Items.
 The Web normally sends mentions and `requestAiReply` without a duplicate `teammateId`;
 the daemon resolves no mention to `ling_agent`, one mention to that teammate, and multiple
 mentions back to `ling_agent`.
@@ -1454,21 +1477,21 @@ When accepted, the response contains `replyDispatch.disposition = "followup_queu
 not the public Run-intervention request body, writes the intervention's channel lineage fields
 `sourceMessageId` and `targetTeammateId`. Continuations resolve the target's current channel model
 binding when their FIFO item starts. `RunSession.threadId` remains the canonical LingThread id;
-`ConversationActiveReplyTarget.sourceMessageId` identifies the Channel message used for Root,
-Branch, and Topic projection. `GET /channels/:id/messages` excludes queued source messages until
-their intervention has `startedAt`. It also excludes a source message while dispatch classification
+`ConversationActiveReplyTarget.sourceMessageId` identifies the source ConversationItem used for
+Root, Branch, and Topic projection. `GET /channels/:id/items` excludes queued source Items until
+their intervention has `startedAt`. It also excludes a source Item while dispatch classification
 is in flight between message persistence and the authoritative `reply_pending` or
 `followup_queued` state, preventing concurrent refresh from briefly exposing a queued message.
 
 SSE events:
 
-- `ready`: `{ "message": ChannelMessage, "aiReply"?: ChannelMessage, "aiReplies"?: ChannelMessage[] }`
-- `reply_pending`: `{ "sourceMessageId": string, "targetTeammateId": string, "startedAt": string }`
-- `run_linked`: `{ "messageId": string, "linkedRunId": string, "activeReply"?: ConversationActiveReplyTarget }`
-- `delta`: `{ "messageId": string, "delta": string, "body": string }`
-- `done`: `{ "message": ChannelMessage, "aiReply"?: ChannelMessage, "aiReplies"?: ChannelMessage[], "autoStartedWorkflow"?: ... }`
-- `blocked`: `{ "message": ChannelMessage, "aiReply"?: ChannelMessage, "aiReplies"?: ChannelMessage[], "error"?: string }`
-- `error`: `{ "message"?: ChannelMessage, "aiReply"?: ChannelMessage, "aiReplies"?: ChannelMessage[], "error": string }`
+- `ready`: `{ "thread": LingThread, "turn": LingTurn, "userItem": ConversationItem, "assistantItems"?: ConversationItem[], "decorations": [] }`
+- `reply_pending`: `{ "sourceItemId": string, "targetTeammateId": string, "startedAt": string }`
+- `run_linked`: `{ "itemId": string, "linkedRunId": string, "activeReply"?: ConversationActiveReplyTarget }`
+- `delta`: `{ "itemId": string, "delta": string, "body": string }`
+- `done`: `ChannelConversationTurnResponse`
+- `blocked`: `ChannelConversationTurnResponse & { "error"?: string }`
+- `error`: partial Turn response plus `{ "error": string }`
 
 Hidden `<ling_task_proposal>` blocks are not streamed as visible deltas. The daemon
 continues to extract and persist proposals through the channel proposal pipeline.

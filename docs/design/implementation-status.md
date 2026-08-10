@@ -28,7 +28,7 @@ counts, screenshots, hashes and run diaries belong in CI or Release artifacts.
 
 | Work | Current boundary | Closure condition |
 |---|---|---|
-| [Channel Conversation Continuity v2](channel-conversation-continuity-v2-implementation-plan.md) | G0, S0, and S1+S2 merged; S3-S6 implemented and locally verified | S7, final migration, recovery, performance, security, eval, and Web E2E gates pass |
+| [Channel Conversation Continuity v2](channel-conversation-continuity-v2-implementation-plan.md) | S0-S7 implemented; final local gates pass with 36 Contracts, 362 Core, 905 Daemon, 49 API Client, 40 Remote Protocol, 45 Web unit, and 128 Channel E2E tests | Merge PR-G after remote CI, verify `main`, then close issue #421 |
 | [Channel Context Processing](channel-context-processing-layer-implementation-plan.md) | Channel and direct-message context views exist | Condensation, quote eligibility, persistence and redaction ownership are closed |
 | [Permission Presets](codex-inspired-settings-permission-presets-implementation-plan.md) | Enforcement modes exist | Preset UI, effective preview and run audit agree with daemon enforcement |
 | [Conversation Surface](conversation-surface-contract-implementation-plan.md) | Shared primitives and initial package extraction are implemented | WorkCell, evidence, attachment, package CSS and Desktop-consumption boundaries close |

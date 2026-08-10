@@ -1,6 +1,6 @@
 # Channel Conversation Continuity v2 Implementation Plan
 
-Status: G0 complete; S-1 and S0 merged; S1+S2 through S6 implemented and locally verified; S7 pending
+Status: G0 complete; S-1 and S0 merged; S1+S2 through S7 implemented and locally verified; PR-G pending
 Owner: conversation, channel context, Ling Agent Session, and storage maintainers
 Date: 2026-08-08
 Last verified: 2026-08-10
@@ -562,6 +562,8 @@ remain deterministic.
 - Project conversation transcript blocks from `conversation_items` plus domain refs.
 - Replace message endpoints/types with item/turn endpoints or a stable compatibility-free
   API rename appropriate for the pre-release product.
+- Use an explicit `ChannelConversationSurface` union so canonical Thread ids and Topic
+  anchor Item ids can never share one `threadId` field.
 - Update safe Context inspect details with:
   - thread/turn/segment ids;
   - projection version;
@@ -679,6 +681,24 @@ Compare:
 - content-versus-execution accuracy;
 - clarification actionability;
 - permission-boundary rejection rate.
+
+Current offline semantic regression evidence is deterministic and provider-independent:
+
+| Required dimension | Evidence |
+| --- | --- |
+| Chinese continuation and content generation | `article-continuation-remains-reply` golden scenario plus the daemon issue #421 article continuation test |
+| English continuation and topic switching | segmentation-policy structural inheritance, switch, and provisional-promotion tests use English turns and explicit relations |
+| Ambiguous reference and actionable clarification | underspecified-work, missing-target, and multiple-target daemon tests require typed non-empty `missingFields` |
+| Content versus local file execution | issue #421 article/README test and explicit file execute tests assert `reply` versus `execute` before TargetResolver |
+| Explicit command execution | daemon command regression asserts `run_command`, `targetKind="command"`, and bounded `bash` tools for `pnpm test` |
+| Inaccessible Segment ids | segmentation-policy tests reject model-invented segment and evidence ids before assignment |
+| Multi-agent privacy and stale results | agent-context consistency tests fail closed on private-memory leakage and relevant projection drift |
+
+These tests exercise scripted model outputs through the real validation, persistence, and
+routing pipeline. They do not claim empirical accuracy for a particular paid provider;
+no paid live-provider call is part of this local closure. Provider-specific prompt or
+model releases must run the same corpus through their release eval environment and record
+the comparison metrics above.
 
 ### Web E2E
 
@@ -822,8 +842,11 @@ interfaces at the end of S3 and keep implementation files separate before parall
   - Verify: budget, race, invalidation, reconstruction, and fallback tests.
 - [x] **T7 (P2, human: ~2 days / Codex: ~3-5 hours)**: enforce multi-agent projection versions and private-memory isolation.
   - Verify: shared-core, stale fan-in, handoff, and security fixtures.
-- [ ] **T8 (P2, human: ~2 days / Codex: ~3-4 hours)**: switch transcript/API/Web diagnostics and remove old runtime authorities.
-  - Verify: package suites, channel E2E, old-symbol search, and migration smoke.
+- [x] **T8 (P2, human: ~2 days / Codex: ~3-4 hours)**: switch transcript/API/Web diagnostics and remove old runtime authorities.
+  - Verified locally: Contracts 36, Core 362, Daemon 905, API Client 49, Remote Protocol
+    40, Web unit 45, Channel E2E 113, and adjacent Channel E2E 15 all pass; typecheck,
+    i18n, lint, migration/recovery, paging-index, old-authority search, public-safety,
+    docs-link, and diff checks pass.
 
 ## NOT In Scope
 
@@ -870,7 +893,8 @@ schema.
 | Design Review | `/plan-design-review` | UI and UX gaps | 0 | not run | UI changes are limited to later advanced Context details |
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | not run | Not required for the design baseline |
 
-**VERDICT:** ENG CLEARED. S-1 and S0 are merged; S1+S2 through S6 are implemented
-and locally verified; S7 retains the reviewed delivery order and exit criteria.
+**VERDICT:** ENG CLEARED. S-1 and S0 are merged; S1+S2 through S7 are implemented
+and locally verified. PR-G, remote CI, main merge verification, and issue #421 closure
+remain delivery operations rather than design decisions.
 
 NO UNRESOLVED DECISIONS
