@@ -1,4 +1,4 @@
-import type { ChannelMessageStreamReplyPendingEvent } from "../../types.js";
+import type { ChannelReplyPendingEvent } from "../../types.js";
 import type { PendingChannelSendPreview } from "./ChannelMessageFeed.js";
 
 export function acknowledgePendingChannelSendPreview(
@@ -13,7 +13,7 @@ export function acknowledgePendingChannelSendPreview(
 export function projectPendingChannelReply(
   current: PendingChannelSendPreview | undefined,
   previewId: string,
-  pending: ChannelMessageStreamReplyPendingEvent,
+  pending: ChannelReplyPendingEvent,
 ): PendingChannelSendPreview | undefined {
   if (!current || current.id !== previewId) return current;
   if (current.sourceMessageId && current.sourceMessageId !== pending.sourceMessageId) return current;

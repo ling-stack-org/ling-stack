@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
 import type {
-  ChannelMessageStreamReplyPendingEvent,
+  ChannelReplyPendingEvent,
   ChannelReplyDispatch,
   ChannelReplyDisposition,
   ChannelWorkflowOrchestrationResponse,
@@ -98,7 +98,7 @@ interface LingAgentChannelMessageInput {
   readonly routeDependencies: Omit<ChannelMessageRouteInput, "store" | "channel" | "sourceMessage" | "requestedProviderPresetId" | "requestedTeammateId">;
   readonly imageVisionSummarizer?: LingImageVisionSummarizer;
   readonly replyDispatchCoordinator?: ChannelReplyDispatchCoordinator;
-  readonly onReplyPending?: (pending: ChannelMessageStreamReplyPendingEvent) => void;
+  readonly onReplyPending?: (pending: ChannelReplyPendingEvent) => void;
 }
 
 export async function handleChannelTurnStream(
@@ -939,8 +939,8 @@ function hasChannelReplyPayload(message: ChannelMessage, turnEnvelope: LingAgent
 }
 
 function notifyReplyPending(
-  callback: ((pending: ChannelMessageStreamReplyPendingEvent) => void) | undefined,
-  pending: ChannelMessageStreamReplyPendingEvent,
+  callback: ((pending: ChannelReplyPendingEvent) => void) | undefined,
+  pending: ChannelReplyPendingEvent,
 ): void {
   try {
     callback?.(pending);

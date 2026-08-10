@@ -133,7 +133,7 @@ test("builds URL query parameters for list endpoints", async () => {
   const client = new LingDaemonClient({ baseUrl: "http://daemon.test/", fetch: mock.fetch });
 
   await client.listRuns("/repo path", 25);
-  await client.listChannelMessages("/repo", "channel 1", { limit: 15 });
+  await client.listChannelConversationItems("/repo", "channel 1", { limit: 15, beforeSequence: 40, threadId: "thread 1" });
   await client.listChannelAttachments("/repo", "channel 1", 16);
   await client.listChannelLinkPreviews("/repo", "channel 1", 17);
   await client.getChannelBrief("/repo", "channel 1");
@@ -223,7 +223,7 @@ test("builds URL query parameters for list endpoints", async () => {
   await client.runWorkspaceTerminalCommand("/repo path", { command: "pwd" });
 
   assert.equal(mock.calls[0].url, "http://daemon.test/runs?cwd=%2Frepo+path&limit=25");
-  assert.equal(mock.calls[1].url, "http://daemon.test/channels/channel%201/messages?cwd=%2Frepo&limit=15");
+  assert.equal(mock.calls[1].url, "http://daemon.test/channels/channel%201/items?cwd=%2Frepo&limit=15&beforeSequence=40&threadId=thread+1");
   assert.equal(mock.calls[2].url, "http://daemon.test/channels/channel%201/attachments?cwd=%2Frepo&limit=16");
   assert.equal(mock.calls[3].url, "http://daemon.test/channels/channel%201/link-previews?cwd=%2Frepo&limit=17");
   assert.equal(mock.calls[4].url, "http://daemon.test/channels/channel%201/brief?cwd=%2Frepo");
@@ -1045,7 +1045,7 @@ test("sends mutation bodies for channel, task, provider, policy, media, and appr
     },
   });
   await client.updateChannel("/repo", "channel 1", { defaultTeammateId: "designer" });
-  await client.createChannelMessage("/repo", "channel 1", {
+  await client.createChannelTurn("/repo", "channel 1", {
     body: "hello @Engineer",
     mentions: [{ id: "engineer", label: "Engineer", kind: "ai-teammate" }],
     requestAiReply: true,
@@ -1142,7 +1142,7 @@ test("sends mutation bodies for channel, task, provider, policy, media, and appr
   assert.equal(mock.calls[1].url, "http://daemon.test/channels/channel%201?cwd=%2Frepo");
   assert.deepEqual(JSON.parse(mock.calls[1].body), { defaultTeammateId: "designer" });
   assert.equal(mock.calls[2].method, "POST");
-  assert.equal(mock.calls[2].url, "http://daemon.test/channels/channel%201/messages?cwd=%2Frepo");
+  assert.equal(mock.calls[2].url, "http://daemon.test/channels/channel%201/turns?cwd=%2Frepo");
   assert.deepEqual(JSON.parse(mock.calls[2].body), {
     body: "hello @Engineer",
     mentions: [{ id: "engineer", label: "Engineer", kind: "ai-teammate" }],
@@ -1216,24 +1216,39 @@ test("uses expected routes for delete, cancel, check, and artifact URLs", async 
   assert.equal(client.attachmentContentUrl("attachment 1", "/repo"), "http://daemon.test/attachments/attachment%201/content?cwd=%2Frepo");
 });
 
-test("streams channel messages through the channel stream route", async () => {
+test("creates, streams, inspects, and corrects channel turns through item APIs", async () => {
   const mock = createFetchMock({ ok: true });
   const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
 
-  await client.streamChannelMessage("/repo", "channel 1", {
+  await client.createChannelTurn("/repo", "channel 1", {
+    body: "first turn",
+    requestAiReply: false,
+  });
+  await client.streamChannelTurn("/repo", "channel 1", {
     body: "hello @Engineer",
     mentions: [{ id: "engineer", label: "Engineer", kind: "ai-teammate" }],
     requestAiReply: true,
+  });
+  await client.getChannelTurnContext("/repo", "channel 1", "turn 1");
+  await client.correctChannelTurnContext("/repo", "channel 1", "turn 1", {
+    segmentId: "segment 2",
+    expectedAssignmentRevision: 3,
   });
 
   assert.equal(mock.calls[0].method, "POST");
-  assert.equal(mock.calls[0].url, "http://daemon.test/channels/channel%201/messages/stream?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[0].body), {
+  assert.equal(mock.calls[0].url, "http://daemon.test/channels/channel%201/turns?cwd=%2Frepo");
+  assert.deepEqual(JSON.parse(mock.calls[0].body), { body: "first turn", requestAiReply: false });
+  assert.equal(mock.calls[1].method, "POST");
+  assert.equal(mock.calls[1].url, "http://daemon.test/channels/channel%201/turns/stream?cwd=%2Frepo");
+  assert.deepEqual(JSON.parse(mock.calls[1].body), {
     body: "hello @Engineer",
     mentions: [{ id: "engineer", label: "Engineer", kind: "ai-teammate" }],
     requestAiReply: true,
   });
-  assert.equal(mock.calls[0].headers.Accept, "text/event-stream");
+  assert.equal(mock.calls[1].headers.Accept, "text/event-stream");
+  assert.equal(mock.calls[2].url, "http://daemon.test/channels/channel%201/turns/turn%201/context?cwd=%2Frepo");
+  assert.equal(mock.calls[3].url, "http://daemon.test/channels/channel%201/turns/turn%201/context/corrections?cwd=%2Frepo");
+  assert.deepEqual(JSON.parse(mock.calls[3].body), { segmentId: "segment 2", expectedAssignmentRevision: 3 });
 });
 
 test("uses expected managed plugin routes", async () => {

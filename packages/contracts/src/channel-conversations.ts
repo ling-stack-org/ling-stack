@@ -125,6 +125,7 @@ export interface ChannelConversationContextInspectResponse {
   readonly turn: LingTurn;
   readonly sourceItemId: string;
   readonly segment: ContextSegment;
+  readonly segments: readonly ContextSegment[];
   readonly assignment: TurnContextAssignment;
   readonly projection: ConversationContextProjectionMetadata;
   readonly summaries: readonly ConversationContextSummary[];

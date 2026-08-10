@@ -27,7 +27,7 @@ import type {
   Channel,
   ChannelAttachment,
   ChannelMessage,
-  ChannelMessageStreamReplyPendingEvent,
+  ChannelReplyPendingEvent,
   ChannelReplyDispatch,
   ChannelReplyDisposition,
   ConversationActiveReplyTarget,
@@ -129,7 +129,7 @@ interface ChannelComposerActionsInput {
     readonly requestAiReply: boolean;
     readonly replyDisposition?: ChannelReplyDisposition;
     readonly onMessageAccepted?: (message: ChannelMessage) => void;
-    readonly onReplyPending?: (pending: ChannelMessageStreamReplyPendingEvent) => void;
+    readonly onReplyPending?: (pending: ChannelReplyPendingEvent) => void;
     readonly onReplyLinked?: (target: ConversationActiveReplyTarget) => void;
     readonly onReplyDispatch?: (dispatch: ChannelReplyDispatch) => void;
   }) => Promise<{ readonly errorMessage?: string }>;

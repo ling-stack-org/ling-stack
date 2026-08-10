@@ -24,10 +24,8 @@ import type {
   ChannelConversationContextInspectResponse,
   ChannelConversationItemPageResponse,
   ChannelConversationTurnResponse,
-  ChannelMessageListResponse,
   ChannelIntentDecisionListResponse,
   ChannelMessageRouteDecisionListResponse,
-  ChannelMessageMutationResponse,
   ChannelMutationResponse,
   ChannelPlaybookCandidateListResponse,
   ChannelPlaybookCandidateMutationResponse,
@@ -67,7 +65,6 @@ import type {
   CreateChannelHandoffRequest,
   CreateChannelLinkPreviewRequest,
   CreateChannelTurnRequest,
-  CreateChannelMessageRequest,
   CreateTaskRequest,
   CreateChannelWorkflowFromHandoffRequest,
   CreateChannelWorkflowRequest,
@@ -325,30 +322,6 @@ export async function correctChannelTurnContext(
   input: CorrectChannelTurnContextRequest,
 ): Promise<CorrectChannelTurnContextResponse> {
   return daemonClient.correctChannelTurnContext(cwd, channelId, turnId, input);
-}
-
-export async function listChannelMessages(
-  cwd: string,
-  channelId: string,
-  options: { readonly limit?: number; readonly beforeMessageId?: string; readonly threadId?: string } = {},
-): Promise<ChannelMessageListResponse> {
-  return daemonClient.listChannelMessages(cwd, channelId, options);
-}
-
-export async function createChannelMessage(
-  cwd: string,
-  channelId: string,
-  input: CreateChannelMessageRequest,
-): Promise<ChannelMessageMutationResponse> {
-  return daemonClient.createChannelMessage(cwd, channelId, input);
-}
-
-export async function streamChannelMessage(
-  cwd: string,
-  channelId: string,
-  input: CreateChannelMessageRequest,
-): Promise<Response> {
-  return daemonClient.streamChannelMessage(cwd, channelId, input);
 }
 
 export async function listChannelMessageRouteDecisions(

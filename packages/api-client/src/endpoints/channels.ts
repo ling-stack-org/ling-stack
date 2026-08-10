@@ -27,8 +27,6 @@ import type {
   ChannelConversationContextInspectResponse,
   ChannelConversationItemPageResponse,
   ChannelConversationTurnResponse,
-  ChannelMessageListResponse,
-  ChannelMessageMutationResponse,
   ChannelPlaybookCandidateListResponse,
   ChannelPlaybookCandidateMutationResponse,
   ChannelPlaybookCandidateReviewRequest,
@@ -81,7 +79,6 @@ import type {
   CreateChannelHandoffRequest,
   CreateChannelLinkPreviewRequest,
   CreateChannelTurnRequest,
-  CreateChannelMessageRequest,
   CreateChannelRequest,
   CreateChannelTeamPatternRequest,
   CreateChannelTeamEvaluationRunRequest,
@@ -354,46 +351,6 @@ export const channelEndpoints = {
       input: CorrectChannelTurnContextRequest,
     ): Promise<CorrectChannelTurnContextResponse> {
       return this._post(`/channels/${encodeURIComponent(channelId)}/turns/${encodeURIComponent(turnId)}/context/corrections`, { cwd }, input);
-    },
-
-  async listChannelMessages(this: LingDaemonEndpointContext,
-      cwd: string,
-      channelId: string,
-      options: { readonly limit?: number; readonly beforeMessageId?: string; readonly threadId?: string } = {},
-    ): Promise<ChannelMessageListResponse> {
-      return this._get(`/channels/${encodeURIComponent(channelId)}/messages`, {
-        cwd,
-        limit: options.limit,
-        beforeMessageId: options.beforeMessageId,
-        threadId: options.threadId,
-      });
-    },
-
-  async createChannelMessage(this: LingDaemonEndpointContext,
-      cwd: string,
-      channelId: string,
-      input: CreateChannelMessageRequest,
-    ): Promise<ChannelMessageMutationResponse> {
-      return this._post(`/channels/${encodeURIComponent(channelId)}/messages`, { cwd }, input);
-    },
-
-  async streamChannelMessage(this: LingDaemonEndpointContext,
-      cwd: string,
-      channelId: string,
-      input: CreateChannelMessageRequest,
-    ): Promise<Response> {
-      const response = await this._fetch(this._url(`/channels/${encodeURIComponent(channelId)}/messages/stream`, { cwd }), {
-        method: "POST",
-        headers: {
-          Accept: "text/event-stream",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(input),
-      });
-      if (!response.ok) {
-        throw new LingDaemonError(await readErrorMessage(response), response.status, response.statusText);
-      }
-      return response;
     },
 
   async listChannelMessageRouteDecisions(this: LingDaemonEndpointContext,

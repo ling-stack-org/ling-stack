@@ -136,6 +136,49 @@ test("context assignments reject invented cross-thread segments and invalid conf
   }, secondAt), /between 0 and 1/);
 });
 
+test("explicit context corrections use an atomic assignment revision fence", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "ling-context-assignment-cas-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const store = createSqliteRunStore(cwd);
+  t.after(() => store.close());
+  const channel = store.createChannel({ name: "Correction", boundPath: cwd }, firstAt);
+  const thread = store.resolveOrCreateConversationThread({
+    surfaceKind: "channel_root",
+    channelId: channel.id,
+    title: "Correction",
+    objective: "Test explicit correction fencing",
+  }, firstAt).thread;
+  const first = appendUserTurn(store, channel.id, thread.id, "first", firstAt);
+  const second = appendUserTurn(store, channel.id, thread.id, "second", secondAt);
+  const firstAssignment = store.getEffectiveTurnContextAssignment(first.turnId);
+  const secondAssignment = store.getEffectiveTurnContextAssignment(second.turnId);
+  assert.ok(firstAssignment);
+  assert.ok(secondAssignment);
+
+  const corrected = store.applyTurnContextAssignment({
+    turnId: second.turnId,
+    expectedPreviousRevision: secondAssignment.revision,
+    target: { kind: "existing", segmentId: firstAssignment.segmentId },
+    status: "committed",
+    decisionSource: "user",
+    evidenceRefs: [{ type: "turn", id: second.turnId }],
+    policyVersion: "continuity-v2-user-correction-v1",
+  }, thirdAt);
+  assert.equal(corrected.assignment.revision, secondAssignment.revision + 1);
+  assert.equal(corrected.assignment.decisionSource, "user");
+
+  assert.throws(() => store.applyTurnContextAssignment({
+    turnId: second.turnId,
+    expectedPreviousRevision: secondAssignment.revision,
+    target: { kind: "existing", segmentId: firstAssignment.segmentId },
+    status: "committed",
+    decisionSource: "user",
+    evidenceRefs: [{ type: "turn", id: second.turnId }],
+    policyVersion: "continuity-v2-user-correction-v1",
+  }, thirdAt), /Context assignment revision conflict/);
+  assert.equal(store.getEffectiveTurnContextAssignment(second.turnId)?.id, corrected.assignment.id);
+});
+
 test("context summaries commit with a source fence, supersede atomically, and discard stale results", async (t) => {
   const cwd = await mkdtemp(join(tmpdir(), "ling-context-summary-"));
   t.after(() => rm(cwd, { recursive: true, force: true }));

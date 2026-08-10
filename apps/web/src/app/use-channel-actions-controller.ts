@@ -52,8 +52,7 @@ import type {
   ChannelConversationStreamDeltaEvent,
   ChannelConversationStreamDoneEvent,
   ChannelConversationStreamErrorEvent,
-  ChannelMessageStreamErrorEvent,
-  ChannelMessageStreamReplyPendingEvent,
+  ChannelReplyPendingEvent,
   ChannelConversationStreamReplyPendingEvent,
   ChannelConversationStreamReadyEvent,
   ChannelConversationStreamRunLinkedEvent,
@@ -82,6 +81,7 @@ import {
 import {
   projectChannelStreamReady,
   projectChannelStreamTerminal,
+  type ChannelPresentationStreamErrorEvent,
 } from "./channel-message-stream-projection.js";
 import {
   projectChannelConversationTurn,
@@ -141,7 +141,7 @@ interface SendChannelMessageInput {
   readonly requestAiReply: boolean;
   readonly replyDisposition?: ChannelReplyDisposition;
   readonly onMessageAccepted?: (message: ChannelMessage) => void;
-  readonly onReplyPending?: (pending: ChannelMessageStreamReplyPendingEvent) => void;
+  readonly onReplyPending?: (pending: ChannelReplyPendingEvent) => void;
   readonly onReplyLinked?: (target: ConversationActiveReplyTarget) => void;
   readonly onReplyDispatch?: (dispatch: ChannelReplyDispatch) => void;
 }
@@ -572,7 +572,7 @@ export function useChannelActionsController(input: {
         }
         if (event.event === "error") {
           const raw = JSON.parse(event.data) as ChannelConversationStreamErrorEvent;
-          const data: ChannelMessageStreamErrorEvent = raw.userItem && raw.turn && raw.thread
+          const data: ChannelPresentationStreamErrorEvent = raw.userItem && raw.turn && raw.thread
             ? {
                 ...projectChannelConversationTurn({
                   thread: raw.thread,

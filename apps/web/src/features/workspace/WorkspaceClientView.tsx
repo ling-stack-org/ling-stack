@@ -184,7 +184,7 @@ import type {
   ChannelMention,
   ChannelMessage,
   ChannelMessageFileRef,
-  ChannelMessageStreamReplyPendingEvent,
+  ChannelReplyPendingEvent,
   ChannelMessageRouteDecision,
   ChannelReplyDispatch,
   ChannelReplyDisposition,
@@ -662,7 +662,7 @@ export function WorkspaceClientView({
     readonly requestAiReply: boolean;
     readonly replyDisposition?: ChannelReplyDisposition;
     readonly onMessageAccepted?: (message: ChannelMessage) => void;
-    readonly onReplyPending?: (pending: ChannelMessageStreamReplyPendingEvent) => void;
+    readonly onReplyPending?: (pending: ChannelReplyPendingEvent) => void;
     readonly onReplyLinked?: (target: ConversationActiveReplyTarget) => void;
     readonly onReplyDispatch?: (dispatch: ChannelReplyDispatch) => void;
   }) => Promise<{ readonly errorMessage?: string }>;

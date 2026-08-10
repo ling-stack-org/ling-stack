@@ -115,6 +115,11 @@ export async function handleChannelTurnContext(
       turn: lineage.turn,
       sourceItemId: lineage.sourceItem.id,
       segment: projection.segment,
+      segments: store.listContextSegments({
+        threadId: lineage.thread.id,
+        states: ["active", "provisional"],
+        limit: 100,
+      }),
       assignment: projection.assignment,
       projection: projection.metadata,
       summaries: projection.summaries,
