@@ -9,6 +9,7 @@ import {
   validateTerminalReport,
 } from "../../core/dist/index.js";
 import { finalizeOrchestratedWorkflowStepRun } from "../dist/features/channels/orchestrator.js";
+import { buildWorkflowStepContextPack } from "../dist/features/channels/context-packs.js";
 import { collectWorkflowTerminalReportEvidence } from "../dist/features/channels/terminal-report-evidence.js";
 
 test("workflow terminal reply preserves full step result text", async () => {
@@ -53,6 +54,16 @@ test("workflow terminal reply preserves full step result text", async () => {
       status: "doing",
       assigneeTeammateId: "ling_agent",
     }, "2026-06-25T00:02:30.000Z");
+    const contextPack = buildWorkflowStepContextPack({
+      store,
+      channel,
+      workflow,
+      step,
+      prompt: step.prompt,
+      consumerTeammateId: "ling_agent",
+      workflowSteps: [step],
+    });
+    assert.ok(contextPack.agentContext);
     const run = store.createRun({
       id: "run_workflow_terminal_summary",
       cwd,
@@ -64,7 +75,7 @@ test("workflow terminal reply preserves full step result text", async () => {
       providerModel: "test-model",
       taskSnapshot: { id: task.id, title: "Create index.html" },
       providerSnapshot: { provider: "test-provider", model: "test-model" },
-      requestSnapshot: { cwd },
+      requestSnapshot: { cwd, contextPack },
       createdAt: "2026-06-25T00:03:00.000Z",
     });
     const longResult = `${Array.from({ length: 90 }, (_, index) => `结果片段${index}`).join(" ")} END_MARKER_完整结尾`;

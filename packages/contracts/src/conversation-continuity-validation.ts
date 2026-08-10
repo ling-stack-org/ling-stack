@@ -158,6 +158,7 @@ const SNAPSHOT_KEYS = new Set([
 
 const PROJECTION_KEYS = new Set([
   "projectionVersion",
+  "sourceStateFingerprint",
   "threadId",
   "turnId",
   "segmentId",
@@ -393,6 +394,7 @@ export function isConversationContextProjectionMetadata(
 ): value is ConversationContextProjectionMetadata {
   return isRecordWithOnlyKeys(value, PROJECTION_KEYS)
     && isText(value.projectionVersion)
+    && isText(value.sourceStateFingerprint)
     && isText(value.threadId)
     && isText(value.turnId)
     && isText(value.segmentId)

@@ -2008,6 +2008,29 @@ export interface WorkflowPacketSourceRef {
   readonly label?: string;
 }
 
+export interface WorkflowAgentContextStamp {
+  readonly schemaVersion: 1;
+  readonly sourceItemId: string;
+  readonly consumerTeammateId?: string;
+  readonly contextProjection: ConversationContextProjectionMetadata;
+  readonly roleEvidenceRefs: readonly WorkflowPacketSourceRef[];
+  readonly roleEvidenceFingerprint: string;
+}
+
+export type WorkflowFanInContextReviewStatus =
+  | "accepted_current"
+  | "rebased_metadata"
+  | "rejected_stale"
+  | "rejected_private_leak";
+
+export interface WorkflowFanInContextReview {
+  readonly dependencyWorkflowStepId: string;
+  readonly status: WorkflowFanInContextReviewStatus;
+  readonly consumedProjectionVersion?: string;
+  readonly currentProjectionVersion?: string;
+  readonly reason: string;
+}
+
 export type WorkflowHandoffIntentStatus =
   | "proposed"
   | "validated"
@@ -2056,6 +2079,7 @@ export interface WorkflowHandoffIntent {
   readonly expectedOutput: string;
   readonly riskSummary?: string;
   readonly sourceRefs: readonly WorkflowPacketSourceRef[];
+  readonly agentContext?: WorkflowAgentContextStamp;
   readonly status: WorkflowHandoffIntentStatus;
   readonly validation?: WorkflowHandoffValidation;
   readonly createdBy: WorkflowHandoffIntentCreatedBy;
@@ -2079,6 +2103,8 @@ export interface CreateWorkflowHandoffIntentInput {
   readonly expectedOutput: string;
   readonly riskSummary?: string;
   readonly sourceRefs?: readonly WorkflowPacketSourceRef[];
+  /** Internal-only continuity stamp derived by the daemon from the source step. */
+  readonly agentContext?: WorkflowAgentContextStamp;
   readonly status?: WorkflowHandoffIntentStatus;
   readonly validation?: WorkflowHandoffValidation;
   readonly createdBy: WorkflowHandoffIntentCreatedBy;
@@ -2092,6 +2118,8 @@ export interface UpdateWorkflowHandoffIntentInput {
   readonly expectedOutput?: string;
   readonly riskSummary?: string | null;
   readonly sourceRefs?: readonly WorkflowPacketSourceRef[];
+  /** Internal-only refreshed continuity stamp. Public PATCH routes must not accept this field. */
+  readonly agentContext?: WorkflowAgentContextStamp | null;
   readonly status?: WorkflowHandoffIntentStatus;
   readonly validation?: WorkflowHandoffValidation | null;
 }
@@ -2099,6 +2127,7 @@ export interface UpdateWorkflowHandoffIntentInput {
 export interface ListWorkflowHandoffIntentsOptions {
   readonly channelId?: string;
   readonly workflowId?: string;
+  readonly channelHandoffId?: string;
   readonly sourceWorkflowStepId?: string;
   readonly sourceRunId?: string;
   readonly status?: WorkflowHandoffIntentStatus;
@@ -2223,6 +2252,7 @@ export interface ChannelWorkflowStepContextPacket {
   readonly dependencies: readonly WorkflowStepOutputRef[];
   readonly priorOutputArtifactIds: readonly string[];
   readonly sourceRefs?: readonly WorkflowPacketSourceRef[];
+  readonly agentContext?: WorkflowAgentContextStamp;
   readonly selectorDecisionIds?: readonly string[];
   readonly handoffIntentIds?: readonly string[];
   readonly requestedRunnerId?: string;
@@ -2265,6 +2295,7 @@ export interface WorkflowStepContextPackSnapshot {
     readonly label?: string;
   }[];
   readonly contextProjection?: ConversationContextProjectionMetadata;
+  readonly agentContext?: WorkflowAgentContextStamp;
 }
 
 export interface ChannelWorkflowStepOutputPacket {
@@ -2283,6 +2314,7 @@ export interface ChannelWorkflowStepOutputPacket {
   readonly blockers?: readonly string[];
   readonly changedPaths?: readonly string[];
   readonly sourceRefs?: readonly WorkflowPacketSourceRef[];
+  readonly agentContext?: WorkflowAgentContextStamp;
   readonly selectorDecisionIds?: readonly string[];
   readonly handoffIntentIds?: readonly string[];
   readonly runnerAudit?: RunnerResolutionAudit;
@@ -2325,6 +2357,8 @@ export interface ChannelWorkflowStepMetadata {
   readonly proposalStepSources?: readonly ChannelExecutionProposalStepSource[];
   readonly fanInSummaryArtifactId?: string;
   readonly memoryCandidateIds?: readonly string[];
+  readonly fanInContextReviews?: readonly WorkflowFanInContextReview[];
+  readonly resultContextReview?: WorkflowFanInContextReview;
 }
 
 export interface ChannelWorkflowMetadata {

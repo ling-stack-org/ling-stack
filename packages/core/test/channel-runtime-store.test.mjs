@@ -217,6 +217,7 @@ test("sqlite channel auto reply mode and route decisions round trip", async () =
     assert.ok(sourceAssignment);
     const contextProjection = {
       projectionVersion: "ctxv2_route_test",
+      sourceStateFingerprint: "source-state-route-test",
       threadId: sourceItem.threadId,
       turnId: sourceItem.turnId,
       segmentId: sourceAssignment.segmentId,
@@ -374,6 +375,7 @@ function contextProjectionForItem(store, itemId) {
   assert.ok(assignment);
   return {
     projectionVersion: `projection:${item.id}:${assignment.revision}`,
+    sourceStateFingerprint: `source-state:${item.id}:${assignment.revision}`,
     threadId: item.threadId,
     turnId: item.turnId,
     segmentId: assignment.segmentId,
@@ -1524,6 +1526,56 @@ test("sqlite channel workflow migration self-heals missing workflow tables", asy
       assert.equal(workflow.title, "Self heal workflow tables");
     } finally {
       store.close();
+    }
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("sqlite workflow agent context migration self-heals its durable stamp column and handoff index", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-workflow-agent-context-heal-"));
+  const initialStore = createSqliteRunStore(cwd);
+  try {
+    const databasePath = initialStore.paths.databasePath;
+    initialStore.close();
+
+    const database = new DatabaseSync(databasePath);
+    try {
+      database.exec("ALTER TABLE workflow_handoff_intents DROP COLUMN agent_context_json;");
+      assert.equal(
+        database.prepare("PRAGMA table_info(workflow_handoff_intents)").all().some((row) => row.name === "agent_context_json"),
+        false,
+      );
+    } finally {
+      database.close();
+    }
+
+    createSqliteRunStore(cwd).close();
+    const repaired = new DatabaseSync(databasePath);
+    try {
+      assert.equal(
+        repaired.prepare("PRAGMA table_info(workflow_handoff_intents)").all().some((row) => row.name === "agent_context_json"),
+        true,
+      );
+      assert.ok(repaired.prepare(
+        "SELECT version FROM schema_migrations WHERE version = 112 AND name = 'add_workflow_agent_context_stamp'",
+      ).get());
+      assert.ok(repaired.prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_workflow_handoff_intents_channel_handoff'",
+      ).get());
+      repaired.exec("DROP INDEX idx_workflow_handoff_intents_channel_handoff;");
+    } finally {
+      repaired.close();
+    }
+
+    createSqliteRunStore(cwd).close();
+    const indexRepaired = new DatabaseSync(databasePath);
+    try {
+      assert.ok(indexRepaired.prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_workflow_handoff_intents_channel_handoff'",
+      ).get());
+    } finally {
+      indexRepaired.close();
     }
   } finally {
     await rm(cwd, { recursive: true, force: true });

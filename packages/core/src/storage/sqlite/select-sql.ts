@@ -1301,6 +1301,7 @@ export function workflowHandoffIntentSelectSql(whereClause: string): string {
       expected_output,
       risk_summary,
       source_refs_json,
+      agent_context_json,
       status,
       validation_json,
       created_by,

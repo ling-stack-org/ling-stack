@@ -1,6 +1,6 @@
 # Channel Conversation Continuity v2
 
-Status: approved design baseline; S-1 and S0 merged; S1+S2, S3, and S4 implemented and locally verified; S5-S7 pending
+Status: approved design baseline; S-1 and S0 merged; S1+S2 through S6 implemented and locally verified; S7 pending
 Date: 2026-08-08
 Last verified: 2026-08-10
 Scope: channel conversation persistence, Thread/Turn/Item topology, context segmentation,

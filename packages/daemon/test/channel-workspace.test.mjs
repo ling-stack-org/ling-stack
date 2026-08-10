@@ -7243,6 +7243,218 @@ test("channel handoff workflows start steps, create tasks, and expose blockers",
   }
 });
 
+test("manual workflow step start rejects a result after source context changes", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-manual-workflow-stale-context-"));
+  const runner = new DelayedRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const channel = await createWorkflowTestChannel(daemon.url, cwd, "Manual continuity workflow");
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const store = stores.get(cwd);
+    assert.ok(store);
+    store.updateChannel(channel.id, { defaultProviderPresetId: provider.id }, "2026-08-10T03:00:00.000Z");
+    const rootThread = store.resolveOrCreateConversationThread({
+      surfaceKind: "channel_root",
+      channelId: channel.id,
+      title: "Manual continuity workflow",
+      objective: "Implement the original continuity objective.",
+    }, "2026-08-10T03:00:00.000Z").thread;
+    const sourceItem = store.appendConversationUserTurn({
+      channelId: channel.id,
+      threadId: rootThread.id,
+      title: "Implement the original continuity objective.",
+      userInstruction: "Implement the original continuity objective.",
+      payload: {
+        body: "Implement the original continuity objective.",
+        format: "plain_text",
+        mentions: [],
+        attachmentIds: [],
+        linkPreviewIds: [],
+        fileRefs: [],
+      },
+      idempotencyKey: "manual-workflow-stale-context-source",
+    }, "2026-08-10T03:00:00.000Z").item;
+    const workflow = store.createChannelWorkflow({
+      channelId: channel.id,
+      title: "Manual continuity workflow",
+      objective: "Implement the original continuity objective.",
+      status: "ready",
+      createdBy: "local-user",
+      metadata: { sourceMessageId: sourceItem.id },
+    }, "2026-08-10T03:00:01.000Z");
+    const step = store.createChannelWorkflowStep({
+      workflowId: workflow.id,
+      title: "Manual continuity step",
+      prompt: "Implement the original continuity objective.",
+      toParticipantId: "ling_agent",
+      toParticipantLabel: "Ling Agent",
+      metadata: {
+        sourceMessageId: sourceItem.id,
+        providerPresetId: provider.id,
+        requiredTools: ["read"],
+      },
+    }, "2026-08-10T03:00:02.000Z");
+
+    const response = await fetch(`${daemon.url}/workflow-steps/${encodeURIComponent(step.id)}/start?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "create_and_run_task" }),
+    });
+    assert.equal(response.ok, true);
+    await waitForCondition(() => runner.runs.length === 1, "manual workflow runner start");
+    store.appendConversationItem({
+      channelId: channel.id,
+      threadId: sourceItem.threadId,
+      turnId: sourceItem.turnId,
+      kind: "user_message",
+      status: "committed",
+      actorType: "local_user",
+      visibility: "channel",
+      payload: { ...sourceItem.payload, body: "Replace the objective before the manual result commits." },
+      supersedesItemId: sourceItem.id,
+      idempotencyKey: "manual-workflow-stale-context-correction",
+    }, "2026-08-10T03:00:03.000Z");
+    runner.resolve("This result consumed the old objective.");
+    await response.text();
+
+    const blockedStep = store.getChannelWorkflowStep(step.id);
+    assert.equal(blockedStep.status, "blocked");
+    assert.ok(blockedStep.taskId);
+    assert.equal(blockedStep.resultSummary, undefined);
+    assert.equal(blockedStep.metadata.resultContextReview.status, "rejected_stale");
+    assert.equal(store.getChannelWorkflow(workflow.id).status, "blocked");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("queued workflow runs keep private role memory out of durable snapshots", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-queued-workflow-memory-isolation-"));
+  const runner = new DelayedRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const channel = await createWorkflowTestChannel(daemon.url, cwd, "Queued continuity workflow");
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const store = stores.get(cwd);
+    assert.ok(store);
+    store.updateChannel(channel.id, { defaultProviderPresetId: provider.id }, "2026-08-10T03:10:00.000Z");
+
+    await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "Hold the channel runtime slot.",
+      requestAiReply: true,
+      providerPresetId: provider.id,
+    });
+    await waitForCondition(() => runner.runs.length === 1, "blocking channel reply start");
+
+    const privateMemory = store.createMemoryObject({
+      workspaceId: channel.workspaceId,
+      scopeType: "teammate",
+      ownerId: "ling_agent",
+      title: "Queued continuity objective",
+      body: "Queued continuity objective private role evidence must stay owner-scoped.",
+      tags: ["queued-continuity"],
+      sourceRefs: [],
+      reviewState: "active",
+      enabled: true,
+      sensitivity: "private",
+      verifyBeforeUse: false,
+      createdBy: "test",
+    }, "2026-08-10T03:10:01.000Z");
+    const rootThread = store.resolveOrCreateConversationThread({
+      surfaceKind: "channel_root",
+      channelId: channel.id,
+      title: "Queued continuity workflow",
+      objective: "Queued continuity objective",
+    }, "2026-08-10T03:10:02.000Z").thread;
+    const sourceItem = store.appendConversationUserTurn({
+      channelId: channel.id,
+      threadId: rootThread.id,
+      title: "Queued continuity objective",
+      userInstruction: "Queued continuity objective",
+      payload: {
+        body: "Queued continuity objective",
+        format: "plain_text",
+        mentions: [],
+        attachmentIds: [],
+        linkPreviewIds: [],
+        fileRefs: [],
+      },
+      idempotencyKey: "queued-workflow-memory-source",
+    }, "2026-08-10T03:10:02.000Z").item;
+    const workflow = store.createChannelWorkflow({
+      channelId: channel.id,
+      title: "Queued continuity workflow",
+      objective: "Queued continuity objective",
+      status: "ready",
+      createdBy: "local-user",
+      metadata: { sourceMessageId: sourceItem.id },
+    }, "2026-08-10T03:10:03.000Z");
+    const step = store.createChannelWorkflowStep({
+      workflowId: workflow.id,
+      title: "Queued continuity objective",
+      prompt: "Queued continuity objective",
+      toParticipantId: "ling_agent",
+      toParticipantLabel: "Ling Agent",
+      metadata: {
+        sourceMessageId: sourceItem.id,
+        providerPresetId: provider.id,
+        requiredTools: ["read"],
+      },
+    }, "2026-08-10T03:10:04.000Z");
+
+    const response = await fetch(`${daemon.url}/workflow-steps/${encodeURIComponent(step.id)}/start?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "create_and_run_task" }),
+    });
+    assert.equal(response.ok, true);
+    await response.text();
+
+    const queuedRun = store.listRuns({ status: "queued", limit: 20 })
+      .find((run) => run.workflowStepId === step.id);
+    assert.ok(queuedRun);
+    assert.equal(queuedRun.requestSnapshot.workflowStepId, step.id);
+    const queuedStep = store.getChannelWorkflowStep(step.id);
+    assert.equal(queuedStep.status, "running");
+    assert.equal(queuedStep.runId, queuedRun.id);
+    assert.equal(store.getChannelWorkflow(workflow.id).status, "running");
+    assert.doesNotMatch(queuedRun.taskSnapshot.prompt, /private role evidence/u);
+    assert.doesNotMatch(queuedRun.requestSnapshot.task.prompt, /private role evidence/u);
+    assert.equal(queuedRun.requestSnapshot.preselectedMemoryUse, undefined);
+    const workUnit = store.getWorkUnit(queuedRun.workUnitId);
+    assert.ok(workUnit);
+    assert.doesNotMatch(workUnit.request.task.prompt, /private role evidence/u);
+    assert.equal(workUnit.request.preselectedMemoryUse, undefined);
+    assert.equal(
+      store.listUsedMemoryEvents({ runId: queuedRun.id, limit: 20 }).some((event) => event.memoryIds.includes(privateMemory.id)),
+      false,
+    );
+
+    runner.resolve("The blocking channel reply is complete.");
+    await waitForCondition(() => runner.completed, "blocking channel reply completion");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("workflow handoff intents validate, accept, and stay visible as workflow evidence", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-handoff-intents-"));
   const stores = new Map();
@@ -7290,6 +7502,18 @@ test("workflow handoff intents validate, accept, and stay visible as workflow ev
     assert.equal(created.handoffIntent.status, "validated");
     assert.equal(created.handoffIntent.validation.targetTeammateExists, true);
     assert.equal(created.handoffIntent.validation.targetTeammateActive, true);
+
+    const bypassResponse = await fetch(
+      `${daemon.url}/workflow-handoff-intents/${encodeURIComponent(created.handoffIntent.id)}?cwd=${encodeURIComponent(cwd)}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "accepted" }),
+      },
+    );
+    assert.equal(bypassResponse.status, 400);
+    assert.match(await bypassResponse.text(), /status is server-owned/u);
+    assert.equal(store.getWorkflowHandoffIntent(created.handoffIntent.id).status, "validated");
 
     const stepAfterIntent = store.getChannelWorkflowStep(sourceStep.id);
     assert.ok(stepAfterIntent.metadata.handoffIntentIds.includes(created.handoffIntent.id));
@@ -7443,6 +7667,13 @@ test("autoplan-lite workflow compiles durable steps and orchestrates them throug
     assert.equal(compiled.workflowSteps[0].metadata.policy.onRunFailed, "block_for_user");
     assert.equal(compiled.workflowSteps[4].metadata.policy.onRunFailed, "fail_workflow");
     assert.equal(compiled.workflowSteps[1].metadata.dependsOnStepIds.length, 1);
+    const firstStepMemory = (await postJson(`${daemon.url}/memory?cwd=${encodeURIComponent(cwd)}`, {
+      scopeType: "teammate",
+      ownerId: compiled.workflowSteps[0].toParticipantId,
+      title: "Orchestrator test objective",
+      body: "Build the orchestrator test slice with source-linked evidence.",
+      sensitivity: "private",
+    })).memory;
 
     const firstTick = await postJson(`${daemon.url}/workflows/${encodeURIComponent(compiled.workflow.id)}/orchestrate?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(firstTick.status, "started");
@@ -7484,6 +7715,16 @@ test("autoplan-lite workflow compiles durable steps and orchestrates them throug
     assert.equal(firstRun.workflowStepId, firstStepAfterFirstTick.id);
     assert.equal(firstRun.requestSnapshot.workflowStepId, firstStepAfterFirstTick.id);
     assert.equal(firstRun.requestSnapshot.runnerResolution.requestSource, "workflow_step");
+    assert.match(runner.runs[0].task.prompt, /Build the orchestrator test slice with source-linked evidence/u);
+    assert.doesNotMatch(firstRun.taskSnapshot.prompt, /source-linked evidence/u);
+    assert.doesNotMatch(firstRun.requestSnapshot.task.prompt, /source-linked evidence/u);
+    assert.equal(firstRun.requestSnapshot.preselectedMemoryUse, undefined);
+    const firstWorkUnit = await getJson(`${daemon.url}/work-units/${encodeURIComponent(firstRun.workUnitId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.doesNotMatch(firstWorkUnit.workUnit.request.task.prompt, /source-linked evidence/u);
+    assert.equal(firstWorkUnit.workUnit.request.preselectedMemoryUse, undefined);
+    const firstRunMemoryUse = await getJson(`${daemon.url}/memory/used?cwd=${encodeURIComponent(cwd)}&runId=${encodeURIComponent(firstRun.id)}`);
+    assert.deepEqual(firstRunMemoryUse.events[0].memoryIds, [firstStepMemory.id]);
+    assert.match(firstRunMemoryUse.events[0].policyVersion, /memory_use_isolation_v1/u);
     const runsForStep = await getJson(`${daemon.url}/runs?cwd=${encodeURIComponent(cwd)}&workflowStepId=${encodeURIComponent(firstStepAfterFirstTick.id)}`);
     assert.deepEqual(runsForStep.runs.map((run) => run.id), [firstRun.id]);
     const threadsForStep = await getJson(`${daemon.url}/threads?cwd=${encodeURIComponent(cwd)}&workflowStepId=${encodeURIComponent(firstStepAfterFirstTick.id)}`);

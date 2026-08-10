@@ -339,6 +339,12 @@ export interface ConversationContextSnapshot {
 
 export interface ConversationContextProjectionMetadata {
   readonly projectionVersion: string;
+  /**
+   * Fingerprint of the effective assignment, summaries, and item revisions that
+   * contributed facts to this projection. Unlike projectionVersion, this does
+   * not change for metadata-only segment activity.
+   */
+  readonly sourceStateFingerprint: string;
   readonly threadId: string;
   readonly turnId: string;
   readonly segmentId: string;

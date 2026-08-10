@@ -224,6 +224,8 @@ const TEAMMATE_MODEL_BINDING_MIGRATION_NAME = "add_teammate_model_binding_mode";
 const REMOTE_UNREAD_ENTITY_MIGRATION_VERSION = 109;
 const REMOTE_UNREAD_ENTITY_MIGRATION_NAME = "deduplicate_remote_run_unread_entities";
 const AI_EVOLUTION_SKILL_LIFECYCLE_MIGRATION_NAME = "repair_ai_evolution_skill_lifecycle";
+const WORKFLOW_AGENT_CONTEXT_MIGRATION_VERSION = 112;
+const WORKFLOW_AGENT_CONTEXT_MIGRATION_NAME = "add_workflow_agent_context_stamp";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -3559,6 +3561,23 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
         context.recordMigration(WORKFLOW_COORDINATION_RECORDS_MIGRATION_VERSION, WORKFLOW_COORDINATION_RECORDS_MIGRATION_NAME);
       }
     }
+
+    const hasWorkflowAgentContextMigration = context.hasMigration(WORKFLOW_AGENT_CONTEXT_MIGRATION_VERSION);
+    if (
+      !hasWorkflowAgentContextMigration
+      || !context.hasColumn("workflow_handoff_intents", "agent_context_json")
+    ) {
+      if (!context.hasColumn("workflow_handoff_intents", "agent_context_json")) {
+        database.exec("ALTER TABLE workflow_handoff_intents ADD COLUMN agent_context_json TEXT;");
+      }
+      if (!hasWorkflowAgentContextMigration) {
+        context.recordMigration(WORKFLOW_AGENT_CONTEXT_MIGRATION_VERSION, WORKFLOW_AGENT_CONTEXT_MIGRATION_NAME);
+      }
+    }
+    database.exec(`
+      CREATE INDEX IF NOT EXISTS idx_workflow_handoff_intents_channel_handoff
+      ON workflow_handoff_intents(channel_handoff_id, updated_at);
+    `);
 
     const hasChannelAutoReplyRouterMigration = context.hasMigration(CHANNEL_AUTO_REPLY_ROUTER_MIGRATION_VERSION);
     if (
