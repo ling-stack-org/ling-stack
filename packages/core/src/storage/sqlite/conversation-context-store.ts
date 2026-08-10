@@ -92,6 +92,16 @@ export class SqliteConversationContextStore {
       if (!turn) throw new Error(`Ling turn not found for context assignment: ${input.turnId}`);
       const threadId = readString(turn, "thread_id");
       const previousAssignment = this.getEffectiveTurnContextAssignment(input.turnId);
+      if (input.expectedPreviousRevision !== undefined) {
+        if (!Number.isSafeInteger(input.expectedPreviousRevision) || input.expectedPreviousRevision < 1) {
+          throw new RangeError(`Invalid expected context assignment revision: ${input.expectedPreviousRevision}`);
+        }
+        if (previousAssignment?.revision !== input.expectedPreviousRevision) {
+          throw new Error(
+            `Context assignment revision conflict: expected ${input.expectedPreviousRevision}, current ${previousAssignment?.revision ?? "missing"}`,
+          );
+        }
+      }
       const segment = this.resolveAssignmentSegment(input, threadId, previousAssignment, now);
       if (input.antecedentTurnId) {
         const antecedent = this.context.database.prepare(`

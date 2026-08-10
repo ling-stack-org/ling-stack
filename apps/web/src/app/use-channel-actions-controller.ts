@@ -8,7 +8,7 @@ import {
   createChannelWorkflowFromHandoff,
   createTask,
   deleteChannelAttachment,
-  streamChannelMessage,
+  streamChannelTurn,
   updateChannel,
   updateChannelBrief,
   updateChannelCollaborationProtocol,
@@ -48,13 +48,15 @@ import type {
   ChannelReplyDisposition,
   ConversationActiveReplyTarget,
   ChannelMessageFileRef,
-  ChannelMessageStreamBlockedEvent,
-  ChannelMessageStreamDeltaEvent,
-  ChannelMessageStreamDoneEvent,
+  ChannelConversationStreamBlockedEvent,
+  ChannelConversationStreamDeltaEvent,
+  ChannelConversationStreamDoneEvent,
+  ChannelConversationStreamErrorEvent,
   ChannelMessageStreamErrorEvent,
   ChannelMessageStreamReplyPendingEvent,
-  ChannelMessageStreamReadyEvent,
-  ChannelMessageStreamRunLinkedEvent,
+  ChannelConversationStreamReplyPendingEvent,
+  ChannelConversationStreamReadyEvent,
+  ChannelConversationStreamRunLinkedEvent,
   ChannelWorkflow,
   ChannelWorkflowStep,
   ProviderPreset,
@@ -81,6 +83,11 @@ import {
   projectChannelStreamReady,
   projectChannelStreamTerminal,
 } from "./channel-message-stream-projection.js";
+import {
+  projectChannelConversationTurn,
+  projectMessageItem,
+  projectMessageItems,
+} from "../lib/channel-conversation-items.js";
 
 export interface ChannelActionsController {
   readonly saveChannel: () => Promise<void>;
@@ -488,7 +495,7 @@ export function useChannelActionsController(input: {
       let messageAccepted = false;
       let autoStartedWorkflow = false;
       let streamErrorMessage = "";
-      const response = await streamChannelMessage(input.form.cwd.trim(), channelId, {
+      const response = await streamChannelTurn(input.form.cwd.trim(), channelId, {
         threadId: messageInput.threadId,
         body: messageInput.body,
         mentions: messageInput.mentions,
@@ -501,7 +508,8 @@ export function useChannelActionsController(input: {
       });
       await readSseResponse(response, (event) => {
         if (event.event === "ready") {
-          const data = JSON.parse(event.data) as ChannelMessageStreamReadyEvent;
+          const raw = JSON.parse(event.data) as ChannelConversationStreamReadyEvent;
+          const data = projectChannelConversationTurn(raw);
           const aiReplies = data.aiReplies?.length ? data.aiReplies : data.aiReply ? [data.aiReply] : [];
           receivedAiReply = receivedAiReply || aiReplies.length > 0;
           input.setChannelMessages((current) => projectChannelStreamReady(current, data));
@@ -512,19 +520,23 @@ export function useChannelActionsController(input: {
           return;
         }
         if (event.event === "reply_pending") {
-          const data = JSON.parse(event.data) as ChannelMessageStreamReplyPendingEvent;
-          messageInput.onReplyPending?.(data);
+          const data = JSON.parse(event.data) as ChannelConversationStreamReplyPendingEvent;
+          messageInput.onReplyPending?.({
+            sourceMessageId: data.sourceItemId,
+            targetTeammateId: data.targetTeammateId,
+            startedAt: data.startedAt,
+          });
           return;
         }
         if (event.event === "delta") {
-          const data = JSON.parse(event.data) as ChannelMessageStreamDeltaEvent;
-          input.setChannelMessages((current) => current.map((message) => message.id === data.messageId ? { ...message, body: data.body, status: "pending" } : message));
+          const data = JSON.parse(event.data) as ChannelConversationStreamDeltaEvent;
+          input.setChannelMessages((current) => current.map((message) => message.id === data.itemId ? { ...message, body: data.body, status: "pending" } : message));
           return;
         }
         if (event.event === "run_linked") {
-          const data = JSON.parse(event.data) as ChannelMessageStreamRunLinkedEvent;
+          const data = JSON.parse(event.data) as ChannelConversationStreamRunLinkedEvent;
           input.setChannelMessages((current) => current.map((message) =>
-            message.id === data.messageId ? { ...message, linkedRunId: data.linkedRunId } : message
+            message.id === data.itemId ? { ...message, linkedRunId: data.linkedRunId } : message
           ));
           if (data.activeReply) {
             messageInput.onReplyLinked?.(data.activeReply);
@@ -537,7 +549,8 @@ export function useChannelActionsController(input: {
           return;
         }
         if (event.event === "done") {
-          const data = JSON.parse(event.data) as ChannelMessageStreamDoneEvent;
+          const raw = JSON.parse(event.data) as ChannelConversationStreamDoneEvent;
+          const data = projectChannelConversationTurn(raw);
           const aiReplies = data.aiReplies?.length ? data.aiReplies : data.aiReply ? [data.aiReply] : [];
           receivedAiReply = receivedAiReply || aiReplies.length > 0;
           autoStartedWorkflow = Boolean(data.autoStartedWorkflow);
@@ -546,7 +559,8 @@ export function useChannelActionsController(input: {
           return;
         }
         if (event.event === "blocked") {
-          const data = JSON.parse(event.data) as ChannelMessageStreamBlockedEvent;
+          const raw = JSON.parse(event.data) as ChannelConversationStreamBlockedEvent;
+          const data = { ...projectChannelConversationTurn(raw), ...(raw.error ? { error: raw.error } : {}) };
           const aiReplies = data.aiReplies?.length ? data.aiReplies : data.aiReply ? [data.aiReply] : [];
           receivedAiReply = receivedAiReply || aiReplies.length > 0;
           input.setChannelMessages((current) => projectChannelStreamTerminal(current, data));
@@ -557,7 +571,29 @@ export function useChannelActionsController(input: {
           return;
         }
         if (event.event === "error") {
-          const data = JSON.parse(event.data) as ChannelMessageStreamErrorEvent;
+          const raw = JSON.parse(event.data) as ChannelConversationStreamErrorEvent;
+          const data: ChannelMessageStreamErrorEvent = raw.userItem && raw.turn && raw.thread
+            ? {
+                ...projectChannelConversationTurn({
+                  thread: raw.thread,
+                  turn: raw.turn,
+                  userItem: raw.userItem,
+                  ...(raw.assistantItems ? { assistantItems: raw.assistantItems } : {}),
+                  decorations: raw.decorations ?? [],
+                  ...(raw.replyDispatch ? { replyDispatch: raw.replyDispatch } : {}),
+                }),
+                error: raw.error,
+              }
+            : {
+                ...(raw.userItem
+                  ? { message: projectMessageItem(raw.userItem, raw.decorations ?? []) }
+                  : {}),
+                ...(raw.assistantItems
+                  ? { aiReplies: projectMessageItems(raw.assistantItems, raw.decorations ?? []) }
+                  : {}),
+                ...(raw.replyDispatch ? { replyDispatch: raw.replyDispatch } : {}),
+                error: raw.error,
+              };
           const messages = [data.message, ...(data.aiReplies?.length ? data.aiReplies : data.aiReply ? [data.aiReply] : [])]
             .filter((message): message is ChannelMessage => Boolean(message));
           receivedAiReply = receivedAiReply || messages.some((message) => message.kind === "ai_reply");

@@ -30,6 +30,8 @@ export type TurnContextAssignmentTarget =
 
 export interface ApplyTurnContextAssignmentInput {
   readonly turnId: string;
+  /** Optional compare-and-swap fence for explicit user corrections. */
+  readonly expectedPreviousRevision?: number;
   readonly target: TurnContextAssignmentTarget;
   readonly status: TurnContextAssignmentStatus;
   readonly decisionSource: TurnContextDecisionSource;
