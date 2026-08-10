@@ -1,3 +1,4 @@
+import { appendChannelItemFixture, getChannelItemViewFixture, listChannelItemViewsFixture, updateChannelItemFixture } from "../../core/test/channel-conversation-fixture.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -44,7 +45,7 @@ test("terminal report publication uses a deterministic message id across mark-pu
     const message = publishWorkflowTerminalReport({ store, report, now });
     assert.equal(message?.id, terminalReportMessageId(report.id));
     assert.equal(publishWorkflowTerminalReport({ store, report, now: "2026-07-11T05:05:00.000Z" })?.id, message?.id);
-    assert.equal(store.listChannelMessages({ channelId: fixture.channel.id, limit: 100 }).filter((item) => item.id === message?.id).length, 1);
+    assert.equal(listChannelItemViewsFixture(store, { channelId: fixture.channel.id, limit: 100 }).filter((item) => item.id === message?.id).length, 1);
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });

@@ -1,3 +1,4 @@
+import { appendChannelItemFixture, getChannelItemViewFixture, listChannelItemViewPageFixture, listChannelItemViewsFixture, updateChannelItemFixture } from "./channel-conversation-fixture.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -192,7 +193,7 @@ test("sqlite channel auto reply mode and route decisions round trip", async () =
     const reset = store.updateChannel(channel.id, { autoReplyMode: null }, "2026-06-09T00:02:00.000Z");
     assert.equal(reset.autoReplyMode, "mentions_only");
 
-    const message = store.createChannelMessage(
+    const message = appendChannelItemFixture(store,
       {
         channelId: channel.id,
         authorType: "local-user",
@@ -200,10 +201,10 @@ test("sqlite channel auto reply mode and route decisions round trip", async () =
       },
       "2026-06-09T00:03:00.000Z",
     );
-    const reply = store.createChannelMessage(
+    const reply = appendChannelItemFixture(store,
       {
         channelId: channel.id,
-        threadId: message.id,
+        replyToItemId: message.id,
         kind: "ai_reply",
         authorType: "ai-teammate",
         authorId: "teammate_builtin_engineer",
@@ -308,7 +309,7 @@ test("sqlite channel intent decisions round trip visible multi-reply ids", async
       },
       now,
     );
-    const message = store.createChannelMessage(
+    const message = appendChannelItemFixture(store,
       {
         channelId: channel.id,
         authorType: "local-user",
@@ -316,10 +317,10 @@ test("sqlite channel intent decisions round trip visible multi-reply ids", async
       },
       "2026-06-10T00:01:00.000Z",
     );
-    const architectReply = store.createChannelMessage(
+    const architectReply = appendChannelItemFixture(store,
       {
         channelId: channel.id,
-        threadId: message.id,
+        replyToItemId: message.id,
         kind: "ai_reply",
         authorType: "ai-teammate",
         authorId: "teammate_builtin_architect",
@@ -327,10 +328,10 @@ test("sqlite channel intent decisions round trip visible multi-reply ids", async
       },
       "2026-06-10T00:02:00.000Z",
     );
-    const engineerReply = store.createChannelMessage(
+    const engineerReply = appendChannelItemFixture(store,
       {
         channelId: channel.id,
-        threadId: message.id,
+        replyToItemId: message.id,
         kind: "ai_reply",
         authorType: "ai-teammate",
         authorId: "teammate_builtin_engineer",
@@ -468,7 +469,7 @@ test("sqlite channel workspace assets persist messages, attachments, and link pr
       },
       now,
     );
-    const message = store.createChannelMessage(
+    const message = appendChannelItemFixture(store,
       {
         channelId: channel.id,
         authorType: "local-user",
@@ -501,8 +502,8 @@ test("sqlite channel workspace assets persist messages, attachments, and link pr
     );
 
     assert.equal(store.getChannel(channel.id).defaultTeammateId, "engineer");
-    assert.deepEqual(store.listChannelMessages({ channelId: channel.id }).map((item) => item.id), [message.id]);
-    assert.equal(store.getChannelMessage(message.id).mentions[0].id, "engineer");
+    assert.deepEqual(listChannelItemViewsFixture(store, { channelId: channel.id }).map((item) => item.id), [message.id]);
+    assert.equal(getChannelItemViewFixture(store, message.id).mentions[0].id, "engineer");
     assert.deepEqual(store.listChannelAttachments({ channelId: channel.id }).map((item) => item.id), [attachment.id]);
     assert.equal(store.getChannelAttachment(attachment.id).fileName, "brief.pdf");
     assert.deepEqual(store.listChannelLinkPreviews({ channelId: channel.id }).map((item) => item.id), [preview.id]);
@@ -521,7 +522,7 @@ test("sqlite channel workspace assets persist messages, attachments, and link pr
   }
 });
 
-test("sqlite channel messages page latest history with stable cursors", async () => {
+test("sqlite channel items page latest history with stable sequence cursors", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-message-page-"));
   const store = createSqliteRunStore(cwd);
   try {
@@ -534,7 +535,7 @@ test("sqlite channel messages page latest history with stable cursors", async ()
     );
     const messages = [];
     for (let index = 0; index < 520; index += 1) {
-      messages.push(store.createChannelMessage(
+      messages.push(appendChannelItemFixture(store,
         {
           channelId: channel.id,
           authorType: "local-user",
@@ -544,16 +545,17 @@ test("sqlite channel messages page latest history with stable cursors", async ()
       ));
     }
 
-    const defaultPage = store.listChannelMessagesPage({ channelId: channel.id });
+    const threadId = store.getConversationItem(messages[0].id).threadId;
+    const defaultPage = listChannelItemViewPageFixture(store, { threadId, limit: 200 });
     assert.equal(defaultPage.messages.length, 200);
     assert.equal(defaultPage.hasMore, true);
     assert.equal(defaultPage.messages[0].body, "Message 321");
     assert.equal(defaultPage.messages.at(-1).body, "Message 520");
-    assert.equal(defaultPage.nextBeforeMessageId, defaultPage.messages[0].id);
+    assert.equal(defaultPage.nextBeforeSequence, store.getConversationItem(defaultPage.messages[0].id).sequence);
 
-    const olderPage = store.listChannelMessagesPage({
-      channelId: channel.id,
-      beforeMessageId: defaultPage.nextBeforeMessageId,
+    const olderPage = listChannelItemViewPageFixture(store, {
+      threadId,
+      beforeSequence: defaultPage.nextBeforeSequence,
       limit: 100,
     });
     assert.equal(olderPage.messages.length, 100);
@@ -562,17 +564,17 @@ test("sqlite channel messages page latest history with stable cursors", async ()
     assert.equal(olderPage.messages.at(-1).body, "Message 320");
     assert.equal(new Set([...defaultPage.messages, ...olderPage.messages].map((message) => message.id)).size, 300);
 
-    const oversizedPage = store.listChannelMessagesPage({ channelId: channel.id, limit: 999 });
+    const oversizedPage = listChannelItemViewPageFixture(store, { threadId, limit: 999 });
     assert.equal(oversizedPage.messages.length, 500);
     assert.equal(oversizedPage.messages[0].body, "Message 21");
     assert.equal(oversizedPage.messages.at(-1).body, "Message 520");
 
     assert.throws(
-      () => store.listChannelMessagesPage({ channelId: channel.id, beforeMessageId: "message_missing" }),
-      /Invalid channel message cursor/,
+      () => listChannelItemViewPageFixture(store, { threadId, beforeSequence: 0 }),
+      /Invalid conversation item cursor/,
     );
 
-    assert.deepEqual(store.listChannelMessages({ channelId: channel.id, limit: 3 }).map((message) => message.body), [
+    assert.deepEqual(listChannelItemViewsFixture(store, { channelId: channel.id, limit: 3 }).map((message) => message.body), [
       "Message 518",
       "Message 519",
       "Message 520",
@@ -596,7 +598,7 @@ test("sqlite channel message root pages can exclude channel branch lanes while k
       },
       "2026-05-29T00:00:00.000Z",
     );
-    const rootMessage = store.createChannelMessage(
+    const rootMessage = appendChannelItemFixture(store,
       {
         channelId: channel.id,
         authorType: "local-user",
@@ -634,10 +636,10 @@ test("sqlite channel message root pages can exclude channel branch lanes while k
       },
       "2026-05-29T00:00:02.750Z",
     );
-    store.createChannelMessage(
+    appendChannelItemFixture(store,
       {
         channelId: channel.id,
-        threadId: rootMessage.id,
+        replyToItemId: rootMessage.id,
         kind: "ai_reply",
         authorType: "ai-teammate",
         authorId: "ling_agent",
@@ -645,7 +647,7 @@ test("sqlite channel message root pages can exclude channel branch lanes while k
       },
       "2026-05-29T00:00:03.000Z",
     );
-    store.createChannelMessage(
+    appendChannelItemFixture(store,
       {
         channelId: channel.id,
         threadId: branch.rootThreadId,
@@ -656,7 +658,7 @@ test("sqlite channel message root pages can exclude channel branch lanes while k
     );
 
     assert.deepEqual(
-      store.listChannelMessages({
+      listChannelItemViewsFixture(store, {
         channelId: channel.id,
         excludeThreadIds: [branch.rootThreadId],
         limit: 10,
@@ -664,7 +666,7 @@ test("sqlite channel message root pages can exclude channel branch lanes while k
       ["Root message", "Root attached reply"],
     );
     assert.deepEqual(
-      store.listChannelMessages({
+      listChannelItemViewsFixture(store, {
         channelId: channel.id,
         threadId: branch.rootThreadId,
         limit: 10,
@@ -677,7 +679,7 @@ test("sqlite channel message root pages can exclude channel branch lanes while k
   }
 });
 
-test("sqlite channel message cursors keep same-timestamp order stable", async () => {
+test("sqlite channel item sequence cursors keep same-timestamp order stable", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-message-same-time-"));
   const store = createSqliteRunStore(cwd);
   try {
@@ -689,7 +691,7 @@ test("sqlite channel message cursors keep same-timestamp order stable", async ()
       "2026-05-29T01:00:00.000Z",
     );
     for (let index = 0; index < 6; index += 1) {
-      store.createChannelMessage(
+      appendChannelItemFixture(store,
         {
           channelId: channel.id,
           authorType: "local-user",
@@ -699,16 +701,17 @@ test("sqlite channel message cursors keep same-timestamp order stable", async ()
       );
     }
 
-    const latest = store.listChannelMessagesPage({ channelId: channel.id, limit: 3 });
+    const threadId = store.findLingThreadByOwner({ kind: "channel_discussion", channelId: channel.id }).id;
+    const latest = listChannelItemViewPageFixture(store, { threadId, limit: 3 });
     assert.deepEqual(latest.messages.map((message) => message.body), [
       "Same time 4",
       "Same time 5",
       "Same time 6",
     ]);
-    const older = store.listChannelMessagesPage({
-      channelId: channel.id,
+    const older = listChannelItemViewPageFixture(store, {
+      threadId,
       limit: 3,
-      beforeMessageId: latest.nextBeforeMessageId,
+      beforeSequence: latest.nextBeforeSequence,
     });
     assert.deepEqual(older.messages.map((message) => message.body), [
       "Same time 1",
@@ -729,8 +732,8 @@ test("sqlite channel collaboration protocol persists brief, decisions, handoffs,
   try {
     const channel = store.createChannel({ name: "Engineering", boundPath: cwd }, now);
     const otherChannel = store.createChannel({ name: "Design", boundPath: cwd }, now);
-    const message = store.createChannelMessage({ channelId: channel.id, authorType: "local-user", body: "Use manual handoffs." }, now);
-    const otherMessage = store.createChannelMessage({ channelId: otherChannel.id, authorType: "local-user", body: "Wrong channel." }, now);
+    const message = appendChannelItemFixture(store, { channelId: channel.id, authorType: "local-user", body: "Use manual handoffs." }, now);
+    const otherMessage = appendChannelItemFixture(store, { channelId: otherChannel.id, authorType: "local-user", body: "Wrong channel." }, now);
     const task = store.createTask({ channelId: channel.id, title: "Implement protocol", prompt: "Build v1.1." }, now);
 
     const firstDecision = store.createChannelDecision(
@@ -1431,7 +1434,7 @@ test("sqlite channel workspace migration self-heals old channel and task columns
         },
         now,
       );
-      const message = store.createChannelMessage(
+      const message = appendChannelItemFixture(store,
         {
           channelId: channel.id,
           authorType: "local-user",
@@ -1442,7 +1445,7 @@ test("sqlite channel workspace migration self-heals old channel and task columns
 
       assert.equal(store.getChannel(channel.id).defaultTeammateId, "engineer");
       assert.equal(store.getTask(task.id).assigneeTeammateId, "engineer");
-      assert.equal(store.getChannelMessage(message.id).body, "Migration should keep channel chat writable.");
+      assert.equal(getChannelItemViewFixture(store, message.id).body, "Migration should keep channel chat writable.");
     } finally {
       store.close();
     }

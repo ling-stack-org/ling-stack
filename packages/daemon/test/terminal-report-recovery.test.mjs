@@ -1,3 +1,4 @@
+import { appendChannelItemFixture, getChannelItemViewFixture, listChannelItemViewsFixture, updateChannelItemFixture } from "../../core/test/channel-conversation-fixture.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -47,7 +48,7 @@ test("terminal report recovery publishes committed reports without duplicating t
     const recovered = store.getTerminalReport(draft.id);
     assert.ok(recovered?.publishedMessageId);
     await recoverWorkflowTerminalReports(store);
-    assert.equal(store.listChannelMessages({ channelId: fixture.channel.id, limit: 100 }).filter((message) => message.id === recovered?.publishedMessageId).length, 1);
+    assert.equal(listChannelItemViewsFixture(store, { channelId: fixture.channel.id, limit: 100 }).filter((message) => message.id === recovered?.publishedMessageId).length, 1);
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });
@@ -72,7 +73,7 @@ test("terminal report recovery does not backfill workflows created before rollou
     await recoverWorkflowTerminalReports(store);
 
     assert.equal(store.listTerminalReports({ sourceKind: "workflow", sourceId: workflow.id, limit: 100 }).length, 0);
-    assert.equal(store.listChannelMessages({ channelId: channel.id, limit: 100 }).length, 0);
+    assert.equal(listChannelItemViewsFixture(store, { channelId: channel.id, limit: 100 }).length, 0);
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });

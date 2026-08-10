@@ -21,10 +21,11 @@ import type {
   ChannelLinkPreviewListResponse,
   ChannelLinkPreviewMutationResponse,
   ChannelListResponse,
-  ChannelMessageListResponse,
+  ChannelConversationContextInspectResponse,
+  ChannelConversationItemPageResponse,
+  ChannelConversationTurnResponse,
   ChannelIntentDecisionListResponse,
   ChannelMessageRouteDecisionListResponse,
-  ChannelMessageMutationResponse,
   ChannelMutationResponse,
   ChannelPlaybookCandidateListResponse,
   ChannelPlaybookCandidateMutationResponse,
@@ -63,13 +64,14 @@ import type {
   CreateChannelExecutionProposalRequest,
   CreateChannelHandoffRequest,
   CreateChannelLinkPreviewRequest,
-  CreateChannelMessageRequest,
+  CreateChannelTurnRequest,
   CreateTaskRequest,
   CreateChannelWorkflowFromHandoffRequest,
   CreateChannelWorkflowRequest,
   CreateChannelWorkflowStepRequest,
   CreateChannelWorkflowTemplateCompileRequest,
   StartChannelWorkflowStepRequest,
+  ListChannelConversationItemsOptions,
   Task,
   TaskEditFormState,
   TaskListResponse,
@@ -87,6 +89,8 @@ import type {
   UpdateChannelWorkflowRequest,
   UpdateChannelWorkflowStepRequest,
   UpdateChannelRequest,
+  CorrectChannelTurnContextRequest,
+  CorrectChannelTurnContextResponse,
 } from "../types.js";
 import { channelFormToPayload, channelFormToUpdatePayload, taskEditFormToPayload } from "./channel-payloads.js";
 import { daemonClient } from "./client.js";
@@ -280,28 +284,45 @@ export async function openChannelWorkspace(cwd: string, channelId: string): Prom
   return daemonClient.openChannelWorkspace(cwd, channelId);
 }
 
-export async function listChannelMessages(
+export async function listChannelConversationItems(
   cwd: string,
   channelId: string,
-  options: { readonly limit?: number; readonly beforeMessageId?: string; readonly threadId?: string } = {},
-): Promise<ChannelMessageListResponse> {
-  return daemonClient.listChannelMessages(cwd, channelId, options);
+  options: ListChannelConversationItemsOptions = {},
+): Promise<ChannelConversationItemPageResponse> {
+  return daemonClient.listChannelConversationItems(cwd, channelId, options);
 }
 
-export async function createChannelMessage(
+export async function createChannelTurn(
   cwd: string,
   channelId: string,
-  input: CreateChannelMessageRequest,
-): Promise<ChannelMessageMutationResponse> {
-  return daemonClient.createChannelMessage(cwd, channelId, input);
+  input: CreateChannelTurnRequest,
+): Promise<ChannelConversationTurnResponse> {
+  return daemonClient.createChannelTurn(cwd, channelId, input);
 }
 
-export async function streamChannelMessage(
+export async function streamChannelTurn(
   cwd: string,
   channelId: string,
-  input: CreateChannelMessageRequest,
+  input: CreateChannelTurnRequest,
 ): Promise<Response> {
-  return daemonClient.streamChannelMessage(cwd, channelId, input);
+  return daemonClient.streamChannelTurn(cwd, channelId, input);
+}
+
+export async function getChannelTurnContext(
+  cwd: string,
+  channelId: string,
+  turnId: string,
+): Promise<ChannelConversationContextInspectResponse> {
+  return daemonClient.getChannelTurnContext(cwd, channelId, turnId);
+}
+
+export async function correctChannelTurnContext(
+  cwd: string,
+  channelId: string,
+  turnId: string,
+  input: CorrectChannelTurnContextRequest,
+): Promise<CorrectChannelTurnContextResponse> {
+  return daemonClient.correctChannelTurnContext(cwd, channelId, turnId, input);
 }
 
 export async function listChannelMessageRouteDecisions(

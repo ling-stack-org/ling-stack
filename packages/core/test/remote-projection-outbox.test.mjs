@@ -1,3 +1,4 @@
+import { appendChannelItemFixture, getChannelItemViewFixture, listChannelItemViewsFixture, updateChannelItemFixture } from "./channel-conversation-fixture.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -44,7 +45,7 @@ test("existing conversation and profile writes durably enqueue lightweight proje
   try {
     const start = store.listRemoteProjectionOutbox({ limit: 1_000 }).at(-1)?.activitySeq ?? 0;
     const channel = store.createChannel({ name: "Projection", boundPath: cwd }, "2026-07-31T02:00:00.000Z");
-    const channelMessage = store.createChannelMessage({
+    const channelMessage = appendChannelItemFixture(store, {
       channelId: channel.id,
       authorType: "ai-teammate",
       authorId: createBuiltinAiTeammateId("engineer"),

@@ -1,13 +1,18 @@
 import type {
   ConversationItemV1,
   ConversationMessageMentionV1,
-} from "@ling-stack/contracts";
+} from "./conversation-continuity.js";
 import type {
   ChannelMention,
   ChannelMessage,
   ChannelMessageFileRef,
-} from "./workspace-types.js";
+} from "./channels.js";
 
+/**
+ * Projects a canonical conversation item into the message-shaped presentation view used
+ * by the current Channel UI. The item remains the authority; this helper is pure and
+ * browser-safe so daemon, API consumers, and Web cannot drift on projection semantics.
+ */
 export function projectConversationItemToChannelMessage(
   item: ConversationItemV1,
   options: { readonly linkedRunId?: string } = {},
@@ -15,13 +20,12 @@ export function projectConversationItemToChannelMessage(
   if (!item.channelId) {
     throw new Error(`Conversation item is not attached to a channel: ${item.id}`);
   }
-  const payload = item.payload;
-  const status = projectStatus(item);
   return {
     id: item.id,
     workspaceId: item.workspaceId,
     channelId: item.channelId,
     threadId: item.threadId,
+    ...(item.turnId ? { turnId: item.turnId } : {}),
     kind: item.kind === "user_message" ? "message" : item.kind === "assistant_message" ? "ai_reply" : "system",
     intent: item.domainRefs.some((ref) => ref.type === "task") ? "task" : "discuss",
     authorType: item.actorType === "local_user"
@@ -35,9 +39,12 @@ export function projectConversationItemToChannelMessage(
     attachmentIds: item.kind === "user_message" ? item.payload.attachmentIds : [],
     linkPreviewIds: item.kind === "user_message" ? item.payload.linkPreviewIds : [],
     fileRefs: item.kind === "user_message" ? item.payload.fileRefs.map(projectFileRef) : [],
+    ...(item.kind === "user_message" && item.payload.replyToItemId
+      ? { replyToItemId: item.payload.replyToItemId }
+      : {}),
     linkedTaskId: item.domainRefs.find((ref) => ref.type === "task")?.id,
     linkedRunId: options.linkedRunId ?? item.domainRefs.find((ref) => ref.type === "run")?.id,
-    status,
+    status: projectStatus(item),
     errorMessage: item.kind === "assistant_message" ? item.payload.errorMessage : undefined,
     revision: item.revision,
     createdAt: item.createdAt,

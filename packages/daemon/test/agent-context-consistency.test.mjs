@@ -1,3 +1,4 @@
+import { appendChannelItemFixture, getChannelItemViewFixture, listChannelItemViewsFixture, updateChannelItemFixture } from "../../core/test/channel-conversation-fixture.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -180,7 +181,7 @@ test("workflow agents share one projection while private role memory stays owner
       boundPath: fixture.cwd,
       allowedTools: ["read"],
     }, "2026-08-10T01:00:45.000Z");
-    const otherSource = fixture.store.createChannelMessage({
+    const otherSource = appendChannelItemFixture(fixture.store, {
       channelId: otherChannel.id,
       authorType: "local-user",
       body: "Keep this channel isolated.",
@@ -589,7 +590,7 @@ async function createFixture() {
     boundPath: cwd,
     allowedTools: ["read"],
   }, now);
-  const sourceMessage = store.createChannelMessage({
+  const sourceMessage = appendChannelItemFixture(store, {
     channelId: channel.id,
     authorType: "local-user",
     body: "Use continuity-agent-memory evidence to complete this objective.",

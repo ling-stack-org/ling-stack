@@ -123,12 +123,7 @@ export function buildConversationContextProjection(
   });
   const explicitTurnItems = uniqueItems(explicitItems.flatMap((item) =>
     item.turnId ? input.store.listConversationItemsForTurn({ turnId: item.turnId }) : [item]))
-    .map((item) => {
-      if (!canProjectItem(item, input.view, input.consumerTeammateId)) {
-        throw new Error(`Conversation projection explicit turn item is not visible to this consumer: ${item.id}`);
-      }
-      return item;
-    });
+    .filter((item) => canProjectItem(item, input.view, input.consumerTeammateId));
   const explicitTurnItemIds = new Set(explicitTurnItems.map((item) => item.id));
   const inheritedItems = forkSnapshot
     ? forkSnapshot.sourceRefs

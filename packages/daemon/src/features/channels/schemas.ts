@@ -1,4 +1,4 @@
-import type { ChannelReplyDisposition } from "@ling-stack/contracts";
+import type { ChannelConversationSurface, ChannelReplyDisposition } from "@ling-stack/contracts";
 import {
   channelDecisionStatuses,
   channelContextSummaryAuthorTypes,
@@ -29,9 +29,6 @@ import {
   type ChannelIntentDecisionAction,
   type ChannelIntentDecisionStatus,
   type ChannelMention,
-  type ChannelMessageAuthorType,
-  type ChannelMessageIntent,
-  type ChannelMessageKind,
   type ChannelMessageRouteDecisionStatus,
   type ChannelProtocolSourceRef,
   type ChannelWorkspaceBinding,
@@ -166,21 +163,15 @@ export interface ChannelAttachmentRequest {
   readonly messageId?: string;
 }
 
-export interface ChannelMessageRequest {
+export interface ChannelTurnRequest {
   readonly idempotencyKey?: string;
-  readonly threadId?: string;
+  readonly surface?: ChannelConversationSurface;
   readonly contextSegmentId?: string;
-  readonly kind?: ChannelMessageKind;
-  readonly intent?: ChannelMessageIntent;
-  readonly authorType: ChannelMessageAuthorType;
-  readonly authorId?: string;
   readonly body: string;
   readonly mentions: readonly ChannelMention[];
   readonly attachmentIds: readonly string[];
   readonly linkPreviewIds: readonly string[];
   readonly fileRefs: readonly ChannelMessageFileRef[];
-  readonly linkedTaskId?: string;
-  readonly linkedRunId?: string;
   readonly requestAiReply: boolean;
   readonly replyDisposition?: ChannelReplyDisposition;
   readonly providerPresetId?: string;
@@ -581,25 +572,41 @@ export function parseChannelAttachmentRequest(value: unknown): ChannelAttachment
   return input;
 }
 
-export function parseChannelMessageRequest(value: unknown): ChannelMessageRequest {
+export function parseChannelTurnRequest(value: unknown): ChannelTurnRequest {
   if (!isRecord(value)) {
-    throw new Error("Channel message request must be a JSON object");
+    throw new Error("Channel turn request must be a JSON object");
   }
-  const input: ChannelMessageRequest = {
+  if (value.threadId !== undefined) {
+    throw new Error("threadId is not supported on channel turn requests; use surface.threadId or surface.anchorItemId");
+  }
+  const allowed = new Set([
+    "idempotencyKey",
+    "surface",
+    "contextSegmentId",
+    "body",
+    "mentions",
+    "attachmentIds",
+    "linkPreviewIds",
+    "fileRefs",
+    "requestAiReply",
+    "replyDisposition",
+    "providerPresetId",
+    "teammateId",
+  ]);
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) {
+      throw new Error(`Channel turn request contains unsupported field: ${key}`);
+    }
+  }
+  const input: ChannelTurnRequest = {
     idempotencyKey: readOptionalString(value, "idempotencyKey"),
-    threadId: readOptionalString(value, "threadId"),
+    surface: readOptionalChannelConversationSurface(value),
     contextSegmentId: readOptionalString(value, "contextSegmentId"),
-    kind: readOptionalChannelMessageKind(value, "kind"),
-    intent: readOptionalChannelMessageIntent(value, "intent") ?? "discuss",
-    authorType: readOptionalChannelMessageAuthorType(value, "authorType") ?? "local-user",
-    authorId: readOptionalString(value, "authorId"),
     body: readStringAllowEmpty(value, "body"),
     mentions: readOptionalChannelMentions(value, "mentions") ?? [],
     attachmentIds: readOptionalStringArray(value, "attachmentIds") ?? [],
     linkPreviewIds: readOptionalStringArray(value, "linkPreviewIds") ?? [],
     fileRefs: readOptionalChannelMessageFileRefs(value, "fileRefs") ?? [],
-    linkedTaskId: readOptionalString(value, "linkedTaskId"),
-    linkedRunId: readOptionalString(value, "linkedRunId"),
     requestAiReply: readOptionalBoolean(value, "requestAiReply") ?? false,
     replyDisposition: readOptionalChannelReplyDisposition(value),
     providerPresetId: readOptionalString(value, "providerPresetId"),
@@ -615,6 +622,48 @@ export function parseChannelMessageRequest(value: unknown): ChannelMessageReques
     throw new Error("A channel message can reference at most 12 workspace files");
   }
   return input;
+}
+
+function readOptionalChannelConversationSurface(value: Record<string, unknown>): ChannelConversationSurface | undefined {
+  const surface = value.surface;
+  if (surface === undefined) {
+    return undefined;
+  }
+  if (!isRecord(surface)) {
+    throw new Error("surface must be a JSON object");
+  }
+  const kind = readString(surface, "kind");
+  if (kind === "channel_root") {
+    assertOnlyChannelSurfaceKeys(surface, ["kind"]);
+    return { kind };
+  }
+  if (kind === "thread") {
+    assertOnlyChannelSurfaceKeys(surface, ["kind", "threadId"]);
+    const threadId = readString(surface, "threadId").trim();
+    if (!threadId) {
+      throw new Error("surface.threadId must be a non-empty string");
+    }
+    return { kind, threadId };
+  }
+  if (kind === "topic") {
+    assertOnlyChannelSurfaceKeys(surface, ["kind", "anchorItemId"]);
+    const anchorItemId = readString(surface, "anchorItemId").trim();
+    if (!anchorItemId) {
+      throw new Error("surface.anchorItemId must be a non-empty string");
+    }
+    return { kind, anchorItemId };
+  }
+  throw new Error("surface.kind must be channel_root, thread, or topic");
+}
+
+function assertOnlyChannelSurfaceKeys(
+  surface: Record<string, unknown>,
+  allowedKeys: readonly string[],
+): void {
+  const allowed = new Set(allowedKeys);
+  for (const key of Object.keys(surface)) {
+    if (!allowed.has(key)) throw new Error(`surface contains unsupported field: ${key}`);
+  }
 }
 
 function readOptionalChannelReplyDisposition(value: Record<string, unknown>): ChannelReplyDisposition | undefined {
@@ -1042,39 +1091,6 @@ function readChannelWorkflowStepStartMode(record: Record<string, unknown>, key: 
   const value = readString(record, key);
   if (value !== "create_task" && value !== "create_and_run_task") {
     throw new Error(`${key} must be one of: create_task, create_and_run_task`);
-  }
-  return value;
-}
-
-function readOptionalChannelMessageKind(record: Record<string, unknown>, key: string): ChannelMessageKind | undefined {
-  const value = readOptionalString(record, key);
-  if (value === undefined) {
-    return undefined;
-  }
-  if (value !== "message" && value !== "ai_reply" && value !== "system" && value !== "task_link") {
-    throw new Error(`${key} must be one of: message, ai_reply, system, task_link`);
-  }
-  return value;
-}
-
-function readOptionalChannelMessageIntent(record: Record<string, unknown>, key: string): ChannelMessageIntent | undefined {
-  const value = readOptionalString(record, key);
-  if (value === undefined) {
-    return undefined;
-  }
-  if (value !== "discuss" && value !== "task") {
-    throw new Error(`${key} must be one of: discuss, task`);
-  }
-  return value;
-}
-
-function readOptionalChannelMessageAuthorType(record: Record<string, unknown>, key: string): ChannelMessageAuthorType | undefined {
-  const value = readOptionalString(record, key);
-  if (value === undefined) {
-    return undefined;
-  }
-  if (value !== "local-user" && value !== "ai-teammate" && value !== "system") {
-    throw new Error(`${key} must be one of: local-user, ai-teammate, system`);
   }
   return value;
 }

@@ -1,6 +1,6 @@
 # Channel Conversation Continuity v2
 
-Status: approved design baseline; S-1 and S0 merged; S1+S2 through S6 implemented and locally verified; S7 pending
+Status: approved design baseline; S-1 and S0 merged; S1+S2 through S7 implemented and locally verified; PR-G pending
 Date: 2026-08-08
 Last verified: 2026-08-10
 Scope: channel conversation persistence, Thread/Turn/Item topology, context segmentation,
@@ -196,6 +196,20 @@ Rules:
   inside the root do not silently create visible child threads.
 - A channel may contain many work threads, but only one active non-archived
   `channel_root` thread.
+
+API callers select a surface without overloading identifiers:
+
+```ts
+type ChannelConversationSurface =
+  | { kind: "channel_root" }
+  | { kind: "thread"; threadId: string }
+  | { kind: "topic"; anchorItemId: string };
+```
+
+`threadId` always means a canonical `LingThread.id`. Topic materialization alone accepts
+an `anchorItemId`; after the daemon returns the Topic Thread, paging and sending use that
+Thread id. A Turn request has no top-level `threadId` compatibility alias, and an Items
+query cannot send `threadId` and `anchorItemId` together.
 
 ### Root-level topic isolation
 

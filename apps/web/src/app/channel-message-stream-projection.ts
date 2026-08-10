@@ -1,14 +1,31 @@
 import type {
+  ChannelConversationTurnResponse,
   ChannelMessage,
-  ChannelMessageStreamBlockedEvent,
-  ChannelMessageStreamDoneEvent,
-  ChannelMessageStreamErrorEvent,
-  ChannelMessageStreamReadyEvent,
+  ChannelReplyDispatch,
 } from "../types.js";
+
+export interface ChannelPresentationStreamReadyEvent {
+  readonly message: ChannelMessage;
+  readonly aiReply?: ChannelMessage;
+  readonly aiReplies?: readonly ChannelMessage[];
+}
+
+export interface ChannelPresentationStreamTerminalEvent {
+  readonly message?: ChannelMessage;
+  readonly aiReply?: ChannelMessage;
+  readonly aiReplies?: readonly ChannelMessage[];
+  readonly replyDispatch?: ChannelReplyDispatch;
+  readonly autoStartedWorkflow?: ChannelConversationTurnResponse["autoStartedWorkflow"];
+  readonly error?: string;
+}
+
+export interface ChannelPresentationStreamErrorEvent extends ChannelPresentationStreamTerminalEvent {
+  readonly error: string;
+}
 
 export function projectChannelStreamReady(
   current: readonly ChannelMessage[],
-  event: ChannelMessageStreamReadyEvent,
+  event: ChannelPresentationStreamReadyEvent,
 ): readonly ChannelMessage[] {
   const replies = channelStreamReplies(event);
   return replies.length > 0
@@ -18,7 +35,7 @@ export function projectChannelStreamReady(
 
 export function projectChannelStreamTerminal(
   current: readonly ChannelMessage[],
-  event: ChannelMessageStreamDoneEvent | ChannelMessageStreamBlockedEvent | ChannelMessageStreamErrorEvent,
+  event: ChannelPresentationStreamTerminalEvent,
 ): readonly ChannelMessage[] {
   const replies = channelStreamReplies(event);
   if (event.replyDispatch?.disposition === "followup_queued") {

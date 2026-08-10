@@ -35,7 +35,13 @@ import { getChannelMessageView } from "../features/channels/conversation-item-me
 import { handleChannelCollaborationProtocol } from "../features/channels/collaboration-protocol.js";
 import { handleChannelPlaybookCandidates } from "../features/channels/playbooks.js";
 import { handleChannelLinkPreviewItem, handleChannelLinkPreviewsCollection } from "../features/channels/link-previews.js";
-import { handleChannelMessagesCollection, handleChannelMessageStream, handleLingAgentChannelMessage } from "../features/channels/messages.js";
+import {
+  handleChannelItemsCollection,
+  handleChannelTurnsCollection,
+  handleChannelTurnStream,
+  handleLingAgentChannelMessage,
+} from "../features/channels/messages.js";
+import { handleChannelTurnContext } from "../features/channels/channel-context-inspect.js";
 import { confirmChannelExecutionProposalWorkflow } from "../features/channels/proposal-workflows.js";
 import { handleChannelTeamExpertsProjection } from "../features/channels/team-experts.js";
 import { handleChannelTeamMetricsProjection } from "../features/channels/team-metrics.js";
@@ -1969,9 +1975,36 @@ export async function routeRequest(
       await handleChannelProposedPlans(request, response, config, storeRegistry, channelRoute.channelId);
       return;
     }
-    if (channelRoute.action === "messages") {
-      const channelMessagesCwd = url.searchParams.get("cwd") ?? "";
-      await handleChannelMessagesCollection(request, response, config, storeRegistry, channelRoute.channelId, (input) =>
+    if (channelRoute.action === "items") {
+      await handleChannelItemsCollection(
+        request,
+        response,
+        config,
+        storeRegistry,
+        channelRoute.channelId,
+        channelReplyDispatchCoordinator,
+      );
+      return;
+    }
+    if (channelRoute.action === "turn-context" || channelRoute.action === "turn-context-correction") {
+      if (!channelRoute.turnId) {
+        writeJson(response, 400, { error: "bad_request", message: "turn id is required" });
+        return;
+      }
+      await handleChannelTurnContext(
+        request,
+        response,
+        config,
+        storeRegistry,
+        channelRoute.channelId,
+        channelRoute.turnId,
+        channelRoute.action === "turn-context-correction",
+      );
+      return;
+    }
+    if (channelRoute.action === "turns") {
+      const channelTurnsCwd = url.searchParams.get("cwd") ?? "";
+      await handleChannelTurnsCollection(request, response, config, storeRegistry, channelRoute.channelId, (input) =>
         createAiChannelReply({
           startRun: startTeammateDirectRun,
           secretResolver,
@@ -1983,7 +2016,7 @@ export async function routeRequest(
         }),
         (input) => confirmAndOrchestrateChannelProposal({
           store: input.store,
-          cwd: channelMessagesCwd,
+          cwd: channelTurnsCwd,
           proposalId: input.proposalId,
         }),
         {
@@ -1996,9 +2029,9 @@ export async function routeRequest(
       );
       return;
     }
-    if (channelRoute.action === "messages-stream") {
-      const channelMessagesCwd = url.searchParams.get("cwd") ?? "";
-      await handleChannelMessageStream(request, response, config, storeRegistry, channelRoute.channelId, (input) =>
+    if (channelRoute.action === "turns-stream") {
+      const channelTurnsCwd = url.searchParams.get("cwd") ?? "";
+      await handleChannelTurnStream(request, response, config, storeRegistry, channelRoute.channelId, (input) =>
         createAiChannelReply({
           startRun: startTeammateDirectRun,
           secretResolver,
@@ -2010,7 +2043,7 @@ export async function routeRequest(
         }),
         (input) => confirmAndOrchestrateChannelProposal({
           store: input.store,
-          cwd: channelMessagesCwd,
+          cwd: channelTurnsCwd,
           proposalId: input.proposalId,
         }),
         {

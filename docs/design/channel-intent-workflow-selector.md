@@ -15,6 +15,24 @@ Related docs:
 - [Multi-Agent Orchestrator](./multi-agent-orchestrator.md)
 - [Channel Context Budget Manager](channel-context-budget-manager.md)
 
+## Current Runtime Contract
+
+Continuity v2 accepts only these actions:
+
+```text
+no_reply | reply | visible_multi_reply | clarify | workflow_proposal | execute
+```
+
+Every decision references the source Turn, source ConversationItem, effective Segment,
+and shared projection version. `reply` completes without TargetResolver. Only a validated
+`execute` or executable proposal candidate may enter target resolution and policy gating.
+`clarify` carries typed `missingFields`; model output cannot grant tools, approvals,
+workspace scope, secrets, external sends, or memory access.
+
+The v1 action taxonomy retained below is non-normative migration history. No runtime or
+new test may emit `single_reply` or `direct_workflow`, and no compatibility alias maps
+those values into v2.
+
 ## Purpose
 
 This document now describes an internal Ling Agent Coordinator classifier. The user-facing

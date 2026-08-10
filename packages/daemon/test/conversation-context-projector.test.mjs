@@ -39,6 +39,12 @@ test("segmentation policy uses structural inheritance, validates model ids, and 
     visibilityOwnerId: "teammate_private",
     payload: { eventType: "private_note", summary: "private evidence" },
   }, "2026-08-10T02:00:30.000Z");
+  const publicFirstProjection = buildConversationContextProjection({
+    store: fixture.store,
+    sourceItemId: first.item.id,
+    view: "selector",
+  });
+  assert.deepEqual(publicFirstProjection.items.map((item) => item.id), [first.item.id]);
 
   const second = appendUserTurn(fixture, "unrelated second topic", secondAt);
   const secondResolution = await assignContextSegmentForTurn({

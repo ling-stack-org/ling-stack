@@ -1,12 +1,13 @@
+import type { ChannelConversationSurface } from "@ling-stack/contracts";
 import type { Channel, LingThread, RunStore } from "@ling-stack/core";
 
 export function resolveChannelConversationThread(input: {
   readonly store: RunStore;
   readonly channel: Channel;
-  readonly surfaceRefId?: string;
+  readonly surface?: ChannelConversationSurface;
   readonly now: string;
 }): LingThread {
-  if (!input.surfaceRefId) {
+  if (!input.surface || input.surface.kind === "channel_root") {
     return input.store.resolveOrCreateConversationThread({
       surfaceKind: "channel_root",
       channelId: input.channel.id,
@@ -15,17 +16,20 @@ export function resolveChannelConversationThread(input: {
     }, input.now).thread;
   }
 
-  const explicitThread = input.store.getLingThread(input.surfaceRefId);
-  if (explicitThread) {
+  if (input.surface.kind === "thread") {
+    const explicitThread = input.store.getLingThread(input.surface.threadId);
+    if (!explicitThread) {
+      throw new Error(`Conversation thread not found: ${input.surface.threadId}`);
+    }
     if (explicitThread.channelId !== input.channel.id || explicitThread.archivedAt || explicitThread.status === "archived") {
-      throw new Error(`Conversation thread is not active in channel: ${input.surfaceRefId}`);
+      throw new Error(`Conversation thread is not active in channel: ${input.surface.threadId}`);
     }
     return explicitThread;
   }
 
-  const anchor = input.store.getConversationItem(input.surfaceRefId);
+  const anchor = input.store.getConversationItem(input.surface.anchorItemId);
   if (!anchor || anchor.channelId !== input.channel.id) {
-    throw new Error(`Conversation surface reference does not belong to channel: ${input.surfaceRefId}`);
+    throw new Error(`Conversation topic anchor does not belong to channel: ${input.surface.anchorItemId}`);
   }
   return input.store.resolveOrCreateConversationThread({
     surfaceKind: "topic",

@@ -1,3 +1,4 @@
+import { appendChannelItemFixture, getChannelItemViewFixture, listChannelItemViewsFixture, updateChannelItemFixture } from "../../core/test/channel-conversation-fixture.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -23,7 +24,7 @@ test("workflow terminal reply preserves full step result text", async () => {
       boundPath: cwd,
       allowedTools: ["read", "write"],
     }, now);
-    const sourceMessage = store.createChannelMessage({
+    const sourceMessage = appendChannelItemFixture(store, {
       channelId: channel.id,
       authorType: "local-user",
       body: "创建 index.html",
@@ -90,7 +91,7 @@ test("workflow terminal reply preserves full step result text", async () => {
     const completedStep = store.getChannelWorkflowStep(step.id);
     assert.equal(completedStep?.status, "succeeded");
     assert.equal(completedStep?.resultSummary, longResult);
-    const reply = store.listChannelMessages({ channelId: channel.id, limit: 20 }).find((message) => message.kind === "ai_reply");
+    const reply = listChannelItemViewsFixture(store, { channelId: channel.id, limit: 20 }).find((message) => message.kind === "ai_reply");
     assert.ok(reply);
     assert.match(reply.body, /完成：「Create index\.html」/u);
     assert.match(reply.body, /END_MARKER_完整结尾/u);

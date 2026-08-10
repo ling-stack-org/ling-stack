@@ -1,3 +1,4 @@
+import { appendChannelItemFixture, getChannelItemViewFixture, listChannelItemViewsFixture, updateChannelItemFixture } from "../../core/test/channel-conversation-fixture.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -124,9 +125,9 @@ function createActiveReplyRun(store, channelId, teammateId, suffix) {
   const sourceMessage = createMessage(store, channelId, [], {
     body: `source ${suffix}`,
   });
-  const replyMessage = store.createChannelMessage({
+  const replyMessage = appendChannelItemFixture(store, {
     channelId,
-    threadId: sourceMessage.id,
+    replyToItemId: sourceMessage.id,
     kind: "ai_reply",
     authorType: "ai-teammate",
     authorId: teammateId,
@@ -167,7 +168,7 @@ function createActiveReplyRun(store, channelId, teammateId, suffix) {
 }
 
 function createMessage(store, channelId, mentions, overrides = {}) {
-  return store.createChannelMessage({
+  return appendChannelItemFixture(store, {
     channelId,
     kind: "message",
     intent: "discuss",

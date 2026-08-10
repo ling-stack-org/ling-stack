@@ -248,45 +248,48 @@ deploy authority, external-send authority, or memory authority.
 signals. They may influence `responderHint`, participant selection, or whether an
 ordinary `reply` is expected. They must not short-circuit executable intent handling.
 
-### Current v1 model-assisted implementation reference
+### Continuity v2 model-assisted intent contract
 
-The section below records the currently implemented v1 action names and migration logic.
-It is superseded for new work by Channel Conversation Continuity v2. The clean-break v2
-implementation uses `reply` and `execute`, one context projection version, structured
-clarification fields, and post-intent TargetResolver gating.
+Model-assisted intent classification is part of the Ling Agent Session turn loop, not a
+separate auto-reply feature. Every accepted input already owns a committed
+`LingTurn`/user `ConversationItem`, an effective ContextSegment assignment, and one shared
+projection version before classification begins.
 
-The implementation must treat model-assisted intent classification as part of the Ling
-Agent Session turn loop, not as a separate optional auto-reply feature. The model may
-classify a turn as `single_reply` (the ordinary `answer` outcome), `clarify`,
-`workflow_proposal`, `direct_workflow`, `visible_multi_reply`, or `no_reply`, but that
-classification is only intent evidence. It is never execution permission.
+The classifier may return `reply`, `clarify`, `workflow_proposal`, `execute`,
+`visible_multi_reply`, or `no_reply`. The result is intent evidence only. It never grants
+execution permission.
 
-The migration target is:
+The shipped order is:
 
 ```text
-build LingAgentTurnEnvelope
+commit LingTurn + user ConversationItem
+-> assign effective ContextSegment
+-> build one permission-filtered ConversationContextProjection
+-> build LingAgentTurnEnvelope from that projection
 -> active-session intake
 -> deterministic high-confidence validators
 -> model-assisted intent classification when deterministic validators do not settle it
--> target/action validator
+-> TargetResolver only for execute/proposal candidates
 -> policy gate
 -> one product outcome
 ```
 
 The validator/policy split is mandatory:
 
-- model says `direct_workflow` and TargetResolver finds one safe target -> create
+- model says `execute` and TargetResolver finds one safe target -> create
   bounded proposal evidence, then let Policy Gate decide whether to auto-start;
-- model says `direct_workflow` but target/action/content/objective is ambiguous -> ask
-  one clarification question;
-- model says `direct_workflow` for a file create and TargetResolver only found a file
+- model says `execute` but target/action/content/objective is ambiguous -> emit
+  `clarify` with typed `missingFields` and one actionable question;
+- model says `execute` for a file create and TargetResolver only found a file
   name -> require one executable input source before run creation: literal requested
   content, materialized attachment text, a same-thread code block, the current objective,
   or a recent same-session objective. A bare target such as `index.html` must not become
   an empty placeholder run;
 - model says `workflow_proposal` -> create proposal evidence only after participant and
   required-tool validation;
-- model says `single_reply` or `no_reply` -> ordinary reply routing may run, but it
+- model says `reply` -> ordinary reply routing may run without calling TargetResolver;
+- model says `no_reply` -> suppress only system/noise cases, never accepted user content;
+- model says `reply` or `no_reply` -> ordinary reply routing may run, but it
   remains the final outcome after executable paths declined;
 - model output never grants tool access, bypasses runtime approval, expands workspace
   scope, selects secrets, or performs external/account mutations.
@@ -298,10 +301,11 @@ be considered executable. Follow-up turns such as "can you write it locally now?
 eligible for model classification and target validation against the same-thread context
 before ordinary answer mode can respond.
 
-`ChannelMessage.threadId` can narrow recent target lookup and auto-start risk policy, but
-it must not block model-assisted `direct_workflow`, `clarify`, or approval handling. A
-thread reply that asks Ling to execute against a target established in that thread should
-produce a bounded proposal or clarification, not an ordinary "I cannot write files"
+`ChannelMessage.threadId` is a presentation projection of the canonical `LingThread.id`;
+it is never an Item anchor or a target-resolution fallback. Topic materialization uses an
+explicit `anchorItemId`, then later reads and sends use the returned Thread id. A Turn that
+asks Ling to execute against a target established in its projected context should produce
+a bounded proposal or structured clarification, not an ordinary "I cannot write files"
 answer.
 
 ### Policy Gate
@@ -892,10 +896,11 @@ policy error.
 
 Internal outcomes:
 
-- `single_reply`;
+- `reply`;
 - `visible_multi_reply`;
 - `workflow_proposal`;
-- `direct_workflow`;
+- `execute`;
+- `clarify` with typed `missingFields`;
 - `SelectorDecision`;
 - `ChannelMessageRouteDecision`;
 - `ExecutionAction`;

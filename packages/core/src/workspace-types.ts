@@ -1306,39 +1306,6 @@ export interface ChannelMessage {
   readonly updatedAt: string;
 }
 
-export interface CreateChannelMessageInput {
-  readonly id?: string;
-  readonly channelId: string;
-  readonly threadId?: string;
-  readonly kind?: ChannelMessageKind;
-  readonly intent?: ChannelMessageIntent;
-  readonly authorType: ChannelMessageAuthorType;
-  readonly authorId?: string;
-  readonly body: string;
-  readonly mentions?: readonly ChannelMention[];
-  readonly attachmentIds?: readonly string[];
-  readonly linkPreviewIds?: readonly string[];
-  readonly fileRefs?: readonly ChannelMessageFileRef[];
-  readonly linkedTaskId?: string;
-  readonly linkedRunId?: string;
-  readonly status?: ChannelMessage["status"];
-  readonly errorMessage?: string;
-}
-
-export interface ListChannelMessagesOptions {
-  readonly channelId: string;
-  readonly threadId?: string;
-  readonly excludeThreadIds?: readonly string[];
-  readonly beforeMessageId?: string;
-  readonly limit?: number;
-}
-
-export interface ChannelMessageListPage {
-  readonly messages: readonly ChannelMessage[];
-  readonly hasMore: boolean;
-  readonly nextBeforeMessageId?: string;
-}
-
 export type ChannelMessageRouteAction = "reply" | "no_reply";
 
 export type ChannelMessageRouteDecisionStatus = "accepted" | "suppressed" | "failed";
@@ -2557,10 +2524,6 @@ export function createTeammateDirectReplyInterventionId(): string {
 
 export function createTeammateDirectLinkPreviewId(): string {
   return `dm_link_${randomUUID()}`;
-}
-
-export function createChannelMessageId(): string {
-  return `msg_${randomUUID()}`;
 }
 
 export function createChannelMessageRouteDecisionId(): string {
