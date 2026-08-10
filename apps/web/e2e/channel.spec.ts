@@ -2356,7 +2356,7 @@ test("Ling Agent session acceptance matrix auto-starts executable messages", asy
   await expect.poll(() => {
     const decision = state.channelIntentDecisions[0];
     return isRecord(decision) ? [decision.action, decision.status, decision.createdBy].join("|") : "";
-  }).toBe("direct_workflow|accepted|deterministic");
+  }).toBe("execute|accepted|deterministic");
 });
 
 test("Ling Agent session keeps ordinary questions on chat routing", async ({ page }) => {
@@ -2412,7 +2412,7 @@ test("ordinary channel feed hides routing and intent decision internals", async 
       updatedAt: "2026-05-25T00:10:00.000Z",
     },
     {
-      id: "msg_direct_workflow",
+      id: "msg_execute",
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
       kind: "message",
@@ -2447,10 +2447,10 @@ test("ordinary channel feed hides routing and intent decision internals", async 
   ];
   state.channelExecutionProposals = [
     {
-      id: "proposal_direct_workflow",
+      id: "proposal_execute",
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
-      sourceMessageId: "msg_direct_workflow",
+      sourceMessageId: "msg_execute",
       proposedByTeammateId: "ling_agent",
       title: "Edit README.md",
       prompt: "Edit README.md with one test sentence.",
@@ -2467,13 +2467,19 @@ test("ordinary channel feed hides routing and intent decision internals", async 
   ];
   state.channelIntentDecisions = [
     {
-      schemaVersion: 1,
-      id: "intent_direct_workflow",
+      schemaVersion: 2,
+      id: "intent_execute",
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
-      sourceMessageId: "msg_direct_workflow",
-      action: "direct_workflow",
-      proposalId: "proposal_direct_workflow",
+      sourceTurnId: "turn_msg_execute",
+      sourceItemId: "msg_execute",
+      contextSegmentId: "segment_channel_engineering",
+      contextProjectionVersion: "ctxv2_mock_msg_execute",
+      action: "execute",
+      selectedTeammateIds: [],
+      proposalId: "proposal_execute",
+      resultItemIds: [],
+      execution: { kind: "file_edit", targetKind: "file" },
       reason: "Direct workflow proposal created by mock intent selector.",
       status: "accepted",
       createdBy: "deterministic",

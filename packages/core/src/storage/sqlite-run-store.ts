@@ -78,7 +78,6 @@ import {
   createChannelDecisionId,
   createChannelExecutionProposalId,
   createChannelHandoffId,
-  createChannelIntentDecisionId,
   createChannelLinkPreviewId,
   createChannelMessageRouteDecisionId,
   type AiCouncil,
@@ -497,6 +496,7 @@ import {
   applyContinuityV2StorageMigration,
   CONTINUITY_V2_STORAGE_MIGRATION_VERSION,
 } from "./sqlite/continuity-v2-migration.js";
+import { applyChannelIntentV2Migration } from "./sqlite/channel-intent-v2-migration.js";
 import {
   isJsonRecord,
   isRecord,
@@ -939,6 +939,8 @@ export class SqliteRunStore implements RunStore {
         assertProposalInChannel: (channelId, proposalId) => this.assertProposalInChannel(channelId, proposalId),
         assertWorkflowInChannel: (channelId, workflowId) => this.assertWorkflowInChannel(channelId, workflowId),
         hasAiTeammate: (id) => Boolean(this.getAiTeammate(id)),
+        getConversationItem: (id) => this.getConversationItem(id),
+        getEffectiveTurnContextAssignment: (turnId) => this.getEffectiveTurnContextAssignment(turnId),
       },
     );
     this.channelProposals = new SqliteChannelProposalStore(
@@ -1097,6 +1099,12 @@ export class SqliteRunStore implements RunStore {
         });
         if (!options.deferContinuityV2MigrationForTest) {
           this.applyContinuityV2AuthorityCutover();
+          applyChannelIntentV2Migration({
+            database: this.database,
+            appliedAt: new Date().toISOString(),
+            hasMigration: (version) => this.hasMigration(version),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
         }
       });
     } catch (error) {
@@ -2778,7 +2786,9 @@ export class SqliteRunStore implements RunStore {
   }
 
   createChannelIntentDecision(input: CreateChannelIntentDecisionInput, now: string): ChannelIntentDecision {
-    if (this.legacyContinuityFixtureMode) return this.createLegacyIntentDecisionFixture(input, now);
+    if (this.legacyContinuityFixtureMode) {
+      throw new Error("Channel Intent v2 is unavailable before the Continuity v2 authority cutover.");
+    }
     return this.channelIntentDecisions.createChannelIntentDecision(input, now);
   }
 
@@ -4015,41 +4025,6 @@ export class SqliteRunStore implements RunStore {
       proposal.errorMessage ?? null, now, now,
     );
     return proposal;
-  }
-
-  private createLegacyIntentDecisionFixture(
-    input: CreateChannelIntentDecisionInput,
-    now: string,
-  ): ChannelIntentDecision {
-    const decision: ChannelIntentDecision = {
-      schemaVersion: 1, id: createChannelIntentDecisionId(), workspaceId: DEFAULT_WORKSPACE_ID,
-      channelId: input.channelId, sourceMessageId: input.sourceMessageId, action: input.action,
-      ...(input.selectedTeammateId ? { selectedTeammateId: input.selectedTeammateId } : {}),
-      ...(input.selectedTeammateIds ? { selectedTeammateIds: input.selectedTeammateIds } : {}),
-      ...(input.proposalId ? { proposalId: input.proposalId } : {}),
-      ...(input.replyMessageId ? { replyMessageId: input.replyMessageId } : {}),
-      ...(input.replyMessageIds ? { replyMessageIds: input.replyMessageIds } : {}),
-      ...(input.workflowId ? { workflowId: input.workflowId } : {}),
-      reason: input.reason, status: input.status, createdBy: input.createdBy,
-      ...(input.errorMessage ? { errorMessage: input.errorMessage } : {}), createdAt: now, updatedAt: now,
-    };
-    this.database.prepare(`
-      INSERT INTO channel_intent_decisions (
-        id, schema_version, workspace_id, channel_id, source_message_id, action,
-        selected_teammate_id, selected_teammate_ids_json, proposal_id, reply_message_id,
-        reply_message_ids_json, workflow_id, reason, status, created_by, error_message,
-        created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      decision.id, decision.schemaVersion, decision.workspaceId, decision.channelId,
-      decision.sourceMessageId, decision.action, decision.selectedTeammateId ?? null,
-      decision.selectedTeammateIds ? JSON.stringify(decision.selectedTeammateIds) : null,
-      decision.proposalId ?? null, decision.replyMessageId ?? null,
-      decision.replyMessageIds ? JSON.stringify(decision.replyMessageIds) : null,
-      decision.workflowId ?? null, decision.reason, decision.status, decision.createdBy,
-      decision.errorMessage ?? null, now, now,
-    );
-    return decision;
   }
 
   private createLegacyRouteDecisionFixture(

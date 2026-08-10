@@ -1,6 +1,12 @@
 import type { ConversationPendingReplacement, RunTool, ToolName } from "./shared.js";
 import type { ConversationActiveReplyTarget, RunIntervention } from "./runtime.js";
-import type { ConversationContextProjectionMetadata } from "./conversation-continuity.js";
+import type {
+  ChannelIntentDecisionV2,
+  ChannelIntentDecisionV2Action,
+  ChannelIntentDecisionV2CreatedBy,
+  ChannelIntentDecisionV2Status,
+  ConversationContextProjectionMetadata,
+} from "./conversation-continuity.js";
 import type { ResponseLanguage, ResponseLanguagePreference } from "./settings.js";
 import type {
   ProcedureObservationCluster,
@@ -672,38 +678,10 @@ export interface ChannelMessageRouteDecisionListResponse {
   readonly decisions: readonly ChannelMessageRouteDecision[];
 }
 
-export type ChannelIntentDecisionAction =
-  | "no_reply"
-  | "single_reply"
-  | "visible_multi_reply"
-  | "clarify"
-  | "workflow_proposal"
-  | "direct_workflow";
-
-export type ChannelIntentDecisionStatus = "accepted" | "suppressed" | "failed";
-
-export type ChannelIntentDecisionCreatedBy = "deterministic" | "model";
-
-export interface ChannelIntentDecision {
-  readonly schemaVersion: 1;
-  readonly id: string;
-  readonly workspaceId: string;
-  readonly channelId: string;
-  readonly sourceMessageId: string;
-  readonly action: ChannelIntentDecisionAction;
-  readonly selectedTeammateId?: string;
-  readonly selectedTeammateIds?: readonly string[];
-  readonly proposalId?: string;
-  readonly replyMessageId?: string;
-  readonly replyMessageIds?: readonly string[];
-  readonly workflowId?: string;
-  readonly reason: string;
-  readonly status: ChannelIntentDecisionStatus;
-  readonly createdBy: ChannelIntentDecisionCreatedBy;
-  readonly errorMessage?: string;
-  readonly createdAt: string;
-  readonly updatedAt: string;
-}
+export type ChannelIntentDecisionAction = ChannelIntentDecisionV2Action;
+export type ChannelIntentDecisionStatus = ChannelIntentDecisionV2Status;
+export type ChannelIntentDecisionCreatedBy = ChannelIntentDecisionV2CreatedBy;
+export type ChannelIntentDecision = ChannelIntentDecisionV2;
 
 export interface ChannelIntentDecisionListResponse {
   readonly cwd: string;

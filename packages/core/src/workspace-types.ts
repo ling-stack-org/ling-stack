@@ -6,7 +6,18 @@ import type { AuthorizationMode, PermissionPreset, SessionPermissionMode, Worksp
 import type { SkillCandidateSourceRef } from "./skill-candidate-types.js";
 import type { AiTeammateRoleKey, SkillApprovalProfile } from "./skill-types.js";
 import type { WorkflowTerminationPolicy } from "./workflow-graph-types.js";
-import type { ConversationContextProjectionMetadata } from "@ling-stack/contracts";
+import {
+  channelIntentDecisionV2Actions,
+  channelIntentDecisionV2CreatedByValues,
+  channelIntentDecisionV2Statuses,
+  type ChannelIntentClarificationV2,
+  type ChannelIntentDecisionV2,
+  type ChannelIntentDecisionV2Action,
+  type ChannelIntentDecisionV2CreatedBy,
+  type ChannelIntentDecisionV2Status,
+  type ChannelIntentExecutionV2,
+  type ConversationContextProjectionMetadata,
+} from "@ling-stack/contracts";
 
 export const DEFAULT_WORKSPACE_ID = "workspace_default";
 
@@ -1418,71 +1429,34 @@ export interface ListChannelMessageRouteDecisionsOptions {
   readonly limit?: number;
 }
 
-export type ChannelIntentDecisionAction =
-  | "no_reply"
-  | "single_reply"
-  | "visible_multi_reply"
-  | "clarify"
-  | "workflow_proposal"
-  | "direct_workflow";
-
-export const channelIntentDecisionActions: readonly ChannelIntentDecisionAction[] = [
-  "no_reply",
-  "single_reply",
-  "visible_multi_reply",
-  "clarify",
-  "workflow_proposal",
-  "direct_workflow",
-];
-
-export type ChannelIntentDecisionStatus = "accepted" | "suppressed" | "failed";
-
-export const channelIntentDecisionStatuses: readonly ChannelIntentDecisionStatus[] = ["accepted", "suppressed", "failed"];
-
-export type ChannelIntentDecisionCreatedBy = "deterministic" | "model";
-
-export const channelIntentDecisionCreatedByValues: readonly ChannelIntentDecisionCreatedBy[] = ["deterministic", "model"];
-
-export interface ChannelIntentDecision {
-  readonly schemaVersion: 1;
-  readonly id: string;
-  readonly workspaceId: string;
-  readonly channelId: string;
-  readonly sourceMessageId: string;
-  readonly action: ChannelIntentDecisionAction;
-  readonly selectedTeammateId?: string;
-  readonly selectedTeammateIds?: readonly string[];
-  readonly proposalId?: string;
-  readonly replyMessageId?: string;
-  readonly replyMessageIds?: readonly string[];
-  readonly workflowId?: string;
-  readonly reason: string;
-  readonly status: ChannelIntentDecisionStatus;
-  readonly createdBy: ChannelIntentDecisionCreatedBy;
-  readonly errorMessage?: string;
-  readonly createdAt: string;
-  readonly updatedAt: string;
-}
+export type ChannelIntentDecisionAction = ChannelIntentDecisionV2Action;
+export const channelIntentDecisionActions: readonly ChannelIntentDecisionAction[] = channelIntentDecisionV2Actions;
+export type ChannelIntentDecisionStatus = ChannelIntentDecisionV2Status;
+export const channelIntentDecisionStatuses: readonly ChannelIntentDecisionStatus[] = channelIntentDecisionV2Statuses;
+export type ChannelIntentDecisionCreatedBy = ChannelIntentDecisionV2CreatedBy;
+export const channelIntentDecisionCreatedByValues: readonly ChannelIntentDecisionCreatedBy[] = channelIntentDecisionV2CreatedByValues;
+export type ChannelIntentDecision = ChannelIntentDecisionV2;
 
 export interface CreateChannelIntentDecisionInput {
   readonly channelId: string;
-  readonly sourceMessageId: string;
+  readonly sourceItemId: string;
+  readonly contextProjection: ConversationContextProjectionMetadata;
   readonly action: ChannelIntentDecisionAction;
-  readonly selectedTeammateId?: string;
   readonly selectedTeammateIds?: readonly string[];
   readonly proposalId?: string;
-  readonly replyMessageId?: string;
-  readonly replyMessageIds?: readonly string[];
+  readonly resultItemIds?: readonly string[];
   readonly workflowId?: string;
   readonly reason: string;
+  readonly clarification?: ChannelIntentClarificationV2;
+  readonly execution?: ChannelIntentExecutionV2;
   readonly status: ChannelIntentDecisionStatus;
   readonly createdBy: ChannelIntentDecisionCreatedBy;
-  readonly errorMessage?: string;
+  readonly errorCode?: string;
 }
 
 export interface ListChannelIntentDecisionsOptions {
   readonly channelId?: string;
-  readonly sourceMessageId?: string;
+  readonly sourceItemId?: string;
   readonly action?: ChannelIntentDecisionAction;
   readonly status?: ChannelIntentDecisionStatus;
   readonly limit?: number;

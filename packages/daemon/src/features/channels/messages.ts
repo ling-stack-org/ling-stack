@@ -42,6 +42,7 @@ import {
 } from "./conversation-item-messages.js";
 import { assignContextSegmentForTurn } from "./context-processing/context-segmentation-policy.js";
 import { createModelContextSegmentProposer } from "./context-processing/context-segmentation-model.js";
+import { buildConversationContextProjection } from "./context-processing/conversation-context-projector.js";
 import { filterQueuedChannelReplyMessages } from "./channel-reply-message-visibility.js";
 import { materializeInlineChannelInputs } from "./materialization/inline.js";
 import { createProviderBackedImageVisionSummarizer } from "./materialization/provider-vision.js";
@@ -579,6 +580,8 @@ async function dispatchLingAgentChannelMessage(
       sourceMessage: input.sourceMessage,
       proposal: workflowIntent.proposal,
     });
+    const typedExecution = input.store.getChannelIntentDecision(workflowIntent.intentDecisionId)?.execution
+      ?? { kind: "run_command" as const, targetKind: "workspace" as const };
     if (autoStartDecision.allowed && input.startExecutionProposalWorkflow) {
       let coordinatorReply = createCoordinatorWorkflowStartReply({
         store: input.store,
@@ -599,16 +602,16 @@ async function dispatchLingAgentChannelMessage(
           status: "ready",
           now: new Date().toISOString(),
         });
-        input.store.createChannelIntentDecision({
-          channelId: input.channel.id,
-          sourceMessageId: input.sourceMessage.id,
-          action: "direct_workflow",
+        persistChannelIntentDecision(input.store, input.channel, input.sourceMessage, {
+          action: "execute",
           proposalId: autoStartedWorkflow.proposal.id,
           workflowId: autoStartedWorkflow.workflow.id,
+          resultItemIds: [coordinatorReply.id],
+          execution: typedExecution,
           reason: `Ling Agent Session auto-started proposal ${autoStartedWorkflow.proposal.id}. ${autoStartDecision.reason}`,
           status: "accepted",
           createdBy: "deterministic",
-        }, new Date().toISOString());
+        });
         return { aiReply: coordinatorReply, autoStartedWorkflow };
       } catch (error) {
         coordinatorReply = updatePendingAssistantMessage({
@@ -619,30 +622,29 @@ async function dispatchLingAgentChannelMessage(
           errorMessage: error instanceof Error ? error.message : String(error),
           now: new Date().toISOString(),
         });
-        input.store.createChannelIntentDecision({
-          channelId: input.channel.id,
-          sourceMessageId: input.sourceMessage.id,
-          action: "direct_workflow",
+        persistChannelIntentDecision(input.store, input.channel, input.sourceMessage, {
+          action: "execute",
           proposalId: workflowIntent.proposal.id,
+          resultItemIds: [coordinatorReply.id],
+          execution: typedExecution,
           reason: `Ling Agent Session auto-start failed; proposal remains available for confirmation. ${autoStartDecision.reason}`,
           status: "failed",
           createdBy: "deterministic",
-          errorMessage: error instanceof Error ? error.message : String(error),
-        }, new Date().toISOString());
+          errorCode: "auto_start_failed",
+        });
         return { aiReply: coordinatorReply };
       }
     }
     if (!autoStartDecision.allowed && autoStartDecision.blockReason === "tool_denied") {
-      input.store.createChannelIntentDecision({
-        channelId: input.channel.id,
-        sourceMessageId: input.sourceMessage.id,
-        action: "direct_workflow",
+      persistChannelIntentDecision(input.store, input.channel, input.sourceMessage, {
+        action: "execute",
         proposalId: workflowIntent.proposal.id,
+        execution: typedExecution,
         reason: `Ling Agent Session auto-start blocked by approval policy. ${autoStartDecision.reason}`,
         status: "failed",
         createdBy: "deterministic",
-        errorMessage: autoStartDecision.reason,
-      }, new Date().toISOString());
+        errorCode: "tool_denied",
+      });
     }
     return {};
   }
@@ -676,16 +678,14 @@ async function dispatchLingAgentChannelMessage(
       visibleParticipantTeammateIds: workflowIntent.teammateIds,
     })));
     if (!workflowIntent.intentDecisionId) {
-      input.store.createChannelIntentDecision({
-        channelId: input.channel.id,
-        sourceMessageId: input.sourceMessage.id,
+      persistChannelIntentDecision(input.store, input.channel, input.sourceMessage, {
         action: "visible_multi_reply",
         selectedTeammateIds: workflowIntent.teammateIds,
-        replyMessageIds: aiReplies.map((reply) => reply.id),
+        resultItemIds: aiReplies.map((reply) => reply.id),
         reason: workflowIntent.reason,
         status: "accepted",
         createdBy: workflowIntent.createdBy,
-      }, new Date().toISOString());
+      });
     }
     return { aiReply: aiReplies[0], aiReplies };
   }
@@ -799,6 +799,25 @@ function coordinatorWorkflowStartFailedBody(proposal: ChannelExecutionProposal, 
     return `I tried to start this workflow, but it was blocked before execution: ${message}`;
   }
   return `我尝试开始这次 workflow，但执行前被阻塞：${message}`;
+}
+
+function persistChannelIntentDecision(
+  store: RunStore,
+  channel: Channel,
+  sourceMessage: ChannelMessage,
+  decision: Omit<Parameters<RunStore["createChannelIntentDecision"]>[0], "channelId" | "sourceItemId" | "contextProjection">,
+): void {
+  const projection = buildConversationContextProjection({
+    store,
+    sourceItemId: sourceMessage.id,
+    view: "selector",
+  });
+  store.createChannelIntentDecision({
+    ...decision,
+    channelId: channel.id,
+    sourceItemId: sourceMessage.id,
+    contextProjection: projection.metadata,
+  }, new Date().toISOString());
 }
 
 function canDispatchChannelReply(message: ChannelMessage): boolean {

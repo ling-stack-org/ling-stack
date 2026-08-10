@@ -315,7 +315,7 @@ export async function listChannelMessageRouteDecisions(
 export async function listChannelIntentDecisions(
   cwd: string,
   channelId: string,
-  options: { readonly sourceMessageId?: string; readonly action?: string; readonly status?: string; readonly limit?: number } = {},
+  options: { readonly sourceItemId?: string; readonly action?: string; readonly status?: string; readonly limit?: number } = {},
 ): Promise<ChannelIntentDecisionListResponse> {
   return daemonClient.listChannelIntentDecisions(cwd, channelId, options);
 }

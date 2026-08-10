@@ -1,6 +1,6 @@
 # Channel Conversation Continuity v2 Implementation Plan
 
-Status: G0 complete; S-1 and S0 merged; S1+S2 and S3 implemented and locally verified; S4-S7 pending
+Status: G0 complete; S-1 and S0 merged; S1+S2, S3, and S4 implemented and locally verified; S5-S7 pending
 Owner: conversation, channel context, Ling Agent Session, and storage maintainers
 Date: 2026-08-08
 Last verified: 2026-08-10
@@ -447,6 +447,14 @@ context. Paging for UI remains allowed; context construction goes through the pr
 
 ## Slice S4: Intent v2 And Issue #421 Closure
 
+Status: implemented on `codex/continuity-v2-context-projector`. The clean-break SQLite
+migration, contracts, API/client filters, selector, structured clarification, typed
+execution, Web diagnostics, and Issue #421 regression fixtures are locally verified.
+The focused channel workspace suite passes 186/186, including article continuation,
+explicit README execution, and unrelated-request segment isolation. S4-specific Web E2E
+passes 3/3. The broader `channel.spec.ts` run is 108/112; four failures outside the S4
+touch set remain part of the final S7/full-program E2E gate.
+
 ### Changes
 
 - Replace v1 selector parsing and persistence with `ChannelIntentDecisionV2`.
@@ -792,9 +800,9 @@ interfaces at the end of S3 and keep implementation files separate before parall
     idempotency, paging, and supersession tests.
 - [x] **T3 (P1, human: ~2 days / Codex: ~3-4 hours)**: create every user `LingTurn` and map root/topic/branch explicitly.
   - Verify: daemon ingest and thread-lineage tests.
-- [ ] **T4 (P1, human: ~3 days / Codex: ~5-7 hours)**: implement segmentation policy and shared projector; remove raw fixed-window consumers.
+- [x] **T4 (P1, human: ~3 days / Codex: ~5-7 hours)**: implement segmentation policy and shared projector; remove raw fixed-window consumers.
   - Verify: projection consistency, permission, correction, and consumer adapter tests.
-- [ ] **T5 (P1, human: ~2 days / Codex: ~3-4 hours)**: cut intent decisions to v2 and close issue #421.
+- [x] **T5 (P1, human: ~2 days / Codex: ~3-4 hours)**: cut intent decisions to v2 and satisfy issue #421 closure criteria.
   - Verify: daemon regression suite, explicit file safety, clarification actionability, and eval cases.
 - [ ] **T6 (P2, human: ~2 days / Codex: ~3-5 hours)**: add proactive summaries, coverage watermarks, stale-result rejection, and fork snapshots.
   - Verify: budget, race, invalidation, reconstruction, and fallback tests.
@@ -848,7 +856,7 @@ schema.
 | Design Review | `/plan-design-review` | UI and UX gaps | 0 | not run | UI changes are limited to later advanced Context details |
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | not run | Not required for the design baseline |
 
-**VERDICT:** ENG CLEARED. S-1 and S0 are merged; S1+S2 and S3 are implemented and
-locally verified; S4-S7 retain the reviewed delivery order and exit criteria.
+**VERDICT:** ENG CLEARED. S-1 and S0 are merged; S1+S2, S3, and S4 are implemented
+and locally verified; S5-S7 retain the reviewed delivery order and exit criteria.
 
 NO UNRESOLVED DECISIONS

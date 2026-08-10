@@ -5809,13 +5809,12 @@ function maybeCreateMockWorkflowProposal(
   };
   state.channelExecutionProposals.unshift(proposal);
   state.channelIntentDecisions.push({
-    schemaVersion: 1,
+    ...mockChannelIntentDecisionContext(channelId, message),
     id: `intent_${state.channelIntentDecisions.length + 1}`,
-    workspaceId: "workspace_default",
-    channelId,
-    sourceMessageId: typeof message.id === "string" ? message.id : "",
     action: "workflow_proposal",
+    selectedTeammateIds: finalSelectedTeammates.flatMap((teammate) => typeof teammate.id === "string" ? [teammate.id] : []),
     proposalId: proposal.id,
+    resultItemIds: [],
     reason: "Workflow proposal created from channel intent.",
     status: "accepted",
     createdBy: "deterministic",
@@ -5913,14 +5912,12 @@ function maybeCreateMockMaterializationClarifyReply(
   };
   state.channelMessages.push(aiReply);
   state.channelIntentDecisions.push({
-    schemaVersion: 1,
+    ...mockChannelIntentDecisionContext(channelId, message),
     id: `intent_${state.channelIntentDecisions.length + 1}`,
-    workspaceId: "workspace_default",
-    channelId,
-    sourceMessageId: typeof message.id === "string" ? message.id : "",
     action: "clarify",
-    selectedTeammateId: "ling_agent",
-    replyMessageId: aiReply.id,
+    selectedTeammateIds: ["ling_agent"],
+    resultItemIds: [aiReply.id],
+    clarification: { missingFields: ["materialized_input"], question: replyBody },
     reason: decisionReason,
     status: "accepted",
     createdBy: "deterministic",
@@ -5987,13 +5984,13 @@ function maybeCreateMockSingleStepExecutableProposal(
   };
   state.channelExecutionProposals.unshift(proposal);
   state.channelIntentDecisions.push({
-    schemaVersion: 1,
+    ...mockChannelIntentDecisionContext(channelId, message),
     id: `intent_${state.channelIntentDecisions.length + 1}`,
-    workspaceId: "workspace_default",
-    channelId,
-    sourceMessageId: typeof message.id === "string" ? message.id : "",
-    action: "direct_workflow",
+    action: "execute",
+    selectedTeammateIds: [],
     proposalId: proposal.id,
+    resultItemIds: [],
+    execution: { kind: isEdit ? "file_edit" : "file_create", targetKind: "file" },
     reason: "Direct single-step executable proposal created by mock intent selector.",
     status: "accepted",
     createdBy: "deterministic",
@@ -6002,6 +5999,30 @@ function maybeCreateMockSingleStepExecutableProposal(
   });
   const autoStartedWorkflow = mockAutoStartExecutionProposalWorkflow(state, proposal);
   return { autoStartedWorkflow };
+}
+
+function mockChannelIntentDecisionContext(
+  channelId: string,
+  message: Record<string, unknown>,
+): {
+  readonly schemaVersion: 2;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly sourceTurnId: string;
+  readonly sourceItemId: string;
+  readonly contextSegmentId: string;
+  readonly contextProjectionVersion: string;
+} {
+  const sourceItemId = typeof message.id === "string" ? message.id : "unknown_item";
+  return {
+    schemaVersion: 2,
+    workspaceId: "workspace_default",
+    channelId,
+    sourceTurnId: `turn_${sourceItemId}`,
+    sourceItemId,
+    contextSegmentId: `segment_${channelId}`,
+    contextProjectionVersion: `ctxv2_mock_${sourceItemId}`,
+  };
 }
 
 function mockExecutableFileTarget(state: MockState, channelId: string, body: string): string | undefined {
@@ -10952,7 +10973,7 @@ export async function handleDaemonRoute(
   const channelIntentDecisionsMatch = /^\/channels\/([^/]+)\/intent-decisions$/.exec(path);
   if (channelIntentDecisionsMatch && request.method() === "GET") {
     const channelId = decodeURIComponent(channelIntentDecisionsMatch[1]);
-    const sourceMessageId = url.searchParams.get("sourceMessageId");
+    const sourceItemId = url.searchParams.get("sourceItemId");
     await route.fulfill({
       json: {
         cwd,
@@ -10960,7 +10981,7 @@ export async function handleDaemonRoute(
         decisions: state.channelIntentDecisions.filter((decision) =>
           isRecord(decision) &&
           decision.channelId === channelId &&
-          (!sourceMessageId || decision.sourceMessageId === sourceMessageId)),
+          (!sourceItemId || decision.sourceItemId === sourceItemId)),
       },
     });
     return;

@@ -933,8 +933,8 @@ test("active channel reply does not intercept an unmarked direct workflow reques
     const activeRun = createActiveChannelReplyRunFixture(store, {
       cwd,
       channelId: channel.id,
-      runId: "run_active_reply_before_direct_workflow",
-      taskId: "task_active_reply_before_direct_workflow",
+      runId: "run_active_reply_before_execute",
+      taskId: "task_active_reply_before_execute",
     });
 
     const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
@@ -946,8 +946,8 @@ test("active channel reply does not intercept an unmarked direct workflow reques
     assert.equal(created.autoStartedWorkflow.workflowSteps.length, 1);
     assert.deepEqual(created.autoStartedWorkflow.workflowSteps[0].metadata.requiredTools, ["write"]);
     assert.deepEqual(store.listRunInterventions({ sourceRunId: activeRun.id }), []);
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
-    assert.equal(decisions.decisions.some((decision) => decision.action === "direct_workflow" && decision.status === "accepted"), true);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(decisions.decisions.some((decision) => decision.action === "execute" && decision.status === "accepted"), true);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -1860,8 +1860,8 @@ test("cached public link body lets Ling answer without materialization clarify",
     assert.equal(finalReply.body, "这个页面讲的是 cached public link body。");
     assert.equal(runner.runs.length, 1);
     assert.match(runner.runs[0].task.prompt, /Cached public link body for Ling to summarize/);
-    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
-    assert.deepEqual(intentDecisions.decisions, []);
+    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
+    assertSingleReplyIntentDecision(intentDecisions.decisions, created.message.id);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -2089,8 +2089,8 @@ test("materialized pdf and docx attachments let Ling answer without materializat
     const docxPreview = await getJson(`${daemon.url}/attachments/${encodeURIComponent(docxAttachment.id)}/preview?cwd=${encodeURIComponent(cwd)}&scope=channel&channelId=${encodeURIComponent(channel.id)}`);
     assert.equal(docxPreview.kind, "office");
     assert.match(docxPreview.text, /Walking on imported air/);
-    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
-    assert.deepEqual(intentDecisions.decisions, []);
+    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
+    assertSingleReplyIntentDecision(intentDecisions.decisions, created.message.id);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -2136,8 +2136,8 @@ test("materialized image attachment lets Ling answer without materialization cla
     assert.equal(runner.runs.length, 1);
     assert.match(runner.runs[0].task.prompt, /branch button hidden/);
     assert.doesNotMatch(runner.runs[0].task.prompt, /Image vision summarizer is not configured/);
-    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
-    assert.deepEqual(intentDecisions.decisions, []);
+    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
+    assertSingleReplyIntentDecision(intentDecisions.decisions, created.message.id);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -3817,7 +3817,7 @@ test("channel intent selector creates visible multi-replies for discussion-only 
     const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(routeDecisions.decisions.length, 0);
 
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 1);
     assertIntentDecisionInspectPayloadIsSafe(decisions.decisions[0]);
     assert.equal(decisions.decisions[0].action, "visible_multi_reply");
@@ -3828,7 +3828,7 @@ test("channel intent selector creates visible multi-replies for discussion-only 
       created.aiReplies.map((reply) => reply.authorId).sort(),
     );
     assert.deepEqual(
-      [...decisions.decisions[0].replyMessageIds].sort(),
+      [...decisions.decisions[0].resultItemIds].sort(),
       created.aiReplies.map((reply) => reply.id).sort(),
     );
   } finally {
@@ -3900,7 +3900,7 @@ test("channel intent selector creates workflow proposals for execution-shaped al
     const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(routeDecisions.decisions.length, 0);
 
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 1);
     assertIntentDecisionInspectPayloadIsSafe(decisions.decisions[0]);
     assert.equal(decisions.decisions[0].action, "workflow_proposal");
@@ -3950,7 +3950,7 @@ test("channel intent selector does not assign specialists outside current channe
     assert.match(proposals.proposals[0].riskSummary, /Ling Agent 可以先处理/);
     assert.doesNotMatch(proposals.proposals[0].prompt, /Engineer:|QA:|Architect:/);
 
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 1);
     assertIntentDecisionInspectPayloadIsSafe(decisions.decisions[0]);
     assert.equal(decisions.decisions[0].action, "workflow_proposal");
@@ -4030,7 +4030,7 @@ test("channel intent selector uses attached AI council specialists without copyi
     assert.equal(designerChannels.memberships.some((membership) => membership.channelId === channel.id), false);
     assert.equal(qaChannels.memberships.some((membership) => membership.channelId === channel.id), false);
 
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 1);
     assertIntentDecisionInspectPayloadIsSafe(decisions.decisions[0]);
     assert.equal(decisions.decisions[0].action, "workflow_proposal");
@@ -4082,14 +4082,16 @@ test("channel intent selector asks one clarify question for underspecified work 
     const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(routeDecisions.decisions.length, 0);
 
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 1);
     assertIntentDecisionInspectPayloadIsSafe(decisions.decisions[0]);
     assert.equal(decisions.decisions[0].action, "clarify");
     assert.equal(decisions.decisions[0].status, "accepted");
     assert.equal(decisions.decisions[0].createdBy, "deterministic");
-    assert.equal(decisions.decisions[0].selectedTeammateId, "ling_agent");
-    assert.equal(decisions.decisions[0].replyMessageId, created.aiReply.id);
+    assert.deepEqual(decisions.decisions[0].selectedTeammateIds, ["ling_agent"]);
+    assert.deepEqual(decisions.decisions[0].resultItemIds, [created.aiReply.id]);
+    assert.deepEqual(decisions.decisions[0].clarification.missingFields, ["acceptance_criteria"]);
+    assert.equal(decisions.decisions[0].clarification.question, created.aiReply.body);
     assert.match(decisions.decisions[0].reason, /Clarify question created from channel intent/);
   } finally {
     await daemon.close();
@@ -4144,10 +4146,10 @@ test("channel intent selector auto-starts explicit direct workflow proposals", a
     );
     assert.match(proposals.proposals[0].riskSummary, /runtime approval policy/);
 
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 2);
     assertIntentDecisionInspectPayloadIsSafe(decisions.decisions[0]);
-    assert.equal(decisions.decisions[0].action, "direct_workflow");
+    assert.equal(decisions.decisions[0].action, "execute");
     assert.equal(decisions.decisions[0].status, "accepted");
     assert.equal(decisions.decisions[0].proposalId, proposals.proposals[0].id);
     assert.equal(decisions.decisions.some((decision) => /auto-started proposal/.test(decision.reason)), true);
@@ -4262,9 +4264,9 @@ test("single-step file creation becomes direct workflow with bounded write tools
     assert.match(proposals.proposals[0].riskSummary, /write/);
     assert.match(proposals.proposals[0].prompt, /权限边界/);
 
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 2);
-    assert.equal(decisions.decisions[0].action, "direct_workflow");
+    assert.equal(decisions.decisions[0].action, "execute");
     assert.equal(decisions.decisions[0].status, "accepted");
     assert.equal(decisions.decisions.some((decision) => /auto-started proposal/.test(decision.reason)), true);
 
@@ -4311,8 +4313,8 @@ test("explicit Ling Agent file request becomes direct workflow instead of discus
     assert.match(proposals.proposals[0].prompt, /login\.html/);
     const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(routeDecisions.decisions, []);
-    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
-    assert.equal(intentDecisions.decisions.some((decision) => decision.action === "direct_workflow" && /Bounded executable request/.test(decision.reason)), true);
+    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(intentDecisions.decisions.some((decision) => decision.action === "execute" && /Bounded executable request/.test(decision.reason)), true);
     assert.equal(runner.runs.length, 1);
     assert.deepEqual(runner.runs[0].tools, ["write"]);
     assert.match(runner.runs[0].task.prompt, /login\.html/);
@@ -4469,8 +4471,8 @@ test("thread follow-up can create the single file named by the previous Ling Age
     assert.match(proposals.proposals[0].prompt, /Target: index\.html/);
     const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(routeDecisions.decisions, []);
-    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
-    assert.equal(intentDecisions.decisions.some((decision) => decision.action === "direct_workflow" && /Bounded executable request/.test(decision.reason)), true);
+    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(intentDecisions.decisions.some((decision) => decision.action === "execute" && /Bounded executable request/.test(decision.reason)), true);
     assert.equal(runner.runs.length, 1);
     assert.deepEqual(runner.runs[0].tools, ["write"]);
     assert.match(runner.runs[0].task.prompt, /Target: index\.html/);
@@ -4556,7 +4558,11 @@ test("thread follow-up opens the recent HTML target with bounded bash tools", as
 test("model-assisted thread follow-up opens recent target from typed operation kind", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-thread-model-followup-open-"));
   const runner = new ScriptedRunner([
-    JSON.stringify({ action: "direct_workflow", operationKind: "open_local_target", reason: "User wants to preview the recent local artifact." }),
+    JSON.stringify({
+      action: "execute",
+      reason: "User wants to preview the recent local artifact.",
+      execution: { kind: "open_local_target", targetKind: "file" },
+    }),
     "Opened local target.",
   ]);
   const stores = new Map();
@@ -4617,11 +4623,11 @@ test("model-assisted thread follow-up opens recent target from typed operation k
     assert.deepEqual(proposals.proposals[0].requiredTools, ["bash"]);
     assert.match(proposals.proposals[0].prompt, /Open index\.html in the local browser/);
     assert.doesNotMatch(proposals.proposals[0].prompt, /Create index\.html|declared file tool scope/);
-    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(intentDecisions.decisions.some((decision) =>
-      decision.action === "direct_workflow" &&
-      decision.createdBy === "model" &&
-      /direct_workflow\/open_local_target/.test(decision.reason)
+      decision.action === "execute" &&
+      decision.createdBy === "model_policy" &&
+      /execute\/open_local_target/.test(decision.reason)
     ), true);
     assert.equal(runner.runs.length, 2);
     assert.match(runner.runs[0].systemPrompt, /channel intent selector/i);
@@ -4637,7 +4643,11 @@ test("model-assisted thread follow-up opens recent target from typed operation k
 test("model-assisted thread follow-up writes the recent local target without phrase-rule matching", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-thread-model-followup-file-"));
   const runner = new ScriptedRunner([
-    JSON.stringify({ action: "direct_workflow", operationKind: "file_create", reason: "User is asking Ling to write the previously discussed file locally." }),
+    JSON.stringify({
+      action: "execute",
+      reason: "User is asking Ling to write the previously discussed file locally.",
+      execution: { kind: "file_create", targetKind: "file" },
+    }),
     "Created local file.",
   ]);
   const stores = new Map();
@@ -4707,11 +4717,11 @@ test("model-assisted thread follow-up writes the recent local target without phr
     assert.match(proposals.proposals[0].prompt, /Target: index\.html/);
     const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(routeDecisions.decisions, []);
-    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(intentDecisions.decisions.some((decision) =>
-      decision.action === "direct_workflow" &&
-      decision.createdBy === "model" &&
-      /Model-assisted direct_workflow\/file_create validated/.test(decision.reason)
+      decision.action === "execute" &&
+      decision.createdBy === "model_policy" &&
+      /Model-assisted execute\/file_create validated/.test(decision.reason)
     ), true);
     assert.equal(runner.runs.length, 2);
     assert.match(runner.runs[0].systemPrompt, /channel intent selector/i);
@@ -4728,7 +4738,11 @@ test("model-assisted thread follow-up writes the recent local target without phr
 test("model-assisted thread follow-up clarifies instead of creating empty recent target", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-thread-model-followup-empty-file-"));
   const runner = new ScriptedRunner([
-    JSON.stringify({ action: "direct_workflow", operationKind: "file_create", reason: "User is asking Ling to write the previously discussed file locally." }),
+    JSON.stringify({
+      action: "execute",
+      reason: "User is asking Ling to write the previously discussed file locally.",
+      execution: { kind: "file_create", targetKind: "file" },
+    }),
   ]);
   const stores = new Map();
   const daemon = await startDaemonForTest(runner, {
@@ -4798,7 +4812,11 @@ test("model-assisted thread follow-up clarifies instead of creating empty recent
 test("model-assisted local write request clarifies when no target validates", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-model-followup-missing-target-"));
   const runner = new ScriptedRunner([
-    JSON.stringify({ action: "direct_workflow", operationKind: "file_create", reason: "User is asking Ling to write something locally." }),
+    JSON.stringify({
+      action: "execute",
+      reason: "User is asking Ling to write something locally.",
+      execution: { kind: "file_create", targetKind: "file" },
+    }),
   ]);
   const daemon = await startDaemonForTest(runner, {}, { channels: { intentSelector: true } });
   try {
@@ -4828,10 +4846,12 @@ test("model-assisted local write request clarifies when no target validates", as
     assert.deepEqual(proposals.proposals, []);
     const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(routeDecisions.decisions, []);
-    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(intentDecisions.decisions.length, 1);
     assert.equal(intentDecisions.decisions[0].action, "clarify");
-    assert.equal(intentDecisions.decisions[0].createdBy, "model");
+    assert.equal(intentDecisions.decisions[0].createdBy, "model_policy");
+    assert.deepEqual(intentDecisions.decisions[0].clarification.missingFields, ["target"]);
+    assert.equal(intentDecisions.decisions[0].clarification.question, created.aiReply.body);
     assert.match(intentDecisions.decisions[0].reason, /target validation failed/);
   } finally {
     await daemon.close();
@@ -4900,7 +4920,7 @@ test("workspace follow-up clarifies when the previous Ling Agent reply names mul
     assert.match(created.aiReply.body, /README\.md/);
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(proposals.proposals, []);
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 1);
     assert.equal(decisions.decisions[0].action, "clarify");
     assert.match(decisions.decisions[0].reason, /multiple file targets/i);
@@ -4974,7 +4994,7 @@ test("thread follow-up clarifies when the previous Ling Agent reply names multip
     assert.match(created.aiReply.body, /README\.md/);
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(proposals.proposals, []);
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 1);
     assert.equal(decisions.decisions[0].action, "clarify");
     assert.match(decisions.decisions[0].reason, /multiple file targets/i);
@@ -5020,7 +5040,7 @@ test("text attachment preview can feed a direct README write workflow", async ()
     assert.match(proposals.proposals[0].prompt, /Attachment: readme-copy\.txt/);
     assert.match(proposals.proposals[0].prompt, /README body from attachment/);
     assert.match(runner.runs[0].task.prompt, /README body from attachment/);
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.some((decision) => /auto-started proposal/.test(decision.reason)), true);
   } finally {
     await daemon.close();
@@ -5133,9 +5153,9 @@ test("attachment-dependent README write blocks when attachment content is not ma
     assert.equal(proposals.proposals[0].status, "blocked");
     assert.match(proposals.proposals[0].errorMessage, /可读的附件内容|readable attachment content/i);
     assert.doesNotMatch(proposals.proposals[0].errorMessage, /附件预览|attachment preview|too large|previewStatus/i);
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 1);
-    assert.equal(decisions.decisions[0].action, "direct_workflow");
+    assert.equal(decisions.decisions[0].action, "execute");
     assert.match(decisions.decisions[0].reason, /no available attachment preview\/extraction/i);
   } finally {
     await daemon.close();
@@ -5172,7 +5192,7 @@ test("unreadable screenshot task creates Ling materialization clarify reply", as
     assert.doesNotMatch(created.aiReply.body, /OCR|视觉提取|metadata_only|extractor|SSRF/i);
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(proposals.proposals.length, 0);
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 1);
     assert.equal(decisions.decisions[0].action, "clarify");
     assert.equal(decisions.decisions[0].status, "accepted");
@@ -5209,7 +5229,7 @@ test("blocked link body request creates Ling materialization clarify reply", asy
     assert.equal(runner.runs.length, 0);
     assert.match(created.aiReply.body, /local\/private links automatically|本机或私有地址/i);
     assert.doesNotMatch(created.aiReply.body, /body extraction is blocked|SSRF|metadata_only|extractor/i);
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 1);
     assert.equal(decisions.decisions[0].action, "clarify");
     assert.match(decisions.decisions[0].reason, /Link body materialization is blocked/);
@@ -5399,8 +5419,8 @@ test("single-step file edit inherits target path from recent workflow context", 
     assert.match(editProposals.proposals[0].prompt, new RegExp(`Target: ${escapeRegExp(cwd)}/README\\.md`));
     const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(edited.message.id)}`);
     assert.deepEqual(routeDecisions.decisions, []);
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(edited.message.id)}`);
-    assert.equal(decisions.decisions[0].action, "direct_workflow");
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(edited.message.id)}`);
+    assert.equal(decisions.decisions[0].action, "execute");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -5463,8 +5483,8 @@ test("file creation how-to question remains ordinary Ling chat intent", async ()
     assert.equal(created.aiReply.authorId, "ling_agent");
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(proposals.proposals, []);
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
-    assert.deepEqual(decisions.decisions, []);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
+    assertSingleReplyIntentDecision(decisions.decisions, created.message.id);
 
     const whyQuestion = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
       body: "为什么不能创建 README.md？",
@@ -5507,8 +5527,8 @@ test("single-step test request becomes direct workflow with bounded bash tools",
     assert.equal(proposals.proposals[0].assigneeTeammateId, "teammate_builtin_qa");
     assert.deepEqual(proposals.proposals[0].requiredTools, ["bash"]);
     assert.match(proposals.proposals[0].riskSummary, /bash/);
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
-    assert.equal(decisions.decisions[0].action, "direct_workflow");
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(decisions.decisions[0].action, "execute");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -5547,7 +5567,7 @@ test("high-risk push merge request auto-starts when required tools are not denie
 
     const workflows = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workflows?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(workflows.workflows.length, 1);
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.some((decision) => /High-risk side effect is runtime-gated: git_push_or_merge/.test(decision.reason)), true);
   } finally {
     await daemon.close();
@@ -5609,8 +5629,8 @@ test("high-risk thread follow-up creates a proposal without auto-starting", asyn
 
     const workflows = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workflows?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(workflows.workflows.length, 0);
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
-    assert.equal(decisions.decisions.some((decision) => decision.action === "direct_workflow" && decision.status === "accepted"), true);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(decisions.decisions.some((decision) => decision.action === "execute" && decision.status === "accepted"), true);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -5649,7 +5669,7 @@ test("high-risk push merge request blocks before run when required tool is denie
     assert.equal(proposals.proposals[0].status, "draft");
     assert.equal(proposals.proposals[0].linkedWorkflowId, undefined);
 
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.some((decision) => decision.status === "failed" && /denies required tools: bash/.test(decision.errorMessage ?? decision.reason)), true);
   } finally {
     await daemon.close();
@@ -5703,11 +5723,11 @@ test("model-assisted channel intent no_reply falls through to ordinary Ling repl
     assert.equal(routeDecisions.decisions[0].action, "reply");
     assert.equal(routeDecisions.decisions[0].status, "accepted");
     assert.equal(routeDecisions.decisions[0].replyMessageId, created.aiReply.id);
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 1);
     assert.equal(decisions.decisions[0].action, "no_reply");
     assert.equal(decisions.decisions[0].status, "suppressed");
-    assert.equal(decisions.decisions[0].createdBy, "model");
+    assert.equal(decisions.decisions[0].createdBy, "model_policy");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -5749,8 +5769,167 @@ test("model-assisted channel intent selector does not fall back to phrase-rule w
     await waitForCondition(() => runner.runs.length === 2, "ordinary channel reply after selector parse failure");
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(proposals.proposals.length, 0);
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
-    assert.equal(decisions.decisions.length, 0);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
+    assertSingleReplyIntentDecision(decisions.decisions, created.message.id);
+    assert.equal(decisions.decisions[0].createdBy, "deterministic");
+    assert.match(decisions.decisions[0].reason, /fail-open to an ordinary reply/i);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("issue #421 article continuation stays reply while an explicit README save executes", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-issue-421-article-"));
+  const runner = new ScriptedRunner([
+    JSON.stringify({ action: "reply", reason: "The user asked for conversational article content." }),
+    "提纲：一、可恢复记忆；二、选择性投影；三、多 Agent 一致性。",
+    JSON.stringify({ action: "reply", reason: "The user confirmed that the article should continue in chat." }),
+    "正文：可恢复记忆的关键不是无限拼接历史，而是保留可追溯事实并按当前任务投影。",
+    JSON.stringify({
+      action: "execute",
+      reason: "The user explicitly requested a local README write.",
+      execution: { kind: "file_create", targetKind: "file" },
+    }),
+    "README.md saved.",
+  ]);
+  const daemon = await startDaemonForTest(runner, {}, { channels: { intentSelector: true } });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Issue 421 article continuity",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read", "grep", "find", "ls", "write"],
+    })).channel;
+
+    const article = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "帮我写一篇关于可恢复多 Agent 记忆的长文，先给提纲。",
+      teammateId: "ling_agent",
+      requestAiReply: true,
+    });
+    await waitForChannelMessageStatus(daemon.url, cwd, channel.id, article.aiReply.id, "ready");
+
+    const continuation = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "需要，开始吧",
+      teammateId: "ling_agent",
+      requestAiReply: true,
+    });
+    const continuedMessages = await waitForChannelMessageStatus(
+      daemon.url,
+      cwd,
+      channel.id,
+      continuation.aiReply.id,
+      "ready",
+    );
+    const continuedReply = continuedMessages.messages.find((message) => message.id === continuation.aiReply.id);
+    assert.match(continuedReply.body, /可恢复记忆/);
+
+    const articleDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(article.message.id)}`);
+    const continuationDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(continuation.message.id)}`);
+    assertSingleReplyIntentDecision(articleDecisions.decisions, article.message.id);
+    assertSingleReplyIntentDecision(continuationDecisions.decisions, continuation.message.id);
+    assert.equal(articleDecisions.decisions[0].createdBy, "model_policy");
+    assert.equal(continuationDecisions.decisions[0].createdBy, "model_policy");
+    assert.equal(continuationDecisions.decisions[0].contextSegmentId, articleDecisions.decisions[0].contextSegmentId);
+    assert.equal(continuationDecisions.decisions[0].clarification, undefined);
+    assert.equal(continuationDecisions.decisions[0].execution, undefined);
+    const continuationProposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(continuation.message.id)}`);
+    assert.deepEqual(continuationProposals.proposals, []);
+
+    const save = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "把刚才的文章保存到 README.md。",
+      teammateId: "ling_agent",
+      requestAiReply: true,
+    });
+    assertCoordinatorWorkflowStartReply(save);
+    assert.equal(save.autoStartedWorkflow.workflowSteps.length, 1);
+    const saveProposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(save.message.id)}`);
+    assert.equal(saveProposals.proposals.length, 1);
+    assert.equal(saveProposals.proposals[0].status, "accepted");
+    assert.match(saveProposals.proposals[0].prompt, /Target: README\.md/);
+    const saveDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(save.message.id)}`);
+    assert.equal(saveDecisions.decisions.length, 2);
+    assert(saveDecisions.decisions.every((decision) => decision.action === "execute"));
+    assert(saveDecisions.decisions.every((decision) => decision.execution.kind === "file_create"));
+    assert(saveDecisions.decisions.every((decision) => decision.execution.targetKind === "file"));
+    assert(saveDecisions.decisions.every((decision) => decision.proposalId === saveProposals.proposals[0].id));
+    assert(saveDecisions.decisions.every((decision) => {
+      assertIntentDecisionInspectPayloadIsSafe(decision);
+      return true;
+    }));
+    const classified = saveDecisions.decisions.find((decision) => decision.createdBy === "model_policy");
+    const started = saveDecisions.decisions.find((decision) => decision.workflowId === save.autoStartedWorkflow.workflow.id);
+    assert.ok(classified);
+    assert.ok(started);
+    assert.deepEqual(started.resultItemIds, [save.aiReply.id]);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("issue #421 unrelated snake-game request escapes an old target clarification", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-issue-421-segment-reset-"));
+  const runner = new ScriptedRunner([
+    JSON.stringify({
+      action: "clarify",
+      reason: "A local write needs a concrete destination.",
+      clarification: { missingFields: ["target"], question: "要保存到哪个目标文件？" },
+    }),
+    JSON.stringify({ action: "reply", reason: "The snake-game design is independently answerable in chat." }),
+    "贪吃蛇玩法：方向键移动，吃到食物增长，撞墙或撞到自己结束。",
+  ]);
+  runner.segmentationResponses = [JSON.stringify({
+    action: "propose_new",
+    confidence: 0.96,
+    relatedSegmentIds: [],
+    reason: "The snake-game design is unrelated to the unresolved file destination.",
+  })];
+  const daemon = await startDaemonForTest(runner, {}, { channels: { intentSelector: true } });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Issue 421 clarification isolation",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read", "grep", "find", "ls", "write"],
+    })).channel;
+
+    const oldRequest = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "把这段内容写到本地文件里。",
+      teammateId: "ling_agent",
+      requestAiReply: true,
+    });
+    assert.equal(oldRequest.aiReply.status, "ready");
+    assert.match(oldRequest.aiReply.body, /目标文件/);
+    const oldDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(oldRequest.message.id)}`);
+    assert.equal(oldDecisions.decisions.length, 1);
+    assert.equal(oldDecisions.decisions[0].action, "clarify");
+    assert.deepEqual(oldDecisions.decisions[0].clarification.missingFields, ["target"]);
+
+    const snake = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "再做一个贪吃蛇小游戏的方案，先讲玩法。",
+      teammateId: "ling_agent",
+      requestAiReply: true,
+    });
+    const snakeMessages = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, snake.aiReply.id, "ready");
+    const snakeReply = snakeMessages.messages.find((message) => message.id === snake.aiReply.id);
+    assert.match(snakeReply.body, /贪吃蛇玩法/);
+    assert.doesNotMatch(snakeReply.body, /目标文件|target file/i);
+    const snakeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(snake.message.id)}`);
+    assertSingleReplyIntentDecision(snakeDecisions.decisions, snake.message.id);
+    assert.equal(snakeDecisions.decisions[0].createdBy, "model_policy");
+    assert.notEqual(snakeDecisions.decisions[0].contextSegmentId, oldDecisions.decisions[0].contextSegmentId);
+    assert.equal(runner.segmentationRuns.length, 1);
+    const snakeProposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(snake.message.id)}`);
+    assert.deepEqual(snakeProposals.proposals, []);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -6504,8 +6683,8 @@ test("attachment-only channel turn reaches Ling Agent with metadata and preview"
     const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(routeDecisions.decisions.length, 1);
     assert.equal(routeDecisions.decisions[0].action, "reply");
-    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
-    assert.deepEqual(intentDecisions.decisions, []);
+    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
+    assertSingleReplyIntentDecision(intentDecisions.decisions, created.message.id);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -12164,7 +12343,10 @@ function wrapTestRunnerContextSegmentation(runner) {
       return runner.runTask(options);
     }
     runner.segmentationRuns.push(options);
-    const text = JSON.stringify({ action: "uncertain", candidateSegmentIds: [] });
+    const configuredResponse = runner.segmentationResponses?.shift();
+    const text = typeof configuredResponse === "function"
+      ? configuredResponse(options)
+      : configuredResponse ?? JSON.stringify({ action: "uncertain", candidateSegmentIds: [] });
     options.onEvent?.({ type: "assistant_text_delta", text });
     return {
       taskId: options.task.id,
@@ -12485,18 +12667,21 @@ function assertIntentDecisionInspectPayloadIsSafe(decision) {
     "id",
     "workspaceId",
     "channelId",
-    "sourceMessageId",
+    "sourceTurnId",
+    "sourceItemId",
+    "contextSegmentId",
+    "contextProjectionVersion",
     "action",
-    "selectedTeammateId",
     "selectedTeammateIds",
     "proposalId",
-    "replyMessageId",
-    "replyMessageIds",
+    "resultItemIds",
     "workflowId",
     "reason",
+    "clarification",
+    "execution",
     "status",
     "createdBy",
-    "errorMessage",
+    "errorCode",
     "createdAt",
     "updatedAt",
   ]);
@@ -12527,6 +12712,15 @@ function assertIntentDecisionInspectPayloadIsSafe(decision) {
   for (const key of forbiddenKeys) {
     assert.equal(Object.hasOwn(decision, key), false, `unsafe intent inspect field exposed: ${key}`);
   }
+}
+
+function assertSingleReplyIntentDecision(decisions, sourceItemId) {
+  assert.equal(decisions.length, 1);
+  assertIntentDecisionInspectPayloadIsSafe(decisions[0]);
+  assert.equal(decisions[0].schemaVersion, 2);
+  assert.equal(decisions[0].sourceItemId, sourceItemId);
+  assert.equal(decisions[0].action, "reply");
+  assert.equal(decisions[0].status, "accepted");
 }
 
 async function waitForChannelMessageStatus(baseUrl, cwd, channelId, messageId, status, threadId) {

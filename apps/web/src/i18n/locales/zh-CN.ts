@@ -6103,4 +6103,13 @@ export const zhCN = {
   "Generate a fresh five-minute QR code, then confirm the phone on this PC.": "生成一个新的五分钟配对码，然后在这台 PC 上确认手机。",
   "Listener": "监听器",
   "Generate pairing code": "生成配对码",
+  "Source item": "来源条目",
+  "Context segment": "上下文分段",
+  "Projection version": "投影版本",
+  "Result items": "结果条目",
+  "Execute": "执行",
+  "Missing fields": "缺失字段",
+  "Clarification question": "澄清问题",
+  "Execution kind": "执行类型",
+  "Target kind": "目标类型",
 } as const satisfies Readonly<Record<string, string>>;

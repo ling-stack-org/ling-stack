@@ -91,7 +91,7 @@ export function buildConversationTurnProjection(input: BuildConversationTurnProj
   );
   const intentDecisionsBySourceMessageId = groupBy(
     input.intentDecisions.filter((decision) => decision.channelId === input.channelId && decision.status === "accepted"),
-    (decision) => decision.sourceMessageId,
+    (decision) => decision.sourceItemId,
   );
   const workflowById = new Map(input.workflows.filter((workflow) => workflow.channelId === input.channelId).map((workflow) => [workflow.id, workflow]));
   const runsById = new Map(input.runs.map((run) => [run.id, run]));

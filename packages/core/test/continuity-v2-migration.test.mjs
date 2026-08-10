@@ -194,7 +194,8 @@ test("Continuity v2 migration atomically imports root, topic and branch timeline
     requiredTools: ["write"],
     status: "draft",
   }, rootUser.createdAt);
-  store.createChannelIntentDecision({
+  insertLegacyIntentDecision(cwd, {
+    id: "intent-root-reply",
     channelId: channel.id,
     sourceMessageId: rootUser.id,
     action: "single_reply",
@@ -204,8 +205,10 @@ test("Continuity v2 migration atomically imports root, topic and branch timeline
     reason: "Ling replied.",
     status: "accepted",
     createdBy: "deterministic",
-  }, rootReply.createdAt);
-  store.createChannelIntentDecision({
+    createdAt: rootReply.createdAt,
+  });
+  insertLegacyIntentDecision(cwd, {
+    id: "intent-topic-reply",
     channelId: channel.id,
     sourceMessageId: topicUser.id,
     action: "single_reply",
@@ -214,7 +217,8 @@ test("Continuity v2 migration atomically imports root, topic and branch timeline
     reason: "Architect replied.",
     status: "accepted",
     createdBy: "deterministic",
-  }, topicReply.createdAt);
+    createdAt: topicReply.createdAt,
+  });
   const route = store.createChannelMessageRouteDecision({
     channelId: channel.id,
     sourceMessageId: branchUser.id,
@@ -483,6 +487,33 @@ function migrate(database) {
         .run(version, name, migrationTime);
     },
   });
+}
+
+function insertLegacyIntentDecision(cwd, input) {
+  const database = new DatabaseSync(resolveRuntimePaths(cwd).databasePath);
+  try {
+    database.prepare(`
+      INSERT INTO channel_intent_decisions (
+        id, schema_version, workspace_id, channel_id, source_message_id, action,
+        selected_teammate_id, selected_teammate_ids_json, proposal_id, reply_message_id,
+        reply_message_ids_json, workflow_id, reason, status, created_by, error_message,
+        created_at, updated_at
+      ) VALUES (?, 1, 'workspace_default', ?, ?, ?, ?, '[]', ?, ?, '[]', NULL, ?, 'accepted', 'deterministic', NULL, ?, ?)
+    `).run(
+      input.id,
+      input.channelId,
+      input.sourceMessageId,
+      input.action,
+      input.selectedTeammateId ?? null,
+      input.proposalId ?? null,
+      input.replyMessageId ?? null,
+      input.reason,
+      input.createdAt,
+      input.createdAt,
+    );
+  } finally {
+    database.close();
+  }
 }
 
 function tableNames(database, names) {
