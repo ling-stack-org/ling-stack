@@ -75,6 +75,25 @@ test("normalizes workflow handoff intents and preserves explicit source refs", (
       { type: "channel_message", id: "message_1", label: "custom label" },
       { type: "artifact", id: "artifact_1", label: "implementation summary" },
     ],
+    agentContext: {
+      schemaVersion: 1,
+      sourceItemId: "message_1",
+      consumerTeammateId: "reviewer",
+      contextProjection: {
+        projectionVersion: "ctxv2_handoff_1",
+        sourceStateFingerprint: "source-state-handoff-1",
+        threadId: "thread_1",
+        turnId: "turn_1",
+        segmentId: "segment_1",
+        throughItemSequence: 7,
+        summaryIds: ["summary_1"],
+        sourceRefs: [{ type: "conversation_item", id: "message_1" }],
+        policyVersion: "continuity-v2-projector-v1",
+        visibilityFingerprint: "channel-shared",
+      },
+      roleEvidenceRefs: [{ type: "memory", id: "memory_reviewer" }],
+      roleEvidenceFingerprint: "role-reviewer-1",
+    },
     status: "validated",
     validation: {
       targetTeammateExists: true,
@@ -104,6 +123,7 @@ test("normalizes workflow handoff intents and preserves explicit source refs", (
   ]);
   assert.equal(normalized.inputPacket.workflowId, "workflow_1");
   assert.equal(normalized.inputPacket.sourceWorkflowStepId, "step_1");
+  assert.deepEqual(normalized.inputPacket.agentContext, intent.agentContext);
   assert.equal(normalized.validation.targetTeammateExists, true);
 });
 

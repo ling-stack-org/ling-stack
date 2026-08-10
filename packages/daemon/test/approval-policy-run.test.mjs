@@ -85,6 +85,8 @@ test("runtime runner settings api seeds Pi defaults and explicit runner requests
     assert.equal(run.requestSnapshot.runnerResolution.fallbackAllowed, true);
     assert.equal(run.requestSnapshot.runnerResolution.effectiveRunnerId, "pi");
     assert.equal(run.requestSnapshot.runtimeSettings.defaultRunnerId, "pi");
+    assert.equal(run.taskSnapshot.id, "task_workspace_default_runner");
+    assert.equal(run.requestSnapshot.task.id, "task_workspace_default_runner");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });

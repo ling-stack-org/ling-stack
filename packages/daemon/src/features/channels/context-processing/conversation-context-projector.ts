@@ -53,7 +53,7 @@ export interface ConversationContextProjection {
 export function buildConversationContextProjection(
   input: BuildConversationContextProjectionInput,
 ): ConversationContextProjection {
-  const sourceItem = input.store.getConversationItem(input.sourceItemId);
+  const sourceItem = input.store.getEffectiveConversationItem(input.sourceItemId);
   if (!sourceItem?.turnId || sourceItem.status !== "committed") {
     throw new Error(`Conversation projection source must be a committed turn item: ${input.sourceItemId}`);
   }
@@ -175,6 +175,32 @@ export function buildConversationContextProjection(
     ...items.flatMap((item) => item.domainRefs),
     ...items.map((item) => ({ type: "conversation_item" as const, id: item.id })),
   ]);
+  const sourceStateFingerprint = fingerprint({
+    assignment: {
+      id: assignment.id,
+      revision: assignment.revision,
+      status: assignment.status,
+      evidenceRefs: assignment.evidenceRefs,
+    },
+    summaries: summaries.map((summary) => ({
+      id: summary.id,
+      version: summary.version,
+      status: inheritedSummaries.some((inherited) => inherited.id === summary.id) ? "snapshot" : summary.status,
+      coveredFromSequence: summary.coveredFromSequence,
+      coveredThroughSequence: summary.coveredThroughSequence,
+      sourceRefs: summary.sourceRefs,
+    })),
+    items: items.map((item) => ({
+      id: item.id,
+      revision: item.revision,
+      status: item.status,
+      visibility: item.visibility,
+      visibilityOwnerId: item.visibilityOwnerId ?? null,
+      supersedesItemId: item.supersedesItemId ?? null,
+      domainRefs: item.domainRefs,
+      updatedAt: item.updatedAt,
+    })),
+  });
   const projectionVersion = fingerprint({
     policyVersion: CONVERSATION_CONTEXT_PROJECTOR_POLICY_VERSION,
     thread: {
@@ -194,10 +220,12 @@ export function buildConversationContextProjection(
     ]),
     throughItemSequence: sourceItem.sequence,
     visibilityFingerprint,
+    sourceStateFingerprint,
   });
   return {
     metadata: {
       projectionVersion,
+      sourceStateFingerprint,
       threadId: thread.id,
       turnId: sourceItem.turnId,
       segmentId: segment.id,

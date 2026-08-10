@@ -81,6 +81,7 @@ test("Channel Intent v2 migration deletes v1 rows and preserves new v2 decisions
 function projectionFor(item, assignment) {
   return {
     projectionVersion: `projection:${item.id}:${assignment.revision}`,
+    sourceStateFingerprint: `source-state:${item.id}:${assignment.revision}`,
     threadId: item.threadId,
     turnId: item.turnId,
     segmentId: assignment.segmentId,

@@ -8,6 +8,7 @@ import type {
 import { collectChannelStateSource, collectWorkflowEvidenceSources, collectWorkflowStepSource } from "./sources.js";
 import { buildProjectedConversationContextSlice } from "./conversation-context-adapter.js";
 import type { ChannelContextBudgetSnapshot, ChannelContextSection, ChannelContextSourceRef, ChannelContextView } from "./types.js";
+import type { ChannelContextDroppedSource, ChannelContextSource } from "./types.js";
 import { buildChannelContextView } from "./views.js";
 
 type WorkflowStepContextPackStore = RunStore;
@@ -19,8 +20,17 @@ export interface WorkflowStepContextPackInput {
   readonly step: ChannelWorkflowStep;
   readonly prompt: string;
   readonly providerPresetId?: string;
+  readonly consumerTeammateId?: string;
   readonly workflowSteps: readonly ChannelWorkflowStep[];
   readonly compactedDependencySummary?: WorkflowStepCompactedDependencySummary;
+  readonly roleEvidence?: WorkflowStepRoleEvidence;
+}
+
+export interface WorkflowStepRoleEvidence {
+  readonly section?: ChannelContextSection;
+  readonly sourceRefs: readonly ChannelContextSourceRef[];
+  readonly sources: readonly ChannelContextSource[];
+  readonly dropped: readonly ChannelContextDroppedSource[];
 }
 
 export interface WorkflowStepCompactedDependencySummary {
@@ -43,7 +53,6 @@ export function buildWorkflowStepContextView(input: BuildWorkflowStepContextView
     channel: input.channel,
     sourceItemId,
     view: "workflow_step",
-    consumerTeammateId: input.step.toParticipantId,
   }) : undefined;
   const dependencySections = input.compactedDependencySummary
     ? [buildCompactedWorkflowDependencySection(input.compactedDependencySummary)]
@@ -126,6 +135,7 @@ export function buildWorkflowStepContextView(input: BuildWorkflowStepContextView
     ...dependencySections,
     ...formatWorkflowDecisionAndHandoffSections(input),
     ...(projectedContext?.sections ?? []),
+    ...(input.roleEvidence?.section ? [input.roleEvidence.section] : []),
     ...(contextSummary
       ? [{
           id: "workflow_context_summary",
@@ -149,11 +159,12 @@ export function buildWorkflowStepContextView(input: BuildWorkflowStepContextView
     kind: "workflow_step_view",
     workspaceId: input.channel.workspaceId,
     channelId: input.channel.id,
-    consumerTeammateId: input.step.toParticipantId,
+    consumerTeammateId: input.consumerTeammateId ?? input.step.toParticipantId,
     sections,
     sourceRefs: uniqueContextSourceRefs([
       ...compactedSourceRefs,
       ...(projectedContext?.sourceRefs ?? []),
+      ...(input.roleEvidence?.sourceRefs ?? []),
     ]),
     contextProjection: projectedContext?.projection.metadata,
     compactionIds: input.compactedDependencySummary ? [input.compactedDependencySummary.id] : undefined,
@@ -166,6 +177,7 @@ export function buildWorkflowStepContextView(input: BuildWorkflowStepContextView
       }),
       collectWorkflowStepSource({ channel: input.channel, workflow: input.workflow, step: input.step }),
       ...(projectedContext?.sources ?? []),
+      ...(input.roleEvidence?.sources ?? []),
       ...collectWorkflowEvidenceSources({
         store: input.store,
         channel: input.channel,
@@ -173,6 +185,7 @@ export function buildWorkflowStepContextView(input: BuildWorkflowStepContextView
         step: input.step,
       }),
     ],
+    dropped: input.roleEvidence?.dropped,
   });
 }
 

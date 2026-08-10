@@ -17,7 +17,11 @@ function redactValue(value: unknown, seen: WeakSet<object>, extraSecrets: readon
       return "[Circular]";
     }
     seen.add(value);
-    return value.map((item) => redactValue(item, seen, extraSecrets));
+    try {
+      return value.map((item) => redactValue(item, seen, extraSecrets));
+    } finally {
+      seen.delete(value);
+    }
   }
 
   if (typeof value === "object" && value !== null) {
@@ -25,12 +29,15 @@ function redactValue(value: unknown, seen: WeakSet<object>, extraSecrets: readon
       return "[Circular]";
     }
     seen.add(value);
-
-    const result: Record<string, unknown> = {};
-    for (const [key, item] of Object.entries(value)) {
-      result[key] = shouldRedactKey(key) ? REDACTED : redactValue(item, seen, extraSecrets);
+    try {
+      const result: Record<string, unknown> = {};
+      for (const [key, item] of Object.entries(value)) {
+        result[key] = shouldRedactKey(key) ? REDACTED : redactValue(item, seen, extraSecrets);
+      }
+      return result;
+    } finally {
+      seen.delete(value);
     }
-    return result;
   }
 
   return value;

@@ -16,6 +16,7 @@ import type {
   ConversationContextProjectionMetadata,
   ConversationDomainRefType,
 } from "@ling-stack/contracts";
+import type { WorkflowAgentContextStamp } from "@ling-stack/core";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
 import { formatChannelDiscussionPrompt, type ChannelDiscussionPromptContext, type ChannelDiscussionPromptTeammate } from "./ai-prompts.js";
 import {
@@ -49,6 +50,7 @@ import type {
   ChannelContextViewKind,
 } from "./context-processing/types.js";
 import { providerRuntimeObservationForPreset } from "./provider-runtime-observations.js";
+import { createWorkflowAgentContextStamp } from "./agent-context-consistency.js";
 
 export type ContextPackKind =
   | "channel_reply"
@@ -121,6 +123,7 @@ export interface ContextPack {
   readonly estimatedInputTokens: number;
   readonly overBudget: boolean;
   readonly contextProjection?: ConversationContextProjectionMetadata;
+  readonly agentContext?: WorkflowAgentContextStamp;
 }
 
 interface BuildContextPackInput {
@@ -130,6 +133,7 @@ interface BuildContextPackInput {
   readonly sourceRefs?: readonly ContextSourceRef[];
   readonly compactionIds?: readonly string[];
   readonly contextProjection?: ConversationContextProjectionMetadata;
+  readonly agentContext?: WorkflowAgentContextStamp;
 }
 
 interface ChannelReplyContextPackInput {
@@ -257,6 +261,7 @@ export function buildContextPack(input: BuildContextPackInput): ContextPack {
     estimatedInputTokens,
     overBudget: estimatedInputTokens > budget.inputBudgetTokens,
     contextProjection: input.contextProjection,
+    agentContext: input.agentContext,
   };
 }
 
@@ -285,6 +290,7 @@ interface CompatContextView {
   readonly providerPreset?: ProviderPreset;
   readonly view: ChannelContextView;
   readonly legacySourceRefs: readonly ContextSourceRef[];
+  readonly agentContext?: WorkflowAgentContextStamp;
 }
 
 function buildCompatContextView(input: {
@@ -332,6 +338,7 @@ function buildContextPackFromContextView(input: CompatContextView): ContextPack 
     sourceRefs: uniqueContextSourceRefs(input.legacySourceRefs),
     compactionIds: input.view.metadata.compactionIds,
     contextProjection: input.view.contextProjection,
+    agentContext: input.agentContext,
   });
 }
 
@@ -652,12 +659,29 @@ export function buildWorkflowStepContextPack(input: WorkflowStepContextPackInput
       capabilityConfidence: budget.capabilityConfidence,
     },
   });
-  return buildContextPackFromContextView({
+  const pack = buildContextPackFromContextView({
     kind: "workflow_step",
     providerPreset,
     view,
     legacySourceRefs: legacyContextSourceRefsFromContextView(view),
   });
+  const sourceItemId = input.step.metadata?.sourceMessageId ?? input.workflow.metadata?.sourceMessageId;
+  const roleEvidenceWasKept = pack.sections.some((section) => section.id === "workflow_role_evidence");
+  const roleEvidenceRefs = roleEvidenceWasKept
+    ? (input.roleEvidence?.sourceRefs ?? [])
+        .filter((ref): ref is ContextSourceRef & { readonly type: "memory" } => ref.type === "memory")
+        .map((ref) => ({ type: "memory" as const, id: ref.id }))
+    : [];
+  const agentContext = sourceItemId && pack.contextProjection
+    ? createWorkflowAgentContextStamp({
+        store: input.store,
+        sourceItemId,
+        contextProjection: pack.contextProjection,
+        consumerTeammateId: input.consumerTeammateId ?? input.step.toParticipantId,
+        roleEvidenceRefs,
+      })
+    : undefined;
+  return agentContext ? { ...pack, agentContext } : pack;
 }
 
 export function buildChannelProtocolContextSection(input: {

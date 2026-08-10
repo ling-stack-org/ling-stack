@@ -1,6 +1,6 @@
 # Channel Conversation Continuity v2 Implementation Plan
 
-Status: G0 complete; S-1 and S0 merged; S1+S2, S3, S4, and S5 implemented and locally verified; S6-S7 pending
+Status: G0 complete; S-1 and S0 merged; S1+S2 through S6 implemented and locally verified; S7 pending
 Owner: conversation, channel context, Ling Agent Session, and storage maintainers
 Date: 2026-08-08
 Last verified: 2026-08-10
@@ -527,12 +527,21 @@ snapshot reconstruction, and the one strict context-length fallback.
 
 ## Slice S6: Multi-Agent Context Version Consistency
 
+Status: implemented on `codex/continuity-v2-agent-consistency` and locally verified.
+Contracts (`35/35`), Core (`360/360`), Daemon (`902/902`), and Web (`42/42`)
+tests pass; Web typecheck and `git diff --check` pass. Agent requests, output packets,
+fan-in, and handoffs carry durable context stamps; stale relevant facts and direct private
+evidence copies fail closed, while safe metadata-only rebases and accepted-handoff retries
+remain deterministic.
+
 ### Changes
 
 - Include projection version, segment id, item watermark, and source refs in every agent
   request and handoff packet.
 - Provide every agent the same shared core, then add role-specific evidence.
 - Enforce teammate-private memory and private-chat isolation.
+- Keep owner-scoped execution prompts separate from durable Task, Run, and WorkUnit audit
+  snapshots; persist memory-use ids and policy evidence without copying private memory text.
 - On result fan-in, compare consumed projection with current projection:
   - accept if changed refs are unrelated;
   - rebase metadata-only results when safe;
@@ -811,7 +820,7 @@ interfaces at the end of S3 and keep implementation files separate before parall
   - Verify: daemon regression suite, explicit file safety, clarification actionability, and eval cases.
 - [x] **T6 (P2, human: ~2 days / Codex: ~3-5 hours)**: add proactive summaries, coverage watermarks, stale-result rejection, and fork snapshots.
   - Verify: budget, race, invalidation, reconstruction, and fallback tests.
-- [ ] **T7 (P2, human: ~2 days / Codex: ~3-5 hours)**: enforce multi-agent projection versions and private-memory isolation.
+- [x] **T7 (P2, human: ~2 days / Codex: ~3-5 hours)**: enforce multi-agent projection versions and private-memory isolation.
   - Verify: shared-core, stale fan-in, handoff, and security fixtures.
 - [ ] **T8 (P2, human: ~2 days / Codex: ~3-4 hours)**: switch transcript/API/Web diagnostics and remove old runtime authorities.
   - Verify: package suites, channel E2E, old-symbol search, and migration smoke.
@@ -861,7 +870,7 @@ schema.
 | Design Review | `/plan-design-review` | UI and UX gaps | 0 | not run | UI changes are limited to later advanced Context details |
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | not run | Not required for the design baseline |
 
-**VERDICT:** ENG CLEARED. S-1 and S0 are merged; S1+S2, S3, and S4 are implemented
-and locally verified; S5-S7 retain the reviewed delivery order and exit criteria.
+**VERDICT:** ENG CLEARED. S-1 and S0 are merged; S1+S2 through S6 are implemented
+and locally verified; S7 retains the reviewed delivery order and exit criteria.
 
 NO UNRESOLVED DECISIONS

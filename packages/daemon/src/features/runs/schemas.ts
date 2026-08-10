@@ -39,6 +39,12 @@ import {
   readString,
 } from "../../shared/validation.js";
 
+export interface PreselectedMemoryUse {
+  readonly memoryIds: readonly string[];
+  readonly recallQuery: string;
+  readonly policyVersion: string;
+}
+
 export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired" | "onEvent" | "provider" | "tools" | "mcpTools" | "onMcpToolCall"> {
   readonly workspaceCwd?: string;
   readonly providerPresetId?: string;
@@ -72,6 +78,8 @@ export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired
   readonly directWorkspaceBinding?: DirectWorkspaceBinding;
   readonly directWorkspaceSnapshot?: DirectWorkspaceSnapshot;
   readonly skipMemoryRecall?: boolean;
+  /** Internal-only memory evidence already selected and rendered by a scoped context owner. */
+  readonly preselectedMemoryUse?: PreselectedMemoryUse;
   /** Internal-only evidence version for conversation-derived runs. External request parsing does not accept it. */
   readonly contextProjection?: ConversationContextProjectionMetadata;
   /** Internal-only override used by trusted multi-reply channel orchestration. */

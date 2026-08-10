@@ -320,6 +320,7 @@ test("segment, assignment, summary, snapshot and projection contracts preserve s
   }), true);
   assert.equal(isConversationContextProjectionMetadata({
     projectionVersion: "projection-1",
+    sourceStateFingerprint: "source-state-1",
     threadId: "thread-1",
     turnId: "turn-2",
     segmentId: "segment-1",

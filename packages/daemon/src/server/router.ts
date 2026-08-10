@@ -92,6 +92,7 @@ import {
   handleChannelWorkflowStepStartRoute,
   handleChannelWorkflowStepsCollection,
   handleChannelWorkflowsCollection,
+  type WorkflowStepRunRequest,
 } from "../features/channels/workflows.js";
 import {
   handleGetWorkflowWorkspaceChanges,
@@ -1469,6 +1470,37 @@ export async function routeRequest(
     return;
   }
 
+  const attachWorkflowStepContextArtifact = (
+    store: RunStore,
+    workflowStepId: string,
+    runId: string,
+    runRequest: WorkflowStepRunRequest,
+  ): void => {
+    const now = new Date().toISOString();
+    const latestStep = store.getChannelWorkflowStep(workflowStepId);
+    const workflow = latestStep ? store.getChannelWorkflow(latestStep.workflowId) : undefined;
+    const run = store.getRun(runId);
+    if (!latestStep || !workflow || !run) return;
+    try {
+      const artifact = createWorkflowStepContextArtifact({
+        store,
+        workflow,
+        step: latestStep,
+        run,
+        runRequest,
+        now,
+      });
+      const stepWithLatestMetadata = store.getChannelWorkflowStep(workflowStepId) ?? latestStep;
+      store.updateChannelWorkflowStep(
+        workflowStepId,
+        { metadata: { ...stepWithLatestMetadata.metadata, contextArtifactId: artifact.id } },
+        now,
+      );
+    } catch {
+      // Context artifacts are audit evidence; a write failure must not orphan an already-started run.
+    }
+  };
+
   const createStartOrchestratedRun = (store: RunStore, cwd: string): StartOrchestratedWorkflowStepRun => {
     const startOrchestratedRun: StartOrchestratedWorkflowStepRun = ({ workflow, workflowStep, taskId, runRequest }) =>
       new Promise((resolve) => {
@@ -1492,28 +1524,7 @@ export async function routeRequest(
             onRunReady: (runId) => {
               const now = new Date().toISOString();
               store.updateChannelWorkflowStep(workflowStep.id, { taskId, runId }, now);
-              const run = store.getRun(runId);
-              if (run) {
-                try {
-                  const latestStep = store.getChannelWorkflowStep(workflowStep.id) ?? workflowStep;
-                  const artifact = createWorkflowStepContextArtifact({
-                    store,
-                    workflow,
-                    step: latestStep,
-                    run,
-                    runRequest,
-                    now,
-                  });
-                  const stepWithLatestMetadata = store.getChannelWorkflowStep(workflowStep.id) ?? latestStep;
-                  store.updateChannelWorkflowStep(
-                    workflowStep.id,
-                    { metadata: { ...stepWithLatestMetadata.metadata, contextArtifactId: artifact.id } },
-                    now,
-                  );
-                } catch {
-                  // Context artifacts are audit evidence; a write failure must not orphan an already-started run.
-                }
-              }
+              attachWorkflowStepContextArtifact(store, workflowStep.id, runId, runRequest);
               resolveOnce(runId);
             },
             afterRunTerminal: async (terminalRun) => {
@@ -1873,7 +1884,25 @@ export async function routeRequest(
             secretResolver,
             mcpBroker,
             {
-              afterRunTerminal: maybeContinueRunInterventions,
+              onRunReady: (runId) => {
+                const store = storeRegistry.getStore(runRequest.workspaceCwd);
+                store.updateChannelWorkflowStep(
+                  workflowRoute.workflowStepId,
+                  { taskId: runRequest.task.id, runId },
+                  new Date().toISOString(),
+                );
+                attachWorkflowStepContextArtifact(store, workflowRoute.workflowStepId, runId, runRequest);
+              },
+              afterRunTerminal: async (terminalRun) => {
+                const store = storeRegistry.getStore(runRequest.workspaceCwd);
+                finalizeOrchestratedWorkflowStepRun(
+                  store,
+                  workflowRoute.workflowStepId,
+                  terminalRun.taskId,
+                  terminalRun,
+                );
+                await maybeContinueRunInterventions(terminalRun);
+              },
               controlPlaneEvents,
               startupState,
               computerUsePreviews,

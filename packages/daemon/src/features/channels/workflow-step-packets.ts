@@ -12,11 +12,13 @@ import {
   type RunSession,
   type RunStorePathsFacet,
   type WorkspaceStoreFacet,
+  type WorkflowAgentContextStamp,
   type WorkflowPacketSourceRef,
   type WorkflowStepOutputRef,
 } from "@ling-stack/core";
 import { normalizeArtifactPath } from "../../shared/path.js";
 import { isRecord } from "../../shared/validation.js";
+import { isWorkflowAgentContextStamp } from "./agent-context-consistency.js";
 import type { WorkflowStepContextCompactionSummary } from "./context-compaction.js";
 import type { WorkflowStepRunRequest } from "./workflows.js";
 
@@ -103,6 +105,7 @@ export function buildWorkflowStepContextPacket(input: {
       ...ref.artifactIds,
     ])),
     sourceRefs: buildWorkflowPacketSourceRefs(input),
+    agentContext: input.runRequest.contextPack?.agentContext,
     selectorDecisionIds: input.step.metadata?.selectorDecisionIds,
     handoffIntentIds: input.step.metadata?.handoffIntentIds,
     requestedRunnerId: runnerAudit?.requestedRunnerId ?? input.runRequest.runnerId,
@@ -115,13 +118,19 @@ export function buildWorkflowStepContextPacket(input: {
 }
 
 export function buildWorkflowStepOutputPacket(input: {
-  readonly store: WorkflowStepPacketSourceStore;
+  readonly store: WorkflowStepPacketStore;
   readonly workflow: ChannelWorkflow;
   readonly step: ChannelWorkflowStep;
   readonly run: RunSession;
   readonly now: string;
 }): ChannelWorkflowStepOutputPacket {
   const artifacts = input.store.listArtifacts(input.run.id);
+  const contextPacket = input.step.metadata?.contextArtifactId
+    ? readWorkflowStepContextPacketArtifact({
+        store: input.store,
+        artifactId: input.step.metadata.contextArtifactId,
+      })
+    : undefined;
   const graphId = input.step.metadata?.graphId ?? input.workflow.metadata?.workflowGraphId;
   const graphNodeId = input.step.metadata?.graphNodeId ?? input.step.metadata?.templateStepId;
   return omitUndefined({
@@ -139,6 +148,7 @@ export function buildWorkflowStepOutputPacket(input: {
     blockers: uniqueStrings([input.step.blocker, input.run.errorMessage ?? undefined]),
     changedPaths: extractWorkflowStepChangedPaths({ artifacts }),
     sourceRefs: buildWorkflowPacketSourceRefs(input),
+    agentContext: contextPacket?.agentContext ?? readWorkflowAgentContextFromRunSnapshot(input.run),
     selectorDecisionIds: input.step.metadata?.selectorDecisionIds,
     handoffIntentIds: input.step.metadata?.handoffIntentIds,
     runnerAudit: readRunnerAudit(input.run),
@@ -190,6 +200,9 @@ export function readWorkflowStepContextPacketArtifact(input: {
   if (!isRecord(packet) || packet.schemaVersion !== 1 || typeof packet.workflowId !== "string" || typeof packet.workflowStepId !== "string") {
     return undefined;
   }
+  if (packet.agentContext !== undefined && !isWorkflowAgentContextStamp(packet.agentContext)) {
+    return undefined;
+  }
   return packet as unknown as ChannelWorkflowStepContextPacket;
 }
 
@@ -201,7 +214,21 @@ export function readWorkflowStepOutputPacketArtifact(input: {
   if (!isRecord(packet) || packet.schemaVersion !== 1 || typeof packet.workflowId !== "string" || typeof packet.workflowStepId !== "string") {
     return undefined;
   }
+  if (packet.agentContext !== undefined && !isWorkflowAgentContextStamp(packet.agentContext)) {
+    return undefined;
+  }
   return packet as unknown as ChannelWorkflowStepOutputPacket;
+}
+
+export function readWorkflowAgentContextFromRunSnapshot(
+  run: Pick<RunSession, "requestSnapshot">,
+): WorkflowAgentContextStamp | undefined {
+  if (!isRecord(run.requestSnapshot)) return undefined;
+  const contextPack = run.requestSnapshot.contextPack;
+  if (!isRecord(contextPack)) return undefined;
+  return isWorkflowAgentContextStamp(contextPack.agentContext)
+    ? contextPack.agentContext
+    : undefined;
 }
 
 export function extractWorkflowStepChangedPaths(input: {
