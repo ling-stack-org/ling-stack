@@ -6,7 +6,6 @@ Date: 2026-06-12
 Related docs:
 
 - [Channel Conversation Continuity v2](channel-conversation-continuity-v2.md)
-- [Channel Conversation Continuity v2 Implementation Plan](channel-conversation-continuity-v2-implementation-plan.md)
 - [Ling Agent Session Implementation Plan](ling-agent-session-implementation-plan.md)
 - [Channel Intent To Workflow Selector](channel-intent-workflow-selector.md)
 - [Channel Auto Reply Router](channel-auto-reply-router.md)

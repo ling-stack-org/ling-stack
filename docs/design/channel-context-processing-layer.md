@@ -7,7 +7,6 @@ Design baseline.
 Related docs:
 
 - [Channel Conversation Continuity v2](channel-conversation-continuity-v2.md)
-- [Channel Conversation Continuity v2 Implementation Plan](channel-conversation-continuity-v2-implementation-plan.md)
 - [Channel Context Budget Manager](channel-context-budget-manager.md)
 - [Channel Context Processing Layer Implementation Plan](channel-context-processing-layer-implementation-plan.md)
 - [Ling Agent Session Control Plane](ling-agent-session.md)
