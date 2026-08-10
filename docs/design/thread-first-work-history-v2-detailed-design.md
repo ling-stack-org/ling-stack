@@ -44,7 +44,6 @@ drill-down.
 ## Related Docs
 
 - [Channel Conversation Continuity v2](channel-conversation-continuity-v2.md)
-- [Channel Conversation Continuity v2 Implementation Plan](channel-conversation-continuity-v2-implementation-plan.md)
 - [Thread-First Work History](thread-first-work-history.md)
 - [Thread-First Work History Implementation Plan](thread-first-work-history-implementation-plan.md)
 - [Conversation Surface Contract](./conversation-surface-contract.md)

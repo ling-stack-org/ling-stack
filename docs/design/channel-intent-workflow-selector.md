@@ -6,7 +6,6 @@ Date: 2026-06-10
 Related docs:
 
 - [Channel Conversation Continuity v2](channel-conversation-continuity-v2.md)
-- [Channel Conversation Continuity v2 Implementation Plan](channel-conversation-continuity-v2-implementation-plan.md)
 - [Conversation Surface Contract](./conversation-surface-contract.md)
 - [Ling Agent Session Control Plane](ling-agent-session.md)
 - [Channel Auto Reply Router](channel-auto-reply-router.md)
