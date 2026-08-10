@@ -9,6 +9,8 @@ import { DEFAULT_WORKSPACE_ID, createCompositeSecretResolver, createSqliteRunSto
 import { createDaemonServer } from "../dist/index.js";
 import { buildContextPack, resolveProviderContextBudget } from "../dist/features/channels/context-packs.js";
 import { routeChannelMessageReply } from "../dist/features/channels/channel-message-router.js";
+import { resolveChannelReplyExecutionTarget } from "../dist/features/channels/channel-reply-execution-target.js";
+import { planConversationContextSummary } from "../dist/features/channels/context-processing/conversation-summary-coordinator.js";
 import { buildLingAgentSessionViewForChannel } from "../dist/features/channels/ling-agent-session-view.js";
 import { buildLingAgentTurnEnvelope } from "../dist/features/channels/ling-agent-turn-envelope.js";
 import { findActiveChannelReplyRun } from "../dist/features/channels/channel-reply-dispatch.js";
@@ -3612,7 +3614,14 @@ test("channel no-tools AI reply retries once with compacted channel summary afte
     new Error("context_length exceeded by test provider"),
     "Retry reply",
   ]);
-  const daemon = await startDaemonForTest(runner);
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
   try {
     const channel = await createChannel(daemon.url, cwd);
     const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
@@ -3647,9 +3656,128 @@ test("channel no-tools AI reply retries once with compacted channel summary afte
     assert.equal(persistedProvider.maxTokens, undefined);
 
     const summaries = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/context-summaries?cwd=${encodeURIComponent(cwd)}`);
-    assert.equal(summaries.contextSummaries.length, 1);
-    assert.equal(summaries.contextSummaries[0].authorType, "system");
-    assert.deepEqual(summaries.contextSummaries[0].sourceMessageIds, [created.message.id]);
+    assert.equal(summaries.contextSummaries.length, 0);
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const incidents = store.listAvailabilityIncidents({
+      providerPresetId: provider.id,
+      now: new Date().toISOString(),
+      limit: 10,
+    });
+    assert.equal(incidents.length, 1);
+    assert.equal(incidents[0].kind, "timeout");
+    assert.equal(incidents[0].state, "slow");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("channel hard summary uses the effective workspace provider before dispatching a reply", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-proactive-summary-"));
+  const runner = new SummaryAwareRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const provider = (await createStaticChatProvider(daemon.url, cwd, {
+      contextWindow: 1_800,
+      maxTokens: 512,
+    })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    await setWorkspaceDefaultProvider(daemon.url, cwd, provider.id);
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const thread = store.resolveOrCreateConversationThread({
+      surfaceKind: "channel_root",
+      channelId: channel.id,
+      title: "Proactive summary",
+      objective: "Summarize before the provider rejects the prompt",
+    }, "2026-08-10T06:00:00.000Z").thread;
+
+    for (let index = 0; index < 10; index += 1) {
+      const createdAt = new Date(Date.parse("2026-08-10T06:00:01.000Z") + index * 10_000).toISOString();
+      const turn = store.appendConversationUserTurn({
+        itemId: `item_proactive_summary_${index}`,
+        turnId: `turn_proactive_summary_${index}`,
+        channelId: channel.id,
+        threadId: thread.id,
+        title: `Historical fact ${index}`,
+        userInstruction: `Historical fact ${index}`,
+        payload: {
+          body: `Historical fact ${index}: ${"x".repeat(900)}`,
+          format: "plain_text",
+          mentions: [],
+          attachmentIds: [],
+          linkPreviewIds: [],
+          fileRefs: [],
+        },
+        idempotencyKey: `proactive-summary:${index}`,
+      }, createdAt);
+      const run = store.createRun({
+        id: `run_proactive_summary_${index}`,
+        cwd,
+        taskId: `task_proactive_summary_${index}`,
+        channelId: channel.id,
+        threadId: thread.id,
+        turnId: turn.turnId,
+        providerName: "test",
+        providerModel: "test",
+        taskSnapshot: {
+          id: `task_proactive_summary_${index}`,
+          title: `Historical fact ${index}`,
+          prompt: `Historical fact ${index}`,
+        },
+        providerSnapshot: { provider: "test", model: "test" },
+        requestSnapshot: {
+          cwd,
+          task: {
+            id: `task_proactive_summary_${index}`,
+            title: `Historical fact ${index}`,
+            prompt: `Historical fact ${index}`,
+          },
+        },
+        createdAt: new Date(Date.parse(createdAt) + 1_000).toISOString(),
+      });
+      store.markRunStarted(run.id, new Date(Date.parse(createdAt) + 2_000).toISOString());
+      store.markRunSucceeded(run.id, new Date(Date.parse(createdAt) + 3_000).toISOString());
+    }
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "@Engineer continue from the durable summary.",
+      mentions: [{ id: "teammate_builtin_engineer", label: "Engineer", kind: "ai-teammate" }],
+      teammateId: "teammate_builtin_engineer",
+      requestAiReply: true,
+    });
+    await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
+
+    const target = resolveChannelReplyExecutionTarget({
+      store,
+      channel,
+      requestedTeammateId: "teammate_builtin_engineer",
+    });
+    assert.equal(target.providerPresetId, provider.id);
+    const currentItem = store.getConversationItem(created.message.id);
+    assert.ok(currentItem);
+    const plan = planConversationContextSummary({
+      store,
+      sourceItemId: currentItem.id,
+      inputBudgetTokens: resolveProviderContextBudget(provider, "channel_reply").inputBudgetTokens,
+    });
+    assert.equal(plan?.trigger, "hard");
+    assert.equal(runner.summaryRuns.length, 1);
+    assert.equal(runner.replyRuns.length, 1);
+    const summaries = store.listConversationContextSummaries({ threadId: thread.id });
+    assert.equal(summaries.length, 1);
+    assert.equal(summaries[0].objective, "Preserve the durable historical objective.");
+    assert.ok(summaries[0].coveredThroughSequence < currentItem.sequence);
+    assert.match(runner.replyRuns[0].task.prompt, /Preserve the durable historical objective/);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -6053,21 +6181,32 @@ test("default_teammate route treats channel branches and topic replies as separa
       title: "Root",
       objective: "Root conversation",
     }, now).thread;
-    const rootTurn = store.createLingTurn({
-      threadId: rootThread.id,
-      kind: "initial_request",
-      title: "Branch parent",
-      userInstruction: "Create a branch",
+    const rootMessage = store.createChannelMessage({
       channelId: channel.id,
+      authorType: "local-user",
+      body: "Create a branch",
     }, now);
+    const rootItem = store.getConversationItem(rootMessage.id);
+    assert.ok(rootItem?.turnId);
+    const rootAssignment = store.getEffectiveTurnContextAssignment(rootItem.turnId);
+    assert.ok(rootAssignment);
     const branchThread = store.resolveOrCreateConversationThread({
       id: "thread_branch_root",
       surfaceKind: "branch",
       channelId: channel.id,
       parentThreadId: rootThread.id,
-      parentTurnId: rootTurn.id,
+      parentTurnId: rootItem.turnId,
       title: "Branch",
       objective: "Branch conversation",
+      forkContextSnapshot: {
+        id: "snapshot_branch_root",
+        segmentId: rootAssignment.segmentId,
+        projectionVersion: "ctxv2_branch_root",
+        throughItemSequence: rootItem.sequence,
+        summaryIds: [],
+        sourceRefs: [{ type: "conversation_item", id: rootItem.id }],
+        policyVersion: "continuity-v2-snapshot-v1",
+      },
     }, now).thread;
     const branch = store.createChannelBranch(
       {
@@ -12026,6 +12165,34 @@ test("private attachments avatar and hard delete stay scoped to teammate private
     await rm(cwd, { recursive: true, force: true });
   }
 });
+
+class SummaryAwareRunner {
+  constructor() {
+    this.runs = [];
+    this.summaryRuns = [];
+    this.replyRuns = [];
+  }
+
+  async runTask(options) {
+    this.runs.push(options);
+    const summary = /conversation summary coordinator/i.test(options.systemPrompt ?? "");
+    const text = summary
+      ? JSON.stringify({
+          objective: "Preserve the durable historical objective.",
+          decisions: ["Use proactive summaries before provider rejection."],
+          constraints: ["Keep the recent raw tail."],
+          openQuestions: [],
+        })
+      : "Reply after proactive summary.";
+    (summary ? this.summaryRuns : this.replyRuns).push(options);
+    options.onEvent?.({ type: "assistant_text_delta", text });
+    return {
+      taskId: options.task.id,
+      messages: [{ role: "assistant", content: text }],
+      events: [],
+    };
+  }
+}
 
 class RecordingRunner {
   constructor() {

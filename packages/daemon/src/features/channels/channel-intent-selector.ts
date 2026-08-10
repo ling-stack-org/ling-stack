@@ -543,10 +543,11 @@ async function requestModelIntent(input: ChannelIntentSelectorInput): Promise<Ch
       error,
       now: observedAt,
     });
-    const compaction = compactChannelDiscussionForNoToolsRetry({
+    const compaction = await compactChannelDiscussionForNoToolsRetry({
       store: input.store,
       channel: input.channel,
       sourceMessage: input.sourceMessage,
+      inputBudgetTokens: contextPack.budget.inputBudgetTokens,
       now: observedAt,
     });
     contextPack = buildChannelIntentSelectorContextPack({

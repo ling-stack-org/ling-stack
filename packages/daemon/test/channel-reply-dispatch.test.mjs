@@ -57,21 +57,30 @@ test("active channel replies are scoped to their conversation line", async () =>
       title: "Reply lanes",
       objective: "Verify active reply scoping",
     }, "2026-08-06T00:00:05.000Z").thread;
-    const rootTurn = store.createLingTurn({
-      threadId: rootThread.id,
-      kind: "follow_up",
-      title: "Branch parent",
-      userInstruction: "Open an independent branch",
-      channelId: channel.id,
-    }, "2026-08-06T00:00:06.000Z");
+    const rootMessage = createMessage(store, channel.id, [], {
+      body: "Open an independent branch",
+    });
+    const rootItem = store.getConversationItem(rootMessage.id);
+    assert.ok(rootItem?.turnId);
+    const rootAssignment = store.getEffectiveTurnContextAssignment(rootItem.turnId);
+    assert.ok(rootAssignment);
     const branchThread = store.resolveOrCreateConversationThread({
       id: "thread_branch",
       surfaceKind: "branch",
       channelId: channel.id,
       parentThreadId: rootThread.id,
-      parentTurnId: rootTurn.id,
+      parentTurnId: rootItem.turnId,
       title: "Independent branch",
       objective: "Verify active reply scoping",
+      forkContextSnapshot: {
+        id: "snapshot_thread_branch",
+        segmentId: rootAssignment.segmentId,
+        projectionVersion: "ctxv2_thread_branch",
+        throughItemSequence: rootItem.sequence,
+        summaryIds: [],
+        sourceRefs: [{ type: "conversation_item", id: rootItem.id }],
+        policyVersion: "continuity-v2-snapshot-v1",
+      },
     }, "2026-08-06T00:00:07.000Z").thread;
     const branchMessage = createMessage(store, channel.id, [], { threadId: branchThread.id });
     assert.equal(findActiveChannelReplyRun({ store, channelId: channel.id, sourceMessage: branchMessage }), undefined);

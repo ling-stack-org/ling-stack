@@ -372,6 +372,7 @@ export class SqliteConversationItemStore {
       throw new RangeError(`Invalid conversation projection lower watermark: ${afterSequence}`);
     }
     const limit = Math.min(Math.max(options.limit ?? 500, 1), 500);
+    const order = options.order === "oldest" ? "ASC" : "DESC";
     const rows = this.context.database.prepare(`
       SELECT items.*
       FROM conversation_items AS items
@@ -392,7 +393,7 @@ export class SqliteConversationItemStore {
           SELECT 1 FROM conversation_items AS replacement
           WHERE replacement.supersedes_item_id = items.id
         )
-      ORDER BY items.sequence DESC
+      ORDER BY items.sequence ${order}
       LIMIT ?
     `).all(
       DEFAULT_WORKSPACE_ID,
@@ -402,9 +403,8 @@ export class SqliteConversationItemStore {
       options.throughSequence,
       limit,
     );
-    return rows
-      .map((row) => mapConversationItem(row as Record<string, SQLOutputValue>))
-      .reverse();
+    const items = rows.map((row) => mapConversationItem(row as Record<string, SQLOutputValue>));
+    return options.order === "oldest" ? items : items.reverse();
   }
 
   updatePendingConversationItem<K extends ConversationItemKindV1>(

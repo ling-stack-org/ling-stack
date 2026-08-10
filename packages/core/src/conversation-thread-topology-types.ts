@@ -1,4 +1,5 @@
 import type { LingThread } from "./run-types.js";
+import type { CreateConversationContextSnapshotInput } from "./conversation-context-store-types.js";
 
 interface ConversationThreadTopologyBaseInput {
   readonly id?: string;
@@ -19,6 +20,8 @@ export type ResolveOrCreateConversationThreadInput =
       readonly surfaceKind: "branch";
       readonly parentThreadId: string;
       readonly parentTurnId: string;
+      readonly forkedFromRunId?: string;
+      readonly forkContextSnapshot: Omit<CreateConversationContextSnapshotInput, "threadId">;
     });
 
 export interface ResolveOrCreateConversationThreadResult {

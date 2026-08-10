@@ -136,6 +136,113 @@ test("context assignments reject invented cross-thread segments and invalid conf
   }, secondAt), /between 0 and 1/);
 });
 
+test("context summaries commit with a source fence, supersede atomically, and discard stale results", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "ling-context-summary-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const store = createSqliteRunStore(cwd);
+  t.after(() => store.close());
+  const channel = store.createChannel({ name: "Summary", boundPath: cwd }, firstAt);
+  const thread = store.resolveOrCreateConversationThread({
+    surfaceKind: "channel_root",
+    channelId: channel.id,
+    title: "Summary",
+    objective: "Test summary fencing",
+  }, firstAt).thread;
+  const first = appendUserTurn(store, channel.id, thread.id, "summary first", firstAt);
+  const second = appendUserTurn(store, channel.id, thread.id, "summary second", secondAt);
+  const initialInput = summaryCommitInput(store, thread.id, first.contextSegmentId, [first, second]);
+
+  const third = appendUserTurn(store, channel.id, thread.id, "summary third", thirdAt);
+  const initial = store.commitConversationContextSummary(initialInput, thirdAt);
+  assert.equal(initial.status, "committed");
+  assert.equal(initial.summary.version, 1);
+  assert.equal(initial.summary.coveredThroughSequence, second.item.sequence);
+
+  const replacementInput = summaryCommitInput(
+    store,
+    thread.id,
+    first.contextSegmentId,
+    [first, second, third],
+    initial.summary.id,
+  );
+  const replacement = store.commitConversationContextSummary(
+    replacementInput,
+    "2026-08-10T01:03:00.000Z",
+  );
+  assert.equal(replacement.status, "committed");
+  assert.equal(replacement.summary.version, 2);
+  assert.equal(replacement.summary.supersedesSummaryId, initial.summary.id);
+  assert.equal(store.getConversationContextSummary(initial.summary.id)?.status, "superseded");
+  assert.deepEqual(
+    store.listConversationContextSummaries({ threadId: thread.id }).map((summary) => summary.id),
+    [replacement.summary.id],
+  );
+
+  const duplicateLateResult = store.commitConversationContextSummary(
+    replacementInput,
+    "2026-08-10T01:04:00.000Z",
+  );
+  assert.deepEqual(duplicateLateResult, {
+    status: "discarded_stale",
+    reason: "active_summary_changed",
+  });
+});
+
+test("context summary assignment races are discarded and snapshots remain source-linked", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "ling-context-snapshot-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const store = createSqliteRunStore(cwd);
+  t.after(() => store.close());
+  const channel = store.createChannel({ name: "Snapshot", boundPath: cwd }, firstAt);
+  const thread = store.resolveOrCreateConversationThread({
+    surfaceKind: "channel_root",
+    channelId: channel.id,
+    title: "Snapshot",
+    objective: "Test snapshot reconstruction",
+  }, firstAt).thread;
+  const first = appendUserTurn(store, channel.id, thread.id, "snapshot first", firstAt);
+  const second = appendUserTurn(store, channel.id, thread.id, "snapshot second", secondAt);
+  const staleInput = summaryCommitInput(store, thread.id, first.contextSegmentId, [first, second]);
+
+  store.applyTurnContextAssignment({
+    turnId: first.turnId,
+    target: { kind: "existing", segmentId: first.contextSegmentId },
+    status: "committed",
+    decisionSource: "user",
+    confidence: 1,
+    evidenceRefs: [{ type: "conversation_item", id: first.item.id }],
+    policyVersion,
+  }, thirdAt);
+  assert.deepEqual(
+    store.commitConversationContextSummary(staleInput, "2026-08-10T01:03:00.000Z"),
+    { status: "discarded_stale", reason: "assignments_changed" },
+  );
+
+  const snapshot = store.createConversationContextSnapshot({
+    id: "snapshot-fork-boundary",
+    threadId: thread.id,
+    segmentId: first.contextSegmentId,
+    projectionVersion: "ctxv2_snapshot_fixture",
+    throughItemSequence: second.item.sequence,
+    summaryIds: [],
+    sourceRefs: [
+      { type: "thread", id: thread.id },
+      { type: "conversation_item", id: first.item.id },
+      { type: "conversation_item", id: second.item.id },
+    ],
+    policyVersion: "continuity-v2-snapshot-v1",
+  }, "2026-08-10T01:04:00.000Z");
+  assert.equal(store.getConversationContextSnapshot(snapshot.id)?.projectionVersion, "ctxv2_snapshot_fixture");
+  assert.deepEqual(
+    store.listConversationContextSnapshots({ threadId: thread.id }).map((candidate) => candidate.id),
+    [snapshot.id],
+  );
+
+  appendUserTurn(store, channel.id, thread.id, "parent changed later", "2026-08-10T01:05:00.000Z");
+  assert.equal(store.getConversationContextSnapshot(snapshot.id)?.throughItemSequence, second.item.sequence);
+  assert.deepEqual(store.getConversationContextSnapshot(snapshot.id)?.sourceRefs, snapshot.sourceRefs);
+});
+
 function appendUserTurn(store, channelId, threadId, body, now) {
   return store.appendConversationUserTurn({
     channelId,
@@ -152,6 +259,44 @@ function appendUserTurn(store, channelId, threadId, body, now) {
     },
     idempotencyKey: `context-test:${body}`,
   }, now);
+}
+
+function summaryCommitInput(store, threadId, segmentId, turns, expectedActiveSummaryId = null) {
+  return {
+    threadId,
+    segmentId,
+    scope: "segment",
+    coveredFromSequence: turns[0].item.sequence,
+    coveredThroughSequence: turns.at(-1).item.sequence,
+    objective: "Preserve the current objective.",
+    decisions: ["Use fenced summaries."],
+    constraints: ["Do not overwrite a newer summary."],
+    openQuestions: [],
+    activeWorkRefs: [],
+    sourceRefs: [
+      ...(expectedActiveSummaryId ? [{ type: "context_summary", id: expectedActiveSummaryId }] : []),
+      ...turns.map((turn) => ({ type: "conversation_item", id: turn.item.id })),
+    ],
+    policyVersion: "continuity-v2-summary-v1",
+    projectionVersion: `ctxv2_fixture_${turns.at(-1).item.sequence}`,
+    visibilityFingerprint: "visibility_fixture_channel",
+    expectedActiveSummaryId,
+    sourceFence: turns.map((turn) => {
+      const assignment = store.getEffectiveTurnContextAssignment(turn.turnId);
+      assert.ok(assignment);
+      return {
+        itemId: turn.item.id,
+        sequence: turn.item.sequence,
+        revision: turn.item.revision,
+        updatedAt: turn.item.updatedAt,
+        visibility: turn.item.visibility,
+        visibilityOwnerId: turn.item.visibilityOwnerId,
+        turnId: turn.turnId,
+        assignmentId: assignment.id,
+        assignmentRevision: assignment.revision,
+      };
+    }),
+  };
 }
 
 function insertSegmentSummary(cwd, input) {

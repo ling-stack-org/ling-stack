@@ -68,6 +68,7 @@ export interface ListConversationItemsForSegmentOptions {
   readonly segmentId: string;
   readonly throughSequence: number;
   readonly afterSequence?: number;
+  readonly order?: "oldest" | "newest";
   readonly limit?: number;
 }
 

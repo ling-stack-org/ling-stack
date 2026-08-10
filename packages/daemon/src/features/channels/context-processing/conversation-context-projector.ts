@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type {
   ContextSegment,
+  ConversationContextSnapshot,
   ConversationContextProjectionMetadata,
   ConversationContextSummary,
   ConversationDomainRef,
@@ -37,6 +38,7 @@ export interface ConversationContextProjection {
   readonly metadata: ConversationContextProjectionMetadata;
   readonly segment: ContextSegment;
   readonly assignment: TurnContextAssignment;
+  readonly forkSnapshot?: ConversationContextSnapshot;
   readonly summaries: readonly ConversationContextSummary[];
   readonly items: readonly ConversationItemV1[];
   readonly sharedCore: {
@@ -59,6 +61,12 @@ export function buildConversationContextProjection(
   if (!thread || thread.archivedAt || thread.status === "archived") {
     throw new Error(`Conversation projection thread is not active: ${sourceItem.threadId}`);
   }
+  const forkSnapshot = thread.forkContextSnapshotId
+    ? input.store.getConversationContextSnapshot(thread.forkContextSnapshotId)
+    : undefined;
+  if (thread.forkContextSnapshotId && !forkSnapshot) {
+    throw new Error(`Conversation projection fork snapshot is missing: ${thread.forkContextSnapshotId}`);
+  }
   const assignment = input.store.getEffectiveTurnContextAssignment(sourceItem.turnId);
   if (!assignment) {
     throw new Error(`Conversation projection turn has no context assignment: ${sourceItem.turnId}`);
@@ -68,13 +76,24 @@ export function buildConversationContextProjection(
     throw new Error(`Conversation projection assignment references an unavailable segment: ${assignment.segmentId}`);
   }
 
-  const summaries = effectiveProjectionSummaries(input.store, sourceItem, segment.id);
+  const inheritedSummaries = forkSnapshot
+    ? forkSnapshot.summaryIds.map((summaryId) => {
+        const summary = input.store.getConversationContextSummary(summaryId);
+        if (!summary) throw new Error(`Conversation projection fork summary is missing: ${summaryId}`);
+        return { ...summary, status: "active" as const };
+      })
+    : [];
+  const summaries = uniqueSummaries([
+    ...inheritedSummaries,
+    ...effectiveProjectionSummaries(input.store, sourceItem, segment.id),
+  ]);
   assertProjectionSummarySourceRefsVisible({
     store: input.store,
     sourceItem,
     summaries,
     view: input.view,
     consumerTeammateId: input.consumerTeammateId,
+    inheritedSummaryIds: new Set(inheritedSummaries.map((summary) => summary.id)),
   });
   const coveredThroughSequence = summaries
     .filter((summary) => summary.segmentId === segment.id && summary.scope === "segment")
@@ -111,8 +130,22 @@ export function buildConversationContextProjection(
       return item;
     });
   const explicitTurnItemIds = new Set(explicitTurnItems.map((item) => item.id));
+  const inheritedItems = forkSnapshot
+    ? forkSnapshot.sourceRefs
+        .filter((ref) => ref.type === "conversation_item" || ref.type === "message")
+        .map((ref) => {
+          const item = input.store.getConversationItem(ref.id);
+          if (!item || item.status !== "committed") {
+            throw new Error(`Conversation projection fork item is missing: ${ref.id}`);
+          }
+          if (!canProjectItem(item, input.view, input.consumerTeammateId)) {
+            throw new Error(`Conversation projection fork item is not visible to this consumer: ${ref.id}`);
+          }
+          return item;
+        })
+    : [];
   const historicalGuidanceItemIds = historicalRunGuidanceItemIds(input.store);
-  const visibleItems = uniqueItems([...tail, ...explicitItems, ...explicitTurnItems, sourceItem])
+  const visibleItems = uniqueItems([...inheritedItems, ...tail, ...explicitItems, ...explicitTurnItems, sourceItem])
     .filter((item) => item.id === sourceItem.id || !historicalGuidanceItemIds.has(item.id))
     .filter((item) => canProjectItem(item, input.view, input.consumerTeammateId))
     .filter((item) =>
@@ -126,12 +159,14 @@ export function buildConversationContextProjection(
   );
   const visibilityFingerprint = fingerprint({
     scope: projectionVisibilityScope(input.view, input.consumerTeammateId),
+    forkSnapshotId: forkSnapshot?.id ?? null,
     visibleItemScopes: items.map((item) => [item.id, item.visibility, item.visibilityOwnerId ?? null]),
   });
   const sourceRefs = uniqueDomainRefs([
     { type: "thread", id: thread.id },
     { type: "turn", id: sourceItem.turnId },
     { type: "conversation_item", id: sourceItem.id },
+    ...(forkSnapshot ? [{ type: "context_snapshot" as const, id: forkSnapshot.id }] : []),
     ...assignment.evidenceRefs,
     ...summaries.flatMap((summary) => [
       { type: "context_summary" as const, id: summary.id },
@@ -147,11 +182,16 @@ export function buildConversationContextProjection(
       surfaceKind: thread.surfaceKind,
       relationKind: thread.relationKind,
       anchorItemId: thread.anchorItemId ?? null,
+      forkContextSnapshotId: thread.forkContextSnapshotId ?? null,
     },
     turnId: sourceItem.turnId,
     segment: { id: segment.id, revision: segment.revision },
     assignment: { id: assignment.id, revision: assignment.revision },
-    summaries: summaries.map((summary) => [summary.id, summary.version, summary.status]),
+    summaries: summaries.map((summary) => [
+      summary.id,
+      summary.version,
+      inheritedSummaries.some((inherited) => inherited.id === summary.id) ? "snapshot" : summary.status,
+    ]),
     throughItemSequence: sourceItem.sequence,
     visibilityFingerprint,
   });
@@ -169,6 +209,7 @@ export function buildConversationContextProjection(
     },
     segment,
     assignment,
+    ...(forkSnapshot ? { forkSnapshot } : {}),
     summaries,
     items,
     sharedCore: {
@@ -231,10 +272,14 @@ function assertProjectionSummarySourceRefsVisible(input: {
   readonly summaries: readonly ConversationContextSummary[];
   readonly view: ConversationContextProjectionView;
   readonly consumerTeammateId?: string;
+  readonly inheritedSummaryIds: ReadonlySet<string>;
 }): void {
-  for (const ref of input.summaries.flatMap((summary) => summary.sourceRefs)) {
+  for (const summary of input.summaries) {
+    for (const ref of summary.sourceRefs) {
     if (ref.type === "conversation_item" || ref.type === "message") {
-      const item = input.store.getEffectiveConversationItem(ref.id);
+      const item = input.inheritedSummaryIds.has(summary.id)
+        ? input.store.getConversationItem(ref.id)
+        : input.store.getEffectiveConversationItem(ref.id);
       if (!item || item.status !== "committed") {
         throw new Error(`Conversation projection summary source ref is missing or stale: ${ref.type}:${ref.id}`);
       }
@@ -264,6 +309,7 @@ function assertProjectionSummarySourceRefsVisible(input: {
     }
     if (memory.scopeType === "channel" && memory.ownerId !== input.sourceItem.channelId) {
       throw new Error(`Conversation projection summary memory ref belongs to another channel: ${ref.id}`);
+    }
     }
   }
 }
@@ -342,13 +388,21 @@ function trimProjectionItemsByTextBudget(
   const safeMax = Math.min(Math.max(Math.floor(maxTextChars), 1_024), 256_000);
   const selected: ConversationItemV1[] = [];
   let used = 0;
-  for (const item of [...items].sort((left, right) => right.sequence - left.sequence)) {
+  const sourceThreadId = items.find((item) => item.id === sourceItemId)?.threadId;
+  const ordered = [...items].sort((left, right) => {
+    const leftCurrent = left.threadId === sourceThreadId ? 1 : 0;
+    const rightCurrent = right.threadId === sourceThreadId ? 1 : 0;
+    return leftCurrent - rightCurrent
+      || left.sequence - right.sequence
+      || left.id.localeCompare(right.id);
+  });
+  for (const item of [...ordered].reverse()) {
     const size = projectionItemText(item).length;
     if (item.id !== sourceItemId && selected.length > 0 && used + size > safeMax) continue;
     selected.push(item);
     used += size;
   }
-  return selected.sort((left, right) => left.sequence - right.sequence || left.id.localeCompare(right.id));
+  return selected.reverse();
 }
 
 function projectionItemText(item: ConversationItemV1): string {
@@ -378,6 +432,14 @@ function projectionItemText(item: ConversationItemV1): string {
 function uniqueItems(items: readonly ConversationItemV1[]): ConversationItemV1[] {
   const byId = new Map<string, ConversationItemV1>();
   for (const item of items) byId.set(item.id, item);
+  return [...byId.values()];
+}
+
+function uniqueSummaries(
+  summaries: readonly ConversationContextSummary[],
+): ConversationContextSummary[] {
+  const byId = new Map<string, ConversationContextSummary>();
+  for (const summary of summaries) byId.set(summary.id, summary);
   return [...byId.values()];
 }
 

@@ -1,6 +1,6 @@
 # Channel Conversation Continuity v2 Implementation Plan
 
-Status: G0 complete; S-1 and S0 merged; S1+S2, S3, and S4 implemented and locally verified; S5-S7 pending
+Status: G0 complete; S-1 and S0 merged; S1+S2, S3, S4, and S5 implemented and locally verified; S6-S7 pending
 Owner: conversation, channel context, Ling Agent Session, and storage maintainers
 Date: 2026-08-08
 Last verified: 2026-08-10
@@ -400,7 +400,7 @@ input accepted
 
 ## Slice S3: Context Segmentation And Shared Projection
 
-Status: implemented on `codex/continuity-v2-context-projector` and locally verified.
+Status: implemented on `codex/continuity-v2-context-projection` and locally verified.
 Contracts (`35/35`), Core (`355/355`), Daemon (`888/888`), Remote Protocol
 (`40/40`), and Web (`42/42`) tests pass; Web typecheck and `git diff --check` pass.
 Model-facing Channel consumers use the shared projector, including causally later queued
@@ -447,7 +447,7 @@ context. Paging for UI remains allowed; context construction goes through the pr
 
 ## Slice S4: Intent v2 And Issue #421 Closure
 
-Status: implemented on `codex/continuity-v2-context-projector`. The clean-break SQLite
+Status: implemented on `codex/continuity-v2-intent-v2`. The clean-break SQLite
 migration, contracts, API/client filters, selector, structured clarification, typed
 execution, Web diagnostics, and Issue #421 regression fixtures are locally verified.
 The focused channel workspace suite passes 186/186, including article continuation,
@@ -499,6 +499,11 @@ bad clarification -> unrelated snake game
   sections explicitly marked as superseded.
 
 ## Slice S5: Proactive Summaries And Fork Snapshots
+
+Status: implemented on `codex/continuity-v2-summaries-snapshots` and locally verified.
+Core (`357/357`) and Daemon (`894/894`) tests pass, including provider-aware hard
+summarization, stable raw-tail reconstruction, stale-result fencing, immutable fork
+snapshot reconstruction, and the one strict context-length fallback.
 
 ### Changes
 
@@ -804,7 +809,7 @@ interfaces at the end of S3 and keep implementation files separate before parall
   - Verify: projection consistency, permission, correction, and consumer adapter tests.
 - [x] **T5 (P1, human: ~2 days / Codex: ~3-4 hours)**: cut intent decisions to v2 and satisfy issue #421 closure criteria.
   - Verify: daemon regression suite, explicit file safety, clarification actionability, and eval cases.
-- [ ] **T6 (P2, human: ~2 days / Codex: ~3-5 hours)**: add proactive summaries, coverage watermarks, stale-result rejection, and fork snapshots.
+- [x] **T6 (P2, human: ~2 days / Codex: ~3-5 hours)**: add proactive summaries, coverage watermarks, stale-result rejection, and fork snapshots.
   - Verify: budget, race, invalidation, reconstruction, and fallback tests.
 - [ ] **T7 (P2, human: ~2 days / Codex: ~3-5 hours)**: enforce multi-agent projection versions and private-memory isolation.
   - Verify: shared-core, stale fan-in, handoff, and security fixtures.
