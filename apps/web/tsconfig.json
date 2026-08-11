@@ -7,6 +7,7 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "outDir": "dist-types",
+    "rootDir": "..",
     "strict": true,
     "target": "ES2022",
     "types": ["vite/client"]

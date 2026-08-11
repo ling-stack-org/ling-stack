@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 
-import { signAsync } from "@electron/osx-sign";
+import { sign } from "@electron/osx-sign";
 
 import {
   SigningContractError,
@@ -101,7 +101,7 @@ export function createDarwinPlatformSigner(input = {}) {
       const mainExecutable = await resolveBundleMainExecutable(filePath);
       const beforeSha256 = await sha256File(mainExecutable);
       const originalOptionsForFile = bundleSignOptions.optionsForFile;
-      await signAsync({
+      await sign({
         ...bundleSignOptions,
         app: filePath,
         identity,

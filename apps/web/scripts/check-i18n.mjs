@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import ts from "typescript";
+import { ts, visitTypeScriptNode, withTypeScriptSourceFiles } from "./typescript-ast.mjs";
 
 const webRoot = process.cwd();
 const srcRoot = path.join(webRoot, "src");
@@ -28,9 +28,7 @@ function unwrapExpression(expression) {
   return current;
 }
 
-function parseLocale({ file, exportName }) {
-  const sourceText = fs.readFileSync(file, "utf8");
-  const sourceFile = ts.createSourceFile(file, sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+function parseLocale({ file, exportName }, sourceFile) {
   const keys = new Set();
   const duplicates = [];
 
@@ -53,7 +51,10 @@ function parseLocale({ file, exportName }) {
         }
       }
     }
-    ts.forEachChild(node, visit);
+    ts.visitEachChild(node, (child) => {
+      visit(child);
+      return child;
+    });
   }
 
   visit(sourceFile);
@@ -76,20 +77,12 @@ function collectSourceFiles(root) {
   return files;
 }
 
-function collectLiteralTranslationKeys() {
+function collectLiteralTranslationKeys(files, sourceFiles) {
   const keys = new Set();
   const dynamicCalls = [];
-  for (const file of collectSourceFiles(srcRoot)) {
-    const sourceText = fs.readFileSync(file, "utf8");
-    const sourceFile = ts.createSourceFile(
-      file,
-      sourceText,
-      ts.ScriptTarget.Latest,
-      true,
-      file.endsWith(".tsx") || file.endsWith(".jsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
-    );
-
-    function visit(node) {
+  for (const file of files) {
+    const sourceFile = sourceFiles.get(path.resolve(file));
+    visitTypeScriptNode(sourceFile, (node) => {
       if (ts.isCallExpression(node) && node.expression.getText(sourceFile) === "t") {
         const argument = node.arguments[0];
         if (argument) {
@@ -101,17 +94,18 @@ function collectLiteralTranslationKeys() {
           }
         }
       }
-      ts.forEachChild(node, visit);
-    }
-
-    visit(sourceFile);
+    });
   }
   return { keys, dynamicCalls };
 }
 
-const english = parseLocale(localeFiles["en-US"]);
-const chinese = parseLocale(localeFiles["zh-CN"]);
-const literalTranslations = collectLiteralTranslationKeys();
+const allSourceFiles = collectSourceFiles(srcRoot);
+const audit = withTypeScriptSourceFiles(allSourceFiles, (sourceFiles) => ({
+  english: parseLocale(localeFiles["en-US"], sourceFiles.get(path.resolve(localeFiles["en-US"].file))),
+  chinese: parseLocale(localeFiles["zh-CN"], sourceFiles.get(path.resolve(localeFiles["zh-CN"].file))),
+  literalTranslations: collectLiteralTranslationKeys(allSourceFiles, sourceFiles),
+}));
+const { english, chinese, literalTranslations } = audit;
 const missingChinese = [...literalTranslations.keys].filter((key) => !chinese.keys.has(key));
 const englishOnlyKeys = [...english.keys].filter((key) => !chinese.keys.has(key));
 const failures = [];
