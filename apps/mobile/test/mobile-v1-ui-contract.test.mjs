@@ -70,5 +70,5 @@ test("profile surface remains narrow and unpair calls the ordered remote client 
   assert.match(provider, /setPhase\("welcome"\)/u);
   assert.match(storage, /AsyncStorage\.getAllKeys\(\)/u);
   assert.match(storage, /key\.startsWith\(prefix\)/u);
-  assert.match(storage, /AsyncStorage\.multiRemove\(keys\)/u);
+  assert.match(storage, /AsyncStorage\.removeMany\(keys\)/u);
 });

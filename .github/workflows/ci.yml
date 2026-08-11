@@ -53,6 +53,9 @@ jobs:
       - name: Check public repository safety
         run: corepack pnpm check:public
 
+      - name: Check patched dependency security regressions
+        run: corepack pnpm check:dependency-security
+
       - name: Scan Git history for secrets
         run: >-
           docker run --rm
