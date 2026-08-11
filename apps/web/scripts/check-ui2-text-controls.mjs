@@ -1,7 +1,7 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import process from "node:process";
-import ts from "typescript";
+import { ts, visitTypeScriptNode, withTypeScriptSourceFiles } from "./typescript-ast.mjs";
 
 const webRoot = process.cwd();
 const sourceRoot = resolve(webRoot, "src");
@@ -13,33 +13,35 @@ const violations = [];
 const retained = [];
 const ownedNativeControls = [];
 
-for (const file of collectTsxFiles(sourceRoot)) {
-  const source = readFileSync(file, "utf8");
-  const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  const sourcePath = relative(sourceRoot, file);
-  visit(sourceFile, (node) => {
-    if (!ts.isJsxOpeningElement(node) && !ts.isJsxSelfClosingElement(node)) return;
-    const tag = node.tagName.getText(sourceFile);
-    if (tag !== "input" && tag !== "textarea") return;
-    const type = tag === "textarea" ? "textarea" : readStaticInputType(node, sourceFile);
-    const line = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
-    if (tag === "input" && type && nativeInputTypes.has(type)) {
-      if (readStaticAttribute(node, sourceFile, "data-ling-control-native") !== "true") {
-        violations.push(`${sourcePath}:${line} <input type="${type}"> missing data-ling-control-native="true"`);
-      } else {
-        ownedNativeControls.push(`${sourcePath}:${line} <input type="${type}">`);
+const sourceFiles = collectTsxFiles(sourceRoot);
+withTypeScriptSourceFiles(sourceFiles, (parsedFiles) => {
+  for (const file of sourceFiles) {
+    const sourceFile = parsedFiles.get(resolve(file));
+    const sourcePath = relative(sourceRoot, file);
+    visitTypeScriptNode(sourceFile, (node) => {
+      if (!ts.isJsxOpeningElement(node) && !ts.isJsxSelfClosingElement(node)) return;
+      const tag = node.tagName.getText(sourceFile);
+      if (tag !== "input" && tag !== "textarea") return;
+      const type = tag === "textarea" ? "textarea" : readStaticInputType(node, sourceFile);
+      const line = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
+      if (tag === "input" && type && nativeInputTypes.has(type)) {
+        if (readStaticAttribute(node, sourceFile, "data-ling-control-native") !== "true") {
+          violations.push(`${sourcePath}:${line} <input type="${type}"> missing data-ling-control-native="true"`);
+        } else {
+          ownedNativeControls.push(`${sourcePath}:${line} <input type="${type}">`);
+        }
+        return;
       }
-      return;
-    }
 
-    const allowed = decisionGatedControls.get(sourcePath);
-    if (allowed?.tag === tag && allowed.type === type) {
-      retained.push(`${sourcePath}:${line} <${tag} type="${type}">`);
-      return;
-    }
-    violations.push(`${sourcePath}:${line} <${tag}${type ? ` type="${type}"` : " dynamic-type"}>`);
-  });
-}
+      const allowed = decisionGatedControls.get(sourcePath);
+      if (allowed?.tag === tag && allowed.type === type) {
+        retained.push(`${sourcePath}:${line} <${tag} type="${type}">`);
+        return;
+      }
+      violations.push(`${sourcePath}:${line} <${tag}${type ? ` type="${type}"` : " dynamic-type"}>`);
+    });
+  }
+});
 
 for (const sourcePath of decisionGatedControls.keys()) {
   if (!retained.some((entry) => entry.startsWith(`${sourcePath}:`))) {
@@ -76,9 +78,4 @@ function readStaticAttribute(node, sourceFile, name) {
   if (!attribute) return undefined;
   if (!ts.isJsxAttribute(attribute) || !attribute.initializer) return "true";
   return ts.isStringLiteral(attribute.initializer) ? attribute.initializer.text : "dynamic";
-}
-
-function visit(node, callback) {
-  callback(node);
-  ts.forEachChild(node, (child) => visit(child, callback));
 }

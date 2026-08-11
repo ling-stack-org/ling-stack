@@ -1,7 +1,8 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { extname, join, relative, resolve } from "node:path";
 import process from "node:process";
-import ts from "typescript";
+import { ts, visitTypeScriptNode, withTypeScriptSourceFiles } from "./typescript-ast.mjs";
 
 const webRoot = process.cwd();
 const repoRoot = resolve(webRoot, "../..");
@@ -14,40 +15,34 @@ const sourceRoots = [
 const blockedMethods = new Set(["alert", "confirm", "prompt"]);
 const browserGlobals = new Set(["globalThis", "window"]);
 
-const selfTest = findViolations(
-  ts.createSourceFile(
-    "browser-dialog-guard-self-test.ts",
-    [
-      "window.alert('blocked');",
-      "globalThis.confirm('blocked');",
-      "window['prompt']('blocked');",
-      "function confirm() { return true; }",
-      "confirm();",
-    ].join("\n"),
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS,
-  ),
-  "browser-dialog-guard-self-test.ts",
-);
-if (selfTest.length !== 3) {
-  console.error(`Browser dialog guard self-test failed: expected 3 violations, found ${selfTest.length}.`);
-  process.exit(1);
+const selfTestDir = mkdtempSync(join(tmpdir(), "ling-browser-dialog-guard-"));
+const selfTestFile = join(selfTestDir, "browser-dialog-guard-self-test.ts");
+writeFileSync(selfTestFile, [
+  "window.alert('blocked');",
+  "globalThis.confirm('blocked');",
+  "window['prompt']('blocked');",
+  "function confirm() { return true; }",
+  "confirm();",
+].join("\n"));
+
+const productionFiles = sourceRoots.flatMap((root) => collectSourceFiles(root));
+let violations;
+try {
+  violations = withTypeScriptSourceFiles([...productionFiles, selfTestFile], (sourceFiles) => {
+    const selfTest = findViolations(sourceFiles.get(resolve(selfTestFile)), "browser-dialog-guard-self-test.ts");
+    if (selfTest.length !== 3) {
+      throw new Error(`Browser dialog guard self-test failed: expected 3 violations, found ${selfTest.length}.`);
+    }
+    return productionFiles.flatMap((file) => (
+      findViolations(sourceFiles.get(resolve(file)), relative(repoRoot, file))
+    ));
+  });
+} finally {
+  rmSync(selfTestDir, { recursive: true, force: true });
 }
 
-const violations = [];
-for (const root of sourceRoots) {
-  for (const file of collectSourceFiles(root)) {
-    const source = readFileSync(file, "utf8");
-    const sourceFile = ts.createSourceFile(
-      file,
-      source,
-      ts.ScriptTarget.Latest,
-      true,
-      sourceKind(file),
-    );
-    violations.push(...findViolations(sourceFile, relative(repoRoot, file)));
-  }
+if (!violations) {
+  throw new Error("Browser dialog guard produced no result.");
 }
 
 if (violations.length > 0) {
@@ -73,7 +68,7 @@ function collectSourceFiles(root) {
 
 function findViolations(sourceFile, displayPath) {
   const found = [];
-  visit(sourceFile, (node) => {
+  visitTypeScriptNode(sourceFile, (node) => {
     if (!ts.isCallExpression(node)) return;
     const target = readBrowserDialogTarget(node.expression);
     if (!target) return;
@@ -92,21 +87,8 @@ function readBrowserDialogTarget(expression) {
   if (ts.isElementAccessExpression(expression) && ts.isIdentifier(expression.expression)) {
     const global = expression.expression.text;
     const argument = expression.argumentExpression;
-    const method = argument && ts.isStringLiteralLike(argument) ? argument.text : "";
+    const method = argument && ts.isStringLiteral(argument) ? argument.text : "";
     return browserGlobals.has(global) && blockedMethods.has(method) ? { global, method } : undefined;
   }
   return undefined;
-}
-
-function sourceKind(file) {
-  const extension = extname(file);
-  if (extension === ".tsx") return ts.ScriptKind.TSX;
-  if (extension === ".jsx") return ts.ScriptKind.JSX;
-  if (extension === ".js" || extension === ".mjs") return ts.ScriptKind.JS;
-  return ts.ScriptKind.TS;
-}
-
-function visit(node, callback) {
-  callback(node);
-  ts.forEachChild(node, (child) => visit(child, callback));
 }
