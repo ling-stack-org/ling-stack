@@ -1,9 +1,12 @@
 import type { SQLOutputValue } from "node:sqlite";
 import {
+  isChannelIntentDecisionV2,
+  isConversationContextProjectionMetadata,
+  type ConversationItemV1,
+  type TurnContextAssignment,
+} from "@ling-stack/contracts";
+import {
   DEFAULT_WORKSPACE_ID,
-  channelIntentDecisionActions,
-  channelIntentDecisionCreatedByValues,
-  channelIntentDecisionStatuses,
   createChannelIntentDecisionId,
   type ChannelIntentDecision,
   type CreateChannelIntentDecisionInput,
@@ -15,10 +18,12 @@ import { channelIntentDecisionSelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
 
 export interface SqliteChannelIntentDecisionStorePorts {
-  readonly assertMessageInChannel: (channelId: string, messageId: string) => void;
+  readonly assertItemInChannel: (channelId: string, itemId: string) => void;
   readonly assertProposalInChannel: (channelId: string, proposalId: string) => void;
   readonly assertWorkflowInChannel: (channelId: string, workflowId: string) => void;
   readonly hasAiTeammate: (id: string) => boolean;
+  readonly getConversationItem: (id: string) => ConversationItemV1 | undefined;
+  readonly getEffectiveTurnContextAssignment: (turnId: string) => TurnContextAssignment | undefined;
 }
 
 export class SqliteChannelIntentDecisionStore {
@@ -28,25 +33,47 @@ export class SqliteChannelIntentDecisionStore {
   ) {}
 
   createChannelIntentDecision(input: CreateChannelIntentDecisionInput, now: string): ChannelIntentDecision {
-    this.ports.assertMessageInChannel(input.channelId, input.sourceMessageId);
+    this.ports.assertItemInChannel(input.channelId, input.sourceItemId);
+    const sourceItem = this.ports.getConversationItem(input.sourceItemId);
+    if (!sourceItem?.turnId || sourceItem.status !== "committed") {
+      throw new Error(`Channel Intent v2 source must be a committed turn item: ${input.sourceItemId}`);
+    }
+    if (!isConversationContextProjectionMetadata(input.contextProjection)) {
+      throw new Error("Channel Intent v2 requires valid context projection metadata.");
+    }
+    const assignment = this.ports.getEffectiveTurnContextAssignment(sourceItem.turnId);
+    if (!assignment) {
+      throw new Error(`Channel Intent v2 source turn has no context assignment: ${sourceItem.turnId}`);
+    }
+    if (
+      input.contextProjection.threadId !== sourceItem.threadId
+      || input.contextProjection.turnId !== sourceItem.turnId
+      || input.contextProjection.segmentId !== assignment.segmentId
+      || input.contextProjection.throughItemSequence !== sourceItem.sequence
+    ) {
+      throw new Error("Channel Intent v2 projection does not match the source turn assignment.");
+    }
     this.assertChannelIntentDecisionRefsInChannel(input.channelId, input);
     const decision: ChannelIntentDecision = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       id: createChannelIntentDecisionId(),
       workspaceId: DEFAULT_WORKSPACE_ID,
       channelId: input.channelId,
-      sourceMessageId: input.sourceMessageId,
+      sourceTurnId: sourceItem.turnId,
+      sourceItemId: sourceItem.id,
+      contextSegmentId: assignment.segmentId,
+      contextProjectionVersion: input.contextProjection.projectionVersion,
       action: input.action,
-      selectedTeammateId: input.selectedTeammateId,
-      selectedTeammateIds: input.selectedTeammateIds,
+      selectedTeammateIds: input.selectedTeammateIds ?? [],
       proposalId: input.proposalId,
-      replyMessageId: input.replyMessageId,
-      replyMessageIds: input.replyMessageIds,
+      resultItemIds: input.resultItemIds ?? [],
       workflowId: input.workflowId,
       reason: input.reason,
+      clarification: input.clarification,
+      execution: input.execution,
       status: input.status,
       createdBy: input.createdBy,
-      errorMessage: input.errorMessage,
+      errorCode: input.errorCode,
       createdAt: now,
       updatedAt: now,
     };
@@ -58,39 +85,45 @@ export class SqliteChannelIntentDecisionStore {
           schema_version,
           workspace_id,
           channel_id,
-          source_message_id,
+          source_turn_id,
+          source_item_id,
+          context_segment_id,
+          context_projection_version,
           action,
-          selected_teammate_id,
           selected_teammate_ids_json,
           proposal_id,
-          reply_message_id,
-          reply_message_ids_json,
+          result_item_ids_json,
           workflow_id,
           reason,
+          clarification_json,
+          execution_json,
           status,
           created_by,
-          error_message,
+          error_code,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         decision.id,
         decision.schemaVersion,
         decision.workspaceId,
         decision.channelId,
-        decision.sourceMessageId,
+        decision.sourceTurnId,
+        decision.sourceItemId,
+        decision.contextSegmentId,
+        decision.contextProjectionVersion,
         decision.action,
-        decision.selectedTeammateId ?? null,
-        stringifyJson(decision.selectedTeammateIds ?? []),
+        stringifyJson(decision.selectedTeammateIds),
         decision.proposalId ?? null,
-        decision.replyMessageId ?? null,
-        stringifyJson(decision.replyMessageIds ?? []),
+        stringifyJson(decision.resultItemIds),
         decision.workflowId ?? null,
         decision.reason,
+        decision.clarification ? stringifyJson(decision.clarification) : null,
+        decision.execution ? stringifyJson(decision.execution) : null,
         decision.status,
         decision.createdBy,
-        decision.errorMessage ?? null,
+        decision.errorCode ?? null,
         decision.createdAt,
         decision.updatedAt,
       );
@@ -113,9 +146,9 @@ export class SqliteChannelIntentDecisionStore {
       clauses.push("channel_id = ?");
       params.push(options.channelId);
     }
-    if (options.sourceMessageId) {
-      clauses.push("source_message_id = ?");
-      params.push(options.sourceMessageId);
+    if (options.sourceItemId) {
+      clauses.push("source_item_id = ?");
+      params.push(options.sourceItemId);
     }
     if (options.action) {
       clauses.push("action = ?");
@@ -135,11 +168,8 @@ export class SqliteChannelIntentDecisionStore {
 
   private assertChannelIntentDecisionRefsInChannel(
     channelId: string,
-    input: Pick<CreateChannelIntentDecisionInput, "selectedTeammateId" | "selectedTeammateIds" | "proposalId" | "replyMessageId" | "replyMessageIds" | "workflowId">,
+    input: Pick<CreateChannelIntentDecisionInput, "selectedTeammateIds" | "proposalId" | "resultItemIds" | "workflowId" | "execution">,
   ): void {
-    if (input.selectedTeammateId && !this.ports.hasAiTeammate(input.selectedTeammateId)) {
-      throw new Error(`AI teammate not found: ${input.selectedTeammateId}`);
-    }
     for (const teammateId of input.selectedTeammateIds ?? []) {
       if (!this.ports.hasAiTeammate(teammateId)) {
         throw new Error(`AI teammate not found: ${teammateId}`);
@@ -148,35 +178,21 @@ export class SqliteChannelIntentDecisionStore {
     if (input.proposalId) {
       this.ports.assertProposalInChannel(channelId, input.proposalId);
     }
-    if (input.replyMessageId) {
-      this.ports.assertMessageInChannel(channelId, input.replyMessageId);
-    }
-    for (const replyMessageId of input.replyMessageIds ?? []) {
-      this.ports.assertMessageInChannel(channelId, replyMessageId);
+    for (const resultItemId of input.resultItemIds ?? []) {
+      this.ports.assertItemInChannel(channelId, resultItemId);
     }
     if (input.workflowId) {
       this.ports.assertWorkflowInChannel(channelId, input.workflowId);
     }
+    const targetRef = input.execution?.targetRef;
+    if (targetRef && (targetRef.type === "conversation_item" || targetRef.type === "message")) {
+      this.ports.assertItemInChannel(channelId, targetRef.id);
+    }
   }
 }
 
-function validateChannelIntentDecisionInput(
-  decision: Pick<CreateChannelIntentDecisionInput, "action" | "reason" | "status" | "createdBy">,
-): void {
-  if (!channelIntentDecisionActions.includes(decision.action)) {
-    throw new Error("channel intent decision action is not supported");
-  }
-  if (!channelIntentDecisionStatuses.includes(decision.status)) {
-    throw new Error("channel intent decision status is not supported");
-  }
-  if (!channelIntentDecisionCreatedByValues.includes(decision.createdBy)) {
-    throw new Error("channel intent decision createdBy is not supported");
-  }
-  validateNonEmptyString(decision.reason, "channel intent decision reason");
-}
-
-function validateNonEmptyString(value: string, label: string): void {
-  if (!value.trim()) {
-    throw new Error(`${label} must not be empty`);
+function validateChannelIntentDecisionInput(decision: ChannelIntentDecision): void {
+  if (!isChannelIntentDecisionV2(decision)) {
+    throw new Error("Channel Intent v2 decision failed schema validation.");
   }
 }

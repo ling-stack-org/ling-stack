@@ -10,6 +10,11 @@ Last verified: 2026-08-03
 for the domain model, source taxonomy, policy and API behavior. This plan tracks only the
 remaining delivery work.
 
+[Channel Conversation Continuity v2](channel-conversation-continuity-v2.md) now owns the
+canonical timeline, segment assignment, projection version, rolling-summary coverage,
+and multi-agent recovery changes. That delivery completed on `main` in PR #432. Do not
+reintroduce those changes as isolated additions to this older remaining-work list.
+
 ## Current Baseline
 
 Implemented foundations include:

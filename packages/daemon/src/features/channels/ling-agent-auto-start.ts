@@ -1,5 +1,6 @@
 import { resolveEffectiveTeammateProviderPresetId, type Channel, type ChannelExecutionProposal, type ChannelMessage, type RunStore, type RunTool } from "@ling-stack/core";
 import { isLingAgentExecutorId } from "./ling-agent-executor.js";
+import { resolveChannelConversationSurface } from "./conversation-surface.js";
 
 export type LingAutoStartRisk = "low" | "medium" | "high";
 
@@ -98,7 +99,7 @@ export function decideLingAgentAutoStart(input: {
     ...proposal.collaborationSteps.map((step) => step.summary),
   ].join("\n"));
 
-  if (sourceMessage.threadId && highRisk) {
+  if (resolveChannelConversationSurface(store, channel.id, sourceMessage).kind !== "root" && highRisk) {
     return blocked("policy_requires_confirmation", `Thread follow-up contains a high-risk side effect and needs confirmation before start: ${highRisk}.`);
   }
 
@@ -146,8 +147,8 @@ function isDirectWorkflowProposal(
   return store
     .listChannelIntentDecisions({
       channelId: proposal.channelId,
-      sourceMessageId: sourceMessage.id,
-      action: "direct_workflow",
+      sourceItemId: sourceMessage.id,
+      action: "execute",
       status: "accepted",
       limit: 10,
     })

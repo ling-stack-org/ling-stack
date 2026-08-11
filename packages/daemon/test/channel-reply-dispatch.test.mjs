@@ -1,3 +1,4 @@
+import { appendChannelItemFixture, getChannelItemViewFixture, listChannelItemViewsFixture, updateChannelItemFixture } from "../../core/test/channel-conversation-fixture.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -51,7 +52,38 @@ test("active channel replies are scoped to their conversation line", async () =>
 
     assert.equal(findActiveChannelReplyRun({ store, channelId: channel.id, sourceMessage: engineerSource })?.id, engineerRun.id);
     assert.equal(findActiveChannelReplyRun({ store, channelId: channel.id, sourceMessage: engineerSource, activeRunId: engineerRun.id })?.id, engineerRun.id);
-    const branchMessage = createMessage(store, channel.id, [], { threadId: "thread_branch" });
+    const rootThread = store.resolveOrCreateConversationThread({
+      surfaceKind: "channel_root",
+      channelId: channel.id,
+      title: "Reply lanes",
+      objective: "Verify active reply scoping",
+    }, "2026-08-06T00:00:05.000Z").thread;
+    const rootMessage = createMessage(store, channel.id, [], {
+      body: "Open an independent branch",
+    });
+    const rootItem = store.getConversationItem(rootMessage.id);
+    assert.ok(rootItem?.turnId);
+    const rootAssignment = store.getEffectiveTurnContextAssignment(rootItem.turnId);
+    assert.ok(rootAssignment);
+    const branchThread = store.resolveOrCreateConversationThread({
+      id: "thread_branch",
+      surfaceKind: "branch",
+      channelId: channel.id,
+      parentThreadId: rootThread.id,
+      parentTurnId: rootItem.turnId,
+      title: "Independent branch",
+      objective: "Verify active reply scoping",
+      forkContextSnapshot: {
+        id: "snapshot_thread_branch",
+        segmentId: rootAssignment.segmentId,
+        projectionVersion: "ctxv2_thread_branch",
+        throughItemSequence: rootItem.sequence,
+        summaryIds: [],
+        sourceRefs: [{ type: "conversation_item", id: rootItem.id }],
+        policyVersion: "continuity-v2-snapshot-v1",
+      },
+    }, "2026-08-06T00:00:07.000Z").thread;
+    const branchMessage = createMessage(store, channel.id, [], { threadId: branchThread.id });
     assert.equal(findActiveChannelReplyRun({ store, channelId: channel.id, sourceMessage: branchMessage }), undefined);
     assert.equal(findActiveChannelReplyRun({ store, channelId: channel.id, sourceMessage: branchMessage, activeRunId: engineerRun.id }), undefined);
 
@@ -93,9 +125,9 @@ function createActiveReplyRun(store, channelId, teammateId, suffix) {
   const sourceMessage = createMessage(store, channelId, [], {
     body: `source ${suffix}`,
   });
-  const replyMessage = store.createChannelMessage({
+  const replyMessage = appendChannelItemFixture(store, {
     channelId,
-    threadId: sourceMessage.id,
+    replyToItemId: sourceMessage.id,
     kind: "ai_reply",
     authorType: "ai-teammate",
     authorId: teammateId,
@@ -136,7 +168,7 @@ function createActiveReplyRun(store, channelId, teammateId, suffix) {
 }
 
 function createMessage(store, channelId, mentions, overrides = {}) {
-  return store.createChannelMessage({
+  return appendChannelItemFixture(store, {
     channelId,
     kind: "message",
     intent: "discuss",

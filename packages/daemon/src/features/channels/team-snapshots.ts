@@ -13,6 +13,7 @@ import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
+import { listChannelMessageViews } from "./conversation-item-messages.js";
 
 export async function handleChannelTeamSnapshots(
   request: IncomingMessage,
@@ -151,7 +152,7 @@ export async function handleChannelTeamEvaluations(
 }
 
 function buildCurrentSnapshotState(store: RunStore, channelId: string, now: string): ChannelTeamSnapshotState {
-  const messages = store.listChannelMessages({ channelId, limit: 200 });
+  const messages = listChannelMessageViews({ store, channelId, limit: 200 });
   const evidence = store.listChannelTeamEvidenceItems({ channelId, now, limit: 500 });
   const reliabilityIncidents = store.listReliabilityIncidents({ now, limit: 200 });
   const availabilityIncidents = store.listAvailabilityIncidents({ now, limit: 200 });
@@ -239,8 +240,7 @@ function readRecentMessageCases(store: RunStore, channelId: string, value: unkno
     return [];
   }
   const limit = readOptionalIntegerValue(value.recentMessageLimit) ?? 10;
-  return store
-    .listChannelMessages({ channelId, limit })
+  return listChannelMessageViews({ store, channelId, limit })
     .filter((message) => message.authorType === "local-user")
     .map((message) => ({
       id: `historical:${message.id}`,

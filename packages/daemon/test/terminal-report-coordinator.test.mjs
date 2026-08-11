@@ -1,3 +1,4 @@
+import { appendChannelItemFixture, getChannelItemViewFixture, listChannelItemViewsFixture, updateChannelItemFixture } from "../../core/test/channel-conversation-fixture.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -120,7 +121,7 @@ test("terminal report coordinator commits fallback, publishes once, and closes i
     });
     assert.equal(repeated.record.id, result.record.id);
     assert.equal(repeated.message?.id, result.message?.id);
-    assert.equal(store.listChannelMessages({ channelId: fixture.channel.id, limit: 100 }).filter((message) => message.id === result.message?.id).length, 1);
+    assert.equal(listChannelItemViewsFixture(store, { channelId: fixture.channel.id, limit: 100 }).filter((message) => message.id === result.message?.id).length, 1);
     assert.equal(store.listTerminalReports({ sourceKind: "workflow", sourceId: fixture.workflow.id }).length, 1);
   } finally {
     store.close();

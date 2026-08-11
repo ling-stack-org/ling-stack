@@ -1,4 +1,5 @@
 import type { ApprovalRequest } from "../../approval-types.js";
+import type { ConversationItemV1 } from "@ling-stack/contracts";
 import type { RunSession } from "../../run-types.js";
 import {
   DEFAULT_WORKSPACE_ID,
@@ -10,7 +11,6 @@ import {
   type ChannelExecutionProposal,
   type ChannelHandoff,
   type ChannelLinkPreview,
-  type ChannelMessage,
   type ChannelProtocolSourceRef,
   type ChannelWorkflow,
   type ChannelWorkflowStep,
@@ -23,7 +23,7 @@ import {
 
 export interface SqliteChannelReferenceValidatorPorts {
   readonly getChannel: (channelId: string) => Channel | undefined;
-  readonly getChannelMessage: (messageId: string) => ChannelMessage | undefined;
+  readonly getConversationItem: (itemId: string) => ConversationItemV1 | undefined;
   readonly getChannelAttachment: (attachmentId: string) => ChannelAttachment | undefined;
   readonly getChannelLinkPreview: (linkPreviewId: string) => ChannelLinkPreview | undefined;
   readonly getTask: (taskId: string) => Task | undefined;
@@ -49,13 +49,13 @@ export class SqliteChannelReferenceValidator {
     }
   }
 
-  assertMessageInChannel(channelId: string, messageId: string): void {
-    const message = this.ports.getChannelMessage(messageId);
-    if (!message) {
-      throw new Error(`Channel message not found: ${messageId}`);
+  assertItemInChannel(channelId: string, itemId: string): void {
+    const item = this.ports.getConversationItem(itemId);
+    if (!item) {
+      throw new Error(`Conversation item not found: ${itemId}`);
     }
-    if (message.channelId !== channelId) {
-      throw new Error(`Message does not belong to channel: ${messageId}`);
+    if (item.channelId !== channelId) {
+      throw new Error(`Conversation item does not belong to channel: ${itemId}`);
     }
   }
 
@@ -184,7 +184,7 @@ export class SqliteChannelReferenceValidator {
     input: { readonly sourceMessageId?: string; readonly sourceTaskId?: string; readonly sourceRunId?: string },
   ): void {
     if (input.sourceMessageId) {
-      this.assertMessageInChannel(channelId, input.sourceMessageId);
+      this.assertItemInChannel(channelId, input.sourceMessageId);
     }
     if (input.sourceTaskId) {
       this.assertTaskInChannel(channelId, input.sourceTaskId);
@@ -220,7 +220,7 @@ export class SqliteChannelReferenceValidator {
       this.assertRunInChannel(channelId, refs.runId);
     }
     if (refs.messageId) {
-      this.assertMessageInChannel(channelId, refs.messageId);
+      this.assertItemInChannel(channelId, refs.messageId);
     }
     if (refs.handoffId) {
       this.assertHandoffInChannel(channelId, refs.handoffId);
@@ -256,7 +256,7 @@ export class SqliteChannelReferenceValidator {
     for (const sourceRef of sourceRefs) {
       switch (sourceRef.type) {
         case "channel_message":
-          this.assertMessageInChannel(channelId, sourceRef.id);
+          this.assertItemInChannel(channelId, sourceRef.id);
           break;
         case "channel_decision":
           this.assertDecisionInChannel(channelId, sourceRef.id);
@@ -304,7 +304,7 @@ export class SqliteChannelReferenceValidator {
     for (const sourceRef of sourceRefs) {
       switch (sourceRef.type) {
         case "message":
-          this.assertMessageInChannel(channelId, sourceRef.id);
+          this.assertItemInChannel(channelId, sourceRef.id);
           break;
         case "channel_decision":
           this.assertDecisionInChannel(channelId, sourceRef.id);

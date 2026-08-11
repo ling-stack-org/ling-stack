@@ -9,6 +9,7 @@ import type {
   ChannelContextView,
   ChannelContextViewKind,
 } from "./types.js";
+import type { ConversationContextProjectionMetadata } from "@ling-stack/contracts";
 
 export interface BuildChannelContextCondenserInput {
   readonly enabled?: boolean;
@@ -26,6 +27,7 @@ export interface BuildChannelContextViewInput {
   readonly sources?: readonly ChannelContextSource[];
   readonly dropped?: readonly ChannelContextDroppedSource[];
   readonly budget?: ChannelContextBudgetSnapshot;
+  readonly contextProjection?: ConversationContextProjectionMetadata;
   readonly condenser?: BuildChannelContextCondenserInput;
   readonly compactionIds?: readonly string[];
   readonly now?: string;
@@ -70,6 +72,7 @@ export function buildChannelContextView(input: BuildChannelContextViewInput): Ch
     sources: viewSources,
     dropped,
     budget: input.budget,
+    contextProjection: input.contextProjection,
     metadata: {
       createdAt: input.now ?? new Date().toISOString(),
       compactionIds: uniqueStrings([

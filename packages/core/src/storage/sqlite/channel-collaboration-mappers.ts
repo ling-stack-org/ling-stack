@@ -1,9 +1,6 @@
 import type { SQLOutputValue } from "node:sqlite";
 import {
   type ChannelBrief,
-  type ChannelContextSummary,
-  type ChannelContextSummaryAuthorType,
-  type ChannelContextSummaryTargetType,
   type ChannelDecision,
   type ChannelDecisionStatus,
   type ChannelHandoff,
@@ -72,25 +69,6 @@ export function mapChannelHandoff(row: Record<string, SQLOutputValue>): ChannelH
     expectedOutput: readString(row, "expected_output"),
     status: readString(row, "status") as ChannelHandoffStatus,
     createdBy: readString(row, "created_by"),
-    createdAt: readString(row, "created_at"),
-    updatedAt: readString(row, "updated_at"),
-  });
-}
-
-export function mapChannelContextSummary(row: Record<string, SQLOutputValue>): ChannelContextSummary {
-  return omitUndefined({
-    id: readString(row, "id"),
-    workspaceId: readString(row, "workspace_id"),
-    channelId: readString(row, "channel_id"),
-    targetType: readString(row, "target_type") as ChannelContextSummaryTargetType,
-    targetId: readString(row, "target_id"),
-    sourceMessageIds: parseJsonStringArray(readString(row, "source_message_ids_json")),
-    decisionIds: parseJsonStringArray(readString(row, "decision_ids_json")),
-    summary: readString(row, "summary"),
-    acceptanceCriteria: parseJsonStringArray(readString(row, "acceptance_criteria_json")),
-    openQuestions: parseJsonStringArray(readString(row, "open_questions_json")),
-    authorType: readString(row, "author_type") as ChannelContextSummaryAuthorType,
-    authorId: readNullableString(row, "author_id"),
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
   });

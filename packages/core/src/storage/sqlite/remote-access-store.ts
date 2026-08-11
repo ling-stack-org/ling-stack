@@ -30,6 +30,9 @@ import {
   stringifyJson,
 } from "./helpers.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import { SqliteConversationThreadTopologyStore } from "./conversation-thread-topology-store.js";
+import { SqliteConversationTurnIngestStore } from "./conversation-turn-ingest-store.js";
+import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
 
 const REMOTE_COMMAND_TYPE = "conversation.send_text";
 const MAX_REMOTE_TEXT_BYTES = 32 * 1024;
@@ -37,7 +40,11 @@ const MAX_RETRY_WINDOW_MS = 24 * 60 * 60_000;
 const TOMBSTONE_RETENTION_MS = 7 * 24 * 60 * 60_000;
 
 export class SqliteRemoteAccessStore {
-  constructor(private readonly context: SqliteStoreContext) {}
+  constructor(
+    private readonly context: SqliteStoreContext,
+    private readonly turnIngest: SqliteConversationTurnIngestStore,
+    private readonly threadTopology: SqliteConversationThreadTopologyStore,
+  ) {}
 
   commitRemoteConversationSend(input: CommitRemoteConversationSendInput, now: string): CommitRemoteConversationSendResult {
     this.assertSendInput(input, now);
@@ -384,6 +391,9 @@ export class SqliteRemoteAccessStore {
     requireNonEmpty(input.commandId, "commandId");
     requireNonEmpty(input.bodyHash, "bodyHash");
     requireNonEmpty(input.conversationId, "conversationId");
+    if (input.workspaceId !== DEFAULT_WORKSPACE_ID) {
+      throw new Error(`Remote workspace is not supported: ${input.workspaceId}`);
+    }
     const body = input.body.trim();
     if (!body) {
       throw new Error("Remote message body is required");
@@ -433,13 +443,34 @@ export class SqliteRemoteAccessStore {
   private insertConversationMessage(input: CommitRemoteConversationSendInput, messageId: string, now: string): void {
     const body = String(redactSecrets(input.body));
     if (input.conversationKind === "channel") {
-      this.context.database.prepare(`
-        INSERT INTO channel_messages (
-          id, workspace_id, channel_id, thread_id, kind, intent, author_type, author_id,
-          body, mentions_json, attachment_ids_json, link_preview_ids_json, file_refs_json,
-          linked_task_id, linked_run_id, status, error_message, created_at, updated_at
-        ) VALUES (?, ?, ?, NULL, 'message', 'discuss', 'local-user', 'local-user', ?, '[]', '[]', '[]', '[]', NULL, NULL, 'ready', NULL, ?, ?)
-      `).run(messageId, input.workspaceId, input.conversationId, body, now, now);
+      const channel = this.context.database.prepare(`
+        SELECT name FROM channels WHERE workspace_id = ? AND id = ?
+      `).get(input.workspaceId, input.conversationId) as Record<string, SQLOutputValue> | undefined;
+      if (!channel) throw new RemoteConversationNotFoundError(input.conversationKind, input.conversationId);
+      const thread = this.threadTopology.resolveOrCreateWithinTransaction({
+        surfaceKind: "channel_root",
+        channelId: input.conversationId,
+        title: `${readString(channel, "name")} conversation`,
+        objective: `Root conversation for ${readString(channel, "name")}.`,
+      }, now).thread;
+      this.turnIngest.appendUserTurnWithinTransaction({
+        itemId: messageId,
+        channelId: input.conversationId,
+        threadId: thread.id,
+        turnKind: thread.nextItemSequence > 1 ? "manual_followup" : "initial_request",
+        title: body.split(/\r?\n/u, 1)[0]!.trim().slice(0, 160) || "Mobile message",
+        userInstruction: body,
+        actorId: "local-user",
+        payload: {
+          body,
+          format: "plain_text",
+          mentions: [],
+          attachmentIds: [],
+          linkPreviewIds: [],
+          fileRefs: [],
+        },
+        idempotencyKey: `remote-command:${input.commandId}`,
+      }, now);
       return;
     }
 
@@ -476,7 +507,7 @@ export class SqliteRemoteAccessStore {
       INSERT INTO ling_turns (
         id, workspace_id, thread_id, kind, status, title, user_instruction, channel_id,
         task_id, teammate_id, workflow_step_id, external_work_id, automation_id,
-        source_message_id, source_turn_id, intervention_id, active_run_id, last_run_id,
+        source_item_id, source_turn_id, intervention_id, active_run_id, last_run_id,
         created_by_actor, created_at, updated_at, completed_at
       )
       SELECT ?, ?, id, 'manual_followup', 'open', ?, ?, channel_id, task_id, teammate_id,
@@ -549,17 +580,22 @@ export class SqliteRemoteAccessStore {
       mentioned = Boolean(this.context.database.prepare(`
         SELECT 1 AS found
         FROM remote_projection_outbox AS outbox
-        INNER JOIN channel_messages AS messages
-          ON messages.workspace_id = outbox.workspace_id
-          AND messages.channel_id = outbox.conversation_id
-          AND messages.id = outbox.entity_id
+        INNER JOIN conversation_items AS items
+          ON items.workspace_id = outbox.workspace_id
+          AND items.channel_id = outbox.conversation_id
+          AND items.id = outbox.entity_id
         WHERE outbox.workspace_id = ?
           AND outbox.conversation_kind = 'channel'
           AND outbox.conversation_id = ?
           AND outbox.activity_seq > ?
           AND outbox.affects_unread = 1
           AND outbox.operation <> 'delete'
-          AND messages.mentions_json LIKE '%"kind":"local-user"%'
+          AND outbox.entity_type = 'conversation_item'
+          AND EXISTS (
+            SELECT 1
+            FROM json_each(items.payload_json, '$.mentions') AS mention
+            WHERE json_extract(mention.value, '$.kind') = 'local_user'
+          )
         LIMIT 1
       `).get(input.workspaceId, input.conversationId, cursor));
     }

@@ -138,7 +138,10 @@ test("dark reduced-motion Channel terminal and topic reply keep command and keyb
   await expectNoOverflow(topicPanel);
   await captureSurface(page, "1280x800-ling-dark-channel-topic-reply-input.png");
   await replyInput.press("Enter");
-  await expect.poll(() => state.lastChannelMessageRequest?.threadId).toBe("message_shared_topic_root");
+  await expect.poll(() => state.lastChannelTurnRequest?.surface).toEqual({
+    kind: "thread",
+    threadId: "thread_topic_channel_engineering_message_shared_topic_root",
+  });
   await expect(topicPanel).toContainText("First reply line");
   await expect(topicPanel).toContainText("Second reply line");
   await topicPanel.getByRole("button", { name: "Close topic" }).click();

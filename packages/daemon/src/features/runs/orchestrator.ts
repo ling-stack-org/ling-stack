@@ -221,6 +221,8 @@ export async function executeRunRequest(
   let runtimeApprovalProfile: SkillApprovalProfile | undefined;
   let effectivePolicySnapshot: EffectiveRunPolicySnapshot | undefined;
   let approvalPolicy: ApprovalPolicy | undefined;
+  let durableTaskSnapshot: RunRequest["task"] = runRequest.task;
+  let durableRunRequest: RunRequest = { ...runRequest, preselectedMemoryUse: undefined };
   let runId = "";
   let createdAt = "";
   let workspaceCwd = "";
@@ -372,6 +374,12 @@ export async function executeRunRequest(
       thread.conversationMode.mode,
     );
     turn = ensureLingTurnForRun(store, thread, runRequest, createdAt);
+    durableTaskSnapshot = store.getTask(runRequest.task.id) ?? runRequest.task;
+    durableRunRequest = {
+      ...runRequest,
+      task: durableTaskSnapshot,
+      preselectedMemoryUse: undefined,
+    };
     const workUnitOwner = resolveRunWorkUnitOwner(thread, runRequest, turn.id);
     const existingWorkUnit = runRequest.idempotencyKey
       ? store.findWorkUnitByIdempotency({
@@ -411,7 +419,7 @@ export async function executeRunRequest(
       createdByActor: "user",
       linkedMessageId: runRequest.linkedMessageId,
       request: {
-        ...runRequest,
+        ...durableRunRequest,
         permissionMode: effectivePolicySnapshot.mode,
         effectivePolicySnapshot,
         workspaceCwd,
@@ -546,10 +554,10 @@ export async function executeRunRequest(
       providerPresetId: runRequest.providerPresetId,
       providerName: resolvedProvider.provider,
       providerModel: resolvedProvider.model,
-      taskSnapshot: runRequest.task,
+      taskSnapshot: durableTaskSnapshot,
       providerSnapshot: { providerPresetId: runRequest.providerPresetId, ...resolvedProvider },
       requestSnapshot: {
-        ...runRequest,
+        ...durableRunRequest,
         permissionMode: effectivePolicySnapshot.mode,
         effectivePolicySnapshot,
         workspaceCwd,
@@ -608,18 +616,25 @@ export async function executeRunRequest(
           })
         : undefined,
     };
-    if (memoryRecall && memoryRecall.memories.length > 0) {
+    const usedMemory = memoryRecall && memoryRecall.memories.length > 0
+      ? {
+          memoryIds: memoryRecall.memories.map((item) => item.memory.id),
+          recallQuery: memoryRecall.request.query,
+          policyVersion: memoryRecall.policyVersion,
+        }
+      : runRequest.preselectedMemoryUse;
+    if (usedMemory && usedMemory.memoryIds.length > 0) {
       store.recordUsedMemoryEvent(
         {
-          memoryIds: memoryRecall.memories.map((item) => item.memory.id),
+          memoryIds: usedMemory.memoryIds,
           intent: "task-run",
-          recallQuery: memoryRecall.request.query,
+          recallQuery: usedMemory.recallQuery,
           teammateId: run.teammateId,
           channelId: run.channelId,
           taskId: run.taskId,
           runId: run.id,
           responseId: run.id,
-          policyVersion: memoryRecall.policyVersion,
+          policyVersion: usedMemory.policyVersion,
         },
         createdAt,
       );
@@ -672,7 +687,7 @@ export async function executeRunRequest(
       run = createQueuedRunForConflict({
         store,
         storeRegistry,
-        runRequest,
+        runRequest: durableRunRequest,
         runId,
         workspaceCwd: workspaceCwd || runRequest.cwd,
         workUnit,

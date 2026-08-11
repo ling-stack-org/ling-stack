@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type {
+  ConversationItemV1,
+  LingThreadRelationKindV2,
+  LingThreadSurfaceKindV2,
+} from "@ling-stack/contracts";
+import type {
   ApprovalActionType,
   ApprovalRequest,
   ApprovalRisk,
@@ -95,6 +100,22 @@ import type {
   ListConversationTurnSupersessionsOptions,
 } from "./conversation-revision-types.js";
 import type {
+  AppendConversationItem,
+  ConversationItemListPage,
+  ConversationItemChannelListPage,
+  ListConversationItemsByChannelOptions,
+  ListConversationItemsOptions,
+  UpdatePendingConversationItemInput,
+} from "./conversation-item-store-types.js";
+import type {
+  AppendConversationUserTurnInput,
+  AppendConversationUserTurnResult,
+} from "./conversation-turn-ingest-types.js";
+import type {
+  ResolveOrCreateConversationThreadInput,
+  ResolveOrCreateConversationThreadResult,
+} from "./conversation-thread-topology-types.js";
+import type {
   AvailabilityIncident,
   ChannelTeamEvidenceItem,
   ChannelTeamPattern,
@@ -146,7 +167,6 @@ import type {
   ChannelLinkPreview,
   ChannelMessage,
   ChannelMessageRouteDecision,
-  ChannelMessageListPage,
   ChannelCouncilPolicy,
   ChannelUpdateInput,
   CloneAiCouncilInput,
@@ -168,7 +188,6 @@ import type {
   CreateChannelInput,
   CreateChannelIntentDecisionInput,
   CreateChannelLinkPreviewInput,
-  CreateChannelMessageInput,
   CreateConversationAttachmentInput,
   CreateAiCouncilInput,
   CreateAiTeammateInput,
@@ -198,7 +217,6 @@ import type {
   ListChannelIntentDecisionsOptions,
   ListChannelsOptions,
   ListChannelLinkPreviewsOptions,
-  ListChannelMessagesOptions,
   ListChannelMessageRouteDecisionsOptions,
   ListConversationAttachmentsOptions,
   ListTeammatePrivateAttachmentsOptions,
@@ -500,7 +518,7 @@ export interface LingTurn {
   readonly workflowStepId?: string;
   readonly externalWorkId?: string;
   readonly automationId?: string;
-  readonly sourceMessageId?: string;
+  readonly sourceItemId?: string;
   readonly sourceTurnId?: string;
   readonly interventionId?: string;
   readonly activeRunId?: string;
@@ -532,7 +550,7 @@ export interface CreateLingTurnInput {
   readonly workflowStepId?: string;
   readonly externalWorkId?: string;
   readonly automationId?: string;
-  readonly sourceMessageId?: string;
+  readonly sourceItemId?: string;
   readonly sourceTurnId?: string;
   readonly interventionId?: string;
   readonly activeRunId?: string;
@@ -878,6 +896,11 @@ export interface LingThread {
   readonly pinnedAt?: string;
   readonly archivedAt?: string;
   readonly archivedReason?: string;
+  readonly surfaceKind: LingThreadSurfaceKindV2;
+  readonly relationKind: LingThreadRelationKindV2;
+  readonly anchorItemId?: string;
+  readonly forkContextSnapshotId?: string;
+  readonly nextItemSequence: number;
 }
 
 export interface CreateLingThreadInput {
@@ -901,6 +924,10 @@ export interface CreateLingThreadInput {
   readonly pinnedAt?: string;
   readonly archivedAt?: string;
   readonly archivedReason?: string;
+  readonly surfaceKind?: LingThreadSurfaceKindV2;
+  readonly relationKind?: LingThreadRelationKindV2;
+  readonly anchorItemId?: string;
+  readonly forkContextSnapshotId?: string;
 }
 
 export interface UpdateLingThreadInput {
@@ -1345,6 +1372,10 @@ export interface RunStore {
     now: string,
   ): ConversationTurnSupersession | undefined;
   createLingThread(input: CreateLingThreadInput, now: string): LingThread;
+  resolveOrCreateConversationThread(
+    input: ResolveOrCreateConversationThreadInput,
+    now: string,
+  ): ResolveOrCreateConversationThreadResult;
   getLingThread(threadId: string): LingThread | undefined;
   hardDeleteLingThread(threadId: string, input: HardDeleteLingThreadInput, now: string): HardDeleteLingThreadResult | undefined;
   findLingThreadByOwner(input: {
@@ -1647,20 +1678,60 @@ export interface RunStore {
   getTeammatePrivateAttachment(id: string): TeammatePrivateAttachment | undefined;
   listTeammatePrivateAttachments(options: ListTeammatePrivateAttachmentsOptions): TeammatePrivateAttachment[];
   deleteTeammatePrivateAttachment(id: string): boolean;
-  createChannelMessage(input: CreateChannelMessageInput, now: string): ChannelMessage;
-  updateChannelMessageRuntime(
-    id: string,
-    input: {
-      readonly body?: string;
-      readonly status?: ChannelMessage["status"];
-      readonly errorMessage?: string | null;
-      readonly linkedRunId?: string | null;
-    },
+  appendConversationItem(input: AppendConversationItem, now: string): ConversationItemV1;
+  appendConversationUserTurn(input: AppendConversationUserTurnInput, now: string): AppendConversationUserTurnResult;
+  getConversationItem(id: string): ConversationItemV1 | undefined;
+  getEffectiveConversationItem(id: string): ConversationItemV1 | undefined;
+  getConversationItemByIdempotencyKey(threadId: string, idempotencyKey: string): ConversationItemV1 | undefined;
+  findConversationItemByDomainRef(
+    input: import("./conversation-item-store-types.js").FindConversationItemByDomainRefInput,
+  ): ConversationItemV1 | undefined;
+  listConversationItemsForTurn(
+    options: import("./conversation-item-store-types.js").ListConversationItemsForTurnOptions,
+  ): readonly ConversationItemV1[];
+  listConversationItemsPage(options: ListConversationItemsOptions): ConversationItemListPage;
+  listConversationItemsByChannelPage(
+    options: ListConversationItemsByChannelOptions,
+  ): ConversationItemChannelListPage;
+  listConversationItemsForSegment(
+    options: import("./conversation-item-store-types.js").ListConversationItemsForSegmentOptions,
+  ): readonly ConversationItemV1[];
+  updatePendingConversationItem(
+    itemId: string,
+    input: UpdatePendingConversationItemInput,
     now: string,
-  ): ChannelMessage | undefined;
-  getChannelMessage(id: string): ChannelMessage | undefined;
-  listChannelMessages(options: ListChannelMessagesOptions): ChannelMessage[];
-  listChannelMessagesPage(options: ListChannelMessagesOptions): ChannelMessageListPage;
+  ): ConversationItemV1;
+  getContextSegment(id: string): import("@ling-stack/contracts").ContextSegment | undefined;
+  listContextSegments(
+    options: import("./conversation-context-store-types.js").ListContextSegmentsOptions,
+  ): readonly import("@ling-stack/contracts").ContextSegment[];
+  getEffectiveTurnContextAssignment(
+    turnId: string,
+  ): import("@ling-stack/contracts").TurnContextAssignment | undefined;
+  applyTurnContextAssignment(
+    input: import("./conversation-context-store-types.js").ApplyTurnContextAssignmentInput,
+    now: string,
+  ): import("./conversation-context-store-types.js").ApplyTurnContextAssignmentResult;
+  getConversationContextSummary(
+    id: string,
+  ): import("@ling-stack/contracts").ConversationContextSummary | undefined;
+  listConversationContextSummaries(
+    options: import("./conversation-context-store-types.js").ListConversationContextSummariesOptions,
+  ): readonly import("@ling-stack/contracts").ConversationContextSummary[];
+  commitConversationContextSummary(
+    input: import("./conversation-context-store-types.js").CommitConversationContextSummaryInput,
+    now: string,
+  ): import("./conversation-context-store-types.js").CommitConversationContextSummaryResult;
+  createConversationContextSnapshot(
+    input: import("./conversation-context-store-types.js").CreateConversationContextSnapshotInput,
+    now: string,
+  ): import("@ling-stack/contracts").ConversationContextSnapshot;
+  getConversationContextSnapshot(
+    id: string,
+  ): import("@ling-stack/contracts").ConversationContextSnapshot | undefined;
+  listConversationContextSnapshots(
+    options: import("./conversation-context-store-types.js").ListConversationContextSnapshotsOptions,
+  ): readonly import("@ling-stack/contracts").ConversationContextSnapshot[];
   createChannelMessageRouteDecision(input: CreateChannelMessageRouteDecisionInput, now: string): ChannelMessageRouteDecision;
   getChannelMessageRouteDecision(id: string): ChannelMessageRouteDecision | undefined;
   listChannelMessageRouteDecisions(options?: ListChannelMessageRouteDecisionsOptions): ChannelMessageRouteDecision[];
@@ -2198,11 +2269,30 @@ export type MemoryStoreFacet = RunStoreFacet<
 
 export type ChannelStoreFacet = RunStoreFacet<
   | "listChannelBranches"
-  | "createChannelMessage"
-  | "updateChannelMessageRuntime"
-  | "getChannelMessage"
-  | "listChannelMessages"
-  | "listChannelMessagesPage"
+  | "getLingThread"
+  | "listLingThreads"
+  | "resolveOrCreateConversationThread"
+  | "appendConversationItem"
+  | "appendConversationUserTurn"
+  | "getConversationItem"
+  | "getEffectiveConversationItem"
+  | "getConversationItemByIdempotencyKey"
+  | "findConversationItemByDomainRef"
+  | "listConversationItemsForTurn"
+  | "listConversationItemsPage"
+  | "listConversationItemsByChannelPage"
+  | "listConversationItemsForSegment"
+  | "updatePendingConversationItem"
+  | "getContextSegment"
+  | "listContextSegments"
+  | "getEffectiveTurnContextAssignment"
+  | "applyTurnContextAssignment"
+  | "getConversationContextSummary"
+  | "listConversationContextSummaries"
+  | "commitConversationContextSummary"
+  | "createConversationContextSnapshot"
+  | "getConversationContextSnapshot"
+  | "listConversationContextSnapshots"
   | "createChannelMessageRouteDecision"
   | "getChannelMessageRouteDecision"
   | "listChannelMessageRouteDecisions"

@@ -64,8 +64,13 @@ export class SqliteLingThreadStore {
           updated_at,
           pinned_at,
           archived_at,
-          archived_reason
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          archived_reason,
+          surface_kind,
+          relation_kind,
+          anchor_item_id,
+          fork_context_snapshot_id,
+          next_item_sequence
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
       `)
       .run(
         id,
@@ -93,6 +98,10 @@ export class SqliteLingThreadStore {
         input.pinnedAt ?? null,
         input.archivedAt ?? null,
         input.archivedReason ?? null,
+        input.surfaceKind ?? defaultThreadSurfaceKind(input.kind),
+        input.relationKind ?? "root",
+        input.anchorItemId ?? null,
+        input.forkContextSnapshotId ?? null,
       );
     this.ports.rebuildLingThreadMetadata(id, now);
     const thread = this.getLingThread(id);
@@ -735,6 +744,10 @@ export class SqliteLingThreadStore {
       .get(DEFAULT_WORKSPACE_ID, goalId);
     return row ? mapLingThreadGoal(row as Record<string, SQLOutputValue>) : undefined;
   }
+}
+
+function defaultThreadSurfaceKind(kind: LingThreadKind): "direct" | "work" {
+  return kind === "conversation" || kind === "teammate_direct" ? "direct" : "work";
 }
 
 const activeLingThreadGoalStatuses = [

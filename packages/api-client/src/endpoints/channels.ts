@@ -24,8 +24,10 @@ import type {
   ChannelLinkPreviewListResponse,
   ChannelLinkPreviewMutationResponse,
   ChannelListResponse,
-  ChannelMessageListResponse,
-  ChannelMessageMutationResponse,
+  ChannelConversationContextInspectResponse,
+  ChannelConversationItemPageResponse,
+  ChannelConversationSurface,
+  ChannelConversationTurnResponse,
   ChannelPlaybookCandidateListResponse,
   ChannelPlaybookCandidateMutationResponse,
   ChannelPlaybookCandidateReviewRequest,
@@ -77,7 +79,7 @@ import type {
   CreateChannelExecutionProposalRequest,
   CreateChannelHandoffRequest,
   CreateChannelLinkPreviewRequest,
-  CreateChannelMessageRequest,
+  CreateChannelTurnRequest,
   CreateChannelRequest,
   CreateChannelTeamPatternRequest,
   CreateChannelTeamEvaluationRunRequest,
@@ -86,6 +88,9 @@ import type {
   CreateChannelWorkflowTemplateCompileRequest,
   CreateChannelWorkflowRequest,
   CreateChannelWorkflowStepRequest,
+  CorrectChannelTurnContextRequest,
+  CorrectChannelTurnContextResponse,
+  ListChannelConversationItemsOptions,
   PreviewContentResponse,
   UpdateChannelBriefRequest,
   UpdateChannelBranchRequest,
@@ -102,6 +107,18 @@ import type {
 import { LingDaemonError } from "../errors.js";
 import { readErrorMessage } from "../transport.js";
 import type { LingDaemonEndpointContext, PublicEndpointGroup } from "../transport.js";
+
+function channelConversationSurfaceQuery(surface: ChannelConversationSurface | undefined): {
+  readonly threadId?: string;
+  readonly anchorItemId?: string;
+} {
+  if (!surface || surface.kind === "channel_root") {
+    return {};
+  }
+  return surface.kind === "thread"
+    ? { threadId: surface.threadId }
+    : { anchorItemId: surface.anchorItemId };
+}
 
 export const channelEndpoints = {
   async listChannels(this: LingDaemonEndpointContext, cwd: string, options: { readonly archived?: boolean; readonly limit?: number } = {}): Promise<ChannelListResponse> {
@@ -293,33 +310,34 @@ export const channelEndpoints = {
       return this._post(`/channels/${encodeURIComponent(channelId)}/workspace/cleanup`, { cwd });
     },
 
-  async listChannelMessages(this: LingDaemonEndpointContext,
+  async listChannelConversationItems(this: LingDaemonEndpointContext,
       cwd: string,
       channelId: string,
-      options: { readonly limit?: number; readonly beforeMessageId?: string; readonly threadId?: string } = {},
-    ): Promise<ChannelMessageListResponse> {
-      return this._get(`/channels/${encodeURIComponent(channelId)}/messages`, {
+      options: ListChannelConversationItemsOptions = {},
+    ): Promise<ChannelConversationItemPageResponse> {
+      const surfaceQuery = channelConversationSurfaceQuery(options.surface);
+      return this._get(`/channels/${encodeURIComponent(channelId)}/items`, {
         cwd,
         limit: options.limit,
-        beforeMessageId: options.beforeMessageId,
-        threadId: options.threadId,
+        beforeSequence: options.beforeSequence,
+        ...surfaceQuery,
       });
     },
 
-  async createChannelMessage(this: LingDaemonEndpointContext,
+  async createChannelTurn(this: LingDaemonEndpointContext,
       cwd: string,
       channelId: string,
-      input: CreateChannelMessageRequest,
-    ): Promise<ChannelMessageMutationResponse> {
-      return this._post(`/channels/${encodeURIComponent(channelId)}/messages`, { cwd }, input);
+      input: CreateChannelTurnRequest,
+    ): Promise<ChannelConversationTurnResponse> {
+      return this._post(`/channels/${encodeURIComponent(channelId)}/turns`, { cwd }, input);
     },
 
-  async streamChannelMessage(this: LingDaemonEndpointContext,
+  async streamChannelTurn(this: LingDaemonEndpointContext,
       cwd: string,
       channelId: string,
-      input: CreateChannelMessageRequest,
+      input: CreateChannelTurnRequest,
     ): Promise<Response> {
-      const response = await this._fetch(this._url(`/channels/${encodeURIComponent(channelId)}/messages/stream`, { cwd }), {
+      const response = await this._fetch(this._url(`/channels/${encodeURIComponent(channelId)}/turns/stream`, { cwd }), {
         method: "POST",
         headers: {
           Accept: "text/event-stream",
@@ -331,6 +349,23 @@ export const channelEndpoints = {
         throw new LingDaemonError(await readErrorMessage(response), response.status, response.statusText);
       }
       return response;
+    },
+
+  async getChannelTurnContext(this: LingDaemonEndpointContext,
+      cwd: string,
+      channelId: string,
+      turnId: string,
+    ): Promise<ChannelConversationContextInspectResponse> {
+      return this._get(`/channels/${encodeURIComponent(channelId)}/turns/${encodeURIComponent(turnId)}/context`, { cwd });
+    },
+
+  async correctChannelTurnContext(this: LingDaemonEndpointContext,
+      cwd: string,
+      channelId: string,
+      turnId: string,
+      input: CorrectChannelTurnContextRequest,
+    ): Promise<CorrectChannelTurnContextResponse> {
+      return this._post(`/channels/${encodeURIComponent(channelId)}/turns/${encodeURIComponent(turnId)}/context/corrections`, { cwd }, input);
     },
 
   async listChannelMessageRouteDecisions(this: LingDaemonEndpointContext,
@@ -349,11 +384,11 @@ export const channelEndpoints = {
   async listChannelIntentDecisions(this: LingDaemonEndpointContext,
       cwd: string,
       channelId: string,
-      options: { readonly sourceMessageId?: string; readonly action?: string; readonly status?: string; readonly limit?: number } = {},
+      options: { readonly sourceItemId?: string; readonly action?: string; readonly status?: string; readonly limit?: number } = {},
     ): Promise<ChannelIntentDecisionListResponse> {
       return this._get(`/channels/${encodeURIComponent(channelId)}/intent-decisions`, {
         cwd,
-        sourceMessageId: options.sourceMessageId,
+        sourceItemId: options.sourceItemId,
         action: options.action,
         status: options.status,
         limit: options.limit,

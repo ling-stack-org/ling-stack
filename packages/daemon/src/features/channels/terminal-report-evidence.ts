@@ -3,6 +3,7 @@ import {
   createTerminalReportSnapshotId,
   validateTerminalReportEvidenceSnapshot,
   type ApprovalRequest,
+  type ChannelWorkflowStep,
   type ExecutionAction,
   type LingTurn,
   type RunArtifact,
@@ -135,7 +136,11 @@ export function collectRunTerminalReportEvidence(
   const workspaceFileRefsByArtifactId = collectWorkspaceFileRefsByArtifactId(actions);
   const changedPaths = changedPathsFromActions(actions);
   const teammate = run.teammateId ? store.getAiTeammate(run.teammateId) : undefined;
-  const resultSummary = readRunAssistantSummary(store, run.id, budgets.summaryCharacters) ?? run.errorMessage;
+  const workflowStep = run.workflowStepId ? store.getChannelWorkflowStep(run.workflowStepId) : undefined;
+  const rejectedContext = workflowStepResultContextRejected(workflowStep);
+  const resultSummary = rejectedContext
+    ? undefined
+    : readRunAssistantSummary(store, run.id, budgets.summaryCharacters) ?? run.errorMessage;
 
   return finalizeSnapshot({
     workspaceId: turn?.workspaceId ?? thread?.workspaceId ?? "workspace_default",
@@ -143,9 +148,9 @@ export function collectRunTerminalReportEvidence(
     channelId: run.channelId ?? turn?.channelId ?? thread?.channelId,
     threadId: turn?.threadId ?? run.threadId,
     turnId: turn?.id,
-    sourceMessageId: turn?.sourceMessageId,
+    sourceMessageId: turn?.sourceItemId,
     source: { kind: "run", id: run.id },
-    objective: boundedText(task?.prompt || task?.title || turn?.userInstruction || turn?.title || "Complete the run.", budgets.summaryCharacters),
+    objective: boundedText(workflowStep?.prompt || task?.prompt || task?.title || turn?.userInstruction || turn?.title || "Complete the run.", budgets.summaryCharacters),
     language: options.language ?? languageForRun(run, turn?.userInstruction ?? task?.prompt ?? task?.title) ?? "en-US",
     terminalState,
     terminalAt: run.endedAt ?? run.updatedAt,
@@ -183,7 +188,7 @@ export function collectRunTerminalReportEvidence(
     references: [
       sourceRef,
       ...(turn ? [sourceRefFor("turn", turn.id, turn.title)] : []),
-      ...(turn?.sourceMessageId ? [sourceRefFor("message", turn.sourceMessageId, "Source message")] : []),
+      ...(turn?.sourceItemId ? [sourceRefFor("conversation_item", turn.sourceItemId, "Source item")] : []),
     ],
   }, options, budgets, sourceRef);
 }
@@ -218,7 +223,7 @@ export function collectTurnTerminalReportEvidence(
     channelId: turn.channelId ?? thread?.channelId,
     threadId: turn.threadId,
     turnId: turn.id,
-    sourceMessageId: turn.sourceMessageId,
+    sourceMessageId: turn.sourceItemId,
     source: { kind: "turn", id: turn.id },
     objective: boundedText(turn.userInstruction || turn.title, budgets.summaryCharacters),
     language: options.language ?? runs.map((run) => languageForRun(run, turn.userInstruction)).find(Boolean) ?? inferUserLanguage(turn.userInstruction),
@@ -244,7 +249,7 @@ export function collectTurnTerminalReportEvidence(
     risks: collectTurnRisks(turn, runs, actions, approvalsRaw, sourceRef, budgets.summaryCharacters),
     references: [
       sourceRef,
-      ...(turn.sourceMessageId ? [sourceRefFor("message", turn.sourceMessageId, "Source message")] : []),
+      ...(turn.sourceItemId ? [sourceRefFor("conversation_item", turn.sourceItemId, "Source item")] : []),
       ...runs.map((run) => sourceRefFor("run", run.id, store.getTask(run.taskId)?.title ?? "Run")),
     ],
   }, options, budgets, sourceRef);
@@ -316,13 +321,14 @@ function mapWorkflowStep(item: WorkflowEvidence["steps"][number], maxCharacters:
     throw new Error(`Workflow step is not terminal: ${step.id} (${step.status})`);
   }
   const changedPaths = uniqueStrings(item.outputPacket?.changedPaths ?? []).map((path) => redactEvidenceText(path));
+  const rejectedContext = workflowStepResultContextRejected(step);
   return {
     id: step.id,
     title: boundedText(step.title, maxCharacters),
     status,
     teammateId: step.toParticipantId,
     runId: step.runId,
-    resultSummary: step.resultSummary ? boundedText(step.resultSummary, maxCharacters) : item.outputPacket?.resultSummary ? boundedText(item.outputPacket.resultSummary, maxCharacters) : undefined,
+    resultSummary: rejectedContext ? undefined : step.resultSummary ? boundedText(step.resultSummary, maxCharacters) : item.outputPacket?.resultSummary ? boundedText(item.outputPacket.resultSummary, maxCharacters) : undefined,
     blocker: step.blocker ? boundedText(step.blocker, maxCharacters) : undefined,
     changedPaths,
     artifactIds: uniqueStrings([
@@ -488,7 +494,9 @@ function aggregateWorkflowParticipants(
       workflowStepId: item.step.id,
       runId: item.step.runId,
       status: participantStatusForStep(item.step.status),
-      summary: item.step.resultSummary ?? item.outputPacket?.resultSummary,
+      summary: workflowStepResultContextRejected(item.step)
+        ? undefined
+        : item.step.resultSummary ?? item.outputPacket?.resultSummary,
       sourceRefs: uniqueRefs([
         sourceRefFor("workflow_step", item.step.id, item.step.title),
         ...(item.step.runId ? [sourceRefFor("run", item.step.runId, item.step.title)] : []),
@@ -513,6 +521,11 @@ function aggregateWorkflowParticipants(
     });
   }
   return [...byAgent.values()];
+}
+
+function workflowStepResultContextRejected(step: ChannelWorkflowStep | undefined): boolean {
+  const status = step?.metadata?.resultContextReview?.status;
+  return status === "rejected_stale" || status === "rejected_private_leak";
 }
 
 function aggregateRunParticipants(

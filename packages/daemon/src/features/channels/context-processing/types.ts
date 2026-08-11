@@ -1,3 +1,5 @@
+import type { ConversationContextProjectionMetadata } from "@ling-stack/contracts";
+
 export type ChannelContextSourceKind =
   | "turn"
   | "channel_state"
@@ -105,5 +107,6 @@ export interface ChannelContextView {
   readonly sources: readonly ChannelContextSource[];
   readonly dropped: readonly ChannelContextDroppedSource[];
   readonly budget?: ChannelContextBudgetSnapshot;
+  readonly contextProjection?: ConversationContextProjectionMetadata;
   readonly metadata: ChannelContextViewMetadata;
 }

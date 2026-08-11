@@ -22,9 +22,15 @@ import {
   stringifyJson,
 } from "./helpers.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import { SqliteConversationItemStore } from "./conversation-item-store.js";
+import { SqliteConversationTurnIngestStore } from "./conversation-turn-ingest-store.js";
 
 export class SqliteConversationRevisionStore {
-  constructor(private readonly context: SqliteStoreContext) {}
+  constructor(
+    private readonly context: SqliteStoreContext,
+    private readonly items: SqliteConversationItemStore,
+    private readonly turnIngest: SqliteConversationTurnIngestStore,
+  ) {}
 
   commitConversationMessageEdit(input: CommitConversationMessageEditInput, now: string): CommitConversationMessageEditResult {
     const replay = this.findSupersessionByIdempotency(input.idempotencyKey);
@@ -65,7 +71,7 @@ export class SqliteConversationRevisionStore {
         supersedesRevisionId: original.id,
         createdAt: now,
       });
-      this.updateNativeMessage(input, now);
+      const replacementTurnId = this.updateNativeMessage(input, now);
       if (input.supersededTurnId) {
         this.context.database.prepare(`
           UPDATE ling_turns
@@ -73,7 +79,7 @@ export class SqliteConversationRevisionStore {
           WHERE id = ?
         `).run(now, now, input.supersededTurnId);
       }
-      const supersession = this.insertSupersession(input, replacement.id, now);
+      const supersession = this.insertSupersession(input, replacement.id, replacementTurnId, now);
       this.context.database.exec("COMMIT");
       return { revision: replacement, supersession, idempotentReplay: false };
     } catch (error) {
@@ -199,6 +205,7 @@ export class SqliteConversationRevisionStore {
   private insertSupersession(
     input: CommitConversationMessageEditInput,
     replacementRevisionId: string,
+    replacementTurnId: string | undefined,
     now: string,
   ): ConversationTurnSupersession {
     const id = createConversationTurnSupersessionId();
@@ -208,7 +215,7 @@ export class SqliteConversationRevisionStore {
         superseded_run_ids_json, superseded_response_message_ids_json, replacement_revision_id,
         replacement_turn_id, reason, replacement_status, failure_reason, idempotency_key,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'latest_user_message_edited', 'pending', NULL, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'latest_user_message_edited', 'pending', NULL, ?, ?, ?)
     `).run(
       id,
       DEFAULT_WORKSPACE_ID,
@@ -220,6 +227,7 @@ export class SqliteConversationRevisionStore {
       stringifyJson(input.supersededRunIds ?? []),
       stringifyJson(input.supersededResponseMessageIds ?? []),
       replacementRevisionId,
+      replacementTurnId ?? null,
       input.idempotencyKey,
       now,
       now,
@@ -227,9 +235,9 @@ export class SqliteConversationRevisionStore {
     return this.getConversationTurnSupersession(id)!;
   }
 
-  private updateNativeMessage(input: CommitConversationMessageEditInput, now: string): void {
+  private updateNativeMessage(input: CommitConversationMessageEditInput, now: string): string | undefined {
     if (input.surface === "normal_conversation") {
-      return;
+      return undefined;
     }
     if (input.surface === "teammate_direct") {
       const result = this.context.database.prepare(`
@@ -250,26 +258,49 @@ export class SqliteConversationRevisionStore {
       if (Number(result.changes) !== 1) {
         throw new Error(`Editable teammate direct message not found: ${input.messageId}`);
       }
-      return;
+      return undefined;
     }
-    const result = this.context.database.prepare(`
-      UPDATE channel_messages
-      SET body = ?, mentions_json = ?, attachment_ids_json = ?, link_preview_ids_json = ?, file_refs_json = ?, updated_at = ?
-      WHERE workspace_id = ? AND id = ? AND channel_id = ? AND author_type = 'local-user'
-    `).run(
-      input.replacement.body,
-      stringifyJson(input.replacement.mentions),
-      stringifyJson(input.replacement.attachmentIds),
-      stringifyJson(input.replacement.linkPreviewIds),
-      stringifyJson(input.replacement.fileRefs),
-      now,
-      DEFAULT_WORKSPACE_ID,
-      input.messageId,
-      input.ownerId,
-    );
-    if (Number(result.changes) !== 1) {
+    const original = this.items.getConversationItem(input.messageId);
+    if (
+      !original
+      || original.kind !== "user_message"
+      || original.status !== "committed"
+      || original.channelId !== input.ownerId
+      || original.threadId !== input.laneId
+    ) {
       throw new Error(`Editable channel message not found: ${input.messageId}`);
     }
+    const replacement = this.turnIngest.appendUserTurnWithinTransaction({
+      channelId: input.ownerId,
+      threadId: original.threadId,
+      turnKind: "manual_followup",
+      title: input.replacement.body.replace(/\s+/gu, " ").trim().slice(0, 160) || "Edited channel input",
+      userInstruction: input.replacement.body || "Edited channel input with references.",
+      ...(original.actorId ? { actorId: original.actorId } : {}),
+      payload: {
+        body: input.replacement.body,
+        format: original.payload.format,
+        mentions: input.replacement.mentions.map((mention) => ({
+          id: mention.id,
+          label: mention.label,
+          kind: mention.kind === "ai-teammate"
+            ? "ai_teammate" as const
+            : mention.kind === "local-user"
+              ? "local_user" as const
+              : "channel" as const,
+        })),
+        attachmentIds: input.replacement.attachmentIds,
+        linkPreviewIds: input.replacement.linkPreviewIds,
+        fileRefs: input.replacement.fileRefs,
+        ...(original.payload.replyToItemId ? { replyToItemId: original.payload.replyToItemId } : {}),
+        ...(original.payload.quotedItemIds ? { quotedItemIds: original.payload.quotedItemIds } : {}),
+      },
+      domainRefs: original.domainRefs,
+      ...(original.turnId ? { sourceTurnId: original.turnId } : {}),
+      supersedesItemId: original.id,
+      idempotencyKey: `conversation-edit:${input.idempotencyKey}`,
+    }, now);
+    return replacement.turnId;
   }
 
   private getRevision(id: string): ConversationMessageRevision | undefined {

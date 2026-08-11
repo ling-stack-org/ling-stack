@@ -71,6 +71,14 @@ export interface MockState {
   channelMessages: unknown[];
   channelMessageRouteDecisions: unknown[];
   channelIntentDecisions: unknown[];
+  channelTurnContexts: Record<string, Record<string, unknown>>;
+  channelTurnContextCorrectionRequests: Array<{
+    readonly channelId: string;
+    readonly turnId: string;
+    readonly segmentId: string;
+    readonly expectedAssignmentRevision: number;
+  }>;
+  staleNextChannelTurnContextCorrection?: { readonly segmentId: string };
   channelExecutionProposals: unknown[];
   channelAttachments: unknown[];
   channelLinkPreviews: unknown[];
@@ -142,7 +150,7 @@ export interface MockState {
   channelAiReplyBody?: string;
   keepChannelAiReplyPending?: boolean;
   failNextChannelMessage?: boolean;
-  lastChannelMessageRequest?: Record<string, unknown>;
+  lastChannelTurnRequest?: Record<string, unknown>;
   lastTeammateDirectMessageRequest?: Record<string, unknown>;
   lastConversationMessageEditRequest?: Record<string, unknown>;
   channelMessageQueries?: Record<string, unknown>[];
@@ -233,6 +241,11 @@ export interface MockLingThread {
   pinnedAt?: string;
   archivedAt?: string;
   archivedReason?: string;
+  surfaceKind?: "channel_root" | "topic" | "branch" | "direct" | "work";
+  relationKind?: "root" | "topic" | "branch";
+  anchorItemId?: string;
+  forkContextSnapshotId?: string;
+  nextItemSequence?: number;
 }
 
 export interface MockLingTurn {
@@ -249,6 +262,7 @@ export interface MockLingTurn {
   workflowStepId?: string;
   externalWorkId?: string;
   automationId?: string;
+  sourceItemId?: string;
   sourceMessageId?: string;
   sourceTurnId?: string;
   revision?: number;
@@ -1180,6 +1194,8 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     channelMessages: [],
     channelMessageRouteDecisions: [],
     channelIntentDecisions: [],
+    channelTurnContexts: {},
+    channelTurnContextCorrectionRequests: [],
     channelMessageQueries: [],
     channelExecutionProposals: [],
     channelAttachments: [],
@@ -5137,6 +5153,10 @@ function createMockChannelBranchThread(
     objective: `Conversation branch "${branchName}" for ${channelName}.`,
     status: "open",
     conversationMode: { mode: "default" },
+    surfaceKind: "branch",
+    relationKind: "branch",
+    parentThreadId: `thread_channel_${String(branch.channelId ?? "channel")}`,
+    nextItemSequence: 1,
     createdAt: typeof branch.createdAt === "string" ? branch.createdAt : "2026-05-25T00:17:00.000Z",
     updatedAt: typeof branch.updatedAt === "string" ? branch.updatedAt : "2026-05-25T00:17:00.000Z",
     archivedAt,
@@ -5164,6 +5184,282 @@ function syncMockChannelBranchThreadArchive(state: MockState, branch: Record<str
   }
   delete thread.archivedAt;
   delete thread.archivedReason;
+}
+
+function ensureMockChannelRootThread(state: MockState, channelId: string): MockLingThread {
+  const id = `thread_channel_${channelId}`;
+  const existing = state.threads.find((thread) =>
+    thread.channelId === channelId && thread.surfaceKind === "channel_root")
+    ?? state.threads.find((thread) => thread.id === id)
+    ?? state.threads.find((thread) =>
+      thread.channelId === channelId && thread.kind === "channel_discussion" && !thread.parentThreadId && !thread.anchorItemId);
+  if (existing) {
+    existing.surfaceKind = "channel_root";
+    existing.relationKind = "root";
+    existing.nextItemSequence = mockChannelConversationEntries(state, channelId).filter((entry) => entry.item.threadId === id).length + 1;
+    return existing;
+  }
+  const channel = state.channels.find((candidate) => isRecord(candidate) && candidate.id === channelId);
+  const name = isRecord(channel) && typeof channel.name === "string" ? channel.name : channelId;
+  const thread: MockLingThread = {
+    id,
+    workspaceId: "workspace_default",
+    kind: "channel_discussion",
+    channelId,
+    title: `${name} conversation`,
+    objective: `Root conversation for ${name}.`,
+    status: "open",
+    conversationMode: { mode: "default" },
+    surfaceKind: "channel_root",
+    relationKind: "root",
+    nextItemSequence: 1,
+    createdAt: "2026-05-22T00:00:00.000Z",
+    updatedAt: "2026-05-25T00:18:00.000Z",
+  };
+  state.threads.unshift(thread);
+  return thread;
+}
+
+function mockChannelConversationThread(state: MockState, channelId: string, requestedThreadId?: string): MockLingThread {
+  if (requestedThreadId) {
+    const existing = state.threads.find((thread) => thread.id === requestedThreadId && thread.channelId === channelId);
+    if (existing) {
+      existing.surfaceKind ??= existing.parentThreadId ? "branch" : "channel_root";
+      existing.relationKind ??= existing.parentThreadId ? "branch" : "root";
+      existing.nextItemSequence ??= 1;
+      return existing;
+    }
+    throw new Error(`Mock conversation thread not found: ${requestedThreadId}`);
+  }
+  return ensureMockChannelRootThread(state, channelId);
+}
+
+function mockChannelTurnThread(
+  state: MockState,
+  channelId: string,
+  body: Record<string, unknown>,
+): MockLingThread {
+  const surface = isRecord(body.surface) ? body.surface : undefined;
+  if (!surface || surface.kind === "channel_root") {
+    return ensureMockChannelRootThread(state, channelId);
+  }
+  if (surface.kind === "thread" && typeof surface.threadId === "string") {
+    return mockChannelConversationThread(state, channelId, surface.threadId);
+  }
+  if (surface.kind === "topic" && typeof surface.anchorItemId === "string") {
+    return ensureMockChannelTopicThread(state, channelId, surface.anchorItemId);
+  }
+  return ensureMockChannelRootThread(state, channelId);
+}
+
+function ensureMockChannelTopicThread(state: MockState, channelId: string, anchorItemId: string): MockLingThread {
+  const existing = state.threads.find((thread) =>
+    thread.channelId === channelId && thread.surfaceKind === "topic" && thread.anchorItemId === anchorItemId);
+  if (existing) return existing;
+  const id = `thread_topic_${channelId}_${anchorItemId}`;
+  const thread: MockLingThread = {
+    id,
+    workspaceId: "workspace_default",
+    kind: "channel_discussion",
+    channelId,
+    title: `Topic ${anchorItemId}`,
+    objective: `Topic anchored at ${anchorItemId}.`,
+    status: "open",
+    conversationMode: { mode: "default" },
+    surfaceKind: "topic",
+    relationKind: "topic",
+    anchorItemId,
+    nextItemSequence: 1,
+    createdAt: "2026-05-22T00:00:00.000Z",
+    updatedAt: "2026-05-25T00:18:00.000Z",
+  };
+  state.threads.unshift(thread);
+  return thread;
+}
+
+function mockChannelConversationEntries(
+  state: MockState,
+  channelId: string,
+): Array<{ readonly message: Record<string, unknown>; readonly item: Record<string, unknown>; readonly turn: MockLingTurn }> {
+  const messages = state.channelMessages
+    .filter((message): message is Record<string, unknown> => isRecord(message) && message.channelId === channelId && message.status !== "superseded")
+    .sort((left, right) => String(left.createdAt ?? "").localeCompare(String(right.createdAt ?? "")) || String(left.id ?? "").localeCompare(String(right.id ?? "")));
+  const rootThread = state.threads.find((thread) => thread.channelId === channelId && thread.surfaceKind === "channel_root")
+    ?? state.threads.find((thread) => thread.id === `thread_channel_${channelId}`)
+    ?? {
+      id: `thread_channel_${channelId}`,
+      channelId,
+    };
+  const sequenceByThread = new Map<string, number>();
+  const messageById = new Map(messages.map((message) => [String(message.id), message]));
+  const userMessageById = new Map(messages.filter((message) => message.kind !== "ai_reply").map((message) => [String(message.id), message]));
+  const latestUserBySurfaceThreadId = new Map<string, Record<string, unknown>>();
+  const surfaceThreadForUser = (userMessage: Record<string, unknown> | undefined): string => {
+    if (!userMessage || typeof userMessage.threadId !== "string") return rootThread.id;
+    const explicitThread = state.threads.find((thread) => thread.id === userMessage.threadId && thread.channelId === channelId);
+    if (explicitThread) return explicitThread.id;
+    if (messageById.has(userMessage.threadId)) {
+      return ensureMockChannelTopicThread(state, channelId, userMessage.threadId).id;
+    }
+    return rootThread.id;
+  };
+  return messages.map((message) => {
+    const isAssistant = message.kind === "ai_reply";
+    const explicitAssistantThreadId = isAssistant && typeof message.threadId === "string"
+      && state.threads.some((thread) => thread.id === message.threadId && thread.channelId === channelId)
+      ? message.threadId
+      : undefined;
+    const anchoredAssistantThreadId = isAssistant && typeof message.threadId === "string" && messageById.has(message.threadId)
+      ? ensureMockChannelTopicThread(state, channelId, message.threadId).id
+      : undefined;
+    const explicitSourceUser = isAssistant && typeof message.sourceItemId === "string"
+      ? userMessageById.get(message.sourceItemId)
+      : undefined;
+    const sourceUser = isAssistant
+      ? explicitSourceUser ?? (typeof message.threadId === "string"
+        ? userMessageById.get(message.threadId)
+          ?? ((explicitAssistantThreadId ?? anchoredAssistantThreadId)
+            ? latestUserBySurfaceThreadId.get(explicitAssistantThreadId ?? anchoredAssistantThreadId ?? "")
+            : undefined)
+        : undefined)
+      : message;
+    const threadId = isAssistant
+      ? sourceUser ? surfaceThreadForUser(sourceUser) : explicitAssistantThreadId ?? anchoredAssistantThreadId ?? rootThread.id
+      : surfaceThreadForUser(message);
+    if (!isAssistant) latestUserBySurfaceThreadId.set(threadId, message);
+    const sequence = (sequenceByThread.get(threadId) ?? 0) + 1;
+    sequenceByThread.set(threadId, sequence);
+    const sourceId = sourceUser ? String(sourceUser.id ?? message.id) : undefined;
+    const turnId = sourceId ? `turn_${sourceId}` : undefined;
+    const createdAt = String(message.createdAt ?? "2026-05-25T00:18:00.000Z");
+    const updatedAt = String(message.updatedAt ?? createdAt);
+    const deliveryStatus = message.status === "pending" || message.status === "blocked" || message.status === "failed"
+      ? message.status
+      : "ready";
+    const item = isAssistant
+      ? {
+          schemaVersion: 1,
+          id: String(message.id),
+          workspaceId: "workspace_default",
+          channelId,
+          threadId,
+          ...(turnId ? { turnId } : {}),
+          sequence,
+          kind: "assistant_message",
+          status: deliveryStatus === "pending" ? "pending" : deliveryStatus === "failed" ? "failed" : "committed",
+          actorType: message.authorId === "ling_agent" ? "ling_agent" : "teammate",
+          ...(typeof message.authorId === "string" ? { actorId: message.authorId } : {}),
+          visibility: "channel",
+          payload: {
+            body: String(message.body ?? ""),
+            format: "markdown",
+            streaming: deliveryStatus === "pending",
+            deliveryStatus,
+            ...(typeof message.errorMessage === "string" ? { errorMessage: message.errorMessage } : {}),
+          },
+          domainRefs: [
+            ...(sourceId ? [{ type: "conversation_item", id: sourceId }] : []),
+            ...(typeof message.linkedRunId === "string" ? [{ type: "run", id: message.linkedRunId }] : []),
+          ],
+          revision: 1,
+          createdAt,
+          updatedAt,
+          ...(deliveryStatus === "pending" ? {} : { committedAt: updatedAt }),
+        }
+      : {
+          schemaVersion: 1,
+          id: String(message.id),
+          workspaceId: "workspace_default",
+          channelId,
+          threadId,
+          ...(turnId ? { turnId } : {}),
+          sequence,
+          kind: "user_message",
+          status: "committed",
+          actorType: "local_user",
+          ...(typeof message.authorId === "string" ? { actorId: message.authorId } : {}),
+          visibility: "channel",
+          payload: {
+            body: String(message.body ?? ""),
+            format: "plain_text",
+            mentions: Array.isArray(message.mentions)
+              ? message.mentions.filter(isRecord).map((mention) => ({
+                  id: String(mention.id ?? ""),
+                  label: String(mention.label ?? mention.id ?? ""),
+                  kind: mention.kind === "ai-teammate" ? "ai_teammate" : mention.kind === "channel" ? "channel" : "local_user",
+                }))
+              : [],
+            attachmentIds: Array.isArray(message.attachmentIds) ? message.attachmentIds : [],
+            linkPreviewIds: Array.isArray(message.linkPreviewIds) ? message.linkPreviewIds : [],
+            fileRefs: Array.isArray(message.fileRefs) ? message.fileRefs : [],
+            ...(typeof message.threadId === "string" && messageById.has(message.threadId)
+              ? { replyToItemId: message.threadId }
+              : {}),
+          },
+          domainRefs: [
+            ...(typeof message.linkedTaskId === "string" ? [{ type: "task", id: message.linkedTaskId }] : []),
+            ...(typeof message.linkedRunId === "string" ? [{ type: "run", id: message.linkedRunId }] : []),
+          ],
+          revision: typeof message.revision === "number" ? message.revision : 1,
+          createdAt,
+          updatedAt,
+          committedAt: updatedAt,
+        };
+    const turn: MockLingTurn = {
+      id: turnId ?? `turn_${String(message.id)}`,
+      workspaceId: "workspace_default",
+      threadId,
+      kind: "manual_followup",
+      status: deliveryStatus === "pending" ? "running" : deliveryStatus === "blocked" ? "blocked" : deliveryStatus === "failed" ? "failed" : "succeeded",
+      title: String(sourceUser?.body ?? message.body ?? "Channel turn").slice(0, 160),
+      userInstruction: String(sourceUser?.body ?? message.body ?? ""),
+      channelId,
+      ...(sourceId ? { sourceItemId: sourceId } : {}),
+      createdByActor: "local-user",
+      createdAt: String(sourceUser?.createdAt ?? createdAt),
+      updatedAt,
+      ...(deliveryStatus === "pending" ? {} : { completedAt: updatedAt }),
+    };
+    return { message, item, turn };
+  });
+}
+
+function mockChannelConversationDecorations(entries: readonly { readonly message: Record<string, unknown>; readonly item: Record<string, unknown> }[]): readonly Record<string, unknown>[] {
+  return entries.flatMap(({ message, item }) => {
+    const decoration = {
+      itemId: item.id,
+      ...(typeof message.linkedRunId === "string" ? { linkedRunId: message.linkedRunId } : {}),
+      ...(typeof message.editedAt === "string" ? { editedAt: message.editedAt } : {}),
+      ...(isRecord(message.pendingReplacement) ? { pendingReplacement: message.pendingReplacement } : {}),
+      ...(isRecord(message.webEvidence) ? { webEvidence: message.webEvidence } : {}),
+    };
+    return Object.keys(decoration).length > 1 ? [decoration] : [];
+  });
+}
+
+function buildMockChannelTurnResponse(
+  state: MockState,
+  channelId: string,
+  message: Record<string, unknown>,
+  aiReplies: readonly Record<string, unknown>[] = [],
+  extra: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const entries = mockChannelConversationEntries(state, channelId);
+  const userEntry = entries.find((entry) => entry.item.id === message.id);
+  if (!userEntry) throw new Error(`Mock channel user item not found: ${String(message.id)}`);
+  const assistantEntries = aiReplies
+    .map((reply) => entries.find((entry) => entry.item.id === reply.id))
+    .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+  const thread = mockChannelConversationThread(state, channelId, String(userEntry.item.threadId));
+  thread.nextItemSequence = entries.filter((entry) => entry.item.threadId === thread.id).length + 1;
+  return {
+    thread,
+    turn: userEntry.turn,
+    userItem: userEntry.item,
+    ...(assistantEntries.length > 0 ? { assistantItems: assistantEntries.map((entry) => entry.item) } : {}),
+    decorations: mockChannelConversationDecorations([userEntry, ...assistantEntries]),
+    ...extra,
+  };
 }
 
 function readChannelAutoReplyMode(value: unknown): string {
@@ -5809,13 +6105,12 @@ function maybeCreateMockWorkflowProposal(
   };
   state.channelExecutionProposals.unshift(proposal);
   state.channelIntentDecisions.push({
-    schemaVersion: 1,
+    ...mockChannelIntentDecisionContext(channelId, message),
     id: `intent_${state.channelIntentDecisions.length + 1}`,
-    workspaceId: "workspace_default",
-    channelId,
-    sourceMessageId: typeof message.id === "string" ? message.id : "",
     action: "workflow_proposal",
+    selectedTeammateIds: finalSelectedTeammates.flatMap((teammate) => typeof teammate.id === "string" ? [teammate.id] : []),
     proposalId: proposal.id,
+    resultItemIds: [],
     reason: "Workflow proposal created from channel intent.",
     status: "accepted",
     createdBy: "deterministic",
@@ -5897,7 +6192,8 @@ function maybeCreateMockMaterializationClarifyReply(
     id: `msg_${state.channelMessages.length + 1}`,
     workspaceId: "workspace_default",
     channelId,
-    threadId: typeof message.id === "string" ? message.id : undefined,
+    threadId: typeof message.threadId === "string" ? message.threadId : ensureMockChannelRootThread(state, channelId).id,
+    sourceItemId: typeof message.id === "string" ? message.id : undefined,
     kind: "ai_reply",
     intent: "discuss",
     authorType: "ai-teammate",
@@ -5913,14 +6209,12 @@ function maybeCreateMockMaterializationClarifyReply(
   };
   state.channelMessages.push(aiReply);
   state.channelIntentDecisions.push({
-    schemaVersion: 1,
+    ...mockChannelIntentDecisionContext(channelId, message),
     id: `intent_${state.channelIntentDecisions.length + 1}`,
-    workspaceId: "workspace_default",
-    channelId,
-    sourceMessageId: typeof message.id === "string" ? message.id : "",
     action: "clarify",
-    selectedTeammateId: "ling_agent",
-    replyMessageId: aiReply.id,
+    selectedTeammateIds: ["ling_agent"],
+    resultItemIds: [aiReply.id],
+    clarification: { missingFields: ["materialized_input"], question: replyBody },
     reason: decisionReason,
     status: "accepted",
     createdBy: "deterministic",
@@ -5987,13 +6281,13 @@ function maybeCreateMockSingleStepExecutableProposal(
   };
   state.channelExecutionProposals.unshift(proposal);
   state.channelIntentDecisions.push({
-    schemaVersion: 1,
+    ...mockChannelIntentDecisionContext(channelId, message),
     id: `intent_${state.channelIntentDecisions.length + 1}`,
-    workspaceId: "workspace_default",
-    channelId,
-    sourceMessageId: typeof message.id === "string" ? message.id : "",
-    action: "direct_workflow",
+    action: "execute",
+    selectedTeammateIds: [],
     proposalId: proposal.id,
+    resultItemIds: [],
+    execution: { kind: isEdit ? "file_edit" : "file_create", targetKind: "file" },
     reason: "Direct single-step executable proposal created by mock intent selector.",
     status: "accepted",
     createdBy: "deterministic",
@@ -6002,6 +6296,30 @@ function maybeCreateMockSingleStepExecutableProposal(
   });
   const autoStartedWorkflow = mockAutoStartExecutionProposalWorkflow(state, proposal);
   return { autoStartedWorkflow };
+}
+
+function mockChannelIntentDecisionContext(
+  channelId: string,
+  message: Record<string, unknown>,
+): {
+  readonly schemaVersion: 2;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly sourceTurnId: string;
+  readonly sourceItemId: string;
+  readonly contextSegmentId: string;
+  readonly contextProjectionVersion: string;
+} {
+  const sourceItemId = typeof message.id === "string" ? message.id : "unknown_item";
+  return {
+    schemaVersion: 2,
+    workspaceId: "workspace_default",
+    channelId,
+    sourceTurnId: `turn_${sourceItemId}`,
+    sourceItemId,
+    contextSegmentId: `segment_${channelId}`,
+    contextProjectionVersion: `ctxv2_mock_${sourceItemId}`,
+  };
 }
 
 function mockExecutableFileTarget(state: MockState, channelId: string, body: string): string | undefined {
@@ -6580,12 +6898,19 @@ async function handleMockConversationMessageEdit(
       pendingReplacement: undefined,
       updatedAt: now,
     };
+    const currentEntry = mockChannelConversationEntries(state, ownerId)
+      .find((entry) => entry.item.id === messageId);
+    const currentThreadId = typeof currentEntry?.item.threadId === "string"
+      ? currentEntry.item.threadId
+      : ensureMockChannelRootThread(state, ownerId).id;
     for (let index = 0; index < state.channelMessages.length; index += 1) {
       const candidate = state.channelMessages[index];
       const matchesSupersededReply = isRecord(candidate) && candidate.authorType === "ai-teammate" && candidate.status !== "superseded" && (
-        surface === "topic_reply" || surface === "channel_branch"
-          ? candidate.threadId === current.threadId && String(candidate.createdAt ?? "") >= String(current.createdAt ?? "")
-          : candidate.threadId === messageId
+        candidate.sourceItemId === messageId || (
+          surface === "topic_reply" || surface === "channel_branch"
+            ? candidate.threadId === current.threadId && String(candidate.createdAt ?? "") >= String(current.createdAt ?? "")
+            : candidate.threadId === messageId
+        )
       );
       if (matchesSupersededReply && isRecord(candidate)) {
         supersededResponseMessageIds.push(String(candidate.id));
@@ -6596,7 +6921,8 @@ async function handleMockConversationMessageEdit(
       id: `msg_edit_reply_${state.channelMessages.length + 1}`,
       workspaceId: "workspace_default",
       channelId: ownerId,
-      threadId: typeof current.threadId === "string" && (surface === "topic_reply" || surface === "channel_branch") ? current.threadId : messageId,
+      threadId: currentThreadId,
+      sourceItemId: messageId,
       kind: "ai_reply",
       intent: "discuss",
       authorType: "ai-teammate",
@@ -10639,11 +10965,11 @@ export async function handleDaemonRoute(
       return;
     }
   }
-  const channelMessageStreamMatch = /^\/channels\/([^/]+)\/messages\/stream$/.exec(path);
-  if (channelMessageStreamMatch && request.method() === "POST") {
-    const channelId = decodeURIComponent(channelMessageStreamMatch[1]);
+  const channelTurnStreamMatch = /^\/channels\/([^/]+)\/turns\/stream$/.exec(path);
+  if (channelTurnStreamMatch && request.method() === "POST") {
+    const channelId = decodeURIComponent(channelTurnStreamMatch[1]);
     const body = await request.postDataJSON() as Record<string, unknown>;
-    state.lastChannelMessageRequest = body;
+    state.lastChannelTurnRequest = body;
     if (state.channelMessageDelayMs) {
       await new Promise((resolve) => setTimeout(resolve, state.channelMessageDelayMs));
     }
@@ -10652,11 +10978,15 @@ export async function handleDaemonRoute(
       await route.fulfill({ status: 500, json: { error: "mock_send_failed", message: "Mock message send failed." } });
       return;
     }
+    const conversationThread = mockChannelTurnThread(state, channelId, body);
     const message = {
       id: `msg_${state.channelMessages.length + 1}`,
       workspaceId: "workspace_default",
       channelId,
-      threadId: typeof body.threadId === "string" ? body.threadId : undefined,
+      threadId: conversationThread.id,
+      threadSurfaceKind: conversationThread.surfaceKind,
+      threadRelationKind: conversationThread.relationKind,
+      threadAnchorItemId: conversationThread.anchorItemId,
       kind: typeof body.kind === "string" ? body.kind : "message",
       intent: typeof body.intent === "string" ? body.intent : "discuss",
       authorType: typeof body.authorType === "string" ? body.authorType : "local-user",
@@ -10682,7 +11012,7 @@ export async function handleDaemonRoute(
           ? body.teammateId
           : "ling_agent";
     const replyPending = {
-      sourceMessageId: message.id,
+      sourceItemId: message.id,
       targetTeammateId: requestedTeammateId,
       startedAt: message.createdAt,
     };
@@ -10721,8 +11051,8 @@ export async function handleDaemonRoute(
         intervention,
       };
       const events = [
-        { event: "ready", data: { message } },
-        { event: "done", data: { message, replyDispatch } },
+        { event: "ready", data: buildMockChannelTurnResponse(state, channelId, message) },
+        { event: "done", data: buildMockChannelTurnResponse(state, channelId, message, [], { replyDispatch }) },
       ];
       await route.fulfill({
         status: 200,
@@ -10734,10 +11064,10 @@ export async function handleDaemonRoute(
     const materializationClarifyReply = maybeCreateMockMaterializationClarifyReply(state, channelId, message);
     if (materializationClarifyReply) {
       const events = [
-        { event: "ready", data: { message } },
+        { event: "ready", data: buildMockChannelTurnResponse(state, channelId, message) },
         { event: "reply_pending", data: replyPending },
-        { event: "ready", data: { message, aiReply: materializationClarifyReply, aiReplies: [materializationClarifyReply] } },
-        { event: "done", data: { message, aiReply: materializationClarifyReply, aiReplies: [materializationClarifyReply] } },
+        { event: "ready", data: buildMockChannelTurnResponse(state, channelId, message, [materializationClarifyReply]) },
+        { event: "done", data: buildMockChannelTurnResponse(state, channelId, message, [materializationClarifyReply]) },
       ];
       await route.fulfill({
         status: 200,
@@ -10753,9 +11083,9 @@ export async function handleDaemonRoute(
       : undefined;
     if (mockWorkflowProposal) {
       const events = [
-        { event: "ready", data: { message } },
+        { event: "ready", data: buildMockChannelTurnResponse(state, channelId, message) },
         { event: "reply_pending", data: replyPending },
-        { event: "done", data: { message, ...mockWorkflowProposal } },
+        { event: "done", data: buildMockChannelTurnResponse(state, channelId, message, [], mockWorkflowProposal) },
       ];
       await route.fulfill({
         status: 200,
@@ -10770,7 +11100,7 @@ export async function handleDaemonRoute(
         message.authorType === "local-user" &&
         message.kind === "message" &&
         message.intent === "discuss" &&
-        !message.threadId &&
+        conversationThread.surfaceKind === "channel_root" &&
         (message.body.includes("?") || message.body.includes("？") || isMockContextualFollowUp(message.body)) &&
         (autoReplyMode === "default_teammate" || autoReplyMode === "auto_route")
       );
@@ -10818,7 +11148,8 @@ export async function handleDaemonRoute(
           id: `msg_${state.channelMessages.length + 1}`,
           workspaceId: "workspace_default",
           channelId,
-          threadId: message.threadId ?? message.id,
+          threadId: conversationThread.id,
+          sourceItemId: message.id,
           kind: "ai_reply",
           intent: "discuss",
           authorType: "ai-teammate",
@@ -10843,16 +11174,17 @@ export async function handleDaemonRoute(
       }
     }
     const events = [
-      { event: "ready", data: { message } },
+      { event: "ready", data: buildMockChannelTurnResponse(state, channelId, message) },
       { event: "reply_pending", data: { ...replyPending, targetTeammateId: routedTeammateId ?? requestedTeammateId } },
-      ...(pendingReply ? [{ event: "ready", data: { message, aiReply: pendingReply, aiReplies: [pendingReply] } }] : []),
-      ...(aiReply && !state.keepChannelAiReplyPending ? [{ event: "delta", data: { messageId: aiReply.id, delta: aiReply.body, body: aiReply.body } }] : []),
-      { event: "done", data: storedAiReply ? {
+      ...(pendingReply ? [{ event: "ready", data: buildMockChannelTurnResponse(state, channelId, message, [pendingReply]) }] : []),
+      ...(aiReply && !state.keepChannelAiReplyPending ? [{ event: "delta", data: { itemId: aiReply.id, delta: aiReply.body, body: aiReply.body } }] : []),
+      { event: "done", data: buildMockChannelTurnResponse(
+        state,
+        channelId,
         message,
-        aiReply: storedAiReply,
-        aiReplies: [storedAiReply],
-        replyDispatch: { targetTeammateId: routedTeammateId, disposition: "reply_requested" },
-      } : { message } },
+        storedAiReply ? [storedAiReply] : [],
+        storedAiReply ? { replyDispatch: { targetTeammateId: routedTeammateId, disposition: "reply_requested" } } : {},
+      ) },
     ];
     await route.fulfill({
       status: 200,
@@ -10862,18 +11194,21 @@ export async function handleDaemonRoute(
     return;
   }
 
-  const channelMessagesMatch = /^\/channels\/([^/]+)\/messages$/.exec(path);
-  if (channelMessagesMatch && request.method() === "GET") {
-    const channelId = decodeURIComponent(channelMessagesMatch[1]);
+  const channelItemsMatch = /^\/channels\/([^/]+)\/items$/.exec(path);
+  if (channelItemsMatch && request.method() === "GET") {
+    const channelId = decodeURIComponent(channelItemsMatch[1]);
     const rawLimit = Number.parseInt(url.searchParams.get("limit") ?? "200", 10);
     const limit = Math.min(Math.max(Number.isInteger(rawLimit) ? rawLimit : 200, 1), 500);
-    const beforeMessageId = url.searchParams.get("beforeMessageId");
-    const threadId = url.searchParams.get("threadId");
+    const rawBeforeSequence = url.searchParams.get("beforeSequence");
+    const beforeSequence = rawBeforeSequence === null ? undefined : Number.parseInt(rawBeforeSequence, 10);
+    const requestedThreadId = url.searchParams.get("threadId") ?? undefined;
+    const requestedAnchorItemId = url.searchParams.get("anchorItemId") ?? undefined;
     state.channelMessageQueries?.push({
       channelId,
       limit,
-      beforeMessageId: beforeMessageId ?? undefined,
-      threadId: threadId ?? undefined,
+      beforeSequence,
+      threadId: requestedThreadId,
+      anchorItemId: requestedAnchorItemId,
     });
     const hiddenQueuedMessageIds = new Set(state.runInterventions.flatMap((intervention) => {
       if (!isRecord(intervention) || typeof intervention.startedAt === "string" || !isRecord(intervention.messagePayload)) {
@@ -10883,24 +11218,8 @@ export async function handleDaemonRoute(
         ? [intervention.messagePayload.sourceMessageId]
         : [];
     }));
-    const messages = state.channelMessages
-      .filter((message) =>
-        isRecord(message) &&
-        message.channelId === channelId &&
-        message.status !== "superseded" &&
-        !hiddenQueuedMessageIds.has(typeof message.id === "string" ? message.id : "") &&
-        (!threadId || message.threadId === threadId)
-      )
-      .sort((left, right) => {
-        if (!isRecord(left) || !isRecord(right)) {
-          return 0;
-        }
-        const leftCreatedAt = typeof left.createdAt === "string" ? left.createdAt : "";
-        const rightCreatedAt = typeof right.createdAt === "string" ? right.createdAt : "";
-        return leftCreatedAt.localeCompare(rightCreatedAt);
-      });
     const pendingReplyById = state.pendingChannelAiReplies ?? {};
-    for (const message of messages) {
+    for (const message of state.channelMessages) {
       if (!isRecord(message) || message.status !== "pending") {
         continue;
       }
@@ -10912,25 +11231,170 @@ export async function handleDaemonRoute(
         delete pendingReplyById[message.id];
       }
     }
-    const beforeIndex = beforeMessageId
-      ? messages.findIndex((message) => isRecord(message) && message.id === beforeMessageId)
-      : messages.length;
-    if (beforeMessageId && beforeIndex < 0) {
-      await route.fulfill({ status: 400, json: { error: "bad_request", message: `Invalid channel message cursor: ${beforeMessageId}` } });
+    if (beforeSequence !== undefined && (!Number.isInteger(beforeSequence) || beforeSequence < 1)) {
+      await route.fulfill({ status: 400, json: { error: "bad_request", message: `Invalid conversation item sequence cursor: ${rawBeforeSequence}` } });
       return;
     }
-    const pageEnd = beforeIndex;
-    const pageStart = Math.max(0, pageEnd - limit);
-    const pageMessages = messages.slice(pageStart, pageEnd);
+    if (requestedThreadId && requestedAnchorItemId) {
+      await route.fulfill({ status: 400, json: { error: "bad_request", message: "threadId and anchorItemId cannot be used together" } });
+      return;
+    }
+    const thread = requestedAnchorItemId
+      ? ensureMockChannelTopicThread(state, channelId, requestedAnchorItemId)
+      : mockChannelConversationThread(state, channelId, requestedThreadId);
+    const visibleEntries = mockChannelConversationEntries(state, channelId)
+      .filter((entry) => entry.item.threadId === thread.id)
+      .filter((entry) => !hiddenQueuedMessageIds.has(String(entry.item.id)))
+      .filter((entry) => beforeSequence === undefined || Number(entry.item.sequence) < beforeSequence);
+    const pageStart = Math.max(0, visibleEntries.length - limit);
+    const pageEntries = visibleEntries.slice(pageStart);
+    const turnById = new Map(pageEntries.map((entry) => [entry.turn.id, entry.turn]));
+    thread.nextItemSequence = mockChannelConversationEntries(state, channelId)
+      .filter((entry) => entry.item.threadId === thread.id).length + 1;
     await route.fulfill({
       json: {
         cwd,
         channelId,
-        messages: pageMessages,
+        thread,
+        turns: [...turnById.values()],
+        items: pageEntries.map((entry) => entry.item),
+        decorations: mockChannelConversationDecorations(pageEntries),
         hasMore: pageStart > 0,
-        nextBeforeMessageId: pageStart > 0 && isRecord(pageMessages[0]) && typeof pageMessages[0].id === "string" ? pageMessages[0].id : undefined,
+        nextBeforeSequence: pageStart > 0 ? pageEntries[0]?.item.sequence : undefined,
       },
     });
+    return;
+  }
+  const channelTurnContextCorrectionMatch = /^\/channels\/([^/]+)\/turns\/([^/]+)\/context\/corrections$/.exec(path);
+  if (channelTurnContextCorrectionMatch && request.method() === "POST") {
+    const channelId = decodeURIComponent(channelTurnContextCorrectionMatch[1]);
+    const turnId = decodeURIComponent(channelTurnContextCorrectionMatch[2]);
+    const context = state.channelTurnContexts[turnId];
+    if (!isRecord(context)) {
+      await route.fulfill({ status: 404, json: { error: "channel_turn_not_found", message: `Channel turn not found: ${turnId}` } });
+      return;
+    }
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const segmentId = typeof body.segmentId === "string" ? body.segmentId : "";
+    const expectedAssignmentRevision = typeof body.expectedAssignmentRevision === "number"
+      ? body.expectedAssignmentRevision
+      : Number.NaN;
+    state.channelTurnContextCorrectionRequests.push({
+      channelId,
+      turnId,
+      segmentId,
+      expectedAssignmentRevision,
+    });
+    const assignment = isRecord(context.assignment) ? context.assignment : undefined;
+    const projection = isRecord(context.projection) ? context.projection : undefined;
+    const segments = Array.isArray(context.segments) ? context.segments.filter(isRecord) : [];
+    const currentRevision = assignment && typeof assignment.revision === "number" ? assignment.revision : undefined;
+    if (!assignment || !projection || currentRevision === undefined) {
+      await route.fulfill({ status: 500, json: { error: "mock_context_invalid", message: `Mock context is incomplete: ${turnId}` } });
+      return;
+    }
+
+    const applyAssignment = (targetSegmentId: string, decisionSource: "user" | "model_policy"): {
+      readonly previousAssignment: Record<string, unknown>;
+      readonly assignment: Record<string, unknown>;
+      readonly segment: Record<string, unknown>;
+      readonly projection: Record<string, unknown>;
+      readonly invalidatedSummaryIds: readonly string[];
+    } | undefined => {
+      const segment = segments.find((candidate) => candidate.id === targetSegmentId);
+      if (!segment) return undefined;
+      const previousAssignment = { ...assignment };
+      const revision = currentRevision + 1;
+      const nextAssignment = {
+        ...assignment,
+        id: `${String(assignment.id ?? `assignment_${turnId}`)}_r${revision}`,
+        segmentId: targetSegmentId,
+        revision,
+        decisionSource,
+        supersedesAssignmentId: assignment.id,
+        createdAt: "2026-08-10T08:05:00.000Z",
+      };
+      const invalidatedSummaryIds = Array.isArray(context.summaries)
+        ? context.summaries.filter(isRecord).map((summary) => String(summary.id ?? "")).filter(Boolean)
+        : [];
+      const nextProjection = {
+        ...projection,
+        projectionVersion: `${String(projection.projectionVersion ?? "ctxv2_mock")}_r${revision}`,
+        sourceStateFingerprint: `${String(projection.sourceStateFingerprint ?? "source_mock")}_r${revision}`,
+        segmentId: targetSegmentId,
+        summaryIds: [],
+      };
+      context.assignment = nextAssignment;
+      context.segment = segment;
+      context.projection = nextProjection;
+      context.summaries = [];
+      return {
+        previousAssignment,
+        assignment: nextAssignment,
+        segment,
+        projection: nextProjection,
+        invalidatedSummaryIds,
+      };
+    };
+
+    if (state.staleNextChannelTurnContextCorrection) {
+      const staleSegmentId = state.staleNextChannelTurnContextCorrection.segmentId;
+      delete state.staleNextChannelTurnContextCorrection;
+      const staleUpdate = applyAssignment(staleSegmentId, "model_policy");
+      if (!staleUpdate) {
+        await route.fulfill({ status: 500, json: { error: "mock_context_segment_missing", message: `Mock segment not found: ${staleSegmentId}` } });
+        return;
+      }
+      await route.fulfill({
+        status: 409,
+        json: {
+          error: "context_assignment_revision_conflict",
+          message: `Context assignment revision conflict: expected ${expectedAssignmentRevision}, current ${staleUpdate.assignment.revision}`,
+        },
+      });
+      return;
+    }
+    if (!Number.isSafeInteger(expectedAssignmentRevision) || expectedAssignmentRevision !== currentRevision) {
+      await route.fulfill({
+        status: 409,
+        json: {
+          error: "context_assignment_revision_conflict",
+          message: `Context assignment revision conflict: expected ${expectedAssignmentRevision}, current ${currentRevision}`,
+        },
+      });
+      return;
+    }
+    const corrected = applyAssignment(segmentId, "user");
+    if (!corrected) {
+      await route.fulfill({ status: 400, json: { error: "context_segment_unavailable", message: `Context segment is not available to this turn: ${segmentId}` } });
+      return;
+    }
+    await route.fulfill({
+      json: {
+        cwd,
+        channelId,
+        thread: context.thread,
+        turn: context.turn,
+        segment: corrected.segment,
+        assignment: corrected.assignment,
+        previousAssignment: corrected.previousAssignment,
+        invalidatedSummaryIds: corrected.invalidatedSummaryIds,
+        projection: corrected.projection,
+        idempotentReplay: false,
+      },
+    });
+    return;
+  }
+  const channelTurnContextMatch = /^\/channels\/([^/]+)\/turns\/([^/]+)\/context$/.exec(path);
+  if (channelTurnContextMatch && request.method() === "GET") {
+    const channelId = decodeURIComponent(channelTurnContextMatch[1]);
+    const turnId = decodeURIComponent(channelTurnContextMatch[2]);
+    const context = state.channelTurnContexts[turnId];
+    if (!isRecord(context)) {
+      await route.fulfill({ status: 404, json: { error: "channel_turn_not_found", message: `Channel turn not found: ${turnId}` } });
+      return;
+    }
+    await route.fulfill({ json: { ...context, cwd, channelId } });
     return;
   }
   const channelRouteDecisionsMatch = /^\/channels\/([^/]+)\/message-route-decisions$/.exec(path);
@@ -10952,7 +11416,7 @@ export async function handleDaemonRoute(
   const channelIntentDecisionsMatch = /^\/channels\/([^/]+)\/intent-decisions$/.exec(path);
   if (channelIntentDecisionsMatch && request.method() === "GET") {
     const channelId = decodeURIComponent(channelIntentDecisionsMatch[1]);
-    const sourceMessageId = url.searchParams.get("sourceMessageId");
+    const sourceItemId = url.searchParams.get("sourceItemId");
     await route.fulfill({
       json: {
         cwd,
@@ -10960,15 +11424,16 @@ export async function handleDaemonRoute(
         decisions: state.channelIntentDecisions.filter((decision) =>
           isRecord(decision) &&
           decision.channelId === channelId &&
-          (!sourceMessageId || decision.sourceMessageId === sourceMessageId)),
+          (!sourceItemId || decision.sourceItemId === sourceItemId)),
       },
     });
     return;
   }
-  if (channelMessagesMatch && request.method() === "POST") {
-    const channelId = decodeURIComponent(channelMessagesMatch[1]);
+  const channelTurnsMatch = /^\/channels\/([^/]+)\/turns$/.exec(path);
+  if (channelTurnsMatch && request.method() === "POST") {
+    const channelId = decodeURIComponent(channelTurnsMatch[1]);
     const body = await request.postDataJSON() as Record<string, unknown>;
-    state.lastChannelMessageRequest = body;
+    state.lastChannelTurnRequest = body;
     if (state.channelMessageDelayMs) {
       await new Promise((resolve) => setTimeout(resolve, state.channelMessageDelayMs));
     }
@@ -10977,11 +11442,15 @@ export async function handleDaemonRoute(
       await route.fulfill({ status: 500, json: { error: "mock_send_failed", message: "Mock message send failed." } });
       return;
     }
+    const conversationThread = mockChannelTurnThread(state, channelId, body);
     const message = {
       id: `msg_${state.channelMessages.length + 1}`,
       workspaceId: "workspace_default",
       channelId,
-      threadId: typeof body.threadId === "string" ? body.threadId : undefined,
+      threadId: conversationThread.id,
+      threadSurfaceKind: conversationThread.surfaceKind,
+      threadRelationKind: conversationThread.relationKind,
+      threadAnchorItemId: conversationThread.anchorItemId,
       kind: typeof body.kind === "string" ? body.kind : "message",
       intent: typeof body.intent === "string" ? body.intent : "discuss",
       authorType: typeof body.authorType === "string" ? body.authorType : "local-user",
@@ -11000,7 +11469,7 @@ export async function handleDaemonRoute(
     state.channelMessages.push(message);
     const materializationClarifyReply = maybeCreateMockMaterializationClarifyReply(state, channelId, message);
     if (materializationClarifyReply) {
-      await route.fulfill({ status: 201, json: { message, aiReply: materializationClarifyReply } });
+      await route.fulfill({ status: 201, json: buildMockChannelTurnResponse(state, channelId, message, [materializationClarifyReply]) });
       return;
     }
     const channel = state.channels.find((item) => isRecord(item) && item.id === channelId);
@@ -11009,7 +11478,7 @@ export async function handleDaemonRoute(
       ? maybeCreateMockWorkflowProposal(state, channelId, message, autoReplyMode)
       : undefined;
     if (mockWorkflowProposal) {
-      await route.fulfill({ status: 201, json: { message, ...mockWorkflowProposal } });
+      await route.fulfill({ status: 201, json: buildMockChannelTurnResponse(state, channelId, message, [], mockWorkflowProposal) });
       return;
     }
     const shouldAutoReply = body.requestAiReply === true ||
@@ -11018,7 +11487,7 @@ export async function handleDaemonRoute(
         message.authorType === "local-user" &&
         message.kind === "message" &&
         message.intent === "discuss" &&
-        !message.threadId &&
+        conversationThread.surfaceKind === "channel_root" &&
         (message.body.includes("?") || message.body.includes("？") || isMockContextualFollowUp(message.body)) &&
         (autoReplyMode === "default_teammate" || autoReplyMode === "auto_route")
       );
@@ -11063,7 +11532,8 @@ export async function handleDaemonRoute(
           id: `msg_${state.channelMessages.length + 1}`,
           workspaceId: "workspace_default",
           channelId,
-          threadId: message.threadId ?? message.id,
+          threadId: conversationThread.id,
+          sourceItemId: message.id,
           kind: "ai_reply",
           intent: "discuss",
           authorType: "ai-teammate",
@@ -11087,7 +11557,10 @@ export async function handleDaemonRoute(
       state.pendingChannelAiReplies ??= {};
       state.pendingChannelAiReplies[aiReply.id] = "收到，我会按频道上下文推进。";
     }
-    await route.fulfill({ status: 201, json: aiReply ? { message, aiReply } : { message } });
+    await route.fulfill({
+      status: 201,
+      json: buildMockChannelTurnResponse(state, channelId, message, aiReply ? [aiReply] : []),
+    });
     return;
   }
   const channelProposalsMatch = /^\/channels\/([^/]+)\/proposals$/.exec(path);

@@ -12,6 +12,10 @@ import type {
   RunStore,
   SecretResolver,
 } from "@ling-stack/core";
+import type {
+  ChannelIntentClarificationV2,
+  ChannelIntentExecutionV2,
+} from "@ling-stack/contracts";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import { extractAssistantText } from "../../shared/assistant-text.js";
@@ -22,6 +26,10 @@ import { resolveEffectiveChannelCollaborationProtocol } from "./collaboration-pr
 import { compactChannelDiscussionForNoToolsRetry, isContextLengthError } from "./context-compaction.js";
 import { buildChannelIntentSelectorContextPack, renderContextPack } from "./context-packs.js";
 import { buildWorkflowProposalContextView, proposalSourceRefsFromContextView } from "./context-processing/proposals.js";
+import {
+  buildConversationContextProjection,
+  projectConversationContextMessages,
+} from "./context-processing/conversation-context-projector.js";
 import { createLingAgentExecutor, isLingAgentExecutorId, LING_AGENT_EXECUTOR_ID } from "./ling-agent-executor.js";
 import {
   buildLingAgentTurnEnvelope,
@@ -34,7 +42,13 @@ import {
   recordProviderRuntimeAvailabilityIncident,
 } from "./provider-runtime-observations.js";
 import { resolveChannelResponseLanguage } from "./response-language.js";
+import { resolveChannelConversationSurface } from "./conversation-surface.js";
 import { extractFileTargetCandidate, resolveExecutableFileTarget } from "./target-resolver.js";
+import {
+  appendChannelAssistantMessage,
+  findChannelAssistantReplyForSource,
+  getChannelMessageView,
+} from "./conversation-item-messages.js";
 
 export interface ChannelIntentSelectorInput {
   readonly store: RunStore;
@@ -64,7 +78,7 @@ export type ChannelIntentSelectorResult =
       readonly action: "visible_multi_reply";
       readonly teammateIds: readonly string[];
       readonly reason: string;
-      readonly createdBy: "deterministic" | "model";
+      readonly createdBy: "deterministic" | "model_policy";
       readonly aiReplies?: readonly ChannelMessage[];
       readonly intentDecisionId?: string;
     }
@@ -94,17 +108,11 @@ interface MaterializationClarifyReason {
 }
 
 interface ChannelIntentModelOutput {
-  readonly action: "no_reply" | "single_reply" | "visible_multi_reply" | "clarify" | "workflow_proposal" | "direct_workflow";
+  readonly action: "no_reply" | "reply" | "visible_multi_reply" | "clarify" | "workflow_proposal" | "execute";
   readonly reason: string;
-  readonly operationKind?: ChannelIntentModelOperationKind;
+  readonly clarification?: ChannelIntentClarificationV2;
+  readonly execution?: ChannelIntentExecutionV2;
 }
-
-type ChannelIntentModelOperationKind =
-  | "file_create"
-  | "file_edit"
-  | "open_local_target"
-  | "run_command"
-  | "unknown";
 
 interface RoleMatch {
   readonly roleKey: AiTeammate["roleKey"];
@@ -122,6 +130,7 @@ type ProposalParticipantSelection = {
 
 interface SingleStepExecutableIntent {
   readonly kind: "file_create" | "file_edit" | "command_run";
+  readonly execution: ChannelIntentExecutionV2;
   readonly title: string;
   readonly prompt: string;
   readonly actionSummary: string;
@@ -139,6 +148,7 @@ interface SingleStepExecutableBlocker {
 
 interface SingleStepExecutableClarify {
   readonly reasonCode: ClarifyReasonCode;
+  readonly missingFields?: readonly string[];
   readonly userMessage?: string;
   readonly technicalReason: string;
 }
@@ -214,7 +224,7 @@ export async function selectChannelWorkflowIntent(input: ChannelIntentSelectorIn
     return modelIntent;
   }
   if (input.config?.channels.intentSelector) {
-    return { action: "continue" };
+    return createReplyIntentResult(input, "Intent model routing was unavailable; ordinary reply fallback applied.");
   }
   const executableClarify = detectSingleStepExecutableClarify(input);
   if (executableClarify) {
@@ -224,6 +234,12 @@ export async function selectChannelWorkflowIntent(input: ChannelIntentSelectorIn
       "deterministic",
       executableClarify.technicalReason,
       executableClarify.userMessage,
+      executableClarify.userMessage
+        ? {
+            missingFields: executableClarify.missingFields ?? missingFieldsForClarifyReason(executableClarify.reasonCode),
+            question: executableClarify.userMessage,
+          }
+        : undefined,
     );
   }
   const executableIntent = detectSingleStepExecutableIntent(input);
@@ -238,8 +254,8 @@ export async function selectChannelWorkflowIntent(input: ChannelIntentSelectorIn
   if (hasNonLingExplicitAiMention(input.sourceMessage)) {
     return { action: "continue" };
   }
-  if (input.sourceMessage.threadId) {
-    return { action: "continue" };
+  if (resolveChannelConversationSurface(input.store, input.channel.id, input.sourceMessage).kind !== "root") {
+    return createReplyIntentResult(input, "Non-root Ling turn remains an ordinary reply.");
   }
   return selectDeterministicChannelWorkflowIntent(input);
 }
@@ -261,7 +277,7 @@ function selectDeterministicChannelWorkflowIntent(input: ChannelIntentSelectorIn
   if (!reasonCode) {
     const clarifyReasonCode = detectClarifyIntentReason(input.sourceMessage);
     if (!clarifyReasonCode) {
-      return { action: "continue" };
+      return createReplyIntentResult(input, "Deterministic fallback kept the turn as an ordinary reply.");
     }
     return createClarifyReply(input, clarifyReasonCode);
   }
@@ -271,7 +287,7 @@ function selectDeterministicChannelWorkflowIntent(input: ChannelIntentSelectorIn
 function createWorkflowIntentResult(
   input: ChannelIntentSelectorInput,
   reasonCode: IntentReasonCode,
-  createdBy: "deterministic" | "model",
+  createdBy: "deterministic" | "model_policy",
   decisionReason?: string,
 ): ChannelIntentSelectorResult {
   const existingProposal = input.store
@@ -304,38 +320,59 @@ async function maybeSelectModelAssistedIntent(input: ChannelIntentSelectorInput)
   try {
     const output = await requestModelIntent(input);
     return applyModelIntentOutput(input, output);
-  } catch {
-    return undefined;
+  } catch (error) {
+    return createReplyIntentResult(
+      input,
+      `Intent model output was unavailable or invalid; fail-open to an ordinary reply. ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 
+function createReplyIntentResult(
+  input: ChannelIntentSelectorInput,
+  reason: string,
+  createdBy: "deterministic" | "model_policy" = "deterministic",
+): ChannelIntentSelectorResult {
+  persistIntentDecision(input, {
+    action: "reply",
+    reason,
+    status: "accepted",
+    createdBy,
+  });
+  return { action: "continue" };
+}
+
 function applyModelIntentOutput(input: ChannelIntentSelectorInput, output: ChannelIntentModelOutput): ChannelIntentSelectorResult | undefined {
-  if (output.action === "single_reply") {
-    persistIntentDecision(input, {
-      action: "single_reply",
-      reason: output.reason,
-      status: "accepted",
-      createdBy: "model",
-    });
-    return { action: "continue" };
+  if (output.action === "reply") {
+    return createReplyIntentResult(input, output.reason, "model_policy");
   }
   if (output.action === "no_reply") {
     const decision = persistIntentDecision(input, {
       action: "no_reply",
       reason: output.reason,
       status: "suppressed",
-      createdBy: "model",
+      createdBy: "model_policy",
     });
     return { action: "no_reply", intentDecisionId: decision.id };
   }
   if (output.action === "clarify") {
-    return createClarifyReply(input, clarifyReasonFromMessage(input.sourceMessage), "model", output.reason);
+    const clarification = output.clarification;
+    if (!clarification) throw new Error("Intent model clarify output omitted structured clarification.");
+    validateClarificationForCurrentTurn(input, clarification);
+    return createClarifyReply(
+      input,
+      clarifyReasonFromMissingFields(clarification.missingFields),
+      "model_policy",
+      output.reason,
+      clarification.question,
+      clarification,
+    );
   }
   if (output.action === "visible_multi_reply") {
-    return selectVisibleMultiReply(input, "model", output.reason);
+    return selectVisibleMultiReply(input, "model_policy", output.reason);
   }
-  if (output.action === "direct_workflow") {
-    return createModelAssistedDirectWorkflowResult(input, output);
+  if (output.action === "execute") {
+    return createModelAssistedExecuteResult(input, output);
   }
 
   const reasonCode = detectWorkflowIntentReason(input.sourceMessage) ?? "ordered_work_request";
@@ -343,28 +380,31 @@ function applyModelIntentOutput(input: ChannelIntentSelectorInput, output: Chann
   if (participants.length === 0) {
     return undefined;
   }
-  return createWorkflowProposal(input, reasonCode, output.action, "model", output.reason, participants);
+  return createWorkflowProposal(input, reasonCode, output.action, "model_policy", output.reason, participants);
 }
 
-function createModelAssistedDirectWorkflowResult(input: ChannelIntentSelectorInput, output: ChannelIntentModelOutput): ChannelIntentSelectorResult {
-  const operationKind = output.operationKind ?? "unknown";
-  if (operationKind === "unknown") {
+function createModelAssistedExecuteResult(input: ChannelIntentSelectorInput, output: ChannelIntentModelOutput): ChannelIntentSelectorResult {
+  const execution = output.execution;
+  if (!execution) {
     return createClarifyReply(
       input,
       "missing_target",
-      "model",
-      `Model classified the turn as direct_workflow but did not provide a supported operationKind. Model reason: ${output.reason}`,
-    );
-  }
-  if (operationKind === "run_command") {
-    return createClarifyReply(
-      input,
-      "missing_target",
-      "model",
-      `Model classified the turn as direct_workflow/run_command, but the typed operation path requires a separate command materialization contract. Model reason: ${output.reason}`,
+      "model_policy",
+      `Model classified the turn as execute but omitted its typed execution contract. Model reason: ${output.reason}`,
     );
   }
   const text = normalizeWhitespace(input.sourceMessage.body);
+  if (execution.kind === "run_command") {
+    const executableIntent = detectReleaseExecutableIntent(text) ?? detectCommandExecutableIntent(text);
+    return executableIntent
+      ? createSingleStepExecutableProposal(input, executableIntent, "model_policy", `Model-assisted execute/run_command validated. ${output.reason}`)
+      : createClarifyReply(
+          input,
+          "missing_target",
+          "model_policy",
+          `Model classified the turn as execute/run_command, but no bounded command or check was materialized. Model reason: ${output.reason}`,
+        );
+  }
   const explicitTarget = extractFileTargetCandidate(text);
   const targetResolution = resolveExecutableFileTarget({
     store: input.store,
@@ -382,8 +422,8 @@ function createModelAssistedDirectWorkflowResult(input: ChannelIntentSelectorInp
     return createClarifyReply(
       input,
       "ambiguous_target",
-      "model",
-      `Model classified the turn as direct_workflow/${operationKind}, but target validation found multiple candidates. ${targetResolution.reason} Model reason: ${output.reason}`,
+      "model_policy",
+      `Model classified the turn as execute/${execution.kind}, but target validation found multiple candidates. ${targetResolution.reason} Model reason: ${output.reason}`,
       buildAmbiguousFileTargetClarifyBody(targetResolution.candidates, responseLanguage),
     );
   }
@@ -391,19 +431,19 @@ function createModelAssistedDirectWorkflowResult(input: ChannelIntentSelectorInp
     return createClarifyReply(
       input,
       "missing_target",
-      "model",
-      `Model classified the turn as direct_workflow/${operationKind}, but target validation failed: ${targetResolution.reason} Model reason: ${output.reason}`,
+      "model_policy",
+      `Model classified the turn as execute/${execution.kind}, but target validation failed: ${targetResolution.reason} Model reason: ${output.reason}`,
     );
   }
-  if (operationKind === "open_local_target") {
+  if (execution.kind === "open_local_target") {
     return createSingleStepExecutableProposal(
       input,
       buildOpenLocalTargetExecutableIntent(targetResolution.target),
-      "model",
-      `Model-assisted direct_workflow/open_local_target validated against TargetResolver. ${output.reason}`,
+      "model_policy",
+      `Model-assisted execute/open_local_target validated against TargetResolver. ${output.reason}`,
     );
   }
-  const fileAction = operationKind === "file_edit" ? "file_edit" : "file_create";
+  const fileAction = execution.kind === "file_edit" ? "file_edit" : "file_create";
   const content = resolveFileContentForRequest(input, text, targetResolution.target);
   if (fileAction === "file_create" && !hasConcreteFileWorkInput(content) && requiresConcreteFileContent(text, targetResolution.source)) {
     const responseLanguage = resolveChannelResponseLanguage({
@@ -411,19 +451,21 @@ function createModelAssistedDirectWorkflowResult(input: ChannelIntentSelectorInp
       channel: input.channel,
       sourceText: input.sourceMessage.body,
     }).language;
+    const question = buildMissingFileContentClarifyBody(targetResolution.target, responseLanguage);
     return createClarifyReply(
       input,
       "missing_acceptance",
-      "model",
-      `Model classified the turn as direct_workflow/${operationKind}, but validated target ${targetResolution.target} has no concrete content or objective source and the current turn is only a follow-up/capability check. Model reason: ${output.reason}`,
-      buildMissingFileContentClarifyBody(targetResolution.target, responseLanguage),
+      "model_policy",
+      `Model classified the turn as execute/${execution.kind}, but validated target ${targetResolution.target} has no concrete content or objective source and the current turn is only a follow-up/capability check. Model reason: ${output.reason}`,
+      question,
+      { missingFields: ["content"], question },
     );
   }
   return createSingleStepExecutableProposal(
     input,
     buildFileExecutableIntent(input, text, targetResolution.target, fileAction, content),
-    "model",
-    `Model-assisted direct_workflow/${operationKind} validated against TargetResolver. ${output.reason}`,
+    "model_policy",
+    `Model-assisted execute/${execution.kind} validated against TargetResolver. ${output.reason}`,
   );
 }
 
@@ -501,10 +543,11 @@ async function requestModelIntent(input: ChannelIntentSelectorInput): Promise<Ch
       error,
       now: observedAt,
     });
-    const compaction = compactChannelDiscussionForNoToolsRetry({
+    const compaction = await compactChannelDiscussionForNoToolsRetry({
       store: input.store,
       channel: input.channel,
       sourceMessage: input.sourceMessage,
+      inputBudgetTokens: contextPack.budget.inputBudgetTokens,
       now: observedAt,
     });
     contextPack = buildChannelIntentSelectorContextPack({
@@ -564,34 +607,74 @@ function parseModelIntentOutput(text: string): ChannelIntentModelOutput {
   const reason = record.reason;
   if (
     (action !== "no_reply" &&
-      action !== "single_reply" &&
+      action !== "reply" &&
       action !== "visible_multi_reply" &&
       action !== "clarify" &&
       action !== "workflow_proposal" &&
-      action !== "direct_workflow") ||
+      action !== "execute") ||
     typeof reason !== "string" ||
     reason.trim().length === 0
   ) {
     throw new Error("Intent model output schema is invalid.");
   }
-  const operationKind = parseModelOperationKind(record.operationKind);
+  const allowedKeys = action === "clarify"
+    ? new Set(["action", "reason", "clarification"])
+    : action === "execute"
+      ? new Set(["action", "reason", "execution"])
+      : new Set(["action", "reason"]);
+  if (Object.keys(record).some((key) => !allowedKeys.has(key))) {
+    throw new Error("Intent model output contains unsupported fields.");
+  }
   return {
     action,
     reason: reason.trim(),
-    ...(action === "direct_workflow" ? { operationKind } : {}),
+    ...(action === "clarify" ? { clarification: parseModelClarification(record.clarification) } : {}),
+    ...(action === "execute" ? { execution: parseModelExecution(record.execution) } : {}),
   };
 }
 
-function parseModelOperationKind(value: unknown): ChannelIntentModelOperationKind {
-  if (
-    value === "file_create" ||
-    value === "file_edit" ||
-    value === "open_local_target" ||
-    value === "run_command"
-  ) {
-    return value;
+function parseModelClarification(value: unknown): ChannelIntentClarificationV2 {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Intent model clarify output must include a structured clarification object.");
   }
-  return "unknown";
+  const record = value as Record<string, unknown>;
+  const missingFields = record.missingFields;
+  const question = record.question;
+  if (
+    Object.keys(record).some((key) => key !== "missingFields" && key !== "question")
+    || !Array.isArray(missingFields)
+    || missingFields.length === 0
+    || missingFields.some((field) => typeof field !== "string" || !field.trim())
+    || new Set(missingFields).size !== missingFields.length
+    || typeof question !== "string"
+    || !question.trim()
+  ) {
+    throw new Error("Intent model clarification schema is invalid.");
+  }
+  return { missingFields: missingFields.map((field) => field.trim()), question: question.trim() };
+}
+
+function parseModelExecution(value: unknown): ChannelIntentExecutionV2 {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Intent model execute output must include a structured execution object.");
+  }
+  const record = value as Record<string, unknown>;
+  const kind = record.kind;
+  const targetKind = record.targetKind;
+  if (
+    Object.keys(record).some((key) => key !== "kind" && key !== "targetKind")
+    || (kind !== "file_create" && kind !== "file_edit" && kind !== "open_local_target" && kind !== "run_command")
+    || (targetKind !== "file" && targetKind !== "directory" && targetKind !== "command" && targetKind !== "workspace")
+  ) {
+    throw new Error("Intent model execution schema is invalid.");
+  }
+  if ((kind === "file_create" || kind === "file_edit" || kind === "open_local_target") && targetKind !== "file") {
+    throw new Error("Intent model file execution must use targetKind=file.");
+  }
+  if (kind === "run_command" && targetKind !== "command" && targetKind !== "workspace") {
+    throw new Error("Intent model command execution must use targetKind=command or workspace.");
+  }
+  return { kind, targetKind };
 }
 
 function readStrictJsonObject(text: string): string {
@@ -604,7 +687,7 @@ function readStrictJsonObject(text: string): string {
 
 function selectVisibleMultiReply(
   input: ChannelIntentSelectorInput,
-  createdBy: "deterministic" | "model",
+  createdBy: "deterministic" | "model_policy",
   modelReason?: string,
 ): ChannelIntentSelectorResult | undefined {
   if (!detectVisibleMultiReplyIntent(input.sourceMessage)) {
@@ -614,19 +697,19 @@ function selectVisibleMultiReply(
   const existingDecision = input.store
     .listChannelIntentDecisions({
       channelId: input.channel.id,
-      sourceMessageId: input.sourceMessage.id,
+      sourceItemId: input.sourceMessage.id,
       action: "visible_multi_reply",
       status: "accepted",
       limit: 1,
     })
     [0];
   if (existingDecision) {
-    const aiReplies = (existingDecision.replyMessageIds ?? [])
-      .map((replyMessageId) => input.store.getChannelMessage(replyMessageId))
+    const aiReplies = existingDecision.resultItemIds
+      .map((replyMessageId) => getChannelMessageView(input.store, replyMessageId))
       .filter((message): message is ChannelMessage => Boolean(message && message.channelId === input.channel.id));
     return {
       action: "visible_multi_reply",
-      teammateIds: existingDecision.selectedTeammateIds ?? [],
+      teammateIds: existingDecision.selectedTeammateIds,
       reason: existingDecision.reason,
       createdBy: existingDecision.createdBy,
       aiReplies,
@@ -649,8 +732,8 @@ function selectVisibleMultiReply(
 function createWorkflowProposal(
   input: ChannelIntentSelectorInput,
   reasonCode: IntentReasonCode,
-  decisionAction: "workflow_proposal" | "direct_workflow",
-  createdBy: "deterministic" | "model",
+  decisionAction: "workflow_proposal" | "execute",
+  createdBy: "deterministic" | "model_policy",
   decisionReason: string | undefined,
   participants: readonly ProposalParticipantSelection[],
 ): ChannelIntentSelectorResult {
@@ -661,6 +744,9 @@ function createWorkflowProposal(
     const decision = persistIntentDecision(input, {
       action: decisionAction,
       proposalId: existingProposal.id,
+      ...(decisionAction === "execute"
+        ? { execution: { kind: "run_command" as const, targetKind: "workspace" as const } }
+        : {}),
       reason: `Existing ${decisionAction} proposal already covers this message: ${existingProposal.id}`,
       status: "suppressed",
       createdBy,
@@ -712,7 +798,10 @@ function createWorkflowProposal(
   const decision = persistIntentDecision(input, {
     action: decisionAction,
     proposalId: proposal.id,
-    reason: decisionReason ?? `${decisionAction === "direct_workflow" ? "Direct workflow proposal" : "Workflow proposal"} created from channel intent: ${reasonCode}.`,
+    ...(decisionAction === "execute"
+      ? { execution: { kind: "run_command" as const, targetKind: "workspace" as const } }
+      : {}),
+    reason: decisionReason ?? `${decisionAction === "execute" ? "Executable workflow proposal" : "Workflow proposal"} created from channel intent: ${reasonCode}.`,
     status: "accepted",
     createdBy,
   });
@@ -722,7 +811,7 @@ function createWorkflowProposal(
 function createSingleStepExecutableProposal(
   input: ChannelIntentSelectorInput,
   executableIntent: SingleStepExecutableIntent,
-  createdBy: "deterministic" | "model",
+  createdBy: "deterministic" | "model_policy",
   decisionReason?: string,
 ): ChannelIntentSelectorResult {
   const existingProposal = input.store
@@ -730,9 +819,10 @@ function createSingleStepExecutableProposal(
     .find((proposal) => proposal.status !== "cancelled" && proposal.status !== "superseded");
   if (existingProposal) {
     const decision = persistIntentDecision(input, {
-      action: "direct_workflow",
+      action: "execute",
       proposalId: existingProposal.id,
-      reason: `Existing direct_workflow proposal already covers this message: ${existingProposal.id}`,
+      execution: executableIntent.execution,
+      reason: `Existing execute proposal already covers this message: ${existingProposal.id}`,
       status: "suppressed",
       createdBy,
     });
@@ -783,8 +873,9 @@ function createSingleStepExecutableProposal(
     now,
   );
   const decision = persistIntentDecision(input, {
-    action: "direct_workflow",
+    action: "execute",
     proposalId: proposal.id,
+    execution: executableIntent.execution,
     reason: blocker?.technicalReason
       ? `Direct single-step executable proposal blocked for ${executableIntent.kind}: ${blocker.technicalReason}`
       : decisionReason ?? `Direct single-step executable proposal created for ${executableIntent.kind}.`,
@@ -819,19 +910,32 @@ function buildProposalShaping(
 function createClarifyReply(
   input: ChannelIntentSelectorInput,
   reasonCode: ClarifyReasonCode,
-  createdBy: "deterministic" | "model" = "deterministic",
+  createdBy: "deterministic" | "model_policy" = "deterministic",
   modelReason?: string,
   bodyOverride?: string,
+  clarificationOverride?: ChannelIntentClarificationV2,
 ): ChannelIntentSelectorResult {
-  const replyThreadId = input.sourceMessage.threadId ?? input.sourceMessage.id;
-  const existingReply = input.store
-    .listChannelMessages({ channelId: input.channel.id, threadId: input.sourceMessage.id, limit: 20 })
-    .find((message) => message.kind === "ai_reply" && message.status !== "failed");
+  const responseLanguage = resolveChannelResponseLanguage({
+    store: input.store,
+    channel: input.channel,
+    sourceText: input.sourceMessage.body,
+  }).language;
+  const question = bodyOverride ?? buildClarifyQuestion(reasonCode, responseLanguage);
+  const clarification = clarificationOverride ?? {
+    missingFields: missingFieldsForClarifyReason(reasonCode),
+    question,
+  };
+  validateClarificationShape(clarification);
+  const existingReply = findChannelAssistantReplyForSource({
+    store: input.store,
+    sourceItemId: input.sourceMessage.id,
+  });
   if (existingReply) {
     const decision = persistIntentDecision(input, {
       action: "clarify",
-      selectedTeammateId: existingReply.authorId,
-      replyMessageId: existingReply.id,
+      selectedTeammateIds: existingReply.authorId ? [existingReply.authorId] : [],
+      resultItemIds: [existingReply.id],
+      clarification,
       reason: `Existing clarify reply already covers this message: ${existingReply.id}`,
       status: "suppressed",
       createdBy,
@@ -843,29 +947,20 @@ function createClarifyReply(
   if (!teammate) {
     return { action: "continue" };
   }
-  const responseLanguage = resolveChannelResponseLanguage({
-    store: input.store,
-    channel: input.channel,
-    sourceText: input.sourceMessage.body,
-  }).language;
   const now = new Date().toISOString();
-  const aiReply = input.store.createChannelMessage(
-    {
-      channelId: input.channel.id,
-      threadId: replyThreadId,
-      kind: "ai_reply",
-      intent: "discuss",
-      authorType: "ai-teammate",
-      authorId: teammate.id,
-      body: bodyOverride ?? buildClarifyQuestion(reasonCode, responseLanguage),
-      status: "ready",
-    },
+  const aiReply = appendChannelAssistantMessage({
+    store: input.store,
+    sourceItemId: input.sourceMessage.id,
+    actorId: teammate.id,
+    body: question,
+    idempotencyKey: `clarify:${input.sourceMessage.id}:${reasonCode}`,
     now,
-  );
+  });
   const decision = persistIntentDecision(input, {
     action: "clarify",
-    selectedTeammateId: teammate.id,
-    replyMessageId: aiReply.id,
+    selectedTeammateIds: [teammate.id],
+    resultItemIds: [aiReply.id],
+    clarification,
     reason: modelReason ?? `Clarify question created from channel intent: ${reasonCode}.`,
     status: "accepted",
     createdBy,
@@ -876,17 +971,23 @@ function createClarifyReply(
 function createMaterializationClarifyReply(
   input: ChannelIntentSelectorInput,
   clarify: MaterializationClarifyReason,
-  createdBy: "deterministic" | "model" = "deterministic",
+  createdBy: "deterministic" | "model_policy" = "deterministic",
 ): ChannelIntentSelectorResult {
-  const replyThreadId = input.sourceMessage.threadId ?? input.sourceMessage.id;
-  const existingReply = input.store
-    .listChannelMessages({ channelId: input.channel.id, threadId: input.sourceMessage.id, limit: 20 })
-    .find((message) => message.kind === "ai_reply" && message.status !== "failed");
+  const clarification: ChannelIntentClarificationV2 = {
+    missingFields: ["materialized_input"],
+    question: clarify.body,
+  };
+  validateClarificationShape(clarification);
+  const existingReply = findChannelAssistantReplyForSource({
+    store: input.store,
+    sourceItemId: input.sourceMessage.id,
+  });
   if (existingReply) {
     const decision = persistIntentDecision(input, {
       action: "clarify",
-      selectedTeammateId: existingReply.authorId,
-      replyMessageId: existingReply.id,
+      selectedTeammateIds: existingReply.authorId ? [existingReply.authorId] : [],
+      resultItemIds: [existingReply.id],
+      clarification,
       reason: `Existing materialization clarify reply already covers this message: ${existingReply.id}`,
       status: "suppressed",
       createdBy,
@@ -899,23 +1000,19 @@ function createMaterializationClarifyReply(
     return { action: "continue" };
   }
   const now = new Date().toISOString();
-  const aiReply = input.store.createChannelMessage(
-    {
-      channelId: input.channel.id,
-      threadId: replyThreadId,
-      kind: "ai_reply",
-      intent: "discuss",
-      authorType: "ai-teammate",
-      authorId: teammate.id,
-      body: clarify.body,
-      status: "ready",
-    },
+  const aiReply = appendChannelAssistantMessage({
+    store: input.store,
+    sourceItemId: input.sourceMessage.id,
+    actorId: teammate.id,
+    body: clarify.body,
+    idempotencyKey: `materialization-clarify:${input.sourceMessage.id}`,
     now,
-  );
+  });
   const decision = persistIntentDecision(input, {
     action: "clarify",
-    selectedTeammateId: teammate.id,
-    replyMessageId: aiReply.id,
+    selectedTeammateIds: [teammate.id],
+    resultItemIds: [aiReply.id],
+    clarification,
     reason: clarify.technicalReason,
     status: "accepted",
     createdBy,
@@ -946,7 +1043,7 @@ function hasNonLingExplicitAiMention(message: ChannelMessage): boolean {
   return message.mentions.some((mention) => mention.kind === "ai-teammate" && !isLingAgentExecutorId(mention.id));
 }
 
-function detectWorkflowIntentReason(message: ChannelMessage): IntentReasonCode | undefined {
+function detectWorkflowIntentReason(message: Pick<ChannelMessage, "body">): IntentReasonCode | undefined {
   const text = message.body.trim();
   const lower = text.toLowerCase();
   if (
@@ -1038,6 +1135,7 @@ function detectSingleStepExecutableClarify(input: ChannelIntentSelectorInput): S
       }).language;
       return {
         reasonCode: "missing_acceptance",
+        missingFields: ["content"],
         userMessage: buildMissingFileContentClarifyBody(targetResolution.target, responseLanguage),
         technicalReason: `Resolved file target ${targetResolution.target}, but no concrete content or objective source was available for a follow-up/capability-style create request.`,
       };
@@ -1133,6 +1231,7 @@ function buildOpenLocalTargetExecutableIntent(target: string): SingleStepExecuta
   const rolePreferences: readonly AiTeammate["roleKey"][] = ["engineer", "qa"];
   return {
     kind: "command_run",
+    execution: { kind: "open_local_target", targetKind: "file" },
     title,
     prompt: [
       "Open the requested local target for the user.",
@@ -1168,6 +1267,7 @@ function buildFileExecutableIntent(
   const title = truncateTitle(`${fileAction === "file_edit" ? "Edit" : "Create"} ${target}`);
   return {
     kind: fileAction,
+    execution: { kind: fileAction, targetKind: "file" },
     title,
     prompt: [
       `${fileAction === "file_edit" ? "Edit" : "Create"} the requested file.`,
@@ -1287,16 +1387,15 @@ function extractRecentThreadCodeBlockContent(input: ChannelIntentSelectorInput, 
 }
 
 function recentFileContentMessages(input: ChannelIntentSelectorInput): readonly ChannelMessage[] {
-  const scopedMessages = input.sourceMessage.threadId
-    ? input.store.listChannelMessages({ channelId: input.channel.id, threadId: input.sourceMessage.threadId, limit: 30 })
-    : input.store.listChannelMessages({ channelId: input.channel.id, limit: 30 });
-  const rootMessage = input.sourceMessage.threadId ? input.store.getChannelMessage(input.sourceMessage.threadId) : undefined;
-  return uniqueMessages([
-    ...scopedMessages,
-    ...(rootMessage && rootMessage.channelId === input.channel.id ? [rootMessage] : []),
-  ])
-    .filter((message) => message.id !== input.sourceMessage.id && message.createdAt <= input.sourceMessage.createdAt && message.status !== "failed")
-    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  const projection = buildConversationContextProjection({
+    store: input.store,
+    sourceItemId: input.sourceMessage.id,
+    view: "resolver",
+  });
+  return projectConversationContextMessages(projection, input.store)
+    .filter((message) => message.id !== input.sourceMessage.id && message.status !== "failed")
+    .slice()
+    .reverse();
 }
 
 function extractRecentFileObjective(input: ChannelIntentSelectorInput): FileContentResolution | undefined {
@@ -1315,19 +1414,6 @@ function extractRecentFileObjective(input: ChannelIntentSelectorInput): FileCont
     };
   }
   return undefined;
-}
-
-function uniqueMessages(messages: readonly ChannelMessage[]): readonly ChannelMessage[] {
-  const seen = new Set<string>();
-  const unique: ChannelMessage[] = [];
-  for (const message of messages) {
-    if (seen.has(message.id)) {
-      continue;
-    }
-    seen.add(message.id);
-    unique.push(message);
-  }
-  return unique;
 }
 
 function extractMarkdownCodeBlocks(text: string): readonly { readonly language: string; readonly content: string }[] {
@@ -1394,6 +1480,7 @@ function detectCommandExecutableIntent(text: string): SingleStepExecutableIntent
   const rolePreferences: readonly AiTeammate["roleKey"][] = looksLikeTest ? ["qa", "engineer"] : ["engineer", "qa"];
   return {
     kind: "command_run",
+    execution: { kind: "run_command", targetKind: "command" },
     title,
     prompt: [
       "Run the requested local command or project check.",
@@ -1421,6 +1508,7 @@ function detectReleaseExecutableIntent(text: string): SingleStepExecutableIntent
   const target = "Git push/merge workflow";
   return {
     kind: "command_run",
+    execution: { kind: "run_command", targetKind: "workspace" },
     title: "Prepare Git push/merge",
     prompt: [
       "Prepare and run the requested Git push/merge workflow.",
@@ -1703,8 +1791,8 @@ function looksExecutionAllTeammatesRequest(text: string): boolean {
   return /(开始|启动|执行|开跑|工作流|workflow|协作|实现|修复|验证|验收|测试|跑测试|e2e|push|合并|发布|部署|ship|release|deploy|改代码|写代码|处理)/iu.test(text);
 }
 
-function intentDecisionActionForReason(reasonCode: IntentReasonCode): "workflow_proposal" | "direct_workflow" {
-  return reasonCode === "explicit_workflow_start" ? "direct_workflow" : "workflow_proposal";
+function intentDecisionActionForReason(reasonCode: IntentReasonCode): "workflow_proposal" | "execute" {
+  return reasonCode === "explicit_workflow_start" ? "execute" : "workflow_proposal";
 }
 
 function detectClarifyIntentReason(message: ChannelMessage): ClarifyReasonCode | undefined {
@@ -1726,6 +1814,67 @@ function detectClarifyIntentReason(message: ChannelMessage): ClarifyReasonCode |
 
 function clarifyReasonFromMessage(message: ChannelMessage): ClarifyReasonCode {
   return detectClarifyIntentReason(message) ?? "missing_acceptance";
+}
+
+function clarifyReasonFromMissingFields(fields: readonly string[]): ClarifyReasonCode {
+  if (fields.includes("approval_scope")) return "approval_sensitive_target";
+  if (fields.includes("target") && fields.length > 1) return "ambiguous_target";
+  if (fields.includes("target")) return "missing_target";
+  return "missing_acceptance";
+}
+
+function missingFieldsForClarifyReason(reasonCode: ClarifyReasonCode): readonly string[] {
+  if (reasonCode === "approval_sensitive_target") {
+    return ["target", "approval_scope", "acceptance_criteria"];
+  }
+  if (reasonCode === "missing_acceptance") return ["acceptance_criteria"];
+  return ["target"];
+}
+
+function validateClarificationForCurrentTurn(
+  input: ChannelIntentSelectorInput,
+  clarification: ChannelIntentClarificationV2,
+): void {
+  validateClarificationShape(clarification);
+  if (clarification.missingFields.includes("target") && !currentTurnMayRequireExecutionTarget(input.sourceMessage.body)) {
+    throw new Error("Intent model cannot request a local target for an independently answerable content turn.");
+  }
+}
+
+function validateClarificationShape(clarification: ChannelIntentClarificationV2): void {
+  if (clarification.missingFields.length === 0 || !clarification.question.trim()) {
+    throw new Error("Channel clarification requires missingFields and a specific question.");
+  }
+  const question = clarification.question.toLowerCase();
+  for (const field of clarification.missingFields) {
+    const pattern = clarificationQuestionPattern(field);
+    if (!pattern.test(question)) {
+      throw new Error(`Channel clarification question does not name missing field: ${field}`);
+    }
+  }
+}
+
+function clarificationQuestionPattern(field: string): RegExp {
+  if (field === "target") return /(target|file|path|directory|branch|pr|对象|目标|文件|路径|目录|分支)/iu;
+  if (field === "content") return /(content|body|text|page|feature|内容|正文|文本|页面|功能)/iu;
+  if (field === "acceptance_criteria") return /(acceptance|criteria|check|done|verify|验收|检查|完成|通过|验证)/iu;
+  if (field === "approval_scope") return /(approval|permission|allow|remote|授权|审批|权限|允许|远端)/iu;
+  if (field === "materialized_input") return /(attachment|link|input|file|image|document|附件|链接|输入|文件|图片|文档)/iu;
+  if (field === "command") return /(command|check|test|命令|检查|测试)/iu;
+  return new RegExp(field.replace(/[_-]+/gu, "[ _-]+"), "iu");
+}
+
+function currentTurnMayRequireExecutionTarget(body: string): boolean {
+  const text = normalizeWhitespace(body);
+  return Boolean(
+    detectFileAction(text)
+    || detectImplicitRecentFileAction(text)
+    || mightRequestBrowserOpen(text)
+    || detectReleaseExecutableIntent(text)
+    || detectCommandExecutableIntent(text)
+    || detectWorkflowIntentReason({ body: text })
+    || looksWorkShapedButUnderspecified(text)
+  );
 }
 
 function looksWorkShapedButUnderspecified(text: string): boolean {
@@ -2211,22 +2360,28 @@ function persistIntentDecision(
   decision: Pick<
     Parameters<RunStore["createChannelIntentDecision"]>[0],
     "action" | "reason" | "status" | "createdBy"
-  > & Partial<Pick<Parameters<RunStore["createChannelIntentDecision"]>[0], "selectedTeammateId" | "selectedTeammateIds" | "proposalId" | "replyMessageId" | "replyMessageIds" | "workflowId" | "errorMessage">>,
+  > & Partial<Pick<Parameters<RunStore["createChannelIntentDecision"]>[0], "selectedTeammateIds" | "proposalId" | "resultItemIds" | "workflowId" | "clarification" | "execution" | "errorCode">>,
 ): ChannelIntentDecision {
+  const projection = buildConversationContextProjection({
+    store: input.store,
+    sourceItemId: input.sourceMessage.id,
+    view: "selector",
+  });
   return input.store.createChannelIntentDecision({
     channelId: input.channel.id,
-    sourceMessageId: input.sourceMessage.id,
+    sourceItemId: input.sourceMessage.id,
+    contextProjection: projection.metadata,
     action: decision.action,
-    selectedTeammateId: decision.selectedTeammateId,
     selectedTeammateIds: decision.selectedTeammateIds,
     proposalId: decision.proposalId,
-    replyMessageId: decision.replyMessageId,
-    replyMessageIds: decision.replyMessageIds,
+    resultItemIds: decision.resultItemIds,
     workflowId: decision.workflowId,
     reason: decision.reason,
+    clarification: decision.clarification,
+    execution: decision.execution,
     status: decision.status,
     createdBy: decision.createdBy,
-    errorMessage: decision.errorMessage,
+    errorCode: decision.errorCode,
   }, new Date().toISOString());
 }
 

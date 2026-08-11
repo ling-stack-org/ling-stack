@@ -189,6 +189,7 @@ function parseCreateWorkflowHandoffIntentInput(value: unknown): CreateWorkflowHa
   if (!isRecord(value)) {
     throw new Error("Workflow handoff intent request must be a JSON object");
   }
+  rejectServerOwnedWorkflowHandoffFields(value);
   return {
     channelId: readString(value, "channelId"),
     workflowId: readOptionalString(value, "workflowId"),
@@ -213,6 +214,7 @@ function parseWorkflowHandoffIntentUpdateInput(value: unknown): UpdateWorkflowHa
   if (!isRecord(value)) {
     throw new Error("Workflow handoff intent update must be a JSON object");
   }
+  rejectServerOwnedWorkflowHandoffFields(value);
   return {
     channelHandoffId: readNullableString(value, "channelHandoffId"),
     toParticipantLabel: readNullableString(value, "toParticipantLabel"),
@@ -221,8 +223,15 @@ function parseWorkflowHandoffIntentUpdateInput(value: unknown): UpdateWorkflowHa
     expectedOutput: readOptionalString(value, "expectedOutput"),
     riskSummary: readNullableString(value, "riskSummary"),
     sourceRefs: readOptionalWorkflowPacketSourceRefs(value, "sourceRefs"),
-    status: readOptionalWorkflowHandoffIntentStatus(value, "status"),
   };
+}
+
+function rejectServerOwnedWorkflowHandoffFields(value: Record<string, unknown>): void {
+  for (const key of ["agentContext", "status", "validation"] as const) {
+    if (key in value) {
+      throw new Error(`Workflow handoff ${key} is server-owned`);
+    }
+  }
 }
 
 function readOptionalWorkflowPacketSourceRefs(record: Record<string, unknown>, key: string): readonly WorkflowPacketSourceRef[] | undefined {
@@ -243,17 +252,6 @@ function readOptionalWorkflowPacketSourceRefs(record: Record<string, unknown>, k
       label: readOptionalString(item, "label"),
     };
   });
-}
-
-function readOptionalWorkflowHandoffIntentStatus(record: Record<string, unknown>, key: string): WorkflowHandoffIntentStatus | undefined {
-  const value = record[key];
-  if (value === undefined) {
-    return undefined;
-  }
-  if (!workflowHandoffIntentStatuses.includes(value as WorkflowHandoffIntentStatus)) {
-    throw new Error(`${key} must be a workflow handoff intent status`);
-  }
-  return value as WorkflowHandoffIntentStatus;
 }
 
 function readOptionalWorkflowHandoffIntentStatusQuery(url: URL, key: string): WorkflowHandoffIntentStatus | undefined {

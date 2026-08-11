@@ -4,6 +4,7 @@ import { ensureChannelReplyThread } from "./channel-reply-execution.js";
 import { resolveChannelReplyExecutionTarget } from "./channel-reply-execution-target.js";
 import { buildLingAgentTurnEnvelope } from "./ling-agent-turn-envelope.js";
 import { resolveChannelResponseLanguage, responseLanguageInstruction } from "./response-language.js";
+import { getChannelMessageView } from "./conversation-item-messages.js";
 
 export interface ChannelReplyContinuationContext {
   readonly title: string;
@@ -12,6 +13,7 @@ export interface ChannelReplyContinuationContext {
   readonly targetTeammateId: string;
   readonly providerPresetId: string;
   readonly threadId: string;
+  readonly turnId: string;
   readonly runnerId?: string;
 }
 
@@ -29,7 +31,7 @@ export function buildChannelReplyContinuationContext(input: {
   if (!channel) {
     throw new Error(`Channel continuation channel was not found: ${channelId}`);
   }
-  const sourceMessage = input.store.getChannelMessage(input.sourceMessageId);
+  const sourceMessage = getChannelMessageView(input.store, input.sourceMessageId);
   if (
     !sourceMessage ||
     sourceMessage.channelId !== channel.id ||
@@ -52,6 +54,10 @@ export function buildChannelReplyContinuationContext(input: {
     throw new Error(`AI teammate is not configured for this channel: ${target.teammateId}`);
   }
   const threadId = ensureChannelReplyThread(input.store, channel, sourceMessage).id;
+  const sourceItem = input.store.getConversationItem(input.sourceMessageId);
+  if (!sourceItem?.turnId || sourceItem.threadId !== threadId) {
+    throw new Error(`Channel guidance source item has no owning turn: ${input.sourceMessageId}`);
+  }
   const turnEnvelope = buildLingAgentTurnEnvelope({
     store: input.store,
     channel,
@@ -89,6 +95,7 @@ export function buildChannelReplyContinuationContext(input: {
     targetTeammateId: target.teammateId,
     providerPresetId: target.providerPresetId,
     threadId,
+    turnId: sourceItem.turnId,
     ...(target.teammate?.runnerId ? { runnerId: target.teammate.runnerId } : {}),
   };
 }
@@ -105,6 +112,5 @@ function listEarlierCompletedGuidanceReplies(
     sourceRunId: sourceRun.id,
     beforeInterventionId: currentIntervention.id,
     channelId: sourceRun.channelId,
-    limit: 6,
   });
 }

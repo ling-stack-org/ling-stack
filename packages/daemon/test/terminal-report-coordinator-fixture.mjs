@@ -1,7 +1,8 @@
+import { appendChannelItemFixture, getChannelItemViewFixture, listChannelItemViewsFixture, updateChannelItemFixture } from "../../core/test/channel-conversation-fixture.mjs";
 export function createTerminalWorkflowFixture(store, cwd, suffix = "default") {
   const now = "2026-07-11T05:00:00.000Z";
   const channel = store.createChannel({ name: `Terminal report ${suffix}`, boundPath: cwd }, now);
-  const sourceMessage = store.createChannelMessage({
+  const sourceMessage = appendChannelItemFixture(store, {
     channelId: channel.id,
     authorType: "local-user",
     body: "实现 TerminalReport",

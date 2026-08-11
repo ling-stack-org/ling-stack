@@ -1,3 +1,4 @@
+import { appendChannelItemFixture, getChannelItemViewFixture, listChannelItemViewsFixture, updateChannelItemFixture } from "../../core/test/channel-conversation-fixture.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -286,7 +287,7 @@ test("channel and teammate-direct edits update their native messages before repl
   const activeRuns = new ActiveRunRegistry();
   try {
     const channel = store.createChannel({ name: "Engineering", boundPath: cwd }, "2026-07-12T06:00:00.000Z");
-    const channelMessage = store.createChannelMessage({
+    const channelMessage = appendChannelItemFixture(store, {
       channelId: channel.id,
       authorType: "local-user",
       body: "Channel old",
@@ -302,7 +303,7 @@ test("channel and teammate-direct edits update their native messages before repl
       activeRuns,
       startReplacement: async ({ editable }) => {
         assert.equal(editable.surface, "channel_root");
-        assert.equal(store.getChannelMessage(editable.messageId)?.body, "Channel revised");
+        assert.equal(getChannelItemViewFixture(store, editable.messageId)?.body, "Channel revised");
         return {};
       },
     });
@@ -419,17 +420,18 @@ test("default projections hide superseded turns and response messages while audi
     assert.equal(store.getLingTurn(oldTurn.id)?.status, "superseded");
 
     const channel = store.createChannel({ name: "Projection channel", boundPath: cwd }, "2026-07-12T07:01:00.000Z");
-    const source = store.createChannelMessage({ channelId: channel.id, authorType: "local-user", body: "Source" }, "2026-07-12T07:01:01.000Z");
-    const oldReply = store.createChannelMessage({
+    const source = appendChannelItemFixture(store, { channelId: channel.id, authorType: "local-user", body: "Source" }, "2026-07-12T07:01:01.000Z");
+    const oldReply = appendChannelItemFixture(store, {
       channelId: channel.id,
-      threadId: source.id,
+      replyToItemId: source.id,
       authorType: "ai-teammate",
+      authorId: LING_AGENT_ID,
       body: "Old reply",
     }, "2026-07-12T07:01:02.000Z");
     store.commitConversationMessageEdit({
       surface: "channel_root",
       ownerId: channel.id,
-      laneId: channel.id,
+      laneId: source.threadId,
       messageId: source.id,
       expectedRevision: 1,
       current: { ...emptyEditFields, body: "Source" },
@@ -442,7 +444,7 @@ test("default projections hide superseded turns and response messages while audi
       ownerId: channel.id,
     });
     assert.deepEqual(filterSupersededChannelMessages([source, oldReply], channelProjection).map((message) => message.id), [source.id]);
-    assert.equal(store.getChannelMessage(oldReply.id)?.body, "Old reply");
+    assert.equal(getChannelItemViewFixture(store, oldReply.id)?.body, "Old reply");
 
     const teammateId = createBuiltinAiTeammateId("designer");
     const directThread = store.getOrCreateTeammateDirectThread(teammateId, "2026-07-12T07:02:00.000Z");
@@ -551,7 +553,7 @@ test("conversation detail projects approvals and queued guidance once with struc
       title: "Continue the run",
       userInstruction: "Internal continuation prompt that must not leak into the transcript.",
       interventionId: intervention.id,
-      sourceMessageId: guidanceId,
+      sourceItemId: guidanceId,
       teammateId: LING_AGENT_ID,
       createdByActor: "local-user",
     }, "2026-07-12T08:00:05.000Z");

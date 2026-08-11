@@ -51,10 +51,18 @@ import {
 import { assertChannelWorkspaceReady } from "./workspace.js";
 import { LING_AGENT_EXECUTOR_ID } from "./ling-agent-executor.js";
 import {
+  appendChannelAssistantMessage,
+  getChannelMessageView,
+} from "./conversation-item-messages.js";
+import {
   maybeScheduleWorkflowTerminalReport,
   terminalReportsEnabledForStore,
 } from "./terminal-report-coordinator.js";
 import { buildWorkflowEvidence } from "./workflow-evidence.js";
+import { renderUsedMemoryPromptForView } from "../memory/prompt.js";
+import { reviewWorkflowFanInContext } from "./workflow-fanin.js";
+import type { PreselectedMemoryUse } from "../runs/schemas.js";
+import { resolveWorkflowHandoffExecutionContext } from "./workflow-handoffs.js";
 
 const WORKFLOW_STEP_RESOURCE_LEASE_TTL_MS = 6 * 60 * 60 * 1000;
 
@@ -67,6 +75,8 @@ export interface WorkflowStepRunRequest {
   readonly workflowStepId?: string;
   readonly requestedSkillId?: string;
   readonly skipProviderPreflight?: boolean;
+  readonly skipMemoryRecall?: boolean;
+  readonly preselectedMemoryUse?: PreselectedMemoryUse;
   readonly idempotencyKey?: string;
   readonly approvalProfile?: SkillApprovalProfile;
   readonly task: {
@@ -78,6 +88,7 @@ export interface WorkflowStepRunRequest {
   readonly tools?: readonly RunTool[];
   readonly thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
   readonly contextPack?: WorkflowStepRunContextPackSnapshot;
+  readonly contextProjection?: ContextPack["contextProjection"];
   readonly contextCompactions?: readonly WorkflowStepContextCompactionSummary[];
 }
 
@@ -99,6 +110,8 @@ export interface WorkflowStepRunContextPackSnapshot {
     readonly metadata?: Record<string, unknown>;
   }[];
   readonly sourceRefs: ContextPack["sourceRefs"];
+  readonly contextProjection?: ContextPack["contextProjection"];
+  readonly agentContext?: ContextPack["agentContext"];
 }
 
 export type ValidateWorkflowStepRunRequest = (runRequest: WorkflowStepRunRequest) => void;
@@ -225,6 +238,16 @@ export async function handleChannelWorkflowFromHandoff(
     }
     const body = await readJsonBody(request, config.maxBodyBytes);
     const input = parseChannelWorkflowFromHandoffRequest(body);
+    const createdAt = new Date().toISOString();
+    const continuityContext = resolveWorkflowHandoffExecutionContext({
+      store,
+      channelHandoffId: handoff.id,
+      now: createdAt,
+    });
+    if (continuityContext.blocker) {
+      throw new Error(`Workflow handoff cannot start: ${continuityContext.blocker}`);
+    }
+    const sourceItemId = continuityContext.sourceItemId ?? handoff.sourceMessageId;
     const workflow = store.createChannelWorkflow(
       {
         channelId: handoff.channelId,
@@ -232,8 +255,9 @@ export async function handleChannelWorkflowFromHandoff(
         title: input.title ?? `Handoff to ${handoff.toParticipantLabel}`,
         objective: input.objective ?? (handoff.expectedOutput || handoff.reason || "Complete handoff workflow."),
         createdBy: input.createdBy,
+        metadata: sourceItemId ? { sourceMessageId: sourceItemId } : undefined,
       },
-      new Date().toISOString(),
+      createdAt,
     );
     const workflowStep = store.createChannelWorkflowStep(
       {
@@ -244,8 +268,9 @@ export async function handleChannelWorkflowFromHandoff(
         prompt: formatHandoffStepPrompt(handoff),
         toParticipantId: handoff.toParticipantId,
         toParticipantLabel: handoff.toParticipantLabel,
+        metadata: sourceItemId ? { sourceMessageId: sourceItemId } : undefined,
       },
-      new Date().toISOString(),
+      createdAt,
     );
     writeJson(response, 201, { workflow, workflowStep });
   } catch (error) {
@@ -614,40 +639,6 @@ async function handleChannelWorkflowStepStart(
     });
     return;
   }
-  const run = store.getRun(runId);
-  if (run?.status === "succeeded") {
-    store.transitionChannelWorkflowStepStatus({
-      workflowStepId,
-      expectedStatus: "running",
-      event: "succeed",
-      actor: "runner",
-      reason: `run:${runId}`,
-      now: completedAt,
-      taskId: started.task.id,
-      runId,
-      resultSummary: "Run succeeded.",
-    });
-    completeWorkflowIfStepsFinished(store, started.workflowId, completedAt);
-    return;
-  }
-  store.transitionChannelWorkflowStepStatus({
-    workflowStepId,
-    expectedStatus: "running",
-    event: "fail",
-    actor: "runner",
-    reason: run?.errorMessage ?? `run:${runId}`,
-    now: completedAt,
-    taskId: started.task.id,
-    runId,
-    blocker: run?.errorMessage,
-  });
-  store.transitionChannelWorkflowStatus({
-    workflowId: started.workflowId,
-    event: "step_failed",
-    actor: "runner",
-    reason: run?.errorMessage ?? `run:${runId}`,
-    now: completedAt,
-  });
 }
 
 export type PreparedWorkflowStepStart =
@@ -736,6 +727,20 @@ export function prepareWorkflowStepStart(
     return fail(409, stepTransition.code, `Workflow step transition failed: ${stepTransition.code}`);
   }
 
+  const fanInContext = reviewWorkflowFanInContext({ store, workflow, step });
+  if (fanInContext.reviews.length > 0) {
+    const persistedStep = store.getChannelWorkflowStep(step.id) ?? step;
+    store.updateChannelWorkflowStep(step.id, {
+      metadata: {
+        ...persistedStep.metadata,
+        fanInContextReviews: fanInContext.reviews,
+      },
+    }, now);
+  }
+  if (fanInContext.blocker) {
+    return block(fanInContext.blocker);
+  }
+
   const providerPresetId = input.providerPresetId ?? channel.defaultProviderPresetId;
   const workspace = assertChannelWorkspaceReady(channel, cwd);
   if (!workspace.ok) {
@@ -743,7 +748,24 @@ export function prepareWorkflowStepStart(
   }
   const runnerId = input.runnerId;
   const taskTitle = input.taskTitle ?? step.title;
+  const assigneeTeammateId = input.assigneeTeammateId ?? step.toParticipantId;
   const workflowSteps = store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 });
+  const memoryRecallQuery = `${workflow.objective}\n${step.title}\n${input.taskPrompt ?? step.prompt}`;
+  const memoryRecall = store.recallMemory({
+    teammateId: assigneeTeammateId,
+    channelId: channel.id,
+    intent: "task-run",
+    query: memoryRecallQuery,
+    maxResults: 6,
+  });
+  const renderedMemory = renderUsedMemoryPromptForView({
+    memories: memoryRecall.memories,
+    recallPolicyVersion: memoryRecall.policyVersion,
+    viewKind: "workflow_step_view",
+    workspaceId: workflow.workspaceId,
+    channelId: channel.id,
+    consumerTeammateId: assigneeTeammateId,
+  });
   const contextPackInput = {
     store,
     channel,
@@ -751,7 +773,31 @@ export function prepareWorkflowStepStart(
     step,
     prompt: input.taskPrompt ?? step.prompt,
     providerPresetId,
+    consumerTeammateId: assigneeTeammateId,
     workflowSteps,
+    roleEvidence: {
+      section: renderedMemory.prompt ? {
+        id: "workflow_role_evidence",
+        role: "memory" as const,
+        priority: "medium" as const,
+        title: "workflow_role_evidence",
+        text: renderedMemory.prompt,
+        sourceRefIds: renderedMemory.memoryIds,
+        visibility: "prompt" as const,
+        quotePolicy: "influence_only" as const,
+        metadata: {
+          policyVersion: renderedMemory.policyVersion,
+          consumerTeammateId: assigneeTeammateId,
+        },
+      } : undefined,
+      sourceRefs: renderedMemory.memoryIds.map((memoryId) => ({
+        type: "memory",
+        id: memoryId,
+        label: "role-scoped memory",
+      })),
+      sources: renderedMemory.sources,
+      dropped: [],
+    },
   };
   const initialContextPack = buildWorkflowStepContextPack(contextPackInput);
   const compacted = maybeCompactWorkflowStepContext({
@@ -764,7 +810,6 @@ export function prepareWorkflowStepStart(
     return block(`Workflow step context exceeds provider budget (${contextPack.estimatedInputTokens}/${contextPack.budget.inputBudgetTokens} estimated input tokens).`);
   }
   const taskPrompt = renderWorkflowStepContextPackPrompt(contextPack);
-  const assigneeTeammateId = input.assigneeTeammateId ?? step.toParticipantId;
   const unavailableRequiredTools = workflowStepUnavailableRequiredTools(channel.allowedTools, step.metadata);
   if (unavailableRequiredTools.length > 0) {
     return block(`Workflow step requires tools not allowed in this channel: ${unavailableRequiredTools.join(", ")}.`);
@@ -777,6 +822,14 @@ export function prepareWorkflowStepStart(
     teammateId: assigneeTeammateId,
     workflowStepId: step.id,
     skipProviderPreflight: input.skipProviderPreflight ?? false,
+    skipMemoryRecall: true,
+    preselectedMemoryUse: renderedMemory.memoryIds.length > 0
+      ? {
+          memoryIds: renderedMemory.memoryIds,
+          recallQuery: memoryRecallQuery,
+          policyVersion: renderedMemory.policyVersion,
+        }
+      : undefined,
     idempotencyKey: input.idempotencyKey ?? `workflow-step:${step.id}`,
     task: {
       id: "pending",
@@ -787,6 +840,7 @@ export function prepareWorkflowStepStart(
     tools: workflowStepRunTools(channel.allowedTools, step.metadata?.requiredTools),
     thinkingLevel: "medium",
     contextPack: snapshotWorkflowStepContextPack(contextPack),
+    contextProjection: contextPack.contextProjection,
     contextCompactions: compacted.compactions,
   };
 
@@ -805,7 +859,7 @@ export function prepareWorkflowStepStart(
     {
       channelId: channel.id,
       title: taskTitle,
-      prompt: taskPrompt,
+      prompt: input.taskPrompt ?? step.prompt,
       assigneeTeammateId,
     },
     new Date().toISOString(),
@@ -821,7 +875,7 @@ export function prepareWorkflowStepStart(
       task: {
         id: task.id,
         title: task.title,
-        prompt: task.prompt,
+        prompt: taskPrompt,
         channelId: task.channelId,
       },
     },
@@ -993,32 +1047,27 @@ export function maybeCreateWorkflowTerminalCoordinatorReply(
   if (!sourceMessageId) {
     return undefined;
   }
-  const sourceMessage = store.getChannelMessage(sourceMessageId);
+  const sourceMessage = getChannelMessageView(store, sourceMessageId);
   if (!sourceMessage) {
     return undefined;
   }
-  const threadId = sourceMessage.threadId ?? sourceMessage.id;
   const messageId = legacyWorkflowTerminalMessageId(workflow.id);
-  const existing = store.getChannelMessage(messageId);
+  const existing = getChannelMessageView(store, messageId);
   if (existing) {
     return existing;
   }
   const steps = store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 });
-  return store.createChannelMessage(
-    {
-      id: messageId,
-      channelId: workflow.channelId,
-      threadId,
-      kind: "ai_reply",
-      intent: "discuss",
-      authorType: "ai-teammate",
-      authorId: LING_AGENT_EXECUTOR_ID,
-      body: workflowTerminalCoordinatorReplyBody(workflow, steps),
-      status: "ready",
-      linkedRunId: input.linkedRunId,
-    },
-    input.now ?? new Date().toISOString(),
-  );
+  return appendChannelAssistantMessage({
+    store,
+    sourceItemId: sourceMessage.id,
+    itemId: messageId,
+    idempotencyKey: `workflow-terminal:${workflow.id}`,
+    actorId: LING_AGENT_EXECUTOR_ID,
+    body: workflowTerminalCoordinatorReplyBody(workflow, steps),
+    status: "ready",
+    linkedRunId: input.linkedRunId,
+    now: input.now ?? new Date().toISOString(),
+  });
 }
 
 function workflowCoordinatorReplyStatusIsTerminal(status: ChannelWorkflowStatus): boolean {
@@ -1118,6 +1167,8 @@ function snapshotWorkflowStepContextPack(pack: ContextPack): WorkflowStepRunCont
       metadata: section.metadata,
     })),
     sourceRefs: pack.sourceRefs,
+    contextProjection: pack.contextProjection,
+    agentContext: pack.agentContext,
   };
 }
 

@@ -31,6 +31,7 @@ import {
   type LingAgentTurnEnvelope,
 } from "./ling-agent-turn-envelope.js";
 import { resolveChannelConversationSurface } from "./conversation-surface.js";
+import { findChannelAssistantReplyForSource } from "./conversation-item-messages.js";
 import {
   recordProviderContextLengthObservation,
   recordProviderRuntimeAvailabilityIncident,
@@ -471,10 +472,11 @@ async function requestModelRoute(input: ChannelMessageRouteInput, candidates: re
       error,
       now: observedAt,
     });
-    const compaction = compactChannelDiscussionForNoToolsRetry({
+    const compaction = await compactChannelDiscussionForNoToolsRetry({
       store: input.store,
       channel: input.channel,
       sourceMessage: input.sourceMessage,
+      inputBudgetTokens: contextPack.budget.inputBudgetTokens,
       now: observedAt,
     });
     contextPack = buildChannelAutoRouteContextPack({
@@ -619,9 +621,12 @@ function validateModelRouteOutput(output: ChannelAutoRouteModelOutput, candidate
 }
 
 function hasExistingReplyForSource(input: ChannelMessageRouteInput, teammateId: string): boolean {
-  return input.store
-    .listChannelMessages({ channelId: input.channel.id, threadId: input.sourceMessage.id, limit: 20 })
-    .some((message) => message.kind === "ai_reply" && message.authorId === teammateId && message.status !== "failed");
+  const reply = findChannelAssistantReplyForSource({
+    store: input.store,
+    sourceItemId: input.sourceMessage.id,
+    limit: 20,
+  });
+  return reply?.authorId === teammateId && reply.status !== "failed";
 }
 
 function persistRouteDecision(input: ChannelMessageRouteInput, draft: RouteDecisionDraft) {
@@ -681,6 +686,7 @@ function summarizeContextPack(pack: ContextPack): ChannelMessageRouteContextPack
     droppedSectionIds: pack.droppedSectionIds,
     sourceRefCounts,
     compactionIds: pack.compactionIds,
+    contextProjection: pack.contextProjection,
   };
 }
 
