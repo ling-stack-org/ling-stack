@@ -1,4 +1,5 @@
 import type { SQLOutputValue } from "node:sqlite";
+import { isConversationContextProjectionMetadata } from "@ling-stack/contracts";
 import type { RunTool } from "../../approval-policy.js";
 import type { SkillApprovalProfile } from "../../skill-types.js";
 import {
@@ -12,9 +13,11 @@ import {
   type ChannelWorkflowStepStatus,
   type ResponseLanguage,
   type WorkflowFanInPolicy,
+  type WorkflowFanInContextReview,
   type WorkflowHandoffIntent,
   type WorkflowHandoffIntentStatus,
   type WorkflowHandoffValidation,
+  type WorkflowAgentContextStamp,
   type WorkflowPacketSourceRef,
   type WorkflowSelectorAlternative,
   type WorkflowSelectorDecision,
@@ -54,12 +57,43 @@ export function mapWorkflowHandoffIntent(row: Record<string, SQLOutputValue>): W
     expectedOutput: readString(row, "expected_output"),
     riskSummary: readNullableString(row, "risk_summary"),
     sourceRefs: parseWorkflowPacketSourceRefs(readString(row, "source_refs_json")),
+    agentContext: parseOptionalWorkflowAgentContextStamp(readNullableString(row, "agent_context_json")),
     status: readString(row, "status") as WorkflowHandoffIntentStatus,
     validation: parseOptionalWorkflowHandoffValidation(readNullableString(row, "validation_json")),
     createdBy: readString(row, "created_by") as WorkflowHandoffIntent["createdBy"],
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
   });
+}
+
+function parseOptionalWorkflowAgentContextStamp(value: string | undefined): WorkflowAgentContextStamp | undefined {
+  if (!value) return undefined;
+  const parsed = parseJson(value);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+  const record = parsed as Record<string, unknown>;
+  if (
+    record.schemaVersion !== 1
+    || typeof record.sourceItemId !== "string"
+    || record.sourceItemId.trim().length === 0
+    || (record.consumerTeammateId !== undefined
+      && (typeof record.consumerTeammateId !== "string" || record.consumerTeammateId.trim().length === 0))
+    || !isConversationContextProjectionMetadata(record.contextProjection)
+    || !Array.isArray(record.roleEvidenceRefs)
+    || typeof record.roleEvidenceFingerprint !== "string"
+    || record.roleEvidenceFingerprint.trim().length === 0
+  ) {
+    return undefined;
+  }
+  const roleEvidenceRefs = parseWorkflowPacketSourceRefs(JSON.stringify(record.roleEvidenceRefs));
+  if (roleEvidenceRefs.some((ref) => ref.id.trim().length === 0)) return undefined;
+  return {
+    schemaVersion: 1,
+    sourceItemId: record.sourceItemId,
+    consumerTeammateId: record.consumerTeammateId as string | undefined,
+    contextProjection: record.contextProjection,
+    roleEvidenceRefs,
+    roleEvidenceFingerprint: record.roleEvidenceFingerprint,
+  };
 }
 
 export function mapWorkflowSelectorDecision(row: Record<string, SQLOutputValue>): WorkflowSelectorDecision {
@@ -179,6 +213,44 @@ function parseOptionalChannelWorkflowStepMetadata(value: string | undefined): Ch
     proposalStepSources: parseOptionalProposalStepSourcesValue(record.proposalStepSources),
     fanInSummaryArtifactId: readOptionalStringValue(record.fanInSummaryArtifactId),
     memoryCandidateIds: readOptionalStringListValue(record.memoryCandidateIds),
+    fanInContextReviews: parseOptionalWorkflowFanInContextReviews(record.fanInContextReviews),
+    resultContextReview: parseWorkflowFanInContextReview(record.resultContextReview),
+  });
+}
+
+function parseOptionalWorkflowFanInContextReviews(value: unknown): readonly WorkflowFanInContextReview[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const reviews: WorkflowFanInContextReview[] = [];
+  for (const item of value) {
+    const review = parseWorkflowFanInContextReview(item);
+    if (!review) return undefined;
+    reviews.push(review);
+  }
+  return reviews;
+}
+
+function parseWorkflowFanInContextReview(value: unknown): WorkflowFanInContextReview | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const status = record.status;
+  if (
+    typeof record.dependencyWorkflowStepId !== "string"
+    || (status !== "accepted_current"
+      && status !== "rebased_metadata"
+      && status !== "rejected_stale"
+      && status !== "rejected_private_leak")
+    || typeof record.reason !== "string"
+    || (record.consumedProjectionVersion !== undefined && typeof record.consumedProjectionVersion !== "string")
+    || (record.currentProjectionVersion !== undefined && typeof record.currentProjectionVersion !== "string")
+  ) {
+    return undefined;
+  }
+  return omitUndefined({
+    dependencyWorkflowStepId: record.dependencyWorkflowStepId,
+    status: status as WorkflowFanInContextReview["status"],
+    consumedProjectionVersion: readOptionalStringValue(record.consumedProjectionVersion),
+    currentProjectionVersion: readOptionalStringValue(record.currentProjectionVersion),
+    reason: record.reason,
   });
 }
 

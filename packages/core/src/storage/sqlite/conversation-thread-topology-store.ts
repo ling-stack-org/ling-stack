@@ -3,6 +3,8 @@ import type {
   ResolveOrCreateConversationThreadInput,
   ResolveOrCreateConversationThreadResult,
 } from "../../conversation-thread-topology-types.js";
+import type { CreateConversationContextSnapshotInput } from "../../conversation-context-store-types.js";
+import type { ConversationContextSnapshot } from "@ling-stack/contracts";
 import type { CreateLingThreadInput, LingThread } from "../../run-types.js";
 import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
 import { readNullableString, readString } from "./helpers.js";
@@ -11,6 +13,10 @@ import type { SqliteStoreContext } from "./store-context.js";
 export interface SqliteConversationThreadTopologyStorePorts {
   readonly createLingThread: (input: CreateLingThreadInput, now: string) => LingThread;
   readonly getLingThread: (threadId: string) => LingThread | undefined;
+  readonly createConversationContextSnapshotWithinTransaction: (
+    input: CreateConversationContextSnapshotInput,
+    now: string,
+  ) => ConversationContextSnapshot;
 }
 
 export class SqliteConversationThreadTopologyStore {
@@ -29,7 +35,7 @@ export class SqliteConversationThreadTopologyStore {
       this.context.database.exec("COMMIT");
       return result;
     } catch (error) {
-      if (this.context.database.isTransaction) this.context.database.exec("ROLLBACK");
+      this.context.database.exec("ROLLBACK");
       throw error;
     }
   }
@@ -43,7 +49,7 @@ export class SqliteConversationThreadTopologyStore {
       this.assertExistingMatches(input, existing);
       return { thread: existing, created: false };
     }
-    const createInput = this.buildCreateInput(input);
+    const createInput = this.buildCreateInput(input, now);
     return { thread: this.ports.createLingThread(createInput, now), created: true };
   }
 
@@ -72,7 +78,7 @@ export class SqliteConversationThreadTopologyStore {
     return this.ports.getLingThread(readString(row as Record<string, SQLOutputValue>, "id"));
   }
 
-  private buildCreateInput(input: ResolveOrCreateConversationThreadInput): CreateLingThreadInput {
+  private buildCreateInput(input: ResolveOrCreateConversationThreadInput, now: string): CreateLingThreadInput {
     switch (input.surfaceKind) {
       case "channel_root":
         this.assertChannelExists(input.channelId);
@@ -103,8 +109,12 @@ export class SqliteConversationThreadTopologyStore {
           relationKind: "topic",
         };
       }
-      case "branch":
+      case "branch": {
         this.assertParentLineage(input.channelId, input.parentThreadId, input.parentTurnId);
+        const snapshot = this.ports.createConversationContextSnapshotWithinTransaction({
+          ...input.forkContextSnapshot,
+          threadId: input.parentThreadId,
+        }, now);
         return {
           ...(input.id ? { id: input.id } : {}),
           kind: "channel_discussion",
@@ -113,9 +123,12 @@ export class SqliteConversationThreadTopologyStore {
           objective: input.objective,
           parentThreadId: input.parentThreadId,
           parentTurnId: input.parentTurnId,
+          ...(input.forkedFromRunId ? { forkedFromRunId: input.forkedFromRunId } : {}),
+          forkContextSnapshotId: snapshot.id,
           surfaceKind: "branch",
           relationKind: "branch",
         };
+      }
     }
   }
 

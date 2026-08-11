@@ -1,3 +1,4 @@
+import { appendChannelItemFixture, getChannelItemViewFixture, listChannelItemViewsFixture, updateChannelItemFixture } from "../../core/test/channel-conversation-fixture.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -20,7 +21,7 @@ test("workflow terminal evidence aggregates rounds, actions, checks, artifacts, 
   try {
     const now = "2026-07-11T02:00:00.000Z";
     const channel = store.createChannel({ name: "Terminal Report", boundPath: cwd }, now);
-    const sourceMessage = store.createChannelMessage({
+    const sourceMessage = appendChannelItemFixture(store, {
       channelId: channel.id,
       authorType: "local-user",
       body: "实现并验证 TerminalReport",

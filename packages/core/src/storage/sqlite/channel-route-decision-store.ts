@@ -1,5 +1,8 @@
 import type { SQLOutputValue } from "node:sqlite";
-import type { ConversationItemV1 } from "@ling-stack/contracts";
+import {
+  isConversationContextProjectionMetadata,
+  type ConversationItemV1,
+} from "@ling-stack/contracts";
 import {
   DEFAULT_WORKSPACE_ID,
   channelAutoReplyModes,
@@ -263,6 +266,10 @@ function validateChannelMessageRouteContextPackMetadata(
     if (!Number.isFinite(count) || count < 0) {
       throw new Error("channel message route context pack source ref count must be a non-negative number");
     }
+  }
+  if (metadata.contextProjection !== undefined
+    && !isConversationContextProjectionMetadata(metadata.contextProjection)) {
+    throw new Error("channel message route context projection metadata is invalid");
   }
 }
 

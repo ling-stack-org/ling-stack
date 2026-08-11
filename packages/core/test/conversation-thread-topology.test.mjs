@@ -61,12 +61,24 @@ test("Conversation topology creates branch lineage atomically and rejects cross-
     parentTurnId: parent.turnId,
     title: "Branch",
     objective: "Explore a branch",
+    forkContextSnapshot: {
+      id: "snapshot-branch-runtime",
+      segmentId: parent.contextSegmentId,
+      projectionVersion: "ctxv2_branch_runtime",
+      throughItemSequence: parent.item.sequence,
+      summaryIds: [],
+      sourceRefs: [{ type: "conversation_item", id: parent.item.id }],
+      policyVersion: "continuity-v2-snapshot-v1",
+    },
   };
   const branch = fixture.store.resolveOrCreateConversationThread(branchInput, now);
   assert.equal(branch.created, true);
   assert.equal(branch.thread.relationKind, "branch");
   assert.equal(branch.thread.parentThreadId, fixture.rootThreadId);
   assert.equal(branch.thread.parentTurnId, parent.turnId);
+  assert.equal(branch.thread.forkContextSnapshotId, "snapshot-branch-runtime");
+  assert.equal(fixture.store.getConversationContextSnapshot("snapshot-branch-runtime")?.threadId, fixture.rootThreadId);
+  assert.equal(fixture.database.prepare("SELECT COUNT(*) AS count FROM conversation_items WHERE thread_id = ?").get(branch.thread.id).count, 0);
 
   const replay = fixture.store.resolveOrCreateConversationThread(branchInput, "2026-08-09T15:01:00.000Z");
   assert.equal(replay.created, false);

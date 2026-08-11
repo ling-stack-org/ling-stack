@@ -145,7 +145,7 @@ test("channel header refresh and search keep local state and overlays independen
   await expect(searchInput).toHaveCount(0);
   await expect(page.getByLabel("Channel message feed")).toContainText("Refresh source message.");
 
-  await page.route("**/channels/channel_engineering/messages?*", async (route) => {
+  await page.route("**/channels/channel_engineering/items?*", async (route) => {
     await new Promise((resolve) => setTimeout(resolve, 450));
     await route.fallback();
   });

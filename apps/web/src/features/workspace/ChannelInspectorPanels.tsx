@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { LingDaemonError } from "@ling-stack/api-client";
 import {
   Check,
   CircleAlert,
@@ -12,6 +13,7 @@ import {
 } from "lucide-react";
 import { useI18n, type Translate } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
+import { correctChannelTurnContext, getChannelTurnContext } from "../../api.js";
 import { InlineFeedback, Select, useLingToast } from "../../shared/ui/index.js";
 import { RuntimeDiagnosticsPanel } from "./RuntimeDiagnosticsPanel.js";
 import { ChannelBriefEditor, type ChannelBriefDraft } from "./ChannelBriefEditor.js";
@@ -26,6 +28,7 @@ import type {
   ChannelBrief,
   ChannelCollaborationProtocolResponse,
   ChannelContextSummary,
+  ChannelConversationContextInspectResponse,
   ChannelDecision,
   ChannelHandoff,
   ChannelHandoffStatus,
@@ -222,6 +225,8 @@ export function ChannelInspector({
       ) : null}
       {mode === "routing" ? (
         <RoutingEvidenceIndex
+          cwd={cwd}
+          channelId={channel?.id ?? ""}
           items={recentRoutingEvidence}
           teammates={teammates}
           openDecisionId={openRoutingDecisionId}
@@ -371,11 +376,15 @@ type RoutingEvidenceItem =
     };
 
 function RoutingEvidenceIndex({
+  cwd,
+  channelId,
   items,
   teammates,
   openDecisionId,
   onToggle,
 }: {
+  readonly cwd: string;
+  readonly channelId: string;
   readonly items: readonly RoutingEvidenceItem[];
   readonly teammates: readonly ChannelMention[];
   readonly openDecisionId: string;
@@ -415,7 +424,13 @@ function RoutingEvidenceIndex({
                   {item.kind === "route" ? (
                     <ChannelRouteInspectContent decision={item.decision} teammates={teammates} t={t} />
                   ) : (
-                    <ChannelIntentInspectContent decision={item.decision} teammates={teammates} t={t} />
+                    <ChannelIntentInspectContent
+                      cwd={cwd}
+                      channelId={channelId}
+                      decision={item.decision}
+                      teammates={teammates}
+                      t={t}
+                    />
                   )}
                 </div>
               ) : null}
@@ -762,15 +777,18 @@ function ChannelRouteInspectContent({
 }
 
 function ChannelIntentInspectContent({
+  cwd,
+  channelId,
   decision,
   teammates,
   t,
 }: {
+  readonly cwd: string;
+  readonly channelId: string;
   readonly decision: ChannelIntentDecision;
   readonly teammates: readonly ChannelMention[];
   readonly t: Translate;
 }): React.JSX.Element {
-  const replyMessageIds = uniqueStrings([decision.replyMessageId, ...(decision.replyMessageIds ?? [])].filter((id): id is string => Boolean(id)));
   return (
     <>
       <p>{channelIntentDecisionUserReason(decision, t)}</p>
@@ -792,13 +810,49 @@ function ChannelIntentInspectContent({
           <dd>{channelIntentDecisionCreatedByLabel(decision, t)}</dd>
         </div>
         <div>
-          <dt>{t("Source message")}</dt>
-          <dd>{decision.sourceMessageId}</dd>
+          <dt>{t("Source item")}</dt>
+          <dd>{decision.sourceItemId}</dd>
         </div>
         <div>
-          <dt>{t("Reply messages")}</dt>
-          <dd>{formatOptionalIdList(replyMessageIds, t)}</dd>
+          <dt>{t("Source turn")}</dt>
+          <dd>{decision.sourceTurnId}</dd>
         </div>
+        <div>
+          <dt>{t("Context segment")}</dt>
+          <dd>{decision.contextSegmentId}</dd>
+        </div>
+        <div>
+          <dt>{t("Projection version")}</dt>
+          <dd>{decision.contextProjectionVersion}</dd>
+        </div>
+        <div>
+          <dt>{t("Result items")}</dt>
+          <dd>{formatOptionalIdList(decision.resultItemIds, t)}</dd>
+        </div>
+        {decision.clarification ? (
+          <>
+            <div>
+              <dt>{t("Missing fields")}</dt>
+              <dd>{formatOptionalIdList(decision.clarification.missingFields, t)}</dd>
+            </div>
+            <div>
+              <dt>{t("Clarification question")}</dt>
+              <dd>{decision.clarification.question}</dd>
+            </div>
+          </>
+        ) : null}
+        {decision.execution ? (
+          <>
+            <div>
+              <dt>{t("Execution kind")}</dt>
+              <dd>{decision.execution.kind}</dd>
+            </div>
+            <div>
+              <dt>{t("Target kind")}</dt>
+              <dd>{decision.execution.targetKind}</dd>
+            </div>
+          </>
+        ) : null}
         <div>
           <dt>{t("Proposal")}</dt>
           <dd>{decision.proposalId || t("None")}</dd>
@@ -807,14 +861,144 @@ function ChannelIntentInspectContent({
           <dt>{t("Workflow")}</dt>
           <dd>{decision.workflowId || t("None")}</dd>
         </div>
-        {decision.errorMessage ? (
+        {decision.errorCode ? (
           <div>
             <dt>{t("Error")}</dt>
-            <dd>{decision.errorMessage}</dd>
+            <dd>{decision.errorCode}</dd>
           </div>
         ) : null}
       </dl>
+      <ChannelContextInspectDetails cwd={cwd} channelId={channelId} decision={decision} t={t} />
     </>
+  );
+}
+
+function ChannelContextInspectDetails({
+  cwd,
+  channelId,
+  decision,
+  t,
+}: {
+  readonly cwd: string;
+  readonly channelId: string;
+  readonly decision: ChannelIntentDecision;
+  readonly t: Translate;
+}): React.JSX.Element {
+  const [inspect, setInspect] = useState<ChannelConversationContextInspectResponse>();
+  const [selectedSegmentId, setSelectedSegmentId] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let current = true;
+    setInspect(undefined);
+    setSelectedSegmentId("");
+    setError("");
+    if (!cwd || !channelId || !decision.sourceTurnId) return () => { current = false; };
+    setLoading(true);
+    void getChannelTurnContext(cwd, channelId, decision.sourceTurnId)
+      .then((response) => {
+        if (!current) return;
+        setInspect(response);
+        setSelectedSegmentId(response.assignment.segmentId);
+      })
+      .catch((caught) => {
+        if (current) setError(caught instanceof Error ? caught.message : String(caught));
+      })
+      .finally(() => {
+        if (current) setLoading(false);
+      });
+    return () => { current = false; };
+  }, [channelId, cwd, decision.sourceTurnId]);
+
+  async function saveCorrection(): Promise<void> {
+    if (!inspect || !selectedSegmentId || selectedSegmentId === inspect.assignment.segmentId || saving) return;
+    setSaving(true);
+    setError("");
+    try {
+      await correctChannelTurnContext(cwd, channelId, decision.sourceTurnId, {
+        segmentId: selectedSegmentId,
+        expectedAssignmentRevision: inspect.assignment.revision,
+      });
+      const refreshed = await getChannelTurnContext(cwd, channelId, decision.sourceTurnId);
+      setInspect(refreshed);
+      setSelectedSegmentId(refreshed.assignment.segmentId);
+    } catch (caught) {
+      if (caught instanceof LingDaemonError && caught.code === "context_assignment_revision_conflict") {
+        try {
+          const refreshed = await getChannelTurnContext(cwd, channelId, decision.sourceTurnId);
+          setInspect(refreshed);
+          setSelectedSegmentId(refreshed.assignment.segmentId);
+          setError(t("Context changed while you were editing. Review the latest segment and try again."));
+        } catch (refreshError) {
+          setError(refreshError instanceof Error ? refreshError.message : String(refreshError));
+        }
+      } else {
+        setError(caught instanceof Error ? caught.message : String(caught));
+      }
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading) {
+    return <p><Loader2 className="spin" size={14} /> {t("Loading context inspect...")}</p>;
+  }
+  if (!inspect) {
+    return error
+      ? <InlineFeedback className="compact" tone="danger" role="alert">{error}</InlineFeedback>
+      : <p>{t("Context inspect metadata is unavailable.")}</p>;
+  }
+  const coverage = inspect.summaries.length > 0
+    ? inspect.summaries.map((summary) => `${summary.coveredFromSequence}-${summary.coveredThroughSequence}`).join(", ")
+    : t("None");
+  return (
+    <div className="channel-route-inspect-section">
+      <span>{t("Context inspect summary")}</span>
+      <dl className="channel-route-inspect-grid">
+        <div><dt>{t("Thread")}</dt><dd>{inspect.thread.id}</dd></div>
+        <div><dt>{t("Turn")}</dt><dd>{inspect.turn.id}</dd></div>
+        <div><dt>{t("Context segment")}</dt><dd>{inspect.assignment.segmentId}</dd></div>
+        <div><dt>{t("Projection version")}</dt><dd>{inspect.projection.projectionVersion}</dd></div>
+        <div><dt>{t("Item watermark")}</dt><dd>{inspect.projection.throughItemSequence}</dd></div>
+        <div><dt>{t("Summary coverage")}</dt><dd>{coverage}</dd></div>
+        <div><dt>{t("Source refs")}</dt><dd>{inspect.sourceRefs.length}</dd></div>
+        <div><dt>{t("Dropped items")}</dt><dd>{inspect.droppedItemCount}</dd></div>
+        <div><dt>{t("Redacted items")}</dt><dd>{inspect.redactedItemCount}</dd></div>
+      </dl>
+      {inspect.sourceRefs.length > 0 ? (
+        <ul>
+          {inspect.sourceRefs.slice(0, 20).map((ref) => (
+            <li key={`${ref.type}:${ref.id}`}><code>{ref.type}:{ref.id}</code></li>
+          ))}
+        </ul>
+      ) : null}
+      <label className="field wide">
+        <span>{t("Correct context segment")}</span>
+        <Select
+          size="md"
+          value={selectedSegmentId}
+          onChange={(event) => setSelectedSegmentId(event.target.value)}
+          disabled={saving}
+        >
+          {inspect.segments.map((segment) => (
+            <option key={segment.id} value={segment.id}>{segment.label || segment.id}</option>
+          ))}
+        </Select>
+      </label>
+      {error ? <InlineFeedback className="compact" tone="danger" role="alert">{error}</InlineFeedback> : null}
+      <button
+        className="secondary-button compact-button"
+        type="button"
+        disabled={saving || !selectedSegmentId || selectedSegmentId === inspect.assignment.segmentId}
+        onClick={() => void saveCorrection()}
+      >
+        {saving ? <Loader2 className="spin" size={14} /> : <Check size={14} />}
+        {t("Apply context correction")}
+      </button>
+      <small>{t("Context diagnostics never include raw prompts, hidden reasoning, private memory bodies, or secret values.")}</small>
+    </div>
   );
 }
 
@@ -913,25 +1097,25 @@ function channelIntentDecisionActionLabel(action: ChannelIntentDecision["action"
   switch (action) {
     case "no_reply":
       return t("No reply");
-    case "single_reply":
-      return t("Single reply");
+    case "reply":
+      return t("Reply");
     case "visible_multi_reply":
       return t("Visible multi-reply");
     case "clarify":
       return t("Clarify");
     case "workflow_proposal":
       return t("Workflow proposal");
-    case "direct_workflow":
-      return t("Direct workflow proposal");
+    case "execute":
+      return t("Execute");
   }
 }
 
 function channelIntentDecisionCreatedByLabel(decision: ChannelIntentDecision, t: Translate): string {
-  return decision.createdBy === "model" ? t("Model selector") : t("Deterministic rule");
+  return decision.createdBy === "model_policy" ? t("Model selector") : t("Deterministic rule");
 }
 
 function channelIntentDecisionUserReason(decision: ChannelIntentDecision, t: Translate): string {
-  if (decision.errorMessage) {
+  if (decision.errorCode) {
     return t("Ling could not safely handle this channel intent.");
   }
   return decision.reason || channelIntentDecisionActionLabel(decision.action, t);
@@ -949,7 +1133,7 @@ function formatIntentDecisionTeammates(
   teammates: readonly ChannelMention[],
   t: Translate,
 ): string {
-  const ids = uniqueStrings([decision.selectedTeammateId, ...(decision.selectedTeammateIds ?? [])].filter((id): id is string => Boolean(id)));
+  const ids = decision.selectedTeammateIds;
   if (ids.length === 0) {
     return t("None");
   }

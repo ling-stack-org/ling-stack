@@ -303,10 +303,10 @@ When `followup_queued` arrives, the optimistic guidance rekeys to the durable in
 and remains as a confirmed bridge until the authoritative intervention snapshot appears or
 the source message enters the transcript. The handoff must never expose an empty or duplicate
 intermediate frame.
-The daemon also fences the source message between message persistence and dispatch
-classification. `GET /channels/:id/messages` excludes a fenced message until either the
-message owns the reply lane or its durable `queue_followup` exists. A refresh can therefore
-never expose a queued source message during the persistence gap and then retract it.
+The daemon also fences the source Item between Turn persistence and dispatch
+classification. `GET /channels/:id/items` excludes a fenced Item until either the Turn
+owns the reply lane or its durable `queue_followup` exists. A refresh can therefore
+never expose a queued source Item during the persistence gap and then retract it.
 
 A `queue_followup` created from an already-persisted channel user message retains both
 `sourceMessageId` and `targetTeammateId` for audit and execution. Until its intervention has

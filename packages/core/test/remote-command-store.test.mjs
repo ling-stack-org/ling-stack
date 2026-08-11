@@ -1,3 +1,4 @@
+import { appendChannelItemFixture, getChannelItemViewFixture, listChannelItemViewsFixture, updateChannelItemFixture } from "./channel-conversation-fixture.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -47,7 +48,7 @@ test("remote sends atomically persist one native message, receipt, dispatch inte
       conversationId: channel.id,
     }), "2026-07-31T01:00:01.000Z");
     assert.equal(channelSend.idempotentReplay, false);
-    assert.equal(store.getChannelMessage(channelSend.messageId)?.body, "Sent from iPhone.");
+    assert.equal(getChannelItemViewFixture(store, channelSend.messageId)?.body, "Sent from iPhone.");
     assert.equal(channelSend.receipt.status, "completed");
     assert.deepEqual(channelSend.receipt.terminalOutcome?.result, {
       kind: "message_created",
@@ -68,7 +69,7 @@ test("remote sends atomically persist one native message, receipt, dispatch inte
     }), "2026-07-31T01:05:00.000Z");
     assert.equal(replay.idempotentReplay, true);
     assert.equal(replay.messageId, channelSend.messageId);
-    assert.equal(store.listChannelMessages({ channelId: channel.id }).filter((item) => item.id === channelSend.messageId).length, 1);
+    assert.equal(listChannelItemViewsFixture(store, { channelId: channel.id }).filter((item) => item.id === channelSend.messageId).length, 1);
 
     assert.throws(
       () => store.commitRemoteConversationSend(sendInput({

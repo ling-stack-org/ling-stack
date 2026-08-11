@@ -29,7 +29,7 @@ Implemented before this slice:
 - Web has an `AI Teammates` management page with role, model, profile, and channel steps.
 - The sidebar has distinct active targets for workspace, tasks, channels, teammates, and
   direct messages.
-- Channel messages can mention AI teammates and request a no-tools AI reply.
+- Channel ConversationItems can mention AI teammates and request a supervised no-tools reply.
 - Channels and tasks can reference `defaultTeammateId` and `assigneeTeammateId`.
 
 Implemented in this slice:
@@ -809,7 +809,8 @@ GET /teammates/:id/activity?cwd=/path/to/workspace
 ```
 
 These endpoints are read-only composition endpoints. They should reuse existing task,
-run, approval, and channel message stores rather than introducing duplicate durable state.
+run, approval, Channel `conversation_items`, and teammate-private message stores rather
+than introducing duplicate durable state.
 
 ## AI Reply And Execution Flow
 

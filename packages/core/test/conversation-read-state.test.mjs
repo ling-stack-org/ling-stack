@@ -1,3 +1,4 @@
+import { appendChannelItemFixture, getChannelItemViewFixture, listChannelItemViewsFixture, updateChannelItemFixture } from "./channel-conversation-fixture.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -26,7 +27,7 @@ test("daemon-owned read cursor is monotonic and later message revisions become u
     assert.equal(initial.unreadCount, 0);
     assert.equal(initial.mentioned, false);
 
-    const reply = store.createChannelMessage({
+    const reply = appendChannelItemFixture(store, {
       channelId: channel.id,
       authorType: "ai-teammate",
       authorId: createBuiltinAiTeammateId("engineer"),
@@ -52,7 +53,7 @@ test("daemon-owned read cursor is monotonic and later message revisions become u
     }, "2026-07-31T03:00:03.000Z");
     assert.equal(backwards.readThroughActivitySeq, unread.activitySeq);
 
-    store.updateChannelMessageRuntime(reply.id, {
+    updateChannelItemFixture(store, reply.id, {
       body: "Please review the completed answer.",
       status: "ready",
     }, "2026-07-31T03:00:04.000Z");
@@ -68,7 +69,7 @@ test("daemon-owned read cursor is monotonic and later message revisions become u
     assert.equal(capped.readThroughActivitySeq, editedUnread.activitySeq);
     assert.equal(capped.unreadCount, 0);
 
-    store.createChannelMessage({
+    appendChannelItemFixture(store, {
       channelId: channel.id,
       authorType: "ai-teammate",
       authorId: createBuiltinAiTeammateId("designer"),

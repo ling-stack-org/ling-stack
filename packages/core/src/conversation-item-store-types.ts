@@ -63,6 +63,25 @@ export interface ConversationItemChannelListPage {
   readonly nextBeforeItemId?: string;
 }
 
+export interface ListConversationItemsForSegmentOptions {
+  readonly threadId: string;
+  readonly segmentId: string;
+  readonly throughSequence: number;
+  readonly afterSequence?: number;
+  readonly order?: "oldest" | "newest";
+  readonly limit?: number;
+}
+
+export interface FindConversationItemByDomainRefInput {
+  readonly threadId: string;
+  readonly ref: ConversationDomainRef;
+  readonly beforeSequence?: number;
+}
+
+export interface ListConversationItemsForTurnOptions {
+  readonly turnId: string;
+}
+
 export type ConversationItemStoreErrorCode =
   | "thread_not_found"
   | "thread_archived"

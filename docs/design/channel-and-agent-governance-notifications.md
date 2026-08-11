@@ -92,7 +92,7 @@ Current gaps:
 
 ## Non-Goals
 
-- No writing governance notifications into `channel_messages`.
+- No writing ordinary governance notifications into `conversation_items`.
 - No channel feed system messages for ordinary memory, skill, or health review events.
 - No AI auto-reply triggered by a governance notification.
 - No approval, publish, archive, quarantine, or delete action performed by clicking a
@@ -450,7 +450,7 @@ If there are no actionable events, the header should not show a badge. Low-prior
 pressure.
 
 First Web implementation uses a header popover. The popover is intentionally separate
-from both `channel_messages` and the right-side task/review drawer: it can show review
+from both the canonical `conversation_items` timeline and the right-side task/review drawer: it can show review
 pressure without rewriting conversation history or stealing the authoritative review
 surface. It may support notification-level `seen` and `dismiss` mutations, but those
 mutations affect only the notification projection; source memory, skill, protocol, and
@@ -864,7 +864,7 @@ Tests:
 | Failure mode | Guardrail |
 | --- | --- |
 | Ling Agent becomes a dumping ground | Route local channel events to channel header, not Ling Agent. |
-| Channel feed becomes noisy | Never write ordinary notifications into `channel_messages`. |
+| Channel feed becomes noisy | Never write ordinary notifications into `conversation_items`. |
 | Private chat gets interrupted mid-turn | Gate direct system messages on idle thread and no running reply. |
 | Same cluster appears once per agent | Dedupe by cluster id and route to the channel owner. |
 | User dismisses reminder and loses work | Dismiss notification only; source governance queue remains authoritative. |

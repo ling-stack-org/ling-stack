@@ -1,3 +1,4 @@
+import { appendChannelItemFixture, getChannelItemViewFixture, listChannelItemViewsFixture, updateChannelItemFixture } from "./channel-conversation-fixture.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -42,7 +43,7 @@ test("sqlite channel team evidence round-trips without visible message or runtim
   const now = "2026-06-26T00:00:00.000Z";
   const store = createSqliteRunStore(cwd);
   const channel = store.createChannel({ name: "Engineering", boundPath: cwd }, now);
-  const message = store.createChannelMessage(
+  const message = appendChannelItemFixture(store,
     {
       channelId: channel.id,
       authorType: "local-user",

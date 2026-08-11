@@ -1,12 +1,11 @@
 # Channel Intent To Workflow Selector
 
-Status: current v1 implementation reference; v2 clean-break contract approved in Channel Conversation Continuity v2
+Status: superseded v1 implementation reference; S4 runtime now uses the v2 clean-break contract in Channel Conversation Continuity v2
 Date: 2026-06-10
 
 Related docs:
 
 - [Channel Conversation Continuity v2](channel-conversation-continuity-v2.md)
-- [Channel Conversation Continuity v2 Implementation Plan](channel-conversation-continuity-v2-implementation-plan.md)
 - [Conversation Surface Contract](./conversation-surface-contract.md)
 - [Ling Agent Session Control Plane](ling-agent-session.md)
 - [Channel Auto Reply Router](channel-auto-reply-router.md)
@@ -14,6 +13,24 @@ Related docs:
 - [Multi-Agent Orchestration Experience](multi-agent-orchestration-experience.md)
 - [Multi-Agent Orchestrator](./multi-agent-orchestrator.md)
 - [Channel Context Budget Manager](channel-context-budget-manager.md)
+
+## Current Runtime Contract
+
+Continuity v2 accepts only these actions:
+
+```text
+no_reply | reply | visible_multi_reply | clarify | workflow_proposal | execute
+```
+
+Every decision references the source Turn, source ConversationItem, effective Segment,
+and shared projection version. `reply` completes without TargetResolver. Only a validated
+`execute` or executable proposal candidate may enter target resolution and policy gating.
+`clarify` carries typed `missingFields`; model output cannot grant tools, approvals,
+workspace scope, secrets, external sends, or memory access.
+
+The v1 action taxonomy retained below is non-normative migration history. No runtime or
+new test may emit `single_reply` or `direct_workflow`, and no compatibility alias maps
+those values into v2.
 
 ## Purpose
 

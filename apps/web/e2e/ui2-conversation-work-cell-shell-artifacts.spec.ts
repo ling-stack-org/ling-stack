@@ -65,7 +65,7 @@ test("Channel WorkCell keeps artifacts, changed files, references, and hover pre
   const composer = page.getByRole("textbox", { name: "Message this channel or @ an AI teammate", exact: true });
   await composer.fill("Please inspect apps/web/src/features/workspace/WorkspaceClientView.tsx");
   await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
-  await expect.poll(() => state.lastChannelMessageRequest?.fileRefs?.[0]?.path)
+  await expect.poll(() => state.lastChannelTurnRequest?.fileRefs?.[0]?.path)
     .toBe("apps/web/src/features/workspace/WorkspaceClientView.tsx");
   const references = feed.getByLabel("References").last();
   const fileReference = references.getByRole("button", { name: /WorkspaceClientView\.tsx/u });

@@ -656,9 +656,9 @@ export async function handleChannelIntentDecisionsCollection(
     }
 
     if (request.method === "GET") {
-      const sourceMessageId = url.searchParams.get("sourceMessageId") ?? undefined;
-      if (sourceMessageId) {
-        const messageError = validateChannelMessageOwner(store, channelId, sourceMessageId);
+      const sourceItemId = url.searchParams.get("sourceItemId") ?? undefined;
+      if (sourceItemId) {
+        const messageError = validateChannelMessageOwner(store, channelId, sourceItemId);
         if (messageError) {
           writeJson(response, messageError.statusCode, {
             error: messageError.code,
@@ -672,7 +672,7 @@ export async function handleChannelIntentDecisionsCollection(
         channelId,
         decisions: store.listChannelIntentDecisions({
           channelId,
-          sourceMessageId,
+          sourceItemId,
           action: readOptionalChannelIntentDecisionActionQuery(url),
           status: readOptionalChannelIntentDecisionStatusQuery(url),
           limit: readOptionalIntegerQuery(url, "limit", 1),

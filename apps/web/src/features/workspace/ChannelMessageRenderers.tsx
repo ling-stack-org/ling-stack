@@ -389,6 +389,11 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
   }): ReactNode {
     const pendingCoordinatorMessage = block.message.status === "pending";
     const body = conversationCoordinatorDisplayBody(turn, block.message, block.phase, input.t).trim();
+    const proposedPlanBlock = readChannelProposedPlanMessage(body, block.message);
+    const proposedPlan = proposedPlanBlock
+      ? input.proposedPlanArtifactsById.get(proposedPlanBlock.plan.id) ?? proposedPlanBlock.plan
+      : undefined;
+    const visibleBody = proposedPlanBlock?.displayBody.trim() ?? body;
     const evidenceNode = (block.memoryCitationEvents.length > 0 || block.message.webEvidence) ? (
       <MessageEvidencePanel
         memoryContent={block.memoryCitationEvents.length > 0 ? (
@@ -402,7 +407,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
         webEvidence={block.message.webEvidence}
       />
     ) : null;
-    if (!body) {
+    if (!visibleBody && !proposedPlanBlock) {
       return evidenceNode ? <div className="conversation-turn-assistant-copy" key={block.id}>{evidenceNode}</div> : null;
     }
     return (
@@ -414,7 +419,19 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
         key={block.id}
       >
         {pendingCoordinatorMessage ? <Loader2 className="message-pending-spinner spin" size={13} /> : null}
-        <MessageBodyRenderer text={body} cwd={input.cwd} compact streaming={pendingCoordinatorMessage} onOpenLocalFile={input.onOpenFileReference} />
+        {visibleBody ? <MessageBodyRenderer text={visibleBody} cwd={input.cwd} compact streaming={pendingCoordinatorMessage} onOpenLocalFile={input.onOpenFileReference} /> : null}
+        {proposedPlanBlock ? (
+          <ChannelProposedPlanBlock
+            plan={proposedPlan ?? proposedPlanBlock.plan}
+            cwd={input.cwd}
+            t={input.t}
+            busy={input.planActionBusyId === (proposedPlan ?? proposedPlanBlock.plan).id}
+            onAccept={input.onAcceptProposedPlan}
+            onConvert={input.onConvertProposedPlan}
+            onRefine={input.onRefineProposedPlan}
+            onSave={input.onSaveProposedPlan}
+          />
+        ) : null}
         {evidenceNode}
       </div>
     );

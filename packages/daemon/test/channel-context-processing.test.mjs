@@ -1125,13 +1125,52 @@ function createCanonicalConversationStore({ threads, messages, interventions = [
     };
   });
   const itemById = new Map(items.map((item) => [item.id, item]));
+  const turnById = new Map(items.map((item) => [item.turnId, {
+    id: item.turnId,
+    threadId: item.threadId,
+    status: "completed",
+  }]));
+  const segmentByThreadId = new Map(threads.map((thread) => [thread.id, {
+    id: `segment_${thread.id}`,
+    threadId: thread.id,
+    state: "active",
+    createdFromTurnId: items.find((item) => item.threadId === thread.id)?.turnId ?? `turn_${thread.id}`,
+    lastActiveTurnId: [...items].reverse().find((item) => item.threadId === thread.id)?.turnId ?? `turn_${thread.id}`,
+    revision: 1,
+    createdAt: now,
+    updatedAt: now,
+  }]));
+  const assignmentByTurnId = new Map(items.map((item) => [item.turnId, {
+    id: `assignment_${item.turnId}`,
+    turnId: item.turnId,
+    segmentId: segmentByThreadId.get(item.threadId).id,
+    status: "committed",
+    decisionSource: "structural",
+    confidence: 1,
+    evidenceRefs: [{ type: "conversation_item", id: item.id }],
+    policyVersion: "test-policy",
+    revision: 1,
+    createdAt: now,
+  }]));
   return {
     listRunInterventions: () => interventions,
     listLingThreads: ({ channelId }) => threads.filter((thread) => thread.channelId === channelId),
     getLingThread: (threadId) => threadById.get(threadId),
     getConversationItem: (itemId) => itemById.get(itemId),
     getEffectiveConversationItem: (itemId) => itemById.get(itemId),
-    getLingTurn: () => undefined,
+    getLingTurn: (turnId) => turnById.get(turnId),
+    getEffectiveTurnContextAssignment: (turnId) => assignmentByTurnId.get(turnId),
+    getContextSegment: (segmentId) => [...segmentByThreadId.values()].find((segment) => segment.id === segmentId),
+    listConversationContextSummaries: () => [],
+    getMemoryObject: () => undefined,
+    listConversationItemsForTurn: ({ turnId }) => items.filter((item) => item.turnId === turnId && item.status === "committed"),
+    listConversationItemsForSegment: (options) => items
+      .filter((item) => item.threadId === options.threadId)
+      .filter((item) => assignmentByTurnId.get(item.turnId)?.segmentId === options.segmentId)
+      .filter((item) => item.sequence <= options.throughSequence)
+      .filter((item) => item.sequence > (options.afterSequence ?? 0))
+      .filter((item) => item.status === "committed")
+      .slice(0, options.limit ?? 500),
     listConversationItemsByChannelPage: (options) => {
       const filtered = items
         .filter((item) => item.channelId === options.channelId)

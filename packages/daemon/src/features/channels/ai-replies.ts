@@ -12,7 +12,7 @@ import type { RunExecutionSink } from "../runs/orchestrator.js";
 import type { RunRequest } from "../runs/schemas.js";
 import { extractChannelExecutionProposal } from "./ai-proposals.js";
 import { compactChannelDiscussionForNoToolsRetry, isContextLengthError } from "./context-compaction.js";
-import { buildChannelReplyContextPack, renderContextPack } from "./context-packs.js";
+import { buildChannelReplyContextPack, renderContextPack, type ContextPack } from "./context-packs.js";
 import { LING_AGENT_EXECUTOR_ID } from "./ling-agent-executor.js";
 import { resolveChannelReplyExecutionTarget } from "./channel-reply-execution-target.js";
 import {
@@ -285,6 +285,7 @@ async function completeAiChannelReply(input: {
       input,
       prompt: discussionPrompt,
       systemPrompt,
+      contextProjection: requireContextProjection(discussionContextPack),
       webContext,
       webProgressEvents,
       observerBusError,
@@ -306,10 +307,11 @@ async function completeAiChannelReply(input: {
         error: firstRunFailure,
         now: observedAt,
       });
-      const compaction = compactChannelDiscussionForNoToolsRetry({
+      const compaction = await compactChannelDiscussionForNoToolsRetry({
         store: input.store,
         channel: input.channel,
         sourceMessage: input.sourceMessage,
+        inputBudgetTokens: discussionContextPack.budget.inputBudgetTokens,
         now: observedAt,
       });
       discussionContextPack = buildChannelReplyContextPack({
@@ -338,6 +340,7 @@ async function completeAiChannelReply(input: {
         input,
         prompt: discussionPrompt,
         systemPrompt,
+        contextProjection: requireContextProjection(discussionContextPack),
         webContext,
         webProgressEvents,
         observerBusError,
@@ -480,6 +483,7 @@ async function startProjectedChannelReplyRun(input: {
   readonly input: Parameters<typeof completeAiChannelReply>[0];
   readonly prompt: string;
   readonly systemPrompt: string;
+  readonly contextProjection: NonNullable<ContextPack["contextProjection"]>;
   readonly webContext: ChannelWebContext;
   readonly webProgressEvents: readonly WebEvidenceProgressEvent[];
   readonly observerBusError?: string;
@@ -532,6 +536,7 @@ async function startProjectedChannelReplyRun(input: {
     channelParallelLimit: input.input.channelParallelLimit,
     parentRunId: input.parentRunId,
     compactedRetry: input.compactedRetry,
+    contextProjection: input.contextProjection,
   }), projection.sink);
   const runId = startedRunId ?? projection.runId();
   if (!runId) {
@@ -542,6 +547,13 @@ async function startProjectedChannelReplyRun(input: {
     throw new Error(`Channel reply run was not persisted: ${runId}`);
   }
   return { run, projection };
+}
+
+function requireContextProjection(pack: ContextPack): NonNullable<ContextPack["contextProjection"]> {
+  if (!pack.contextProjection) {
+    throw new Error("Channel reply context pack is missing its conversation projection metadata.");
+  }
+  return pack.contextProjection;
 }
 
 function notifyRunLinked(callback: ((runId: string) => void) | undefined, runId: string): void {
