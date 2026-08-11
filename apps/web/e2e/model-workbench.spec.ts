@@ -481,6 +481,59 @@ test("model workbench keeps model discovery network failures productized", async
   await expect(page.getByText("Provider model discovery failed: The operation was aborted due to timeout")).toHaveCount(0);
 });
 
+test("model import dialog keeps its footer attached without an empty trailing panel", async ({ page }) => {
+  await page.setViewportSize({ width: 1426, height: 912 });
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "zh-CN");
+  });
+  await mockDaemon(page, createBaseState({ approvalStatus: "expired" }), {
+    templates: createDefaultProviderTemplates(),
+  });
+  await page.goto("/");
+
+  await openModelWorkbench(page);
+  await page.getByRole("button", { name: "添加模型" }).first().click();
+  const editor = page.getByRole("dialog", { name: "新建预设" });
+  await editor.getByLabel("模型供应商").selectOption("custom-openai-compatible");
+  await editor.getByLabel("API Key", { exact: true }).fill("test-visible-key");
+  await editor.getByRole("button", { name: "获取模型" }).click();
+
+  const modelCards = editor.locator(".provider-model-card");
+  await expect(modelCards).toHaveCount(10);
+  await modelCards.filter({ hasText: "cliproxy-gpt-4o" }).click();
+  await modelCards.filter({ hasText: "doubao-1-5-pro-32k-250115" }).click();
+  await expect(editor.getByText("已选 2 个")).toBeVisible();
+  await editor.locator(".provider-sheet-body").evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+
+  const layout = await editor.evaluate((element) => {
+    const body = element.querySelector<HTMLElement>(".provider-sheet-body");
+    const footer = element.querySelector<HTMLElement>(".provider-sheet-footer");
+    const modelGrid = element.querySelector<HTMLElement>(".provider-model-grid");
+    if (!body || !footer || !modelGrid) return undefined;
+    const dialogRect = element.getBoundingClientRect();
+    const bodyRect = body.getBoundingClientRect();
+    const footerRect = footer.getBoundingClientRect();
+    return {
+      trailingGap: dialogRect.bottom - footerRect.bottom,
+      dialogHeight: dialogRect.height,
+      bodyBottomGap: footerRect.top - bodyRect.bottom,
+      bodyClientHeight: body.clientHeight,
+      bodyScrollHeight: body.scrollHeight,
+      modelGridClientHeight: modelGrid.clientHeight,
+      modelGridScrollHeight: modelGrid.scrollHeight,
+    };
+  });
+
+  expect(layout).toBeDefined();
+  expect(layout?.trailingGap ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(2);
+  expect(Math.abs(layout?.bodyBottomGap ?? Number.POSITIVE_INFINITY)).toBeLessThanOrEqual(1);
+  expect(layout?.dialogHeight ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(880);
+  expect(layout?.bodyScrollHeight ?? 0).toBeGreaterThan(layout?.bodyClientHeight ?? 0);
+  expect(layout?.modelGridScrollHeight ?? 0).toBeGreaterThan(layout?.modelGridClientHeight ?? 0);
+});
+
 test("model workbench save validates before persisting and keeps errors inside the sheet", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "zh-CN");
