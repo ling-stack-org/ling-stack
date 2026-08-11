@@ -49,7 +49,7 @@ export interface TeammatePrivateChatSurfaceProps {
   readonly loading: boolean;
   readonly visibleMessages: readonly TeammateDirectMessage[];
   readonly normalizedMessageSearchQuery: string;
-  readonly privateFeedRef: RefObject<HTMLDivElement>;
+  readonly privateFeedRef: RefObject<HTMLDivElement | null>;
   readonly privateMessageFeedVirtualizer: ReactVirtualizer<HTMLDivElement, Element>;
   readonly privateMessageFeedVirtualRows: readonly VirtualItem[];
   readonly usedMemoryEvents: readonly UsedMemoryEvent[];

@@ -29,7 +29,7 @@ export function WorkBoardList(props: {
   readonly onOpenChannel: (id: string) => void;
   readonly onClaim?: (id: string) => void;
   readonly onHeartbeat?: (id: string, token: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   if (props.loading && props.items.length === 0) return <div className="work-board-list-skeleton" aria-label={t("Loading work board...")}>{Array.from({ length: 6 }, (_, index) => <Skeleton key={index} height={56} shape="block" />)}</div>;
   return (

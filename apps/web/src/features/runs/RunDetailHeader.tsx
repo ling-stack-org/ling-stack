@@ -13,7 +13,7 @@ export function RunDetailHeader({ run, approvals, isRunning, cancellingRunId, on
   readonly cancellingRunId: string;
   readonly onRerun: (run: RunSession) => void;
   readonly onCancelRun: (run: RunSession) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const primaryState = deriveRunPrimaryState(run, approvals);
   const stopping = Boolean(run && cancellingRunId === run.id);

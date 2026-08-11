@@ -6,7 +6,7 @@ interface ChannelHeaderControllerInput {
 }
 
 export interface ChannelHeaderController {
-  readonly searchInputRef: RefObject<HTMLInputElement>;
+  readonly searchInputRef: RefObject<HTMLInputElement | null>;
   readonly searchOpen: boolean;
   readonly clearSearch: () => void;
   readonly closeSearch: () => void;

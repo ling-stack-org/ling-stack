@@ -15,7 +15,7 @@ export function ArtifactRow({
   readonly artifact: RunArtifact;
   readonly cwd?: string;
   readonly onUseAsSkillEvidence?: (artifact: RunArtifact) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const [previewRequest, setPreviewRequest] = useState<PreviewRequest | undefined>();
   const contentUrl = artifactContentUrl(artifact.id, cwd);

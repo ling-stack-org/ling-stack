@@ -24,7 +24,7 @@ export function ArchivedSettingsPanel({
 }: {
   readonly state: ArchivedSettingsControllerState;
   readonly actions: ArchivedSettingsControllerActions;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const [activeCategory, setActiveCategory] = useState<ArchivedCategoryId>(readArchivedCategoryPreference);
   const [searchQuery, setSearchQuery] = useState("");

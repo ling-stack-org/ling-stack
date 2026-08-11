@@ -69,7 +69,7 @@ export function ProjectSceneOutline({
   readonly selectedProjectId: string;
   readonly selectedSceneId: string;
   readonly workflows: readonly MediaWorkflowDefinitionDetail[];
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const [name, setName] = useState(project.mediaProject.name);
   const readinessByScene = useMemo(() => new Map(readiness.map((item) => [item.sceneId, item])), [readiness]);
@@ -271,7 +271,7 @@ export function ProjectSceneOutline({
   );
 }
 
-function OwnerFailure({ failure, actions }: { readonly failure: MediaProductionFailure; readonly actions: MediaProductionActions }): JSX.Element {
+function OwnerFailure({ failure, actions }: { readonly failure: MediaProductionFailure; readonly actions: MediaProductionActions }): React.JSX.Element {
   const { t } = useI18n();
   return (
     <InlineFeedback className="project-outline-failure" role="alert" title={t(failure.productMessageKey)} tone="danger">

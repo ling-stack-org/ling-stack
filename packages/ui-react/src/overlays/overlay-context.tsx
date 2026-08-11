@@ -26,7 +26,7 @@ export function OverlayRoot({
   kind,
   onOpenChange,
   open,
-}: OverlayRootProps & { readonly kind: OverlayKind }): JSX.Element {
+}: OverlayRootProps & { readonly kind: OverlayKind }): React.JSX.Element {
   const canDismiss = dismissible && !busy;
 
   return (

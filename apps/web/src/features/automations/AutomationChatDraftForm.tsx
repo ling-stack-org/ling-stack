@@ -33,7 +33,7 @@ export function AutomationChatDraftForm({
   readonly onPreview: () => void;
   readonly onPromptChange: (value: string) => void;
   readonly onRepair: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   if (!draft) {
     return (
       <div className="automation-ui2-chat-form">

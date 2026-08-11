@@ -53,7 +53,7 @@ export function ThreadReplyPanel({
   readonly onRetryMessageReplacement: (message: ChannelMessage) => void | Promise<void>;
   readonly onOpenFileReference: () => void;
   readonly messageAuthorLabel: (message: ChannelMessage, teammates: readonly ChannelMention[]) => string;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const canSend = draft.trim().length > 0 && !pending;
   const rootMessageIsOwn = rootMessage.authorType === "local-user";

@@ -52,7 +52,7 @@ const emptyForm: ConnectionForm = {
 export function WorkflowConnectionWorkspace({ state, actions }: {
   readonly state: MediaWorkflowControllerState;
   readonly actions: MediaWorkflowControllerActions;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const [creating, setCreating] = useState(state.connections.length === 0);
   const [deleteTarget, setDeleteTarget] = useState<{ readonly id: string; readonly trigger: HTMLElement | null }>();
@@ -165,7 +165,7 @@ function ConnectionList({ state, creating, selected, onCreate, onSelect }: {
   readonly selected?: MediaWorkflowConnection;
   readonly onCreate: () => void;
   readonly onSelect: (id: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <div className="media-workflow-list-pane">
@@ -181,7 +181,7 @@ function ConnectionList({ state, creating, selected, onCreate, onSelect }: {
   );
 }
 
-function ConnectionHeader({ connection, creating, state, actions }: { readonly connection?: MediaWorkflowConnection; readonly creating: boolean; readonly state: MediaWorkflowControllerState; readonly actions: MediaWorkflowControllerActions }): JSX.Element {
+function ConnectionHeader({ connection, creating, state, actions }: { readonly connection?: MediaWorkflowConnection; readonly creating: boolean; readonly state: MediaWorkflowControllerState; readonly actions: MediaWorkflowControllerActions }): React.JSX.Element {
   const { t } = useI18n();
   const checking = Boolean(connection && isMediaWorkflowBusy(state, "connection-check", connection.id));
   const subjectBusy = Boolean(connection && isMediaWorkflowSubjectBusy(state, "connection", connection.id));
@@ -194,18 +194,18 @@ function ConnectionHeader({ connection, creating, state, actions }: { readonly c
   );
 }
 
-function ConnectionHealth({ connection }: { readonly connection: MediaWorkflowConnection }): JSX.Element {
+function ConnectionHealth({ connection }: { readonly connection: MediaWorkflowConnection }): React.JSX.Element {
   const { t } = useI18n();
   const status = connectionStatusView(connection);
   return <InlineFeedback title={t(connection.health?.ok ? "Connection is ready" : "Connection needs attention")} tone={connection.health?.ok ? "success" : "danger"}><StatusIndicator label={t(status.label.key, status.label.values)} tone={status.tone} /><Collapsible><CollapsibleTrigger asChild><Button size="sm" variant="ghost">{t("Technical details")}</Button></CollapsibleTrigger><CollapsibleContent><code>{connection.health?.message}</code></CollapsibleContent></Collapsible></InlineFeedback>;
 }
 
-function ConnectionFailure({ failure, onClear }: { readonly failure: MediaWorkflowFailure; readonly onClear: () => void }): JSX.Element {
+function ConnectionFailure({ failure, onClear }: { readonly failure: MediaWorkflowFailure; readonly onClear: () => void }): React.JSX.Element {
   const { t } = useI18n();
   return <InlineFeedback role="alert" title={t(failure.productMessageKey, failure.productMessageValues)} tone="danger"><Button leadingIcon={<X size={14} />} size="sm" variant="ghost" onClick={onClear}>{t("Clear")}</Button>{failure.technicalMessage ? <Collapsible><CollapsibleTrigger asChild><Button size="sm" variant="ghost">{t("Technical details")}</Button></CollapsibleTrigger><CollapsibleContent><code>{failure.technicalMessage}</code></CollapsibleContent></Collapsible> : null}</InlineFeedback>;
 }
 
-function ConnectionDeleteDialog({ connection, state, actions, trigger, onClose }: { readonly connection?: MediaWorkflowConnection; readonly state: MediaWorkflowControllerState; readonly actions: MediaWorkflowControllerActions; readonly trigger: HTMLElement | null; readonly onClose: () => void }): JSX.Element | null {
+function ConnectionDeleteDialog({ connection, state, actions, trigger, onClose }: { readonly connection?: MediaWorkflowConnection; readonly state: MediaWorkflowControllerState; readonly actions: MediaWorkflowControllerActions; readonly trigger: HTMLElement | null; readonly onClose: () => void }): React.JSX.Element | null {
   const { t } = useI18n();
   const cancelRef = useRef<HTMLButtonElement>(null);
   if (!connection) return null;

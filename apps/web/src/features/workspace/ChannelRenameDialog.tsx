@@ -31,7 +31,7 @@ export function ChannelRenameDialog({
   readonly onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   readonly onClose: () => void;
   readonly returnFocusRef: RefObject<HTMLElement | null>;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const trimmedValue = value.trim();
   const submitDisabled = saving || !trimmedValue || trimmedValue === currentName;

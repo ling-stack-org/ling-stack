@@ -290,7 +290,7 @@ function channelSidePanelLabel(view: ChannelSidePanelView): string {
   return "Task detail";
 }
 
-function channelSidePanelIcon(view: ChannelSidePanelView, size: number): JSX.Element {
+function channelSidePanelIcon(view: ChannelSidePanelView, size: number): React.JSX.Element {
   if (view === "task") {
     return <SquareTerminal size={size} />;
   }
@@ -730,7 +730,7 @@ export function WorkspaceClientView({
     patch: UpdateWorkspaceSettingsRequest,
     options?: ErrorPresentationOptions,
   ) => void | Promise<WorkspaceSettings | undefined>;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const [createTaskOpen, setCreateTaskOpen] = useState(false);
   const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
@@ -929,7 +929,7 @@ export function WorkspaceClientView({
   const conversationThreadTurnLoadsRef = useRef(new Set<string>());
   const conversationThreadTurnRunSignaturesRef = useRef(new Map<string, string>());
   const messageFeedChannelIdRef = useRef(selectedChannelId);
-  const channelSettingsAutosaveTimerRef = useRef<number | undefined>();
+  const channelSettingsAutosaveTimerRef = useRef<number | undefined>(undefined);
   const channelSettingsAutosaveInFlightRef = useRef(false);
   const channelSettingsAutosaveQueuedRef = useRef(false);
   const channelSettingsAutosaveRequestRef = useRef(0);
@@ -2380,7 +2380,7 @@ export function WorkspaceClientView({
     setTeammateManagerOpen(false);
   }
 
-  function activityActionRow(activityItemId: string, children?: ReactNode): JSX.Element {
+  function activityActionRow(activityItemId: string, children?: ReactNode): React.JSX.Element {
     return (
       <div className="activity-action-row">
         {children}

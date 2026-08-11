@@ -16,7 +16,7 @@ const channelSettingsSections: readonly {
   { id: "health", label: "Channel health", icon: HeartPulse },
 ];
 
-export function ChannelSettingsNavigation(): JSX.Element {
+export function ChannelSettingsNavigation(): React.JSX.Element {
   const { t } = useI18n();
 
   return (

@@ -23,7 +23,7 @@ interface ConversationBlockLongPressState {
 }
 
 interface ChannelConversationBlockInteractionsInput {
-  readonly scrollRef: RefObject<HTMLDivElement>;
+  readonly scrollRef: RefObject<HTMLDivElement | null>;
   readonly t: Translate;
 }
 
@@ -46,7 +46,7 @@ export function useChannelConversationBlockInteractions({
   const [conversationBlockFailure, setConversationBlockFailure] = useState<ConversationBlockFailure | undefined>();
   const [conversationBlockActionMenu, setConversationBlockActionMenu] = useState<ConversationBlockActionMenuState | undefined>();
   const conversationBlockCopyAttemptRef = useRef(0);
-  const conversationBlockLongPressRef = useRef<ConversationBlockLongPressState | undefined>();
+  const conversationBlockLongPressRef = useRef<ConversationBlockLongPressState | undefined>(undefined);
   const conversationBlockActionMenuRef = useRef<HTMLDivElement | null>(null);
 
   const closeConversationBlockActionMenu = useCallback((): void => {

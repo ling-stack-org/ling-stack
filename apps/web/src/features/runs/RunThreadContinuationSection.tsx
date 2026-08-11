@@ -13,7 +13,7 @@ export function RunThreadContinuationSection({ cwd, run, turnContext, isRunning,
   readonly turnContext: WorkHistoryTurnContext | undefined;
   readonly isRunning: boolean;
   readonly onRefresh: () => void;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const { t } = useI18n();
   const turnState = useMemo<WorkHistoryTurnLoadState | undefined>(() => turnContext ? {
     status: "loaded",

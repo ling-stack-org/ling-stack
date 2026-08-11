@@ -39,7 +39,7 @@ interface DragState {
   readonly startOffset: CropOffset;
 }
 
-export function AvatarCropDialog({ sourceDataUrl, onCancel, onConfirm }: AvatarCropDialogProps): JSX.Element {
+export function AvatarCropDialog({ sourceDataUrl, onCancel, onConfirm }: AvatarCropDialogProps): React.JSX.Element {
   const { t } = useI18n();
   const imageRef = useRef<HTMLImageElement | null>(null);
   const cropFrameRef = useRef<HTMLDivElement | null>(null);

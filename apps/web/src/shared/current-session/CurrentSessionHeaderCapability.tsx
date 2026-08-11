@@ -21,7 +21,7 @@ export function CurrentSessionHeaderCapabilityProvider({
   children,
 }: {
   readonly children: ReactNode;
-}): JSX.Element {
+}): React.JSX.Element {
   const registrationsRef = useRef(new Map<symbol, HTMLElement>());
   const [target, setTarget] = useState<HTMLElement | null>(null);
 
@@ -52,9 +52,9 @@ export function CurrentSessionHeaderCapabilityProvider({
   );
 }
 
-export function CurrentSessionHeaderCapabilitySlot(): JSX.Element {
+export function CurrentSessionHeaderCapabilitySlot(): React.JSX.Element {
   const context = useRequiredHeaderCapabilityContext();
-  const releaseTargetRef = useRef<(() => void) | undefined>();
+  const releaseTargetRef = useRef<(() => void) | undefined>(undefined);
 
   const attachTarget = useCallback<RefCallback<HTMLSpanElement>>((target) => {
     releaseTargetRef.current?.();

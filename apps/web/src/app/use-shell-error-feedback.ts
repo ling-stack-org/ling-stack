@@ -16,7 +16,7 @@ export function useShellErrorFeedback(input: {
   readonly dismissToast: (idOrScope: string) => void;
   readonly showToast: (toast: LingToastInput) => string;
 }): void {
-  const coordinatorRef = useRef<ReturnType<typeof createShellErrorFeedbackCoordinator>>();
+  const coordinatorRef = useRef<ReturnType<typeof createShellErrorFeedbackCoordinator> | undefined>(undefined);
   const dismissToastRef = useRef(input.dismissToast);
   const itemsRef = useRef(input.items);
   const showToastRef = useRef(input.showToast);

@@ -26,7 +26,7 @@ export function CouncilSettingsPanel({
   readonly onOpenCloneCouncil: () => void;
   readonly selectedBoundaryLabels: readonly string[];
   readonly selectedCapacityLabel?: string;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const council = controller.authority;
   const view = controller.viewModel;
@@ -105,7 +105,7 @@ function EditableCouncilSettings({
   controller,
 }: {
   readonly controller: CouncilSettingsArchiveController;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const view = controller.viewModel;
   const controlsDisabled = Boolean(controller.mutationKind) || controller.archiveBusy;
@@ -183,7 +183,7 @@ function EditableCouncilSettings({
   );
 }
 
-function ManagedCouncilSettings({ council }: { readonly council: AiCouncil }): JSX.Element {
+function ManagedCouncilSettings({ council }: { readonly council: AiCouncil }): React.JSX.Element {
   const { t } = useI18n();
   return (
     <div className="council-settings-archive-managed">
@@ -202,7 +202,7 @@ function CouncilLifecycleAction({
   controller,
 }: {
   readonly controller: CouncilSettingsArchiveController;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const action = controller.viewModel.statusAction;
   const managed = controller.viewModel.managed;
@@ -240,7 +240,7 @@ function CouncilDangerSection({
   controller,
 }: {
   readonly controller: CouncilSettingsArchiveController;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const managed = controller.viewModel.managed;
 

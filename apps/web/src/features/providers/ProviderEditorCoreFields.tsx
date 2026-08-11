@@ -23,7 +23,7 @@ export function ProviderEditorCoreFields({
   readonly onResetModelDiscovery: () => void;
   readonly onShowApiKeyChange: (value: boolean) => void;
   readonly onTemplateSelect: (template: ProviderTemplate) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const custom = selectedTemplateId === "custom-openai-compatible";
   return (

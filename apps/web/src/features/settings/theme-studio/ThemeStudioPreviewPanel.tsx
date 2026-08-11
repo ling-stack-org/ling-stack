@@ -18,7 +18,7 @@ import type { QuickThemeState } from "./quick-theme-state.js";
 
 const profileRegistry = new PresentationProfileRegistry();
 
-export function ThemeStudioPreviewPanel({ state }: { readonly state: QuickThemeState }): JSX.Element {
+export function ThemeStudioPreviewPanel({ state }: { readonly state: QuickThemeState }): React.JSX.Element {
   const { t } = useI18n();
   const [surface, setSurface] = useState<ThemeStudioPreviewSurface>("home");
   const [viewport, setViewport] = useState<ThemeStudioPreviewViewport>("1440x960");

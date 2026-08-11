@@ -14,7 +14,7 @@ export function ThreadPage({ cwd, isRunning, initialThreadId, onRefreshRuns, onS
   readonly initialThreadId?: string;
   readonly onRefreshRuns: () => void;
   readonly onSelectRun: (runId: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const focusRevalidationToken = useFocusRevalidationToken();
   const controller = useRunsThreadsPageController({ cwd, runs: [], initialThreadId, autoSelectThread: true, loadTurns: false });

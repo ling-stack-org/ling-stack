@@ -23,7 +23,7 @@ export function ProviderDeleteDialog({
   readonly target: ProviderPreset | undefined;
   readonly onCancel: () => void;
   readonly onConfirm: () => void;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const { t } = useI18n();
   if (!target) return null;
   const name = target.model.trim() || target.displayName.trim();

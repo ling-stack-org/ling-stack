@@ -39,7 +39,7 @@ export function ApprovalCard({
   readonly onExecuteExternalAction?: (actionId: string) => void;
   readonly onCancelExternalAction?: (actionId: string) => void;
   readonly onRefreshExternalAction?: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <article
       className={`approval-row approval-card${compact ? " compact" : ""}${selected ? " selected" : ""}`}

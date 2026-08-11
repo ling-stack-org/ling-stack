@@ -8,7 +8,7 @@ export function OverlayPortalProvider({
 }: {
   readonly children: ReactNode;
   readonly container: HTMLElement | null;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <OverlayPortalContainerContext.Provider value={container}>
       {children}

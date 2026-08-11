@@ -41,7 +41,7 @@ export function ExternalWorkReadySurface({
   readonly onDeleteExternalWorkSecret: () => Promise<boolean>;
   readonly onExternalWorkAction: (action: "poll" | "reconcile" | "start" | "stop") => Promise<boolean>;
   readonly selectedChannel: Channel;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const overall = externalWorkOverallState(externalWorkStatus);
   const target = externalWorkTarget(externalWorkStatus);

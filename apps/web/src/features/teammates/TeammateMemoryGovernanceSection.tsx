@@ -16,7 +16,7 @@ export function TeammateMemoryGovernanceSection({
   controller,
 }: {
   readonly controller: TeammateMemoryController;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const policy = controller.snapshot?.policy;
   return (

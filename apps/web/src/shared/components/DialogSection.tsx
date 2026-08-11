@@ -14,7 +14,7 @@ export function DialogSection({
   readonly collapsible?: boolean;
   readonly defaultOpen?: boolean;
   readonly className?: string;
-}): JSX.Element {
+}): React.JSX.Element {
   const classes = ["dialog-section", collapsible ? "collapsible" : "", className].filter(Boolean).join(" ");
 
   if (collapsible) {

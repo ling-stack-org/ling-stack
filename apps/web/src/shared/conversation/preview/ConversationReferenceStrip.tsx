@@ -18,10 +18,10 @@ export function ConversationReferenceStrip({
 }: {
   readonly references: readonly ConversationReferenceItem[];
   readonly ariaLabel: string;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const [activeId, setActiveId] = useState("");
-  const openTimerRef = useRef<number | undefined>();
-  const closeTimerRef = useRef<number | undefined>();
+  const openTimerRef = useRef<number | undefined>(undefined);
+  const closeTimerRef = useRef<number | undefined>(undefined);
 
   useEffect(() => () => {
     if (openTimerRef.current !== undefined) {

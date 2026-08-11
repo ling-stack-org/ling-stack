@@ -11,7 +11,7 @@ export function StartupIssueList({
   readonly errorMessage: string;
   readonly hasSnapshot: boolean;
   readonly issues: readonly StartupIssueViewModel[];
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const { t } = useI18n();
   const visibleIssues = issues.slice(0, 4);
 

@@ -1,7 +1,7 @@
 import type { PropsWithChildren } from "react";
 import { OverlayScrollArea } from "../../shared/ui/index.js";
 
-export function SkillLibraryOverlayScrollArea({ children }: PropsWithChildren): JSX.Element {
+export function SkillLibraryOverlayScrollArea({ children }: PropsWithChildren): React.JSX.Element {
   return (
     <OverlayScrollArea
       className="settings-skill-table-scroll-area"

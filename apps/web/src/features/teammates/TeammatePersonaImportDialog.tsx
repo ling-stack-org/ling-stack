@@ -41,7 +41,7 @@ export function TeammatePersonaImportDialog({
   readonly onFormChange: (form: PersonaImportForm) => void;
   readonly onOpenChange: (open: boolean) => void;
   readonly onPreview: () => void | Promise<void>;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const busy = Boolean(busyAction);
   const [mode, setMode] = useState<PersonaInputMode>("file");

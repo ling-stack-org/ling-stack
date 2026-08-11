@@ -58,7 +58,7 @@ export interface CouncilWorkspacePanelsProps {
   readonly settingsArchiveController: CouncilSettingsArchiveController;
 }
 
-export function CouncilWorkspacePanels(props: CouncilWorkspacePanelsProps): JSX.Element {
+export function CouncilWorkspacePanels(props: CouncilWorkspacePanelsProps): React.JSX.Element {
   const { t } = useI18n();
   const selectedCouncil = props.selectedCouncil;
   const [activeDetailTab, setActiveDetailTab] = useState<CouncilDetailTab>("members");
@@ -199,7 +199,7 @@ function CouncilDetailHeader({
   readonly council: AiCouncil;
   readonly selectedCapacityLabel?: string;
   readonly selectedBoundaryLabels: readonly string[];
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const visibleBoundaryLabels = selectedBoundaryLabels.slice(0, selectedCapacityLabel ? 1 : 2);
   const lifecycleStatus = councilStatusPresentation(council.status);
@@ -224,7 +224,7 @@ function CouncilDetailHeader({
   );
 }
 
-function CouncilDetailTabs(): JSX.Element {
+function CouncilDetailTabs(): React.JSX.Element {
   const { t } = useI18n();
   const tabs: readonly { readonly id: CouncilDetailTab; readonly label: string }[] = [
     { id: "members", label: t("Council members") },

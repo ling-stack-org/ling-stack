@@ -13,7 +13,7 @@ export function SettingsRunDiagnosticsToolbar({
   readonly isLoading: boolean;
   readonly onClose: () => void;
   readonly onRefresh: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <header className="settings-run-diagnostics-toolbar">

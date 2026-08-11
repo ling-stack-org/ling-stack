@@ -11,7 +11,7 @@ export function AutomationRunList({
   readonly runs: readonly AutomationRunViewModel[];
   readonly t: AutomationTranslate;
   readonly onOpenRun: (runId: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <div className="automation-ui2-run-list" role="list" aria-label={t("Recent history")}>
       {runs.map((item) => (

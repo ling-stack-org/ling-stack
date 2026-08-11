@@ -6,7 +6,7 @@ export interface DiffFileSummaryProps {
   readonly onSelect?: () => void;
 }
 
-export function DiffFileSummary({ change, selected = false, onSelect }: DiffFileSummaryProps): JSX.Element {
+export function DiffFileSummary({ change, selected = false, onSelect }: DiffFileSummaryProps): React.JSX.Element {
   return (
     <button className={selected ? "diff-file-summary selected" : "diff-file-summary"} type="button" onClick={onSelect}>
       <span>

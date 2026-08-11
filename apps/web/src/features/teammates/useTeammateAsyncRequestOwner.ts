@@ -188,7 +188,7 @@ export function useTeammateAsyncRequestOwner<Action extends string, Resource ext
   identity = teammateId,
 ): TeammateAsyncRequestOwner<Action, Resource> {
   const [, rerender] = useReducer((value: number) => value + 1, 0);
-  const storeRef = useRef<TeammateAsyncRequestStore<Action, Resource>>();
+  const storeRef = useRef<TeammateAsyncRequestStore<Action, Resource> | undefined>(undefined);
   if (!storeRef.current) {
     storeRef.current = new TeammateAsyncRequestStore<Action, Resource>(identity, teammateId, rerender);
   }

@@ -6,7 +6,7 @@ import { useI18n } from "../../i18n.js";
 import type { RunArtifact } from "../../types.js";
 import { MediaArtifactPreview } from "./MediaArtifactPreview.js";
 
-export function MediaJobArtifactRow({ artifact, cwd }: { readonly artifact: RunArtifact; readonly cwd: string }): JSX.Element {
+export function MediaJobArtifactRow({ artifact, cwd }: { readonly artifact: RunArtifact; readonly cwd: string }): React.JSX.Element {
   const { t } = useI18n();
   const href = artifactContentUrl(artifact.id, cwd);
   const title = artifact.title || t("Generated result");

@@ -22,7 +22,7 @@ export function FilesPage({
   statusLabels,
   error,
   onOpenItem,
-}: FilesPageProps): JSX.Element {
+}: FilesPageProps): React.JSX.Element {
   const groups = groupFileItems(items, groupFallbackLabel);
   return (
     <div className="right-dock-files-page">

@@ -1,4 +1,4 @@
-export function DesktopWindowChrome(): JSX.Element | null {
+export function DesktopWindowChrome(): React.JSX.Element | null {
   const isMacosDesktop =
     typeof window !== "undefined" && window.lingDesktop?.platform === "macos";
 

@@ -12,7 +12,7 @@ import {
 import { firstRunReady, firstRunSteps } from "./first-run-view-models.js";
 import type { FirstRunController } from "./useFirstRunController.js";
 
-export function FirstRunDialog({ controller }: { readonly controller: FirstRunController }): JSX.Element {
+export function FirstRunDialog({ controller }: { readonly controller: FirstRunController }): React.JSX.Element {
   const { t } = useI18n();
   const ready = firstRunReady(controller.readiness);
   const content = stepContent(controller, t);

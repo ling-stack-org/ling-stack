@@ -84,7 +84,7 @@ export function ActivityFilterToolbar({
   readonly clearDisabled: boolean;
   readonly customViewLimitReached: boolean;
   readonly showSearch?: boolean;
-  readonly savedViewSelectRef?: RefObject<HTMLSelectElement>;
+  readonly savedViewSelectRef?: RefObject<HTMLSelectElement | null>;
   readonly onSavedViewSelect: (view: ChannelActivitySavedView) => void;
   readonly onSaveView: () => void;
   readonly onRenameView: () => void;
@@ -94,7 +94,7 @@ export function ActivityFilterToolbar({
   readonly onCategoryFilterChange: (filter: ActivityCategoryFilter) => void;
   readonly onAttentionFilterChange: (filter: ActivityAttentionFilter) => void;
   readonly onClear: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const selectedCustomView = selectedSavedView && !selectedSavedView.builtin;
   const filterSummaryParts = [
@@ -228,7 +228,7 @@ export function ActivityDrilldownDrawer({
   readonly onOpenTarget: (target: ChannelActivityDrilldownTarget) => void;
   readonly onRunTriageAction: (draft: ChannelActivityTriageDraft) => Promise<ChannelActivityTriageResult>;
   readonly onOpenTriageResult: (result: ChannelActivityTriageResult) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const triageActions = useMemo(() => buildChannelActivityTriageActions(drilldown), [drilldown]);
   const [selectedTriageActionId, setSelectedTriageActionId] = useState<ChannelActivityTriageActionKind | "">("");
@@ -434,7 +434,7 @@ function ActivityTriageDraftForm({
   readonly draft: ChannelActivityTriageDraft;
   readonly disabled: boolean;
   readonly onChange: (field: string, value: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   if (draft.actionKind === "follow_up_task") {
     return (
@@ -562,7 +562,7 @@ function drilldownTargetLabel(target: ChannelActivityDrilldownTarget): string {
   return "Review source";
 }
 
-function drilldownTargetIcon(target: ChannelActivityDrilldownTarget): JSX.Element {
+function drilldownTargetIcon(target: ChannelActivityDrilldownTarget): React.JSX.Element {
   if (target.kind === "task") {
     return <SquareTerminal size={14} />;
   }
@@ -575,7 +575,7 @@ function drilldownTargetIcon(target: ChannelActivityDrilldownTarget): JSX.Elemen
   return <Workflow size={14} />;
 }
 
-function triageActionIcon(action: ChannelActivityTriageActionKind): JSX.Element {
+function triageActionIcon(action: ChannelActivityTriageActionKind): React.JSX.Element {
   if (action === "follow_up_task") {
     return <SquareTerminal size={14} />;
   }

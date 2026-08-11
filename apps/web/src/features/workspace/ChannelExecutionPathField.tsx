@@ -16,7 +16,7 @@ export function ChannelExecutionPathField({
   readonly disabled: boolean;
   readonly forceApply: boolean;
   readonly onApply: (path: string) => Promise<void>;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const [draftPath, setDraftPath] = useState(value);
   const [busyAction, setBusyAction] = useState<"apply" | "select" | "">("");

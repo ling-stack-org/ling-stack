@@ -32,7 +32,7 @@ export function ChannelActivityWorkspace({
   composerNode,
   threadReply,
   drilldown,
-}: ChannelActivityWorkspaceProps): JSX.Element {
+}: ChannelActivityWorkspaceProps): React.JSX.Element {
   const { t } = useI18n();
   return (
     <section className="panel task-list-panel activity-tab-panel channel-chat-panel" aria-label={t("Channel activity")}>

@@ -10,7 +10,7 @@ import { ThemeStudioProgress } from "./ThemeStudioProgress.js";
 import { quickThemeIssueMessage } from "./quick-theme-view-models.js";
 import { useQuickThemeStudioController } from "./useQuickThemeStudioController.js";
 
-export function ThemeStudioSurface({ onBack }: { readonly onBack: () => void }): JSX.Element {
+export function ThemeStudioSurface({ onBack }: { readonly onBack: () => void }): React.JSX.Element {
   const { t } = useI18n();
   const { showToast } = useLingToast();
   const controller = useQuickThemeStudioController();

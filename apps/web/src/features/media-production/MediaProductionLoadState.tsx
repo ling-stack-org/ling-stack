@@ -16,7 +16,7 @@ export function MediaProductionLoadState({
 }: {
   readonly actions: MediaProductionActions;
   readonly state: MediaProductionState;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const { t } = useI18n();
   const loadFailure = selectMediaProductionFailure(state.failures, ["project-list", "project-detail"]);
   const createFailure = selectMediaProductionFailure(state.failures, ["project-create"]);
@@ -102,7 +102,7 @@ function FailureFeedback({
   readonly onClear: (() => void) | undefined;
   readonly onRetry: () => void;
   readonly tone: "danger" | "warning";
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <InlineFeedback

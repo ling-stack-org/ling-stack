@@ -18,7 +18,7 @@ export function MediaJobRow({
   readonly selected: boolean;
   readonly onAction: (action: MediaJobActionId, projection: MediaJobProjectionInput) => void;
   readonly onSelect: (jobId: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const action = row.primaryAction;
   return (

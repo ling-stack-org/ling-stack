@@ -76,7 +76,7 @@ export function ToastProvider({
   closeLabel = "Dismiss notification",
   maxVisible = 3,
   viewportLabel = "Notifications",
-}: ToastProviderProps): JSX.Element {
+}: ToastProviderProps): React.JSX.Element {
   const [items, setItems] = useState<readonly ToastItem[]>([]);
   const sequenceRef = useRef(0);
   const cleanupTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());

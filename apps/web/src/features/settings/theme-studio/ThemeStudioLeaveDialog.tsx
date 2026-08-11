@@ -12,7 +12,7 @@ export function ThemeStudioLeaveDialog({ open, onCancel, onDiscard }: {
   readonly open: boolean;
   readonly onCancel: () => void;
   readonly onDiscard: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onCancel(); }}>

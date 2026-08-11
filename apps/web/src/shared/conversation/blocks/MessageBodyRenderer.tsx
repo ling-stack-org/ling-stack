@@ -21,7 +21,7 @@ export interface MessageBodyRendererProps {
 export function MessageBodyRenderer({
   onOpenLocalFile,
   ...props
-}: MessageBodyRendererProps): JSX.Element {
+}: MessageBodyRendererProps): React.JSX.Element {
   const sharedProps: SharedMessageBodyRendererProps = {
     ...props,
     onOpenLocalFile,

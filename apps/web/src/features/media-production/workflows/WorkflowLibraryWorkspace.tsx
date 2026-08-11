@@ -32,7 +32,7 @@ export function WorkflowLibraryWorkspace({ state, actions, mediaJobs, imageArtif
   readonly mediaJobs: readonly MediaJob[];
   readonly imageArtifacts: readonly RunArtifact[];
   readonly onOpenConnections: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const selected = state.workflows.find((item) => item.definition.id === state.selectedWorkflowId);
@@ -110,7 +110,7 @@ const WorkflowFileInput = forwardRef<HTMLInputElement, { readonly disabled: bool
   return <input ref={ref} className="media-workflow-file-input" data-ling-control-native="true" type="file" accept="application/json,.json" hidden disabled={disabled} onChange={(event) => { const file = event.target.files?.[0]; if (file) onFile(file); event.currentTarget.value = ""; }} />;
 });
 
-function ImportDetail({ state, actions }: { readonly state: MediaWorkflowControllerState; readonly actions: MediaWorkflowControllerActions }): JSX.Element {
+function ImportDetail({ state, actions }: { readonly state: MediaWorkflowControllerState; readonly actions: MediaWorkflowControllerActions }): React.JSX.Element {
   const { t } = useI18n();
   const draft = state.importDraft!;
   const validation = deriveMediaWorkflowImportValidation(draft);
@@ -131,7 +131,7 @@ function WorkflowDetail({ workflow, mediaJobs, imageArtifacts, state, actions }:
   readonly imageArtifacts: readonly RunArtifact[];
   readonly state: MediaWorkflowControllerState;
   readonly actions: MediaWorkflowControllerActions;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const version = workflow.versions[0];
   const testJob = version?.testMediaJobId ? mediaJobs.find((job) => job.id === version.testMediaJobId) : undefined;
@@ -162,12 +162,12 @@ function WorkflowDetail({ workflow, mediaJobs, imageArtifacts, state, actions }:
   );
 }
 
-function WorkflowFailure({ failure, onClear }: { readonly failure: MediaWorkflowFailure; readonly onClear: () => void }): JSX.Element {
+function WorkflowFailure({ failure, onClear }: { readonly failure: MediaWorkflowFailure; readonly onClear: () => void }): React.JSX.Element {
   const { t } = useI18n();
   return <InlineFeedback role="alert" title={t(failure.productMessageKey, failure.productMessageValues)} tone="danger"><Button leadingIcon={<X size={14} />} size="sm" variant="ghost" onClick={onClear}>{t("Clear")}</Button>{failure.technicalMessage ? <DiagnosticDetails value={failure.technicalMessage} /> : null}</InlineFeedback>;
 }
 
-function DiagnosticDetails({ value }: { readonly value: string }): JSX.Element {
+function DiagnosticDetails({ value }: { readonly value: string }): React.JSX.Element {
   const { t } = useI18n();
   return <Collapsible><CollapsibleTrigger asChild><Button size="sm" variant="ghost">{t("Technical details")}</Button></CollapsibleTrigger><CollapsibleContent><pre>{value}</pre></CollapsibleContent></Collapsible>;
 }

@@ -7,7 +7,7 @@ export function DesktopComputerUsePreference({
   sectionTitle = "Desktop",
 }: {
   readonly sectionTitle?: string;
-} = {}): JSX.Element | null {
+} = {}): React.JSX.Element | null {
   const { t } = useI18n();
   const desktopComputerUse = typeof window === "undefined" ? undefined : window.lingDesktop?.computerUse;
   const [enabled, setEnabled] = useState(true);

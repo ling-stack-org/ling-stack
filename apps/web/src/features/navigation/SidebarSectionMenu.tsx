@@ -32,7 +32,7 @@ export function SidebarSectionMenu({
   readonly onOpenChange: (open: boolean) => void;
   readonly open: boolean;
   readonly triggerRef?: Ref<HTMLButtonElement>;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <Menu modal={false} open={open} onOpenChange={onOpenChange}>
       <MenuTrigger asChild>

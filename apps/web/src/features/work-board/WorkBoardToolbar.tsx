@@ -21,7 +21,7 @@ export function WorkBoardToolbar(props: {
   readonly onSortChange: (sort: WorkBoardSort) => void;
   readonly onClearFilters: () => void;
   readonly onPopoverOpenChange: (open: boolean) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const activeCount = countActiveFilters(props.filters);
   return (
@@ -68,7 +68,7 @@ export function WorkBoardToolbar(props: {
   );
 }
 
-function FilterSelect({ label, value, options, onChange }: { readonly label: string; readonly value: string; readonly options: readonly (readonly [string, string])[]; readonly onChange: (value: string) => void }): JSX.Element {
+function FilterSelect({ label, value, options, onChange }: { readonly label: string; readonly value: string; readonly options: readonly (readonly [string, string])[]; readonly onChange: (value: string) => void }): React.JSX.Element {
   const { t } = useI18n();
   return <Field label={label}><Select size="sm" value={value} onChange={(event) => onChange(event.target.value)}><option value="">{t("All")}</option>{options.map(([optionValue, text]) => <option key={optionValue} value={optionValue}>{text}</option>)}</Select></Field>;
 }

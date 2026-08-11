@@ -21,7 +21,7 @@ export function AutomationDraftList({
   readonly onConfirm: (draftId: string) => void;
   readonly onDiscard: (draftId: string) => void;
   readonly onSelect: (draftId: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <section className="automation-ui2-draft-section" aria-label={t("Draft review")}>
       <h2>{t("Drafts waiting for confirmation")}</h2>

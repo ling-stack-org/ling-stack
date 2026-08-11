@@ -19,7 +19,7 @@ import type { TeammatePrivateChatSurfaceProps } from "./teammate-private-chat-ty
 import { useTeammatePrivateComposerController } from "./useTeammatePrivateComposerController.js";
 import { useTeammatePrivateMessageController } from "./useTeammatePrivateMessageController.js";
 
-export function TeammatePrivateChatSurface(props: TeammatePrivateChatSurfaceProps): JSX.Element {
+export function TeammatePrivateChatSurface(props: TeammatePrivateChatSurfaceProps): React.JSX.Element {
   const { t } = useI18n();
   const {
     cwd,

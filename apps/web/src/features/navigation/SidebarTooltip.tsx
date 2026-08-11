@@ -7,7 +7,7 @@ export function SidebarTooltip({
 }: {
   readonly children: ReactElement;
   readonly label: string;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <Tooltip content={label} side="right" sideOffset={8}>
       {children}

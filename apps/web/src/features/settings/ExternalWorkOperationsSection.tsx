@@ -26,7 +26,7 @@ export function ExternalWorkOperationsSection({
   readonly errorMessage?: string;
   readonly onAction: (action: ExternalWorkStatusAction) => Promise<boolean>;
   readonly status: ExternalWorkStatusResponse;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const background = externalWorkBackgroundState(status);
   const recordedError = externalWorkLastError(status);

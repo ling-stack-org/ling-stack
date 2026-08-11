@@ -100,10 +100,10 @@ const ThemeContext = createContext<ThemeContextValue>({
   syncActiveTheme: async () => undefined,
 });
 
-export function ThemeProvider({ children }: { readonly children: ReactNode }): JSX.Element {
+export function ThemeProvider({ children }: { readonly children: ReactNode }): React.JSX.Element {
   const initialRef = useRef(readInitialThemeSelection());
   const registryRef = useRef(new ThemeRegistry());
-  const repositoryRef = useRef<ThemePackageRepositoryPort>();
+  const repositoryRef = useRef<ThemePackageRepositoryPort | undefined>(undefined);
   repositoryRef.current ??= createThemePackageRepository();
   const repositoryDescriptorsRef = useRef(new Map<string, ThemePackageRepositoryDescriptor>());
   const explicitSelectionRef = useRef(initialRef.current.explicit);

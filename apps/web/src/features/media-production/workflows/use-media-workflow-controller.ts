@@ -72,7 +72,7 @@ export function useMediaWorkflowController(input: {
   const subjectTicketsRef = useRef(new Map<string, number>());
   const connectionsRef = useRef<readonly MediaWorkflowConnection[]>([]);
   const workflowsRef = useRef<readonly MediaWorkflowDefinitionDetail[]>([]);
-  const importDraftRef = useRef<MediaWorkflowImportDraft>();
+  const importDraftRef = useRef<MediaWorkflowImportDraft | undefined>(undefined);
   const onJobsChangedRef = useRef(input.onJobsChanged);
   onJobsChangedRef.current = input.onJobsChanged;
 

@@ -20,7 +20,7 @@ export function FullAccessConfirmationDialog({
   readonly onConfirm: () => void;
   readonly open: boolean;
   readonly returnFocusTarget?: HTMLElement | null;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const cancelButtonRef = useRef<HTMLButtonElement>(null);
 

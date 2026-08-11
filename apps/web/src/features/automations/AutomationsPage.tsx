@@ -74,7 +74,7 @@ export interface AutomationsPageProps {
   readonly onOpenThread: (threadId: string) => void;
 }
 
-export function AutomationsPage(props: AutomationsPageProps): JSX.Element {
+export function AutomationsPage(props: AutomationsPageProps): React.JSX.Element {
   const { t } = useI18n();
   const { showToast } = useLingToast();
   const controller = useAutomationsPageController({

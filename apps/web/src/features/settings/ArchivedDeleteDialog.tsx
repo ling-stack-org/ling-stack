@@ -29,7 +29,7 @@ export function ArchivedDeleteDialog({
   readonly target?: ArchivedDeleteTarget;
   readonly onClose: () => void;
   readonly onConfirm: () => Promise<boolean>;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const displayName = target?.displayName || (target?.displayNameFallbackKey ? t(target.displayNameFallbackKey) : "");

@@ -56,7 +56,7 @@ export function RightDockShell({
   onNavigate,
   onBack,
   className,
-}: RightDockShellProps): JSX.Element | null {
+}: RightDockShellProps): React.JSX.Element | null {
   if (!open) {
     return null;
   }

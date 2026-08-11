@@ -11,7 +11,7 @@ export function MediaJobRepair({
   readonly projection: MediaJobProjectionInput;
   readonly repair: MediaJobRepairView;
   readonly onAction: (action: MediaJobRepairView["primaryAction"]["id"], projection: MediaJobProjectionInput) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <div className="media-job-repair-owner">

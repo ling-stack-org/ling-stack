@@ -16,7 +16,7 @@ export function TeammateRoleCatalog({
   readonly templates: readonly AiTeammateTemplate[];
   readonly onCreate: () => void;
   readonly onOpenTemplate: (template: AiTeammateTemplate) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
 
   return (

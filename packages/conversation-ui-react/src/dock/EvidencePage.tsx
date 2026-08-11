@@ -14,7 +14,7 @@ export function EvidencePage({
   emptyTitle,
   emptyDescription,
   onOpenItem,
-}: EvidencePageProps): JSX.Element {
+}: EvidencePageProps): React.JSX.Element {
   const visibleGroups = groups.filter((group) => group.items.length > 0);
   if (visibleGroups.length === 0) {
     return <DockEmptyState title={emptyTitle} description={emptyDescription} />;

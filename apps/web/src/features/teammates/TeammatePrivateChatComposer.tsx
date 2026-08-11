@@ -102,7 +102,7 @@ export function TeammatePrivateChatComposer({
   privateComposerSending,
   privateComposerSendingLabel,
   uploadingAttachments,
-}: TeammatePrivateChatComposerProps): JSX.Element {
+}: TeammatePrivateChatComposerProps): React.JSX.Element {
   const { t } = useI18n();
   const permissionLocked = privateComposerSending || hasDirectRuntimeActivity || Boolean(directGuidanceSubmitting);
   const visibleDirectInterventions = openDirectInterventions.filter((intervention) =>

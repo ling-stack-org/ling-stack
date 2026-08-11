@@ -16,7 +16,7 @@ export function WorkBoardFailDialog(props: {
   readonly onValidationChange: (message: string) => void;
   readonly onClose: () => void;
   readonly onConfirm: (reason: string) => Promise<boolean>;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   async function confirm(): Promise<void> {
     const reason = props.reason.trim();

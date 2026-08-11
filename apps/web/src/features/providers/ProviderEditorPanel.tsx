@@ -69,7 +69,7 @@ export function ProviderEditorPanel({
   readonly onShowApiKeyChange: (value: boolean) => void;
   readonly onSaveCurrentPreset: () => void;
   readonly onPrimaryAction: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const title = !editingProviderId && setupIntent === "chat"
     ? t("New chat model")

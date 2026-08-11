@@ -13,7 +13,7 @@ export function DockEmptyState({
   icon,
   title,
   description,
-}: DockEmptyStateProps): JSX.Element {
+}: DockEmptyStateProps): React.JSX.Element {
   return (
     <EmptyState
       className={className}

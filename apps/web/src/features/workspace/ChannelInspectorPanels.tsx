@@ -67,8 +67,8 @@ function ProtocolList<T>({
 }: {
   readonly emptyLabel: string;
   readonly items: readonly T[];
-  readonly renderItem: (item: T) => JSX.Element;
-}): JSX.Element {
+  readonly renderItem: (item: T) => React.JSX.Element;
+}): React.JSX.Element {
   if (items.length === 0) {
     return (
       <div className="client-empty-state compact">
@@ -178,7 +178,7 @@ export function ChannelInspector({
   readonly onCancelWorkUnit: (workUnitId: string) => void;
   readonly onRetryWorkUnit: (workUnitId: string) => void;
   readonly onReconcileWorkUnit: (workUnitId: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const activeDecisions = decisions.filter((decision) => decision.status === "active");
   const taskSummaries = selectedTask ? contextSummaries.filter((summary) => summary.targetType === "task" && summary.targetId === selectedTask.id) : [];
@@ -380,7 +380,7 @@ function RoutingEvidenceIndex({
   readonly teammates: readonly ChannelMention[];
   readonly openDecisionId: string;
   readonly onToggle: (id: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <div className="routing-evidence-index">
@@ -468,7 +468,7 @@ function ChannelProtocolEditor({
   readonly loadError?: string;
   readonly onSave: (input: UpdateChannelCollaborationProtocolRequest) => Promise<ChannelCollaborationProtocolResponse | undefined>;
   readonly onRevert: () => Promise<ChannelCollaborationProtocolResponse | undefined>;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const { showToast } = useLingToast();
   const [draft, setDraft] = useState<ChannelProtocolDraft>(() => protocolDraftFromState(channel, protocol));
@@ -678,7 +678,7 @@ function ChannelRouteInspectContent({
   readonly decision: ChannelMessageRouteDecision;
   readonly teammates: readonly ChannelMention[];
   readonly t: Translate;
-}): JSX.Element {
+}): React.JSX.Element {
   const contextPack = decision.contextPack;
   return (
     <>
@@ -769,7 +769,7 @@ function ChannelIntentInspectContent({
   readonly decision: ChannelIntentDecision;
   readonly teammates: readonly ChannelMention[];
   readonly t: Translate;
-}): JSX.Element {
+}): React.JSX.Element {
   const replyMessageIds = uniqueStrings([decision.replyMessageId, ...(decision.replyMessageIds ?? [])].filter((id): id is string => Boolean(id)));
   return (
     <>

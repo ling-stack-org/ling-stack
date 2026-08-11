@@ -40,7 +40,7 @@ export function ConversationArtifactStrip({
   readonly recoveryTarget?: ConversationWorkspaceRecoveryTarget;
   readonly loadPreview: ArtifactPreviewLoader;
   readonly onOpenWorkspaceReview?: (target: ConversationWorkspaceReviewTarget) => void;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const { t } = useI18n();
   const artifactItems = items.filter((item) => item.kind === "artifact");
   const changedItems = items.filter((item) => item.kind === "changed" && (item.changeArtifacts?.length ?? 0) > 0);
@@ -92,7 +92,7 @@ function ArtifactOutputRow({
   readonly onPreviewEnter: (item: ConversationArtifactStripItem, element: HTMLElement) => void;
   readonly onPreviewLeave: () => void;
   readonly onPreviewNow: (item: ConversationArtifactStripItem, element: HTMLElement) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const previewable = Boolean(item.previewable && item.artifactId && cwd);
   const workspaceFilePath = item.workspaceFilePath?.trim();
@@ -159,7 +159,7 @@ function ChangedFilesGroup({
   readonly onPreviewEnter: (change: LoadedChangeFile, element: HTMLElement) => void;
   readonly onPreviewLeave: () => void;
   readonly onPreviewNow: (change: LoadedChangeFile, element: HTMLElement) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const [showAll, setShowAll] = useState(false);
   const [loadedChanges, setLoadedChanges] = useState<readonly LoadedChangeFile[]>(() => fallbackChangeFiles(item.changeArtifacts ?? []));
@@ -343,7 +343,7 @@ function fileCountFromChanges(changes: readonly LoadedChangeFile[]): number {
   return new Set(changes.map((change) => change.path)).size;
 }
 
-function ChangeStat({ additions, deletions }: { readonly additions: number; readonly deletions: number }): JSX.Element {
+function ChangeStat({ additions, deletions }: { readonly additions: number; readonly deletions: number }): React.JSX.Element {
   return (
     <span className="conversation-work-cell-change-stat">
       <span className="add">+{additions}</span>
@@ -445,8 +445,8 @@ function useArtifactHoverPreview(input: {
   readonly leaveSource: () => void;
 } {
   const [preview, setPreview] = useState<HoverPreviewState | undefined>();
-  const showTimerRef = useRef<number | undefined>();
-  const hideTimerRef = useRef<number | undefined>();
+  const showTimerRef = useRef<number | undefined>(undefined);
+  const hideTimerRef = useRef<number | undefined>(undefined);
   const requestIdRef = useRef(0);
   const previewRef = useRef<HTMLElement | null>(null);
 
@@ -601,11 +601,11 @@ function ArtifactHoverPreview({
   onPointerEnter,
   onPointerLeave,
 }: {
-  readonly previewRef: RefObject<HTMLElement>;
+  readonly previewRef: RefObject<HTMLElement | null>;
   readonly state: HoverPreviewState;
   readonly onPointerEnter: () => void;
   readonly onPointerLeave: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const target = state.target;
   const label = target.kind === "change" ? target.entry.path : target.item.label;
   const change = target.kind === "change" ? target.entry.change : previewDiffChange(target.preview, label);
@@ -633,7 +633,7 @@ function ArtifactHoverPreview({
   );
 }
 
-function CompactArtifactPreview({ preview }: { readonly preview: PreviewContentResponse }): JSX.Element {
+function CompactArtifactPreview({ preview }: { readonly preview: PreviewContentResponse }): React.JSX.Element {
   if (preview.kind === "image" && preview.imageUrl) {
     return <img className="conversation-artifact-hover-preview-image" src={preview.imageUrl} alt="" />;
   }

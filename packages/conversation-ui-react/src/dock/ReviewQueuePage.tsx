@@ -47,7 +47,7 @@ export function ReviewQueuePage({
   onClearReviewPacket,
   onFilterChange,
   onOpenItem,
-}: ReviewQueuePageProps): JSX.Element {
+}: ReviewQueuePageProps): React.JSX.Element {
   const [selectedItemId, setSelectedItemId] = useState<string | undefined>(undefined);
   const visibleItems = useMemo(() => items.filter((item) => {
     if (activeFilter === "all") {

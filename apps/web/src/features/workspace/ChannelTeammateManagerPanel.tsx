@@ -51,7 +51,7 @@ export function ChannelTeammateManagerPanel({
   onAddSelectedChannelTeammate,
   onRemoveChannelTeammate,
   onOpenTeammates,
-}: ChannelTeammateManagerPanelProps): JSX.Element {
+}: ChannelTeammateManagerPanelProps): React.JSX.Element {
   const { t } = useI18n();
   return (
     <section className="channel-settings-surface channel-settings-card channel-teammate-manager" aria-label={t("Channel teammates")}>

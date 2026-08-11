@@ -14,7 +14,7 @@ export function ProviderAdvancedSettings({
   readonly isCustomProvider: boolean;
   readonly canEditCustomProviderFields: boolean;
   readonly onFormChange: (form: ProviderFormState) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <InspectorSection className="provider-editor-advanced" title={t("Advanced settings")}>
@@ -95,7 +95,7 @@ export function ProviderAdvancedSettings({
   );
 }
 
-function Toggle({ label, checked, onChange }: { readonly label: string; readonly checked: boolean; readonly onChange: (checked: boolean) => void }): JSX.Element {
+function Toggle({ label, checked, onChange }: { readonly label: string; readonly checked: boolean; readonly onChange: (checked: boolean) => void }): React.JSX.Element {
   return (
     <label className="provider-toggle-field">
       <Switch aria-label={label} checked={checked} onCheckedChange={onChange} />

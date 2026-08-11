@@ -8,7 +8,7 @@ interface ChannelFeedStatusProps {
   readonly error: boolean;
 }
 
-export function ChannelFeedStatus({ error, loading }: ChannelFeedStatusProps): JSX.Element | null {
+export function ChannelFeedStatus({ error, loading }: ChannelFeedStatusProps): React.JSX.Element | null {
   const { t } = useI18n();
   if (!loading && !error) {
     return null;
@@ -42,7 +42,7 @@ export function ChannelFeedLatestControl({
   feedbackNode,
   onActivate,
   visible,
-}: ChannelFeedLatestControlProps): JSX.Element {
+}: ChannelFeedLatestControlProps): React.JSX.Element {
   const { t } = useI18n();
   return (
     <>

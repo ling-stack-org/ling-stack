@@ -104,7 +104,7 @@ export function TeammatePrivateChatFeed({
   usedMemoryEvents,
   userProfile,
   visibleMessages,
-}: TeammatePrivateChatFeedProps): JSX.Element {
+}: TeammatePrivateChatFeedProps): React.JSX.Element {
   const { t } = useI18n();
   const localUserDisplayName = userProfile?.displayName.trim() || t("You");
   const runById = useMemo(() => new Map(runs.map((run) => [run.id, run])), [runs]);

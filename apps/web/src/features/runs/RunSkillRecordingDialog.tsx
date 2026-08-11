@@ -27,7 +27,7 @@ export function RunSkillRecordingDialog({ draft, submitting, error, precheckErro
   readonly onChange: (patch: Partial<RunSkillRecordingDraft>) => void;
   readonly onClose: () => void;
   readonly onSubmit: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const cancelRef = useRef<HTMLButtonElement>(null);
   const validationMissing = Boolean(draft && splitLines(draft.validationStepsText).length === 0);
@@ -81,7 +81,7 @@ export function RunSkillRecordingDialog({ draft, submitting, error, precheckErro
   );
 }
 
-function RecordingResultSummary({ result }: { readonly result: SkillRecordingObservationResponse }): JSX.Element {
+function RecordingResultSummary({ result }: { readonly result: SkillRecordingObservationResponse }): React.JSX.Element {
   const { t } = useI18n();
   if (result.action === "candidate_created" && result.candidate) {
     return <InlineFeedback title={t("Skill candidate created")} tone="success"><span>{result.candidate.title}</span><code>{result.candidate.id}</code></InlineFeedback>;

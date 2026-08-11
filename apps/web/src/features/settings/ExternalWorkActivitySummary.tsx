@@ -8,7 +8,7 @@ export function ExternalWorkActivitySummary({
   status,
 }: {
   readonly status: ExternalWorkStatusResponse;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const work = status.records.externalWork;
   const triage = status.records.ciTriage;
@@ -54,12 +54,12 @@ function SummaryRow({
   tone,
   total,
 }: {
-  readonly icon: JSX.Element;
+  readonly icon: React.JSX.Element;
   readonly label: string;
   readonly summary: string;
   readonly tone: ExternalWorkStatusTone;
   readonly total: number;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <DataRow

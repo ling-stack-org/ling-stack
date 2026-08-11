@@ -16,7 +16,7 @@ export function EvidenceDisclosure({
   summary,
   defaultOpen = false,
   children,
-}: EvidenceDisclosureProps): JSX.Element {
+}: EvidenceDisclosureProps): React.JSX.Element {
   const [open, setOpen] = useState(defaultOpen);
   const rootClassName = ["conversation-evidence", className].filter(Boolean).join(" ");
 

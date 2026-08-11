@@ -44,7 +44,7 @@ export function MessageBubble({
   attachmentsNode,
   evidenceNode,
   errorNode,
-}: MessageBubbleProps): JSX.Element {
+}: MessageBubbleProps): React.JSX.Element {
   const hasAvatar = avatar !== null && avatar !== undefined && avatar !== false;
   const inlineAuthor = tone === "chat" || tone === "chat-blocked";
   const sideClass = inlineAuthor ? side === "end" ? "message-bubble-own" : "message-bubble-peer" : "";

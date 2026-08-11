@@ -26,7 +26,7 @@ export function LingToastProvider({
 }: {
   readonly children: ReactNode;
   readonly portalContainer?: HTMLElement | null;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const viewport = <ToastViewport data-ling-overlay="toast-viewport" />;
   return (

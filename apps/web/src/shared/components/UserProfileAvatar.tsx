@@ -7,7 +7,7 @@ export function UserProfileAvatar({
 }: {
   readonly profile: UserProfile | undefined;
   readonly fallbackLabel?: string;
-}): JSX.Element {
+}): React.JSX.Element {
   if (profile?.avatarDataUrl) {
     return <img className="user-profile-avatar" src={profile.avatarDataUrl} alt="" />;
   }

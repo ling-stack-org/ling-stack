@@ -16,7 +16,7 @@ const largeDiffFileThreshold = 6;
 const largeDiffLineThreshold = 180;
 const largeDiffCharacterThreshold = 24_000;
 
-export function DiffCodeBlock({ diff, language, highlight = true }: DiffCodeBlockProps): JSX.Element {
+export function DiffCodeBlock({ diff, language, highlight = true }: DiffCodeBlockProps): React.JSX.Element {
   const { t } = useI18n();
   const rootRef = useRef<HTMLElement | null>(null);
   const [expanded, setExpanded] = useState(false);

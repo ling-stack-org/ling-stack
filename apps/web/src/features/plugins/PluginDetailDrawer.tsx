@@ -46,7 +46,7 @@ export function PluginDetailDrawer({
   readonly handlers: PluginActionHandlers;
   readonly onOpenMcpSettings: () => void;
   readonly onClose: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const [runtimeOpen, setRuntimeOpen] = useState(false);
   const drawerRef = useRef<HTMLDivElement>(null);

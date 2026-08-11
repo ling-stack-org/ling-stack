@@ -42,7 +42,7 @@ export function MediaProductionWorkspace({
   onOpenMediaJob,
   onConfigureVideoModel,
   jobsPanel,
-}: MediaProductionPageProps): JSX.Element {
+}: MediaProductionPageProps): React.JSX.Element {
   const { t } = useI18n();
   const { showToast } = useLingToast();
   const [view, setView] = useState<MediaProductionView>("studio");
@@ -51,11 +51,11 @@ export function MediaProductionWorkspace({
   const [storyboardFocusRequest, setStoryboardFocusRequest] = useState<StoryboardFocusRequest>({ sceneId: "", sequence: 0 });
   const [overlay, setOverlay] = useState<MediaProductionOverlay>({ kind: "none" });
   const [canvasStageWidth, setCanvasStageWidth] = useState(0);
-  const lastProjectJobSignature = useRef<{ readonly projectId: string; readonly signature: string }>();
+  const lastProjectJobSignature = useRef<{ readonly projectId: string; readonly signature: string } | undefined>(undefined);
   const canvasStageRef = useRef<HTMLDivElement>(null);
   const selectionContextRef = useRef({ projectId: "", sceneId: "" });
-  const projectDeleteSnapshotRef = useRef<import("../../types.js").MediaProject>();
-  const sceneDeleteSnapshotRef = useRef<import("../../types.js").MediaScene>();
+  const projectDeleteSnapshotRef = useRef<import("../../types.js").MediaProject | undefined>(undefined);
+  const sceneDeleteSnapshotRef = useRef<import("../../types.js").MediaScene | undefined>(undefined);
   const onToast = useCallback((intent: MediaProductionToastIntent): void => {
     showToast({ message: t(intent.messageKey, intent.values), tone: "success", scope: intent.scope });
   }, [showToast, t]);

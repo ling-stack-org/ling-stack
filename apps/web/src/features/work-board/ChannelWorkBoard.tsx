@@ -28,7 +28,7 @@ interface ChannelWorkBoardProps {
   readonly busyWorkItemId?: string;
 }
 
-export function ChannelWorkBoard(props: ChannelWorkBoardProps): JSX.Element {
+export function ChannelWorkBoard(props: ChannelWorkBoardProps): React.JSX.Element {
   const { t } = useI18n();
   const items = useMemo(() => {
     const projected = buildWorkItemViews({

@@ -21,7 +21,7 @@ export function ConversationToolbar({
   children,
   className,
   ...props
-}: ConversationToolbarProps): JSX.Element {
+}: ConversationToolbarProps): React.JSX.Element {
   return (
     <div
       {...props}
@@ -43,7 +43,7 @@ export interface ConversationToolbarCountBadgeProps {
 export function ConversationToolbarCountBadge({
   className,
   count,
-}: ConversationToolbarCountBadgeProps): JSX.Element {
+}: ConversationToolbarCountBadgeProps): React.JSX.Element {
   return (
     <span
       className={mergeClassNames("ling-conversation-toolbar-count", className)}

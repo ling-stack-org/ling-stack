@@ -4,7 +4,7 @@ import { MetaRow } from "../../shared/components/index.js";
 import { DataRow, EmptyState, InspectorSection, StatusIndicator } from "../../shared/ui/index.js";
 import type { ThreadDetailController } from "./ThreadDetailPanel.js";
 
-export function ThreadTechnicalDetails({ controller }: { readonly controller: ThreadDetailController }): JSX.Element {
+export function ThreadTechnicalDetails({ controller }: { readonly controller: ThreadDetailController }): React.JSX.Element {
   const { t } = useI18n();
   const thread = controller.state.displayThread;
   const transitions = controller.state.evidence?.transitions ?? [];

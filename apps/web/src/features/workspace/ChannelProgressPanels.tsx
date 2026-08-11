@@ -135,7 +135,7 @@ export function ProgressPopover({
   readonly environmentSummary?: ChannelEnvironmentSummary;
   readonly sourceSummary?: ConversationContextSourceSummary;
   readonly onOpenSourceGroup?: (group: ConversationContextSourceGroup, summary: ConversationContextSourceSummary) => void;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const { t } = useI18n();
   const environmentRows = environmentSummary?.popoverRows ?? [];
   if (progressRows.length === 0 && environmentRows.length === 0 && (!sourceSummary || sourceSummary.sourceCount === 0)) {
@@ -230,7 +230,7 @@ export function ChannelEnvironmentPopoverSection({
   summary,
 }: {
   readonly summary: ChannelEnvironmentSummary;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <div className="attention-environment-section" aria-label={t("Environment")}>

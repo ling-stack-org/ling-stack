@@ -17,7 +17,7 @@ export function AutomationDiscardDraftDialog({
   readonly t: AutomationTranslate;
   readonly onConfirm: () => void;
   readonly onOpenChange: (open: boolean) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <Dialog busy={busy} open={Boolean(draft)} onOpenChange={onOpenChange}>
       <DialogContent className="automation-ui2-confirm-dialog" size="sm">

@@ -23,7 +23,7 @@ export function ThemePackageActions({
   readonly onDelete: (theme: RegisteredTheme, trigger: HTMLButtonElement | null) => void;
   readonly onPreview: (theme: RegisteredTheme, trigger: HTMLButtonElement | null) => void;
   readonly onReimport: (theme: RegisteredTheme, trigger: HTMLButtonElement | null) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   return (

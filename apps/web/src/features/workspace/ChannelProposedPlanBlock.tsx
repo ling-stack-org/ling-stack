@@ -24,7 +24,7 @@ export function ChannelProposedPlanBlock({
   onConvert,
   onRefine,
   onSave,
-}: ChannelProposedPlanBlockProps): JSX.Element {
+}: ChannelProposedPlanBlockProps): React.JSX.Element {
   const loadingLabel = t("Loading");
   return (
     <section className="proposed-plan-block" data-plan-status={plan.status} aria-label={t("Proposed plan")}>

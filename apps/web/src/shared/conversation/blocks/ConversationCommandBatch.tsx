@@ -10,7 +10,7 @@ export function ConversationCommandBatch({
 }: {
   readonly batch: ConversationCommandBatchModel;
   readonly renderCommand: (command: ConversationCommandBatchItem) => ReactNode;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const disclosure = useConversationBlockView({
     blockId: batch.id,

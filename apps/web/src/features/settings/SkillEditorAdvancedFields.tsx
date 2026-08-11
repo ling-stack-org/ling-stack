@@ -30,7 +30,7 @@ export function SkillEditorAdvancedFields({
   readonly busy: boolean;
   readonly onFormChange: (form: SkillEditorForm) => void;
   readonly t: SettingsTranslator;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <InspectorSection
       className="settings-skill-editor-advanced"
@@ -73,7 +73,7 @@ function ApprovalEditor({
   readonly busy: boolean;
   readonly onFormChange: (form: SkillEditorForm) => void;
   readonly t: SettingsTranslator;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <section className="settings-skill-editor-option-section">
       <strong>{t("Approval policy")}</strong>
@@ -156,7 +156,7 @@ function OptionChecklist<T extends string>({
   readonly disabled: boolean;
   readonly label: (value: T) => string;
   readonly onToggle: (value: T) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <section className="settings-skill-editor-option-section">
       <strong>{title}</strong>

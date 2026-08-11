@@ -58,7 +58,7 @@ export function AutomationExecutionInspector({
   readonly onPreview: (automationId: string) => void;
   readonly onRepairTarget: (automationId: string, target: AutomationTarget) => void;
   readonly onRun: (automationId: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const automation = automationViewModel?.automation;
   const draft = draftViewModel?.draft;
   const [repairTargetId, setRepairTargetId] = useState("workspace");

@@ -212,7 +212,7 @@ function isSettingsWorkspaceToolView(view: ViewId): view is Exclude<SettingsWork
   return view === "providers" || view === "teammates" || view === "councils";
 }
 
-export function AppShell(): JSX.Element {
+export function AppShell(): React.JSX.Element {
   const { locale, setLocale, t } = useI18n();
   const { preference: themePreference, setLegacyPreference: setThemePreference } = useTheme();
   const { dismissToast, showToast } = useLingToast();
@@ -271,7 +271,7 @@ export function AppShell(): JSX.Element {
   const [teammateCreateOpen, setTeammateCreateOpen] = useState(false);
   const workspaceTimelineLoadRef = useRef("");
   const channelEditFormSyncKeyRef = useRef("");
-  const workspaceDefaultProviderPresetIdRef = useRef<string>();
+  const workspaceDefaultProviderPresetIdRef = useRef<string | undefined>(undefined);
   const workspaceDefaultProviderAssignmentPendingRef = useRef("");
   useEffect(() => {
     if (narrowViewport) setChannelSidebarOpen(false);

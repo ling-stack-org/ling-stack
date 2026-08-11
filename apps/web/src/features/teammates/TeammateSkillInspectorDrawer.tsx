@@ -33,7 +33,7 @@ export function TeammateSkillInspectorDrawer({
   readonly onOpenChange: (open: boolean) => void;
   readonly onRemoveBinding: (skillId: string) => void | Promise<void>;
   readonly onToggleBinding: (skillId: string) => void | Promise<void>;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const actionBusy = row ? mutationKey.endsWith(`:${row.id}`) : false;
 
@@ -161,7 +161,7 @@ function DetailTokens({
   readonly empty: string;
   readonly label: string;
   readonly values: readonly string[];
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <div className="teammate-skill-detail-value">
       <strong>{label}</strong>
@@ -174,7 +174,7 @@ function DetailTokens({
   );
 }
 
-function RawValue({ label, value }: { readonly label: string; readonly value: string }): JSX.Element {
+function RawValue({ label, value }: { readonly label: string; readonly value: string }): React.JSX.Element {
   return (
     <span>
       <small>{label}</small>

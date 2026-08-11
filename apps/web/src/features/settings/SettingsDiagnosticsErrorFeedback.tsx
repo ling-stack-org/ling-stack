@@ -11,7 +11,7 @@ export function SettingsDiagnosticsErrorFeedback({
   readonly message: string;
   readonly title: string;
   readonly tone: InlineFeedbackTone;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <InlineFeedback className={className} title={title} tone={tone}>

@@ -44,7 +44,7 @@ export function ChannelSettingsWorkspacePanel({
   readonly onRefreshChannelWorkspace: () => void;
   readonly onOpenChannelWorkspacePath: () => void;
   readonly onHandoffChannelWorkspace: (mode: ChannelWorkspaceMode) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
 
   return (
@@ -186,7 +186,7 @@ export function channelWorkspaceModeLabel(mode: ChannelWorkspaceMode): string {
   return "Local";
 }
 
-export function channelWorkspaceModeIcon(mode: ChannelWorkspaceMode, size: number): JSX.Element {
+export function channelWorkspaceModeIcon(mode: ChannelWorkspaceMode, size: number): React.JSX.Element {
   if (mode === "managed_worktree") {
     return <GitBranch size={size} />;
   }

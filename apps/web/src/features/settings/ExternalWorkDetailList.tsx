@@ -3,7 +3,7 @@ export interface ExternalWorkDetailItem {
   readonly value: string;
 }
 
-export function ExternalWorkDetailList({ items }: { readonly items: readonly ExternalWorkDetailItem[] }): JSX.Element {
+export function ExternalWorkDetailList({ items }: { readonly items: readonly ExternalWorkDetailItem[] }): React.JSX.Element {
   return (
     <dl className="settings-external-work-detail-list">
       {items.map((item) => (

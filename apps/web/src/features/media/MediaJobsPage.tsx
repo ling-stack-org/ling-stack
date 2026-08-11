@@ -42,7 +42,7 @@ export interface MediaJobsPageProps {
   readonly domainActions?: MediaJobsDomainActions;
 }
 
-export function MediaJobsPage(props: MediaJobsPageProps): JSX.Element {
+export function MediaJobsPage(props: MediaJobsPageProps): React.JSX.Element {
   const { t } = useI18n();
   const bridge = readMediaJobsDomainBridge(props.artifactsByJob);
   const state = props.domainState ?? bridge?.state ?? legacyState(props);

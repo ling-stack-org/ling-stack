@@ -151,7 +151,7 @@ export function useFocusedDomainErrorOwner<
 >(identity: string): FocusedDomainErrorOwner<TDomain, TAction> {
   const mountedRef = useRef(true);
   const [, rerender] = useReducer((value: number) => value + 1, 0);
-  const ownerRef = useRef<FocusedDomainErrorOwner<TDomain, TAction>>();
+  const ownerRef = useRef<FocusedDomainErrorOwner<TDomain, TAction> | undefined>(undefined);
   if (!ownerRef.current) {
     ownerRef.current = createFocusedDomainErrorOwner<TDomain, TAction>(identity, () => {
       if (mountedRef.current) rerender();

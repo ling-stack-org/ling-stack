@@ -29,7 +29,7 @@ export function PluginUninstallDialog({
   readonly onCancel: () => void;
   readonly onComplete: () => void;
   readonly onUninstall: (pluginId: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const [submitted, setSubmitted] = useState(false);
   const [sawBusy, setSawBusy] = useState(false);

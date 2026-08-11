@@ -5,7 +5,7 @@ import { InspectorSection, StatusIndicator } from "../../shared/ui/index.js";
 import type { ThreadDetailController } from "./ThreadDetailPanel.js";
 import { runStatusTone } from "./run-list-view-models.js";
 
-export function ThreadOverviewSection({ controller }: { readonly controller: ThreadDetailController }): JSX.Element {
+export function ThreadOverviewSection({ controller }: { readonly controller: ThreadDetailController }): React.JSX.Element {
   const { t } = useI18n();
   const thread = controller.state.displayThread;
   return (

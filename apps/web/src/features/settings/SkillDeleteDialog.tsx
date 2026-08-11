@@ -28,7 +28,7 @@ export function SkillDeleteDialog({
   readonly onClose: () => void;
   readonly onConfirm: () => void;
   readonly t: SettingsTranslator;
-}): JSX.Element {
+}): React.JSX.Element {
   const cancelRef = useRef<HTMLButtonElement>(null);
   return (
     <Dialog

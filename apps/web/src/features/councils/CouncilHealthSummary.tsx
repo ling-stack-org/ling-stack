@@ -2,7 +2,7 @@ import { useI18n } from "../../i18n.js";
 import { InspectorSection, StatusIndicator } from "../../shared/ui/index.js";
 import type { CouncilListHealthRowView } from "./council-list-health-view-model.js";
 
-export function CouncilHealthSummary({ row }: { readonly row: CouncilListHealthRowView }): JSX.Element {
+export function CouncilHealthSummary({ row }: { readonly row: CouncilListHealthRowView }): React.JSX.Element {
   const { locale, t } = useI18n();
   const detail = healthDetail(row, t);
   const reportTime = row.reportGeneratedAt

@@ -20,7 +20,7 @@ export function MediaJobsHeader({
   readonly hasRunnableModel: boolean;
   readonly onFilterChange: (filter: MediaJobStatusFilter) => void;
   readonly onPrimaryAction: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const summary = [t("{taskCount} loaded tasks", { taskCount })];
   if (generatingCount) summary.push(t("{count} generating", { count: generatingCount }));

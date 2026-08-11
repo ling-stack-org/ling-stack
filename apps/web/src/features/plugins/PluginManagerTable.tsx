@@ -36,7 +36,7 @@ export function PluginManagerTable({
   readonly onAdd: () => void;
   readonly onClearFilters: () => void;
   readonly t: Translate;
-}): JSX.Element {
+}): React.JSX.Element {
   const initialLoading = isLoading && allRows.length === 0;
   return (
     <TableContainer className="plugin-table" data-refreshing={isLoading && allRows.length > 0 ? "true" : undefined}>
@@ -75,7 +75,7 @@ export function PluginManagerTable({
   );
 }
 
-function PluginSkeletonRows(): JSX.Element {
+function PluginSkeletonRows(): React.JSX.Element {
   return (
     <>
       {Array.from({ length: 6 }, (_, index) => (

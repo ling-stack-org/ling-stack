@@ -27,7 +27,7 @@ export function CouncilMemberRemoveDialog({
   readonly onOpenChange: (open: boolean) => void;
   readonly onRestoreFocus: () => void;
   readonly target?: CouncilMemberRowView;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <Dialog busy={busy} open={Boolean(target)} onOpenChange={onOpenChange}>

@@ -143,7 +143,7 @@ export function TaskDetailPanel({
   readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
   readonly onOpenProviders: (run?: RunSession) => void;
   readonly attachmentContentUrl: (attachment: ChannelAttachment) => string;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const linkedRun = task.currentRunId ? runById.get(task.currentRunId) : undefined;
   const linkedRunStatus = task.currentRunId

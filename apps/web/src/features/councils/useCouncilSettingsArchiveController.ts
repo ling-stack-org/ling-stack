@@ -233,7 +233,7 @@ export function useCouncilSettingsArchiveController({
     archiveBusy,
     archiveError,
     archiveOpen,
-    archiveTriggerRef: archiveTriggerRef as RefObject<HTMLButtonElement>,
+    archiveTriggerRef: archiveTriggerRef as RefObject<HTMLButtonElement | null>,
     authority,
     draft,
     mutationKind,

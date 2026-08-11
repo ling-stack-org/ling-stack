@@ -9,7 +9,7 @@ export function TeammateMemoryScopeList({
 }: {
   readonly rows: readonly TeammateMemoryScopeRow[];
   readonly onOpenDetail: (detail: TeammateMemoryDetail) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <section className="teammate-memory-section" aria-labelledby="teammate-memory-scopes-title">

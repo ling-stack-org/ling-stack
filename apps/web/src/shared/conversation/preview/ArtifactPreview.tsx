@@ -9,7 +9,7 @@ export interface ArtifactPreviewProps {
   readonly preview: PreviewContentResponse;
 }
 
-export function ArtifactPreview({ preview }: ArtifactPreviewProps): JSX.Element {
+export function ArtifactPreview({ preview }: ArtifactPreviewProps): React.JSX.Element {
   const { t } = useI18n();
 
   if (preview.kind === "image" && preview.imageUrl) {

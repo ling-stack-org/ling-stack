@@ -61,7 +61,7 @@ export function PlanHistoryPage({
   onStatusFilterChange,
   onOpenPlan,
   onOpenSource,
-}: PlanHistoryPageProps): JSX.Element {
+}: PlanHistoryPageProps): React.JSX.Element {
   const { t } = useI18n();
   const [agentFilter, setAgentFilter] = useState("all");
   const [goalFilter, setGoalFilter] = useState("all");
@@ -272,7 +272,7 @@ export function PlanDetailPanel({
   onAccept,
   onConvert,
   onArchive,
-}: PlanDetailPanelProps): JSX.Element {
+}: PlanDetailPanelProps): React.JSX.Element {
   const { t } = useI18n();
   const archived = plan.status === "archived";
   const accepted = plan.status === "accepted";

@@ -30,7 +30,7 @@ export function MediaJobList({
   readonly onCreate: () => void;
   readonly onSelect: (jobId: string) => void;
   readonly onShowAll: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   if (initialLoading) return <MediaJobListSkeleton />;
   if (loadFailed) return <div className="media-job-list-state" data-media-jobs-list-state="load-error" />;
@@ -78,7 +78,7 @@ export function MediaJobList({
   );
 }
 
-function MediaJobListSkeleton(): JSX.Element {
+function MediaJobListSkeleton(): React.JSX.Element {
   return (
     <div className="media-job-list media-job-list-skeleton" aria-busy="true" data-media-jobs-list-state="loading">
       {Array.from({ length: 6 }, (_, index) => (

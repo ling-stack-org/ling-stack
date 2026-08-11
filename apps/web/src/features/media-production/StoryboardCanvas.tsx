@@ -65,7 +65,7 @@ interface StoryboardNodeData extends Record<string, unknown> {
   readonly onPreview: (sceneId: string) => void;
 }
 
-function StoryboardSceneNode({ data }: NodeProps<Node<StoryboardNodeData>>): JSX.Element {
+function StoryboardSceneNode({ data }: NodeProps<Node<StoryboardNodeData>>): React.JSX.Element {
   const { scene } = data;
   const fixedSize = { width: storyboardNodeWidth, height: storyboardNodeHeight };
   return (
@@ -137,7 +137,7 @@ export function StoryboardCanvas({
   onPreviewResult,
   onMoveScene,
   onCreateScene,
-}: StoryboardCanvasProps): JSX.Element {
+}: StoryboardCanvasProps): React.JSX.Element {
   const { t } = useI18n();
   const reducedMotion = usePrefersReducedMotion();
   const motionDuration = storyboardMotionDuration(reducedMotion, 220);

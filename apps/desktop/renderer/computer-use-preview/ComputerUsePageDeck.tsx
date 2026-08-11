@@ -169,7 +169,7 @@ function PageDeckChrome({
   readonly setViewAllOpen: (open: boolean) => void;
   readonly t: ComputerUsePreviewTranslate;
   readonly viewAllOpen: boolean;
-  readonly viewAllTriggerRef: React.RefObject<HTMLButtonElement>;
+  readonly viewAllTriggerRef: React.RefObject<HTMLButtonElement | null>;
 }) {
   const activePage = pageDeck.residentPages.find((page) => page.active);
   const viewAllPanelRef = useRef<HTMLDivElement>(null);

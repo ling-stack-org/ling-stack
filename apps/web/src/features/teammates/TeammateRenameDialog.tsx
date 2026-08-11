@@ -31,7 +31,7 @@ export function TeammateRenameDialog({
   readonly onClose: () => void;
   readonly onSubmit: () => void;
   readonly onValueChange: (value: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const trimmedValue = value.trim();
   const submitDisabled = saving || !trimmedValue || trimmedValue === currentName;

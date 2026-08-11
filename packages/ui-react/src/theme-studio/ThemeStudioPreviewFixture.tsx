@@ -109,7 +109,7 @@ export function ThemeStudioPreviewFixture({
   surface,
   variableMap,
   viewport,
-}: ThemeStudioPreviewFixtureProps): JSX.Element {
+}: ThemeStudioPreviewFixtureProps): React.JSX.Element {
   const fieldId = useId();
   const dimensions = THEME_STUDIO_PREVIEW_VIEWPORTS[viewport];
   const normalizedScale = normalizeScale(scale);
@@ -179,7 +179,7 @@ function PreviewSidebar({
 }: {
   readonly copy: ThemeStudioPreviewCopy;
   readonly surface: ThemeStudioPreviewSurface;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <aside className="ling-ui-theme-studio-preview-sidebar">
       <strong>{copy.shared.workspace}</strong>
@@ -198,7 +198,7 @@ function PreviewSidebar({
   );
 }
 
-function HomePreview({ copy }: { readonly copy: ThemeStudioPreviewCopy }): JSX.Element {
+function HomePreview({ copy }: { readonly copy: ThemeStudioPreviewCopy }): React.JSX.Element {
   return (
     <div className="ling-ui-theme-studio-preview-home">
       <header className="ling-ui-theme-studio-preview-page-header">
@@ -226,7 +226,7 @@ function HomePreview({ copy }: { readonly copy: ThemeStudioPreviewCopy }): JSX.E
   );
 }
 
-function ConversationPreview({ copy }: { readonly copy: ThemeStudioPreviewCopy }): JSX.Element {
+function ConversationPreview({ copy }: { readonly copy: ThemeStudioPreviewCopy }): React.JSX.Element {
   return (
     <div className="ling-ui-theme-studio-preview-conversation">
       <header className="ling-ui-theme-studio-preview-conversation-header">
@@ -267,7 +267,7 @@ function SettingsPreview({
 }: {
   readonly copy: ThemeStudioPreviewCopy;
   readonly fieldId: string;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <div className="ling-ui-theme-studio-preview-settings">
       <header className="ling-ui-theme-studio-preview-page-header">
@@ -310,7 +310,7 @@ function DialogPreview({
 }: {
   readonly copy: ThemeStudioPreviewCopy;
   readonly fieldId: string;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <div className="ling-ui-theme-studio-preview-dialog-page">
       <header className="ling-ui-theme-studio-preview-page-header">

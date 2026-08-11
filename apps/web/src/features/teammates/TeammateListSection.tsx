@@ -5,12 +5,12 @@ export function TeammateListSection<T>({
   items,
   renderItem,
 }: {
-  readonly icon: JSX.Element;
+  readonly icon: React.JSX.Element;
   readonly title: string;
   readonly emptyLabel: string;
   readonly items: readonly T[];
-  readonly renderItem: (item: T) => JSX.Element;
-}): JSX.Element {
+  readonly renderItem: (item: T) => React.JSX.Element;
+}): React.JSX.Element {
   return (
     <section className="teammate-list-panel">
       <div className="panel-title split">

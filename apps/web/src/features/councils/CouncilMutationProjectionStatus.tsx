@@ -11,7 +11,7 @@ export function CouncilMutationProjectionStatus({
   readonly projection?: CouncilMutationProjection;
   readonly repairBusy: boolean;
   readonly onRepair: () => void | Promise<void>;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const { t } = useI18n();
   if (!projection) return null;
   if (projection.phase !== "stale") {

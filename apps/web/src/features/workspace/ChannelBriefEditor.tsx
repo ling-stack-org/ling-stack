@@ -18,7 +18,7 @@ export function ChannelBriefEditor({
   readonly draft: ChannelBriefDraft;
   readonly onDraftChange: (draft: ChannelBriefDraft) => void;
   readonly onSave: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
 
   return (

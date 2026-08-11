@@ -25,7 +25,7 @@ export function useWorkBoardController(input: {
   const [failDialogTargetId, setFailDialogTargetId] = useState("");
   const [failReason, setFailReason] = useState("");
   const [failValidation, setFailValidation] = useState("");
-  const appliedScopeRef = useRef<WorkBoardScope>();
+  const appliedScopeRef = useRef<WorkBoardScope | undefined>(undefined);
   const appliedItemRef = useRef("");
   const appliedIntentRef = useRef(0);
 

@@ -6,7 +6,7 @@ export function ComputerControlStatusDetails({
   rows,
 }: {
   readonly rows: readonly ComputerControlStatusRow[];
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <div className="computer-control-readiness-list">

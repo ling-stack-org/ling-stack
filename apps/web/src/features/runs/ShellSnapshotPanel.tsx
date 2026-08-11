@@ -12,7 +12,7 @@ export function ShellSnapshotPanel({ cwd, run, artifacts }: {
   readonly cwd: string;
   readonly run: RunSession;
   readonly artifacts: readonly RunArtifact[];
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const [snapshots, setSnapshots] = useState<readonly ShellSnapshotListItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -74,6 +74,6 @@ export function ShellSnapshotPanel({ cwd, run, artifacts }: {
   );
 }
 
-function SnapshotLink({ cwd, label, artifactId, artifact }: { readonly cwd: string; readonly label: string; readonly artifactId: string; readonly artifact?: RunArtifact }): JSX.Element {
+function SnapshotLink({ cwd, label, artifactId, artifact }: { readonly cwd: string; readonly label: string; readonly artifactId: string; readonly artifact?: RunArtifact }): React.JSX.Element {
   return <a className="runs-artifact-link" href={artifactContentUrl(artifactId, cwd)} rel="noreferrer" target="_blank" title={artifact?.title ?? artifactId}>{label}</a>;
 }

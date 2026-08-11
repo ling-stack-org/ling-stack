@@ -34,7 +34,7 @@ export function ConversationStatusStrip({
   statusNode,
   metaItems = [],
   actions = [],
-}: ConversationStatusStripProps): JSX.Element {
+}: ConversationStatusStripProps): React.JSX.Element {
   const rootClassName = ["conversation-status-strip", !icon ? "no-icon" : "", className].filter(Boolean).join(" ");
 
   return (

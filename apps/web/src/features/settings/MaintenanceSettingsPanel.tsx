@@ -24,7 +24,7 @@ export function StartupDiagnosticsSettingsPanel({
   readonly startupStatusError: string;
   readonly onRefreshStartup: () => void;
   readonly onOpenRunDiagnostics: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const statusView = projectStartupStatus(startupStatus, startupStatusLoading, startupStatusError);
   const issues = projectStartupIssues(startupStatus);

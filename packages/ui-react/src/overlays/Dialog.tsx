@@ -9,7 +9,7 @@ import { OverlayRoot, type OverlayRootProps, useOverlayContext } from "./overlay
 
 export type DialogSize = "sm" | "md" | "lg";
 
-export function Dialog(props: OverlayRootProps): JSX.Element {
+export function Dialog(props: OverlayRootProps): React.JSX.Element {
   return <OverlayRoot {...props} kind="dialog" />;
 }
 

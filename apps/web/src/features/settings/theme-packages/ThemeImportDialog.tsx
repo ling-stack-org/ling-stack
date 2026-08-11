@@ -35,7 +35,7 @@ export function ThemeImportDialog({
   readonly onPreview: (trigger: HTMLButtonElement | null) => void;
   readonly onPublish: () => void;
   readonly onUseAfterImportChange: (value: boolean) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const previewButtonRef = useRef<HTMLButtonElement | null>(null);

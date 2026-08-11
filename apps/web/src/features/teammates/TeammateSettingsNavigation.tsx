@@ -20,7 +20,7 @@ export function TeammateSettingsNavigation<TabId extends string>({
   readonly sections: readonly TeammateSettingsSection<TabId>[];
   readonly label: string;
   readonly onChange: (tab: TabId) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const minimumTabWidth = 120;
   const tabListStyle = {
     gridTemplateColumns: `repeat(${sections.length}, minmax(${minimumTabWidth}px, 1fr))`,

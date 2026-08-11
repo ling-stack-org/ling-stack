@@ -27,7 +27,7 @@ export function FileChangeEvidencePanel({
   sourceRunId,
   approvalId,
   compact = false,
-}: FileChangeEvidencePanelProps): JSX.Element | null {
+}: FileChangeEvidencePanelProps): React.JSX.Element | null {
   const { t } = useI18n();
   const diffArtifacts = useMemo(() => deriveFileChangeArtifacts(artifacts), [artifacts]);
   const artifactIdentity = diffArtifacts.map((artifact) => artifact.id).join("|");

@@ -2,7 +2,7 @@ import { useI18n } from "../../i18n.js";
 import { formatEventData, formatEventPreview, readDataBoolean } from "../../lib/data.js";
 import type { RunEventEnvelope } from "../../types.js";
 
-export function EventRow({ event }: { readonly event: RunEventEnvelope }): JSX.Element {
+export function EventRow({ event }: { readonly event: RunEventEnvelope }): React.JSX.Element {
   const { t } = useI18n();
   const preview = formatEventPreview(event.data);
   const payloadOpen = event.type === "run_error" || event.type === "result" || (event.type === "tool_end" && readDataBoolean(event.data, "isError"));

@@ -38,7 +38,7 @@ export function TeammateSettingsHeader({
   readonly onSaveModel: () => void;
   readonly onResetPermissions: () => void;
   readonly onSavePermissions: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <header

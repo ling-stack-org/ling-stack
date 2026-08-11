@@ -8,7 +8,7 @@ export interface AppShellOverlayBoundaryProps extends Omit<HTMLAttributes<HTMLEl
 export function AppShellOverlayBoundary({
   children,
   ...props
-}: AppShellOverlayBoundaryProps): JSX.Element {
+}: AppShellOverlayBoundaryProps): React.JSX.Element {
   const viewport = useAppViewportState();
   return (
     <main

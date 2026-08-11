@@ -35,7 +35,7 @@ export interface QuickThemeStudioController {
 export function useQuickThemeStudioController(): QuickThemeStudioController {
   const identityRef = useRef(createIdentity());
   const createdAtRef = useRef(new Date().toISOString());
-  const analysisAbortRef = useRef<AbortController>();
+  const analysisAbortRef = useRef<AbortController | undefined>(undefined);
   const nameRef = useRef("");
   const operationRef = useRef(0);
   const { installTheme, setFixedTheme, syncActiveTheme } = useTheme();

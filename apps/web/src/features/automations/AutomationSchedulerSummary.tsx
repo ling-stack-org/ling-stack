@@ -17,7 +17,7 @@ export function AutomationSchedulerSummary({
   readonly t: AutomationTranslate;
   readonly onStart: () => void;
   readonly onStop: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <section className="automation-scheduler-strip automation-ui2-scheduler" aria-label={t("Automation scheduler")}>
       <div className="automation-ui2-scheduler-icon" aria-hidden="true"><CalendarClock size={17} /></div>

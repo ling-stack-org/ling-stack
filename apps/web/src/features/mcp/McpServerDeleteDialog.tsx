@@ -30,7 +30,7 @@ export function McpServerDeleteDialog({
   readonly open: boolean;
   readonly returnFocusRef: MutableRefObject<HTMLButtonElement | null>;
   readonly server?: McpServer;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const cancelRef = useRef<HTMLButtonElement | null>(null);
 

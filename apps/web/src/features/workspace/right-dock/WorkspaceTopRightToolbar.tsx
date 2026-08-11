@@ -20,7 +20,7 @@ export function WorkspaceTopRightToolbar({
   ariaLabel,
   className,
   ...props
-}: WorkspaceTopRightToolbarProps): JSX.Element {
+}: WorkspaceTopRightToolbarProps): React.JSX.Element {
   return (
     <ConversationToolbar
       {...props}
@@ -35,7 +35,7 @@ export type WorkspaceToolbarCountBadgeProps = ConversationToolbarCountBadgeProps
 export function WorkspaceToolbarCountBadge({
   className,
   ...props
-}: WorkspaceToolbarCountBadgeProps): JSX.Element {
+}: WorkspaceToolbarCountBadgeProps): React.JSX.Element {
   return (
     <ConversationToolbarCountBadge
       {...props}

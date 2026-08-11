@@ -32,7 +32,7 @@ export function useConversationBottomPanelResizeController({
     readonly startY: number;
     readonly startHeight: number;
     readonly containerHeight: number;
-  }>();
+  } | undefined>(undefined);
 
   useEffect(() => {
     const element = containerRef?.current;

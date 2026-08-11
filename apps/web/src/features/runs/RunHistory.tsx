@@ -75,7 +75,7 @@ export function RunHistory({
   readonly onOpenApprovals: (runId?: string) => void;
   readonly onEditTask: (run: RunSession) => void;
   readonly onSelect: (runId: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const focusRevalidationToken = useFocusRevalidationToken();
   const controller = useRunsThreadsPageController({ cwd, runs, selectedRunId, selectedRun, autoSelectThread: false, loadTurns: true });

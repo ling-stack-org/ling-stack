@@ -28,7 +28,7 @@ export function PluginRuntimePreviewSection({
   readonly onPreview: () => void;
   readonly onEnable: () => void;
   readonly t: Translate;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <InspectorSection
       className="plugin-runtime-section"

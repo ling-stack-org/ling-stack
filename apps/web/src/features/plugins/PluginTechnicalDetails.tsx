@@ -8,7 +8,7 @@ export function PluginTechnicalDetails({
 }: {
   readonly fields: readonly PluginDetailFieldView[];
   readonly t: Translate;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   if (!fields.length) return null;
   return (
     <InspectorSection

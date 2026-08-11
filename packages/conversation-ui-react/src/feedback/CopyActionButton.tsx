@@ -20,7 +20,7 @@ export function CopyActionButton({
   iconSize = 13,
   idleContent,
   copiedContent,
-}: CopyActionButtonProps): JSX.Element {
+}: CopyActionButtonProps): React.JSX.Element {
   const [copied, setCopied] = useState(false);
   const copiedText = copiedLabel ?? "Copied";
   const currentLabel = copied ? copiedText : label;

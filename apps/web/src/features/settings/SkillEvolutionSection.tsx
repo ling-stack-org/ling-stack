@@ -83,7 +83,7 @@ export function SkillEvolutionSection({
   readonly onCreatePlaybookCandidate: (cluster: ProcedureObservationCluster) => void;
   readonly onReviewPlaybookCandidate: (candidate: ChannelPlaybookCandidate, action: ChannelPlaybookCandidateReviewAction) => void;
   readonly t: SettingsTranslator;
-}): JSX.Element {
+}): React.JSX.Element {
   const partition = partitionSkillRegistry(skills);
   const pendingCount = skillCandidates.filter((candidate) => isOpenSkillCandidateStatus(candidate.status)).length +
     clusters.filter((cluster) => cluster.status === "ready_for_review").length +

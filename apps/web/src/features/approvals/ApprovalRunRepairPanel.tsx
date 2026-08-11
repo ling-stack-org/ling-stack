@@ -18,7 +18,7 @@ export function ApprovalRunRepairPanel({
   readonly approvals: readonly ApprovalRequest[];
   readonly onOpenRun: () => void;
   readonly onClear: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const pendingCount = approvals.filter((approval) => effectiveApprovalStatus(approval) === "pending").length;
   const highestRisk = highestApprovalRisk(approvals);

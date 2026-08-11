@@ -51,7 +51,7 @@ export function ArtifactPreviewDrawer({
   downloadName,
   variant = "lightbox",
   onClose,
-}: ArtifactPreviewDrawerProps): JSX.Element | null {
+}: ArtifactPreviewDrawerProps): React.JSX.Element | null {
   const { t } = useI18n();
   const { showToast } = useLingToast();
   const [preview, setPreview] = useState<PreviewContentResponse | undefined>();
@@ -59,8 +59,8 @@ export function ArtifactPreviewDrawer({
   const [error, setError] = useState("");
   const [actionError, setActionError] = useState("");
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
-  const previousFocusRef = useRef<HTMLElement | undefined>();
-  const lightboxSwipeRef = useRef<{ readonly pointerId: number; readonly startX: number; readonly startY: number } | undefined>();
+  const previousFocusRef = useRef<HTMLElement | undefined>(undefined);
+  const lightboxSwipeRef = useRef<{ readonly pointerId: number; readonly startX: number; readonly startY: number } | undefined>(undefined);
 
   useEffect(() => {
     if (!request) {

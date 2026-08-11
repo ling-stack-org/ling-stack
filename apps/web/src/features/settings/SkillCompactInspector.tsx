@@ -49,7 +49,7 @@ export function SkillCompactInspector({
   readonly onArchiveSource: () => void;
   readonly onRollbackSource: (snapshotId: string) => void;
   readonly t: SettingsTranslator;
-}): JSX.Element {
+}): React.JSX.Element {
   const state = skillRegistryState(skill, t);
   const requiredToolCount = skill.definition.requiredTools.length;
   const providerCapabilityCount = skill.definition.requiredProviderCapabilities.length;

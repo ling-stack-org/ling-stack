@@ -19,7 +19,7 @@ export function SidebarArchiveAllConversationsDialog({
   readonly returnFocusRef: RefObject<HTMLButtonElement | null>;
   readonly onConfirm: () => void | Promise<void>;
   readonly onOpenChange: (open: boolean) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const [busy, setBusy] = useState(false);

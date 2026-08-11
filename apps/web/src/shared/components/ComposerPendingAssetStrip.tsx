@@ -25,7 +25,7 @@ export function ComposerPendingAssetStrip<TAttachment extends { readonly sizeByt
   links = [],
   onRemoveAttachment,
   onRemoveLink,
-}: ComposerPendingAssetStripProps<TAttachment>): JSX.Element {
+}: ComposerPendingAssetStripProps<TAttachment>): React.JSX.Element {
   const { t } = useI18n();
 
   return (

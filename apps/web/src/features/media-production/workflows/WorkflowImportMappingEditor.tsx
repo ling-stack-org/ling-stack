@@ -34,7 +34,7 @@ export function WorkflowImportMappingEditor({
   readonly draft: MediaWorkflowImportDraft;
   readonly disabled: boolean;
   readonly onChange: (patch: Partial<Pick<MediaWorkflowImportDraft, "name" | "description" | "inputFields" | "outputRules">>) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const validation = deriveMediaWorkflowImportValidation(draft);
   return (
@@ -168,7 +168,7 @@ export function WorkflowImportMappingEditor({
   );
 }
 
-function DiagnosticDetails({ issues, technicalMessages }: { readonly issues: readonly MediaWorkflowTranslationDescriptor[]; readonly technicalMessages: readonly string[] }): JSX.Element {
+function DiagnosticDetails({ issues, technicalMessages }: { readonly issues: readonly MediaWorkflowTranslationDescriptor[]; readonly technicalMessages: readonly string[] }): React.JSX.Element {
   const { t } = useI18n();
   return (
     <Collapsible>
@@ -181,7 +181,7 @@ function DiagnosticDetails({ issues, technicalMessages }: { readonly issues: rea
   );
 }
 
-function NodeDetails({ label, value }: { readonly label: string; readonly value: string }): JSX.Element {
+function NodeDetails({ label, value }: { readonly label: string; readonly value: string }): React.JSX.Element {
   return (
     <Collapsible>
       <CollapsibleTrigger asChild><Button size="sm" variant="ghost">{label}</Button></CollapsibleTrigger>

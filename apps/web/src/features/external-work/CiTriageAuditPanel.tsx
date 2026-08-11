@@ -33,7 +33,7 @@ export function CiTriageAuditPanel({
   readonly onRefresh?: () => void;
   readonly onSelectTask?: (taskId: string) => void;
   readonly onOpenRun?: (runId: string) => void;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const { t } = useI18n();
   const visibleRecords = maxRecords ? records.slice(0, maxRecords) : records;
   const hiddenCount = maxRecords && records.length > maxRecords ? records.length - maxRecords : 0;
@@ -101,7 +101,7 @@ function CiTriageAuditRow({
   readonly cwd?: string;
   readonly onSelectTask?: (taskId: string) => void;
   readonly onOpenRun?: (runId: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const triage = record.triage;
   const taskId = triage.taskId ?? record.task?.id;
@@ -175,11 +175,11 @@ function CiTriageField({
   value,
   code = false,
 }: {
-  readonly icon: JSX.Element;
+  readonly icon: React.JSX.Element;
   readonly label: string;
   readonly value: string;
   readonly code?: boolean;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <div className="ci-triage-field">
       <span>

@@ -28,7 +28,7 @@ export function SidebarObjectRow({
   readonly status?: ReactNode;
   readonly statusId?: string;
   readonly tooltip?: string;
-}): JSX.Element {
+}): React.JSX.Element {
   const shellClasses = ["sidebar-row-shell", shellClassName, selected ? "selected" : ""]
     .filter(Boolean)
     .join(" ");

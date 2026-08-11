@@ -38,7 +38,7 @@ export function ConversationArtifactRecoveryDialog({
   readonly target?: ConversationWorkspaceRecoveryTarget;
   readonly onClose: () => void;
   readonly onRecovered: (response: ConversationArtifactRecoveryResponse) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");

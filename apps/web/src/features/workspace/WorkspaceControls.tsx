@@ -9,7 +9,7 @@ export function ProviderPresetOptions({
 }: {
   readonly runnableProviders: readonly ProviderPreset[];
   readonly blockedProviders: readonly ProviderPreset[];
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
 
   return (
@@ -36,7 +36,7 @@ export function ProviderPresetOptions({
   );
 }
 
-export function ChannelExecutionModeSummary(): JSX.Element {
+export function ChannelExecutionModeSummary(): React.JSX.Element {
   const { t } = useI18n();
   return (
     <div className="runtime-policy-summary">
@@ -53,7 +53,7 @@ export function ChannelWriteLockField({
 }: {
   readonly form: ChannelFormState;
   readonly onChange: (form: ChannelFormState) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const updatePolicy = (runtimePolicy: Partial<ChannelFormState["runtimePolicy"]>): void => {
     onChange({

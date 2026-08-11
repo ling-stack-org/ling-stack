@@ -24,7 +24,7 @@ export function TeammateChannelsTab({
   controller,
 }: {
   readonly controller: TeammateChannelsController;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const {
     busyActions,
@@ -139,7 +139,7 @@ function ChannelRow({
   readonly error?: string;
   readonly onAction: (action: TeammateChannelAction) => Promise<void>;
   readonly row: TeammateChannelRowViewModel;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <div className="teammate-channel-row-shell" data-channel-id={row.channel.id}>

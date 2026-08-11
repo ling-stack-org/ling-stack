@@ -14,7 +14,7 @@ export function PageActionHeader({
   readonly primaryAction?: ReactNode;
   readonly secondaryActions?: ReactNode;
   readonly className?: string;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <header
       className={["page-action-header", className].filter(Boolean).join(" ")}

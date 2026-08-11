@@ -40,7 +40,7 @@ export function SettingsShell({
   readonly navigationLabel: string;
   readonly onBack?: () => void;
   readonly onSelectSection: (sectionId: SettingsSectionId) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <div
       className="settings-layout"

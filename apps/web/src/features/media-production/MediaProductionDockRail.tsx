@@ -14,7 +14,7 @@ export function MediaProductionDockRail({
   readonly rightAvailable: boolean;
   readonly onToggleLeft: () => void;
   readonly onToggleRight: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const leftLabel = leftOpen ? t("Close projects and scenes") : t("Projects and scenes");
   const rightLabel = rightAvailable

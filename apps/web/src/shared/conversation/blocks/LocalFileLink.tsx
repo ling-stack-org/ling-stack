@@ -5,7 +5,7 @@ export interface LocalFileLinkProps {
   readonly onOpen?: (reference: LocalFileReference) => void;
 }
 
-export function LocalFileLink({ reference, onOpen }: LocalFileLinkProps): JSX.Element {
+export function LocalFileLink({ reference, onOpen }: LocalFileLinkProps): React.JSX.Element {
   const className = reference.insideWorkspace
     ? "message-local-file-link"
     : "message-local-file-link outside-workspace";

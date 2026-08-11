@@ -117,7 +117,7 @@ export function WorkflowQueueCard({
   readonly onStartWorkflowStep: (step: ChannelWorkflowStep, mode: ChannelWorkflowStepStartMode) => void;
   readonly onRetryWorkflowStep: (step: ChannelWorkflowStep) => void;
   readonly onUpdateWorkflowStepStatus: (step: ChannelWorkflowStep, status: "skipped" | "cancelled") => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const orderedSteps = [...steps].sort((left, right) => left.position - right.position);
   const workflowContextSummaries = contextSummaries.filter((summary) => orderedSteps.some((step) => step.contextSummaryId === summary.id));
@@ -202,7 +202,7 @@ function WorkflowStepCard({
   readonly onStartWorkflowStep: (step: ChannelWorkflowStep, mode: ChannelWorkflowStepStartMode) => void;
   readonly onRetryWorkflowStep: (step: ChannelWorkflowStep) => void;
   readonly onUpdateWorkflowStepStatus: (step: ChannelWorkflowStep, status: "skipped" | "cancelled") => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const terminal = isWorkflowStepTerminal(step.status);
   const canStart = step.status === "queued" || step.status === "blocked";
@@ -350,7 +350,7 @@ function WorkflowArtifactChip({
   readonly artifactId: string;
   readonly artifact: RunArtifact | undefined;
   readonly cwd: string;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const chipTitle = artifact?.title || artifact?.path || artifactId;
   const text = `${label}: ${truncatePreview(chipTitle, 42)}`;
@@ -384,7 +384,7 @@ function WorkflowStepContextEvidencePanel({
 }: {
   readonly cwd: string;
   readonly step: ChannelWorkflowStep;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const { t } = useI18n();
   const contextArtifactId = step.metadata?.contextArtifactId;
   const [open, setOpen] = useState(false);
@@ -445,7 +445,7 @@ function WorkflowStepContextEvidenceBody({
   readonly artifactId: string;
   readonly state: WorkflowStepContextEvidenceState;
   readonly onRetry: () => Promise<void>;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   if (state.status === "idle" || state.status === "loading") {
     return (
@@ -512,7 +512,7 @@ function WorkflowContextInspectEvidence({
   readonly inspect: WorkflowContextInspectSummary;
   readonly artifactId: string;
   readonly fallbackPacket?: ChannelWorkflowStepContextPacket;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   if (inspect.availability !== "available") {
     if (fallbackPacket?.contextPack) {
@@ -546,7 +546,7 @@ function WorkflowContextPackEvidence({
 }: {
   readonly packet: ChannelWorkflowStepContextPacket;
   readonly artifactId: string;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const pack = packet.contextPack;
   if (!pack) {
@@ -575,7 +575,7 @@ function WorkflowContextSourceSummaryView({
   summary,
 }: {
   readonly summary: ConversationContextSourceSummary;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <div className="workflow-context-source-summary" aria-label={t("Context source summary")}>
@@ -612,7 +612,7 @@ function WorkflowContextDeveloperDiagnostics({
   children,
 }: {
   readonly children: ReactNode;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <details className="workflow-context-developer-diagnostics">
@@ -630,7 +630,7 @@ function WorkflowContextBudgetDiagnostics({
 }: {
   readonly pack: WorkflowContextPackSnapshot;
   readonly t: Translate;
-}): JSX.Element {
+}): React.JSX.Element {
   const sectionEstimateCount = pack.sections.filter((section) => typeof section.estimatedTokens === "number").length;
   return (
     <details className="workflow-context-budget-diagnostics">
@@ -733,7 +733,7 @@ function WorkflowContextInspectBudgetDiagnostics({
 }: {
   readonly inspect: WorkflowContextInspectSummary;
   readonly t: Translate;
-}): JSX.Element {
+}): React.JSX.Element {
   const sectionEstimateCount = inspect.sections.filter((section) => typeof section.estimatedTokens === "number").length;
   return (
     <details className="workflow-context-budget-diagnostics">
@@ -828,7 +828,7 @@ function WorkflowContextEvidenceSection({
   readonly title: string;
   readonly summary: string;
   readonly children: ReactNode;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <section className="workflow-context-evidence-section">
       <header>
@@ -924,7 +924,7 @@ export function WorkflowFinalSummary({
   readonly workflow: ChannelWorkflow;
   readonly steps: readonly ChannelWorkflowStep[];
   readonly artifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const orderedSteps = [...steps].sort((left, right) => left.position - right.position);
   const completedSteps = orderedSteps.filter((step) => step.status === "succeeded" || step.status === "skipped");
@@ -997,7 +997,7 @@ export function ChannelExecutionProposalCard({
     input: UpdateChannelExecutionProposalRequest,
   ) => Promise<ChannelExecutionProposal | undefined>;
   readonly onOpenRun: (runId: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -1247,7 +1247,7 @@ function RequirementShapingSummary({
   readonly shaping: ChannelExecutionProposal["shaping"];
   readonly collaborationSteps: ChannelExecutionProposal["collaborationSteps"];
   readonly teammates: readonly ChannelMention[];
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const visibleSteps = collaborationSteps.slice(0, 4);
   const openQuestions = shaping?.openQuestions.slice(0, 4) ?? [];

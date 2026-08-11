@@ -156,7 +156,7 @@ export function WorkspaceRightDock({
   onAcceptPlan,
   onConvertPlan,
   onArchivePlan,
-}: WorkspaceRightDockProps): JSX.Element | null {
+}: WorkspaceRightDockProps): React.JSX.Element | null {
   const { t } = useI18n();
   const [stack, setStack] = useState<readonly DockPageStackEntry[]>([]);
   const [planScope, setPlanScope] = useState<"thread" | "channel">("thread");

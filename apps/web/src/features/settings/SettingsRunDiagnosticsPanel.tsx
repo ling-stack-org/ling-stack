@@ -33,7 +33,7 @@ export function SettingsRunDiagnosticsPanel({
   readonly onOpenFullDiagnostics: (runId?: string) => void;
   readonly onRefresh: () => void;
   readonly onSelectRun: (runId: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const rows = projectRunDiagnosticsRows(runs);
   const counts = projectRunDiagnosticsCounts(runs);

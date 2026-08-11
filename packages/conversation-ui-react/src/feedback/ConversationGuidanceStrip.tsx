@@ -64,7 +64,7 @@ export function ConversationGuidanceStrip({
   onQueue,
   onRedirect,
   onStop,
-}: ConversationGuidanceStripProps): JSX.Element {
+}: ConversationGuidanceStripProps): React.JSX.Element {
   const showCompose = Boolean(
     typeof instruction === "string" &&
       instructionPlaceholder &&

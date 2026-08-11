@@ -76,7 +76,7 @@ export function AutomationListPane({
   readonly onSelectDraft: (draftId: string) => void;
   readonly onStatusChange: (automationId: string, status: AutomationStatus) => void;
   readonly onTabChange: (tab: AutomationTab) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const hasContent = activeTab === "history" ? runs.length > 0 : definitions.length > 0 || drafts.length > 0;
   return (
     <section className="automation-current-pane automation-ui2-list-pane" aria-label={t("Enabled automations")} data-automation-list-pane>
@@ -167,7 +167,7 @@ export function AutomationListPane({
   );
 }
 
-function AutomationListSkeleton(): JSX.Element {
+function AutomationListSkeleton(): React.JSX.Element {
   return (
     <div className="automation-ui2-list-skeleton" aria-label="Loading" aria-busy="true">
       {Array.from({ length: 5 }, (_, index) => (

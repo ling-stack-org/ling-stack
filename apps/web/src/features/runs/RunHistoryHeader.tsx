@@ -16,7 +16,7 @@ export function RunHistoryHeader({
   readonly title: string;
   readonly onArchivedFilterChange: (filter: LingThreadArchivedFilter) => void;
   readonly onSearchChange: (value: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   function handleSearchKeyDown(event: KeyboardEvent<HTMLInputElement>): void {
     if (event.key === "Escape" && search) {

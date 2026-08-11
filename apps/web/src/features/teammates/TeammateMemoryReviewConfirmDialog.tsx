@@ -3,7 +3,7 @@ import { Button, Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, 
 import { memoryReviewActionConfirmation, memoryReviewActionLabel } from "./teammate-memory-view-models.js";
 import type { TeammateMemoryController } from "./useTeammateMemoryController.js";
 
-export function TeammateMemoryReviewConfirmDialog({ controller }: { readonly controller: TeammateMemoryController }): JSX.Element {
+export function TeammateMemoryReviewConfirmDialog({ controller }: { readonly controller: TeammateMemoryController }): React.JSX.Element {
   const { t } = useI18n();
   const pending = controller.pendingReview;
   const busy = Boolean(pending && controller.reviewingId === pending.item.memory.id);

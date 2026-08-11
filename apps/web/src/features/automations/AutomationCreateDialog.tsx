@@ -78,7 +78,7 @@ export function AutomationCreateDialog({
   readonly onOpenChange: (open: boolean) => void;
   readonly onPreviewDraft: (draftId: string) => Promise<AutomationContextPreview | undefined>;
   readonly onUpdateDraft: (draftId: string, partial: Partial<CreateAutomationRequest>) => Promise<AutomationDraft | undefined>;
-}): JSX.Element {
+}): React.JSX.Element {
   const makeDefaultForm = () => defaultAutomationFormValue({ channels, cwd, providers });
   const [formValue, setFormValue] = useState<AutomationFormValue>(makeDefaultForm);
   const [chatPrompt, setChatPrompt] = useState("");

@@ -10,7 +10,7 @@ import {
   Workflow,
 } from "lucide-react";
 
-export function teammateRoleIcon(roleKey: string | undefined, size = 15): JSX.Element {
+export function teammateRoleIcon(roleKey: string | undefined, size = 15): React.JSX.Element {
   if (roleKey === "product") return <Brain size={size} />;
   if (roleKey === "engineer") return <Code2 size={size} />;
   if (roleKey === "architect") return <Workflow size={size} />;

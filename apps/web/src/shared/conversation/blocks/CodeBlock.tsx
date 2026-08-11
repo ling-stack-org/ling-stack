@@ -31,7 +31,7 @@ export function CodeBlock({
   maxCollapsedLines = defaultCollapsedLines,
   maxCollapsedCharacters = defaultCollapsedCharacters,
   copyLabel,
-}: CodeBlockProps): JSX.Element {
+}: CodeBlockProps): React.JSX.Element {
   const { t } = useI18n();
   const { resolvedTheme } = useTheme();
   const rootRef = useRef<HTMLElement | null>(null);

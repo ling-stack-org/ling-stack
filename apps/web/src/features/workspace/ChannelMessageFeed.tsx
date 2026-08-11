@@ -79,7 +79,7 @@ interface UseChannelMessageFeedInput {
 }
 
 export interface ChannelMessageFeedState {
-  readonly scrollRef: RefObject<HTMLDivElement>;
+  readonly scrollRef: RefObject<HTMLDivElement | null>;
   readonly latestButtonVisible: boolean;
   readonly totalSize: number;
   readonly virtualRows: ReturnType<ReturnType<typeof useVirtualizer>["getVirtualItems"]>;
@@ -132,11 +132,11 @@ export function useChannelMessageFeed({
   const autoFollowUntilRef = useRef(0);
   const userScrollIntentRef = useRef(false);
   const userScrollRenderSignatureRef = useRef("");
-  const visibleAnchorRef = useRef<MessageFeedAnchorSnapshot | undefined>();
+  const visibleAnchorRef = useRef<MessageFeedAnchorSnapshot | undefined>(undefined);
   const olderLoadArmedRef = useRef(true);
-  const olderLoadSnapshotRef = useRef<OlderLoadAnchorSnapshot | undefined>();
+  const olderLoadSnapshotRef = useRef<OlderLoadAnchorSnapshot | undefined>(undefined);
   const initialLatestPendingRef = useRef(true);
-  const pinnedFollowFrameRef = useRef<number | undefined>();
+  const pinnedFollowFrameRef = useRef<number | undefined>(undefined);
   const [latestButtonVisible, setLatestButtonVisible] = useState(false);
   const [resetRevision, setResetRevision] = useState(0);
 
@@ -578,7 +578,7 @@ export function ChannelMessageFeed({
   statusNode,
   surfaceId,
   title,
-}: ChannelMessageFeedProps): JSX.Element {
+}: ChannelMessageFeedProps): React.JSX.Element {
   return (
     <ConversationViewProvider surfaceId={surfaceId}>
       <ConversationVirtualFeed

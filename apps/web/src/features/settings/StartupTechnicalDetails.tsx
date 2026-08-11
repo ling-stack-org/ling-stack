@@ -13,7 +13,7 @@ export function StartupTechnicalDetails({
 }: {
   readonly effectiveConfig?: EffectiveConfigResponse;
   readonly status: StartupStatusResponse;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const phases = projectStartupPhases(status);
   const issueCount = status.diagnostics.filter((diagnostic) => diagnostic.level !== "info").length;
@@ -89,7 +89,7 @@ function configSourceLabel(source: EffectiveConfigResponse["values"]["theme"]["s
   return "Built-in";
 }
 
-function TechnicalValue({ label, value }: { readonly label: string; readonly value: string }): JSX.Element {
+function TechnicalValue({ label, value }: { readonly label: string; readonly value: string }): React.JSX.Element {
   return (
     <div>
       <dt>{label}</dt>
@@ -98,7 +98,7 @@ function TechnicalValue({ label, value }: { readonly label: string; readonly val
   );
 }
 
-function StartupDiagnosticDetail({ diagnostic }: { readonly diagnostic: StartupDiagnostic }): JSX.Element {
+function StartupDiagnosticDetail({ diagnostic }: { readonly diagnostic: StartupDiagnostic }): React.JSX.Element {
   const { t } = useI18n();
   return (
     <div className="settings-startup-diagnostic-detail">

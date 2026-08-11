@@ -127,7 +127,7 @@ export function ChannelSettingsPanels({
   readonly onRefreshChannelWorkspace: () => void;
   readonly onOpenChannelWorkspacePath: () => void;
   readonly onHandoffChannelWorkspace: (mode: ChannelWorkspaceMode) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [activeSection, setActiveSection] = useState<ChannelSettingsSection>("general");
 
   useEffect(() => {

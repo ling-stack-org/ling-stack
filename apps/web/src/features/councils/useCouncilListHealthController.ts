@@ -48,7 +48,7 @@ export function useCouncilListHealthController({
   const [refreshError, setRefreshError] = useState("");
   const [refreshCompletion, setRefreshCompletion] = useState(0);
   const refreshFlightRef = useRef(false);
-  const refreshAttemptRef = useRef<{ readonly baselineRevision: string; readonly completion: number }>();
+  const refreshAttemptRef = useRef<{ readonly baselineRevision: string; readonly completion: number } | undefined>(undefined);
   const mountedRef = useRef(true);
   const rows = useMemo(
     () => buildCouncilListHealthRows(councils, healthReport, t),

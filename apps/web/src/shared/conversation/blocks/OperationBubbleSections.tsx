@@ -8,7 +8,7 @@ export interface OperationBubbleSectionProps {
 export function OperationBubbleSection({
   children,
   label,
-}: OperationBubbleSectionProps): JSX.Element {
+}: OperationBubbleSectionProps): React.JSX.Element {
   return (
     <section className="conversation-operation-bubble-section" aria-label={label}>
       {children}

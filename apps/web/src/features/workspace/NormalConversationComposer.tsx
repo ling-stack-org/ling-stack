@@ -108,7 +108,7 @@ export function NormalConversationComposer({
   slashOptions,
   slashPicker,
   stopping,
-}: NormalConversationComposerProps): JSX.Element {
+}: NormalConversationComposerProps): React.JSX.Element {
   const { t } = useI18n();
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [thinkingMenuOpen, setThinkingMenuOpen] = useState(false);

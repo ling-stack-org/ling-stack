@@ -15,7 +15,7 @@ export function SceneResultPanel({
   readonly cwd: string;
   readonly readiness?: SceneReadiness;
   readonly artifactsByJob: Readonly<Record<string, readonly RunArtifact[]>>;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const projection = deriveSceneResultProjection(readiness);
   const recovery = readiness?.latestJob && readiness.latestIssue

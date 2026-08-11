@@ -19,7 +19,7 @@ export function PluginManagerHeader({
   readonly busyCreating: boolean;
   readonly onRefresh: () => void;
   readonly t: Translate;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <>
       <header

@@ -15,7 +15,7 @@ export function ThreadList({ threads, selectedThreadId, search, loadState, error
   readonly onClearSearch: () => void;
   readonly onRetry: () => void;
   readonly onSelect: (threadId: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   if (loadState === "loading-initial") {
     return <div className="runs-history-skeleton">{Array.from({ length: 7 }, (_, index) => <Skeleton height={58} key={index} shape="block" />)}</div>;

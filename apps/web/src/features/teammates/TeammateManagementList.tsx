@@ -74,7 +74,7 @@ export function TeammateManagementList({
   readonly settingsToolMode: boolean;
   readonly teammates: readonly LocalTeammateDraft[];
   readonly templates: readonly AiTeammateTemplate[];
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const controller = useTeammateManagementListController({ channels, providers, teammates, templates, t });
   const initialLoading = isLoading && controller.model.rows.length === 0;
@@ -199,7 +199,7 @@ function TeammateManagementRow({
   readonly onToggleTeammatePinned: (teammateId: string) => void;
   readonly row: TeammateManagementRowViewModel;
   readonly settingsToolMode: boolean;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const roleSummary = row.roleLabelKey ? t(row.roleLabelKey) : roleLabel(row.roleKey, t);
   const modelLabel = row.modelLabelKey ? t(row.modelLabelKey) : row.modelLabel;
@@ -307,7 +307,7 @@ function TeammateManagementRow({
   );
 }
 
-function TeammateListSkeleton(): JSX.Element {
+function TeammateListSkeleton(): React.JSX.Element {
   const { t } = useI18n();
   return (
     <div className="teammate-draft-list teammate-management-list-skeleton" aria-label={t("Loading AI teammates")}>

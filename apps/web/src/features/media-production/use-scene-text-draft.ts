@@ -23,7 +23,7 @@ export interface SceneTextDraftController {
   readonly busyField?: SceneTextField;
   readonly failures: Partial<Record<SceneTextField, MediaProductionFailure>>;
   readonly promptRequired: boolean;
-  readonly promptRef: RefObject<HTMLTextAreaElement>;
+  readonly promptRef: RefObject<HTMLTextAreaElement | null>;
   readonly change: (field: SceneTextField, value: string) => void;
   readonly clear: (field: SceneTextField) => void;
   readonly commit: (field: SceneTextField, value?: string) => Promise<MediaProductionMutationOutcome>;

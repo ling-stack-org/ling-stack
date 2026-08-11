@@ -14,7 +14,7 @@ export function TeammateMemoryHealthSection({
   readonly healthLabel: string;
   readonly healthTone: MemoryStatusTone;
   readonly onOpenDetail: (detail: TeammateMemoryDetail) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <InspectorSection

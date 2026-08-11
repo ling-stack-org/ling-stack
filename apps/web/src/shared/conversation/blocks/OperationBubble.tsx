@@ -28,7 +28,7 @@ export function OperationBubble({
   expanded = true,
   toggleLabel,
   onToggleExpanded,
-}: OperationBubbleProps): JSX.Element {
+}: OperationBubbleProps): React.JSX.Element {
   const statusTone = operationBubbleStatusTone(status, active);
   const bodyVisible = !expandable || expanded;
   const rootClassName = [

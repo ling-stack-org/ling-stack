@@ -19,7 +19,7 @@ export function WorkItemRow(props: {
   readonly onOpenChannel?: (channelId: string) => void;
   readonly onClaimWorkItem?: (workItemId: string) => void;
   readonly onHeartbeatWorkItem?: (workItemId: string, claimToken: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const action = derivePrimaryWorkBoardAction(props.item, {
     busy: props.busy, canClaim: Boolean(props.onClaimWorkItem), canOpenTask: Boolean(props.onOpenTask),
@@ -51,7 +51,7 @@ export function WorkItemRow(props: {
   );
 }
 
-function workItemIcon(item: WorkItemView): JSX.Element {
+function workItemIcon(item: WorkItemView): React.JSX.Element {
   if (item.waitingReason === "approval") return <ShieldCheck aria-hidden="true" size={15} />;
   if (item.status === "blocked") return <CircleAlert aria-hidden="true" size={15} />;
   if (item.sourceType.startsWith("external")) return <GitPullRequest aria-hidden="true" size={15} />;

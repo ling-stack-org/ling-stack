@@ -22,7 +22,7 @@ function resolvePresentation(props: ChannelWorkflowStatusIndicatorProps) {
   return channelWorkflowRunStatusPresentation(props.status);
 }
 
-export function ChannelWorkflowStatusIndicator(props: ChannelWorkflowStatusIndicatorProps): JSX.Element {
+export function ChannelWorkflowStatusIndicator(props: ChannelWorkflowStatusIndicatorProps): React.JSX.Element {
   const { t } = useI18n();
   const presentation = resolvePresentation(props);
   const label = t(presentation.labelKey);
@@ -39,7 +39,7 @@ export function ChannelWorkflowStatusIndicator(props: ChannelWorkflowStatusIndic
   );
 }
 
-export function ChannelWorkflowStatusLabel({ status }: { readonly status: ChannelWorkflow["status"] }): JSX.Element {
+export function ChannelWorkflowStatusLabel({ status }: { readonly status: ChannelWorkflow["status"] }): React.JSX.Element {
   const { t } = useI18n();
   return <>{t(channelWorkflowStatusPresentation(status).labelKey)}</>;
 }
@@ -58,7 +58,7 @@ export function ChannelWorkflowLinkedStatusIndicators({
   readonly linkedWorkflow: ChannelWorkflow | undefined;
   readonly activeRunId: string;
   readonly latestStatus: string;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   if (!linkedRunId && !linkedWorkflowId) return null;
   const linkedRunStatus = linkedRunId
     ? displayLinkedRunStatus(linkedRunId, linkedRun, activeRunId, latestStatus)

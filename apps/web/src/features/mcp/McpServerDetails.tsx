@@ -20,7 +20,7 @@ export function McpServerDetails({
 }: {
   readonly server: McpServer;
   readonly tools: readonly McpTool[];
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <div className="settings-mcp-server-details" data-mcp-server-details={server.id}>
@@ -59,7 +59,7 @@ export function McpServerDetails({
   );
 }
 
-function McpToolRow({ tool }: { readonly tool: McpTool }): JSX.Element {
+function McpToolRow({ tool }: { readonly tool: McpTool }): React.JSX.Element {
   const { t } = useI18n();
   const description = tool.description?.trim();
   return (

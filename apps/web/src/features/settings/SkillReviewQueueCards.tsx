@@ -35,7 +35,7 @@ export function ProcedureObservationClusterCard({
   readonly onCreateProtocolCandidate: (cluster: ProcedureObservationCluster) => void;
   readonly onCreatePlaybookCandidate: (cluster: ProcedureObservationCluster) => void;
   readonly t: SettingsTranslator;
-}): JSX.Element {
+}): React.JSX.Element {
   const canCreateProtocol = cluster.channelId && cluster.routeKind === "channel_protocol" &&
     cluster.status === "ready_for_review" && cluster.recommendedAction === "create_channel_protocol_candidate" &&
     cluster.routeBlockers.length === 0;
@@ -122,7 +122,7 @@ export function PlaybookCandidateCard({
   readonly busyAction: string;
   readonly onReview: (candidate: ChannelPlaybookCandidate, action: ChannelPlaybookCandidateReviewAction) => void;
   readonly t: SettingsTranslator;
-}): JSX.Element {
+}): React.JSX.Element {
   const approveAction = `playbook:${candidate.id}:approve`;
   const rejectAction = `playbook:${candidate.id}:reject`;
   const canReview = candidate.status === "draft";
@@ -190,7 +190,7 @@ export function SkillCandidateReviewCard({
   readonly onAdopt: (candidateId: string) => void;
   readonly onReview: (candidateId: string, action: SkillCandidateReviewAction) => void;
   readonly t: SettingsTranslator;
-}): JSX.Element {
+}): React.JSX.Element {
   const gate = skillCandidateGate(candidate, t);
   const adoptAction = `candidate:${candidate.id}:adopt`;
   const rejectAction = `candidate:${candidate.id}:reject`;
@@ -246,7 +246,7 @@ export function SkillCandidateReviewCard({
   );
 }
 
-function DetailValue({ label, children }: { readonly label: string; readonly children: React.ReactNode }): JSX.Element {
+function DetailValue({ label, children }: { readonly label: string; readonly children: React.ReactNode }): React.JSX.Element {
   return <span><small>{label}</small>{children}</span>;
 }
 

@@ -17,7 +17,7 @@ export function StartupReadinessSummary({
   readonly statusView: StartupStatusViewModel;
   readonly onOpenRunDiagnostics: () => void;
   readonly onRefresh: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const timestamp = status?.updatedAt
     ? t("Updated {time}", { time: formatDateTime(status.updatedAt) })

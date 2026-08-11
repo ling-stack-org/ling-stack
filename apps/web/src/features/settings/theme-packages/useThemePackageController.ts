@@ -72,7 +72,7 @@ export function useThemePackageController() {
   const previewReturnFocusRef = useRef<HTMLButtonElement | null>(null);
   const deleteReturnFocusRef = useRef<HTMLButtonElement | null>(null);
   const operationRef = useRef(0);
-  const previewUrlRef = useRef<string>();
+  const previewUrlRef = useRef<string | undefined>(undefined);
   const [importState, setImportState] = useState<ThemeImportDialogState>(INITIAL_IMPORT);
   const [previewState, setPreviewState] = useState<ThemePreviewDialogState>({
     loading: false,

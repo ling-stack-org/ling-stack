@@ -22,7 +22,7 @@ const I18nContext = createContext<I18nContextValue>({
   t: (key) => key,
 });
 
-export function I18nProvider({ children }: { readonly children: ReactNode }): JSX.Element {
+export function I18nProvider({ children }: { readonly children: ReactNode }): React.JSX.Element {
   const [locale, setLocaleState] = useState<Locale>(() => resolveInitialLocale());
 
   useEffect(() => {

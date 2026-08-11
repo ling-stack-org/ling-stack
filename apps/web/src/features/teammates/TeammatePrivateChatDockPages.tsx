@@ -31,7 +31,7 @@ export function TeammatePrivateChatContextPage({
 }: {
   readonly context: TeammatePrivateDockContextView;
   readonly cwd: string;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <section
@@ -153,7 +153,7 @@ export function TeammatePrivateChatActivityPage({
   items,
 }: {
   readonly items: readonly TeammatePrivateDockActivityView[];
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <section
@@ -185,7 +185,7 @@ export function TeammatePrivateChatActivityPage({
   );
 }
 
-function DockIdentity({ icon, label }: { readonly icon: ReactNode; readonly label: string }): JSX.Element {
+function DockIdentity({ icon, label }: { readonly icon: ReactNode; readonly label: string }): React.JSX.Element {
   return (
     <span className="teammate-private-dock-identity">
       <span aria-hidden="true">{icon}</span>

@@ -58,7 +58,7 @@ export function MessageRow({
   evidenceNode,
   errorNode,
   actionsNode,
-}: MessageRowProps): JSX.Element {
+}: MessageRowProps): React.JSX.Element {
   const ownMessage = authorType === "local-user";
   const surfacePolicy = getConversationSurfacePolicy(surface);
   const avatarAllowed = authorType === "local-user"

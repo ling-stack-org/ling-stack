@@ -21,7 +21,7 @@ export function RunInspector({
   readonly artifacts?: readonly RunArtifact[];
   readonly onLookupRunIdChange: (runId: string) => void;
   readonly onLoadRun: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const toolEvents = events.filter((event) => event.type.startsWith("tool_"));
   void activeRunId;

@@ -44,7 +44,7 @@ export function ProviderWorkbenchHeader({
   readonly onAddModel: () => void;
   readonly onCheckBatch: () => void;
   readonly settingsToolMode?: boolean;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <header

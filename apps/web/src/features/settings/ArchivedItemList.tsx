@@ -24,7 +24,7 @@ export function ArchivedItemList({
   readonly rows: readonly ArchivedItemRowViewModel[];
   readonly onDelete: (row: ArchivedItemRowViewModel, trigger: HTMLButtonElement) => void;
   readonly onRestore: (row: ArchivedItemRowViewModel) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const mutationBusy = Boolean(actionId);
   const showSkeletons = isLoading && rows.length === 0;
@@ -88,7 +88,7 @@ export function ArchivedItemList({
   );
 }
 
-function ArchivedListSkeleton(): JSX.Element {
+function ArchivedListSkeleton(): React.JSX.Element {
   const { t } = useI18n();
   return (
     <div className="archived-item-loading" aria-label={t("Loading archived items")}>

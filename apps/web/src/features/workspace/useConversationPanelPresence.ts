@@ -15,8 +15,8 @@ export interface ConversationPanelPresence {
 export function useConversationPanelPresence(open: boolean, initialOpen = open): ConversationPanelPresence {
   const [rendered, setRendered] = useState(initialOpen);
   const [expanded, setExpanded] = useState(initialOpen);
-  const openFrameRef = useRef<number>();
-  const unmountTimeoutRef = useRef<number>();
+  const openFrameRef = useRef<number | undefined>(undefined);
+  const unmountTimeoutRef = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     const pendingUnmountId = unmountTimeoutRef.current;

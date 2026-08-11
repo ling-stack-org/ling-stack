@@ -24,7 +24,7 @@ import {
 } from "./teammate-memory-view-models.js";
 import type { TeammateMemoryController } from "./useTeammateMemoryController.js";
 
-export function TeammateMemoryInspectorDrawer({ controller }: { readonly controller: TeammateMemoryController }): JSX.Element {
+export function TeammateMemoryInspectorDrawer({ controller }: { readonly controller: TeammateMemoryController }): React.JSX.Element {
   const { t } = useI18n();
   const detail = controller.detail;
   const busy = Boolean(controller.reviewingId);
@@ -43,7 +43,7 @@ export function TeammateMemoryInspectorDrawer({ controller }: { readonly control
   );
 }
 
-function ScopeDetail({ controller }: { readonly controller: TeammateMemoryController }): JSX.Element | null {
+function ScopeDetail({ controller }: { readonly controller: TeammateMemoryController }): React.JSX.Element | null {
   const { t } = useI18n();
   const detail = controller.detail;
   if (detail?.kind !== "scope") return null;
@@ -61,7 +61,7 @@ function ScopeDetail({ controller }: { readonly controller: TeammateMemoryContro
   );
 }
 
-function HealthDetail({ controller }: { readonly controller: TeammateMemoryController }): JSX.Element | null {
+function HealthDetail({ controller }: { readonly controller: TeammateMemoryController }): React.JSX.Element | null {
   const { t } = useI18n();
   const detail = controller.detail;
   if (detail?.kind !== "health") return null;
@@ -87,7 +87,7 @@ function HealthDetail({ controller }: { readonly controller: TeammateMemoryContr
   );
 }
 
-function MemoryDetail({ controller }: { readonly controller: TeammateMemoryController }): JSX.Element | null {
+function MemoryDetail({ controller }: { readonly controller: TeammateMemoryController }): React.JSX.Element | null {
   const { t } = useI18n();
   const detail = controller.detail;
   if (detail?.kind !== "memory") return null;
@@ -135,7 +135,7 @@ function MemoryDetail({ controller }: { readonly controller: TeammateMemoryContr
   );
 }
 
-function MemoryActions({ controller }: { readonly controller: TeammateMemoryController }): JSX.Element | null {
+function MemoryActions({ controller }: { readonly controller: TeammateMemoryController }): React.JSX.Element | null {
   const { t } = useI18n();
   const detail = controller.detail;
   if (detail?.kind !== "memory") return null;
@@ -163,7 +163,7 @@ function MemoryActions({ controller }: { readonly controller: TeammateMemoryCont
   );
 }
 
-function RawValue({ label, value }: { readonly label: string; readonly value: string }): JSX.Element {
+function RawValue({ label, value }: { readonly label: string; readonly value: string }): React.JSX.Element {
   return <span className="teammate-memory-raw-value"><strong>{label}</strong><code>{value}</code></span>;
 }
 

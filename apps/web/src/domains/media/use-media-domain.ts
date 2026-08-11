@@ -71,7 +71,7 @@ export function useMediaDomain(input: {
   const artifactGuard = useLatestKeyedRequestGuard();
   const workspaceEpochRef = useRef(0);
   const mutationEpochRef = useRef(0);
-  const listInFlightRef = useRef<Promise<void>>();
+  const listInFlightRef = useRef<Promise<void> | undefined>(undefined);
   const cwdRef = useRef(input.cwd.trim());
   const jobsRef = useRef(mediaJobs);
   const artifactsRef = useRef(artifactsByJob);

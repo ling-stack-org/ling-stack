@@ -25,7 +25,7 @@ export function ChannelComposerFeedback({
   onRetry,
   sendError,
   sendState,
-}: ChannelComposerFeedbackProps): JSX.Element | null {
+}: ChannelComposerFeedbackProps): React.JSX.Element | null {
   const { t } = useI18n();
   if (!feedback && sendState !== "failed") {
     return null;

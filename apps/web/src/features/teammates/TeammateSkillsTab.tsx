@@ -29,7 +29,7 @@ export function TeammateSkillsTab({
 }: {
   readonly controller: TeammateSkillsController;
   readonly onOpenSkillLibrary?: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const detailReturnFocusRef = useRef<HTMLElement | null>(null);
   const {
@@ -144,7 +144,7 @@ function SkillRow({
   readonly row: TeammateSkillRowModel;
   readonly onOpenDetails: (skillId: string, trigger: HTMLElement) => void;
   readonly onToggleBinding: (skillId: string) => void | Promise<void>;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const stopRowClick = (event: MouseEvent<HTMLElement>): void => event.stopPropagation();
   const needsAttention = teammateSkillNeedsAttention(row);

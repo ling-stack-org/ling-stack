@@ -34,7 +34,7 @@ export function PluginCreateDialog({
   readonly onCreate: (input: ManagedPluginCreateRequest) => Promise<ManagedPluginView | undefined>;
   readonly onClose: () => void;
   readonly onDismissFailure: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const [displayName, setDisplayName] = useState("");
   const [description, setDescription] = useState("");
@@ -210,6 +210,6 @@ export function PluginCreateDialog({
   );
 }
 
-function fieldError(message: string | undefined): JSX.Element | undefined {
+function fieldError(message: string | undefined): React.JSX.Element | undefined {
   return message ? <span role="alert">{message}</span> : undefined;
 }

@@ -25,7 +25,7 @@ export function DockReviewItemDetail({
   readonly item: DockReviewItem;
   readonly cwd?: string;
   readonly compact?: boolean;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const isApprovalGate = item.kind === "approval_gate";
   const hasPreview = Boolean(item.codePreview);
@@ -96,7 +96,7 @@ function DockReviewDetailTop({
 }: {
   readonly item: DockReviewItem;
   readonly preview: NonNullable<DockReviewItem["codePreview"]>;
-}): JSX.Element {
+}): React.JSX.Element {
   const stats = item.stats ?? preview.stats ?? codePreviewStats(preview.lines);
   const minimap = reviewMinimapSegments(item, preview);
   return (
@@ -146,7 +146,7 @@ function DockReviewArtifactPreview({
   readonly fallbackTitle: string;
   readonly fallbackReason: string;
   readonly compact?: boolean;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");

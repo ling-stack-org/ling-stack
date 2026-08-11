@@ -40,7 +40,7 @@ export function McpServerEditorDialog({
   readonly open: boolean;
   readonly returnFocusRef: MutableRefObject<HTMLButtonElement | null>;
   readonly server?: McpServer;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const nameInputRef = useRef<HTMLInputElement | null>(null);
   const [form, setForm] = useState<McpServerFormState>(defaultMcpServerForm);

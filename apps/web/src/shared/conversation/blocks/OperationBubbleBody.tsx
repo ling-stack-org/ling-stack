@@ -4,7 +4,7 @@ export interface OperationBubbleBodyProps {
   readonly children: ReactNode;
 }
 
-export function OperationBubbleBody({ children }: OperationBubbleBodyProps): JSX.Element {
+export function OperationBubbleBody({ children }: OperationBubbleBodyProps): React.JSX.Element {
   return (
     <div className="conversation-operation-bubble-body">
       {children}

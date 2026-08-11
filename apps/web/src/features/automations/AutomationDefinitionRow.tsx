@@ -40,7 +40,7 @@ export function AutomationDefinitionRow({
   readonly onRun: (automationId: string) => void;
   readonly onSelect: (automationId: string) => void;
   readonly onStatusChange: (automationId: string, status: AutomationStatus) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { automation, latestRun } = viewModel;
   const busy = Boolean(action);
   const primaryMutation = action === "run" || action === "status" || action === "target";

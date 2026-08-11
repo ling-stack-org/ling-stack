@@ -17,7 +17,7 @@ export function AiTeammateInspector({
 }: {
   readonly skillPack: SkillPack | undefined;
   readonly localTeammates: readonly LocalTeammateDraft[];
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   if (!skillPack) {
     return (

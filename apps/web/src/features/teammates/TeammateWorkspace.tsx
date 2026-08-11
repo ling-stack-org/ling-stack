@@ -223,7 +223,7 @@ export function TeammateWorkspace({
     readonly requestId: number;
   };
   readonly onSettingsOpenRequestConsumed?: (requestId: number) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const focusRevalidationToken = useFocusRevalidationToken();
   const [workspaceView, setWorkspaceView] = useState<TeammateWorkspaceView>("chat");

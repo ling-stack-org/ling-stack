@@ -15,7 +15,7 @@ export function TeammateExternalToolsSection({
   readonly controller: TeammateExternalToolsController;
   readonly servers: readonly McpServer[];
   readonly toolsByServerId: ReadonlyMap<string, readonly McpTool[]>;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const rows = useMemo(() => buildExternalToolServiceRows({

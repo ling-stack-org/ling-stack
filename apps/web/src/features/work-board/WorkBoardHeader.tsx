@@ -5,7 +5,7 @@ import type { WorkBoardFreshness, WorkBoardStats } from "./work-board-types.js";
 export function WorkBoardHeader({ stats, freshness }: {
   readonly stats: WorkBoardStats;
   readonly freshness: WorkBoardFreshness;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const degraded = freshness === "partial" || freshness === "stale" || freshness === "error";
   return (

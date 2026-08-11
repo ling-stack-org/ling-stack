@@ -25,7 +25,7 @@ export function ChannelProtocolResetDialog({
   readonly returnFocusRef: RefObject<HTMLButtonElement | null>;
   readonly onConfirm: () => void;
   readonly onOpenChange: (open: boolean) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const cancelRef = useRef<HTMLButtonElement | null>(null);
 

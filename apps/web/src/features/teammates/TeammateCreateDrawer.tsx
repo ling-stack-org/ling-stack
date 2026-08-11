@@ -51,7 +51,7 @@ export function TeammateCreateDrawer({
   readonly onClose: () => void;
   readonly onOpenCreated?: (teammateId: string) => void;
   readonly onOpenProviders: () => void;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const { t } = useI18n();
   const providerOptions = useMemo(
     () => providers.filter((provider) => canUseConversationProvider(provider) && providerPreflightReady(provider)),
@@ -315,7 +315,7 @@ export function TeammateCreateDrawer({
     </Dialog>
   );
 
-  function renderFooter(): JSX.Element {
+  function renderFooter(): React.JSX.Element {
     if (mode === "setup_progress") {
       const createdWithWarnings = Boolean(setupResult?.partial && setupResult.teammateId);
       const showModelWorkbench = Boolean(setupResult && !setupResult.ok && setupSteps.model.state === "failed");

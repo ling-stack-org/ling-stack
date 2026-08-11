@@ -18,7 +18,7 @@ export function RunEvidenceSection({ cwd, run, events, assistantText, approvals,
   readonly artifacts: readonly RunArtifact[];
   readonly memoryById: ReadonlyMap<string, MemoryObject>;
   readonly usedMemoryEvents: readonly UsedMemoryEvent[];
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const terminalEvent = terminalRunEvent(events);
   const toolEvents = events.filter((event) => event.type.startsWith("tool_"));

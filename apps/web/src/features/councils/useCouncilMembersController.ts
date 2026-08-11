@@ -88,8 +88,8 @@ export function useCouncilMembersController({
   const [readinessError, setReadinessError] = useState("");
   const mountedRef = useRef(true);
   const requestSequenceRef = useRef(0);
-  const mutationFlightRef = useRef<symbol>();
-  const readinessFlightRef = useRef<symbol>();
+  const mutationFlightRef = useRef<symbol | undefined>(undefined);
+  const readinessFlightRef = useRef<symbol | undefined>(undefined);
   const membersRef = useRef(members);
   const councilRef = useRef(selectedCouncil);
   const healthReportRef = useRef(healthReport);

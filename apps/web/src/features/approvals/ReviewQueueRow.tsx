@@ -11,7 +11,7 @@ export function ReviewQueueRow({
   readonly row: ApprovalQueueRowView;
   readonly selected: boolean;
   readonly onSelect: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <DataRow

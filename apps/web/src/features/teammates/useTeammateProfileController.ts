@@ -30,7 +30,7 @@ export interface PersonaImportForm {
 
 export interface TeammateProfileController {
   readonly avatarCropSource?: string;
-  readonly avatarTriggerRef: RefObject<HTMLButtonElement>;
+  readonly avatarTriggerRef: RefObject<HTMLButtonElement | null>;
   readonly importingPersona: boolean;
   readonly personaBusyAction: "" | "apply" | "preview";
   readonly personaDraft?: TeammatePersonaDraft;

@@ -41,7 +41,7 @@ export function DesktopComputerUseControlSlot({
   };
   readonly onToggleVisibility: () => void;
   readonly onStop: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const stopFeedbackId = useId();
   const visibilityFeedbackId = useId();

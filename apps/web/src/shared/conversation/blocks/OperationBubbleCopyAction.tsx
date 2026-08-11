@@ -18,7 +18,7 @@ export function OperationBubbleCopyAction({
   copiedLabel,
   className,
   iconSize = 13,
-}: OperationBubbleCopyActionProps): JSX.Element {
+}: OperationBubbleCopyActionProps): React.JSX.Element {
   const { t } = useI18n();
   const { active, copied, copyText, setActive } = useConversationActionView({ actionId });
   const currentLabel = copied ? copiedLabel ?? t("Copied") : label;

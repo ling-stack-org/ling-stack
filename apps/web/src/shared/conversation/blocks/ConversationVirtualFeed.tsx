@@ -6,7 +6,7 @@ import { useConversationViewReconciliation } from "../view-store/use-conversatio
 import type { ConversationViewRetainKeys } from "../view-store/conversation-view-store.js";
 
 export interface ConversationVirtualFeedProps<TItem> {
-  readonly scrollRef: RefObject<HTMLDivElement>;
+  readonly scrollRef: RefObject<HTMLDivElement | null>;
   readonly ariaLabel: string;
   readonly className?: string;
   readonly feedClassName?: string;
@@ -69,7 +69,7 @@ export function ConversationVirtualFeed<TItem>({
   title,
   statusNode,
   latestButtonNode,
-}: ConversationVirtualFeedProps<TItem>): JSX.Element {
+}: ConversationVirtualFeedProps<TItem>): React.JSX.Element {
   useConversationViewReconciliation(viewStateRetainKeys);
 
   const resolvedFeedClassName = [feedClassName, empty ? emptyFeedClassName : ""].filter(Boolean).join(" ");

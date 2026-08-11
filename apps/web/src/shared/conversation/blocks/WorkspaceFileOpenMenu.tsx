@@ -32,7 +32,7 @@ export function WorkspaceFileOpenMenu({
   readonly line?: number;
   readonly compact?: boolean;
   readonly placement?: "below" | "auto";
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const rootRef = useRef<HTMLSpanElement | null>(null);
   const popoverRef = useRef<HTMLSpanElement | null>(null);
@@ -202,7 +202,7 @@ function OpenTargetIcon({
 }: {
   readonly cwd: string;
   readonly target: WorkspaceFileOpenTarget;
-}): JSX.Element {
+}): React.JSX.Element {
   const [failed, setFailed] = useState(false);
   const fallback = openTargetFallbackIcon(target);
   if (target === "finder" || target === "terminal" || failed) {
@@ -219,7 +219,7 @@ function OpenTargetIcon({
   );
 }
 
-function openTargetFallbackIcon(target: WorkspaceFileOpenTarget): JSX.Element {
+function openTargetFallbackIcon(target: WorkspaceFileOpenTarget): React.JSX.Element {
   if (target === "finder") return <FolderOpen />;
   if (target === "terminal") return <SquareTerminal />;
   if (target === "textedit") return <FileText />;

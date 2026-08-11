@@ -18,7 +18,7 @@ export function TeammateMemoryReviewList({
   readonly onOpenDetail: (row: TeammateMemoryReviewRow) => void;
   readonly onRequestReview: (row: TeammateMemoryReviewRow, action: MemoryReviewAction) => void;
   readonly onStartEdit: (row: TeammateMemoryReviewRow) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <section className="teammate-memory-review-section" aria-labelledby="teammate-memory-review-title">

@@ -10,7 +10,7 @@ export function SidebarPrimaryNavigation({
 }: {
   readonly activeSidebarTarget: SidebarTarget;
   readonly onOpenView: (view: ViewId) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <nav className="primary-nav">
@@ -41,7 +41,7 @@ function NavItem({
   readonly tooltip?: string;
   readonly hidden?: boolean;
   readonly pendingView?: ViewId;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <SidebarTooltip label={tooltip ?? ariaLabel ?? label}>
       <Button
