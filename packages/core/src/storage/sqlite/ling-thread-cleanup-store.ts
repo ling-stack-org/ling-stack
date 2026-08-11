@@ -48,7 +48,7 @@ export class SqliteLingThreadCleanupStore {
       automationDefinitions: countWhere(this.context.database, "automation_definitions", "thread_id = ?", [threadId]),
       runsUnlinked: countWhere(this.context.database, "run_sessions", "thread_id = ?", [threadId]),
       childThreadsDetached: countWhere(this.context.database, "ling_threads", "parent_thread_id = ?", [threadId]),
-      channelMessagesUnlinked: countWhere(this.context.database, "channel_messages", "thread_id = ?", [threadId]),
+      conversationItemsDeleted: countWhere(this.context.database, "conversation_items", "thread_id = ?", [threadId]),
     };
     const tombstone = {
       id: createRetentionTombstoneId(),
@@ -84,7 +84,6 @@ export class SqliteLingThreadCleanupStore {
           tombstone.createdAt,
         );
       this.context.database.prepare("UPDATE run_sessions SET thread_id = NULL, updated_at = ? WHERE thread_id = ?").run(now, threadId);
-      this.context.database.prepare("UPDATE channel_messages SET thread_id = NULL WHERE thread_id = ?").run(threadId);
       this.context.database.prepare("DELETE FROM ling_thread_proposed_plans WHERE workspace_id = ? AND thread_id = ?").run(DEFAULT_WORKSPACE_ID, threadId);
       this.context.database.prepare("DELETE FROM ling_thread_goals WHERE workspace_id = ? AND thread_id = ?").run(DEFAULT_WORKSPACE_ID, threadId);
       this.context.database.prepare("DELETE FROM ling_threads WHERE id = ?").run(threadId);

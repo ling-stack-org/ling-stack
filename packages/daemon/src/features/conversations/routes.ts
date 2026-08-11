@@ -18,6 +18,7 @@ import type {
   ConversationTranscriptMessage,
   ConversationTranscriptStatus,
   AuthorizationMode,
+  ChannelMessageFileRef,
   PermissionPreset,
   ResponseLanguagePreference,
   RunThinkingLevel,
@@ -34,13 +35,14 @@ import { writeJson, writeSse, writeSseHead } from "../../shared/response.js";
 import { isRecord, readOptionalString, readOptionalStringArray, readString } from "../../shared/validation.js";
 import { persistConversationAttachment, CHANNEL_ATTACHMENT_REQUEST_MAX_BYTES } from "../channels/attachments.js";
 import { inferUserLanguage, responseLanguageInstruction } from "../channels/response-language.js";
-import { parseChannelAttachmentRequest } from "../channels/schemas.js";
+import { parseChannelAttachmentRequest, readOptionalChannelMessageFileRefs } from "../channels/schemas.js";
 import { buildEffectiveConfigResponse } from "../settings/effective-config.js";
 import type { LingImageVisionSummarizer } from "../channels/materialization/registry.js";
 import type { RunExecutionSink } from "../runs/orchestrator.js";
 import type { RunRequest } from "../runs/schemas.js";
 import { materializeInlineConversationAttachments, type ConversationAttachmentMaterialization } from "./materialization.js";
 import { lingConversationToneInstruction } from "./conversation-tone.js";
+import { projectConversationActiveReplyTarget } from "./active-reply-target.js";
 import { projectTerminalReportDto } from "../channels/terminal-report-routes.js";
 import { listExecutionActions } from "../runs/execution-actions.js";
 import {
@@ -49,6 +51,11 @@ import {
   filterSupersededTerminalReports,
   projectPendingConversationReplacement,
 } from "./supersession-projection.js";
+import {
+  collectConversationRuntimeProjection,
+  projectConversationTurnUserRuntime,
+  projectUnboundConversationInterventionMessages,
+} from "./runtime-projection.js";
 
 type StartConversationRun = (runRequest: RunRequest, sink: RunExecutionSink) => Promise<string | undefined>;
 
@@ -91,7 +98,7 @@ export async function startConversationReplacementRun(input: {
     title: conversationTitle(input.message),
     userInstruction: input.message,
     teammateId: LING_AGENT_ID,
-    sourceMessageId: input.messageId,
+    sourceItemId: input.messageId,
     createdByActor: "local-user",
   }, now);
   const streamInput: ConversationStreamRequest = {
@@ -175,7 +182,7 @@ export async function handleConversationStream(
       imageVisionSummarizer,
     });
     const effectiveConfig = await buildEffectiveConfigResponse({ cwd: workspaceCwd, store, runnerRegistry });
-    const userMessage = createUserTranscriptMessage(thread, turn, conversationAttachments);
+    const userMessage = createUserTranscriptMessage(thread, turn, conversationAttachments, input.fileRefs ?? []);
     let assistantMessage = createAssistantTranscriptMessage(thread, turn, undefined, "", "running", now);
     let runId = "";
     let closed = false;
@@ -202,7 +209,20 @@ export async function handleConversationStream(
           runId = ready.runId;
           assistantMessage = { ...assistantMessage, runId };
         }
-        safeWrite("ready", { thread, turn, userMessage, assistantMessage, runId: runId || undefined });
+        const activeReply = projectConversationActiveReplyTarget({
+          store,
+          runId: runId || undefined,
+          threadId: thread.id,
+          teammateId: LING_AGENT_ID,
+        });
+        safeWrite("ready", {
+          thread,
+          turn,
+          userMessage,
+          assistantMessage,
+          runId: runId || undefined,
+          ...(activeReply ? { activeReply } : {}),
+        });
       },
       writeEvent(_event, data) {
         const envelope = data as RunEventEnvelope;
@@ -210,6 +230,17 @@ export async function handleConversationStream(
           assistantMessage = {
             ...assistantMessage,
             content: assistantMessage.content + readEventText(envelope),
+            status: "running",
+            updatedAt: envelope.ts,
+          };
+        } else if (
+          envelope.type === "message_end" &&
+          readEventRole(envelope) === "assistant" &&
+          !assistantMessage.content.trim()
+        ) {
+          assistantMessage = {
+            ...assistantMessage,
+            content: readEventText(envelope),
             status: "running",
             updatedAt: envelope.ts,
           };
@@ -245,9 +276,12 @@ export async function handleConversationStream(
         const latestThread = store.getLingThread(thread.id) ?? thread;
         const latestTurn = store.getLingTurn(turn.id) ?? turn;
         const terminalStatus = statusFromRun(latestRun) ?? assistantMessage.status;
+        const finalStatus = terminalStatus === "succeeded" && !assistantMessage.content.trim()
+          ? "failed"
+          : terminalStatus;
         const finalAssistant = {
           ...assistantMessage,
-          status: terminalStatus,
+          status: finalStatus,
           content: assistantMessage.content || fallbackAssistantContent(terminalStatus, input.responseLanguage, input.message),
           updatedAt: latestRun?.updatedAt ?? new Date().toISOString(),
         };
@@ -387,10 +421,23 @@ export function buildConversationDetail(
     .map((link) => store.getRun(link.runId))
     .filter((run): run is RunSession => Boolean(run))
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  const runtimeProjection = collectConversationRuntimeProjection(store, runs);
   const runByTurnId = new Map(runLinks.map((link) => [link.turnId, store.getRun(link.runId)]));
   const messages = turns.flatMap((turn) => {
     const run = runByTurnId.get(turn.id);
-    const rawUser = createUserTranscriptMessage(thread, turn, conversationAttachmentsFromRunSnapshot(store, run));
+    const turnRuntime = projectConversationTurnUserRuntime({
+      store,
+      turn,
+      run,
+      intervention: turn.interventionId ? runtimeProjection.interventionById.get(turn.interventionId) : undefined,
+    });
+    const rawUser = createUserTranscriptMessage(
+      thread,
+      turn,
+      turnRuntime.attachments,
+      turnRuntime.fileRefs,
+      turnRuntime.content,
+    );
     const latestRevision = store.listConversationMessageRevisions({
       surface: "normal_conversation",
       messageId: rawUser.id,
@@ -442,6 +489,15 @@ export function buildConversationDetail(
       updatedAt: revision.createdAt,
     });
   }
+  for (const message of projectUnboundConversationInterventionMessages({
+    store,
+    thread,
+    runs,
+    interventions: runtimeProjection.interventions,
+    existingMessageIds: new Set(messageById.keys()),
+  })) {
+    messageById.set(message.id, message);
+  }
   const latestRun = runs[runs.length - 1];
   const latestSnapshot = readRecord(latestRun?.requestSnapshot);
   const latestProjectPath = latestRun?.cwd && latestRun.cwd !== cwd ? latestRun.cwd : undefined;
@@ -451,6 +507,8 @@ export function buildConversationDetail(
     turns,
     runs,
     executionActions: listExecutionActions(store, { threadId: thread.id, limit: 500 }),
+    approvals: runtimeProjection.approvals,
+    interventions: runtimeProjection.interventions,
     terminalReports: (options.includeSuperseded
       ? store.listTerminalReports({ threadId: thread.id, limit: 200 })
       : filterSupersededTerminalReports(store.listTerminalReports({ threadId: thread.id, limit: 200 }), projection))
@@ -475,8 +533,9 @@ function parseConversationStreamRequest(value: unknown): ConversationStreamReque
   }
   const message = readString(value, "message").trim();
   const attachmentIds = readOptionalStringArray(value, "attachmentIds") ?? [];
-  if (!message && attachmentIds.length === 0) {
-    throw new Error("message or attachmentIds is required.");
+  const fileRefs = readOptionalChannelMessageFileRefs(value, "fileRefs") ?? [];
+  if (!message && attachmentIds.length === 0 && fileRefs.length === 0) {
+    throw new Error("message, attachmentIds, or fileRefs is required.");
   }
   if (attachmentIds.length > 10) {
     throw new Error("A conversation message can reference at most 10 attachments.");
@@ -489,6 +548,7 @@ function parseConversationStreamRequest(value: unknown): ConversationStreamReque
     threadId: readOptionalString(value, "threadId")?.trim() || undefined,
     message,
     attachmentIds: normalizeStringList(attachmentIds),
+    fileRefs,
     projectPath: readOptionalString(value, "projectPath")?.trim() || undefined,
     providerPresetId,
     thinkingLevel: readThinkingLevel(readOptionalString(value, "thinkingLevel")),
@@ -544,7 +604,12 @@ function buildConversationRunRequest(input: {
     task: {
       id: conversationRunTaskId(input.turn.id),
       title: input.turn.title,
-      prompt: buildConversationRunPrompt(input.input.message, input.attachments, input.attachmentMaterializations),
+      prompt: buildConversationRunPrompt(
+        input.input.message,
+        input.attachments,
+        input.attachmentMaterializations,
+        input.input.fileRefs ?? [],
+      ),
     },
     threadId: input.thread.id,
     turnId: input.turn.id,
@@ -561,6 +626,7 @@ function buildConversationRunRequest(input: {
     responseLanguage,
     appendSystemPrompt,
     conversationAttachmentIds: input.attachments.map((attachment) => attachment.id),
+    conversationFileRefs: input.input.fileRefs ?? [],
     idempotencyKey: input.input.idempotencyKey ?? `conversation:${input.turn.id}`,
   };
 }
@@ -569,12 +635,15 @@ function createUserTranscriptMessage(
   thread: LingThread,
   turn: LingTurn,
   attachments: readonly ConversationAttachment[] = [],
+  fileRefs: readonly ChannelMessageFileRef[] = [],
+  content = turn.userInstruction,
 ): ConversationTranscriptMessage {
   return {
-    id: turn.sourceMessageId?.startsWith("conversation-user:") ? turn.sourceMessageId : `conversation-user:${turn.id}`,
+    id: turn.sourceItemId?.startsWith("conversation-user:") ? turn.sourceItemId : `conversation-user:${turn.id}`,
     role: "user",
-    content: turn.userInstruction,
+    content,
     ...(attachments.length > 0 ? { attachments } : {}),
+    ...(fileRefs.length > 0 ? { fileRefs } : {}),
     status: statusFromTurn(turn),
     threadId: thread.id,
     turnId: turn.id,
@@ -609,9 +678,14 @@ function createAssistantTranscriptMessage(
 
 function assistantMessageFromRun(store: RunStore, thread: LingThread, turn: LingTurn, run: RunSession): ConversationTranscriptMessage {
   const events = store.listEvents(run.id, { limit: 1000 });
-  const content = events.filter((event) => event.type === "assistant_text_delta").map(readEventText).join("");
+  const streamedContent = events.filter((event) => event.type === "assistant_text_delta").map(readEventText).join("");
+  const finalContent = [...events]
+    .reverse()
+    .find((event) => event.type === "message_end" && readEventRole(event) === "assistant" && readEventText(event).trim());
+  const content = streamedContent || (finalContent ? readEventText(finalContent) : "");
   const error = [...events].reverse().map(readEventError).find(Boolean);
   const status = statusFromRun(run) ?? "running";
+  const projectedStatus = status === "succeeded" && !content.trim() ? "failed" : status;
   const requestSnapshot = readRecord(run.requestSnapshot);
   const responseLanguage = readResponseLanguagePreference(readOptionalRecordString(requestSnapshot, "responseLanguage"));
   return createAssistantTranscriptMessage(
@@ -619,7 +693,7 @@ function assistantMessageFromRun(store: RunStore, thread: LingThread, turn: Ling
     turn,
     run,
     content || error || fallbackAssistantContent(status, responseLanguage, turn.userInstruction),
-    status,
+    projectedStatus,
     run.updatedAt,
   );
 }
@@ -676,9 +750,13 @@ function readEventText(event: RunEventEnvelope): string {
   return readOptionalRecordString(readRecord(event.data), "text") ?? "";
 }
 
+function readEventRole(event: RunEventEnvelope): string {
+  return readOptionalRecordString(readRecord(event.data), "role") ?? "";
+}
+
 function readEventError(event: RunEventEnvelope): string {
   const data = readRecord(event.data);
-  return readOptionalRecordString(data, "message") || readOptionalRecordString(data, "error") || "";
+  return readOptionalRecordString(data, "message") || readOptionalRecordString(data, "errorMessage") || readOptionalRecordString(data, "error") || "";
 }
 
 function readErrorBodyMessage(body: unknown, responseLanguage: ResponseLanguagePreference | undefined, message: string): string {
@@ -694,7 +772,9 @@ function fallbackAssistantContent(status: ConversationTranscriptStatus, response
     return language === "zh-CN" ? "这次运行已取消。" : "Ling Agent run was cancelled.";
   }
   if (status === "succeeded") {
-    return language === "zh-CN" ? "这次运行已完成，但没有返回文本内容。" : "Ling Agent finished without text output.";
+    return language === "zh-CN"
+      ? "模型没有返回可显示的内容，请重试或切换模型。"
+      : "The model returned no displayable content. Retry or choose another model.";
   }
   return conversationRunFailedContent(responseLanguage, message);
 }
@@ -771,13 +851,26 @@ function buildConversationRunPrompt(
   message: string,
   attachments: readonly ConversationAttachment[],
   materializations: ReadonlyMap<string, ConversationAttachmentMaterialization>,
+  fileRefs: readonly ChannelMessageFileRef[],
 ): string {
   const trimmedMessage = message.trim();
   const parts = [
     trimmedMessage || "User attached files.",
     renderConversationAttachmentsForPrompt(attachments, materializations),
+    renderConversationFileRefsForPrompt(fileRefs),
   ].filter((part) => part.trim());
   return parts.join("\n\n");
+}
+
+function renderConversationFileRefsForPrompt(fileRefs: readonly ChannelMessageFileRef[]): string {
+  if (fileRefs.length === 0) {
+    return "";
+  }
+  return [
+    "Workspace file references:",
+    ...fileRefs.map((fileRef, index) => `- ${index + 1}. ${fileRef.label ? `${fileRef.label}: ` : ""}${fileRef.path}${fileRef.line ? `:${fileRef.line}` : ""}`),
+    "Treat these as user-supplied references only. Existing workspace and approval policy still controls access.",
+  ].join("\n");
 }
 
 function renderConversationAttachmentsForPrompt(

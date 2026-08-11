@@ -10,6 +10,12 @@ by [Work History IA Cleanup](work-history-ia-cleanup.md). The durable V2 models 
 remain valid, but future UI work should not treat Work History as the customer-primary
 global work surface.
 
+Continuity update, 2026-08-06: [Channel Conversation Continuity v2](channel-conversation-continuity-v2.md)
+supersedes the earlier boundary that created `LingTurn` only for executable work and kept
+ordinary conversation exclusively in `channel_messages`. The durable model is now
+`LingThread -> LingTurn -> ConversationItem`; runs and evidence are referenced domain
+records inside a turn. Work History remains the denser audit and recovery projection.
+
 ## Purpose
 
 V1 renamed and reframed the Runs surface into a thread-first Work History shell. V2
@@ -37,6 +43,7 @@ drill-down.
 
 ## Related Docs
 
+- [Channel Conversation Continuity v2](channel-conversation-continuity-v2.md)
 - [Thread-First Work History](thread-first-work-history.md)
 - [Thread-First Work History Implementation Plan](thread-first-work-history-implementation-plan.md)
 - [Conversation Surface Contract](./conversation-surface-contract.md)
@@ -81,8 +88,12 @@ Ling's mapped model is:
 ```text
 LingThread
   -> LingTurn
-    -> RunSession attempt
-      -> Evidence item
+    -> ConversationItem
+      -> message / tool / approval / handoff / operation / artifact ref
+
+LingTurn
+  -> zero or more RunSession attempts
+  -> existing workflow / approval / artifact / evidence authority
 ```
 
 That durable model is not the same object as the user-visible conversation transcript.
@@ -497,7 +508,8 @@ conversation content.
 
 `LingTurn` is the durable user-intent boundary inside a `LingThread`.
 
-It is not a chat message table. It records work-triggering intent and lineage.
+It is not a chat message table. It records ordinary and executable intent, lineage, and
+terminal outcome. Ordered observable content belongs to `ConversationItem`.
 
 ```ts
 type LingTurnKind =
@@ -535,7 +547,7 @@ interface LingTurn {
   readonly workflowStepId?: string;
   readonly externalWorkId?: string;
   readonly automationId?: string;
-  readonly sourceMessageId?: string;
+  readonly sourceItemId?: string;
   readonly sourceTurnId?: string;
   readonly interventionId?: string;
   readonly activeRunId?: string;
@@ -579,7 +591,7 @@ CREATE TABLE ling_turns (
   workflow_step_id TEXT,
   external_work_id TEXT,
   automation_id TEXT,
-  source_message_id TEXT,
+  source_item_id TEXT,
   source_turn_id TEXT,
   intervention_id TEXT,
   active_run_id TEXT,
@@ -613,29 +625,27 @@ CREATE INDEX ling_turn_runs_run_idx
 
 ### Creation Rules
 
-Create a turn when a work-triggering intent is accepted:
+Create a turn for every accepted local-user input before selector or reply routing.
+Also create turns for independent system-originated work lifecycles:
 
+- ordinary channel or direct conversation input;
 - workspace task run starts;
-- channel message creates executable work;
+- channel input creates executable work;
 - manual follow-up or queued follow-up is accepted;
 - run redirect/interruption is recorded;
 - workflow step starts;
 - automation tick starts real work;
 - external work update is routed into Ling work.
 
-Do not create a turn for every normal chat message unless that message creates or
-continues executable work.
-
-This rule is about durable work records, not about UI rendering. The conversation feed may
-still render a `ConversationTranscriptTurn` for a user message that only needs coordinator
-prose, clarification, or discussion. That UI turn does not require a `LingTurn` unless it
-creates executable work, continues a previous work turn, queues a follow-up, redirects an
-active run, or records an external work update.
+An ordinary reply turn can complete without a run. Executable work links the same turn to
+one or more run attempts through `ling_turn_runs`. This keeps conversation continuity,
+segmentation, summary coverage, resume, and multi-agent recovery on one durable turn
+boundary.
 
 Do not infer this boundary by matching assistant copy. A message that says `确认需求` is not
-automatically a work turn, and a message that omits `完成` can still be terminal. The
-materialization decision must come from intent selection, target resolution, runtime
-state, and explicit turn metadata.
+automatically executable work, and a message that omits `完成` can still be terminal. Turn
+creation comes from accepted input or an explicit system lifecycle; execution and terminal
+state come from intent, target resolution, runtime state, and explicit metadata.
 
 ### Status Reconciliation
 
@@ -646,6 +656,7 @@ active run queued/running -> running
 any linked run waiting_for_approval -> waiting_for_approval
 latest terminal run succeeded -> succeeded
 latest terminal run failed and no queued continuation -> failed
+ordinary reply committed with no run -> succeeded
 active redirect accepted -> cancelled or superseded, then child turn running
 manual follow-up queued -> open or running depending on continuation state
 ```
@@ -734,7 +745,7 @@ raw runtime/channel records
 
 Projection rules:
 
-- one user task should normally produce one `ConversationTranscriptTurn` in the main feed;
+- one user turn should normally produce one `ConversationTranscriptTurn` in the main feed;
 - coordinator start text, operation cells, agent spans, terminal text, and artifacts are
   blocks inside that same turn, not separate `Ling Agent` replies;
 - `OperationCell` blocks use stable ids, mutate while active, and commit in place when
@@ -746,17 +757,18 @@ Projection rules:
 - raw/detail fields are referenced from blocks and rendered only in expanded/raw surfaces,
   not duplicated in the main transcript or right drawer root.
 
-`LingTurn` and `ConversationTranscriptTurn` can be related but are not identical:
+`LingTurn` and `ConversationTranscriptTurn` are now one-to-one at the user-intent
+boundary, while transcript blocks remain a derived presentation model:
 
 | Concept | Owner | Purpose | Example |
 | --- | --- | --- | --- |
-| `LingTurn` | daemon durable work store | executable intent, lineage, resume/fork/archive anchors | a task run, queued follow-up, interrupt redirect |
-| `ConversationTranscriptTurn` | shared transcript projection | one user-visible turn in channel/private conversation | user request plus coordinator prose, operation cells, agent spans, terminal summary |
+| `LingTurn` | daemon durable conversation store | ordinary or executable intent, lineage, context assignment, terminal outcome | user question, task run, queued follow-up, interrupt redirect |
+| `ConversationTranscriptTurn` | shared transcript projection | user-visible projection of the durable turn | user request plus coordinator prose, operation cells, agent spans, terminal summary |
 | `TranscriptBlock` | shared transcript projection | renderable semantic unit with lifecycle | operation cell, agent activity span, approval state, artifact strip |
 
-This split prevents three common failures:
+This boundary prevents three common failures:
 
-1. creating durable work rows for every normal chat message;
+1. leaving normal chat outside durable recovery and context assignment;
 2. splitting one user task into multiple `Ling Agent` replies because start text and
    terminal text were stored as unrelated messages;
 3. deleting completed process rows because the final coordinator summary is treated as a

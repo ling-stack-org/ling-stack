@@ -15,6 +15,7 @@ import type {
   RemoteConversationSummaryV1,
 } from "@ling-stack/contracts";
 import { listChannelBranchRootThreadIds } from "../channels/conversation-surface.js";
+import { listChannelMessageViewsPage } from "../channels/conversation-item-messages.js";
 import {
   buildConversationSupersessionProjection,
   filterSupersededChannelMessages,
@@ -109,7 +110,8 @@ export class ChannelRemoteConversationAdapter extends BaseRemoteConversationAdap
 
   open(conversationId: string, olderPageCursor: string | undefined, now: string): RemoteConversationPage {
     const channel = this.requireChannel(conversationId);
-    const page = this.options.store.listChannelMessagesPage({
+    const page = listChannelMessageViewsPage({
+      store: this.options.store,
       channelId: channel.id,
       excludeThreadIds: listChannelBranchRootThreadIds(this.options.store, channel.id),
       ...(olderPageCursor ? { beforeMessageId: olderPageCursor } : {}),
@@ -133,13 +135,13 @@ export class ChannelRemoteConversationAdapter extends BaseRemoteConversationAdap
     if (!channel || channel.workspaceId !== this.options.workspaceId) {
       return false;
     }
-    return this.options.store.listChannelMessagesPage({ channelId: channel.id, limit: 100 }).messages
+    return listChannelMessageViewsPage({ store: this.options.store, channelId: channel.id, limit: 100 }).messages
       .some((message) => message.authorType !== "local-user" && message.status === "pending");
   }
 
   private projectSummary(channel: Channel, now: string): RemoteConversationSummaryV1 {
     const readState = this.readState(channel.id, now);
-    const latest = this.options.store.listChannelMessagesPage({ channelId: channel.id, limit: 1 }).messages.at(-1);
+    const latest = listChannelMessageViewsPage({ store: this.options.store, channelId: channel.id, limit: 1 }).messages.at(-1);
     return {
       workspaceId: this.options.workspaceId,
       conversationId: channel.id,
@@ -160,7 +162,7 @@ export class ChannelRemoteConversationAdapter extends BaseRemoteConversationAdap
     message: ChannelMessage,
     now: string,
   ): RemoteConversationMessageV1 {
-    const version = this.version(message.channelId, "channel_message", message.id);
+    const version = this.version(message.channelId, "conversation_item", message.id);
     const teammate = message.authorId ? this.options.store.getAiTeammate(message.authorId) : undefined;
     const role = message.authorType === "local-user"
       ? "local_user"

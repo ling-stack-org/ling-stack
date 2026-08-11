@@ -1,3 +1,4 @@
+import { appendChannelItemFixture, getChannelItemViewFixture, listChannelItemViewsFixture, updateChannelItemFixture } from "./channel-conversation-fixture.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -42,7 +43,7 @@ test("sqlite channel team evidence round-trips without visible message or runtim
   const now = "2026-06-26T00:00:00.000Z";
   const store = createSqliteRunStore(cwd);
   const channel = store.createChannel({ name: "Engineering", boundPath: cwd }, now);
-  const message = store.createChannelMessage(
+  const message = appendChannelItemFixture(store,
     {
       channelId: channel.id,
       authorType: "local-user",
@@ -56,7 +57,7 @@ test("sqlite channel team evidence round-trips without visible message or runtim
   const database = new DatabaseSync(paths.databasePath);
   try {
     const evidence = openChannelTeamEvidenceStore(database);
-    const beforeMessageCount = readCount(database, "channel_messages");
+    const beforeMessageCount = readCount(database, "conversation_items");
     const beforeRunEventCount = readCount(database, "run_events");
 
     const created = evidence.createChannelTeamEvidenceItem(
@@ -85,7 +86,7 @@ test("sqlite channel team evidence round-trips without visible message or runtim
     assert.equal(created.visibility, "folded_evidence");
     assert.deepEqual(created.sourceRefs, [{ type: "message", id: message.id, label: "User request" }]);
     assert.deepEqual(created.payload, { noteType: "specialist_note", hiddenReasoningStored: false });
-    assert.equal(readCount(database, "channel_messages"), beforeMessageCount);
+    assert.equal(readCount(database, "conversation_items"), beforeMessageCount);
     assert.equal(readCount(database, "run_events"), beforeRunEventCount);
 
     const relevance = evidence.createChannelTeamEvidenceItem(
@@ -151,7 +152,7 @@ test("sqlite channel team evidence round-trips without visible message or runtim
     assert.equal(updated?.evidenceGrade, "verified");
     assert.equal(updated?.confidence, undefined);
     assert.deepEqual(updated?.payload, { noteType: "specialist_note", adoptedBy: "ling_agent" });
-    assert.equal(readCount(database, "channel_messages"), beforeMessageCount);
+    assert.equal(readCount(database, "conversation_items"), beforeMessageCount);
     assert.equal(readCount(database, "run_events"), beforeRunEventCount);
   } finally {
     database.close();

@@ -2,7 +2,7 @@
 
 Status: active design contract for the shared conversation UI
 Date: 2026-06-28
-Updated: 2026-07-13
+Updated: 2026-08-06
 Scope: normal conversation, channel root, channel branch, topic reply, teammate private
 chat, run/thread detail, and future Desktop/PC conversation renderers
 
@@ -189,6 +189,17 @@ message/composer/evidence model.
     serial/parallel work, handoffs, and terminal summaries must render inside the one
     visible work object for the turn; UI projections cannot create a second workflow
     engine or authorize state transitions.
+20. A conversation send has one cross-surface lifecycle: `submitting` ->
+    `message_accepted` -> `reply_linked` -> `settled`. The Composer may accept guidance
+    after `reply_linked`; it must not wait for the assistant reply to finish. Each accepted
+    submit keeps its own request identity, so a later submit cannot invalidate an earlier
+    request that is still receiving transport events. Channel `reply_pending` is an
+    intermediate transport projection only for the message preparing a new reply; a queued
+    follow-up skips it and returns durable queue disposition instead. Neither path adds
+    another lifecycle state or execution object.
+21. File paste is owned by the shared tokenized input. Clipboard files enter the same
+    attachment upload path as the attach button and drag/drop. Clipboard HTML is never
+    inserted into the editable transcript input.
 
 ## Surface Capability Matrix
 
@@ -254,6 +265,88 @@ is active, the authorization control stays visible but locked. The active execut
 the request/effective-policy snapshot captured before start; UI changes cannot mutate it
 mid-run.
 
+Active work guidance always targets a real cancellable `RunSession` and persists through
+the existing `RunIntervention` queue. Ordinary channel replies use that standard
+`RunSession` contract; the linked `channel_ai_reply` WorkUnit remains a supervision
+projection and cannot become a second execution authority. Whenever any teammate reply is
+active, the Composer remains the ordinary channel input and does not add a separate target
+selector. The daemon is the sole reply-target authority: no AI mention routes through Ling
+Agent, one AI mention targets that teammate, and multiple AI mentions return to Ling Agent
+for coordination rather than fan-out. The Web may project the resolved active reply for
+stop-button state, but it must not send an independent teammate selection.
+
+Every non-empty Composer submission is persisted as an ordinary channel user message. Root,
+each Branch, each message-keyed Topic, and each explicit Thread expose independent reply lanes.
+The Web sends an explicit `queue_followup` disposition only for the currently projected active
+reply on that line. The daemon validates the exact `activeRunId` against the Run's persisted
+`requestSnapshot.sourceMessageId`; a different line cannot capture the message. Within one line,
+the FIFO still follows the root source Run even when the message targets a different idle
+teammate. Message text never implies interruption. Only an empty Composer submit or an explicit
+Run detail action can stop the active reply on that line. No second guidance queue,
+continuation protocol, business table, or per-teammate parallel lane is permitted.
+
+The first targeted reply may spend time materializing attachments, links, or routing intent
+before its `RunSession` exists. During only that pre-link window, the daemon holds a
+process-local pending-reply lane keyed by workspace, channel, and conversation line. A rapid
+later submission may follow that existing predecessor without an `activeRunId`, wait for the
+owner's real Run linkage, and then append its normal durable `queue_followup`; target identity
+never creates another lane. A mode-only request with no live predecessor does not search for an
+arbitrary active Run and returns to normal intent routing. The lane stores
+no message body, is released when dispatch fails or produces no Run, and is cleared during
+daemon shutdown. It is concurrency coordination only: channel messages, `RunSession`, and
+`RunIntervention` remain the sole durable sources of truth.
+
+The Web send lifecycle reserves that channel lane synchronously. A later submission sees any
+older unsettled submission as its predecessor even before `reply_pending` or `run_linked`
+arrives, so its first visual frame is the guidance queue rather than a transcript bubble.
+When `followup_queued` arrives, the optimistic guidance rekeys to the durable intervention id
+and remains as a confirmed bridge until the authoritative intervention snapshot appears or
+the source message enters the transcript. The handoff must never expose an empty or duplicate
+intermediate frame.
+The daemon also fences the source Item between Turn persistence and dispatch
+classification. `GET /channels/:id/items` excludes a fenced Item until either the Turn
+owns the reply lane or its durable `queue_followup` exists. A refresh can therefore
+never expose a queued source Item during the persistence gap and then retract it.
+
+A `queue_followup` created from an already-persisted channel user message retains both
+`sourceMessageId` and `targetTeammateId` for audit and execution. Until its intervention has
+`startedAt`, that message is excluded from transcript projections and appears once in the
+Composer guidance queue. At `starting_continuation` it leaves the queue and enters the
+transcript; cancellation before start keeps it out of the transcript. Background activity
+refresh keeps retained feed content visible and must not reopen initial-loading chrome after
+the channel scope has loaded once.
+
+Runs and WorkUnits may arrive in separate refresh responses. When a Run references a
+`workUnitId` whose WorkUnit has not arrived yet, default chat treats its ownership as
+unresolved and does not render a runtime card. Audit/detail views may still expose it. Once
+the WorkUnit arrives, the normal visible-work rules decide whether the card belongs in chat;
+this fail-closed projection prevents completed reply supervision from flashing for one frame.
+
+The intervention payload carries the durable channel `sourceMessageId`; it must not recover
+that relationship by parsing an idempotency key. Each continuation creates one deterministic
+pending Agent message before execution. Its continuation WorkUnit owns that source user
+message and links to the pending Agent message, while the continuation Run retains
+`parentRunId` and `interventionId`. Every successful, failed, cancelled, blocked, or empty
+continuation therefore resolves to one visible message terminal state instead of completing
+only in the detached runtime sink.
+
+The daemon publishes the compact active-reply target only after both the `RunSession` and
+its supervising WorkUnit are durably linked. `queued`, `running`, and
+`waiting_for_approval` are all active reply states; `queued` is expected at the first
+`reply_linked` event and must already unlock the Composer for guidance or stop. This event
+contains only identifiers, scope, status, and timestamps. Channel targets include
+`sourceMessageId` for conversation-line projection while `threadId` remains the canonical
+LingThread id. It cannot contain prompts,
+provider snapshots, raw output, or credentials.
+
+The Web may use that SSE target while the authoritative conversation/channel/private
+runtime refresh catches up. Reconciliation merges by `runId`; it does not fabricate a
+complete `RunSession`, change domain ids, or create a second execution authority. A fetched
+Run detail may replace the list snapshot only when its `updatedAt` is newer; an older detail
+must never make a terminal reply look active again. Once guidance mode has ended, the
+channel target resets to Ling Agent so a later unmentioned message does not inherit a stale
+teammate choice.
+
 ## Component Contract
 
 ### ConversationShell
@@ -299,8 +392,42 @@ Rules:
 - entering a conversation opens at latest,
 - loading older messages preserves scroll position,
 - active/streaming rows update in place,
+- an optimistic send and its acknowledged conversation turn retain one render identity;
+  domain message and turn IDs remain unchanged,
+- while the user remains pinned to latest, text revisions and measured row-height changes
+  schedule at most one tail reconciliation per animation frame; explicit user scroll
+  disables follow until the user returns to latest,
+- channel Composer clearance is virtual feed `paddingEnd`, not duplicated viewport or row
+  padding,
 - virtualized and non-virtualized feeds must preserve row width and action placement,
 - empty state copy is surface-specific, but the visual component is shared.
+
+### Conversation Send Lifecycle
+
+Channel, normal conversation, and teammate private chat use the same owner-scoped send
+lifecycle:
+
+- `submitting`: that request has not yet been accepted; its immutable payload snapshot is
+  protected from duplicate submission, but an already-unlocked channel reply may accept a
+  second guidance request without globally locking the Composer,
+- `message_accepted`: the user message is durable; its optimistic reply projection remains
+  attached to that exact message until dispatch or a terminal no-reply result takes over,
+- `reply_linked`: a durable run/work-unit target exists; the Composer unlocks and its next
+  non-empty submit is guidance while an empty submit is stop,
+- `settled`: the reply is terminal and transient targets are cleared,
+- `failed_before_accept`: the original draft and pending assets are restored.
+
+Failures after `message_accepted` never restore the original payload because the message
+may already be durable. Concurrent request identities remain independently valid; an owner
+change rejects stale events from the previous surface, and duplicate active targets merge by
+`runId`. Clearing or restoring one request snapshot must not overwrite text or assets entered
+for a later request.
+
+Channel streaming emits `reply_pending` after message acceptance and canonical target
+resolution only when that message owns an idle channel lane. It occurs before materialization,
+intent selection, provider preparation, or Run creation and contains only `sourceMessageId`,
+`targetTeammateId`, and `startedAt`. A message that finds an active lane skips this event and
+returns its durable `followup_queued` disposition, so it cannot flash a false thinking row.
 
 ### MessageRow
 
@@ -317,11 +444,19 @@ Rules:
 
 - local user messages align right,
 - assistant/teammate/coordinator messages align left,
+- channel and teammate private chat render the local user avatar; normal conversation
+  intentionally renders no user or Ling Agent avatar,
 - repeated actor names are hidden when they add no information,
 - avatar size is compact and close to body text scale,
 - AI labels are not repeated when the teammate avatar and surface already identify the
   speaker,
 - streaming updates mutate one row, not multiple bubbles,
+- optimistic pending state and acknowledged pending state use the same `MessageRow`, body
+  typography and strong text color; only the spinner uses muted color,
+- the shared 13px pending spinner uses a 5px first-line offset; rows must not vertically
+  center the entire text block to compensate,
+- ordinary conversation body text uses 15px, 550 weight and the semantic strong text token
+  on all three desktop surfaces,
 - blocked and failed rows remain visible with an actionable reason.
 
 ### MessageActionBar
@@ -418,6 +553,11 @@ Rules:
 - channel teammate activity belongs above the message action row,
 - normal conversation and private chat may render compact work cells when actual work
   happened,
+- a successful text-only chat run is not visible work. WorkCell appears only for tool or
+  execution actions, non-approved approvals, files/artifacts, durable changes/risks, or a
+  failed/approval-blocked run,
+- generic successful verification summaries such as `1 check passed` do not create a
+  WorkCell by themselves,
 - run/thread detail can render the richest version of the same work contract.
 
 ## Surface Policies
@@ -536,6 +676,8 @@ All surfaces use the same state vocabulary:
 | `superseded` | a newer user-message revision replaced this logical turn | hidden from default transcript; visible in audit detail |
 | `editing` | latest local-user message is in the inline editor | keep row geometry stable and lock duplicate edit actions |
 | `succeeded` | terminal success | quiet terminal state |
+
+For identity switches inside an already loaded workspace, request activity does not automatically become a visible `loading` state. The feed hides the previous identity's snapshot, suppresses the empty state until the new first page commits, and only renders rows whose workspace and conversation owner match the selected surface.
 
 Do not invent page-local labels such as `complete-card`, `experts-running`, or
 `web_search_pending` as UI state. Those may be implementation details inside evidence,
@@ -720,7 +862,9 @@ Current first-pass matching:
 
 Rendering rules:
 
-- user messages remain right-aligned and do not show teammate avatar stacks,
+- user messages remain right-aligned and do not show avatars or teammate avatar stacks,
+- assistant messages do not show a Ling Agent avatar or repeat the Ling Agent label on
+  every ordinary reply,
 - assistant rows can show copy/feedback only when the action state exists,
 - compact work/evidence appears only when matched to real detail data,
 - normal conversation does not show topic reply,
@@ -836,6 +980,9 @@ Shared visual rules:
 - composer shell, toolbar, send button, pending asset strip, popovers, and focus states
   use one shared visual system across normal conversation, channel, and teammate
   private chat,
+- pending images, files, links and file references stay in one non-wrapping row; overflow
+  scrolls horizontally inside the strip and never expands the page or wraps into a second
+  Composer row,
 - user messages align with the same right edge as assistant rows' content column,
 - avatars are compact and actual where available,
 - icon stacks overlap cleanly with stable spacing,
@@ -845,7 +992,8 @@ Shared visual rules:
 - status-critical controls remain visible,
 - titles in evidence/source rows may use semantic accent color, but the surface must not
   collapse into a one-note palette,
-- text must not overlap or require horizontal scrolling outside code/log blocks.
+- text must not overlap or require horizontal scrolling outside code/log blocks,
+- the final visible message keeps at least 38px clearance above the channel composer.
 
 ## Regression Contract
 
@@ -872,6 +1020,25 @@ Every future slice touching conversation UI should keep or add focused tests for
 - Mermaid and structured Markdown render through the same body renderer on channel,
   normal, private, and topic surfaces,
 - invalid or incomplete Mermaid falls back to source without breaking the transcript.
+- pending text does not change size, weight or color when the server acknowledges it,
+- optimistic send acknowledgement does not replace the virtual row identity,
+- a channel message that owns an idle lane receives canonical `reply_pending` before costly
+  routing work; a queued follow-up receives no false pending projection and moves directly to
+  the durable guidance queue,
+- a pinned channel feed follows in-place streaming growth while user-scrolled history
+  keeps its visible anchor,
+- four pending images remain one internally scrollable Composer row on normal, channel and
+  teammate-private surfaces,
+- pasted files are prevented from entering the contenteditable DOM and use the same
+  attachment controller as selected or dropped files; both clipboard `files` and
+  file-kind `items` are recognized, while text paste accepts plain text only,
+- the tokenized editor remains `contenteditable=plaintext-only`, and all pending images
+  render through the same `ComposerPendingAssetStrip` card geometry on every surface,
+- successful text-only chat runs do not expose WorkCell status or generic check summaries,
+- runners that emit only final assistant text still produce one visible response without
+  duplicating providers that already emitted text deltas,
+- reasoning-only or structurally empty successful responses never become assistant body
+  text and fail provider readiness with `empty_response`.
 
 ## Implementation Slice Status
 

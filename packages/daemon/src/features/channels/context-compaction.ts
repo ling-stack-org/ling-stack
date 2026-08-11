@@ -1,10 +1,19 @@
-import type { Channel, ChannelContextSummary, ChannelMessage, ChannelWorkflowStep, RunArtifact, RunExecutionStoreFacet, RunStore } from "@ling-stack/core";
+import type { Channel, ChannelMessage, ChannelWorkflowStep, RunArtifact, RunExecutionStoreFacet, RunStore } from "@ling-stack/core";
+import type { ConversationContextSummary } from "@ling-stack/contracts";
 import {
   buildWorkflowStepContextPack,
   type ContextPack,
   type ContextSourceRef,
   type WorkflowStepContextPackInput,
 } from "./context-packs.js";
+import {
+  buildConversationContextProjection,
+  projectConversationContextMessages,
+} from "./context-processing/conversation-context-projector.js";
+import {
+  coordinateConversationContextSummary,
+  type ConversationSummaryDraft,
+} from "./context-processing/conversation-summary-coordinator.js";
 
 export interface WorkflowStepContextCompactionSummary {
   readonly schemaVersion: 1;
@@ -31,7 +40,7 @@ export interface WorkflowStepContextCompactionResult {
 }
 
 export interface ChannelDiscussionCompactionResult {
-  readonly summary: ChannelContextSummary;
+  readonly summary?: ConversationContextSummary;
   readonly compactedSummary: {
     readonly id: string;
     readonly text: string;
@@ -54,40 +63,88 @@ export function isContextLengthError(error: unknown): boolean {
   return CONTEXT_LENGTH_ERROR_PATTERNS.some((pattern) => pattern.test(message));
 }
 
-export function compactChannelDiscussionForNoToolsRetry(input: {
+export async function compactChannelDiscussionForNoToolsRetry(input: {
   readonly store: RunStore;
   readonly channel: Channel;
   readonly sourceMessage: ChannelMessage;
+  readonly inputBudgetTokens: number;
   readonly now: string;
-}): ChannelDiscussionCompactionResult {
-  const sourceMessages = selectChannelSummaryMessages(input.store, input.channel, input.sourceMessage);
-  const summaryText = renderChannelDiscussionSummary(input.channel, input.sourceMessage, sourceMessages);
-  const summary = input.store.createChannelContextSummary(
-    {
-      channelId: input.channel.id,
-      targetType: "thread",
-      targetId: input.sourceMessage.threadId ?? input.sourceMessage.id,
-      sourceMessageIds: sourceMessages.map((message) => message.id),
-      summary: summaryText,
-      acceptanceCriteria: [],
-      openQuestions: [],
-      authorType: "system",
+}): Promise<ChannelDiscussionCompactionResult> {
+  const result = await coordinateConversationContextSummary({
+    store: input.store,
+    sourceItemId: input.sourceMessage.id,
+    inputBudgetTokens: input.inputBudgetTokens,
+    policy: {
+      softCompletedTurnCount: 2,
+      softInputBudgetRatio: 0.01,
+      hardInputBudgetRatio: 0.02,
+      targetInputBudgetRatio: 0.1,
+      rawTailCompletedTurnCount: 1,
+      generationChunkBudgetRatio: 0.1,
     },
-    input.now,
-  );
+    generate: emergencySummaryDraft,
+    now: input.now,
+  });
+  const summary = result.status === "completed" && result.commit.status === "committed"
+    ? result.commit.summary
+    : selectActiveSegmentSummary(input.store, input.sourceMessage.id);
+  const sourceMessages = selectChannelSummaryMessages(input.store, input.channel, input.sourceMessage);
+  const summaryText = summary
+    ? renderCanonicalConversationSummary(summary)
+    : renderChannelDiscussionSummary(input.channel, input.sourceMessage, sourceMessages);
+  const sourceMessageIds = summary
+    ? summary.sourceRefs
+        .filter((ref) => ref.type === "conversation_item")
+        .map((ref) => ref.id)
+    : sourceMessages.map((message) => message.id);
   return {
-    summary,
+    ...(summary ? { summary } : {}),
     compactedSummary: {
-      id: summary.id,
+      id: summary?.id ?? `context_retry_${input.sourceMessage.id}`,
       text: [
         "Compacted channel discussion summary for a no-tools retry:",
-        summary.summary,
+        summaryText,
         "",
         "Use this summary instead of expanding older channel history. It excludes private teammate chat, hidden prompts, provider secrets, raw artifact bodies, and protocol mutations.",
       ].join("\n"),
-      sourceMessageIds: summary.sourceMessageIds,
+      sourceMessageIds,
     },
   };
+}
+
+async function emergencySummaryDraft(input: {
+  readonly current: ConversationSummaryDraft;
+  readonly items: readonly import("@ling-stack/contracts").ConversationItemV1[];
+}): Promise<ConversationSummaryDraft> {
+  const latestUserBody = [...input.items]
+    .reverse()
+    .find((item) => item.kind === "user_message")?.payload.body;
+  return {
+    objective: input.current.objective ?? (latestUserBody ? truncateSummary(latestUserBody, 1_200) : undefined),
+    decisions: input.current.decisions,
+    constraints: input.current.constraints,
+    openQuestions: input.current.openQuestions,
+  };
+}
+
+function selectActiveSegmentSummary(
+  store: RunStore,
+  sourceItemId: string,
+): ConversationContextSummary | undefined {
+  const projection = buildConversationContextProjection({ store, sourceItemId, view: "reply" });
+  return projection.summaries.find((summary) =>
+    summary.scope === "segment" && summary.segmentId === projection.metadata.segmentId);
+}
+
+function renderCanonicalConversationSummary(summary: ConversationContextSummary): string {
+  return [
+    summary.objective ? `Objective: ${summary.objective}` : undefined,
+    summary.decisions.length > 0 ? `Decisions: ${summary.decisions.join(" | ")}` : undefined,
+    summary.constraints.length > 0 ? `Constraints: ${summary.constraints.join(" | ")}` : undefined,
+    summary.openQuestions.length > 0 ? `Open questions: ${summary.openQuestions.join(" | ")}` : undefined,
+    `Coverage: ${summary.coveredFromSequence}-${summary.coveredThroughSequence}`,
+    `Source refs: ${summary.sourceRefs.length}`,
+  ].filter((line): line is string => Boolean(line)).join("\n");
 }
 
 export function maybeCompactWorkflowStepContext(input: {
@@ -131,21 +188,18 @@ function shouldCompactWorkflowStepContext(pack: ContextPack): boolean {
 }
 
 function selectChannelSummaryMessages(store: RunStore, channel: Channel, sourceMessage: ChannelMessage): readonly ChannelMessage[] {
-  const byId = new Map<string, ChannelMessage>();
-  for (const message of store.listChannelMessages({ channelId: channel.id, limit: 30 })) {
-    if (message.status === "pending" || !message.body.trim()) {
-      continue;
-    }
-    byId.set(message.id, message);
-  }
-  byId.set(sourceMessage.id, sourceMessage);
-  return [...byId.values()]
-    .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
-    .slice(-20);
+  const projection = buildConversationContextProjection({
+    store,
+    sourceItemId: sourceMessage.id,
+    view: "reply",
+    maxTailTextChars: 8_192,
+  });
+  return projectConversationContextMessages(projection, store)
+    .filter((message) => message.status !== "pending" && Boolean(message.body.trim()));
 }
 
 function renderChannelDiscussionSummary(channel: Channel, sourceMessage: ChannelMessage, messages: readonly ChannelMessage[]): string {
-  const recentLines = messages.slice(-12).map((message) => [
+  const projectedLines = messages.map((message) => [
     `- ${message.createdAt} ${message.authorType}${message.authorId ? `:${message.authorId}` : ""}`,
     message.threadId ? `thread=${message.threadId}` : undefined,
     `kind=${message.kind}`,
@@ -155,9 +209,8 @@ function renderChannelDiscussionSummary(channel: Channel, sourceMessage: Channel
     `Channel: ${channel.name} (${channel.id})`,
     `Source message: ${sourceMessage.id}`,
     `Compacted visible message count: ${messages.length}.`,
-    "Recent visible channel messages:",
-    ...recentLines,
-    messages.length > recentLines.length ? `- ${messages.length - recentLines.length} older visible messages omitted from retry prompt; source refs remain on the summary record.` : undefined,
+    "Projected visible conversation items:",
+    ...projectedLines,
   ].filter((line): line is string => line !== undefined).join("\n");
 }
 

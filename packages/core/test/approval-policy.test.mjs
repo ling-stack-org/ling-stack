@@ -1,3 +1,4 @@
+import { appendChannelItemFixture, getChannelItemViewFixture, listChannelItemViewsFixture, updateChannelItemFixture } from "./channel-conversation-fixture.mjs";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -463,6 +464,166 @@ test("sqlite store persists run interventions, idempotency, FIFO order, cancella
     assert.equal(continuation?.parentRunId, "run_source");
     assert.equal(continuation?.interventionId, interventions[1].id);
     assert.equal(continuation?.continuationReason, "interrupt_redirect");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("sqlite store atomically claims pending interventions beyond the first history page", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-run-intervention-claim-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    store.createRun({
+      id: "run_claim_source",
+      cwd,
+      taskId: "task_claim_source",
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: {},
+      providerSnapshot: {},
+      requestSnapshot: {},
+      createdAt: "2026-08-08T00:00:00.000Z",
+    });
+
+    let pendingId = "";
+    for (let index = 0; index < 101; index += 1) {
+      const createdAt = new Date(Date.parse("2026-08-08T00:00:00.000Z") + index * 1_000).toISOString();
+      const intervention = store.createRunIntervention({
+        sourceRunId: "run_claim_source",
+        mode: "queue_followup",
+        instruction: `guidance ${index}`,
+        idempotencyKey: `claim-${index}`,
+      }, createdAt);
+      if (index < 100) {
+        store.updateRunInterventionStatus({
+          interventionId: intervention.id,
+          expectedStatuses: ["queued"],
+          status: "started",
+          startedAt: createdAt,
+          completedAt: createdAt,
+          now: createdAt,
+        });
+      } else {
+        pendingId = intervention.id;
+      }
+    }
+
+    const claimed = store.claimNextRunIntervention({
+      sourceRunId: "run_claim_source",
+      expectedStatuses: ["cancelling_source", "queued"],
+      status: "starting_continuation",
+      startedAt: "2026-08-08T00:02:00.000Z",
+      now: "2026-08-08T00:02:00.000Z",
+    });
+    assert.equal(claimed?.id, pendingId);
+    assert.equal(claimed?.status, "starting_continuation");
+    assert.equal(store.claimNextRunIntervention({
+      sourceRunId: "run_claim_source",
+      expectedStatuses: ["cancelling_source", "queued"],
+      status: "starting_continuation",
+      startedAt: "2026-08-08T00:02:01.000Z",
+      now: "2026-08-08T00:02:01.000Z",
+    }), undefined);
+    assert.equal(store.updateRunInterventionStatus({
+      interventionId: pendingId,
+      expectedStatuses: ["queued"],
+      status: "cancelled",
+      now: "2026-08-08T00:02:02.000Z",
+    }), undefined);
+    assert.equal(store.getRunIntervention(pendingId)?.status, "starting_continuation");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("sqlite store loads only the latest completed intervention replies before the current item", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-run-intervention-replies-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const channel = store.createChannel({ name: "Continuation context", boundPath: cwd }, "2026-08-08T00:00:00.000Z");
+    store.createRun({
+      id: "run_reply_context_source",
+      cwd,
+      taskId: "task_reply_context_source",
+      channelId: channel.id,
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: {},
+      providerSnapshot: {},
+      requestSnapshot: {},
+      createdAt: "2026-08-08T00:00:00.000Z",
+    });
+
+    const replyIds = [];
+    for (let index = 0; index < 8; index += 1) {
+      const timestamp = new Date(Date.parse("2026-08-08T00:00:00.000Z") + index * 1_000).toISOString();
+      const reply = appendChannelItemFixture(store, {
+        channelId: channel.id,
+        kind: "ai_reply",
+        intent: "discuss",
+        authorType: "ai-teammate",
+        authorId: "ling_agent",
+        body: `reply ${index}`,
+        mentions: [],
+        attachmentIds: [],
+        linkPreviewIds: [],
+        status: "ready",
+      }, timestamp);
+      const workUnit = store.createWorkUnit({
+        workspaceId: channel.workspaceId,
+        kind: "channel_ai_reply",
+        ownerType: "channel_message",
+        ownerId: reply.id,
+        channelId: channel.id,
+        idempotencyKey: `reply-context-work-unit-${index}`,
+        createdByActor: "local-user",
+        request: {},
+        linkedMessageId: reply.id,
+        now: timestamp,
+      });
+      const intervention = store.createRunIntervention({
+        sourceRunId: "run_reply_context_source",
+        mode: "queue_followup",
+        instruction: `guidance ${index}`,
+        idempotencyKey: `reply-context-intervention-${index}`,
+      }, timestamp);
+      store.updateRunInterventionStatus({
+        interventionId: intervention.id,
+        expectedStatuses: ["queued"],
+        status: "started",
+        continuationWorkUnitId: workUnit.id,
+        startedAt: timestamp,
+        completedAt: timestamp,
+        now: timestamp,
+      });
+      replyIds.push(reply.id);
+    }
+    const current = store.createRunIntervention({
+      sourceRunId: "run_reply_context_source",
+      mode: "queue_followup",
+      instruction: "current guidance",
+      idempotencyKey: "reply-context-current",
+    }, "2026-08-08T00:00:09.000Z");
+
+    assert.deepEqual(
+      store.listPriorRunInterventionReplyMessages({
+        sourceRunId: "run_reply_context_source",
+        beforeInterventionId: current.id,
+        channelId: channel.id,
+        limit: 6,
+      }).map((message) => message.id),
+      replyIds.slice(-6),
+    );
+    assert.deepEqual(
+      store.listPriorRunInterventionReplyMessages({
+        sourceRunId: "run_reply_context_source",
+        beforeInterventionId: current.id,
+        channelId: channel.id,
+      }).map((message) => message.id),
+      replyIds,
+    );
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });

@@ -13,14 +13,17 @@ export class ActiveRunRegistry {
   add(runId: string, run: ActiveRun): void {
     this.activeRuns.set(runId, run);
     if (run.completion) {
-      const completion = run.completion;
-      this.completions.add(completion);
-      completion.then(() => {
-        this.completions.delete(completion);
-      }, () => {
-        this.completions.delete(completion);
-      });
+      this.trackCompletion(run.completion);
     }
+  }
+
+  trackCompletion(completion: Promise<unknown>): void {
+    this.completions.add(completion);
+    completion.then(() => {
+      this.completions.delete(completion);
+    }, () => {
+      this.completions.delete(completion);
+    });
   }
 
   get(runId: string): ActiveRun | undefined {

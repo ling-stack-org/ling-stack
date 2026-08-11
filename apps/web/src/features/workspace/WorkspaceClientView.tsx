@@ -68,6 +68,7 @@ import {
   type ChannelActivityTriageResult,
 } from "../../lib/channel-activity-triage.js";
 import { buildConversationWorkCellDetailsFromThreadEvidence, buildConversationWorkCellViewModel, groupRunsByThreadId, type ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
+import { deriveSilentChannelReplyRunIds } from "../../lib/conversation-runtime-visibility.js";
 import { buildConversationTurnProjection } from "../../lib/conversation-turn-projector.js";
 import { buildCollaborationTaskCardModel, type CollaborationTaskCardModel } from "../../lib/collaboration-task-card.js";
 import {
@@ -116,6 +117,7 @@ import { TeammateAvatarView } from "../teammates/TeammateAvatarView.js";
 import { IconButton, InlineFeedback, Spinner } from "../../shared/ui/index.js";
 import {
   ConversationStatusStrip,
+  useConversationSendLifecycle,
   type DockPageKind,
   type ConversationWorkCellDetailsState,
 } from "../../shared/conversation/index.js";
@@ -182,7 +184,11 @@ import type {
   ChannelMention,
   ChannelMessage,
   ChannelMessageFileRef,
+  ChannelReplyPendingEvent,
   ChannelMessageRouteDecision,
+  ChannelReplyDispatch,
+  ChannelReplyDisposition,
+  ConversationActiveReplyTarget,
   ChannelTeamMetricsProjection,
   ChannelExecutionProposal,
   UpdateChannelExecutionProposalRequest,
@@ -255,6 +261,7 @@ import { useChannelActivityController } from "./useChannelActivityController.js"
 import { useChannelWorkThreadsController } from "./useChannelWorkThreadsController.js";
 import { useChannelComposerDraftController } from "./useChannelComposerDraftController.js";
 import { useChannelComposerActionsController } from "./useChannelComposerActionsController.js";
+import { useChannelGuidanceTargetController } from "./useChannelGuidanceTargetController.js";
 import { useChannelThreadReplyController } from "./useChannelThreadReplyController.js";
 import { useChannelComposerInputController } from "./useChannelComposerInputController.js";
 import { useChannelComposerSnapshotController } from "./useChannelComposerSnapshotController.js";
@@ -653,6 +660,11 @@ export function WorkspaceClientView({
     readonly linkPreviewIds: readonly string[];
     readonly fileRefs: readonly ChannelMessageFileRef[];
     readonly requestAiReply: boolean;
+    readonly replyDisposition?: ChannelReplyDisposition;
+    readonly onMessageAccepted?: (message: ChannelMessage) => void;
+    readonly onReplyPending?: (pending: ChannelReplyPendingEvent) => void;
+    readonly onReplyLinked?: (target: ConversationActiveReplyTarget) => void;
+    readonly onReplyDispatch?: (dispatch: ChannelReplyDispatch) => void;
   }) => Promise<{ readonly errorMessage?: string }>;
   readonly onConfirmExecutionProposal: (proposal: ChannelExecutionProposal) => void;
   readonly onCancelExecutionProposal: (proposal: ChannelExecutionProposal) => void;
@@ -965,11 +977,23 @@ export function WorkspaceClientView({
     () => channelWorkCellDemoFixture ? [...channelMessages, ...channelWorkCellDemoFixture.channelMessages] : channelMessages,
     [channelMessages, channelWorkCellDemoFixture],
   );
+  const visibleChannelMessageIds = useMemo(
+    () => new Set(channelMessagesForDisplay.map((message) => message.id)),
+    [channelMessagesForDisplay],
+  );
   const latestEditableChannelMessageId = useMemo(() => [...channelMessagesForDisplay]
     .filter((message) => message.authorType === "local-user" && !message.pendingReplacement)
-    .filter((message) => selectedChannelBranchRootThreadId
-      ? message.threadId === selectedChannelBranchRootThreadId
-      : !message.threadId)
+    .filter((message) => {
+      if (message.threadSurfaceKind) {
+        return selectedChannelBranchRootThreadId
+          ? message.threadSurfaceKind === "branch" && message.threadId === selectedChannelBranchRootThreadId
+          : message.threadSurfaceKind === "channel_root";
+      }
+      // Data-only legacy fixtures have no canonical topology metadata.
+      return selectedChannelBranchRootThreadId
+        ? message.threadId === selectedChannelBranchRootThreadId
+        : !message.threadId;
+    })
     .at(-1)?.id, [channelMessagesForDisplay, selectedChannelBranchRootThreadId]);
   const memoryByIdForDisplay = useMemo(() => {
     if (!channelWorkCellDemoFixture) {
@@ -1426,41 +1450,23 @@ export function WorkspaceClientView({
   const providerBlocker = providerRunPreflightBlocker(effectiveProvider, t);
   const activeLeaseCount = resourceLeases.filter((lease) => lease.status === "active").length;
   const taskActionPending = activeTaskRunAction !== undefined;
-  const activeConversationRun = activeRun && runCanBeStoppedInComposer(activeRun, workflowStepById)
+  const fallbackConversationRun = activeRun && runCanBeStoppedInComposer(activeRun, workflowStepById)
     ? activeRun
     : channelRuns.find((candidate) => runCanBeStoppedInComposer(candidate, workflowStepById));
-  const activeConversationRunHasWorkflowStep = Boolean(activeConversationRun?.workflowStepId);
-  const activeConversationSourceRunId = activeConversationRun ? activeConversationRun.parentRunId ?? activeConversationRun.id : "";
-  const activeConversationTask = activeConversationRun?.taskId ? taskById.get(activeConversationRun.taskId) : undefined;
-  const channelActiveStatusStrip = activeConversationRun && !activeConversationRunHasWorkflowStep ? (
-    <ConversationStatusStrip
-      className="channel-active-status-strip conversation-composer-status-strip"
-      icon={<Workflow size={15} />}
-      title={t("Run in progress")}
-      description={activeConversationTask ? t("Run for {title} is {status}.", { title: activeConversationTask.title, status: activeConversationRun.status }) : t("Run is still running.")}
-      statusNode={<ChannelActiveStatusIndicator kind="run" status={activeConversationRun.status} />}
-      metaItems={[
-        { id: "provider", label: t("Provider"), value: effectiveProvider?.displayName ?? t("No model selected") },
-        { id: "approvals", label: t("Approvals"), value: pendingApprovalCount },
-      ]}
-      actions={[
-        {
-          id: "open-run",
-          label: t("Open run"),
-          icon: <SquareTerminal size={14} />,
-          onClick: () => openRunInPanel(activeConversationRun.id),
-        },
-        {
-          id: "stop-run",
-          label: isCancellingRun ? t("Stopping") : t("Stop"),
-          icon: isCancellingRun ? <Loader2 className="spin" size={14} /> : <Square size={14} />,
-          danger: true,
-          disabled: isCancellingRun,
-          onClick: () => onCancelActiveRun(activeConversationRun),
-        },
-      ]}
-    />
-  ) : pendingApprovalCount > 0 && inlineApprovalViews.length === 0 ? (
+  const guidanceTeammateLabelById = useMemo(() => new Map([
+    ...teammateTemplates.map((teammate) => [teammate.id, teammate.name] as const),
+    ...localTeammates.map((teammate) => [teammate.id, teammate.displayName] as const),
+  ]), [localTeammates, teammateTemplates]);
+  const channelGuidanceTeammateLabel = useMemo(
+    () => (teammateId: string | undefined) => teammateId
+      ? guidanceTeammateLabelById.get(teammateId) ?? (teammateId === LING_AGENT_AUTHOR_ID ? t("Ling Agent") : t("AI teammate"))
+      : t("AI teammate"),
+    [guidanceTeammateLabelById, t],
+  );
+  const channelSendLifecycle = useConversationSendLifecycle(
+    `channel:${selectedChannelId}:${selectedChannelBranchRootThreadId ?? "root"}`,
+  );
+  const channelActiveStatusStrip = pendingApprovalCount > 0 && inlineApprovalViews.length === 0 ? (
     <ConversationStatusStrip
       className="channel-active-status-strip conversation-composer-status-strip attention"
       icon={<ShieldCheck size={15} />}
@@ -1699,6 +1705,16 @@ export function WorkspaceClientView({
       workflowProgressByWorkflowId,
     ],
   );
+  const silentChannelReplyRunIds = useMemo(
+    () => deriveSilentChannelReplyRunIds({
+      runs: channelRuns,
+      workUnits,
+      approvals,
+      executionActions: channelExecutionActionsForDisplay,
+      terminalReports: terminalReportsForDisplay,
+    }),
+    [approvals, channelExecutionActionsForDisplay, channelRuns, terminalReportsForDisplay, workUnits],
+  );
   const renderableActivityItems = useMemo(
     () => visibleActivityItems.filter((item) => {
       if (!auditActivityVisible && conversationTurnProjection.hiddenActivityIds.has(item.id)) {
@@ -1710,13 +1726,16 @@ export function WorkspaceClientView({
       if (!auditActivityVisible && item.kind === "run" && workflowRepresentedRunIds.has(item.record.id)) {
         return false;
       }
+      if (!auditActivityVisible && item.kind === "run" && silentChannelReplyRunIds.has(item.record.id)) {
+        return false;
+      }
       if (item.kind !== "run" || !item.record.threadId) {
         return true;
       }
       const workCell = conversationWorkCellByThreadId.get(item.record.threadId);
       return !workCell || workCell.anchorRunId === item.record.id;
     }),
-    [auditActivityVisible, conversationTurnProjection.hiddenActivityIds, conversationWorkCellByThreadId, visibleActivityItems, workflowProgressByWorkflowId, workflowRepresentedRunIds],
+    [auditActivityVisible, conversationTurnProjection.hiddenActivityIds, conversationWorkCellByThreadId, silentChannelReplyRunIds, visibleActivityItems, workflowProgressByWorkflowId, workflowRepresentedRunIds],
   );
   const latestVisibleActivityItemId =
     renderableActivityItems.length > 0 ? renderableActivityItems[renderableActivityItems.length - 1]?.id ?? "" : "";
@@ -1790,8 +1809,27 @@ export function WorkspaceClientView({
     ],
     [allTeammateOptions, channelTeammateIds],
   );
-  const threadReplyController = useChannelThreadReplyController({
+  const channelGuidanceTarget = useChannelGuidanceTargetController({
+    selectedChannelId,
+    conversationLineThreadId: selectedChannelBranchRootThreadId,
     channelMessages,
+    channelRuns,
+    workUnits,
+    transientReplies: channelSendLifecycle.activeReplies,
+    fallbackRun: fallbackConversationRun,
+    messageMentions,
+    teammateLabel: channelGuidanceTeammateLabel,
+  });
+  const activeConversationTarget = channelGuidanceTarget.activeTarget;
+  const guidanceModeActive = channelGuidanceTarget.guidanceModeActive;
+  const activeConversationSourceRunId = channelGuidanceTarget.sourceRunId;
+  const threadReplyController = useChannelThreadReplyController({
+    cwd,
+    selectedChannelId,
+    channelMessages,
+    channelRuns,
+    workUnits,
+    transientReplies: channelSendLifecycle.activeReplies,
     teammateOptions,
     onSendMessage,
   });
@@ -2494,7 +2532,7 @@ export function WorkspaceClientView({
     insertMentionTrigger,
     handleComposerTextChange,
     handleComposerKeyDown,
-    handleComposerPaste,
+    handleComposerPasteFiles,
     handleComposerDragOver,
     handleComposerDragLeave,
     handleComposerDrop,
@@ -2503,7 +2541,7 @@ export function WorkspaceClientView({
   } = useChannelComposerInputController({
     cwd,
     selectedChannelId,
-    activeConversationRun,
+    guidanceModeActive,
     messageDraft,
     setMessageDraft,
     pendingAttachments,
@@ -3050,7 +3088,12 @@ export function WorkspaceClientView({
       showComposerFeedback("info", t("Source unavailable"));
       return;
     }
-    const targetFeedItemId = `message:${plan.sourceMessageId}`;
+    const sourceTurn = conversationTurnProjection.turns.find((turn) =>
+      turn.sourceMessageId === plan.sourceMessageId ||
+      turn.coordinatorStartMessages.some((message) => message.id === plan.sourceMessageId) ||
+      turn.coordinatorTerminalMessages.some((message) => message.id === plan.sourceMessageId)
+    );
+    const targetFeedItemId = sourceTurn?.id ?? `message:${plan.sourceMessageId}`;
     const target = Array.from(document.querySelectorAll<HTMLElement>(".message-feed-virtual-row"))
       .find((element) => element.dataset.feedItemId === targetFeedItemId);
     if (!target) {
@@ -3078,8 +3121,6 @@ export function WorkspaceClientView({
     runGuidanceSubmitting,
     runGuidanceError,
     runGuidanceItems,
-    openRunGuidanceInterventions,
-    submitChannelRunGuidanceFromDraft,
     sendMessage,
     handleChannelComposerSubmit,
     dismissSendError,
@@ -3088,8 +3129,10 @@ export function WorkspaceClientView({
     selectedChannelId,
     selectedChannelBranchRootThreadId,
     selectedChannel,
-    activeConversationRun,
+    activeConversationTarget,
     activeConversationSourceRunId,
+    visibleChannelMessageIds,
+    sendLifecycle: channelSendLifecycle,
     isCancellingRun,
     composerHasSendableContent,
     assetOperationPending,
@@ -3102,10 +3145,7 @@ export function WorkspaceClientView({
     pendingLinkPreviews,
     setPendingLinkPreviews,
     composerInputParts,
-    composerFileRefs,
-    readyLinkPreviewIds,
-    composerBusy,
-    setComposerBusy,
+    composerInputRef,
     sendState,
     setSendState,
     setSendError,
@@ -3136,30 +3176,32 @@ export function WorkspaceClientView({
     isChannelCurrent: (channelId) => selectedChannelIdRef.current === channelId,
     rememberDetachedSendFailure: channelComposerSnapshots.rememberDetachedSendFailure,
     rememberDetachedSendSuccess: channelComposerSnapshots.rememberDetachedSendSuccess,
-    onCancelActiveRun,
+    onCancelActiveReply: (target) => {
+      if (target.activeReply.workUnitId) {
+        onCancelWorkUnit(target.activeReply.workUnitId);
+        return;
+      }
+      if (target.run) onCancelActiveRun(target.run);
+    },
     onRefreshChannelActivity,
     onRefreshTasks,
     onRefreshRunApprovals,
     onRefreshRuntime,
     t,
   });
-  const channelComposerSubmitDisabled = activeConversationRun
-    ? !selectedChannelId || isCancellingRun || Boolean(runGuidanceSubmitting) || (composerHasSendableContent && (composerBusy || assetOperationPending))
-    : !selectedChannelId || composerBusy || assetOperationPending || !composerHasSendableContent;
+  const channelComposerSubmitDisabled = composerHasSendableContent
+    ? !selectedChannelId || composerBusy || assetOperationPending || Boolean(runGuidanceSubmitting)
+    : !selectedChannelId || !activeConversationTarget || isCancellingRun;
   const composerSessionCommandActive = composerSlashIntent.kind === "session_command";
-  const channelComposerSubmitLabel = activeConversationRun
-    ? composerHasSendableContent
-      ? runGuidanceSubmitting === "queue_followup" ? t("Queueing guidance...") : t("Queue guidance")
-      : isCancellingRun ? t("Stopping run...") : t("Stop run")
+  const channelComposerSubmitLabel = activeConversationTarget && !composerHasSendableContent
+    ? t("Stop reply")
     : composerSessionCommandActive
       ? sendState === "sending" ? t("Applying command...") : t("Apply command")
     : composerSlashCommandActive
       ? sendState === "sending" ? t("Creating task...") : t("Create task")
       : sendState === "sending" ? t("Sending...") : t("Send");
-  const composerShortcutTitle = activeConversationRun
-    ? t("Enter queues guidance. Shift+Enter inserts a newline. Esc closes menus.")
-    : t("Enter sends. Shift+Enter inserts a newline. Esc closes menus.");
-  const channelComposerSubmitTitle = activeConversationRun && !composerHasSendableContent
+  const composerShortcutTitle = t("Enter sends. Shift+Enter inserts a newline. Esc closes menus.");
+  const channelComposerSubmitTitle = activeConversationTarget && !composerHasSendableContent
     ? channelComposerSubmitLabel
     : t("{action} (Enter)", { action: channelComposerSubmitLabel });
   const composerDropZoneStyle = {
@@ -3169,9 +3211,12 @@ export function WorkspaceClientView({
   const channelComposerPermissionPreset = permissionPreset ?? inferPermissionPreset(permissionMode);
 
   function channelMessageEditSurface(message: ChannelMessage): "channel_root" | "channel_branch" | "topic_reply" {
-    if (selectedChannelBranchRootThreadId && message.threadId === selectedChannelBranchRootThreadId) {
-      return "channel_branch";
+    if (message.threadSurfaceKind) {
+      if (message.threadSurfaceKind === "branch") return "channel_branch";
+      if (message.threadSurfaceKind === "topic") return "topic_reply";
+      return "channel_root";
     }
+    if (selectedChannelBranchRootThreadId && message.threadId === selectedChannelBranchRootThreadId) return "channel_branch";
     return message.threadId ? "topic_reply" : "channel_root";
   }
 
@@ -3199,6 +3244,7 @@ export function WorkspaceClientView({
       });
       setEditingChannelMessageId(undefined);
       await Promise.all([onRefreshChannelMessages(), onRefreshChannelActivity()]);
+      await threadReplyController.refreshThread();
     } catch (error) {
       setChannelMessageEditError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -3232,6 +3278,7 @@ export function WorkspaceClientView({
         setChannelReplacementRetryError(result.failureReason ?? pending.failureReason ?? "");
       }
       await Promise.all([onRefreshChannelMessages(), onRefreshChannelActivity()]);
+      await threadReplyController.refreshThread();
     } catch (error) {
       setChannelReplacementRetryError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -3338,11 +3385,12 @@ export function WorkspaceClientView({
     });
   }
 
-  const channelComposerPermissionLocked = Boolean(activeConversationRun) || sendState === "sending" || composerBusy || Boolean(runGuidanceSubmitting) || isCancellingRun;
+  const channelComposerPermissionLocked = guidanceModeActive || sendState === "sending" || composerBusy || Boolean(runGuidanceSubmitting) || isCancellingRun;
   const channelComposer = (
     <ChannelComposer
       statusNode={channelActiveStatusStrip}
-      activeRun={Boolean(activeConversationRun)}
+      guidanceModeActive={guidanceModeActive}
+      replyTargetActive={Boolean(activeConversationTarget)}
       composerBusy={composerBusy}
       composerDragActive={composerDragActive}
       composerDropZoneStyle={composerDropZoneStyle}
@@ -3383,7 +3431,6 @@ export function WorkspaceClientView({
       selectedChannelId={selectedChannelId}
       sendError={sendError || selectedComposerError}
       sendState={sendState}
-      showGuidance={Boolean(activeConversationRun) || openRunGuidanceInterventions.length > 0}
       slashActiveIndex={slashActiveIndex}
       slashCommandPickerOptions={slashCommandPickerOptions}
       slashPicker={slashPicker}
@@ -3391,7 +3438,6 @@ export function WorkspaceClientView({
       submitLabel={channelComposerSubmitLabel}
       submitTitle={channelComposerSubmitTitle}
       value={messageDraft}
-      formatBytes={formatBytes}
       onAttachFiles={attachFiles}
       onCommitMention={commitMention}
       onCommitSlashCommand={commitSlashCommand}
@@ -3404,10 +3450,9 @@ export function WorkspaceClientView({
       onDrop={handleComposerDrop}
       onInputChange={handleComposerTextChange}
       onInputKeyDown={(event) => handleComposerKeyDown(event, {
-        submitChannelRunGuidanceFromDraft,
         sendMessage,
       })}
-      onInputPaste={handleComposerPaste}
+      onInputPasteFiles={handleComposerPasteFiles}
       onInputSelect={updateMentionPicker}
       onInsertMentionTrigger={insertMentionTrigger}
       onOpenApproval={(approvalId) => openApprovalDetail(approvals.find((approval) => approval.id === approvalId))}

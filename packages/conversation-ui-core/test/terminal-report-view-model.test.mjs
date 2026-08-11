@@ -14,15 +14,24 @@ test("terminal report projection keeps semantic sections and removes private dev
       corrections: [],
       sourceRefs: [{ kind: "workflow", id: "workflow_1", label: "Workflow", visibility: "conversation" }],
     },
-    changes: [{
-      id: "change_1",
-      title: "接入会话 UI",
-      summary: "展示最终总结。",
-      paths: ["apps/web/src/view.tsx"],
-      addedLines: 12,
-      deletedLines: 2,
-      sourceRefs: [],
-    }],
+    changes: [
+      {
+        id: "change_artifact_storage",
+        title: "run_1/001-read-content.md",
+        summary: "已更新 run_1/001-read-content.md",
+        paths: ["run_1/001-read-content.md"],
+        sourceRefs: [],
+      },
+      {
+        id: "change_1",
+        title: "接入会话 UI",
+        summary: "展示最终总结。",
+        paths: ["apps/web/src/view.tsx"],
+        addedLines: 12,
+        deletedLines: 2,
+        sourceRefs: [],
+      },
+    ],
     verification: [{
       id: "check_1",
       title: "Web typecheck",
@@ -50,6 +59,7 @@ test("terminal report projection keeps semantic sections and removes private dev
     ],
     risks: [],
     references: [
+      { kind: "run", id: "run_1", label: "Ling Agent run", visibility: "conversation" },
       { kind: "artifact", id: "artifact_1", label: "view.tsx", visibility: "conversation" },
       { kind: "artifact", id: "artifact_metadata", label: "Generated file metadata: view.tsx", visibility: "conversation" },
       { kind: "file", id: "apps/web/src/view.tsx", label: "apps/web/src/view.tsx", visibility: "conversation" },
@@ -61,7 +71,7 @@ test("terminal report projection keeps semantic sections and removes private dev
   });
 
   assert.equal(report.rows[0].reportSection, "outcome");
-  assert.equal(report.rows.some((row) => row.reportSection === "change"), true);
+  assert.equal(report.rows.filter((row) => row.reportSection === "change").length, 1);
   assert.equal(report.rows.some((row) => row.reportSection === "verification"), true);
   assert.equal(report.rows.find((row) => row.reportSection === "participant")?.participantId, "qa");
   assert.equal(report.rows.find((row) => row.reportSection === "change")?.meta, "1 个文件 +12 -2");
@@ -73,8 +83,6 @@ test("terminal report projection keeps semantic sections and removes private dev
   assert.equal(report.rows.find((row) => row.reportSection === "verification")?.meta, "已通过");
   assert.equal(report.rows.find((row) => row.reportSection === "participant")?.meta, "已完成");
   assert.deepEqual(report.evidenceLinks.map((link) => link.id), [
-    "terminal_report_1:ref:artifact:artifact_1",
-    "terminal_report_1:ref:file:apps/web/src/view.tsx",
     "terminal_report_1:ref:memory:memory_1",
   ]);
   assert.equal(report.artifactStripItems.length, 2);

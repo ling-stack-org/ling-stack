@@ -31,10 +31,17 @@ import {
   handleChannelAttachmentsCollection,
 } from "../features/channels/attachments.js";
 import { createAiChannelReply } from "../features/channels/ai-replies.js";
+import { getChannelMessageView } from "../features/channels/conversation-item-messages.js";
 import { handleChannelCollaborationProtocol } from "../features/channels/collaboration-protocol.js";
 import { handleChannelPlaybookCandidates } from "../features/channels/playbooks.js";
 import { handleChannelLinkPreviewItem, handleChannelLinkPreviewsCollection } from "../features/channels/link-previews.js";
-import { handleChannelMessagesCollection, handleChannelMessageStream, handleLingAgentChannelMessage } from "../features/channels/messages.js";
+import {
+  handleChannelItemsCollection,
+  handleChannelTurnsCollection,
+  handleChannelTurnStream,
+  handleLingAgentChannelMessage,
+} from "../features/channels/messages.js";
+import { handleChannelTurnContext } from "../features/channels/channel-context-inspect.js";
 import { confirmChannelExecutionProposalWorkflow } from "../features/channels/proposal-workflows.js";
 import { handleChannelTeamExpertsProjection } from "../features/channels/team-experts.js";
 import { handleChannelTeamMetricsProjection } from "../features/channels/team-metrics.js";
@@ -91,6 +98,7 @@ import {
   handleChannelWorkflowStepStartRoute,
   handleChannelWorkflowStepsCollection,
   handleChannelWorkflowsCollection,
+  type WorkflowStepRunRequest,
 } from "../features/channels/workflows.js";
 import {
   handleGetWorkflowWorkspaceChanges,
@@ -344,6 +352,7 @@ export async function routeRequest(
     storeRegistry,
     activeRuns,
     activeDirectReplies,
+    channelReplyDispatchCoordinator,
     runtimeSupervisor,
     secretResolver,
     externalSecretStore,
@@ -353,6 +362,7 @@ export async function routeRequest(
     backgroundSchedulers,
     automationSchedulers,
     controlPlaneEvents,
+    providerImportPreflight,
     providerStartupRefresh,
     startupState,
     computerUsePreviews,
@@ -382,6 +392,7 @@ export async function routeRequest(
     });
     await maybeStartNextRunInterventionContinuation({
       sourceRunId: goalContinuation?.sourceRunId ?? sourceRunId,
+      terminalRun,
       store,
       runnerRegistry,
       storeRegistry,
@@ -550,7 +561,7 @@ export async function routeRequest(
   }
 
   if (url.pathname === "/providers/import-models") {
-    await handleProviderModelImport(request, response, config, storeRegistry, secretResolver, controlPlaneEvents);
+    await handleProviderModelImport(request, response, config, storeRegistry, secretResolver, controlPlaneEvents, providerImportPreflight);
     return;
   }
 
@@ -1465,6 +1476,37 @@ export async function routeRequest(
     return;
   }
 
+  const attachWorkflowStepContextArtifact = (
+    store: RunStore,
+    workflowStepId: string,
+    runId: string,
+    runRequest: WorkflowStepRunRequest,
+  ): void => {
+    const now = new Date().toISOString();
+    const latestStep = store.getChannelWorkflowStep(workflowStepId);
+    const workflow = latestStep ? store.getChannelWorkflow(latestStep.workflowId) : undefined;
+    const run = store.getRun(runId);
+    if (!latestStep || !workflow || !run) return;
+    try {
+      const artifact = createWorkflowStepContextArtifact({
+        store,
+        workflow,
+        step: latestStep,
+        run,
+        runRequest,
+        now,
+      });
+      const stepWithLatestMetadata = store.getChannelWorkflowStep(workflowStepId) ?? latestStep;
+      store.updateChannelWorkflowStep(
+        workflowStepId,
+        { metadata: { ...stepWithLatestMetadata.metadata, contextArtifactId: artifact.id } },
+        now,
+      );
+    } catch {
+      // Context artifacts are audit evidence; a write failure must not orphan an already-started run.
+    }
+  };
+
   const createStartOrchestratedRun = (store: RunStore, cwd: string): StartOrchestratedWorkflowStepRun => {
     const startOrchestratedRun: StartOrchestratedWorkflowStepRun = ({ workflow, workflowStep, taskId, runRequest }) =>
       new Promise((resolve) => {
@@ -1488,28 +1530,7 @@ export async function routeRequest(
             onRunReady: (runId) => {
               const now = new Date().toISOString();
               store.updateChannelWorkflowStep(workflowStep.id, { taskId, runId }, now);
-              const run = store.getRun(runId);
-              if (run) {
-                try {
-                  const latestStep = store.getChannelWorkflowStep(workflowStep.id) ?? workflowStep;
-                  const artifact = createWorkflowStepContextArtifact({
-                    store,
-                    workflow,
-                    step: latestStep,
-                    run,
-                    runRequest,
-                    now,
-                  });
-                  const stepWithLatestMetadata = store.getChannelWorkflowStep(workflowStep.id) ?? latestStep;
-                  store.updateChannelWorkflowStep(
-                    workflowStep.id,
-                    { metadata: { ...stepWithLatestMetadata.metadata, contextArtifactId: artifact.id } },
-                    now,
-                  );
-                } catch {
-                  // Context artifacts are audit evidence; a write failure must not orphan an already-started run.
-                }
-              }
+              attachWorkflowStepContextArtifact(store, workflowStep.id, runId, runRequest);
               resolveOnce(runId);
             },
             afterRunTerminal: async (terminalRun) => {
@@ -1643,7 +1664,7 @@ export async function routeRequest(
           });
         }
 
-        const sourceMessage = store.getChannelMessage(editable.messageId);
+        const sourceMessage = getChannelMessageView(store, editable.messageId);
         if (!sourceMessage) {
           throw new HttpError(404, "message_not_found", "The edited channel message is no longer available.");
         }
@@ -1654,13 +1675,13 @@ export async function routeRequest(
           requestedProviderPresetId: editRequest.providerPresetId,
           requestAiReply: true,
           createAiReply: (input) => createAiChannelReply({
-            runnerRegistry,
-            runtimeSupervisor,
+            startRun: startTeammateDirectRun,
             secretResolver,
             webFetch: context.webFetch,
             webResolveHostAddresses: context.webResolveHostAddresses,
             ...input,
             completionMode: "background",
+            trackCompletion: (completion) => activeRuns.trackCompletion(completion),
             teamObserverBusEnabled: config.channels.teamObserverBus === true,
           }),
           startExecutionProposalWorkflow: (input) => confirmAndOrchestrateChannelProposal({
@@ -1671,6 +1692,7 @@ export async function routeRequest(
           config,
           routeDependencies: { runnerRegistry, secretResolver, config },
           imageVisionSummarizer,
+          replyDispatchCoordinator: channelReplyDispatchCoordinator,
         });
         return {};
       },
@@ -1868,7 +1890,25 @@ export async function routeRequest(
             secretResolver,
             mcpBroker,
             {
-              afterRunTerminal: maybeContinueRunInterventions,
+              onRunReady: (runId) => {
+                const store = storeRegistry.getStore(runRequest.workspaceCwd);
+                store.updateChannelWorkflowStep(
+                  workflowRoute.workflowStepId,
+                  { taskId: runRequest.task.id, runId },
+                  new Date().toISOString(),
+                );
+                attachWorkflowStepContextArtifact(store, workflowRoute.workflowStepId, runId, runRequest);
+              },
+              afterRunTerminal: async (terminalRun) => {
+                const store = storeRegistry.getStore(runRequest.workspaceCwd);
+                finalizeOrchestratedWorkflowStepRun(
+                  store,
+                  workflowRoute.workflowStepId,
+                  terminalRun.taskId,
+                  terminalRun,
+                );
+                await maybeContinueRunInterventions(terminalRun);
+              },
               controlPlaneEvents,
               startupState,
               computerUsePreviews,
@@ -1935,47 +1975,48 @@ export async function routeRequest(
       await handleChannelProposedPlans(request, response, config, storeRegistry, channelRoute.channelId);
       return;
     }
-    if (channelRoute.action === "messages") {
-      const channelMessagesCwd = url.searchParams.get("cwd") ?? "";
-      await handleChannelMessagesCollection(request, response, config, storeRegistry, channelRoute.channelId, (input) =>
-        createAiChannelReply({
-          runnerRegistry,
-          runtimeSupervisor,
-          secretResolver,
-          webFetch: context.webFetch,
-          webResolveHostAddresses: context.webResolveHostAddresses,
-          ...input,
-          teamObserverBusEnabled: config.channels.teamObserverBus === true,
-        }),
-        (input) => confirmAndOrchestrateChannelProposal({
-          store: input.store,
-          cwd: channelMessagesCwd,
-          proposalId: input.proposalId,
-        }),
-        {
-          runnerRegistry,
-          secretResolver,
-          config,
-        },
-        imageVisionSummarizer,
+    if (channelRoute.action === "items") {
+      await handleChannelItemsCollection(
+        request,
+        response,
+        config,
+        storeRegistry,
+        channelRoute.channelId,
+        channelReplyDispatchCoordinator,
       );
       return;
     }
-    if (channelRoute.action === "messages-stream") {
-      const channelMessagesCwd = url.searchParams.get("cwd") ?? "";
-      await handleChannelMessageStream(request, response, config, storeRegistry, channelRoute.channelId, (input) =>
+    if (channelRoute.action === "turn-context" || channelRoute.action === "turn-context-correction") {
+      if (!channelRoute.turnId) {
+        writeJson(response, 400, { error: "bad_request", message: "turn id is required" });
+        return;
+      }
+      await handleChannelTurnContext(
+        request,
+        response,
+        config,
+        storeRegistry,
+        channelRoute.channelId,
+        channelRoute.turnId,
+        channelRoute.action === "turn-context-correction",
+      );
+      return;
+    }
+    if (channelRoute.action === "turns") {
+      const channelTurnsCwd = url.searchParams.get("cwd") ?? "";
+      await handleChannelTurnsCollection(request, response, config, storeRegistry, channelRoute.channelId, (input) =>
         createAiChannelReply({
-          runnerRegistry,
-          runtimeSupervisor,
+          startRun: startTeammateDirectRun,
           secretResolver,
           webFetch: context.webFetch,
           webResolveHostAddresses: context.webResolveHostAddresses,
           ...input,
+          trackCompletion: (completion) => activeRuns.trackCompletion(completion),
           teamObserverBusEnabled: config.channels.teamObserverBus === true,
         }),
         (input) => confirmAndOrchestrateChannelProposal({
           store: input.store,
-          cwd: channelMessagesCwd,
+          cwd: channelTurnsCwd,
           proposalId: input.proposalId,
         }),
         {
@@ -1984,6 +2025,34 @@ export async function routeRequest(
           config,
         },
         imageVisionSummarizer,
+        channelReplyDispatchCoordinator,
+      );
+      return;
+    }
+    if (channelRoute.action === "turns-stream") {
+      const channelTurnsCwd = url.searchParams.get("cwd") ?? "";
+      await handleChannelTurnStream(request, response, config, storeRegistry, channelRoute.channelId, (input) =>
+        createAiChannelReply({
+          startRun: startTeammateDirectRun,
+          secretResolver,
+          webFetch: context.webFetch,
+          webResolveHostAddresses: context.webResolveHostAddresses,
+          ...input,
+          trackCompletion: (completion) => activeRuns.trackCompletion(completion),
+          teamObserverBusEnabled: config.channels.teamObserverBus === true,
+        }),
+        (input) => confirmAndOrchestrateChannelProposal({
+          store: input.store,
+          cwd: channelTurnsCwd,
+          proposalId: input.proposalId,
+        }),
+        {
+          runnerRegistry,
+          secretResolver,
+          config,
+        },
+        imageVisionSummarizer,
+        channelReplyDispatchCoordinator,
       );
       return;
     }

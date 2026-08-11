@@ -140,6 +140,10 @@
   line-height: 1.5;
 }
 
+.terminal-report-row.file-reference-only {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .terminal-report-row-icon {
   display: inline-flex;
   align-items: center;

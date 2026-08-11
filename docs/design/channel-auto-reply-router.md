@@ -70,10 +70,11 @@ was explicitly materialized into the envelope.
 
 ## Current P0 Behavior
 
-The Web composer still derives explicit AI reply requests only from mentions:
+The Web composer sends every ordinary channel Composer submission through the existing Ling
+reply decision path:
 
 ```ts
-const shouldRequestAi = mentions.some((mention) => mention.kind === "ai-teammate");
+const shouldRequestAi = true;
 ```
 
 Then it sends:
@@ -82,17 +83,23 @@ Then it sends:
 requestAiReply: shouldRequestAi
 ```
 
-Under Ling Agent Session, `requestAiReply` is a compatibility signal meaning "the user
-explicitly asked an AI teammate to participate." It is not an instruction to bypass
+Under Ling Agent Session, `requestAiReply` is an explicit responder signal meaning
+"resolve a channel reply for this accepted Turn." Mentions remain the target authority:
+none selects `ling_agent`, one selects that teammate, and multiple return to `ling_agent` for
+coordination. Web does not submit another teammate selector. The flag is not an instruction to bypass
 executable intent detection. The daemon must persist the user message, build the
 TurnEnvelope, run active-session and executable/collaboration handling first, and call
 this router only when the coordinator returns the ordinary `answer` outcome.
+
+The resolved target id is canonical across route evidence, pending message, WorkUnit, Run,
+and pending dispatch lane. `ai-teammate` is an author type only and is never a valid fallback
+executor id.
 
 - `@ProductStrategy hello` can create an explicit AI reply and record route evidence with
   `createdBy: "explicit_mention"` after the coordinator classifies the turn as
   `answer`;
 - `@Ling Agent 在工作区创建 login.html` must not be swallowed by this router. It should
-  become `direct_workflow`, confirmation, clarification, or blocked work before ordinary
+  become `execute`, a workflow proposal, structured clarification, or blocked work before ordinary
   answer routing;
 - `可以直接在工作区帮我做好吗？` after a prior reply naming one file target, such as
   `login.html`, should resolve that target through TargetResolver before this router is
@@ -665,14 +672,16 @@ PATCH /channels/:channelId?cwd=...
 
 Accept `autoReplyMode`.
 
-Channel message create:
+Channel Turn create:
 
 ```text
-POST /channels/:channelId/messages?cwd=...
+POST /channels/:channelId/turns?cwd=...
+POST /channels/:channelId/turns/stream?cwd=...
 ```
 
-Keep existing `requestAiReply` for explicit client behavior. The daemon should derive
-auto routing when `requestAiReply` is false.
+The Turn request uses the explicit `ChannelConversationSurface` union. It has no
+top-level `threadId` compatibility alias. `requestAiReply` remains a responder hint; the
+daemon still runs Continuity v2 intent selection before ordinary reply routing.
 
 P0 evidence route:
 

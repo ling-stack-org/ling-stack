@@ -43,6 +43,17 @@
   width: var(--conversation-message-avatar-size);
   height: var(--conversation-message-avatar-size);
   min-width: var(--conversation-message-avatar-size);
+  min-height: var(--conversation-message-avatar-size);
+  max-width: var(--conversation-message-avatar-size);
+  max-height: var(--conversation-message-avatar-size);
+  align-self: start;
+  flex: 0 0 var(--conversation-message-avatar-size);
+  aspect-ratio: 1;
+}
+
+[data-conversation-message-row] > .user-profile-avatar {
+  border-radius: 50%;
+  object-fit: cover;
 }
 
 [data-conversation-message-row] > .message-content {
@@ -164,8 +175,38 @@
   background: transparent;
 }
 
+[data-conversation-message-row].message-bubble-chat > .message-content .message-body-renderer,
+[data-conversation-message-row].message-bubble-chat > .message-content .message-body-paragraph,
+[data-conversation-message-row].message-bubble-chat > .message-content .message-body-list {
+  color: var(--conversation-text, var(--ling-text-default));
+}
+
+[data-conversation-message-row].message-bubble-chat.message-bubble-peer > .message-content {
+  padding: 0;
+  border-radius: 0;
+}
+
 [data-conversation-message-row].message-bubble-chat.message-bubble-own > .message-content {
   background: var(--conversation-bg-muted, var(--ling-bg-subtle));
+}
+
+[data-conversation-message-row].message-row-identity-sr-only > .message-content > .message-row-peer-identity {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  border: 0;
+  white-space: nowrap;
+}
+
+.message-row-peer-status {
+  color: var(--conversation-text-soft, var(--ling-text-soft));
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
 }
 
 [data-conversation-message-row].message-bubble-chat-blocked > .message-content {
@@ -194,7 +235,7 @@
 }
 
 [data-conversation-message-row].message-bubble-pending > .message-content {
-  color: var(--conversation-text-muted, var(--ling-text-muted));
+  color: var(--conversation-text-strong, var(--ling-text-strong));
 }
 
 .message-body-with-spinner {

@@ -88,6 +88,7 @@ export function ThreadReplyPanel({
           const editing = editingMessageId === reply.id;
           return (
             <MessageRow
+              surface="topic_reply"
               key={reply.id}
               className={replyIsOwn ? "thread-reply-item thread-reply-own" : "thread-reply-item"}
               authorType={reply.authorType}

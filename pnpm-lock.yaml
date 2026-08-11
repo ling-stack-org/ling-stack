@@ -303,6 +303,9 @@ importers:
 
   packages/core:
     dependencies:
+      '@ling-stack/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@ling-stack/plugin-sdk':
         specifier: workspace:*
         version: link:../plugin-sdk

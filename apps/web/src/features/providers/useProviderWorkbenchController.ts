@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ProviderPreset } from "../../types.js";
-import { filterProviderWorkbenchRoutes, type ProviderStatusFilter } from "./provider-workbench-view-models.js";
+import {
+  filterProviderWorkbenchRoutes,
+  type ProviderCapabilityFilter,
+  type ProviderStatusFilter,
+} from "./provider-workbench-view-models.js";
 
 export function useProviderWorkbenchController(input: {
   readonly providers: readonly ProviderPreset[];
@@ -10,6 +14,7 @@ export function useProviderWorkbenchController(input: {
 }) {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<ProviderStatusFilter>("all");
+  const [capabilityFilter, setCapabilityFilter] = useState<ProviderCapabilityFilter>("all");
   const [deleteTarget, setDeleteTarget] = useState<ProviderPreset>();
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteErrorSnapshot, setDeleteErrorSnapshot] = useState("");
@@ -18,9 +23,10 @@ export function useProviderWorkbenchController(input: {
       providers: input.providers,
       query,
       statusFilter,
+      capabilityFilter,
       selectedProviderId: input.selectedProviderId,
     }),
-    [input.providers, input.selectedProviderId, query, statusFilter],
+    [capabilityFilter, input.providers, input.selectedProviderId, query, statusFilter],
   );
 
   useEffect(() => {
@@ -47,7 +53,8 @@ export function useProviderWorkbenchController(input: {
   }
 
   return {
-    clearFilters: () => { setQuery(""); setStatusFilter("all"); },
+    capabilityFilter,
+    clearFilters: () => { setQuery(""); setStatusFilter("all"); setCapabilityFilter("all"); },
     closeDelete: () => { if (!deleteBusy) setDeleteTarget(undefined); },
     confirmDelete,
     deleteBusy,
@@ -56,6 +63,7 @@ export function useProviderWorkbenchController(input: {
     filteredProviders,
     query,
     requestDelete,
+    setCapabilityFilter,
     setQuery,
     setStatusFilter,
     statusFilter,

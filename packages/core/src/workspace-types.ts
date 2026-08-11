@@ -6,6 +6,18 @@ import type { AuthorizationMode, PermissionPreset, SessionPermissionMode, Worksp
 import type { SkillCandidateSourceRef } from "./skill-candidate-types.js";
 import type { AiTeammateRoleKey, SkillApprovalProfile } from "./skill-types.js";
 import type { WorkflowTerminationPolicy } from "./workflow-graph-types.js";
+import {
+  channelIntentDecisionV2Actions,
+  channelIntentDecisionV2CreatedByValues,
+  channelIntentDecisionV2Statuses,
+  type ChannelIntentClarificationV2,
+  type ChannelIntentDecisionV2,
+  type ChannelIntentDecisionV2Action,
+  type ChannelIntentDecisionV2CreatedBy,
+  type ChannelIntentDecisionV2Status,
+  type ChannelIntentExecutionV2,
+  type ConversationContextProjectionMetadata,
+} from "@ling-stack/contracts";
 
 export const DEFAULT_WORKSPACE_ID = "workspace_default";
 
@@ -1294,39 +1306,6 @@ export interface ChannelMessage {
   readonly updatedAt: string;
 }
 
-export interface CreateChannelMessageInput {
-  readonly id?: string;
-  readonly channelId: string;
-  readonly threadId?: string;
-  readonly kind?: ChannelMessageKind;
-  readonly intent?: ChannelMessageIntent;
-  readonly authorType: ChannelMessageAuthorType;
-  readonly authorId?: string;
-  readonly body: string;
-  readonly mentions?: readonly ChannelMention[];
-  readonly attachmentIds?: readonly string[];
-  readonly linkPreviewIds?: readonly string[];
-  readonly fileRefs?: readonly ChannelMessageFileRef[];
-  readonly linkedTaskId?: string;
-  readonly linkedRunId?: string;
-  readonly status?: ChannelMessage["status"];
-  readonly errorMessage?: string;
-}
-
-export interface ListChannelMessagesOptions {
-  readonly channelId: string;
-  readonly threadId?: string;
-  readonly excludeThreadIds?: readonly string[];
-  readonly beforeMessageId?: string;
-  readonly limit?: number;
-}
-
-export interface ChannelMessageListPage {
-  readonly messages: readonly ChannelMessage[];
-  readonly hasMore: boolean;
-  readonly nextBeforeMessageId?: string;
-}
-
 export type ChannelMessageRouteAction = "reply" | "no_reply";
 
 export type ChannelMessageRouteDecisionStatus = "accepted" | "suppressed" | "failed";
@@ -1357,6 +1336,7 @@ export interface ChannelMessageRouteContextPackMetadata {
   readonly droppedSectionIds: readonly string[];
   readonly sourceRefCounts: Readonly<Record<string, number>>;
   readonly compactionIds: readonly string[];
+  readonly contextProjection?: ConversationContextProjectionMetadata;
 }
 
 export interface ChannelMessageRouteDecision {
@@ -1416,71 +1396,34 @@ export interface ListChannelMessageRouteDecisionsOptions {
   readonly limit?: number;
 }
 
-export type ChannelIntentDecisionAction =
-  | "no_reply"
-  | "single_reply"
-  | "visible_multi_reply"
-  | "clarify"
-  | "workflow_proposal"
-  | "direct_workflow";
-
-export const channelIntentDecisionActions: readonly ChannelIntentDecisionAction[] = [
-  "no_reply",
-  "single_reply",
-  "visible_multi_reply",
-  "clarify",
-  "workflow_proposal",
-  "direct_workflow",
-];
-
-export type ChannelIntentDecisionStatus = "accepted" | "suppressed" | "failed";
-
-export const channelIntentDecisionStatuses: readonly ChannelIntentDecisionStatus[] = ["accepted", "suppressed", "failed"];
-
-export type ChannelIntentDecisionCreatedBy = "deterministic" | "model";
-
-export const channelIntentDecisionCreatedByValues: readonly ChannelIntentDecisionCreatedBy[] = ["deterministic", "model"];
-
-export interface ChannelIntentDecision {
-  readonly schemaVersion: 1;
-  readonly id: string;
-  readonly workspaceId: string;
-  readonly channelId: string;
-  readonly sourceMessageId: string;
-  readonly action: ChannelIntentDecisionAction;
-  readonly selectedTeammateId?: string;
-  readonly selectedTeammateIds?: readonly string[];
-  readonly proposalId?: string;
-  readonly replyMessageId?: string;
-  readonly replyMessageIds?: readonly string[];
-  readonly workflowId?: string;
-  readonly reason: string;
-  readonly status: ChannelIntentDecisionStatus;
-  readonly createdBy: ChannelIntentDecisionCreatedBy;
-  readonly errorMessage?: string;
-  readonly createdAt: string;
-  readonly updatedAt: string;
-}
+export type ChannelIntentDecisionAction = ChannelIntentDecisionV2Action;
+export const channelIntentDecisionActions: readonly ChannelIntentDecisionAction[] = channelIntentDecisionV2Actions;
+export type ChannelIntentDecisionStatus = ChannelIntentDecisionV2Status;
+export const channelIntentDecisionStatuses: readonly ChannelIntentDecisionStatus[] = channelIntentDecisionV2Statuses;
+export type ChannelIntentDecisionCreatedBy = ChannelIntentDecisionV2CreatedBy;
+export const channelIntentDecisionCreatedByValues: readonly ChannelIntentDecisionCreatedBy[] = channelIntentDecisionV2CreatedByValues;
+export type ChannelIntentDecision = ChannelIntentDecisionV2;
 
 export interface CreateChannelIntentDecisionInput {
   readonly channelId: string;
-  readonly sourceMessageId: string;
+  readonly sourceItemId: string;
+  readonly contextProjection: ConversationContextProjectionMetadata;
   readonly action: ChannelIntentDecisionAction;
-  readonly selectedTeammateId?: string;
   readonly selectedTeammateIds?: readonly string[];
   readonly proposalId?: string;
-  readonly replyMessageId?: string;
-  readonly replyMessageIds?: readonly string[];
+  readonly resultItemIds?: readonly string[];
   readonly workflowId?: string;
   readonly reason: string;
+  readonly clarification?: ChannelIntentClarificationV2;
+  readonly execution?: ChannelIntentExecutionV2;
   readonly status: ChannelIntentDecisionStatus;
   readonly createdBy: ChannelIntentDecisionCreatedBy;
-  readonly errorMessage?: string;
+  readonly errorCode?: string;
 }
 
 export interface ListChannelIntentDecisionsOptions {
   readonly channelId?: string;
-  readonly sourceMessageId?: string;
+  readonly sourceItemId?: string;
   readonly action?: ChannelIntentDecisionAction;
   readonly status?: ChannelIntentDecisionStatus;
   readonly limit?: number;
@@ -2032,6 +1975,29 @@ export interface WorkflowPacketSourceRef {
   readonly label?: string;
 }
 
+export interface WorkflowAgentContextStamp {
+  readonly schemaVersion: 1;
+  readonly sourceItemId: string;
+  readonly consumerTeammateId?: string;
+  readonly contextProjection: ConversationContextProjectionMetadata;
+  readonly roleEvidenceRefs: readonly WorkflowPacketSourceRef[];
+  readonly roleEvidenceFingerprint: string;
+}
+
+export type WorkflowFanInContextReviewStatus =
+  | "accepted_current"
+  | "rebased_metadata"
+  | "rejected_stale"
+  | "rejected_private_leak";
+
+export interface WorkflowFanInContextReview {
+  readonly dependencyWorkflowStepId: string;
+  readonly status: WorkflowFanInContextReviewStatus;
+  readonly consumedProjectionVersion?: string;
+  readonly currentProjectionVersion?: string;
+  readonly reason: string;
+}
+
 export type WorkflowHandoffIntentStatus =
   | "proposed"
   | "validated"
@@ -2080,6 +2046,7 @@ export interface WorkflowHandoffIntent {
   readonly expectedOutput: string;
   readonly riskSummary?: string;
   readonly sourceRefs: readonly WorkflowPacketSourceRef[];
+  readonly agentContext?: WorkflowAgentContextStamp;
   readonly status: WorkflowHandoffIntentStatus;
   readonly validation?: WorkflowHandoffValidation;
   readonly createdBy: WorkflowHandoffIntentCreatedBy;
@@ -2103,6 +2070,8 @@ export interface CreateWorkflowHandoffIntentInput {
   readonly expectedOutput: string;
   readonly riskSummary?: string;
   readonly sourceRefs?: readonly WorkflowPacketSourceRef[];
+  /** Internal-only continuity stamp derived by the daemon from the source step. */
+  readonly agentContext?: WorkflowAgentContextStamp;
   readonly status?: WorkflowHandoffIntentStatus;
   readonly validation?: WorkflowHandoffValidation;
   readonly createdBy: WorkflowHandoffIntentCreatedBy;
@@ -2116,6 +2085,8 @@ export interface UpdateWorkflowHandoffIntentInput {
   readonly expectedOutput?: string;
   readonly riskSummary?: string | null;
   readonly sourceRefs?: readonly WorkflowPacketSourceRef[];
+  /** Internal-only refreshed continuity stamp. Public PATCH routes must not accept this field. */
+  readonly agentContext?: WorkflowAgentContextStamp | null;
   readonly status?: WorkflowHandoffIntentStatus;
   readonly validation?: WorkflowHandoffValidation | null;
 }
@@ -2123,6 +2094,7 @@ export interface UpdateWorkflowHandoffIntentInput {
 export interface ListWorkflowHandoffIntentsOptions {
   readonly channelId?: string;
   readonly workflowId?: string;
+  readonly channelHandoffId?: string;
   readonly sourceWorkflowStepId?: string;
   readonly sourceRunId?: string;
   readonly status?: WorkflowHandoffIntentStatus;
@@ -2247,6 +2219,7 @@ export interface ChannelWorkflowStepContextPacket {
   readonly dependencies: readonly WorkflowStepOutputRef[];
   readonly priorOutputArtifactIds: readonly string[];
   readonly sourceRefs?: readonly WorkflowPacketSourceRef[];
+  readonly agentContext?: WorkflowAgentContextStamp;
   readonly selectorDecisionIds?: readonly string[];
   readonly handoffIntentIds?: readonly string[];
   readonly requestedRunnerId?: string;
@@ -2288,6 +2261,8 @@ export interface WorkflowStepContextPackSnapshot {
     readonly id: string;
     readonly label?: string;
   }[];
+  readonly contextProjection?: ConversationContextProjectionMetadata;
+  readonly agentContext?: WorkflowAgentContextStamp;
 }
 
 export interface ChannelWorkflowStepOutputPacket {
@@ -2306,6 +2281,7 @@ export interface ChannelWorkflowStepOutputPacket {
   readonly blockers?: readonly string[];
   readonly changedPaths?: readonly string[];
   readonly sourceRefs?: readonly WorkflowPacketSourceRef[];
+  readonly agentContext?: WorkflowAgentContextStamp;
   readonly selectorDecisionIds?: readonly string[];
   readonly handoffIntentIds?: readonly string[];
   readonly runnerAudit?: RunnerResolutionAudit;
@@ -2348,6 +2324,8 @@ export interface ChannelWorkflowStepMetadata {
   readonly proposalStepSources?: readonly ChannelExecutionProposalStepSource[];
   readonly fanInSummaryArtifactId?: string;
   readonly memoryCandidateIds?: readonly string[];
+  readonly fanInContextReviews?: readonly WorkflowFanInContextReview[];
+  readonly resultContextReview?: WorkflowFanInContextReview;
 }
 
 export interface ChannelWorkflowMetadata {
@@ -2546,10 +2524,6 @@ export function createTeammateDirectReplyInterventionId(): string {
 
 export function createTeammateDirectLinkPreviewId(): string {
   return `dm_link_${randomUUID()}`;
-}
-
-export function createChannelMessageId(): string {
-  return `msg_${randomUUID()}`;
 }
 
 export function createChannelMessageRouteDecisionId(): string {

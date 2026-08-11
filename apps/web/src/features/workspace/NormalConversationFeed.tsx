@@ -3,10 +3,10 @@ import { ArrowDown, Copy, FileText, Pencil, ThumbsDown, ThumbsUp } from "lucide-
 import { attachmentContentUrl } from "../../api.js";
 import { useI18n } from "../../i18n.js";
 import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js";
-import { UserProfileAvatar } from "../../shared/components/index.js";
 import {
   ConversationAttachmentStrip,
   ConversationFeed,
+  ConversationReferenceStrip,
   ConversationReplacementRetry,
   ConversationWorkCell,
   InlineMessageEditor,
@@ -14,8 +14,7 @@ import {
   MessageRow,
 } from "../../shared/conversation/index.js";
 import { IconButton, InlineFeedback } from "../../shared/ui/index.js";
-import { publicAssetUrl } from "../../shared/ui/public-asset-url.js";
-import type { RunSession, UserProfile } from "../../types.js";
+import type { RunSession } from "../../types.js";
 import type {
   WorkspaceRightDockFileTarget,
   WorkspaceRightDockReviewTarget,
@@ -30,10 +29,8 @@ import type {
 } from "./normal-conversation-types.js";
 
 const latestThresholdPx = 56;
-const lingAgentAvatarSrc = publicAssetUrl("icons/ling-stack-gpt-image-2-icon.png");
 
 export interface NormalConversationFeedProps {
-  readonly userProfile?: UserProfile;
   readonly messages: readonly ConversationHomeMessage[];
   readonly visibleMessages: readonly ConversationHomeMessage[];
   readonly runById: ReadonlyMap<string, RunSession>;
@@ -57,7 +54,6 @@ export interface NormalConversationFeedProps {
 }
 
 export function NormalConversationFeed({
-  userProfile,
   detailContext,
   editSaving,
   editingMessageId,
@@ -152,7 +148,6 @@ export function NormalConversationFeed({
         renderItem={(item) => (
           <NormalConversationMessageRow
             item={item}
-            userProfile={userProfile}
             feedback={feedbackById[item.message.id]}
             editing={editingMessageId === item.message.id}
             editSaving={editSaving}
@@ -191,7 +186,6 @@ function NormalConversationMessageRow({
   editing,
   feedback,
   item,
-  userProfile,
   onCancelEdit,
   onEdit,
   onOpenFiles,
@@ -207,7 +201,6 @@ function NormalConversationMessageRow({
   workspaceCwd,
 }: {
   readonly item: NormalConversationFeedItem;
-  readonly userProfile?: UserProfile;
   readonly feedback?: "up" | "down";
   readonly editing: boolean;
   readonly editSaving: boolean;
@@ -230,13 +223,9 @@ function NormalConversationMessageRow({
   const { message } = item;
   return (
     <MessageRow
+      surface="normal_conversation"
       className={item.className}
       authorType={item.authorType}
-      avatar={item.authorType === "local-user"
-        ? <UserProfileAvatar profile={userProfile} fallbackLabel={t("You")} />
-        : item.authorType === "ai-teammate"
-          ? <img className="normal-conversation-agent-avatar" src={lingAgentAvatarSrc} alt="" />
-          : null}
       authorName={item.authorName}
       createdAtLabel={item.createdAtLabel}
       statusNode={message.editedAt ? <span className="conversation-message-edited-label">{t("Edited")}</span> : undefined}
@@ -258,9 +247,10 @@ function NormalConversationMessageRow({
       bodyCompact
       bodyStreaming={item.bodyStreaming}
       bodyOnOpenLocalFile={onOpenFiles}
-      attachmentsNode={message.attachments && message.attachments.length > 0 ? (
-        <ConversationAttachmentStrip
-          attachments={message.attachments.map((attachment) => ({
+      attachmentsNode={(message.attachments?.length ?? 0) > 0 || (message.fileRefs?.length ?? 0) > 0 ? (
+        <>
+          <ConversationAttachmentStrip
+            attachments={(message.attachments ?? []).map((attachment) => ({
             id: attachment.id,
             label: attachment.fileName,
             meta: formatBytes(attachment.sizeBytes),
@@ -276,9 +266,22 @@ function NormalConversationMessageRow({
               threadId: message.threadId,
               maxBytes: 64_000,
             } : undefined,
-          }))}
-          loadPreview={loadPreviewContent}
-        />
+            }))}
+            loadPreview={loadPreviewContent}
+          />
+          <ConversationReferenceStrip
+            ariaLabel={t("References")}
+            references={(message.fileRefs ?? []).map((fileRef, index) => ({
+              id: `file:${fileRef.path}:${fileRef.line ?? ""}:${index}`,
+              kind: "workspace_file" as const,
+              label: fileRef.label ?? fileRef.path.split(/[\\/]/u).filter(Boolean).at(-1) ?? fileRef.path,
+              meta: fileRef.line !== undefined ? `${fileRef.path}:${fileRef.line}` : fileRef.path,
+              previewTitle: fileRef.label,
+              previewText: fileRef.path,
+              onOpen: () => onOpenReportFile({ cwd: workspaceCwd.trim(), path: fileRef.path, line: fileRef.line, label: fileRef.label }),
+            }))}
+          />
+        </>
       ) : null}
       workCellNode={item.workCell ? (
         <ConversationWorkCell

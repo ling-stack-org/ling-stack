@@ -5,6 +5,7 @@ import {
   type RunSession,
   type RunStore,
   type SkillApprovalProfile,
+  type WorkflowFanInContextReview,
   type WorkflowStepFailurePolicy,
   type WorkflowStepGate,
   type WorkflowStepPolicy,
@@ -19,7 +20,16 @@ import {
 } from "./workflows.js";
 import { getWorkflowPlanModeBlocker } from "./plan-mode-guard.js";
 import { maybeCreateWorkflowFanInEvidence } from "./workflow-fanin.js";
-import { createWorkflowStepOutputArtifact } from "./workflow-step-packets.js";
+import {
+  createWorkflowStepOutputArtifact,
+  readWorkflowAgentContextFromRunSnapshot,
+  readWorkflowStepContextPacketArtifact,
+} from "./workflow-step-packets.js";
+import {
+  privateRoleEvidenceValues,
+  reviewWorkflowAgentContextStamp,
+  textContainsPrivateRoleEvidence,
+} from "./agent-context-consistency.js";
 import { ensureDeterministicWorkflowSelectorDecision } from "./workflow-selector.js";
 import {
   resolveSmartSchedulingDecision,
@@ -572,21 +582,25 @@ export function finalizeOrchestratedWorkflowStepRun(
     return step;
   }
   if (run.status === "succeeded") {
-    if (maybeRequestPostStepApproval(store, workflow, step, taskId, run, now)) {
+    const resultSummary = workflowStepRunResultSummary(store, run);
+    if (blockWorkflowStepForRejectedAgentContext(store, workflow, step, run, resultSummary, now)) {
+      // Preserve the rejected run as audit evidence, but never commit its stale or private result.
+    } else if (maybeRequestPostStepApproval(store, workflow, step, taskId, run, now)) {
       return store.getChannelWorkflowStep(workflowStepId);
+    } else {
+      store.transitionChannelWorkflowStepStatus({
+        workflowStepId,
+        expectedStatus: "running",
+        event: "succeed",
+        actor: "runner",
+        reason: `run:${run.id}`,
+        now,
+        taskId,
+        runId: run.id,
+        resultSummary,
+      });
+      completeWorkflowIfStepsFinished(store, step.workflowId, now);
     }
-    store.transitionChannelWorkflowStepStatus({
-      workflowStepId,
-      expectedStatus: "running",
-      event: "succeed",
-      actor: "runner",
-      reason: `run:${run.id}`,
-      now,
-      taskId,
-      runId: run.id,
-      resultSummary: workflowStepRunResultSummary(store, run),
-    });
-    completeWorkflowIfStepsFinished(store, step.workflowId, now);
   } else if (run.status === "cancelled") {
     applyWorkflowStepFailurePolicy({
       store,
@@ -632,6 +646,112 @@ export function finalizeOrchestratedWorkflowStepRun(
   maybeCreateWorkflowTerminalCoordinatorReply(store, step.workflowId, { linkedRunId: run.id, now });
   store.releaseResourceLeasesForOwner("workflow_step", workflowStepId, now);
   return store.getChannelWorkflowStep(workflowStepId);
+}
+
+function blockWorkflowStepForRejectedAgentContext(
+  store: RunStore,
+  workflow: ChannelWorkflow,
+  step: ChannelWorkflowStep,
+  run: RunSession,
+  resultSummary: string,
+  now: string,
+): boolean {
+  const continuityBacked = Boolean(step.metadata?.sourceMessageId ?? workflow.metadata?.sourceMessageId);
+  if (!continuityBacked) return false;
+  const contextArtifactId = step.metadata?.contextArtifactId;
+  const agentContext = contextArtifactId
+    ? readWorkflowStepContextPacketArtifact({ store, artifactId: contextArtifactId })?.agentContext
+    : readWorkflowAgentContextFromRunSnapshot(run);
+  if (!agentContext) {
+    return blockWorkflowStepForContextReason(
+      store,
+      workflow,
+      step,
+      run,
+      "Continuity-backed result has no durable agent context stamp.",
+      {
+        dependencyWorkflowStepId: step.id,
+        status: "rejected_stale",
+        reason: "Continuity-backed result has no durable agent context stamp.",
+      },
+      now,
+    );
+  }
+  const privateValues = privateRoleEvidenceValues({ store, stamp: agentContext });
+  if (textContainsPrivateRoleEvidence(resultSummary, privateValues)) {
+    return blockWorkflowStepForContextReason(
+      store,
+      workflow,
+      step,
+      run,
+      "Workflow result repeats private role evidence and cannot be committed.",
+      {
+        dependencyWorkflowStepId: step.id,
+        status: "rejected_private_leak",
+        consumedProjectionVersion: agentContext.contextProjection.projectionVersion,
+        reason: "Workflow result repeats private role evidence and cannot be committed.",
+      },
+      now,
+    );
+  }
+  const reviewed = reviewWorkflowAgentContextStamp({
+    store,
+    dependencyWorkflowStepId: step.id,
+    consumed: agentContext,
+  }).review;
+  if (reviewed.status === "rejected_stale" || reviewed.status === "rejected_private_leak") {
+    return blockWorkflowStepForContextReason(
+      store,
+      workflow,
+      step,
+      run,
+      `Workflow result context is no longer current: ${reviewed.reason}`,
+      reviewed,
+      now,
+    );
+  }
+  return false;
+}
+
+function blockWorkflowStepForContextReason(
+  store: RunStore,
+  workflow: ChannelWorkflow,
+  step: ChannelWorkflowStep,
+  run: RunSession,
+  reason: string,
+  review: WorkflowFanInContextReview,
+  now: string,
+): true {
+  const stepTransition = store.transitionChannelWorkflowStepStatus({
+    workflowStepId: step.id,
+    expectedStatus: "running",
+    event: "blocked",
+    actor: "system",
+    reason,
+    now,
+    taskId: step.taskId ?? run.taskId,
+    runId: run.id,
+    blocker: reason,
+  });
+  if (!stepTransition.ok) {
+    throw new HttpError(409, stepTransition.code, `Workflow result context transition failed: ${stepTransition.code}`);
+  }
+  const blockedStep = store.getChannelWorkflowStep(step.id) ?? step;
+  store.updateChannelWorkflowStep(step.id, {
+    metadata: { ...blockedStep.metadata, resultContextReview: review },
+  }, now);
+  const workflowTransition = store.transitionChannelWorkflowStatus({
+    workflowId: workflow.id,
+    expectedStatus: "running",
+    event: "step_blocked",
+    actor: "system",
+    reason,
+    now,
+  });
+  if (!workflowTransition.ok) {
+    throw new HttpError(409, workflowTransition.code, `Workflow result context transition failed: ${workflowTransition.code}`);
+  }
+  return true;
 }
 
 function workflowStepRunResultSummary(store: RunStore, run: RunSession): string {
@@ -1052,6 +1172,24 @@ function reconcilePostStepApprovalDecision(
     }
     const runningStep = store.getChannelWorkflowStep(step.id) ?? latestStep;
     if (runningStep.status === "running") {
+      const run = runningStep.runId ? store.getRun(runningStep.runId) : undefined;
+      if (run && blockWorkflowStepForRejectedAgentContext(
+        store,
+        store.getChannelWorkflow(workflow.id) ?? workflow,
+        runningStep,
+        run,
+        workflowStepRunResultSummary(store, run),
+        now,
+      )) {
+        try {
+          attachWorkflowStepOutputArtifact(store, runningStep.id, run, now);
+        } catch {
+          // The rejected run is still linked durably even when its audit artifact cannot be written.
+        }
+        const blockedWorkflow = store.getChannelWorkflow(workflow.id) ?? workflow;
+        const blockedStep = store.getChannelWorkflowStep(step.id) ?? runningStep;
+        return { status: "blocked", workflow: blockedWorkflow, workflowStep: blockedStep, blocker: blockedStep.blocker ?? "Workflow result context changed." };
+      }
       const succeed = store.transitionChannelWorkflowStepStatus({
         workflowStepId: runningStep.id,
         expectedStatus: "running",

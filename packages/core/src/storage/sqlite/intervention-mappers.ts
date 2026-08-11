@@ -82,6 +82,8 @@ export function normalizeRunInterventionMessagePayload(payload: RunInterventionM
   const linkPreviews = normalizeRunInterventionLinkPreviewPayloads(payload.linkPreviews);
   const fileRefs = normalizeRunInterventionWorkspaceFilePayloads(payload.fileRefs);
   return {
+    ...(payload.sourceMessageId?.trim() ? { sourceMessageId: payload.sourceMessageId.trim() } : {}),
+    ...(payload.targetTeammateId?.trim() ? { targetTeammateId: payload.targetTeammateId.trim() } : {}),
     body: payload.body.trim(),
     attachmentIds: normalizeStringList(payload.attachmentIds),
     linkPreviewIds: normalizeStringList(payload.linkPreviewIds),
@@ -172,6 +174,8 @@ function parseRunInterventionMessagePayload(value: string | undefined, instructi
     throw new Error("Expected run intervention message payload from SQLite");
   }
   const body = typeof parsed.body === "string" ? parsed.body : instruction;
+  const sourceMessageId = typeof parsed.sourceMessageId === "string" ? parsed.sourceMessageId : undefined;
+  const targetTeammateId = typeof parsed.targetTeammateId === "string" ? parsed.targetTeammateId : undefined;
   const attachmentIds = Array.isArray(parsed.attachmentIds) ? parsed.attachmentIds : [];
   const linkPreviewIds = Array.isArray(parsed.linkPreviewIds) ? parsed.linkPreviewIds : [];
   if (attachmentIds.some((item) => typeof item !== "string") || linkPreviewIds.some((item) => typeof item !== "string")) {
@@ -181,6 +185,8 @@ function parseRunInterventionMessagePayload(value: string | undefined, instructi
   const linkPreviews = Array.isArray(parsed.linkPreviews) ? parsed.linkPreviews.map(parseRunInterventionLinkPreviewPayload) : undefined;
   const fileRefs = Array.isArray(parsed.fileRefs) ? parsed.fileRefs.map(parseRunInterventionWorkspaceFilePayload) : undefined;
   return normalizeRunInterventionMessagePayload({
+    sourceMessageId,
+    targetTeammateId,
     body,
     attachmentIds: attachmentIds as string[],
     linkPreviewIds: linkPreviewIds as string[],

@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import type { ChannelActivityItem } from "../../lib/channel-activity.js";
 import type { ConversationTurnViewModel } from "../../lib/conversation-turn-projector.js";
 import type { ChannelMessage, ChannelMessageFileRef } from "../../types.js";
@@ -19,8 +19,9 @@ interface ChannelMessageFeedAssemblyInput {
   readonly selectedChannelId: string;
 }
 
-interface PendingChannelSendState {
+export interface PendingChannelSendState {
   readonly acknowledged: boolean;
+  readonly acknowledgedMessageId?: string;
   readonly aiReplyStarted: boolean;
 }
 
@@ -47,11 +48,33 @@ export function useChannelMessageFeedAssembly({
   selectedChannelBranchRootThreadId,
   selectedChannelId,
 }: ChannelMessageFeedAssemblyInput): ChannelMessageFeedAssembly {
+  const optimisticRenderKeyByMessageIdRef = useRef(new Map<string, string>());
+  const pendingChannelSendState = useMemo(
+    () => derivePendingChannelSendState(channelMessages, pendingChannelSendPreview),
+    [channelMessages, pendingChannelSendPreview],
+  );
+  const pendingRenderKey = pendingChannelSendPreview ? `pending-send:${pendingChannelSendPreview.id}` : undefined;
+  if (pendingChannelSendState.acknowledgedMessageId && pendingRenderKey) {
+    optimisticRenderKeyByMessageIdRef.current.set(pendingChannelSendState.acknowledgedMessageId, pendingRenderKey);
+  }
+
   const conversationFeedBodyItems = useMemo<readonly ChannelMessageFeedItem[]>(
     () => {
       const items: Array<ChannelMessageFeedItem & { readonly createdAt: string }> = [
         ...(!auditActivityVisible
-          ? conversationTurns.map((turn) => ({ id: turn.id, kind: "turn" as const, turn, createdAt: turn.createdAt }))
+          ? conversationTurns.map((turn) => ({
+            id: turn.id,
+            kind: "turn" as const,
+            turn,
+            renderKey: optimisticRenderKeyByMessageIdRef.current.get(turn.sourceMessageId),
+            pendingReplyPreview:
+              pendingChannelSendPreview &&
+              pendingChannelSendState.acknowledgedMessageId === turn.sourceMessageId &&
+              !pendingChannelSendState.aiReplyStarted
+                ? pendingChannelSendPreview
+                : undefined,
+            createdAt: turn.createdAt,
+          }))
           : []),
         ...renderableActivityItems.map((item) => ({ id: item.id, kind: "activity" as const, item, createdAt: item.createdAt })),
       ];
@@ -61,24 +84,15 @@ export function useChannelMessageFeedAssembly({
       });
       return items.map(({ createdAt: _createdAt, ...item }) => item);
     },
-    [auditActivityVisible, conversationTurns, renderableActivityItems],
+    [auditActivityVisible, conversationTurns, pendingChannelSendPreview, pendingChannelSendState, renderableActivityItems],
   );
 
   const messageFeedCanLoadOlder =
     channelMessagesHasOlder && !activityFiltersActive && conversationFeedBodyItems.length > 0;
 
-  const pendingChannelSendState = useMemo(
-    () => derivePendingChannelSendState(channelMessages, pendingChannelSendPreview),
-    [channelMessages, pendingChannelSendPreview],
-  );
-
-  const pendingChannelSendResolved =
-    pendingChannelSendState.acknowledged &&
-    pendingChannelSendState.aiReplyStarted;
-
   const pendingChannelSendVisible = Boolean(
     pendingChannelSendPreview &&
-    !pendingChannelSendResolved &&
+    !pendingChannelSendState.acknowledged &&
     pendingChannelSendPreview.channelId === selectedChannelId &&
     pendingChannelSendPreview.threadId === selectedChannelBranchRootThreadId &&
     !activeWorkThreadId,
@@ -91,9 +105,10 @@ export function useChannelMessageFeedAssembly({
       ...(pendingChannelSendVisible && pendingChannelSendPreview
         ? [{
           id: `pending-send:${pendingChannelSendPreview.id}`,
+          renderKey: pendingRenderKey,
           kind: "pending-send" as const,
           preview: pendingChannelSendPreview,
-          showSentMessage: !pendingChannelSendState.acknowledged,
+          showSentMessage: true,
         }]
         : []),
     ],
@@ -112,32 +127,35 @@ export function useChannelMessageFeedAssembly({
   };
 }
 
-function derivePendingChannelSendState(
+export function derivePendingChannelSendState(
   channelMessages: readonly ChannelMessage[],
   pendingChannelSendPreview: PendingChannelSendPreview | undefined,
 ): PendingChannelSendState {
   if (!pendingChannelSendPreview) {
     return { acknowledged: false, aiReplyStarted: false };
   }
-  const acknowledgedMessage = [...channelMessages]
-    .reverse()
-    .find((message) =>
-      message.channelId === pendingChannelSendPreview.channelId &&
-      message.threadId === pendingChannelSendPreview.threadId &&
-      message.kind === "message" &&
-      message.authorType === "local-user" &&
-      message.body === pendingChannelSendPreview.body &&
-      sameStringList(message.attachmentIds, pendingChannelSendPreview.attachmentIds) &&
-      sameStringList(message.linkPreviewIds, pendingChannelSendPreview.linkPreviewIds) &&
-      sameFileRefList(message.fileRefs ?? [], pendingChannelSendPreview.fileRefs)
-    );
-  const replyThreadId = acknowledgedMessage ? acknowledgedMessage.threadId ?? acknowledgedMessage.id : pendingChannelSendPreview.threadId;
+  const acknowledgedMessage = pendingChannelSendPreview.sourceMessageId
+    ? channelMessages.find((message) => message.id === pendingChannelSendPreview.sourceMessageId)
+    : [...channelMessages]
+        .reverse()
+        .find((message) =>
+          message.channelId === pendingChannelSendPreview.channelId &&
+          messageMatchesPendingSurface(message, pendingChannelSendPreview.threadId) &&
+          message.kind === "message" &&
+          message.authorType === "local-user" &&
+          message.body === pendingChannelSendPreview.body &&
+          sameStringList(message.attachmentIds, pendingChannelSendPreview.attachmentIds) &&
+          sameStringList(message.linkPreviewIds, pendingChannelSendPreview.linkPreviewIds) &&
+          sameFileRefList(message.fileRefs ?? [], pendingChannelSendPreview.fileRefs)
+        );
+  const replyThreadId = acknowledgedMessage?.threadId ?? pendingChannelSendPreview.threadId;
+  const replyTurnId = acknowledgedMessage?.turnId;
   const previewCreatedAt = Date.parse(pendingChannelSendPreview.createdAt);
   const aiReplyStarted = channelMessages.some((message) => {
     if (message.channelId !== pendingChannelSendPreview.channelId || message.kind !== "ai_reply") {
       return false;
     }
-    if (replyThreadId && message.threadId !== replyThreadId) {
+    if (replyTurnId ? message.turnId !== replyTurnId : replyThreadId && message.threadId !== replyThreadId) {
       return false;
     }
     const messageCreatedAt = Date.parse(message.createdAt);
@@ -145,8 +163,18 @@ function derivePendingChannelSendState(
   });
   return {
     acknowledged: Boolean(acknowledgedMessage),
+    acknowledgedMessageId: acknowledgedMessage?.id,
     aiReplyStarted,
   };
+}
+
+function messageMatchesPendingSurface(message: ChannelMessage, requestedThreadId: string | undefined): boolean {
+  if (message.threadSurfaceKind) {
+    return requestedThreadId
+      ? message.threadId === requestedThreadId
+      : message.threadSurfaceKind === "channel_root";
+  }
+  return message.threadId === requestedThreadId;
 }
 
 function sameStringList(left: readonly string[], right: readonly string[]): boolean {

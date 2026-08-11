@@ -121,7 +121,7 @@ export function ProviderRouteList({
         </TableHead>
         <TableBody>
           {filteredProviders.map((provider) => {
-            const providerIsChecking = checkingProviderIds.includes(provider.id);
+            const providerIsChecking = checkingProviderIds.includes(provider.id) || provider.lastCheck?.code === "checking";
             const rowCheckResult = checkScope === "row" && checkedProviderId === provider.id ? checkResult : undefined;
             const rowCheckGuidance = rowCheckResult ? providerCheckDisplayGuidance(rowCheckResult, provider, t) : "";
             const row = readProviderRouteRowView({ provider, selectedProviderId, rowCheckGuidance, t });

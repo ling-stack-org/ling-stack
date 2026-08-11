@@ -2,7 +2,7 @@
 
 Status: current planning index
 Owner: repository maintainers
-Last verified: 2026-08-03
+Last verified: 2026-08-10
 Document type: governance index
 
 ## Purpose

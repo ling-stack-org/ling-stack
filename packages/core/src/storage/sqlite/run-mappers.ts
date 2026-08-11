@@ -1,4 +1,5 @@
 import type { SQLOutputValue } from "node:sqlite";
+import type { LingThreadRelationKindV2, LingThreadSurfaceKindV2 } from "@ling-stack/contracts";
 import { conversationModeKinds, runContinuationReasons, type ConversationModeKind, type ConversationModeState, type GoalContinuationEvidenceDelta, type GoalContinuationStopReason, type GoalEvidenceRef, type GoalUsageSource, type LingThread, type LingThreadGoal, type LingThreadGoalCompletionActor, type LingThreadGoalStatus, type LingThreadKind, type LingThreadMetadata, type LingThreadStatus, type LingTurn, type LingTurnKind, type LingTurnRun, type LingTurnRunRole, type LingTurnStatus, type ProposedPlanArtifact, type ProposedPlanArtifactStatus, type RunContinuationReason, type RunEventEnvelope, type RunEventType, type RunSession, type RunStatus } from "../../run-types.js";
 import { omitUndefined, parseJson, readNullableNumber, readNullableString, readNumber, readString } from "./helpers.js";
 
@@ -28,6 +29,11 @@ export function mapLingThread(row: Record<string, SQLOutputValue>): LingThread {
     pinnedAt: readNullableString(row, "pinned_at"),
     archivedAt: readNullableString(row, "archived_at"),
     archivedReason: readNullableString(row, "archived_reason"),
+    surfaceKind: readString(row, "surface_kind") as LingThreadSurfaceKindV2,
+    relationKind: readString(row, "relation_kind") as LingThreadRelationKindV2,
+    anchorItemId: readNullableString(row, "anchor_item_id"),
+    forkContextSnapshotId: readNullableString(row, "fork_context_snapshot_id"),
+    nextItemSequence: readNumber(row, "next_item_sequence"),
   });
 }
 
@@ -174,7 +180,7 @@ export function mapLingTurn(row: Record<string, SQLOutputValue>): LingTurn {
     workflowStepId: readNullableString(row, "workflow_step_id"),
     externalWorkId: readNullableString(row, "external_work_id"),
     automationId: readNullableString(row, "automation_id"),
-    sourceMessageId: readNullableString(row, "source_message_id"),
+    sourceItemId: readNullableString(row, "source_item_id"),
     sourceTurnId: readNullableString(row, "source_turn_id"),
     interventionId: readNullableString(row, "intervention_id"),
     activeRunId: readNullableString(row, "active_run_id"),

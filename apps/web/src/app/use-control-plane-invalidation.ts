@@ -31,6 +31,7 @@ export function useControlPlaneInvalidation(input: {
   readonly channelRunsForArtifacts: readonly RunSession[];
   readonly setSkillLibraryRefreshToken: (update: (current: number) => number) => void;
   readonly refreshRuns: (cwd?: string) => Promise<void>;
+  readonly refreshSelectedConversation: (cwd?: string) => Promise<void>;
   readonly refreshRuntimeState: (cwd?: string) => Promise<void>;
   readonly refreshApprovals: (cwd?: string, runId?: string) => Promise<void>;
   readonly refreshApprovalPolicy: () => Promise<void>;
@@ -105,6 +106,11 @@ export function useControlPlaneInvalidation(input: {
         `channel:${input.selectedChannelId}`,
         input.refreshChannelRunArtifacts(workspaceCwd, input.selectedChannelId, input.channelRunsForArtifacts),
       );
+    }
+    const conversationDomain = (["runs", "work_units", "approvals", "artifacts"] as const)
+      .find((domain) => changed.has(domain));
+    if (conversationDomain) {
+      trackRefresh(conversationDomain, "selected-conversation", input.refreshSelectedConversation(workspaceCwd));
     }
   };
 

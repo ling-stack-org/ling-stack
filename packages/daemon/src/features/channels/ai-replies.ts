@@ -1,17 +1,20 @@
-import { resolveEffectiveTeammateProviderPresetId, type Channel, type ChannelMessage, type RunStore, type SecretResolver } from "@ling-stack/core";
-import type { RunnerRegistry, RunnerResolution } from "../../runtime/runners.js";
-import type { RuntimeSupervisor } from "../../runtime/supervisor.js";
-import { startRuntimeWorkUnit, transitionWorkUnitTerminal } from "../../runtime/work-units.js";
-import { extractAssistantText } from "../../shared/assistant-text.js";
+import {
+  projectConversationItemToChannelMessage,
+  type Channel,
+  type ChannelMessage,
+  type RunSession,
+  type RunStore,
+  type SecretResolver,
+} from "@ling-stack/core";
 import { renderUsedMemoryPromptForView } from "../memory/prompt.js";
 import { isRunTool } from "../runs/approvals.js";
-import { acquireRunRuntimeSemaphores } from "../runs/concurrency.js";
-import { resolveProviderForRun } from "../runs/providers.js";
-import { resolveAiTeammateReference } from "../teammates/identity.js";
+import type { RunExecutionSink } from "../runs/orchestrator.js";
+import type { RunRequest } from "../runs/schemas.js";
 import { extractChannelExecutionProposal } from "./ai-proposals.js";
 import { compactChannelDiscussionForNoToolsRetry, isContextLengthError } from "./context-compaction.js";
-import { buildChannelReplyContextPack, renderContextPack } from "./context-packs.js";
-import { createLingAgentExecutor, isLingAgentExecutorId, LING_AGENT_EXECUTOR_ID } from "./ling-agent-executor.js";
+import { buildChannelReplyContextPack, renderContextPack, type ContextPack } from "./context-packs.js";
+import { LING_AGENT_EXECUTOR_ID } from "./ling-agent-executor.js";
+import { resolveChannelReplyExecutionTarget } from "./channel-reply-execution-target.js";
 import {
   buildLingAgentTurnEnvelope,
   renderLingAgentTurnEnvelopeSearchText,
@@ -23,16 +26,29 @@ import {
   recordProviderRuntimeAvailabilityIncident,
 } from "./provider-runtime-observations.js";
 import { resolveChannelResponseLanguage, responseLanguageInstruction } from "./response-language.js";
-import { buildChannelWebContext, prependChannelWebContext } from "./web-tools.js";
+import { buildChannelWebContext, prependChannelWebContext, type ChannelWebContext } from "./web-tools.js";
 import {
   recordMessageWebEvidenceEvent,
   recordMessageWebEvidenceProgressEvent,
   renderWebEvidenceProgressPendingBody,
 } from "../web/message-web-evidence.js";
 import type { WebEvidenceProgressEvent } from "../web/web-evidence-service.js";
+import { buildChannelReplyRunRequest } from "./channel-reply-execution.js";
+import {
+  CHANNEL_PROMPT_LEAK_ERROR_MESSAGE,
+  createChannelReplyRunProjection,
+  isChannelReplyPromptLeak,
+  visibleChannelReplyText,
+} from "./channel-reply-run-projection.js";
+import {
+  getChannelMessageView,
+  updatePendingAssistantMessage,
+} from "./conversation-item-messages.js";
+
+export type StartChannelReplyRun = (runRequest: RunRequest, sink: RunExecutionSink) => Promise<string | undefined>;
 
 export async function createAiChannelReply(input: {
-  readonly runnerRegistry: RunnerRegistry;
+  readonly startRun: StartChannelReplyRun;
   readonly store: RunStore;
   readonly channel: Channel;
   readonly sourceMessage: ChannelMessage;
@@ -42,24 +58,28 @@ export async function createAiChannelReply(input: {
   readonly proposalMode?: "allow" | "disabled";
   readonly channelParallelLimit?: number;
   readonly visibleParticipantTeammateIds?: readonly string[];
-  readonly runtimeSupervisor: RuntimeSupervisor;
   readonly secretResolver: SecretResolver;
   readonly webFetch?: typeof globalThis.fetch;
   readonly webResolveHostAddresses?: (hostname: string) => Promise<readonly string[]>;
   readonly teamObserverBusEnabled?: boolean;
   readonly completionMode?: "background" | "inline";
+  readonly trackCompletion?: (completion: Promise<unknown>) => void;
   readonly replyMessageId?: string;
   readonly disableWebEvidence?: boolean;
+  readonly onRunLinked?: (runId: string) => void;
+  readonly onDispatchSettled?: () => void;
   readonly stream?: {
     readonly onReady: (message: ChannelMessage) => void;
+    readonly onRunLinked?: (message: ChannelMessage) => void;
     readonly onDelta: (message: ChannelMessage, delta: string) => void;
     readonly onDone: (message: ChannelMessage) => void;
     readonly onBlocked: (message: ChannelMessage) => void;
   };
 }): Promise<ChannelMessage> {
   if (input.replyMessageId) {
-    const existing = input.store.getChannelMessage(input.replyMessageId);
+    const existing = getChannelMessageView(input.store, input.replyMessageId);
     if (existing) {
+      notifyDispatchSettled(input.onDispatchSettled);
       return existing;
     }
   }
@@ -68,80 +88,58 @@ export async function createAiChannelReply(input: {
     input.teammateId ??
     input.sourceMessage.mentions.find((mention) => mention.kind === "ai-teammate")?.id ??
     LING_AGENT_EXECUTOR_ID;
-  const teammate = isLingAgentExecutorId(teammateId)
-    ? input.store.getAiTeammate(teammateId) ?? createLingAgentExecutor(now)
-    : resolveAiTeammateReference(input.store, teammateId);
-  const canonicalTeammateId = teammate?.id ?? teammateId;
-  const providerPresetId = teammate
-    ? resolveEffectiveTeammateProviderPresetId({
-        teammate,
-        surface: "channel",
-        requestedProviderPresetId: input.providerPresetId,
-        workspaceDefaultProviderPresetId: input.store.getWorkspaceSettings().defaultProviderPresetId,
-        channelDefaultProviderPresetId: input.channel.defaultProviderPresetId,
-      })
-    : input.providerPresetId ?? input.channel.defaultProviderPresetId;
-  const runnerResolution = input.runnerRegistry.resolve({
-    requestedRunnerId: teammate?.runnerId,
-    allowFallback: true,
-    tools: [],
-  });
-  const pending = input.store.createChannelMessage(
-    {
-      ...(input.replyMessageId ? { id: input.replyMessageId } : {}),
-      channelId: input.channel.id,
-      threadId: input.sourceMessage.threadId ?? input.sourceMessage.id,
-      kind: "ai_reply",
-      intent: "discuss",
-      authorType: "ai-teammate",
-      authorId: canonicalTeammateId,
-      body: input.completionMode === "inline" ? "" : "AI teammate is preparing a reply...",
-      status: "pending",
-    },
-    now,
-  );
-  input.stream?.onReady(pending);
-  const supervised = startRuntimeWorkUnit({
+  const target = resolveChannelReplyExecutionTarget({
     store: input.store,
-    runtimeSupervisor: input.runtimeSupervisor,
-    kind: "channel_ai_reply",
-    ownerType: "channel_message",
-    ownerId: input.sourceMessage.id,
-    channelId: input.channel.id,
-    teammateId: canonicalTeammateId,
-    providerPresetId,
-    requestedRunnerId: runnerResolution.requestedRunnerId,
-    effectiveRunnerId: runnerResolution.effectiveRunnerId,
-    fallbackReason: runnerResolution.fallbackReason,
-    linkedMessageId: pending.id,
-    idempotencyKey: `channel_ai_reply:${input.sourceMessage.id}:${pending.id}`,
-    request: {
-      sourceMessageId: input.sourceMessage.id,
-      providerPresetId,
-      teammateId: canonicalTeammateId,
-      runnerResolution: toRunnerResolutionSnapshot(runnerResolution),
-    },
+    channel: input.channel,
+    requestedTeammateId: teammateId,
+    requestedProviderPresetId: input.providerPresetId,
+    now,
   });
+  const { teammate, teammateId: canonicalTeammateId, providerPresetId } = target;
+  const sourceItem = input.store.getConversationItem(input.sourceMessage.id);
+  if (!sourceItem?.turnId || sourceItem.channelId !== input.channel.id) {
+    throw new Error(`Channel reply source item has no owning turn: ${input.sourceMessage.id}`);
+  }
+  const pendingItem = input.store.appendConversationItem({
+    ...(input.replyMessageId ? { id: input.replyMessageId } : {}),
+    channelId: input.channel.id,
+    threadId: sourceItem.threadId,
+    turnId: sourceItem.turnId,
+    kind: "assistant_message",
+    status: "pending",
+    actorType: canonicalTeammateId === LING_AGENT_EXECUTOR_ID ? "ling_agent" : "teammate",
+    actorId: canonicalTeammateId,
+    visibility: "channel",
+    payload: {
+      body: input.completionMode === "inline" ? "" : "AI teammate is preparing a reply...",
+      format: "markdown",
+      streaming: true,
+      deliveryStatus: "pending",
+    },
+    domainRefs: [{ type: "conversation_item", id: sourceItem.id, label: "reply source" }],
+    ...(input.replyMessageId ? { idempotencyKey: `assistant-reply:${input.replyMessageId}` } : {}),
+  }, now);
+  const pending = projectConversationItemToChannelMessage(pendingItem);
+  input.stream?.onReady(pending);
 
   const completion = completeAiChannelReply({
     ...input,
     pending,
-    supervised,
     teammate,
     canonicalTeammateId,
     providerPresetId,
-    runnerResolution,
     now,
-  });
+  }).finally(() => notifyDispatchSettled(input.onDispatchSettled));
   if (input.completionMode === "inline") {
     return await completion;
   }
+  input.trackCompletion?.(completion);
   void completion;
   return pending;
 }
 
 async function completeAiChannelReply(input: {
-  readonly runnerRegistry: RunnerRegistry;
+  readonly startRun: StartChannelReplyRun;
   readonly store: RunStore;
   readonly channel: Channel;
   readonly sourceMessage: ChannelMessage;
@@ -151,27 +149,26 @@ async function completeAiChannelReply(input: {
   readonly proposalMode?: "allow" | "disabled";
   readonly channelParallelLimit?: number;
   readonly visibleParticipantTeammateIds?: readonly string[];
-  readonly runtimeSupervisor: RuntimeSupervisor;
   readonly secretResolver: SecretResolver;
   readonly webFetch?: typeof globalThis.fetch;
   readonly webResolveHostAddresses?: (hostname: string) => Promise<readonly string[]>;
   readonly teamObserverBusEnabled?: boolean;
   readonly disableWebEvidence?: boolean;
+  readonly onRunLinked?: (runId: string) => void;
   readonly pending: ChannelMessage;
-  readonly supervised: ReturnType<typeof startRuntimeWorkUnit>;
-  readonly teammate: ReturnType<typeof resolveAiTeammateReference>;
+  readonly teammate: ReturnType<typeof resolveChannelReplyExecutionTarget>["teammate"];
   readonly canonicalTeammateId: string;
-  readonly runnerResolution: RunnerResolution;
   readonly now: string;
   readonly stream?: {
     readonly onReady: (message: ChannelMessage) => void;
+    readonly onRunLinked?: (message: ChannelMessage) => void;
     readonly onDelta: (message: ChannelMessage, delta: string) => void;
     readonly onDone: (message: ChannelMessage) => void;
     readonly onBlocked: (message: ChannelMessage) => void;
   };
 }): Promise<ChannelMessage> {
   if (input.teammate && input.teammate.status !== "active") {
-    const blocked = finishChannelMessageWorkUnit(input.store, input.supervised, input.pending.id, {
+    const blocked = finishChannelMessage(input.store, input.pending.id, {
       body: `AI teammate is ${input.teammate.status}.`,
       status: "blocked",
       errorMessage: `Teammate status is ${input.teammate.status}.`,
@@ -181,7 +178,7 @@ async function completeAiChannelReply(input: {
   }
 
   if (!input.providerPresetId) {
-    const blocked = finishChannelMessageWorkUnit(input.store, input.supervised, input.pending.id, {
+    const blocked = finishChannelMessage(input.store, input.pending.id, {
       body: "AI teammate is not configured for this channel.",
       status: "blocked",
       errorMessage: "No provider preset is selected for this channel discussion.",
@@ -190,9 +187,8 @@ async function completeAiChannelReply(input: {
     return blocked;
   }
 
-  const textDeltas: string[] = [];
-  let lastVisibleStreamBody = "";
-  let promptLeakDetected = false;
+  const webProgressEvents: WebEvidenceProgressEvent[] = [];
+  let observerBusError: string | undefined;
   try {
     const turnEnvelope = input.turnEnvelope ?? buildLingAgentTurnEnvelope({
       store: input.store,
@@ -209,17 +205,7 @@ async function completeAiChannelReply(input: {
         now: input.now,
       });
     } catch (error) {
-      input.store.appendRuntimeEvent({
-        workUnitId: input.supervised.workUnit.id,
-        attemptId: input.supervised.attempt.id,
-        type: "work_unit_progress",
-        actor: "system",
-        ts: new Date().toISOString(),
-        data: {
-          channelTeamObserverBus: "failed",
-          error: error instanceof Error ? error.message : String(error),
-        },
-      });
+      observerBusError = error instanceof Error ? error.message : String(error);
     }
     const memoryRecall = input.store.recallMemory({
       teammateId: input.canonicalTeammateId,
@@ -263,18 +249,10 @@ async function completeAiChannelReply(input: {
         fetch: input.webFetch,
         resolveHostAddresses: input.webResolveHostAddresses,
         onProgress: (progress) => {
-          recordChannelWebEvidenceProgress(input, progress);
+          webProgressEvents.push(progress);
+          updateChannelWebEvidenceProgress(input, progress);
         },
       });
-    recordMessageWebEvidenceEvent({
-      store: input.store,
-      workUnitId: input.supervised.workUnit.id,
-      attemptId: input.supervised.attempt.id,
-      sourceMessageId: input.sourceMessage.id,
-      linkedMessageId: input.pending.id,
-      context: webContext,
-      ts: new Date().toISOString(),
-    });
     let discussionPrompt = prependChannelWebContext(renderContextPack(discussionContextPack), webContext);
     const conversationMode = input.sourceMessage.threadId
       ? input.store.getLingThreadConversationMode(input.sourceMessage.threadId)
@@ -303,109 +281,17 @@ async function completeAiChannelReply(input: {
       memoryPrompt,
     ].filter((line): line is string => Boolean(line)).join("\n");
 
-    acquireRunRuntimeSemaphores({
-      store: input.store,
-      workUnit: input.supervised.workUnit,
-      attempt: input.supervised.attempt,
-      channel: input.channel,
-      channelParallelLimit: input.channelParallelLimit,
-      providerKey: input.providerPresetId,
-      runnerId: input.runnerResolution.effectiveRunnerId,
-      now: input.now,
+    let execution = await startProjectedChannelReplyRun({
+      input,
+      prompt: discussionPrompt,
+      systemPrompt,
+      contextProjection: requireContextProjection(discussionContextPack),
+      webContext,
+      webProgressEvents,
+      observerBusError,
     });
-
-    const runDiscussionTask = async (prompt: string) => {
-      const provider = resolveProviderForRun(
-        input.store,
-        {
-          cwd: input.store.paths.cwd,
-          workspaceCwd: input.store.paths.cwd,
-          task: {
-            id: input.sourceMessage.id,
-            title: `Channel discussion in ${input.channel.name}`,
-            prompt,
-            channelId: input.channel.id,
-          },
-          providerPresetId: input.providerPresetId,
-          tools: [],
-          thinkingLevel: "medium",
-          systemPrompt,
-        },
-        input.secretResolver,
-      );
-      return input.runnerResolution.runner.adapter.runTask({
-        cwd: input.store.paths.cwd,
-        task: {
-          id: input.sourceMessage.id,
-          title: `Channel discussion in ${input.channel.name}`,
-          prompt,
-          channelId: input.channel.id,
-        },
-        provider,
-        tools: [],
-        thinkingLevel: "medium",
-        systemPrompt,
-        onEvent: (event) => {
-          input.store.appendRuntimeEvent({
-            workUnitId: input.supervised.workUnit.id,
-            attemptId: input.supervised.attempt.id,
-            type: "work_unit_progress",
-            actor: "runner",
-            ts: new Date().toISOString(),
-            data: { runnerEventType: event.type },
-          });
-          if (event.type === "assistant_text_delta") {
-            textDeltas.push(event.text);
-            const visibleBody = visibleReplyTextSoFar(textDeltas.join(""));
-            if (promptLeakDetected || isChannelReplyPromptLeak(visibleBody)) {
-              promptLeakDetected = true;
-              if (lastVisibleStreamBody !== PROMPT_LEAK_PENDING_BODY) {
-                lastVisibleStreamBody = PROMPT_LEAK_PENDING_BODY;
-                const updated = input.store.updateChannelMessageRuntime(
-                  input.pending.id,
-                  {
-                    body: PROMPT_LEAK_PENDING_BODY,
-                    status: "pending",
-                    errorMessage: null,
-                  },
-                  new Date().toISOString(),
-                );
-                if (updated) {
-                  input.stream?.onDelta(updated, "");
-                }
-              }
-              return;
-            }
-            if (visibleBody !== lastVisibleStreamBody) {
-              const delta = visibleBody.startsWith(lastVisibleStreamBody)
-                ? visibleBody.slice(lastVisibleStreamBody.length)
-                : visibleBody;
-              lastVisibleStreamBody = visibleBody;
-              const updated = input.store.updateChannelMessageRuntime(
-                input.pending.id,
-                {
-                  body: visibleBody,
-                  status: "pending",
-                  errorMessage: null,
-                },
-                new Date().toISOString(),
-              );
-              if (updated) {
-                input.stream?.onDelta(updated, delta);
-              }
-            }
-          }
-        },
-      });
-    };
-
-    let result: Awaited<ReturnType<typeof runDiscussionTask>>;
-    try {
-      result = await runDiscussionTask(discussionPrompt);
-    } catch (error) {
-      if (!isContextLengthError(error)) {
-        throw error;
-      }
+    const firstRunFailure = channelReplyRunFailure(execution.run, execution.projection.error());
+    if (firstRunFailure && isContextLengthError(firstRunFailure)) {
       const observedAt = new Date().toISOString();
       const providerPreset = discussionContextPack.providerPresetId ? input.store.getProviderPreset(discussionContextPack.providerPresetId) : undefined;
       recordProviderContextLengthObservation({
@@ -418,13 +304,14 @@ async function completeAiChannelReply(input: {
         providerPreset,
         providerPresetId: discussionContextPack.providerPresetId,
         code: "context_length_error",
-        error,
+        error: firstRunFailure,
         now: observedAt,
       });
-      const compaction = compactChannelDiscussionForNoToolsRetry({
+      const compaction = await compactChannelDiscussionForNoToolsRetry({
         store: input.store,
         channel: input.channel,
         sourceMessage: input.sourceMessage,
+        inputBudgetTokens: discussionContextPack.budget.inputBudgetTokens,
         now: observedAt,
       });
       discussionContextPack = buildChannelReplyContextPack({
@@ -440,37 +327,56 @@ async function completeAiChannelReply(input: {
         minimal: true,
       });
       discussionPrompt = prependChannelWebContext(renderContextPack(discussionContextPack), webContext);
-      textDeltas.length = 0;
-      lastVisibleStreamBody = "";
-      const reset = input.store.updateChannelMessageRuntime(
-        input.pending.id,
-        {
-          body: "",
-          status: "pending",
-          errorMessage: null,
-        },
-        new Date().toISOString(),
-      );
-      if (reset) {
-        input.stream?.onDelta(reset, "");
-      }
-      result = await runDiscussionTask(discussionPrompt);
+      const reset = updatePendingAssistantMessage({
+        store: input.store,
+        itemId: input.pending.id,
+        body: "",
+        status: "pending",
+        errorMessage: null,
+        now: new Date().toISOString(),
+      });
+      input.stream?.onDelta(reset, "");
+      execution = await startProjectedChannelReplyRun({
+        input,
+        prompt: discussionPrompt,
+        systemPrompt,
+        contextProjection: requireContextProjection(discussionContextPack),
+        webContext,
+        webProgressEvents,
+        observerBusError,
+        parentRunId: execution.run.id,
+        compactedRetry: true,
+      });
     }
-    const rawReplyText = textDeltas.join("").trim() || extractAssistantText(result.messages) || "AI reply completed without text.";
-    if (isChannelReplyPromptLeak(rawReplyText)) {
-      throw new Error(PROMPT_LEAK_ERROR_MESSAGE);
+    if (execution.run.status === "queued" || execution.run.status === "running" || execution.run.status === "waiting_for_approval") {
+      return getChannelMessageView(input.store, input.pending.id) ?? input.pending;
+    }
+    if (execution.run.status === "cancelled") {
+      const stopped = finishChannelMessage(input.store, input.pending.id, {
+        body: "Reply stopped.",
+        status: "blocked",
+        errorMessage: "Channel reply was stopped by the user.",
+      });
+      input.stream?.onBlocked(stopped);
+      return stopped;
+    }
+    const runFailure = channelReplyRunFailure(execution.run, execution.projection.error());
+    if (runFailure) {
+      throw new Error(runFailure);
+    }
+    const rawReplyText = execution.projection.rawText().trim() || "AI reply completed without text.";
+    if (execution.projection.promptLeakDetected() || isChannelReplyPromptLeak(rawReplyText)) {
+      throw new Error(CHANNEL_PROMPT_LEAK_ERROR_MESSAGE);
     }
     const extractedProposal = !proposalBlocksAllowed
       ? undefined
       : extractChannelExecutionProposal(rawReplyText, input.canonicalTeammateId, isRunTool);
-    const fallbackReplyText = input.stream ? visibleReplyText(rawReplyText) : rawReplyText;
+    const fallbackReplyText = input.stream ? visibleChannelReplyText(rawReplyText) : rawReplyText;
     const replyText = extractedProposal?.visibleBody ?? (fallbackReplyText || rawReplyText);
-    const reply = finishChannelMessageWorkUnit(input.store, input.supervised, input.pending.id, {
+    const replyReference = {
+      ...(getChannelMessageView(input.store, input.pending.id) ?? input.pending),
       body: replyText,
-      status: "ready",
-      errorMessage: null,
-    });
-    input.stream?.onDone(reply);
+    };
     if (renderedMemory.memoryIds.length > 0) {
       input.store.recordUsedMemoryEvent(
         {
@@ -479,7 +385,7 @@ async function completeAiChannelReply(input: {
           recallQuery: memoryRecall.request.query,
           teammateId: input.canonicalTeammateId,
           channelId: input.channel.id,
-          responseId: reply.id,
+          responseId: replyReference.id,
           policyVersion: renderedMemory.policyVersion,
         },
         new Date().toISOString(),
@@ -489,7 +395,7 @@ async function completeAiChannelReply(input: {
       input.store.createChannelExecutionProposal(
         {
           channelId: input.channel.id,
-          sourceMessageId: input.pending.id,
+          sourceMessageId: replyReference.id,
           proposedByTeammateId: input.canonicalTeammateId,
           title: extractedProposal.title,
           prompt: extractedProposal.prompt,
@@ -503,7 +409,13 @@ async function completeAiChannelReply(input: {
         new Date().toISOString(),
       );
     }
-    recordProposedPlanArtifactFromReply(input.store, reply, rawReplyText);
+    recordProposedPlanArtifactFromReply(input.store, replyReference, rawReplyText);
+    const reply = finishChannelMessage(input.store, input.pending.id, {
+      body: replyText,
+      status: "ready",
+      errorMessage: null,
+    });
+    input.stream?.onDone(reply);
     return reply;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -514,20 +426,16 @@ async function completeAiChannelReply(input: {
       error,
       now: new Date().toISOString(),
     });
-    const blocked = finishChannelMessageWorkUnit(input.store, input.supervised, input.pending.id, {
+    const blocked = finishChannelMessage(input.store, input.pending.id, {
       body: `AI teammate is blocked: ${message}`,
       status: "blocked",
       errorMessage: message,
     });
     input.stream?.onBlocked(blocked);
     return blocked;
-  } finally {
-    input.store.releaseRuntimeSemaphoreSlotsForOwner(input.supervised.attempt.id, new Date().toISOString(), "message-reply-finished");
   }
 }
 
-const PROMPT_LEAK_PENDING_BODY = "AI teammate response was blocked because the runner echoed internal channel context.";
-const PROMPT_LEAK_ERROR_MESSAGE = "Runner echoed internal channel context instead of an assistant reply.";
 const proposedPlanPattern = /<proposed_plan(?:\s+title=(?:"([^"]+)"|'([^']+)'))?\s*>([\s\S]*?)<\/proposed_plan>/i;
 
 function recordProposedPlanArtifactFromReply(store: RunStore, reply: ChannelMessage, rawReplyText: string): void {
@@ -571,146 +479,166 @@ function renderPlanModeInstruction(): string {
   ].join("\n");
 }
 
-function isChannelReplyPromptLeak(raw: string): boolean {
-  const text = raw.trim();
-  const blockedPrefixes = [
-    "Channel collaboration protocol:",
-    "Recent channel context before the latest turn:",
-    "Reply as the channel AI teammate. Keep the response actionable and brief.",
-  ];
-  if (blockedPrefixes.some((prefix) => text.startsWith(prefix))) {
-    return true;
+async function startProjectedChannelReplyRun(input: {
+  readonly input: Parameters<typeof completeAiChannelReply>[0];
+  readonly prompt: string;
+  readonly systemPrompt: string;
+  readonly contextProjection: NonNullable<ContextPack["contextProjection"]>;
+  readonly webContext: ChannelWebContext;
+  readonly webProgressEvents: readonly WebEvidenceProgressEvent[];
+  readonly observerBusError?: string;
+  readonly parentRunId?: string;
+  readonly compactedRetry?: boolean;
+}): Promise<{
+  readonly run: RunSession;
+  readonly projection: ReturnType<typeof createChannelReplyRunProjection>;
+}> {
+  const projection = createChannelReplyRunProjection({
+    store: input.input.store,
+    pendingMessageId: input.input.pending.id,
+    stream: input.input.stream,
+    onRunLinked: ({ runId, workUnitId, attemptId }) => {
+      recordBufferedChannelWebEvidence({
+        store: input.input.store,
+        workUnitId,
+        attemptId,
+        sourceMessage: input.input.sourceMessage,
+        pending: input.input.pending,
+        webContext: input.webContext,
+        progressEvents: input.webProgressEvents,
+      });
+      if (input.observerBusError) {
+        input.input.store.appendRuntimeEvent({
+          workUnitId,
+          attemptId,
+          type: "work_unit_progress",
+          actor: "system",
+          ts: new Date().toISOString(),
+          data: {
+            channelTeamObserverBus: "failed",
+            error: input.observerBusError,
+          },
+        });
+      }
+      notifyRunLinked(input.input.onRunLinked, runId);
+    },
+  });
+  const startedRunId = await input.input.startRun(buildChannelReplyRunRequest({
+    store: input.input.store,
+    channel: input.input.channel,
+    sourceMessage: input.input.sourceMessage,
+    replyMessage: input.input.pending,
+    teammate: input.input.teammate,
+    teammateId: input.input.canonicalTeammateId,
+    providerPresetId: input.input.providerPresetId!,
+    prompt: input.prompt,
+    systemPrompt: input.systemPrompt,
+    channelParallelLimit: input.input.channelParallelLimit,
+    parentRunId: input.parentRunId,
+    compactedRetry: input.compactedRetry,
+    contextProjection: input.contextProjection,
+  }), projection.sink);
+  const runId = startedRunId ?? projection.runId();
+  if (!runId) {
+    throw new Error(projection.error() ?? "Channel reply run failed to start.");
   }
-  if (/^Attachments:\s*(?:none)?/u.test(text) && text.includes("Link previews:")) {
-    return true;
+  const run = input.input.store.getRun(runId);
+  if (!run) {
+    throw new Error(`Channel reply run was not persisted: ${runId}`);
   }
-  if (text.length < 80) {
-    return false;
-  }
-  const markers = [
-    "Channel collaboration protocol:",
-    "Response language:",
-    "Auto reply mode:",
-    "Default workflow preference:",
-    "Private teammate chat, hidden prompts, provider secrets",
-    "Recent channel context before the latest turn:",
-    "Use this context to resolve short follow-ups",
-    "Reply as the channel AI teammate. Keep the response actionable and brief.",
-    "Current teammate:",
-    "User message:",
-    "Attachments:",
-    "Link previews:",
-    "Workspace file refs:",
-  ];
-  const matchedMarkers = markers.filter((marker) => text.includes(marker));
-  const hasProtocol = text.includes("Channel collaboration protocol:");
-  const hasReplyInstruction = text.includes("Reply as the channel AI teammate. Keep the response actionable and brief.");
-  const hasRecentContext = text.includes("Recent channel context before the latest turn:");
-  const hasEnvelopeCluster =
-    (text.includes("Attachments:") || text.includes("Attachments: none")) &&
-    (text.includes("Link previews:") || text.includes("Link previews: none")) &&
-    (text.includes("Workspace file refs:") || text.includes("Workspace file refs: none"));
-  return (
-    (hasReplyInstruction && (hasProtocol || hasEnvelopeCluster || hasRecentContext)) ||
-    (hasProtocol && matchedMarkers.length >= 4) ||
-    (hasEnvelopeCluster && matchedMarkers.length >= 5)
-  );
+  return { run, projection };
 }
 
-function visibleReplyTextSoFar(raw: string): string {
-  const visible = stripHiddenProposalText(raw);
-  if (visible.length !== raw.length) {
-    return visible;
+function requireContextProjection(pack: ContextPack): NonNullable<ContextPack["contextProjection"]> {
+  if (!pack.contextProjection) {
+    throw new Error("Channel reply context pack is missing its conversation projection metadata.");
   }
-  const marker = "<ling_task_proposal";
-  const lower = raw.toLowerCase();
-  const maxPrefixLength = Math.min(marker.length - 1, lower.length);
-  for (let length = maxPrefixLength; length > 0; length -= 1) {
-    if (marker.startsWith(lower.slice(-length))) {
-      return raw.slice(0, raw.length - length);
-    }
+  return pack.contextProjection;
+}
+
+function notifyRunLinked(callback: ((runId: string) => void) | undefined, runId: string): void {
+  try {
+    callback?.(runId);
+  } catch {
+    // Reply execution remains authoritative when an in-memory dispatch observer closes early.
   }
-  return raw;
 }
 
-function visibleReplyText(raw: string): string {
-  return stripHiddenProposalText(raw).trim();
+function notifyDispatchSettled(callback: (() => void) | undefined): void {
+  try {
+    callback?.();
+  } catch {
+    // Reply execution remains authoritative when an in-memory dispatch observer closes early.
+  }
 }
 
-function stripHiddenProposalText(raw: string): string {
-  return raw
-    .replace(/<ling_task_proposal[\s\S]*?<\/ling_task_proposal>/giu, "")
-    .replace(/<ling_task_proposal[\s\S]*$/iu, "");
+function channelReplyRunFailure(run: RunSession, projectionError: string | undefined): string | undefined {
+  if (run.status !== "failed") {
+    return undefined;
+  }
+  return run.errorMessage?.trim() || projectionError?.trim() || "Channel reply run failed.";
 }
 
-function recordChannelWebEvidenceProgress(
-  input: Pick<Parameters<typeof completeAiChannelReply>[0], "store" | "supervised" | "sourceMessage" | "pending" | "stream">,
+function updateChannelWebEvidenceProgress(
+  input: Pick<Parameters<typeof completeAiChannelReply>[0], "store" | "sourceMessage" | "pending" | "stream">,
   progress: WebEvidenceProgressEvent,
 ): void {
   const now = new Date().toISOString();
-  recordMessageWebEvidenceProgressEvent({
+  const body = renderWebEvidenceProgressPendingBody(progress, input.sourceMessage.body);
+  const updated = updatePendingAssistantMessage({
     store: input.store,
-    workUnitId: input.supervised.workUnit.id,
-    attemptId: input.supervised.attempt.id,
+    itemId: input.pending.id,
+    body,
+    status: "pending",
+    errorMessage: null,
+    now,
+  });
+  input.stream?.onDelta(updated, "");
+}
+
+function recordBufferedChannelWebEvidence(input: {
+  readonly store: RunStore;
+  readonly workUnitId: string;
+  readonly attemptId?: string;
+  readonly sourceMessage: ChannelMessage;
+  readonly pending: ChannelMessage;
+  readonly webContext: ChannelWebContext;
+  readonly progressEvents: readonly WebEvidenceProgressEvent[];
+}): void {
+  for (const progress of input.progressEvents) {
+    recordMessageWebEvidenceProgressEvent({
+      store: input.store,
+      workUnitId: input.workUnitId,
+      attemptId: input.attemptId,
+      sourceMessageId: input.sourceMessage.id,
+      linkedMessageId: input.pending.id,
+      progress,
+      ts: new Date().toISOString(),
+    });
+  }
+  recordMessageWebEvidenceEvent({
+    store: input.store,
+    workUnitId: input.workUnitId,
+    attemptId: input.attemptId,
     sourceMessageId: input.sourceMessage.id,
     linkedMessageId: input.pending.id,
-    progress,
-    ts: now,
+    context: input.webContext,
+    ts: new Date().toISOString(),
   });
-  const body = renderWebEvidenceProgressPendingBody(progress, input.sourceMessage.body);
-  const updated = input.store.updateChannelMessageRuntime(
-    input.pending.id,
-    {
-      body,
-      status: "pending",
-      errorMessage: null,
-    },
-    now,
-  );
-  if (updated) {
-    input.stream?.onDelta(updated, "");
-  }
 }
 
-function toRunnerResolutionSnapshot(resolution: RunnerResolution): {
-  readonly requestedRunnerId: string;
-  readonly effectiveRunnerId: string;
-  readonly fallbackReason?: RunnerResolution["fallbackReason"];
-} {
-  return {
-    requestedRunnerId: resolution.requestedRunnerId,
-    effectiveRunnerId: resolution.effectiveRunnerId,
-    fallbackReason: resolution.fallbackReason,
-  };
-}
-
-function finishChannelMessageWorkUnit(
+function finishChannelMessage(
   store: RunStore,
-  supervised: { readonly workUnit: { readonly id: string }; readonly attempt: { readonly id: string } },
   messageId: string,
   input: { readonly body: string; readonly status: ChannelMessage["status"]; readonly errorMessage?: string | null },
 ): ChannelMessage {
   const now = new Date().toISOString();
-  transitionWorkUnitTerminal(store, {
-    workUnitId: supervised.workUnit.id,
-    attemptId: supervised.attempt.id,
-    event: input.status === "ready" ? "runner_succeeded" : "runner_failed",
-    attemptStatus: input.status === "ready" ? "succeeded" : "failed",
-    runtimeEventType: input.status === "ready" ? "work_unit_succeeded" : "work_unit_failed",
-    actor: "runner",
+  return updatePendingAssistantMessage({
+    store,
+    itemId: messageId,
+    body: input.body,
+    status: input.status,
+    errorMessage: input.errorMessage ?? null,
     now,
-    errorCode: input.status === "ready" ? undefined : "message_reply_blocked",
-    errorMessage: input.errorMessage ?? undefined,
   });
-  return (
-    store.updateChannelMessageRuntime(
-      messageId,
-      {
-        body: input.body,
-        status: input.status,
-        errorMessage: input.errorMessage ?? null,
-      },
-      now,
-    ) ?? store.getChannelMessage(messageId)!
-  );
 }

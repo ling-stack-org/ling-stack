@@ -98,7 +98,7 @@ export interface TerminalReportViewModel {
 }
 
 export function terminalReportToViewModel(report: TerminalReportViewInput): TerminalReportViewModel {
-  const sections: readonly TerminalReportSectionInput[] = [
+  const rawSections: readonly TerminalReportSectionInput[] = [
     report.outcome,
     ...report.outcome.corrections,
     ...report.changes,
@@ -107,11 +107,31 @@ export function terminalReportToViewModel(report: TerminalReportViewInput): Term
     ...report.artifacts,
     ...report.risks,
   ];
+  const allSourceRefs = [
+    ...report.references,
+    ...rawSections.flatMap((section) => section.sourceRefs),
+  ];
+  const changes = workspaceChanges(report.changes, allSourceRefs);
+  const visibleArtifacts = report.artifacts.filter(isUserVisibleTerminalReportArtifact);
+  const sections: readonly TerminalReportSectionInput[] = [
+    report.outcome,
+    ...report.outcome.corrections,
+    ...changes,
+    ...report.verification,
+    ...report.participants,
+    ...visibleArtifacts,
+    ...report.risks,
+  ];
   const sourceRefs = uniqueSourceRefs([
     ...report.references,
     ...sections.flatMap((section) => section.sourceRefs),
   ]);
-  const changedPaths = [...new Set(report.changes.flatMap((change) => change.paths).filter(Boolean))];
+  const changedPaths = [...new Set(changes.flatMap((change) => change.paths).filter(Boolean))];
+  const visibleArtifactIds = new Set(visibleArtifacts.map((artifact) => artifact.id));
+  const evidenceSourceRefs = sourceRefs.filter((ref) =>
+    !(ref.kind === "artifact" && visibleArtifactIds.has(ref.id)) &&
+    !(ref.kind === "file" && (changedPaths.includes(ref.id) || (ref.label ? changedPaths.includes(ref.label) : false))),
+  );
   return {
     reportId: report.id,
     revisionKey: `${report.id}:${report.evidenceFingerprint}`,
@@ -135,7 +155,7 @@ export function terminalReportToViewModel(report: TerminalReportViewInput): Term
         meta: localizedMeta(report.language, correction.confidence),
         tone: "neutral" as const,
       })),
-      ...report.changes.map((change) => ({
+      ...changes.map((change) => ({
         id: `${report.id}:change:${change.id}`,
         kind: "edit" as const,
         reportSection: "change" as const,
@@ -175,7 +195,7 @@ export function terminalReportToViewModel(report: TerminalReportViewInput): Term
         tone: riskTone(risk.severity, risk.status),
       })),
     ],
-    evidenceLinks: sourceRefs.map((ref) => ({
+    evidenceLinks: evidenceSourceRefs.map((ref) => ({
       id: `${report.id}:ref:${ref.kind}:${ref.id}`,
       label: ref.label || ref.id,
       meta: ref.kind,
@@ -197,7 +217,7 @@ export function terminalReportToViewModel(report: TerminalReportViewInput): Term
         })),
         tone: "neutral" as const,
       }] : []),
-      ...report.artifacts.filter(isUserVisibleTerminalReportArtifact).map((artifact) => {
+      ...visibleArtifacts.map((artifact) => {
         const workspaceFilePath = terminalReportArtifactWorkspacePath(artifact, changedPaths);
         return {
           id: `${report.id}:artifact:${artifact.id}`,
@@ -214,6 +234,22 @@ export function terminalReportToViewModel(report: TerminalReportViewInput): Term
     ],
     updatedAt: report.committedAt,
   };
+}
+
+function workspaceChanges(
+  changes: TerminalReportViewInput["changes"],
+  sourceRefs: readonly TerminalReportSourceRefInput[],
+): TerminalReportViewInput["changes"] {
+  const artifactStoragePrefixes = sourceRefs
+    .filter((ref) => ref.kind === "run")
+    .map((ref) => `${ref.id}/`);
+  if (artifactStoragePrefixes.length === 0) {
+    return changes;
+  }
+  return changes.flatMap((change) => {
+    const paths = change.paths.filter((path) => !artifactStoragePrefixes.some((prefix) => path.startsWith(prefix)));
+    return paths.length > 0 ? [{ ...change, paths }] : [];
+  });
 }
 
 const WORKSPACE_FILE_ARTIFACT_KINDS = new Set<TerminalReportArtifactKindInput>([

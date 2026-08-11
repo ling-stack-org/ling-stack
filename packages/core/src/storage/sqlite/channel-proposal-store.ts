@@ -1,9 +1,9 @@
 import type { SQLOutputValue } from "node:sqlite";
+import type { ConversationItemV1 } from "@ling-stack/contracts";
 import {
   DEFAULT_WORKSPACE_ID,
   createChannelExecutionProposalId,
   type ChannelExecutionProposal,
-  type ChannelMessage,
   type ChannelRequirementShaping,
   type CreateChannelExecutionProposalInput,
   type ListChannelExecutionProposalsOptions,
@@ -16,7 +16,7 @@ import type { SqliteStoreContext } from "./store-context.js";
 
 export interface SqliteChannelProposalStorePorts {
   readonly hasChannel: (id: string) => boolean;
-  readonly getChannelMessage: (id: string) => ChannelMessage | undefined;
+  readonly getConversationItem: (id: string) => ConversationItemV1 | undefined;
 }
 
 export class SqliteChannelProposalStore {
@@ -29,9 +29,9 @@ export class SqliteChannelProposalStore {
     if (!this.ports.hasChannel(input.channelId)) {
       throw new Error(`Channel not found: ${input.channelId}`);
     }
-    const sourceMessage = this.ports.getChannelMessage(input.sourceMessageId);
-    if (!sourceMessage || sourceMessage.channelId !== input.channelId) {
-      throw new Error(`Source message does not belong to channel: ${input.sourceMessageId}`);
+    const sourceItem = this.ports.getConversationItem(input.sourceMessageId);
+    if (!sourceItem || sourceItem.channelId !== input.channelId) {
+      throw new Error(`Source item does not belong to channel: ${input.sourceMessageId}`);
     }
     const shaping = input.shaping ?? defaultChannelRequirementShaping(input, now);
     const proposal: ChannelExecutionProposal = {
@@ -64,7 +64,7 @@ export class SqliteChannelProposalStore {
           id,
           workspace_id,
           channel_id,
-          source_message_id,
+          source_item_id,
           proposed_by_teammate_id,
           title,
           prompt,
@@ -124,7 +124,7 @@ export class SqliteChannelProposalStore {
     const clauses = ["workspace_id = ?", "channel_id = ?"];
     const params: (string | number)[] = [DEFAULT_WORKSPACE_ID, options.channelId];
     if (options.sourceMessageId) {
-      clauses.push("source_message_id = ?");
+      clauses.push("source_item_id = ?");
       params.push(options.sourceMessageId);
     }
     if (options.status) {

@@ -1,4 +1,4 @@
-import { useState, type Dispatch, type SetStateAction } from "react";
+import { useRef, useState, type Dispatch, type SetStateAction } from "react";
 import {
   getChannelCollaborationProtocol,
   getChannelBrief,
@@ -10,7 +10,7 @@ import {
   listChannelExecutionProposals,
   listChannelHandoffs,
   listChannelLinkPreviews,
-  listChannelMessages,
+  listChannelConversationItems,
   listChannelMessageRouteDecisions,
   listChannelIntentDecisions,
   listChannelWorkflowSteps,
@@ -31,6 +31,7 @@ import {
 } from "../../api.js";
 import type { DomainController, DomainError } from "../../app/domain-controller.js";
 import { deriveChannelTasks } from "../../lib/channel-artifacts.js";
+import { projectChannelConversationItemPage } from "../../lib/channel-conversation-items.js";
 import {
   defaultChannelCreateForm,
   defaultChannelEditForm,
@@ -233,6 +234,7 @@ export function useWorkspaceDomain(input: {
   const [taskEditForm, setTaskEditForm] = useState<TaskEditFormState>(defaultTaskEditForm);
   const [taskRunProviderId, setTaskRunProviderId] = useState("");
   const [channelMessages, setChannelMessages] = useState<readonly ChannelMessage[]>([]);
+  const [channelItemsBeforeSequence, setChannelItemsBeforeSequence] = useState<number | undefined>();
   const [memoryObjects, setMemoryObjects] = useState<readonly MemoryObject[]>([]);
   const [usedMemoryEvents, setUsedMemoryEvents] = useState<readonly UsedMemoryEvent[]>([]);
   const [channelMessagesHasOlder, setChannelMessagesHasOlder] = useState(false);
@@ -259,6 +261,7 @@ export function useWorkspaceDomain(input: {
   const [channelProtocolLoading, setChannelProtocolLoading] = useState(false);
   const [channelStateTransitions, setChannelStateTransitions] = useState<readonly StateTransitionEvent[]>([]);
   const [channelActivityTransitionsLoading, setChannelActivityTransitionsLoading] = useState(false);
+  const channelActivityTransitionsLoadedScopeRef = useRef("");
   const [channelActivityTransitionError, setChannelActivityTransitionError] = useState("");
   const [channelGovernanceNotifications, setChannelGovernanceNotifications] = useState<readonly GovernanceNotification[]>([]);
   const [channelGovernanceNotificationsLoading, setChannelGovernanceNotificationsLoading] = useState(false);
@@ -450,6 +453,7 @@ export function useWorkspaceDomain(input: {
     if (!cwd || !channelId) {
       setChannelMessages([]);
       setChannelMessagesHasOlder(false);
+      setChannelItemsBeforeSequence(undefined);
       return;
     }
 
@@ -459,13 +463,18 @@ export function useWorkspaceDomain(input: {
     try {
       clearScopedFeedback("composer", channelId);
       setError(undefined);
-      const response = await listChannelMessages(cwd, channelId, { limit: channelMessageInitialLimit, threadId });
+      const response = await listChannelConversationItems(cwd, channelId, {
+        limit: channelMessageInitialLimit,
+        surface: threadId ? { kind: "thread", threadId } : { kind: "channel_root" },
+      });
       if (!loadGuard.isCurrent(guardKey, token)) {
         return;
       }
-      setChannelMessages(response.messages);
-      setChannelMessagesHasOlder(response.hasMore === true);
-      input.onChannelMessagesLoaded?.(channelId, response.messages);
+      const page = projectChannelConversationItemPage(response);
+      setChannelMessages(page.messages);
+      setChannelMessagesHasOlder(page.hasMore);
+      setChannelItemsBeforeSequence(page.nextBeforeSequence);
+      input.onChannelMessagesLoaded?.(channelId, page.messages);
     } catch (caught) {
       if (!loadGuard.isCurrent(guardKey, token)) return;
       reportScopedFeedback("composer", channelId, "load", caught);
@@ -478,8 +487,7 @@ export function useWorkspaceDomain(input: {
 
   async function loadOlderChannelMessages(channelId = selectedChannelId, threadId?: string): Promise<void> {
     const cwd = input.cwd.trim();
-    const beforeMessageId = channelMessages[0]?.id;
-    if (!cwd || !channelId || !beforeMessageId || channelMessagesLoadingOlder || !channelMessagesHasOlder) {
+    if (!cwd || !channelId || channelItemsBeforeSequence === undefined || channelMessagesLoadingOlder || !channelMessagesHasOlder) {
       return;
     }
 
@@ -489,16 +497,18 @@ export function useWorkspaceDomain(input: {
     try {
       clearScopedFeedback("composer", channelId);
       setError(undefined);
-      const response = await listChannelMessages(cwd, channelId, {
+      const response = await listChannelConversationItems(cwd, channelId, {
         limit: channelMessageOlderLimit,
-        beforeMessageId,
-        threadId,
+        beforeSequence: channelItemsBeforeSequence,
+        surface: threadId ? { kind: "thread", threadId } : { kind: "channel_root" },
       });
       if (!loadGuard.isCurrent(guardKey, token)) {
         return;
       }
-      setChannelMessages((current) => mergeChannelMessages(response.messages, current));
-      setChannelMessagesHasOlder(response.hasMore === true);
+      const page = projectChannelConversationItemPage(response);
+      setChannelMessages((current) => mergeChannelMessages(page.messages, current));
+      setChannelMessagesHasOlder(page.hasMore);
+      setChannelItemsBeforeSequence(page.nextBeforeSequence);
     } catch (caught) {
       if (!loadGuard.isCurrent(guardKey, token)) return;
       reportScopedFeedback("composer", channelId, "load", caught);
@@ -672,14 +682,17 @@ export function useWorkspaceDomain(input: {
     channelRuns: readonly RunSession[] = [],
   ): Promise<void> {
     if (!cwd || !channelId) {
+      channelActivityTransitionsLoadedScopeRef.current = "";
       setChannelStateTransitions([]);
       setChannelActivityTransitionError("");
       setChannelActivityTransitionsLoading(false);
       return;
     }
 
+    const scopeKey = `${cwd}:${channelId}`;
     const entities = buildChannelTransitionEntities(channelId, tasks, channelRuns, channelWorkflows, channelWorkflowSteps);
     if (entities.length === 0) {
+      channelActivityTransitionsLoadedScopeRef.current = scopeKey;
       setChannelStateTransitions([]);
       setChannelActivityTransitionError("");
       setChannelActivityTransitionsLoading(false);
@@ -687,7 +700,7 @@ export function useWorkspaceDomain(input: {
     }
 
     const token = loadGuard.next(`activityTransitions:${cwd}:${channelId}`);
-    setChannelActivityTransitionsLoading(true);
+    setChannelActivityTransitionsLoading(channelActivityTransitionsLoadedScopeRef.current !== scopeKey);
     const results = await Promise.all(
       entities.map(async (entity) => {
         try {
@@ -720,6 +733,7 @@ export function useWorkspaceDomain(input: {
 
     setChannelStateTransitions([...nextTransitions.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
     setChannelActivityTransitionError(errors.size > 0 ? [...errors][0] : "");
+    channelActivityTransitionsLoadedScopeRef.current = scopeKey;
     setChannelActivityTransitionsLoading(false);
   }
 
@@ -934,6 +948,7 @@ export function useWorkspaceDomain(input: {
     setTasks([]);
     setChannelMessages([]);
     setChannelMessagesHasOlder(false);
+    setChannelItemsBeforeSequence(undefined);
     setChannelMessagesLoadingOlder(false);
     setChannelExecutionProposals([]);
     setChannelAttachments([]);
@@ -957,6 +972,7 @@ export function useWorkspaceDomain(input: {
 
   function resetForCwd(cwd: string): void {
     loadGuard.reset();
+    channelActivityTransitionsLoadedScopeRef.current = "";
     setChannels([]);
     setChannelBranches([]);
     setSelectedChannelId("");
@@ -982,6 +998,7 @@ export function useWorkspaceDomain(input: {
     setMemoryObjects([]);
     setUsedMemoryEvents([]);
     setChannelMessagesHasOlder(false);
+    setChannelItemsBeforeSequence(undefined);
     setChannelMessagesLoadingOlder(false);
     setChannelExecutionProposals([]);
     setChannelAttachments([]);

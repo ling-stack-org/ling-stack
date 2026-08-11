@@ -114,6 +114,16 @@ export {
 export { ConversationAttachmentStrip, type ConversationAttachmentChip, type ConversationAttachmentStripProps } from "./preview/ConversationAttachmentStrip.js";
 export { ConversationReferenceStrip, type ConversationReferenceItem } from "./preview/ConversationReferenceStrip.js";
 export { isConversationGuidanceQueueVisible } from "./feedback/conversation-guidance-visibility.js";
+export {
+  ConversationSendLifecycleStore,
+  type ConversationSendLifecycleSnapshot,
+  type ConversationSendOperation,
+  type ConversationSendPhase,
+} from "./conversation-send-lifecycle.js";
+export {
+  useConversationSendLifecycle,
+  type ConversationSendLifecycleController,
+} from "./useConversationSendLifecycle.js";
 export { ConversationEvidenceBundlePanel, type ConversationEvidenceBundle, type ConversationEvidenceBundlePanelProps, type ConversationEvidenceItem, type ConversationEvidenceSection } from "./blocks/ConversationEvidenceBundlePanel.js";
 export { MessageBubble, type MessageBubbleProps, type MessageBubbleTone } from "./blocks/MessageBubble.js";
 export { MessageBodyRenderer, type MessageBodyRendererProps } from "./blocks/MessageBodyRenderer.js";

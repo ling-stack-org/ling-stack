@@ -24,13 +24,14 @@ import {
   type ChannelAutoRouteCandidateContext,
   type ContextPack,
 } from "./context-packs.js";
-import { createLingAgentExecutor, LING_AGENT_EXECUTOR_ID } from "./ling-agent-executor.js";
+import { createLingAgentExecutor, isLingAgentExecutorId, LING_AGENT_EXECUTOR_ID } from "./ling-agent-executor.js";
 import {
   buildLingAgentTurnEnvelope,
   turnEnvelopeHasUserInput,
   type LingAgentTurnEnvelope,
 } from "./ling-agent-turn-envelope.js";
 import { resolveChannelConversationSurface } from "./conversation-surface.js";
+import { findChannelAssistantReplyForSource } from "./conversation-item-messages.js";
 import {
   recordProviderContextLengthObservation,
   recordProviderRuntimeAvailabilityIncident,
@@ -149,12 +150,17 @@ export async function routeChannelMessageReply(input: ChannelMessageRouteInput):
 }
 
 export function routeExplicitChannelMention(input: ChannelMessageRouteInput): ChannelMessageRouteResult {
-  const teammateId = input.requestedTeammateId ?? input.sourceMessage.mentions.find((mention) => mention.kind === "ai-teammate")?.id;
-  const teammate = teammateId ? resolveAiTeammateReference(input.store, teammateId) : undefined;
+  const requestedTeammateId = input.requestedTeammateId ??
+    input.sourceMessage.mentions.find((mention) => mention.kind === "ai-teammate")?.id ??
+    LING_AGENT_EXECUTOR_ID;
+  const teammate = isLingAgentExecutorId(requestedTeammateId)
+    ? input.store.getAiTeammate(LING_AGENT_EXECUTOR_ID) ?? createLingAgentExecutor()
+    : resolveAiTeammateReference(input.store, requestedTeammateId);
+  const teammateId = teammate?.id ?? requestedTeammateId;
   const providerPresetId = resolveRunnableProviderPresetId(input, teammate);
   const decision = persistRouteDecision(input, {
     action: "reply",
-    teammateId: teammate?.id ?? teammateId,
+    teammateId,
     providerPresetId,
     confidence: 1,
     reason: "Explicit AI teammate mention requested a reply.",
@@ -164,7 +170,7 @@ export function routeExplicitChannelMention(input: ChannelMessageRouteInput): Ch
   return {
     action: "reply",
     decisionId: decision.id,
-    teammateId: teammate?.id ?? teammateId ?? "ai-teammate",
+    teammateId,
     providerPresetId,
     reason: decision.reason,
     createdBy: "explicit_mention",
@@ -466,10 +472,11 @@ async function requestModelRoute(input: ChannelMessageRouteInput, candidates: re
       error,
       now: observedAt,
     });
-    const compaction = compactChannelDiscussionForNoToolsRetry({
+    const compaction = await compactChannelDiscussionForNoToolsRetry({
       store: input.store,
       channel: input.channel,
       sourceMessage: input.sourceMessage,
+      inputBudgetTokens: contextPack.budget.inputBudgetTokens,
       now: observedAt,
     });
     contextPack = buildChannelAutoRouteContextPack({
@@ -614,9 +621,12 @@ function validateModelRouteOutput(output: ChannelAutoRouteModelOutput, candidate
 }
 
 function hasExistingReplyForSource(input: ChannelMessageRouteInput, teammateId: string): boolean {
-  return input.store
-    .listChannelMessages({ channelId: input.channel.id, threadId: input.sourceMessage.id, limit: 20 })
-    .some((message) => message.kind === "ai_reply" && message.authorId === teammateId && message.status !== "failed");
+  const reply = findChannelAssistantReplyForSource({
+    store: input.store,
+    sourceItemId: input.sourceMessage.id,
+    limit: 20,
+  });
+  return reply?.authorId === teammateId && reply.status !== "failed";
 }
 
 function persistRouteDecision(input: ChannelMessageRouteInput, draft: RouteDecisionDraft) {
@@ -676,6 +686,7 @@ function summarizeContextPack(pack: ContextPack): ChannelMessageRouteContextPack
     droppedSectionIds: pack.droppedSectionIds,
     sourceRefCounts,
     compactionIds: pack.compactionIds,
+    contextProjection: pack.contextProjection,
   };
 }
 

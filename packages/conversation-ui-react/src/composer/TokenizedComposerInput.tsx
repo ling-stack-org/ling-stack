@@ -3,7 +3,6 @@ import {
   useImperativeHandle,
   useLayoutEffect,
   useRef,
-  type ClipboardEventHandler,
   type CSSProperties,
   type FormEventHandler,
   type KeyboardEventHandler,
@@ -28,7 +27,7 @@ export interface TokenizedComposerInputProps {
   readonly executableSlashTargetLabel?: string;
   readonly onChange: (value: string, caret: number) => void;
   readonly onKeyDown: KeyboardEventHandler<HTMLDivElement>;
-  readonly onPaste: ClipboardEventHandler<HTMLDivElement>;
+  readonly onPasteFiles?: (files: readonly File[]) => void;
   readonly onSelect: (value: string, caret: number) => void;
 }
 
@@ -39,7 +38,7 @@ export const TokenizedComposerInput = forwardRef<TokenizedComposerInputHandle, T
     executableSlashTargetLabel,
     onChange,
     onKeyDown,
-    onPaste,
+    onPasteFiles,
     onSelect,
     parts,
     placeholder,
@@ -188,7 +187,7 @@ export const TokenizedComposerInput = forwardRef<TokenizedComposerInputHandle, T
     <div
       ref={editorRef}
       className={value ? "tokenized-composer-input has-value" : "tokenized-composer-input"}
-      contentEditable
+      contentEditable="plaintext-only"
       role="textbox"
       aria-label={ariaLabel}
       aria-multiline="true"
@@ -229,8 +228,10 @@ export const TokenizedComposerInput = forwardRef<TokenizedComposerInputHandle, T
       onKeyUp={() => onSelect(serializeComposerDom(editorRef.current), readSelectionOffset(editorRef.current, "end", value.length))}
       onMouseUp={() => onSelect(serializeComposerDom(editorRef.current), readSelectionOffset(editorRef.current, "end", value.length))}
       onPaste={(event) => {
-        onPaste(event);
-        if (event.defaultPrevented || event.clipboardData.files.length > 0) {
+        const files = clipboardFiles(event.clipboardData);
+        if (files.length > 0) {
+          event.preventDefault();
+          onPasteFiles?.(files);
           return;
         }
         event.preventDefault();
@@ -239,6 +240,20 @@ export const TokenizedComposerInput = forwardRef<TokenizedComposerInputHandle, T
     />
   );
 });
+
+function clipboardFiles(data: DataTransfer): readonly File[] {
+  const files = Array.from(data.files);
+  if (files.length > 0) {
+    return files;
+  }
+  return Array.from(data.items).flatMap((item) => {
+    if (item.kind !== "file") {
+      return [];
+    }
+    const file = item.getAsFile();
+    return file ? [file] : [];
+  });
+}
 
 function renderComposerInlineParts(
   root: HTMLDivElement,

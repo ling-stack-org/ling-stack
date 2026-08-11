@@ -30,13 +30,17 @@ import type {
 } from "../../types.js";
 
 export type ChannelMessageFeedItem =
-  | { readonly id: "older-channel-messages"; readonly kind: "older-loader" }
-  | { readonly id: string; readonly kind: "turn"; readonly turn: ConversationTurnViewModel }
-  | { readonly id: string; readonly kind: "activity"; readonly item: ChannelActivityItem }
-  | { readonly id: string; readonly kind: "pending-send"; readonly preview: PendingChannelSendPreview; readonly showSentMessage: boolean };
+  (
+    | { readonly id: "older-channel-messages"; readonly kind: "older-loader" }
+    | { readonly id: string; readonly kind: "turn"; readonly turn: ConversationTurnViewModel; readonly pendingReplyPreview?: PendingChannelSendPreview }
+    | { readonly id: string; readonly kind: "activity"; readonly item: ChannelActivityItem }
+    | { readonly id: string; readonly kind: "pending-send"; readonly preview: PendingChannelSendPreview; readonly showSentMessage: boolean }
+  ) & { readonly renderKey?: string };
 
 export interface PendingChannelSendPreview {
   readonly id: string;
+  readonly sourceMessageId?: string;
+  readonly targetTeammateId?: string;
   readonly channelId: string;
   readonly threadId?: string;
   readonly body: string;
@@ -131,6 +135,8 @@ export function useChannelMessageFeed({
   const visibleAnchorRef = useRef<MessageFeedAnchorSnapshot | undefined>();
   const olderLoadArmedRef = useRef(true);
   const olderLoadSnapshotRef = useRef<OlderLoadAnchorSnapshot | undefined>();
+  const initialLatestPendingRef = useRef(true);
+  const pinnedFollowFrameRef = useRef<number | undefined>();
   const [latestButtonVisible, setLatestButtonVisible] = useState(false);
   const [resetRevision, setResetRevision] = useState(0);
 
@@ -138,8 +144,10 @@ export function useChannelMessageFeed({
     count: items.length,
     getScrollElement: () => scrollRef.current,
     estimateSize: (index) => items[index]?.kind === "older-loader" ? 48 : 128,
+    measureElement: measureChannelMessageFeedRow,
     overscan: 10,
-    getItemKey: (index) => items[index]?.id ?? index,
+    paddingEnd: 38,
+    getItemKey: (index) => items[index]?.renderKey ?? items[index]?.id ?? index,
   });
   const virtualRows = virtualizer.getVirtualItems();
   const totalSize = virtualizer.getTotalSize();
@@ -216,6 +224,7 @@ export function useChannelMessageFeed({
     userScrollRenderSignatureRef.current = "";
     olderLoadArmedRef.current = true;
     olderLoadSnapshotRef.current = undefined;
+    initialLatestPendingRef.current = true;
     visibleAnchorRef.current = undefined;
     setLatestButtonVisible(false);
     setResetRevision((revision) => revision + 1);
@@ -237,6 +246,52 @@ export function useChannelMessageFeed({
     visibleAnchorRef.current = undefined;
     setLatestButtonVisible(false);
   }, [items.length, virtualizer]);
+
+  const schedulePinnedFollow = useCallback((): void => {
+    const feed = scrollRef.current;
+    const forceInitialLatest = initialLatestPendingRef.current;
+    if (!feed || items.length === 0 || loading || protocolLoading || (!forceInitialLatest && !pinnedToLatestRef.current)) {
+      return;
+    }
+    if (!forceInitialLatest && userScrollIntentRef.current && !channelMessageFeedIsPinnedToLatest(feed)) {
+      return;
+    }
+    if (pinnedFollowFrameRef.current !== undefined) {
+      return;
+    }
+    pinnedFollowFrameRef.current = globalThis.requestAnimationFrame(() => {
+      const currentFeed = scrollRef.current;
+      const forceCurrentInitialLatest = initialLatestPendingRef.current;
+      if (!currentFeed || (!forceCurrentInitialLatest && !pinnedToLatestRef.current)) {
+        pinnedFollowFrameRef.current = undefined;
+        return;
+      }
+      if (items.length > 0) {
+        virtualizer.scrollToIndex(items.length - 1, { align: "end" });
+      }
+      const finishFollow = (): void => {
+        pinnedFollowFrameRef.current = undefined;
+        const settledFeed = scrollRef.current;
+        if (!settledFeed) {
+          return;
+        }
+        settledFeed.scrollTop = settledFeed.scrollHeight;
+        if (channelMessageFeedIsPinnedToLatest(settledFeed)) {
+          initialLatestPendingRef.current = false;
+        }
+        pinnedToLatestRef.current = true;
+        autoFollowUntilRef.current = Date.now() + 1_000;
+        userScrollIntentRef.current = false;
+        visibleAnchorRef.current = undefined;
+        setLatestButtonVisible(false);
+      };
+      if (forceCurrentInitialLatest) {
+        pinnedFollowFrameRef.current = globalThis.requestAnimationFrame(finishFollow);
+      } else {
+        finishFollow();
+      }
+    });
+  }, [items.length, loading, protocolLoading, virtualizer]);
 
   const onUserScrollIntent = useCallback((): void => {
     const feed = scrollRef.current;
@@ -320,14 +375,24 @@ export function useChannelMessageFeed({
     if (!feed || typeof ResizeObserver === "undefined") {
       return undefined;
     }
-    const observer = new ResizeObserver(() => updateScrollPositionState());
+    const observer = new ResizeObserver(() => {
+      schedulePinnedFollow();
+      updateScrollPositionState();
+    });
     observer.observe(feed);
     const virtualizerElement = feed.querySelector<HTMLElement>(".message-feed-virtualizer");
     if (virtualizerElement) {
       observer.observe(virtualizerElement);
     }
     return () => observer.disconnect();
-  }, [updateScrollPositionState]);
+  }, [schedulePinnedFollow, updateScrollPositionState]);
+
+  useEffect(() => () => {
+    if (pinnedFollowFrameRef.current !== undefined) {
+      globalThis.cancelAnimationFrame(pinnedFollowFrameRef.current);
+      pinnedFollowFrameRef.current = undefined;
+    }
+  }, []);
 
   const firstVirtualIndex = virtualRows[0]?.index ?? -1;
   useEffect(() => {
@@ -424,41 +489,20 @@ export function useChannelMessageFeed({
 
   useEffect(() => {
     if (loading || protocolLoading || !pinnedToLatestRef.current) {
-      return undefined;
+      return;
     }
-    const feed = scrollRef.current;
-    if (!feed) {
-      return undefined;
-    }
-    const frameIds: number[] = [];
-    const scrollToLatestAttempt = (attempt: number): void => {
-      autoFollowUntilRef.current = Date.now() + 1_000;
-      userScrollIntentRef.current = false;
-      if (items.length > 0) {
-        virtualizer.scrollToIndex(items.length - 1, { align: "end" });
-      }
-      feed.scrollTop = feed.scrollHeight;
-      pinnedToLatestRef.current = true;
-      setLatestButtonVisible(false);
-      if (attempt < 4) {
-        const frameId = globalThis.requestAnimationFrame(() => scrollToLatestAttempt(attempt + 1));
-        frameIds.push(frameId);
-      }
-    };
-    const frameId = globalThis.requestAnimationFrame(() => scrollToLatestAttempt(0));
-    frameIds.push(frameId);
-    return () => {
-      frameIds.forEach((scheduledFrameId) => globalThis.cancelAnimationFrame(scheduledFrameId));
-    };
+    schedulePinnedFollow();
   }, [
     items.length,
     latestVisibleItemId,
     loading,
     protocolLoading,
     renderableItemCount,
+    renderSignature,
     resetRevision,
+    schedulePinnedFollow,
     tailDependencyKey,
-    virtualizer,
+    totalSize,
   ]);
 
   useEffect(() => {
@@ -504,6 +548,14 @@ export function useChannelMessageFeed({
 function channelMessageFeedIsPinnedToLatest(feed: HTMLDivElement): boolean {
   const maxScrollTop = feed.scrollHeight - feed.clientHeight;
   return maxScrollTop <= 0 || maxScrollTop - feed.scrollTop <= 24;
+}
+
+function measureChannelMessageFeedRow(
+  element: HTMLDivElement,
+  entry: ResizeObserverEntry | undefined,
+): number {
+  const borderBox = entry?.borderBoxSize[0];
+  return Math.ceil(borderBox?.blockSize ?? element.getBoundingClientRect().height);
 }
 
 export function ChannelMessageFeed({
@@ -581,7 +633,7 @@ export function channelMessageFeedItemRenderSignature(item: ChannelMessageFeedIt
     ].join("|");
   }
   if (item.kind === "turn") {
-    return conversationTurnRenderSignature(item.turn);
+    return `${conversationTurnRenderSignature(item.turn)}|${item.pendingReplyPreview ? "pending-reply" : ""}`;
   }
   return channelActivityItemRenderSignature(item.item);
 }
@@ -668,7 +720,7 @@ function channelMessageFeedItemIsPending(item: ChannelMessageFeedItem | undefine
     return item.item.kind === "message" && item.item.record.status === "pending";
   }
   if (item.kind === "turn") {
-    return turnHasPendingMessage(item.turn) || item.turn.operationCell?.mode === "active";
+    return Boolean(item.pendingReplyPreview) || turnHasPendingMessage(item.turn) || item.turn.operationCell?.mode === "active";
   }
   if (item.kind === "pending-send") {
     return true;

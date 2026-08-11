@@ -16,7 +16,7 @@ export function translatePiEvent(event: AgentSessionEvent): PiRunnerEvent | unde
       }
       return undefined;
     case "message_end":
-      return { type: "message_end", role: getMessageRole(event.message) };
+      return messageEndEvent(event.message);
     case "tool_execution_start":
       return {
         type: "tool_start",
@@ -42,6 +42,83 @@ export function translatePiEvent(event: AgentSessionEvent): PiRunnerEvent | unde
     default:
       return undefined;
   }
+}
+
+function messageEndEvent(message: unknown): Extract<PiRunnerEvent, { readonly type: "message_end" }> {
+  const role = getMessageRole(message);
+  const text = role === "assistant" ? getMessageText(message) : undefined;
+  const stopReason = role === "assistant" ? getStopReason(message) : undefined;
+  const errorMessage = role === "assistant" ? getSafeErrorMessage(message) : undefined;
+  const contentKinds = role === "assistant" ? getContentKinds(message) : [];
+  return {
+    type: "message_end",
+    role,
+    ...(text ? { text } : {}),
+    ...(stopReason ? { stopReason } : {}),
+    ...(errorMessage ? { errorMessage } : {}),
+    ...(contentKinds.length > 0 ? { contentKinds } : {}),
+  };
+}
+
+function getMessageText(message: unknown): string | undefined {
+  if (!isRecord(message)) {
+    return undefined;
+  }
+  const content = message.content;
+  if (typeof content === "string") {
+    return content.trim() ? content : undefined;
+  }
+  if (!Array.isArray(content)) {
+    return undefined;
+  }
+  const text = content
+    .filter((item): item is Record<string, unknown> => isRecord(item) && (item.type === "text" || item.type === "output_text"))
+    .map((item) => typeof item.text === "string" ? item.text : "")
+    .join("");
+  return text.trim() ? text : undefined;
+}
+
+function getStopReason(message: unknown): string | undefined {
+  if (!isRecord(message)) {
+    return undefined;
+  }
+  const value = message.stopReason ?? message.stop_reason ?? message.finishReason ?? message.finish_reason;
+  if (typeof value !== "string" || !value.trim()) {
+    return undefined;
+  }
+  const normalized = value.trim();
+  return /^[a-z0-9_.:-]{1,64}$/i.test(normalized) ? normalized : "other";
+}
+
+function getSafeErrorMessage(message: unknown): string | undefined {
+  if (!isRecord(message)) {
+    return undefined;
+  }
+  if (typeof message.errorMessage === "string" || typeof message.error_message === "string" || isRecord(message.error)) {
+    return "Provider message ended with an error.";
+  }
+  return undefined;
+}
+
+function getContentKinds(message: unknown): readonly string[] {
+  if (!isRecord(message)) {
+    return [];
+  }
+  if (typeof message.content === "string") {
+    return message.content.trim() ? ["text"] : [];
+  }
+  if (!Array.isArray(message.content)) {
+    return [];
+  }
+  const kinds = message.content.map((item) => {
+    if (!isRecord(item) || typeof item.type !== "string") {
+      return "other";
+    }
+    return ["text", "output_text", "thinking", "reasoning", "tool_call", "tool_use", "image", "audio"].includes(item.type)
+      ? item.type
+      : "other";
+  });
+  return [...new Set(kinds)];
 }
 
 function isHandledUnifiedExecError(result: unknown): boolean {

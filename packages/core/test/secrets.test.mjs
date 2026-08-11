@@ -70,3 +70,42 @@ test("redaction can include resolved secret values", () => {
     nested: ["[REDACTED]"],
   });
 });
+
+test("redaction preserves shared references while stopping true cycles", () => {
+  const shared = {
+    projectionVersion: "projection-v1",
+    apiKey: "shared-reference-secret",
+  };
+  const circular = { label: "root" };
+  circular.self = circular;
+
+  assert.deepEqual(redactSecrets({
+    contextPack: {
+      contextProjection: shared,
+      agentContext: { contextProjection: shared },
+    },
+    contextProjection: shared,
+    circular,
+  }), {
+    contextPack: {
+      contextProjection: {
+        projectionVersion: "projection-v1",
+        apiKey: "[REDACTED]",
+      },
+      agentContext: {
+        contextProjection: {
+          projectionVersion: "projection-v1",
+          apiKey: "[REDACTED]",
+        },
+      },
+    },
+    contextProjection: {
+      projectionVersion: "projection-v1",
+      apiKey: "[REDACTED]",
+    },
+    circular: {
+      label: "root",
+      self: "[Circular]",
+    },
+  });
+});

@@ -1,19 +1,82 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve as resolvePath } from "node:path";
 import {
-  type ChannelStoreFacet,
   type ChannelWorkflow,
   type ChannelWorkflowStep,
-  type MemoryStoreFacet,
-  type RunExecutionStoreFacet,
+  type RunStore,
   type RunSession,
   type RunStorePathsFacet,
   type WorkflowStepOutputRef,
+  type WorkflowFanInContextReview,
 } from "@ling-stack/core";
 import { normalizeArtifactPath } from "../../shared/path.js";
 import { readWorkflowStepOutputPacketArtifact } from "./workflow-step-packets.js";
+import {
+  privateRoleEvidenceValues,
+  reviewWorkflowAgentContextStamp,
+  textContainsPrivateRoleEvidence,
+} from "./agent-context-consistency.js";
 
-type WorkflowFanInStore = ChannelStoreFacet & RunExecutionStoreFacet & RunStorePathsFacet & MemoryStoreFacet;
+type WorkflowFanInStore = RunStore & RunStorePathsFacet;
+
+export function reviewWorkflowFanInContext(input: {
+  readonly store: WorkflowFanInStore;
+  readonly workflow: ChannelWorkflow;
+  readonly step: ChannelWorkflowStep;
+}): {
+  readonly reviews: readonly WorkflowFanInContextReview[];
+  readonly blocker?: string;
+} {
+  const workflowIsContinuityBacked = Boolean(
+    input.step.metadata?.sourceMessageId ?? input.workflow.metadata?.sourceMessageId,
+  );
+  const dependencies = dependencySteps(input.store, input.workflow.id, input.step);
+  const reviews: WorkflowFanInContextReview[] = [];
+  for (const dependency of dependencies) {
+    const outputPacket = dependency.metadata?.outputArtifactId
+      ? readWorkflowStepOutputPacketArtifact({
+          store: input.store,
+          artifactId: dependency.metadata.outputArtifactId,
+        })
+      : undefined;
+    if (!outputPacket?.agentContext) {
+      if (workflowIsContinuityBacked) {
+        reviews.push({
+          dependencyWorkflowStepId: dependency.id,
+          status: "rejected_stale",
+          reason: "A continuity-backed dependency has no consumed agent context stamp.",
+        });
+      }
+      continue;
+    }
+    const privateValues = privateRoleEvidenceValues({ store: input.store, stamp: outputPacket.agentContext });
+    if (
+      textContainsPrivateRoleEvidence(outputPacket.resultSummary, privateValues)
+      || textContainsPrivateRoleEvidence(dependency.resultSummary, privateValues)
+    ) {
+      reviews.push({
+        dependencyWorkflowStepId: dependency.id,
+        status: "rejected_private_leak",
+        consumedProjectionVersion: outputPacket.agentContext.contextProjection.projectionVersion,
+        reason: "The dependency result repeats private role evidence and cannot enter shared fan-in.",
+      });
+      continue;
+    }
+    reviews.push(reviewWorkflowAgentContextStamp({
+      store: input.store,
+      dependencyWorkflowStepId: dependency.id,
+      consumed: outputPacket.agentContext,
+    }).review);
+  }
+  const rejected = reviews.find((review) =>
+    review.status === "rejected_stale" || review.status === "rejected_private_leak");
+  return rejected
+    ? {
+        reviews,
+        blocker: `Workflow rejected dependency ${rejected.dependencyWorkflowStepId}: ${rejected.reason}`,
+      }
+    : { reviews };
+}
 
 export function maybeCreateWorkflowFanInEvidence(input: {
   readonly store: WorkflowFanInStore;
@@ -97,6 +160,19 @@ function collectDependencyOutputs(
         branchGroupId: dependency.metadata?.branchGroupId,
       };
     });
+}
+
+function dependencySteps(
+  store: WorkflowFanInStore,
+  workflowId: string,
+  step: ChannelWorkflowStep,
+): readonly ChannelWorkflowStep[] {
+  const stepsById = new Map(
+    store.listChannelWorkflowSteps({ workflowId, limit: 500 }).map((candidate) => [candidate.id, candidate] as const),
+  );
+  return (step.metadata?.dependsOnStepIds ?? [])
+    .map((dependencyId) => stepsById.get(dependencyId))
+    .filter((dependency): dependency is ChannelWorkflowStep => Boolean(dependency));
 }
 
 function writeFanInSummaryArtifact(input: {

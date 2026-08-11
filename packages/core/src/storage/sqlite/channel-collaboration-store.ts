@@ -2,35 +2,27 @@ import type { SQLOutputValue } from "node:sqlite";
 import {
   DEFAULT_WORKSPACE_ID,
   createChannelBriefId,
-  createChannelContextSummaryId,
   createChannelDecisionId,
   createChannelHandoffId,
   type ChannelBrief,
-  type ChannelContextSummary,
-  type ChannelContextSummaryTargetType,
   type ChannelDecision,
   type ChannelHandoff,
-  type CreateChannelContextSummaryInput,
   type CreateChannelDecisionInput,
   type CreateChannelHandoffInput,
-  type ListChannelContextSummariesOptions,
   type ListChannelDecisionsOptions,
   type ListChannelHandoffsOptions,
   type UpdateChannelBriefInput,
-  type UpdateChannelContextSummaryInput,
   type UpdateChannelDecisionInput,
   type UpdateChannelHandoffInput,
 } from "../../workspace-types.js";
-import { nullableUpdate, readString, stringifyJson } from "./helpers.js";
+import { nullableUpdate, stringifyJson } from "./helpers.js";
 import {
   mapChannelBrief,
-  mapChannelContextSummary,
   mapChannelDecision,
   mapChannelHandoff,
 } from "./channel-collaboration-mappers.js";
 import {
   channelBriefSelectSql,
-  channelContextSummarySelectSql,
   channelDecisionSelectSql,
   channelHandoffSelectSql,
 } from "./select-sql.js";
@@ -44,8 +36,6 @@ export interface SqliteChannelCollaborationStorePorts {
   ) => void;
   readonly assertAttachmentInChannel: (channelId: string, attachmentId: string) => void;
   readonly assertLinkPreviewInChannel: (channelId: string, linkPreviewId: string) => void;
-  readonly assertMessageInChannel: (channelId: string, messageId: string) => void;
-  readonly assertTaskInChannel: (channelId: string, taskId: string) => void;
 }
 
 export class SqliteChannelCollaborationStore {
@@ -175,7 +165,7 @@ export class SqliteChannelCollaborationStore {
           id,
           workspace_id,
           channel_id,
-          source_message_id,
+          source_item_id,
           source_task_id,
           source_run_id,
           title,
@@ -287,7 +277,7 @@ export class SqliteChannelCollaborationStore {
           id,
           workspace_id,
           channel_id,
-          source_message_id,
+          source_item_id,
           source_task_id,
           source_run_id,
           from_participant_id,
@@ -397,163 +387,6 @@ export class SqliteChannelCollaborationStore {
     return this.getChannelHandoff(id);
   }
 
-  createChannelContextSummary(input: CreateChannelContextSummaryInput, now: string): ChannelContextSummary {
-    this.ports.assertChannelExists(input.channelId);
-    this.assertSummaryTargetInChannel(input.channelId, input.targetType, input.targetId);
-    for (const messageId of input.sourceMessageIds ?? []) {
-      this.ports.assertMessageInChannel(input.channelId, messageId);
-    }
-    for (const decisionId of input.decisionIds ?? []) {
-      this.assertDecisionInChannel(input.channelId, decisionId);
-    }
-
-    const summary: ChannelContextSummary = {
-      id: createChannelContextSummaryId(),
-      workspaceId: DEFAULT_WORKSPACE_ID,
-      channelId: input.channelId,
-      targetType: input.targetType,
-      targetId: input.targetId,
-      sourceMessageIds: input.sourceMessageIds ?? [],
-      decisionIds: input.decisionIds ?? [],
-      summary: input.summary,
-      acceptanceCriteria: input.acceptanceCriteria ?? [],
-      openQuestions: input.openQuestions ?? [],
-      authorType: input.authorType,
-      authorId: input.authorId,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    this.context.database
-      .prepare(`
-        INSERT INTO channel_context_summaries (
-          id,
-          workspace_id,
-          channel_id,
-          target_type,
-          target_id,
-          source_message_ids_json,
-          decision_ids_json,
-          summary,
-          acceptance_criteria_json,
-          open_questions_json,
-          author_type,
-          author_id,
-          created_at,
-          updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `)
-      .run(
-        summary.id,
-        summary.workspaceId,
-        summary.channelId,
-        summary.targetType,
-        summary.targetId,
-        stringifyJson(summary.sourceMessageIds),
-        stringifyJson(summary.decisionIds),
-        summary.summary,
-        stringifyJson(summary.acceptanceCriteria),
-        stringifyJson(summary.openQuestions),
-        summary.authorType,
-        summary.authorId ?? null,
-        summary.createdAt,
-        summary.updatedAt,
-      );
-
-    const created = this.getChannelContextSummary(summary.id);
-    if (!created) {
-      throw new Error(`Failed to create channel context summary: ${summary.id}`);
-    }
-    return created;
-  }
-
-  getChannelContextSummary(id: string): ChannelContextSummary | undefined {
-    const row = this.context.database.prepare(channelContextSummarySelectSql("WHERE id = ?")).get(id);
-    return row ? mapChannelContextSummary(row as Record<string, SQLOutputValue>) : undefined;
-  }
-
-  listChannelContextSummaries(options: ListChannelContextSummariesOptions): ChannelContextSummary[] {
-    const clauses = ["workspace_id = ?", "channel_id = ?"];
-    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID, options.channelId];
-    if (options.targetType) {
-      clauses.push("target_type = ?");
-      params.push(options.targetType);
-    }
-    if (options.targetId) {
-      clauses.push("target_id = ?");
-      params.push(options.targetId);
-    }
-    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
-    params.push(limit);
-    return this.context.database
-      .prepare(`${channelContextSummarySelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY updated_at DESC, rowid DESC LIMIT ?`)
-      .all(...params)
-      .map((row) => mapChannelContextSummary(row as Record<string, SQLOutputValue>));
-  }
-
-  updateChannelContextSummary(
-    id: string,
-    input: UpdateChannelContextSummaryInput,
-    now: string,
-  ): ChannelContextSummary | undefined {
-    const existing = this.getChannelContextSummary(id);
-    if (!existing) {
-      return undefined;
-    }
-    const targetType = input.targetType ?? existing.targetType;
-    const targetId = input.targetId ?? existing.targetId;
-    this.assertSummaryTargetInChannel(existing.channelId, targetType, targetId);
-    for (const messageId of input.sourceMessageIds ?? existing.sourceMessageIds) {
-      this.ports.assertMessageInChannel(existing.channelId, messageId);
-    }
-    for (const decisionId of input.decisionIds ?? existing.decisionIds) {
-      this.assertDecisionInChannel(existing.channelId, decisionId);
-    }
-    const next: ChannelContextSummary = {
-      ...existing,
-      targetType,
-      targetId,
-      sourceMessageIds: input.sourceMessageIds ?? existing.sourceMessageIds,
-      decisionIds: input.decisionIds ?? existing.decisionIds,
-      summary: input.summary ?? existing.summary,
-      acceptanceCriteria: input.acceptanceCriteria ?? existing.acceptanceCriteria,
-      openQuestions: input.openQuestions ?? existing.openQuestions,
-      authorType: input.authorType ?? existing.authorType,
-      authorId: nullableUpdate(input.authorId, existing.authorId),
-      updatedAt: now,
-    };
-    this.context.database
-      .prepare(`
-        UPDATE channel_context_summaries
-        SET
-          target_type = ?,
-          target_id = ?,
-          source_message_ids_json = ?,
-          decision_ids_json = ?,
-          summary = ?,
-          acceptance_criteria_json = ?,
-          open_questions_json = ?,
-          author_type = ?,
-          author_id = ?,
-          updated_at = ?
-        WHERE id = ?
-      `)
-      .run(
-        next.targetType,
-        next.targetId,
-        stringifyJson(next.sourceMessageIds),
-        stringifyJson(next.decisionIds),
-        next.summary,
-        stringifyJson(next.acceptanceCriteria),
-        stringifyJson(next.openQuestions),
-        next.authorType,
-        next.authorId ?? null,
-        next.updatedAt,
-        id,
-      );
-    return this.getChannelContextSummary(id);
-  }
-
   private assertDecisionInChannel(channelId: string, decisionId: string): void {
     const decision = this.getChannelDecision(decisionId);
     if (!decision) {
@@ -564,29 +397,4 @@ export class SqliteChannelCollaborationStore {
     }
   }
 
-  private assertSummaryTargetInChannel(
-    channelId: string,
-    targetType: ChannelContextSummaryTargetType,
-    targetId: string,
-  ): void {
-    if (targetType === "task") {
-      this.ports.assertTaskInChannel(channelId, targetId);
-      return;
-    }
-    const directMessage = this.context.database
-      .prepare("SELECT channel_id FROM channel_messages WHERE id = ? LIMIT 1")
-      .get(targetId) as Record<string, SQLOutputValue> | undefined;
-    if (directMessage) {
-      if (readString(directMessage, "channel_id") !== channelId) {
-        throw new Error(`Summary target does not belong to channel: ${targetId}`);
-      }
-      return;
-    }
-    const threadMessage = this.context.database
-      .prepare("SELECT id FROM channel_messages WHERE channel_id = ? AND thread_id = ? LIMIT 1")
-      .get(channelId, targetId);
-    if (!threadMessage) {
-      throw new Error(`Channel thread not found: ${targetId}`);
-    }
-  }
 }

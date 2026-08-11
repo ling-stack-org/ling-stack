@@ -60,6 +60,7 @@ test("openclaw-acp registry selection executes fake ACP through normalized event
       "message_end",
       "run_end",
     ]);
+    assert.equal(events.find((event) => event.type === "message_end")?.text, "OpenClaw says hello.");
     assert.equal(JSON.stringify(events).includes("sk-test-secret"), false);
     const artifactEvent = events.find((event) => event.type === "tool_end" && event.toolName === "artifact_import");
     assert.ok(artifactEvent);

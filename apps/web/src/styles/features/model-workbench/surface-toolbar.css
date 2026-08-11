@@ -99,16 +99,32 @@
   display: grid;
   min-width: 0;
   grid-template-columns: minmax(220px, 1fr) minmax(148px, auto) auto auto auto;
+  grid-template-areas: "search status capability add check";
   align-items: center;
   gap: var(--ling-space-4);
 }
 
 .provider-search-field {
+  grid-area: search;
   width: 100%;
   max-width: 420px;
 }
 
 .provider-status-filter {
+  grid-area: status;
   width: 100%;
   min-width: 148px;
+}
+
+.provider-capability-filter {
+  grid-area: capability;
+  justify-self: start;
+}
+
+.provider-add-model-action {
+  grid-area: add;
+}
+
+.provider-check-all-action {
+  grid-area: check;
 }

@@ -1,60 +1,9 @@
 .channel-message-row {
-  display: grid;
-  grid-template-columns: 30px minmax(0, min(680px, 76%));
-  align-items: start;
-  gap: 10px;
-  min-width: 0;
+  --conversation-message-max-width: 680px;
 }
 
 .channel-message-row.local-user {
-  grid-template-columns: minmax(0, min(620px, 76%)) 30px;
-  justify-content: end;
-  justify-items: end;
-  column-gap: 10px;
-  row-gap: 0;
-}
-
-.channel-message-row.local-user > .avatar-initial,
-.channel-message-row.local-user > .user-profile-avatar {
-  grid-column: 2;
-}
-
-.channel-message-row.local-user > .message-row-own-identity {
-  display: inline-flex;
-  grid-column: 2;
-  grid-row: 1;
-  align-items: center;
-  justify-self: end;
-  gap: 8px;
-  min-width: 0;
-  min-height: 30px;
-}
-
-.channel-message-row.local-user > .message-row-own-identity strong {
-  overflow: hidden;
-  max-width: 220px;
-  color: var(--conversation-text);
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 1.2;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.channel-message-row.local-user > .message-row-own-identity .avatar-initial,
-.channel-message-row.local-user > .message-row-own-identity .user-profile-avatar {
-  flex: 0 0 auto;
-  width: 30px;
-  height: 30px;
-}
-
-.channel-message-row.local-user > .message-content {
-  grid-column: 1;
-  grid-row: 1;
-  justify-self: end;
-  justify-items: end;
-  max-width: 100%;
-  padding: var(--ling-space-4) var(--ling-space-5);
+  --conversation-message-max-width: 620px;
 }
 
 .thread-reply-composer .thread-reply-input {
@@ -63,39 +12,8 @@
   resize: vertical;
 }
 
-.channel-message-row.system {
-  grid-template-columns: 30px minmax(0, min(680px, 76%));
-}
-
-.channel-message-row.ai-teammate {
-  grid-template-columns: 30px minmax(0, 1fr);
-}
-
-.channel-message-row > .avatar-initial {
-  width: 30px;
-  height: 30px;
-  font-size: 12px;
-}
-
-.channel-message-row > .teammate-avatar-image.compact,
-.channel-message-row > .user-profile-avatar {
-  width: 30px;
-  height: 30px;
-}
-
 .channel-message-row > .message-content {
-  position: relative;
-  display: grid;
-  gap: 5px;
-  width: fit-content;
   max-width: 100%;
-  min-width: 0;
-  padding: 0;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  transition:
-    background-color var(--ling-motion-standard) var(--ling-ease-standard),
-    border-color var(--ling-motion-standard) var(--ling-ease-standard);
 }
 
 .channel-message-row.blocked > .message-content {
@@ -103,42 +21,9 @@
   background: var(--ling-status-warning-bg);
 }
 
-.channel-message-row header {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
-}
-
-.channel-message-row:not(.local-user) > .message-content > header,
-.channel-message-row > .message-content > header strong,
-.channel-message-row.local-user > .message-row-own-identity strong {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  padding: 0;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  clip-path: inset(50%);
-  border: 0;
-  white-space: nowrap;
-}
-
-.channel-message-row.local-user > .message-content > header,
-.channel-message-row header time {
-  display: none;
-}
-
-.channel-message-row header strong {
-  color: var(--conversation-text-strong);
-  font-size: 13px;
-}
-
 .channel-message-row > .message-content > p,
 .channel-message-row .message-body-paragraph {
   margin: 0;
-  color: var(--conversation-text);
   font-size: 15px;
   font-weight: 550;
   line-height: 1.55;
@@ -150,6 +35,10 @@
   padding-right: 0;
   color: var(--conversation-text-strong);
   text-align: right;
+}
+
+.channel-message-row.local-user > .message-content {
+  padding-inline-end: calc(var(--ling-space-5) - 1px);
 }
 
 .channel-message-row.local-user > .message-content > p,
@@ -209,7 +98,7 @@
   display: flex;
   flex-direction: column;
   gap: 18px;
-  padding: 0 4px 18px;
+  padding: 0 4px;
 }
 
 .activity-shell .message-group {
@@ -248,6 +137,11 @@
 
 .conversation-turn-assistant-copy p {
   margin: 0;
+}
+
+.conversation-turn-assistant-copy.message-body-with-spinner .message-body-renderer,
+.conversation-turn-assistant-copy.message-body-with-spinner .message-body-paragraph {
+  color: var(--conversation-text-strong);
 }
 
 .conversation-turn-assistant-copy.terminal {

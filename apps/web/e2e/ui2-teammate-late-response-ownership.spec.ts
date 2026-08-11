@@ -82,7 +82,7 @@ test("identity revisions reject old action and finally ownership after switching
   expect(store.isActionCurrent(newEngineer)).toBe(true);
 });
 
-test("late teammate workspace success cannot replace the selected teammate or clear its loading state", async ({ page }) => {
+test("late teammate workspace success cannot replace the selected teammate or show switch loading", async ({ page }) => {
   await prepareSurface(page);
   const runtimeErrors = collectRuntimeErrors(page);
   const state = createTeammateState();
@@ -112,17 +112,24 @@ test("late teammate workspace success cannot replace the selected teammate or cl
   });
 
   await page.goto("/");
+  await startTransientLoadingRecorder(page);
   await openTeammate(page, "Ling Engineer", false);
   await engineerStarted.promise;
+  expect(await readTransientLoadingSightings(page)).toEqual([]);
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Ling Designer" }).click();
   await expect(page.getByRole("heading", { name: "Ling Designer", level: 1 })).toBeVisible();
   await designerStarted.promise;
+  await expect(page.getByText("Loading teammate workspace...", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("No private messages yet", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Late Engineer response", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Designer remains authoritative", { exact: true })).toHaveCount(0);
 
   const engineerResponse = page.waitForResponse((response) => response.ok() && response.url().includes("/teammate_engineer/direct-messages"));
   releaseEngineer.resolve();
   await engineerResponse;
-  await expect(page.getByText("Loading teammate workspace...", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Loading teammate workspace...", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("No private messages yet", { exact: true })).toHaveCount(0);
   await expect(page.getByText("Late Engineer response", { exact: true })).toHaveCount(0);
 
   const designerResponse = page.waitForResponse((response) => response.ok() && response.url().includes("/teammate_designer/direct-messages"));
@@ -475,4 +482,41 @@ function collectRuntimeErrors(page: Page): string[] {
   });
   page.on("pageerror", (error) => errors.push(error.message));
   return errors;
+}
+
+async function startTransientLoadingRecorder(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const state = window as typeof window & {
+      __teammateLoadingObserver?: MutationObserver;
+      __teammateLoadingSightings?: string[];
+    };
+    const record = (): void => {
+      for (const element of document.querySelectorAll(".client-empty-state")) {
+        const text = element.textContent?.trim() ?? "";
+        if (text === "Loading" || text === "Loading teammate workspace...") {
+          state.__teammateLoadingSightings?.push(text);
+        }
+      }
+    };
+    state.__teammateLoadingSightings = [];
+    state.__teammateLoadingObserver?.disconnect();
+    state.__teammateLoadingObserver = new MutationObserver(record);
+    state.__teammateLoadingObserver.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+    record();
+  });
+}
+
+async function readTransientLoadingSightings(page: Page): Promise<readonly string[]> {
+  return page.evaluate(() => {
+    const state = window as typeof window & {
+      __teammateLoadingObserver?: MutationObserver;
+      __teammateLoadingSightings?: string[];
+    };
+    state.__teammateLoadingObserver?.disconnect();
+    return state.__teammateLoadingSightings ?? [];
+  });
 }

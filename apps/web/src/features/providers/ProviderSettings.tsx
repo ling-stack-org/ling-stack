@@ -150,12 +150,14 @@ export function ProviderSettings(props: ProviderSettingsProps): JSX.Element {
           summary={summary}
           providerSearch={workbench.query}
           providerStatusFilter={workbench.statusFilter}
+          providerCapabilityFilter={workbench.capabilityFilter}
           isLoading={props.isLoading}
           isCheckingProviders={isCheckingProviders}
           isBatchChecking={isBatchChecking}
           isStale={Boolean(props.errorMessage && providers.length)}
           onProviderSearchChange={workbench.setQuery}
           onProviderStatusFilterChange={workbench.setStatusFilter}
+          onProviderCapabilityFilterChange={workbench.setCapabilityFilter}
           onAddModel={() => editor.openNew()}
           onCheckBatch={() => void feedback.checkBatch()}
           settingsToolMode={props.settingsToolMode}
@@ -194,7 +196,9 @@ export function ProviderSettings(props: ProviderSettingsProps): JSX.Element {
           checkedProviderId={checkedProviderId}
           checkResult={rowCheckFeedback.listCheckResult}
           checkScope={checkScope}
-          hasActiveFilters={Boolean(workbench.query || workbench.statusFilter !== "all")}
+          hasActiveFilters={Boolean(
+            workbench.query || workbench.statusFilter !== "all" || workbench.capabilityFilter !== "all"
+          )}
           onClearFilters={workbench.clearFilters}
           onAddModel={editor.openNew}
           onEdit={editor.openEdit}

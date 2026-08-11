@@ -3,6 +3,7 @@ import {
   canUseGenerationProviderForOperation,
   isWorkbenchNeedsConfigProvider,
   isWorkbenchReadyProvider,
+  providerCheckIsPending,
   providerNeedsSecret,
   providerPreflightReady,
   providerRunPreflightBlocker,
@@ -24,10 +25,12 @@ export {
 } from "./provider-discovery-view-models.js";
 
 export type ProviderStatusFilter = "all" | "ready" | "needsAttention" | "missingKey" | "disabled";
+export type ProviderCapabilityFilter = "all" | "video" | "image" | "chat";
 export type ProviderSetupIntent = "chat" | "generation" | "video_generation";
 export type ProviderPrimaryState =
   | "disabled"
   | "missing_api_key"
+  | "checking"
   | "check_failed"
   | "needs_check"
   | "current_default"
@@ -153,11 +156,13 @@ export function filterProviderWorkbenchRoutes({
   providers,
   query,
   statusFilter,
+  capabilityFilter,
   selectedProviderId,
 }: {
   readonly providers: readonly ProviderPreset[];
   readonly query: string;
   readonly statusFilter: ProviderStatusFilter;
+  readonly capabilityFilter: ProviderCapabilityFilter;
   readonly selectedProviderId: string;
 }): readonly ProviderPreset[] {
   const normalizedQuery = query.trim().toLowerCase();
@@ -172,7 +177,12 @@ export function filterProviderWorkbenchRoutes({
       (statusFilter === "missingKey" && providerNeedsSecret(provider) && !provider.apiKeyConfigured) ||
       (statusFilter === "needsAttention" && isWorkbenchNeedsConfigProvider(provider)) ||
       (statusFilter === "disabled" && !provider.enabled);
-    return matchesQuery && matchesStatus;
+    const matchesCapability =
+      capabilityFilter === "all" ||
+      (capabilityFilter === "video" && provider.capabilities.includes("video_generate")) ||
+      (capabilityFilter === "image" && provider.capabilities.some((capability) => capability === "image_generate" || capability === "image_edit")) ||
+      (capabilityFilter === "chat" && provider.api !== "media-job" && provider.capabilities.includes("chat"));
+    return matchesQuery && matchesStatus && matchesCapability;
   }), selectedProviderId);
 }
 
@@ -198,28 +208,33 @@ export function readProviderRouteRowView({
     canUseGenerationProviderForOperation(provider, operation)
   );
   const ready = providerPreflightReady(provider) || canGenerate;
+  const checking = providerCheckIsPending(provider.lastCheck);
   const primaryState: ProviderPrimaryState = !provider.enabled
     ? "disabled"
     : missingApiKey
       ? "missing_api_key"
-      : provider.lastCheck && !provider.lastCheck.ok
-        ? "check_failed"
-        : !ready
-          ? "needs_check"
-          : selectedForRun
-            ? "current_default"
-            : "ready";
+      : checking
+        ? "checking"
+        : provider.lastCheck && !provider.lastCheck.ok
+          ? "check_failed"
+          : !ready
+            ? "needs_check"
+            : selectedForRun
+              ? "current_default"
+              : "ready";
   const primaryStatusLabel = primaryState === "disabled"
     ? t("Disabled")
     : primaryState === "missing_api_key"
       ? t("Needs API key")
-      : primaryState === "check_failed"
-        ? t("Needs attention")
-        : primaryState === "needs_check"
-          ? t("Needs check")
-          : primaryState === "current_default"
-            ? t("Current default")
-            : t("Ready");
+      : primaryState === "checking"
+        ? t("Checking")
+        : primaryState === "check_failed"
+          ? t("Needs attention")
+          : primaryState === "needs_check"
+            ? t("Needs check")
+            : primaryState === "current_default"
+              ? t("Current default")
+              : t("Ready");
   const primaryStatusTone: ProviderStatusTone = primaryState === "check_failed"
     ? "danger"
     : primaryState === "missing_api_key" || primaryState === "needs_check"
@@ -235,11 +250,13 @@ export function readProviderRouteRowView({
       ? "disabled"
       : primaryState === "missing_api_key"
         ? "key-missing"
-        : primaryState === "check_failed"
-          ? "check-bad"
-          : primaryState === "needs_check"
-            ? "check-unknown"
-            : "run-ready",
+        : primaryState === "checking"
+          ? "check-unknown"
+          : primaryState === "check_failed"
+            ? "check-bad"
+            : primaryState === "needs_check"
+              ? "check-unknown"
+              : "run-ready",
   ].join(" ");
   const primaryAction: ProviderPrimaryAction = primaryState === "disabled"
     ? "enable"
@@ -255,7 +272,7 @@ export function readProviderRouteRowView({
     provider.capabilities.some((capability) => capability === "image_generate" || capability === "image_edit") ? t("Image") : "",
     provider.capabilities.includes("video_generate") ? t("Video") : "",
   ].filter(Boolean);
-  const statusHint = primaryState === "ready" || primaryState === "current_default"
+  const statusHint = primaryState === "ready" || primaryState === "current_default" || primaryState === "checking"
     ? ""
     : providerRunPreflightBlocker(provider, t) ?? rowCheckGuidance;
   const isCustomRoute = provider.providerId === "custom-openai-compatible";
@@ -286,7 +303,7 @@ export function readProviderRouteRowView({
     sourceLabel,
     sourceInitial: providerInitial(sourceLabel || provider.displayName),
     secondaryLabel,
-    showInlineCheck: provider.enabled && !missingApiKey && primaryAction !== "check",
+    showInlineCheck: provider.enabled && !missingApiKey && !checking && primaryAction !== "check",
     showInlineEdit: primaryAction !== "add_api_key",
     showDisableMenuAction: provider.enabled,
   };

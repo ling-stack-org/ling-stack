@@ -274,6 +274,7 @@ export class AutomationSchedulerRegistry {
     }
     await maybeStartNextRunInterventionContinuation({
       sourceRunId,
+      terminalRun,
       store,
       runnerRegistry: this.runnerRegistry,
       storeRegistry: this.storeRegistry,

@@ -251,6 +251,101 @@ test("provider keychain setup reports unavailable stores", async () => {
   }
 });
 
+test("provider model import returns while bounded background checks continue", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-provider-import-background-check-"));
+  const stores = new Map();
+  const daemon = await startDaemonForTest(stores);
+  const modelServer = await startDelayedChatCheckServer(400);
+  try {
+    const imported = await postJson(`${daemon.url}/providers/import-models?cwd=${encodeURIComponent(cwd)}`, {
+      kind: "openai-compatible",
+      displayName: "Background Relay",
+      providerId: "background-relay",
+      api: "openai-completions",
+      baseUrl: modelServer.url,
+      apiKey: "background-check-secret",
+      authHeader: true,
+      capabilities: ["chat"],
+      input: ["text"],
+      models: [
+        { id: "background-model-1" },
+        { id: "background-model-2" },
+        { id: "background-model-3" },
+        { id: "background-model-4" },
+      ],
+    });
+
+    assert.equal(imported.createdCount, 4);
+    assert.deepEqual(imported.providers.map((provider) => provider.lastCheck?.code), [
+      "checking",
+      "checking",
+      "checking",
+      "checking",
+    ]);
+
+    const pending = await getJson(`${daemon.url}/providers?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(pending.providers.filter((provider) => provider.lastCheck?.code === "checking").length, 4);
+
+    await waitFor(async () => {
+      const listed = await getJson(`${daemon.url}/providers?cwd=${encodeURIComponent(cwd)}`);
+      return listed.providers.length === 4 && listed.providers.every((provider) => provider.lastCheck?.ok === true);
+    }, 3_000);
+    assert.equal(modelServer.requestCount, 4);
+    assert.equal(modelServer.maxInFlight, 3);
+  } finally {
+    await daemon.close();
+    await modelServer.close();
+    for (const store of stores.values()) {
+      store.close();
+    }
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("provider import background result does not overwrite a newer edit", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-provider-import-stale-check-"));
+  const stores = new Map();
+  const daemon = await startDaemonForTest(stores);
+  const modelServer = await startDelayedChatCheckServer(300);
+  try {
+    const imported = await postJson(`${daemon.url}/providers/import-models?cwd=${encodeURIComponent(cwd)}`, {
+      kind: "openai-compatible",
+      displayName: "Editable Relay",
+      providerId: "editable-relay",
+      api: "openai-completions",
+      baseUrl: modelServer.url,
+      apiKey: "editable-check-secret",
+      authHeader: true,
+      capabilities: ["chat"],
+      input: ["text"],
+      models: [{ id: "editable-model" }],
+    });
+    const provider = imported.providers[0];
+    assert.equal(provider.lastCheck?.code, "checking");
+
+    const edited = await requestJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}?cwd=${encodeURIComponent(cwd)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ displayName: "Edited after import" }),
+    });
+    assert.equal(edited.status, 200);
+    assert.equal(edited.body.provider.displayName, "Edited after import");
+    assert.equal(edited.body.provider.lastCheck, undefined);
+
+    await new Promise((resolveWait) => setTimeout(resolveWait, 450));
+    const listed = await getJson(`${daemon.url}/providers?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(listed.providers[0].displayName, "Edited after import");
+    assert.equal(listed.providers[0].lastCheck, undefined);
+  } finally {
+    await daemon.close();
+    await modelServer.close();
+    for (const store of stores.values()) {
+      store.close();
+    }
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 async function startDaemonForTest(stores, dependencies = {}) {
   const daemon = createDaemonServer({
     host: "127.0.0.1",
@@ -347,6 +442,48 @@ async function startModelServerForSecretHeaderTest() {
       server.close((error) => error ? rejectClose(error) : resolveClose());
     }),
   };
+}
+
+async function startDelayedChatCheckServer(delayMs) {
+  let requestCount = 0;
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const server = createServer((_request, response) => {
+    requestCount += 1;
+    inFlight += 1;
+    maxInFlight = Math.max(maxInFlight, inFlight);
+    setTimeout(() => {
+      inFlight -= 1;
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ choices: [{ message: { role: "assistant", content: "ok" } }] }));
+    }, delayMs);
+  });
+  await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  return {
+    get requestCount() {
+      return requestCount;
+    },
+    get maxInFlight() {
+      return maxInFlight;
+    },
+    url: `http://127.0.0.1:${address.port}`,
+    close: () => new Promise((resolveClose, rejectClose) => {
+      server.close((error) => error ? rejectClose(error) : resolveClose());
+    }),
+  };
+}
+
+async function waitFor(predicate, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) {
+      return;
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+  }
+  assert.fail(`condition was not met within ${timeoutMs}ms`);
 }
 
 async function getJson(url) {

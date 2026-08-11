@@ -1,0 +1,287 @@
+{
+  "schemaVersion": 1,
+  "contractSchemaVersion": 2,
+  "scenarios": [
+    {
+      "id": "article-continuation-remains-reply",
+      "title": "Long-form content continues in conversation",
+      "description": "A request to draft an article and the acknowledgement that follows remain conversational and never imply a local file target.",
+      "turns": [
+        {
+          "id": "article-request",
+          "actor": "local_user",
+          "body": "帮我写一篇关于可恢复多 Agent 记忆的长文，先给提纲。",
+          "expected": {
+            "segmentAction": "propose_new",
+            "intentAction": "reply",
+            "targetResolver": "skip",
+            "threadSurface": "channel_root"
+          }
+        },
+        {
+          "id": "article-continue",
+          "actor": "local_user",
+          "body": "需要，开始吧",
+          "expected": {
+            "segmentAction": "continue",
+            "intentAction": "reply",
+            "targetResolver": "skip",
+            "threadSurface": "channel_root"
+          }
+        }
+      ]
+    },
+    {
+      "id": "explicit-readme-write-executes",
+      "title": "Explicit file destination becomes executable work",
+      "description": "Naming README.md and asking to save content crosses the typed side-effect boundary.",
+      "turns": [
+        {
+          "id": "save-article",
+          "actor": "local_user",
+          "body": "把刚才的文章保存到 README.md。",
+          "expected": {
+            "segmentAction": "continue",
+            "intentAction": "execute",
+            "targetResolver": "run",
+            "threadSurface": "channel_root"
+          }
+        }
+      ]
+    },
+    {
+      "id": "local-write-without-target-clarifies",
+      "title": "Executable file work requires a concrete target",
+      "description": "An explicit local write request without a destination produces an actionable structured clarification.",
+      "turns": [
+        {
+          "id": "missing-file-target",
+          "actor": "local_user",
+          "body": "把这段内容写到本地文件里。",
+          "expected": {
+            "segmentAction": "continue",
+            "intentAction": "clarify",
+            "targetResolver": "skip",
+            "missingFields": [
+              "target"
+            ],
+            "threadSurface": "channel_root"
+          }
+        }
+      ]
+    },
+    {
+      "id": "unrelated-request-escapes-clarification",
+      "title": "A fresh request does not inherit an unrelated clarification",
+      "description": "A snake-game request following an unresolved file-target question starts a fresh working set and remains independently answerable.",
+      "initialSegments": [
+        {
+          "id": "segment-file-target-clarification",
+          "label": "Unresolved local file target",
+          "state": "active"
+        }
+      ],
+      "turns": [
+        {
+          "id": "snake-game-request",
+          "actor": "local_user",
+          "body": "再做一个贪吃蛇小游戏的方案，先讲玩法。",
+          "expected": {
+            "segmentAction": "propose_new",
+            "intentAction": "reply",
+            "targetResolver": "skip",
+            "threadSurface": "channel_root"
+          }
+        }
+      ]
+    },
+    {
+      "id": "explicit-architecture-decision-switches-segment",
+      "title": "An explicit decision returns to an existing architecture segment",
+      "description": "A short decision acknowledgement binds to the known architecture discussion instead of the most recent unrelated turn.",
+      "initialSegments": [
+        {
+          "id": "segment-architecture",
+          "label": "Continuity v2 architecture",
+          "state": "active"
+        },
+        {
+          "id": "segment-ui-task",
+          "label": "Unrelated UI task",
+          "state": "active"
+        }
+      ],
+      "turns": [
+        {
+          "id": "choose-option-b",
+          "actor": "local_user",
+          "body": "方案 B 就这样定。",
+          "expected": {
+            "segmentAction": "switch_existing",
+            "segmentId": "segment-architecture",
+            "intentAction": "reply",
+            "targetResolver": "skip",
+            "threadSurface": "channel_root"
+          }
+        }
+      ]
+    },
+    {
+      "id": "explicit-reply-inherits-segment",
+      "title": "Reply and quote relations deterministically inherit context",
+      "description": "A structural reply relation is authoritative and does not require a semantic segment guess.",
+      "turns": [
+        {
+          "id": "source-architecture-turn",
+          "actor": "local_user",
+          "body": "conversation_items 最终替代 channel_messages。",
+          "expected": {
+            "segmentAction": "continue",
+            "segmentId": "segment-architecture",
+            "intentAction": "reply",
+            "targetResolver": "skip",
+            "threadSurface": "channel_root"
+          }
+        },
+        {
+          "id": "reply-to-architecture-turn",
+          "actor": "local_user",
+          "body": "这里的迁移必须一次完成吗？",
+          "relation": {
+            "kind": "reply",
+            "targetTurnId": "source-architecture-turn"
+          },
+          "expected": {
+            "segmentAction": "structural_inherit",
+            "segmentId": "segment-architecture",
+            "intentAction": "reply",
+            "targetResolver": "skip",
+            "threadSurface": "channel_root"
+          }
+        }
+      ]
+    },
+    {
+      "id": "formal-topic-versus-natural-shift",
+      "title": "Formal topics create threads while natural shifts create segments",
+      "description": "The visible product action decides thread creation; semantic topic changes inside root remain ContextSegments.",
+      "turns": [
+        {
+          "id": "create-formal-topic",
+          "actor": "local_user",
+          "body": "为上下文架构正式建一个 Topic。",
+          "expected": {
+            "segmentAction": "new_thread",
+            "intentAction": "reply",
+            "targetResolver": "skip",
+            "threadSurface": "topic"
+          }
+        },
+        {
+          "id": "natural-root-shift",
+          "actor": "local_user",
+          "body": "还有一个问题，多 Agent 怎么保证关键事实一致？",
+          "expected": {
+            "segmentAction": "propose_new",
+            "intentAction": "reply",
+            "targetResolver": "skip",
+            "threadSurface": "channel_root"
+          }
+        }
+      ]
+    },
+    {
+      "id": "branch-uses-snapshot-without-copying-items",
+      "title": "A branch inherits a source-linked snapshot",
+      "description": "Forking creates a Branch LingThread bound to the parent projection watermark and never clones parent timeline rows.",
+      "turns": [
+        {
+          "id": "parent-fork-point",
+          "actor": "local_user",
+          "body": "当前方案已经确认 Thread → Turn → Item。",
+          "expected": {
+            "segmentAction": "continue",
+            "segmentId": "segment-architecture",
+            "intentAction": "reply",
+            "targetResolver": "skip",
+            "threadSurface": "channel_root"
+          }
+        },
+        {
+          "id": "fork-branch",
+          "actor": "local_user",
+          "body": "从这里 fork 一个分支评估替代迁移方案。",
+          "relation": {
+            "kind": "fork",
+            "targetTurnId": "parent-fork-point"
+          },
+          "expected": {
+            "segmentAction": "new_thread",
+            "segmentId": "segment-architecture",
+            "intentAction": "reply",
+            "targetResolver": "skip",
+            "threadSurface": "branch",
+            "forkCopiesParentItems": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "private-memory-never-enters-public-projection",
+      "title": "Private teammate memory stays out of public channel context",
+      "description": "Role-private memory may inform only its authorized agent view and is filtered before the shared channel projection.",
+      "turns": [
+        {
+          "id": "public-channel-question",
+          "actor": "local_user",
+          "body": "请所有 Agent 基于公开设计总结当前约束。",
+          "expected": {
+            "segmentAction": "continue",
+            "intentAction": "reply",
+            "targetResolver": "skip",
+            "threadSurface": "channel_root",
+            "forbiddenSourceRefTypes": [
+              "memory"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "stale-agent-result-is-rejected",
+      "title": "Relevant projection drift fences stale agent results",
+      "description": "A specialist result based on superseded facts cannot silently commit after the shared projection changes.",
+      "turns": [
+        {
+          "id": "agent-source-turn",
+          "actor": "local_user",
+          "body": "评估是否保留 v1 兼容层。",
+          "expected": {
+            "segmentAction": "continue",
+            "segmentId": "segment-architecture",
+            "intentAction": "reply",
+            "targetResolver": "skip",
+            "threadSurface": "channel_root"
+          }
+        },
+        {
+          "id": "stale-specialist-result",
+          "actor": "teammate",
+          "body": "建议保留 v1 双读层。",
+          "relation": {
+            "kind": "followup",
+            "targetTurnId": "agent-source-turn"
+          },
+          "expected": {
+            "segmentAction": "structural_inherit",
+            "segmentId": "segment-architecture",
+            "intentAction": "no_reply",
+            "targetResolver": "skip",
+            "threadSurface": "channel_root",
+            "staleResultDisposition": "reject"
+          }
+        }
+      ]
+    }
+  ]
+}
