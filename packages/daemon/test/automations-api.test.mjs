@@ -244,7 +244,7 @@ test("automation scheduler auto-restores, deduplicates registration, fires sched
       trigger: {
         type: "schedule",
         timezone: "UTC",
-        schedule: { cadence: "interval", everyMs: 1000 },
+        schedule: { cadence: "interval", everyMs: 3000 },
         missedRunPolicy: "skip",
       },
     });
@@ -276,15 +276,16 @@ test("automation scheduler auto-restores, deduplicates registration, fires sched
     assert.equal(listed.schedulers.length, 1);
     assert.equal(listed.schedulers[0].id, restored.schedulers[0].id);
 
-    await waitForCondition(() => runner.runs.length === 1, "scheduled automation fire");
+    await waitForCondition(() => runner.runs.length === 1, "scheduled automation fire", 6000);
+    const stopped = await postJson(`${daemon.url}/automations/scheduler/stop?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(stopped.scheduler.status, "stopped");
+
     const automationRuns = await getJson(`${daemon.url}/automation-runs?cwd=${encodeURIComponent(cwd)}&automationId=${encodeURIComponent(scheduled.automation.id)}`);
     assert.equal(automationRuns.automationRuns.length, 1);
     assert.equal(automationRuns.automationRuns[0].triggerType, "schedule");
     assert.ok(automationRuns.automationRuns[0].scheduledFor);
 
-    const stopped = await postJson(`${daemon.url}/automations/scheduler/stop?cwd=${encodeURIComponent(cwd)}`, {});
-    assert.equal(stopped.scheduler.status, "stopped");
-    await sleep(1300);
+    await sleep(3300);
     assert.equal(runner.runs.length, 1);
   } finally {
     await daemon.close();

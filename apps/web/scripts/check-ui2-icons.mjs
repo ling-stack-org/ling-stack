@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { relative, resolve } from "node:path";
-import ts from "typescript";
+import { ts, visitTypeScriptNode, withTypeScriptSourceFiles } from "./typescript-ast.mjs";
 
 const typedActionOwners = [
   "src/features/automations/AutomationDefinitionRow.tsx",
@@ -83,35 +83,35 @@ const violations = [];
 const discoveredOwners = new Set();
 const sourceRoot = resolve(process.cwd(), "src");
 
-for (const absolutePath of collectTsxFiles(sourceRoot)) {
-  const sourcePath = relative(process.cwd(), absolutePath).replaceAll("\\", "/");
-  const source = readFileSync(absolutePath, "utf8");
-  const sourceFile = ts.createSourceFile(sourcePath, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  let jsxIconCount = 0;
+const sourceFiles = collectTsxFiles(sourceRoot);
+withTypeScriptSourceFiles(sourceFiles, (parsedFiles) => {
+  for (const absolutePath of sourceFiles) {
+    const sourcePath = relative(process.cwd(), absolutePath).replaceAll("\\", "/");
+    const sourceFile = parsedFiles.get(resolve(absolutePath));
+    let jsxIconCount = 0;
 
-  const visit = (node) => {
-    if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
-      const tagName = node.tagName.getText(sourceFile);
-      if (iconButtonTags.has(tagName)) {
-        discoveredOwners.add(sourcePath);
-        const iconAttribute = node.attributes.properties.find((property) => (
-          ts.isJsxAttribute(property) && property.name.getText(sourceFile) === "icon"
-        ));
-        if (iconAttribute?.initializer && ts.isJsxExpression(iconAttribute.initializer)) {
-          const expression = iconAttribute.initializer.expression;
-          if (expression && containsJsx(expression)) jsxIconCount += 1;
+    visitTypeScriptNode(sourceFile, (node) => {
+      if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
+        const tagName = node.tagName.getText(sourceFile);
+        if (iconButtonTags.has(tagName)) {
+          discoveredOwners.add(sourcePath);
+          const iconAttribute = node.attributes.properties.find((property) => (
+            ts.isJsxAttribute(property) && property.name.getText(sourceFile) === "icon"
+          ));
+          if (iconAttribute?.initializer && ts.isJsxExpression(iconAttribute.initializer)) {
+            const expression = iconAttribute.initializer.expression;
+            if (expression && containsJsx(expression)) jsxIconCount += 1;
+          }
         }
       }
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(sourceFile);
+    });
 
-  const budget = legacyReactNodeBudgets.get(sourcePath) ?? 0;
-  if (jsxIconCount !== budget) {
-    violations.push(`${sourcePath} legacy ReactNode IconButton budget is ${jsxIconCount}, expected ${budget}`);
+    const budget = legacyReactNodeBudgets.get(sourcePath) ?? 0;
+    if (jsxIconCount !== budget) {
+      violations.push(`${sourcePath} legacy ReactNode IconButton budget is ${jsxIconCount}, expected ${budget}`);
+    }
   }
-}
+});
 
 const expectedOwners = new Set(typedActionOwners);
 for (const sourcePath of discoveredOwners) {
@@ -147,13 +147,10 @@ function collectTsxFiles(directory) {
 
 function containsJsx(node) {
   let found = false;
-  const visit = (current) => {
+  visitTypeScriptNode(node, (current) => {
     if (ts.isJsxElement(current) || ts.isJsxSelfClosingElement(current) || ts.isJsxFragment(current)) {
       found = true;
-      return;
     }
-    ts.forEachChild(current, visit);
-  };
-  visit(node);
+  });
   return found;
 }

@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { constants as fsConstants } from "node:fs";
+import { constants as fsConstants, type Stats } from "node:fs";
 import { access, cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { basename, dirname, join, resolve } from "node:path";
@@ -4667,7 +4667,7 @@ async function assertWorkspaceStateTarget(targetRoot: string): Promise<void> {
   }
 }
 
-async function statRequired(path: string, code: string, message: string): Promise<Awaited<ReturnType<typeof stat>>> {
+async function statRequired(path: string, code: string, message: string): Promise<Stats> {
   try {
     return await stat(path);
   } catch (error) {
