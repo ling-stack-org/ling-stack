@@ -115,6 +115,34 @@ test("main window stays hidden until ready and denies all renderer navigation", 
   assert.equal(navigationPrevented, true);
 });
 
+test("main window removes the default application menu only on Windows", async () => {
+  const windowsHarness = createWindowHarness();
+  await createMainWindow({
+    daemonBaseUrl,
+    themePackageFirstPaint,
+    platform: "win32",
+    webIndexPath: "/safe/web/index.html",
+    createWindow: windowsHarness.createWindow,
+    openExternal: windowsHarness.openExternal,
+  });
+
+  assert.equal(windowsHarness.removeMenuCount, 1);
+  assert.equal(windowsHarness.capturedOptions.titleBarStyle, "default");
+
+  const macHarness = createWindowHarness();
+  await createMainWindow({
+    daemonBaseUrl,
+    themePackageFirstPaint,
+    platform: "darwin",
+    webIndexPath: "/safe/web/index.html",
+    createWindow: macHarness.createWindow,
+    openExternal: macHarness.openExternal,
+  });
+
+  assert.equal(macHarness.removeMenuCount, 0);
+  assert.equal(macHarness.capturedOptions.titleBarStyle, "hiddenInset");
+});
+
 test("main window denies every popup and opens only HTTP(S) URLs externally", async () => {
   const harness = createWindowHarness();
 
@@ -170,6 +198,7 @@ function createWindowHarness() {
   const webContentsEvents = new Map();
   const windowEvents = new Map();
   let capturedOptions;
+  let removeMenuCount = 0;
   let showCount = 0;
   let windowOpenHandler;
 
@@ -179,6 +208,9 @@ function createWindowHarness() {
     },
     once: (event, listener) => {
       windowEvents.set(event, listener);
+    },
+    removeMenu: () => {
+      removeMenuCount += 1;
     },
     show: () => {
       showCount += 1;
@@ -208,6 +240,9 @@ function createWindowHarness() {
     },
     get showCount() {
       return showCount;
+    },
+    get removeMenuCount() {
+      return removeMenuCount;
     },
     webContentsEvents,
     window,

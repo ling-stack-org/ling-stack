@@ -8,6 +8,7 @@ export interface MainWindowFactoryInput {
   readonly daemonBaseUrl: string;
   readonly themePackageFirstPaint: DesktopThemePackageFirstPaintState;
   readonly computerControlPlatform?: "macos" | "windows";
+  readonly platform?: NodeJS.Platform;
   readonly webIndexPath: string;
   readonly createWindow?: (options: BrowserWindowConstructorOptions) => BrowserWindow;
   readonly openExternal?: (url: string) => Promise<void> | void;
@@ -51,7 +52,11 @@ export async function createMainWindow(input: MainWindowFactoryInput): Promise<B
     ?? ((options: BrowserWindowConstructorOptions) => new electron!.BrowserWindow(options));
   const openExternal = input.openExternal
     ?? ((url: string) => electron!.shell.openExternal(url));
-  const window = createWindow(buildMainWindowOptions(input));
+  const platform = input.platform ?? process.platform;
+  const window = createWindow(buildMainWindowOptions(input, platform));
+  if (platform === "win32") {
+    window.removeMenu();
+  }
   input.onWindowCreated?.(window);
   if (input.showWhenReady !== false) {
     window.once("ready-to-show", () => window.show());
