@@ -12,7 +12,7 @@ export function PluginManagerRow({
   readonly row: PluginRowView;
   readonly handlers: PluginActionHandlers;
   readonly t: Translate;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <TableRow className="plugin-table-row" data-plugin-id={row.id} data-primary-state={row.primaryState.id}>
       <TableCell className="plugin-table-name">

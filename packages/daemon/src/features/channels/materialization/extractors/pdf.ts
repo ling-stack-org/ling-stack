@@ -1,13 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import { isAbsolute, relative as relativePath, resolve as resolvePath } from "node:path";
+import { PDFParse } from "pdf-parse";
 import type { LingInputExtractor, LingMaterializationRequest, LingMaterializationResult } from "../registry.js";
-
-const require = createRequire(import.meta.url);
-const pdfParse = require("pdf-parse") as (
-  dataBuffer: Buffer,
-  options?: { readonly max?: number },
-) => Promise<{ readonly numpages?: number; readonly text?: string }>;
 
 export const pdfExtractorV1: LingInputExtractor = {
   id: "pdf_text_v1",
@@ -78,7 +72,10 @@ async function materializePdfAttachment(input: LingMaterializationRequest): Prom
         errorMessage: `PDF attachment is too large for text materialization (${bytes.byteLength} bytes).`,
       };
     }
-    const parsed = await pdfParse(bytes);
+    const parser = new PDFParse({ data: bytes });
+    const parsed = await parser.getText().finally(async () => {
+      await parser.destroy().catch(() => undefined);
+    });
     const extractedText = normalizeExtractedText(parsed.text ?? "");
     if (!extractedText) {
       return {
@@ -86,7 +83,7 @@ async function materializePdfAttachment(input: LingMaterializationRequest): Prom
         contentKind: "pdf_text",
         byteCount: bytes.byteLength,
         structuredSummary: {
-          pageCount: parsed.numpages ?? undefined,
+          pageCount: parsed.total,
         },
         errorCode: "no_text_extracted",
         errorMessage: "No embedded PDF text was extracted.",
@@ -99,7 +96,7 @@ async function materializePdfAttachment(input: LingMaterializationRequest): Prom
       contentKind: "pdf_text",
       contentText,
       structuredSummary: {
-        pageCount: parsed.numpages ?? undefined,
+        pageCount: parsed.total,
       },
       byteCount: bytes.byteLength,
       tokenEstimate: estimateTokens(contentText),

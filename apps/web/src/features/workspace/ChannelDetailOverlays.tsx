@@ -45,7 +45,7 @@ export function ConversationDetailOverlay({
   readonly icon: ReactNode;
   readonly children: ReactNode;
   readonly onClose: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <InspectorSection
@@ -92,7 +92,7 @@ export function ChannelSourceDetailPanel({
   readonly detail?: SelectedSourceDetailState;
   readonly messages: readonly ChannelMessage[];
   readonly decisions: readonly ChannelDecision[];
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   if (!detail) {
     return (
@@ -226,7 +226,7 @@ export function ChannelApprovalDetailPanel({
   readonly onResolve: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
   readonly onOpenTask: (taskId: string) => void;
   readonly onOpenRun: (runId: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const [decisionReason, setDecisionReason] = useState("");
   const [confirmDecision, setConfirmDecision] = useState<ApprovalResolution | undefined>();

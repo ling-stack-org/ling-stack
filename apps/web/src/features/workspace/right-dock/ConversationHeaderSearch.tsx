@@ -24,7 +24,7 @@ export function ConversationHeaderSearch({
   onChange,
   onClear,
   onEscape,
-}: ConversationHeaderSearchProps): JSX.Element {
+}: ConversationHeaderSearchProps): React.JSX.Element {
   const containerClassName = ["conversation-header-search", className].filter(Boolean).join(" ");
   const handleChange = (event: ChangeEvent<HTMLInputElement>): void => onChange(event.target.value);
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>): void => {

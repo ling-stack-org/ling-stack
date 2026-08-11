@@ -13,7 +13,7 @@ export interface NormalConversationEmptyStateProps {
 export function NormalConversationEmptyState({
   composerNode,
   onApplyShortcut,
-}: NormalConversationEmptyStateProps): JSX.Element {
+}: NormalConversationEmptyStateProps): React.JSX.Element {
   const { t } = useI18n();
   return (
     <section className="conversation-home" aria-label={t("Conversation home")}>

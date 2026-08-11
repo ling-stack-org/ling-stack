@@ -6,7 +6,7 @@ export function MetaRow({
   readonly label: string;
   readonly value: string;
   readonly compact?: boolean;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <div className={compact ? "meta-row compact" : "meta-row"}>
       <span>{label}</span>

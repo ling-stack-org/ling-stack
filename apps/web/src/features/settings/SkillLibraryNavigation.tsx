@@ -13,7 +13,7 @@ export function SkillLibraryNavigation({
   readonly evolutionCount: number;
   readonly builtinCount: number;
   readonly onSectionChange: (section: SkillLibrarySectionId) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <SettingsSubnav
       label="Skill library sections"

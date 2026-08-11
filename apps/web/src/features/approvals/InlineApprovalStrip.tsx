@@ -12,7 +12,7 @@ export function InlineApprovalStrip({ approvals, resolvingApprovals, onResolve, 
   readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
   readonly onResolve: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
   readonly onOpenApproval: (approvalId: string) => void;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const uniqueApprovals = [...new Map(approvals.map((item) => [item.approval.id, item])).values()];
@@ -61,7 +61,7 @@ function InlineApprovalItem({ item, priority, resolvingDecision, onResolve, onOp
   readonly resolvingDecision?: ApprovalResolution;
   readonly onResolve: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
   readonly onOpenApproval: (approvalId: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const isResolving = Boolean(resolvingDecision);
   return (

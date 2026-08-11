@@ -6,7 +6,7 @@ import type { ApprovalRequest } from "../../types.js";
 import { approvalActionDisplayKey, approvalRiskTone, approvalStatusTone } from "./approval-view-models.js";
 import { ApprovalPayloadSummary } from "./ApprovalPayloadSummary.js";
 
-export function ApprovalSummary({ approval }: { readonly approval: ApprovalRequest }): JSX.Element {
+export function ApprovalSummary({ approval }: { readonly approval: ApprovalRequest }): React.JSX.Element {
   const { t } = useI18n();
   const status = effectiveApprovalStatus(approval);
   const timing = approvalTimingLabel(approval);

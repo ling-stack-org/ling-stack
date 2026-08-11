@@ -33,7 +33,7 @@ export function PluginRowActions({
   readonly row: PluginRowView;
   readonly handlers: PluginActionHandlers;
   readonly t: Translate;
-}): JSX.Element {
+}): React.JSX.Element {
   const rowBusy = Boolean(row.busyAction);
   return (
     <div className="plugin-table-actions">
@@ -119,7 +119,7 @@ function PluginIconAction({
   readonly busy: boolean;
   readonly disabled: boolean;
   readonly onClick: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <IconButton
       className="plugin-table-icon-action"
@@ -147,7 +147,7 @@ export function runPluginAction(action: PluginActionId, pluginId: string, handle
   handlers.onDisable(pluginId);
 }
 
-export function pluginActionIcon(action: PluginActionId): JSX.Element {
+export function pluginActionIcon(action: PluginActionId): React.JSX.Element {
   const ActionIcon = pluginActionIconComponent(action);
   return <ActionIcon aria-hidden="true" />;
 }

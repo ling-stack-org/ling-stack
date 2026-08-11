@@ -39,7 +39,7 @@ export function NewTaskPanel({
   readonly onTaskFormChange: (form: TaskFormState) => void;
   readonly onCreateTask: () => void;
   readonly onCancel: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const allowedTools = selectedChannel?.allowedTools ?? defaultTools;
 

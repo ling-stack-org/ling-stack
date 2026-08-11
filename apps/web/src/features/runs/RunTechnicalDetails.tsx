@@ -15,7 +15,7 @@ export function RunTechnicalDetails({ run, events, leases, transitions, workUnit
   readonly leases: readonly ResourceLease[];
   readonly transitions: readonly StateTransitionEvent[];
   readonly workUnitDetail: WorkUnitDetailResponse | undefined;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const toolEvents = events.filter((event) => event.type.startsWith("tool_"));
   const permissionMode = readSessionPermissionModeFromSnapshot(run.requestSnapshot);
@@ -57,7 +57,7 @@ function readRunnerResolution(run: RunSession, workUnit?: WorkUnitDetailResponse
   };
 }
 
-function ToolEventDetails({ event, events }: { readonly event: RunEventEnvelope; readonly events: readonly RunEventEnvelope[] }): JSX.Element {
+function ToolEventDetails({ event, events }: { readonly event: RunEventEnvelope; readonly events: readonly RunEventEnvelope[] }): React.JSX.Element {
   const { t } = useI18n();
   const isError = readDataBoolean(event.data, "isError");
   const start = event.type === "tool_start" ? undefined : findRelatedToolStart(events, event);

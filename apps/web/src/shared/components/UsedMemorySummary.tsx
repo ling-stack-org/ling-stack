@@ -7,7 +7,7 @@ export function UsedMemorySummaryLabel({
   events,
 }: {
   readonly events: readonly UsedMemoryEvent[];
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const { t } = useI18n();
   const memoryCount = uniqueMemoryIds(events).length;
   if (events.length === 0 || memoryCount === 0) {
@@ -34,7 +34,7 @@ export function UsedMemorySummary({
   readonly maxItems?: number;
   readonly compact?: boolean;
   readonly variant?: "panel" | "footer" | "inline";
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const { t } = useI18n();
   const allMemoryIds = uniqueMemoryIds(events);
   const memoryIds = allMemoryIds.slice(0, maxItems);

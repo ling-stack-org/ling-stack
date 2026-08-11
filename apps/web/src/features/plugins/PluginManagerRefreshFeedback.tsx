@@ -14,7 +14,7 @@ export function PluginManagerRefreshFeedback({
   readonly loading: boolean;
   readonly onRetry: () => void;
   readonly t: Translate;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <InlineFeedback
       className="plugin-manager-retained-feedback"

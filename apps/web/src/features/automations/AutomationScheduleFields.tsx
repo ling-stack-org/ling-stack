@@ -23,7 +23,7 @@ export function AutomationScheduleFields({
   readonly t: AutomationTranslate;
   readonly value: AutomationScheduleValue;
   readonly onChange: (value: AutomationScheduleValue) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <div className="automation-ui2-schedule-fields">
       <Field label={t("Schedule")} error={error}>

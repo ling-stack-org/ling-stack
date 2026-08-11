@@ -42,7 +42,7 @@ export interface CouncilListHealthPanelProps {
   readonly visibleRows: readonly CouncilListHealthRowView[];
 }
 
-export function CouncilListHealthPanel(props: CouncilListHealthPanelProps): JSX.Element {
+export function CouncilListHealthPanel(props: CouncilListHealthPanelProps): React.JSX.Element {
   const { t } = useI18n();
   const noResults = props.rows.length > 0 && props.visibleRows.length === 0;
 
@@ -156,7 +156,7 @@ export function CouncilListOverviewSummary({
 }: {
   readonly compact?: boolean;
   readonly overview: CouncilListHealthOverviewView;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <div className={compact ? "council-workspace-summary compact" : "council-workspace-summary"} aria-label={t("Council summary")}>
@@ -168,7 +168,7 @@ export function CouncilListOverviewSummary({
   );
 }
 
-function CouncilListSkeleton(): JSX.Element {
+function CouncilListSkeleton(): React.JSX.Element {
   const { t } = useI18n();
   return (
     <div className="council-list-health-skeleton" aria-label={t("Loading councils")} role="status">

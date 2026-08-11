@@ -54,7 +54,7 @@ export function ConversationWorkCell({
   terminalReportProjectionPolicy,
   onOpenWorkspaceFile,
   onOpenWorkspaceReview,
-}: ConversationWorkCellProps): JSX.Element {
+}: ConversationWorkCellProps): React.JSX.Element {
   const { t } = useI18n();
   const active = model.mode === "active";
   const { rootRef, activityVisibility } = useWorkCellActivityVisibility(active);
@@ -271,7 +271,7 @@ export function ConversationArtifactStripPanel({
   readonly recoveryTarget?: ConversationArtifactStripItem["recoveryTarget"];
   readonly loadPreview: ArtifactPreviewLoader;
   readonly onOpenWorkspaceReview?: (target: ConversationWorkspaceReviewTarget) => void;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const visibleItems = items.filter((item) => item.kind === "artifact" || item.kind === "changed");
   if (visibleItems.length === 0) {
     return null;
@@ -458,7 +458,7 @@ function AgentActivitySpans({
   readonly cwd?: string;
   readonly loadPreview: ArtifactPreviewLoader;
   readonly renderAgentAvatar?: (span: ConversationAgentActivitySpan) => ReactNode;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <section className="conversation-work-cell-agent-spans" aria-label={t("Agent activity")}>
@@ -487,7 +487,7 @@ function AgentActivitySpanItem({
   readonly cwd?: string;
   readonly loadPreview: ArtifactPreviewLoader;
   readonly renderAgentAvatar?: (span: ConversationAgentActivitySpan) => ReactNode;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const items = span.items ?? projectConversationCommandBatches(span.rows, { participantScope: span.participantId ?? span.id });
   const hasDetail = items.length > 0;
@@ -556,7 +556,7 @@ function WorkCellDetails({
   readonly loadPreview: ArtifactPreviewLoader;
   readonly showGroups: boolean;
   readonly onRetry: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   if (state.status === "not_loaded") {
     return (
@@ -651,7 +651,7 @@ function ActiveTurnItemStream({
   readonly cwd?: string;
   readonly loadPreview: ArtifactPreviewLoader;
   readonly scope?: "primary" | "agent";
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const className = scope === "agent"
     ? "conversation-work-cell-agent-stream"
@@ -700,7 +700,7 @@ function WorkCellRow({
   readonly showIcon?: boolean;
   readonly cwd?: string;
   readonly loadPreview?: ArtifactPreviewLoader;
-}): JSX.Element {
+}): React.JSX.Element {
   const [expanded, setExpanded] = useState(row.commandExecution?.status === "executing");
   const previousCommandStatusRef = useRef(row.commandExecution?.status);
   const [changePreview, setChangePreview] = useState<InlineChangePreviewState>({ status: "idle", changes: [] });
@@ -880,7 +880,7 @@ function inlineChangePreviewState(
   };
 }
 
-function InlineChangePreview({ changes }: { readonly changes: readonly ConversationFileChange[] }): JSX.Element {
+function InlineChangePreview({ changes }: { readonly changes: readonly ConversationFileChange[] }): React.JSX.Element {
   const visibleChanges = changes.slice(0, 2);
   return (
     <div className="conversation-work-cell-change-preview">
@@ -1002,7 +1002,7 @@ function WorkCellRowIcon({
 }: {
   readonly kind: ConversationWorkCellRow["kind"];
   readonly tone: ConversationWorkCellRow["tone"] | "neutral";
-}): JSX.Element {
+}): React.JSX.Element {
   if (tone === "failed") {
     return <CircleAlert size={13} />;
   }

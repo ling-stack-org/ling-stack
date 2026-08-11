@@ -25,7 +25,7 @@ export function McpServerList({
   readonly onSync: (serverId: string) => void;
   readonly servers: readonly McpServer[];
   readonly toolsByServerId: ReadonlyMap<string, readonly McpTool[]>;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <div className="mcp-server-list settings-mcp-server-list" aria-live="polite">
       {servers.map((server) => (

@@ -130,7 +130,7 @@ export function useChannelActivityController({
   const [activeActivityViewId, setActiveActivityViewId] = useState(allChannelActivitySavedViewId);
   const [activityFiltersExpanded, setActivityFiltersExpanded] = useState(false);
   const [activityDrilldownItemId, setActivityDrilldownItemId] = useState("");
-  const lastActivityDrilldownRef = useRef<ChannelActivityDrilldownItem | undefined>();
+  const lastActivityDrilldownRef = useRef<ChannelActivityDrilldownItem | undefined>(undefined);
   const savedViewMutationSyncPendingRef = useRef(false);
   const workspaceChannelActivityViewsRef = useRef<WorkspaceSettings["channelActivityViews"] | undefined>(workspaceSettings?.channelActivityViews);
   const onWorkspaceSettingsPatchRef = useRef(onWorkspaceSettingsPatch);

@@ -459,6 +459,7 @@ export function createDaemonServer(
         server.closeAllConnections();
       });
       await activeRuns.waitForIdle();
+      await automationSchedulers.waitForIdle();
       await providerImportShutdown;
       await cuaDriverActivationCoordinator.shutdown();
       storeRegistry.closeAll();

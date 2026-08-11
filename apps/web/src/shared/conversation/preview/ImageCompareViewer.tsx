@@ -11,7 +11,7 @@ export interface ImageCompareViewerProps {
 
 const compareModes: readonly PreviewImageCompareMode[] = ["single", "side_by_side", "slider", "diff_overlay"];
 
-export function ImageCompareViewer({ current, compare }: ImageCompareViewerProps): JSX.Element {
+export function ImageCompareViewer({ current, compare }: ImageCompareViewerProps): React.JSX.Element {
   const { t } = useI18n();
   const availableModes = compare ? compareModes : (["single"] as const);
   const defaultMode = compare?.defaultMode && compareModes.includes(compare.defaultMode)
@@ -85,7 +85,7 @@ export function ImageCompareViewer({ current, compare }: ImageCompareViewerProps
   );
 }
 
-function ImageFrame({ image, label }: { readonly image: PreviewImageCompareSource; readonly label: string }): JSX.Element {
+function ImageFrame({ image, label }: { readonly image: PreviewImageCompareSource; readonly label: string }): React.JSX.Element {
   return (
     <figure className="image-compare-frame">
       <img src={image.imageUrl} alt={image.label} loading="lazy" decoding="async" onLoad={(event) => notifyConversationDeferredContentReady(event.currentTarget)} />
@@ -107,7 +107,7 @@ function imageCompareModeLabel(mode: PreviewImageCompareMode): string {
   return "Single";
 }
 
-function imageCompareModeIcon(mode: PreviewImageCompareMode): JSX.Element {
+function imageCompareModeIcon(mode: PreviewImageCompareMode): React.JSX.Element {
   if (mode === "side_by_side") {
     return <Columns2 size={13} />;
   }

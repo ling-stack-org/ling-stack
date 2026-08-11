@@ -28,7 +28,7 @@ export function TeammateCreateProgress({
 }: {
   readonly result?: TeammateCreateResult;
   readonly steps: Readonly<Record<TeammateCreateSetupStep, TeammateCreateStepViewState>>;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const state = result?.partial && result.teammateId
     ? "partial"
@@ -85,7 +85,7 @@ function productizeSetupMessage(message: string | undefined, t: (key: string) =>
   return message;
 }
 
-function renderStepIcon(state: TeammateCreateStepState): JSX.Element {
+function renderStepIcon(state: TeammateCreateStepState): React.JSX.Element {
   if (state === "running") return <Spinner size="sm" />;
   if (state === "failed") return <CircleAlert />;
   if (state === "success" || state === "skipped") return <Check />;

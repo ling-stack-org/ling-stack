@@ -34,7 +34,7 @@ export function WorkBoardInspector(props: {
   readonly onComplete?: (id: string, token: string) => void;
   readonly onOpenFail: (id: string, trigger: HTMLElement) => void;
   readonly onLoadEvidence: (item: WorkItemView) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const [routeChannelId, setRouteChannelId] = useState("");
   const item = props.item;
@@ -80,10 +80,10 @@ export function WorkBoardInspector(props: {
   );
 }
 
-function DetailField({ label, value }: { readonly label: string; readonly value: string }): JSX.Element { return <span className="work-board-detail-field"><small>{label}</small><strong dir="auto" title={value}>{value}</strong></span>; }
+function DetailField({ label, value }: { readonly label: string; readonly value: string }): React.JSX.Element { return <span className="work-board-detail-field"><small>{label}</small><strong dir="auto" title={value}>{value}</strong></span>; }
 function linkedCount(item: WorkItemView): string { return String([item.taskId, item.runId, item.approvalId, item.channelId].filter(Boolean).length); }
 function evidenceSummary(item: WorkItemView, evidence?: WorkBoardEvidenceState): string { return evidence?.status === "ready" || evidence?.status === "stale" ? String(evidence.artifacts.length) : String(item.artifactIds.length + item.proofArtifactIds.length); }
-function EvidenceBody({ item, evidence, onOpenRun }: { readonly item: WorkItemView; readonly evidence?: WorkBoardEvidenceState; readonly onOpenRun: (id: string) => void }): JSX.Element {
+function EvidenceBody({ item, evidence, onOpenRun }: { readonly item: WorkItemView; readonly evidence?: WorkBoardEvidenceState; readonly onOpenRun: (id: string) => void }): React.JSX.Element {
   const { t } = useI18n();
   if (evidence?.status === "loading") return <Skeleton height={48} shape="block" />;
   if (evidence?.issue) return <InlineFeedback title={t(evidence.status === "stale" ? "Showing retained evidence" : "Evidence could not be loaded")} tone="warning">{t(evidence.issue.message)}</InlineFeedback>;

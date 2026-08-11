@@ -27,7 +27,7 @@ export function ThemePreviewFixture({
   previewUrl,
   themeName,
   variableMap,
-}: ThemePreviewFixtureProps): JSX.Element {
+}: ThemePreviewFixtureProps): React.JSX.Element {
   return (
     <section
       className="ling-ui-theme-preview-fixture"

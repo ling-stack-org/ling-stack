@@ -7,7 +7,7 @@ export interface ComposerFileReferenceTokenProps {
   readonly onRemove?: () => void;
 }
 
-export function ComposerFileReferenceToken({ path, line, removeLabel, onRemove }: ComposerFileReferenceTokenProps): JSX.Element {
+export function ComposerFileReferenceToken({ path, line, removeLabel, onRemove }: ComposerFileReferenceTokenProps): React.JSX.Element {
   return (
     <span className="composer-structured-token file-reference">
       <FileText size={13} />

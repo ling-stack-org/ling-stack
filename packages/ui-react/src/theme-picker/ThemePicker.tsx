@@ -125,7 +125,7 @@ export const ThemePicker = forwardRef<
   );
 });
 
-function ThemeOptionSwatch({ swatch }: { readonly swatch: ThemePickerSwatch }): JSX.Element {
+function ThemeOptionSwatch({ swatch }: { readonly swatch: ThemePickerSwatch }): React.JSX.Element {
   const style = {
     "--ling-theme-option-accent": swatch.accent,
     "--ling-theme-option-app": swatch.app,

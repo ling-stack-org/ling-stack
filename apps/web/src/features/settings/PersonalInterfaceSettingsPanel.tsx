@@ -15,7 +15,7 @@ export function PersonalSettingsPanel({
 }: {
   readonly cwd: string;
   readonly onProfileChange?: (profile: UserProfile) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   return <ProfilePage cwd={cwd} onProfileChange={onProfileChange} variant="settings" />;
 }
 
@@ -25,7 +25,7 @@ export function InterfacePreferencesSettingsPanel({
 }: {
   readonly workspaceResponseLanguage: ResponseLanguagePreference;
   readonly onWorkspaceResponseLanguageChange: (language: ResponseLanguagePreference) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { locale, setLocale, t } = useI18n();
   const [surface, setSurface] = useState<"overview" | "quick-studio">("overview");
 

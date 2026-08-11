@@ -26,7 +26,7 @@ export function SkillEditorFeedback({
   readonly busy: boolean;
   readonly onReload: () => void;
   readonly t: SettingsTranslator;
-}): JSX.Element {
+}): React.JSX.Element {
   const errorRef = useRef<HTMLDivElement>(null);
   const authorityRef = useRef<HTMLDivElement>(null);
 

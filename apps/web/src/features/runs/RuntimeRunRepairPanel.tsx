@@ -14,7 +14,7 @@ export function RuntimeRunRepairPanel({ run, events, workspaceCwd, isRunning, on
   readonly onEditTask: (run: RunSession) => void;
   readonly onRerun: (run: RunSession) => void;
   readonly onReload: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const summary = buildRuntimeFailureSummary(run, events, workspaceCwd, t);
   return (

@@ -33,7 +33,7 @@ export function SettingsRunDiagnosticsDetail({
   readonly run: RunSession | undefined;
   readonly selectedRunId: string;
   readonly onOpenFullDiagnostics: (runId?: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const activity = projectRecentRunActivity(events);
 
@@ -137,7 +137,7 @@ export function SettingsRunDiagnosticsDetail({
   );
 }
 
-function DetailValue({ label, value }: { readonly label: string; readonly value: string }): JSX.Element {
+function DetailValue({ label, value }: { readonly label: string; readonly value: string }): React.JSX.Element {
   return (
     <div>
       <dt>{label}</dt>

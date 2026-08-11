@@ -27,7 +27,7 @@ export function ChannelEnvironmentCommitDialog({
   readonly onMessageChange: (message: string) => void;
   readonly onIncludeUnstagedChange: (include: boolean) => void;
   readonly onClose: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
 
   return (

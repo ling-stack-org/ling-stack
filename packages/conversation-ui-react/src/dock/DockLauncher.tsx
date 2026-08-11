@@ -16,7 +16,7 @@ export interface DockLauncherProps {
 export function DockLauncher({
   items,
   onOpenPage,
-}: DockLauncherProps): JSX.Element {
+}: DockLauncherProps): React.JSX.Element {
   return (
     <div className="right-dock-launcher">
       <div className="right-dock-launcher-list">

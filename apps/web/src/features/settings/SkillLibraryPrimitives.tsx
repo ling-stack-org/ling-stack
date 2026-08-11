@@ -15,7 +15,7 @@ export function SkillSourceStatus({
   readonly showSource?: boolean;
   readonly showState?: boolean;
   readonly t: SettingsTranslator;
-}): JSX.Element {
+}): React.JSX.Element {
   const sourceState = skillSourceSnapshotState(snapshot, t);
   return (
     <span className="settings-skill-source-status">
@@ -37,7 +37,7 @@ export function SkillTokenList({
 }: {
   readonly values: readonly string[];
   readonly emptyLabel: string;
-}): JSX.Element {
+}): React.JSX.Element {
   if (values.length === 0) return <span className="settings-skill-empty-token">{emptyLabel}</span>;
   return (
     <span className="settings-skill-token-list">

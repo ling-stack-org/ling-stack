@@ -48,8 +48,8 @@ interface ProfileSettingsSurfaceProps {
   readonly saving: boolean;
   readonly errorMessage: string;
   readonly onRetryLoad: () => void;
-  readonly avatarButtonRef: RefObject<HTMLButtonElement>;
-  readonly fileInputRef: RefObject<HTMLInputElement>;
+  readonly avatarButtonRef: RefObject<HTMLButtonElement | null>;
+  readonly fileInputRef: RefObject<HTMLInputElement | null>;
   readonly onAvatarChange: (event: ChangeEvent<HTMLInputElement>) => void;
   readonly onCommitDisplayName: (value: string) => void | Promise<void>;
   readonly onActivityModeChange: (mode: ActivityMode) => void;
@@ -77,7 +77,7 @@ export function ProfileSettingsSurface({
   onActivityModeChange,
   formatCompactNumber,
   formatDuration,
-}: ProfileSettingsSurfaceProps): JSX.Element {
+}: ProfileSettingsSurfaceProps): React.JSX.Element {
   const { t } = useI18n();
   const nameInputRef = useRef<HTMLInputElement | null>(null);
   const nameEditButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -242,7 +242,7 @@ export function ProfileSettingsSurface({
   );
 }
 
-function ProfileSettingsLoading({ title }: { readonly title: string }): JSX.Element {
+function ProfileSettingsLoading({ title }: { readonly title: string }): React.JSX.Element {
   return (
     <div
       className="profile-settings-surface profile-settings-loading"
@@ -280,7 +280,7 @@ function ProfileUsageSummary({
   readonly onActivityModeChange: (mode: ActivityMode) => void;
   readonly formatCompactNumber: (value: number) => string;
   readonly formatDuration: (value: number) => string;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const hasActivity = hasProfileActivity(metrics);
 
@@ -373,7 +373,7 @@ function ProfileUsageSummary({
   );
 }
 
-function ProfileUsageMetric({ label, value }: { readonly label: string; readonly value: string }): JSX.Element {
+function ProfileUsageMetric({ label, value }: { readonly label: string; readonly value: string }): React.JSX.Element {
   return (
     <span className="profile-usage-metric">
       <small>{label}</small>

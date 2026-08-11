@@ -139,7 +139,7 @@ export interface ChannelMessageRenderersInput {
   readonly usedMemoryEvents: readonly UsedMemoryEvent[];
   readonly userProfile?: UserProfile;
   readonly workflowProgressByWorkflowId: ReadonlyMap<string, unknown>;
-  readonly activityActionRow: (activityItemId: string, children?: ReactNode) => JSX.Element;
+  readonly activityActionRow: (activityItemId: string, children?: ReactNode) => React.JSX.Element;
   readonly conversationWorkCellDetailsCacheKey: (threadId: string) => string;
   readonly onCancelExecutionProposal: (proposal: ChannelExecutionProposal) => void;
   readonly onCancelWorkflow: (workflow: ChannelWorkflow) => void;

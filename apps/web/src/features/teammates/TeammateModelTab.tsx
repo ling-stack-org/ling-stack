@@ -23,7 +23,7 @@ export function TeammateModelTab({
   readonly viewModel: TeammateModelViewModel;
   readonly onOpenProviders: () => void;
   readonly onSelectProvider: (providerPresetId: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const workbenchAction = (
     <Button leadingIcon={<Settings2 />} size="sm" variant="secondary" onClick={onOpenProviders}>
@@ -93,7 +93,7 @@ export function TeammateModelTab({
   );
 }
 
-function ModelSummaryRow({ label, value }: { readonly label: string; readonly value: string }): JSX.Element {
+function ModelSummaryRow({ label, value }: { readonly label: string; readonly value: string }): React.JSX.Element {
   return (
     <DataRow
       compact

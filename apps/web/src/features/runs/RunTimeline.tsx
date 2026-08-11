@@ -16,7 +16,7 @@ export function RunTimeline({ events, assistantText, errorMessage, isRunning, pe
   readonly pendingApprovals: readonly ApprovalRequest[];
   readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
   readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const activities = useMemo(() => buildRunActivities(events), [events]);
   const activityListRef = useRef<HTMLDivElement>(null);
@@ -71,12 +71,12 @@ function scrollToBottom(element: HTMLDivElement | null): void {
   if (element) element.scrollTop = element.scrollHeight;
 }
 
-function ActivityRow({ activity }: { readonly activity: RunActivityItem }): JSX.Element {
+function ActivityRow({ activity }: { readonly activity: RunActivityItem }): React.JSX.Element {
   const { t } = useI18n();
   return <article className={`timeline-activity-row ${activity.kind} ${activity.status}`}><span className="timeline-activity-icon">{activityIcon(activity)}</span><div className="timeline-activity-copy"><div className="timeline-activity-head"><strong>{t(activity.titleKey, activity.values)}</strong><time>{new Date(activity.ts).toLocaleTimeString()}</time></div>{activity.detail ? <small>{activity.detail}</small> : null}</div></article>;
 }
 
-function activityIcon(activity: RunActivityItem): JSX.Element {
+function activityIcon(activity: RunActivityItem): React.JSX.Element {
   if (activity.status === "failed") return <CircleAlert size={15} />;
   if (activity.status === "succeeded") return <CheckCircle2 size={15} />;
   if (activity.kind === "thinking") return <Bot size={15} />;

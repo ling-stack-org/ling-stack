@@ -54,7 +54,7 @@ export function SidebarSection({
   readonly stale?: boolean;
   readonly staleLabel: string;
   readonly title: string;
-}): JSX.Element {
+}): React.JSX.Element {
   const sectionClassName = [
     "sidebar-section",
     `sidebar-section-${sectionId}`,
@@ -144,7 +144,7 @@ export function SidebarSection({
   );
 }
 
-export function SidebarSectionSkeleton({ label, rows }: { readonly label: string; readonly rows: number }): JSX.Element {
+export function SidebarSectionSkeleton({ label, rows }: { readonly label: string; readonly rows: number }): React.JSX.Element {
   return (
     <span className="sidebar-section-skeleton" role="status" aria-label={label}>
       {Array.from({ length: rows }, (_, index) => (

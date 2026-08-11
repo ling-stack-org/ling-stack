@@ -3,7 +3,7 @@ import { useI18n } from "../../i18n.js";
 import { Button, Field, InlineFeedback, InspectorSection, Textarea } from "../../shared/ui/index.js";
 import type { ThreadDetailController } from "./ThreadDetailPanel.js";
 
-export function ThreadForkSection({ controller }: { readonly controller: ThreadDetailController }): JSX.Element {
+export function ThreadForkSection({ controller }: { readonly controller: ThreadDetailController }): React.JSX.Element {
   const { t } = useI18n();
   const { state, actions } = controller;
   return (

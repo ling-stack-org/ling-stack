@@ -44,7 +44,7 @@ export function MessageActionBar({
   actions,
   copiedLabel = "Copied",
   visibility = "hover-focus",
-}: MessageActionBarProps): JSX.Element | null {
+}: MessageActionBarProps): React.JSX.Element | null {
   const resolvedPolicy = {
     ...getConversationSurfacePolicy(surface),
     ...policy,
@@ -136,7 +136,7 @@ interface MessageActionTooltipProps {
   readonly label: string;
 }
 
-function MessageActionTooltip({ children, label }: MessageActionTooltipProps): JSX.Element {
+function MessageActionTooltip({ children, label }: MessageActionTooltipProps): React.JSX.Element {
   return (
     <Tooltip content={label} side="top" sideOffset={6}>
       <span className="message-action-bar-tooltip-trigger">{children}</span>
@@ -154,7 +154,7 @@ function MessageActionBarCopyButton({
   action,
   actionClassName,
   copiedLabel,
-}: MessageActionBarCopyButtonProps): JSX.Element {
+}: MessageActionBarCopyButtonProps): React.JSX.Element {
   const [copied, setCopied] = useState(false);
   const currentLabel = copied ? copiedLabel : action.label;
   const unavailable = action.disabled || action.loading;

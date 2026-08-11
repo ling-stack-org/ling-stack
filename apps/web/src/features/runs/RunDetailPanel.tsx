@@ -77,7 +77,7 @@ export function RunDetailPanel({
   readonly onEditTask: (run: RunSession) => void;
   readonly onSelectRun: (runId: string) => void;
   readonly cwd: string;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const pendingApprovals = approvals.filter((approval) => approval.status === "pending");
   const terminalEvent = [...events].reverse().find((event) => ["result", "run_error", "run_cancelled", "run_end"].includes(event.type));

@@ -23,7 +23,7 @@ export function ThemePreviewDialog({
   readonly returnFocusRef: RefObject<HTMLButtonElement | null>;
   readonly state: ThemePreviewDialogState;
   readonly onClose: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const closeRef = useRef<HTMLButtonElement | null>(null);
   const packageValue = state.package;

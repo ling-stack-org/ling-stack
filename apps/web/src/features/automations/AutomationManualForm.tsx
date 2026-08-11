@@ -49,7 +49,7 @@ export function AutomationManualForm({
   readonly onCancel: () => void;
   readonly onChange: (value: AutomationFormValue) => void;
   readonly onSubmit: (request: CreateAutomationRequest) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [submitted, setSubmitted] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);

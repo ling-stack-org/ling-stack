@@ -81,7 +81,7 @@ export function FirstRunFlow({
   readonly onCreateTask: () => void;
   readonly onCheckThenRunTask: (task: Task) => void;
   readonly onRunTask: (task: Task) => void;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const { t } = useI18n();
   const readyProvider = providers.find(providerPreflightReady);
   const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
@@ -447,7 +447,7 @@ function buildFirstRunRunStep(
   };
 }
 
-function firstRunStepIcon(status: FirstRunStep["status"]): JSX.Element {
+function firstRunStepIcon(status: FirstRunStep["status"]): React.JSX.Element {
   if (status === "ready") {
     return <CheckCircle2 size={17} />;
   }
@@ -457,7 +457,7 @@ function firstRunStepIcon(status: FirstRunStep["status"]): JSX.Element {
   return <CircleAlert size={17} />;
 }
 
-function firstRunActionIcon(step: FirstRunStep): JSX.Element {
+function firstRunActionIcon(step: FirstRunStep): React.JSX.Element {
   if (step.id === "provider" || step.id === "channel-provider") {
     return <PlugZap size={14} />;
   }

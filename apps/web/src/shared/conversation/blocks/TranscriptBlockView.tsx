@@ -14,7 +14,7 @@ export function TranscriptBlockView({
   block,
   cwd,
   defaultExpanded,
-}: TranscriptBlockViewProps): JSX.Element {
+}: TranscriptBlockViewProps): React.JSX.Element {
   const { t } = useI18n();
   const hasExpandedDetail = Boolean(block.expanded?.summary || block.expanded?.lines?.length);
   const previewTargets = block.previewTargets ?? [];
@@ -99,7 +99,7 @@ function TranscriptDisplayLineView({
 }: {
   readonly line: TranscriptDisplayLine;
   readonly cwd?: string;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <span className={["transcript-block-view-line", line.tone ? `tone-${line.tone}` : ""].filter(Boolean).join(" ")}>
       <MessageBodyRenderer text={line.text} cwd={cwd} compact />

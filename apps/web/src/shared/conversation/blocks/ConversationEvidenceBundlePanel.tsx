@@ -39,7 +39,7 @@ export function ConversationEvidenceBundlePanel({
   label,
   bundle,
   defaultOpen,
-}: ConversationEvidenceBundlePanelProps): JSX.Element | null {
+}: ConversationEvidenceBundlePanelProps): React.JSX.Element | null {
   const sections = bundle.sections.filter((section) => section.content || (section.items && section.items.length > 0));
   if (sections.length === 0) {
     return null;

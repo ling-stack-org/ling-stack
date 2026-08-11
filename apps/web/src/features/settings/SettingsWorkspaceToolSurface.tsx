@@ -10,7 +10,7 @@ export function SettingsWorkspaceToolSurface({
   readonly children: ReactNode;
   readonly label: string;
   readonly view: SettingsWorkspaceToolSurfaceView;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <div
       className="settings-workspace-tool-surface"

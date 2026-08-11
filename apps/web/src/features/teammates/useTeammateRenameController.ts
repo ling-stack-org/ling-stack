@@ -9,7 +9,7 @@ export interface TeammateRenameController {
   readonly error: string;
   readonly open: boolean;
   readonly saving: boolean;
-  readonly triggerRef: RefObject<HTMLButtonElement>;
+  readonly triggerRef: RefObject<HTMLButtonElement | null>;
   readonly value: string;
   readonly close: () => void;
   readonly openDialog: () => void;

@@ -34,7 +34,7 @@ export function CuaDriverInstallDrawer({
   readonly onConnect: (pluginId: string, command?: string) => Promise<ManagedPluginView | undefined>;
   readonly onDismissFailure: (pluginId: string) => void;
   readonly onClose: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const { showToast } = useLingToast();
   const [customCommand, setCustomCommand] = useState("");

@@ -11,7 +11,7 @@ export function WorkBoardEmptyState({ totalCount, scopedCount, filtered, scope, 
   readonly onClearFilters: () => void;
   readonly onChangeScope: (scope: WorkBoardScope) => void;
   readonly onOpenChannel?: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   if (filtered && scopedCount > 0) return <EmptyState className="work-board-empty" icon={<SearchX />} title={t("No work matches these filters")} description={t("Clear filters to see work in this view.")} action={<Button size="sm" onClick={onClearFilters}>{t("Clear filters")}</Button>} />;
   if (totalCount === 0) return <EmptyState className="work-board-empty" icon={<Kanban />} title={t("No work yet")} description={t("Work from tasks, runs, approvals, and channels will appear here.")} action={onOpenChannel ? <Button size="sm" onClick={onOpenChannel}>{t("Open a channel")}</Button> : undefined} />;

@@ -23,7 +23,7 @@ export function TeammateAvatarView({
   readonly teammate: TeammateAvatarLike;
   readonly cwd: string;
   readonly compact?: boolean;
-}): JSX.Element {
+}): React.JSX.Element {
   const defaultAvatarSrc = defaultTeammateAvatarSrc(teammate);
   const [attachmentAvatarFailed, setAttachmentAvatarFailed] = useState(false);
   const [defaultAvatarFailed, setDefaultAvatarFailed] = useState(false);

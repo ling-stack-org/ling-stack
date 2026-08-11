@@ -10,7 +10,7 @@ export function TerminalReportParticipants({
   readonly rows: readonly ConversationWorkCellRow[];
   readonly expanded: boolean;
   readonly renderParticipantAvatar?: (participantId: string | undefined, label: string) => ReactNode;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   if (rows.length === 0) {
     return null;
   }
@@ -52,7 +52,7 @@ function ParticipantAvatar({
 }: {
   readonly row: ConversationWorkCellRow;
   readonly renderParticipantAvatar?: (participantId: string | undefined, label: string) => ReactNode;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <span className="terminal-report-participant-avatar" aria-hidden="true">
       {renderParticipantAvatar?.(row.participantId, row.title) ?? <AvatarInitial label={row.title.trim().charAt(0).toUpperCase() || "A"} tone="gray" />}

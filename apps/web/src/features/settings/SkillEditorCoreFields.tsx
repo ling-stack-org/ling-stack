@@ -13,7 +13,7 @@ export function SkillEditorCoreFields({
   readonly busy: boolean;
   readonly onFormChange: (form: SkillEditorForm) => void;
   readonly t: SettingsTranslator;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <>
       <section className="settings-skill-editor-section" aria-labelledby="skill-editor-basic-title">

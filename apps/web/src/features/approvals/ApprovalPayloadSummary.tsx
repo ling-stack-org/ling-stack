@@ -2,7 +2,7 @@ import { useI18n, type Translate } from "../../i18n.js";
 import { formatUnknownPreview, readDataField, readDataString } from "../../lib/data.js";
 import type { ApprovalRequest } from "../../types.js";
 
-export function ApprovalPayloadSummary({ approval }: { readonly approval: ApprovalRequest }): JSX.Element | null {
+export function ApprovalPayloadSummary({ approval }: { readonly approval: ApprovalRequest }): React.JSX.Element | null {
   const { t } = useI18n();
   const payloadType = readDataString(approval.payload, "type");
   if (payloadType === "bash") {

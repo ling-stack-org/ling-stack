@@ -35,7 +35,7 @@ export function ApprovalToolbar({
   readonly onRiskChange: (risk: ApprovalRisk | "all") => void;
   readonly onSearchChange: (search: string) => void;
   readonly onClear: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <div className="approvals-ui2-toolbar" aria-label={t("Filters")}>

@@ -25,7 +25,7 @@ export function ExecutionPermissionsSettingsPanel({
   readonly workspaceDefaultWorkspaceAccessMode?: WorkspaceAccessMode;
   readonly onWorkspaceDefaultAuthorizationChange: (mode: AuthorizationMode) => void;
   readonly onWorkspaceDefaultWorkspaceAccessChange: (mode: WorkspaceAccessMode) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const authorizationMode = resolveAuthorizationMode(
     workspaceDefaultAuthorizationMode,
@@ -118,7 +118,7 @@ function AuthorizationDecisionRow<Value extends string>({
   readonly value: Value;
   readonly options: readonly AuthorizationChoice<Value>[];
   readonly onChange: (value: Value) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const selected = options.find((option) => option.value === value) ?? options[0];
   return (
     <DataRow

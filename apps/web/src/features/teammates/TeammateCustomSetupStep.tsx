@@ -47,7 +47,7 @@ export function TeammateCustomSetupStep({
   readonly onChangeName: (value: string) => void;
   readonly onChangeProvider: (value: string) => void;
   readonly onOpenProviders: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
 
   return (

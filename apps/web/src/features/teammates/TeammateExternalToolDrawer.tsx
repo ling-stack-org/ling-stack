@@ -33,7 +33,7 @@ export function TeammateExternalToolDrawer({
   readonly controller: TeammateExternalToolsController;
   readonly returnFocusRef: RefObject<HTMLElement | null>;
   readonly row: ExternalToolServiceRow | undefined;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const visibleTools = row
     ? filterExternalTools(row.tools, row.selectedToolNames, controller.searchQuery, controller.filter)
@@ -125,7 +125,7 @@ function ExternalToolCheckbox({
   readonly index: number;
   readonly onChange: () => void;
   readonly tool: McpTool;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const fallback = t("Unnamed external capability {number}", { number: index + 1 });
   const displayName = externalToolDisplayName(tool, fallback);

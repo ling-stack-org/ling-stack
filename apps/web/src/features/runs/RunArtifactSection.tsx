@@ -16,7 +16,7 @@ export function RunArtifactSection({ cwd, run, events, artifacts }: {
   readonly run: RunSession;
   readonly events: readonly RunEventEnvelope[];
   readonly artifacts: readonly RunArtifact[];
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const [overlayContainer, setOverlayContainer] = useState<HTMLDivElement | null>(null);
   const recordingTriggerRef = useRef<HTMLElement | null>(null);

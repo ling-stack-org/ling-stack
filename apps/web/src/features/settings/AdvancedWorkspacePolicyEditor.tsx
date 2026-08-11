@@ -33,7 +33,7 @@ export function AdvancedWorkspacePolicyEditor({
   readonly isLoading: boolean;
   readonly onFormChange: (form: ApprovalPolicyFormState) => void;
   readonly onSave: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const [expandedGroupIds, setExpandedGroupIds] = useState<readonly PermissionToolGroupId[]>([]);
   const [isAddingPath, setIsAddingPath] = useState(false);
@@ -207,7 +207,7 @@ function PermissionToolRow({
   readonly group: PermissionToolGroup;
   readonly value: ApprovalToolDecision;
   readonly onChange: (decision: ApprovalToolDecision) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const toolLabel = t(permissionToolLabelKeys[tool]);
   return (
@@ -233,7 +233,7 @@ function PermissionDecisionControl({
   readonly label: string;
   readonly value: PermissionGroupDecision;
   readonly onChange: (decision: ApprovalToolDecision) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <div className="settings-permission-decision-control" role="group" aria-label={t("{label} permission decision", { label })}>

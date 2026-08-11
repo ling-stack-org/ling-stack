@@ -11,7 +11,7 @@ export function ApprovalPermissionDelta({
 }: {
   readonly approval: ApprovalRequest;
   readonly compact?: boolean;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const { t } = useI18n();
   const delta = projectRuntimePermissionDelta(approval);
   if (!delta || delta.added.length + delta.removed.length + delta.unchanged.length === 0) return null;
@@ -40,7 +40,7 @@ export function ApprovalPermissionDelta({
   );
 }
 
-function PermissionEntries({ label, entries }: { readonly label: string; readonly entries: readonly string[] }): JSX.Element | null {
+function PermissionEntries({ label, entries }: { readonly label: string; readonly entries: readonly string[] }): React.JSX.Element | null {
   if (entries.length === 0) return null;
   return (
     <span className="approval-permission-column">

@@ -79,7 +79,7 @@ export function TeammateChatHeader({
   readonly onCloseSummary: () => void;
   readonly onToggleTerminal: () => void;
   readonly onToggleDetails: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const lifecycleStatus = teammate.status === "active" ? undefined : teammateStatusPresentation(teammate.status);
   return (

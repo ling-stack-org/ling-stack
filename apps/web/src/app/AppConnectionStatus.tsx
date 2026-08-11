@@ -10,7 +10,7 @@ export function AppConnectionStatus({
   readonly offline: boolean;
   readonly refreshing: boolean;
   readonly onRetry: () => void;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const { t } = useI18n();
   if (!offline) return null;
 

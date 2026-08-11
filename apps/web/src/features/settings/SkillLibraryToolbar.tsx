@@ -28,7 +28,7 @@ export function SkillLibraryToolbar({
   readonly onImport: () => void;
   readonly onCreate: () => void;
   readonly t: SettingsTranslator;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <div className={`settings-skill-library-toolbar settings-skill-library-toolbar--${mode}${afterSearch ? " has-view-select" : ""}`}>
       <Input

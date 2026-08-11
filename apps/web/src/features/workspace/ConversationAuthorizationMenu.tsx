@@ -35,7 +35,7 @@ export function ConversationAuthorizationMenu({
 }: {
   readonly mode: ConversationAuthorizationMode;
   readonly onModeChange: (mode: ConversationAuthorizationMode) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const activeOption = authorizationOptions.find((option) => option.mode === mode) ?? authorizationOptions[1];

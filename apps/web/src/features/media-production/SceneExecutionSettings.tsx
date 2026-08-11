@@ -39,7 +39,7 @@ export function SceneExecutionSettings({
   readonly actions: MediaProductionActions;
   readonly onConfigureVideoModel: () => void;
   readonly onOpenWorkflowLibrary: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const [draft, setDraft] = useState<ExecutionDraft>(() => sceneDraft(scene));
   const [busyFields, setBusyFields] = useState<ReadonlySet<SettingsField>>(() => new Set());
@@ -156,7 +156,7 @@ export function SceneExecutionSettings({
   );
 }
 
-function DirectSettings(input: SettingsBranchProps & { readonly cwd: string }): JSX.Element {
+function DirectSettings(input: SettingsBranchProps & { readonly cwd: string }): React.JSX.Element {
   const { t } = useI18n();
   const capability = !input.source.blocker && input.source.selectedProvider
     ? resolveMediaProviderRuntimeState(input.source.selectedProvider, "video_generate").videoGeneration
@@ -199,7 +199,7 @@ function DirectSettings(input: SettingsBranchProps & { readonly cwd: string }): 
   </>;
 }
 
-function WorkflowSettings(input: SettingsBranchProps): JSX.Element {
+function WorkflowSettings(input: SettingsBranchProps): React.JSX.Element {
   const { t } = useI18n();
   const fields = input.source.blocker ? [] : input.source.selectedWorkflow?.currentVersion?.inputFields.filter((field) => field.semantic !== "prompt") ?? [];
   return <>
@@ -221,7 +221,7 @@ function WorkflowSettings(input: SettingsBranchProps): JSX.Element {
   </>;
 }
 
-function WorkflowField({ field, input }: { readonly field: MediaWorkflowInputField; readonly input: SettingsBranchProps }): JSX.Element {
+function WorkflowField({ field, input }: { readonly field: MediaWorkflowInputField; readonly input: SettingsBranchProps }): React.JSX.Element {
   const { t } = useI18n();
   const fieldKey = `workflow:${field.id}` as const;
   const value = workflowFieldSceneValue(field, input.scene);
@@ -244,7 +244,7 @@ function WorkflowField({ field, input }: { readonly field: MediaWorkflowInputFie
   </div>;
 }
 
-function ReferenceAssets(input: SettingsBranchProps & { readonly cwd: string }): JSX.Element {
+function ReferenceAssets(input: SettingsBranchProps & { readonly cwd: string }): React.JSX.Element {
   const { t } = useI18n();
   return <div className="reference-asset-picker compact">
     <div className="scene-inspector-section-head"><span className="field-label">{t("References")}</span><small>{t("Current workspace")}</small></div>
@@ -274,15 +274,15 @@ interface SettingsBranchProps {
   readonly failures: Readonly<Partial<Record<SettingsField, MediaProductionFailure>>>;
   readonly updateDraft: <Key extends keyof ExecutionDraft>(key: Key, value: ExecutionDraft[Key], field: SettingsField) => void;
   readonly save: (field: SettingsField, patch: MediaScenePatch) => Promise<void>;
-  readonly feedback: (field: SettingsField) => JSX.Element | null;
+  readonly feedback: (field: SettingsField) => React.JSX.Element | null;
   readonly onRepair: () => void;
 }
 
-function SourceRepair({ actionLabel, label, icon, onClick }: { readonly actionLabel: string; readonly label: string; readonly icon: JSX.Element; readonly onClick: () => void }): JSX.Element {
+function SourceRepair({ actionLabel, label, icon, onClick }: { readonly actionLabel: string; readonly label: string; readonly icon: React.JSX.Element; readonly onClick: () => void }): React.JSX.Element {
   return <InlineFeedback title={label} tone="warning"><Button leadingIcon={icon} size="sm" variant="secondary" onClick={onClick}>{actionLabel}</Button></InlineFeedback>;
 }
 
-function FieldFailure({ failure, busy, onRetry, onClear }: { readonly failure: MediaProductionFailure; readonly busy: boolean; readonly onRetry: () => void; readonly onClear: () => void }): JSX.Element {
+function FieldFailure({ failure, busy, onRetry, onClear }: { readonly failure: MediaProductionFailure; readonly busy: boolean; readonly onRetry: () => void; readonly onClear: () => void }): React.JSX.Element {
   const { t } = useI18n();
   return <InlineFeedback role="alert" title={t(failure.productMessageKey)} tone="danger">
     <span className="scene-field-failure-actions"><Button size="sm" loading={busy} variant="secondary" onClick={onRetry}>{t("Retry")}</Button><Button size="sm" variant="ghost" onClick={onClear}>{t("Clear")}</Button></span>

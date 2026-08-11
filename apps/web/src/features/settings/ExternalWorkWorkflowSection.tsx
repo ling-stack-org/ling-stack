@@ -34,7 +34,7 @@ export function ExternalWorkWorkflowSection({
     readonly projectSlug?: string;
   }) => Promise<boolean>;
   readonly status: ExternalWorkStatusResponse;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const [sourceKind, setSourceKind] = useState<"github" | "linear">("github");
   const [repository, setRepository] = useState("");

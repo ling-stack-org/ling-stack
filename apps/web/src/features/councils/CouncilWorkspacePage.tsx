@@ -46,7 +46,7 @@ export function CouncilWorkspacePage({
   onOpenAiTeammates,
   onOpenChannel,
   settingsToolMode = false,
-}: CouncilWorkspacePageProps): JSX.Element {
+}: CouncilWorkspacePageProps): React.JSX.Element {
   const { t } = useI18n();
   const focusRevalidationToken = useFocusRevalidationToken();
   const [authoritativeProjectedCouncil, setAuthoritativeProjectedCouncil] = useState<AiCouncil>();

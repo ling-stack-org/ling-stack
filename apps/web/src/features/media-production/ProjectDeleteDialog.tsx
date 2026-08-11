@@ -35,7 +35,7 @@ export function ProjectDeleteDialog({
   readonly onRestoreFocus: () => void;
   readonly project: MediaProject;
   readonly sceneCount: number;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const cancelRef = useRef<HTMLButtonElement>(null);
 
@@ -110,7 +110,7 @@ function DeleteFailure({
   readonly isDeleting: boolean;
   readonly onClear: () => void;
   readonly onRetry: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <InlineFeedback role="alert" title={t(failure.productMessageKey)} tone="danger">

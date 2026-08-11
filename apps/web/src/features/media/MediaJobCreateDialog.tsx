@@ -41,7 +41,7 @@ export function MediaJobCreateDialog({
   readonly onOperationChange: (operation: MediaJobFormState["operation"]) => void;
   readonly onPatch: (patch: Partial<MediaJobFormState>, field?: keyof MediaJobFormErrors) => void;
   readonly onSubmit: () => Promise<void>;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <Dialog open={open} busy={busy} onOpenChange={onOpenChange}>

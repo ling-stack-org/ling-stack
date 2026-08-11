@@ -17,7 +17,7 @@ export function AutomationArchiveDialog({
   readonly t: AutomationTranslate;
   readonly onConfirm: () => void;
   readonly onOpenChange: (open: boolean) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <Dialog busy={busy} open={Boolean(automation)} onOpenChange={onOpenChange}>
       <DialogContent className="automation-ui2-confirm-dialog" size="sm">

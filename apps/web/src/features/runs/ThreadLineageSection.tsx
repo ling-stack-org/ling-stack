@@ -8,7 +8,7 @@ import { runStatusTone } from "./run-list-view-models.js";
 export function ThreadLineageSection({ controller, onSelectThreadId }: {
   readonly controller: ThreadDetailController;
   readonly onSelectThreadId: (threadId: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const { displayThread: thread, parentThread, childThreads } = controller.state;
   return (

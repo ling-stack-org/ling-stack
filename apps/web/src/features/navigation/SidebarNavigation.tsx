@@ -120,7 +120,7 @@ export function SidebarNavigation({
   readonly channelDrawer?: boolean;
   readonly channelDrawerOpen?: boolean;
   readonly onChannelDrawerOpenChange?: (open: boolean) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const sidebarStatusLabels = {
     failed: t("Failed"),
@@ -556,7 +556,7 @@ function renderSidebarNotification(
     readonly unread: string;
     readonly waiting: string;
   },
-): JSX.Element | null {
+): React.JSX.Element | null {
   if (!notification) {
     return null;
   }

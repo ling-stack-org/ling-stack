@@ -11,7 +11,7 @@ export function ComputerControlSettingsPage({
   controller,
 }: {
   readonly controller: ComputerControlController;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const { t } = useI18n();
   const view = controller.view;
   const taskContinuationAvailable = typeof window !== "undefined"
@@ -113,7 +113,7 @@ export function ComputerControlSettingsPage({
   );
 }
 
-function PageHeader(): JSX.Element {
+function PageHeader(): React.JSX.Element {
   const { t } = useI18n();
   return (
     <header className="computer-control-page-header">
@@ -123,11 +123,11 @@ function PageHeader(): JSX.Element {
   );
 }
 
-function SectionHeader({ icon, id, title }: { readonly icon: JSX.Element; readonly id: string; readonly title: string }): JSX.Element {
+function SectionHeader({ icon, id, title }: { readonly icon: React.JSX.Element; readonly id: string; readonly title: string }): React.JSX.Element {
   return <header className="computer-control-section-header"><span aria-hidden="true">{icon}</span><h2 id={id}>{title}</h2></header>;
 }
 
-function PrimaryAction({ action, busy, controller }: { readonly action: ComputerControlPrimaryAction; readonly busy: boolean; readonly controller: ComputerControlController }): JSX.Element | null {
+function PrimaryAction({ action, busy, controller }: { readonly action: ComputerControlPrimaryAction; readonly busy: boolean; readonly controller: ComputerControlController }): React.JSX.Element | null {
   const { t } = useI18n();
   if (action.kind === "none") return null;
   const run = (): void => {
@@ -143,7 +143,7 @@ function PrimaryAction({ action, busy, controller }: { readonly action: Computer
   );
 }
 
-function Detail({ label, value }: { readonly label: string; readonly value: string }): JSX.Element {
+function Detail({ label, value }: { readonly label: string; readonly value: string }): React.JSX.Element {
   return <div><dt>{label}</dt><dd>{value}</dd></div>;
 }
 

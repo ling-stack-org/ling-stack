@@ -23,7 +23,7 @@ export interface NormalConversationContextPageProps {
   readonly context: NormalConversationDockContextView;
 }
 
-export function NormalConversationContextPage({ context }: NormalConversationContextPageProps): JSX.Element {
+export function NormalConversationContextPage({ context }: NormalConversationContextPageProps): React.JSX.Element {
   const { t } = useI18n();
   return (
     <section
@@ -86,7 +86,7 @@ export interface NormalConversationActivityPageProps {
   readonly items: readonly NormalConversationDockActivityItem[];
 }
 
-export function NormalConversationActivityPage({ items }: NormalConversationActivityPageProps): JSX.Element {
+export function NormalConversationActivityPage({ items }: NormalConversationActivityPageProps): React.JSX.Element {
   const { t } = useI18n();
   return (
     <section
@@ -123,7 +123,7 @@ export function NormalConversationActivityPage({ items }: NormalConversationActi
   );
 }
 
-function DockIdentity({ icon, label }: { readonly icon: ReactNode; readonly label: string }): JSX.Element {
+function DockIdentity({ icon, label }: { readonly icon: ReactNode; readonly label: string }): React.JSX.Element {
   return (
     <span className="normal-conversation-dock-identity">
       <span aria-hidden="true">{icon}</span>

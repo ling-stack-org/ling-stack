@@ -16,7 +16,7 @@ export function WorkflowFieldRenderer({
   readonly disabled?: boolean;
   readonly hiddenSemantics?: readonly MediaWorkflowInputField["semantic"][];
   readonly onChange: (fieldId: string, value: unknown) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const visibleFields = fields.filter((field) => !hiddenSemantics.includes(field.semantic));
   if (visibleFields.length === 0) return <p className="media-workflow-muted">{t("No additional parameters")}</p>;

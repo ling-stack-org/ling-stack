@@ -22,7 +22,7 @@ export function ReviewQueueList({
   readonly onSelect: (approvalId: string) => void;
   readonly onClearFilters: () => void;
   readonly onOpenWorkBoard?: (scope?: "actionable" | "history") => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   if (initialLoading) return <ReviewQueueSkeleton />;
   if (rows.length === 0) {
@@ -56,7 +56,7 @@ export function ReviewQueueList({
   );
 }
 
-function ReviewQueueSkeleton(): JSX.Element {
+function ReviewQueueSkeleton(): React.JSX.Element {
   return (
     <div className="review-queue-list approvals-ui2-list approvals-ui2-list-skeleton" aria-busy="true">
       {Array.from({ length: 6 }, (_, index) => (

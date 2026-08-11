@@ -6,7 +6,7 @@ export interface FileRefChipProps {
   readonly icon?: ReactNode;
 }
 
-export function FileRefChip({ label, meta, icon }: FileRefChipProps): JSX.Element {
+export function FileRefChip({ label, meta, icon }: FileRefChipProps): React.JSX.Element {
   return (
     <span className="file-ref-chip">
       {icon}

@@ -18,7 +18,7 @@ export function DockEvidenceItemDetail({
     readonly failureReason: string;
     readonly time: string;
   };
-}): JSX.Element {
+}): React.JSX.Element {
   const href = safeEvidenceHref(item.href);
   return (
     <dl className="right-dock-detail-list">

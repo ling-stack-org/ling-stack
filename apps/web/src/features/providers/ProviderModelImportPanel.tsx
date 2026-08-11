@@ -52,7 +52,7 @@ export function ProviderModelImportPanel({
   readonly onClearSelection: () => void;
   readonly onSelectProviderModel: (model: ProviderModelOption) => void;
   readonly onToggleImportModel: (model: ProviderModelOption) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <section className="provider-model-discovery" aria-label={t("Available models")}>

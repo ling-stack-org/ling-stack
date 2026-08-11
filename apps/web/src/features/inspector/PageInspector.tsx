@@ -102,7 +102,7 @@ export function PageInspector({
   readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
   readonly onExecuteExternalAction: (actionId: string) => void;
   readonly onCancelExternalAction: (actionId: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   if (activeView === "runs") {
     return (
@@ -227,7 +227,7 @@ function MediaJobInspector({
   readonly providers: readonly ProviderPreset[];
   readonly artifacts: readonly RunArtifact[];
   readonly cwd: string;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const provider = mediaJob ? providers.find((item) => item.id === mediaJob.providerPresetId) : undefined;
   return (
@@ -283,7 +283,7 @@ function ApprovalInspector({
   readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
   readonly onExecuteExternalAction: (actionId: string) => void;
   readonly onCancelExternalAction: (actionId: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const pendingCount = approvals.filter((item) => effectiveApprovalStatus(item) === "pending").length;
   return (
@@ -325,7 +325,7 @@ function SettingsInspector({
   readonly policy: ApprovalPolicy | undefined;
   readonly form: ApprovalPolicyFormState;
   readonly externalWorkStatus: ExternalWorkStatusResponse | undefined;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const decisions = Object.values(form.toolDecisions);
   const askCount = decisions.filter((decision) => decision === "ask").length;

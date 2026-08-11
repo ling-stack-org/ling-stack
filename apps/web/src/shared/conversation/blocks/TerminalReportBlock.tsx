@@ -53,7 +53,7 @@ export function TerminalReportBlock({
   readonly surface: ConversationSurfaceKind;
   readonly projectionPolicy?: Partial<TerminalReportProjectionPolicy>;
   readonly onOpenWorkspaceFile?: (target: TerminalReportFileTarget) => void;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const resolvedProjectionPolicy = getTerminalReportProjectionPolicy(surface, projectionPolicy);
   const outcome = rows.find((row) => row.reportSection === "outcome");
   if (!outcome) {
@@ -98,7 +98,7 @@ function TerminalReportRows({
   readonly rows: readonly ConversationWorkCellRow[];
   readonly kind: "correction" | "change" | "verification" | "risk";
   readonly onOpenWorkspaceFile?: (target: TerminalReportFileTarget) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <section className={`terminal-report-section kind-${kind}`}>
       <div className="terminal-report-row-list">
@@ -173,9 +173,9 @@ function TerminalReportFileReference({
 }: {
   readonly target: TerminalReportFileTarget;
   readonly onOpen?: (target: TerminalReportFileTarget) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const tooltipId = useId();
-  const timerRef = useRef<number | undefined>();
+  const timerRef = useRef<number | undefined>(undefined);
   const [tooltipVisible, setTooltipVisible] = useState(false);
   const fileName = terminalReportFileName(target.path);
   const fileIcon = terminalReportFileIcon(target.path);
@@ -283,7 +283,7 @@ function isTextDocumentExtension(extension: string): boolean {
   return extension === ".txt" || extension === ".log" || extension === ".csv" || extension === ".rst";
 }
 
-function reportRowIcon(kind: "correction" | "change" | "verification" | "risk"): JSX.Element {
+function reportRowIcon(kind: "correction" | "change" | "verification" | "risk"): React.JSX.Element {
   if (kind === "change") {
     return <FilePenLine size={13} />;
   }

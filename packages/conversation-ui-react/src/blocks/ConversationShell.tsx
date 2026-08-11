@@ -22,7 +22,7 @@ export function ConversationShell({
   statusNode,
   composerNode,
   sideNode,
-}: ConversationShellProps): JSX.Element {
+}: ConversationShellProps): React.JSX.Element {
   const rootClassName = ["conversation-shell", className].filter(Boolean).join(" ");
 
   return (

@@ -12,7 +12,7 @@ export function AutomationWorkbenchHeader({
   readonly summary: AutomationPageSummary;
   readonly t: AutomationTranslate;
   readonly onCreate: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <header
       className="automations-inbox-header automation-ui2-header"

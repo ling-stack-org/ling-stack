@@ -51,7 +51,7 @@ export function ReviewQueueDetail({
   readonly onResolve: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
   readonly onExecuteExternalAction: (actionId: string) => void;
   readonly onCancelExternalAction: (actionId: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   if (initialLoading) return <ReviewQueueDetailSkeleton />;
   if (!row) {
@@ -124,7 +124,7 @@ function QueueCategoryAction({ row, channels, routingExternalWorkId, onOpenRun, 
   readonly onOpenRun: (runId: string) => void;
   readonly onOpenWorkBoard?: (scope?: "actionable" | "history") => void;
   readonly onRouteExternalWork?: (externalWorkId: string, channelId: string) => void;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const { t } = useI18n();
   if (row.category !== "route" && row.category !== "repair") return null;
   const externalWorkId = row.externalAction?.action.externalWorkId;
@@ -156,7 +156,7 @@ function ReviewQueueRouteControl({ channels, currentChannelId, externalWorkId, r
   readonly externalWorkId: string;
   readonly routing: boolean;
   readonly onRouteExternalWork: (externalWorkId: string, channelId: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const [targetChannelId, setTargetChannelId] = useState("");
   useEffect(() => setTargetChannelId(""), [externalWorkId]);
@@ -180,7 +180,7 @@ function ReviewQueueRouteControl({ channels, currentChannelId, externalWorkId, r
   );
 }
 
-function ReviewQueueDetailSkeleton(): JSX.Element {
+function ReviewQueueDetailSkeleton(): React.JSX.Element {
   return (
     <aside className="review-queue-detail approvals-ui2-detail approvals-ui2-detail-skeleton" aria-busy="true">
       <Skeleton width="35%" /><Skeleton height={28} shape="block" width="85%" /><Skeleton height={74} shape="block" width="100%" /><Skeleton height={140} shape="block" width="100%" />

@@ -12,7 +12,7 @@ export function ThemePackageRepairList({
   readonly items: readonly ThemePackageRepairItem[];
   readonly onDelete: (item: ThemePackageRepairItem, trigger: HTMLButtonElement | null) => void;
   readonly onReimport: (item: ThemePackageRepairItem, trigger: HTMLButtonElement | null) => void;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const { t } = useI18n();
   if (items.length === 0) return null;
   return (
@@ -42,7 +42,7 @@ function ThemePackageRepairRow({
   readonly item: ThemePackageRepairItem;
   readonly onDelete: (item: ThemePackageRepairItem, trigger: HTMLButtonElement | null) => void;
   readonly onReimport: (item: ThemePackageRepairItem, trigger: HTMLButtonElement | null) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const reimportRef = useRef<HTMLButtonElement | null>(null);
   const deleteRef = useRef<HTMLButtonElement | null>(null);

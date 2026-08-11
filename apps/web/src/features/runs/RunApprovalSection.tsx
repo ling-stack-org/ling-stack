@@ -9,7 +9,7 @@ export function RunApprovalSection({ approvals, resolvingApprovals, onResolve }:
   readonly approvals: readonly ApprovalRequest[];
   readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
   readonly onResolve: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const pending = approvals.filter((approval) => approval.status === "pending");
   return (

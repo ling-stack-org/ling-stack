@@ -50,7 +50,7 @@ export function MediaWorkflowLibraryDialog({
   readonly imageArtifacts: readonly RunArtifact[];
   readonly onTabChange: (tab: MediaWorkflowLibraryTab) => void;
   readonly onClose: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const focusRevalidationToken = useFocusRevalidationToken({ enabled: open });
   const loadFailure = selectMediaWorkflowFailure(state.failures, "load");
@@ -125,7 +125,7 @@ export function MediaWorkflowLibraryDialog({
   );
 }
 
-function WorkflowDialogSkeleton(): JSX.Element {
+function WorkflowDialogSkeleton(): React.JSX.Element {
   return (
     <div className="media-workflow-split-view" data-media-workflow-loading="initial">
       <div className="media-workflow-list-pane">
@@ -151,7 +151,7 @@ function WorkflowLoadFailure({
   readonly initial: boolean;
   readonly onClear: () => void;
   readonly onRetry: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <InlineFeedback className="media-workflow-error" role="alert" title={t(failure.productMessageKey, failure.productMessageValues)} tone={initial ? "danger" : "warning"}>

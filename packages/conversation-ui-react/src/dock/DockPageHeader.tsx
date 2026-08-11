@@ -20,7 +20,7 @@ export function DockPageHeader({
   actions,
   filters,
   onBack,
-}: DockPageHeaderProps): JSX.Element {
+}: DockPageHeaderProps): React.JSX.Element {
   return (
     <div className="right-dock-page-header">
       <div className="right-dock-page-header-row">

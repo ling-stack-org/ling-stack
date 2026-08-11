@@ -241,7 +241,7 @@ export function ChannelComposer({
   submitLabel,
   submitTitle,
   value,
-}: ChannelComposerProps): JSX.Element {
+}: ChannelComposerProps): React.JSX.Element {
   const { t } = useI18n();
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const addMenuRef = useRef<HTMLDivElement | null>(null);

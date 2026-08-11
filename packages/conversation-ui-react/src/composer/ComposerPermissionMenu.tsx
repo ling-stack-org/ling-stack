@@ -39,7 +39,7 @@ export function ComposerPermissionMenu({
   options = defaultConversationPermissionPresetOptions,
   preset,
   selectedPermissionLabel = "Selected permission preset {label}",
-}: ComposerPermissionMenuProps): JSX.Element {
+}: ComposerPermissionMenuProps): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const ActiveIcon = disabled ? LockKeyhole : permissionPresetIcon[preset];
   const activeOption = findPermissionPresetOption(options, preset);

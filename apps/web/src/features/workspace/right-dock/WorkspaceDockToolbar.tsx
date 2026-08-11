@@ -29,7 +29,7 @@ export function WorkspaceDockToolbarButtons({
   mode = "channel",
   onOpenPage,
   onToggleDetails,
-}: WorkspaceDockToolbarButtonsProps): JSX.Element {
+}: WorkspaceDockToolbarButtonsProps): React.JSX.Element {
   const { t } = useI18n();
   const DetailsIcon = open ? PanelRightClose : PanelRightOpen;
   const items = [
@@ -89,7 +89,7 @@ export function WorkspaceDockToolbarButtons({
 export function WorkspaceDockToolbar({
   ariaLabel,
   ...buttonProps
-}: WorkspaceDockToolbarProps): JSX.Element {
+}: WorkspaceDockToolbarProps): React.JSX.Element {
   const { t } = useI18n();
   return (
     <WorkspaceTopRightToolbar className="workspace-dock-toolbar" ariaLabel={ariaLabel ?? t("Workspace dock toolbar")}>

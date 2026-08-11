@@ -19,7 +19,7 @@ export function MessageRow({
   bodyOnOpenLocalFile,
   bodyNode,
   ...props
-}: MessageRowProps): JSX.Element {
+}: MessageRowProps): React.JSX.Element {
   const resolvedBodyNode = bodyNode ?? (body ? (
     <div className={bodyStreaming ? "message-body-shell message-body-with-spinner" : "message-body-shell"}>
       {bodyStreaming ? <Loader2 className="message-pending-spinner spin" size={13} /> : null}

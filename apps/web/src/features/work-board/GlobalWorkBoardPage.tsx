@@ -17,7 +17,7 @@ import { useWorkBoardController } from "./useWorkBoardController.js";
 
 export type { WorkBoardScope } from "./work-board-types.js";
 
-export function GlobalWorkBoardPage(props: GlobalWorkBoardPageProps): JSX.Element {
+export function GlobalWorkBoardPage(props: GlobalWorkBoardPageProps): React.JSX.Element {
   const { t } = useI18n();
   const focusRevalidationToken = useFocusRevalidationToken();
   const { showToast } = useLingToast();

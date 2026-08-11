@@ -15,7 +15,7 @@ export function AutomationTemplateStep({
   readonly templates: readonly BuiltinAutomationTemplate[];
   readonly onReview: (template: BuiltinAutomationTemplate) => void;
   readonly onSelect: (templateId: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const selected = templates.find((template) => template.id === selectedTemplateId) ?? templates[0];
   if (!selected) {
     return <EmptyState compact icon={<Layers size={18} />} title={t("No templates available")} />;

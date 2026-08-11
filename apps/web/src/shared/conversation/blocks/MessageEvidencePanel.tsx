@@ -22,7 +22,7 @@ export function MessageEvidencePanel({
   memorySummary,
   webEvidence,
   defaultOpen,
-}: MessageEvidencePanelProps): JSX.Element | null {
+}: MessageEvidencePanelProps): React.JSX.Element | null {
   const { t } = useI18n();
   const renderableWebEvidence = projectConversationWebEvidence(webEvidence);
   const sections: ConversationEvidenceSection[] = [];

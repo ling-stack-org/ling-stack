@@ -41,7 +41,7 @@ export function SkillSourceInspector({
   readonly onArchive: () => void;
   readonly onRollback: (snapshotId: string) => void;
   readonly t: SettingsTranslator;
-}): JSX.Element {
+}): React.JSX.Element {
   const previewBusy = busyAction === `source-preview:${skillId}`;
   const archiveBusy = busyAction === `source-archive:${skillId}`;
   const hasBusyAction = Boolean(busyAction);

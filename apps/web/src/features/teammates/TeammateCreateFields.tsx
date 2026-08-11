@@ -14,7 +14,7 @@ export function TeammateProviderField({
   readonly providers: readonly ProviderPreset[];
   readonly value: string;
   readonly onChange: (value: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <Field label={t("Base model")}>
@@ -38,7 +38,7 @@ export function TeammateChannelField({
   readonly disabled: boolean;
   readonly value: string;
   readonly onChange: (value: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <Field label={t("Join channels")}>
@@ -50,7 +50,7 @@ export function TeammateChannelField({
   );
 }
 
-export function TeammateNoModelState({ onOpenProviders }: { readonly onOpenProviders: () => void }): JSX.Element {
+export function TeammateNoModelState({ onOpenProviders }: { readonly onOpenProviders: () => void }): React.JSX.Element {
   const { t } = useI18n();
   return (
     <EmptyState

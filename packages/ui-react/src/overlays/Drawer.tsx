@@ -16,7 +16,7 @@ import { OverlayRoot, type OverlayRootProps, useOverlayContext } from "./overlay
 export type DrawerSize = DialogSize;
 export type DrawerSide = "right";
 
-export function Drawer(props: OverlayRootProps): JSX.Element {
+export function Drawer(props: OverlayRootProps): React.JSX.Element {
   return <OverlayRoot {...props} kind="drawer" />;
 }
 

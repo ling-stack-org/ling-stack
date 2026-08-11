@@ -45,7 +45,7 @@ export function TeammateProfileTab({
   onApplyPersonaDraft,
 }: {
   readonly avatarCropSource?: string;
-  readonly avatarTriggerRef: RefObject<HTMLButtonElement>;
+  readonly avatarTriggerRef: RefObject<HTMLButtonElement | null>;
   readonly cwd: string;
   readonly teammate: AiTeammate;
   readonly settingsForm: TeammateSettingsForm;
@@ -64,7 +64,7 @@ export function TeammateProfileTab({
   readonly onConfirmAvatarCrop: (dataUrl: string) => void | Promise<void>;
   readonly onPreviewPersonaImport: () => void | Promise<void>;
   readonly onApplyPersonaDraft: () => Promise<boolean>;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const [personaImportOpen, setPersonaImportOpen] = useState(false);

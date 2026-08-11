@@ -16,7 +16,7 @@ export function useChannelProtocolResetController({
   const resetTargetRef = useRef<{
     readonly channelId: string;
     readonly onReset: () => Promise<unknown>;
-  }>();
+  } | undefined>(undefined);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");

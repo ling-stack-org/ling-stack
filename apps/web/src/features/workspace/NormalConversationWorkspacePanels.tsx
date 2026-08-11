@@ -44,7 +44,7 @@ export function NormalConversationWorkspacePanels({
   terminalSession,
   onCloseDock,
   onCloseTerminal,
-}: NormalConversationWorkspacePanelsProps): JSX.Element {
+}: NormalConversationWorkspacePanelsProps): React.JSX.Element {
   const { t } = useI18n();
   const effectiveCwd = workspaceCwd.trim();
   return (

@@ -15,7 +15,7 @@ export function ProviderSecretInput({
   readonly showApiKey: boolean;
   readonly onFormChange: (form: ProviderFormState) => void;
   readonly onShowApiKeyChange: (value: boolean) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <div className="provider-secret-input">

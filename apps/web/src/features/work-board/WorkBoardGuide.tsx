@@ -1,7 +1,7 @@
 import { useI18n } from "../../i18n.js";
 import { InspectorSection } from "../../shared/ui/index.js";
 
-export function WorkBoardGuide(): JSX.Element {
+export function WorkBoardGuide(): React.JSX.Element {
   const { t } = useI18n();
   return (
     <InspectorSection title={t("How Work Board is organized")}>

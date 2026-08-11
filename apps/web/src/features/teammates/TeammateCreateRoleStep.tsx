@@ -36,7 +36,7 @@ export function TeammateCreateRoleStep({
   readonly onOpenCustom: () => void;
   readonly onOpenProviders: () => void;
   readonly onSelectTemplate: (template: AiTeammateTemplate) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
 
   return (

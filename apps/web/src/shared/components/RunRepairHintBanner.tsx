@@ -19,7 +19,7 @@ export function RunRepairHintBanner({
   readonly onOpenApprovals: (runId?: string) => void;
   readonly onOpenRun?: (runId: string) => void;
   readonly onReload?: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const canOpenRun = hint.target === "run" && Boolean(onOpenRun);
   const canReload = hint.target === "run" && !onOpenRun && Boolean(onReload);
@@ -52,7 +52,7 @@ export function RunRepairHintBanner({
   );
 }
 
-function runRepairIcon(target: RunRepairTarget): JSX.Element {
+function runRepairIcon(target: RunRepairTarget): React.JSX.Element {
   if (target === "providers") {
     return <PlugZap size={14} />;
   }

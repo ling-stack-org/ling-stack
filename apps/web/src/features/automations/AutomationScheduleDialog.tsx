@@ -19,7 +19,7 @@ export function AutomationScheduleDialog({
   readonly t: AutomationTranslate;
   readonly onOpenChange: (open: boolean) => void;
   readonly onSave: (trigger: AutomationTrigger, rrule?: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [value, setValue] = useState<AutomationScheduleValue>(() => automation ? definitionScheduleValue(automation) : definitionScheduleValue({ trigger: { type: "manual" } } as AutomationDefinition));
   useEffect(() => {
     if (automation) setValue(definitionScheduleValue(automation));

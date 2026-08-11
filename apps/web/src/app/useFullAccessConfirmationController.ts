@@ -31,9 +31,9 @@ export interface FullAccessConfirmationController {
 export function useFullAccessConfirmationController(): FullAccessConfirmationController {
   const [open, setOpen] = useState(false);
   const [, setConfirmationRevision] = useState(0);
-  const confirmedByScopeRef = useRef<Map<string, PermissionConfirmation>>();
-  const storageRef = useRef<FullAccessConfirmationStorage>();
-  const pendingRef = useRef<PendingFullAccessConfirmation>();
+  const confirmedByScopeRef = useRef<Map<string, PermissionConfirmation> | undefined>(undefined);
+  const storageRef = useRef<FullAccessConfirmationStorage | undefined>(undefined);
+  const pendingRef = useRef<PendingFullAccessConfirmation | undefined>(undefined);
   const returnFocusTargetRef = useRef<HTMLElement | null>(null);
   if (!confirmedByScopeRef.current) {
     storageRef.current = browserFullAccessConfirmationStorage();

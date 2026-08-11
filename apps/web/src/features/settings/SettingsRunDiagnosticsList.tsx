@@ -14,7 +14,7 @@ export function SettingsRunDiagnosticsList({
   readonly rows: readonly RunDiagnosticsRowViewModel[];
   readonly selectedRunId: string;
   readonly onSelect: (runId: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const initialLoading = isLoading && rows.length === 0;
 
@@ -49,7 +49,7 @@ export function SettingsRunDiagnosticsList({
   );
 }
 
-function RunListSkeleton(): JSX.Element {
+function RunListSkeleton(): React.JSX.Element {
   return (
     <div className="settings-run-diagnostics-skeletons" aria-hidden="true">
       {Array.from({ length: 4 }, (_, index) => (

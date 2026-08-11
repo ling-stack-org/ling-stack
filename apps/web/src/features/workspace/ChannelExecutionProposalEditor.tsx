@@ -67,7 +67,7 @@ export function ChannelExecutionProposalEditor<TSource>({
   onRemoveStep,
   onStepChange,
   teammates,
-}: ChannelExecutionProposalEditorProps<TSource>): JSX.Element {
+}: ChannelExecutionProposalEditorProps<TSource>): React.JSX.Element {
   const { t } = useI18n();
 
   return (

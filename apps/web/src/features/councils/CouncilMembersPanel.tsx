@@ -27,7 +27,7 @@ export function CouncilMembersPanel({
   readonly cwd: string;
   readonly onOpenCloneCouncil: () => void;
   readonly onOpenTeammates: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const feedback = membersFeedback(controller, t);
 

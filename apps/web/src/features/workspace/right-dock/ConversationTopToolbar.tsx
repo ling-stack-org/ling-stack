@@ -48,7 +48,7 @@ export function ConversationTopToolbar({
   onToggleSummary,
   onToggleTerminal,
   onToggleDetails,
-}: ConversationTopToolbarProps): JSX.Element {
+}: ConversationTopToolbarProps): React.JSX.Element {
   const TerminalIcon = terminalActive ? PanelBottomClose : PanelBottom;
   const DetailsIcon = detailsActive ? PanelRightClose : PanelRightOpen;
 

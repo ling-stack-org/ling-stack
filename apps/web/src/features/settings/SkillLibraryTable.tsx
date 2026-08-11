@@ -43,7 +43,7 @@ export function SkillLibraryTable({
   readonly onArchiveSkill: (skillId: string) => void;
   readonly onDeleteSkill: (skill: SkillRegistryEntry, trigger: HTMLButtonElement) => void;
   readonly t: SettingsTranslator;
-}): JSX.Element {
+}): React.JSX.Element {
   function handleRowKeyDown(event: KeyboardEvent<HTMLTableRowElement>, skillId: string): void {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();

@@ -1,4 +1,4 @@
-export function LingStackLogo({ size = 20 }: { readonly size?: number }): JSX.Element {
+export function LingStackLogo({ size = 20 }: { readonly size?: number }): React.JSX.Element {
   return (
     <svg
       aria-hidden="true"

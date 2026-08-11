@@ -182,7 +182,7 @@ export function SettingsPage({
   readonly runsLoading: boolean;
   readonly onCloseWorkspaceTool?: () => void;
   readonly onBackToApplication?: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const [activeSection, setActiveSection] = useState<SettingsSectionId>(initialSection ?? "personal-profile");
   const computerControlVisible = computerControl.surfaceMode === "computer_control"

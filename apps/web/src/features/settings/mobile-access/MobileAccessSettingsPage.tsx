@@ -11,7 +11,7 @@ import { Badge, Button, Field, InlineFeedback, Input, Skeleton } from "../../../
 
 type BusyAction = "enable" | "disable" | "pair" | "confirm" | "reject" | "revoke" | "refresh";
 
-export function MobileAccessSettingsPage(): JSX.Element {
+export function MobileAccessSettingsPage(): React.JSX.Element {
   const { t } = useI18n();
   const capability = window.lingDesktop?.mobileAccess;
   const [status, setStatus] = useState<DesktopMobileAccessStatus>();
@@ -153,16 +153,16 @@ export function MobileAccessSettingsPage(): JSX.Element {
     </div>
   );
 
-  function PageHeader(): JSX.Element {
+  function PageHeader(): React.JSX.Element {
     return <header className="mobile-access-page-header"><span className="mobile-access-page-icon"><Smartphone aria-hidden="true" /></span><h1>{t("Mobile Access")}</h1></header>;
   }
 
-  function SectionHeader({ icon, id, title }: { readonly icon: JSX.Element; readonly id: string; readonly title: string }): JSX.Element {
+  function SectionHeader({ icon, id, title }: { readonly icon: React.JSX.Element; readonly id: string; readonly title: string }): React.JSX.Element {
     return <header className="mobile-access-section-header"><span aria-hidden="true">{icon}</span><h2 id={id}>{title}</h2></header>;
   }
 }
 
-function Detail({ label, value }: { readonly label: string; readonly value: string }): JSX.Element {
+function Detail({ label, value }: { readonly label: string; readonly value: string }): React.JSX.Element {
   return <div><dt>{label}</dt><dd>{value}</dd></div>;
 }
 

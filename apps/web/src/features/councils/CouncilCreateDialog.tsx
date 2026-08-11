@@ -41,7 +41,7 @@ export function CouncilCreateDialog({
   readonly onRestoreFocus: () => void;
   readonly onSubmit: () => void | Promise<void>;
   readonly onToggleMember: (teammateId: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const hasName = Boolean(draft.displayName.trim());
   const selectedCount = draft.memberIds.length;

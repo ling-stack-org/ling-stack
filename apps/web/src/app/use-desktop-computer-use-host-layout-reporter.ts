@@ -22,7 +22,7 @@ interface ComputerUseObstacleRect {
 
 export function useDesktopComputerUseHostLayoutReporter(
   capabilities: DesktopComputerUseCapabilities | undefined,
-  hostRef: RefObject<HTMLElement>,
+  hostRef: RefObject<HTMLElement | null>,
 ): void {
   useEffect(() => {
     const host = hostRef.current;

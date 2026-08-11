@@ -37,7 +37,7 @@ export function ExternalWorkCredentialSection({
   readonly onConfigure: (token: string) => Promise<boolean>;
   readonly onDelete: () => Promise<boolean>;
   readonly status: ExternalWorkStatusResponse;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const presentation = externalWorkCredentialState(status);
   const canConfigure = canConfigureExternalWorkCredential(status);

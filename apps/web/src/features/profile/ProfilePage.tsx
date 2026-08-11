@@ -18,7 +18,7 @@ export function ProfilePage({
   readonly cwd: string;
   readonly onProfileChange?: (profile: UserProfile) => void;
   readonly variant?: "standalone" | "settings";
-}): JSX.Element {
+}): React.JSX.Element {
   const { locale, t } = useI18n();
   const focusRevalidationToken = useFocusRevalidationToken();
   const { showToast } = useLingToast();
@@ -339,11 +339,11 @@ export function ProfilePage({
   );
 }
 
-function ProfileStat({ value, label }: { readonly value: string; readonly label: string }): JSX.Element {
+function ProfileStat({ value, label }: { readonly value: string; readonly label: string }): React.JSX.Element {
   return <div className="profile-stat"><strong>{value}</strong><span>{label}</span></div>;
 }
 
-function ProfileInsight({ icon, label, value }: { readonly icon: JSX.Element; readonly label: string; readonly value: string }): JSX.Element {
+function ProfileInsight({ icon, label, value }: { readonly icon: React.JSX.Element; readonly label: string; readonly value: string }): React.JSX.Element {
   return <div className="profile-insight-row"><span className="profile-insight-icon">{icon}</span><span>{label}</span><strong>{value}</strong></div>;
 }
 

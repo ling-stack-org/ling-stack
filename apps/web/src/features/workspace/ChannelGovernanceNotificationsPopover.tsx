@@ -32,7 +32,7 @@ export function ChannelGovernanceNotificationsPopover({
   readonly onOpenChange: (open: boolean) => void;
   readonly onMarkSeen: (notificationId: string) => void;
   readonly onDismiss: (notificationId: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const contentRef = useRef<HTMLDivElement | null>(null);
   const triggerLabel = t("{label}: {count}", { label: t("Review queue"), count });
@@ -151,7 +151,7 @@ export function ChannelGovernanceNotificationsPopover({
   );
 }
 
-function governanceNotificationIcon(notification: GovernanceNotification): JSX.Element {
+function governanceNotificationIcon(notification: GovernanceNotification): React.JSX.Element {
   if (notification.severity === "critical" || notification.severity === "action_required") {
     return <CircleAlert size={15} />;
   }

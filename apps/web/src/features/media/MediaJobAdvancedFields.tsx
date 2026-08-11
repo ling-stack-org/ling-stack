@@ -15,7 +15,7 @@ export function MediaJobAdvancedFields({
   readonly section?: "core" | "advanced" | "all";
   readonly videoGeneration?: VideoGenerationCapabilities;
   readonly onPatch: (patch: Partial<MediaJobFormState>, field?: keyof MediaJobFormErrors) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   if (form.operation === "image_edit") {
     return (
@@ -73,7 +73,7 @@ function WatermarkField({
 }: {
   readonly form: MediaJobFormState;
   readonly onPatch: (patch: Partial<MediaJobFormState>) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <Field label={t("Watermark")}>

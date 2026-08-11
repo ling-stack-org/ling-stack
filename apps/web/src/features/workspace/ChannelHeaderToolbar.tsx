@@ -60,7 +60,7 @@ export function ChannelHeaderToolbar({
   showEmptyTeammateAction,
   teammateActionNode,
   onToggleSearch,
-}: ChannelHeaderToolbarProps): JSX.Element {
+}: ChannelHeaderToolbarProps): React.JSX.Element {
   const BottomPanelIcon = bottomPanelOpen ? PanelBottomClose : PanelBottom;
   const DetailsIcon = detailsOpen ? PanelRightClose : PanelRightOpen;
 

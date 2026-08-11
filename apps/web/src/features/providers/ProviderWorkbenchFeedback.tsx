@@ -19,7 +19,7 @@ export function ProviderOperationFeedback({
 }: {
   readonly batchResult: ProviderBatchResult | undefined;
   readonly operationWarning: string;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const { t } = useI18n();
   if (!batchResult && !operationWarning) return null;
 
@@ -48,7 +48,7 @@ export function ProviderNextAction({
   readonly providers: readonly ProviderPreset[];
   readonly nextActionProvider: ProviderPreset | undefined;
   readonly isLoading: boolean;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const { t } = useI18n();
   if (isLoading || providers.some(providerPreflightReady)) return null;
   let message = providers.length === 0
@@ -89,7 +89,7 @@ export function ProviderRunRepairPanel({
   readonly onRerun: (run: RunSession) => void;
   readonly onOpenRun: (runId: string) => void;
   readonly onClear: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const ready = provider ? providerPreflightReady(provider) : false;
   const checkText = provider

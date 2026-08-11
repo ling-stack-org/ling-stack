@@ -75,7 +75,7 @@ export async function removeConversationDrafts(workspaceBindingId: string): Prom
   const prefix = draftNamespacePrefix(workspaceBindingId);
   const keys = (await AsyncStorage.getAllKeys()).filter((key) => key.startsWith(prefix));
   if (keys.length > 0) {
-    await AsyncStorage.multiRemove(keys);
+    await AsyncStorage.removeMany(keys);
   }
 }
 

@@ -43,7 +43,7 @@ export function useTeammateMemoryController({
   const identityKey = `${cwd.trim()}::${teammate.id}`;
   const identityRef = useRef(identityKey);
   const requestSequenceRef = useRef(0);
-  const snapshotRef = useRef<TeammateMemorySnapshot>();
+  const snapshotRef = useRef<TeammateMemorySnapshot | undefined>(undefined);
   const toastIdRef = useRef("");
   identityRef.current = identityKey;
 

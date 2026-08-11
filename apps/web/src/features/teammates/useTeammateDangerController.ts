@@ -144,7 +144,7 @@ export function useTeammateDangerController({
     hardDeleteError,
     hardDeleteOpen,
     hardDeleteReason,
-    hardDeleteTriggerRef: hardDeleteTriggerRef as RefObject<HTMLButtonElement>,
+    hardDeleteTriggerRef: hardDeleteTriggerRef as RefObject<HTMLButtonElement | null>,
     viewModel,
     confirmHardDelete,
     disable,

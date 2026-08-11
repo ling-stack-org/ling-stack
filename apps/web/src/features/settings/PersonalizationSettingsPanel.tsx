@@ -16,7 +16,7 @@ import { SkillGovernanceSettingsSection } from "./SkillGovernanceSettingsSection
 const visibleLingConversationTones: readonly LingConversationTone[] = ["friendly", "pragmatic"];
 const defaultLingConversationTone: LingConversationTone = "pragmatic";
 
-export function PersonalizationSettingsPanel({ cwd }: { readonly cwd: string }): JSX.Element {
+export function PersonalizationSettingsPanel({ cwd }: { readonly cwd: string }): React.JSX.Element {
   const { t } = useI18n();
   const { showToast } = useLingToast();
   const [effectiveConfig, setEffectiveConfig] = useState<EffectiveConfigResponse | undefined>();

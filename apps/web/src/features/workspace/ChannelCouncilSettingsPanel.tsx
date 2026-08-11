@@ -63,7 +63,7 @@ export function ChannelCouncilSettingsPanel({
   onAddSelectedChannelCouncil,
   onRemoveChannelCouncil,
   onSetPreferredChannelCouncil,
-}: ChannelCouncilSettingsPanelProps): JSX.Element {
+}: ChannelCouncilSettingsPanelProps): React.JSX.Element {
   const { t } = useI18n();
   const loading = aiCouncilsLoading || channelCouncilLoading;
   return (

@@ -26,7 +26,7 @@ export function ProjectRunReviewDialog({
   readonly onClose: () => void;
   readonly onConfirm: () => Promise<void>;
   readonly isSubmitting: boolean;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const confirmInFlight = useRef(false);
   const [confirmPending, setConfirmPending] = useState(false);

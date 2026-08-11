@@ -4,7 +4,7 @@ import { formatEventPreview, readDataBoolean, readDataField, readDataNumber, rea
 import { MetaRow } from "../../shared/components/index.js";
 import { InspectorSection, StatusIndicator } from "../../shared/ui/index.js";
 
-export function SkillSourceRuntimeSection({ context }: { readonly context: unknown }): JSX.Element {
+export function SkillSourceRuntimeSection({ context }: { readonly context: unknown }): React.JSX.Element {
   const { t } = useI18n();
   const loaded = readDataBoolean(context, "loaded");
   const truncated = readDataBoolean(context, "truncated");

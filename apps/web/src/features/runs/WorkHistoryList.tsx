@@ -43,7 +43,7 @@ export function WorkHistoryList({
   readonly onRetry: () => void;
   readonly onSelectGroup: (group: WorkHistoryTurnGroup) => void;
   readonly onSelectRun: (runId: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const searchMatchByThreadId = buildThreadSearchMatchMap(searchMatches);
   const initialLoading = loadState === "loading-initial";
@@ -138,6 +138,6 @@ export function WorkHistoryList({
   );
 }
 
-function HistorySkeleton(): JSX.Element {
+function HistorySkeleton(): React.JSX.Element {
   return <div className="runs-history-skeleton" aria-label="Loading">{Array.from({ length: 6 }, (_, index) => <Skeleton height={58} key={index} shape="block" />)}</div>;
 }

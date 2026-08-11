@@ -23,7 +23,7 @@ export function MediaJobInspector({
   readonly copyError: string;
   readonly onAction: (action: MediaJobActionId, projection: MediaJobProjectionInput) => void;
   readonly onRetryArtifacts: (jobId: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   if (initialLoading) {
     return <aside className="media-job-inspector" aria-busy="true"><Skeleton shape="block" width="100%" height={180} /><Skeleton width="70%" /><Skeleton width="90%" /></aside>;

@@ -20,7 +20,7 @@ export function MediaJobResult({
   readonly copyError: string;
   readonly onAction: (action: MediaJobActionId, projection: MediaJobProjectionInput) => void;
   readonly onRetryArtifacts: (jobId: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const { job, result } = projection;
   const primaryHref = result.primary ? artifactContentUrl(result.primary.id, cwd) : "";

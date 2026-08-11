@@ -33,12 +33,12 @@ interface SceneInspectorProps {
   readonly onOpenWorkflowLibrary: () => void;
 }
 
-export function SceneInspector(props: SceneInspectorProps): JSX.Element {
+export function SceneInspector(props: SceneInspectorProps): React.JSX.Element {
   if (!props.scene) return <aside className="scene-inspector" />;
   return <SceneInspectorContent key={props.scene.id} {...props} scene={props.scene} />;
 }
 
-function SceneInspectorContent(props: SceneInspectorProps & { readonly scene: MediaScene }): JSX.Element {
+function SceneInspectorContent(props: SceneInspectorProps & { readonly scene: MediaScene }): React.JSX.Element {
   const { t } = useI18n();
   const [view, setView] = useState<InspectorView>("settings");
   const editor = useSceneTextDraft(props.scene, props.actions);
@@ -74,7 +74,7 @@ function SceneInspectorContent(props: SceneInspectorProps & { readonly scene: Me
   );
 }
 
-function SceneSettingsPanel(props: SceneInspectorProps & { readonly scene: MediaScene; readonly editor: SceneTextDraftController }): JSX.Element {
+function SceneSettingsPanel(props: SceneInspectorProps & { readonly scene: MediaScene; readonly editor: SceneTextDraftController }): React.JSX.Element {
   const { t } = useI18n();
   const { editor } = props;
   const revert = (field: TextField, target: HTMLElement): void => {
@@ -95,7 +95,7 @@ function SceneSettingsPanel(props: SceneInspectorProps & { readonly scene: Media
   </>;
 }
 
-function SceneRunFooter({ scene, readiness, busyAction, actions, editor }: { readonly scene: MediaScene; readonly readiness?: SceneReadiness; readonly busyAction: string; readonly actions: MediaProductionActions; readonly editor: SceneTextDraftController }): JSX.Element {
+function SceneRunFooter({ scene, readiness, busyAction, actions, editor }: { readonly scene: MediaScene; readonly readiness?: SceneReadiness; readonly busyAction: string; readonly actions: MediaProductionActions; readonly editor: SceneTextDraftController }): React.JSX.Element {
   const { t } = useI18n();
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<MediaProductionFailure>();
@@ -126,7 +126,7 @@ function SceneRunFooter({ scene, readiness, busyAction, actions, editor }: { rea
   </div>;
 }
 
-function MutationFeedback({ failure, busy, onRetry, onClear }: { readonly failure: MediaProductionFailure; readonly busy: boolean; readonly onRetry: () => void; readonly onClear: () => void }): JSX.Element {
+function MutationFeedback({ failure, busy, onRetry, onClear }: { readonly failure: MediaProductionFailure; readonly busy: boolean; readonly onRetry: () => void; readonly onClear: () => void }): React.JSX.Element {
   const { t } = useI18n();
   return <InlineFeedback role="alert" title={t(failure.productMessageKey)} tone="danger"><span><Button size="sm" loading={busy} onClick={onRetry}>{t("Retry")}</Button><Button size="sm" variant="ghost" onClick={onClear}>{t("Clear")}</Button></span>{failure.technicalMessage ? <InspectorSection title={t("Technical details")}><p>{failure.technicalMessage}</p></InspectorSection> : null}</InlineFeedback>;
 }

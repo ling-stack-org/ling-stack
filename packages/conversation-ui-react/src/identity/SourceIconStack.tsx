@@ -31,7 +31,7 @@ export function SourceIconStack({
   label,
   overflowLabel = (count) => `+${count}`,
   onOpenSource,
-}: SourceIconStackProps): JSX.Element | null {
+}: SourceIconStackProps): React.JSX.Element | null {
   if (sources.length === 0) {
     return null;
   }

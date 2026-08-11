@@ -16,7 +16,7 @@ export function RunOverviewSection({ run, turnContext, onSelectRun }: {
   readonly run: RunSession;
   readonly turnContext: WorkHistoryTurnContext | undefined;
   readonly onSelectRun: (runId: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const permissionMode = readSessionPermissionModeFromSnapshot(run.requestSnapshot);
   const permissionPreset = readPermissionPresetFromSnapshot(run.requestSnapshot) ?? inferPermissionPreset(permissionMode);

@@ -97,7 +97,7 @@ export function ConversationHome({
   onRefreshConversation,
   onStopConversation,
   onSendConversation,
-}: ConversationHomeProps): JSX.Element {
+}: ConversationHomeProps): React.JSX.Element {
   const { t } = useI18n();
   const [draft, setDraft] = useState(initialDraft);
   const [messages, setMessages] = useState<readonly ConversationHomeMessage[]>(initialMessages);

@@ -47,7 +47,7 @@ test("T13-P.9D Channel removes the generic AppShell error owner", async () => {
 
   const workspaceClientSignature = workspaceClientSource.slice(
     workspaceClientSource.indexOf("export function WorkspaceClientView"),
-    workspaceClientSource.indexOf("): JSX.Element {", workspaceClientSource.indexOf("export function WorkspaceClientView")),
+    workspaceClientSource.indexOf("): React.JSX.Element {", workspaceClientSource.indexOf("export function WorkspaceClientView")),
   );
   expect(workspaceClientSignature).not.toContain("readonly errorMessage: string;");
   expect(workspaceClientSource).not.toMatch(/\n\s*errorMessage,\n\s*onChannelCreateOpenChange/u);

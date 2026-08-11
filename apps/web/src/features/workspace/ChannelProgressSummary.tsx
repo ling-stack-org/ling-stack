@@ -149,7 +149,7 @@ function runProgressTone(status: RunSession["status"]): AttentionProgressTone {
   return "neutral";
 }
 
-function runProgressIcon(status: RunSession["status"]): JSX.Element {
+function runProgressIcon(status: RunSession["status"]): React.JSX.Element {
   if (status === "succeeded") {
     return <CheckCircle2 size={18} />;
   }
@@ -186,7 +186,7 @@ function collaborationProgressTone(tone: CollaborationProgressProjectionTone): A
   return tone;
 }
 
-function collaborationProgressIcon(icon: CollaborationProgressProjectionIcon): JSX.Element {
+function collaborationProgressIcon(icon: CollaborationProgressProjectionIcon): React.JSX.Element {
   if (icon === "blocked" || icon === "failed") {
     return <CircleAlert size={18} />;
   }

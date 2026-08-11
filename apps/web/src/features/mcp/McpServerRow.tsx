@@ -60,7 +60,7 @@ export function McpServerRow({
   readonly onSync: (serverId: string) => void;
   readonly server: McpServer;
   readonly tools: readonly McpTool[];
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const moreButtonRef = useRef<HTMLButtonElement | null>(null);
   const deleteRequestedRef = useRef(false);
@@ -195,7 +195,7 @@ function PrimaryServerAction({
   readonly onCheck: () => void;
   readonly onEdit: (trigger: HTMLButtonElement) => void;
   readonly onSync: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const label = action === "check" ? t("Check connection") : action === "sync" ? t("Sync tool list") : t("Edit");
   const loading = busyAction === action || (action === "edit" && busyAction === "save");

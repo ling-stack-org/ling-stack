@@ -17,7 +17,7 @@ export function CouncilArchiveDialog({
   controller,
 }: {
   readonly controller: CouncilSettingsArchiveController;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const cancelRef = useRef<HTMLButtonElement>(null);
 

@@ -38,7 +38,7 @@ export function DockReviewCodePreview({
   readonly item: DockReviewItem;
   readonly preview: NonNullable<DockReviewItem["codePreview"]>;
   readonly focusLine?: number;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const [collapsed, setCollapsed] = useState(false);
   const focusedLineRef = useRef<HTMLSpanElement | null>(null);

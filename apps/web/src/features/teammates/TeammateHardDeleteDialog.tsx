@@ -21,7 +21,7 @@ export function TeammateHardDeleteDialog({
 }: {
   readonly controller: TeammateDangerController;
   readonly teammate: AiTeammate;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const cancelRef = useRef<HTMLButtonElement>(null);
 

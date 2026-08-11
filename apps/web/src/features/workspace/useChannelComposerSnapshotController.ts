@@ -77,7 +77,7 @@ export function useChannelComposerSnapshotController({
   const previousChannelIdRef = useRef(selectedChannelId);
   const composerSnapshotsRef = useRef<Record<string, ChannelComposerSnapshot>>({});
   const onChannelSwitchRef = useRef(onChannelSwitch);
-  const latestSnapshotRef = useRef<ChannelComposerSnapshot | undefined>();
+  const latestSnapshotRef = useRef<ChannelComposerSnapshot | undefined>(undefined);
 
   useEffect(() => {
     onChannelSwitchRef.current = onChannelSwitch;

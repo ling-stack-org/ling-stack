@@ -26,7 +26,7 @@ export function ConversationSummaryRow({
   metaItems = [],
   evidenceNode,
   actionsNode,
-}: ConversationSummaryRowProps): JSX.Element {
+}: ConversationSummaryRowProps): React.JSX.Element {
   const rootClassName = ["conversation-summary-row", className].filter(Boolean).join(" ");
 
   return (

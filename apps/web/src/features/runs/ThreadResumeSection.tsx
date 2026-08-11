@@ -6,7 +6,7 @@ import { Button, Field, InlineFeedback, InspectorSection, Select, Textarea } fro
 import type { ThreadDetailController } from "./ThreadDetailPanel.js";
 import { buildThreadResumeDisabledReason } from "./thread-detail-view-models.js";
 
-export function ThreadResumeSection({ controller }: { readonly controller: ThreadDetailController }): JSX.Element {
+export function ThreadResumeSection({ controller }: { readonly controller: ThreadDetailController }): React.JSX.Element {
   const { t } = useI18n();
   const { state, actions } = controller;
   const disabledReason = buildThreadResumeDisabledReason({

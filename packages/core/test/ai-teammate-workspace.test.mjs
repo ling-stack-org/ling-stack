@@ -946,6 +946,58 @@ test("sqlite persists teammate direct reply interventions with idempotency and c
   }
 });
 
+test("sqlite preserves teammate direct reply intervention FIFO order within one timestamp", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ai-teammate-direct-intervention-fifo-"));
+  const now = "2026-06-09T02:00:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    const teammateId = createBuiltinAiTeammateId("engineer");
+    const thread = store.getOrCreateTeammateDirectThread(teammateId, now);
+    const sourceMessage = store.createTeammateDirectMessage(
+      {
+        threadId: thread.id,
+        teammateId,
+        authorType: "local-user",
+        authorId: "local-user",
+        body: "Drain queued guidance in insertion order.",
+      },
+      now,
+    );
+    const ids = [
+      "direct_intervention_z_first",
+      "direct_intervention_a_second",
+      "direct_intervention_m_third",
+    ];
+    for (const [index, id] of ids.entries()) {
+      store.createTeammateDirectReplyIntervention(
+        {
+          id,
+          teammateId,
+          threadId: thread.id,
+          sourceMessageId: sourceMessage.id,
+          mode: "queue_followup",
+          instruction: `Queued guidance ${index + 1}`,
+          idempotencyKey: `direct-guidance-fifo-${index}`,
+          requestedBy: "local-user",
+        },
+        now,
+      );
+    }
+
+    assert.deepEqual(
+      store.listTeammateDirectReplyInterventions({
+        teammateId,
+        threadId: thread.id,
+        status: "queued",
+      }).map((item) => item.id),
+      ids,
+    );
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("sqlite lists latest teammate direct messages and pages older history", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ai-teammate-direct-message-pagination-"));
   const store = createSqliteRunStore(cwd);

@@ -31,7 +31,7 @@ export function MediaProductionCanvasToolbar({
   readonly onOpenProjectDock: () => void;
   readonly onRunProject: () => void;
   readonly onConfigureVideoModel: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const projection = deriveMediaProductionToolbarProjection({
     projectName,
@@ -97,7 +97,7 @@ function ToolbarPrimaryAction({
   readonly action: MediaProductionToolbarActionProjection;
   readonly onConfigure: () => void;
   readonly onReviewOrRun: () => void;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const { t } = useI18n();
   if (action.kind === "none") return null;
   const icon = action.kind === "configure"

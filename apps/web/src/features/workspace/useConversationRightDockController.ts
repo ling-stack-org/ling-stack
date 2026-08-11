@@ -85,7 +85,7 @@ export function useConversationRightDockController({
   const [containerWidth, setContainerWidth] = useState(0);
   const [resizing, setResizing] = useState(false);
   const presence = useConversationPanelPresence(intentOpen, initialOpen);
-  const layoutAnimationRef = useRef<number>();
+  const layoutAnimationRef = useRef<number | undefined>(undefined);
   const layoutWidthRef = useRef(initialOpen ? defaultWidth : 0);
   const layoutHandleWidthRef = useRef(initialOpen ? channelRightDockResizeHandleWidth : 0);
   const motionUntilRef = useRef(0);
@@ -94,7 +94,7 @@ export function useConversationRightDockController({
     readonly containerRight: number;
     readonly containerWidth: number;
     readonly viewportWidth: number;
-  }>();
+  } | undefined>(undefined);
   const visible = intentOpen || presence.rendered;
   const motionState: ConversationPanelMotionState = resizing ? "resizing" : presence.motionState;
 

@@ -63,7 +63,7 @@ export function SkillReviewQueuePanel({
   readonly onReviewPlaybookCandidate: (candidate: ChannelPlaybookCandidate, action: ChannelPlaybookCandidateReviewAction) => void;
   readonly toolbarAfterSearch?: ReactNode;
   readonly t: SettingsTranslator;
-}): JSX.Element {
+}): React.JSX.Element {
   const [activeFilter, setActiveFilter] = useState<SkillReviewQueueFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [sortMode, setSortMode] = useState<SkillReviewQueueSortMode>("updated");

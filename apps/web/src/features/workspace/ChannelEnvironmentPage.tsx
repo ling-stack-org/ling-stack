@@ -112,7 +112,7 @@ export function ChannelEnvironmentPage({
   readonly onChangeWorkspacePath: (path: string) => Promise<void>;
   readonly onOpenReview: () => void;
   readonly onOpenCommit: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const [selectingDirectory, setSelectingDirectory] = useState(false);
   const [directoryError, setDirectoryError] = useState("");
@@ -252,11 +252,11 @@ export function ChannelEnvironmentPage({
   );
 }
 
-function EnvironmentIdentity({ icon, label }: { readonly icon: ReactNode; readonly label: string }): JSX.Element {
+function EnvironmentIdentity({ icon, label }: { readonly icon: ReactNode; readonly label: string }): React.JSX.Element {
   return <span className="channel-environment-identity"><span aria-hidden="true">{icon}</span><strong>{label}</strong></span>;
 }
 
-function EnvironmentMetric({ icon, label, value }: { readonly icon: ReactNode; readonly label: string; readonly value: string }): JSX.Element {
+function EnvironmentMetric({ icon, label, value }: { readonly icon: ReactNode; readonly label: string; readonly value: string }): React.JSX.Element {
   return <span className="channel-environment-metric"><span aria-hidden="true">{icon}</span><span><strong>{label}</strong><small>{value}</small></span></span>;
 }
 
@@ -284,7 +284,7 @@ function environmentEvidenceSummary(summary: ChannelEnvironmentSummary, t: Trans
   return count === 0 ? t("No linked resources") : t("{count} linked items", { count });
 }
 
-export function ChannelEnvironmentDiffStat({ additions, deletions }: { readonly additions: number; readonly deletions: number }): JSX.Element {
+export function ChannelEnvironmentDiffStat({ additions, deletions }: { readonly additions: number; readonly deletions: number }): React.JSX.Element {
   return (
     <span className="channel-environment-diff-stat" aria-label={`+${additions} -${deletions}`}>
       <span className="add">+{additions}</span>

@@ -82,7 +82,7 @@ export function AiTeammatesPage({
   readonly onRefresh?: () => void;
   readonly settingsToolMode?: boolean;
   readonly defaultProviderId?: string;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const templates = skillPack?.teammateTemplates ?? [];
   const skills = skillPack?.skills ?? [];
@@ -207,7 +207,7 @@ function TemplateDetailSheet({
   readonly skillById: ReadonlyMap<string, SkillDefinition>;
   readonly onClose: () => void;
   readonly onCreate: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const [dialogOpen, setDialogOpen] = useState(true);
   const closeCommittedRef = useRef(false);
@@ -366,7 +366,7 @@ function teammateRoleUseCases(template: AiTeammateTemplate, t: (key: string, val
   return [t("When this role matches the current work"), t("When you want a focused teammate"), t("Before assigning a scoped task")];
 }
 
-function ApprovalProfileBadge({ profile, compact = false }: { readonly profile: SkillApprovalProfile; readonly compact?: boolean }): JSX.Element {
+function ApprovalProfileBadge({ profile, compact = false }: { readonly profile: SkillApprovalProfile; readonly compact?: boolean }): React.JSX.Element {
   const { t } = useI18n();
   return <span className={`approval-profile-badge ${profile.mode} ${compact ? "compact" : ""}`}>{approvalProfileText(profile, t)}</span>;
 }
@@ -379,7 +379,7 @@ function WorkflowTemplatePanel({
   readonly workflow: SkillPack["workflowTemplates"][number];
   readonly templates: readonly AiTeammateTemplate[];
   readonly skillById: ReadonlyMap<string, SkillDefinition>;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <section className="teammate-workflow-panel" aria-label={t("Workflow")}>
@@ -410,7 +410,7 @@ function WorkflowStepCard({
   readonly index: number;
   readonly templates: readonly AiTeammateTemplate[];
   readonly skillById: ReadonlyMap<string, SkillDefinition>;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const template = templates.find((item) => item.id === step.teammateTemplateId);
   const skill = skillById.get(step.skillId);

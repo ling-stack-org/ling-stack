@@ -61,7 +61,7 @@ export function DesktopComputerUseBridge({
 }: {
   readonly selectedConversationId?: string;
   readonly surfaceKind?: "channel" | "normal_conversation" | "teammate_direct";
-  readonly hostRef: RefObject<HTMLElement>;
+  readonly hostRef: RefObject<HTMLElement | null>;
 }) {
   const { locale } = useI18n();
   const capabilities = window.lingDesktop?.computerUse;
@@ -69,12 +69,12 @@ export function DesktopComputerUseBridge({
   const [stopRequest, setStopRequest] = useState<StopRequestState | undefined>();
   const [visibilityRequest, setVisibilityRequest] = useState<VisibilityRequestState | undefined>();
   const stopRequestSequenceRef = useRef(0);
-  const pendingStopRequestRef = useRef<PendingStopRequest | undefined>();
-  const stopConvergenceTimeoutIdRef = useRef<number | undefined>();
+  const pendingStopRequestRef = useRef<PendingStopRequest | undefined>(undefined);
+  const stopConvergenceTimeoutIdRef = useRef<number | undefined>(undefined);
   const visibilityRequestSequenceRef = useRef(0);
-  const pendingVisibilityRequestRef = useRef<PendingVisibilityRequest | undefined>();
-  const visibilityConvergenceTimeoutIdRef = useRef<number | undefined>();
-  const activeSummarySessionIdRef = useRef<string | undefined>();
+  const pendingVisibilityRequestRef = useRef<PendingVisibilityRequest | undefined>(undefined);
+  const visibilityConvergenceTimeoutIdRef = useRef<number | undefined>(undefined);
+  const activeSummarySessionIdRef = useRef<string | undefined>(undefined);
   const selectedConversationIdRef = useRef(selectedConversationId);
   selectedConversationIdRef.current = selectedConversationId;
 

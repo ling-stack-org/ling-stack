@@ -33,12 +33,12 @@ export function OverlayScrollArea({
   scrollbarClassName,
   thumbClassName,
   viewportClassName,
-}: OverlayScrollAreaProps): JSX.Element {
+}: OverlayScrollAreaProps): React.JSX.Element {
   const viewportRef = useRef<HTMLDivElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
   const thumbRef = useRef<HTMLSpanElement>(null);
-  const scrollIdleTimerRef = useRef<number>();
-  const dragRef = useRef<ScrollDragState>();
+  const scrollIdleTimerRef = useRef<number | undefined>(undefined);
+  const dragRef = useRef<ScrollDragState | undefined>(undefined);
 
   const syncScrollbar = useCallback((): void => {
     const viewport = viewportRef.current;

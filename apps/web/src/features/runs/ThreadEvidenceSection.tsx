@@ -5,7 +5,7 @@ import type { ThreadDetailController } from "./ThreadDetailPanel.js";
 import { RunInterventionRow } from "./RunInterventionRow.js";
 import { runStatusTone } from "./run-list-view-models.js";
 
-export function ThreadEvidenceSection({ controller }: { readonly controller: ThreadDetailController }): JSX.Element {
+export function ThreadEvidenceSection({ controller }: { readonly controller: ThreadDetailController }): React.JSX.Element {
   const { t } = useI18n();
   const { evidence, interventions, interventionsLoading, errors } = controller.state;
   const artifactById = new Map(evidence?.runs.flatMap((item) => item.artifacts).map((artifact) => [artifact.id, artifact]) ?? []);

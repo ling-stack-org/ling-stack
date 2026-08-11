@@ -233,7 +233,7 @@ test("MP-11 delayed old cwd responses cannot overwrite the current workflow stat
     const host = document.createElement("div");
     host.id = "workflow-controller-probe";
     document.body.append(host);
-    function Probe(): JSX.Element {
+    function Probe(): React.JSX.Element {
       const [cwdValue, setCwdValue] = React.useState("/cwd-a");
       const controller = controllerModule.useMediaWorkflowController({ cwd: cwdValue, onJobsChanged: () => undefined });
       return React.createElement("section", {},

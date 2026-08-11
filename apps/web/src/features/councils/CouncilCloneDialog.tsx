@@ -34,7 +34,7 @@ export function CouncilCloneDialog({
   readonly onOpenChange: (open: boolean) => void;
   readonly onRestoreFocus: () => void;
   readonly onSubmit: () => void | Promise<void>;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   if (!review) return <></>;
 

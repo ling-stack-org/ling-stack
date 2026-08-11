@@ -17,7 +17,7 @@ export function SettingsSubnav({
   readonly options: readonly SettingsSubnavOption[];
   readonly activeId: string;
   readonly onChange: (id: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const activeOption = options.find((option) => option.id === activeId) ?? options[0];
 
@@ -45,7 +45,7 @@ export function SettingsMetaLine({
 }: {
   readonly label: string;
   readonly items: readonly { readonly label: string; readonly value: string | number }[];
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
 
   return (

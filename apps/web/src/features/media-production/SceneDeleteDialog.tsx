@@ -33,7 +33,7 @@ export function SceneDeleteDialog({
   readonly onDeleted: () => void;
   readonly onRestoreFocus: () => void;
   readonly scene: MediaScene;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const cancelRef = useRef<HTMLButtonElement>(null);
 

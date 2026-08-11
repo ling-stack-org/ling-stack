@@ -51,7 +51,7 @@ export function MessageBodyRenderer({
   renderLocalFile,
   onOpenLocalFile,
   onDeferredContentReady,
-}: MessageBodyRendererProps): JSX.Element {
+}: MessageBodyRendererProps): React.JSX.Element {
   const blocks = parseMessageBody(text, cwd, { allowMarkdown, streaming });
   const rootClassName = [
     "message-body-renderer",
@@ -114,7 +114,7 @@ function renderBlock(
     case "math":
       return <MathContent key={`math-${index}`} source={block.source} display complete={block.complete} onDeferredContentReady={options.onDeferredContentReady} />;
     case "heading": {
-      const HeadingTag = `h${block.depth}` as keyof JSX.IntrinsicElements;
+      const HeadingTag = `h${block.depth}` as keyof React.JSX.IntrinsicElements;
       return <HeadingTag key={`heading-${index}`} className="message-body-heading">{renderInlineTokens(block.inlines, options)}</HeadingTag>;
     }
     case "quote":
@@ -214,7 +214,7 @@ function DefaultCodeBlock({
   readonly copyLabel: string;
   readonly kind: "code" | "diff";
   readonly language?: string;
-}): JSX.Element {
+}): React.JSX.Element {
   const normalizedLanguage = language?.trim() || (kind === "diff" ? "diff" : "text");
   return (
     <figure className={kind === "diff" ? "message-diff-block" : "message-code-block"} data-language={normalizedLanguage}>
@@ -235,7 +235,7 @@ function DefaultLocalFileLink({
 }: {
   readonly reference: LocalFileReference;
   readonly onOpen?: (reference: LocalFileReference) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const className = reference.insideWorkspace
     ? "message-local-file-link"
     : "message-local-file-link outside-workspace";

@@ -12,7 +12,7 @@ export function TeammateDangerTab({
 }: {
   readonly controller: TeammateDangerController;
   readonly teammate: AiTeammate;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const { viewModel } = controller;
 

@@ -10,7 +10,7 @@ export function RunGuidancePanel({ cwd, run, canRedirect, onRefreshRun }: {
   readonly run: RunSession;
   readonly canRedirect: boolean;
   readonly onRefreshRun: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const { state, actions } = useRunInterventionController({ cwd, run, onRefreshRun });
   const queueKey = "create:queue_followup";

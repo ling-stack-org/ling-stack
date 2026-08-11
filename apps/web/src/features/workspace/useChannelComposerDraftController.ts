@@ -79,7 +79,7 @@ export function useChannelComposerDraftController(channelId: string): ChannelCom
   const [composerInputMinHeight, setComposerInputMinHeight] = useState(76);
   const [pendingChannelSendPreview, setPendingChannelSendPreview] = useState<PendingChannelSendPreview | undefined>();
   const composerInputRef = useRef<TokenizedComposerInputHandle | null>(null);
-  const composerResizeDragRef = useRef<{ readonly pointerId: number; readonly startY: number; readonly startHeight: number } | undefined>();
+  const composerResizeDragRef = useRef<{ readonly pointerId: number; readonly startY: number; readonly startHeight: number } | undefined>(undefined);
   const autoPreviewUrlsRef = useRef(new Set<string>());
   const attachmentPreviewUrlsRef = useRef(new Set<string>());
 

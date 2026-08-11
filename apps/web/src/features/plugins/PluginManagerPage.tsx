@@ -13,7 +13,7 @@ import { usePluginManagerController } from "./usePluginManagerController.js";
 
 export type { PluginManagerPageProps } from "./plugin-manager-types.js";
 
-export function PluginManagerPage(props: PluginManagerPageProps): JSX.Element {
+export function PluginManagerPage(props: PluginManagerPageProps): React.JSX.Element {
   const { t } = useI18n();
   const copy = useMemo(() => buildPluginManagerCopy(t), [t]);
   const controller = usePluginManagerController({

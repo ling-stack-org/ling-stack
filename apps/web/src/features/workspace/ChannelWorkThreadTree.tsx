@@ -56,7 +56,7 @@ export function ChannelWorkThreadTree({
   onForkThread,
   onSetArchiveConfirmWorkThreadId,
   onMutateThreadVisibility,
-}: ChannelWorkThreadTreeProps): JSX.Element {
+}: ChannelWorkThreadTreeProps): React.JSX.Element {
   const { t } = useI18n();
   const mainBranchForkId = `channel-main:${selectedChannelId}`;
   return (

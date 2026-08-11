@@ -29,7 +29,7 @@ export function RuntimeDiagnosticsPanel({
   readonly onCancelWorkUnit: (workUnitId: string) => void;
   readonly onRetryWorkUnit: (workUnitId: string) => void;
   readonly onReconcileWorkUnit: (workUnitId: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const active = diagnostics?.active ?? workUnits.filter(isActiveWorkUnit);
   const queued = diagnostics?.queued ?? workUnits.filter((unit) => unit.status === "queued");
@@ -144,7 +144,7 @@ function WorkUnitDiagnosticsRow({
   readonly onCancel: (workUnitId: string) => void;
   readonly onRetry: (workUnitId: string) => void;
   readonly onReconcile: (workUnitId: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const canCancel = ["queued", "claimed", "running", "waiting_for_approval"].includes(workUnit.status);
   const canRetry = workUnit.status === "failed" || workUnit.status === "stale";
@@ -190,7 +190,7 @@ function WorkUnitDiagnosticsRow({
   );
 }
 
-function RuntimeResourceLeaseRow({ lease }: { readonly lease: ResourceLease }): JSX.Element {
+function RuntimeResourceLeaseRow({ lease }: { readonly lease: ResourceLease }): React.JSX.Element {
   const { t } = useI18n();
   const status = resourceLeaseStatusPresentation(lease.status);
   return (
@@ -208,7 +208,7 @@ function RuntimeStatus({
   status,
 }: {
   readonly status: ReturnType<typeof workUnitStatusPresentation>;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <StatusIndicator
@@ -226,8 +226,8 @@ function RuntimeProtocolList<T>({
 }: {
   readonly emptyLabel: string;
   readonly items: readonly T[];
-  readonly renderItem: (item: T) => JSX.Element;
-}): JSX.Element {
+  readonly renderItem: (item: T) => React.JSX.Element;
+}): React.JSX.Element {
   if (items.length === 0) {
     return (
       <div className="client-empty-state compact">

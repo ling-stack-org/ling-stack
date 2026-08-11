@@ -24,7 +24,7 @@ export function ThreadDetailPanel({ cwd, thread, threadId, turnState, visibleThr
   readonly onRefresh: () => void;
   readonly onSelectRun: (runId: string) => void;
   readonly onSelectThreadId: (threadId: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const controller = useThreadDetailController({ cwd, thread, threadId, turnState, visibleThreads, isRunning, onRefresh, onSelectThreadId });
   const { state, actions } = controller;

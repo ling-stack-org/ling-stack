@@ -74,7 +74,7 @@ export function NormalConversationFeed({
   searchActive,
   visibleMessages,
   workspaceCwd,
-}: NormalConversationFeedProps): JSX.Element {
+}: NormalConversationFeedProps): React.JSX.Element {
   const { t } = useI18n();
   const feedRef = useRef<HTMLDivElement | null>(null);
   const stickToLatestRef = useRef(true);
@@ -218,7 +218,7 @@ function NormalConversationMessageRow({
   readonly onOpenReportFile: (target: WorkspaceRightDockFileTarget) => void;
   readonly onOpenReview: (target: WorkspaceRightDockReviewTarget) => void;
   readonly onOpenRun?: (runId: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const { message } = item;
   return (

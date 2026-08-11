@@ -15,7 +15,7 @@ import {
 type SlashCommand = { readonly id: string; readonly label: string };
 
 export interface TeammatePrivateComposerController {
-  readonly composerInputRef: React.RefObject<TokenizedComposerInputHandle>;
+  readonly composerInputRef: React.RefObject<TokenizedComposerInputHandle | null>;
   readonly selectedPermissionPreset: PermissionPreset;
   readonly slashActiveIndex: number;
   readonly slashCommandPickerOptions: readonly SlashCommand[];

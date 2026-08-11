@@ -20,7 +20,7 @@ export function DockFileItemDetail({
     readonly path: string;
     readonly status: string;
   };
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <dl className="right-dock-detail-list">
       <div>
@@ -49,7 +49,7 @@ export function DockWorkspaceFilePreview({
 }: {
   readonly cwd: string;
   readonly target: WorkspaceRightDockFileTarget;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");

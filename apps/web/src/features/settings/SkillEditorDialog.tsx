@@ -56,7 +56,7 @@ export function SkillEditorDialog({
   readonly onConfirmAuthorityChanges: () => void;
   readonly onReload: () => void;
   readonly t: SettingsTranslator;
-}): JSX.Element {
+}): React.JSX.Element {
   const formValid = Boolean(form.name.trim() && form.summary.trim() && form.promptFragments.some((item) => item.trim()));
   const busyLabel = busy === "checking" ? t("Checking...") : t("Saving...");
   return (

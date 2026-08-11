@@ -9,7 +9,7 @@ export function WorkBoardLinkedObjects({ item, onOpenTask, onOpenRun, onOpenAppr
   readonly onOpenRun: (id: string) => void;
   readonly onOpenApproval: (id: string) => void;
   readonly onOpenChannel: (id: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const links = [
     item.taskId ? { key: "task", label: t("Task"), value: item.taskId, open: () => onOpenTask(item.taskId as string) } : undefined,

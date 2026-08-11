@@ -19,7 +19,7 @@ export function SkillLibrarySettingsPanel({
 }: {
   readonly cwd: string;
   readonly refreshToken?: number;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const { showToast } = useLingToast();
   const deleteTriggerRef = useRef<HTMLButtonElement | null>(null);

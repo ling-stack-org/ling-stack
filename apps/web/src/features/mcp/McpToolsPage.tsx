@@ -54,7 +54,7 @@ export function McpToolsPage({
   readonly onUpdate: (serverId: string, form: McpServerFormState) => Promise<void>;
   readonly servers: readonly McpServer[];
   readonly tools: readonly McpTool[];
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingServer, setEditingServer] = useState<McpServer | undefined>();
@@ -179,7 +179,7 @@ export function McpToolsPage({
   );
 }
 
-function McpServerLoadingState(): JSX.Element {
+function McpServerLoadingState(): React.JSX.Element {
   const { t } = useI18n();
   return (
     <div className="settings-mcp-loading" aria-label={t("Loading MCP servers")}>

@@ -35,7 +35,7 @@ export function SkillImportDialog({
   readonly onLoadFile: (file: File | undefined) => void;
   readonly onImport: () => void;
   readonly t: SettingsTranslator;
-}): JSX.Element {
+}): React.JSX.Element {
   const fileInputRef = useRef<HTMLInputElement>(null);
   return (
     <Dialog

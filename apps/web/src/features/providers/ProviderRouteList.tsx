@@ -67,7 +67,7 @@ export function ProviderRouteList({
   readonly onUse: (provider: ProviderPreset) => void;
   readonly onStopUse: (provider: ProviderPreset) => void;
   readonly onToggleEnabled: (provider: ProviderPreset, enabled: boolean) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   if (isLoading && providers.length === 0) return <ProviderTableSkeleton />;
 
@@ -208,7 +208,7 @@ export function ProviderRouteList({
   );
 }
 
-function ProviderTableSkeleton(): JSX.Element {
+function ProviderTableSkeleton(): React.JSX.Element {
   const { t } = useI18n();
   return (
     <div className="provider-table-shell provider-table-skeleton" aria-label={t("Loading providers...")} aria-busy="true">

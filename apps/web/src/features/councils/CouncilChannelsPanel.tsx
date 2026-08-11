@@ -19,7 +19,7 @@ export function CouncilChannelsPanel({
   controller,
 }: {
   readonly controller: CouncilChannelsController;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const selectedCouncilId = controller.selectedCouncilId;
 
@@ -182,7 +182,7 @@ function CouncilChannelRow({
 }: {
   readonly controller: CouncilChannelsController;
   readonly row: CouncilChannelRelationshipRow;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const busyAction = controller.busyActions[row.councilId];
   const restriction = row.restrictionLabelKey ? t(row.restrictionLabelKey) : undefined;

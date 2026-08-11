@@ -10,7 +10,7 @@ export function ConversationReplacementRetry({
   readonly retryLabel: string;
   readonly retrying: boolean;
   readonly onRetry: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <div className="conversation-replacement-retry" role="status">
       {failureReason ? <span>{failureReason}</span> : null}

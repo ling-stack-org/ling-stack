@@ -15,7 +15,7 @@ export function ConversationEmptyState({
   label,
   description,
   loading = false,
-}: ConversationEmptyStateProps): JSX.Element {
+}: ConversationEmptyStateProps): React.JSX.Element {
   return (
     <div className={className}>
       {loading ? <Loader2 className="spin" size={18} /> : icon}

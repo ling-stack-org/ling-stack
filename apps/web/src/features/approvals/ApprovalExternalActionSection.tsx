@@ -28,7 +28,7 @@ export function ApprovalExternalActionSection({
   readonly onExecute?: (actionId: string) => void;
   readonly onCancel?: (actionId: string) => void;
   readonly onRefresh?: () => void;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const { t } = useI18n();
   const hasExternalPayload = readDataString(approval.payload, "type") === "external_action";
   const action = actionView?.action;
@@ -110,7 +110,7 @@ function ExternalActionRetry({ operation, actionId, canExecute, canCancel, onExe
   readonly onExecute?: (actionId: string) => void;
   readonly onCancel?: (actionId: string) => void;
   readonly onRefresh?: () => void;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const { t } = useI18n();
   if (operation.failedOperation === "execute" && actionId && canExecute) return <Button size="sm" variant="ghost" onClick={() => onExecute?.(actionId)}>{t("Retry")}</Button>;
   if (operation.failedOperation === "cancel" && actionId && canCancel) return <Button size="sm" variant="ghost" onClick={() => onCancel?.(actionId)}>{t("Retry")}</Button>;

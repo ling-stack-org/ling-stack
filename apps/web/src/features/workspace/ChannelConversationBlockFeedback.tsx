@@ -17,7 +17,7 @@ export function ChannelConversationBlockFeedback({
   readonly dismissLabel: string;
   readonly failure: ConversationBlockFailure;
   readonly onDismiss: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <div
       className="conversation-block-feedback error"

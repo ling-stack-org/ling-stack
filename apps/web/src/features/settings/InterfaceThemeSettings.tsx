@@ -18,7 +18,7 @@ import { ThemePackageRepairList } from "./theme-packages/ThemePackageRepairList.
 import { ThemePreviewDialog } from "./theme-packages/ThemePreviewDialog.js";
 import { useThemePackageController } from "./theme-packages/useThemePackageController.js";
 
-export function InterfaceThemeSettings({ onCreateTheme }: { readonly onCreateTheme: () => void }): JSX.Element {
+export function InterfaceThemeSettings({ onCreateTheme }: { readonly onCreateTheme: () => void }): React.JSX.Element {
   const { t } = useI18n();
   const {
     resolved,

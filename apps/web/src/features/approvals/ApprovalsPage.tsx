@@ -39,7 +39,7 @@ export function ApprovalsPage({
   readonly onRouteExternalWork?: (externalWorkId: string, channelId: string) => void;
   readonly routingExternalWorkId?: string;
   readonly inlineApprovalIds?: ReadonlySet<string>;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const controller = useApprovalsPageController({ approvals, repairRun, repairRunId, externalActionDetails, inlineApprovalIds, selectedApprovalId, isLoading, errorMessage, onSelectApproval });
   const refresh = repairRunId ? () => onRefreshRepair(repairRunId) : onRefresh;

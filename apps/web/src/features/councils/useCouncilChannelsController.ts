@@ -40,7 +40,7 @@ export function useCouncilChannelsController({
   const catalogSequenceRef = useRef(0);
   const loadSequenceRef = useRef(0);
   const identityRef = useRef("");
-  const policyRef = useRef<ChannelCouncilPolicy>();
+  const policyRef = useRef<ChannelCouncilPolicy | undefined>(undefined);
   const hasSnapshotRef = useRef(false);
   const busyActionsRef = useRef<Readonly<Record<string, CouncilChannelMutationAction>>>({});
   const mutationQueueRef = useRef<Promise<void>>(Promise.resolve());

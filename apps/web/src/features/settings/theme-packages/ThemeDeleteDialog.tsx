@@ -25,7 +25,7 @@ export function ThemeDeleteDialog({
   readonly state: ThemeDeleteDialogState;
   readonly onClose: () => void;
   readonly onConfirm: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   return (

@@ -58,7 +58,7 @@ export function ChannelCreateDialog({
   readonly onCreateChannel: () => void | Promise<void>;
   readonly onOpenProviders: () => void;
   readonly onClose: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const [open, setOpen] = useState(true);
   const [submitting, setSubmitting] = useState(false);

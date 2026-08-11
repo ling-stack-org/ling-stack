@@ -27,7 +27,7 @@ export function SceneResultPreviewDialog({
   readonly currentMediaJobId?: string;
   readonly onClose: () => void;
   readonly onOpenTask: (mediaJobId: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const href = artifactContentUrl(artifact.id, cwd);
   return (

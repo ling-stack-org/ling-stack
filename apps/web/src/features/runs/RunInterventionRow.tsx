@@ -26,7 +26,7 @@ export function RunInterventionRow({
   readonly onPromote?: () => void;
   readonly promoteBusy?: boolean;
   readonly promoteError?: string;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const instructionId = useId();
   const [expanded, setExpanded] = useState(false);

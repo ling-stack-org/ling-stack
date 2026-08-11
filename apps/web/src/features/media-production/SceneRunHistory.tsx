@@ -18,7 +18,7 @@ export function SceneRunHistory({
   readonly jobs: readonly MediaJob[];
   readonly artifactsByJob: Readonly<Record<string, readonly RunArtifact[]>>;
   readonly actions: MediaProductionActions;
-}): JSX.Element {
+}): React.JSX.Element {
   const { locale, t } = useI18n();
   const projections = useMemo(() => deriveSceneRunProjections({ scene, runs, jobs, artifactsByJob, locale }), [artifactsByJob, jobs, locale, runs, scene]);
   const [busyRunIds, setBusyRunIds] = useState<ReadonlySet<string>>(() => new Set());

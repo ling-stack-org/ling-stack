@@ -11,7 +11,7 @@ export interface DiffViewerProps {
 
 const defaultMaxCollapsedLines = 160;
 
-export function DiffViewer({ change, maxCollapsedLines = defaultMaxCollapsedLines, showFoldMarkers = true }: DiffViewerProps): JSX.Element {
+export function DiffViewer({ change, maxCollapsedLines = defaultMaxCollapsedLines, showFoldMarkers = true }: DiffViewerProps): React.JSX.Element {
   const { t } = useI18n();
   const rootRef = useRef<HTMLPreElement | null>(null);
   const [expanded, setExpanded] = useState(false);

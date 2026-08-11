@@ -542,7 +542,7 @@ export class SqliteTeammateDirectStore {
     const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
     params.push(limit);
     return this.context.database
-      .prepare(`${teammateDirectReplyInterventionSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY created_at ASC, id ASC LIMIT ?`)
+      .prepare(`${teammateDirectReplyInterventionSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY created_at ASC, rowid ASC LIMIT ?`)
       .all(...params)
       .map((row) => mapTeammateDirectReplyIntervention(row as Record<string, SQLOutputValue>));
   }

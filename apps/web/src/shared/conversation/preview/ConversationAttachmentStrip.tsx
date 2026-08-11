@@ -28,7 +28,7 @@ export function ConversationAttachmentStrip({
   chipClassName,
   attachments,
   loadPreview,
-}: ConversationAttachmentStripProps): JSX.Element | null {
+}: ConversationAttachmentStripProps): React.JSX.Element | null {
   const { t } = useI18n();
   const [activePreview, setActivePreview] = useState<ConversationAttachmentChip | undefined>();
 

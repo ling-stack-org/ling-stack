@@ -17,7 +17,7 @@ import {
 import { importPlanWarningCount } from "./teammate-memory-view-models.js";
 import type { TeammateMemoryController } from "./useTeammateMemoryController.js";
 
-export function TeammateMemoryImportDialog({ controller }: { readonly controller: TeammateMemoryController }): JSX.Element {
+export function TeammateMemoryImportDialog({ controller }: { readonly controller: TeammateMemoryController }): React.JSX.Element {
   const { t } = useI18n();
   const plan = controller.importPlan;
   const warningCount = importPlanWarningCount(plan);

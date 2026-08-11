@@ -21,7 +21,7 @@ export function ApprovalDecisionPanel({
   readonly errorMessage?: string;
   readonly resolvingDecision?: ApprovalResolution;
   readonly onResolve: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
-}): JSX.Element | null {
+}): React.JSX.Element | null {
   const { t } = useI18n();
   const approveButtonRef = useRef<HTMLButtonElement>(null);
   const decision = useApprovalDecisionController({ approval, resolvingDecision, errorMessage, onResolve });

@@ -16,7 +16,7 @@ export function MessageBubble({
   bodyNode,
   pending = false,
   ...props
-}: MessageBubbleProps): JSX.Element {
+}: MessageBubbleProps): React.JSX.Element {
   const resolvedBodyNode = bodyNode ?? (body ? (
     <MessageBodyRenderer
       text={body}

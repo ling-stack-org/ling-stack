@@ -1,5 +1,6 @@
 import { join } from "node:path";
-import { AuthStorage, createAgentSession, ModelRegistry, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { InMemoryCredentialStore, InMemoryModelsStore } from "@earendil-works/pi-ai";
+import { createAgentSession, ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_TOOLS } from "./constants.js";
 import { translatePiEvent } from "./events.js";
 import { TOOL_HYDRATION_CALL_TOOL_NAME, TOOL_HYDRATION_LOAD_TOOL_NAME } from "./extensions/tool-hydration.js";
@@ -17,15 +18,18 @@ export class PiRunnerAdapter {
 
     throwIfAborted(options.signal);
 
-    const authStorage = AuthStorage.inMemory();
+    const modelRuntime = await ModelRuntime.create({
+      credentials: new InMemoryCredentialStore(),
+      modelsPath: null,
+      modelsStore: new InMemoryModelsStore(),
+    });
     if (options.provider.apiKey) {
-      authStorage.setRuntimeApiKey(options.provider.provider, options.provider.apiKey);
+      await modelRuntime.setRuntimeApiKey(options.provider.provider, options.provider.apiKey);
     }
 
-    const modelRegistry = ModelRegistry.inMemory(authStorage);
-    this.registerCustomProviderIfNeeded(modelRegistry, options.provider);
+    this.registerCustomProviderIfNeeded(modelRuntime, options.provider);
 
-    const model = modelRegistry.find(options.provider.provider, options.provider.model);
+    const model = modelRuntime.getModel(options.provider.provider, options.provider.model);
     if (!model) {
       throw new Error(`Pi model not found: ${options.provider.provider}/${options.provider.model}`);
     }
@@ -47,8 +51,7 @@ export class PiRunnerAdapter {
     const { session } = await createAgentSession({
       cwd,
       agentDir,
-      authStorage,
-      modelRegistry,
+      modelRuntime,
       model,
       thinkingLevel: options.thinkingLevel ?? "medium",
       tools: activeTools,
@@ -109,12 +112,12 @@ export class PiRunnerAdapter {
     }
   }
 
-  private registerCustomProviderIfNeeded(modelRegistry: ModelRegistry, provider: PiRunnerProviderConfig): void {
+  private registerCustomProviderIfNeeded(modelRuntime: ModelRuntime, provider: PiRunnerProviderConfig): void {
     if (!provider.baseUrl) {
       return;
     }
 
-    modelRegistry.registerProvider(provider.provider, {
+    modelRuntime.registerProvider(provider.provider, {
       name: provider.displayName ?? provider.provider,
       baseUrl: provider.baseUrl,
       apiKey: provider.apiKey,

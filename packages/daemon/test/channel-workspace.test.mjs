@@ -34,8 +34,29 @@ import { ensureGitRepo, ensureGitRepoForChannelPost } from "./git-test-helpers.m
 const require = createRequire(import.meta.url);
 
 async function readPdfFixtureBytes() {
-  const pdfParseDir = dirname(require.resolve("pdf-parse/package.json"));
-  return readFile(resolve(pdfParseDir, "test", "data", "04-valid.pdf"));
+  const content = "BT\n/F1 24 Tf\n100 700 Td\n(Ling PDF fixture) Tj\nET";
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /MediaBox [0 0 612 792] /Contents 5 0 R >>",
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    `<< /Length ${Buffer.byteLength(content, "latin1")} >>\nstream\n${content}\nendstream`,
+  ];
+  let pdf = "%PDF-1.4\n";
+  const offsets = [0];
+  for (const [index, object] of objects.entries()) {
+    offsets.push(Buffer.byteLength(pdf, "latin1"));
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  }
+  const xrefOffset = Buffer.byteLength(pdf, "latin1");
+  pdf += `xref\n0 ${objects.length + 1}\n`;
+  pdf += "0000000000 65535 f \n";
+  pdf += offsets
+    .slice(1)
+    .map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`)
+    .join("");
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+  return Buffer.from(pdf, "latin1");
 }
 
 async function readDocxFixtureBytes() {
@@ -1915,8 +1936,8 @@ test("pdf and docx extractors materialize bounded attachment text", async () => 
     });
     assert.equal(pdfResult.status, "available", JSON.stringify(pdfResult));
     assert.equal(pdfResult.contentKind, "pdf_text");
-    assert.match(pdfResult.contentText, /Turk J Med Sci/);
-    assert.equal(pdfResult.structuredSummary.pageCount, 5);
+    assert.match(pdfResult.contentText, /Ling PDF fixture/);
+    assert.equal(pdfResult.structuredSummary.pageCount, 1);
 
     const docxBytes = await readDocxFixtureBytes();
     await writeFile(resolve(store.paths.attachmentsDir, "fixture.docx"), docxBytes);
@@ -2032,7 +2053,7 @@ test("inline materialization writes pdf and docx cache for current-turn attachme
     assert.equal(pdfRows.length, 1);
     assert.equal(pdfRows[0].extractorId, "pdf_text_v1");
     assert.equal(pdfRows[0].status, "available", JSON.stringify(pdfRows[0]));
-    assert.match(pdfRows[0].contentText, /Turk J Med Sci/);
+    assert.match(pdfRows[0].contentText, /Ling PDF fixture/);
 
     const docxRows = store.listChannelInputMaterializations({
       channelId: channel.id,
@@ -2046,7 +2067,7 @@ test("inline materialization writes pdf and docx cache for current-turn attachme
 
     const envelope = buildLingAgentTurnEnvelope({ store, channel, sourceMessage: message });
     assert.deepEqual(envelope.attachments.map((attachment) => attachment.materializationStatus), ["available", "available"]);
-    assert.match(envelope.attachments[0].previewText, /Turk J Med Sci/);
+    assert.match(envelope.attachments[0].previewText, /Ling PDF fixture/);
     assert.match(envelope.attachments[1].previewText, /Walking on imported air/);
   } finally {
     store.close();
@@ -2090,11 +2111,11 @@ test("materialized pdf and docx attachments let Ling answer without materializat
     const finalReply = listed.messages.find((message) => message.id === created.aiReply.id);
     assert.equal(finalReply.body, "我读到了 PDF 和 DOCX 的正文。");
     assert.equal(runner.runs.length, 1);
-    assert.match(runner.runs[0].task.prompt, /Turk J Med Sci/);
+    assert.match(runner.runs[0].task.prompt, /Ling PDF fixture/);
     assert.match(runner.runs[0].task.prompt, /Walking on imported air/);
     const pdfPreview = await getJson(`${daemon.url}/attachments/${encodeURIComponent(pdfAttachment.id)}/preview?cwd=${encodeURIComponent(cwd)}&scope=channel&channelId=${encodeURIComponent(channel.id)}`);
     assert.equal(pdfPreview.kind, "pdf");
-    assert.match(pdfPreview.text, /Turk J Med Sci/);
+    assert.match(pdfPreview.text, /Ling PDF fixture/);
     const docxPreview = await getJson(`${daemon.url}/attachments/${encodeURIComponent(docxAttachment.id)}/preview?cwd=${encodeURIComponent(cwd)}&scope=channel&channelId=${encodeURIComponent(channel.id)}`);
     assert.equal(docxPreview.kind, "office");
     assert.match(docxPreview.text, /Walking on imported air/);

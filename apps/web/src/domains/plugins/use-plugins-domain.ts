@@ -88,7 +88,7 @@ export function usePluginsDomain(input: {
   const [pluginPendingActions, setPluginPendingActions] = useState<readonly PluginPendingAction[]>([]);
   const [pluginActionErrors, setPluginActionErrors] = useState<readonly PluginActionError[]>([]);
   const [error, setError] = useState<DomainError | undefined>();
-  const autoConnectInFlightRef = useRef<Promise<ManagedPluginView | undefined> | undefined>();
+  const autoConnectInFlightRef = useRef<Promise<ManagedPluginView | undefined> | undefined>(undefined);
   const actionFenceRef = useRef(new PluginActionRequestFence());
   const loadRequestIdRef = useRef(0);
   const internalRequestIdRef = useRef(0);

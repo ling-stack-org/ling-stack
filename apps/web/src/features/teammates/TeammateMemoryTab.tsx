@@ -15,7 +15,7 @@ export function TeammateMemoryTab({
 }: {
   readonly controller: TeammateMemoryController;
   readonly isProtectedSystemTeammate: boolean;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const snapshot = controller.snapshot;
   const showHealth = Boolean(snapshot && (

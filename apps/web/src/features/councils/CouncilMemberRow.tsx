@@ -28,7 +28,7 @@ export function CouncilMemberRow({
   readonly onToggle: (teammateId: string) => void;
   readonly row: CouncilMemberRowView;
   readonly total: number;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const teammateId = row.member.teammateId;
   const rowBusy = mutationTargetId === teammateId;

@@ -41,7 +41,7 @@ export function NormalConversationHeader({
   onToggleSummary,
   onToggleTerminal,
   onToggleDetails,
-}: NormalConversationHeaderProps): JSX.Element {
+}: NormalConversationHeaderProps): React.JSX.Element {
   const { t } = useI18n();
 
   return (

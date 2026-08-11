@@ -9,7 +9,7 @@ export type CopyActionButtonProps = SharedCopyActionButtonProps;
 export function CopyActionButton({
   copiedLabel,
   ...props
-}: CopyActionButtonProps): JSX.Element {
+}: CopyActionButtonProps): React.JSX.Element {
   const { t } = useI18n();
   return <SharedCopyActionButton {...props} copiedLabel={copiedLabel ?? t("Copied")} />;
 }

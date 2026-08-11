@@ -59,7 +59,7 @@ export function WorkflowConversionPreviewDrawer({
   historicalWorkflowSteps,
   onConfirm,
   onClose,
-}: WorkflowConversionPreviewDrawerProps): JSX.Element {
+}: WorkflowConversionPreviewDrawerProps): React.JSX.Element {
   const { t } = useI18n();
   const steps = deriveWorkflowPreviewSteps(plan.bodyMarkdown);
   const [editing, setEditing] = useState(false);

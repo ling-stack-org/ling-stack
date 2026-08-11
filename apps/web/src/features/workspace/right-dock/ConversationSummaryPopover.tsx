@@ -36,7 +36,7 @@ export function ConversationSummaryPopover({
   dockMotion,
   motionState,
   onClose,
-}: ConversationSummaryPopoverProps): JSX.Element {
+}: ConversationSummaryPopoverProps): React.JSX.Element {
   const { t } = useI18n();
   const resolvedClassName = [
     "conversation-summary-layer",

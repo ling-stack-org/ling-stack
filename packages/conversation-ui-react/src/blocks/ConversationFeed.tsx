@@ -31,7 +31,7 @@ export function ConversationFeed<TItem>({
   emptyIcon,
   getItemId,
   renderItem,
-}: ConversationFeedProps<TItem>): JSX.Element {
+}: ConversationFeedProps<TItem>): React.JSX.Element {
   const rootClassName = [className ?? "conversation-feed", items.length === 0 ? "empty" : ""].filter(Boolean).join(" ");
 
   return (

@@ -3,7 +3,7 @@ import { useI18n } from "../../i18n.js";
 import { formatEventData } from "../../lib/data.js";
 import type { ApprovalRequest } from "../../types.js";
 
-export function ApprovalTechnicalDetails({ approval }: { readonly approval: ApprovalRequest }): JSX.Element {
+export function ApprovalTechnicalDetails({ approval }: { readonly approval: ApprovalRequest }): React.JSX.Element {
   const { t } = useI18n();
   return (
     <InspectorSection className="approval-technical-details" summary={approval.id} title={t("Technical details")}>

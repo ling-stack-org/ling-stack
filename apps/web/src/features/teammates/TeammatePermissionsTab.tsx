@@ -53,7 +53,7 @@ export function TeammatePermissionsTab({
   readonly workspacePolicyError?: string;
   readonly onRefreshWorkspacePolicy?: () => void;
   readonly onOpenAuthorizationSettings?: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const viewModel = buildTeammatePermissionsViewModel({
     teammate,

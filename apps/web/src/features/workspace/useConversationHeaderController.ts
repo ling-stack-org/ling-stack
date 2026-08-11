@@ -6,9 +6,9 @@ export interface ConversationHeaderControllerInput {
 }
 
 export interface ConversationHeaderController {
-  readonly searchInputRef: RefObject<HTMLInputElement>;
+  readonly searchInputRef: RefObject<HTMLInputElement | null>;
   readonly searchOpen: boolean;
-  readonly searchTriggerRef: RefObject<HTMLButtonElement>;
+  readonly searchTriggerRef: RefObject<HTMLButtonElement | null>;
   readonly clearSearch: () => void;
   readonly closeSearch: (restoreFocus?: boolean) => void;
   readonly toggleSearch: () => void;

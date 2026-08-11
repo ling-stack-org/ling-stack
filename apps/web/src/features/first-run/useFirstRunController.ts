@@ -36,7 +36,7 @@ export function useFirstRunController(input: {
   }), [input.daemonHealthy, input.hasReadyProvider, input.workspaceCwd]);
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<FirstRunStepId>("workspace");
-  const sessionPreferenceRef = useRef<FirstRunPreferenceV1>();
+  const sessionPreferenceRef = useRef<FirstRunPreferenceV1 | undefined>(undefined);
 
   useEffect(() => {
     if (input.daemonHealthy === undefined || !input.providersLoaded) return;

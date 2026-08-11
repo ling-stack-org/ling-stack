@@ -37,7 +37,7 @@ export function ProviderRouteActions({
   readonly onStopUse: (provider: ProviderPreset) => void;
   readonly onToggleEnabled: (provider: ProviderPreset, enabled: boolean) => void;
   readonly onUse: (provider: ProviderPreset) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const primary = row.primaryAction === "add_api_key" ? (
     <Button className="provider-main-action" size="sm" leadingIcon={<Pencil />} onClick={() => onEdit(provider)}>

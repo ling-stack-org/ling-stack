@@ -9,7 +9,7 @@ export type ChannelActiveStatusIndicatorProps = ChannelActiveStatusInput;
 
 export function ChannelActiveStatusIndicator(
   props: ChannelActiveStatusIndicatorProps,
-): JSX.Element {
+): React.JSX.Element {
   const { t } = useI18n();
   const presentation = channelActiveStatusPresentation(props);
 

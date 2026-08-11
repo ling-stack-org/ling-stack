@@ -62,7 +62,7 @@ export function ConversationComposerShell({
   style,
   surface,
   toolbarClassName,
-}: ConversationComposerShellProps): JSX.Element {
+}: ConversationComposerShellProps): React.JSX.Element {
   const rootClassName = [
     "conversation-composer",
     `conversation-composer-surface-${surface}`,

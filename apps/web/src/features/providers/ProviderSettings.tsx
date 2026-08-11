@@ -78,7 +78,7 @@ export interface ProviderSettingsProps {
   readonly settingsToolMode?: boolean;
 }
 
-export function ProviderSettings(props: ProviderSettingsProps): JSX.Element {
+export function ProviderSettings(props: ProviderSettingsProps): React.JSX.Element {
   const { t } = useI18n();
   const {
     providers, form, templates, editingProviderId, selectedTemplateId, checkingProviderIds,

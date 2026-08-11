@@ -40,7 +40,7 @@ export function WorkspaceChangeReviewPage({
   readonly error?: string;
   readonly requestedPath?: string;
   readonly onRefresh: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const [navigatorOpen, setNavigatorOpen] = useState(false);
   const [filter, setFilter] = useState("");
@@ -191,7 +191,7 @@ function WorkspaceChangeFileSection({
   readonly file: WorkspaceChangeFile;
   readonly selected: boolean;
   readonly setRef: (element: HTMLElement | null) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const [collapsed, setCollapsed] = useState(false);
   const fileIcon = terminalReportFileIcon(file.path);
@@ -277,7 +277,7 @@ function workspaceChangeKind(file: WorkspaceChangeFile): ConversationFileChange[
   return "update";
 }
 
-function ChangeStats({ additions, deletions }: { readonly additions: number; readonly deletions: number }): JSX.Element {
+function ChangeStats({ additions, deletions }: { readonly additions: number; readonly deletions: number }): React.JSX.Element {
   return <span className="workspace-change-stats"><span className="add">+{additions}</span><span className="delete">-{deletions}</span></span>;
 }
 

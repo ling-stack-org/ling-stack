@@ -8,7 +8,7 @@ export function ArchivedErrorFeedback({
 }: {
   readonly className?: string;
   readonly feedback: ArchivedSettingsFeedback;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <div className={["archived-items-feedback", className].filter(Boolean).join(" ")}>

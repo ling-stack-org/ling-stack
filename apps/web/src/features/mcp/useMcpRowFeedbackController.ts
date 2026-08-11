@@ -35,7 +35,7 @@ export function useMcpRowFeedbackController(servers: readonly McpServer[]): {
     servers.map((server) => [server.id, mcpServerConfigurationIdentity(server)] as const),
   ), [servers]);
   const currentIdentitiesRef = useRef(identities);
-  const previousIdentitiesRef = useRef<ReadonlyMap<string, string>>();
+  const previousIdentitiesRef = useRef<ReadonlyMap<string, string> | undefined>(undefined);
   currentIdentitiesRef.current = identities;
 
   const clearFailure = useCallback((serverId: string): void => {

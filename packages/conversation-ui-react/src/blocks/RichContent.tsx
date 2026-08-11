@@ -24,7 +24,7 @@ export function MermaidBlock({
   readonly source: string;
   readonly complete: boolean;
   readonly onDeferredContentReady?: (target: Element | null) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const renderGenerationRef = useRef(0);
@@ -191,7 +191,7 @@ export function MathContent({
   readonly display: boolean;
   readonly complete?: boolean;
   readonly onDeferredContentReady?: (target: Element | null) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const containerRef = useRef<HTMLElement | null>(null);
   const [html, setHtml] = useState("");
   const [error, setError] = useState("");

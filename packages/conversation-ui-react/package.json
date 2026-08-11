@@ -20,18 +20,18 @@
   "dependencies": {
     "@ling-stack/conversation-ui-core": "workspace:*",
     "@ling-stack/ui-react": "workspace:*",
-    "katex": "^0.16.22",
-    "lucide-react": "^0.468.0",
+    "katex": "^0.18.1",
+    "lucide-react": "^1.29.0",
     "mermaid": "^11.12.0",
-    "type-fest": "^4.41.0"
+    "type-fest": "^5.8.0"
   },
   "peerDependencies": {
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
   },
   "devDependencies": {
     "@types/katex": "^0.16.7",
-    "@types/react": "^18.3.1",
-    "@types/react-dom": "^18.3.1"
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4"
   }
 }

@@ -26,7 +26,7 @@ export function NormalConversationPage({
   feedProps,
   composerNode,
   panelsProps,
-}: NormalConversationPageProps): JSX.Element {
+}: NormalConversationPageProps): React.JSX.Element {
   const { t } = useI18n();
   const { dockController, dockViewModel, terminalPresence, terminalResize } = panelsProps;
   return (

@@ -44,12 +44,14 @@ export interface AutomationSchedulerState {
 
 interface AutomationSchedulerEntry {
   state: AutomationSchedulerState;
+  generation: number;
   timers: Map<string, ReturnType<typeof setTimeout>>;
   runningAutomationIds: Set<string>;
 }
 
 export class AutomationSchedulerRegistry {
   private readonly entriesByCwd = new Map<string, AutomationSchedulerEntry>();
+  private readonly inFlightTasks = new Set<Promise<void>>();
 
   constructor(
     private readonly runnerRegistry: RunnerRegistry,
@@ -89,6 +91,7 @@ export class AutomationSchedulerRegistry {
           tickCount: 0,
           items: [],
         },
+        generation: 1,
         timers: new Map(),
         runningAutomationIds: new Set(),
       };
@@ -122,6 +125,7 @@ export class AutomationSchedulerRegistry {
     if (!existing || existing.state.status !== "running") {
       return this.start(cwd).scheduler;
     }
+    existing.generation += 1;
     this.clearTimers(existing);
     existing.state = {
       ...existing.state,
@@ -133,7 +137,14 @@ export class AutomationSchedulerRegistry {
     const store = this.storeRegistry.getStore(cwd);
     const automations = store.listAutomationDefinitions({ status: "enabled", scheduledOnly: true, limit: 500 });
     for (const automation of automations) {
-      this.scheduleAutomation(existing, automation, new Date());
+      if (existing.runningAutomationIds.has(automation.id)) {
+        this.upsertItem(existing, {
+          automationId: automation.id,
+          title: automation.title,
+        });
+      } else {
+        this.scheduleAutomation(existing, automation, new Date());
+      }
     }
     this.refreshStateSummary(existing);
     return existing.state;
@@ -144,6 +155,7 @@ export class AutomationSchedulerRegistry {
     if (!entry) {
       return undefined;
     }
+    entry.generation += 1;
     this.clearTimers(entry);
     entry.state = {
       ...entry.state,
@@ -162,10 +174,17 @@ export class AutomationSchedulerRegistry {
     }
   }
 
+  async waitForIdle(): Promise<void> {
+    while (this.inFlightTasks.size > 0) {
+      await Promise.allSettled([...this.inFlightTasks]);
+    }
+  }
+
   private scheduleAutomation(entry: AutomationSchedulerEntry, automation: AutomationDefinition, from: Date): void {
-    if (automation.trigger.type !== "schedule") {
+    if (entry.state.status !== "running" || automation.trigger.type !== "schedule") {
       return;
     }
+    const generation = entry.generation;
     const nextRunAt = computeNextAutomationRunAt(automation, from);
     const delayMs = Math.max(new Date(nextRunAt).getTime() - Date.now(), 1000);
     const existingTimer = entry.timers.get(automation.id);
@@ -173,7 +192,12 @@ export class AutomationSchedulerRegistry {
       clearTimeout(existingTimer);
     }
     const timer = setTimeout(() => {
-      void this.fireAutomation(entry, automation.id, nextRunAt);
+      if (entry.timers.get(automation.id) === timer) {
+        entry.timers.delete(automation.id);
+      }
+      const task = this.fireAutomation(entry, automation.id, nextRunAt, generation);
+      this.inFlightTasks.add(task);
+      void task.finally(() => this.inFlightTasks.delete(task));
     }, delayMs);
     timer.unref?.();
     entry.timers.set(automation.id, timer);
@@ -185,8 +209,17 @@ export class AutomationSchedulerRegistry {
     this.storeRegistry.getStore(entry.state.cwd).updateAutomationDefinition(automation.id, { nextRunAt }, new Date().toISOString());
   }
 
-  private async fireAutomation(entry: AutomationSchedulerEntry, automationId: string, scheduledFor: string): Promise<void> {
-    if (entry.state.status !== "running" || entry.runningAutomationIds.has(automationId)) {
+  private async fireAutomation(
+    entry: AutomationSchedulerEntry,
+    automationId: string,
+    scheduledFor: string,
+    generation: number,
+  ): Promise<void> {
+    if (
+      entry.state.status !== "running"
+      || entry.generation !== generation
+      || entry.runningAutomationIds.has(automationId)
+    ) {
       return;
     }
     entry.runningAutomationIds.add(automationId);
@@ -229,6 +262,9 @@ export class AutomationSchedulerRegistry {
             },
           ),
       });
+      if (entry.state.status !== "running" || entry.generation !== generation) {
+        return;
+      }
       entry.state = {
         ...entry.state,
         tickCount: entry.state.tickCount + 1,
@@ -244,6 +280,9 @@ export class AutomationSchedulerRegistry {
       });
       this.scheduleAutomation(entry, automation, new Date());
     } catch (error) {
+      if (entry.state.status !== "running" || entry.generation !== generation) {
+        return;
+      }
       const message = error instanceof Error ? error.message : String(error);
       entry.state = {
         ...entry.state,
@@ -262,8 +301,27 @@ export class AutomationSchedulerRegistry {
       store.updateAutomationDefinition(automationId, { status: "error", lastErrorMessage: message }, new Date().toISOString());
     } finally {
       entry.runningAutomationIds.delete(automationId);
-      this.refreshStateSummary(entry);
+      if (entry.generation === generation) {
+        this.refreshStateSummary(entry);
+      } else {
+        this.rescheduleAutomationAfterRefresh(entry, automationId);
+      }
     }
+  }
+
+  private rescheduleAutomationAfterRefresh(entry: AutomationSchedulerEntry, automationId: string): void {
+    if (
+      entry.state.status !== "running"
+      || entry.timers.has(automationId)
+      || entry.runningAutomationIds.has(automationId)
+    ) {
+      return;
+    }
+    const automation = this.storeRegistry.getStore(entry.state.cwd).getAutomationDefinition(automationId);
+    if (!automation || automation.status !== "enabled" || automation.trigger.type !== "schedule") {
+      return;
+    }
+    this.scheduleAutomation(entry, automation, new Date());
   }
 
   private async maybeContinueRunInterventions(terminalRun: RunSession): Promise<void> {

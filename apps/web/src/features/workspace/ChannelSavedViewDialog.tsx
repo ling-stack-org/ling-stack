@@ -36,7 +36,7 @@ export function ChannelSavedViewDialog({
   readonly onClose: () => void;
   readonly onDraftChange: (value: string) => void;
   readonly onSubmit: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const cancelRef = useRef<HTMLButtonElement | null>(null);

@@ -8,7 +8,7 @@ import { Badge, DataRow, InlineFeedback, Switch } from "../../../shared/ui/index
  * Control boundary: the preference can pause Agent work, but it can never
  * authorize input or capture while the system session is locked.
  */
-export function LockAwareComputerControlSection(): JSX.Element {
+export function LockAwareComputerControlSection(): React.JSX.Element {
   const { t } = useI18n();
   const desktopCapability = typeof window === "undefined"
     ? undefined

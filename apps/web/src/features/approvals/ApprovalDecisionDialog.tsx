@@ -35,11 +35,11 @@ export function ApprovalDecisionDialog({
   readonly reasonRequired: boolean;
   readonly reasonError: string;
   readonly mutationError: string;
-  readonly restoreFocusRef: RefObject<HTMLButtonElement>;
+  readonly restoreFocusRef: RefObject<HTMLButtonElement | null>;
   readonly onOpenChange: (open: boolean) => void;
   readonly onReasonChange: (reason: string) => void;
   readonly onConfirm: (decision: ApprovalResolution) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const cancelRef = useRef<HTMLButtonElement>(null);
   return (

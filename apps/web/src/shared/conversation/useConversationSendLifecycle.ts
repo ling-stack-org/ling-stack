@@ -15,7 +15,7 @@ export interface ConversationSendLifecycleController extends ConversationSendLif
 }
 
 export function useConversationSendLifecycle(ownerKey: string): ConversationSendLifecycleController {
-  const storeRef = useRef<ConversationSendLifecycleStore>();
+  const storeRef = useRef<ConversationSendLifecycleStore | undefined>(undefined);
   if (!storeRef.current) storeRef.current = new ConversationSendLifecycleStore(ownerKey);
   const [snapshot, setSnapshot] = useState(() => storeRef.current!.snapshot());
 

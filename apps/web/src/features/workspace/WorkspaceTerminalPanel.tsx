@@ -129,7 +129,7 @@ export function WorkspaceTerminalPanel({
   expanded = true,
   motionState = "open",
   resizing = false,
-}: WorkspaceTerminalPanelProps): JSX.Element {
+}: WorkspaceTerminalPanelProps): React.JSX.Element {
   const { t } = useI18n();
   const internalSession = useWorkspaceTerminalSession(session ? undefined : cwd);
   const terminalSession = session ?? internalSession;
@@ -227,7 +227,7 @@ function WorkspaceTerminalHistoryLine({
 }: {
   readonly entry: WorkspaceTerminalHistoryEntry;
   readonly prompt: string;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const response = entry.response;
   const hasStdout = Boolean(response?.stdout);

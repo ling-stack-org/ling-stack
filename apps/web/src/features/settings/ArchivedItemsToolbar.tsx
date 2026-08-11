@@ -23,7 +23,7 @@ export function ArchivedItemsToolbar({
   readonly searchInputRef: MutableRefObject<HTMLInputElement | null>;
   readonly onCategoryChange: (categoryId: ArchivedCategoryId) => void;
   readonly onQueryChange: (query: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const options: readonly SettingsSubnavOption[] = archivedCategoryDefinitions.map((category) => ({
     id: category.id,

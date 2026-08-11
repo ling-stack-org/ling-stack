@@ -71,7 +71,7 @@ export function SkillLibraryRegistrySection({
   readonly onEditSkill: (skill: SkillRegistryEntry) => void;
   readonly toolbarAfterSearch?: ReactNode;
   readonly t: SettingsTranslator;
-}): JSX.Element {
+}): React.JSX.Element {
   const [userSearch, setUserSearch] = useState("");
   const [evolvedSearch, setEvolvedSearch] = useState("");
   const [builtinSearch, setBuiltinSearch] = useState("");

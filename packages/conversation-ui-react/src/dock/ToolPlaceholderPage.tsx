@@ -13,7 +13,7 @@ export function ToolPlaceholderPage({
   title,
   description,
   children,
-}: ToolPlaceholderPageProps): JSX.Element {
+}: ToolPlaceholderPageProps): React.JSX.Element {
   return (
     <div className="right-dock-tool-page">
       {children ?? <DockEmptyState icon={icon} title={title} description={description} />}

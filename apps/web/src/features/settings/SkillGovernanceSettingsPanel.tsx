@@ -41,7 +41,7 @@ export function SkillGovernanceSettingsPanel({
   readonly onChange: (policy: SkillGovernancePolicy) => void;
   readonly onSave: () => void;
   readonly t: SettingsTranslator;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <section className="settings-skill-governance" aria-label={t("Skill policy")}>
       {!supported ? (

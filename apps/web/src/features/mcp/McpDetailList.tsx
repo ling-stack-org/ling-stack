@@ -1,7 +1,7 @@
 import { useI18n } from "../../i18n.js";
 import type { McpDetailItem } from "./mcp-settings-view-models.js";
 
-export function McpDetailList({ items }: { readonly items: readonly McpDetailItem[] }): JSX.Element {
+export function McpDetailList({ items }: { readonly items: readonly McpDetailItem[] }): React.JSX.Element {
   const { t } = useI18n();
   return (
     <dl className="settings-mcp-detail-list">

@@ -7,7 +7,7 @@ import { InlineFeedback, Skeleton, useLingToast } from "../../shared/ui/index.js
 import type { EffectiveConfigResponse, SkillGovernancePolicy } from "../../types.js";
 import { defaultSkillGovernancePolicy, SkillGovernanceSettingsPanel } from "./SkillGovernanceSettingsPanel.js";
 
-export function SkillGovernanceSettingsSection({ cwd }: { readonly cwd: string }): JSX.Element {
+export function SkillGovernanceSettingsSection({ cwd }: { readonly cwd: string }): React.JSX.Element {
   const { t } = useI18n();
   const { showToast } = useLingToast();
   const [effectiveConfig, setEffectiveConfig] = useState<EffectiveConfigResponse | undefined>();

@@ -41,7 +41,7 @@ export function ExternalWorkSettingsPanel({
   readonly onExternalWorkAction: (action: "poll" | "reconcile" | "start" | "stop") => Promise<boolean>;
   readonly onRefreshExternalWork: () => void;
   readonly selectedChannel: Channel | undefined;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const statusError = error?.kind === "status" || error?.kind === "triage" ? error : undefined;
 
@@ -116,7 +116,7 @@ export function ExternalWorkSettingsPanel({
   );
 }
 
-function ExternalWorkLoadingState({ label }: { readonly label: string }): JSX.Element {
+function ExternalWorkLoadingState({ label }: { readonly label: string }): React.JSX.Element {
   return (
     <div className="settings-external-work-loading" role="status" aria-label={label}>
       <Skeleton shape="block" height={62} width="100%" />

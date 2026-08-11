@@ -14,7 +14,7 @@ export function McpServerToolbar({
   readonly readyCount: number;
   readonly serverCount: number;
   readonly toolCount: number;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <div className="settings-mcp-toolbar" role="toolbar" aria-label={t("MCP server actions")}>

@@ -48,7 +48,7 @@ export function SkillLibraryInspectorPanel({
   readonly onArchiveSource: () => void;
   readonly onRollbackSource: (snapshotId: string) => void;
   readonly t: SettingsTranslator;
-}): JSX.Element {
+}): React.JSX.Element {
   const triggerRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {

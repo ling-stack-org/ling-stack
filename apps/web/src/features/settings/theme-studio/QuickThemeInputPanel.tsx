@@ -10,7 +10,7 @@ import {
 } from "../../../shared/ui/index.js";
 import type { QuickThemeStudioController } from "./useQuickThemeStudioController.js";
 
-export function QuickThemeInputPanel({ controller }: { readonly controller: QuickThemeStudioController }): JSX.Element {
+export function QuickThemeInputPanel({ controller }: { readonly controller: QuickThemeStudioController }): React.JSX.Element {
   const { t } = useI18n();
   const inputRef = useRef<HTMLInputElement>(null);
   const { source, stage } = controller.state;

@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 export type WorkCellActivityVisibility = "running" | "paused";
 
 export function useWorkCellActivityVisibility(active: boolean): {
-  readonly rootRef: RefObject<HTMLElement>;
+  readonly rootRef: RefObject<HTMLElement | null>;
   readonly activityVisibility: WorkCellActivityVisibility;
 } {
   const rootRef = useRef<HTMLElement>(null);

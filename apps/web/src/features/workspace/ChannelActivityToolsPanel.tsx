@@ -116,7 +116,7 @@ export function ChannelActivityToolsPanel({
   ciTriageLoading,
   cwd,
   onRefreshCiTriage,
-}: ChannelActivityToolsPanelProps): JSX.Element {
+}: ChannelActivityToolsPanelProps): React.JSX.Element {
   const { t } = useI18n();
   const [savedViewDialog, setSavedViewDialog] = useState<ChannelSavedViewDialogState>();
   const [savedViewDialogBusy, setSavedViewDialogBusy] = useState(false);

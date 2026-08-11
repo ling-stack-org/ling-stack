@@ -12,7 +12,7 @@ const steps = [
 export function ThemeStudioProgress({ stage, hasSource }: {
   readonly hasSource: boolean;
   readonly stage: QuickThemeStage;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const completed = completedCount(stage, hasSource);
   return (

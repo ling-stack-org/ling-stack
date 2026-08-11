@@ -51,7 +51,7 @@ export function useWorkspaceSettingsController(input: {
   const [workspaceSettings, setWorkspaceSettings] = useState<WorkspaceSettings | undefined>();
   const [effectiveConfig, setEffectiveConfig] = useState<EffectiveConfigResponse | undefined>();
   const workspaceSettingsLoadedCwdRef = useRef("");
-  const interfaceSettingsSyncRef = useRef<{ readonly cwd: string; readonly theme: ThemePreference; readonly locale: Locale } | undefined>();
+  const interfaceSettingsSyncRef = useRef<{ readonly cwd: string; readonly theme: ThemePreference; readonly locale: Locale } | undefined>(undefined);
   const currentLocaleRef = useRef(input.locale);
   const workspaceCwd = input.form.cwd.trim();
   const errorOwner = useFocusedDomainErrorOwner<"workspace-settings", WorkspaceSettingsErrorAction>(

@@ -21,7 +21,7 @@ export function OperationBubbleHeader({
   expanded = true,
   toggleLabel,
   onToggleExpanded,
-}: OperationBubbleHeaderProps): JSX.Element {
+}: OperationBubbleHeaderProps): React.JSX.Element {
   return (
     <header className="conversation-operation-bubble-header">
       {expandable ? (

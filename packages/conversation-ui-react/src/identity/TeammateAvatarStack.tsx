@@ -26,7 +26,7 @@ export function TeammateAvatarStack({
   label,
   overflowLabel = (count) => `+${count}`,
   onOpen,
-}: TeammateAvatarStackProps): JSX.Element | null {
+}: TeammateAvatarStackProps): React.JSX.Element | null {
   if (items.length === 0) {
     return null;
   }

@@ -25,7 +25,7 @@ export function MediaArtifactPreview({
   readonly className?: string;
   readonly autoPlay?: boolean;
   readonly loading?: boolean;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const resolvedMode = mode ?? variant ?? "tile";
   const canonicalUrl = artifact ? artifactContentUrl(artifact.id, cwd) : "";

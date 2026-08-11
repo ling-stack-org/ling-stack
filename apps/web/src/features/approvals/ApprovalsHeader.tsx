@@ -7,7 +7,7 @@ export function ApprovalsHeader({
 }: {
   readonly pendingCount: number;
   readonly repairScoped: boolean;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   return (
     <header className="approvals-ui2-header">

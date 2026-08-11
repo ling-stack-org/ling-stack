@@ -37,7 +37,7 @@ export function ChannelSettingsGeneralPanel({
   readonly providers: readonly ProviderPreset[];
   readonly taskReadyProviders: readonly ProviderPreset[];
   readonly setupChatProviders: readonly ProviderPreset[];
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
 
   return (

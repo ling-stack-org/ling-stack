@@ -11,7 +11,7 @@ export interface ConversationViewProviderProps {
 export function ConversationViewProvider({
   surfaceId,
   children,
-}: ConversationViewProviderProps): JSX.Element {
+}: ConversationViewProviderProps): React.JSX.Element {
   const store = useMemo(() => createConversationViewStore(surfaceId), [surfaceId]);
   return (
     <ConversationViewStoreContext.Provider value={store}>

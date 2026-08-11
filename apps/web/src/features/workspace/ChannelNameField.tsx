@@ -11,7 +11,7 @@ export function ChannelNameField({
   readonly value: string;
   readonly disabled: boolean;
   readonly onSave: (name: string) => Promise<void>;
-}): JSX.Element {
+}): React.JSX.Element {
   const { t } = useI18n();
   const [draftName, setDraftName] = useState(value);
   const [saving, setSaving] = useState(false);
