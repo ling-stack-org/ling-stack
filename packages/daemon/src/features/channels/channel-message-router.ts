@@ -472,10 +472,11 @@ async function requestModelRoute(input: ChannelMessageRouteInput, candidates: re
       error,
       now: observedAt,
     });
-    const compaction = compactChannelDiscussionForNoToolsRetry({
+    const compaction = await compactChannelDiscussionForNoToolsRetry({
       store: input.store,
       channel: input.channel,
       sourceMessage: input.sourceMessage,
+      inputBudgetTokens: contextPack.budget.inputBudgetTokens,
       now: observedAt,
     });
     contextPack = buildChannelAutoRouteContextPack({
@@ -685,6 +686,7 @@ function summarizeContextPack(pack: ContextPack): ChannelMessageRouteContextPack
     droppedSectionIds: pack.droppedSectionIds,
     sourceRefCounts,
     compactionIds: pack.compactionIds,
+    contextProjection: pack.contextProjection,
   };
 }
 

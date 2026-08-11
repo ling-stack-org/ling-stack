@@ -70,13 +70,17 @@ test("task and terminal reply runs do not become ordinary reply targets", () => 
   assert.equal(resolveChannelGuidanceTarget({ replyTargets: targets }), undefined);
 });
 
-test("topic replies use source message lineage instead of the canonical LingThread id", () => {
+test("canonical root and topic replies use explicit LingThread topology", () => {
   const rootRun = run("run_root", "wu_root", "teammate_designer", "ling_thread_root", "message_root");
-  const topicRun = run("run_topic", "wu_topic", "teammate_engineer", "ling_thread_root", "message_topic_reply");
+  const topicRun = run("run_topic", "wu_topic", "teammate_engineer", "ling_thread_topic", "message_topic_reply");
   const messages = [
-    message("message_root"),
-    message("message_topic_root"),
-    message("message_topic_reply", "message_topic_root"),
+    { ...message("message_root", "ling_thread_root"), threadSurfaceKind: "channel_root" },
+    { ...message("message_topic_root", "ling_thread_root"), threadSurfaceKind: "channel_root" },
+    {
+      ...message("message_topic_reply", "ling_thread_topic"),
+      threadSurfaceKind: "topic",
+      threadAnchorItemId: "message_topic_root",
+    },
   ];
 
   const rootTargets = deriveChannelReplyGuidanceTargets({
@@ -88,7 +92,7 @@ test("topic replies use source message lineage instead of the canonical LingThre
   });
   const topicTargets = deriveChannelReplyGuidanceTargets({
     channelId: "channel_main",
-    conversationLineThreadId: "message_topic_root",
+    conversationLineThreadId: "ling_thread_topic",
     channelMessages: messages,
     runs: [rootRun, topicRun],
     workUnits: [workUnit("wu_root", "channel_ai_reply"), workUnit("wu_topic", "channel_ai_reply")],

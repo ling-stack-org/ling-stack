@@ -1,6 +1,6 @@
 # Channel Conversation Continuity v2
 
-Status: approved design baseline; S-1 and S0 merged; S1+S2 implemented and locally verified; S3-S7 pending
+Status: implemented and verified on `main`
 Date: 2026-08-08
 Last verified: 2026-08-10
 Scope: channel conversation persistence, Thread/Turn/Item topology, context segmentation,
@@ -16,6 +16,24 @@ Related docs:
 - [Thread-First Work History v2 Detailed Design](thread-first-work-history-v2-detailed-design.md)
 - [Conversation Memory Citations And Sources](conversation-memory-citations-and-sources.md)
 - [Multi-Agent Orchestrator](multi-agent-orchestrator.md)
+
+## Delivery Evidence
+
+Continuity v2 was delivered through the ordered slices defined by this contract:
+
+- G0 CI gate repair: PR #423, squash commit `3057b2af`;
+- S0 contracts and fixtures: PR #425, squash commit `264ebd3a`;
+- S1+S2 atomic storage and runtime cutover: PR #426, squash commit `dd2c9ed9`;
+- S3 shared context projection: PR #427, squash commit `09d2031b`;
+- S4 intent v2: PR #428, squash commit `2d9a5375`;
+- S5 summaries and snapshots: PR #429, squash commit `e67fde1d`;
+- S6 multi-agent consistency: PR #431, squash commit `9a54d9dc`;
+- S7 API, Web, diagnostics, and authority cleanup: PR #432, squash commit `1aed5b13`.
+
+PR #432 passed remote CI on its final head and the merged `main` commit passed run
+`31392694904`. Final local acceptance passed 36 Contracts, 362 Core, 905 Daemon,
+49 API Client, 40 Remote Protocol, 45 Web unit, 113 Channel E2E, and 15 adjacent
+Channel E2E tests. Issue #421 closed from PR #432 after the merge.
 
 ## Decision Summary
 
@@ -196,6 +214,20 @@ Rules:
   inside the root do not silently create visible child threads.
 - A channel may contain many work threads, but only one active non-archived
   `channel_root` thread.
+
+API callers select a surface without overloading identifiers:
+
+```ts
+type ChannelConversationSurface =
+  | { kind: "channel_root" }
+  | { kind: "thread"; threadId: string }
+  | { kind: "topic"; anchorItemId: string };
+```
+
+`threadId` always means a canonical `LingThread.id`. Topic materialization alone accepts
+an `anchorItemId`; after the daemon returns the Topic Thread, paging and sending use that
+Thread id. A Turn request has no top-level `threadId` compatibility alias, and an Items
+query cannot send `threadId` and `anchorItemId` together.
 
 ### Root-level topic isolation
 

@@ -101,6 +101,13 @@ function activeReplyBelongsToConversationLine(
   if (!sourceMessage || sourceMessage.channelId !== input.channelId) {
     return false;
   }
+  if (sourceMessage.threadSurfaceKind) {
+    return input.conversationLineThreadId
+      ? sourceMessage.threadId === input.conversationLineThreadId
+      : sourceMessage.threadSurfaceKind === "channel_root";
+  }
+  // Data-only legacy fixtures identify Root with an absent threadId and Topic with an
+  // anchor item id. Canonical runtime messages always take the branch above.
   return (sourceMessage.threadId ?? undefined) === input.conversationLineThreadId;
 }
 

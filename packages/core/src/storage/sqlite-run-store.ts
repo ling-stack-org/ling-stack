@@ -72,13 +72,11 @@ import {
 } from "../approval-policy.js";
 import {
   DEFAULT_WORKSPACE_ID,
-  createChannelMessageId,
   createChannelAttachmentId,
   createChannelContextSummaryId,
   createChannelDecisionId,
   createChannelExecutionProposalId,
   createChannelHandoffId,
-  createChannelIntentDecisionId,
   createChannelLinkPreviewId,
   createChannelMessageRouteDecisionId,
   type AiCouncil,
@@ -105,7 +103,6 @@ import {
   type ChannelIntentDecision,
   type ChannelLinkPreview,
   type ChannelMessage,
-  type ChannelMessageListPage,
   type ChannelMessageRouteDecision,
   type ChannelCouncilPolicy,
   type ChannelUpdateInput,
@@ -129,7 +126,6 @@ import {
   type CreateChannelInput,
   type CreateChannelIntentDecisionInput,
   type CreateChannelLinkPreviewInput,
-  type CreateChannelMessageInput,
   type CreateChannelMessageRouteDecisionInput,
   type CreateChannelWorkflowInput,
   type CreateChannelWorkflowStepInput,
@@ -158,7 +154,6 @@ import {
   type ListChannelIntentDecisionsOptions,
   type ListChannelsOptions,
   type ListChannelLinkPreviewsOptions,
-  type ListChannelMessagesOptions,
   type ListChannelMessageRouteDecisionsOptions,
   type ListChannelWorkflowsOptions,
   type ListChannelWorkflowStepsOptions,
@@ -484,7 +479,6 @@ import {
   type UpsertGovernanceNotificationResult,
 } from "../governance-notification-types.js";
 import { redactSecrets } from "../redaction.js";
-import { projectConversationItemToChannelMessage } from "../conversation-item-channel-view.js";
 import { applySqliteRunStoreMigrations, configureSqliteRunStoreDatabase } from "./sqlite/migrations.js";
 import { withSqliteRunStoreMigrationLock } from "./sqlite/migration-coordinator.js";
 import {
@@ -497,6 +491,7 @@ import {
   applyContinuityV2StorageMigration,
   CONTINUITY_V2_STORAGE_MIGRATION_VERSION,
 } from "./sqlite/continuity-v2-migration.js";
+import { applyChannelIntentV2Migration } from "./sqlite/channel-intent-v2-migration.js";
 import {
   isJsonRecord,
   isRecord,
@@ -564,6 +559,7 @@ import { SqliteChannelProposalStore } from "./sqlite/channel-proposal-store.js";
 import { SqliteChannelAssetStore } from "./sqlite/channel-asset-store.js";
 import { SqliteConversationAssetStore } from "./sqlite/conversation-asset-store.js";
 import { SqliteConversationRevisionStore } from "./sqlite/conversation-revision-store.js";
+import { SqliteConversationContextStore } from "./sqlite/conversation-context-store.js";
 import { SqliteRemoteAccessStore } from "./sqlite/remote-access-store.js";
 import { SqliteChannelCollaborationStore } from "./sqlite/channel-collaboration-store.js";
 import { SqliteConversationContextSummaryStore } from "./sqlite/conversation-context-summary-store.js";
@@ -644,6 +640,7 @@ export class SqliteRunStore implements RunStore {
   private readonly conversationItems: SqliteConversationItemStore;
   private readonly conversationTurnIngest: SqliteConversationTurnIngestStore;
   private readonly conversationThreadTopology: SqliteConversationThreadTopologyStore;
+  private readonly conversationContext: SqliteConversationContextStore;
   private readonly channelRouteDecisions: SqliteChannelRouteDecisionStore;
   private readonly channelIntentDecisions: SqliteChannelIntentDecisionStore;
   private readonly channelProposals: SqliteChannelProposalStore;
@@ -677,6 +674,7 @@ export class SqliteRunStore implements RunStore {
       { database: this.database },
       this.conversationItems,
     );
+    this.conversationContext = new SqliteConversationContextStore({ database: this.database });
     this.automations = new SqliteAutomationStore({ database: this.database });
     this.providers = new SqliteProviderStore({ database: this.database });
     this.mcps = new SqliteMcpStore(
@@ -743,6 +741,8 @@ export class SqliteRunStore implements RunStore {
       {
         createLingThread: (input, now) => this.lingThreads.createLingThread(input, now),
         getLingThread: (threadId) => this.lingThreads.getLingThread(threadId),
+        createConversationContextSnapshotWithinTransaction: (input, now) =>
+          this.conversationContext.createConversationContextSnapshotWithinTransaction(input, now),
       },
     );
     this.lingThreadCleanup = new SqliteLingThreadCleanupStore(
@@ -936,6 +936,8 @@ export class SqliteRunStore implements RunStore {
         assertProposalInChannel: (channelId, proposalId) => this.assertProposalInChannel(channelId, proposalId),
         assertWorkflowInChannel: (channelId, workflowId) => this.assertWorkflowInChannel(channelId, workflowId),
         hasAiTeammate: (id) => Boolean(this.getAiTeammate(id)),
+        getConversationItem: (id) => this.getConversationItem(id),
+        getEffectiveTurnContextAssignment: (turnId) => this.getEffectiveTurnContextAssignment(turnId),
       },
     );
     this.channelProposals = new SqliteChannelProposalStore(
@@ -1094,6 +1096,12 @@ export class SqliteRunStore implements RunStore {
         });
         if (!options.deferContinuityV2MigrationForTest) {
           this.applyContinuityV2AuthorityCutover();
+          applyChannelIntentV2Migration({
+            database: this.database,
+            appliedAt: new Date().toISOString(),
+            hasMigration: (version) => this.hasMigration(version),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
         }
       });
     } catch (error) {
@@ -2463,6 +2471,18 @@ export class SqliteRunStore implements RunStore {
     return this.conversationItems.getConversationItemByIdempotencyKey(threadId, idempotencyKey);
   }
 
+  findConversationItemByDomainRef(
+    input: import("../conversation-item-store-types.js").FindConversationItemByDomainRefInput,
+  ): import("@ling-stack/contracts").ConversationItemV1 | undefined {
+    return this.conversationItems.findConversationItemByDomainRef(input);
+  }
+
+  listConversationItemsForTurn(
+    options: import("../conversation-item-store-types.js").ListConversationItemsForTurnOptions,
+  ): readonly import("@ling-stack/contracts").ConversationItemV1[] {
+    return this.conversationItems.listConversationItemsForTurn(options);
+  }
+
   listConversationItemsPage(
     options: import("../conversation-item-store-types.js").ListConversationItemsOptions,
   ): import("../conversation-item-store-types.js").ConversationItemListPage {
@@ -2475,6 +2495,12 @@ export class SqliteRunStore implements RunStore {
     return this.conversationItems.listConversationItemsByChannelPage(options);
   }
 
+  listConversationItemsForSegment(
+    options: import("../conversation-item-store-types.js").ListConversationItemsForSegmentOptions,
+  ): readonly import("@ling-stack/contracts").ConversationItemV1[] {
+    return this.conversationItems.listConversationItemsForSegment(options);
+  }
+
   updatePendingConversationItem(
     itemId: string,
     input: import("../conversation-item-store-types.js").UpdatePendingConversationItemInput,
@@ -2483,221 +2509,65 @@ export class SqliteRunStore implements RunStore {
     return this.conversationItems.updatePendingConversationItem(itemId, input, now);
   }
 
-  createChannelMessage(input: CreateChannelMessageInput, now: string): ChannelMessage {
-    if (this.legacyContinuityFixtureMode) return this.createLegacyChannelMessageFixture(input, now);
-    const channel = this.getChannel(input.channelId);
-    if (!channel) throw new Error(`Channel not found: ${input.channelId}`);
-    const itemId = input.id ?? createChannelMessageId();
-    const explicitThread = input.threadId ? this.getLingThread(input.threadId) : undefined;
-    const anchorItem = input.threadId && !explicitThread ? this.getConversationItem(input.threadId) : undefined;
-    const thread = explicitThread
-      ?? (anchorItem
-        ? this.resolveOrCreateConversationThread({
-            surfaceKind: "topic",
-            channelId: input.channelId,
-            anchorItemId: anchorItem.id,
-            title: input.body.replace(/\s+/gu, " ").trim().slice(0, 120) || "Topic",
-            objective: `Topic anchored at conversation item ${anchorItem.id}.`,
-          }, now).thread
-        : this.resolveOrCreateConversationThread({
-            surfaceKind: "channel_root",
-            channelId: input.channelId,
-            title: `${channel.name} conversation`,
-            objective: `Root conversation for ${channel.name}.`,
-          }, now).thread);
-    if (thread.channelId !== input.channelId) {
-      throw new Error(`Conversation thread does not belong to channel: ${thread.id}`);
-    }
-
-    if (input.authorType === "local-user" && (input.kind === undefined || input.kind === "message")) {
-      if (input.status && input.status !== "ready") {
-        throw new Error(`Local-user conversation item must be committed: ${itemId}`);
-      }
-      const result = this.appendConversationUserTurn({
-        itemId,
-        channelId: input.channelId,
-        threadId: thread.id,
-        turnKind: thread.nextItemSequence > 1 ? "manual_followup" : "initial_request",
-        title: input.body.replace(/\s+/gu, " ").trim().slice(0, 160) || "Channel input",
-        userInstruction: input.body || "Channel input with references.",
-        ...(input.authorId ? { actorId: input.authorId } : {}),
-        payload: {
-          body: input.body,
-          format: "plain_text",
-          mentions: (input.mentions ?? []).map((mention) => ({
-            id: mention.id,
-            label: mention.label,
-            kind: mention.kind === "ai-teammate"
-              ? "ai_teammate" as const
-              : mention.kind === "local-user"
-                ? "local_user" as const
-                : "channel" as const,
-          })),
-          attachmentIds: input.attachmentIds ?? [],
-          linkPreviewIds: input.linkPreviewIds ?? [],
-          fileRefs: input.fileRefs ?? [],
-          ...(anchorItem ? { replyToItemId: anchorItem.id } : {}),
-        },
-        domainRefs: [
-          ...(input.linkedTaskId ? [{ type: "task" as const, id: input.linkedTaskId }] : []),
-          ...(input.linkedRunId ? [{ type: "run" as const, id: input.linkedRunId }] : []),
-        ],
-        idempotencyKey: `channel-item:${itemId}`,
-      }, now);
-      return projectConversationItemToChannelMessage(result.item, { linkedRunId: input.linkedRunId });
-    }
-
-    const latestTurnId = [...this.listConversationItemsPage({ threadId: thread.id, limit: 100 }).items]
-      .reverse()
-      .find((item) => item.kind === "user_message" && item.turnId)?.turnId;
-    const status = input.status ?? "ready";
-    const assistantMessage = input.kind === "ai_reply" || (input.kind === undefined && input.authorType === "ai-teammate");
-    const item = this.appendConversationItem(assistantMessage ? {
-      id: itemId,
-      channelId: input.channelId,
-      threadId: thread.id,
-      ...(latestTurnId ? { turnId: latestTurnId } : {}),
-      kind: "assistant_message",
-      status: status === "pending" ? "pending" : status === "failed" ? "failed" : "committed",
-      actorType: "teammate",
-      ...(input.authorId ? { actorId: input.authorId } : {}),
-      visibility: "channel",
-      payload: {
-        body: input.body,
-        format: "markdown",
-        streaming: status === "pending",
-        deliveryStatus: status,
-        ...(input.errorMessage ? { errorMessage: input.errorMessage } : {}),
-      },
-      domainRefs: [
-        ...(anchorItem ? [{ type: "conversation_item" as const, id: anchorItem.id }] : []),
-        ...(input.linkedTaskId ? [{ type: "task" as const, id: input.linkedTaskId }] : []),
-        ...(input.linkedRunId ? [{ type: "run" as const, id: input.linkedRunId }] : []),
-      ],
-      idempotencyKey: `channel-item:${itemId}`,
-    } : {
-      id: itemId,
-      channelId: input.channelId,
-      threadId: thread.id,
-      ...(latestTurnId ? { turnId: latestTurnId } : {}),
-      kind: "system_event",
-      status: status === "failed" ? "failed" : "committed",
-      actorType: "system",
-      ...(input.authorId ? { actorId: input.authorId } : {}),
-      visibility: "channel",
-      payload: { eventType: input.kind ?? "system", summary: input.body },
-      domainRefs: [
-        ...(input.linkedTaskId ? [{ type: "task" as const, id: input.linkedTaskId }] : []),
-        ...(input.linkedRunId ? [{ type: "run" as const, id: input.linkedRunId }] : []),
-      ],
-      idempotencyKey: `channel-item:${itemId}`,
-    }, now);
-    return projectConversationItemToChannelMessage(item, { linkedRunId: input.linkedRunId });
+  getContextSegment(id: string): import("@ling-stack/contracts").ContextSegment | undefined {
+    return this.conversationContext.getContextSegment(id);
   }
 
-  updateChannelMessageRuntime(
-    id: string,
-    input: {
-      readonly body?: string;
-      readonly status?: ChannelMessage["status"];
-      readonly errorMessage?: string | null;
-      readonly linkedRunId?: string | null;
-    },
+  listContextSegments(
+    options: import("../conversation-context-store-types.js").ListContextSegmentsOptions,
+  ): readonly import("@ling-stack/contracts").ContextSegment[] {
+    return this.conversationContext.listContextSegments(options);
+  }
+
+  getEffectiveTurnContextAssignment(
+    turnId: string,
+  ): import("@ling-stack/contracts").TurnContextAssignment | undefined {
+    return this.conversationContext.getEffectiveTurnContextAssignment(turnId);
+  }
+
+  applyTurnContextAssignment(
+    input: import("../conversation-context-store-types.js").ApplyTurnContextAssignmentInput,
     now: string,
-  ): ChannelMessage | undefined {
-    if (this.legacyContinuityFixtureMode) {
-      const existing = this.getLegacyChannelMessageFixture(id);
-      if (!existing) return undefined;
-      this.database.prepare(`
-        UPDATE channel_messages
-        SET body = ?, status = ?, error_message = ?, linked_run_id = ?, updated_at = ?
-        WHERE id = ?
-      `).run(
-        input.body ?? existing.body,
-        input.status ?? existing.status,
-        input.errorMessage === undefined ? existing.errorMessage ?? null : input.errorMessage,
-        input.linkedRunId === undefined ? existing.linkedRunId ?? null : input.linkedRunId,
-        now,
-        id,
-      );
-      return this.getLegacyChannelMessageFixture(id);
-    }
-    const item = this.getEffectiveConversationItem(id);
-    if (!item) return undefined;
-    if (input.linkedRunId && item.turnId && !this.getLingTurnForRun(input.linkedRunId)) {
-      this.linkRunToLingTurn({ turnId: item.turnId, runId: input.linkedRunId, now });
-    }
-    if (item.kind !== "assistant_message" || item.status !== "pending") {
-      if (input.body !== undefined || input.status !== undefined || input.errorMessage !== undefined) {
-        throw new Error(`Committed conversation item is immutable: ${id}`);
-      }
-      return this.getChannelMessage(id);
-    }
-    const status = input.status ?? (item.payload.deliveryStatus === "pending" ? "pending" : item.payload.deliveryStatus);
-    const terminal = status === "ready" || status === "blocked" || status === "failed";
-    const updated = this.updatePendingConversationItem(id, {
-      expectedRevision: item.revision,
-      payload: {
-        body: input.body ?? item.payload.body,
-        format: item.payload.format,
-        streaming: !terminal,
-        deliveryStatus: status,
-        ...(input.errorMessage === null
-          ? {}
-          : input.errorMessage !== undefined
-            ? { errorMessage: input.errorMessage }
-            : item.payload.errorMessage
-              ? { errorMessage: item.payload.errorMessage }
-              : {}),
-      },
-      status: status === "failed" ? "failed" : terminal ? "committed" : "pending",
-    }, now);
-    return projectConversationItemToChannelMessage(updated, { linkedRunId: input.linkedRunId ?? undefined });
+  ): import("../conversation-context-store-types.js").ApplyTurnContextAssignmentResult {
+    return this.conversationContext.applyTurnContextAssignment(input, now);
   }
 
-  getChannelMessage(id: string): ChannelMessage | undefined {
-    if (this.legacyContinuityFixtureMode) return this.getLegacyChannelMessageFixture(id);
-    const item = this.getEffectiveConversationItem(id);
-    if (!item?.channelId) return undefined;
-    const turn = item.turnId ? this.getLingTurn(item.turnId) : undefined;
-    return projectConversationItemToChannelMessage(item, {
-      linkedRunId: turn?.activeRunId ?? turn?.lastRunId,
-    });
+  getConversationContextSummary(
+    id: string,
+  ): import("@ling-stack/contracts").ConversationContextSummary | undefined {
+    return this.conversationContext.getConversationContextSummary(id);
   }
 
-  listChannelMessages(options: ListChannelMessagesOptions): ChannelMessage[] {
-    return this.listChannelMessagesPage(options).messages.slice();
+  listConversationContextSummaries(
+    options: import("../conversation-context-store-types.js").ListConversationContextSummariesOptions,
+  ): readonly import("@ling-stack/contracts").ConversationContextSummary[] {
+    return this.conversationContext.listConversationContextSummaries(options);
   }
 
-  listChannelMessagesPage(options: ListChannelMessagesOptions): ChannelMessageListPage {
-    if (this.legacyContinuityFixtureMode) return this.listLegacyChannelMessagesFixture(options);
-    let page: import("../conversation-item-store-types.js").ConversationItemChannelListPage;
-    try {
-      page = this.listConversationItemsByChannelPage({
-        channelId: options.channelId,
-        ...(options.threadId ? { threadId: options.threadId } : {}),
-        ...(options.excludeThreadIds ? { excludeThreadIds: options.excludeThreadIds } : {}),
-        ...(options.beforeMessageId ? { beforeItemId: options.beforeMessageId } : {}),
-        kinds: ["user_message", "assistant_message", "system_event"],
-        effectiveOnly: true,
-        ...(options.limit !== undefined ? { limit: options.limit } : {}),
-      });
-    } catch (error) {
-      if (options.beforeMessageId && error instanceof Error && error.message.startsWith("Invalid conversation item cursor:")) {
-        throw new Error(`Invalid channel message cursor: ${options.beforeMessageId}`, { cause: error });
-      }
-      throw error;
-    }
-    return {
-      messages: page.items.map((item) => {
-        const turn = item.turnId ? this.getLingTurn(item.turnId) : undefined;
-        return projectConversationItemToChannelMessage(item, {
-          linkedRunId: turn?.activeRunId ?? turn?.lastRunId,
-        });
-      }),
-      hasMore: page.hasMore,
-      ...(page.nextBeforeItemId ? { nextBeforeMessageId: page.nextBeforeItemId } : {}),
-    };
+  commitConversationContextSummary(
+    input: import("../conversation-context-store-types.js").CommitConversationContextSummaryInput,
+    now: string,
+  ): import("../conversation-context-store-types.js").CommitConversationContextSummaryResult {
+    return this.conversationContext.commitConversationContextSummary(input, now);
+  }
+
+  createConversationContextSnapshot(
+    input: import("../conversation-context-store-types.js").CreateConversationContextSnapshotInput,
+    now: string,
+  ): import("@ling-stack/contracts").ConversationContextSnapshot {
+    return this.conversationContext.createConversationContextSnapshot(input, now);
+  }
+
+  getConversationContextSnapshot(
+    id: string,
+  ): import("@ling-stack/contracts").ConversationContextSnapshot | undefined {
+    return this.conversationContext.getConversationContextSnapshot(id);
+  }
+
+  listConversationContextSnapshots(
+    options: import("../conversation-context-store-types.js").ListConversationContextSnapshotsOptions,
+  ): readonly import("@ling-stack/contracts").ConversationContextSnapshot[] {
+    return this.conversationContext.listConversationContextSnapshots(options);
   }
 
   createChannelMessageRouteDecision(input: CreateChannelMessageRouteDecisionInput, now: string): ChannelMessageRouteDecision {
@@ -2722,7 +2592,9 @@ export class SqliteRunStore implements RunStore {
   }
 
   createChannelIntentDecision(input: CreateChannelIntentDecisionInput, now: string): ChannelIntentDecision {
-    if (this.legacyContinuityFixtureMode) return this.createLegacyIntentDecisionFixture(input, now);
+    if (this.legacyContinuityFixtureMode) {
+      throw new Error("Channel Intent v2 is unavailable before the Continuity v2 authority cutover.");
+    }
     return this.channelIntentDecisions.createChannelIntentDecision(input, now);
   }
 
@@ -3817,59 +3689,6 @@ export class SqliteRunStore implements RunStore {
     });
   }
 
-  private createLegacyChannelMessageFixture(input: CreateChannelMessageInput, now: string): ChannelMessage {
-    this.assertChannelExists(input.channelId);
-    const message: ChannelMessage = {
-      id: input.id ?? createChannelMessageId(),
-      workspaceId: DEFAULT_WORKSPACE_ID,
-      channelId: input.channelId,
-      ...(input.threadId ? { threadId: input.threadId } : {}),
-      kind: input.kind ?? "message",
-      intent: input.intent ?? "discuss",
-      authorType: input.authorType,
-      ...(input.authorId ? { authorId: input.authorId } : {}),
-      body: input.body,
-      mentions: input.mentions ?? [],
-      attachmentIds: input.attachmentIds ?? [],
-      linkPreviewIds: input.linkPreviewIds ?? [],
-      fileRefs: input.fileRefs ?? [],
-      ...(input.linkedTaskId ? { linkedTaskId: input.linkedTaskId } : {}),
-      ...(input.linkedRunId ? { linkedRunId: input.linkedRunId } : {}),
-      status: input.status ?? "ready",
-      ...(input.errorMessage ? { errorMessage: input.errorMessage } : {}),
-      createdAt: now,
-      updatedAt: now,
-    };
-    this.database.prepare(`
-      INSERT INTO channel_messages (
-        id, workspace_id, channel_id, thread_id, kind, intent, author_type, author_id,
-        body, mentions_json, attachment_ids_json, link_preview_ids_json, file_refs_json,
-        linked_task_id, linked_run_id, status, error_message, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      message.id,
-      message.workspaceId,
-      message.channelId,
-      message.threadId ?? null,
-      message.kind,
-      message.intent,
-      message.authorType,
-      message.authorId ?? null,
-      message.body,
-      JSON.stringify(message.mentions),
-      JSON.stringify(message.attachmentIds),
-      JSON.stringify(message.linkPreviewIds),
-      JSON.stringify(message.fileRefs),
-      message.linkedTaskId ?? null,
-      message.linkedRunId ?? null,
-      message.status,
-      message.errorMessage ?? null,
-      now,
-      now,
-    );
-    return message;
-  }
-
   private createLegacyDecisionFixture(input: CreateChannelDecisionInput, now: string): ChannelDecision {
     const decision: ChannelDecision = {
       id: createChannelDecisionId(), workspaceId: DEFAULT_WORKSPACE_ID, channelId: input.channelId,
@@ -3959,41 +3778,6 @@ export class SqliteRunStore implements RunStore {
       proposal.errorMessage ?? null, now, now,
     );
     return proposal;
-  }
-
-  private createLegacyIntentDecisionFixture(
-    input: CreateChannelIntentDecisionInput,
-    now: string,
-  ): ChannelIntentDecision {
-    const decision: ChannelIntentDecision = {
-      schemaVersion: 1, id: createChannelIntentDecisionId(), workspaceId: DEFAULT_WORKSPACE_ID,
-      channelId: input.channelId, sourceMessageId: input.sourceMessageId, action: input.action,
-      ...(input.selectedTeammateId ? { selectedTeammateId: input.selectedTeammateId } : {}),
-      ...(input.selectedTeammateIds ? { selectedTeammateIds: input.selectedTeammateIds } : {}),
-      ...(input.proposalId ? { proposalId: input.proposalId } : {}),
-      ...(input.replyMessageId ? { replyMessageId: input.replyMessageId } : {}),
-      ...(input.replyMessageIds ? { replyMessageIds: input.replyMessageIds } : {}),
-      ...(input.workflowId ? { workflowId: input.workflowId } : {}),
-      reason: input.reason, status: input.status, createdBy: input.createdBy,
-      ...(input.errorMessage ? { errorMessage: input.errorMessage } : {}), createdAt: now, updatedAt: now,
-    };
-    this.database.prepare(`
-      INSERT INTO channel_intent_decisions (
-        id, schema_version, workspace_id, channel_id, source_message_id, action,
-        selected_teammate_id, selected_teammate_ids_json, proposal_id, reply_message_id,
-        reply_message_ids_json, workflow_id, reason, status, created_by, error_message,
-        created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      decision.id, decision.schemaVersion, decision.workspaceId, decision.channelId,
-      decision.sourceMessageId, decision.action, decision.selectedTeammateId ?? null,
-      decision.selectedTeammateIds ? JSON.stringify(decision.selectedTeammateIds) : null,
-      decision.proposalId ?? null, decision.replyMessageId ?? null,
-      decision.replyMessageIds ? JSON.stringify(decision.replyMessageIds) : null,
-      decision.workflowId ?? null, decision.reason, decision.status, decision.createdBy,
-      decision.errorMessage ?? null, now, now,
-    );
-    return decision;
   }
 
   private createLegacyRouteDecisionFixture(
@@ -4103,30 +3887,6 @@ export class SqliteRunStore implements RunStore {
       ...(readNullableString(row, "author_id") ? { authorId: readNullableString(row, "author_id") } : {}),
       createdAt: readString(row, "created_at"), updatedAt: readString(row, "updated_at"),
     };
-  }
-
-  private getLegacyChannelMessageFixture(id: string): ChannelMessage | undefined {
-    const row = this.database.prepare(`${legacyChannelMessageFixtureSelectSql} WHERE id = ?`).get(id);
-    return row ? mapLegacyChannelMessageFixture(row as Record<string, import("node:sqlite").SQLOutputValue>) : undefined;
-  }
-
-  private listLegacyChannelMessagesFixture(options: ListChannelMessagesOptions): ChannelMessageListPage {
-    const clauses = ["workspace_id = ?", "channel_id = ?"];
-    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID, options.channelId];
-    if (options.threadId) {
-      clauses.push("thread_id = ?");
-      params.push(options.threadId);
-    }
-    const limit = Math.min(Math.max(options.limit ?? 200, 1), 500);
-    params.push(limit + 1);
-    const rows = this.database.prepare(`
-      ${legacyChannelMessageFixtureSelectSql}
-      WHERE ${clauses.join(" AND ")}
-      ORDER BY created_at DESC, rowid DESC LIMIT ?
-    `).all(...params).map((row) => mapLegacyChannelMessageFixture(row as Record<string, import("node:sqlite").SQLOutputValue>));
-    const hasMore = rows.length > limit;
-    const messages = rows.slice(0, limit).reverse();
-    return { messages, hasMore, ...(hasMore && messages[0] ? { nextBeforeMessageId: messages[0].id } : {}) };
   }
 
   private assertChannelExists(channelId: string): void {
@@ -4259,46 +4019,6 @@ export function createLegacySqliteRunStoreForMigrationTest(
   paths?: LingStackRuntimePaths,
 ): SqliteRunStore {
   return new SqliteRunStore({ cwd, paths, deferContinuityV2MigrationForTest: true });
-}
-
-const legacyChannelMessageFixtureSelectSql = `
-  SELECT id, workspace_id, channel_id, thread_id, kind, intent, author_type, author_id,
-         body, mentions_json, attachment_ids_json, link_preview_ids_json, file_refs_json,
-         linked_task_id, linked_run_id, status, error_message, created_at, updated_at
-  FROM channel_messages
-`;
-
-function mapLegacyChannelMessageFixture(
-  row: Record<string, import("node:sqlite").SQLOutputValue>,
-): ChannelMessage {
-  const mentions = parseJson(readString(row, "mentions_json"));
-  const attachmentIds = parseJson(readString(row, "attachment_ids_json"));
-  const linkPreviewIds = parseJson(readString(row, "link_preview_ids_json"));
-  const fileRefs = parseJson(readString(row, "file_refs_json"));
-  if (!Array.isArray(mentions) || !Array.isArray(attachmentIds) || !Array.isArray(linkPreviewIds) || !Array.isArray(fileRefs)) {
-    throw new Error(`Invalid legacy channel message fixture payload: ${readString(row, "id")}`);
-  }
-  return {
-    id: readString(row, "id"),
-    workspaceId: readString(row, "workspace_id"),
-    channelId: readString(row, "channel_id"),
-    ...(readNullableString(row, "thread_id") ? { threadId: readNullableString(row, "thread_id") } : {}),
-    kind: readString(row, "kind") as ChannelMessage["kind"],
-    intent: readString(row, "intent") as ChannelMessage["intent"],
-    authorType: readString(row, "author_type") as ChannelMessage["authorType"],
-    ...(readNullableString(row, "author_id") ? { authorId: readNullableString(row, "author_id") } : {}),
-    body: readString(row, "body"),
-    mentions: mentions as ChannelMessage["mentions"],
-    attachmentIds: attachmentIds as readonly string[],
-    linkPreviewIds: linkPreviewIds as readonly string[],
-    fileRefs: fileRefs as ChannelMessage["fileRefs"],
-    ...(readNullableString(row, "linked_task_id") ? { linkedTaskId: readNullableString(row, "linked_task_id") } : {}),
-    ...(readNullableString(row, "linked_run_id") ? { linkedRunId: readNullableString(row, "linked_run_id") } : {}),
-    status: readString(row, "status") as ChannelMessage["status"],
-    ...(readNullableString(row, "error_message") ? { errorMessage: readNullableString(row, "error_message") } : {}),
-    createdAt: readString(row, "created_at"),
-    updatedAt: readString(row, "updated_at"),
-  };
 }
 
 function normalizeOptionalOwnerId(value: string | undefined): string | undefined {

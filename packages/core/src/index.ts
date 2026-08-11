@@ -82,7 +82,11 @@ export * from "./conversation-revision-types.js";
 export * from "./conversation-item-store-types.js";
 export * from "./conversation-turn-ingest-types.js";
 export * from "./conversation-thread-topology-types.js";
-export * from "./conversation-item-channel-view.js";
+export * from "./conversation-context-store-types.js";
+export {
+  isChannelMessageConversationItem,
+  projectConversationItemToChannelMessage,
+} from "@ling-stack/contracts";
 export * from "./remote-access-types.js";
 export * from "./effective-skills.js";
 export * from "./mcp-types.js";

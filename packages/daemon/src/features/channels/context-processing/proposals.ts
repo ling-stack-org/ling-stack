@@ -1,12 +1,8 @@
 import type {
-  ApprovalStoreFacet,
   Channel,
   ChannelMessage,
   ChannelProtocolSourceRef,
-  ChannelStoreFacet,
-  RunExecutionStoreFacet,
   RunStore,
-  RunStorePathsFacet,
 } from "@ling-stack/core";
 import {
   buildLingAgentTurnEnvelope,
@@ -17,16 +13,14 @@ import {
   collectActiveWorkSources,
   collectChannelStateSource,
   collectMaterializedInputSources,
-  collectPriorConversationSources,
   collectTurnSource,
 } from "./sources.js";
+import { buildProjectedConversationContextSlice } from "./conversation-context-adapter.js";
 import type { ChannelContextSection, ChannelContextSourceRef, ChannelContextView } from "./types.js";
 import { buildChannelContextView } from "./views.js";
 
-type WorkflowProposalContextStore = ChannelStoreFacet & RunExecutionStoreFacet & ApprovalStoreFacet & RunStorePathsFacet & Pick<RunStore, "getLingTurn">;
-
 export interface BuildWorkflowProposalContextViewInput {
-  readonly store: WorkflowProposalContextStore;
+  readonly store: RunStore;
   readonly channel: Channel;
   readonly sourceMessage: ChannelMessage;
   readonly turnEnvelope?: LingAgentTurnEnvelope;
@@ -39,11 +33,11 @@ export function buildWorkflowProposalContextView(input: BuildWorkflowProposalCon
     sourceMessage: input.sourceMessage,
   });
   const turnSource = collectTurnSource({ channel: input.channel, envelope });
-  const priorSources = collectPriorConversationSources({
+  const projectedContext = buildProjectedConversationContextSlice({
     store: input.store,
     channel: input.channel,
-    sourceMessage: input.sourceMessage,
-    limit: 6,
+    sourceItemId: input.sourceMessage.id,
+    view: "proposal",
   });
   const activeWorkSources = collectActiveWorkSources({
     store: input.store,
@@ -62,18 +56,7 @@ export function buildWorkflowProposalContextView(input: BuildWorkflowProposalCon
       visibility: "prompt",
       quotePolicy: "public_ok",
     },
-    {
-      id: "proposal_recent_context",
-      role: "evidence",
-      priority: "high",
-      title: "Recent channel context",
-      text: priorSources.length > 0
-        ? ["Recent channel context:", ...priorSources.map((source) => `${source.title}: ${truncateSourceText(source.text)}`)].join("\n")
-        : "Recent channel context: none",
-      sourceRefIds: priorSources.flatMap((source) => source.sourceRefs.map((ref) => ref.id)),
-      visibility: "prompt",
-      quotePolicy: "public_ok",
-    },
+    ...projectedContext.sections,
     {
       id: "proposal_active_work",
       role: "evidence",
@@ -95,12 +78,14 @@ export function buildWorkflowProposalContextView(input: BuildWorkflowProposalCon
     sourceRefs: [
       { type: "channel", id: input.channel.id, label: input.channel.name },
       { type: "message", id: input.sourceMessage.id, label: "Proposal source message" },
+      ...projectedContext.sourceRefs,
     ],
+    contextProjection: projectedContext.projection.metadata,
     sources: [
       collectChannelStateSource({ channel: input.channel }),
       turnSource,
       ...materializedInputSources,
-      ...priorSources,
+      ...projectedContext.sources,
       ...activeWorkSources,
     ],
   });
@@ -116,6 +101,13 @@ export function proposalSourceRefsFromContextView(view: ChannelContextView): rea
 }
 
 function protocolSourceRefFromContextSourceRef(ref: ChannelContextSourceRef): ChannelProtocolSourceRef | undefined {
+  if (ref.type === "conversation_item") {
+    return {
+      type: "message",
+      id: ref.id,
+      ...(ref.label ? { label: ref.label } : {}),
+    };
+  }
   if (
     ref.type !== "message" &&
     ref.type !== "run" &&
@@ -145,12 +137,4 @@ function uniqueProtocolSourceRefs(refs: readonly ChannelProtocolSourceRef[]): re
     unique.push(ref);
   }
   return unique;
-}
-
-function truncateSourceText(text: string | undefined): string {
-  const normalized = (text ?? "").replace(/\s+/g, " ").trim();
-  if (!normalized) {
-    return "[empty]";
-  }
-  return normalized.length > 220 ? `${normalized.slice(0, 217)}...` : normalized;
 }

@@ -112,6 +112,5 @@ function listEarlierCompletedGuidanceReplies(
     sourceRunId: sourceRun.id,
     beforeInterventionId: currentIntervention.id,
     channelId: sourceRun.channelId,
-    limit: 6,
   });
 }

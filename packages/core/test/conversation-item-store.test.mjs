@@ -107,6 +107,73 @@ test("ConversationItemStore updates only the expected pending revision and then 
   }
 });
 
+test("ConversationItemStore lists the complete effective committed turn without a paging cap", () => {
+  const { database, store } = createStore();
+  try {
+    const user = store.appendConversationItem(userInput({ idempotencyKey: "turn-user" }), now);
+    const assistant = store.appendConversationItem({
+      channelId: "channel-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      kind: "assistant_message",
+      status: "committed",
+      actorType: "ling_agent",
+      actorId: "ling-agent",
+      visibility: "channel",
+      payload: {
+        body: "First answer.",
+        format: "markdown",
+        streaming: false,
+        deliveryStatus: "ready",
+      },
+      idempotencyKey: "turn-assistant",
+    }, now);
+    const replacement = store.appendConversationItem({
+      channelId: "channel-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      kind: "assistant_message",
+      status: "committed",
+      actorType: "ling_agent",
+      actorId: "ling-agent",
+      visibility: "channel",
+      payload: {
+        body: "Corrected answer.",
+        format: "markdown",
+        streaming: false,
+        deliveryStatus: "ready",
+      },
+      supersedesItemId: assistant.id,
+      idempotencyKey: "turn-assistant-corrected",
+    }, later);
+    store.appendConversationItem({
+      channelId: "channel-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      kind: "assistant_message",
+      status: "pending",
+      actorType: "ling_agent",
+      actorId: "ling-agent",
+      visibility: "channel",
+      payload: {
+        body: "Pending answer.",
+        format: "markdown",
+        streaming: true,
+        deliveryStatus: "pending",
+      },
+      idempotencyKey: "turn-assistant-pending",
+    }, later);
+
+    assert.deepEqual(store.listConversationItemsForTurn({ turnId: "turn-1" }).map((item) => item.id), [
+      user.id,
+      replacement.id,
+    ]);
+    assert.throws(() => store.listConversationItemsForTurn({ turnId: "" }), RangeError);
+  } finally {
+    database.close();
+  }
+});
+
 test("ConversationItemStore supersedes committed items once and pages with stable sequence cursors", () => {
   const { database, store } = createStore();
   try {
@@ -175,6 +242,29 @@ test("ConversationItemStore enforces thread, turn, channel and visibility bounda
       () => store.listConversationItemsPage({ threadId: "thread-1", beforeSequence: 0 }),
       RangeError,
     );
+  } finally {
+    database.close();
+  }
+});
+
+test("ConversationItemStore paging uses the thread-sequence index instead of scanning the timeline", () => {
+  const { database } = createStore();
+  try {
+    const plan = database.prepare(`
+      EXPLAIN QUERY PLAN
+      SELECT *
+      FROM conversation_items
+      WHERE workspace_id = ? AND thread_id = ? AND sequence < ?
+        AND NOT EXISTS (
+          SELECT 1 FROM conversation_items AS replacement
+          WHERE replacement.supersedes_item_id = conversation_items.id
+        )
+      ORDER BY sequence DESC
+      LIMIT ?
+    `).all("workspace_default", "thread-1", Number.MAX_SAFE_INTEGER, 101);
+    const detail = plan.map((row) => String(row.detail ?? "")).join("\n");
+    assert.match(detail, /SEARCH conversation_items USING INDEX .*\(thread_id=\? AND sequence<\?\)/);
+    assert.doesNotMatch(detail, /SCAN conversation_items(?:\s|$)/);
   } finally {
     database.close();
   }

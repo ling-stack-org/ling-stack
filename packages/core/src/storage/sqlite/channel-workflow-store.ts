@@ -1,4 +1,5 @@
 import type { SQLOutputValue } from "node:sqlite";
+import { isConversationContextProjectionMetadata } from "@ling-stack/contracts";
 import type { CreateStateTransitionEventInput, StateTransitionEvent } from "../../channel-runtime-types.js";
 import {
   transitionWorkflow,
@@ -119,6 +120,7 @@ export class SqliteChannelWorkflowStore {
       expectedOutput: input.expectedOutput,
       riskSummary: input.riskSummary,
       sourceRefs: [...(input.sourceRefs ?? [])],
+      agentContext: input.agentContext,
       status: input.status ?? "proposed",
       validation: input.validation,
       createdBy: input.createdBy,
@@ -146,12 +148,13 @@ export class SqliteChannelWorkflowStore {
           expected_output,
           risk_summary,
           source_refs_json,
+          agent_context_json,
           status,
           validation_json,
           created_by,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         intent.id,
@@ -171,6 +174,7 @@ export class SqliteChannelWorkflowStore {
         intent.expectedOutput,
         intent.riskSummary ?? null,
         stringifyJson(intent.sourceRefs),
+        intent.agentContext ? stringifyJson(intent.agentContext) : null,
         intent.status,
         intent.validation ? stringifyJson(intent.validation) : null,
         intent.createdBy,
@@ -199,6 +203,10 @@ export class SqliteChannelWorkflowStore {
     if (options.workflowId) {
       clauses.push("workflow_id = ?");
       params.push(options.workflowId);
+    }
+    if (options.channelHandoffId) {
+      clauses.push("channel_handoff_id = ?");
+      params.push(options.channelHandoffId);
     }
     if (options.sourceWorkflowStepId) {
       clauses.push("source_workflow_step_id = ?");
@@ -231,6 +239,9 @@ export class SqliteChannelWorkflowStore {
     }
     const sourceRefs = input.sourceRefs ? [...input.sourceRefs] : existing.sourceRefs;
     this.ports.assertWorkflowPacketSourceRefsInChannel(existing.channelId, sourceRefs);
+    const agentContext = input.agentContext === null
+      ? undefined
+      : input.agentContext ?? existing.agentContext;
     const next: WorkflowHandoffIntent = {
       ...existing,
       channelHandoffId,
@@ -240,6 +251,7 @@ export class SqliteChannelWorkflowStore {
       expectedOutput: input.expectedOutput ?? existing.expectedOutput,
       riskSummary: nullableUpdate(input.riskSummary, existing.riskSummary),
       sourceRefs,
+      agentContext,
       status: input.status ?? existing.status,
       validation: nullableUpdate(input.validation, existing.validation),
       updatedAt: now,
@@ -256,6 +268,7 @@ export class SqliteChannelWorkflowStore {
           expected_output = ?,
           risk_summary = ?,
           source_refs_json = ?,
+          agent_context_json = ?,
           status = ?,
           validation_json = ?,
           updated_at = ?
@@ -269,6 +282,7 @@ export class SqliteChannelWorkflowStore {
         next.expectedOutput,
         next.riskSummary ?? null,
         stringifyJson(next.sourceRefs),
+        next.agentContext ? stringifyJson(next.agentContext) : null,
         next.status,
         next.validation ? stringifyJson(next.validation) : null,
         next.updatedAt,
@@ -892,6 +906,20 @@ function validateWorkflowHandoffIntent(intent: WorkflowHandoffIntent): void {
     throw new Error("workflow handoff intent createdBy is not supported");
   }
   validateWorkflowPacketSourceRefs(intent.sourceRefs);
+  if (intent.agentContext) {
+    validateNonEmptyString(intent.agentContext.sourceItemId, "workflow handoff agent context source item id");
+    if (intent.agentContext.consumerTeammateId !== undefined) {
+      validateNonEmptyString(intent.agentContext.consumerTeammateId, "workflow handoff agent context consumer teammate id");
+    }
+    if (
+      intent.agentContext.schemaVersion !== 1
+      || !isConversationContextProjectionMetadata(intent.agentContext.contextProjection)
+    ) {
+      throw new Error("workflow handoff agent context projection is invalid");
+    }
+    validateWorkflowPacketSourceRefs(intent.agentContext.roleEvidenceRefs);
+    validateNonEmptyString(intent.agentContext.roleEvidenceFingerprint, "workflow handoff agent context role evidence fingerprint");
+  }
   if (intent.validation) {
     const validation = intent.validation;
     if (!Array.isArray(validation.blockers)) {

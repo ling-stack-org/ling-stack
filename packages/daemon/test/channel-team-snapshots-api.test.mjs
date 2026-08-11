@@ -1,3 +1,4 @@
+import { appendChannelItemFixture, getChannelItemViewFixture, listChannelItemViewsFixture, updateChannelItemFixture } from "../../core/test/channel-conversation-fixture.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -10,7 +11,7 @@ test("channel team snapshots and evaluations API persist reversible replay recor
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-team-snapshots-api-"));
   const store = createSqliteRunStore(cwd);
   const channel = store.createChannel({ name: "Snapshots Channel", boundPath: cwd }, "2026-06-26T00:00:00.000Z");
-  store.createChannelMessage(
+  appendChannelItemFixture(store,
     {
       channelId: channel.id,
       authorType: "local-user",

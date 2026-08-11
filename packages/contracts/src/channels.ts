@@ -1,5 +1,14 @@
 import type { ConversationPendingReplacement, RunTool, ToolName } from "./shared.js";
-import type { ConversationActiveReplyTarget, RunIntervention } from "./runtime.js";
+import type { RunIntervention } from "./runtime.js";
+import type {
+  ChannelIntentDecisionV2,
+  ChannelIntentDecisionV2Action,
+  ChannelIntentDecisionV2CreatedBy,
+  ChannelIntentDecisionV2Status,
+  ConversationContextProjectionMetadata,
+  LingThreadRelationKindV2,
+  LingThreadSurfaceKindV2,
+} from "./conversation-continuity.js";
 import type { ResponseLanguage, ResponseLanguagePreference } from "./settings.js";
 import type {
   ProcedureObservationCluster,
@@ -7,7 +16,6 @@ import type {
   ProcedureObservationValidationStep,
   SkillCandidateSourceRef,
 } from "./skills.js";
-import type { ChannelWorkflow, ChannelWorkflowOrchestrationResponse, ChannelWorkflowStep } from "./workflows.js";
 
 export type ChannelStatus = "active" | "paused" | "archived";
 
@@ -494,7 +502,13 @@ export interface ChannelMessage {
   readonly id: string;
   readonly workspaceId: string;
   readonly channelId: string;
+  /** Canonical LingThread identity. Never overloaded with a parent item id. */
   readonly threadId?: string;
+  readonly turnId?: string;
+  readonly threadSurfaceKind?: LingThreadSurfaceKindV2;
+  readonly threadRelationKind?: LingThreadRelationKindV2;
+  readonly threadAnchorItemId?: string;
+  readonly replyToItemId?: string;
   readonly kind: ChannelMessageKind;
   readonly intent: ChannelMessageIntent;
   readonly authorType: ChannelMessageAuthorType;
@@ -516,50 +530,9 @@ export interface ChannelMessage {
   readonly updatedAt: string;
 }
 
-export interface CreateChannelMessageRequest {
-  readonly idempotencyKey?: string;
-  readonly threadId?: string;
-  readonly kind?: ChannelMessageKind;
-  readonly intent?: ChannelMessageIntent;
-  readonly authorType?: ChannelMessageAuthorType;
-  readonly authorId?: string;
-  readonly body: string;
-  readonly mentions?: readonly ChannelMention[];
-  readonly attachmentIds?: readonly string[];
-  readonly linkPreviewIds?: readonly string[];
-  readonly fileRefs?: readonly ChannelMessageFileRef[];
-  readonly linkedTaskId?: string;
-  readonly linkedRunId?: string;
-  readonly requestAiReply?: boolean;
-  readonly replyDisposition?: ChannelReplyDisposition;
-  readonly providerPresetId?: string;
-  readonly teammateId?: string;
-}
-
 export interface ChannelReplyDisposition {
   readonly mode: "queue_followup";
   readonly activeRunId?: string;
-}
-
-export interface ChannelMessageListResponse {
-  readonly cwd: string;
-  readonly channelId: string;
-  readonly messages: readonly ChannelMessage[];
-  readonly hasMore?: boolean;
-  readonly nextBeforeMessageId?: string;
-}
-
-export interface ChannelMessageMutationResponse {
-  readonly message: ChannelMessage;
-  readonly aiReply?: ChannelMessage;
-  readonly aiReplies?: readonly ChannelMessage[];
-  readonly replyDispatch?: ChannelReplyDispatch;
-  readonly autoStartedWorkflow?: {
-    readonly proposal: ChannelExecutionProposal;
-    readonly workflow: ChannelWorkflow;
-    readonly workflowSteps: readonly ChannelWorkflowStep[];
-    readonly orchestration?: ChannelWorkflowOrchestrationResponse;
-  };
 }
 
 export interface ChannelReplyDispatch {
@@ -569,52 +542,10 @@ export interface ChannelReplyDispatch {
   readonly intervention?: RunIntervention;
 }
 
-export interface ChannelMessageStreamReadyEvent {
-  readonly message: ChannelMessage;
-  readonly aiReply?: ChannelMessage;
-  readonly aiReplies?: readonly ChannelMessage[];
-}
-
-export interface ChannelMessageStreamReplyPendingEvent {
+export interface ChannelReplyPendingEvent {
   readonly sourceMessageId: string;
   readonly targetTeammateId: string;
   readonly startedAt: string;
-}
-
-export interface ChannelMessageStreamDeltaEvent {
-  readonly messageId: string;
-  readonly delta: string;
-  readonly body: string;
-}
-
-export interface ChannelMessageStreamRunLinkedEvent {
-  readonly messageId: string;
-  readonly linkedRunId: string;
-  readonly activeReply?: ConversationActiveReplyTarget;
-}
-
-export interface ChannelMessageStreamDoneEvent {
-  readonly message: ChannelMessage;
-  readonly aiReply?: ChannelMessage;
-  readonly aiReplies?: readonly ChannelMessage[];
-  readonly replyDispatch?: ChannelReplyDispatch;
-  readonly autoStartedWorkflow?: ChannelMessageMutationResponse["autoStartedWorkflow"];
-}
-
-export interface ChannelMessageStreamBlockedEvent {
-  readonly message: ChannelMessage;
-  readonly aiReply?: ChannelMessage;
-  readonly aiReplies?: readonly ChannelMessage[];
-  readonly replyDispatch?: ChannelReplyDispatch;
-  readonly error?: string;
-}
-
-export interface ChannelMessageStreamErrorEvent {
-  readonly message?: ChannelMessage;
-  readonly aiReply?: ChannelMessage;
-  readonly aiReplies?: readonly ChannelMessage[];
-  readonly replyDispatch?: ChannelReplyDispatch;
-  readonly error: string;
 }
 
 export type ChannelMessageRouteAction = "reply" | "no_reply";
@@ -639,6 +570,7 @@ export interface ChannelMessageRouteContextPackMetadata {
   readonly droppedSectionIds: readonly string[];
   readonly sourceRefCounts: Readonly<Record<string, number>>;
   readonly compactionIds: readonly string[];
+  readonly contextProjection?: ConversationContextProjectionMetadata;
 }
 
 export interface ChannelMessageRouteDecision {
@@ -669,38 +601,10 @@ export interface ChannelMessageRouteDecisionListResponse {
   readonly decisions: readonly ChannelMessageRouteDecision[];
 }
 
-export type ChannelIntentDecisionAction =
-  | "no_reply"
-  | "single_reply"
-  | "visible_multi_reply"
-  | "clarify"
-  | "workflow_proposal"
-  | "direct_workflow";
-
-export type ChannelIntentDecisionStatus = "accepted" | "suppressed" | "failed";
-
-export type ChannelIntentDecisionCreatedBy = "deterministic" | "model";
-
-export interface ChannelIntentDecision {
-  readonly schemaVersion: 1;
-  readonly id: string;
-  readonly workspaceId: string;
-  readonly channelId: string;
-  readonly sourceMessageId: string;
-  readonly action: ChannelIntentDecisionAction;
-  readonly selectedTeammateId?: string;
-  readonly selectedTeammateIds?: readonly string[];
-  readonly proposalId?: string;
-  readonly replyMessageId?: string;
-  readonly replyMessageIds?: readonly string[];
-  readonly workflowId?: string;
-  readonly reason: string;
-  readonly status: ChannelIntentDecisionStatus;
-  readonly createdBy: ChannelIntentDecisionCreatedBy;
-  readonly errorMessage?: string;
-  readonly createdAt: string;
-  readonly updatedAt: string;
-}
+export type ChannelIntentDecisionAction = ChannelIntentDecisionV2Action;
+export type ChannelIntentDecisionStatus = ChannelIntentDecisionV2Status;
+export type ChannelIntentDecisionCreatedBy = ChannelIntentDecisionV2CreatedBy;
+export type ChannelIntentDecision = ChannelIntentDecisionV2;
 
 export interface ChannelIntentDecisionListResponse {
   readonly cwd: string;

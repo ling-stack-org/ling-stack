@@ -184,7 +184,7 @@ import type {
   ChannelMention,
   ChannelMessage,
   ChannelMessageFileRef,
-  ChannelMessageStreamReplyPendingEvent,
+  ChannelReplyPendingEvent,
   ChannelMessageRouteDecision,
   ChannelReplyDispatch,
   ChannelReplyDisposition,
@@ -662,7 +662,7 @@ export function WorkspaceClientView({
     readonly requestAiReply: boolean;
     readonly replyDisposition?: ChannelReplyDisposition;
     readonly onMessageAccepted?: (message: ChannelMessage) => void;
-    readonly onReplyPending?: (pending: ChannelMessageStreamReplyPendingEvent) => void;
+    readonly onReplyPending?: (pending: ChannelReplyPendingEvent) => void;
     readonly onReplyLinked?: (target: ConversationActiveReplyTarget) => void;
     readonly onReplyDispatch?: (dispatch: ChannelReplyDispatch) => void;
   }) => Promise<{ readonly errorMessage?: string }>;
@@ -983,9 +983,17 @@ export function WorkspaceClientView({
   );
   const latestEditableChannelMessageId = useMemo(() => [...channelMessagesForDisplay]
     .filter((message) => message.authorType === "local-user" && !message.pendingReplacement)
-    .filter((message) => selectedChannelBranchRootThreadId
-      ? message.threadId === selectedChannelBranchRootThreadId
-      : !message.threadId)
+    .filter((message) => {
+      if (message.threadSurfaceKind) {
+        return selectedChannelBranchRootThreadId
+          ? message.threadSurfaceKind === "branch" && message.threadId === selectedChannelBranchRootThreadId
+          : message.threadSurfaceKind === "channel_root";
+      }
+      // Data-only legacy fixtures have no canonical topology metadata.
+      return selectedChannelBranchRootThreadId
+        ? message.threadId === selectedChannelBranchRootThreadId
+        : !message.threadId;
+    })
     .at(-1)?.id, [channelMessagesForDisplay, selectedChannelBranchRootThreadId]);
   const memoryByIdForDisplay = useMemo(() => {
     if (!channelWorkCellDemoFixture) {
@@ -1816,6 +1824,7 @@ export function WorkspaceClientView({
   const guidanceModeActive = channelGuidanceTarget.guidanceModeActive;
   const activeConversationSourceRunId = channelGuidanceTarget.sourceRunId;
   const threadReplyController = useChannelThreadReplyController({
+    cwd,
     selectedChannelId,
     channelMessages,
     channelRuns,
@@ -3079,7 +3088,12 @@ export function WorkspaceClientView({
       showComposerFeedback("info", t("Source unavailable"));
       return;
     }
-    const targetFeedItemId = `message:${plan.sourceMessageId}`;
+    const sourceTurn = conversationTurnProjection.turns.find((turn) =>
+      turn.sourceMessageId === plan.sourceMessageId ||
+      turn.coordinatorStartMessages.some((message) => message.id === plan.sourceMessageId) ||
+      turn.coordinatorTerminalMessages.some((message) => message.id === plan.sourceMessageId)
+    );
+    const targetFeedItemId = sourceTurn?.id ?? `message:${plan.sourceMessageId}`;
     const target = Array.from(document.querySelectorAll<HTMLElement>(".message-feed-virtual-row"))
       .find((element) => element.dataset.feedItemId === targetFeedItemId);
     if (!target) {
@@ -3197,9 +3211,12 @@ export function WorkspaceClientView({
   const channelComposerPermissionPreset = permissionPreset ?? inferPermissionPreset(permissionMode);
 
   function channelMessageEditSurface(message: ChannelMessage): "channel_root" | "channel_branch" | "topic_reply" {
-    if (selectedChannelBranchRootThreadId && message.threadId === selectedChannelBranchRootThreadId) {
-      return "channel_branch";
+    if (message.threadSurfaceKind) {
+      if (message.threadSurfaceKind === "branch") return "channel_branch";
+      if (message.threadSurfaceKind === "topic") return "topic_reply";
+      return "channel_root";
     }
+    if (selectedChannelBranchRootThreadId && message.threadId === selectedChannelBranchRootThreadId) return "channel_branch";
     return message.threadId ? "topic_reply" : "channel_root";
   }
 
@@ -3227,6 +3244,7 @@ export function WorkspaceClientView({
       });
       setEditingChannelMessageId(undefined);
       await Promise.all([onRefreshChannelMessages(), onRefreshChannelActivity()]);
+      await threadReplyController.refreshThread();
     } catch (error) {
       setChannelMessageEditError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -3260,6 +3278,7 @@ export function WorkspaceClientView({
         setChannelReplacementRetryError(result.failureReason ?? pending.failureReason ?? "");
       }
       await Promise.all([onRefreshChannelMessages(), onRefreshChannelActivity()]);
+      await threadReplyController.refreshThread();
     } catch (error) {
       setChannelReplacementRetryError(error instanceof Error ? error.message : String(error));
     } finally {

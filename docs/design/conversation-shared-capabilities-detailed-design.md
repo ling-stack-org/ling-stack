@@ -47,7 +47,8 @@ Daemon application services
   -> rich-content-independent edit orchestration and private execution dispatch
 
 Core stores
-  -> message revisions, supersession links, turn/run state, audit records
+  -> Channel conversation items, private-chat messages, supersession links,
+     turn/run state, audit records
 ```
 
 Hard dependency rules:
@@ -55,7 +56,8 @@ Hard dependency rules:
 - shared React components do not import daemon routes or workspace stores;
 - content renderers receive normalized blocks and callbacks, not API clients;
 - edit orchestration does not live in React hooks;
-- native message stores remain the authority for current visible message data;
+- `conversation_items` is the Channel timeline authority; teammate-direct and other
+  non-Channel surfaces retain their scoped native stores;
 - revision and supersession records remain the authority for edit history;
 - `LingTurn`, `RunSession`, approvals, artifacts, and `TerminalReport` remain the authority
   for execution evidence.
@@ -70,7 +72,7 @@ flowchart LR
   UI["Shared MessageRow / WorkCell / TerminalReport"]
   Edit["Conversation message edit service"]
   Direct["Teammate direct execution service"]
-  Stores["Native message stores + revision/supersession ledger"]
+  Stores["Channel Items + scoped private stores + supersession ledger"]
   Runtime["LingTurn + RunSession + approvals + artifacts"]
 
   Surface --> Policy
@@ -86,8 +88,8 @@ flowchart LR
   Runtime --> View
 ```
 
-The shared UI owns presentation only. Native surface adapters remain responsible for
-message identity and lane ownership. The edit service coordinates revisions and
+The shared UI owns presentation only. Surface adapters project canonical Item or scoped
+private-message identity and lane ownership. The edit service coordinates revisions and
 supersession. The direct execution service resolves effective authority and delegates to
 the standard runtime. Neither application service may synthesize UI state from assistant
 copy.

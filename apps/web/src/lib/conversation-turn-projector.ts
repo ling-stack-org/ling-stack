@@ -84,14 +84,18 @@ export interface BuildConversationTurnProjectionInput {
 export function buildConversationTurnProjection(input: BuildConversationTurnProjectionInput): ConversationTurnProjection {
   const hiddenActivityIds = new Set<string>();
   const channelMessages = input.messages.filter((message) => message.channelId === input.channelId);
-  const childMessagesByThreadId = groupBy(channelMessages.filter((message) => Boolean(message.threadId)), (message) => message.threadId ?? "");
+  const messagesByTurnId = groupBy(channelMessages.filter((message) => Boolean(message.turnId)), (message) => message.turnId ?? "");
+  const legacyChildMessagesBySourceItemId = groupBy(
+    channelMessages.filter((message) => !message.turnId && Boolean(message.threadId)),
+    (message) => message.threadId ?? "",
+  );
   const proposalsBySourceMessageId = groupBy(
     input.proposals.filter((proposal) => proposal.channelId === input.channelId && proposal.status !== "cancelled" && proposal.status !== "superseded"),
     (proposal) => proposal.sourceMessageId,
   );
   const intentDecisionsBySourceMessageId = groupBy(
     input.intentDecisions.filter((decision) => decision.channelId === input.channelId && decision.status === "accepted"),
-    (decision) => decision.sourceMessageId,
+    (decision) => decision.sourceItemId,
   );
   const workflowById = new Map(input.workflows.filter((workflow) => workflow.channelId === input.channelId).map((workflow) => [workflow.id, workflow]));
   const runsById = new Map(input.runs.map((run) => [run.id, run]));
@@ -118,7 +122,12 @@ export function buildConversationTurnProjection(input: BuildConversationTurnProj
       operationCellByWorkflowId: input.operationCellByWorkflowId,
       operationCellByThreadId: input.operationCellByThreadId,
     });
-    const childMessages = (childMessagesByThreadId.get(sourceMessage.id) ?? []).sort(compareByCreatedAtThenId);
+    const childMessages = uniqueMessages([
+      ...(sourceMessage.turnId ? messagesByTurnId.get(sourceMessage.turnId) ?? [] : []),
+      ...(legacyChildMessagesBySourceItemId.get(sourceMessage.id) ?? []),
+    ])
+      .filter((message) => message.id !== sourceMessage.id)
+      .sort(compareByCreatedAtThenId);
     const allCoordinatorMessages = childMessages.filter((message) => isLingAgentMessage(message, input.lingAgentAuthorId));
     const coordinatorMessages = allCoordinatorMessages.filter((message) => !input.terminalReportMessageIds?.has(message.id));
     const { startMessages, terminalMessages } = splitCoordinatorMessages(coordinatorMessages, operation?.cell);
@@ -179,7 +188,11 @@ export function buildConversationTurnProjection(input: BuildConversationTurnProj
 }
 
 function isRootUserMessage(message: ChannelMessage): boolean {
-  return message.authorType === "local-user" && message.kind === "message" && !message.threadId;
+  return message.authorType === "local-user" && message.kind === "message" && (Boolean(message.turnId) || !message.threadId);
+}
+
+function uniqueMessages(messages: readonly ChannelMessage[]): readonly ChannelMessage[] {
+  return [...new Map(messages.map((message) => [message.id, message])).values()];
 }
 
 function isLingAgentMessage(message: ChannelMessage, lingAgentAuthorId: string): boolean {

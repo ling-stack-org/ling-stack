@@ -273,6 +273,32 @@ export interface TurnContextAssignment {
   readonly createdAt: string;
 }
 
+export type ContextSegmentProposal =
+  | {
+      readonly action: "continue";
+      readonly segmentId: string;
+      readonly antecedentTurnId?: string;
+      readonly confidence: number;
+      readonly evidenceItemIds: readonly string[];
+    }
+  | {
+      readonly action: "switch_existing";
+      readonly segmentId: string;
+      readonly antecedentTurnId?: string;
+      readonly confidence: number;
+      readonly evidenceItemIds: readonly string[];
+    }
+  | {
+      readonly action: "propose_new";
+      readonly confidence: number;
+      readonly relatedSegmentIds: readonly string[];
+      readonly reason: string;
+    }
+  | {
+      readonly action: "uncertain";
+      readonly candidateSegmentIds: readonly string[];
+    };
+
 export const conversationContextSummaryScopes = ["segment", "thread_core", "work"] as const;
 export type ConversationContextSummaryScope = (typeof conversationContextSummaryScopes)[number];
 
@@ -313,6 +339,12 @@ export interface ConversationContextSnapshot {
 
 export interface ConversationContextProjectionMetadata {
   readonly projectionVersion: string;
+  /**
+   * Fingerprint of the effective assignment, summaries, and item revisions that
+   * contributed facts to this projection. Unlike projectionVersion, this does
+   * not change for metadata-only segment activity.
+   */
+  readonly sourceStateFingerprint: string;
   readonly threadId: string;
   readonly turnId: string;
   readonly segmentId: string;
