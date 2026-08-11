@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
@@ -16,8 +15,10 @@ import { readJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { buildUnavailableWorkspaceGitStatus, inspectWorkspaceGitStatus } from "./git-status.js";
 import {
+  createInitialWorkspaceBinding,
   createManagedGitWorktree,
   inspectManagedWorktree,
+  isWorkspaceDirectory,
   removeManagedWorktreeIfClean,
   resolveGitRepoRoot,
 } from "../workspaces/managed-worktrees.js";
@@ -36,13 +37,10 @@ export function defaultChannelWorkspaceBinding(channel: Channel, workspaceCwd: s
 export function assertChannelWorkspaceReady(channel: Channel, workspaceCwd: string): { readonly ok: true; readonly executionCwd: string } | { readonly ok: false; readonly message: string } {
   const binding = channel.workspaceBinding;
   const executionCwd = resolveChannelExecutionCwd(channel, workspaceCwd);
-  if (!binding || binding.mode === "local") {
-    return { ok: true, executionCwd };
-  }
-  if (binding.status !== "ready") {
+  if (binding && binding.status !== "ready") {
     return { ok: false, message: "频道工作区不可用，请恢复工作区或切回 Local。" };
   }
-  if (!existsSync(executionCwd)) {
+  if (!isWorkspaceDirectory(executionCwd)) {
     return { ok: false, message: "频道工作区目录不存在，请刷新状态、恢复工作区或切回 Local。" };
   }
   return { ok: true, executionCwd };
@@ -188,10 +186,18 @@ async function refreshChannelWorkspaceBinding(channel: Channel, workspaceCwd: st
   const binding = channel.workspaceBinding ?? defaultChannelWorkspaceBinding(channel, workspaceCwd);
   const executionPath = resolveChannelExecutionCwd({ ...channel, workspaceBinding: binding }, workspaceCwd);
   if (binding.mode === "local") {
-    return { ...binding, executionPath, status: "ready", checkedAt: now, updatedAt: now };
+    const available = isWorkspaceDirectory(executionPath);
+    return {
+      ...binding,
+      executionPath,
+      status: available ? "ready" : "missing",
+      errorMessage: available ? undefined : "Local 工作区目录不存在、不是目录或不可访问。",
+      checkedAt: now,
+      updatedAt: now,
+    };
   }
   if (binding.mode === "external_path") {
-    const exists = existsSync(executionPath);
+    const exists = isWorkspaceDirectory(executionPath);
     return {
       ...binding,
       executionPath,
@@ -217,6 +223,7 @@ async function refreshChannelWorkspaceBinding(channel: Channel, workspaceCwd: st
     ...binding,
     executionPath: binding.worktreePath,
     status,
+    createdAt: status === "ready" ? binding.createdAt ?? now : binding.createdAt,
     errorMessage: managedInspectionMessage(status, inspection, "频道工作区目录不存在。"),
     checkedAt: now,
     updatedAt: now,
@@ -233,10 +240,13 @@ async function readHandoffBinding(value: unknown, channel: Channel, workspaceCwd
     throw new Error("mode must be local, managed_worktree, or external_path");
   }
   if (mode === "local") {
+    const executionPath = channel.boundPath ?? workspaceCwd;
+    const available = isWorkspaceDirectory(executionPath);
     return {
       mode,
-      status: "ready",
-      executionPath: channel.boundPath ?? workspaceCwd,
+      status: available ? "ready" : "missing",
+      executionPath,
+      errorMessage: available ? undefined : "Local 工作区目录不存在、不是目录或不可访问。",
       checkedAt: now,
       updatedAt: now,
     };
@@ -246,11 +256,12 @@ async function readHandoffBinding(value: unknown, channel: Channel, workspaceCwd
       throw new Error("executionPath is required for external_path");
     }
     const executionPath = resolvePath(record.executionPath);
+    const available = isWorkspaceDirectory(executionPath);
     return {
       mode,
-      status: existsSync(executionPath) ? "ready" : "missing",
+      status: available ? "ready" : "missing",
       executionPath,
-      errorMessage: existsSync(executionPath) ? undefined : "外部工作区目录不存在。",
+      errorMessage: available ? undefined : "外部工作区目录不存在、不是目录或不可访问。",
       checkedAt: now,
       updatedAt: now,
     };
@@ -274,7 +285,13 @@ export async function createManagedWorktreeBinding(
   const root = channel.boundPath ?? workspaceCwd;
   const repo = await resolveGitRepoRoot(root);
   if (!repo.ok) {
-    return { ok: false, code: "not_git_repository", message: "当前工作区不是 Git 仓库，无法创建独立频道工作区。" };
+    return {
+      ok: false,
+      code: repo.code,
+      message: repo.code === "not_git_repository"
+        ? "当前工作区不是 Git 仓库，无法创建独立频道工作区。"
+        : repo.message,
+    };
   }
   const repoRoot = repo.repoRoot;
   const now = new Date().toISOString();
@@ -314,22 +331,31 @@ export async function createInitialChannelWorkspaceBinding(
   | { readonly ok: true; readonly binding: ChannelWorkspaceBinding }
   | { readonly ok: false; readonly code: string; readonly message: string }
 > {
-  const managed = await createManagedWorktreeBinding(channel, workspaceCwd, workspacePaths);
-  if (managed.ok || managed.code !== "not_git_repository") {
-    return managed;
-  }
-  const now = new Date().toISOString();
-  return {
-    ok: true,
-    binding: {
-      mode: "local",
-      status: "ready",
-      executionPath: channel.boundPath ?? workspaceCwd,
-      createdAt: channel.workspaceBinding?.createdAt ?? now,
-      checkedAt: now,
-      updatedAt: now,
+  return await createInitialWorkspaceBinding({
+    createManaged: () => createManagedWorktreeBinding(channel, workspaceCwd, workspacePaths),
+    createLocal: () => {
+      const now = new Date().toISOString();
+      const executionPath = channel.boundPath ?? workspaceCwd;
+      if (!isWorkspaceDirectory(executionPath)) {
+        return {
+          ok: false,
+          code: "workspace_unavailable",
+          message: "当前工作区目录不存在、不是目录或不可访问，无法使用 Local 工作区。",
+        } as const;
+      }
+      return {
+        ok: true,
+        binding: {
+          mode: "local",
+          status: "ready",
+          executionPath,
+          createdAt: channel.workspaceBinding?.createdAt ?? now,
+          checkedAt: now,
+          updatedAt: now,
+        } satisfies ChannelWorkspaceBinding,
+      } as const;
     },
-  };
+  });
 }
 
 async function cleanupManagedChannelWorktree(

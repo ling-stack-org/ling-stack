@@ -20,6 +20,7 @@ import { resolveChannelReplyExecutionTarget } from "../dist/features/channels/ch
 import { planConversationContextSummary } from "../dist/features/channels/context-processing/conversation-summary-coordinator.js";
 import { buildLingAgentSessionViewForChannel } from "../dist/features/channels/ling-agent-session-view.js";
 import { buildLingAgentTurnEnvelope } from "../dist/features/channels/ling-agent-turn-envelope.js";
+import { assertChannelWorkspaceReady } from "../dist/features/channels/workspace.js";
 import { findActiveChannelReplyRun } from "../dist/features/channels/channel-reply-dispatch.js";
 import { availabilityIncidentInputForProviderRuntimeFailure } from "../dist/features/channels/provider-runtime-observations.js";
 import { linkBodyExtractorV1 } from "../dist/features/channels/materialization/extractors/link-body.js";
@@ -28,8 +29,10 @@ import { pdfExtractorV1 } from "../dist/features/channels/materialization/extrac
 import { attachmentMaterializationFingerprint, linkPreviewMaterializationFingerprint } from "../dist/features/channels/materialization/fingerprints.js";
 import { materializeInlineChannelInputs } from "../dist/features/channels/materialization/inline.js";
 import { materializeInlineTeammateDirectInputs } from "../dist/features/teammates/direct-materialization.js";
+import { ensureDirectWorkspaceReady } from "../dist/features/teammates/direct-workspace.js";
+import { createInitialWorkspaceBinding, createManagedGitWorktree, resolveGitRepoRoot } from "../dist/features/workspaces/managed-worktrees.js";
 import { prepareChannelCreateBody } from "./conversation-model-test-fixture.mjs";
-import { ensureGitRepo, ensureGitRepoForChannelPost } from "./git-test-helpers.mjs";
+import { ensureEmptyGitRepo, ensureGitRepo, ensureGitRepoForChannelPost } from "./git-test-helpers.mjs";
 
 const require = createRequire(import.meta.url);
 
@@ -9896,12 +9899,13 @@ test("direct teammate workspace cleanup refuses dirty managed worktrees", async 
 
 test("channel creation uses local workspace binding when cwd is not a Git repository", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-worktree-nongit-"));
+  const boundPath = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-bound-nongit-"));
   const daemon = await startDaemonForTest();
   try {
     const createUrl = `${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`;
     const createBody = await prepareChannelCreateBody(createUrl, {
       name: "Engineering",
-      boundPath: cwd,
+      boundPath,
       allowedTools: ["read"],
     });
     const response = await fetch(createUrl, {
@@ -9912,18 +9916,487 @@ test("channel creation uses local workspace binding when cwd is not a Git reposi
     assert.equal(response.status, 201);
     const body = await response.json();
     assert.equal(body.channel.name, "Engineering");
-    assert.equal(body.channel.boundPath, cwd);
+    assert.equal(body.channel.boundPath, boundPath);
     assert.equal(body.channel.workspaceBinding?.mode, "local");
     assert.equal(body.channel.workspaceBinding?.status, "ready");
-    assert.equal(body.channel.workspaceBinding?.executionPath, cwd);
+    assert.equal(body.channel.workspaceBinding?.executionPath, boundPath);
     assert.equal(body.channel.workspaceBinding?.worktreePath, undefined);
 
     const listed = await getJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(listed.channels.length, 1);
     assert.equal(listed.channels[0].id, body.channel.id);
     assert.equal(listed.channels[0].workspaceBinding?.mode, "local");
+
+    const explicitWorktree = await fetch(`${daemon.url}/channels/${encodeURIComponent(body.channel.id)}/workspace/create-worktree?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(explicitWorktree.status, 400);
+    assert.equal((await explicitWorktree.json()).error, "not_git_repository");
+
+    await rm(boundPath, { recursive: true, force: true });
+    const refreshed = await postJson(`${daemon.url}/channels/${encodeURIComponent(body.channel.id)}/workspace/refresh?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(refreshed.binding.mode, "local");
+    assert.equal(refreshed.binding.status, "missing");
+    assert.match(refreshed.binding.errorMessage, /不存在、不是目录或不可访问/);
+    assert.deepEqual(
+      assertChannelWorkspaceReady({ ...body.channel, workspaceBinding: refreshed.binding }, cwd),
+      { ok: false, message: "频道工作区不可用，请恢复工作区或切回 Local。" },
+    );
   } finally {
     await daemon.close();
+    await rm(boundPath, { recursive: true, force: true });
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("an empty Git repository uses Local automatically but keeps explicit worktree creation strict", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-worktree-empty-git-"));
+  await ensureEmptyGitRepo(cwd);
+  const daemon = await startDaemonForTest();
+  try {
+    const createUrl = `${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`;
+    const createBody = await prepareChannelCreateBody(createUrl, {
+      name: "Empty Git",
+      boundPath: cwd,
+      allowedTools: ["read"],
+    });
+    const response = await fetch(createUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(createBody),
+    });
+    assert.equal(response.status, 201);
+    const body = await response.json();
+    assert.equal(body.channel.workspaceBinding?.mode, "local");
+    assert.equal(body.channel.workspaceBinding?.status, "ready");
+
+    const explicitWorktree = await fetch(`${daemon.url}/channels/${encodeURIComponent(body.channel.id)}/workspace/create-worktree?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(explicitWorktree.status, 400);
+    assert.equal((await explicitWorktree.json()).error, "git_inspection_failed");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("Git repository resolution distinguishes missing Git, non-repositories, and inspection failures", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-git-resolution-"));
+  try {
+    const missingWorkspace = await resolveGitRepoRoot(resolve(cwd, "missing"), async () => {
+      throw new Error("Git should not run for a missing workspace");
+    });
+    assert.deepEqual(missingWorkspace, {
+      ok: false,
+      code: "workspace_unavailable",
+      message: "当前工作区目录不存在、不是目录或不可访问，无法创建或管理独立 worktree。",
+    });
+
+    const fileWorkspace = resolve(cwd, "workspace.txt");
+    await writeFile(fileWorkspace, "not a directory\n", "utf8");
+    const unavailableFile = await resolveGitRepoRoot(fileWorkspace, async () => {
+      throw new Error("Git should not run for a non-directory workspace");
+    });
+    assert.deepEqual(unavailableFile, {
+      ok: false,
+      code: "workspace_unavailable",
+      message: "当前工作区目录不存在、不是目录或不可访问，无法创建或管理独立 worktree。",
+    });
+
+    const emptyInspection = await resolveGitRepoRoot(cwd, async () => ({ stdout: "", stderr: "" }));
+    assert.deepEqual(emptyInspection, {
+      ok: false,
+      code: "git_inspection_failed",
+      message: "Git 仓库检查未返回工作区根目录，无法创建或管理独立 worktree。",
+    });
+
+    const gitUnavailable = await resolveGitRepoRoot(cwd, async () => {
+      throw Object.assign(new Error("spawn git ENOENT"), { code: "ENOENT" });
+    });
+    assert.deepEqual(gitUnavailable, {
+      ok: false,
+      code: "git_unavailable",
+      message: "系统未找到 Git 可执行文件，无法创建或管理独立 worktree。",
+    });
+
+    const notRepository = await resolveGitRepoRoot(cwd, async () => {
+      throw Object.assign(new Error("git rev-parse failed"), {
+        code: 128,
+        stderr: "fatal: not a git repository (or any of the parent directories): .git",
+      });
+    });
+    assert.deepEqual(notRepository, {
+      ok: false,
+      code: "not_git_repository",
+      message: "当前工作区不是 Git 仓库，无法创建或管理独立 worktree。",
+    });
+
+    const inspectionFailed = await resolveGitRepoRoot(cwd, async () => {
+      throw Object.assign(new Error("git rev-parse failed"), { code: "EACCES" });
+    });
+    assert.deepEqual(inspectionFailed, {
+      ok: false,
+      code: "git_inspection_failed",
+      message: "无法检查 Git 仓库状态，请确认 Git 可用且工作区可访问。",
+    });
+
+    const disappearingWorkspace = await mkdtemp(resolve(tmpdir(), "ling-stack-git-resolution-race-"));
+    const disappeared = await resolveGitRepoRoot(disappearingWorkspace, async () => {
+      await rm(disappearingWorkspace, { recursive: true, force: true });
+      throw Object.assign(new Error("spawn git ENOENT"), { code: "ENOENT" });
+    });
+    assert.equal(disappeared.ok, false);
+    assert.equal(disappeared.code, "workspace_unavailable");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("initial workspace selection falls back to Local only when Git isolation is unavailable", async () => {
+  for (const code of ["git_unavailable", "not_git_repository", "git_inspection_failed"]) {
+    const result = await createInitialWorkspaceBinding({
+      createManaged: async () => ({ ok: false, code, message: code }),
+      createLocal: () => ({ ok: true, binding: { mode: "local", status: "ready" } }),
+    });
+    assert.deepEqual(result, { ok: true, binding: { mode: "local", status: "ready" } });
+  }
+
+  const missingWorkspace = await createInitialWorkspaceBinding({
+    createManaged: async () => ({ ok: false, code: "workspace_unavailable", message: "missing workspace" }),
+    createLocal: () => ({ ok: true, binding: { mode: "local", status: "ready" } }),
+  });
+  assert.deepEqual(missingWorkspace, { ok: false, code: "workspace_unavailable", message: "missing workspace" });
+
+  const disappearedBeforeFallback = await createInitialWorkspaceBinding({
+    createManaged: async () => ({ ok: false, code: "git_unavailable", message: "missing Git" }),
+    createLocal: () => ({ ok: false, code: "workspace_unavailable", message: "missing workspace" }),
+  });
+  assert.deepEqual(disappearedBeforeFallback, { ok: false, code: "workspace_unavailable", message: "missing workspace" });
+});
+
+test("direct workspace initialization serializes concurrent first replies into one setup", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-direct-workspace-flight-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const thread = store.getOrCreateTeammateDirectThread("teammate_builtin_designer", new Date().toISOString());
+    let createCalls = 0;
+    let releaseCreate;
+    let markCreateStarted;
+    const createStarted = new Promise((resolveStarted) => {
+      markCreateStarted = resolveStarted;
+    });
+    const createBarrier = new Promise((resolveCreate) => {
+      releaseCreate = resolveCreate;
+    });
+    const now = new Date().toISOString();
+    const bindingFactory = {
+      createInitial: async () => {
+        createCalls += 1;
+        markCreateStarted();
+        await createBarrier;
+        return {
+          ok: true,
+          binding: {
+            mode: "local",
+            status: "ready",
+            executionPath: cwd,
+            createdAt: now,
+            checkedAt: now,
+            updatedAt: now,
+          },
+        };
+      },
+      createManaged: async () => {
+        throw new Error("managed creation should not run for a new direct thread");
+      },
+    };
+
+    const first = ensureDirectWorkspaceReady({ store, thread, workspaceCwd: cwd, bindingFactory });
+    await createStarted;
+    const second = ensureDirectWorkspaceReady({ store, thread, workspaceCwd: cwd, bindingFactory });
+    await Promise.resolve();
+    assert.equal(createCalls, 1);
+    releaseCreate();
+
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    assert.equal(firstResult.ok, true);
+    assert.equal(secondResult.ok, true);
+    assert.equal(firstResult.ok && firstResult.workspace.binding.mode, "local");
+    assert.equal(secondResult.ok && secondResult.workspace.binding.mode, "local");
+    assert.equal(createCalls, 1);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("direct workspace handoff waits for initialization and remains the final binding", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-direct-workspace-handoff-race-"));
+  const managedPath = resolve(cwd, "managed-worktree");
+  await mkdir(managedPath, { recursive: true });
+  let store;
+  const daemon = await startDaemonForTest(undefined, {
+    storeFactory: (storeCwd) => {
+      store = createSqliteRunStore(storeCwd);
+      return store;
+    },
+  });
+  try {
+    const teammateId = "teammate_builtin_designer";
+    await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-workspace?cwd=${encodeURIComponent(cwd)}`);
+    assert.ok(store);
+    const thread = store.getOrCreateTeammateDirectThread(teammateId, new Date().toISOString());
+    let releaseCreate;
+    let markCreateStarted;
+    const createStarted = new Promise((resolveStarted) => {
+      markCreateStarted = resolveStarted;
+    });
+    const createBarrier = new Promise((resolveCreate) => {
+      releaseCreate = resolveCreate;
+    });
+    const now = new Date().toISOString();
+    const initialization = ensureDirectWorkspaceReady({
+      store,
+      thread,
+      workspaceCwd: cwd,
+      bindingFactory: {
+        createInitial: async () => {
+          markCreateStarted();
+          await createBarrier;
+          return {
+            ok: true,
+            binding: {
+              mode: "managed_worktree",
+              status: "ready",
+              executionPath: managedPath,
+              worktreePath: managedPath,
+              branchName: "ling/test-handoff-race",
+              baseBranch: "main",
+              baseCommit: "abc123",
+              createdAt: now,
+              checkedAt: now,
+              updatedAt: now,
+            },
+          };
+        },
+        createManaged: async () => {
+          throw new Error("managed recreation should not run for a new direct thread");
+        },
+      },
+    });
+    await createStarted;
+
+    const handoff = postJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-workspace/handoff?cwd=${encodeURIComponent(cwd)}`, {
+      mode: "local",
+    });
+    const earlyHandoff = await Promise.race([
+      handoff.then(() => "settled"),
+      new Promise((resolveWaiting) => setTimeout(() => resolveWaiting("waiting"), 50)),
+    ]);
+    assert.equal(earlyHandoff, "waiting");
+    let lateFactoryCalls = 0;
+    const replyAfterHandoff = ensureDirectWorkspaceReady({
+      store,
+      thread,
+      workspaceCwd: cwd,
+      bindingFactory: {
+        createInitial: async () => {
+          lateFactoryCalls += 1;
+          throw new Error("a reply queued after handoff must use the handed-off binding");
+        },
+        createManaged: async () => {
+          lateFactoryCalls += 1;
+          throw new Error("a reply queued after handoff must use the handed-off binding");
+        },
+      },
+    });
+    releaseCreate();
+
+    const [initialized, handedOff, resumedReply] = await Promise.all([initialization, handoff, replyAfterHandoff]);
+    assert.equal(initialized.ok, true);
+    assert.equal(initialized.ok && initialized.workspace.binding.mode, "managed_worktree");
+    assert.equal(handedOff.binding.mode, "local");
+    assert.equal(handedOff.binding.status, "ready");
+    assert.equal(resumedReply.ok, true);
+    assert.equal(resumedReply.ok && resumedReply.workspace.binding.mode, "local");
+    assert.equal(lateFactoryCalls, 0);
+    const finalWorkspace = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-workspace?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(finalWorkspace.binding.mode, "local");
+    assert.equal(finalWorkspace.binding.executionPath, cwd);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("direct workspace initialization releases coordination after a factory error", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-direct-workspace-flight-retry-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const thread = store.getOrCreateTeammateDirectThread("teammate_builtin_designer", new Date().toISOString());
+    await assert.rejects(
+      () => ensureDirectWorkspaceReady({
+        store,
+        thread,
+        workspaceCwd: cwd,
+        bindingFactory: {
+          createInitial: async () => {
+            throw new Error("simulated initialization failure");
+          },
+          createManaged: async () => {
+            throw new Error("managed creation should not run");
+          },
+        },
+      }),
+      /simulated initialization failure/,
+    );
+
+    const now = new Date().toISOString();
+    const retried = await ensureDirectWorkspaceReady({
+      store,
+      thread,
+      workspaceCwd: cwd,
+      bindingFactory: {
+        createInitial: async () => ({
+          ok: true,
+          binding: {
+            mode: "local",
+            status: "ready",
+            executionPath: cwd,
+            createdAt: now,
+            checkedAt: now,
+            updatedAt: now,
+          },
+        }),
+        createManaged: async () => {
+          throw new Error("managed creation should not run");
+        },
+      },
+    });
+    assert.equal(retried.ok, true);
+    assert.equal(retried.ok && retried.workspace.binding.mode, "local");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("direct Local workspaces become unavailable when their directory disappears", async () => {
+  const storeCwd = await mkdtemp(resolve(tmpdir(), "ling-stack-direct-workspace-local-store-"));
+  const workspaceCwd = await mkdtemp(resolve(tmpdir(), "ling-stack-direct-workspace-local-path-"));
+  const store = createSqliteRunStore(storeCwd);
+  try {
+    const thread = store.getOrCreateTeammateDirectThread("teammate_builtin_engineer", new Date().toISOString());
+    const now = new Date().toISOString();
+    const localThread = store.updateTeammateDirectThreadWorkspace(thread.id, {
+      mode: "local",
+      status: "ready",
+      executionPath: workspaceCwd,
+      createdAt: now,
+      checkedAt: now,
+      updatedAt: now,
+    }, now);
+    assert.ok(localThread);
+    await rm(workspaceCwd, { recursive: true, force: true });
+
+    const result = await ensureDirectWorkspaceReady({ store, thread: localThread, workspaceCwd });
+    assert.equal(result.ok, false);
+    assert.equal(result.ok || result.code, "direct_workspace_unavailable");
+    assert.equal(result.ok || result.binding.mode, "local");
+    assert.equal(result.ok || result.binding.status, "missing");
+  } finally {
+    store.close();
+    await rm(workspaceCwd, { recursive: true, force: true });
+    await rm(storeCwd, { recursive: true, force: true });
+  }
+});
+
+test("a previously created direct worktree never downgrades to Local when recreation fails", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-direct-workspace-owned-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const thread = store.getOrCreateTeammateDirectThread("teammate_builtin_engineer", new Date().toISOString());
+    const now = new Date().toISOString();
+    const worktreePath = resolve(cwd, ".ling-stack", "worktrees", "teammates", thread.teammateId, thread.id);
+    const ownedThread = store.updateTeammateDirectThreadWorkspace(thread.id, {
+      mode: "managed_worktree",
+      status: "not_created",
+      executionPath: worktreePath,
+      worktreePath,
+      branchName: `ling/teammate-${thread.teammateId}-${thread.id}`,
+      baseBranch: "main",
+      baseCommit: "abc123",
+      createdAt: now,
+      checkedAt: now,
+      updatedAt: now,
+    }, now);
+    assert.ok(ownedThread);
+    let initialCalls = 0;
+    let managedCalls = 0;
+    const result = await ensureDirectWorkspaceReady({
+      store,
+      thread: ownedThread,
+      workspaceCwd: cwd,
+      bindingFactory: {
+        createInitial: async () => {
+          initialCalls += 1;
+          return { ok: true, binding: { mode: "local", status: "ready", executionPath: cwd, updatedAt: now } };
+        },
+        createManaged: async () => {
+          managedCalls += 1;
+          return { ok: false, code: "git_unavailable", message: "Git is unavailable" };
+        },
+      },
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.ok || result.code, "git_unavailable");
+    assert.equal(initialCalls, 0);
+    assert.equal(managedCalls, 1);
+    assert.equal(result.ok || result.binding.mode, "managed_worktree");
+    assert.equal(result.ok || result.binding.createdAt, now);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("a recovered managed direct worktree records ownership before any later disappearance", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-direct-workspace-recovered-"));
+  await ensureGitRepo(cwd);
+  const store = createSqliteRunStore(cwd);
+  try {
+    const thread = store.getOrCreateTeammateDirectThread("teammate_builtin_engineer", new Date().toISOString());
+    const worktreePath = resolve(cwd, ".ling-stack", "worktrees", "teammates", thread.teammateId, thread.id);
+    const created = await createManagedGitWorktree({
+      repoRoot: cwd,
+      worktreePath,
+      branchName: `ling/teammate-${thread.teammateId}-${thread.id}`,
+    });
+    assert.equal(created.ok, true);
+    const now = new Date().toISOString();
+    const recoveredThread = store.updateTeammateDirectThreadWorkspace(thread.id, {
+      mode: "managed_worktree",
+      status: "blocked",
+      executionPath: worktreePath,
+      worktreePath,
+      branchName: `ling/teammate-${thread.teammateId}-${thread.id}`,
+      checkedAt: now,
+      updatedAt: now,
+    }, now);
+    assert.ok(recoveredThread);
+
+    const ready = await ensureDirectWorkspaceReady({ store, thread: recoveredThread, workspaceCwd: cwd });
+    assert.equal(ready.ok, true);
+    assert.equal(ready.ok && ready.workspace.binding.status, "ready");
+    assert.equal(ready.ok && typeof ready.workspace.binding.createdAt, "string");
+  } finally {
+    store.close();
     await rm(cwd, { recursive: true, force: true });
   }
 });
@@ -11535,6 +12008,75 @@ test("skill import draft publishes registry skills and teammate bindings use eff
       body: JSON.stringify({ bindings: [{ skillId: "missing-new-skill", source: "user", enabled: true }] }),
     });
     assert.equal(unknownResponse.status, 400);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("teammate direct replies use a local workspace when cwd is not a Git repository", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-private-nongit-"));
+  const runner = new RecordingRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const teammateId = "teammate_builtin_designer";
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+    });
+
+    const initialWorkspace = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-workspace?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(initialWorkspace.binding.mode, "managed_worktree");
+    assert.equal(initialWorkspace.binding.status, "not_created");
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const thread = store.getOrCreateTeammateDirectThread(teammateId, new Date().toISOString());
+    const blockedAt = new Date().toISOString();
+    store.updateTeammateDirectThreadWorkspace(thread.id, {
+      ...initialWorkspace.binding,
+      status: "blocked",
+      errorMessage: "当前工作区不是 Git 仓库，无法创建独立私聊工作区。",
+      checkedAt: blockedAt,
+      updatedAt: blockedAt,
+    }, blockedAt);
+
+    const explicitWorktree = await fetch(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-workspace/create-worktree?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(explicitWorktree.status, 400);
+    assert.equal((await explicitWorktree.json()).error, "not_git_repository");
+
+    const created = await postJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "你是谁",
+      providerPresetId: provider.id,
+      requestAiReply: true,
+    });
+
+    assert.equal(created.aiReply.status, "ready");
+    assert.equal(created.aiReply.body, "Designer reply");
+    assert.ok(created.aiReply.linkedRunId);
+    assert.equal(runner.runs.length, 1);
+    assert.equal(runner.runs[0].cwd, cwd);
+
+    const run = await getJson(`${daemon.url}/runs/${encodeURIComponent(created.aiReply.linkedRunId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(run.requestSnapshot.directWorkspaceBinding.mode, "local");
+    assert.equal(run.requestSnapshot.directWorkspaceBinding.status, "ready");
+    assert.equal(run.requestSnapshot.cwd, cwd);
+
+    const workspace = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-workspace?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(workspace.binding.mode, "local");
+    assert.equal(workspace.binding.status, "ready");
+    assert.equal(workspace.snapshot.executionCwd, cwd);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });

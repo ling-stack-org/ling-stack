@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { isAbsolute, relative, resolve as resolvePath } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
@@ -16,15 +15,28 @@ import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import {
+  createInitialWorkspaceBinding,
   createManagedGitWorktree,
   inspectManagedWorktree,
+  isWorkspaceDirectory,
   removeManagedWorktreeIfClean,
   resolveGitRepoRoot,
   safeGitBranchSegment,
+  type WorkspaceBindingCreateResult,
 } from "../workspaces/managed-worktrees.js";
 
 type DirectWorktreeTarget = Pick<TeammateDirectThread, "id" | "teammateId" | "workspaceBinding">;
 type DirectWorkspaceStore = RunStorePathsFacet & TeammateStoreFacet;
+type DirectWorkspaceEnsureResult =
+  | { readonly ok: true; readonly workspace: DirectWorkspaceReady }
+  | { readonly ok: false; readonly code: string; readonly message: string; readonly thread: TeammateDirectThread; readonly binding: DirectWorkspaceBinding };
+
+interface DirectWorkspaceBindingFactory {
+  readonly createInitial: () => Promise<WorkspaceBindingCreateResult<DirectWorkspaceBinding>>;
+  readonly createManaged: () => Promise<WorkspaceBindingCreateResult<DirectWorkspaceBinding>>;
+}
+
+const directWorkspaceMutationTails = new WeakMap<DirectWorkspaceStore, Map<string, Promise<void>>>();
 
 export interface DirectWorkspaceReady {
   readonly thread: TeammateDirectThread;
@@ -82,13 +94,53 @@ export async function ensureDirectWorkspaceReady(input: {
   readonly store: DirectWorkspaceStore;
   readonly thread: TeammateDirectThread;
   readonly workspaceCwd: string;
-}): Promise<
-  | { readonly ok: true; readonly workspace: DirectWorkspaceReady }
-  | { readonly ok: false; readonly code: string; readonly message: string; readonly thread: TeammateDirectThread; readonly binding: DirectWorkspaceBinding }
-> {
+  readonly bindingFactory?: DirectWorkspaceBindingFactory;
+}): Promise<DirectWorkspaceEnsureResult> {
+  return await coordinateDirectWorkspaceMutation(input.store, input.thread.id, async () => {
+    const currentThread = input.store.getOrCreateTeammateDirectThread(input.thread.teammateId, new Date().toISOString());
+    return await ensureDirectWorkspaceReadyOnce({ ...input, thread: currentThread });
+  });
+}
+
+async function coordinateDirectWorkspaceMutation<T>(
+  store: DirectWorkspaceStore,
+  threadId: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  let tails = directWorkspaceMutationTails.get(store);
+  if (!tails) {
+    tails = new Map();
+    directWorkspaceMutationTails.set(store, tails);
+  }
+  const previous = tails.get(threadId) ?? Promise.resolve();
+  let release: (() => void) | undefined;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  tails.set(threadId, current);
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    release?.();
+    if (tails.get(threadId) === current) {
+      tails.delete(threadId);
+    }
+    if (tails.size === 0) {
+      directWorkspaceMutationTails.delete(store);
+    }
+  }
+}
+
+async function ensureDirectWorkspaceReadyOnce(input: {
+  readonly store: DirectWorkspaceStore;
+  readonly thread: TeammateDirectThread;
+  readonly workspaceCwd: string;
+  readonly bindingFactory?: DirectWorkspaceBindingFactory;
+}): Promise<DirectWorkspaceEnsureResult> {
   const refreshed = await refreshDirectWorkspaceBinding(input.thread, input.workspaceCwd, input.store.paths, new Date().toISOString());
   if (refreshed.mode === "local" || refreshed.mode === "external_path") {
-    if (refreshed.status === "ready" && existsSync(refreshed.executionPath ?? input.workspaceCwd)) {
+    if (refreshed.status === "ready" && isWorkspaceDirectory(refreshed.executionPath ?? input.workspaceCwd)) {
       const updated = input.store.updateTeammateDirectThreadWorkspace(input.thread.id, refreshed, refreshed.updatedAt) ?? input.thread;
       return { ok: true, workspace: buildDirectWorkspaceReady(input.workspaceCwd, updated, refreshed) };
     }
@@ -102,7 +154,7 @@ export async function ensureDirectWorkspaceReady(input: {
     };
   }
 
-  if (refreshed.status === "ready" && refreshed.worktreePath && existsSync(refreshed.worktreePath)) {
+  if (refreshed.status === "ready" && refreshed.worktreePath && isWorkspaceDirectory(refreshed.worktreePath)) {
     const updated = input.store.updateTeammateDirectThreadWorkspace(input.thread.id, refreshed, refreshed.updatedAt) ?? input.thread;
     return { ok: true, workspace: buildDirectWorkspaceReady(input.workspaceCwd, updated, refreshed) };
   }
@@ -118,7 +170,13 @@ export async function ensureDirectWorkspaceReady(input: {
     };
   }
 
-  const created = await createManagedDirectWorktreeBinding(input.thread, input.workspaceCwd, input.store.paths);
+  const bindingFactory = input.bindingFactory ?? {
+    createInitial: () => createInitialDirectWorkspaceBinding(input.thread, input.workspaceCwd, input.store.paths),
+    createManaged: () => createManagedDirectWorktreeBinding(input.thread, input.workspaceCwd, input.store.paths),
+  };
+  const created = input.thread.workspaceBinding?.createdAt
+    ? await bindingFactory.createManaged()
+    : await bindingFactory.createInitial();
   if (!created.ok) {
     const failed: DirectWorkspaceBinding = {
       ...refreshed,
@@ -164,25 +222,41 @@ export async function handleTeammateDirectWorkspace(
     }
 
     if (action === "refresh" && request.method === "POST") {
-      const binding = await refreshDirectWorkspaceBinding(thread, cwd, store.paths, new Date().toISOString());
-      const updated = store.updateTeammateDirectThreadWorkspace(thread.id, binding, binding.updatedAt) ?? thread;
+      const updated = await coordinateDirectWorkspaceMutation(store, thread.id, async () => {
+        const current = store.getOrCreateTeammateDirectThread(teammate.id, new Date().toISOString());
+        const binding = await refreshDirectWorkspaceBinding(current, cwd, store.paths, new Date().toISOString());
+        return store.updateTeammateDirectThreadWorkspace(current.id, binding, binding.updatedAt) ?? current;
+      });
       writeJson(response, 200, buildDirectWorkspaceResponse(cwd, teammate.id, updated, store.paths));
       return;
     }
 
     if (action === "handoff" && request.method === "POST") {
       const body = await readJsonBody(request, config.maxBodyBytes);
-      const binding = await readHandoffBinding(body, thread, cwd, store.paths, new Date().toISOString());
-      const updated = store.updateTeammateDirectThreadWorkspace(thread.id, binding, binding.updatedAt) ?? thread;
+      const updated = await coordinateDirectWorkspaceMutation(store, thread.id, async () => {
+        const current = store.getOrCreateTeammateDirectThread(teammate.id, new Date().toISOString());
+        const binding = await readHandoffBinding(body, current, cwd, store.paths, new Date().toISOString());
+        return store.updateTeammateDirectThreadWorkspace(current.id, binding, binding.updatedAt) ?? current;
+      });
       writeJson(response, 200, buildDirectWorkspaceResponse(cwd, teammate.id, updated, store.paths));
       return;
     }
 
     if (action === "cleanup" && request.method === "POST") {
-      const result = await cleanupManagedDirectWorktree(thread, cwd, store.paths, new Date().toISOString());
+      const outcome = await coordinateDirectWorkspaceMutation(store, thread.id, async () => {
+        const current = store.getOrCreateTeammateDirectThread(teammate.id, new Date().toISOString());
+        const result = await cleanupManagedDirectWorktree(current, cwd, store.paths, new Date().toISOString());
+        let updated = current;
+        if (result.ok) {
+          updated = store.updateTeammateDirectThreadWorkspace(current.id, result.binding, result.binding.updatedAt) ?? current;
+        } else if (result.binding) {
+          updated = store.updateTeammateDirectThreadWorkspace(current.id, result.binding, result.binding.updatedAt) ?? current;
+        }
+        return { result, updated };
+      });
+      const { result, updated } = outcome;
       if (!result.ok) {
         if (result.binding) {
-          const updated = store.updateTeammateDirectThreadWorkspace(thread.id, result.binding, result.binding.updatedAt) ?? thread;
           writeJson(response, result.code === "worktree_dirty" ? 409 : 400, {
             error: result.code,
             message: result.message,
@@ -193,7 +267,6 @@ export async function handleTeammateDirectWorkspace(
         writeJson(response, 400, { error: result.code, message: result.message });
         return;
       }
-      const updated = store.updateTeammateDirectThreadWorkspace(thread.id, result.binding, result.binding.updatedAt) ?? thread;
       writeJson(response, 200, buildDirectWorkspaceResponse(cwd, teammate.id, updated, store.paths));
       return;
     }
@@ -203,12 +276,19 @@ export async function handleTeammateDirectWorkspace(
       const baseBranch = typeof body === "object" && body !== null && !Array.isArray(body) && typeof (body as { baseBranch?: unknown }).baseBranch === "string"
         ? (body as { baseBranch: string }).baseBranch.trim()
         : "";
-      const result = await createManagedDirectWorktreeBinding(thread, cwd, store.paths, baseBranch || undefined);
+      const outcome = await coordinateDirectWorkspaceMutation(store, thread.id, async () => {
+        const current = store.getOrCreateTeammateDirectThread(teammate.id, new Date().toISOString());
+        const result = await createManagedDirectWorktreeBinding(current, cwd, store.paths, baseBranch || undefined);
+        const updated = result.ok
+          ? store.updateTeammateDirectThreadWorkspace(current.id, result.binding, result.binding.updatedAt) ?? current
+          : current;
+        return { result, updated };
+      });
+      const { result, updated } = outcome;
       if (!result.ok) {
         writeJson(response, 400, { error: result.code, message: result.message });
         return;
       }
-      const updated = store.updateTeammateDirectThreadWorkspace(thread.id, result.binding, result.binding.updatedAt) ?? thread;
       writeJson(response, 200, buildDirectWorkspaceResponse(cwd, teammate.id, updated, store.paths));
       return;
     }
@@ -253,11 +333,19 @@ async function refreshDirectWorkspaceBinding(
 ): Promise<DirectWorkspaceBinding> {
   const binding = thread.workspaceBinding ?? defaultDirectWorkspaceBinding(thread, workspaceCwd, workspacePaths);
   if (binding.mode === "local") {
-    return { ...binding, executionPath: workspaceCwd, status: "ready", checkedAt: now, updatedAt: now };
+    const available = isWorkspaceDirectory(workspaceCwd);
+    return {
+      ...binding,
+      executionPath: workspaceCwd,
+      status: available ? "ready" : "missing",
+      errorMessage: available ? undefined : "Local 私聊工作区目录不存在、不是目录或不可访问。",
+      checkedAt: now,
+      updatedAt: now,
+    };
   }
   if (binding.mode === "external_path") {
     const executionPath = binding.executionPath ? resolvePath(binding.executionPath) : "";
-    const exists = Boolean(executionPath) && existsSync(executionPath);
+    const exists = Boolean(executionPath) && isWorkspaceDirectory(executionPath);
     return {
       ...binding,
       executionPath: executionPath || undefined,
@@ -276,6 +364,7 @@ async function refreshDirectWorkspaceBinding(
     worktreePath,
     branchName: binding.branchName ?? directWorktreeBranchName(thread.teammateId, thread.id),
     status,
+    createdAt: status === "ready" ? binding.createdAt ?? now : binding.createdAt,
     errorMessage: managedInspectionMessage(status, inspection, "私聊工作区目录不存在。"),
     checkedAt: now,
     updatedAt: now,
@@ -298,10 +387,12 @@ async function readHandoffBinding(
     throw new Error("mode must be local, managed_worktree, or external_path");
   }
   if (mode === "local") {
+    const available = isWorkspaceDirectory(workspaceCwd);
     return {
       mode,
-      status: "ready",
+      status: available ? "ready" : "missing",
       executionPath: workspaceCwd,
+      errorMessage: available ? undefined : "Local 私聊工作区目录不存在、不是目录或不可访问。",
       checkedAt: now,
       updatedAt: now,
     };
@@ -311,11 +402,12 @@ async function readHandoffBinding(
       throw new Error("executionPath is required for external_path");
     }
     const executionPath = resolvePath(record.executionPath);
+    const available = isWorkspaceDirectory(executionPath);
     return {
       mode,
-      status: existsSync(executionPath) ? "ready" : "missing",
+      status: available ? "ready" : "missing",
       executionPath,
-      errorMessage: existsSync(executionPath) ? undefined : "外部私聊工作区目录不存在。",
+      errorMessage: available ? undefined : "外部私聊工作区目录不存在、不是目录或不可访问。",
       checkedAt: now,
       updatedAt: now,
     };
@@ -338,7 +430,13 @@ async function createManagedDirectWorktreeBinding(
 > {
   const repo = await resolveGitRepoRoot(workspaceCwd);
   if (!repo.ok) {
-    return { ok: false, code: "not_git_repository", message: "当前工作区不是 Git 仓库，无法创建独立私聊工作区。" };
+    return {
+      ok: false,
+      code: repo.code,
+      message: repo.code === "not_git_repository"
+        ? "当前工作区不是 Git 仓库，无法创建独立私聊工作区。"
+        : repo.message,
+    };
   }
   const repoRoot = repo.repoRoot;
   const now = new Date().toISOString();
@@ -368,6 +466,37 @@ async function createManagedDirectWorktreeBinding(
       updatedAt: now,
     },
   };
+}
+
+async function createInitialDirectWorkspaceBinding(
+  thread: DirectWorktreeTarget,
+  workspaceCwd: string,
+  workspacePaths: LingStackRuntimePaths,
+): Promise<WorkspaceBindingCreateResult<DirectWorkspaceBinding>> {
+  return await createInitialWorkspaceBinding({
+    createManaged: () => createManagedDirectWorktreeBinding(thread, workspaceCwd, workspacePaths),
+    createLocal: () => {
+      const now = new Date().toISOString();
+      if (!isWorkspaceDirectory(workspaceCwd)) {
+        return {
+          ok: false,
+          code: "workspace_unavailable",
+          message: "当前工作区目录不存在、不是目录或不可访问，无法使用 Local 私聊工作区。",
+        } as const;
+      }
+      return {
+        ok: true,
+        binding: {
+          mode: "local",
+          status: "ready",
+          executionPath: workspaceCwd,
+          createdAt: thread.workspaceBinding?.createdAt ?? now,
+          checkedAt: now,
+          updatedAt: now,
+        } satisfies DirectWorkspaceBinding,
+      } as const;
+    },
+  });
 }
 
 function directWorktreePath(
