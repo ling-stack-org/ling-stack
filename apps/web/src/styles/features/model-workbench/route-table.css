@@ -37,6 +37,7 @@
 
 .provider-table-action-head,
 .provider-table-action-cell {
+  padding-inline: var(--ling-space-3) var(--ling-space-5);
   text-align: right;
 }
 
@@ -149,8 +150,12 @@
 }
 
 .provider-main-action {
-  min-width: 0;
-  max-width: 132px;
+  min-width: max-content;
+  flex: 0 0 auto;
+}
+
+.provider-default-action.selected svg {
+  fill: currentColor;
 }
 
 .provider-row-menu-popover {

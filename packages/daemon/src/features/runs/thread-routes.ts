@@ -41,6 +41,7 @@ import { readOptionalIntegerQuery, readOptionalJsonBody } from "../../shared/req
 import { redactTextWithSecrets } from "../../shared/redaction.js";
 import { writeJson } from "../../shared/response.js";
 import { isRecord, readOptionalBoolean, readOptionalString, readString } from "../../shared/validation.js";
+import { buildConversationContextProjection } from "../channels/context-processing/conversation-context-projector.js";
 import { listExecutionActions } from "./execution-actions.js";
 import { hydrateProposedPlanSourceState, hydrateProposedPlanSourceStates } from "./proposed-plan-source-state.js";
 import { handleLingThreadHardDelete } from "./thread-hard-delete-route.js";
@@ -970,31 +971,103 @@ function createLingThreadFork(input: {
   const requestedTitle = isRecord(body) ? readOptionalString(body, "title")?.trim() : undefined;
   const requestedObjective = isRecord(body) ? readOptionalString(body, "objective")?.trim() : undefined;
   const sourceLabel = anchor.sourceTurn?.title || sourceThread.title;
-  const childThread = store.createLingThread(
-    {
-      id: childThreadId,
-      kind: sourceThread.kind,
-      channelId: sourceThread.channelId,
-      taskId: sourceThread.taskId,
-      teammateId: sourceThread.teammateId,
-      workflowId: sourceThread.workflowId,
-      workflowStepId: sourceThread.workflowStepId,
-      externalWorkId: sourceThread.externalWorkId,
-      title: requestedTitle || `Fork: ${sourceThread.title}`,
-      objective: requestedObjective || `Forked from ${sourceLabel} (${sourceThread.id}) to explore a separate work branch.`,
-      status: "open",
-      parentThreadId: sourceThread.id,
-      parentTurnId: anchor.sourceTurn?.id,
-      forkedFromRunId: anchor.sourceRun?.id,
-    },
-    now,
-  );
+  const title = requestedTitle || `Fork: ${sourceThread.title}`;
+  const objective = requestedObjective || `Forked from ${sourceLabel} (${sourceThread.id}) to explore a separate work branch.`;
+  const childThread = sourceThread.kind === "channel_discussion" && sourceThread.channelId
+    ? createConversationThreadFork({
+        store,
+        sourceThread,
+        sourceTurn: anchor.sourceTurn,
+        sourceRun: anchor.sourceRun,
+        childThreadId,
+        title,
+        objective,
+        now,
+      })
+    : store.createLingThread(
+        {
+          id: childThreadId,
+          kind: sourceThread.kind,
+          channelId: sourceThread.channelId,
+          taskId: sourceThread.taskId,
+          teammateId: sourceThread.teammateId,
+          workflowId: sourceThread.workflowId,
+          workflowStepId: sourceThread.workflowStepId,
+          externalWorkId: sourceThread.externalWorkId,
+          title,
+          objective,
+          status: "open",
+          parentThreadId: sourceThread.id,
+          parentTurnId: anchor.sourceTurn?.id,
+          forkedFromRunId: anchor.sourceRun?.id,
+        },
+        now,
+      );
   return {
     sourceTurn: anchor.sourceTurn,
     sourceRun: anchor.sourceRun,
     childThread,
     created: true,
   };
+}
+
+function createConversationThreadFork(input: {
+  readonly store: RunStore;
+  readonly sourceThread: LingThread;
+  readonly sourceTurn?: LingTurn;
+  readonly sourceRun?: RunSession;
+  readonly childThreadId?: string;
+  readonly title: string;
+  readonly objective: string;
+  readonly now: string;
+}): LingThread {
+  const sourceItemId = input.sourceTurn?.sourceItemId;
+  if (!input.sourceTurn || !sourceItemId || !input.sourceThread.channelId) {
+    throw new HttpError(
+      409,
+      "fork_context_unavailable",
+      `Conversation thread fork requires a source turn with a committed item: ${input.sourceThread.id}`,
+    );
+  }
+  const projection = buildConversationContextProjection({
+    store: input.store,
+    sourceItemId,
+    view: "reply",
+  });
+  return input.store.resolveOrCreateConversationThread({
+    ...(input.childThreadId ? { id: input.childThreadId } : {}),
+    surfaceKind: "branch",
+    channelId: input.sourceThread.channelId,
+    parentThreadId: input.sourceThread.id,
+    parentTurnId: input.sourceTurn.id,
+    ...(input.sourceRun ? { forkedFromRunId: input.sourceRun.id } : {}),
+    title: input.title,
+    objective: input.objective,
+    forkContextSnapshot: {
+      ...(input.childThreadId ? { id: `context_snapshot_${input.childThreadId}` } : {}),
+      segmentId: projection.metadata.segmentId,
+      projectionVersion: projection.metadata.projectionVersion,
+      throughItemSequence: projection.metadata.throughItemSequence,
+      summaryIds: projection.metadata.summaryIds,
+      sourceRefs: uniqueConversationForkSourceRefs([
+        { type: "thread", id: input.sourceThread.id },
+        { type: "turn", id: input.sourceTurn.id },
+        { type: "conversation_item", id: sourceItemId },
+        ...projection.metadata.summaryIds.map((id) => ({ type: "context_summary" as const, id })),
+        ...projection.items.map((item) => ({ type: "conversation_item" as const, id: item.id })),
+        ...projection.sharedCore.activeWorkRefs,
+      ]),
+      policyVersion: projection.metadata.policyVersion,
+    },
+  }, input.now).thread;
+}
+
+function uniqueConversationForkSourceRefs(
+  refs: readonly import("@ling-stack/contracts").ConversationDomainRef[],
+): readonly import("@ling-stack/contracts").ConversationDomainRef[] {
+  const byKey = new Map<string, import("@ling-stack/contracts").ConversationDomainRef>();
+  for (const ref of refs) byKey.set(`${ref.type}:${ref.id}`, ref);
+  return [...byKey.values()];
 }
 
 function createLingThreadForkRunRequest(input: {
@@ -1375,7 +1448,7 @@ function parseCreateLingTurnBody(body: unknown, thread: LingThread): CreateLingT
     workflowStepId: readOptionalString(body, "workflowStepId") ?? thread.workflowStepId,
     externalWorkId: readOptionalString(body, "externalWorkId") ?? thread.externalWorkId,
     automationId: readOptionalString(body, "automationId"),
-    sourceMessageId: readOptionalString(body, "sourceMessageId"),
+    sourceItemId: readOptionalString(body, "sourceItemId"),
     sourceTurnId: readOptionalString(body, "sourceTurnId"),
     interventionId: readOptionalString(body, "interventionId"),
     createdByActor: readOptionalLingTurnActor(body, "createdByActor"),

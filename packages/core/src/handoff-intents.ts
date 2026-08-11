@@ -4,6 +4,7 @@ import type {
   WorkflowHandoffIntent,
   WorkflowHandoffIntentStatus,
   WorkflowHandoffValidation,
+  WorkflowAgentContextStamp,
   WorkflowPacketSourceRef,
 } from "./workspace-types.js";
 
@@ -29,6 +30,7 @@ export interface LingHandoffInputPacket {
   readonly requiredInput: string;
   readonly expectedOutput: string;
   readonly sourceRefs: readonly WorkflowPacketSourceRef[];
+  readonly agentContext?: WorkflowAgentContextStamp;
 }
 
 export interface LingHandoffIntent {
@@ -51,6 +53,7 @@ export interface LingHandoffIntent {
   readonly riskSummary?: string;
   readonly status: LingHandoffIntentStatus;
   readonly sourceRefs: readonly WorkflowPacketSourceRef[];
+  readonly agentContext?: WorkflowAgentContextStamp;
   readonly inputPacket: LingHandoffInputPacket;
   readonly validation?: WorkflowHandoffValidation;
   readonly createdBy: string;
@@ -134,6 +137,7 @@ export function normalizeWorkflowHandoffIntentToLingIntent(intent: WorkflowHando
     riskSummary: intent.riskSummary,
     status: intent.status,
     sourceRefs,
+    agentContext: intent.agentContext,
     inputPacket: {
       schemaVersion: 1,
       intentId: `workflow_handoff_intent:${intent.id}`,
@@ -147,6 +151,7 @@ export function normalizeWorkflowHandoffIntentToLingIntent(intent: WorkflowHando
       requiredInput: intent.requiredInput,
       expectedOutput: intent.expectedOutput,
       sourceRefs,
+      agentContext: intent.agentContext,
     },
     validation: intent.validation,
     createdBy: intent.createdBy,

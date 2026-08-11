@@ -4,7 +4,7 @@ export function hydrateProposedPlanSourceState(store: RunStore, plan: ProposedPl
   if (!plan.sourceMessageId) {
     return plan;
   }
-  const sourceMessage = store.getChannelMessage(plan.sourceMessageId);
+  const sourceMessage = store.getConversationItem(plan.sourceMessageId);
   return {
     ...plan,
     sourceMessageState: sourceMessage && (!plan.channelId || sourceMessage.channelId === plan.channelId)

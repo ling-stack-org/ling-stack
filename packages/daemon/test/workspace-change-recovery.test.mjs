@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -23,7 +23,7 @@ import { isAllowedLocalOrigin } from "../dist/shared/local-workspace-access.js";
 const execFileAsync = promisify(execFile);
 
 test("run patch changes can be undone and reapplied without overwriting later edits", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-run-patch-recovery-"));
+  const cwd = await realpath(await mkdtemp(resolve(tmpdir(), "ling-stack-run-patch-recovery-")));
   const store = createSqliteRunStore(cwd);
   const filePath = resolve(cwd, "src.txt");
   try {

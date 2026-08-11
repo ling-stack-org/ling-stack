@@ -15,8 +15,10 @@ import type { LingExtensionRegistry } from "@ling-stack/plugin-sdk";
 import type { ResolvedDaemonConfig } from "./config.js";
 import type { AutomationSchedulerRegistry } from "./features/automations/scheduler.js";
 import type { LingImageVisionSummarizer } from "./features/channels/materialization/registry.js";
+import type { ChannelReplyDispatchCoordinator } from "./features/channels/channel-reply-dispatch-coordinator.js";
 import type { ExternalWorkBackgroundSchedulerRegistry } from "./features/external-work/background-scheduler.js";
 import type { ProviderStartupRefreshService } from "./features/providers/startup-refresh.js";
+import type { ProviderImportPreflightService } from "./features/providers/import-preflight.js";
 import type { ControlPlaneEventHub } from "./features/control-plane/events.js";
 import type { ComputerUsePreviewProjection } from "@ling-stack/contracts";
 import type {
@@ -157,6 +159,7 @@ export interface DaemonContext {
   readonly storeRegistry: RunStoreRegistry;
   readonly activeRuns: ActiveRunRegistry;
   readonly activeDirectReplies: ActiveDirectReplyRegistry;
+  readonly channelReplyDispatchCoordinator: ChannelReplyDispatchCoordinator;
   readonly runtimeSupervisor: RuntimeSupervisor;
   readonly secretResolver: SecretResolver;
   readonly externalSecretStore: ExternalSecretStore;
@@ -169,6 +172,7 @@ export interface DaemonContext {
   readonly automationSchedulers: AutomationSchedulerRegistry;
   readonly controlPlaneEvents: ControlPlaneEventHub;
   readonly providerStartupRefresh: ProviderStartupRefreshService;
+  readonly providerImportPreflight: ProviderImportPreflightService;
   readonly startupState: StartupStateRegistry;
   readonly startupOptionalWarmups: StartupOptionalWarmupCoordinator;
   readonly computerUsePreviews: ComputerUseProjectionRegistry;

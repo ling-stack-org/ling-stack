@@ -31,9 +31,11 @@ import {
   configureTerminalReportStore,
   recoverTerminalReports,
 } from "./features/channels/terminal-report-coordinator.js";
+import { ChannelReplyDispatchCoordinator } from "./features/channels/channel-reply-dispatch-coordinator.js";
 import { createDefaultMcpBroker } from "./features/mcp/broker.js";
 import { createSystemKeychainSecretStore } from "./features/providers/keychain-secret-store.js";
 import { ProviderStartupRefreshService } from "./features/providers/startup-refresh.js";
+import { ProviderImportPreflightService } from "./features/providers/import-preflight.js";
 import { ActiveDirectReplyRegistry } from "./features/teammates/direct-reply-active-registry.js";
 import { resumePendingMediaJobExecutions } from "./features/media/executor.js";
 import { ActiveRunRegistry } from "./runtime/active-runs.js";
@@ -90,6 +92,7 @@ export {
 export type { RunnerFallbackReason } from "@ling-stack/core";
 export { ActiveRunRegistry } from "./runtime/active-runs.js";
 export { ActiveDirectReplyRegistry } from "./features/teammates/direct-reply-active-registry.js";
+export { ChannelReplyDispatchCoordinator } from "./features/channels/channel-reply-dispatch-coordinator.js";
 export { RunStoreRegistry } from "./runtime/store-registry.js";
 export { RuntimeSupervisor } from "./runtime/supervisor.js";
 export { StartupStateRegistry } from "./startup/state.js";
@@ -180,6 +183,7 @@ export function createDaemonServer(
   const startupState = new StartupStateRegistry();
   const computerUsePreviews = new ComputerUseProjectionRegistry(dependencies.computerUseProjectionOptions);
   const providerStartupRefresh = new ProviderStartupRefreshService({ secretResolver, controlPlaneEvents, startupState });
+  const providerImportPreflight = new ProviderImportPreflightService({ secretResolver, controlPlaneEvents });
   let automationSchedulers: AutomationSchedulerRegistry;
   let startupOptionalWarmups: StartupOptionalWarmupCoordinator;
   const storeRegistry = new RunStoreRegistry(dependencies.storeFactory ?? createDefaultRunStore, {
@@ -292,6 +296,7 @@ export function createDaemonServer(
     automationSchedulers,
   });
   const activeDirectReplies = new ActiveDirectReplyRegistry();
+  const channelReplyDispatchCoordinator = new ChannelReplyDispatchCoordinator();
   const remoteAccessManagementCapability = dependencies.remoteAccessManagementCapability
     ?? process.env.LING_MOBILE_ACCESS_MANAGEMENT_CAPABILITY
     ?? randomBytes(32).toString("base64url");
@@ -327,6 +332,7 @@ export function createDaemonServer(
     storeRegistry,
     activeRuns,
     activeDirectReplies,
+    channelReplyDispatchCoordinator,
     runtimeSupervisor,
     secretResolver,
     externalSecretStore,
@@ -339,6 +345,7 @@ export function createDaemonServer(
     automationSchedulers,
     controlPlaneEvents,
     providerStartupRefresh,
+    providerImportPreflight,
     startupState,
     startupOptionalWarmups,
     computerUsePreviews,
@@ -428,10 +435,12 @@ export function createDaemonServer(
     },
     stop: async () => {
       cuaDriverActivationCoordinator.beginShutdown();
+      const providerImportShutdown = providerImportPreflight.shutdown();
       await remoteAccess.stop();
       await new Promise<void>((resolve, reject) => {
         activeRuns.cancelAll();
         activeDirectReplies.cancelAll();
+        channelReplyDispatchCoordinator.close();
         runtimeSupervisor.releaseAll();
         backgroundSchedulers.stopAll();
         automationSchedulers.stopAll();
@@ -450,6 +459,7 @@ export function createDaemonServer(
         server.closeAllConnections();
       });
       await activeRuns.waitForIdle();
+      await providerImportShutdown;
       await cuaDriverActivationCoordinator.shutdown();
       storeRegistry.closeAll();
     },

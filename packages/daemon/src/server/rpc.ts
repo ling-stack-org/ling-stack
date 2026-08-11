@@ -328,6 +328,7 @@ class RpcConnection {
     });
     await maybeStartNextRunInterventionContinuation({
       sourceRunId: goalContinuation?.sourceRunId ?? sourceRunId,
+      terminalRun,
       store,
       runnerRegistry: this.context.runnerRegistry,
       storeRegistry: this.context.storeRegistry,

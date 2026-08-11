@@ -29,6 +29,7 @@ export function createQueuedRunForConflict(input: {
     taskId: input.runRequest.task.id,
     channelId: input.channel?.id ?? input.runRequest.task.channelId,
     teammateId: input.runRequest.teammateId,
+    workflowStepId: input.runRequest.workflowStepId,
     selectedSkillId: input.selectedSkillId,
     providerPresetId: input.runRequest.providerPresetId,
     providerName: input.provider.provider,

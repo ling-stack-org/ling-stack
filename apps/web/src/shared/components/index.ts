@@ -1,6 +1,7 @@
 export { ArtifactRow } from "./ArtifactRow.js";
 export { AvatarInitial, type AvatarTone } from "./AvatarInitial.js";
 export { ComposerFileReferenceToken, type ComposerFileReferenceTokenProps } from "./ComposerFileReferenceToken.js";
+export { ComposerPendingAssetStrip, type ComposerPendingAssetStripProps, type ComposerPendingLinkItem } from "./ComposerPendingAssetStrip.js";
 export { DialogSection } from "./DialogSection.js";
 export { LingStackLogo } from "./LingStackLogo.js";
 export { MetaRow } from "./MetaRow.js";

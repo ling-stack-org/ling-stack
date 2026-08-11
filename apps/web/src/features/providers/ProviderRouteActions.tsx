@@ -1,4 +1,4 @@
-import { CheckCircle2, MoreHorizontal, Pencil, Play, Trash2, X } from "lucide-react";
+import { CheckCircle2, MoreHorizontal, Pencil, Star, Trash2, X } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import {
   Button,
@@ -55,10 +55,6 @@ export function ProviderRouteActions({
     >
       {t("Check")}
     </Button>
-  ) : row.primaryAction === "set_default" ? (
-    <Button className="provider-main-action" size="sm" leadingIcon={<Play />} onClick={() => onUse(provider)}>
-      {t("Set default")}
-    </Button>
   ) : row.primaryAction === "enable" ? (
     <Button className="provider-main-action" size="sm" leadingIcon={<CheckCircle2 />} disabled={checkingAny} onClick={() => onToggleEnabled(provider, true)}>
       {t("Enable")}
@@ -67,6 +63,16 @@ export function ProviderRouteActions({
 
   return (
     <div className="provider-actions">
+      {row.chatCapable && (row.canBeDefault || row.selectedForRun) ? (
+        <IconButton
+          className={`provider-row-icon-action provider-default-action${row.selectedForRun ? " selected" : ""}`}
+          icon={Star}
+          label={row.selectedForRun ? t("Current default") : t("Set default")}
+          pressed={row.selectedForRun}
+          disabled={row.selectedForRun}
+          onClick={() => onUse(provider)}
+        />
+      ) : null}
       {primary}
       {row.showInlineCheck ? (
         <IconButton

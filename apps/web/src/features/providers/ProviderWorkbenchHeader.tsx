@@ -1,18 +1,31 @@
 import { CheckCircle2, Plus, Search } from "lucide-react";
 import { useI18n } from "../../i18n.js";
-import { Button, Input, Select, StatusIndicator } from "../../shared/ui/index.js";
-import type { ProviderStatusFilter, ProviderWorkbenchSummary } from "./provider-workbench-view-models.js";
+import {
+  Button,
+  Input,
+  SegmentedControl,
+  SegmentedControlItem,
+  Select,
+  StatusIndicator,
+} from "../../shared/ui/index.js";
+import type {
+  ProviderCapabilityFilter,
+  ProviderStatusFilter,
+  ProviderWorkbenchSummary,
+} from "./provider-workbench-view-models.js";
 
 export function ProviderWorkbenchHeader({
   summary,
   providerSearch,
   providerStatusFilter,
+  providerCapabilityFilter,
   isLoading,
   isCheckingProviders,
   isBatchChecking,
   isStale,
   onProviderSearchChange,
   onProviderStatusFilterChange,
+  onProviderCapabilityFilterChange,
   onAddModel,
   onCheckBatch,
   settingsToolMode = false,
@@ -20,12 +33,14 @@ export function ProviderWorkbenchHeader({
   readonly summary: ProviderWorkbenchSummary;
   readonly providerSearch: string;
   readonly providerStatusFilter: ProviderStatusFilter;
+  readonly providerCapabilityFilter: ProviderCapabilityFilter;
   readonly isLoading: boolean;
   readonly isCheckingProviders: boolean;
   readonly isBatchChecking: boolean;
   readonly isStale: boolean;
   readonly onProviderSearchChange: (value: string) => void;
   readonly onProviderStatusFilterChange: (value: ProviderStatusFilter) => void;
+  readonly onProviderCapabilityFilterChange: (value: ProviderCapabilityFilter) => void;
   readonly onAddModel: () => void;
   readonly onCheckBatch: () => void;
   readonly settingsToolMode?: boolean;
@@ -79,8 +94,21 @@ export function ProviderWorkbenchHeader({
           <option value="missingKey">{t("Missing key")}</option>
           <option value="disabled">{t("Disabled providers")}</option>
         </Select>
-        <Button size="sm" variant="primary" leadingIcon={<Plus />} onClick={onAddModel}>{t("Add model")}</Button>
+        <SegmentedControl
+          aria-label={t("Model capability filters")}
+          className="provider-capability-filter"
+          size="sm"
+          value={providerCapabilityFilter}
+          onValueChange={(value) => onProviderCapabilityFilterChange(value as ProviderCapabilityFilter)}
+        >
+          <SegmentedControlItem value="all">{t("All models")}</SegmentedControlItem>
+          <SegmentedControlItem value="video">{t("Video")}</SegmentedControlItem>
+          <SegmentedControlItem value="image">{t("Image")}</SegmentedControlItem>
+          <SegmentedControlItem value="chat">{t("Chat")}</SegmentedControlItem>
+        </SegmentedControl>
+        <Button className="provider-add-model-action" size="sm" variant="primary" leadingIcon={<Plus />} onClick={onAddModel}>{t("Add model")}</Button>
         <Button
+          className="provider-check-all-action"
           size="sm"
           leadingIcon={<CheckCircle2 />}
           loading={isBatchChecking}

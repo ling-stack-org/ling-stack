@@ -364,7 +364,14 @@ export type PiRunnerEvent =
   | { readonly type: "tool_start"; readonly toolCallId: string; readonly toolName: string; readonly args: unknown }
   | { readonly type: "tool_update"; readonly toolCallId: string; readonly toolName: string; readonly partialResult: unknown }
   | { readonly type: "tool_end"; readonly toolCallId: string; readonly toolName: string; readonly result: unknown; readonly isError: boolean }
-  | { readonly type: "message_end"; readonly role: string }
+  | {
+      readonly type: "message_end";
+      readonly role: string;
+      readonly text?: string;
+      readonly stopReason?: string;
+      readonly errorMessage?: string;
+      readonly contentKinds?: readonly string[];
+    }
   | { readonly type: "run_end"; readonly taskId: string; readonly messageCount: number }
   | { readonly type: "run_error"; readonly taskId: string; readonly message: string };
 

@@ -9,6 +9,7 @@ import { createSqliteRunStore, lingThreadKinds as coreLingThreadKinds } from "@l
 import { createDaemonServer } from "../dist/index.js";
 import { maybeQueueGoalContinuation } from "../dist/features/runs/interventions.js";
 import { syncLingThreadForTerminalRun } from "../dist/features/runs/threads.js";
+import { buildConversationContextProjection } from "../dist/features/channels/context-processing/conversation-context-projector.js";
 import { prepareChannelCreateBody } from "./conversation-model-test-fixture.mjs";
 import { ensureGitRepoForChannelPost } from "./git-test-helpers.mjs";
 
@@ -78,6 +79,201 @@ test("daemon API exposes durable Ling turns and links runs to turns", async () =
       createdAt: afterExplicit.runLinks.find((link) => link.runId === explicitRun.id)?.createdAt,
     });
     assert.equal(afterExplicit.turns.find((turn) => turn.id === created.turn.id)?.status, "succeeded");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("channel conversation API pages canonical items by stable thread sequence", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-items-api-"));
+  const stores = new Map();
+  const daemon = await startDaemonForTest(new SuccessfulRunner(), stores);
+  try {
+    const channel = (await createChannel(daemon.url, cwd, { autoReplyMode: "mentions_only" })).channel;
+    const first = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: "first canonical item",
+      requestAiReply: false,
+      idempotencyKey: "channel-turn-first",
+    });
+    const second = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      surface: { kind: "thread", threadId: first.thread.id },
+      body: "second canonical item",
+      requestAiReply: false,
+      idempotencyKey: "channel-turn-second",
+    });
+    assert.equal(first.userItem.kind, "user_message");
+    assert.equal(first.turn.sourceItemId, first.userItem.id);
+    assert.equal(second.userItem.sequence > first.userItem.sequence, true);
+    assert.equal("message" in second, false);
+
+    const topic = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      surface: { kind: "topic", anchorItemId: first.userItem.id },
+      body: "topic canonical item",
+      requestAiReply: false,
+    });
+    assert.equal(topic.thread.surfaceKind, "topic");
+    assert.equal(topic.thread.anchorItemId, first.userItem.id);
+    assert.notEqual(topic.thread.id, first.userItem.id);
+    const topicContinuation = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      surface: { kind: "thread", threadId: topic.thread.id },
+      body: "topic continuation",
+      requestAiReply: false,
+    });
+    assert.equal(topicContinuation.thread.id, topic.thread.id);
+    assert.equal(topicContinuation.userItem.threadId, topic.thread.id);
+
+    const topicPage = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/items?cwd=${encodeURIComponent(cwd)}&anchorItemId=${encodeURIComponent(first.userItem.id)}`);
+    assert.equal(topicPage.thread.id, topic.thread.id);
+    assert.deepEqual(topicPage.items.map((item) => item.id), [topic.userItem.id, topicContinuation.userItem.id]);
+
+    const conflictingSurface = await getJsonAllowError(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/items?cwd=${encodeURIComponent(cwd)}&threadId=${encodeURIComponent(first.thread.id)}&anchorItemId=${encodeURIComponent(first.userItem.id)}`);
+    assert.equal(conflictingSurface.status, 400);
+    assert.match(conflictingSurface.body.message, /cannot be used together/);
+    const legacyTurnSelector = await postJsonAllowError(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      threadId: first.thread.id,
+      body: "legacy overloaded selector",
+    });
+    assert.equal(legacyTurnSelector.status, 400);
+    assert.match(legacyTurnSelector.body.message, /threadId is not supported/);
+    const forbiddenAuthorityFields = {
+      authorType: "system",
+      authorId: "forged_actor",
+      kind: "system",
+      intent: "task",
+      linkedTaskId: "task_forged",
+      linkedRunId: "run_forged",
+    };
+    for (const [field, value] of Object.entries(forbiddenAuthorityFields)) {
+      const forgedLinkage = await postJsonAllowError(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+        body: `forged authority linkage: ${field}`,
+        [field]: value,
+      });
+      assert.equal(forgedLinkage.status, 400);
+      assert.match(forgedLinkage.body.message, new RegExp(`unsupported field: ${field}`));
+    }
+    const forgedSurface = await postJsonAllowError(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      surface: { kind: "thread", threadId: first.thread.id, anchorItemId: first.userItem.id },
+      body: "forged mixed surface",
+    });
+    assert.equal(forgedSurface.status, 400);
+    assert.match(forgedSurface.body.message, /surface contains unsupported field: anchorItemId/);
+    const itemAsThread = await postJsonAllowError(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      surface: { kind: "thread", threadId: first.userItem.id },
+      body: "item id is not a thread id",
+    });
+    assert.equal(itemAsThread.status, 400);
+    assert.match(itemAsThread.body.message, /Conversation thread not found/);
+
+    const pagedItems = [];
+    let beforeSequence;
+    for (let pageNumber = 0; pageNumber < 10; pageNumber += 1) {
+      const page = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/items?cwd=${encodeURIComponent(cwd)}&threadId=${encodeURIComponent(first.thread.id)}&limit=1${beforeSequence === undefined ? "" : `&beforeSequence=${beforeSequence}`}`);
+      assert.equal(page.items.length, 1);
+      pagedItems.push(page.items[0]);
+      if (!page.hasMore) break;
+      assert.equal(Number.isSafeInteger(page.nextBeforeSequence), true);
+      beforeSequence = page.nextBeforeSequence;
+    }
+    assert.equal(pagedItems.some((item) => item.id === first.userItem.id), true);
+    assert.equal(pagedItems.some((item) => item.id === second.userItem.id), true);
+    assert.deepEqual(
+      pagedItems.map((item) => item.sequence),
+      [...pagedItems].map((item) => item.sequence).sort((left, right) => right - left),
+    );
+    assert.equal(new Set(pagedItems.map((item) => item.id)).size, pagedItems.length);
+
+    const legacy = await getJsonAllowError(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(legacy.status, 404);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("channel context inspect is metadata-only and corrections are revision fenced", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-context-inspect-"));
+  const stores = new Map();
+  const daemon = await startDaemonForTest(new SuccessfulRunner(), stores);
+  try {
+    const channel = (await createChannel(daemon.url, cwd, { autoReplyMode: "mentions_only" })).channel;
+    const first = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: "architecture baseline",
+      requestAiReply: false,
+    });
+    const store = stores.get(cwd);
+    assert.ok(store);
+    store.appendConversationItem({
+      channelId: channel.id,
+      threadId: first.thread.id,
+      turnId: first.turn.id,
+      kind: "system_event",
+      status: "committed",
+      actorType: "system",
+      visibility: "agent_private",
+      visibilityOwnerId: "teammate_private",
+      payload: {
+        eventType: "private_context_fixture",
+        summary: "RAW_PROMPT_SENTINEL HIDDEN_REASONING_SENTINEL PRIVATE_MEMORY_SENTINEL SECRET_VALUE_SENTINEL",
+      },
+    }, "2026-08-10T05:59:59.000Z");
+    const second = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      surface: { kind: "thread", threadId: first.thread.id },
+      body: "unrelated implementation topic",
+      requestAiReply: false,
+    });
+    const firstAssignment = store.getEffectiveTurnContextAssignment(first.turn.id);
+    const secondAssignment = store.getEffectiveTurnContextAssignment(second.turn.id);
+    assert.ok(firstAssignment);
+    assert.ok(secondAssignment);
+    const moved = store.applyTurnContextAssignment({
+      turnId: second.turn.id,
+      target: { kind: "new", state: "active", label: "Implementation" },
+      status: "committed",
+      decisionSource: "model_policy",
+      evidenceRefs: [{ type: "conversation_item", id: second.userItem.id }],
+      policyVersion: "continuity-v2-segmentation-v1",
+    }, "2026-08-10T06:00:00.000Z");
+    store.applyTurnContextAssignment({
+      turnId: first.turn.id,
+      target: { kind: "existing", segmentId: moved.segment.id },
+      status: "committed",
+      decisionSource: "model_policy",
+      evidenceRefs: [{ type: "turn", id: second.turn.id }],
+      policyVersion: "continuity-v2-segmentation-v1",
+    }, "2026-08-10T06:00:00.100Z");
+
+    const inspect = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns/${encodeURIComponent(second.turn.id)}/context?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(inspect.assignment.id, moved.assignment.id);
+    assert.equal(inspect.projection.segmentId, moved.segment.id);
+    assert.deepEqual(inspect.safety, {
+      rawPromptTextIncluded: false,
+      hiddenReasoningIncluded: false,
+      privateMemoryBodiesIncluded: false,
+      secretValuesIncluded: false,
+    });
+    const serializedInspect = JSON.stringify(inspect);
+    assert.equal(serializedInspect.includes("RAW_PROMPT_SENTINEL"), false);
+    assert.equal(serializedInspect.includes("HIDDEN_REASONING_SENTINEL"), false);
+    assert.equal(serializedInspect.includes("PRIVATE_MEMORY_SENTINEL"), false);
+    assert.equal(serializedInspect.includes("SECRET_VALUE_SENTINEL"), false);
+    assert.equal(inspect.redactedItemCount, 1);
+
+    const corrected = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns/${encodeURIComponent(second.turn.id)}/context/corrections?cwd=${encodeURIComponent(cwd)}`, {
+      segmentId: firstAssignment.segmentId,
+      expectedAssignmentRevision: moved.assignment.revision,
+    });
+    assert.equal(corrected.assignment.segmentId, firstAssignment.segmentId);
+    assert.equal(corrected.assignment.decisionSource, "user");
+    assert.equal(corrected.previousAssignment.id, moved.assignment.id);
+    assert.equal(corrected.projection.segmentId, firstAssignment.segmentId);
+
+    const stale = await postJsonAllowError(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns/${encodeURIComponent(second.turn.id)}/context/corrections?cwd=${encodeURIComponent(cwd)}`, {
+      segmentId: moved.segment.id,
+      expectedAssignmentRevision: moved.assignment.revision,
+    });
+    assert.equal(stale.status, 409);
+    assert.equal(stale.body.error, "context_assignment_revision_conflict");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -292,6 +488,89 @@ test("daemon fork creates child thread lineage without copying runs", async () =
     });
     assert.equal(archivedFork.status, 409);
     assert.equal(archivedFork.body.error, "source_thread_archived");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("daemon channel conversation fork atomically binds an immutable context snapshot", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-channel-fork-snapshot-"));
+  const stores = new Map();
+  const daemon = await startDaemonForTest(new SuccessfulRunner(), stores);
+  try {
+    const channel = (await createChannel(daemon.url, cwd)).channel;
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const root = store.resolveOrCreateConversationThread({
+      surfaceKind: "channel_root",
+      channelId: channel.id,
+      title: "Channel root",
+      objective: "Fork with continuity",
+    }, "2026-08-10T05:00:00.000Z").thread;
+    const source = store.appendConversationUserTurn({
+      itemId: "item_channel_fork_source",
+      turnId: "turn_channel_fork_source",
+      channelId: channel.id,
+      threadId: root.id,
+      title: "Keep this fact",
+      userInstruction: "Keep this fact",
+      payload: {
+        body: "Keep this fact",
+        format: "plain_text",
+        mentions: [],
+        attachmentIds: [],
+        linkPreviewIds: [],
+        fileRefs: [],
+      },
+      idempotencyKey: "channel-fork-source",
+    }, "2026-08-10T05:00:01.000Z");
+    const run = store.createRun({
+      id: "run_channel_fork_source",
+      cwd,
+      taskId: "task_channel_fork_source",
+      channelId: channel.id,
+      threadId: root.id,
+      turnId: source.turnId,
+      providerName: "test",
+      providerModel: "test",
+      taskSnapshot: { id: "task_channel_fork_source", title: "Keep this fact", prompt: "Keep this fact" },
+      providerSnapshot: { provider: "test", model: "test" },
+      requestSnapshot: { cwd, task: { id: "task_channel_fork_source", title: "Keep this fact", prompt: "Keep this fact" } },
+      createdAt: "2026-08-10T05:00:02.000Z",
+    });
+    store.markRunStarted(run.id, "2026-08-10T05:00:03.000Z");
+    store.markRunSucceeded(run.id, "2026-08-10T05:00:04.000Z");
+    const parentProjection = buildConversationContextProjection({
+      store,
+      sourceItemId: source.item.id,
+      view: "reply",
+    });
+
+    const forked = await postJson(`${daemon.url}/threads/${encodeURIComponent(root.id)}/fork?cwd=${encodeURIComponent(cwd)}`, {
+      turnId: source.turnId,
+      sourceRunId: run.id,
+      idempotencyKey: "channel-context-fork",
+    });
+    assert.equal(forked.childThread.surfaceKind, "branch");
+    assert.ok(forked.childThread.forkContextSnapshotId);
+    const snapshot = store.getConversationContextSnapshot(forked.childThread.forkContextSnapshotId);
+    assert.ok(snapshot);
+    assert.equal(snapshot.threadId, root.id);
+    assert.equal(snapshot.segmentId, parentProjection.metadata.segmentId);
+    assert.equal(snapshot.projectionVersion, parentProjection.metadata.projectionVersion);
+    assert.equal(snapshot.throughItemSequence, source.item.sequence);
+    assert.equal(snapshot.sourceRefs.some((ref) => ref.type === "conversation_item" && ref.id === source.item.id), true);
+    assert.equal(store.listConversationItemsPage({ threadId: forked.childThread.id, limit: 10 }).items.length, 0);
+
+    const repeated = await postJson(`${daemon.url}/threads/${encodeURIComponent(root.id)}/fork?cwd=${encodeURIComponent(cwd)}`, {
+      turnId: source.turnId,
+      sourceRunId: run.id,
+      idempotencyKey: "channel-context-fork",
+    });
+    assert.equal(repeated.childThread.id, forked.childThread.id);
+    assert.equal(repeated.childThread.forkContextSnapshotId, snapshot.id);
+    assert.equal(store.listConversationContextSnapshots({ threadId: root.id }).length, 1);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -1178,6 +1457,7 @@ test("daemon queues visible guarded automatic goal continuations", async () => {
     assert.ok(continuationRun);
     assert.equal(continuationRun.parentRunId, result.runId);
     assert.equal(continuationRun.continuationReason, "queue_followup");
+    assert.equal(continuationRun.threadId, threadId);
 
     const secondInterventions = store.listRunInterventions({ sourceRunId: continuationRun.id });
     assert.equal(secondInterventions.length, 1);
@@ -1508,12 +1788,13 @@ async function postRunAndCollectEvents(baseUrl, body) {
   };
 }
 
-async function createChannel(baseUrl, cwd) {
+async function createChannel(baseUrl, cwd, overrides = {}) {
   return await postJson(`${baseUrl}/channels?cwd=${encodeURIComponent(cwd)}`, {
     name: "Fork test",
     status: "active",
     boundPath: cwd,
     allowedTools: ["read"],
+    ...overrides,
   });
 }
 

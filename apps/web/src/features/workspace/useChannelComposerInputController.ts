@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, type ClipboardEvent, type DragEvent, type Dispatch, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject, type SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, type DragEvent, type Dispatch, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject, type SetStateAction } from "react";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
 import {
   composerWorkspaceFileParts,
@@ -21,7 +21,6 @@ import type {
   ChannelLinkPreview,
   ChannelMention,
   ChannelMessageFileRef,
-  RunSession,
 } from "../../types.js";
 import type { ActiveMentionPicker, ChannelComposerSendState } from "./ChannelComposer.js";
 import type { PendingLinkPreviewItem } from "./useChannelComposerDraftController.js";
@@ -30,7 +29,7 @@ import { findMentionsInText, mentionTokenExistsInText, mergeMentions } from "./c
 interface ChannelComposerInputControllerInput {
   readonly cwd: string;
   readonly selectedChannelId: string;
-  readonly activeConversationRun: RunSession | undefined;
+  readonly guidanceModeActive: boolean;
   readonly messageDraft: string;
   readonly setMessageDraft: Dispatch<SetStateAction<string>>;
   readonly pendingAttachments: readonly PendingAttachmentItem<ChannelAttachment>[];
@@ -63,8 +62,7 @@ interface ChannelComposerInputControllerInput {
 }
 
 interface ComposerKeyDownSubmissionActions {
-  readonly submitChannelRunGuidanceFromDraft: () => Promise<boolean>;
-  readonly sendMessage: () => Promise<void>;
+  readonly sendMessage: (draftOverride?: string) => Promise<void>;
 }
 
 export interface ChannelComposerInputController {
@@ -87,7 +85,7 @@ export interface ChannelComposerInputController {
   readonly insertMentionTrigger: () => void;
   readonly handleComposerTextChange: (value: string, caret: number) => void;
   readonly handleComposerKeyDown: (event: ReactKeyboardEvent<HTMLDivElement>, actions: ComposerKeyDownSubmissionActions) => void;
-  readonly handleComposerPaste: (event: ClipboardEvent<HTMLDivElement>) => void;
+  readonly handleComposerPasteFiles: (files: readonly File[]) => void;
   readonly handleComposerDragOver: (event: DragEvent<HTMLElement>) => void;
   readonly handleComposerDragLeave: (event: DragEvent<HTMLElement>) => void;
   readonly handleComposerDrop: (event: DragEvent<HTMLElement>) => void;
@@ -98,7 +96,7 @@ export interface ChannelComposerInputController {
 type ComposerSlashIntentForInput = ReturnType<typeof parseComposerSlashIntent>;
 
 export function useChannelComposerInputController({
-  activeConversationRun,
+  guidanceModeActive,
   attachmentPreviewUrlsRef,
   autoPreviewUrlsRef,
   composerInputRef,
@@ -133,11 +131,16 @@ export function useChannelComposerInputController({
 }: ChannelComposerInputControllerInput): ChannelComposerInputController {
   const updateMentionPicker = useCallback((value: string, caret: number): void => {
     const activeMention = findActiveMention(value, caret);
-    setMentionPicker(activeMention);
-    setMentionActiveIndex(0);
-    setSlashPicker(activeMention ? undefined : findActiveSlashCommand(value, caret));
-    setSlashActiveIndex(0);
-  }, [setMentionActiveIndex, setMentionPicker, setSlashActiveIndex, setSlashPicker]);
+    if (!sameComposerPicker(mentionPicker, activeMention)) {
+      setMentionPicker(activeMention);
+      setMentionActiveIndex(0);
+    }
+    const activeSlashCommand = activeMention ? undefined : findActiveSlashCommand(value, caret);
+    if (!sameComposerPicker(slashPicker, activeSlashCommand)) {
+      setSlashPicker(activeSlashCommand);
+      setSlashActiveIndex(0);
+    }
+  }, [mentionPicker, setMentionActiveIndex, setMentionPicker, setSlashActiveIndex, setSlashPicker, slashPicker]);
 
   const focusComposerAt = useCallback((caret: number): void => {
     const focus = (): void => {
@@ -309,12 +312,8 @@ export function useChannelComposerInputController({
     }
   }, [attachmentPreviewUrlsRef, onUploadAttachments, setComposerBusy, setPendingAttachments, t]);
 
-  const handleComposerPaste = useCallback((event: ClipboardEvent<HTMLDivElement>): void => {
-    if (event.clipboardData.files.length === 0) {
-      return;
-    }
-    event.preventDefault();
-    void attachFiles(event.clipboardData.files);
+  const handleComposerPasteFiles = useCallback((files: readonly File[]): void => {
+    void attachFiles(files);
   }, [attachFiles]);
 
   const handleComposerDragOver = useCallback((event: DragEvent<HTMLElement>): void => {
@@ -444,13 +443,13 @@ export function useChannelComposerInputController({
     [composerInputParts],
   );
   const composerSlashIntent = useMemo(
-    () => activeConversationRun
+    () => guidanceModeActive
       ? { kind: "none" as const }
       : parseComposerSlashIntent(messageDraft.trim(), {
         teammateMentions: teammateOptions.map((teammate) => ({ id: teammate.id, label: teammate.label })),
         commands: slashCommands,
       }),
-    [activeConversationRun, messageDraft, slashCommands, teammateOptions],
+    [guidanceModeActive, messageDraft, slashCommands, teammateOptions],
   );
   const composerSlashCommandActive = composerSlashIntent.kind !== "none";
   const composerSlashTargetLabel = composerSlashCommandActive ? composerSlashCommandTargetLabel(composerSlashIntent, t) : "";
@@ -508,13 +507,7 @@ export function useChannelComposerInputController({
     if (!mentionPicker && !slashPicker) {
       if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
         event.preventDefault();
-        if (activeConversationRun) {
-          if (composerHasSendableContent) {
-            void actions.submitChannelRunGuidanceFromDraft();
-          }
-          return;
-        }
-        void actions.sendMessage();
+        void actions.sendMessage(composerInputRef.current?.readValue());
         return;
       }
       if (event.key === "Escape") {
@@ -531,10 +524,9 @@ export function useChannelComposerInputController({
       setSlashActiveIndex(0);
     }
   }, [
-    activeConversationRun,
     commitMention,
     commitSlashCommand,
-    composerHasSendableContent,
+    composerInputRef,
     mentionActiveIndex,
     mentionPicker,
     mentionPickerOptions,
@@ -567,7 +559,7 @@ export function useChannelComposerInputController({
     insertMentionTrigger,
     handleComposerTextChange,
     handleComposerKeyDown,
-    handleComposerPaste,
+    handleComposerPasteFiles,
     handleComposerDragOver,
     handleComposerDragLeave,
     handleComposerDrop,
@@ -593,6 +585,19 @@ function findActiveMention(value: string, caret: number): ActiveMentionPicker | 
     start: caret - query.length - 1,
     end: caret,
   };
+}
+
+function sameComposerPicker(
+  left: ActiveMentionPicker | ActiveSlashCommandPicker | undefined,
+  right: ActiveMentionPicker | ActiveSlashCommandPicker | undefined,
+): boolean {
+  return left === right || Boolean(
+    left &&
+    right &&
+    left.query === right.query &&
+    left.start === right.start &&
+    left.end === right.end,
+  );
 }
 
 function insertMentionToken(value: string, picker: ActiveMentionPicker | undefined, label: string): { readonly value: string; readonly caret: number } {

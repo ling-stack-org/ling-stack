@@ -56,6 +56,7 @@ test("1440x960 Ling Light owns a complete Channel turn, transcript disclosure, t
   await expect(blockedRow).toHaveCount(1);
   await expectMessageFrameContained(sourceRow);
   await expectMessageFrameContained(assistantRow);
+  await expectOwnMessageBubble(sourceRow);
   await expectMessageInteractionPolicy(sourceRow, "user", "Copy message");
   await expectMessageInteractionPolicy(assistantRow, "assistant", "Copy message");
   await expectMessageInteractionPolicy(blockedRow, "state", "Copy message");
@@ -118,7 +119,15 @@ test("1280x800 Ling Dark keeps Normal message states independent from Channel ow
   const pending = rows.filter({ hasText: "Normal ownership response is still streaming" });
   const failed = rows.filter({ hasText: "Normal ownership provider failed" });
   await expect(own).toHaveClass(/message-bubble-own/u);
+  await expectOwnMessageBubble(own);
+  await expect(own).toHaveAttribute("data-has-avatar", "false");
+  await expect(own.locator(":scope > :is(.user-profile-avatar, .avatar-initial, img)")).toHaveCount(0);
   await expect(ready).toHaveClass(/message-bubble-peer/u);
+  await expect(ready).toHaveAttribute("data-has-avatar", "false");
+  await expect(ready.locator(":scope > :is(.user-profile-avatar, .avatar-initial, img)")).toHaveCount(0);
+  await expect(ready).toHaveClass(/message-row-identity-sr-only/u);
+  await expect(ready.locator(":scope > .message-content > header")).toHaveCSS("clip-path", "inset(50%)");
+  await expectSharedConversationBodyTypography(ready);
   await expect(pending).toHaveClass(/message-bubble-pending/u);
   await expect(pending.locator(".message-pending-spinner")).toBeVisible();
   await expect(failed).toHaveClass(/failed/u);
@@ -133,7 +142,6 @@ test("1280x800 Ling Dark keeps Normal message states independent from Channel ow
   await expectMessageFrameContained(ready);
   await expectMessageFrameContained(pending);
   await expectMessageFrameContained(failed);
-  await expectAuthorTimeBaseline(ready);
   const like = await exerciseActionBar(ready, "Like response");
   await like.click();
   await expect(like).toHaveClass(/selected/u);
@@ -174,7 +182,9 @@ test("1440x960 imported Quiet Ocean keeps Teammate identity, attachments, Memory
   const peer = rows.filter({ hasText: "Peer response with attachment and Memory" });
   const blocked = rows.filter({ hasText: "Private ownership request is blocked" });
   await expect(own).toHaveClass(/message-bubble-own/u);
+  await expectOwnMessageBubble(own);
   await expect(peer).toHaveClass(/message-bubble-peer/u);
+  await expectSharedConversationBodyTypography(peer);
   await expect(blocked).toHaveClass(/message-bubble-chat-blocked/u);
   await expect(blocked.getByRole("alert")).toContainText("Private ownership request is blocked");
   await expect(peer.getByRole("link", { name: "message-ownership-notes.md" })).toBeVisible();
@@ -188,7 +198,7 @@ test("1440x960 imported Quiet Ocean keeps Teammate identity, attachments, Memory
   await expectMessageFrameContained(own);
   await expectMessageFrameContained(peer);
   await expectMessageFrameContained(blocked);
-  await expectAuthorTimeBaseline(peer);
+  await expectPeerContentTopAligned(peer);
 
   const copy = await exerciseActionBar(peer, "Copy message");
   await expectActionHitArea(copy);
@@ -277,6 +287,28 @@ function installChannelTranscriptFixture(state: MockState): void {
   state.tasks = [];
   state.runs = [];
   state.approvals = [];
+}
+
+async function expectSharedConversationBodyTypography(row: Locator): Promise<void> {
+  const body = row.locator(".message-body-renderer").first();
+  await expect(body).toBeVisible();
+  const styles = await body.evaluate((element) => {
+    const computed = getComputedStyle(element);
+    const probe = document.createElement("span");
+    probe.style.color = "var(--conversation-text)";
+    document.body.append(probe);
+    const expectedColor = getComputedStyle(probe).color;
+    probe.remove();
+    return {
+      color: computed.color,
+      expectedColor,
+      fontSize: computed.fontSize,
+      fontWeight: Number(computed.fontWeight),
+    };
+  });
+  expect(styles.color).toBe(styles.expectedColor);
+  expect(styles.fontSize).toBe("15px");
+  expect(styles.fontWeight).toBe(550);
 }
 
 function installNormalOwnershipFixture(state: MockState): string {
@@ -560,28 +592,41 @@ async function expectActionHitArea(action: Locator): Promise<void> {
   expect(box!.width, "message action width").toBeGreaterThanOrEqual(32);
 }
 
-async function expectAuthorTimeBaseline(row: Locator): Promise<void> {
+async function expectPeerContentTopAligned(row: Locator): Promise<void> {
   const layout = await row.evaluate((element) => {
-    const header = element.querySelector<HTMLElement>(":scope > .message-content > header");
-    const author = header?.querySelector<HTMLElement>("strong");
-    const time = header?.querySelector<HTMLElement>("time");
-    if (!header || !author || !time) return undefined;
-    const authorBox = author.getBoundingClientRect();
-    const timeBox = time.getBoundingClientRect();
+    const avatar = element.querySelector<HTMLElement>(":scope > :is(img, .avatar-initial, .user-profile-avatar)");
+    const content = element.querySelector<HTMLElement>(":scope > .message-content");
+    const firstVisibleContent = content?.querySelector<HTMLElement>(":scope > :not(.message-row-peer-identity)");
+    if (!avatar || !content || !firstVisibleContent) return undefined;
+    const avatarBox = avatar.getBoundingClientRect();
+    const contentBox = firstVisibleContent.getBoundingClientRect();
     return {
-      centerDelta: Math.abs(
-        (authorBox.top + authorBox.height / 2) - (timeBox.top + timeBox.height / 2),
-      ),
-      gap: timeBox.left - authorBox.right,
-      overflow: header.scrollWidth - header.clientWidth,
-      verticalOverlap: Math.min(authorBox.bottom, timeBox.bottom) - Math.max(authorBox.top, timeBox.top),
+      topDelta: Math.abs(avatarBox.top - contentBox.top),
+      gap: contentBox.left - avatarBox.right,
+      overflow: element.scrollWidth - element.clientWidth,
     };
   });
-  expect(layout, "author and time header").toBeDefined();
-  expect(layout?.centerDelta ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(2);
+  expect(layout, "peer avatar and content").toBeDefined();
+  expect(layout?.topDelta ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(2);
   expect(layout?.gap ?? 0).toBeGreaterThanOrEqual(4);
   expect(layout?.overflow ?? 1).toBeLessThanOrEqual(1);
-  expect(layout?.verticalOverlap ?? 0).toBeGreaterThan(0);
+}
+
+async function expectOwnMessageBubble(row: Locator): Promise<void> {
+  const appearance = await row.locator(":scope > .message-content").evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      backgroundColor: style.backgroundColor,
+      borderRadius: Number.parseFloat(style.borderTopLeftRadius),
+      justifySelf: style.justifySelf,
+      padding: Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.paddingRight),
+    };
+  });
+  expect(appearance.backgroundColor).not.toBe("transparent");
+  expect(appearance.backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
+  expect(appearance.borderRadius).toBeGreaterThan(0);
+  expect(appearance.justifySelf).toBe("end");
+  expect(appearance.padding).toBeGreaterThan(0);
 }
 
 async function expectReducedMotion(page: Page, locators: readonly Locator[]): Promise<void> {

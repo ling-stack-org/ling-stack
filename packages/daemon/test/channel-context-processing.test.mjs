@@ -156,17 +156,17 @@ test("recent conversation collector keeps same-channel ready messages only", () 
 });
 
 test("shared channel context message listing excludes historical queued guidance", () => {
-  const current = createMessage({ id: "msg_current", body: "继续" });
-  const store = {
-    listRunInterventions: () => [{ idempotencyKey: "channel_message:msg_guidance:queue_followup" }],
-    getChannelMessage: (messageId) => [current].find((message) => message.id === messageId),
-    listChannelBranches: () => [],
-    listChannelMessages: () => [
-      createMessage({ id: "msg_old", body: "old topic" }),
-      createMessage({ id: "msg_guidance", body: "queued guidance" }),
+  const rootThread = createConversationThread();
+  const current = createMessage({ id: "msg_current", threadId: rootThread.id, body: "继续" });
+  const store = createCanonicalConversationStore({
+    threads: [rootThread],
+    messages: [
+      createMessage({ id: "msg_old", threadId: rootThread.id, body: "old topic" }),
+      createMessage({ id: "msg_guidance", threadId: rootThread.id, body: "queued guidance" }),
       current,
     ],
-  };
+    interventions: [{ idempotencyKey: "channel_message:msg_guidance:queue_followup" }],
+  });
 
   const messages = listChannelContextMessages({
     store,
@@ -178,25 +178,14 @@ test("shared channel context message listing excludes historical queued guidance
 });
 
 test("channel context message listing scopes root and branch surfaces separately", () => {
-  const rootMessage = createMessage({ id: "msg_root", body: "root" });
-  const rootReply = createMessage({ id: "msg_root_reply", threadId: rootMessage.id, kind: "ai_reply", authorType: "ai-teammate", body: "root reply" });
+  const rootThread = createConversationThread();
+  const branchThread = createConversationThread({ id: "thread_branch", surfaceKind: "branch", relationKind: "branch" });
+  const rootMessage = createMessage({ id: "msg_root", threadId: rootThread.id, body: "root" });
+  const rootReply = createMessage({ id: "msg_root_reply", threadId: rootThread.id, kind: "ai_reply", authorType: "ai-teammate", body: "root reply" });
   const branchMessage = createMessage({ id: "msg_branch", threadId: "thread_branch", body: "branch" });
-  const latestRoot = createMessage({ id: "msg_latest_root", body: "latest root" });
+  const latestRoot = createMessage({ id: "msg_latest_root", threadId: rootThread.id, body: "latest root" });
   const messages = [rootMessage, rootReply, branchMessage, latestRoot];
-  const store = {
-    listRunInterventions: () => [],
-    getChannelMessage: (messageId) => messages.find((message) => message.id === messageId),
-    listChannelBranches: () => [{ id: "branch_1", channelId: "channel_1", name: "Branch", status: "active", rootThreadId: "thread_branch" }],
-    listChannelMessages: (options) => messages.filter((message) => {
-      if (message.channelId !== options.channelId) {
-        return false;
-      }
-      if (options.threadId) {
-        return message.threadId === options.threadId;
-      }
-      return !(options.excludeThreadIds ?? []).includes(message.threadId);
-    }),
-  };
+  const store = createCanonicalConversationStore({ threads: [rootThread, branchThread], messages });
 
   assert.deepEqual(
     listChannelContextMessages({ store, channelId: "channel_1", sourceMessage: latestRoot }).map((message) => message.id),
@@ -209,24 +198,20 @@ test("channel context message listing scopes root and branch surfaces separately
 });
 
 test("channel context message listing scopes topic replies to their source message", () => {
-  const rootMessage = createMessage({ id: "msg_root", body: "root" });
-  const topicReply = createMessage({ id: "msg_topic", threadId: rootMessage.id, body: "topic follow-up" });
+  const rootThread = createConversationThread();
+  const topicThread = createConversationThread({
+    id: "thread_topic",
+    surfaceKind: "topic",
+    relationKind: "topic",
+    parentThreadId: rootThread.id,
+    anchorItemId: "msg_root",
+  });
+  const branchThread = createConversationThread({ id: "thread_branch", surfaceKind: "branch", relationKind: "branch" });
+  const rootMessage = createMessage({ id: "msg_root", threadId: rootThread.id, body: "root" });
+  const topicReply = createMessage({ id: "msg_topic", threadId: topicThread.id, body: "topic follow-up" });
   const branchMessage = createMessage({ id: "msg_branch", threadId: "thread_branch", body: "branch" });
   const messages = [rootMessage, topicReply, branchMessage];
-  const store = {
-    listRunInterventions: () => [],
-    getChannelMessage: (messageId) => messages.find((message) => message.id === messageId),
-    listChannelBranches: () => [{ id: "branch_1", channelId: "channel_1", name: "Branch", status: "active", rootThreadId: "thread_branch" }],
-    listChannelMessages: (options) => messages.filter((message) => {
-      if (message.channelId !== options.channelId) {
-        return false;
-      }
-      if (options.threadId) {
-        return message.threadId === options.threadId;
-      }
-      return true;
-    }),
-  };
+  const store = createCanonicalConversationStore({ threads: [rootThread, topicThread, branchThread], messages });
 
   assert.deepEqual(
     listChannelContextMessages({ store, channelId: "channel_1", sourceMessage: topicReply }).map((message) => message.id),
@@ -543,14 +528,17 @@ test("workflow context inspect summary exposes metadata without raw prompt text"
 
 test("workflow proposal context view maps supported source refs for shaping evidence", () => {
   const channel = createChannel();
-  const sourceMessage = createMessage({ id: "msg_current", body: "继续处理上面的 workflow" });
-  const store = {
-    listRunInterventions: () => [],
-    listChannelBranches: () => [],
-    listChannelMessages: () => [
-      createMessage({ id: "msg_previous", body: "先实现这个功能" }),
+  const rootThread = createConversationThread();
+  const sourceMessage = createMessage({ id: "msg_current", threadId: rootThread.id, body: "继续处理上面的 workflow" });
+  const conversationStore = createCanonicalConversationStore({
+    threads: [rootThread],
+    messages: [
+      createMessage({ id: "msg_previous", threadId: rootThread.id, body: "先实现这个功能" }),
       sourceMessage,
     ],
+  });
+  const store = {
+    ...conversationStore,
     getChannelAttachment: () => undefined,
     getChannelLinkPreview: () => undefined,
     listChannelInputMaterializations: () => [],
@@ -1067,6 +1055,131 @@ function createMessage(overrides = {}) {
     createdAt: now,
     updatedAt: now,
     ...overrides,
+  };
+}
+
+function createConversationThread(overrides = {}) {
+  return {
+    id: "thread_root",
+    workspaceId: "workspace_1",
+    kind: "channel_discussion",
+    channelId: "channel_1",
+    title: "Conversation",
+    objective: "Test conversation",
+    status: "open",
+    conversationMode: { mode: "normal", source: "default" },
+    createdAt: now,
+    updatedAt: now,
+    surfaceKind: "channel_root",
+    relationKind: "root",
+    nextItemSequence: 1,
+    ...overrides,
+  };
+}
+
+function createCanonicalConversationStore({ threads, messages, interventions = [] }) {
+  const threadById = new Map(threads.map((thread) => [thread.id, thread]));
+  const nextSequenceByThread = new Map();
+  const items = messages.map((message) => {
+    assert.ok(message.threadId, `Canonical test message requires threadId: ${message.id}`);
+    const sequence = (nextSequenceByThread.get(message.threadId) ?? 0) + 1;
+    nextSequenceByThread.set(message.threadId, sequence);
+    const assistant = message.kind === "ai_reply";
+    const status = message.status === "pending" ? "pending" : message.status === "failed" ? "failed" : "committed";
+    return {
+      schemaVersion: 1,
+      id: message.id,
+      workspaceId: message.workspaceId,
+      channelId: message.channelId,
+      threadId: message.threadId,
+      turnId: `turn_${message.id}`,
+      sequence,
+      kind: assistant ? "assistant_message" : "user_message",
+      status,
+      actorType: message.authorType === "local-user" ? "local_user" : "teammate",
+      ...(message.authorId ? { actorId: message.authorId } : {}),
+      visibility: "channel",
+      payload: assistant ? {
+        body: message.body,
+        format: "markdown",
+        streaming: status === "pending",
+        deliveryStatus: message.status,
+        ...(message.errorMessage ? { errorMessage: message.errorMessage } : {}),
+      } : {
+        body: message.body,
+        format: "markdown",
+        mentions: message.mentions.map((mention) => ({
+          id: mention.id,
+          label: mention.label,
+          kind: mention.kind === "ai-teammate" ? "ai_teammate" : mention.kind === "local-user" ? "local_user" : "channel",
+        })),
+        attachmentIds: message.attachmentIds,
+        linkPreviewIds: message.linkPreviewIds,
+        fileRefs: message.fileRefs,
+      },
+      domainRefs: [],
+      revision: 1,
+      createdAt: message.createdAt,
+      updatedAt: message.updatedAt,
+      ...(status === "committed" ? { committedAt: message.updatedAt } : {}),
+    };
+  });
+  const itemById = new Map(items.map((item) => [item.id, item]));
+  const turnById = new Map(items.map((item) => [item.turnId, {
+    id: item.turnId,
+    threadId: item.threadId,
+    status: "completed",
+  }]));
+  const segmentByThreadId = new Map(threads.map((thread) => [thread.id, {
+    id: `segment_${thread.id}`,
+    threadId: thread.id,
+    state: "active",
+    createdFromTurnId: items.find((item) => item.threadId === thread.id)?.turnId ?? `turn_${thread.id}`,
+    lastActiveTurnId: [...items].reverse().find((item) => item.threadId === thread.id)?.turnId ?? `turn_${thread.id}`,
+    revision: 1,
+    createdAt: now,
+    updatedAt: now,
+  }]));
+  const assignmentByTurnId = new Map(items.map((item) => [item.turnId, {
+    id: `assignment_${item.turnId}`,
+    turnId: item.turnId,
+    segmentId: segmentByThreadId.get(item.threadId).id,
+    status: "committed",
+    decisionSource: "structural",
+    confidence: 1,
+    evidenceRefs: [{ type: "conversation_item", id: item.id }],
+    policyVersion: "test-policy",
+    revision: 1,
+    createdAt: now,
+  }]));
+  return {
+    listRunInterventions: () => interventions,
+    listLingThreads: ({ channelId }) => threads.filter((thread) => thread.channelId === channelId),
+    getLingThread: (threadId) => threadById.get(threadId),
+    getConversationItem: (itemId) => itemById.get(itemId),
+    getEffectiveConversationItem: (itemId) => itemById.get(itemId),
+    getLingTurn: (turnId) => turnById.get(turnId),
+    getEffectiveTurnContextAssignment: (turnId) => assignmentByTurnId.get(turnId),
+    getContextSegment: (segmentId) => [...segmentByThreadId.values()].find((segment) => segment.id === segmentId),
+    listConversationContextSummaries: () => [],
+    getMemoryObject: () => undefined,
+    listConversationItemsForTurn: ({ turnId }) => items.filter((item) => item.turnId === turnId && item.status === "committed"),
+    listConversationItemsForSegment: (options) => items
+      .filter((item) => item.threadId === options.threadId)
+      .filter((item) => assignmentByTurnId.get(item.turnId)?.segmentId === options.segmentId)
+      .filter((item) => item.sequence <= options.throughSequence)
+      .filter((item) => item.sequence > (options.afterSequence ?? 0))
+      .filter((item) => item.status === "committed")
+      .slice(0, options.limit ?? 500),
+    listConversationItemsByChannelPage: (options) => {
+      const filtered = items
+        .filter((item) => item.channelId === options.channelId)
+        .filter((item) => !options.threadId || item.threadId === options.threadId)
+        .filter((item) => !(options.excludeThreadIds ?? []).includes(item.threadId))
+        .filter((item) => !options.kinds || options.kinds.includes(item.kind));
+      const limit = options.limit ?? 200;
+      return { items: filtered.slice(-limit), hasMore: filtered.length > limit };
+    },
   };
 }
 

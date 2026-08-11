@@ -1,11 +1,19 @@
 .provider-form-panel.provider-sheet {
+  display: flex;
+  flex-direction: column;
   width: min(720px, calc(100vw - 32px));
   max-height: calc(100vh - 32px);
   max-height: calc(100dvh - 32px);
 }
 
+.provider-sheet-header,
+.provider-sheet-footer {
+  flex: 0 0 auto;
+}
+
 .provider-sheet-body {
   display: grid;
+  flex: 1 1 auto;
   align-content: start;
   gap: var(--ling-space-6);
 }

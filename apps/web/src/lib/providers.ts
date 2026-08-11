@@ -389,7 +389,11 @@ export function isWorkbenchReadyProvider(provider: ProviderPreset): boolean {
 }
 
 export function isWorkbenchNeedsConfigProvider(provider: ProviderPreset): boolean {
-  return provider.enabled && !isWorkbenchReadyProvider(provider);
+  return provider.enabled && !providerCheckIsPending(provider.lastCheck) && !isWorkbenchReadyProvider(provider);
+}
+
+export function providerCheckIsPending(result: ProviderCheckResult | undefined): boolean {
+  return result?.code === "checking";
 }
 
 export function providerSecretReady(provider: ProviderPreset): boolean {
@@ -606,6 +610,12 @@ export function providerRunPreflightBlocker(provider: ProviderPreset | undefined
       providerName: provider.displayName,
     });
   }
+  if (providerCheckIsPending(provider.lastCheck)) {
+    return translateProviderText(t, "{providerName}: {reason}.", {
+      providerName: provider.displayName,
+      reason: translateProviderText(t, "Checking"),
+    });
+  }
   if (!provider.lastCheck.ok) {
     return translateProviderText(t, "{providerName}: provider check failed ({status}). {guidance}", {
       providerName: provider.displayName,
@@ -666,6 +676,9 @@ export function taskProviderReadinessGuidance(provider: ProviderPreset | undefin
   if (!provider.lastCheck) {
     return translateProviderText(t, "Save validates the API key, base URL, and model access before starting.");
   }
+  if (providerCheckIsPending(provider.lastCheck)) {
+    return translateProviderText(t, "Checking");
+  }
   if (!provider.lastCheck.ok) {
     return providerCheckGuidance(provider.lastCheck, provider, t);
   }
@@ -676,11 +689,17 @@ export function providerLastCheckLabel(provider: ProviderPreset, t?: ProviderTra
   if (!provider.lastCheck) {
     return translateProviderText(t, "unchecked");
   }
+  if (providerCheckIsPending(provider.lastCheck)) {
+    return translateProviderText(t, "Checking");
+  }
   return provider.lastCheck.ok ? translateProviderText(t, "check ready") : providerCheckStatusLabel(provider.lastCheck, t);
 }
 
 export function providerLastCheckClass(provider: ProviderPreset): string {
   if (!provider.lastCheck) {
+    return "provider-state check-unknown";
+  }
+  if (providerCheckIsPending(provider.lastCheck)) {
     return "provider-state check-unknown";
   }
   return provider.lastCheck.ok ? "provider-state check-ok" : "provider-state check-bad";
@@ -779,6 +798,9 @@ export function hiddenNonMatchingMediaModelCount(
 
 
 export function providerCheckStatusLabel(result: ProviderCheckResult, t?: ProviderTranslate): string {
+  if (providerCheckIsPending(result)) {
+    return translateProviderText(t, "Checking");
+  }
   if (result.ok) {
     return translateProviderText(t, "ready");
   }
@@ -790,6 +812,9 @@ export function providerCheckStatusLabel(result: ProviderCheckResult, t?: Provid
   }
   if (result.code === "network_failed") {
     return translateProviderText(t, "network failed");
+  }
+  if (result.code === "empty_response") {
+    return translateProviderText(t, "empty response");
   }
   if (result.code === "auth_failed") {
     return translateProviderText(t, "auth failed");
@@ -807,6 +832,9 @@ export function providerCheckStatusLabel(result: ProviderCheckResult, t?: Provid
 }
 
 export function providerCheckMessage(result: ProviderCheckResult, t?: ProviderTranslate): string {
+  if (providerCheckIsPending(result)) {
+    return translateProviderText(t, "Checking");
+  }
   if (result.ok) {
     return translateProviderText(t, result.message);
   }
@@ -818,6 +846,9 @@ export function providerCheckMessage(result: ProviderCheckResult, t?: ProviderTr
   }
   if (result.code === "network_failed") {
     return translateProviderText(t, "Provider network check failed. Check Base URL, proxy, and local relay status.");
+  }
+  if (result.code === "empty_response") {
+    return translateProviderText(t, "Provider accepted the request but did not return displayable text.");
   }
   if (result.code === "model_unsupported") {
     return translateProviderText(t, "The configured model is not available from this endpoint.");
@@ -867,6 +898,9 @@ export function providerModelDiscoveryErrorMessage(error: unknown, t?: ProviderT
 }
 
 export function providerCheckGuidance(result: ProviderCheckResult, provider: Pick<ProviderPreset, "api"> | undefined, t?: ProviderTranslate): string {
+  if (providerCheckIsPending(result)) {
+    return "";
+  }
   if (result.ok) {
     if (provider?.api === "media-job") {
       return translateProviderText(t, "Model is ready for generation tasks.");
@@ -882,6 +916,9 @@ export function providerCheckGuidance(result: ProviderCheckResult, provider: Pic
   }
   if (result.code === "network_failed") {
     return translateProviderText(t, "Check proxy, Base URL, local relay status, and outbound network access from the daemon.");
+  }
+  if (result.code === "empty_response") {
+    return translateProviderText(t, "Check the API protocol and model response format, then run Check again.");
   }
   if (result.code === "model_unsupported") {
     return translateProviderText(t, "Check the model name, API protocol, and Base URL path for this provider.");

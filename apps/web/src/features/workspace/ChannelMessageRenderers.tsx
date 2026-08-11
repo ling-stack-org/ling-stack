@@ -255,7 +255,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
     raw_debug_ref: renderGenericTranscriptBlock,
   });
 
-  function renderConversationTurnItem(turn: ConversationTurnViewModel): ReactNode {
+  function renderConversationTurnItem(turn: ConversationTurnViewModel, pendingReplyPreview?: PendingChannelSendPreview): ReactNode {
     const operationCell = turn.operationCell;
     const operationRef = turn.operationRef;
     let detailsState: ConversationWorkCellDetailsState = { status: "not_loaded" };
@@ -272,6 +272,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
       <div className="conversation-turn" data-conversation-turn-id={turn.id}>
         {renderMessageFeedActivityItem(channelMessageToActivityItem(turn.sourceMessage))}
         {renderConversationTurnAssistantTranscript(turn, detailsState, onLoadDetails)}
+        {pendingReplyPreview ? renderPendingChannelReplyStatus() : null}
       </div>
     );
   }
@@ -302,6 +303,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
 
     return (
       <MessageRow
+        surface={channelSurface}
         className="channel-message-row conversation-turn-assistant-row"
         authorType="ai-teammate"
         avatar={anchorMessage ? renderChannelMessageAvatar(anchorMessage) : renderLingAgentAvatar()}
@@ -387,6 +389,11 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
   }): ReactNode {
     const pendingCoordinatorMessage = block.message.status === "pending";
     const body = conversationCoordinatorDisplayBody(turn, block.message, block.phase, input.t).trim();
+    const proposedPlanBlock = readChannelProposedPlanMessage(body, block.message);
+    const proposedPlan = proposedPlanBlock
+      ? input.proposedPlanArtifactsById.get(proposedPlanBlock.plan.id) ?? proposedPlanBlock.plan
+      : undefined;
+    const visibleBody = proposedPlanBlock?.displayBody.trim() ?? body;
     const evidenceNode = (block.memoryCitationEvents.length > 0 || block.message.webEvidence) ? (
       <MessageEvidencePanel
         memoryContent={block.memoryCitationEvents.length > 0 ? (
@@ -400,7 +407,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
         webEvidence={block.message.webEvidence}
       />
     ) : null;
-    if (!body) {
+    if (!visibleBody && !proposedPlanBlock) {
       return evidenceNode ? <div className="conversation-turn-assistant-copy" key={block.id}>{evidenceNode}</div> : null;
     }
     return (
@@ -412,7 +419,19 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
         key={block.id}
       >
         {pendingCoordinatorMessage ? <Loader2 className="message-pending-spinner spin" size={13} /> : null}
-        <MessageBodyRenderer text={body} cwd={input.cwd} compact streaming={pendingCoordinatorMessage} onOpenLocalFile={input.onOpenFileReference} />
+        {visibleBody ? <MessageBodyRenderer text={visibleBody} cwd={input.cwd} compact streaming={pendingCoordinatorMessage} onOpenLocalFile={input.onOpenFileReference} /> : null}
+        {proposedPlanBlock ? (
+          <ChannelProposedPlanBlock
+            plan={proposedPlan ?? proposedPlanBlock.plan}
+            cwd={input.cwd}
+            t={input.t}
+            busy={input.planActionBusyId === (proposedPlan ?? proposedPlanBlock.plan).id}
+            onAccept={input.onAcceptProposedPlan}
+            onConvert={input.onConvertProposedPlan}
+            onRefine={input.onRefineProposedPlan}
+            onSave={input.onSaveProposedPlan}
+          />
+        ) : null}
         {evidenceNode}
       </div>
     );
@@ -668,6 +687,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
       return (
         <div className="message-group">
           <MessageRow
+            surface={channelSurface}
             className={message.status === "blocked" ? "channel-message-row blocked" : "channel-message-row"}
             authorType={message.authorType}
             avatar={renderChannelMessageAvatar(message)}
@@ -1023,7 +1043,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
       return renderPendingChannelSendPreview(feedItem.preview, feedItem.showSentMessage);
     }
     if (feedItem.kind === "turn") {
-      return renderConversationTurnItem(feedItem.turn);
+      return renderConversationTurnItem(feedItem.turn, feedItem.pendingReplyPreview);
     }
     return renderMessageFeedActivityItem(feedItem.item);
   }
@@ -1033,6 +1053,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
       <div className="message-group channel-pending-send-group">
         {showSentMessage ? (
           <MessageRow
+            surface={channelSurface}
             className="channel-message-row pending-send"
             authorType="local-user"
             avatar={<UserProfileAvatar profile={input.userProfile} fallbackLabel={input.localUserDisplayName} />}
@@ -1046,11 +1067,23 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
             attachmentsNode={renderChannelMessageAssets(preview.attachmentIds, preview.fileRefs, preview.linkPreviewIds, preview.channelId)}
           />
         ) : null}
-        <div className="channel-send-thinking-row" role="status" aria-live="polite">
-          <Loader2 className="message-pending-spinner spin" size={13} />
-          <span>{input.t("Thinking...")}</span>
-        </div>
+        {renderPendingChannelReplyStatus()}
       </div>
+    );
+  }
+
+  function renderPendingChannelReplyStatus(): ReactNode {
+    return (
+      <MessageRow
+        surface={channelSurface}
+        className="channel-message-row channel-send-thinking-message"
+        authorType="ai-teammate"
+        avatar={renderLingAgentAvatar()}
+        authorName={input.t("Ling Agent")}
+        body={input.t("Thinking...")}
+        bodyCompact
+        bodyStreaming
+      />
     );
   }
 

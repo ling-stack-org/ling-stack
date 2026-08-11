@@ -437,6 +437,21 @@ export interface RunEventEnvelope {
   readonly data: unknown;
 }
 
+export type ConversationActiveReplyStatus = "queued" | "running" | "waiting_for_approval";
+
+export interface ConversationActiveReplyTarget {
+  readonly runId: string;
+  readonly sourceRunId: string;
+  readonly workUnitId?: string;
+  readonly channelId?: string;
+  readonly threadId?: string;
+  readonly sourceMessageId?: string;
+  readonly teammateId?: string;
+  readonly status: ConversationActiveReplyStatus;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
 export interface RunSession {
   readonly id: string;
   readonly status: RunStatus;
@@ -505,6 +520,8 @@ export type RunInterventionStatus =
   | "cancelled";
 
 export interface RunInterventionMessagePayload {
+  readonly sourceMessageId?: string;
+  readonly targetTeammateId?: string;
   readonly body: string;
   readonly attachmentIds: readonly string[];
   readonly linkPreviewIds: readonly string[];

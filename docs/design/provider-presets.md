@@ -52,6 +52,7 @@ Implemented today:
 - Custom OpenAI-compatible providers can be registered dynamically by the Pi runner adapter when `baseUrl` is present.
 - Persistent provider preset storage, daemon CRUD APIs, CLI/Web setup surfaces, built-in templates, and env secret refs are implemented.
 - Provider health checks perform static validation plus live lightweight probes for OpenAI-compatible chat, OpenAI Responses, and Anthropic Messages.
+- Batch model import persists presets immediately and runs chat preflights in a daemon-owned background queue with a maximum concurrency of three. Persisted `checking` state keeps the Web list truthful across refreshes; completed checks continue to publish the existing provider control-plane event.
 - `packages/providers` defines capability interfaces and media vendor adapters for the currently connected generation families.
 - Generation runtime readiness is resolved by [Provider Generation Runtime Resolver](provider-generation-runtime.md), not by page-specific provider checks.
 
@@ -803,6 +804,12 @@ Default preflight for `providerPresetId` checks:
 - `lastCheck` exists,
 - `lastCheck.ok === true`.
 
+Live chat checks require more than HTTP success. `openai-completions`,
+`openai-responses`, and `anthropic-messages` probes must parse a supported visible text
+field from the response. A 2xx response containing only reasoning, thinking, unknown
+blocks, or an empty body records `lastCheck.code = "empty_response"`. Raw response bodies
+and reasoning content are never promoted to user-visible assistant text.
+
 `skipProviderPreflight: true` is a development/debug escape hatch. It may bypass secret-readiness and `lastCheck` gates, but it must not bypass hard compatibility rules: disabled presets, media presets, and no-chat presets still fail before runner invocation.
 
 Inline `provider` remains accepted for development and does not participate in preset preflight because there is no persisted `lastCheck`. Normal product flows should use `providerPresetId`.
@@ -824,7 +831,8 @@ Web Model Workbench should expose:
 - summary counters for chat-compatible providers, preflight-ready providers, missing env refs, and templates,
 - a compact repair queue ordered by next action,
 - `Check all` for enabled chat providers,
-- per-provider `Check`, `Edit`, and `Use` actions.
+- per-provider `Set default`, `Check`, `Edit`, and `More` actions; `Set default` is a star
+  icon and the fixed action column remains `184px`.
 - model capability status (`Auto`, `Estimated`, `Conservative`, or `Custom override`)
   without requiring token fields in the default setup path.
 

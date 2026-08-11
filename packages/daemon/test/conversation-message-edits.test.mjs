@@ -1,3 +1,4 @@
+import { appendChannelItemFixture, getChannelItemViewFixture, listChannelItemViewsFixture, updateChannelItemFixture } from "../../core/test/channel-conversation-fixture.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -286,7 +287,7 @@ test("channel and teammate-direct edits update their native messages before repl
   const activeRuns = new ActiveRunRegistry();
   try {
     const channel = store.createChannel({ name: "Engineering", boundPath: cwd }, "2026-07-12T06:00:00.000Z");
-    const channelMessage = store.createChannelMessage({
+    const channelMessage = appendChannelItemFixture(store, {
       channelId: channel.id,
       authorType: "local-user",
       body: "Channel old",
@@ -302,7 +303,7 @@ test("channel and teammate-direct edits update their native messages before repl
       activeRuns,
       startReplacement: async ({ editable }) => {
         assert.equal(editable.surface, "channel_root");
-        assert.equal(store.getChannelMessage(editable.messageId)?.body, "Channel revised");
+        assert.equal(getChannelItemViewFixture(store, editable.messageId)?.body, "Channel revised");
         return {};
       },
     });
@@ -419,17 +420,18 @@ test("default projections hide superseded turns and response messages while audi
     assert.equal(store.getLingTurn(oldTurn.id)?.status, "superseded");
 
     const channel = store.createChannel({ name: "Projection channel", boundPath: cwd }, "2026-07-12T07:01:00.000Z");
-    const source = store.createChannelMessage({ channelId: channel.id, authorType: "local-user", body: "Source" }, "2026-07-12T07:01:01.000Z");
-    const oldReply = store.createChannelMessage({
+    const source = appendChannelItemFixture(store, { channelId: channel.id, authorType: "local-user", body: "Source" }, "2026-07-12T07:01:01.000Z");
+    const oldReply = appendChannelItemFixture(store, {
       channelId: channel.id,
-      threadId: source.id,
+      replyToItemId: source.id,
       authorType: "ai-teammate",
+      authorId: LING_AGENT_ID,
       body: "Old reply",
     }, "2026-07-12T07:01:02.000Z");
     store.commitConversationMessageEdit({
       surface: "channel_root",
       ownerId: channel.id,
-      laneId: channel.id,
+      laneId: source.threadId,
       messageId: source.id,
       expectedRevision: 1,
       current: { ...emptyEditFields, body: "Source" },
@@ -442,7 +444,7 @@ test("default projections hide superseded turns and response messages while audi
       ownerId: channel.id,
     });
     assert.deepEqual(filterSupersededChannelMessages([source, oldReply], channelProjection).map((message) => message.id), [source.id]);
-    assert.equal(store.getChannelMessage(oldReply.id)?.body, "Old reply");
+    assert.equal(getChannelItemViewFixture(store, oldReply.id)?.body, "Old reply");
 
     const teammateId = createBuiltinAiTeammateId("designer");
     const directThread = store.getOrCreateTeammateDirectThread(teammateId, "2026-07-12T07:02:00.000Z");
@@ -482,6 +484,211 @@ test("default projections hide superseded turns and response messages while audi
   }
 });
 
+test("conversation detail projects approvals and queued guidance once with structured file references", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-conversation-runtime-projection-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const thread = store.createLingThread({
+      kind: "conversation",
+      teammateId: LING_AGENT_ID,
+      title: "Runtime projection",
+      objective: "Runtime projection",
+    }, "2026-07-12T08:00:00.000Z");
+    const sourceTurn = store.createLingTurn({
+      threadId: thread.id,
+      kind: "initial_request",
+      title: "Inspect the workspace",
+      userInstruction: "Inspect the workspace",
+      teammateId: LING_AGENT_ID,
+      createdByActor: "local-user",
+    }, "2026-07-12T08:00:01.000Z");
+    const sourceRun = store.createRun(createRunInput({
+      id: "run_conversation_projection_source",
+      cwd,
+      threadId: thread.id,
+      turnId: sourceTurn.id,
+      createdAt: "2026-07-12T08:00:02.000Z",
+    }));
+    const approval = store.createApprovalRequest({
+      runId: sourceRun.id,
+      taskId: sourceRun.taskId,
+      toolCallId: "tool_conversation_projection",
+      actionType: "bash",
+      risk: "high",
+      title: "Run workspace check",
+      description: "Confirm the workspace check.",
+      payload: { type: "bash", cwd, command: "git status --short", riskFlags: ["test"] },
+    }, "2026-07-12T08:00:03.000Z");
+    const intervention = store.createRunIntervention({
+      sourceRunId: sourceRun.id,
+      mode: "queue_followup",
+      instruction: "Also inspect the release notes.",
+      messagePayload: {
+        body: "Also inspect the release notes.",
+        attachmentIds: [],
+        linkPreviewIds: [],
+        fileRefs: [{
+          path: "docs/RELEASE.md",
+          label: "Release notes",
+          rootRelation: "inside_workspace",
+          kind: "file",
+          materializationStatus: "not_loaded",
+        }],
+      },
+      requestedBy: "local-user",
+      idempotencyKey: "conversation-projection-guidance",
+    }, "2026-07-12T08:00:04.000Z");
+
+    const queued = buildConversationDetail(store, cwd, thread);
+    assert.deepEqual(queued.approvals.map((item) => item.id), [approval.id]);
+    assert.deepEqual(queued.interventions.map((item) => item.id), [intervention.id]);
+    const guidanceId = `conversation-user:intervention:${intervention.id}`;
+    const queuedGuidance = queued.messages.find((message) => message.id === guidanceId);
+    assert.equal(queuedGuidance?.content, "Also inspect the release notes.");
+    assert.deepEqual(queuedGuidance?.fileRefs, [{ path: "docs/RELEASE.md", label: "Release notes", source: "api" }]);
+
+    const continuationTurn = store.createLingTurn({
+      threadId: thread.id,
+      kind: "manual_followup",
+      title: "Continue the run",
+      userInstruction: "Internal continuation prompt that must not leak into the transcript.",
+      interventionId: intervention.id,
+      sourceItemId: guidanceId,
+      teammateId: LING_AGENT_ID,
+      createdByActor: "local-user",
+    }, "2026-07-12T08:00:05.000Z");
+    store.createRun({
+      ...createRunInput({
+        id: "run_conversation_projection_continuation",
+        cwd,
+        threadId: thread.id,
+        turnId: continuationTurn.id,
+        createdAt: "2026-07-12T08:00:06.000Z",
+      }),
+      parentRunId: sourceRun.id,
+      interventionId: intervention.id,
+      continuationReason: "queue_followup",
+    });
+
+    const continued = buildConversationDetail(store, cwd, thread);
+    const projectedGuidance = continued.messages.filter((message) => message.id === guidanceId);
+    assert.equal(projectedGuidance.length, 1);
+    assert.equal(projectedGuidance[0].content, "Also inspect the release notes.");
+    assert.equal(projectedGuidance[0].turnId, continuationTurn.id);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("conversation detail uses final assistant message text when no text deltas were emitted", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-conversation-final-output-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const thread = store.createLingThread({
+      kind: "conversation",
+      teammateId: LING_AGENT_ID,
+      title: "Final output fallback",
+      objective: "Final output fallback",
+    }, "2026-07-12T09:00:00.000Z");
+    const turn = store.createLingTurn({
+      threadId: thread.id,
+      kind: "initial_request",
+      title: "Return a final answer",
+      userInstruction: "Return a final answer",
+      teammateId: LING_AGENT_ID,
+      createdByActor: "local-user",
+    }, "2026-07-12T09:00:01.000Z");
+    const run = store.createRun(createRunInput({
+      id: "run_conversation_final_output",
+      cwd,
+      threadId: thread.id,
+      turnId: turn.id,
+      createdAt: "2026-07-12T09:00:02.000Z",
+    }));
+    finishRun(store, run.id, "2026-07-12T09:00:03.000Z");
+    store.appendEvent(run.id, "message_end", {
+      type: "message_end",
+      role: "assistant",
+      text: "Final-only answer",
+    });
+
+    const assistant = buildConversationDetail(store, cwd, thread).messages
+      .find((message) => message.id === `conversation-assistant:${turn.id}`);
+    assert.equal(assistant?.content, "Final-only answer");
+    assert.equal(assistant?.status, "succeeded");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("conversation detail prefers streamed text and treats a completely empty chat result as failed", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-conversation-empty-output-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const thread = store.createLingThread({
+      kind: "conversation",
+      teammateId: LING_AGENT_ID,
+      title: "Output precedence",
+      objective: "Output precedence",
+    }, "2026-07-12T09:10:00.000Z");
+    const streamedTurn = store.createLingTurn({
+      threadId: thread.id,
+      kind: "initial_request",
+      title: "Stream the answer",
+      userInstruction: "Stream the answer",
+      teammateId: LING_AGENT_ID,
+      createdByActor: "local-user",
+    }, "2026-07-12T09:10:01.000Z");
+    const streamedRun = store.createRun(createRunInput({
+      id: "run_conversation_streamed_output",
+      cwd,
+      threadId: thread.id,
+      turnId: streamedTurn.id,
+      createdAt: "2026-07-12T09:10:02.000Z",
+    }));
+    finishRun(store, streamedRun.id, "2026-07-12T09:10:03.000Z");
+    store.appendEvent(streamedRun.id, "assistant_text_delta", { type: "assistant_text_delta", text: "Streamed answer" });
+    store.appendEvent(streamedRun.id, "message_end", { type: "message_end", role: "assistant", text: "Streamed answer" });
+
+    const emptyTurn = store.createLingTurn({
+      threadId: thread.id,
+      kind: "manual_followup",
+      title: "你是谁",
+      userInstruction: "你是谁",
+      teammateId: LING_AGENT_ID,
+      createdByActor: "local-user",
+    }, "2026-07-12T09:10:04.000Z");
+    const emptyRun = store.createRun({
+      ...createRunInput({
+        id: "run_conversation_empty_output",
+        cwd,
+        threadId: thread.id,
+        turnId: emptyTurn.id,
+        createdAt: "2026-07-12T09:10:05.000Z",
+      }),
+      requestSnapshot: {
+        cwd,
+        responseLanguage: "zh-CN",
+        task: { id: "task_run_conversation_empty_output", title: "你是谁", prompt: "你是谁" },
+      },
+    });
+    finishRun(store, emptyRun.id, "2026-07-12T09:10:06.000Z");
+    store.appendEvent(emptyRun.id, "message_end", { type: "message_end", role: "assistant" });
+
+    const detail = buildConversationDetail(store, cwd, thread);
+    const streamed = detail.messages.find((message) => message.id === `conversation-assistant:${streamedTurn.id}`);
+    const empty = detail.messages.find((message) => message.id === `conversation-assistant:${emptyTurn.id}`);
+    assert.equal(streamed?.content, "Streamed answer");
+    assert.equal(empty?.status, "failed");
+    assert.equal(empty?.content, "模型没有返回可显示的内容，请重试或切换模型。");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 function createRunInput(overrides) {
   return {
     id: overrides.id,
@@ -496,4 +703,23 @@ function createRunInput(overrides) {
     turnId: overrides.turnId,
     createdAt: overrides.createdAt,
   };
+}
+
+function finishRun(store, runId, now) {
+  assert.equal(store.transitionRunStatus({
+    runId,
+    expectedStatus: "queued",
+    event: "runner_started",
+    actor: "runner",
+    now,
+    startedAt: now,
+  }).ok, true);
+  assert.equal(store.transitionRunStatus({
+    runId,
+    expectedStatus: "running",
+    event: "runner_succeeded",
+    actor: "runner",
+    now,
+    endedAt: now,
+  }).ok, true);
 }

@@ -657,6 +657,34 @@
   padding-left: 0;
 }
 
+.conversation-work-cell.completed > .conversation-work-cell-artifacts {
+  padding-left: 0;
+}
+
+.conversation-turn-artifacts .conversation-work-cell-artifact-main,
+.conversation-work-cell.completed > .conversation-work-cell-artifacts .conversation-work-cell-artifact-main {
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 5px;
+  padding-left: 0;
+}
+
+.conversation-turn-artifacts .conversation-work-cell-change-summary,
+.conversation-work-cell.completed > .conversation-work-cell-artifacts .conversation-work-cell-change-summary {
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  gap: 5px;
+  padding-left: 0;
+}
+
+.conversation-turn-artifacts .conversation-work-cell-artifact-thumb,
+.conversation-work-cell.completed > .conversation-work-cell-artifacts .conversation-work-cell-artifact-thumb {
+  width: 30px;
+}
+
+.conversation-turn-artifacts :is(.conversation-work-cell-change-file, .conversation-work-cell-change-more),
+.conversation-work-cell.completed > .conversation-work-cell-artifacts :is(.conversation-work-cell-change-file, .conversation-work-cell-change-more) {
+  padding-left: 0;
+}
+
 .conversation-turn-operation {
   display: flex;
   min-width: 0;

@@ -3,6 +3,7 @@ import {
   createTerminalReportSnapshotId,
   validateTerminalReportEvidenceSnapshot,
   type ApprovalRequest,
+  type ChannelWorkflowStep,
   type ExecutionAction,
   type LingTurn,
   type RunArtifact,
@@ -133,9 +134,13 @@ export function collectRunTerminalReportEvidence(
   const approvalsRaw = store.listApprovalRequests({ runId: run.id, limit: 500 });
   const artifactsById = new Map(artifactsRaw.map((artifact) => [artifact.id, artifact]));
   const workspaceFileRefsByArtifactId = collectWorkspaceFileRefsByArtifactId(actions);
-  const changedPaths = changedPathsFromArtifacts(artifactsRaw);
+  const changedPaths = changedPathsFromActions(actions);
   const teammate = run.teammateId ? store.getAiTeammate(run.teammateId) : undefined;
-  const resultSummary = readRunAssistantSummary(store, run.id, budgets.summaryCharacters) ?? run.errorMessage;
+  const workflowStep = run.workflowStepId ? store.getChannelWorkflowStep(run.workflowStepId) : undefined;
+  const rejectedContext = workflowStepResultContextRejected(workflowStep);
+  const resultSummary = rejectedContext
+    ? undefined
+    : readRunAssistantSummary(store, run.id, budgets.summaryCharacters) ?? run.errorMessage;
 
   return finalizeSnapshot({
     workspaceId: turn?.workspaceId ?? thread?.workspaceId ?? "workspace_default",
@@ -143,9 +148,9 @@ export function collectRunTerminalReportEvidence(
     channelId: run.channelId ?? turn?.channelId ?? thread?.channelId,
     threadId: turn?.threadId ?? run.threadId,
     turnId: turn?.id,
-    sourceMessageId: turn?.sourceMessageId,
+    sourceMessageId: turn?.sourceItemId,
     source: { kind: "run", id: run.id },
-    objective: boundedText(task?.prompt || task?.title || turn?.userInstruction || turn?.title || "Complete the run.", budgets.summaryCharacters),
+    objective: boundedText(workflowStep?.prompt || task?.prompt || task?.title || turn?.userInstruction || turn?.title || "Complete the run.", budgets.summaryCharacters),
     language: options.language ?? languageForRun(run, turn?.userInstruction ?? task?.prompt ?? task?.title) ?? "en-US",
     terminalState,
     terminalAt: run.endedAt ?? run.updatedAt,
@@ -183,7 +188,7 @@ export function collectRunTerminalReportEvidence(
     references: [
       sourceRef,
       ...(turn ? [sourceRefFor("turn", turn.id, turn.title)] : []),
-      ...(turn?.sourceMessageId ? [sourceRefFor("message", turn.sourceMessageId, "Source message")] : []),
+      ...(turn?.sourceItemId ? [sourceRefFor("conversation_item", turn.sourceItemId, "Source item")] : []),
     ],
   }, options, budgets, sourceRef);
 }
@@ -218,13 +223,20 @@ export function collectTurnTerminalReportEvidence(
     channelId: turn.channelId ?? thread?.channelId,
     threadId: turn.threadId,
     turnId: turn.id,
-    sourceMessageId: turn.sourceMessageId,
+    sourceMessageId: turn.sourceItemId,
     source: { kind: "turn", id: turn.id },
     objective: boundedText(turn.userInstruction || turn.title, budgets.summaryCharacters),
     language: options.language ?? runs.map((run) => languageForRun(run, turn.userInstruction)).find(Boolean) ?? inferUserLanguage(turn.userInstruction),
     terminalState,
     terminalAt: turn.completedAt ?? turn.updatedAt,
-    steps: runs.map((run, index) => mapTurnRunStep(store, turn, run, index, budgets.summaryCharacters)),
+    steps: runs.map((run, index) => mapTurnRunStep(
+      store,
+      turn,
+      run,
+      index,
+      budgets.summaryCharacters,
+      actions.filter((action) => action.runId === run.id),
+    )),
     operations: actions.map((action) => mapOperation(action, artifactsById, budgets.summaryCharacters)),
     checks: actions.filter(isCheckAction).map((action) => mapCheck(action, budgets.summaryCharacters)),
     participants,
@@ -237,7 +249,7 @@ export function collectTurnTerminalReportEvidence(
     risks: collectTurnRisks(turn, runs, actions, approvalsRaw, sourceRef, budgets.summaryCharacters),
     references: [
       sourceRef,
-      ...(turn.sourceMessageId ? [sourceRefFor("message", turn.sourceMessageId, "Source message")] : []),
+      ...(turn.sourceItemId ? [sourceRefFor("conversation_item", turn.sourceItemId, "Source item")] : []),
       ...runs.map((run) => sourceRefFor("run", run.id, store.getTask(run.taskId)?.title ?? "Run")),
     ],
   }, options, budgets, sourceRef);
@@ -308,17 +320,15 @@ function mapWorkflowStep(item: WorkflowEvidence["steps"][number], maxCharacters:
   if (!status) {
     throw new Error(`Workflow step is not terminal: ${step.id} (${step.status})`);
   }
-  const changedPaths = uniqueStrings([
-    ...(item.outputPacket?.changedPaths ?? []),
-    ...changedPathsFromArtifacts(item.linkedArtifacts),
-  ]).map((path) => redactEvidenceText(path));
+  const changedPaths = uniqueStrings(item.outputPacket?.changedPaths ?? []).map((path) => redactEvidenceText(path));
+  const rejectedContext = workflowStepResultContextRejected(step);
   return {
     id: step.id,
     title: boundedText(step.title, maxCharacters),
     status,
     teammateId: step.toParticipantId,
     runId: step.runId,
-    resultSummary: step.resultSummary ? boundedText(step.resultSummary, maxCharacters) : item.outputPacket?.resultSummary ? boundedText(item.outputPacket.resultSummary, maxCharacters) : undefined,
+    resultSummary: rejectedContext ? undefined : step.resultSummary ? boundedText(step.resultSummary, maxCharacters) : item.outputPacket?.resultSummary ? boundedText(item.outputPacket.resultSummary, maxCharacters) : undefined,
     blocker: step.blocker ? boundedText(step.blocker, maxCharacters) : undefined,
     changedPaths,
     artifactIds: uniqueStrings([
@@ -339,6 +349,7 @@ function mapTurnRunStep(
   run: RunSession,
   index: number,
   maxCharacters: number,
+  actions: readonly ExecutionAction[],
 ): TerminalReportEvidenceStep {
   const task = store.getTask(run.taskId);
   const artifacts = store.listArtifacts(run.id);
@@ -351,7 +362,7 @@ function mapTurnRunStep(
     runId: run.id,
     resultSummary: summary ? boundedText(summary, maxCharacters) : undefined,
     blocker: run.errorMessage ? boundedText(run.errorMessage, maxCharacters) : undefined,
-    changedPaths: changedPathsFromArtifacts(artifacts),
+    changedPaths: changedPathsFromActions(actions),
     artifactIds: artifacts.map((artifact) => artifact.id),
     sourceRefs: uniqueRefs([
       sourceRefFor("turn", turn.id, turn.title),
@@ -366,13 +377,7 @@ function mapOperation(
   artifactsById: ReadonlyMap<string, RunArtifact>,
   maxCharacters: number,
 ): TerminalReportEvidenceOperation {
-  const changedPaths = uniqueStrings([
-    ...action.targetRefs.map((ref) => ref.path).filter((path): path is string => Boolean(path)),
-    ...action.resultArtifactIds.flatMap((id) => {
-      const artifact = artifactsById.get(id);
-      return artifact ? changedPathsFromArtifacts([artifact]) : [];
-    }),
-  ]).map((path) => redactEvidenceText(path));
+  const changedPaths = operationKind(action) === "edit" ? changedPathsFromActions([action]) : [];
   const title = action.summary && action.summary !== action.title
     ? `${action.title}: ${action.summary}`
     : action.title;
@@ -428,7 +433,7 @@ function mapArtifact(
     kind: artifactKind(artifact),
     title: redactEvidenceText(artifact.title?.trim() || artifact.path),
     path: redactEvidenceText(artifact.path),
-    changedPaths: changedPathsFromArtifacts([artifact]),
+    changedPaths: workspaceFileRefs.map((ref) => redactEvidenceText(ref.id)),
     status: "created",
     sourceRefs: uniqueRefs([
       ref,
@@ -489,7 +494,9 @@ function aggregateWorkflowParticipants(
       workflowStepId: item.step.id,
       runId: item.step.runId,
       status: participantStatusForStep(item.step.status),
-      summary: item.step.resultSummary ?? item.outputPacket?.resultSummary,
+      summary: workflowStepResultContextRejected(item.step)
+        ? undefined
+        : item.step.resultSummary ?? item.outputPacket?.resultSummary,
       sourceRefs: uniqueRefs([
         sourceRefFor("workflow_step", item.step.id, item.step.title),
         ...(item.step.runId ? [sourceRefFor("run", item.step.runId, item.step.title)] : []),
@@ -514,6 +521,11 @@ function aggregateWorkflowParticipants(
     });
   }
   return [...byAgent.values()];
+}
+
+function workflowStepResultContextRejected(step: ChannelWorkflowStep | undefined): boolean {
+  const status = step?.metadata?.resultContextReview?.status;
+  return status === "rejected_stale" || status === "rejected_private_leak";
 }
 
 function aggregateRunParticipants(
@@ -870,11 +882,12 @@ function readRunAssistantSummary(store: RunStore, runId: string, maxCharacters: 
   return text ? boundedText(text, maxCharacters) : undefined;
 }
 
-function changedPathsFromArtifacts(artifacts: readonly RunArtifact[]): string[] {
-  return uniqueStrings(artifacts
-    .filter((artifact) => artifact.type === "file" || artifact.type === "diff")
-    .map((artifact) => artifact.path)
-    .filter((path) => !path.startsWith("workflows/")))
+function changedPathsFromActions(actions: readonly ExecutionAction[]): string[] {
+  return uniqueStrings(actions
+    .filter((action) => operationKind(action) === "edit")
+    .flatMap((action) => action.targetRefs)
+    .filter((ref) => ref.type === "file" && Boolean(ref.path))
+    .map((ref) => ref.path as string))
     .map((path) => redactEvidenceText(path));
 }
 

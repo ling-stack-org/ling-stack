@@ -126,17 +126,10 @@
 }
 
 .teammate-workspace.chat-mode .teammate-message-row .avatar-initial,
-.teammate-workspace.chat-mode .teammate-message-row .teammate-avatar-image.compact,
-.teammate-workspace.chat-mode .teammate-message-row .user-profile-avatar {
+.teammate-workspace.chat-mode .teammate-message-row .teammate-avatar-image.compact {
   width: 30px;
   height: 30px;
   font-size: var(--ling-font-xs);
-}
-
-.teammate-workspace.chat-mode
-  .teammate-message-row.ai-teammate.message-bubble-chat
-  > :is(.avatar-initial, .teammate-avatar-image.compact) {
-  margin-top: var(--ling-space-4);
 }
 
 .teammate-message-error.ling-ui-inline-feedback {

@@ -102,35 +102,69 @@ function TerminalReportRows({
   return (
     <section className={`terminal-report-section kind-${kind}`}>
       <div className="terminal-report-row-list">
-        {rows.map((row) => (
-          <div className={`terminal-report-row tone-${row.tone ?? "neutral"}`} key={row.id}>
-            <span className="terminal-report-row-icon" aria-hidden="true">{reportRowIcon(kind)}</span>
-            <span className="terminal-report-row-copy">
-              <span className="terminal-report-row-title">
-                <span>{row.title}</span>
-                {row.meta && kind !== "change" && kind !== "verification" ? <small>{row.meta}</small> : null}
+        {rows.map((row) => {
+          const hideRedundantTitle = kind === "change" && changeCopyMatchesFileReference(row.title, row.detailLines);
+          const hideRedundantDescription = kind === "change" && row.description
+            ? changeCopyMatchesFileReference(row.description, row.detailLines, true)
+            : false;
+          const fileReferenceOnly = hideRedundantTitle &&
+            (!row.description || hideRedundantDescription) &&
+            !row.commandText &&
+            Boolean(row.detailLines?.length) &&
+            row.detailLines?.every((line) => line.kind === "file_ref");
+          return (
+            <div className={`terminal-report-row tone-${row.tone ?? "neutral"}${fileReferenceOnly ? " file-reference-only" : ""}`} key={row.id}>
+              {!fileReferenceOnly ? <span className="terminal-report-row-icon" aria-hidden="true">{reportRowIcon(kind)}</span> : null}
+              <span className="terminal-report-row-copy">
+                {!hideRedundantTitle ? (
+                  <span className="terminal-report-row-title">
+                    <span>{row.title}</span>
+                    {row.meta && kind !== "change" && kind !== "verification" ? <small>{row.meta}</small> : null}
+                  </span>
+                ) : null}
+                {row.description && !hideRedundantDescription ? <span className="terminal-report-row-description">{row.description}</span> : null}
+                {row.commandText ? <code>{row.commandText}</code> : null}
+                {row.detailLines?.length ? (
+                  <span className="terminal-report-row-paths">
+                    {row.detailLines.map((line, index) => line.kind === "file_ref" ? (
+                      <TerminalReportFileReference
+                        key={`${row.id}:detail:${index}`}
+                        target={{ path: line.path, line: line.line, label: line.text }}
+                        onOpen={onOpenWorkspaceFile}
+                      />
+                    ) : (
+                      <code key={`${row.id}:detail:${index}`}>{line.text}</code>
+                    ))}
+                  </span>
+                ) : null}
               </span>
-              {row.description ? <span className="terminal-report-row-description">{row.description}</span> : null}
-              {row.commandText ? <code>{row.commandText}</code> : null}
-              {row.detailLines?.length ? (
-                <span className="terminal-report-row-paths">
-                  {row.detailLines.map((line, index) => line.kind === "file_ref" ? (
-                    <TerminalReportFileReference
-                      key={`${row.id}:detail:${index}`}
-                      target={{ path: line.path, line: line.line, label: line.text }}
-                      onOpen={onOpenWorkspaceFile}
-                    />
-                  ) : (
-                    <code key={`${row.id}:detail:${index}`}>{line.text}</code>
-                  ))}
-                </span>
-              ) : null}
-            </span>
-          </div>
-        ))}
+            </div>
+          );
+        })}
       </div>
     </section>
   );
+}
+
+function changeCopyMatchesFileReference(
+  value: string,
+  detailLines: ConversationWorkCellRow["detailLines"],
+  stripUpdatePrefix = false,
+): boolean {
+  const normalizedValue = normalizeChangeCopy(stripUpdatePrefix
+    ? value.replace(/^(?:已更新|Updated)\s*[:：]?\s*/iu, "")
+    : value);
+  return (detailLines ?? []).some((line) => {
+    if (line.kind !== "file_ref") {
+      return false;
+    }
+    const normalizedPath = normalizeChangeCopy(line.path);
+    return normalizedValue === normalizedPath || normalizedValue === normalizeChangeCopy(terminalReportFileName(normalizedPath));
+  });
+}
+
+function normalizeChangeCopy(value: string): string {
+  return value.trim().replace(/\\/gu, "/");
 }
 
 function TerminalReportFileReference({

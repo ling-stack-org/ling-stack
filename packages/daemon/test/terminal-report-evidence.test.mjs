@@ -1,3 +1,4 @@
+import { appendChannelItemFixture, getChannelItemViewFixture, listChannelItemViewsFixture, updateChannelItemFixture } from "../../core/test/channel-conversation-fixture.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -20,7 +21,7 @@ test("workflow terminal evidence aggregates rounds, actions, checks, artifacts, 
   try {
     const now = "2026-07-11T02:00:00.000Z";
     const channel = store.createChannel({ name: "Terminal Report", boundPath: cwd }, now);
-    const sourceMessage = store.createChannelMessage({
+    const sourceMessage = appendChannelItemFixture(store, {
       channelId: channel.id,
       authorType: "local-user",
       body: "实现并验证 TerminalReport",
@@ -48,7 +49,7 @@ test("workflow terminal evidence aggregates rounds, actions, checks, artifacts, 
     const terminalReportTypesArtifact = store.createArtifact({
       runId: engineerOne.run.id,
       type: "file",
-      path: "packages/core/src/terminal-report-types.ts",
+      path: `${engineerOne.run.id}/001-terminal-report-types.txt`,
       title: "Terminal report types",
       createdAt: "2026-07-11T02:01:20.000Z",
     });
@@ -124,7 +125,11 @@ test("workflow terminal evidence aggregates rounds, actions, checks, artifacts, 
     assert.ok(snapshot.operations.some((operation) => operation.kind === "edit"));
     assert.ok(snapshot.checks.some((check) => check.command === "pnpm typecheck" && check.status === "passed"));
     assert.ok(snapshot.checks.some((check) => check.command === "pnpm typecheck" && check.status === "failed"));
-    assert.ok(snapshot.artifacts.some((artifact) => artifact.path === "packages/core/src/terminal-report-types.ts"));
+    assert.ok(snapshot.artifacts.some((artifact) => artifact.path === `${engineerOne.run.id}/001-terminal-report-types.txt`));
+    assert.ok(snapshot.steps.every((step) => !step.changedPaths.some((path) => path.startsWith(`${engineerOne.run.id}/`))));
+    assert.deepEqual(snapshot.operations.find((operation) => operation.id.includes("edit_core"))?.changedPaths, [
+      "packages/core/src/terminal-report-types.ts",
+    ]);
     assert.ok(snapshot.artifacts.find((artifact) => artifact.id === terminalReportTypesArtifact.id)?.sourceRefs.some((ref) =>
       ref.kind === "file" && ref.id === "packages/core/src/terminal-report-types.ts"
     ));
@@ -135,6 +140,8 @@ test("workflow terminal evidence aggregates rounds, actions, checks, artifacts, 
       committedAt: "2026-07-11T02:05:01.000Z",
     });
     assert.equal(validateTerminalReport(report, snapshot).ok, true);
+    assert.ok(report.changes.some((change) => change.paths.includes("packages/core/src/terminal-report-types.ts")));
+    assert.ok(report.changes.every((change) => !change.paths.some((path) => path.startsWith(`${engineerOne.run.id}/`))));
     assert.ok(report.artifacts.find((artifact) => artifact.id === terminalReportTypesArtifact.id)?.sourceRefs.some((ref) =>
       ref.kind === "file" && ref.id === "packages/core/src/terminal-report-types.ts"
     ));

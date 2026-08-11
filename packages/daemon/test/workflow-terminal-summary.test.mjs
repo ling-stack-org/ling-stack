@@ -1,3 +1,4 @@
+import { appendChannelItemFixture, getChannelItemViewFixture, listChannelItemViewsFixture, updateChannelItemFixture } from "../../core/test/channel-conversation-fixture.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -9,6 +10,7 @@ import {
   validateTerminalReport,
 } from "../../core/dist/index.js";
 import { finalizeOrchestratedWorkflowStepRun } from "../dist/features/channels/orchestrator.js";
+import { buildWorkflowStepContextPack } from "../dist/features/channels/context-packs.js";
 import { collectWorkflowTerminalReportEvidence } from "../dist/features/channels/terminal-report-evidence.js";
 
 test("workflow terminal reply preserves full step result text", async () => {
@@ -22,7 +24,7 @@ test("workflow terminal reply preserves full step result text", async () => {
       boundPath: cwd,
       allowedTools: ["read", "write"],
     }, now);
-    const sourceMessage = store.createChannelMessage({
+    const sourceMessage = appendChannelItemFixture(store, {
       channelId: channel.id,
       authorType: "local-user",
       body: "创建 index.html",
@@ -53,6 +55,16 @@ test("workflow terminal reply preserves full step result text", async () => {
       status: "doing",
       assigneeTeammateId: "ling_agent",
     }, "2026-06-25T00:02:30.000Z");
+    const contextPack = buildWorkflowStepContextPack({
+      store,
+      channel,
+      workflow,
+      step,
+      prompt: step.prompt,
+      consumerTeammateId: "ling_agent",
+      workflowSteps: [step],
+    });
+    assert.ok(contextPack.agentContext);
     const run = store.createRun({
       id: "run_workflow_terminal_summary",
       cwd,
@@ -64,7 +76,7 @@ test("workflow terminal reply preserves full step result text", async () => {
       providerModel: "test-model",
       taskSnapshot: { id: task.id, title: "Create index.html" },
       providerSnapshot: { provider: "test-provider", model: "test-model" },
-      requestSnapshot: { cwd },
+      requestSnapshot: { cwd, contextPack },
       createdAt: "2026-06-25T00:03:00.000Z",
     });
     const longResult = `${Array.from({ length: 90 }, (_, index) => `结果片段${index}`).join(" ")} END_MARKER_完整结尾`;
@@ -79,7 +91,7 @@ test("workflow terminal reply preserves full step result text", async () => {
     const completedStep = store.getChannelWorkflowStep(step.id);
     assert.equal(completedStep?.status, "succeeded");
     assert.equal(completedStep?.resultSummary, longResult);
-    const reply = store.listChannelMessages({ channelId: channel.id, limit: 20 }).find((message) => message.kind === "ai_reply");
+    const reply = listChannelItemViewsFixture(store, { channelId: channel.id, limit: 20 }).find((message) => message.kind === "ai_reply");
     assert.ok(reply);
     assert.match(reply.body, /完成：「Create index\.html」/u);
     assert.match(reply.body, /END_MARKER_完整结尾/u);

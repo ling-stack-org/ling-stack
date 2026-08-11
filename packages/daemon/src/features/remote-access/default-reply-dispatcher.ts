@@ -21,6 +21,7 @@ import type { StartupStateRegistry } from "../../startup/state.js";
 import type { ComputerUseProjectionRegistry } from "../computer-use/registry.js";
 import type { ControlPlaneEventHub } from "../control-plane/events.js";
 import { createAiChannelReply } from "../channels/ai-replies.js";
+import { getChannelMessageView } from "../channels/conversation-item-messages.js";
 import { createDetachedRunExecutionSink, executeRunRequest } from "../runs/orchestrator.js";
 import type { RunRequest } from "../runs/schemas.js";
 import { startDetachedRunAndResolveReady } from "../runs/detached.js";
@@ -75,7 +76,7 @@ export class DefaultRemoteReplyDispatcher implements RemoteReplyDispatcher {
 
   private async dispatchChannel(intent: RemoteDispatchIntent): Promise<void> {
     const channel = this.options.store.getChannel(intent.conversationId);
-    const sourceMessage = this.options.store.getChannelMessage(intent.messageId);
+    const sourceMessage = getChannelMessageView(this.options.store, intent.messageId);
     if (!channel || channel.workspaceId !== intent.workspaceId || !sourceMessage || sourceMessage.channelId !== channel.id) {
       throw new Error(`Remote channel reply source is unavailable: ${intent.id}`);
     }
@@ -96,17 +97,31 @@ export class DefaultRemoteReplyDispatcher implements RemoteReplyDispatcher {
       });
     }
     await createAiChannelReply({
-      runnerRegistry: this.options.runnerRegistry,
+      startRun: async (request, sink) => await executeRunRequest(
+        request,
+        sink,
+        this.options.runnerRegistry,
+        this.options.storeRegistry,
+        this.options.activeRuns,
+        this.options.runtimeSupervisor,
+        this.options.secretResolver,
+        this.options.mcpBroker,
+        {
+          controlPlaneEvents: this.options.controlPlaneEvents,
+          startupState: this.options.startupState,
+          computerUsePreviews: this.options.computerUsePreviews,
+        },
+      ),
       store: this.options.store,
       channel,
       sourceMessage,
       ...(providerPresetId ? { providerPresetId } : {}),
       ...(teammateId ? { teammateId } : {}),
       proposalMode: "disabled",
-      runtimeSupervisor: this.options.runtimeSupervisor,
       secretResolver: this.options.secretResolver,
       teamObserverBusEnabled: false,
       completionMode: "background",
+      trackCompletion: (completion) => this.options.activeRuns.trackCompletion(completion),
       replyMessageId: remoteReplyMessageId(intent),
       disableWebEvidence: true,
     });

@@ -5,6 +5,7 @@ import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { enrichChannelMessagesWithWebEvidence } from "../web/message-web-evidence.js";
+import { listChannelMessageViews } from "./conversation-item-messages.js";
 
 export async function handleChannelTeamMetricsProjection(
   request: IncomingMessage,
@@ -41,7 +42,7 @@ export async function handleChannelTeamMetricsProjection(
       .listChannelWorkflows({ channelId, limit })
       .flatMap((workflow) => store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 }));
     const approvals = store.listApprovalRequests({ limit: Math.max(limit * 4, 500) });
-    const messages = enrichChannelMessagesWithWebEvidence(store, store.listChannelMessages({ channelId, limit }));
+    const messages = enrichChannelMessagesWithWebEvidence(store, listChannelMessageViews({ store, channelId, limit }));
     const attachments = store.listChannelAttachments({ channelId, limit });
     const artifacts = runs.flatMap((run) => store.listArtifacts(run.id));
     const teamEvidence = store.listChannelTeamEvidenceItems({

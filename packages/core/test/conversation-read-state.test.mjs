@@ -1,3 +1,4 @@
+import { appendChannelItemFixture, getChannelItemViewFixture, listChannelItemViewsFixture, updateChannelItemFixture } from "./channel-conversation-fixture.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -26,16 +27,17 @@ test("daemon-owned read cursor is monotonic and later message revisions become u
     assert.equal(initial.unreadCount, 0);
     assert.equal(initial.mentioned, false);
 
-    const reply = store.createChannelMessage({
+    const reply = appendChannelItemFixture(store, {
       channelId: channel.id,
       authorType: "ai-teammate",
       authorId: createBuiltinAiTeammateId("engineer"),
       body: "Please review this.",
       mentions: [{ id: "local-user", label: "You", kind: "local-user" }],
+      status: "pending",
     }, "2026-07-31T03:00:01.000Z");
     const unread = store.getConversationReadState(readKey, "2026-07-31T03:00:01.000Z");
     assert.equal(unread.unreadCount, 1);
-    assert.equal(unread.mentioned, true);
+    assert.equal(unread.mentioned, false);
 
     const marked = store.markConversationRead({
       ...readKey,
@@ -51,11 +53,14 @@ test("daemon-owned read cursor is monotonic and later message revisions become u
     }, "2026-07-31T03:00:03.000Z");
     assert.equal(backwards.readThroughActivitySeq, unread.activitySeq);
 
-    store.updateChannelMessageRuntime(reply.id, { body: "Please review the edited answer." }, "2026-07-31T03:00:04.000Z");
+    updateChannelItemFixture(store, reply.id, {
+      body: "Please review the completed answer.",
+      status: "ready",
+    }, "2026-07-31T03:00:04.000Z");
     const editedUnread = store.getConversationReadState(readKey, "2026-07-31T03:00:04.000Z");
     assert.equal(editedUnread.unreadCount, 1);
     assert.ok(editedUnread.activitySeq > editedUnread.readThroughActivitySeq);
-    assert.equal(editedUnread.mentioned, true);
+    assert.equal(editedUnread.mentioned, false);
 
     const capped = store.markConversationRead({
       ...readKey,
@@ -64,7 +69,7 @@ test("daemon-owned read cursor is monotonic and later message revisions become u
     assert.equal(capped.readThroughActivitySeq, editedUnread.activitySeq);
     assert.equal(capped.unreadCount, 0);
 
-    store.createChannelMessage({
+    appendChannelItemFixture(store, {
       channelId: channel.id,
       authorType: "ai-teammate",
       authorId: createBuiltinAiTeammateId("designer"),

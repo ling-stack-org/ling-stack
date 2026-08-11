@@ -2,17 +2,20 @@ import type {
   ApprovalStoreFacet,
   ChannelStoreFacet,
   RunExecutionStoreFacet,
+  RunStore,
   TeammateStoreFacet,
   WorkspaceStoreFacet,
 } from "@ling-stack/core";
 import { isRecord } from "../../shared/validation.js";
+import { listChannelMessageViews } from "../channels/conversation-item-messages.js";
 
 type TeammateActivityStore =
   TeammateStoreFacet &
   WorkspaceStoreFacet &
   RunExecutionStoreFacet &
   ApprovalStoreFacet &
-  ChannelStoreFacet;
+  ChannelStoreFacet &
+  Pick<RunStore, "getLingTurn">;
 
 export interface TeammateActivityItem {
   readonly id: string;
@@ -86,7 +89,7 @@ export function buildTeammateActivityItems(
   }
 
   for (const channel of store.listChannels({ limit: 200 })) {
-    for (const message of store.listChannelMessages({ channelId: channel.id, limit: 200 })) {
+    for (const message of listChannelMessageViews({ store, channelId: channel.id, limit: 200 })) {
       if (message.mentions.some((mention) => mention.kind === "ai-teammate" && mention.id === teammateId)) {
         items.push({
           id: `channel-message:${message.id}`,

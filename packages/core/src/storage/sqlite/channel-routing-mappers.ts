@@ -1,8 +1,12 @@
 import type { SQLOutputValue } from "node:sqlite";
 import {
+  isChannelIntentDecisionV2,
+  isConversationContextProjectionMetadata,
+  type ChannelIntentClarificationV2,
+  type ChannelIntentExecutionV2,
+} from "@ling-stack/contracts";
+import {
   type ChannelIntentDecision,
-  type ChannelIntentDecisionAction,
-  type ChannelIntentDecisionStatus,
   type ChannelMessageRouteAlternative,
   type ChannelMessageRouteContextPackMetadata,
   type ChannelMessageRouteDecision,
@@ -44,26 +48,42 @@ export function mapChannelMessageRouteDecision(row: Record<string, SQLOutputValu
 }
 
 export function mapChannelIntentDecision(row: Record<string, SQLOutputValue>): ChannelIntentDecision {
-  return omitUndefined({
-    schemaVersion: readNumber(row, "schema_version") as 1,
+  const decision = omitUndefined({
+    schemaVersion: readNumber(row, "schema_version") as 2,
     id: readString(row, "id"),
     workspaceId: readString(row, "workspace_id"),
     channelId: readString(row, "channel_id"),
-    sourceMessageId: readString(row, "source_message_id"),
-    action: readString(row, "action") as ChannelIntentDecisionAction,
-    selectedTeammateId: readNullableString(row, "selected_teammate_id"),
+    sourceTurnId: readString(row, "source_turn_id"),
+    sourceItemId: readString(row, "source_item_id"),
+    contextSegmentId: readString(row, "context_segment_id"),
+    contextProjectionVersion: readString(row, "context_projection_version"),
+    action: readString(row, "action") as ChannelIntentDecision["action"],
     selectedTeammateIds: parseJsonStringArray(readNullableString(row, "selected_teammate_ids_json") ?? "[]"),
     proposalId: readNullableString(row, "proposal_id"),
-    replyMessageId: readNullableString(row, "reply_message_id"),
-    replyMessageIds: parseJsonStringArray(readNullableString(row, "reply_message_ids_json") ?? "[]"),
+    resultItemIds: parseJsonStringArray(readNullableString(row, "result_item_ids_json") ?? "[]"),
     workflowId: readNullableString(row, "workflow_id"),
     reason: readString(row, "reason"),
-    status: readString(row, "status") as ChannelIntentDecisionStatus,
+    clarification: parseOptionalIntentObject<ChannelIntentClarificationV2>(readNullableString(row, "clarification_json")),
+    execution: parseOptionalIntentObject<ChannelIntentExecutionV2>(readNullableString(row, "execution_json")),
+    status: readString(row, "status") as ChannelIntentDecision["status"],
     createdBy: readString(row, "created_by") as ChannelIntentDecision["createdBy"],
-    errorMessage: readNullableString(row, "error_message"),
+    errorCode: readNullableString(row, "error_code"),
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
   });
+  if (!isChannelIntentDecisionV2(decision)) {
+    throw new Error(`Invalid Channel Intent v2 row: ${readString(row, "id")}`);
+  }
+  return decision;
+}
+
+function parseOptionalIntentObject<T>(value: string | undefined): T | undefined {
+  if (!value) return undefined;
+  const parsed = parseJson(value);
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("Expected Channel Intent v2 structured object from SQLite");
+  }
+  return parsed as T;
 }
 
 function parseChannelMessageRouteAlternatives(value: string): ChannelMessageRouteAlternative[] {
@@ -128,6 +148,10 @@ function parseOptionalChannelMessageRouteContextPackMetadata(
         normalizedSourceRefCounts[key] = count;
       }
     }
+    if (record.contextProjection !== undefined
+      && !isConversationContextProjectionMetadata(record.contextProjection)) {
+      return undefined;
+    }
     return omitUndefined({
       schemaVersion: 1 as const,
       kind: record.kind,
@@ -137,6 +161,7 @@ function parseOptionalChannelMessageRouteContextPackMetadata(
       droppedSectionIds: record.droppedSectionIds,
       sourceRefCounts: normalizedSourceRefCounts,
       compactionIds: record.compactionIds,
+      contextProjection: record.contextProjection,
     });
   } catch {
     return undefined;

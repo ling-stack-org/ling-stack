@@ -1,9 +1,9 @@
-import { CircleAlert, FileText, Link2, Loader2, Plus, Send, SlidersHorizontal, Square, X } from "lucide-react";
+import { CircleAlert, FileText, Plus, Send, SlidersHorizontal, Square } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import { conversationPermissionPresetMenuOptions } from "../../lib/session-permissions.js";
 import {
   ComposerFileReferenceToken,
-  pendingAssetLabel,
+  ComposerPendingAssetStrip,
 } from "../../shared/components/index.js";
 import {
   ComposerPermissionMenu,
@@ -18,7 +18,6 @@ import type { TeammateDirectLinkPreview, TeammatePrivateAttachment } from "../..
 import type { TeammatePrivateChatSurfaceProps } from "./teammate-private-chat-types.js";
 import {
   directFileRefLabel,
-  formatBytes,
   teammateDirectInterventionModeLabel,
   teammateDirectInterventionStatusLabel,
 } from "./teammate-workspace-utils.js";
@@ -42,7 +41,7 @@ export type TeammatePrivateChatComposerProps = Pick<TeammatePrivateChatSurfacePr
   | "onComposerDragLeave"
   | "onComposerDragOver"
   | "onComposerDrop"
-  | "onComposerPaste"
+  | "onComposerPasteFiles"
   | "onEditDirectGuidance"
   | "onOpenModelSettings"
   | "onPromoteDirectGuidance"
@@ -84,7 +83,7 @@ export function TeammatePrivateChatComposer({
   onComposerDragLeave,
   onComposerDragOver,
   onComposerDrop,
-  onComposerPaste,
+  onComposerPasteFiles,
   onEditDirectGuidance,
   onOpenModelSettings,
   onPromoteDirectGuidance,
@@ -186,8 +185,9 @@ export function TeammatePrivateChatComposer({
         onDragLeave={onComposerDragLeave}
         onDrop={onComposerDrop}
         previewNode={pendingAttachments.length > 0 || pendingDirectLinkPreviews.length > 0 || composerFileReferenceParts.length > 0 ? (
-          <div className="pending-assets composer-preview-strip" aria-label={t("Pending message assets")}>
-            {composerFileReferenceTokens.map(({ occurrenceIndex, part }, index) => (
+          <ComposerPendingAssetStrip
+            attachments={pendingAttachments}
+            leadingItems={composerFileReferenceTokens.map(({ occurrenceIndex, part }, index) => (
               <ComposerFileReferenceToken
                 key={`${part.raw}-${index}`}
                 path={part.path}
@@ -196,42 +196,15 @@ export function TeammatePrivateChatComposer({
                 onRemove={() => onRemoveComposerFileReference(part.raw, occurrenceIndex)}
               />
             ))}
-            {pendingDirectLinkPreviews.map((preview) => (
-              <div key={preview.id} className="composer-preview-card link ready">
-                <span className="composer-preview-file-icon" aria-hidden="true"><Link2 size={16} /></span>
-                <span className="composer-preview-body">
-                  <strong title={preview.url}>{preview.title || preview.siteName || preview.url}</strong>
-                  <small>{preview.normalizedUrl}</small>
-                </span>
-                <IconButton
-                  className="composer-preview-remove"
-                  icon={X}
-                  label={t("Remove link preview")}
-                  onClick={() => onRemovePendingLinkPreview(preview.id)}
-                />
-              </div>
-            ))}
-            {pendingAttachments.map((item) => (
-              <div key={item.localId} className={`composer-preview-card ${item.previewUrl ? "image" : "file"} ${item.state}`}>
-                {item.previewUrl ? (
-                  <img className="composer-preview-thumbnail" src={item.previewUrl} alt={item.fileName} />
-                ) : (
-                  <span className="composer-preview-file-icon" aria-hidden="true"><FileText size={17} /></span>
-                )}
-                <span className="composer-preview-body">
-                  <strong title={item.fileName}>{item.fileName}</strong>
-                  <small>{item.error ?? `${t(pendingAssetLabel(item.state))} · ${formatBytes(item.attachment?.sizeBytes ?? item.sizeBytes)}`}</small>
-                </span>
-                {item.state === "uploading" ? <Loader2 className="composer-preview-state-icon spin" size={13} /> : null}
-                <IconButton
-                  className="composer-preview-remove"
-                  icon={X}
-                  label={t("Remove pending attachment")}
-                  onClick={() => void onRemovePendingAttachment(item.localId)}
-                />
-              </div>
-            ))}
-          </div>
+            links={pendingDirectLinkPreviews.map((preview) => ({
+              id: preview.id,
+              url: preview.url,
+              label: preview.title || preview.siteName || preview.url,
+              detail: preview.normalizedUrl,
+            }))}
+            onRemoveAttachment={onRemovePendingAttachment}
+            onRemoveLink={onRemovePendingLinkPreview}
+          />
         ) : null}
         inputNode={(
           <TokenizedComposerInput
@@ -240,7 +213,7 @@ export function TeammatePrivateChatComposer({
             parts={composerInputParts}
             onChange={controller.handleComposerValueChange}
             onKeyDown={controller.handleComposerInputKeyDown}
-            onPaste={onComposerPaste}
+            onPasteFiles={onComposerPasteFiles}
             onSelect={controller.updateSlashPicker}
             placeholder={privateComposerPlaceholder}
             ariaLabel={privateComposerPlaceholder}

@@ -118,12 +118,22 @@ test("UI2 model list exposes one state and the exact routine action matrix", asy
 
   const ready = row(page, "ready-model");
   await expect(ready.getByRole("button", { name: "Set default" })).toBeVisible();
+  await expect(ready.getByRole("button", { name: "Set default" }).locator(".lucide-star")).toBeVisible();
+  await expect(ready.locator(".lucide-play")).toHaveCount(0);
   await expect(ready.getByRole("button", { name: "Check", exact: true })).toBeVisible();
   await expect(ready.getByRole("button", { name: "Edit" })).toBeVisible();
 
   const current = row(page, "default-model");
   await expect(current).toContainText("Current default");
   await expect(current.getByRole("button", { name: "Set default" })).toHaveCount(0);
+  const currentDefault = current.getByRole("button", { name: "Current default" });
+  await expect(currentDefault).toBeDisabled();
+  await expect(currentDefault).toHaveAttribute("aria-pressed", "true");
+  const currentStarPaint = await currentDefault.locator(".lucide-star").evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { color: style.color, fill: style.fill };
+  });
+  expect(currentStarPaint.fill).toBe(currentStarPaint.color);
 
   const image = row(page, "image-model");
   await expect(image).toContainText("Image");
@@ -133,7 +143,7 @@ test("UI2 model list exposes one state and the exact routine action matrix", asy
   await expect(disabled.getByRole("button", { name: "Enable" })).toBeVisible();
   await expect(disabled.getByRole("button", { name: "Edit" })).toBeVisible();
 
-  for (const label of ["Check", "Edit", "More"]) {
+  for (const label of ["Current default", "Check", "Edit", "More"]) {
     const box = await current.getByRole("button", { name: label, exact: true }).boundingBox();
     expect(box?.width).toBeGreaterThanOrEqual(32);
     expect(box?.height).toBeGreaterThanOrEqual(32);
@@ -194,6 +204,30 @@ test("UI2 model list exposes one state and the exact routine action matrix", asy
   await expect(more).toBeFocused();
 });
 
+test("UI2 model list presents persisted background preflight as checking", async ({ page }) => {
+  await useEnglish(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [createChatProvider({
+    id: "model_import_checking",
+    displayName: "Background Relay",
+    model: "background-model",
+    lastCheck: {
+      ok: false,
+      code: "checking",
+      message: "Provider check is running.",
+      checkedAt: "2026-08-04T09:01:14.000Z",
+    },
+  })];
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openWorkbench(page);
+
+  const target = row(page, "background-model");
+  await expect(target.locator(".provider-primary-status")).toHaveText("Checking");
+  await expect(target.getByRole("button", { name: "Check", exact: true })).toHaveCount(0);
+  await expect(target.locator(".provider-status-hint")).toHaveCount(0);
+});
+
 test("UI2 model search, filter, and destructive confirmation stay scoped", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 960 });
   await useEnglish(page);
@@ -223,6 +257,67 @@ test("UI2 model search, filter, and destructive confirmation stay scoped", async
   await dialog.getByRole("button", { name: "Cancel" }).click();
   await expect(dialog).toHaveCount(0);
   await expect(target).toBeVisible();
+});
+
+test("UI2 model capability tabs filter video, image, and chat independently from status and search", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await useEnglish(page);
+  const runtimeErrors = collectRuntimeErrors(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [
+    createChatProvider({ id: "capability_chat", displayName: "Chat Relay", model: "chat-model", lastCheck: readyCheck }),
+    createMediaProvider({ id: "capability_image", displayName: "Image Relay", model: "image-model", lastCheck: readyCheck }),
+    createMediaProvider({
+      id: "capability_video_ready",
+      displayName: "Ready Video Relay",
+      model: "ready-video-model",
+      capabilities: ["video_generate"],
+      lastCheck: readyCheck,
+    }),
+    createMediaProvider({
+      id: "capability_video_disabled",
+      displayName: "Disabled Video Relay",
+      model: "disabled-video-model",
+      capabilities: ["video_generate"],
+      enabled: false,
+      lastCheck: readyCheck,
+    }),
+  ];
+  await mockDaemon(page, state, { templates: createDefaultProviderTemplates() });
+  await page.goto("/");
+  await openWorkbench(page);
+
+  const capabilityTabs = page.getByRole("radiogroup", { name: "Model capability filters" });
+  await expect(capabilityTabs.getByRole("radio")).toHaveText(["All models", "Video", "Image", "Chat"]);
+  const statusFilter = page.getByLabel("Filter model presets");
+  const [statusBox, capabilityBox] = await Promise.all([
+    statusFilter.boundingBox(),
+    capabilityTabs.boundingBox(),
+  ]);
+  expect(statusBox).not.toBeNull();
+  expect(capabilityBox).not.toBeNull();
+  expect(capabilityBox!.x).toBeGreaterThanOrEqual(statusBox!.x + statusBox!.width);
+
+  await capabilityTabs.getByRole("radio", { name: "Video", exact: true }).click();
+  await expect(page.locator(".provider-row")).toHaveCount(2);
+  await expect(row(page, "ready-video-model")).toBeVisible();
+  await expect(row(page, "disabled-video-model")).toBeVisible();
+
+  await statusFilter.selectOption("disabled");
+  await expect(page.locator(".provider-row")).toHaveCount(1);
+  await expect(row(page, "disabled-video-model")).toBeVisible();
+  await page.getByLabel("Search model presets").fill("ready-video");
+  await expect(page.getByText("No model presets match the current filters")).toBeVisible();
+  await page.getByRole("button", { name: "Clear filters" }).click();
+  await expect(page.locator(".provider-row")).toHaveCount(4);
+
+  await capabilityTabs.getByRole("radio", { name: "Image", exact: true }).click();
+  await expect(page.locator(".provider-row")).toHaveCount(1);
+  await expect(row(page, "image-model")).toBeVisible();
+  await capabilityTabs.getByRole("radio", { name: "Chat", exact: true }).click();
+  await expect(page.locator(".provider-row")).toHaveCount(1);
+  await expect(row(page, "chat-model")).toBeVisible();
+  expect(runtimeErrors).toEqual([]);
 });
 
 test("UI2 model focus revalidation retains stale rows and blocked delete remains actionable", async ({ page }) => {
@@ -352,6 +447,56 @@ test("UI2 model editor uses shared fields, discovery rows, checkbox, and advance
   await captureEvidence(page, runtimeErrors, "1280x800-ling-dark-editor-advanced.png");
   await dialog.getByRole("button", { name: "Close model preset editor" }).click();
   await expect(trigger).toBeFocused();
+});
+
+test("UI2 model editor keeps its header and footer anchored after selecting four models", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 960 });
+  await useEnglish(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  const providerModels = Array.from({ length: 22 }, (_, index) => ({
+    id: index === 18 ? "gpt-5.4-mini" : index === 19 ? "gpt-5.5" : index === 20 ? "gpt-5.6-terra" : index === 21 ? "gpt-5.6-pro" : `fixture-model-${index + 1}`,
+    ownedBy: "fixture",
+  }));
+  await mockDaemon(page, state, { templates: createDefaultProviderTemplates(), providerModels });
+  await page.goto("/");
+  await openWorkbench(page);
+
+  await page.getByRole("button", { name: "Add model" }).click();
+  const dialog = page.getByRole("dialog", { name: "New preset" });
+  await dialog.getByLabel("Model supplier").selectOption("custom-openai-compatible");
+  await dialog.getByLabel("API key", { exact: true }).fill("test-visible-key");
+  await dialog.getByRole("button", { name: "Fetch models" }).click();
+
+  const modelCards = dialog.locator(".provider-model-card");
+  await expect(modelCards).toHaveCount(22);
+  for (let index = 18; index < 22; index += 1) {
+    await modelCards.nth(index).click();
+  }
+  await expect(dialog.getByText("4 selected", { exact: true })).toBeVisible();
+
+  const geometry = await dialog.evaluate((element) => {
+    const header = element.querySelector<HTMLElement>(".provider-sheet-header");
+    const body = element.querySelector<HTMLElement>(".provider-sheet-body");
+    const footer = element.querySelector<HTMLElement>(".provider-sheet-footer");
+    const dialogRect = element.getBoundingClientRect();
+    const headerRect = header?.getBoundingClientRect();
+    const footerRect = footer?.getBoundingClientRect();
+    return {
+      dialogTop: dialogRect.top,
+      dialogBottom: dialogRect.bottom,
+      headerTop: headerRect?.top ?? -1,
+      footerBottom: footerRect?.bottom ?? -1,
+      bodyScrollTop: body?.scrollTop ?? -1,
+      display: getComputedStyle(element).display,
+      flexDirection: getComputedStyle(element).flexDirection,
+      gridTemplateRows: getComputedStyle(element).gridTemplateRows,
+    };
+  });
+  expect(geometry.display).toBe("flex");
+  expect(geometry.flexDirection).toBe("column");
+  expect(geometry.headerTop).toBeGreaterThanOrEqual(geometry.dialogTop - 1);
+  expect(Math.abs(geometry.dialogBottom - geometry.footerBottom)).toBeLessThanOrEqual(1);
+  expect(geometry.bodyScrollTop).toBe(0);
 });
 
 for (const scenario of [

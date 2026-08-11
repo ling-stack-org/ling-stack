@@ -351,8 +351,9 @@ export function parseChannelRoute(
   pathname: string,
 ): {
   readonly channelId: string;
-  readonly action?: "brief" | "messages" | "messages-stream" | "message-route-decisions" | "intent-decisions" | "proposals" | "attachments" | "link-previews" | "decisions" | "handoffs" | "context-summaries" | "workflows" | "collaboration-cards" | "terminal-reports" | "team-experts" | "team-metrics" | "team-authority-ledger" | "team-patterns" | "team-snapshots" | "team-evaluations" | "workspace" | "protocol" | "playbooks" | "branches" | "council-policy" | "effective-council" | "proposed-plans";
+  readonly action?: "brief" | "items" | "turns" | "turns-stream" | "turn-context" | "turn-context-correction" | "message-route-decisions" | "intent-decisions" | "proposals" | "attachments" | "link-previews" | "decisions" | "handoffs" | "context-summaries" | "workflows" | "collaboration-cards" | "terminal-reports" | "team-experts" | "team-metrics" | "team-authority-ledger" | "team-patterns" | "team-snapshots" | "team-evaluations" | "workspace" | "protocol" | "playbooks" | "branches" | "council-policy" | "effective-council" | "proposed-plans";
   readonly branchId?: string;
+  readonly turnId?: string;
   readonly protocolAction?: "revert" | "drafts" | "apply-draft" | "candidates" | "review-candidate" | "candidate-from-cluster" | "canvas";
   readonly protocolDraftId?: string;
   readonly protocolClusterId?: string;
@@ -380,8 +381,14 @@ export function parseChannelRoute(
   if (segments.length === 3 && segments[0] === "channels" && segments[2] === "terminal-reports") {
     return { channelId: segments[1], action: "terminal-reports" };
   }
-  if (segments.length === 4 && segments[0] === "channels" && segments[2] === "messages" && segments[3] === "stream") {
-    return { channelId: segments[1], action: "messages-stream" };
+  if (segments.length === 4 && segments[0] === "channels" && segments[2] === "turns" && segments[3] === "stream") {
+    return { channelId: segments[1], action: "turns-stream" };
+  }
+  if (segments.length === 5 && segments[0] === "channels" && segments[2] === "turns" && segments[4] === "context") {
+    return { channelId: segments[1], action: "turn-context", turnId: segments[3] };
+  }
+  if (segments.length === 6 && segments[0] === "channels" && segments[2] === "turns" && segments[4] === "context" && segments[5] === "corrections") {
+    return { channelId: segments[1], action: "turn-context-correction", turnId: segments[3] };
   }
   if (segments.length === 4 && segments[0] === "channels" && segments[2] === "branches") {
     return { channelId: segments[1], action: "branches", branchId: segments[3] };
@@ -429,7 +436,8 @@ export function parseChannelRoute(
     segments[0] === "channels" &&
     (
       segments[2] === "brief" ||
-      segments[2] === "messages" ||
+      segments[2] === "items" ||
+      segments[2] === "turns" ||
       segments[2] === "message-route-decisions" ||
       segments[2] === "intent-decisions" ||
       segments[2] === "proposals" ||

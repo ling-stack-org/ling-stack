@@ -1,6 +1,5 @@
 import type { ReactVirtualizer, VirtualItem } from "@tanstack/react-virtual";
 import type {
-  ClipboardEvent,
   DragEvent,
   KeyboardEvent,
   ReactNode,
@@ -10,6 +9,7 @@ import type {
 import type { ComposerInputPart, PendingAttachmentItem } from "../../shared/components/index.js";
 import type {
   AiTeammate,
+  ApprovalRequest,
   Channel,
   ExecutionAction,
   MemoryObject,
@@ -56,6 +56,7 @@ export interface TeammatePrivateChatSurfaceProps {
   readonly memoryById: ReadonlyMap<string, MemoryObject>;
   readonly runs: readonly RunSession[];
   readonly executionActions: readonly ExecutionAction[];
+  readonly approvals: readonly ApprovalRequest[];
   readonly terminalReports: readonly TerminalReportDto[];
   readonly providerRecovered: boolean;
   readonly modelNotice?: TeammatePrivateModelNotice;
@@ -115,7 +116,7 @@ export interface TeammatePrivateChatSurfaceProps {
       readonly permissionConfirmation?: PermissionConfirmation;
     },
   ) => void;
-  readonly onComposerPaste: (event: ClipboardEvent<HTMLDivElement>) => void;
+  readonly onComposerPasteFiles: (files: readonly File[]) => void;
   readonly onComposerDragOver: (event: DragEvent<HTMLDivElement>) => void;
   readonly onComposerDragLeave: (event: DragEvent<HTMLDivElement>) => void;
   readonly onComposerDrop: (event: DragEvent<HTMLDivElement>) => void;

@@ -1,10 +1,11 @@
 # Channel Intent To Workflow Selector
 
-Status: P0-P10 and bounded `visible_multi_reply` implemented behind Ling Agent Session boundaries; model-assisted selection is enabled by default with deterministic fallback
+Status: superseded v1 implementation reference; S4 runtime now uses the v2 clean-break contract in Channel Conversation Continuity v2
 Date: 2026-06-10
 
 Related docs:
 
+- [Channel Conversation Continuity v2](channel-conversation-continuity-v2.md)
 - [Conversation Surface Contract](./conversation-surface-contract.md)
 - [Ling Agent Session Control Plane](ling-agent-session.md)
 - [Channel Auto Reply Router](channel-auto-reply-router.md)
@@ -12,6 +13,24 @@ Related docs:
 - [Multi-Agent Orchestration Experience](multi-agent-orchestration-experience.md)
 - [Multi-Agent Orchestrator](./multi-agent-orchestrator.md)
 - [Channel Context Budget Manager](channel-context-budget-manager.md)
+
+## Current Runtime Contract
+
+Continuity v2 accepts only these actions:
+
+```text
+no_reply | reply | visible_multi_reply | clarify | workflow_proposal | execute
+```
+
+Every decision references the source Turn, source ConversationItem, effective Segment,
+and shared projection version. `reply` completes without TargetResolver. Only a validated
+`execute` or executable proposal candidate may enter target resolution and policy gating.
+`clarify` carries typed `missingFields`; model output cannot grant tools, approvals,
+workspace scope, secrets, external sends, or memory access.
+
+The v1 action taxonomy retained below is non-normative migration history. No runtime or
+new test may emit `single_reply` or `direct_workflow`, and no compatibility alias maps
+those values into v2.
 
 ## Purpose
 
@@ -280,6 +299,27 @@ Ling should borrow the design pattern, not the runtime.
 | GraphFlow | Work should be graph-controlled: order, parallelism, branch conditions, joins, loops. | Do not let ordinary channel messages bypass Ling's workflow graph/state machines. |
 
 ## Decision Contract
+
+### V2 supersession
+
+[Channel Conversation Continuity v2](channel-conversation-continuity-v2.md) supersedes
+the durable decision names and context input boundary below:
+
+```text
+schemaVersion: 2
+single_reply   -> reply
+direct_workflow -> execute
+sourceMessageId -> sourceTurnId + sourceItemId
+recent message window -> contextSegmentId + contextProjectionVersion
+```
+
+V2 also makes `no_reply` terminal, requires structured missing fields for `clarify`, and
+invokes TargetResolver only for validated executable/proposal target kinds. Because Ling
+is pre-release, implementation will not add v1 aliases or runtime dual reads.
+
+The remainder of this document records the currently implemented v1 selector and its
+historical slices until the v2 cutover is complete. New implementation work must follow
+the v2 owning contract and plan rather than extending the v1 enum or fixed context window.
 
 The channel intent selector returns a validated structured decision:
 

@@ -569,8 +569,11 @@ export async function handlePluginItem(
   }
 }
 
-export function assertBundledCuaDriverRuntimeAvailable(config: ResolvedDaemonConfig): void {
-  if (bundledEmbeddedCuaDriverGateEnabled(config, process.platform)) {
+export function assertBundledCuaDriverRuntimeAvailable(
+  config: ResolvedDaemonConfig,
+  platform: NodeJS.Platform = process.platform,
+): void {
+  if (bundledEmbeddedCuaDriverGateEnabled(config, platform)) {
     throw new HttpError(
       409,
       "cua_desktop_lease_unavailable",

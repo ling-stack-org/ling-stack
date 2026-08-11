@@ -1,3 +1,4 @@
+import { appendChannelItemFixture, getChannelItemViewFixture, listChannelItemViewsFixture, updateChannelItemFixture } from "./channel-conversation-fixture.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -44,7 +45,7 @@ test("existing conversation and profile writes durably enqueue lightweight proje
   try {
     const start = store.listRemoteProjectionOutbox({ limit: 1_000 }).at(-1)?.activitySeq ?? 0;
     const channel = store.createChannel({ name: "Projection", boundPath: cwd }, "2026-07-31T02:00:00.000Z");
-    const channelMessage = store.createChannelMessage({
+    const channelMessage = appendChannelItemFixture(store, {
       channelId: channel.id,
       authorType: "ai-teammate",
       authorId: createBuiltinAiTeammateId("engineer"),
@@ -81,7 +82,7 @@ test("existing conversation and profile writes durably enqueue lightweight proje
       limit: 1_000,
     });
     assert.ok(changes.some((item) => item.entityType === "channel" && item.entityId === channel.id));
-    assert.ok(changes.some((item) => item.entityType === "channel_message" && item.entityId === channelMessage.id && item.affectsUnread));
+    assert.ok(changes.some((item) => item.entityType === "conversation_item" && item.entityId === channelMessage.id && item.affectsUnread));
     assert.ok(changes.some((item) => item.entityType === "teammate_direct_thread" && item.entityId === direct.id));
     assert.ok(changes.some((item) => item.entityType === "teammate_direct_message" && item.entityId === directMessage.id && item.affectsUnread));
     assert.ok(changes.some((item) => item.entityType === "ling_thread" && item.entityId === conversation.id));

@@ -1,3 +1,4 @@
+import { appendChannelItemFixture, getChannelItemViewFixture, listChannelItemViewsFixture, updateChannelItemFixture } from "../../core/test/channel-conversation-fixture.mjs";
 import assert from "node:assert/strict";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -5,12 +6,21 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
-import { DEFAULT_WORKSPACE_ID, createCompositeSecretResolver, createSqliteRunStore, resolveStoragePaths } from "../../core/dist/index.js";
+import {
+  DEFAULT_WORKSPACE_ID,
+  createCompositeSecretResolver,
+  createSqliteRunStore,
+  projectConversationItemToChannelMessage,
+  resolveStoragePaths,
+} from "../../core/dist/index.js";
 import { createDaemonServer } from "../dist/index.js";
 import { buildContextPack, resolveProviderContextBudget } from "../dist/features/channels/context-packs.js";
 import { routeChannelMessageReply } from "../dist/features/channels/channel-message-router.js";
+import { resolveChannelReplyExecutionTarget } from "../dist/features/channels/channel-reply-execution-target.js";
+import { planConversationContextSummary } from "../dist/features/channels/context-processing/conversation-summary-coordinator.js";
 import { buildLingAgentSessionViewForChannel } from "../dist/features/channels/ling-agent-session-view.js";
 import { buildLingAgentTurnEnvelope } from "../dist/features/channels/ling-agent-turn-envelope.js";
+import { findActiveChannelReplyRun } from "../dist/features/channels/channel-reply-dispatch.js";
 import { availabilityIncidentInputForProviderRuntimeFailure } from "../dist/features/channels/provider-runtime-observations.js";
 import { linkBodyExtractorV1 } from "../dist/features/channels/materialization/extractors/link-body.js";
 import { officeExtractorV1 } from "../dist/features/channels/materialization/extractors/office.js";
@@ -135,6 +145,8 @@ test("channel branches follow archive restore and delete lifecycle", async () =>
   });
   try {
     const channel = await createChannel(daemon.url, cwd);
+    const store = stores.find((item) => item.paths.cwd === cwd);
+    assert.ok(store);
     const branch = (await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/branches?cwd=${encodeURIComponent(cwd)}`, {
       name: "Model routing fix",
     })).branch;
@@ -149,22 +161,26 @@ test("channel branches follow archive restore and delete lifecycle", async () =>
     })).branch;
     assert.ok(secondBranch.rootThreadId);
     assert.notEqual(secondBranch.rootThreadId, branch.rootThreadId);
-    await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    appendChannelItemFixture(store, {
+      channelId: channel.id,
       threadId: branch.rootThreadId,
+      authorType: "local-user",
       body: "Message in model routing branch",
-    });
-    await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    }, "2026-06-22T00:01:00.000Z");
+    appendChannelItemFixture(store, {
+      channelId: channel.id,
       threadId: secondBranch.rootThreadId,
+      authorType: "local-user",
       body: "Message in prompt cleanup branch",
-    });
-    const firstBranchMessages = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}&threadId=${encodeURIComponent(branch.rootThreadId)}`);
+    }, "2026-06-22T00:02:00.000Z");
+    const firstBranchMessages = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/items?cwd=${encodeURIComponent(cwd)}&threadId=${encodeURIComponent(branch.rootThreadId)}`);
     assert.deepEqual(
       firstBranchMessages.messages
         .filter((message) => message.authorType === "local-user")
         .map((message) => message.body),
       ["Message in model routing branch"],
     );
-    const secondBranchMessages = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}&threadId=${encodeURIComponent(secondBranch.rootThreadId)}`);
+    const secondBranchMessages = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/items?cwd=${encodeURIComponent(cwd)}&threadId=${encodeURIComponent(secondBranch.rootThreadId)}`);
     assert.deepEqual(
       secondBranchMessages.messages
         .filter((message) => message.authorType === "local-user")
@@ -172,8 +188,6 @@ test("channel branches follow archive restore and delete lifecycle", async () =>
       ["Message in prompt cleanup branch"],
     );
 
-    const store = stores.find((item) => item.paths.cwd === cwd);
-    assert.ok(store);
     const legacyBranch = store.createChannelBranch({
       channelId: channel.id,
       name: "Legacy branch",
@@ -405,9 +419,10 @@ test("channel team metrics exposes visible evidence total separately from team e
   const store = createSqliteRunStore(cwd);
   try {
     const { channel, message } = createStoreChannelAndMessage(store, cwd, "collect evidence");
-    const webMessage = store.createChannelMessage({
+    const webMessage = appendChannelItemFixture(store, {
       channelId: channel.id,
       authorType: "ai-teammate",
+      authorId: "ling_agent",
       body: "web evidence",
       fileRefs: [{ path: `${cwd}/README.md`, line: 12 }],
     }, "2026-06-11T00:02:00.000Z");
@@ -869,39 +884,252 @@ test("ling agent coordinator queues active run follow-up before ordinary routing
     })).channel;
     const store = stores.get(cwd);
     assert.ok(store);
-    const run = store.createRun({
-      id: "run_ling_agent_coordinator_followup",
+    const run = createActiveChannelReplyRunFixture(store, {
       cwd,
-      taskId: "task_ling_agent_coordinator_followup",
       channelId: channel.id,
-      teammateId: "ling_agent",
-      providerName: "test-provider",
-      providerModel: "test-model",
-      taskSnapshot: { id: "task_ling_agent_coordinator_followup", title: "Active work" },
-      providerSnapshot: { provider: "test-provider", model: "test-model" },
-      requestSnapshot: { cwd },
-      createdAt: "2026-06-11T00:01:00.000Z",
+      runId: "run_ling_agent_coordinator_followup",
+      taskId: "task_ling_agent_coordinator_followup",
     });
-    store.markRunStarted(run.id, "2026-06-11T00:02:00.000Z");
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "完成后也更新 docs",
+      replyDisposition: { mode: "queue_followup", activeRunId: run.id },
     });
 
     assert.equal(created.aiReply, undefined);
-    assert.equal(created.activeSessionAction.mode, "queue_followup");
-    assert.equal(created.activeSessionAction.status, "created");
-    assert.equal(created.activeSessionAction.sourceRunId, run.id);
-    assert.equal(created.intervention.sourceRunId, run.id);
-    assert.equal(created.intervention.mode, "queue_followup");
+    assert.equal(created.replyDispatch.disposition, "followup_queued");
+    assert.equal(created.replyDispatch.sourceRunId, run.id);
+    assert.equal(created.replyDispatch.intervention.sourceRunId, run.id);
+    assert.equal(created.replyDispatch.intervention.mode, "queue_followup");
     const interventions = store.listRunInterventions({ sourceRunId: run.id });
-    assert.deepEqual(interventions.map((intervention) => intervention.id), [created.intervention.id]);
+    assert.deepEqual(interventions.map((intervention) => intervention.id), [created.replyDispatch.intervention.id]);
     assert.deepEqual(store.listEvents(run.id).map((event) => event.type), ["run_intervention_created", "run_followup_queued"]);
     const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(routeDecisions.decisions, []);
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(proposals.proposals, []);
   } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("active channel reply does not intercept an unmarked direct workflow request", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-active-reply-direct-workflow-"));
+  const runner = new RecordingRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    await setWorkspaceDefaultProvider(daemon.url, cwd, provider.id);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Direct workflow while reply is active",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read", "grep", "find", "ls", "write"],
+    })).channel;
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const activeRun = createActiveChannelReplyRunFixture(store, {
+      cwd,
+      channelId: channel.id,
+      runId: "run_active_reply_before_execute",
+      taskId: "task_active_reply_before_execute",
+    });
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: `在 ${cwd} 下创建 README.md`,
+    });
+
+    assertCoordinatorWorkflowStartReply(created);
+    assert.equal(created.replyDispatch, undefined);
+    assert.equal(created.autoStartedWorkflow.workflowSteps.length, 1);
+    assert.deepEqual(created.autoStartedWorkflow.workflowSteps[0].metadata.requiredTools, ["write"]);
+    assert.deepEqual(store.listRunInterventions({ sourceRunId: activeRun.id }), []);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(decisions.decisions.some((decision) => decision.action === "execute" && decision.status === "accepted"), true);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("root reply guidance cannot capture a branch turn and branch continuation stays on its thread", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-reply-branch-lineage-"));
+  await ensureGitRepo(cwd);
+  const runner = new AbortableDelayedRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    await setWorkspaceDefaultProvider(daemon.url, cwd, provider.id);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Reply branch lineage",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read"],
+      runtimePolicy: {
+        maxConcurrentRuns: 4,
+        schedulingMode: "smart",
+        writeLockScope: "channel",
+        allowReadOnlyParallel: true,
+        queueOnConflict: true,
+      },
+    })).channel;
+    const branch = (await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/branches?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Independent branch",
+    })).branch;
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const rootRun = createActiveChannelReplyRunFixture(store, {
+      cwd,
+      channelId: channel.id,
+      runId: "run_root_reply_before_branch",
+      taskId: "task_root_reply_before_branch",
+    });
+
+    const branchSource = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      surface: { kind: "thread", threadId: branch.rootThreadId },
+      body: "Start an independent branch reply.",
+      requestAiReply: true,
+      providerPresetId: provider.id,
+      replyDisposition: { mode: "queue_followup", activeRunId: rootRun.id },
+    });
+
+    assert.equal(branchSource.replyDispatch.disposition, "reply_requested");
+    assert.equal(branchSource.aiReply.threadId, branch.rootThreadId);
+    assert.deepEqual(store.listRunInterventions({ sourceRunId: rootRun.id }), []);
+    await waitForCondition(() => runner.runs.length === 1, "branch reply run to start");
+    const branchRun = store.listRuns({ limit: 20 }).find((run) =>
+      run.channelId === channel.id && run.threadId === branch.rootThreadId && run.id !== rootRun.id
+    );
+    assert.ok(branchRun);
+    assert.equal(branchRun.threadId, branch.rootThreadId);
+
+    const guidance = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      surface: { kind: "thread", threadId: branch.rootThreadId },
+      body: "Continue only inside this branch.",
+      requestAiReply: true,
+      providerPresetId: provider.id,
+      replyDisposition: { mode: "queue_followup", activeRunId: branchRun.id },
+    });
+    assert.equal(guidance.replyDispatch.disposition, "followup_queued");
+    assert.equal(guidance.replyDispatch.sourceRunId, branchRun.id);
+
+    runner.resolve("Initial branch reply");
+    await waitForCondition(() => runner.runs.length === 2, "branch continuation to start");
+    await waitForCondition(
+      () => store.getRunIntervention(guidance.replyDispatch.intervention.id)?.continuationRunId,
+      "branch continuation to link",
+    );
+    const intervention = store.getRunIntervention(guidance.replyDispatch.intervention.id);
+    const continuationRun = store.getRun(intervention.continuationRunId);
+    assert.ok(continuationRun);
+    assert.equal(continuationRun.threadId, branch.rootThreadId);
+    runner.resolve("Branch continuation reply");
+  } finally {
+    for (let index = 0; index < 3; index += 1) {
+      runner.resolve("cleanup");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("topic channel replies keep canonical LingThread identity and isolate guidance by source message lineage", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-topic-reply-lineage-"));
+  const runner = new AbortableDelayedRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    await setWorkspaceDefaultProvider(daemon.url, cwd, provider.id);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Topic reply lineage",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read"],
+    })).channel;
+    const store = stores.get(cwd);
+    assert.ok(store);
+
+    const topicRoot = appendChannelItemFixture(store, {
+      channelId: channel.id,
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      body: "Topic root message.",
+      status: "ready",
+    }, "2026-08-08T00:00:00.000Z");
+    const topicSource = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      surface: { kind: "topic", anchorItemId: topicRoot.id },
+      body: "Start a reply inside this topic.",
+      requestAiReply: true,
+      providerPresetId: provider.id,
+    });
+    await waitForCondition(() => runner.runs.length === 1, "topic reply run to start");
+    const topicRun = store.listRuns({ limit: 20 }).find((run) =>
+      run.channelId === channel.id && !run.parentRunId
+    );
+    assert.ok(topicRun);
+    assert.equal(topicRun.requestSnapshot.sourceMessageId, topicSource.message.id);
+    assert.match(topicRun.threadId, /^thread_/);
+    assert.notEqual(topicRun.threadId, topicRoot.id);
+
+    const guidance = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      surface: { kind: "thread", threadId: topicSource.thread.id },
+      body: "Continue only inside this topic.",
+      requestAiReply: true,
+      providerPresetId: provider.id,
+      replyDisposition: { mode: "queue_followup", activeRunId: topicRun.id },
+    });
+    assert.equal(guidance.replyDispatch.disposition, "followup_queued");
+    assert.equal(guidance.replyDispatch.sourceRunId, topicRun.id);
+
+    runner.resolve("Initial topic reply");
+    await waitForCondition(() => runner.runs.length === 2, "topic continuation to start");
+    await waitForCondition(
+      () => store.getRunIntervention(guidance.replyDispatch.intervention.id)?.continuationRunId,
+      "topic continuation to link",
+    );
+    const intervention = store.getRunIntervention(guidance.replyDispatch.intervention.id);
+    const continuationRun = store.getRun(intervention.continuationRunId);
+    assert.equal(continuationRun.threadId, topicRun.threadId);
+    assert.equal(continuationRun.requestSnapshot.sourceMessageId, guidance.message.id);
+    runner.resolve("Topic continuation reply");
+  } finally {
+    for (let index = 0; index < 3; index += 1) {
+      runner.resolve("cleanup");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
   }
@@ -928,38 +1156,30 @@ test("ling agent coordinator queues attachment-only active run guidance", async 
     })).channel;
     const store = stores.get(cwd);
     assert.ok(store);
-    const run = store.createRun({
-      id: "run_ling_agent_coordinator_attachment_followup",
+    const run = createActiveChannelReplyRunFixture(store, {
       cwd,
-      taskId: "task_ling_agent_coordinator_attachment_followup",
       channelId: channel.id,
-      teammateId: "ling_agent",
-      providerName: "test-provider",
-      providerModel: "test-model",
-      taskSnapshot: { id: "task_ling_agent_coordinator_attachment_followup", title: "Active work" },
-      providerSnapshot: { provider: "test-provider", model: "test-model" },
-      requestSnapshot: { cwd },
-      createdAt: "2026-06-11T00:01:00.000Z",
+      runId: "run_ling_agent_coordinator_attachment_followup",
+      taskId: "task_ling_agent_coordinator_attachment_followup",
     });
-    store.markRunStarted(run.id, "2026-06-11T00:02:00.000Z");
     const attachment = (await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/attachments?cwd=${encodeURIComponent(cwd)}`, {
       fileName: "followup.txt",
       contentType: "text/plain",
       contentBase64: Buffer.from("active run follow-up context", "utf8").toString("base64"),
     })).attachment;
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "",
       attachmentIds: [attachment.id],
+      replyDisposition: { mode: "queue_followup", activeRunId: run.id },
     });
 
     assert.equal(created.aiReply, undefined);
-    assert.equal(created.activeSessionAction.mode, "queue_followup");
-    assert.equal(created.activeSessionAction.status, "created");
-    assert.equal(created.activeSessionAction.sourceRunId, run.id);
-    assert.equal(created.intervention.sourceRunId, run.id);
-    assert.deepEqual(created.intervention.messagePayload.attachmentIds, [attachment.id]);
-    assert.equal(created.intervention.messagePayload.body, "");
+    assert.equal(created.replyDispatch.disposition, "followup_queued");
+    assert.equal(created.replyDispatch.sourceRunId, run.id);
+    assert.equal(created.replyDispatch.intervention.sourceRunId, run.id);
+    assert.deepEqual(created.replyDispatch.intervention.messagePayload.attachmentIds, [attachment.id]);
+    assert.equal(created.replyDispatch.intervention.messagePayload.body, "");
     const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(routeDecisions.decisions, []);
   } finally {
@@ -990,39 +1210,31 @@ test("ling agent coordinator queues file-ref-only active run guidance", async ()
     })).channel;
     const store = stores.get(cwd);
     assert.ok(store);
-    const run = store.createRun({
-      id: "run_ling_agent_coordinator_file_ref_followup",
+    const run = createActiveChannelReplyRunFixture(store, {
       cwd,
-      taskId: "task_ling_agent_coordinator_file_ref_followup",
       channelId: channel.id,
-      teammateId: "ling_agent",
-      providerName: "test-provider",
-      providerModel: "test-model",
-      taskSnapshot: { id: "task_ling_agent_coordinator_file_ref_followup", title: "Active work" },
-      providerSnapshot: { provider: "test-provider", model: "test-model" },
-      requestSnapshot: { cwd },
-      createdAt: "2026-06-11T00:01:00.000Z",
+      runId: "run_ling_agent_coordinator_file_ref_followup",
+      taskId: "task_ling_agent_coordinator_file_ref_followup",
     });
-    store.markRunStarted(run.id, "2026-06-11T00:02:00.000Z");
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "",
       fileRefs: [{ path: "README.md", label: "README.md", source: "composer" }],
+      replyDisposition: { mode: "queue_followup", activeRunId: run.id },
     });
 
     assert.equal(created.aiReply, undefined);
     assert.deepEqual(created.message.fileRefs, [{ path: "README.md", label: "README.md", source: "composer" }]);
-    assert.equal(created.activeSessionAction.mode, "queue_followup");
-    assert.equal(created.activeSessionAction.status, "created");
-    assert.equal(created.activeSessionAction.sourceRunId, run.id);
-    assert.equal(created.intervention.sourceRunId, run.id);
-    assert.equal(created.intervention.messagePayload.body, "");
-    assert.deepEqual(created.intervention.messagePayload.attachmentIds, []);
-    assert.deepEqual(created.intervention.messagePayload.linkPreviewIds, []);
-    assert.equal(created.intervention.messagePayload.fileRefs[0].path, "README.md");
-    assert.equal(created.intervention.messagePayload.fileRefs[0].rootRelation, "inside_workspace");
-    assert.equal(created.intervention.messagePayload.fileRefs[0].kind, "file");
-    assert.equal(created.intervention.messagePayload.fileRefs[0].materializationStatus, "metadata_only");
+    assert.equal(created.replyDispatch.disposition, "followup_queued");
+    assert.equal(created.replyDispatch.sourceRunId, run.id);
+    assert.equal(created.replyDispatch.intervention.sourceRunId, run.id);
+    assert.equal(created.replyDispatch.intervention.messagePayload.body, "");
+    assert.deepEqual(created.replyDispatch.intervention.messagePayload.attachmentIds, []);
+    assert.deepEqual(created.replyDispatch.intervention.messagePayload.linkPreviewIds, []);
+    assert.equal(created.replyDispatch.intervention.messagePayload.fileRefs[0].path, "README.md");
+    assert.equal(created.replyDispatch.intervention.messagePayload.fileRefs[0].rootRelation, "inside_workspace");
+    assert.equal(created.replyDispatch.intervention.messagePayload.fileRefs[0].kind, "file");
+    assert.equal(created.replyDispatch.intervention.messagePayload.fileRefs[0].materializationStatus, "metadata_only");
     const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(routeDecisions.decisions, []);
   } finally {
@@ -1042,7 +1254,7 @@ test("ling agent turn envelope merges persisted and explicit text file refs safe
       boundPath: cwd,
       autoReplyMode: "default_teammate",
     }, "2026-06-11T00:00:00.000Z");
-    const message = store.createChannelMessage({
+    const message = appendChannelItemFixture(store, {
       channelId: channel.id,
       authorType: "local-user",
       body: "Also inspect file:README.md and path:/tmp/outside.txt",
@@ -1124,7 +1336,7 @@ test("channel input materialization cache upserts and feeds turn envelope", asyn
     assert.equal(rows[0].truncated, true);
     assert.deepEqual(first.policyDecisionJson, { source: "test" });
 
-    const message = store.createChannelMessage({
+    const message = appendChannelItemFixture(store, {
       channelId: channel.id,
       authorType: "local-user",
       body: "Fix this screenshot",
@@ -1164,7 +1376,7 @@ test("inline materialization writes image vision cache with injected summarizer"
       path: "inline.png",
       createdAt: "2026-06-11T00:01:00.000Z",
     });
-    const message = store.createChannelMessage({
+    const message = appendChannelItemFixture(store, {
       channelId: channel.id,
       authorType: "local-user",
       body: "Please handle this.",
@@ -1238,7 +1450,7 @@ test("inline image materialization reuses same image content after provider time
       path: "first.png",
       createdAt: "2026-06-11T00:01:00.000Z",
     });
-    const firstMessage = store.createChannelMessage({
+    const firstMessage = appendChannelItemFixture(store, {
       channelId: channel.id,
       authorType: "local-user",
       body: "看下这个图片",
@@ -1265,7 +1477,7 @@ test("inline image materialization reuses same image content after provider time
       path: "second.png",
       createdAt: "2026-06-11T00:04:00.000Z",
     });
-    const secondMessage = store.createChannelMessage({
+    const secondMessage = appendChannelItemFixture(store, {
       channelId: channel.id,
       authorType: "local-user",
       body: "同一张图再看一次",
@@ -1325,7 +1537,7 @@ test("retryable image materialization failures are not cached permanently", asyn
       path: "retry.png",
       createdAt: "2026-06-11T00:01:00.000Z",
     });
-    const message = store.createChannelMessage({
+    const message = appendChannelItemFixture(store, {
       channelId: channel.id,
       authorType: "local-user",
       body: "看下这个图片",
@@ -1560,7 +1772,7 @@ test("inline materialization writes public link body cache for explicit link req
       siteName: "Example",
       status: "ready",
     }, "2026-06-11T00:01:00.000Z");
-    const message = store.createChannelMessage({
+    const message = appendChannelItemFixture(store, {
       channelId: channel.id,
       authorType: "local-user",
       body: "Please summarize this link",
@@ -1646,7 +1858,7 @@ test("cached public link body lets Ling answer without materialization clarify",
       tokenEstimate: 12,
     }, "2026-06-11T00:02:00.000Z");
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "Please summarize this link",
       linkPreviewIds: [linkPreview.id],
     });
@@ -1657,8 +1869,8 @@ test("cached public link body lets Ling answer without materialization clarify",
     assert.equal(finalReply.body, "这个页面讲的是 cached public link body。");
     assert.equal(runner.runs.length, 1);
     assert.match(runner.runs[0].task.prompt, /Cached public link body for Ling to summarize/);
-    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
-    assert.deepEqual(intentDecisions.decisions, []);
+    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
+    assertSingleReplyIntentDecision(intentDecisions.decisions, created.message.id);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -1798,7 +2010,7 @@ test("inline materialization writes pdf and docx cache for current-turn attachme
       path: "inline.docx",
       createdAt: "2026-06-11T00:02:00.000Z",
     });
-    const message = store.createChannelMessage({
+    const message = appendChannelItemFixture(store, {
       channelId: channel.id,
       authorType: "local-user",
       body: "Context attached.",
@@ -1868,7 +2080,7 @@ test("materialized pdf and docx attachments let Ling answer without materializat
       contentBase64: (await readDocxFixtureBytes()).toString("base64"),
     })).attachment;
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "Please summarize this PDF and this document",
       attachmentIds: [pdfAttachment.id, docxAttachment.id],
     });
@@ -1886,8 +2098,8 @@ test("materialized pdf and docx attachments let Ling answer without materializat
     const docxPreview = await getJson(`${daemon.url}/attachments/${encodeURIComponent(docxAttachment.id)}/preview?cwd=${encodeURIComponent(cwd)}&scope=channel&channelId=${encodeURIComponent(channel.id)}`);
     assert.equal(docxPreview.kind, "office");
     assert.match(docxPreview.text, /Walking on imported air/);
-    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
-    assert.deepEqual(intentDecisions.decisions, []);
+    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
+    assertSingleReplyIntentDecision(intentDecisions.decisions, created.message.id);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -1920,7 +2132,7 @@ test("materialized image attachment lets Ling answer without materialization cla
       contentBase64: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString("base64"),
     })).attachment;
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "Please fix the UI from this screenshot",
       attachmentIds: [attachment.id],
       requestAiReply: true,
@@ -1933,8 +2145,8 @@ test("materialized image attachment lets Ling answer without materialization cla
     assert.equal(runner.runs.length, 1);
     assert.match(runner.runs[0].task.prompt, /branch button hidden/);
     assert.doesNotMatch(runner.runs[0].task.prompt, /Image vision summarizer is not configured/);
-    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
-    assert.deepEqual(intentDecisions.decisions, []);
+    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
+    assertSingleReplyIntentDecision(intentDecisions.decisions, created.message.id);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -1988,7 +2200,7 @@ test("provider-backed image materialization works without injected summarizer", 
       contentBase64: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString("base64"),
     })).attachment;
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "为什么还是这样？",
       attachmentIds: [attachment.id],
       requestAiReply: true,
@@ -2047,20 +2259,12 @@ test("ling agent coordinator preserves materialized guidance metadata for active
     })).channel;
     const store = stores.get(cwd);
     assert.ok(store);
-    const run = store.createRun({
-      id: "run_ling_agent_materialized_guidance",
+    const run = createActiveChannelReplyRunFixture(store, {
       cwd,
-      taskId: "task_ling_agent_materialized_guidance",
       channelId: channel.id,
-      teammateId: "ling_agent",
-      providerName: "test-provider",
-      providerModel: "test-model",
-      taskSnapshot: { id: "task_ling_agent_materialized_guidance", title: "Active work" },
-      providerSnapshot: { provider: "test-provider", model: "test-model" },
-      requestSnapshot: { cwd },
-      createdAt: "2026-06-11T00:01:00.000Z",
+      runId: "run_ling_agent_materialized_guidance",
+      taskId: "task_ling_agent_materialized_guidance",
     });
-    store.markRunStarted(run.id, "2026-06-11T00:02:00.000Z");
     const attachment = (await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/attachments?cwd=${encodeURIComponent(cwd)}`, {
       fileName: "followup.txt",
       contentType: "text/plain",
@@ -2076,34 +2280,35 @@ test("ling agent coordinator preserves materialized guidance metadata for active
       status: "ready",
     }, "2026-06-11T00:02:30.000Z");
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "另外也更新 file:README.md",
       attachmentIds: [attachment.id],
       linkPreviewIds: [linkPreview.id],
+      replyDisposition: { mode: "queue_followup", activeRunId: run.id },
     });
 
     assert.equal(created.aiReply, undefined);
-    assert.equal(created.activeSessionAction.mode, "queue_followup");
-    assert.equal(created.intervention.sourceRunId, run.id);
-    assert.deepEqual(created.intervention.messagePayload.attachmentIds, [attachment.id]);
-    assert.deepEqual(created.intervention.messagePayload.linkPreviewIds, [linkPreview.id]);
-    assert.equal(created.intervention.messagePayload.attachments[0].fileName, "followup.txt");
-    assert.equal(created.intervention.messagePayload.attachments[0].materializationStatus, "available");
-    assert.match(created.intervention.messagePayload.attachments[0].previewText, /active run follow-up context/);
-    assert.equal(created.intervention.messagePayload.linkPreviews[0].title, "Example Docs");
-    assert.equal(created.intervention.messagePayload.linkPreviews[0].materializationStatus, "metadata_only");
-    assert.match(created.intervention.messagePayload.linkPreviews[0].previewText, /Cached link-preview metadata only/);
-    assert.equal(created.intervention.messagePayload.fileRefs[0].path, "README.md");
-    assert.equal(created.intervention.messagePayload.fileRefs[0].rootRelation, "inside_workspace");
-    assert.equal(created.intervention.messagePayload.fileRefs[0].kind, "file");
-    assert.equal(created.intervention.messagePayload.fileRefs[0].materializationStatus, "metadata_only");
+    assert.equal(created.replyDispatch.disposition, "followup_queued");
+    assert.equal(created.replyDispatch.intervention.sourceRunId, run.id);
+    assert.deepEqual(created.replyDispatch.intervention.messagePayload.attachmentIds, [attachment.id]);
+    assert.deepEqual(created.replyDispatch.intervention.messagePayload.linkPreviewIds, [linkPreview.id]);
+    assert.equal(created.replyDispatch.intervention.messagePayload.attachments[0].fileName, "followup.txt");
+    assert.equal(created.replyDispatch.intervention.messagePayload.attachments[0].materializationStatus, "available");
+    assert.match(created.replyDispatch.intervention.messagePayload.attachments[0].previewText, /active run follow-up context/);
+    assert.equal(created.replyDispatch.intervention.messagePayload.linkPreviews[0].title, "Example Docs");
+    assert.equal(created.replyDispatch.intervention.messagePayload.linkPreviews[0].materializationStatus, "metadata_only");
+    assert.match(created.replyDispatch.intervention.messagePayload.linkPreviews[0].previewText, /Cached link-preview metadata only/);
+    assert.equal(created.replyDispatch.intervention.messagePayload.fileRefs[0].path, "README.md");
+    assert.equal(created.replyDispatch.intervention.messagePayload.fileRefs[0].rootRelation, "inside_workspace");
+    assert.equal(created.replyDispatch.intervention.messagePayload.fileRefs[0].kind, "file");
+    assert.equal(created.replyDispatch.intervention.messagePayload.fileRefs[0].materializationStatus, "metadata_only");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
   }
 });
 
-test("ling agent coordinator requires confirmation for active run redirect", async () => {
+test("ling agent coordinator treats redirect-like text as queued guidance", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ling-agent-coordinator-redirect-"));
   const stores = new Map();
   const daemon = await startDaemonForTest(undefined, {
@@ -2124,37 +2329,487 @@ test("ling agent coordinator requires confirmation for active run redirect", asy
     })).channel;
     const store = stores.get(cwd);
     assert.ok(store);
-    const run = store.createRun({
-      id: "run_ling_agent_coordinator_redirect",
+    const run = createActiveChannelReplyRunFixture(store, {
       cwd,
-      taskId: "task_ling_agent_coordinator_redirect",
       channelId: channel.id,
-      teammateId: "ling_agent",
-      providerName: "test-provider",
-      providerModel: "test-model",
-      taskSnapshot: { id: "task_ling_agent_coordinator_redirect", title: "Active work" },
-      providerSnapshot: { provider: "test-provider", model: "test-model" },
-      requestSnapshot: { cwd },
-      createdAt: "2026-06-11T00:01:00.000Z",
+      runId: "run_ling_agent_coordinator_redirect",
+      taskId: "task_ling_agent_coordinator_redirect",
     });
-    store.markRunStarted(run.id, "2026-06-11T00:02:00.000Z");
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "停，改用 daemon API",
+      replyDisposition: { mode: "queue_followup", activeRunId: run.id },
     });
 
     assert.equal(created.aiReply, undefined);
-    assert.equal(created.intervention, undefined);
-    assert.equal(created.activeSessionAction.mode, "interrupt_redirect");
-    assert.equal(created.activeSessionAction.status, "requires_confirmation");
-    assert.equal(created.activeSessionAction.sourceRunId, run.id);
+    assert.equal(created.replyDispatch.disposition, "followup_queued");
+    assert.equal(created.replyDispatch.sourceRunId, run.id);
+    assert.equal(created.replyDispatch.intervention.mode, "queue_followup");
+    assert.equal(created.replyDispatch.intervention.instruction, "停，改用 daemon API");
     assert.equal(store.getRun(run.id).status, "running");
-    assert.deepEqual(store.listRunInterventions({ sourceRunId: run.id }), []);
+    assert.deepEqual(store.listRunInterventions({ sourceRunId: run.id }).map((item) => item.id), [created.replyDispatch.intervention.id]);
     const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(routeDecisions.decisions, []);
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(proposals.proposals, []);
   } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("channel reply guidance drains FIFO without interrupting and projects every continuation reply", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-reply-guidance-fifo-"));
+  await ensureGitRepo(cwd);
+  const runner = new AbortableDelayedRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    const designerProvider = (await createStaticChatProvider(daemon.url, cwd, {
+      displayName: "Designer Static Chat",
+      providerId: "designer-static-chat",
+      model: "designer-static-model",
+    })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(designerProvider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    await setWorkspaceDefaultProvider(daemon.url, cwd, provider.id);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Channel reply guidance FIFO",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read"],
+    })).channel;
+    const designerId = "teammate_builtin_designer";
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent(designerId)}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: designerProvider.id,
+    });
+    await putJson(`${daemon.url}/teammates/${encodeURIComponent(designerId)}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      memberships: [{ channelId: channel.id }],
+    });
+    const store = stores.get(cwd);
+    assert.ok(store);
+
+    const source = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: "Start a delayed Ling reply.",
+      requestAiReply: true,
+      teammateId: "ling_agent",
+      providerPresetId: provider.id,
+    });
+    assert.equal(source.aiReply.status, "pending");
+    await waitForCondition(() => runner.runs.length === 1, "source channel reply to start");
+    const sourceRun = store.listRuns({ limit: 20 })
+      .find((run) => run.channelId === channel.id && !run.parentRunId);
+    assert.ok(sourceRun);
+    const sourceMessage = getChannelItemViewFixture(store, sourceRun.requestSnapshot.sourceMessageId);
+    assert.ok(sourceMessage);
+    assert.equal(findActiveChannelReplyRun({
+      store,
+      channelId: channel.id,
+      sourceMessage,
+      activeRunId: sourceRun.id,
+    })?.id, sourceRun.id);
+
+    const queuedInputs = [
+      {
+        body: "@Designer queued channel guidance one.",
+        mentions: [{ id: "designer", label: "Designer", kind: "ai-teammate" }],
+        targetTeammateId: designerId,
+      },
+      {
+        body: "Queued channel guidance two.",
+        mentions: [],
+        targetTeammateId: "ling_agent",
+      },
+    ];
+    const queued = [];
+    for (const queuedInput of queuedInputs) {
+      const response = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+        body: queuedInput.body,
+        mentions: queuedInput.mentions,
+        requestAiReply: true,
+        providerPresetId: provider.id,
+        replyDisposition: { mode: "queue_followup", activeRunId: sourceRun.id },
+      });
+      assert.equal(response.replyDispatch.disposition, "followup_queued");
+      assert.equal(response.replyDispatch.targetTeammateId, queuedInput.targetTeammateId);
+      assert.equal(response.replyDispatch.intervention.messagePayload.targetTeammateId, queuedInput.targetTeammateId);
+      queued.push(response);
+    }
+    assert.equal(runner.runs.length, 1);
+    assert.equal(runner.abortCount, 0);
+    const queuedMessageIds = new Set(queued.map((response) => response.message.id));
+    const whileQueued = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/items?cwd=${encodeURIComponent(cwd)}`);
+    assert.deepEqual(whileQueued.messages.filter((message) => queuedMessageIds.has(message.id)), []);
+
+    runner.resolve("Initial channel reply");
+    await waitForCondition(() => runner.runs.length === 2, "first channel continuation to start");
+    assert.match(runner.runs[1].task.prompt, /@Designer queued channel guidance one\./);
+    assert.equal(readCurrentChannelUserMessage(runner.runs[1].task.prompt), queuedInputs[0].body);
+    await waitForCondition(
+      () => store.getRunIntervention(queued[0].replyDispatch.intervention.id)?.continuationRunId,
+      "first channel continuation to link",
+    );
+    const firstContinuation = store.getRun(
+      store.getRunIntervention(queued[0].replyDispatch.intervention.id).continuationRunId,
+    );
+    assert.equal(firstContinuation.teammateId, designerId);
+    assert.equal(firstContinuation.providerPresetId, designerProvider.id);
+    assert.doesNotMatch(runner.runs[1].task.prompt, /Continue a Ling Stack supervised run from preserved context\./);
+    assert.match(runner.runs[1].systemPrompt, /Treat the latest queued follow-up as the current user message/);
+    const whileFirstRuns = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/items?cwd=${encodeURIComponent(cwd)}`);
+    assert.deepEqual(
+      whileFirstRuns.messages.filter((message) => queuedMessageIds.has(message.id)).map((message) => message.id),
+      [queued[0].message.id],
+    );
+    runner.resolve("First channel continuation reply");
+
+    await waitForCondition(() => runner.runs.length === 3, "second channel continuation to start");
+    assert.match(runner.runs[2].task.prompt, /Queued channel guidance two\./);
+    assert.equal(readCurrentChannelUserMessage(runner.runs[2].task.prompt), queuedInputs[1].body);
+    await waitForCondition(
+      () => store.getRunIntervention(queued[1].replyDispatch.intervention.id)?.continuationRunId,
+      "second channel continuation to link",
+    );
+    const secondContinuation = store.getRun(
+      store.getRunIntervention(queued[1].replyDispatch.intervention.id).continuationRunId,
+    );
+    assert.equal(secondContinuation.teammateId, "ling_agent");
+    assert.equal(secondContinuation.providerPresetId, provider.id);
+    assert.doesNotMatch(runner.runs[2].task.prompt, /Continue a Ling Stack supervised run from preserved context\./);
+    assert.match(runner.runs[2].systemPrompt, /Treat the latest queued follow-up as the current user message/);
+    assert.match(
+      runner.runs[2].task.prompt,
+      /Conversation context selected by Continuity v2[\s\S]*First channel continuation reply/,
+    );
+    runner.resolve("Second channel continuation reply");
+
+    await waitForCondition(
+      () => store.listRunInterventions({ sourceRunId: queued[0].replyDispatch.sourceRunId }).every((item) => item.completedAt),
+      "channel guidance interventions to complete",
+    );
+    const listed = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/items?cwd=${encodeURIComponent(cwd)}`);
+    const visibleAiBodies = listed.messages
+      .filter((message) => message.authorType === "ai-teammate" && message.status === "ready")
+      .map((message) => message.body);
+    assert.deepEqual(visibleAiBodies, [
+      "Initial channel reply",
+      "First channel continuation reply",
+      "Second channel continuation reply",
+    ]);
+    for (const [index, response] of queued.entries()) {
+      const intervention = store.getRunIntervention(response.replyDispatch.intervention.id);
+      assert.equal(intervention.status, "started");
+      assert.ok(intervention.completedAt);
+      assert.equal(intervention.messagePayload.sourceMessageId, response.message.id);
+      const continuationRun = store.getRun(intervention.continuationRunId);
+      const continuationWorkUnit = store.getWorkUnit(intervention.continuationWorkUnitId);
+      assert.equal(continuationRun.status, "succeeded");
+      assert.equal(continuationWorkUnit.ownerId, response.message.id);
+      assert.ok(continuationWorkUnit.linkedMessageId);
+      const reply = getChannelItemViewFixture(store, continuationWorkUnit.linkedMessageId);
+      assert.equal(reply.body, `${index === 0 ? "First" : "Second"} channel continuation reply`);
+      assert.equal(reply.linkedRunId, continuationRun.id);
+    }
+    assert.equal(runner.abortCount, 0);
+  } finally {
+    for (let index = 0; index < 3; index += 1) {
+      runner.resolve("cleanup");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("channel reply guidance continues draining after the first continuation fails to start", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-reply-guidance-start-failure-"));
+  const runner = new AbortableDelayedRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    await setWorkspaceDefaultProvider(daemon.url, cwd, provider.id);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Channel reply guidance start failure",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read"],
+    })).channel;
+    const store = stores.get(cwd);
+    assert.ok(store);
+
+    await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: "Start a delayed reply before draining guidance.",
+      requestAiReply: true,
+      providerPresetId: provider.id,
+    });
+    await waitForCondition(() => runner.runs.length === 1, "source reply to start before failure drain");
+    const sourceRun = store.listRuns({ limit: 20 }).find((run) => run.channelId === channel.id && !run.parentRunId);
+    assert.ok(sourceRun);
+
+    const invalid = store.createRunIntervention({
+      sourceRunId: sourceRun.id,
+      mode: "queue_followup",
+      instruction: "This source message is intentionally missing.",
+      messagePayload: {
+        sourceMessageId: "msg_missing_guidance_source",
+        targetTeammateId: "ling_agent",
+        body: "This source message is intentionally missing.",
+        attachmentIds: [],
+        linkPreviewIds: [],
+      },
+      idempotencyKey: "channel_message:msg_missing_guidance_source:queue_followup",
+      requestedBy: "local-user",
+    }, "2026-08-08T00:00:00.000Z");
+    const valid = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: "This second queued message must still run.",
+      requestAiReply: true,
+      providerPresetId: provider.id,
+      replyDisposition: { mode: "queue_followup", activeRunId: sourceRun.id },
+    });
+    assert.equal(valid.replyDispatch.disposition, "followup_queued");
+
+    runner.resolve("Initial reply before failure drain");
+    await waitForCondition(
+      () => store.getRunIntervention(invalid.id)?.status === "failed",
+      "invalid first guidance to fail",
+    );
+    await waitForCondition(() => runner.runs.length === 2, "second guidance to start after first failure");
+    assert.match(runner.runs[1].task.prompt, /This second queued message must still run\./);
+    const validInterventionId = valid.replyDispatch.intervention.id;
+    await waitForCondition(
+      () => Boolean(store.getRunIntervention(validInterventionId)?.continuationRunId),
+      "second guidance continuation to link after first failure",
+    );
+    assert.equal(store.getRunIntervention(invalid.id)?.failureReason.includes("invalid"), true);
+    assert.equal(store.getRunIntervention(validInterventionId)?.status, "started");
+    runner.resolve("Second guidance completed");
+  } finally {
+    for (let index = 0; index < 3; index += 1) {
+      runner.resolve("cleanup");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("queued channel source stays hidden while dispatch classification is still in flight", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-reply-classification-visibility-"));
+  await ensureGitRepo(cwd);
+  const runner = new AbortableDelayedRunner();
+  const stores = new Map();
+  let releaseVision;
+  let visionStartedCount = 0;
+  const visionRelease = new Promise((resolve) => {
+    releaseVision = resolve;
+  });
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+    imageVisionSummarizer: async () => {
+      visionStartedCount += 1;
+      await visionRelease;
+      return {
+        contentText: "A screenshot used to hold dispatch classification open.",
+        structuredSummary: { source: "classification_visibility_test" },
+      };
+    },
+  });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    await setWorkspaceDefaultProvider(daemon.url, cwd, provider.id);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Classification visibility",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read"],
+    })).channel;
+    const source = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: "Start a delayed reply before classification visibility is tested.",
+      requestAiReply: true,
+      teammateId: "ling_agent",
+      providerPresetId: provider.id,
+    });
+    assert.equal(source.aiReply.status, "pending");
+    await waitForCondition(() => runner.runs.length === 1, "source channel reply to start");
+
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const sourceRun = store.listRuns({ limit: 20 })
+      .find((run) => run.channelId === channel.id && run.requestSnapshot.sourceMessageId === source.message.id);
+    assert.ok(sourceRun);
+    await mkdir(store.paths.attachmentsDir, { recursive: true });
+    await writeFile(resolve(store.paths.attachmentsDir, "classification.png"), Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    const attachment = store.createChannelAttachment({
+      channelId: channel.id,
+      kind: "image",
+      fileName: "classification.png",
+      contentType: "image/png",
+      sizeBytes: 8,
+      path: "classification.png",
+      createdAt: new Date().toISOString(),
+    });
+    const queuedBody = "Queue this message while dispatch classification is blocked.";
+    const streamResponse = await fetch(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns/stream?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        body: queuedBody,
+        attachmentIds: [attachment.id],
+        requestAiReply: true,
+        replyDisposition: { mode: "queue_followup", activeRunId: sourceRun.id },
+      }),
+    });
+    assert.equal(streamResponse.status, 200);
+    await waitForCondition(() => visionStartedCount === 1, "classification image summarizer to start");
+
+    const whileClassifying = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/items?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(whileClassifying.messages.some((message) => message.body === queuedBody), false);
+
+    releaseVision();
+    const events = parseSseEvents(await streamResponse.text());
+    const terminal = events.at(-1);
+    assert.equal(terminal.event, "done");
+    assert.equal(terminal.data.replyDispatch.disposition, "followup_queued");
+    const whileQueued = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/items?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(whileQueued.messages.some((message) => message.id === terminal.data.message.id), false);
+  } finally {
+    releaseVision?.();
+    for (let index = 0; index < 3; index += 1) {
+      runner.resolve("cleanup");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("unmentioned channel guidance joins the pending Ling reply lane before its run is linked", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-reply-pending-lane-"));
+  await ensureGitRepo(cwd);
+  const runner = new AbortableDelayedRunner();
+  const stores = new Map();
+  let webSearchCallCount = 0;
+  let releaseWebSearch;
+  const webSearchRelease = new Promise((resolve) => {
+    releaseWebSearch = resolve;
+  });
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+    secretResolver: createCompositeSecretResolver({ env: { OPENAI_API_KEY: "sk-test-secret-value" } }),
+    channelWebFetch: async () => {
+      webSearchCallCount += 1;
+      await webSearchRelease;
+      return new Response(JSON.stringify({
+        output_text: "Delayed web evidence.",
+        output: [{
+          type: "web_search_call",
+          action: {
+            type: "search",
+            sources: [{ type: "url", url: "https://example.com/delayed", title: "Delayed source" }],
+          },
+        }],
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const provider = (await createStaticChatProvider(daemon.url, cwd, {
+      kind: "openai",
+      displayName: "Delayed web reply",
+      providerId: "openai",
+      model: "gpt-5.5",
+      api: "openai-responses",
+      baseUrl: "https://api.openai.com/v1",
+      apiKeyRef: "env:OPENAI_API_KEY",
+      authHeader: true,
+      capabilities: ["chat", "tool_call", "reasoning", "web_search"],
+    })).provider;
+    const store = stores.get(cwd);
+    assert.ok(store);
+    store.recordProviderCheckResult(provider.id, {
+      ok: true,
+      code: "static_check",
+      message: "Provider ready for pending reply lane test.",
+      checkedAt: new Date().toISOString(),
+    });
+    await setWorkspaceDefaultProvider(daemon.url, cwd, provider.id);
+
+    const sourcePromise = postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: "查一下最新版本说明。",
+      requestAiReply: true,
+      providerPresetId: provider.id,
+    });
+    await waitForCondition(() => webSearchCallCount === 1, "source reply web search to start");
+    const guidancePromise = postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: "After that, reply only with pending lane guidance.",
+      requestAiReply: true,
+      providerPresetId: provider.id,
+      replyDisposition: { mode: "queue_followup" },
+    });
+
+    releaseWebSearch();
+    await waitForCondition(() => runner.runs.length === 1, "source Ling reply run to start");
+    const sourceRun = store.listRuns({ teammateId: "ling_agent", limit: 20 })
+      .find((run) => run.channelId === channel.id && !run.parentRunId);
+    assert.ok(sourceRun);
+    assert.equal(sourceRun.teammateId, "ling_agent");
+    assert.ok(sourceRun.workUnitId);
+    assert.equal(store.getWorkUnit(sourceRun.workUnitId).teammateId, "ling_agent");
+    assert.equal(store.listRuns({ teammateId: "ai-teammate", limit: 20 }).length, 0);
+    runner.resolve("Initial pending lane reply");
+    const source = await sourcePromise;
+    const guidance = await guidancePromise;
+    assert.equal(source.aiReply.status, "pending");
+    assert.equal(source.aiReply.authorId, "ling_agent");
+    assert.equal(guidance.aiReply, undefined);
+    assert.equal(guidance.replyDispatch.disposition, "followup_queued");
+    assert.equal(guidance.replyDispatch.targetTeammateId, "ling_agent");
+    assert.equal(guidance.replyDispatch.intervention.mode, "queue_followup");
+    assert.equal(guidance.replyDispatch.intervention.messagePayload.sourceMessageId, guidance.message.id);
+    assert.equal(runner.runs.length, 1);
+    assert.equal(runner.abortCount, 0);
+
+    await waitForCondition(() => runner.runs.length === 2, "pending lane continuation to start");
+    assert.equal(readCurrentChannelUserMessage(runner.runs[1].task.prompt), guidance.message.body);
+    runner.resolve("Pending lane guidance reply");
+    await waitForCondition(() => store.getRunIntervention(guidance.replyDispatch.intervention.id)?.completedAt, "pending lane guidance to complete");
+    assert.equal(runner.abortCount, 0);
+  } finally {
+    releaseWebSearch?.();
+    for (let index = 0; index < 4; index += 1) {
+      runner.resolve("cleanup");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
   }
@@ -2179,13 +2834,13 @@ test("channel messages persist and AI blocker replies do not drop the user messa
       },
     })).channel;
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "请 @Engineer 完善频道需求",
       mentions: [{ id: "engineer", label: "Engineer", kind: "ai-teammate" }],
       requestAiReply: true,
     });
     assert.equal(created.message.body, "请 @Engineer 完善频道需求");
-    assert.equal(created.aiReply.status, "pending");
+    assert.equal(created.aiReply.status, "blocked");
 
     const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "blocked");
     assert.deepEqual(listed.messages.map((message) => message.id), [created.message.id, created.aiReply.id]);
@@ -2212,7 +2867,7 @@ test("channel discussion uses the mentioned teammate provider preset", async () 
       memberships: [{ channelId: channel.id }],
     });
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "@Designer 你好",
       mentions: [{ id: "designer", label: "Designer", kind: "ai-teammate" }],
       requestAiReply: true,
@@ -2258,7 +2913,7 @@ test("channel discussion records provider runtime failures as availability incid
       memberships: [{ channelId: channel.id }],
     });
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "@Engineer 看一下这个实现边界",
       mentions: [{ id: "engineer", label: "Engineer", kind: "ai-teammate" }],
       requestAiReply: true,
@@ -2306,13 +2961,13 @@ test("channel observer bus stays inert when the feature flag is disabled", async
       memberships: [{ channelId: channel.id }],
     });
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "@Engineer 看一下这个实现边界",
       mentions: [{ id: "engineer", label: "Engineer", kind: "ai-teammate" }],
       requestAiReply: true,
     });
 
-    await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
+    await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready", created.message.threadId);
     const store = stores.get(cwd);
     assert.ok(store);
     assert.deepEqual(store.listChannelTeamEvidenceItems({ channelId: channel.id, limit: 10 }), []);
@@ -2345,7 +3000,7 @@ test("channel observer bus writes bounded relevance evidence without visible obs
       memberships: [{ channelId: channel.id }],
     });
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "@Engineer 看一下这个实现边界",
       mentions: [{ id: "engineer", label: "Engineer", kind: "ai-teammate" }],
       requestAiReply: true,
@@ -2412,7 +3067,7 @@ test("channel observer bus skips unavailable observers without blocking the main
       "2099-06-27T00:00:00.000Z",
     );
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "@Engineer 看一下这个实现边界",
       mentions: [{ id: "engineer", label: "Engineer", kind: "ai-teammate" }],
       requestAiReply: true,
@@ -2473,7 +3128,7 @@ test("channel observer bus applies provider-level availability incidents to matc
       "2099-06-27T00:00:00.000Z",
     );
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "@Engineer 看一下这个实现边界",
       mentions: [{ id: "engineer", label: "Engineer", kind: "ai-teammate" }],
       requestAiReply: true,
@@ -2533,7 +3188,7 @@ test("channel observer bus ignores expired provider-level availability incidents
       "2026-06-26T00:00:00.000Z",
     );
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "@Engineer 看一下这个实现边界",
       mentions: [{ id: "engineer", label: "Engineer", kind: "ai-teammate" }],
       requestAiReply: true,
@@ -2614,7 +3269,7 @@ test("channel discussion injects web search context before runner reply", async 
       memberships: [{ channelId: channel.id }],
     });
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "@Designer 查一下 Ling Stack 最新消息",
       mentions: [{ id: "designer", label: "Designer", kind: "ai-teammate" }],
       requestAiReply: true,
@@ -2630,6 +3285,15 @@ test("channel discussion injects web search context before runner reply", async 
     assert.doesNotMatch(JSON.stringify(finalReply.webEvidence), /sk-test-secret-value/);
     const workUnit = store.listWorkUnits({ kind: "channel_ai_reply", linkedMessageId: finalReply.id, limit: 1 })[0];
     assert.ok(workUnit);
+    assert.ok(finalReply.linkedRunId);
+    const run = store.getRun(finalReply.linkedRunId);
+    assert.ok(run);
+    assert.equal(run.status, "succeeded");
+    assert.equal(run.workUnitId, workUnit.id);
+    assert.equal(workUnit.linkedRunId, run.id);
+    assert.equal(workUnit.linkedMessageId, finalReply.id);
+    assert.equal(store.getLingThread(run.threadId)?.kind, "channel_discussion");
+    assert.equal(store.listWorkUnits({ kind: "channel_ai_reply", linkedMessageId: finalReply.id, limit: 10 }).length, 1);
     const webEvidenceEvents = store.listRuntimeEvents(workUnit.id).filter((event) => event.type === "web_evidence_recorded");
     assert.equal(webEvidenceEvents.length, 1);
     assert.equal(webEvidenceEvents[0].data.toolSurface, "web");
@@ -2676,7 +3340,7 @@ test("channel discussion blocks runner prompt envelope echoes", async () => {
       memberships: [{ channelId: channel.id }],
     });
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "@Designer 给我一片关于AI发展的分析报告",
       mentions: [{ id: "designer", label: "Designer", kind: "ai-teammate" }],
       requestAiReply: true,
@@ -2709,7 +3373,7 @@ test("channel message stream emits visible deltas into a durable AI reply", asyn
       memberships: [{ channelId: channel.id }],
     });
 
-    const response = await fetch(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages/stream?cwd=${encodeURIComponent(cwd)}`, {
+    const response = await fetch(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns/stream?cwd=${encodeURIComponent(cwd)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -2721,15 +3385,36 @@ test("channel message stream emits visible deltas into a durable AI reply", asyn
 
     assert.equal(response.status, 200);
     const events = parseSseEvents(await response.text());
-    assert.deepEqual(events.map((event) => event.event), ["ready", "ready", "delta", "done"]);
+    assert.deepEqual(events.map((event) => event.event), ["ready", "reply_pending", "ready", "run_linked", "delta", "done"]);
     assert.equal(events[0].data.message.body, "@Engineer 请流式回复");
-    assert.equal(events[1].data.aiReply.status, "pending");
-    assert.equal(events[2].data.delta, "Streamed channel reply");
-    assert.equal(events[2].data.body, "Streamed channel reply");
-    assert.equal(events[3].data.aiReply.body, "Streamed channel reply");
+    assert.equal(events[1].data.sourceItemId, events[0].data.message.id);
+    assert.equal(events[1].data.targetTeammateId, "teammate_builtin_engineer");
+    assert.ok(events[1].data.startedAt);
+    assert.equal(events[2].data.aiReply.status, "pending");
+    assert.equal(events[3].data.itemId, events[2].data.aiReply.id);
+    assert.ok(events[3].data.linkedRunId);
+    const { threadId, sourceMessageId, ...activeReplyWithoutLineage } = events[3].data.activeReply;
+    assert.deepEqual(activeReplyWithoutLineage, {
+      runId: events[3].data.linkedRunId,
+      sourceRunId: events[3].data.linkedRunId,
+      workUnitId: events[3].data.activeReply.workUnitId,
+      channelId: channel.id,
+      teammateId: "teammate_builtin_engineer",
+      status: "queued",
+      createdAt: events[3].data.activeReply.createdAt,
+      updatedAt: events[3].data.activeReply.updatedAt,
+    });
+    assert.match(threadId, /^thread_/);
+    assert.equal(sourceMessageId, events[0].data.message.id);
+    assert.equal(threadId, events[2].data.aiReply.threadId);
+    assert.ok(events[3].data.activeReply.workUnitId);
+    assert.equal(JSON.stringify(events[3].data.activeReply).includes("prompt"), false);
+    assert.equal(events[4].data.delta, "Streamed channel reply");
+    assert.equal(events[4].data.body, "Streamed channel reply");
+    assert.equal(events[5].data.aiReply.body, "Streamed channel reply");
 
-    const listed = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`);
-    const finalReply = listed.messages.find((message) => message.id === events[1].data.aiReply.id);
+    const listed = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/items?cwd=${encodeURIComponent(cwd)}`);
+    const finalReply = listed.messages.find((message) => message.id === events[2].data.aiReply.id);
     assert.equal(finalReply.body, "Streamed channel reply");
     assert.equal(finalReply.status, "ready");
   } finally {
@@ -2771,6 +3456,15 @@ test("conversation stream materializes uploaded attachments into the run prompt"
     assert.ok(initialReady);
     assert.equal(initialReady.data.userMessage.attachments[0].id, attachment.id);
     assert.equal(initialReady.data.userMessage.attachments[0].fileName, "notes.txt");
+    const linkedReady = events.find((event) => event.event === "ready" && event.data.activeReply);
+    assert.ok(linkedReady);
+    assert.equal(linkedReady.data.activeReply.runId, linkedReady.data.runId);
+    assert.equal(linkedReady.data.activeReply.sourceRunId, linkedReady.data.runId);
+    assert.equal(linkedReady.data.activeReply.threadId, linkedReady.data.thread.id);
+    assert.equal(linkedReady.data.activeReply.teammateId, "ling_agent");
+    assert.equal(linkedReady.data.activeReply.status, "queued");
+    assert.ok(linkedReady.data.activeReply.workUnitId);
+    assert.equal(JSON.stringify(linkedReady.data.activeReply).includes("requestSnapshot"), false);
     assert.equal(runner.runs.length, 1);
     assert.match(runner.runs[0].task.prompt, /Attached files:/);
     assert.match(runner.runs[0].task.prompt, /Alpha decision: keep the shared composer contract\./);
@@ -2819,7 +3513,7 @@ test("channel message stream does not expose hidden task proposal blocks", async
       memberships: [{ channelId: channel.id }],
     });
 
-    const response = await fetch(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages/stream?cwd=${encodeURIComponent(cwd)}`, {
+    const response = await fetch(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns/stream?cwd=${encodeURIComponent(cwd)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -2831,10 +3525,10 @@ test("channel message stream does not expose hidden task proposal blocks", async
 
     assert.equal(response.status, 200);
     const events = parseSseEvents(await response.text());
-    assert.deepEqual(events.map((event) => event.event), ["ready", "ready", "delta", "done"]);
+    assert.deepEqual(events.map((event) => event.event), ["ready", "reply_pending", "ready", "run_linked", "delta", "done"]);
     assert.doesNotMatch(JSON.stringify(events.map((event) => event.data)), /ling_task_proposal/);
-    assert.equal(events[2].data.body, "可以开始。\n");
-    assert.equal(events[3].data.aiReply.body, "可以开始。");
+    assert.equal(events[4].data.body, "可以开始。\n");
+    assert.equal(events[5].data.aiReply.body, "可以开始。");
 
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(proposals.proposals.length, 1);
@@ -2845,7 +3539,7 @@ test("channel message stream does not expose hidden task proposal blocks", async
   }
 });
 
-test("channel AI reply prompt carries recent context for short follow-ups", async () => {
+test("channel AI reply prompt carries projected segment context for short follow-ups", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-reply-followup-context-"));
   const runner = new ScriptedRunner([
     "雨下到第三天，城里的钟停了。修表匠阿岚把怀表放进钟芯，世界重新开始走动。",
@@ -2857,7 +3551,7 @@ test("channel AI reply prompt carries recent context for short follow-ups", asyn
     const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
     await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
 
-    const first = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const first = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "300字的小说",
       providerPresetId: provider.id,
       teammateId: "ling_agent",
@@ -2865,7 +3559,7 @@ test("channel AI reply prompt carries recent context for short follow-ups", asyn
     });
     await waitForChannelMessageStatus(daemon.url, cwd, channel.id, first.aiReply.id, "ready");
 
-    const second = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const second = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "400字",
       providerPresetId: provider.id,
       teammateId: "ling_agent",
@@ -2874,7 +3568,8 @@ test("channel AI reply prompt carries recent context for short follow-ups", asyn
     await waitForChannelMessageStatus(daemon.url, cwd, channel.id, second.aiReply.id, "ready");
 
     assert.equal(runner.runs.length, 2);
-    assert.match(runner.runs[1].task.prompt, /Recent channel context before the latest turn/);
+    assert.equal(runner.segmentationRuns.length, 1);
+    assert.match(runner.runs[1].task.prompt, /Conversation context selected by Continuity v2/);
     assert.match(runner.runs[1].task.prompt, /300字的小说/);
     assert.match(runner.runs[1].task.prompt, /雨下到第三天，城里的钟停了/);
     assert.match(runner.runs[1].task.prompt, /User message:[\s\S]*400字/);
@@ -2901,14 +3596,14 @@ test("channel AI reply injects Plan Mode instructions for plan threads", async (
       mode: "plan",
     });
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "Plan the next implementation slice.",
-      threadId: thread.thread.id,
+      surface: { kind: "thread", threadId: thread.thread.id },
       providerPresetId: provider.id,
       teammateId: "ling_agent",
       requestAiReply: true,
     });
-    await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
+    await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready", created.message.threadId);
 
     assert.equal(runner.runs.length, 1);
     assert.match(runner.runs[0].systemPrompt, /Plan Mode is active/);
@@ -2926,7 +3621,14 @@ test("channel no-tools AI reply retries once with compacted channel summary afte
     new Error("context_length exceeded by test provider"),
     "Retry reply",
   ]);
-  const daemon = await startDaemonForTest(runner);
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
   try {
     const channel = await createChannel(daemon.url, cwd);
     const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
@@ -2938,7 +3640,7 @@ test("channel no-tools AI reply retries once with compacted channel summary afte
       memberships: [{ channelId: channel.id }],
     });
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "@Engineer 请根据频道上下文回复",
       mentions: [{ id: "engineer", label: "Engineer", kind: "ai-teammate" }],
       requestAiReply: true,
@@ -2961,9 +3663,128 @@ test("channel no-tools AI reply retries once with compacted channel summary afte
     assert.equal(persistedProvider.maxTokens, undefined);
 
     const summaries = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/context-summaries?cwd=${encodeURIComponent(cwd)}`);
-    assert.equal(summaries.contextSummaries.length, 1);
-    assert.equal(summaries.contextSummaries[0].authorType, "system");
-    assert.deepEqual(summaries.contextSummaries[0].sourceMessageIds, [created.message.id]);
+    assert.equal(summaries.contextSummaries.length, 0);
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const incidents = store.listAvailabilityIncidents({
+      providerPresetId: provider.id,
+      now: new Date().toISOString(),
+      limit: 10,
+    });
+    assert.equal(incidents.length, 1);
+    assert.equal(incidents[0].kind, "timeout");
+    assert.equal(incidents[0].state, "slow");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("channel hard summary uses the effective workspace provider before dispatching a reply", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-proactive-summary-"));
+  const runner = new SummaryAwareRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const provider = (await createStaticChatProvider(daemon.url, cwd, {
+      contextWindow: 1_800,
+      maxTokens: 512,
+    })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    await setWorkspaceDefaultProvider(daemon.url, cwd, provider.id);
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const thread = store.resolveOrCreateConversationThread({
+      surfaceKind: "channel_root",
+      channelId: channel.id,
+      title: "Proactive summary",
+      objective: "Summarize before the provider rejects the prompt",
+    }, "2026-08-10T06:00:00.000Z").thread;
+
+    for (let index = 0; index < 10; index += 1) {
+      const createdAt = new Date(Date.parse("2026-08-10T06:00:01.000Z") + index * 10_000).toISOString();
+      const turn = store.appendConversationUserTurn({
+        itemId: `item_proactive_summary_${index}`,
+        turnId: `turn_proactive_summary_${index}`,
+        channelId: channel.id,
+        threadId: thread.id,
+        title: `Historical fact ${index}`,
+        userInstruction: `Historical fact ${index}`,
+        payload: {
+          body: `Historical fact ${index}: ${"x".repeat(900)}`,
+          format: "plain_text",
+          mentions: [],
+          attachmentIds: [],
+          linkPreviewIds: [],
+          fileRefs: [],
+        },
+        idempotencyKey: `proactive-summary:${index}`,
+      }, createdAt);
+      const run = store.createRun({
+        id: `run_proactive_summary_${index}`,
+        cwd,
+        taskId: `task_proactive_summary_${index}`,
+        channelId: channel.id,
+        threadId: thread.id,
+        turnId: turn.turnId,
+        providerName: "test",
+        providerModel: "test",
+        taskSnapshot: {
+          id: `task_proactive_summary_${index}`,
+          title: `Historical fact ${index}`,
+          prompt: `Historical fact ${index}`,
+        },
+        providerSnapshot: { provider: "test", model: "test" },
+        requestSnapshot: {
+          cwd,
+          task: {
+            id: `task_proactive_summary_${index}`,
+            title: `Historical fact ${index}`,
+            prompt: `Historical fact ${index}`,
+          },
+        },
+        createdAt: new Date(Date.parse(createdAt) + 1_000).toISOString(),
+      });
+      store.markRunStarted(run.id, new Date(Date.parse(createdAt) + 2_000).toISOString());
+      store.markRunSucceeded(run.id, new Date(Date.parse(createdAt) + 3_000).toISOString());
+    }
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: "@Engineer continue from the durable summary.",
+      mentions: [{ id: "teammate_builtin_engineer", label: "Engineer", kind: "ai-teammate" }],
+      teammateId: "teammate_builtin_engineer",
+      requestAiReply: true,
+    });
+    await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
+
+    const target = resolveChannelReplyExecutionTarget({
+      store,
+      channel,
+      requestedTeammateId: "teammate_builtin_engineer",
+    });
+    assert.equal(target.providerPresetId, provider.id);
+    const currentItem = store.getConversationItem(created.message.id);
+    assert.ok(currentItem);
+    const plan = planConversationContextSummary({
+      store,
+      sourceItemId: currentItem.id,
+      inputBudgetTokens: resolveProviderContextBudget(provider, "channel_reply").inputBudgetTokens,
+    });
+    assert.equal(plan?.trigger, "hard");
+    assert.equal(runner.summaryRuns.length, 1);
+    assert.equal(runner.replyRuns.length, 1);
+    const summaries = store.listConversationContextSummaries({ threadId: thread.id });
+    assert.equal(summaries.length, 1);
+    assert.equal(summaries[0].objective, "Preserve the durable historical objective.");
+    assert.ok(summaries[0].coveredThroughSequence < currentItem.sequence);
+    assert.match(runner.replyRuns[0].task.prompt, /Preserve the durable historical objective/);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -2978,11 +3799,11 @@ test("mentions_only creates a blocked Ling Agent reply when the channel has no r
     const channel = await createChannel(daemon.url, cwd);
     simulateLegacyChannelWithoutModel(cwd, channel.id);
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "这个频道自动回复怎么设计？",
     });
 
-    assert.equal(created.aiReply.status, "pending");
+    assert.equal(created.aiReply.status, "blocked");
     assert.equal(created.aiReply.authorId, "ling_agent");
     const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "blocked");
     const blockedReply = listed.messages.find((message) => message.id === created.aiReply.id);
@@ -3022,7 +3843,7 @@ test("default_teammate routes root messages through Ling Agent without proposals
       allowedTools: ["read"],
     })).channel;
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "这个实现边界怎么处理？",
     });
     assert.equal(created.aiReply.status, "pending");
@@ -3047,9 +3868,13 @@ test("default_teammate routes root messages through Ling Agent without proposals
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}`);
     assert.deepEqual(proposals.proposals, []);
     assert.deepEqual((await getJson(`${daemon.url}/tasks?cwd=${encodeURIComponent(cwd)}`)).tasks, []);
-    assert.deepEqual((await getJson(`${daemon.url}/runs?cwd=${encodeURIComponent(cwd)}`)).runs, []);
+    const firstReplyRuns = (await getJson(`${daemon.url}/runs?cwd=${encodeURIComponent(cwd)}`)).runs;
+    assert.equal(firstReplyRuns.length, 1);
+    assert.equal(firstReplyRuns[0].id, finalReply.linkedRunId);
+    assert.equal(firstReplyRuns[0].status, "succeeded");
+    assert.equal(firstReplyRuns[0].taskId, created.message.id);
 
-    const countQuestion = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const countQuestion = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "现在频道有多少个队友",
     });
     assert.equal(countQuestion.aiReply.status, "pending");
@@ -3097,7 +3922,7 @@ test("channel intent selector creates visible multi-replies for discussion-only 
       });
     }
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "所有队友都回复我一下",
     });
 
@@ -3127,7 +3952,7 @@ test("channel intent selector creates visible multi-replies for discussion-only 
     const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(routeDecisions.decisions.length, 0);
 
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 1);
     assertIntentDecisionInspectPayloadIsSafe(decisions.decisions[0]);
     assert.equal(decisions.decisions[0].action, "visible_multi_reply");
@@ -3138,7 +3963,7 @@ test("channel intent selector creates visible multi-replies for discussion-only 
       created.aiReplies.map((reply) => reply.authorId).sort(),
     );
     assert.deepEqual(
-      [...decisions.decisions[0].replyMessageIds].sort(),
+      [...decisions.decisions[0].resultItemIds].sort(),
       created.aiReplies.map((reply) => reply.id).sort(),
     );
   } finally {
@@ -3179,8 +4004,10 @@ test("channel intent selector creates workflow proposals for execution-shaped al
       });
     }
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "所有队友都回复我一下：Architect 先拆，Engineer 实现，QA 验证",
+      teammateId: "ling_agent",
+      requestAiReply: true,
     });
 
     assert.equal(created.message.body, "所有队友都回复我一下：Architect 先拆，Engineer 实现，QA 验证");
@@ -3202,13 +4029,13 @@ test("channel intent selector creates workflow proposals for execution-shaped al
     assert.match(proposals.proposals[0].collaborationSteps[0].summary, /拆解实现边界/);
     assert.match(proposals.proposals[0].riskSummary, /工作流 proposal/);
 
-    const listedMessages = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`);
+    const listedMessages = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/items?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(listedMessages.messages.filter((message) => message.kind === "ai_reply").length, 0);
 
     const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(routeDecisions.decisions.length, 0);
 
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 1);
     assertIntentDecisionInspectPayloadIsSafe(decisions.decisions[0]);
     assert.equal(decisions.decisions[0].action, "workflow_proposal");
@@ -3243,7 +4070,7 @@ test("channel intent selector does not assign specialists outside current channe
       });
     }
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "Architect 先拆，Engineer 实现，QA 验证",
     });
 
@@ -3258,7 +4085,7 @@ test("channel intent selector does not assign specialists outside current channe
     assert.match(proposals.proposals[0].riskSummary, /Ling Agent 可以先处理/);
     assert.doesNotMatch(proposals.proposals[0].prompt, /Engineer:|QA:|Architect:/);
 
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 1);
     assertIntentDecisionInspectPayloadIsSafe(decisions.decisions[0]);
     assert.equal(decisions.decisions[0].action, "workflow_proposal");
@@ -3295,7 +4122,7 @@ test("channel intent selector uses attached AI council specialists without copyi
       preferredCouncilId: developmentCouncilId,
     });
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "Designer 先 review 交互，QA 验证这个频道设置改动",
     });
 
@@ -3338,7 +4165,7 @@ test("channel intent selector uses attached AI council specialists without copyi
     assert.equal(designerChannels.memberships.some((membership) => membership.channelId === channel.id), false);
     assert.equal(qaChannels.memberships.some((membership) => membership.channelId === channel.id), false);
 
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 1);
     assertIntentDecisionInspectPayloadIsSafe(decisions.decisions[0]);
     assert.equal(decisions.decisions[0].action, "workflow_proposal");
@@ -3372,14 +4199,14 @@ test("channel intent selector asks one clarify question for underspecified work 
       memberships: [{ channelId: channel.id }],
     });
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "做一下吧",
     });
 
     assert.equal(created.message.body, "做一下吧");
     assert.equal(created.aiReply.kind, "ai_reply");
     assert.equal(created.aiReply.status, "ready");
-    assert.equal(created.aiReply.threadId, created.message.id);
+    assert.equal(created.aiReply.threadId, created.message.threadId);
     assert.equal(created.aiReply.authorId, "ling_agent");
     assert.match(created.aiReply.body, /确认范围/);
     assert.equal(runner.runs.length, 0);
@@ -3390,14 +4217,16 @@ test("channel intent selector asks one clarify question for underspecified work 
     const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(routeDecisions.decisions.length, 0);
 
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 1);
     assertIntentDecisionInspectPayloadIsSafe(decisions.decisions[0]);
     assert.equal(decisions.decisions[0].action, "clarify");
     assert.equal(decisions.decisions[0].status, "accepted");
     assert.equal(decisions.decisions[0].createdBy, "deterministic");
-    assert.equal(decisions.decisions[0].selectedTeammateId, "ling_agent");
-    assert.equal(decisions.decisions[0].replyMessageId, created.aiReply.id);
+    assert.deepEqual(decisions.decisions[0].selectedTeammateIds, ["ling_agent"]);
+    assert.deepEqual(decisions.decisions[0].resultItemIds, [created.aiReply.id]);
+    assert.deepEqual(decisions.decisions[0].clarification.missingFields, ["acceptance_criteria"]);
+    assert.equal(decisions.decisions[0].clarification.question, created.aiReply.body);
     assert.match(decisions.decisions[0].reason, /Clarify question created from channel intent/);
   } finally {
     await daemon.close();
@@ -3430,14 +4259,14 @@ test("channel intent selector auto-starts explicit direct workflow proposals", a
       });
     }
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "开始跑 Architect -> Engineer -> QA",
     });
 
     assertCoordinatorWorkflowStartReply(created);
     assert.equal(created.autoStartedWorkflow.workflowSteps.length, 3);
     await waitForCondition(() => runner.runs.length === 3, "direct workflow proposal runner sequence");
-    const listedMessages = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`);
+    const listedMessages = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/items?cwd=${encodeURIComponent(cwd)}`);
     const terminalReply = assertCoordinatorWorkflowTerminalReply(listedMessages.messages);
     assert.match(terminalReply.body, /结果：Designer reply/);
 
@@ -3452,10 +4281,10 @@ test("channel intent selector auto-starts explicit direct workflow proposals", a
     );
     assert.match(proposals.proposals[0].riskSummary, /runtime approval policy/);
 
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 2);
     assertIntentDecisionInspectPayloadIsSafe(decisions.decisions[0]);
-    assert.equal(decisions.decisions[0].action, "direct_workflow");
+    assert.equal(decisions.decisions[0].action, "execute");
     assert.equal(decisions.decisions[0].status, "accepted");
     assert.equal(decisions.decisions[0].proposalId, proposals.proposals[0].id);
     assert.equal(decisions.decisions.some((decision) => /auto-started proposal/.test(decision.reason)), true);
@@ -3494,7 +4323,7 @@ test("explicit response language overrides workspace default for workflow propos
       });
     }
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "Architect 先拆，Engineer 实现，QA 验证。Please respond in English.",
     });
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
@@ -3523,7 +4352,7 @@ test("channel response language overrides follow-user inference for workflow pro
       allowedTools: ["read", "grep"],
     })).channel;
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "Architect 先拆，Engineer 实现，QA 验证",
     });
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
@@ -3555,7 +4384,7 @@ test("single-step file creation becomes direct workflow with bounded write tools
     })).channel;
     await setWorkspaceDefaultProvider(daemon.url, cwd, channel.defaultProviderPresetId);
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: `在 ${cwd} 下创建 README.md`,
     });
 
@@ -3570,9 +4399,9 @@ test("single-step file creation becomes direct workflow with bounded write tools
     assert.match(proposals.proposals[0].riskSummary, /write/);
     assert.match(proposals.proposals[0].prompt, /权限边界/);
 
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 2);
-    assert.equal(decisions.decisions[0].action, "direct_workflow");
+    assert.equal(decisions.decisions[0].action, "execute");
     assert.equal(decisions.decisions[0].status, "accepted");
     assert.equal(decisions.decisions.some((decision) => /auto-started proposal/.test(decision.reason)), true);
 
@@ -3580,6 +4409,50 @@ test("single-step file creation becomes direct workflow with bounded write tools
     assert.equal(runner.runs.length, 1);
     assert.deepEqual(runner.runs[0].tools, ["write"]);
     assert.match(runner.runs[0].task.prompt, /Confirmed task-scoped tools:\nwrite/);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("explicit command request becomes execute with bounded bash tools", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-single-command-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Command execution",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      defaultTeammateId: "teammate_builtin_qa",
+      autoReplyMode: "default_teammate",
+      allowedTools: ["read", "bash"],
+    })).channel;
+    await setWorkspaceDefaultProvider(daemon.url, cwd, channel.defaultProviderPresetId);
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: "运行 `pnpm test` 并报告结果。",
+    });
+
+    assertCoordinatorWorkflowStartReply(created);
+    assert.equal(created.autoStartedWorkflow.workflowSteps.length, 1);
+    const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(proposals.proposals.length, 1);
+    assert.equal(proposals.proposals[0].status, "accepted");
+    assert.deepEqual(proposals.proposals[0].requiredTools, ["bash"]);
+    assert.match(proposals.proposals[0].prompt, /pnpm test/);
+
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(decisions.decisions.length, 2);
+    assert(decisions.decisions.every((decision) => decision.action === "execute"));
+    assert(decisions.decisions.every((decision) => decision.execution.kind === "run_command"));
+    assert(decisions.decisions.every((decision) => decision.execution.targetKind === "command"));
+    assert.equal(runner.runs.length, 1);
+    assert.deepEqual(runner.runs[0].tools, ["bash"]);
+    assert.match(runner.runs[0].task.prompt, /pnpm test/);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -3602,7 +4475,7 @@ test("explicit Ling Agent file request becomes direct workflow instead of discus
       allowedTools: ["read", "grep", "find", "ls", "write"],
     })).channel;
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: `@Ling Agent 在 ${cwd} 下创建 login.html`,
       mentions: [{ id: "ling_agent", label: "Ling Agent", kind: "ai-teammate" }],
       requestAiReply: true,
@@ -3619,8 +4492,8 @@ test("explicit Ling Agent file request becomes direct workflow instead of discus
     assert.match(proposals.proposals[0].prompt, /login\.html/);
     const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(routeDecisions.decisions, []);
-    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
-    assert.equal(intentDecisions.decisions.some((decision) => decision.action === "direct_workflow" && /Bounded executable request/.test(decision.reason)), true);
+    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(intentDecisions.decisions.some((decision) => decision.action === "execute" && /Bounded executable request/.test(decision.reason)), true);
     assert.equal(runner.runs.length, 1);
     assert.deepEqual(runner.runs[0].tools, ["write"]);
     assert.match(runner.runs[0].task.prompt, /login\.html/);
@@ -3654,7 +4527,7 @@ test("workspace follow-up can create the single file named by the previous Ling 
     })).channel;
     const store = stores.get(cwd);
     assert.ok(store);
-    const previousUser = store.createChannelMessage(
+    const previousUser = appendChannelItemFixture(store,
       {
         channelId: channel.id,
         kind: "message",
@@ -3664,10 +4537,10 @@ test("workspace follow-up can create the single file named by the previous Ling 
       },
       "2026-06-12T09:00:00.000Z",
     );
-    store.createChannelMessage(
+    appendChannelItemFixture(store,
       {
         channelId: channel.id,
-        threadId: previousUser.id,
+        threadId: previousUser.threadId,
         kind: "ai_reply",
         intent: "discuss",
         authorType: "ai-teammate",
@@ -3678,7 +4551,7 @@ test("workspace follow-up can create the single file named by the previous Ling 
       "2026-06-12T09:01:00.000Z",
     );
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "可以直接在工作区帮我做好吗？",
       mentions: [{ id: "ling_agent", label: "Ling Agent", kind: "ai-teammate" }],
       requestAiReply: true,
@@ -3726,7 +4599,7 @@ test("thread follow-up can create the single file named by the previous Ling Age
     })).channel;
     const store = stores.get(cwd);
     assert.ok(store);
-    const previousUser = store.createChannelMessage(
+    const previousUser = appendChannelItemFixture(store,
       {
         channelId: channel.id,
         kind: "message",
@@ -3736,10 +4609,10 @@ test("thread follow-up can create the single file named by the previous Ling Age
       },
       "2026-06-12T09:00:00.000Z",
     );
-    store.createChannelMessage(
+    appendChannelItemFixture(store,
       {
         channelId: channel.id,
-        threadId: previousUser.id,
+        threadId: previousUser.threadId,
         kind: "ai_reply",
         intent: "discuss",
         authorType: "ai-teammate",
@@ -3757,16 +4630,17 @@ test("thread follow-up can create the single file named by the previous Ling Age
       "2026-06-12T09:01:00.000Z",
     );
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
-      threadId: previousUser.id,
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      surface: { kind: "topic", anchorItemId: previousUser.id },
       body: "你不可以直接帮我写到里面吗？",
       mentions: [{ id: "ling_agent", label: "Ling Agent", kind: "ai-teammate" }],
       requestAiReply: true,
     });
 
     assertCoordinatorWorkflowStartReply(created, previousUser.id);
-    assert.equal(created.message.threadId, previousUser.id);
-    assert.equal(created.aiReply.threadId, previousUser.id);
+    assert.notEqual(created.message.threadId, previousUser.id);
+    assert.equal(store.getLingThread(created.message.threadId)?.anchorItemId, previousUser.id);
+    assert.equal(created.aiReply.threadId, created.message.threadId);
     assert.equal(created.autoStartedWorkflow.workflowSteps.length, 1);
     assert.doesNotMatch(created.aiReply.body, /不能直接修改工作区|cannot directly modify|没有被授权执行工作区写入/i);
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
@@ -3776,8 +4650,8 @@ test("thread follow-up can create the single file named by the previous Ling Age
     assert.match(proposals.proposals[0].prompt, /Target: index\.html/);
     const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(routeDecisions.decisions, []);
-    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
-    assert.equal(intentDecisions.decisions.some((decision) => decision.action === "direct_workflow" && /Bounded executable request/.test(decision.reason)), true);
+    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(intentDecisions.decisions.some((decision) => decision.action === "execute" && /Bounded executable request/.test(decision.reason)), true);
     assert.equal(runner.runs.length, 1);
     assert.deepEqual(runner.runs[0].tools, ["write"]);
     assert.match(runner.runs[0].task.prompt, /Target: index\.html/);
@@ -3811,7 +4685,7 @@ test("thread follow-up opens the recent HTML target with bounded bash tools", as
     })).channel;
     const store = stores.get(cwd);
     assert.ok(store);
-    const previousUser = store.createChannelMessage(
+    const previousUser = appendChannelItemFixture(store,
       {
         channelId: channel.id,
         kind: "message",
@@ -3821,10 +4695,10 @@ test("thread follow-up opens the recent HTML target with bounded bash tools", as
       },
       "2026-06-12T09:00:00.000Z",
     );
-    store.createChannelMessage(
+    appendChannelItemFixture(store,
       {
         channelId: channel.id,
-        threadId: previousUser.id,
+        threadId: previousUser.threadId,
         kind: "ai_reply",
         intent: "discuss",
         authorType: "ai-teammate",
@@ -3835,8 +4709,8 @@ test("thread follow-up opens the recent HTML target with bounded bash tools", as
       "2026-06-12T09:01:00.000Z",
     );
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
-      threadId: previousUser.id,
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      surface: { kind: "topic", anchorItemId: previousUser.id },
       body: "可以直接帮我浏览器打开吗？",
       mentions: [{ id: "ling_agent", label: "Ling Agent", kind: "ai-teammate" }],
       requestAiReply: true,
@@ -3863,7 +4737,11 @@ test("thread follow-up opens the recent HTML target with bounded bash tools", as
 test("model-assisted thread follow-up opens recent target from typed operation kind", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-thread-model-followup-open-"));
   const runner = new ScriptedRunner([
-    JSON.stringify({ action: "direct_workflow", operationKind: "open_local_target", reason: "User wants to preview the recent local artifact." }),
+    JSON.stringify({
+      action: "execute",
+      reason: "User wants to preview the recent local artifact.",
+      execution: { kind: "open_local_target", targetKind: "file" },
+    }),
     "Opened local target.",
   ]);
   const stores = new Map();
@@ -3887,7 +4765,7 @@ test("model-assisted thread follow-up opens recent target from typed operation k
     })).channel;
     const store = stores.get(cwd);
     assert.ok(store);
-    const previousUser = store.createChannelMessage(
+    const previousUser = appendChannelItemFixture(store,
       {
         channelId: channel.id,
         kind: "message",
@@ -3897,10 +4775,10 @@ test("model-assisted thread follow-up opens recent target from typed operation k
       },
       "2026-06-12T09:00:00.000Z",
     );
-    store.createChannelMessage(
+    appendChannelItemFixture(store,
       {
         channelId: channel.id,
-        threadId: previousUser.id,
+        threadId: previousUser.threadId,
         kind: "ai_reply",
         intent: "discuss",
         authorType: "ai-teammate",
@@ -3911,8 +4789,8 @@ test("model-assisted thread follow-up opens recent target from typed operation k
       "2026-06-12T09:01:00.000Z",
     );
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
-      threadId: previousUser.id,
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      surface: { kind: "topic", anchorItemId: previousUser.id },
       body: "可以直接帮我展示一下这个成果吗？",
     });
 
@@ -3924,11 +4802,11 @@ test("model-assisted thread follow-up opens recent target from typed operation k
     assert.deepEqual(proposals.proposals[0].requiredTools, ["bash"]);
     assert.match(proposals.proposals[0].prompt, /Open index\.html in the local browser/);
     assert.doesNotMatch(proposals.proposals[0].prompt, /Create index\.html|declared file tool scope/);
-    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(intentDecisions.decisions.some((decision) =>
-      decision.action === "direct_workflow" &&
-      decision.createdBy === "model" &&
-      /direct_workflow\/open_local_target/.test(decision.reason)
+      decision.action === "execute" &&
+      decision.createdBy === "model_policy" &&
+      /execute\/open_local_target/.test(decision.reason)
     ), true);
     assert.equal(runner.runs.length, 2);
     assert.match(runner.runs[0].systemPrompt, /channel intent selector/i);
@@ -3944,7 +4822,11 @@ test("model-assisted thread follow-up opens recent target from typed operation k
 test("model-assisted thread follow-up writes the recent local target without phrase-rule matching", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-thread-model-followup-file-"));
   const runner = new ScriptedRunner([
-    JSON.stringify({ action: "direct_workflow", operationKind: "file_create", reason: "User is asking Ling to write the previously discussed file locally." }),
+    JSON.stringify({
+      action: "execute",
+      reason: "User is asking Ling to write the previously discussed file locally.",
+      execution: { kind: "file_create", targetKind: "file" },
+    }),
     "Created local file.",
   ]);
   const stores = new Map();
@@ -3968,7 +4850,7 @@ test("model-assisted thread follow-up writes the recent local target without phr
     })).channel;
     const store = stores.get(cwd);
     assert.ok(store);
-    const previousUser = store.createChannelMessage(
+    const previousUser = appendChannelItemFixture(store,
       {
         channelId: channel.id,
         kind: "message",
@@ -3978,10 +4860,10 @@ test("model-assisted thread follow-up writes the recent local target without phr
       },
       "2026-06-12T09:00:00.000Z",
     );
-    store.createChannelMessage(
+    appendChannelItemFixture(store,
       {
         channelId: channel.id,
-        threadId: previousUser.id,
+        threadId: previousUser.threadId,
         kind: "ai_reply",
         intent: "discuss",
         authorType: "ai-teammate",
@@ -3998,8 +4880,8 @@ test("model-assisted thread follow-up writes the recent local target without phr
       "2026-06-12T09:01:00.000Z",
     );
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
-      threadId: previousUser.id,
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      surface: { kind: "topic", anchorItemId: previousUser.id },
       body: "你现在可以帮我写在本地里面了吗？",
     });
 
@@ -4014,11 +4896,11 @@ test("model-assisted thread follow-up writes the recent local target without phr
     assert.match(proposals.proposals[0].prompt, /Target: index\.html/);
     const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(routeDecisions.decisions, []);
-    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(intentDecisions.decisions.some((decision) =>
-      decision.action === "direct_workflow" &&
-      decision.createdBy === "model" &&
-      /Model-assisted direct_workflow\/file_create validated/.test(decision.reason)
+      decision.action === "execute" &&
+      decision.createdBy === "model_policy" &&
+      /Model-assisted execute\/file_create validated/.test(decision.reason)
     ), true);
     assert.equal(runner.runs.length, 2);
     assert.match(runner.runs[0].systemPrompt, /channel intent selector/i);
@@ -4035,7 +4917,11 @@ test("model-assisted thread follow-up writes the recent local target without phr
 test("model-assisted thread follow-up clarifies instead of creating empty recent target", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-thread-model-followup-empty-file-"));
   const runner = new ScriptedRunner([
-    JSON.stringify({ action: "direct_workflow", operationKind: "file_create", reason: "User is asking Ling to write the previously discussed file locally." }),
+    JSON.stringify({
+      action: "execute",
+      reason: "User is asking Ling to write the previously discussed file locally.",
+      execution: { kind: "file_create", targetKind: "file" },
+    }),
   ]);
   const stores = new Map();
   const daemon = await startDaemonForTest(runner, {
@@ -4058,7 +4944,7 @@ test("model-assisted thread follow-up clarifies instead of creating empty recent
     })).channel;
     const store = stores.get(cwd);
     assert.ok(store);
-    const previousUser = store.createChannelMessage(
+    const previousUser = appendChannelItemFixture(store,
       {
         channelId: channel.id,
         kind: "message",
@@ -4068,10 +4954,10 @@ test("model-assisted thread follow-up clarifies instead of creating empty recent
       },
       "2026-06-12T09:00:00.000Z",
     );
-    store.createChannelMessage(
+    appendChannelItemFixture(store,
       {
         channelId: channel.id,
-        threadId: previousUser.id,
+        threadId: previousUser.threadId,
         kind: "ai_reply",
         intent: "discuss",
         authorType: "ai-teammate",
@@ -4082,8 +4968,8 @@ test("model-assisted thread follow-up clarifies instead of creating empty recent
       "2026-06-12T09:01:00.000Z",
     );
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
-      threadId: previousUser.id,
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      surface: { kind: "topic", anchorItemId: previousUser.id },
       body: "你现在可以帮我写在本地里面了吗？",
     });
 
@@ -4105,7 +4991,11 @@ test("model-assisted thread follow-up clarifies instead of creating empty recent
 test("model-assisted local write request clarifies when no target validates", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-model-followup-missing-target-"));
   const runner = new ScriptedRunner([
-    JSON.stringify({ action: "direct_workflow", operationKind: "file_create", reason: "User is asking Ling to write something locally." }),
+    JSON.stringify({
+      action: "execute",
+      reason: "User is asking Ling to write something locally.",
+      execution: { kind: "file_create", targetKind: "file" },
+    }),
   ]);
   const daemon = await startDaemonForTest(runner, {}, { channels: { intentSelector: true } });
   try {
@@ -4120,7 +5010,7 @@ test("model-assisted local write request clarifies when no target validates", as
       allowedTools: ["read", "grep", "find", "ls", "write"],
     })).channel;
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "你现在可以帮我写在本地里面了吗？",
     });
 
@@ -4135,10 +5025,12 @@ test("model-assisted local write request clarifies when no target validates", as
     assert.deepEqual(proposals.proposals, []);
     const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(routeDecisions.decisions, []);
-    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(intentDecisions.decisions.length, 1);
     assert.equal(intentDecisions.decisions[0].action, "clarify");
-    assert.equal(intentDecisions.decisions[0].createdBy, "model");
+    assert.equal(intentDecisions.decisions[0].createdBy, "model_policy");
+    assert.deepEqual(intentDecisions.decisions[0].clarification.missingFields, ["target"]);
+    assert.equal(intentDecisions.decisions[0].clarification.question, created.aiReply.body);
     assert.match(intentDecisions.decisions[0].reason, /target validation failed/);
   } finally {
     await daemon.close();
@@ -4170,7 +5062,7 @@ test("workspace follow-up clarifies when the previous Ling Agent reply names mul
     })).channel;
     const store = stores.get(cwd);
     assert.ok(store);
-    const previousUser = store.createChannelMessage(
+    const previousUser = appendChannelItemFixture(store,
       {
         channelId: channel.id,
         kind: "message",
@@ -4180,10 +5072,10 @@ test("workspace follow-up clarifies when the previous Ling Agent reply names mul
       },
       "2026-06-12T09:00:00.000Z",
     );
-    store.createChannelMessage(
+    appendChannelItemFixture(store,
       {
         channelId: channel.id,
-        threadId: previousUser.id,
+        threadId: previousUser.threadId,
         kind: "ai_reply",
         intent: "discuss",
         authorType: "ai-teammate",
@@ -4194,7 +5086,7 @@ test("workspace follow-up clarifies when the previous Ling Agent reply names mul
       "2026-06-12T09:01:00.000Z",
     );
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "可以直接在工作区帮我做好吗？",
       mentions: [{ id: "ling_agent", label: "Ling Agent", kind: "ai-teammate" }],
       requestAiReply: true,
@@ -4207,7 +5099,7 @@ test("workspace follow-up clarifies when the previous Ling Agent reply names mul
     assert.match(created.aiReply.body, /README\.md/);
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(proposals.proposals, []);
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 1);
     assert.equal(decisions.decisions[0].action, "clarify");
     assert.match(decisions.decisions[0].reason, /multiple file targets/i);
@@ -4242,7 +5134,7 @@ test("thread follow-up clarifies when the previous Ling Agent reply names multip
     })).channel;
     const store = stores.get(cwd);
     assert.ok(store);
-    const previousUser = store.createChannelMessage(
+    const previousUser = appendChannelItemFixture(store,
       {
         channelId: channel.id,
         kind: "message",
@@ -4252,10 +5144,10 @@ test("thread follow-up clarifies when the previous Ling Agent reply names multip
       },
       "2026-06-12T09:00:00.000Z",
     );
-    store.createChannelMessage(
+    appendChannelItemFixture(store,
       {
         channelId: channel.id,
-        threadId: previousUser.id,
+        threadId: previousUser.threadId,
         kind: "ai_reply",
         intent: "discuss",
         authorType: "ai-teammate",
@@ -4266,8 +5158,8 @@ test("thread follow-up clarifies when the previous Ling Agent reply names multip
       "2026-06-12T09:01:00.000Z",
     );
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
-      threadId: previousUser.id,
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      surface: { kind: "topic", anchorItemId: previousUser.id },
       body: "你直接帮我写到里面",
       mentions: [{ id: "ling_agent", label: "Ling Agent", kind: "ai-teammate" }],
       requestAiReply: true,
@@ -4275,13 +5167,13 @@ test("thread follow-up clarifies when the previous Ling Agent reply names multip
 
     assert.equal(created.autoStartedWorkflow, undefined);
     assert.equal(created.aiReply.status, "ready");
-    assert.equal(created.aiReply.threadId, previousUser.id);
+    assert.equal(created.aiReply.threadId, created.message.threadId);
     assert.match(created.aiReply.body, /多个可能的文件目标|多个可能目标/);
     assert.match(created.aiReply.body, /login\.html/);
     assert.match(created.aiReply.body, /README\.md/);
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(proposals.proposals, []);
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 1);
     assert.equal(decisions.decisions[0].action, "clarify");
     assert.match(decisions.decisions[0].reason, /multiple file targets/i);
@@ -4313,7 +5205,7 @@ test("text attachment preview can feed a direct README write workflow", async ()
       contentBase64: Buffer.from("README body from attachment", "utf8").toString("base64"),
     })).attachment;
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "把附件内容写进 README.md",
       attachmentIds: [attachment.id],
     });
@@ -4327,7 +5219,7 @@ test("text attachment preview can feed a direct README write workflow", async ()
     assert.match(proposals.proposals[0].prompt, /Attachment: readme-copy\.txt/);
     assert.match(proposals.proposals[0].prompt, /README body from attachment/);
     assert.match(runner.runs[0].task.prompt, /README body from attachment/);
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.some((decision) => /auto-started proposal/.test(decision.reason)), true);
   } finally {
     await daemon.close();
@@ -4363,7 +5255,7 @@ test("text attachment materialization cache hit avoids rereading attachment file
       contentBase64: Buffer.from("Cached attachment body", "utf8").toString("base64"),
     })).attachment;
 
-    const first = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const first = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "把附件内容写进 README.md",
       attachmentIds: [attachment.id],
     });
@@ -4384,7 +5276,7 @@ test("text attachment materialization cache hit avoids rereading attachment file
 
     await rm(resolve(store.paths.attachmentsDir, attachment.path), { force: true });
 
-    const second = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const second = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "把附件内容写进 SECOND.md",
       attachmentIds: [attachment.id],
     });
@@ -4427,7 +5319,7 @@ test("attachment-dependent README write blocks when attachment content is not ma
       contentBase64: Buffer.from(oversized, "utf8").toString("base64"),
     })).attachment;
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "把附件内容写进 README.md",
       attachmentIds: [attachment.id],
     });
@@ -4440,9 +5332,9 @@ test("attachment-dependent README write blocks when attachment content is not ma
     assert.equal(proposals.proposals[0].status, "blocked");
     assert.match(proposals.proposals[0].errorMessage, /可读的附件内容|readable attachment content/i);
     assert.doesNotMatch(proposals.proposals[0].errorMessage, /附件预览|attachment preview|too large|previewStatus/i);
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 1);
-    assert.equal(decisions.decisions[0].action, "direct_workflow");
+    assert.equal(decisions.decisions[0].action, "execute");
     assert.match(decisions.decisions[0].reason, /no available attachment preview\/extraction/i);
   } finally {
     await daemon.close();
@@ -4468,7 +5360,7 @@ test("unreadable screenshot task creates Ling materialization clarify reply", as
       contentBase64: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString("base64"),
     })).attachment;
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "根据这个截图修 UI",
       attachmentIds: [attachment.id],
     });
@@ -4479,7 +5371,7 @@ test("unreadable screenshot task creates Ling materialization clarify reply", as
     assert.doesNotMatch(created.aiReply.body, /OCR|视觉提取|metadata_only|extractor|SSRF/i);
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(proposals.proposals.length, 0);
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 1);
     assert.equal(decisions.decisions[0].action, "clarify");
     assert.equal(decisions.decisions[0].status, "accepted");
@@ -4507,7 +5399,7 @@ test("blocked link body request creates Ling materialization clarify reply", asy
     })).linkPreview;
     assert.equal(linkPreview.status, "blocked");
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "Please summarize this link",
       linkPreviewIds: [linkPreview.id],
     });
@@ -4516,7 +5408,7 @@ test("blocked link body request creates Ling materialization clarify reply", asy
     assert.equal(runner.runs.length, 0);
     assert.match(created.aiReply.body, /local\/private links automatically|本机或私有地址/i);
     assert.doesNotMatch(created.aiReply.body, /body extraction is blocked|SSRF|metadata_only|extractor/i);
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 1);
     assert.equal(decisions.decisions[0].action, "clarify");
     assert.match(decisions.decisions[0].reason, /Link body materialization is blocked/);
@@ -4542,7 +5434,7 @@ test("Ling Agent fallback creates file proposal when no Docs teammate can run", 
       allowedTools: ["read", "grep", "find", "ls", "write"],
     })).channel;
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: `在 ${cwd} 下创建 README.md`,
     });
 
@@ -4592,7 +5484,7 @@ test("Ling Agent fallback edits code proposal when no Engineer teammate can run"
       allowedTools: ["read", "grep", "find", "ls", "edit"],
     })).channel;
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: `修改 ${cwd}/src/app.ts，把标题改成 Ling`,
     });
 
@@ -4639,7 +5531,7 @@ test("single-step file creation starts with task-scoped write when channel lacks
     })).channel;
     await setWorkspaceDefaultProvider(daemon.url, cwd, channel.defaultProviderPresetId);
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: `在 ${cwd} 下创建 README.md`,
     });
 
@@ -4684,14 +5576,14 @@ test("single-step file edit inherits target path from recent workflow context", 
     })).channel;
     await setWorkspaceDefaultProvider(daemon.url, cwd, channel.defaultProviderPresetId);
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: `在 ${cwd} 下创建 README.md`,
     });
     const createProposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(createProposals.proposals.length, 1);
     assert.equal(createProposals.proposals[0].status, "accepted");
 
-    const edited = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const edited = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "在 README.md 中添加一句测试语句",
     });
 
@@ -4706,8 +5598,8 @@ test("single-step file edit inherits target path from recent workflow context", 
     assert.match(editProposals.proposals[0].prompt, new RegExp(`Target: ${escapeRegExp(cwd)}/README\\.md`));
     const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(edited.message.id)}`);
     assert.deepEqual(routeDecisions.decisions, []);
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(edited.message.id)}`);
-    assert.equal(decisions.decisions[0].action, "direct_workflow");
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(edited.message.id)}`);
+    assert.equal(decisions.decisions[0].action, "execute");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -4732,7 +5624,7 @@ test("single-step file edit normalizes Users path without leading slash", async 
     })).channel;
     await setWorkspaceDefaultProvider(daemon.url, cwd, channel.defaultProviderPresetId);
 
-    const edited = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const edited = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "Users/tianxiao/ling-stack-test 下面，在 README.md 中添加一句测试语句",
     });
 
@@ -4762,7 +5654,7 @@ test("file creation how-to question remains ordinary Ling chat intent", async ()
       allowedTools: ["read", "grep", "find", "ls", "write"],
     })).channel;
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "如何创建 README.md？",
     });
 
@@ -4770,14 +5662,15 @@ test("file creation how-to question remains ordinary Ling chat intent", async ()
     assert.equal(created.aiReply.authorId, "ling_agent");
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(proposals.proposals, []);
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
-    assert.deepEqual(decisions.decisions, []);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
+    assertSingleReplyIntentDecision(decisions.decisions, created.message.id);
 
-    const whyQuestion = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const whyQuestion = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "为什么不能创建 README.md？",
     });
     assert.equal(whyQuestion.aiReply.status, "pending");
-    assert.equal(whyQuestion.aiReply.authorId, "ling_agent");
+    assert.equal(whyQuestion.replyDispatch.disposition, "reply_requested");
+    assert.equal(whyQuestion.replyDispatch.targetTeammateId, "ling_agent");
     const whyProposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(whyQuestion.message.id)}`);
     assert.deepEqual(whyProposals.proposals, []);
   } finally {
@@ -4800,7 +5693,7 @@ test("single-step test request becomes direct workflow with bounded bash tools",
     })).channel;
     await setWorkspaceDefaultProvider(daemon.url, cwd, channel.defaultProviderPresetId);
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "开始执行测试",
     });
 
@@ -4813,8 +5706,8 @@ test("single-step test request becomes direct workflow with bounded bash tools",
     assert.equal(proposals.proposals[0].assigneeTeammateId, "teammate_builtin_qa");
     assert.deepEqual(proposals.proposals[0].requiredTools, ["bash"]);
     assert.match(proposals.proposals[0].riskSummary, /bash/);
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
-    assert.equal(decisions.decisions[0].action, "direct_workflow");
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(decisions.decisions[0].action, "execute");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -4837,7 +5730,7 @@ test("high-risk push merge request auto-starts when required tools are not denie
       allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
     })).channel;
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "帮我 push 合并代码",
     });
 
@@ -4853,7 +5746,7 @@ test("high-risk push merge request auto-starts when required tools are not denie
 
     const workflows = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workflows?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(workflows.workflows.length, 1);
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.some((decision) => /High-risk side effect is runtime-gated: git_push_or_merge/.test(decision.reason)), true);
   } finally {
     await daemon.close();
@@ -4885,7 +5778,7 @@ test("high-risk thread follow-up creates a proposal without auto-starting", asyn
     })).channel;
     const store = stores.get(cwd);
     assert.ok(store);
-    const previousUser = store.createChannelMessage(
+    const previousUser = appendChannelItemFixture(store,
       {
         channelId: channel.id,
         kind: "message",
@@ -4896,8 +5789,8 @@ test("high-risk thread follow-up creates a proposal without auto-starting", asyn
       "2026-06-12T09:00:00.000Z",
     );
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
-      threadId: previousUser.id,
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      surface: { kind: "topic", anchorItemId: previousUser.id },
       body: "帮我 push 合并代码",
       mentions: [{ id: "ling_agent", label: "Ling Agent", kind: "ai-teammate" }],
       requestAiReply: true,
@@ -4915,8 +5808,8 @@ test("high-risk thread follow-up creates a proposal without auto-starting", asyn
 
     const workflows = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workflows?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(workflows.workflows.length, 0);
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
-    assert.equal(decisions.decisions.some((decision) => decision.action === "direct_workflow" && decision.status === "accepted"), true);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(decisions.decisions.some((decision) => decision.action === "execute" && decision.status === "accepted"), true);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -4942,7 +5835,7 @@ test("high-risk push merge request blocks before run when required tool is denie
       allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
     })).channel;
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "帮我 push 合并代码",
     });
 
@@ -4955,7 +5848,7 @@ test("high-risk push merge request blocks before run when required tool is denie
     assert.equal(proposals.proposals[0].status, "draft");
     assert.equal(proposals.proposals[0].linkedWorkflowId, undefined);
 
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.some((decision) => decision.status === "failed" && /denies required tools: bash/.test(decision.errorMessage ?? decision.reason)), true);
   } finally {
     await daemon.close();
@@ -4989,7 +5882,7 @@ test("model-assisted channel intent no_reply falls through to ordinary Ling repl
       memberships: [{ channelId: channel.id }],
     });
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "这个实现边界怎么处理？",
     });
 
@@ -5009,11 +5902,11 @@ test("model-assisted channel intent no_reply falls through to ordinary Ling repl
     assert.equal(routeDecisions.decisions[0].action, "reply");
     assert.equal(routeDecisions.decisions[0].status, "accepted");
     assert.equal(routeDecisions.decisions[0].replyMessageId, created.aiReply.id);
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 1);
     assert.equal(decisions.decisions[0].action, "no_reply");
     assert.equal(decisions.decisions[0].status, "suppressed");
-    assert.equal(decisions.decisions[0].createdBy, "model");
+    assert.equal(decisions.decisions[0].createdBy, "model_policy");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -5045,7 +5938,7 @@ test("model-assisted channel intent selector does not fall back to phrase-rule w
       });
     }
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "Architect 先拆，Engineer 实现，QA 验证",
     });
 
@@ -5055,8 +5948,167 @@ test("model-assisted channel intent selector does not fall back to phrase-rule w
     await waitForCondition(() => runner.runs.length === 2, "ordinary channel reply after selector parse failure");
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(proposals.proposals.length, 0);
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
-    assert.equal(decisions.decisions.length, 0);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
+    assertSingleReplyIntentDecision(decisions.decisions, created.message.id);
+    assert.equal(decisions.decisions[0].createdBy, "deterministic");
+    assert.match(decisions.decisions[0].reason, /fail-open to an ordinary reply/i);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("issue #421 article continuation stays reply while an explicit README save executes", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-issue-421-article-"));
+  const runner = new ScriptedRunner([
+    JSON.stringify({ action: "reply", reason: "The user asked for conversational article content." }),
+    "提纲：一、可恢复记忆；二、选择性投影；三、多 Agent 一致性。",
+    JSON.stringify({ action: "reply", reason: "The user confirmed that the article should continue in chat." }),
+    "正文：可恢复记忆的关键不是无限拼接历史，而是保留可追溯事实并按当前任务投影。",
+    JSON.stringify({
+      action: "execute",
+      reason: "The user explicitly requested a local README write.",
+      execution: { kind: "file_create", targetKind: "file" },
+    }),
+    "README.md saved.",
+  ]);
+  const daemon = await startDaemonForTest(runner, {}, { channels: { intentSelector: true } });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Issue 421 article continuity",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read", "grep", "find", "ls", "write"],
+    })).channel;
+
+    const article = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: "帮我写一篇关于可恢复多 Agent 记忆的长文，先给提纲。",
+      teammateId: "ling_agent",
+      requestAiReply: true,
+    });
+    await waitForChannelMessageStatus(daemon.url, cwd, channel.id, article.aiReply.id, "ready");
+
+    const continuation = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: "需要，开始吧",
+      teammateId: "ling_agent",
+      requestAiReply: true,
+    });
+    const continuedMessages = await waitForChannelMessageStatus(
+      daemon.url,
+      cwd,
+      channel.id,
+      continuation.aiReply.id,
+      "ready",
+    );
+    const continuedReply = continuedMessages.messages.find((message) => message.id === continuation.aiReply.id);
+    assert.match(continuedReply.body, /可恢复记忆/);
+
+    const articleDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(article.message.id)}`);
+    const continuationDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(continuation.message.id)}`);
+    assertSingleReplyIntentDecision(articleDecisions.decisions, article.message.id);
+    assertSingleReplyIntentDecision(continuationDecisions.decisions, continuation.message.id);
+    assert.equal(articleDecisions.decisions[0].createdBy, "model_policy");
+    assert.equal(continuationDecisions.decisions[0].createdBy, "model_policy");
+    assert.equal(continuationDecisions.decisions[0].contextSegmentId, articleDecisions.decisions[0].contextSegmentId);
+    assert.equal(continuationDecisions.decisions[0].clarification, undefined);
+    assert.equal(continuationDecisions.decisions[0].execution, undefined);
+    const continuationProposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(continuation.message.id)}`);
+    assert.deepEqual(continuationProposals.proposals, []);
+
+    const save = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: "把刚才的文章保存到 README.md。",
+      teammateId: "ling_agent",
+      requestAiReply: true,
+    });
+    assertCoordinatorWorkflowStartReply(save);
+    assert.equal(save.autoStartedWorkflow.workflowSteps.length, 1);
+    const saveProposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(save.message.id)}`);
+    assert.equal(saveProposals.proposals.length, 1);
+    assert.equal(saveProposals.proposals[0].status, "accepted");
+    assert.match(saveProposals.proposals[0].prompt, /Target: README\.md/);
+    const saveDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(save.message.id)}`);
+    assert.equal(saveDecisions.decisions.length, 2);
+    assert(saveDecisions.decisions.every((decision) => decision.action === "execute"));
+    assert(saveDecisions.decisions.every((decision) => decision.execution.kind === "file_create"));
+    assert(saveDecisions.decisions.every((decision) => decision.execution.targetKind === "file"));
+    assert(saveDecisions.decisions.every((decision) => decision.proposalId === saveProposals.proposals[0].id));
+    assert(saveDecisions.decisions.every((decision) => {
+      assertIntentDecisionInspectPayloadIsSafe(decision);
+      return true;
+    }));
+    const classified = saveDecisions.decisions.find((decision) => decision.createdBy === "model_policy");
+    const started = saveDecisions.decisions.find((decision) => decision.workflowId === save.autoStartedWorkflow.workflow.id);
+    assert.ok(classified);
+    assert.ok(started);
+    assert.deepEqual(started.resultItemIds, [save.aiReply.id]);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("issue #421 unrelated snake-game request escapes an old target clarification", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-issue-421-segment-reset-"));
+  const runner = new ScriptedRunner([
+    JSON.stringify({
+      action: "clarify",
+      reason: "A local write needs a concrete destination.",
+      clarification: { missingFields: ["target"], question: "要保存到哪个目标文件？" },
+    }),
+    JSON.stringify({ action: "reply", reason: "The snake-game design is independently answerable in chat." }),
+    "贪吃蛇玩法：方向键移动，吃到食物增长，撞墙或撞到自己结束。",
+  ]);
+  runner.segmentationResponses = [JSON.stringify({
+    action: "propose_new",
+    confidence: 0.96,
+    relatedSegmentIds: [],
+    reason: "The snake-game design is unrelated to the unresolved file destination.",
+  })];
+  const daemon = await startDaemonForTest(runner, {}, { channels: { intentSelector: true } });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Issue 421 clarification isolation",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read", "grep", "find", "ls", "write"],
+    })).channel;
+
+    const oldRequest = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: "把这段内容写到本地文件里。",
+      teammateId: "ling_agent",
+      requestAiReply: true,
+    });
+    assert.equal(oldRequest.aiReply.status, "ready");
+    assert.match(oldRequest.aiReply.body, /目标文件/);
+    const oldDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(oldRequest.message.id)}`);
+    assert.equal(oldDecisions.decisions.length, 1);
+    assert.equal(oldDecisions.decisions[0].action, "clarify");
+    assert.deepEqual(oldDecisions.decisions[0].clarification.missingFields, ["target"]);
+
+    const snake = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: "再做一个贪吃蛇小游戏的方案，先讲玩法。",
+      teammateId: "ling_agent",
+      requestAiReply: true,
+    });
+    const snakeMessages = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, snake.aiReply.id, "ready");
+    const snakeReply = snakeMessages.messages.find((message) => message.id === snake.aiReply.id);
+    assert.match(snakeReply.body, /贪吃蛇玩法/);
+    assert.doesNotMatch(snakeReply.body, /目标文件|target file/i);
+    const snakeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(snake.message.id)}`);
+    assertSingleReplyIntentDecision(snakeDecisions.decisions, snake.message.id);
+    assert.equal(snakeDecisions.decisions[0].createdBy, "model_policy");
+    assert.notEqual(snakeDecisions.decisions[0].contextSegmentId, oldDecisions.decisions[0].contextSegmentId);
+    assert.equal(runner.segmentationRuns.length, 1);
+    const snakeProposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(snake.message.id)}`);
+    assert.deepEqual(snakeProposals.proposals, []);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -5098,7 +6150,7 @@ test("default_teammate route suppresses duplicate Ling Agent replies for the sam
       },
       now,
     );
-    const sourceMessage = store.createChannelMessage(
+    const sourceMessage = appendChannelItemFixture(store,
       {
         channelId: channel.id,
         authorType: "local-user",
@@ -5106,10 +6158,10 @@ test("default_teammate route suppresses duplicate Ling Agent replies for the sam
       },
       now,
     );
-    store.createChannelMessage(
+    appendChannelItemFixture(store,
       {
         channelId: channel.id,
-        threadId: sourceMessage.id,
+        replyToItemId: sourceMessage.id,
         kind: "ai_reply",
         authorType: "ai-teammate",
         authorId: "ling_agent",
@@ -5174,15 +6226,48 @@ test("default_teammate route treats channel branches and topic replies as separa
       },
       now,
     );
+    const rootThread = store.resolveOrCreateConversationThread({
+      surfaceKind: "channel_root",
+      channelId: channel.id,
+      title: "Root",
+      objective: "Root conversation",
+    }, now).thread;
+    const rootMessage = appendChannelItemFixture(store, {
+      channelId: channel.id,
+      authorType: "local-user",
+      body: "Create a branch",
+    }, now);
+    const rootItem = store.getConversationItem(rootMessage.id);
+    assert.ok(rootItem?.turnId);
+    const rootAssignment = store.getEffectiveTurnContextAssignment(rootItem.turnId);
+    assert.ok(rootAssignment);
+    const branchThread = store.resolveOrCreateConversationThread({
+      id: "thread_branch_root",
+      surfaceKind: "branch",
+      channelId: channel.id,
+      parentThreadId: rootThread.id,
+      parentTurnId: rootItem.turnId,
+      title: "Branch",
+      objective: "Branch conversation",
+      forkContextSnapshot: {
+        id: "snapshot_branch_root",
+        segmentId: rootAssignment.segmentId,
+        projectionVersion: "ctxv2_branch_root",
+        throughItemSequence: rootItem.sequence,
+        summaryIds: [],
+        sourceRefs: [{ type: "conversation_item", id: rootItem.id }],
+        policyVersion: "continuity-v2-snapshot-v1",
+      },
+    }, now).thread;
     const branch = store.createChannelBranch(
       {
         channelId: channel.id,
         name: "test",
-        rootThreadId: "thread_branch_root",
+        rootThreadId: branchThread.id,
       },
       now,
     );
-    const branchMessage = store.createChannelMessage(
+    const branchMessage = appendChannelItemFixture(store,
       {
         channelId: channel.id,
         threadId: branch.rootThreadId,
@@ -5191,7 +6276,7 @@ test("default_teammate route treats channel branches and topic replies as separa
       },
       now,
     );
-    const topicSource = store.createChannelMessage(
+    const topicSource = appendChannelItemFixture(store,
       {
         channelId: channel.id,
         authorType: "local-user",
@@ -5199,10 +6284,10 @@ test("default_teammate route treats channel branches and topic replies as separa
       },
       now,
     );
-    const topicReply = store.createChannelMessage(
+    const topicReply = appendChannelItemFixture(store,
       {
         channelId: channel.id,
-        threadId: topicSource.id,
+        topicAnchorItemId: topicSource.id,
         authorType: "local-user",
         body: "这是 topic reply，不应该自动拉起 agent。",
       },
@@ -5268,7 +6353,7 @@ test("Ling Agent replies to greetings, repeated greetings, punctuation, and ackn
       allowedTools: ["read"],
     })).channel;
 
-    const preConfigGreeting = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const preConfigGreeting = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "你好？",
     });
     assert.equal(preConfigGreeting.aiReply.status, "pending");
@@ -5279,7 +6364,7 @@ test("Ling Agent replies to greetings, repeated greetings, punctuation, and ackn
       autoReplyMode: "default_teammate",
     });
 
-    const repeatedGreeting = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const repeatedGreeting = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "你好？",
     });
     assert.equal(repeatedGreeting.aiReply.status, "pending");
@@ -5291,7 +6376,7 @@ test("Ling Agent replies to greetings, repeated greetings, punctuation, and ackn
     assert.equal(decisions.decisions[0].status, "accepted");
     assert.equal(decisions.decisions[0].replyMessageId, repeatedGreeting.aiReply.id);
 
-    const eveningGreeting = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const eveningGreeting = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "晚上好",
     });
     assert.equal(eveningGreeting.aiReply.status, "pending");
@@ -5299,7 +6384,7 @@ test("Ling Agent replies to greetings, repeated greetings, punctuation, and ackn
     const eveningReply = eveningListed.messages.find((message) => message.id === eveningGreeting.aiReply.id);
     assert.equal(eveningReply.body, "晚上好，我在。");
 
-    const punctuation = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const punctuation = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "。。",
     });
     assert.equal(punctuation.aiReply.status, "pending");
@@ -5307,7 +6392,7 @@ test("Ling Agent replies to greetings, repeated greetings, punctuation, and ackn
     const punctuationReply = punctuationListed.messages.find((message) => message.id === punctuation.aiReply.id);
     assert.equal(punctuationReply.body, "看到了，继续说。");
 
-    const acknowledgement = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const acknowledgement = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "好的",
     });
     assert.equal(acknowledgement.aiReply.status, "pending");
@@ -5334,11 +6419,11 @@ test("default_teammate creates a blocked Ling Agent reply when the channel has n
     })).channel;
     simulateLegacyChannelWithoutModel(cwd, channel.id);
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "这个问题谁来回复？",
     });
 
-    assert.equal(created.aiReply.status, "pending");
+    assert.equal(created.aiReply.status, "blocked");
     assert.equal(created.aiReply.authorId, "ling_agent");
     const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "blocked");
     const blockedReply = listed.messages.find((message) => message.id === created.aiReply.id);
@@ -5372,7 +6457,7 @@ test("explicit mentions still reply and keep proposal extraction enabled", async
       providerPresetId: provider.id,
     });
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "@Designer 这个明确任务可以处理吗？",
       mentions: [{ id: "designer", label: "Designer", kind: "ai-teammate" }],
       requestAiReply: true,
@@ -5496,7 +6581,7 @@ test("auto_route uses the model selector and records accepted route evidence", a
     });
     const store = stores.get(cwd);
     assert.ok(store);
-    const oldGuidanceMessage = store.createChannelMessage(
+    const oldGuidanceMessage = appendChannelItemFixture(store,
       {
         channelId: channel.id,
         authorType: "local-user",
@@ -5528,7 +6613,7 @@ test("auto_route uses the model selector and records accepted route evidence", a
       "2026-06-12T08:00:02.000Z",
     );
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "这个设置文案应该怎么改？",
     });
 
@@ -5560,15 +6645,34 @@ test("auto_route uses the model selector and records accepted route evidence", a
       "auto_route_instructions",
       "channel_collaboration_protocol",
       "auto_route_source_message",
-      "auto_route_recent_context",
       "auto_route_candidates",
     ]);
-    assert.deepEqual(decisions.decisions[0].contextPack.sourceRefCounts, { channel: 1, message: 1 });
+    assert.deepEqual(decisions.decisions[0].contextPack.sourceRefCounts, {
+      channel: 1,
+      message: 1,
+      thread: 1,
+      turn: 1,
+      conversation_item: 1,
+    });
+    const createdItem = store.getConversationItem(created.message.id);
+    assert.ok(createdItem?.turnId);
+    assert.equal(decisions.decisions[0].contextPack.contextProjection.threadId, createdItem.threadId);
+    assert.equal(decisions.decisions[0].contextPack.contextProjection.turnId, createdItem.turnId);
+    assert.equal(typeof decisions.decisions[0].contextPack.contextProjection.projectionVersion, "string");
     assert.equal(decisions.decisions[0].contextPack.providerPresetId, provider.id);
     assert.deepEqual((await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}`)).proposals, []);
     assert.deepEqual((await getJson(`${daemon.url}/tasks?cwd=${encodeURIComponent(cwd)}`)).tasks, []);
     const runs = await getJson(`${daemon.url}/runs?cwd=${encodeURIComponent(cwd)}`);
-    assert.deepEqual(runs.runs.filter((run) => run.id !== oldRun.id), []);
+    const replyRuns = runs.runs.filter((run) => run.id !== oldRun.id);
+    assert.equal(replyRuns.length, 1);
+    assert.equal(replyRuns[0].id, finalReply.linkedRunId);
+    assert.equal(replyRuns[0].status, "succeeded");
+    assert.equal(replyRuns[0].taskId, created.message.id);
+    const persistedReplyRun = store.getRun(replyRuns[0].id);
+    assert.equal(
+      persistedReplyRun.requestSnapshot.contextProjection.projectionVersion,
+      decisions.decisions[0].contextPack.contextProjection.projectionVersion,
+    );
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -5577,17 +6681,18 @@ test("auto_route uses the model selector and records accepted route evidence", a
 
 test("auto_route falls back to Ling Agent replies on selector failure", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-auto-route-fallback-"));
-  const runner = new ScriptedRunner(["not json"]);
+  const runner = new ScriptedRunner(["not json", "Ling fallback reply 1"]);
   const daemon = await startDaemonForTest(runner, {}, { channels: { autoRoute: true } });
   try {
     const channel = await createAutoRouteTestChannel(daemon.url, cwd);
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "这个交给谁回复？",
     });
 
     assert.equal(created.aiReply.status, "pending");
     assert.equal(created.aiReply.authorId, "ling_agent");
+    await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
     assert.equal(runner.runs.length, 2);
     let decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions[0].status, "accepted");
@@ -5600,12 +6705,13 @@ test("auto_route falls back to Ling Agent replies on selector failure", async ()
       confidence: 0.2,
       reason: "Unsure.",
       alternativesConsidered: [],
-    }));
-    const lowConfidence = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    }), "Ling fallback reply 2");
+    const lowConfidence = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "这个 UI 问题可以自动判断吗？",
     });
     assert.equal(lowConfidence.aiReply.status, "pending");
     assert.equal(lowConfidence.aiReply.authorId, "ling_agent");
+    await waitForChannelMessageStatus(daemon.url, cwd, channel.id, lowConfidence.aiReply.id, "ready");
     decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(lowConfidence.message.id)}`);
     assert.equal(decisions.decisions[0].status, "accepted");
     assert.match(decisions.decisions[0].reason, /Route model confidence was below threshold/);
@@ -5616,12 +6722,13 @@ test("auto_route falls back to Ling Agent replies on selector failure", async ()
       confidence: 0.9,
       reason: "Wrapped JSON should fail strict parsing.",
       alternativesConsidered: [],
-    })}`);
-    const wrappedJson = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    })}`, "Ling fallback reply 3");
+    const wrappedJson = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "这个带解释的模型输出应该失败吗？",
     });
     assert.equal(wrappedJson.aiReply.status, "pending");
     assert.equal(wrappedJson.aiReply.authorId, "ling_agent");
+    await waitForChannelMessageStatus(daemon.url, cwd, channel.id, wrappedJson.aiReply.id, "ready");
     decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(wrappedJson.message.id)}`);
     assert.equal(decisions.decisions[0].status, "accepted");
     assert.equal(decisions.decisions[0].reason, "Ling Agent fallback replied after automatic teammate selection failed.");
@@ -5632,12 +6739,13 @@ test("auto_route falls back to Ling Agent replies on selector failure", async ()
       confidence: 0.9,
       reason: "Unknown teammate should fail closed.",
       alternativesConsidered: [],
-    }));
-    const unknownTeammate = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    }), "Ling fallback reply 4");
+    const unknownTeammate = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "这个未知 teammate 应该失败吗？",
     });
     assert.equal(unknownTeammate.aiReply.status, "pending");
     assert.equal(unknownTeammate.aiReply.authorId, "ling_agent");
+    await waitForChannelMessageStatus(daemon.url, cwd, channel.id, unknownTeammate.aiReply.id, "ready");
     decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(unknownTeammate.message.id)}`);
     assert.equal(decisions.decisions[0].status, "accepted");
     assert.equal(decisions.decisions[0].reason, "Ling Agent fallback replied after automatic teammate selection failed.");
@@ -5660,7 +6768,7 @@ test("channel AI replies return pending message before runner finishes", async (
       providerPresetId: provider.id,
     });
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "@Designer async please",
       mentions: [{ id: teammateId, label: "Designer", kind: "ai-teammate" }],
       requestAiReply: true,
@@ -5672,7 +6780,7 @@ test("channel AI replies return pending message before runner finishes", async (
     await waitForCondition(() => runner.runs.length === 1, "runner to start channel AI reply");
     assert.equal(runner.runs.length, 1);
     assert.equal(runner.completed, false);
-    const pending = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`);
+    const pending = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/items?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(pending.messages.find((message) => message.id === created.aiReply.id).status, "pending");
 
     runner.resolve("Delayed reply");
@@ -5748,7 +6856,7 @@ test("attachment-only channel turn reaches Ling Agent with metadata and preview"
       contentBase64: Buffer.from("hello channel attachment", "utf8").toString("base64"),
     })).attachment;
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "",
       attachmentIds: [attachment.id],
     });
@@ -5765,8 +6873,8 @@ test("attachment-only channel turn reaches Ling Agent with metadata and preview"
     const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(routeDecisions.decisions.length, 1);
     assert.equal(routeDecisions.decisions[0].action, "reply");
-    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
-    assert.deepEqual(intentDecisions.decisions, []);
+    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
+    assertSingleReplyIntentDecision(intentDecisions.decisions, created.message.id);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -5779,7 +6887,7 @@ test("channel asset references must stay within the same channel", async () => {
   try {
     const first = await createChannel(daemon.url, cwd);
     const second = await createChannel(daemon.url, cwd);
-    const message = await postJson(`${daemon.url}/channels/${encodeURIComponent(first.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const message = await postJson(`${daemon.url}/channels/${encodeURIComponent(first.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "source message",
     });
     const attachment = await postJson(`${daemon.url}/channels/${encodeURIComponent(first.id)}/attachments?cwd=${encodeURIComponent(cwd)}`, {
@@ -5803,7 +6911,7 @@ test("channel asset references must stay within the same channel", async () => {
     assert.equal(crossUpload.status, 400);
     assert.equal((await crossUpload.json()).error, "message_channel_mismatch");
 
-    const crossMessage = await fetch(`${daemon.url}/channels/${encodeURIComponent(second.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const crossMessage = await fetch(`${daemon.url}/channels/${encodeURIComponent(second.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -5909,10 +7017,10 @@ test("channel collaboration protocol drafts apply protocol-only overrides with s
   try {
     const first = await createChannel(daemon.url, cwd);
     const second = await createChannel(daemon.url, cwd);
-    const message = await postJson(`${daemon.url}/channels/${encodeURIComponent(first.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const message = await postJson(`${daemon.url}/channels/${encodeURIComponent(first.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "Draft a protocol update.",
     });
-    const otherMessage = await postJson(`${daemon.url}/channels/${encodeURIComponent(second.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const otherMessage = await postJson(`${daemon.url}/channels/${encodeURIComponent(second.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "Wrong channel source.",
     });
 
@@ -6020,10 +7128,10 @@ test("channel collaboration protocol endpoints persist state and reject cross-ch
   try {
     const first = await createChannel(daemon.url, cwd);
     const second = await createChannel(daemon.url, cwd);
-    const message = await postJson(`${daemon.url}/channels/${encodeURIComponent(first.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const message = await postJson(`${daemon.url}/channels/${encodeURIComponent(first.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "Use manual handoffs for v1.1.",
     });
-    const otherMessage = await postJson(`${daemon.url}/channels/${encodeURIComponent(second.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const otherMessage = await postJson(`${daemon.url}/channels/${encodeURIComponent(second.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "Other channel.",
     });
     const task = (await postJson(`${daemon.url}/tasks?cwd=${encodeURIComponent(cwd)}`, {
@@ -6186,6 +7294,218 @@ test("channel handoff workflows start steps, create tasks, and expose blockers",
   }
 });
 
+test("manual workflow step start rejects a result after source context changes", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-manual-workflow-stale-context-"));
+  const runner = new DelayedRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const channel = await createWorkflowTestChannel(daemon.url, cwd, "Manual continuity workflow");
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const store = stores.get(cwd);
+    assert.ok(store);
+    store.updateChannel(channel.id, { defaultProviderPresetId: provider.id }, "2026-08-10T03:00:00.000Z");
+    const rootThread = store.resolveOrCreateConversationThread({
+      surfaceKind: "channel_root",
+      channelId: channel.id,
+      title: "Manual continuity workflow",
+      objective: "Implement the original continuity objective.",
+    }, "2026-08-10T03:00:00.000Z").thread;
+    const sourceItem = store.appendConversationUserTurn({
+      channelId: channel.id,
+      threadId: rootThread.id,
+      title: "Implement the original continuity objective.",
+      userInstruction: "Implement the original continuity objective.",
+      payload: {
+        body: "Implement the original continuity objective.",
+        format: "plain_text",
+        mentions: [],
+        attachmentIds: [],
+        linkPreviewIds: [],
+        fileRefs: [],
+      },
+      idempotencyKey: "manual-workflow-stale-context-source",
+    }, "2026-08-10T03:00:00.000Z").item;
+    const workflow = store.createChannelWorkflow({
+      channelId: channel.id,
+      title: "Manual continuity workflow",
+      objective: "Implement the original continuity objective.",
+      status: "ready",
+      createdBy: "local-user",
+      metadata: { sourceMessageId: sourceItem.id },
+    }, "2026-08-10T03:00:01.000Z");
+    const step = store.createChannelWorkflowStep({
+      workflowId: workflow.id,
+      title: "Manual continuity step",
+      prompt: "Implement the original continuity objective.",
+      toParticipantId: "ling_agent",
+      toParticipantLabel: "Ling Agent",
+      metadata: {
+        sourceMessageId: sourceItem.id,
+        providerPresetId: provider.id,
+        requiredTools: ["read"],
+      },
+    }, "2026-08-10T03:00:02.000Z");
+
+    const response = await fetch(`${daemon.url}/workflow-steps/${encodeURIComponent(step.id)}/start?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "create_and_run_task" }),
+    });
+    assert.equal(response.ok, true);
+    await waitForCondition(() => runner.runs.length === 1, "manual workflow runner start");
+    store.appendConversationItem({
+      channelId: channel.id,
+      threadId: sourceItem.threadId,
+      turnId: sourceItem.turnId,
+      kind: "user_message",
+      status: "committed",
+      actorType: "local_user",
+      visibility: "channel",
+      payload: { ...sourceItem.payload, body: "Replace the objective before the manual result commits." },
+      supersedesItemId: sourceItem.id,
+      idempotencyKey: "manual-workflow-stale-context-correction",
+    }, "2026-08-10T03:00:03.000Z");
+    runner.resolve("This result consumed the old objective.");
+    await response.text();
+
+    const blockedStep = store.getChannelWorkflowStep(step.id);
+    assert.equal(blockedStep.status, "blocked");
+    assert.ok(blockedStep.taskId);
+    assert.equal(blockedStep.resultSummary, undefined);
+    assert.equal(blockedStep.metadata.resultContextReview.status, "rejected_stale");
+    assert.equal(store.getChannelWorkflow(workflow.id).status, "blocked");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("queued workflow runs keep private role memory out of durable snapshots", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-queued-workflow-memory-isolation-"));
+  const runner = new DelayedRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const channel = await createWorkflowTestChannel(daemon.url, cwd, "Queued continuity workflow");
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const store = stores.get(cwd);
+    assert.ok(store);
+    store.updateChannel(channel.id, { defaultProviderPresetId: provider.id }, "2026-08-10T03:10:00.000Z");
+
+    await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: "Hold the channel runtime slot.",
+      requestAiReply: true,
+      providerPresetId: provider.id,
+    });
+    await waitForCondition(() => runner.runs.length === 1, "blocking channel reply start");
+
+    const privateMemory = store.createMemoryObject({
+      workspaceId: channel.workspaceId,
+      scopeType: "teammate",
+      ownerId: "ling_agent",
+      title: "Queued continuity objective",
+      body: "Queued continuity objective private role evidence must stay owner-scoped.",
+      tags: ["queued-continuity"],
+      sourceRefs: [],
+      reviewState: "active",
+      enabled: true,
+      sensitivity: "private",
+      verifyBeforeUse: false,
+      createdBy: "test",
+    }, "2026-08-10T03:10:01.000Z");
+    const rootThread = store.resolveOrCreateConversationThread({
+      surfaceKind: "channel_root",
+      channelId: channel.id,
+      title: "Queued continuity workflow",
+      objective: "Queued continuity objective",
+    }, "2026-08-10T03:10:02.000Z").thread;
+    const sourceItem = store.appendConversationUserTurn({
+      channelId: channel.id,
+      threadId: rootThread.id,
+      title: "Queued continuity objective",
+      userInstruction: "Queued continuity objective",
+      payload: {
+        body: "Queued continuity objective",
+        format: "plain_text",
+        mentions: [],
+        attachmentIds: [],
+        linkPreviewIds: [],
+        fileRefs: [],
+      },
+      idempotencyKey: "queued-workflow-memory-source",
+    }, "2026-08-10T03:10:02.000Z").item;
+    const workflow = store.createChannelWorkflow({
+      channelId: channel.id,
+      title: "Queued continuity workflow",
+      objective: "Queued continuity objective",
+      status: "ready",
+      createdBy: "local-user",
+      metadata: { sourceMessageId: sourceItem.id },
+    }, "2026-08-10T03:10:03.000Z");
+    const step = store.createChannelWorkflowStep({
+      workflowId: workflow.id,
+      title: "Queued continuity objective",
+      prompt: "Queued continuity objective",
+      toParticipantId: "ling_agent",
+      toParticipantLabel: "Ling Agent",
+      metadata: {
+        sourceMessageId: sourceItem.id,
+        providerPresetId: provider.id,
+        requiredTools: ["read"],
+      },
+    }, "2026-08-10T03:10:04.000Z");
+
+    const response = await fetch(`${daemon.url}/workflow-steps/${encodeURIComponent(step.id)}/start?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "create_and_run_task" }),
+    });
+    assert.equal(response.ok, true);
+    await response.text();
+
+    const queuedRun = store.listRuns({ status: "queued", limit: 20 })
+      .find((run) => run.workflowStepId === step.id);
+    assert.ok(queuedRun);
+    assert.equal(queuedRun.requestSnapshot.workflowStepId, step.id);
+    const queuedStep = store.getChannelWorkflowStep(step.id);
+    assert.equal(queuedStep.status, "running");
+    assert.equal(queuedStep.runId, queuedRun.id);
+    assert.equal(store.getChannelWorkflow(workflow.id).status, "running");
+    assert.doesNotMatch(queuedRun.taskSnapshot.prompt, /private role evidence/u);
+    assert.doesNotMatch(queuedRun.requestSnapshot.task.prompt, /private role evidence/u);
+    assert.equal(queuedRun.requestSnapshot.preselectedMemoryUse, undefined);
+    const workUnit = store.getWorkUnit(queuedRun.workUnitId);
+    assert.ok(workUnit);
+    assert.doesNotMatch(workUnit.request.task.prompt, /private role evidence/u);
+    assert.equal(workUnit.request.preselectedMemoryUse, undefined);
+    assert.equal(
+      store.listUsedMemoryEvents({ runId: queuedRun.id, limit: 20 }).some((event) => event.memoryIds.includes(privateMemory.id)),
+      false,
+    );
+
+    runner.resolve("The blocking channel reply is complete.");
+    await waitForCondition(() => runner.completed, "blocking channel reply completion");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("workflow handoff intents validate, accept, and stay visible as workflow evidence", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-handoff-intents-"));
   const stores = new Map();
@@ -6233,6 +7553,18 @@ test("workflow handoff intents validate, accept, and stay visible as workflow ev
     assert.equal(created.handoffIntent.status, "validated");
     assert.equal(created.handoffIntent.validation.targetTeammateExists, true);
     assert.equal(created.handoffIntent.validation.targetTeammateActive, true);
+
+    const bypassResponse = await fetch(
+      `${daemon.url}/workflow-handoff-intents/${encodeURIComponent(created.handoffIntent.id)}?cwd=${encodeURIComponent(cwd)}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "accepted" }),
+      },
+    );
+    assert.equal(bypassResponse.status, 400);
+    assert.match(await bypassResponse.text(), /status is server-owned/u);
+    assert.equal(store.getWorkflowHandoffIntent(created.handoffIntent.id).status, "validated");
 
     const stepAfterIntent = store.getChannelWorkflowStep(sourceStep.id);
     assert.ok(stepAfterIntent.metadata.handoffIntentIds.includes(created.handoffIntent.id));
@@ -6386,6 +7718,13 @@ test("autoplan-lite workflow compiles durable steps and orchestrates them throug
     assert.equal(compiled.workflowSteps[0].metadata.policy.onRunFailed, "block_for_user");
     assert.equal(compiled.workflowSteps[4].metadata.policy.onRunFailed, "fail_workflow");
     assert.equal(compiled.workflowSteps[1].metadata.dependsOnStepIds.length, 1);
+    const firstStepMemory = (await postJson(`${daemon.url}/memory?cwd=${encodeURIComponent(cwd)}`, {
+      scopeType: "teammate",
+      ownerId: compiled.workflowSteps[0].toParticipantId,
+      title: "Orchestrator test objective",
+      body: "Build the orchestrator test slice with source-linked evidence.",
+      sensitivity: "private",
+    })).memory;
 
     const firstTick = await postJson(`${daemon.url}/workflows/${encodeURIComponent(compiled.workflow.id)}/orchestrate?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(firstTick.status, "started");
@@ -6427,6 +7766,16 @@ test("autoplan-lite workflow compiles durable steps and orchestrates them throug
     assert.equal(firstRun.workflowStepId, firstStepAfterFirstTick.id);
     assert.equal(firstRun.requestSnapshot.workflowStepId, firstStepAfterFirstTick.id);
     assert.equal(firstRun.requestSnapshot.runnerResolution.requestSource, "workflow_step");
+    assert.match(runner.runs[0].task.prompt, /Build the orchestrator test slice with source-linked evidence/u);
+    assert.doesNotMatch(firstRun.taskSnapshot.prompt, /source-linked evidence/u);
+    assert.doesNotMatch(firstRun.requestSnapshot.task.prompt, /source-linked evidence/u);
+    assert.equal(firstRun.requestSnapshot.preselectedMemoryUse, undefined);
+    const firstWorkUnit = await getJson(`${daemon.url}/work-units/${encodeURIComponent(firstRun.workUnitId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.doesNotMatch(firstWorkUnit.workUnit.request.task.prompt, /source-linked evidence/u);
+    assert.equal(firstWorkUnit.workUnit.request.preselectedMemoryUse, undefined);
+    const firstRunMemoryUse = await getJson(`${daemon.url}/memory/used?cwd=${encodeURIComponent(cwd)}&runId=${encodeURIComponent(firstRun.id)}`);
+    assert.deepEqual(firstRunMemoryUse.events[0].memoryIds, [firstStepMemory.id]);
+    assert.match(firstRunMemoryUse.events[0].policyVersion, /memory_use_isolation_v1/u);
     const runsForStep = await getJson(`${daemon.url}/runs?cwd=${encodeURIComponent(cwd)}&workflowStepId=${encodeURIComponent(firstStepAfterFirstTick.id)}`);
     assert.deepEqual(runsForStep.runs.map((run) => run.id), [firstRun.id]);
     const threadsForStep = await getJson(`${daemon.url}/threads?cwd=${encodeURIComponent(cwd)}&workflowStepId=${encodeURIComponent(firstStepAfterFirstTick.id)}`);
@@ -8622,7 +9971,7 @@ test("memory API scopes lexical recall and channel replies audit used memory", a
     assert.equal(recall.memories.some((item) => item.memory.ownerId === "teammate_builtin_engineer"), false);
     assert.equal(recall.memories.some((item) => item.memory.sensitivity === "secret-adjacent"), false);
 
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "@Designer fix Model Workbench width",
       mentions: [{ id: "designer", label: "Designer", kind: "ai-teammate" }],
       requestAiReply: true,
@@ -9705,7 +11054,7 @@ test("procedure observation API routes structured observations before candidate 
     assert.equal(canvas.candidateClusters.some((cluster) => cluster.id === playbookClusters.clusters[0].id), true);
     assert.equal(canvas.sections.some((section) => section.kind === "candidate_clusters" && section.status === "needs_review"), true);
 
-    const protocolSourceMessage = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    const protocolSourceMessage = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "This channel needs reviewer signoff before implementation handoff.",
     });
     const protocolSourceDecision = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/decisions?cwd=${encodeURIComponent(cwd)}`, {
@@ -10196,6 +11545,12 @@ test("teammate direct message stream emits ready delta and done events", async (
     const events = parseSseEvents(await response.text());
     assert.deepEqual(events.map((event) => event.event), ["ready", "run_linked", "delta", "done"]);
     assert.ok(events[1].data.linkedRunId);
+    assert.equal(events[1].data.activeReply.runId, events[1].data.linkedRunId);
+    assert.equal(events[1].data.activeReply.sourceRunId, events[1].data.linkedRunId);
+    assert.equal(events[1].data.activeReply.teammateId, teammateId);
+    assert.equal(events[1].data.activeReply.status, "queued");
+    assert.ok(events[1].data.activeReply.workUnitId);
+    assert.equal(JSON.stringify(events[1].data.activeReply).includes("providerSnapshot"), false);
     assert.equal(events[2].data.delta, "Designer reply");
     assert.equal(events[3].data.aiReply.body, "Designer reply");
     assert.equal(events[3].data.aiReply.linkedRunId, events[1].data.linkedRunId);
@@ -10307,7 +11662,7 @@ test("teammate direct execution creates a supervised run and projects tool event
     const thread = store.getLingThread(run.threadId);
     const turn = store.getLingTurnForRun(run.id);
     assert.equal(thread?.kind, "teammate_direct");
-    assert.equal(turn?.sourceMessageId, run.taskId);
+    assert.equal(turn?.sourceItemId, run.taskId);
     const workUnit = store.getWorkUnit(run.workUnitId);
     assert.equal(workUnit?.kind, "teammate_direct_reply");
     assert.equal(workUnit?.linkedRunId, run.id);
@@ -11103,6 +12458,34 @@ test("private attachments avatar and hard delete stay scoped to teammate private
   }
 });
 
+class SummaryAwareRunner {
+  constructor() {
+    this.runs = [];
+    this.summaryRuns = [];
+    this.replyRuns = [];
+  }
+
+  async runTask(options) {
+    this.runs.push(options);
+    const summary = /conversation summary coordinator/i.test(options.systemPrompt ?? "");
+    const text = summary
+      ? JSON.stringify({
+          objective: "Preserve the durable historical objective.",
+          decisions: ["Use proactive summaries before provider rejection."],
+          constraints: ["Keep the recent raw tail."],
+          openQuestions: [],
+        })
+      : "Reply after proactive summary.";
+    (summary ? this.summaryRuns : this.replyRuns).push(options);
+    options.onEvent?.({ type: "assistant_text_delta", text });
+    return {
+      taskId: options.task.id,
+      messages: [{ role: "assistant", content: text }],
+      events: [],
+    };
+  }
+}
+
 class RecordingRunner {
   constructor() {
     this.runs = [];
@@ -11311,6 +12694,11 @@ class AbortableDelayedRunner {
   }
 }
 
+function readCurrentChannelUserMessage(prompt) {
+  const matches = [...prompt.matchAll(/User message:\nTurn envelope:\nText:\n([^\n]+)/g)];
+  return matches.at(-1)?.[1];
+}
+
 class ParallelDelayedRunner {
   constructor() {
     this.runs = [];
@@ -11384,6 +12772,7 @@ function unusedRunnerRegistry() {
 
 async function startDaemonForTest(runner, dependencies = {}, config = {}) {
   const { channels, ...restConfig } = config;
+  const routedRunner = wrapTestRunnerContextSegmentation(runner);
   const daemon = createDaemonServer({
     host: "127.0.0.1",
     port: 0,
@@ -11391,7 +12780,7 @@ async function startDaemonForTest(runner, dependencies = {}, config = {}) {
     channels: { intentSelector: false, terminalReports: false, ...channels },
   }, {
     ...dependencies,
-    ...(runner ? { runner } : {}),
+    ...(routedRunner ? { runner: routedRunner } : {}),
   });
   await daemon.start();
   const address = daemon.server.address();
@@ -11400,6 +12789,31 @@ async function startDaemonForTest(runner, dependencies = {}, config = {}) {
     url: `http://127.0.0.1:${address.port}`,
     close: () => daemon.stop(),
   };
+}
+
+function wrapTestRunnerContextSegmentation(runner) {
+  if (!runner) {
+    return undefined;
+  }
+  runner.segmentationRuns ??= [];
+  const routed = Object.create(runner);
+  routed.runTask = async (options) => {
+    if (!/context segmentation policy proposer/i.test(options.systemPrompt ?? "")) {
+      return runner.runTask(options);
+    }
+    runner.segmentationRuns.push(options);
+    const configuredResponse = runner.segmentationResponses?.shift();
+    const text = typeof configuredResponse === "function"
+      ? configuredResponse(options)
+      : configuredResponse ?? JSON.stringify({ action: "uncertain", candidateSegmentIds: [] });
+    options.onEvent?.({ type: "assistant_text_delta", text });
+    return {
+      taskId: options.task.id,
+      messages: [text],
+      events: [],
+    };
+  };
+  return routed;
 }
 
 function createParallelWorkflowStep(store, workflowId, title, metadata = {}) {
@@ -11437,12 +12851,71 @@ function createStoreChannelAndMessage(store, cwd, body) {
     boundPath: cwd,
     allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
   }, now);
-  const message = store.createChannelMessage({
+  const message = appendChannelItemFixture(store, {
     channelId: channel.id,
     authorType: "local-user",
     body,
   }, now);
   return { channel, message };
+}
+
+function createActiveChannelReplyRunFixture(store, input) {
+  const teammateId = input.teammateId ?? "ling_agent";
+  const sourceMessage = appendChannelItemFixture(store, {
+    channelId: input.channelId,
+    kind: "message",
+    intent: "discuss",
+    authorType: "local-user",
+    body: "Source message for the active channel reply.",
+    status: "ready",
+  }, "2026-06-11T00:00:55.000Z");
+  const replyMessage = appendChannelItemFixture(store, {
+    channelId: input.channelId,
+    replyToItemId: sourceMessage.id,
+    kind: "ai_reply",
+    intent: "discuss",
+    authorType: "ai-teammate",
+    authorId: teammateId,
+    body: "",
+    status: "pending",
+  }, "2026-06-11T00:00:56.000Z");
+  const workUnit = store.createWorkUnit({
+    id: `wu_${input.runId}`,
+    workspaceId: DEFAULT_WORKSPACE_ID,
+    kind: "channel_ai_reply",
+    ownerType: "channel_message",
+    ownerId: sourceMessage.id,
+    channelId: input.channelId,
+    teammateId,
+    idempotencyKey: `channel-reply-fixture:${input.runId}`,
+    createdByActor: "system",
+    request: { sourceMessageId: sourceMessage.id },
+    linkedMessageId: replyMessage.id,
+    now: "2026-06-11T00:00:57.000Z",
+  });
+  const run = store.createRun({
+    id: input.runId,
+    cwd: input.cwd,
+    taskId: input.taskId,
+    channelId: input.channelId,
+    threadId: sourceMessage.threadId,
+    teammateId,
+    providerName: "test-provider",
+    providerModel: "test-model",
+    taskSnapshot: { id: input.taskId, title: "Active work" },
+    providerSnapshot: { provider: "test-provider", model: "test-model" },
+    requestSnapshot: {
+      cwd: input.cwd,
+      sourceMessageId: sourceMessage.id,
+      linkedMessageId: replyMessage.id,
+    },
+    workUnitId: workUnit.id,
+    createdAt: "2026-06-11T00:01:00.000Z",
+  });
+  store.linkRunToWorkUnit(run.id, workUnit.id, "2026-06-11T00:01:30.000Z");
+  updateChannelItemFixture(store, replyMessage.id, { linkedRunId: run.id }, "2026-06-11T00:01:31.000Z");
+  store.markRunStarted(run.id, "2026-06-11T00:02:00.000Z");
+  return store.getRun(run.id);
 }
 
 function customTemplate(overrides = {}) {
@@ -11603,7 +13076,7 @@ function parseSseEvents(text) {
       }
       return {
         event: eventLine.slice("event:".length).trim(),
-        data: JSON.parse(dataLine.slice("data:".length).trim()),
+        data: projectCanonicalChannelConversationForTest(JSON.parse(dataLine.slice("data:".length).trim())),
       };
     })
     .filter(Boolean);
@@ -11614,7 +13087,7 @@ async function getJson(url) {
   if (!response.ok) {
     assert.fail(`${response.status} ${response.statusText}: ${await response.text()}`);
   }
-  return await response.json();
+  return projectCanonicalChannelConversationForTest(await response.json());
 }
 
 async function getArtifactJson(baseUrl, cwd, artifactId) {
@@ -11625,10 +13098,10 @@ async function getArtifactJson(baseUrl, cwd, artifactId) {
   return await response.json();
 }
 
-function assertCoordinatorWorkflowStartReply(result, expectedThreadId = result.message.id) {
+function assertCoordinatorWorkflowStartReply(result) {
   assert.equal(result.aiReply.kind, "ai_reply");
   assert.equal(result.aiReply.status, "ready");
-  assert.equal(result.aiReply.threadId, expectedThreadId);
+  assert.equal(result.aiReply.threadId, result.message.threadId);
   assert.equal(result.aiReply.authorId, "ling_agent");
   assert.match(result.aiReply.body, /确认需求/);
   assert.match(result.aiReply.body, /开始处理/);
@@ -11654,18 +13127,21 @@ function assertIntentDecisionInspectPayloadIsSafe(decision) {
     "id",
     "workspaceId",
     "channelId",
-    "sourceMessageId",
+    "sourceTurnId",
+    "sourceItemId",
+    "contextSegmentId",
+    "contextProjectionVersion",
     "action",
-    "selectedTeammateId",
     "selectedTeammateIds",
     "proposalId",
-    "replyMessageId",
-    "replyMessageIds",
+    "resultItemIds",
     "workflowId",
     "reason",
+    "clarification",
+    "execution",
     "status",
     "createdBy",
-    "errorMessage",
+    "errorCode",
     "createdAt",
     "updatedAt",
   ]);
@@ -11698,11 +13174,20 @@ function assertIntentDecisionInspectPayloadIsSafe(decision) {
   }
 }
 
-async function waitForChannelMessageStatus(baseUrl, cwd, channelId, messageId, status) {
+function assertSingleReplyIntentDecision(decisions, sourceItemId) {
+  assert.equal(decisions.length, 1);
+  assertIntentDecisionInspectPayloadIsSafe(decisions[0]);
+  assert.equal(decisions[0].schemaVersion, 2);
+  assert.equal(decisions[0].sourceItemId, sourceItemId);
+  assert.equal(decisions[0].action, "reply");
+  assert.equal(decisions[0].status, "accepted");
+}
+
+async function waitForChannelMessageStatus(baseUrl, cwd, channelId, messageId, status, threadId) {
   const deadline = Date.now() + 2_000;
   let latest;
   while (Date.now() < deadline) {
-    latest = await getJson(`${baseUrl}/channels/${encodeURIComponent(channelId)}/messages?cwd=${encodeURIComponent(cwd)}`);
+    latest = await getJson(`${baseUrl}/channels/${encodeURIComponent(channelId)}/items?cwd=${encodeURIComponent(cwd)}${threadId ? `&threadId=${encodeURIComponent(threadId)}` : ""}`);
     const message = latest.messages.find((item) => item.id === messageId);
     if (message?.status === status) {
       return latest;
@@ -11817,7 +13302,43 @@ async function postJson(url, body) {
   if (!response.ok) {
     assert.fail(`${response.status} ${response.statusText}: ${await response.text()}`);
   }
-  return await response.json();
+  return projectCanonicalChannelConversationForTest(await response.json());
+}
+
+function projectCanonicalChannelConversationForTest(payload) {
+  if (!payload || typeof payload !== "object") return payload;
+  const decorations = Array.isArray(payload.decorations) ? payload.decorations : [];
+  const decorationByItemId = new Map(decorations.map((decoration) => [decoration.itemId, decoration]));
+  const projectItem = (item) => {
+    const decoration = decorationByItemId.get(item.id);
+    return {
+      ...projectConversationItemToChannelMessage(item, {
+        ...(decoration?.linkedRunId ? { linkedRunId: decoration.linkedRunId } : {}),
+      }),
+      ...(decoration?.editedAt ? { editedAt: decoration.editedAt } : {}),
+      ...(decoration?.pendingReplacement ? { pendingReplacement: decoration.pendingReplacement } : {}),
+      ...(decoration?.webEvidence ? { webEvidence: decoration.webEvidence } : {}),
+    };
+  };
+  if (payload.userItem) {
+    const message = projectItem(payload.userItem);
+    const aiReplies = (payload.assistantItems ?? []).map(projectItem);
+    return {
+      ...payload,
+      message,
+      aiReplies,
+      ...(aiReplies[0] ? { aiReply: aiReplies[0] } : {}),
+    };
+  }
+  if (Array.isArray(payload.items)) {
+    return {
+      ...payload,
+      messages: payload.items
+        .filter((item) => item.kind === "user_message" || item.kind === "assistant_message" || item.kind === "system_event")
+        .map(projectItem),
+    };
+  }
+  return payload;
 }
 
 async function putJson(url, body) {

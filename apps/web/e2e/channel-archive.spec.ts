@@ -71,7 +71,7 @@ test("channel branch list shows real branches without default branch chrome", as
   const quickSplitRootThreadId = isRecord(quickSplitBranch) && typeof quickSplitBranch.rootThreadId === "string" ? quickSplitBranch.rootThreadId : "";
   await channelComposerTextbox(page).fill("Branch-scoped message");
   await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
-  await expect.poll(() => state.lastChannelMessageRequest?.threadId).toBe(quickSplitRootThreadId);
+  await expect.poll(() => state.lastChannelTurnRequest?.surface).toEqual({ kind: "thread", threadId: quickSplitRootThreadId });
 
   await openArchivedItemsSettings(page);
   const archivedSettings = page.locator(".archived-items-settings-panel");

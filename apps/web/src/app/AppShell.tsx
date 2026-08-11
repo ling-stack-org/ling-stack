@@ -131,6 +131,7 @@ import { defaultTools } from "../lib/tools.js";
 import {
   canUseConversationProvider,
   providerPreflightReady,
+  providerRunPreflightBlocker,
   providerModelRouteLabel,
   sortProvidersForWorkbench,
 } from "../lib/providers.js";
@@ -1023,7 +1024,10 @@ export function AppShell(): JSX.Element {
   const runById = useMemo(() => {
     const items = new Map(runs.map((item) => [item.id, item]));
     if (run) {
-      items.set(run.id, run);
+      const listedRun = items.get(run.id);
+      if (!listedRun || run.updatedAt.localeCompare(listedRun.updatedAt) > 0) {
+        items.set(run.id, run);
+      }
     }
     return items;
   }, [run, runs]);
@@ -1087,6 +1091,8 @@ export function AppShell(): JSX.Element {
         model: provider.model,
         providerId: provider.providerId,
         enabled: provider.enabled,
+        runnable: providerPreflightReady(provider),
+        blocker: providerRunPreflightBlocker(provider, t),
         thinkingModes: provider.thinkingModes ?? [],
       })),
     [conversationChatProviders, defaultConversationProviderPresetId, providerTemplates],
@@ -1112,6 +1118,7 @@ export function AppShell(): JSX.Element {
       authorLabel: message.authorLabel,
       content: message.content,
       attachments: message.attachments,
+      fileRefs: message.fileRefs,
       status: message.status,
       revision: message.revision,
       editedAt: message.editedAt,
@@ -1661,6 +1668,8 @@ export function AppShell(): JSX.Element {
     refreshUsedMemoryAudit,
     refreshChannelMessageRouteDecisions,
     refreshChannelIntentDecisions,
+    refreshRuns,
+    refreshRuntimeState,
     refreshChannelActivity,
   });
   const {
@@ -1709,6 +1718,7 @@ export function AppShell(): JSX.Element {
     channelRunsForArtifacts,
     setSkillLibraryRefreshToken,
     refreshRuns,
+    refreshSelectedConversation,
     refreshRuntimeState,
     refreshApprovals,
     refreshApprovalPolicy,
@@ -2607,7 +2617,6 @@ export function AppShell(): JSX.Element {
               />
               ) : (
                 <ConversationHome
-                  userProfile={userProfile}
                   conversationTitle={selectedConversationDetail?.thread.title ?? ""}
                   initialMessages={selectedConversationMessages}
                   initialProjectPath={selectedConversationProjectPath}
@@ -2623,6 +2632,8 @@ export function AppShell(): JSX.Element {
                     turns: selectedConversationDetail.turns,
                     runs: selectedConversationDetail.runs,
                     executionActions: selectedConversationDetail.executionActions,
+                    approvals: selectedConversationDetail.approvals,
+                    interventions: selectedConversationDetail.interventions,
                     terminalReports: selectedConversationDetail.terminalReports,
                   } : undefined}
                   conversationIdentity={conversationIdentity}
@@ -2636,6 +2647,7 @@ export function AppShell(): JSX.Element {
                   activeRun={activeConversationRun}
                   stopping={Boolean(activeConversationRun && cancellingRunId === activeConversationRun.id)}
                   onOpenRun={(runId) => void openRunFromWorkspace(runId)}
+                  onOpenModelWorkbench={() => openSettingsWorkspaceTool("providers")}
                   fullAccessConfirmed={fullAccessConfirmation.isConfirmed(normalConversationConfirmationScope)}
                   onConfirmFullAccess={() => fullAccessConfirmation.request(normalConversationConfirmationScope)}
                   onConfirmFullAccessSelection={() => fullAccessConfirmation.confirmExplicitSelection(normalConversationConfirmationScope)}
@@ -2650,13 +2662,19 @@ export function AppShell(): JSX.Element {
                     refreshConversationThreads(form.cwd.trim()),
                     refreshSelectedConversation(form.cwd.trim()),
                   ]).then(() => undefined)}
-                  onStopConversation={activeConversationRun
-                    ? () => cancelRunOrWorkUnit(activeConversationRun)
-                    : undefined}
+                  onStopConversation={(target) => {
+                    const targetRun = selectedConversationDetail?.runs.find((run) => run.id === target.runId);
+                    if (targetRun) {
+                      void cancelRunOrWorkUnit(targetRun);
+                      return;
+                    }
+                    if (target.workUnitId) void runWorkUnitAction(target.workUnitId, "cancel");
+                  }}
                   onSendConversation={async (input) => {
                     await sendConversationMessage({
                       message: input.message,
                       attachmentIds: input.attachmentIds,
+                      fileRefs: input.fileRefs,
                       projectPath: input.project.projectPath,
                       providerPresetId: input.model.providerPresetId || defaultConversationProviderPresetId,
                       thinkingLevel: input.model.thinkingLevel,
@@ -2673,6 +2691,8 @@ export function AppShell(): JSX.Element {
                         homeMessageFromTranscript(event.userMessage),
                         homeMessageFromTranscript(event.assistantMessage),
                       ]),
+                      onMessageAccepted: input.onMessageAccepted,
+                      onReplyLinked: input.onReplyLinked,
                       onRunEvent: (event) => {
                         if (event.assistantMessage) {
                           input.upsertMessage(homeMessageFromTranscript(event.assistantMessage));

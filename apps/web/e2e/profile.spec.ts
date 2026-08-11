@@ -161,10 +161,16 @@ test("workspace messages use the saved user profile identity", async ({ page }) 
     return {
       centerDelta: Math.abs((bodyRect.top + bodyRect.height / 2) - (avatarRect.top + avatarRect.height / 2)),
       horizontalGap: avatarRect.left - bodyRect.right,
+      avatarWidth: avatarRect.width,
+      avatarHeight: avatarRect.height,
+      objectFit: getComputedStyle(avatarElement).objectFit,
     };
   });
   expect(messageLayout.centerDelta).toBeLessThanOrEqual(24);
   expect(messageLayout.horizontalGap).toBeGreaterThan(0);
+  expect(messageLayout.avatarWidth).toBe(30);
+  expect(messageLayout.avatarHeight).toBe(30);
+  expect(messageLayout.objectFit).toBe("cover");
 });
 
 test("private teammate chat messages use the saved user profile identity", async ({ page }) => {
@@ -218,8 +224,14 @@ test("private teammate chat messages use the saved user profile identity", async
     return {
       centerDelta: Math.abs((bodyRect.top + bodyRect.height / 2) - (avatarRect.top + avatarRect.height / 2)),
       horizontalGap: avatarRect.left - bodyRect.right,
+      avatarWidth: avatarRect.width,
+      avatarHeight: avatarRect.height,
+      objectFit: getComputedStyle(avatarElement).objectFit,
     };
   });
   expect(messageLayout.centerDelta).toBeLessThanOrEqual(24);
   expect(messageLayout.horizontalGap).toBeGreaterThan(0);
+  expect(messageLayout.avatarWidth).toBe(30);
+  expect(messageLayout.avatarHeight).toBe(30);
+  expect(messageLayout.objectFit).toBe("cover");
 });

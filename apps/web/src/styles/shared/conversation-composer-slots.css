@@ -125,18 +125,25 @@
 
 [data-conversation-composer] .pending-assets.composer-preview-strip {
   display: flex;
+  width: 100%;
   min-width: 0;
   align-items: stretch;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: var(--ling-space-4);
   padding: var(--ling-space-1) var(--ling-space-1) var(--ling-space-2);
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
 }
 
 [data-conversation-composer] .composer-preview-card {
   position: relative;
   display: grid;
-  width: min(244px, 100%);
+  width: 224px;
+  max-width: min(244px, calc(100vw - 96px));
   min-height: 54px;
+  flex: 0 0 224px;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: var(--ling-space-4);
@@ -149,6 +156,11 @@
 
 [data-conversation-composer] .composer-preview-card.image {
   grid-template-columns: 50px minmax(0, 1fr);
+}
+
+[data-conversation-composer] .composer-preview-strip > .composer-structured-token.file-reference {
+  flex: 0 0 auto;
+  max-width: min(244px, calc(100vw - 96px));
 }
 
 [data-conversation-composer] .composer-preview-thumbnail {

@@ -1,4 +1,9 @@
-import type { Channel, ChannelMessage, ChannelStoreFacet } from "@ling-stack/core";
+import type { Channel, ChannelMessage, RunStore } from "@ling-stack/core";
+import {
+  buildConversationContextProjection,
+  projectConversationContextMessages,
+  type ConversationContextProjection,
+} from "./context-processing/conversation-context-projector.js";
 
 export type ResolvedExecutableFileTarget =
   | {
@@ -17,7 +22,7 @@ export type ResolvedExecutableFileTarget =
     };
 
 export interface ResolveExecutableFileTargetInput {
-  readonly store: ChannelStoreFacet;
+  readonly store: RunStore;
   readonly channel: Channel;
   readonly sourceMessage: ChannelMessage;
   readonly target?: string;
@@ -89,9 +94,15 @@ function resolveRecentChannelFileTargets(input: ResolveExecutableFileTargetInput
 function recentChannelFileTargetCandidates(input: ResolveExecutableFileTargetInput): readonly string[] {
   const textSources: string[] = [];
   const sourceCreatedAt = input.sourceMessage.createdAt;
+  const projection = resolverProjection(input);
+  const projectedRefKeys = new Set(projection.metadata.sourceRefs.map((ref) => `${ref.type}:${ref.id}`));
+  const projectedItemIds = new Set(projection.items.map((item) => item.id));
   const workflows = input.store
-    .listChannelWorkflows({ channelId: input.channel.id, limit: 20 })
-    .filter((workflow) => workflow.createdAt <= sourceCreatedAt);
+    .listChannelWorkflows({ channelId: input.channel.id, limit: 500 })
+    .filter((workflow) => workflow.createdAt <= sourceCreatedAt)
+    .filter((workflow) =>
+      projectedRefKeys.has(`workflow:${workflow.id}`)
+      || Boolean(workflow.metadata?.sourceMessageId && projectedItemIds.has(workflow.metadata.sourceMessageId)));
   for (const workflow of workflows) {
     textSources.push(workflow.title, workflow.objective);
     for (const step of input.store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 50 })) {
@@ -102,8 +113,9 @@ function recentChannelFileTargetCandidates(input: ResolveExecutableFileTargetInp
     }
   }
   const proposals = input.store
-    .listChannelExecutionProposals({ channelId: input.channel.id, limit: 20 })
-    .filter((proposal) => proposal.createdAt <= sourceCreatedAt);
+    .listChannelExecutionProposals({ channelId: input.channel.id, limit: 500 })
+    .filter((proposal) => proposal.createdAt <= sourceCreatedAt)
+    .filter((proposal) => projectedItemIds.has(proposal.sourceMessageId));
   for (const proposal of proposals) {
     textSources.push(proposal.title, proposal.prompt);
     if (proposal.riskSummary) {
@@ -141,40 +153,19 @@ function resolveRecentChannelMessageFileTarget(input: ResolveExecutableFileTarge
 }
 
 function recentMessageTargetScope(input: ResolveExecutableFileTargetInput): readonly ChannelMessage[] {
-  const scopedMessages = input.sourceMessage.threadId
-    ? recentThreadMessageTargetScope(input)
-    : input.store.listChannelMessages({ channelId: input.channel.id, limit: 30 });
-  return scopedMessages
-    .filter((message) => message.id !== input.sourceMessage.id && message.createdAt <= input.sourceMessage.createdAt && message.status !== "failed")
+  const projection = resolverProjection(input);
+  return projectConversationContextMessages(projection, input.store)
+    .filter((message) => message.id !== input.sourceMessage.id && message.status !== "failed")
     .slice()
-    .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
     .reverse();
 }
 
-function recentThreadMessageTargetScope(input: ResolveExecutableFileTargetInput): readonly ChannelMessage[] {
-  const threadId = input.sourceMessage.threadId;
-  if (!threadId) {
-    return [];
-  }
-  const messages = input.store.listChannelMessages({ channelId: input.channel.id, threadId, limit: 30 });
-  const rootMessage = input.store.getChannelMessage(threadId);
-  if (rootMessage && rootMessage.channelId === input.channel.id) {
-    return uniqueMessages([...messages, rootMessage]);
-  }
-  return messages;
-}
-
-function uniqueMessages(messages: readonly ChannelMessage[]): readonly ChannelMessage[] {
-  const seen = new Set<string>();
-  const unique: ChannelMessage[] = [];
-  for (const message of messages) {
-    if (seen.has(message.id)) {
-      continue;
-    }
-    seen.add(message.id);
-    unique.push(message);
-  }
-  return unique;
+function resolverProjection(input: ResolveExecutableFileTargetInput): ConversationContextProjection {
+  return buildConversationContextProjection({
+    store: input.store,
+    sourceItemId: input.sourceMessage.id,
+    view: "resolver",
+  });
 }
 
 function extractFileTargetCandidates(text: string): readonly string[] {

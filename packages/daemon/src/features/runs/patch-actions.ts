@@ -334,8 +334,15 @@ function isAbsolutePathWithinAllowedWritePaths(absolutePath: string, cwd: string
     if (lexicalRelativePath === "" || (!lexicalRelativePath.startsWith("..") && !isAbsolute(lexicalRelativePath))) {
       return true;
     }
-    const realScopePath = realpathSync(nearestExistingAncestor(scopePath));
-    const realRelativePath = relative(realScopePath, absolutePath);
+    const realScopePath = resolveThroughExistingAncestor(scopePath);
+    const realAbsolutePath = resolveThroughExistingAncestor(absolutePath);
+    const realRelativePath = relative(realScopePath, realAbsolutePath);
     return realRelativePath === "" || (!realRelativePath.startsWith("..") && !isAbsolute(realRelativePath));
   });
+}
+
+function resolveThroughExistingAncestor(absolutePath: string): string {
+  const existingAncestor = nearestExistingAncestor(absolutePath);
+  const unresolvedSuffix = relative(existingAncestor, absolutePath);
+  return resolvePath(realpathSync(existingAncestor), unresolvedSuffix);
 }

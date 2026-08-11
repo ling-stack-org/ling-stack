@@ -32,6 +32,7 @@ import {
   filterSupersededTeammateDirectMessages,
   projectTeammateDirectMessageRevisionMetadata,
 } from "../conversations/supersession-projection.js";
+import { projectConversationActiveReplyTarget } from "../conversations/active-reply-target.js";
 
 export type CreateTeammateDirectAiReply = (input: {
   readonly store: RunStore;
@@ -306,7 +307,19 @@ export async function handleTeammateDirectMessageStream(
         },
         stream: {
           onReady: (aiReply) => safeWriteSse("ready", { message, aiReply }),
-          onRunLinked: (aiReply) => safeWriteSse("run_linked", { messageId: aiReply.id, linkedRunId: aiReply.linkedRunId }),
+          onRunLinked: (aiReply) => {
+            const activeReply = projectConversationActiveReplyTarget({
+              store,
+              runId: aiReply.linkedRunId,
+              threadId: thread.id,
+              teammateId: teammate.id,
+            });
+            safeWriteSse("run_linked", {
+              messageId: aiReply.id,
+              linkedRunId: aiReply.linkedRunId,
+              ...(activeReply ? { activeReply } : {}),
+            });
+          },
           onDelta: (aiReply, delta) => safeWriteSse("delta", {
             messageId: aiReply.id,
             delta,

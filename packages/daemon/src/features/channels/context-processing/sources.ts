@@ -22,8 +22,12 @@ import {
   buildConversationSupersessionProjection,
   filterSupersededChannelMessages,
 } from "../../conversations/supersession-projection.js";
+import {
+  getChannelMessageView,
+  listChannelMessageViews,
+} from "../conversation-item-messages.js";
 
-type ChannelContextConversationStore = ChannelStoreFacet & RunExecutionStoreFacet & Partial<Pick<RunStore, "listConversationTurnSupersessions">>;
+type ChannelContextConversationStore = ChannelStoreFacet & RunExecutionStoreFacet & Pick<RunStore, "getLingTurn"> & Partial<Pick<RunStore, "listConversationTurnSupersessions">>;
 type ChannelContextActiveWorkStore = ChannelStoreFacet & RunExecutionStoreFacet & ApprovalStoreFacet;
 type WorkflowEvidenceStore = RunExecutionStoreFacet;
 
@@ -236,13 +240,22 @@ export function listChannelContextMessages(input: {
   const limit = input.limit ?? 8;
   const surface = resolveChannelConversationSurface(input.store, input.channelId, input.sourceMessage);
   if (surface.kind === "branch") {
-    return filterChannelContextSupersessions(input.store, input.channelId, input.store
-      .listChannelMessages({ channelId: input.channelId, threadId: surface.rootThreadId, limit })
+    return filterChannelContextSupersessions(input.store, input.channelId, listChannelMessageViews({
+      store: input.store,
+      channelId: input.channelId,
+      threadId: surface.rootThreadId,
+      limit,
+    })
       .filter((message) => message.id === input.sourceMessage.id || !historicalGuidanceMessageIds.has(message.id)));
   }
   if (surface.kind === "topic") {
-    const parentMessage = input.store.getChannelMessage(surface.sourceMessageId);
-    const topicMessages = input.store.listChannelMessages({ channelId: input.channelId, threadId: surface.sourceMessageId, limit });
+    const parentMessage = getChannelMessageView(input.store, surface.sourceMessageId);
+    const topicMessages = listChannelMessageViews({
+      store: input.store,
+      channelId: input.channelId,
+      ...(input.sourceMessage.threadId ? { threadId: input.sourceMessage.threadId } : {}),
+      limit,
+    });
     const messages = parentMessage?.channelId === input.channelId
       ? [parentMessage, ...topicMessages.filter((message) => message.id !== parentMessage.id)]
       : topicMessages;
@@ -252,11 +265,14 @@ export function listChannelContextMessages(input: {
       messages.filter((message) => message.id === input.sourceMessage.id || !historicalGuidanceMessageIds.has(message.id)),
     );
   }
-  return filterChannelContextSupersessions(input.store, input.channelId, input.store
-    .listChannelMessages({
+  return filterChannelContextSupersessions(input.store, input.channelId, listChannelMessageViews({
+      store: input.store,
       channelId: input.channelId,
+      ...(input.sourceMessage.threadId ? { threadId: input.sourceMessage.threadId } : {}),
       limit,
-      excludeThreadIds: listChannelBranchRootThreadIds(input.store, input.channelId),
+      ...(!input.sourceMessage.threadId
+        ? { excludeThreadIds: listChannelBranchRootThreadIds(input.store, input.channelId) }
+        : {}),
     })
     .filter((message) => message.id === input.sourceMessage.id || !historicalGuidanceMessageIds.has(message.id)));
 }

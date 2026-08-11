@@ -10,6 +10,7 @@ import {
   sessionPermissionModes,
   workspaceAccessModes,
   type AuthorizationMode,
+  type ChannelMessageFileRef,
   type PermissionConfirmation,
   type DirectWorkspaceBinding,
   type DirectWorkspaceSnapshot,
@@ -25,6 +26,7 @@ import {
   type WorkspaceAccessMode,
 } from "@ling-stack/core";
 import type { PiRunnerProviderConfig, PiRunnerRunOptions } from "@ling-stack/runner-pi";
+import type { ConversationContextProjectionMetadata } from "@ling-stack/contracts";
 import { HttpError } from "../../errors.js";
 import { parseApprovalProfileObject } from "../../shared/approval-profile.js";
 import {
@@ -36,6 +38,12 @@ import {
   readOptionalStringRecord,
   readString,
 } from "../../shared/validation.js";
+
+export interface PreselectedMemoryUse {
+  readonly memoryIds: readonly string[];
+  readonly recallQuery: string;
+  readonly policyVersion: string;
+}
 
 export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired" | "onEvent" | "provider" | "tools" | "mcpTools" | "onMcpToolCall"> {
   readonly workspaceCwd?: string;
@@ -60,6 +68,7 @@ export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired
   readonly lingConversationTone?: LingConversationTone;
   readonly responseLanguage?: ResponseLanguage;
   readonly conversationAttachmentIds?: readonly string[];
+  readonly conversationFileRefs?: readonly ChannelMessageFileRef[];
   readonly parentRunId?: string;
   readonly interventionId?: string;
   readonly continuationReason?: RunContinuationReason;
@@ -69,6 +78,12 @@ export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired
   readonly directWorkspaceBinding?: DirectWorkspaceBinding;
   readonly directWorkspaceSnapshot?: DirectWorkspaceSnapshot;
   readonly skipMemoryRecall?: boolean;
+  /** Internal-only memory evidence already selected and rendered by a scoped context owner. */
+  readonly preselectedMemoryUse?: PreselectedMemoryUse;
+  /** Internal-only evidence version for conversation-derived runs. External request parsing does not accept it. */
+  readonly contextProjection?: ConversationContextProjectionMetadata;
+  /** Internal-only override used by trusted multi-reply channel orchestration. */
+  readonly channelParallelLimit?: number;
 }
 
 export function parseRunRequest(value: unknown): RunRequest {

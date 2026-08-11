@@ -73,6 +73,121 @@ function configureReadyConversationModel(state: MockState): void {
     : channel);
 }
 
+function configureConcurrentChannelReplyRuns(state: MockState): {
+  readonly designerRunId: string;
+  readonly designerWorkUnitId: string;
+  readonly engineerRunId: string;
+  readonly engineerWorkUnitId: string;
+} {
+  const seed = state.runs[0];
+  const fixtures = [
+    {
+      teammateId: "designer",
+      runId: "run_channel_reply_designer",
+      workUnitId: "wu_channel_reply_designer",
+      createdAt: "2026-05-22T00:01:00.000Z",
+      updatedAt: "2026-05-22T00:01:01.000Z",
+    },
+    {
+      teammateId: "engineer",
+      runId: "run_channel_reply_engineer",
+      workUnitId: "wu_channel_reply_engineer",
+      createdAt: "2026-05-22T00:01:02.000Z",
+      updatedAt: "2026-05-22T00:01:03.000Z",
+    },
+  ] as const;
+
+  state.aiTeammates = [
+    createMockTeammate({ id: "designer", displayName: "Designer", roleKey: "designer", avatarTone: "blue" }),
+    createMockTeammate({ id: "engineer", displayName: "Engineer", roleKey: "engineer", avatarTone: "teal" }),
+  ];
+  state.tasks = [];
+  state.approvals = [];
+  state.channelMessages = [{
+    id: "message_source",
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    kind: "message",
+    intent: "discuss",
+    authorType: "local-user",
+    authorId: "local-user",
+    body: "Start the active channel replies.",
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "ready",
+    createdAt: "2026-05-22T00:00:59.000Z",
+    updatedAt: "2026-05-22T00:00:59.000Z",
+  }];
+  state.runs = fixtures.map((fixture) => ({
+    ...seed,
+    id: fixture.runId,
+    status: "running",
+    taskId: "message_source",
+    threadId: "thread_channel_channel_engineering",
+    teammateId: fixture.teammateId,
+    workUnitId: fixture.workUnitId,
+    requestSnapshot: { sourceMessageId: "message_source" },
+    errorMessage: undefined,
+    createdAt: fixture.createdAt,
+    startedAt: fixture.createdAt,
+    updatedAt: fixture.updatedAt,
+  }));
+  state.workUnits = fixtures.map((fixture) => ({
+    id: fixture.workUnitId,
+    workspaceId: "workspace_default",
+    kind: "channel_ai_reply",
+    ownerType: "channel_message",
+    ownerId: "message_source",
+    channelId: "channel_engineering",
+    teammateId: fixture.teammateId,
+    providerPresetId: "provider_local",
+    idempotencyKey: `channel-reply:${fixture.runId}`,
+    status: "running",
+    priority: 0,
+    attemptCount: 1,
+    activeAttemptId: `attempt_${fixture.runId}`,
+    createdByActor: "system",
+    request: { sourceMessageId: "message_source" },
+    timeoutPolicy: { claimTtlMs: 60_000, heartbeatTtlMs: 60_000, cancelGraceMs: 15_000 },
+    linkedRunId: fixture.runId,
+    linkedMessageId: `reply_${fixture.teammateId}`,
+    createdAt: fixture.createdAt,
+    updatedAt: fixture.updatedAt,
+    startedAt: fixture.createdAt,
+  }));
+  state.turns = [{
+    id: "turn_channel_reply",
+    workspaceId: "workspace_default",
+    threadId: "thread_channel_channel_engineering",
+    kind: "initial_request",
+    status: "running",
+    title: "Ordinary channel replies",
+    userInstruction: "Reply to the channel message.",
+    channelId: "channel_engineering",
+    sourceItemId: "message_source",
+    activeRunId: fixtures[1].runId,
+    createdByActor: "local-user",
+    createdAt: fixtures[0].createdAt,
+    updatedAt: fixtures[1].updatedAt,
+  }];
+  state.turnRunLinks = fixtures.map((fixture, index) => ({
+    turnId: "turn_channel_reply",
+    runId: fixture.runId,
+    attemptNumber: index + 1,
+    role: "primary",
+    createdAt: fixture.createdAt,
+  }));
+
+  return {
+    designerRunId: fixtures[0].runId,
+    designerWorkUnitId: fixtures[0].workUnitId,
+    engineerRunId: fixtures[1].runId,
+    engineerWorkUnitId: fixtures[1].workUnitId,
+  };
+}
+
 async function expectConversationReviewSurface(page: Page): Promise<void> {
   await expect(page.locator(".channel-side-panel")).toHaveCount(0);
   await expect(page.getByLabel("Channel message feed")).toBeVisible();
@@ -127,6 +242,25 @@ async function readStableFirstVisibleFeedAnchor(
   }).toBe(true);
   if (!previous) throw new Error("Visible feed anchor did not stabilize");
   return previous;
+}
+
+async function readOverlappingVirtualFeedRows(page: Page): Promise<string[]> {
+  return page.getByLabel("Channel message feed").locator(".message-feed-virtual-row").evaluateAll((rows) => {
+    const geometry = rows
+      .map((row) => {
+        const rect = row.getBoundingClientRect();
+        return {
+          id: row.getAttribute("data-feed-item-id") ?? "unknown",
+          top: rect.top,
+          bottom: rect.bottom,
+        };
+      })
+      .sort((left, right) => left.top - right.top);
+    return geometry.slice(0, -1).flatMap((row, index) => {
+      const next = geometry[index + 1];
+      return next && row.bottom > next.top + 1 ? [`${row.id} -> ${next.id}`] : [];
+    });
+  });
 }
 
 test("channel governance notifications stay in the header review queue", async ({ page }) => {
@@ -2073,8 +2207,8 @@ test("multi-role channel messages create workflow proposals instead of AI replie
   await channelComposerTextbox(page).fill("Architect 先拆，Engineer 实现，QA 验证，可以吗？");
   await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
 
-  await expect.poll(() => state.lastChannelMessageRequest?.requestAiReply).toBe(false);
-  expect(state.lastChannelMessageRequest).not.toHaveProperty("providerPresetId");
+  await expect.poll(() => state.lastChannelTurnRequest?.requestAiReply).toBe(true);
+  expect(state.lastChannelTurnRequest).not.toHaveProperty("providerPresetId");
   await expect.poll(() => state.channelExecutionProposals.length).toBe(1);
   await expect.poll(() => state.channelMessages.filter((message) => isRecord(message) && message.kind === "ai_reply").length).toBe(0);
   const proposal = page.getByLabel("Task confirmation");
@@ -2209,7 +2343,7 @@ test("Ling Agent session acceptance matrix auto-starts executable messages", asy
   await channelComposerTextbox(page).fill("在 /tmp/example 下创建 README.md");
   await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
 
-  await expect.poll(() => state.lastChannelMessageRequest?.requestAiReply).toBe(false);
+  await expect.poll(() => state.lastChannelTurnRequest?.requestAiReply).toBe(true);
   await expect.poll(() => state.channelExecutionProposals.length).toBe(1);
   await expect.poll(() => state.channelWorkflows.length).toBe(1);
   await expect.poll(() => state.channelMessages.filter((message) => isRecord(message) && message.kind === "ai_reply").length).toBe(0);
@@ -2240,7 +2374,7 @@ test("Ling Agent session acceptance matrix auto-starts executable messages", asy
   await expect.poll(() => {
     const decision = state.channelIntentDecisions[0];
     return isRecord(decision) ? [decision.action, decision.status, decision.createdBy].join("|") : "";
-  }).toBe("direct_workflow|accepted|deterministic");
+  }).toBe("execute|accepted|deterministic");
 });
 
 test("Ling Agent session keeps ordinary questions on chat routing", async ({ page }) => {
@@ -2266,7 +2400,7 @@ test("Ling Agent session keeps ordinary questions on chat routing", async ({ pag
   await expect.poll(() => {
     const decision = state.channelMessageRouteDecisions[0];
     return isRecord(decision) ? [decision.action, decision.status, decision.createdBy, decision.selectedTeammateId].join("|") : "";
-  }).toBe("reply|accepted|deterministic|teammate_builtin_engineer");
+  }).toBe("reply|accepted|explicit_mention|ling_agent");
   const feed = page.locator(".activity-shell");
   await expect(feed.getByText("收到，我会按频道上下文推进。")).toBeVisible();
   await expect(feed.getByLabel("Task confirmation")).toHaveCount(0);
@@ -2296,7 +2430,7 @@ test("ordinary channel feed hides routing and intent decision internals", async 
       updatedAt: "2026-05-25T00:10:00.000Z",
     },
     {
-      id: "msg_direct_workflow",
+      id: "msg_execute",
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
       kind: "message",
@@ -2331,10 +2465,10 @@ test("ordinary channel feed hides routing and intent decision internals", async 
   ];
   state.channelExecutionProposals = [
     {
-      id: "proposal_direct_workflow",
+      id: "proposal_execute",
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
-      sourceMessageId: "msg_direct_workflow",
+      sourceMessageId: "msg_execute",
       proposedByTeammateId: "ling_agent",
       title: "Edit README.md",
       prompt: "Edit README.md with one test sentence.",
@@ -2351,13 +2485,19 @@ test("ordinary channel feed hides routing and intent decision internals", async 
   ];
   state.channelIntentDecisions = [
     {
-      schemaVersion: 1,
-      id: "intent_direct_workflow",
+      schemaVersion: 2,
+      id: "intent_execute",
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
-      sourceMessageId: "msg_direct_workflow",
-      action: "direct_workflow",
-      proposalId: "proposal_direct_workflow",
+      sourceTurnId: "turn_msg_execute",
+      sourceItemId: "msg_execute",
+      contextSegmentId: "segment_channel_engineering",
+      contextProjectionVersion: "ctxv2_mock_msg_execute",
+      action: "execute",
+      selectedTeammateIds: [],
+      proposalId: "proposal_execute",
+      resultItemIds: [],
+      execution: { kind: "file_edit", targetKind: "file" },
       reason: "Direct workflow proposal created by mock intent selector.",
       status: "accepted",
       createdBy: "deterministic",
@@ -2384,6 +2524,238 @@ test("ordinary channel feed hides routing and intent decision internals", async 
   await expect(feed.getByText("Why this handling?")).toHaveCount(0);
   expect(state.channelMessageRouteDecisions).toHaveLength(1);
   expect(state.channelIntentDecisions).toHaveLength(1);
+});
+
+test("channel context inspector exposes safe metadata and recovers from a stale segment correction", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "pending" });
+  const channelId = "channel_engineering";
+  const threadId = "thread_context_inspect";
+  const turnId = "turn_msg_context_inspect";
+  const sourceItemId = "msg_context_inspect";
+  const engineeringSegmentId = "segment_engineering";
+  const researchSegmentId = "segment_research";
+  const operationsSegmentId = "segment_operations";
+  state.channelMessages = [
+    {
+      id: sourceItemId,
+      workspaceId: "workspace_default",
+      channelId,
+      threadId,
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "tian",
+      body: "Continue the deployment architecture review.",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-08-10T08:00:00.000Z",
+      updatedAt: "2026-08-10T08:00:00.000Z",
+    },
+  ];
+  state.channelIntentDecisions = [
+    {
+      schemaVersion: 2,
+      id: "intent_context_inspect",
+      workspaceId: "workspace_default",
+      channelId,
+      sourceTurnId: turnId,
+      sourceItemId,
+      contextSegmentId: engineeringSegmentId,
+      contextProjectionVersion: "ctxv2_context_inspect_r1",
+      action: "reply",
+      selectedTeammateIds: ["engineer"],
+      resultItemIds: [],
+      reason: "Continue the current deployment architecture discussion.",
+      status: "accepted",
+      createdBy: "model_policy",
+      createdAt: "2026-08-10T08:00:00.500Z",
+      updatedAt: "2026-08-10T08:00:00.500Z",
+    },
+  ];
+  const thread = {
+    id: threadId,
+    workspaceId: "workspace_default",
+    kind: "conversation",
+    channelId,
+    title: "Engineering channel root",
+    objective: "Coordinate engineering work",
+    status: "active",
+    conversationMode: { mode: "chat" },
+    createdAt: "2026-08-10T08:00:00.000Z",
+    updatedAt: "2026-08-10T08:00:00.000Z",
+  };
+  const turn = {
+    id: turnId,
+    workspaceId: "workspace_default",
+    threadId,
+    channelId,
+    kind: "manual_followup",
+    status: "succeeded",
+    title: "Continue the deployment architecture review.",
+    userInstruction: "Continue the deployment architecture review.",
+    sourceItemId,
+    createdByActor: "local-user",
+    createdAt: "2026-08-10T08:00:00.000Z",
+    updatedAt: "2026-08-10T08:00:01.000Z",
+    completedAt: "2026-08-10T08:00:01.000Z",
+  };
+  const segments = [
+    {
+      id: engineeringSegmentId,
+      threadId,
+      state: "active",
+      label: "Engineering",
+      createdFromTurnId: turnId,
+      lastActiveTurnId: turnId,
+      revision: 1,
+      createdAt: "2026-08-10T07:00:00.000Z",
+      updatedAt: "2026-08-10T08:00:00.000Z",
+    },
+    {
+      id: researchSegmentId,
+      threadId,
+      state: "active",
+      label: "Research",
+      createdFromTurnId: "turn_research",
+      lastActiveTurnId: "turn_research",
+      revision: 1,
+      createdAt: "2026-08-10T07:10:00.000Z",
+      updatedAt: "2026-08-10T07:10:00.000Z",
+    },
+    {
+      id: operationsSegmentId,
+      threadId,
+      state: "active",
+      label: "Operations",
+      createdFromTurnId: "turn_operations",
+      lastActiveTurnId: "turn_operations",
+      revision: 1,
+      createdAt: "2026-08-10T07:20:00.000Z",
+      updatedAt: "2026-08-10T07:20:00.000Z",
+    },
+  ];
+  state.channelTurnContexts[turnId] = {
+    thread,
+    turn,
+    sourceItemId,
+    segment: segments[0],
+    segments,
+    assignment: {
+      id: "assignment_context_inspect_r1",
+      turnId,
+      segmentId: engineeringSegmentId,
+      status: "committed",
+      revision: 1,
+      decisionSource: "model_policy",
+      confidence: 0.93,
+      evidenceRefs: [{ type: "conversation_item", id: sourceItemId }],
+      policyVersion: "continuity-v2-segmentation-v1",
+      createdAt: "2026-08-10T08:00:00.100Z",
+    },
+    projection: {
+      projectionVersion: "ctxv2_context_inspect_r1",
+      sourceStateFingerprint: "source_context_inspect_r1",
+      threadId,
+      turnId,
+      segmentId: engineeringSegmentId,
+      throughItemSequence: 8,
+      summaryIds: ["summary_context_inspect"],
+      sourceRefs: [
+        { type: "conversation_item", id: sourceItemId },
+        { type: "context_summary", id: "summary_context_inspect" },
+      ],
+      policyVersion: "continuity-v2-projector-v1",
+      visibilityFingerprint: "visibility_context_inspect",
+    },
+    summaries: [
+      {
+        id: "summary_context_inspect",
+        threadId,
+        segmentId: engineeringSegmentId,
+        scope: "segment",
+        status: "active",
+        version: 1,
+        coveredFromSequence: 1,
+        coveredThroughSequence: 6,
+        decisions: [],
+        constraints: [],
+        openQuestions: [],
+        activeWorkRefs: [],
+        sourceRefs: [{ type: "conversation_item", id: sourceItemId }],
+        policyVersion: "continuity-v2-summary-v1",
+        createdAt: "2026-08-10T07:50:00.000Z",
+      },
+    ],
+    sourceRefs: [
+      { type: "conversation_item", id: sourceItemId },
+      { type: "context_summary", id: "summary_context_inspect" },
+    ],
+    droppedItemCount: 2,
+    redactedItemCount: 1,
+    safety: {
+      rawPromptTextIncluded: false,
+      hiddenReasoningIncluded: false,
+      privateMemoryBodiesIncluded: false,
+      secretValuesIncluded: false,
+    },
+  };
+  state.staleNextChannelTurnContextCorrection = { segmentId: researchSegmentId };
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+  await page.getByRole("button", { name: "Show details" }).click();
+  const dock = page.locator(".channel-side-panel.right-dock");
+  await expect(dock).toBeVisible();
+  await dock.getByRole("button", { name: "Activity" }).click();
+  await dock.getByRole("button", { name: "Routing" }).click();
+  const intentRow = dock.locator(".routing-evidence-row").filter({ hasText: "Reply" });
+  await expect(intentRow).toBeVisible();
+  await intentRow.getByRole("button", { name: "Inspect" }).click();
+  const detail = intentRow.locator(".routing-evidence-detail");
+  const contextSection = detail.locator(".channel-route-inspect-section").filter({ hasText: "Context inspect summary" });
+  await expect(contextSection).toContainText(threadId);
+  await expect(contextSection).toContainText(turnId);
+  await expect(contextSection).toContainText(engineeringSegmentId);
+  await expect(contextSection).toContainText("ctxv2_context_inspect_r1");
+  await expect(contextSection).toContainText("Item watermark8");
+  await expect(contextSection).toContainText("Summary coverage1-6");
+  await expect(contextSection.getByText("conversation_item:msg_context_inspect", { exact: true })).toBeVisible();
+  await expect(contextSection.getByText("context_summary:summary_context_inspect", { exact: true })).toBeVisible();
+  await expect(contextSection).toContainText("Dropped items2");
+  await expect(contextSection).toContainText("Redacted items1");
+  await expect(detail).not.toContainText("RAW_PROMPT_SENTINEL");
+  await expect(detail).not.toContainText("HIDDEN_REASONING_SENTINEL");
+  await expect(detail).not.toContainText("PRIVATE_MEMORY_SENTINEL");
+  await expect(detail).not.toContainText("SECRET_VALUE_SENTINEL");
+
+  const segmentSelect = contextSection.getByLabel("Correct context segment");
+  await segmentSelect.selectOption(operationsSegmentId);
+  await contextSection.getByRole("button", { name: "Apply context correction" }).click();
+  await expect(contextSection.getByRole("alert")).toContainText("Context changed while you were editing");
+  await expect(segmentSelect).toHaveValue(researchSegmentId);
+  expect(state.channelTurnContextCorrectionRequests[0]).toEqual({
+    channelId,
+    turnId,
+    segmentId: operationsSegmentId,
+    expectedAssignmentRevision: 1,
+  });
+
+  await segmentSelect.selectOption(operationsSegmentId);
+  await contextSection.getByRole("button", { name: "Apply context correction" }).click();
+  await expect(contextSection.getByRole("alert")).toHaveCount(0);
+  await expect(segmentSelect).toHaveValue(operationsSegmentId);
+  await expect(contextSection.getByText(operationsSegmentId, { exact: true })).toBeVisible();
+  expect(state.channelTurnContextCorrectionRequests[1]).toEqual({
+    channelId,
+    turnId,
+    segmentId: operationsSegmentId,
+    expectedAssignmentRevision: 2,
+  });
 });
 
 test("channel settings can add and remove teammates without preferred specialist controls", async ({ page }) => {
@@ -3230,7 +3602,7 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   await expect(page.locator(".channel-composer .composer-status-row.loading")).toHaveCount(0);
   await expect(page.getByText("收到，我会按频道上下文推进。")).toBeVisible();
   await expect(page.getByLabel("Pending message assets")).toHaveCount(0);
-  await expect.poll(() => state.lastChannelMessageRequest?.providerPresetId).toBe("provider_local");
+  await expect.poll(() => state.lastChannelTurnRequest?.providerPresetId).toBe("provider_local");
   const sentMessage = page.locator(".message-bubble").filter({ hasText: "@Engineer please refine the channel requirements" });
   await expect(sentMessage.getByRole("link", { name: /brief\.txt/ })).toBeVisible();
   await expect(sentMessage.getByRole("link", { name: /shot\.png/ })).toBeVisible();
@@ -3317,7 +3689,10 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   await expect(topicPanel).toContainText("收到，我会按频道上下文推进。");
   await topicPanel.getByLabel("Topic reply input").fill("Thread follow-up from the topic panel");
   await topicPanel.getByRole("button", { name: "Send reply" }).click();
-  await expect.poll(() => state.lastChannelMessageRequest?.threadId).toBe("msg_1");
+  await expect.poll(() => state.lastChannelTurnRequest?.surface).toEqual({
+    kind: "thread",
+    threadId: "thread_topic_channel_engineering_msg_1",
+  });
   await expect(topicPanel).toContainText("Thread follow-up from the topic panel");
 });
 
@@ -3480,6 +3855,12 @@ test("latest channel prompt edits in place and hides its superseded reply", asyn
   await expect(feed).not.toContainText("Old channel response should disappear.");
   await expect.poll(() => state.lastConversationMessageEditRequest?.surface).toBe("channel_root");
   await expect.poll(() => state.lastConversationMessageEditRequest?.messageId).toBe("msg_channel_edit_source");
+  await expect.poll(() => state.channelMessages.find((message) =>
+    isRecord(message) && message.body === "Edited reply: Revised channel prompt"
+  )).toMatchObject({
+    threadId: "thread_channel_channel_engineering",
+    sourceItemId: "msg_channel_edit_source",
+  });
 });
 
 test("pending channel replacement survives refresh and retries with the original idempotency key", async ({ page }) => {
@@ -3604,6 +3985,12 @@ test("latest topic reply edits in place without creating a second topic", async 
   await expect(page.getByLabel("Topic replies")).toHaveCount(1);
   await expect.poll(() => state.lastConversationMessageEditRequest?.surface).toBe("topic_reply");
   await expect.poll(() => state.lastConversationMessageEditRequest?.messageId).toBe("msg_topic_edit_user");
+  await expect.poll(() => state.channelMessages.find((message) =>
+    isRecord(message) && message.body === "Edited reply: Revised topic follow-up"
+  )).toMatchObject({
+    threadId: "thread_topic_channel_engineering_msg_topic_edit_root",
+    sourceItemId: "msg_topic_edit_user",
+  });
 });
 
 test("latest channel branch prompt reruns inside the same branch lane", async ({ page }) => {
@@ -3676,6 +4063,12 @@ test("latest channel branch prompt reruns inside the same branch lane", async ({
   await expect(navigation.locator(".sidebar-branch-row-shell.selected")).toContainText("Implementation branch");
   await expect.poll(() => state.lastConversationMessageEditRequest?.surface).toBe("channel_branch");
   await expect.poll(() => state.lastConversationMessageEditRequest?.messageId).toBe("msg_branch_edit_source");
+  await expect.poll(() => state.channelMessages.find((message) =>
+    isRecord(message) && message.body === "Edited reply: Revised branch prompt"
+  )).toMatchObject({
+    threadId: rootThreadId,
+    sourceItemId: "msg_branch_edit_source",
+  });
 });
 
 test("channel message body renders safe markdown, highlighted code, folded logs, and structured diffs", async ({ page }) => {
@@ -4029,7 +4422,7 @@ test("channel composer sends workspace file refs as native message payload", asy
   await expect(page.locator(".channel-composer .composer-inline-token.file-reference").filter({ hasText: "apps/web/src/features/workspace/WorkspaceClientView.tsx" })).toHaveCount(1);
   await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
 
-  await expect.poll(() => state.lastChannelMessageRequest?.fileRefs).toEqual([
+  await expect.poll(() => state.lastChannelTurnRequest?.fileRefs).toEqual([
     {
       path: "apps/web/src/features/workspace/WorkspaceClientView.tsx",
       label: "apps/web/src/features/workspace/WorkspaceClientView.tsx",
@@ -4140,7 +4533,8 @@ test("channel composer applies plan mode session commands without creating slash
   const planChip = composer.locator(".conversation-mode-chip.plan");
   const planButton = planChip.getByRole("button", { name: "Plan Mode" });
   await expect(planChip).toHaveCount(0);
-  await expect.poll(() => channelRoots().length).toBe(0);
+  await expect.poll(() => channelRoots().length).toBe(1);
+  const rootThreadId = channelRoots()[0]?.id;
 
   await composer.getByRole("button", { name: "Add" }).click();
   await expect(page.getByRole("menu", { name: "Add" })).toBeVisible();
@@ -4150,6 +4544,7 @@ test("channel composer applies plan mode session commands without creating slash
   await composer.getByRole("button", { name: "Add" }).click();
   await page.getByRole("menu", { name: "Add" }).getByRole("menuitem", { name: "Plan Mode" }).click();
   await expect.poll(() => channelRoots().length).toBe(1);
+  expect(channelRoots()[0]?.id).toBe(rootThreadId);
   await expect.poll(planMode).toBe("plan");
   await expect(planChip).toBeVisible();
   await expect(planChip).toHaveClass(/active/);
@@ -4257,16 +4652,16 @@ test("channel composer manages goal lifecycle from the floating panel", async ({
   await goalPanel.getByRole("button", { name: "Collapse goal details" }).click();
 
   await goalPanel.getByRole("button", { name: "Run goal" }).click();
-  await expect.poll(() => String(state.lastChannelMessageRequest?.body ?? "")).toBe("Continue working toward goal: Finish PR4 with a visible goal panel");
+  await expect.poll(() => String(state.lastChannelTurnRequest?.body ?? "")).toBe("Continue working toward goal: Finish PR4 with a visible goal panel");
   await expect(page.getByLabel("Channel message feed").getByText("Continue working toward goal: Finish PR4 with a visible goal panel")).toBeVisible();
 
   await composer.getByRole("button", { name: "Add" }).click();
   await page.getByRole("menu", { name: "Add" }).getByRole("menuitem", { name: "Plan Mode" }).click();
   await expect.poll(planMode).toBe("plan");
-  const previousGoalContinuation = state.lastChannelMessageRequest;
+  const previousGoalContinuation = state.lastChannelTurnRequest;
   await goalPanel.getByRole("button", { name: "Run goal" }).click();
   await expect(composer).toContainText("Exit Plan Mode before continuing a goal.");
-  await expect.poll(() => state.lastChannelMessageRequest).toBe(previousGoalContinuation);
+  await expect.poll(() => state.lastChannelTurnRequest).toBe(previousGoalContinuation);
 
   await composerInput.fill("/plan off");
   await composer.getByRole("button", { name: "Apply command" }).click();
@@ -4455,12 +4850,12 @@ test("channel feed renders proposed_plan blocks as proposed plan cards", async (
 
   await plan.getByRole("button", { name: "Refine plan" }).click();
   await expect.poll(planMode).toBe("plan");
-  await expect.poll(() => String(state.lastChannelMessageRequest?.body ?? "")).toContain("Refine this plan before implementation: PR1 + PR2 implementation");
+  await expect.poll(() => String(state.lastChannelTurnRequest?.body ?? "")).toContain("Refine this plan before implementation: PR1 + PR2 implementation");
   await expect(feed.getByText("Refine this plan before implementation: PR1 + PR2 implementation")).toBeVisible();
 
   await plan.getByRole("button", { name: "Implement" }).click();
   await expect.poll(planMode).toBe("default");
-  await expect.poll(() => String(state.lastChannelMessageRequest?.body ?? "")).toContain("Implement accepted plan: PR1 + PR2 implementation");
+  await expect.poll(() => String(state.lastChannelTurnRequest?.body ?? "")).toContain("Implement accepted plan: PR1 + PR2 implementation");
   await expect.poll(() => state.tasks.find((task) => task.title === "Implement accepted plan: PR1 + PR2 implementation")?.requestedSkillId).toBe("plan-acceptance");
   await expect.poll(() => state.tasks.find((task) => task.title === "Implement accepted plan: PR1 + PR2 implementation")?.prompt ?? "").toContain("Source proposed plan: proposed_plan_msg_proposed_plan");
   await expect(feed.getByText("Implement accepted plan: PR1 + PR2 implementation")).toBeVisible();
@@ -4597,10 +4992,28 @@ test("plan history groups lineage versions across thread and channel scopes", as
   ];
   state.channelMessages = [
     {
+      id: "msg_lineage_source",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      threadId: "thread_channel_main_channel_engineering",
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "local-user",
+      body: "Prepare the accepted lineage plan.",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-05-25T00:41:00.000Z",
+      updatedAt: "2026-05-25T00:41:00.000Z",
+    },
+    {
       id: "msg_lineage_v3",
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
-      threadId: "thread_channel_plan_sibling",
+      threadId: "thread_channel_main_channel_engineering",
       kind: "ai_reply",
       intent: "discuss",
       authorType: "ai-teammate",
@@ -4688,7 +5101,7 @@ test("plan history groups lineage versions across thread and channel scopes", as
   await expect(dock).toContainText("Plan v3 accepted");
   const acceptedRow = dock.locator(".right-dock-plan-row").filter({ hasText: "Plan v3 accepted" });
   await acceptedRow.getByRole("button", { name: "Open source" }).click();
-  const locatedSourceMessage = page.locator('[data-feed-item-id="message:msg_lineage_v3"]');
+  const locatedSourceMessage = page.locator('[data-feed-item-id="conversation-turn:msg_lineage_source"]');
   await expect(locatedSourceMessage).toHaveClass(/conversation-work-cell-locate-pulse/);
   await expect.poll(() => locatedSourceMessage.evaluate((element) => ({
     duration: getComputedStyle(element).animationDuration,
@@ -4835,6 +5248,12 @@ test("channel screenshot request shows materialization clarify reply instead of 
   await expect.poll(() => state.channelIntentDecisions.some((decision) =>
     isRecord(decision) && decision.action === "clarify" && /Mock attachment content is not materialized/.test(String(decision.reason))
   )).toBe(true);
+  await expect.poll(() => state.channelMessages.find((message) =>
+    isRecord(message) && message.authorType === "ai-teammate" && String(message.body).includes("could not read image content")
+  )).toMatchObject({
+    threadId: "thread_channel_channel_engineering",
+    sourceItemId: "msg_1",
+  });
 });
 
 test("channel local link request shows natural clarify copy without debug vocabulary", async ({ page }) => {
@@ -5720,9 +6139,9 @@ test("terminal workflow step suppresses stale running run surfaces", async ({ pa
   await expect(workCell.locator(".conversation-work-cell-agent-span")).toHaveCount(0);
   await expect(workCell.locator(".conversation-work-cell-active-stream")).toContainText("Created the requested README file.");
   await expect(feed.locator(".conversation-work-cell")).toHaveCount(1);
-  await expect(page.getByLabel("Run guidance")).toHaveCount(0);
+  await expect(page.getByLabel("Replying")).toHaveCount(0);
   const composer = page.getByLabel("Channel composer");
-  await expect(composer.getByRole("button", { name: "Stop run" })).toHaveCount(0);
+  await expect(composer.getByRole("button", { name: "Stop reply" })).toHaveCount(0);
   await expect(composer).not.toContainText("Task in progress");
   await expect(composer).not.toContainText("Run in progress");
 });
@@ -8008,6 +8427,124 @@ test("channel message feed stays pinned while AI reply text streams", async ({ p
     )
   ).toBe(true);
   await expect.poll(() => readScrollState(page, ".activity-shell .message-feed")).toMatchObject({ atBottom: true });
+  await expect.poll(() => readOverlappingVirtualFeedRows(page)).toEqual([]);
+});
+
+test("channel message feed measures long turns without overlapping the next row", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "pending" });
+  const longReply = (label: string) => Array.from(
+    { length: 18 },
+    (_, index) => `${label} paragraph ${index + 1} contains enough text to create a variable-height conversation row.`,
+  ).join("\n\n");
+  const historyMessages = Array.from({ length: 20 }, (_, index) => ([
+    {
+      id: `msg_measure_history_user_${index}`,
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "tian",
+      body: `Historical request ${index + 1}.`,
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      status: "ready",
+      createdAt: new Date(Date.UTC(2026, 4, 24, 1, index, 0)).toISOString(),
+      updatedAt: new Date(Date.UTC(2026, 4, 24, 1, index, 0)).toISOString(),
+    },
+    {
+      id: `msg_measure_history_agent_${index}`,
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: "ling_agent",
+      body: `Historical response ${index + 1} keeps a realistic two-message turn in the virtualized channel history.`,
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      status: "ready",
+      createdAt: new Date(Date.UTC(2026, 4, 24, 1, index, 1)).toISOString(),
+      updatedAt: new Date(Date.UTC(2026, 4, 24, 1, index, 1)).toISOString(),
+    },
+  ])).flat();
+  state.channelMessages = [
+    ...historyMessages,
+    {
+      id: "msg_measure_user_1",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "tian",
+      body: "Please write the first detailed response.",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      status: "ready",
+      createdAt: "2026-05-25T01:00:00.000Z",
+      updatedAt: "2026-05-25T01:00:00.000Z",
+    },
+    {
+      id: "msg_measure_agent_1",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: "ling_agent",
+      body: longReply("First response"),
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      status: "ready",
+      createdAt: "2026-05-25T01:01:00.000Z",
+      updatedAt: "2026-05-25T01:01:00.000Z",
+    },
+    {
+      id: "msg_measure_user_2",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "tian",
+      body: "Please write the second detailed response.",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      status: "ready",
+      createdAt: "2026-05-25T01:02:00.000Z",
+      updatedAt: "2026-05-25T01:02:00.000Z",
+    },
+    {
+      id: "msg_measure_agent_2",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: "ling_agent",
+      body: longReply("Second response"),
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      status: "ready",
+      createdAt: "2026-05-25T01:03:00.000Z",
+      updatedAt: "2026-05-25T01:03:00.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  const feed = page.getByLabel("Channel message feed");
+  await expect(feed.getByText("Second response paragraph 18")).toBeVisible();
+  await expect.poll(() => readOverlappingVirtualFeedRows(page)).toEqual([]);
 });
 
 test("channel message feed preserves the visible anchor while active content grows above it", async ({ page }) => {
@@ -8105,7 +8642,8 @@ test("channel activity paginates long message history and virtualizes visible ro
   expect(state.channelMessageQueries?.[0]).toMatchObject({
     channelId: "channel_engineering",
     limit: 200,
-    beforeMessageId: undefined,
+    beforeSequence: undefined,
+    threadId: undefined,
   });
 
   const renderedBefore = await page.locator(".activity-shell .message-feed .message-bubble").count();
@@ -8119,7 +8657,7 @@ test("channel activity paginates long message history and virtualizes visible ro
     element.scrollTop = 0;
     element.dispatchEvent(new Event("scroll"));
   });
-  await expect.poll(() => state.channelMessageQueries?.some((query) => query.beforeMessageId === "msg_long_2801")).toBe(true);
+  await expect.poll(() => state.channelMessageQueries?.some((query) => query.beforeSequence === 2801 && query.threadId === undefined)).toBe(true);
   await expect(page.getByLabel("Channel message feed").getByText("Long channel message 2801")).toBeVisible();
   const renderedAfter = await page.locator(".activity-shell .message-feed .message-bubble").count();
   expect(renderedAfter).toBeLessThan(120);
@@ -8250,7 +8788,18 @@ test("channel conversation turn shows thinking for empty pending ai replies", as
 
   await expect(channelFeed.getByText(body)).toBeVisible();
   await expect(channelFeed.locator(".channel-send-thinking-row")).toHaveCount(0);
-  await expect(channelFeed.locator(".conversation-turn-assistant-copy").getByText("正在思考...")).toBeVisible();
+  const thinkingBlock = channelFeed.locator(".conversation-turn-assistant-copy.message-body-with-spinner");
+  const thinkingMessage = thinkingBlock.getByText("正在思考...");
+  await expect(thinkingMessage).toBeVisible();
+  await expect(thinkingMessage).toHaveCSS("font-size", "15px");
+  await expect(thinkingMessage).toHaveCSS("font-weight", "550");
+  await expect(thinkingMessage).toHaveCSS("color", "rgb(17, 17, 17)");
+  await expect(thinkingBlock.locator(".message-pending-spinner")).toHaveCSS("margin-top", "5px");
+  const virtualTailClearance = await channelFeed.locator(".message-feed-virtualizer").evaluate((virtualizer) => {
+    const lastRow = virtualizer.querySelector<HTMLElement>(".message-feed-virtual-row:last-child");
+    return lastRow ? Math.round(virtualizer.getBoundingClientRect().bottom - lastRow.getBoundingClientRect().bottom) : 0;
+  });
+  expect(virtualTailClearance).toBeGreaterThanOrEqual(37);
 });
 
 test("channel URL preview blocked state stays in Activity and still allows sending text", async ({ page }) => {
@@ -9074,7 +9623,7 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await page.mouse.wheel(0, 120);
   await expect.poll(() => hoverPreviewBody.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
   await expect(hoverPreview).toBeVisible();
-  await changedFiles.nth(1).click();
+  await changedFiles.nth(1).focus();
   await expect(hoverPreview).toContainText("components.css");
   await expect(hoverPreview.locator(".diff-line.add")).toHaveCount(4);
   await expect(hoverPreview.locator(".diff-line.delete")).toHaveCount(0);
@@ -9755,7 +10304,49 @@ test("Ling Agent session active run guidance queues follow-up from composer and 
   run.errorMessage = undefined;
   run.startedAt = "2026-05-22T00:00:30.000Z";
   run.updatedAt = "2026-05-22T00:01:00.000Z";
+  run.threadId = "thread_channel_channel_engineering";
+  run.teammateId = "ling_agent";
+  run.workUnitId = "wu_active_channel_reply";
+  run.requestSnapshot = { sourceMessageId: "message_active_reply_source" };
   state.approvals = [];
+  state.channelMessages = [{
+    id: "message_active_reply_source",
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    kind: "message",
+    intent: "discuss",
+    authorType: "local-user",
+    authorId: "local-user",
+    body: "Start the active Ling Agent reply.",
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "ready",
+    createdAt: "2026-05-22T00:00:29.000Z",
+    updatedAt: "2026-05-22T00:00:29.000Z",
+  }];
+  state.workUnits = [{
+    id: "wu_active_channel_reply",
+    workspaceId: "workspace_default",
+    kind: "channel_ai_reply",
+    ownerType: "channel_message",
+    ownerId: "message_active_reply_source",
+    channelId: "channel_engineering",
+    teammateId: "ling_agent",
+    providerPresetId: "provider_local",
+    idempotencyKey: "channel-reply:message_active_reply_source",
+    status: "running",
+    priority: 0,
+    attemptCount: 1,
+    createdByActor: "system",
+    request: { sourceMessageId: "message_active_reply_source" },
+    timeoutPolicy: { claimTtlMs: 60_000, heartbeatTtlMs: 60_000, cancelGraceMs: 15_000 },
+    linkedRunId: run.id,
+    createdAt: "2026-05-22T00:00:30.000Z",
+    updatedAt: "2026-05-22T00:01:00.000Z",
+    startedAt: "2026-05-22T00:00:30.000Z",
+  }];
   state.tasks = state.tasks.map((task) => isRecord(task) && task.id === "task_inspect"
     ? { ...task, status: "running", currentRunId: run.id, updatedAt: run.updatedAt }
     : task);
@@ -9763,45 +10354,456 @@ test("Ling Agent session active run guidance queues follow-up from composer and 
   await page.goto("/");
   await openEngineeringChannel(page);
 
-  const guidance = page.getByLabel("Run guidance");
-  await expect(guidance).toBeVisible();
-  await expect(guidance).toContainText("Type guidance in the message box and press Enter to queue it.");
   const composer = page.getByLabel("Channel composer");
+  await expect(page.getByLabel("Replying")).toHaveCount(0);
+  await expect(page.getByRole("combobox", { name: "Guide whom" })).toHaveCount(0);
+  await expect(composer).not.toContainText("Run in progress");
   const composerInput = channelComposerTextbox(composer);
-  await expect(composerInput).toHaveAttribute("title", "Enter queues guidance. Shift+Enter inserts a newline. Esc closes menus.");
+  await expect(composerInput).toHaveAttribute("title", "Enter sends. Shift+Enter inserts a newline. Esc closes menus.");
   await composerInput.fill("完成后也更新 docs");
   await composerInput.press("Enter");
 
   await expect.poll(() => state.runInterventions.length).toBe(1);
-  await expect(page.locator('[data-ling-overlay="toast"][data-scope="channel:channel_engineering:composer"]'))
-    .toContainText("Guidance queued");
+  await expect(page.locator('[data-ling-overlay="toast"][data-scope="channel:channel_engineering:composer"]')).toHaveCount(0);
   await expect(composer.locator(".composer-status-row.success")).toHaveCount(0);
-  await expect(guidance).toContainText("完成后也更新 docs");
+  await expect(page.getByLabel("Run guidance")).toHaveCount(1);
   expect(state.runInterventions[0]).toMatchObject({
     sourceRunId: run.id,
     mode: "queue_followup",
     status: "queued",
     instruction: "完成后也更新 docs",
   });
-  expect(state.channelMessages).toHaveLength(0);
+  const firstGuidanceMessage = page.locator(".conversation-guidance-row").filter({ hasText: "完成后也更新 docs" });
+  await expect(firstGuidanceMessage).toBeVisible();
+  await expect(firstGuidanceMessage).not.toContainText("Guidance");
+  await expect(page.locator(".channel-message-row").filter({ hasText: "完成后也更新 docs" })).toHaveCount(0);
+  await expect(page.locator(".conversation-work-cell")).toHaveCount(0);
+  expect(state.channelMessages.map((message) => message.body)).toEqual([
+    "Start the active Ling Agent reply.",
+    "完成后也更新 docs",
+  ]);
   expect(state.channelExecutionProposals).toHaveLength(0);
 
   await expectComposerValue(composerInput, "");
   await composerInput.fill("停，改用 daemon API");
-  await expect(composer.getByRole("button", { name: "Queue guidance" })).toBeEnabled();
-  await expect(composer.getByRole("button", { name: "Queue guidance" })).toHaveAttribute("title", "Queue guidance (Enter)");
-  await composer.getByRole("button", { name: "Queue guidance" }).click();
+  await expect(composer.getByRole("button", { name: "Send" })).toBeEnabled();
+  await expect(composer.getByRole("button", { name: "Send" })).toHaveAttribute("title", "Send (Enter)");
+  await composer.getByRole("button", { name: "Send" }).click();
   await expect.poll(() => state.runInterventions.map((item) => item.instruction)).toEqual([
     "完成后也更新 docs",
     "停，改用 daemon API",
   ]);
+  const redirectedGuidanceMessage = page.locator(".conversation-guidance-row").filter({ hasText: "停，改用 daemon API" });
+  await expect(redirectedGuidanceMessage).toBeVisible();
+  await expect(redirectedGuidanceMessage).not.toContainText("Guidance");
+  await expect(page.locator(".channel-message-row").filter({ hasText: "停，改用 daemon API" })).toHaveCount(0);
   await expectComposerValue(composerInput, "");
-  await composer.getByRole("button", { name: "Stop run" }).click();
+  await composer.getByRole("button", { name: "Stop reply" }).click();
 
   await expect.poll(() => state.runs.find((item) => item.id === run.id)?.status).toBe("cancelled");
   expect(state.runInterventions).toHaveLength(2);
-  expect(state.channelMessages).toHaveLength(0);
+  expect(state.channelMessages.map((message) => message.body)).toEqual([
+    "Start the active Ling Agent reply.",
+    "完成后也更新 docs",
+    "停，改用 daemon API",
+  ]);
   expect(state.channelExecutionProposals).toHaveLength(0);
+});
+
+test("channel composer accepts a second queued guidance while the first request is still pending", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  const run = state.runs[0];
+  run.status = "running";
+  run.errorMessage = undefined;
+  run.startedAt = "2026-08-06T08:00:00.000Z";
+  run.updatedAt = "2026-08-06T08:00:01.000Z";
+  state.approvals = [];
+  state.channelMessageDelayMs = 750;
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  const composer = page.getByLabel("Channel composer");
+  const input = channelComposerTextbox(composer);
+  await input.fill("First queued guidance");
+  await input.press("Enter");
+  await expect.poll(() => state.lastChannelTurnRequest?.body).toBe("First queued guidance");
+  await expectComposerValue(input, "");
+
+  await input.fill("Second queued guidance");
+  await input.press("Enter");
+
+  await expect.poll(() => state.runInterventions.map((item) => item.instruction), { timeout: 4_000 }).toEqual([
+    "First queued guidance",
+    "Second queued guidance",
+  ]);
+  await expectComposerValue(input, "");
+  expect(state.channelMessages.map((message) => message.body)).toEqual([
+    "First queued guidance",
+    "Second queued guidance",
+  ]);
+});
+
+test("second send never flashes in the transcript while the first reply lane is still unclassified", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.channelMessageDelayMs = 2_000;
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  const composer = page.getByLabel("Channel composer");
+  const input = channelComposerTextbox(composer);
+  await input.fill("Start the first ordinary reply");
+  await input.press("Enter");
+  await expectComposerValue(input, "");
+
+  await input.fill("Queue this second message without transcript flicker");
+  await input.press("Enter");
+
+  const queued = page.locator(".conversation-guidance-row").filter({ hasText: "Queue this second message without transcript flicker" });
+  const transcript = page.locator(".channel-message-row").filter({ hasText: "Queue this second message without transcript flicker" });
+  await expect(queued).toBeVisible({ timeout: 500 });
+  await expect(transcript).toHaveCount(0);
+});
+
+test("ordinary channel send unlocks the composer at run linkage before the reply stream finishes", async ({ page }) => {
+  await useEnglishLocale(page);
+  await page.addInitScript(() => {
+    const originalFetch = globalThis.fetch.bind(globalThis);
+    let streamCalls = 0;
+    (globalThis as typeof globalThis & { __channelReplyStreamCalls?: () => number }).__channelReplyStreamCalls = () => streamCalls;
+    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const request = new Request(input, init);
+      const url = new URL(request.url);
+      if (request.method !== "POST" || !url.pathname.endsWith("/channels/channel_engineering/turns/stream")) {
+        return originalFetch(input, init);
+      }
+      if (streamCalls > 0) {
+        return originalFetch(input, init);
+      }
+      streamCalls += 1;
+      const body = await request.clone().json() as Record<string, unknown>;
+      const createdAt = "2026-08-05T08:00:00.000Z";
+      const thread = {
+        id: "thread_channel_channel_engineering",
+        workspaceId: "workspace_default",
+        kind: "channel_discussion",
+        channelId: "channel_engineering",
+        title: "Engineering conversation",
+        objective: "Root conversation for Engineering.",
+        status: "open",
+        conversationMode: { mode: "default" },
+        surfaceKind: "channel_root",
+        relationKind: "root",
+        nextItemSequence: 3,
+        createdAt,
+        updatedAt: createdAt,
+      };
+      const turn = {
+        id: "turn_chunked_channel_reply",
+        workspaceId: "workspace_default",
+        threadId: thread.id,
+        kind: "manual_followup",
+        status: "running",
+        title: String(body.body ?? ""),
+        userInstruction: String(body.body ?? ""),
+        channelId: "channel_engineering",
+        sourceItemId: "message_chunked_channel_reply",
+        createdByActor: "local-user",
+        createdAt,
+        updatedAt: createdAt,
+      };
+      const userItem = {
+        schemaVersion: 1,
+        id: "message_chunked_channel_reply",
+        workspaceId: "workspace_default",
+        channelId: "channel_engineering",
+        threadId: thread.id,
+        turnId: turn.id,
+        sequence: 1,
+        kind: "user_message",
+        status: "committed",
+        actorType: "local_user",
+        actorId: "local-user",
+        visibility: "channel",
+        payload: {
+          body: String(body.body ?? ""),
+          format: "plain_text",
+          mentions: Array.isArray(body.mentions) ? body.mentions : [],
+          attachmentIds: [],
+          linkPreviewIds: [],
+          fileRefs: [],
+        },
+        domainRefs: [],
+        revision: 1,
+        createdAt,
+        updatedAt: createdAt,
+        committedAt: createdAt,
+      };
+      const pendingItem = {
+        schemaVersion: 1,
+        id: "reply_chunked_channel_reply",
+        workspaceId: "workspace_default",
+        channelId: "channel_engineering",
+        threadId: thread.id,
+        turnId: turn.id,
+        sequence: 2,
+        kind: "assistant_message",
+        status: "pending",
+        actorType: "teammate",
+        actorId: "engineer",
+        visibility: "channel",
+        payload: { body: "", format: "markdown", streaming: true, deliveryStatus: "pending" },
+        domainRefs: [
+          { type: "conversation_item", id: userItem.id },
+          { type: "run", id: "run_chunked_channel_reply" },
+        ],
+        revision: 1,
+        createdAt,
+        updatedAt: createdAt,
+      };
+      const readyItem = {
+        ...pendingItem,
+        status: "committed",
+        payload: { body: "First reply completed.", format: "markdown", streaming: false, deliveryStatus: "ready" },
+        committedAt: createdAt,
+      };
+      const decorations = [{ itemId: pendingItem.id, linkedRunId: "run_chunked_channel_reply" }];
+      const encoder = new TextEncoder();
+      const timers: number[] = [];
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          const emit = (event: string, data: unknown): void => {
+            controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+          };
+          emit("ready", { thread, turn, userItem, decorations: [] });
+          timers.push(globalThis.setTimeout(() => emit("ready", { thread, turn, userItem, assistantItems: [pendingItem], decorations }), 100));
+          timers.push(globalThis.setTimeout(() => emit("run_linked", {
+            itemId: pendingItem.id,
+            linkedRunId: "run_chunked_channel_reply",
+            activeReply: {
+              runId: "run_chunked_channel_reply",
+              sourceRunId: "run_chunked_channel_reply",
+              workUnitId: "wu_chunked_channel_reply",
+              channelId: "channel_engineering",
+              threadId: thread.id,
+              sourceMessageId: userItem.id,
+              teammateId: "engineer",
+              status: "running",
+              createdAt,
+              updatedAt: createdAt,
+            },
+          }), 400));
+          timers.push(globalThis.setTimeout(() => emit("delta", {
+            itemId: pendingItem.id,
+            delta: readyItem.payload.body,
+            body: readyItem.payload.body,
+          }), 1_400));
+          timers.push(globalThis.setTimeout(() => {
+            emit("done", { thread, turn: { ...turn, status: "succeeded", completedAt: createdAt }, userItem, assistantItems: [readyItem], decorations });
+            controller.close();
+          }, 1_800));
+        },
+        cancel() {
+          timers.forEach((timer) => globalThis.clearTimeout(timer));
+        },
+      });
+      return new Response(stream, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+    };
+  });
+
+  const state = createBaseState({ approvalStatus: "expired" });
+  const runSeed = state.runs[0];
+  state.runs = [];
+  state.workUnits = [];
+  state.tasks = [];
+  state.approvals = [];
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  const composer = page.getByLabel("Channel composer");
+  const input = channelComposerTextbox(composer);
+  await input.fill("@Eng");
+  await composer.getByRole("option", { name: /@Engineer/u }).click();
+  await page.keyboard.insertText(" start the long reply");
+  await composer.getByRole("button", { name: "Send" }).click();
+
+  state.runs.push({
+    ...runSeed,
+    id: "run_chunked_channel_reply",
+    status: "running",
+    taskId: "message_chunked_channel_reply",
+    channelId: "channel_engineering",
+    teammateId: "engineer",
+    threadId: "message_chunked_channel_reply",
+    workUnitId: "wu_chunked_channel_reply",
+    errorMessage: undefined,
+    createdAt: "2026-08-05T08:00:00.000Z",
+    startedAt: "2026-08-05T08:00:00.000Z",
+    updatedAt: "2026-08-05T08:00:00.000Z",
+  });
+  state.workUnits.push({
+    id: "wu_chunked_channel_reply",
+    workspaceId: "workspace_default",
+    kind: "channel_ai_reply",
+    ownerType: "channel_message",
+    ownerId: "message_chunked_channel_reply",
+    channelId: "channel_engineering",
+    teammateId: "engineer",
+    providerPresetId: "provider_local",
+    idempotencyKey: "channel-reply:message_chunked_channel_reply",
+    status: "running",
+    priority: 0,
+    attemptCount: 1,
+    createdByActor: "system",
+    request: { sourceMessageId: "message_chunked_channel_reply" },
+    timeoutPolicy: { claimTtlMs: 60_000, heartbeatTtlMs: 60_000, cancelGraceMs: 15_000 },
+    linkedRunId: "run_chunked_channel_reply",
+    linkedMessageId: "reply_chunked_channel_reply",
+    createdAt: "2026-08-05T08:00:00.000Z",
+    updatedAt: "2026-08-05T08:00:00.000Z",
+    startedAt: "2026-08-05T08:00:00.000Z",
+  });
+
+  await expect(composer.getByRole("combobox", { name: "Guide whom" })).toHaveCount(0);
+  await input.fill("@Eng");
+  await composer.getByRole("option", { name: /@Engineer/u }).click();
+  await page.keyboard.insertText("Add the failure-path test too");
+  await input.press("Enter");
+  await expect.poll(() => state.runInterventions.length).toBe(1);
+  expect(state.runInterventions[0]).toMatchObject({
+    sourceRunId: "run_chunked_channel_reply",
+    mode: "queue_followup",
+    instruction: "@Engineer Add the failure-path test too",
+  });
+  await expect.poll(() => page.evaluate(() => (
+    (globalThis as typeof globalThis & { __channelReplyStreamCalls?: () => number }).__channelReplyStreamCalls?.() ?? 0
+  ))).toBe(1);
+});
+
+test("every message joins the channel FIFO while any teammate reply is active", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  configureConcurrentChannelReplyRuns(state);
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  await expect(page.locator(".conversation-work-cell")).toHaveCount(0);
+  const composer = page.getByLabel("Channel composer");
+  await expect(page.getByLabel("Replying")).toHaveCount(0);
+  await expect(composer).not.toContainText("Run in progress");
+  await expect(composer.getByRole("combobox", { name: "Guide whom" })).toHaveCount(0);
+  await expect(composer.getByRole("button", { name: "Stop reply" })).toBeEnabled();
+
+  const input = channelComposerTextbox(composer);
+  await input.fill("只补充错误处理");
+  await input.press("Enter");
+  await expect.poll(() => state.lastChannelTurnRequest?.body).toBe("只补充错误处理");
+  expect(state.lastChannelTurnRequest?.teammateId).toBeUndefined();
+  await expect.poll(() => state.runInterventions.length).toBe(1);
+  expect(state.runInterventions[0]).toMatchObject({
+    sourceRunId: "run_channel_reply_designer",
+    mode: "queue_followup",
+    instruction: "只补充错误处理",
+    messagePayload: { targetTeammateId: "ling_agent" },
+  });
+  await expect(page.locator(".conversation-guidance-row").filter({ hasText: "只补充错误处理" })).toBeVisible();
+  await expect(page.locator(".channel-message-row").filter({ hasText: "只补充错误处理" })).toHaveCount(0);
+
+  await input.fill("@Eng");
+  await composer.getByRole("option", { name: /@Engineer/u }).click();
+  await page.keyboard.insertText("只补充 Engineer 的错误处理");
+  await expect(composer.getByRole("button", { name: "Send" })).toBeEnabled();
+  await input.press("Enter");
+  await expect.poll(() => state.runInterventions.length).toBe(2);
+  expect(state.runInterventions[1]).toMatchObject({
+    sourceRunId: "run_channel_reply_designer",
+    mode: "queue_followup",
+    instruction: "@Engineer 只补充 Engineer 的错误处理",
+    messagePayload: { targetTeammateId: "engineer" },
+  });
+  const guidanceMessage = page.locator(".conversation-guidance-row").filter({ hasText: "只补充 Engineer 的错误处理" });
+  await expect(guidanceMessage).toBeVisible();
+  await expect(page.locator(".channel-message-row").filter({ hasText: "只补充 Engineer 的错误处理" })).toHaveCount(0);
+  expect(state.channelMessages.some((message) => message.authorType === "local-user" && message.body === "@Engineer 只补充 Engineer 的错误处理")).toBe(true);
+  expect(state.lastChannelTurnRequest?.teammateId).toBeUndefined();
+  expect(state.lastChannelTurnRequest?.mentions).toEqual([
+    expect.objectContaining({ id: "engineer", kind: "ai-teammate" }),
+  ]);
+
+});
+
+test("channel stop cancels the single active reply", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  const activeReplies = configureConcurrentChannelReplyRuns(state);
+  state.runs = state.runs
+    .filter((run) => run.id === activeReplies.engineerRunId)
+    .map((run) => ({ ...run, teammateId: "ling_agent" }));
+  state.workUnits = state.workUnits
+    .filter((workUnit) => workUnit.id === activeReplies.engineerWorkUnitId)
+    .map((workUnit) => ({ ...workUnit, teammateId: "ling_agent" }));
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  const composer = page.getByLabel("Channel composer");
+  await expect(composer.getByRole("combobox", { name: "Guide whom" })).toHaveCount(0);
+
+  const stopButton = composer.getByRole("button", { name: "Stop reply" });
+  await expect(stopButton).toBeEnabled();
+  await stopButton.click();
+
+  await expect.poll(() => state.runs.find((run) => run.id === activeReplies.engineerRunId)?.status).toBe("cancelled");
+  await expect.poll(() => state.workUnits.find((unit) => unit.id === activeReplies.engineerWorkUnitId)?.status).toBe("cancelled");
+  expect(state.eventsByRun[activeReplies.engineerRunId]?.some((event) => event.type === "run_cancelled")).toBe(true);
+  expect(state.runInterventions).toHaveLength(0);
+});
+
+test("retained channel activity does not flash a loading notice during background refresh", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.runs[0].status = "running";
+  state.runs[0].updatedAt = "2026-08-06T08:00:01.000Z";
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+  await expect(page.getByLabel("Channel message feed")).toBeVisible();
+
+  await page.evaluate(() => {
+    const runtime = globalThis as typeof globalThis & {
+      __channelActivityLoadingFlashes?: number;
+      __channelActivityLoadingObserver?: MutationObserver;
+    };
+    runtime.__channelActivityLoadingFlashes = 0;
+    runtime.__channelActivityLoadingObserver?.disconnect();
+    runtime.__channelActivityLoadingObserver = new MutationObserver(() => {
+      const visible = [...document.querySelectorAll<HTMLElement>(".activity-feed-status")]
+        .some((element) => element.offsetParent !== null && element.textContent?.includes("Loading activity events"));
+      if (visible) runtime.__channelActivityLoadingFlashes = (runtime.__channelActivityLoadingFlashes ?? 0) + 1;
+    });
+    runtime.__channelActivityLoadingObserver.observe(document.body, { childList: true, subtree: true });
+  });
+
+  const composer = page.getByLabel("Channel composer");
+  const input = channelComposerTextbox(composer);
+  await input.fill("Refresh retained activity without flashing");
+  await input.press("Enter");
+  await expect.poll(() => state.runInterventions.length).toBe(1);
+  await page.waitForTimeout(800);
+
+  await expect.poll(() => page.evaluate(() => (
+    (globalThis as typeof globalThis & { __channelActivityLoadingFlashes?: number }).__channelActivityLoadingFlashes ?? 0
+  ))).toBe(0);
 });
 
 test("composer approval overlay groups multiple local approvals and excludes review queue actions", async ({ page }) => {

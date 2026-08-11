@@ -731,7 +731,7 @@ test("executed normal conversation renders one structured terminal report", asyn
     if (message.type() === "error") runtimeErrors.push(`${message.text()} @ ${message.location().url || "unknown"}`);
   });
   page.on("pageerror", (error) => runtimeErrors.push(error.message));
-  await page.setViewportSize({ width: 1000, height: 620 });
+  await page.setViewportSize({ width: 1000, height: 360 });
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "zh-CN");
   });
@@ -818,6 +818,15 @@ test("executed normal conversation renders one structured terminal report", asyn
     type: "assistant_text_delta",
     data: { text: "旧的执行总结不应和结构化报告重复展示。" },
   }];
+  state.artifactsByRun[runId] = [{
+    id: "artifact_terminal_report_conversation",
+    runId,
+    type: "markdown",
+    title: "ConversationHome.tsx",
+    path: `${runId}/001-conversation-home.md`,
+    contentType: "text/markdown",
+    createdAt: completedAt,
+  }];
   state.executionActions = [
     mockCommandExecutionAction("normal_typecheck", threadId, runId, "corepack pnpm --filter @ling-stack/web typecheck", "2026-07-13T04:00:10.000Z", 1200),
     mockCommandExecutionAction("normal_i18n", threadId, runId, "corepack pnpm --filter @ling-stack/web check:i18n", "2026-07-13T04:00:12.000Z", 700),
@@ -844,9 +853,19 @@ test("executed normal conversation renders one structured terminal report", asyn
     changes: Array.from({ length: 12 }, (_, index) => ({
       id: `change_terminal_report_conversation_${index}`,
       kind: "code" as const,
-      title: index === 0 ? "接入普通会话投影" : `普通会话滚动回归项 ${index + 1}`,
-      summary: "普通会话读取执行轮关联的结构化报告，并在展开后保持完整滚动能力。",
-      paths: [`apps/web/src/features/workspace/ConversationHome-${index + 1}.tsx`],
+      title: index === 0
+        ? "apps/web/src/features/workspace/ConversationHome-1.tsx"
+        : index === 1
+          ? "保留有意义的变更说明"
+          : `${runId}/${String(index).padStart(3, "0")}-read-content.md`,
+      summary: index === 0
+        ? "已更新 apps/web/src/features/workspace/ConversationHome-1.tsx"
+        : "普通会话读取执行轮关联的结构化报告，并在展开后保持完整滚动能力。",
+      paths: [index === 0
+        ? "apps/web/src/features/workspace/ConversationHome-1.tsx"
+        : index === 1
+          ? "apps/web/src/features/workspace/ConversationHome-2.tsx"
+          : `${runId}/${String(index).padStart(3, "0")}-read-content.md`],
       addedLines: 18 + index,
       deletedLines: 2,
       sourceRefs: [],
@@ -864,7 +883,7 @@ test("executed normal conversation renders one structured terminal report", asyn
         id: "artifact_terminal_report_conversation",
         kind: "file",
         title: "ConversationHome.tsx",
-        path: "apps/web/src/features/workspace/ConversationHome-1.tsx",
+        path: `${runId}/001-conversation-home.md`,
         sourceRefs: [{
           kind: "file",
           id: "apps/web/src/features/workspace/ConversationHome-1.tsx",
@@ -937,7 +956,11 @@ test("executed normal conversation renders one structured terminal report", asyn
   await expect(report.locator(".terminal-report-participants")).toHaveCount(0);
   await expect(report.locator(".terminal-report-summary")).not.toHaveAttribute("aria-expanded");
   await expect(report.locator(".terminal-report-toggle")).toHaveCount(0);
-  await expect(report).toContainText("接入普通会话投影");
+  const redundantChangeRow = report.locator(".terminal-report-section.kind-change .terminal-report-row").filter({ has: page.getByRole("button", { name: "ConversationHome-1.tsx" }) });
+  await expect(redundantChangeRow.locator(".terminal-report-row-icon")).toHaveCount(0);
+  await expect(redundantChangeRow.locator(".terminal-report-row-title")).toHaveCount(0);
+  await expect(redundantChangeRow.locator(".terminal-report-row-description")).toHaveCount(0);
+  await expect(report).toContainText("保留有意义的变更说明");
   await expect(report.locator(".terminal-report-section.kind-change .terminal-report-row-title small")).toHaveCount(0);
   await expect(report.locator(".terminal-report-section.kind-verification .terminal-report-row-title small")).toHaveCount(0);
   const reportFileLink = report.locator(".terminal-report-file-reference").first();
@@ -965,19 +988,28 @@ test("executed normal conversation renders one structured terminal report", asyn
   await expect(workCell).not.toContainText("echo prior attempt");
   await expect(workCell.locator(".conversation-work-cell-artifact-row")).toHaveCount(1);
   await expect(workCell).toContainText("ConversationHome.tsx");
+  await expect(workCell).toContainText("已编辑 2 个文件");
+  await expect.poll(() => workCell.evaluate((element) => ({
+    artifactPaddingLeft: getComputedStyle(element.querySelector(".conversation-work-cell-artifacts") as Element).paddingLeft,
+    artifactThumbWidth: getComputedStyle(element.querySelector(".conversation-work-cell-artifact-row .conversation-work-cell-artifact-thumb") as Element).width,
+    changeFilePaddingLeft: getComputedStyle(element.querySelector(".conversation-work-cell-change-file") as Element).paddingLeft,
+  }))).toEqual({
+    artifactPaddingLeft: "0px",
+    artifactThumbWidth: "30px",
+    changeFilePaddingLeft: "0px",
+  });
   await expect(workCell.locator(".conversation-work-cell-artifact-row").getByRole("button", { name: "打开方式" })).toBeVisible();
   await expect(workCell).not.toContainText("Generated file metadata");
   await expect(workCell).not.toContainText("Action preview");
   const references = workCell.locator(".conversation-work-cell-evidence-summary");
-  await expect(references).toContainText("1 个引用");
-  await expect(references).toHaveAttribute("aria-expanded", "false");
+  await expect(references).toHaveCount(0);
+  await expect(workCell.locator(".conversation-work-cell-post-report-evidence")).toHaveCount(0);
   await expect.poll(() => workCell.evaluate((element) => {
     const childClasses = Array.from(element.children).map((child) => child.className.toString());
     const operationIndex = childClasses.findIndex((className) => className.includes("conversation-operation-shell"));
     const reportIndex = childClasses.findIndex((className) => className.includes("terminal-report-block"));
     const artifactsIndex = childClasses.findIndex((className) => className.includes("conversation-work-cell-artifacts"));
-    const referencesIndex = childClasses.findIndex((className) => className.includes("conversation-work-cell-post-report-evidence"));
-    return operationIndex < reportIndex && reportIndex < artifactsIndex && artifactsIndex < referencesIndex;
+    return operationIndex < reportIndex && reportIndex < artifactsIndex;
   })).toBe(true);
   const feed = page.locator(".normal-conversation-feed");
   const expandedMetrics = await feed.evaluate((element) => ({
