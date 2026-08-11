@@ -31,7 +31,8 @@ Managed bindings use the existing `ChannelWorkspaceStatus` values:
 - `ready`: the execution path exists and the worktree can be used.
 - `missing`: the binding points at a worktree that is no longer present.
 - `blocked`: Ling could not create or safely manage the worktree.
-- `unsupported`: reserved for future non-Git or provider-specific workspace modes.
+- `unsupported`: reserved for future provider-specific workspace modes. A non-Git
+  directory uses a ready Local binding instead of an unsupported state.
 
 Dirty state is not a runtime blocker. A normal agent run creates diffs, so refresh must keep a dirty worktree runnable. Dirty state is a cleanup blocker: Ling must not silently delete uncommitted or untracked work.
 
@@ -40,9 +41,29 @@ Dirty state is not a runtime blocker. A normal agent run creates diffs, so refre
 Creation:
 
 1. Resolve the Git repo root from the channel bound path or workspace `cwd`.
-2. Capture `baseCommit`, `baseBranch`, branch name, and worktree path.
-3. Create the worktree only when the path does not already exist.
-4. Persist a `managed_worktree` binding with status `ready` or `missing`.
+2. When Git can inspect a repository, capture `baseCommit`, `baseBranch`, branch name,
+   and worktree path, then persist a `managed_worktree` binding.
+3. When the directory is not a Git repository, Git is unavailable, the repository has no
+   usable `HEAD`, or initial Git inspection fails, persist a ready Local binding at the
+   selected path. Git provides isolation; it is not a prerequisite for channel or
+   private-chat replies.
+4. Explicit `create-worktree` actions remain strict and return the distinct
+   `not_git_repository`, `git_unavailable`, or `git_inspection_failed` error instead of
+   silently claiming that a managed worktree exists.
+5. A selected workspace must be an existing, traversable directory. Missing,
+   non-directory, or inaccessible paths never qualify for Local fallback, and a Local
+   binding becomes `missing` if its directory later disappears. Automatic fallback
+   revalidates the directory after Git inspection and immediately before persisting Local
+   so a disappearing workspace cannot be mistaken for a missing Git executable.
+6. A legacy direct-thread binding from a failed initial worktree attempt can move to
+   Local only when it has never owned a created worktree. Previously created, cleaned,
+   missing, or blocked managed worktrees retain their ownership metadata and recovery
+   protections.
+7. Direct-thread first-use initialization is serialized per store and thread so two
+   concurrent replies cannot race to create the same managed binding. Initialization,
+   refresh, handoff, cleanup, and explicit worktree creation share the same per-thread
+   mutation coordinator, with each operation rereading the latest persisted binding
+   before it writes, so an explicit user handoff cannot be overwritten by stale setup.
 
 Refresh:
 

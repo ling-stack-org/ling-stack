@@ -25,5 +25,11 @@ release versions will follow [Semantic Versioning](https://semver.org/spec/v2.0.
 - Consolidated the design documentation around current contracts and implementation
   status instead of completed implementation diaries.
 
+### Fixed
+
+- Channels and private teammate chats now continue in the selected Local workspace when
+  Git is unavailable or the directory is not a Git repository, while missing workspaces
+  and explicit managed-worktree creation still fail closed.
+
 Historical changes before this baseline remain available in Git history. They are not
 retroactively reconstructed as release notes.

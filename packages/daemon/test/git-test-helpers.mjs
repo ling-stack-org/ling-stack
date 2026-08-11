@@ -44,6 +44,13 @@ export async function ensureGitRepo(cwd) {
   await git(cwd, ["commit", "-m", "Initial test workspace"]);
 }
 
+export async function ensureEmptyGitRepo(cwd) {
+  await mkdir(cwd, { recursive: true });
+  await git(cwd, ["init"]);
+  await git(cwd, ["config", "user.email", "test@example.com"]);
+  await git(cwd, ["config", "user.name", "Ling Test"]);
+}
+
 async function git(cwd, args) {
   return await execFileAsync("git", args, { cwd, timeout: 15000, maxBuffer: 1024 * 1024 });
 }
