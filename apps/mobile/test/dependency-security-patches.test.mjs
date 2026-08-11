@@ -111,3 +111,96 @@ test("patched image-size never returns an undersized target box", async () => {
     "undersized target box proof",
   );
 });
+
+test("patched image-size rejects malformed ICNS bounds", async () => {
+  await runBoundedProof(
+    `
+      const assert = require("node:assert/strict");
+      const { ICNS } = require(${JSON.stringify(icnsModulePath)});
+
+      const truncatedHeader = Buffer.alloc(12);
+      truncatedHeader.write("icns", 0);
+      truncatedHeader.writeUInt32BE(12, 4);
+      assert.throws(() => ICNS.calculate(truncatedHeader), /Invalid ICNS image entry header/);
+
+      const undersizedFile = Buffer.alloc(8);
+      undersizedFile.write("icns", 0);
+      undersizedFile.writeUInt32BE(4, 4);
+      assert.throws(() => ICNS.calculate(undersizedFile), /Invalid ICNS file length/);
+
+      const overflowingEntry = Buffer.alloc(16);
+      overflowingEntry.write("icns", 0);
+      overflowingEntry.writeUInt32BE(16, 4);
+      overflowingEntry.write("ic07", 8);
+      overflowingEntry.writeUInt32BE(20, 12);
+      assert.throws(() => ICNS.calculate(overflowingEntry), /Invalid ICNS image entry length/);
+    `,
+    "ICNS malformed bounds proof",
+  );
+});
+
+test("patched image-size preserves valid ICNS traversal", async () => {
+  await runBoundedProof(
+    `
+      const assert = require("node:assert/strict");
+      const { ICNS } = require(${JSON.stringify(icnsModulePath)});
+
+      const singleEntry = Buffer.alloc(16);
+      singleEntry.write("icns", 0);
+      singleEntry.writeUInt32BE(16, 4);
+      singleEntry.write("ic07", 8);
+      singleEntry.writeUInt32BE(8, 12);
+      assert.deepEqual(ICNS.calculate(singleEntry), { width: 128, height: 128, type: "ic07" });
+
+      const multipleEntries = Buffer.alloc(24);
+      multipleEntries.write("icns", 0);
+      multipleEntries.writeUInt32BE(24, 4);
+      multipleEntries.write("ic07", 8);
+      multipleEntries.writeUInt32BE(8, 12);
+      multipleEntries.write("ic08", 16);
+      multipleEntries.writeUInt32BE(8, 20);
+      const result = ICNS.calculate(multipleEntries);
+      assert.deepEqual(result.images.map((image) => image.type), ["ic07", "ic08"]);
+    `,
+    "valid ICNS traversal proof",
+  );
+});
+
+test("patched image-size rejects truncated and overflowing boxes", async () => {
+  await runBoundedProof(
+    `
+      const assert = require("node:assert/strict");
+      const { findBox } = require(${JSON.stringify(utilsModulePath)});
+
+      assert.equal(findBox(Buffer.alloc(7), "meta", 0), undefined);
+
+      const overflowingBox = Buffer.alloc(8);
+      overflowingBox.writeUInt32BE(16, 0);
+      overflowingBox.write("meta", 4);
+      assert.equal(findBox(overflowingBox, "meta", 0), undefined);
+    `,
+    "invalid box bounds proof",
+  );
+});
+
+test("patched image-size preserves valid box lookup and traversal", async () => {
+  await runBoundedProof(
+    `
+      const assert = require("node:assert/strict");
+      const { findBox } = require(${JSON.stringify(utilsModulePath)});
+
+      const targetBox = Buffer.alloc(8);
+      targetBox.writeUInt32BE(8, 0);
+      targetBox.write("meta", 4);
+      assert.deepEqual(findBox(targetBox, "meta", 0), { name: "meta", offset: 0, size: 8 });
+
+      const traversedBoxes = Buffer.alloc(16);
+      traversedBoxes.writeUInt32BE(8, 0);
+      traversedBoxes.write("free", 4);
+      traversedBoxes.writeUInt32BE(8, 8);
+      traversedBoxes.write("meta", 12);
+      assert.deepEqual(findBox(traversedBoxes, "meta", 0), { name: "meta", offset: 8, size: 8 });
+    `,
+    "valid box traversal proof",
+  );
+});
