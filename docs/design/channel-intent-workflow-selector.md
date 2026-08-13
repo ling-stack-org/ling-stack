@@ -909,6 +909,9 @@ The first implementation should be deterministic and conservative:
   other execution work -> `workflow_proposal`;
 - concrete single-step execution verbs such as create/write/edit/delete file, modify code,
   run command, run tests, build, lint, or format with a clear target -> `direct_workflow`;
+- natural-language image/video generation without a workspace/file target remains an
+  ordinary conversation reply so the registered first-party media tool can handle it;
+  the verb `generate` alone is never evidence of an implicit local-file mutation;
 - single-step execution request with missing path, command, content, or target ->
   `clarify`;
 - missing artifact, branch, file, or acceptance target -> `clarify`;

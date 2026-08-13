@@ -14,6 +14,7 @@ import type {
 import type { McpToolDefaultApproval } from "./mcp.js";
 import type { RetentionTombstone } from "./retention.js";
 import type { ConversationActiveReplyTarget, WorkUnit } from "./runtime.js";
+import type { ConversationGeneratedMedia } from "./media.js";
 
 export interface TeammatePersonaDraftRequest {
   readonly content: string;
@@ -505,6 +506,7 @@ export interface TeammateDirectMessageListResponse {
   readonly teammateId: string;
   readonly thread: TeammateDirectThread;
   readonly messages: readonly TeammateDirectMessage[];
+  readonly generatedMedia: readonly ConversationGeneratedMedia[];
   readonly hasMore?: boolean;
   readonly nextBeforeMessageId?: string;
 }

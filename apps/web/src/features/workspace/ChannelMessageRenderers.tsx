@@ -37,6 +37,7 @@ import {
 import {
   ConversationArtifactStripPanel,
   ConversationAttachmentStrip,
+  ConversationGeneratedMediaBlock,
   ConversationReferenceStrip,
   ConversationReplacementRetry,
   ConversationWorkCell,
@@ -68,6 +69,7 @@ import type {
   ChannelMention,
   ChannelMessage,
   ChannelMessageFileRef,
+  ConversationGeneratedMedia,
   ChannelWorkflow,
   ChannelWorkflowStep,
   MemoryObject,
@@ -107,6 +109,7 @@ export interface ChannelMessageRenderersInput {
   readonly attachmentContentUrl: (attachment: ChannelAttachment) => string;
   readonly auditActivityVisible: boolean;
   readonly channelArtifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
+  readonly generatedMedia: readonly ConversationGeneratedMedia[];
   readonly channelAttachmentById: ReadonlyMap<string, ChannelAttachment>;
   readonly channelLinkPreviewById: ReadonlyMap<string, ChannelLinkPreview>;
   readonly channelMessageFeedbackById: Readonly<Record<string, FeedbackValue>>;
@@ -300,6 +303,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
     const externalArtifactCwd = turn.operationCell
       ? input.runById.get(turn.operationCell.anchorRunId)?.cwd ?? input.cwd
       : input.cwd;
+    const generatedMedia = anchorMessage ? generatedMediaForMessage(input.generatedMedia, anchorMessage) : [];
 
     return (
       <MessageRow
@@ -327,6 +331,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
                 />
               </div>
             ) : null}
+            <ConversationGeneratedMediaBlock items={generatedMedia} cwd={input.cwd} />
             {renderChannelAiMessageActions(turn.sourceMessage, copyText)}
           </div>
         )}
@@ -683,6 +688,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
       : undefined;
     const visibleMessageBody = proposedPlanBlock?.displayBody ?? pendingAiReplyBody;
     const editing = input.editingMessageId === message.id;
+    const generatedMedia = generatedMediaForMessage(input.generatedMedia, message);
     if (plainChatMessage) {
       return (
         <div className="message-group">
@@ -727,6 +733,9 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
               </div>
             )}
             attachmentsNode={renderChannelMessageAssets(message.attachmentIds, messageFileRefs, message.linkPreviewIds, message.channelId)}
+            workCellNode={message.authorType === "ai-teammate" ? (
+              <ConversationGeneratedMediaBlock items={generatedMedia} cwd={input.cwd} />
+            ) : null}
             evidenceNode={(messageUsedMemoryEvents.length > 0 || message.webEvidence) ? (
               <MessageEvidencePanel
                 memoryContent={usedMemorySummary}
@@ -1151,6 +1160,15 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
   }
 
   return { renderMessageFeedItem };
+}
+
+function generatedMediaForMessage(
+  items: readonly ConversationGeneratedMedia[],
+  message: ChannelMessage,
+): readonly ConversationGeneratedMedia[] {
+  return items.filter((item) => item.messageId
+    ? item.messageId === message.id
+    : Boolean(message.linkedRunId && item.runId === message.linkedRunId));
 }
 
 function fileNameFromReferencePath(path: string): string {

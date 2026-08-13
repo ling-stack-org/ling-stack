@@ -275,7 +275,7 @@ const workUnitTransitions: Readonly<Record<WorkUnitStatus, Partial<Record<WorkUn
   },
   failed: { retry: "queued" },
   succeeded: {},
-  cancelled: {},
+  cancelled: { retry: "queued" },
 };
 
 export function transitionTask(input: TransitionInput<TaskStatus, TaskTransitionEvent>): TransitionResult<TaskStatus> {

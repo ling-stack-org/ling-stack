@@ -45,7 +45,17 @@ export interface PreselectedMemoryUse {
   readonly policyVersion: string;
 }
 
-export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired" | "onEvent" | "provider" | "tools" | "mcpTools" | "onMcpToolCall"> {
+export interface RunRequest extends Omit<
+  PiRunnerRunOptions,
+  | "onApprovalRequired"
+  | "onEvent"
+  | "provider"
+  | "tools"
+  | "mcpTools"
+  | "onMcpToolCall"
+  | "mediaGenerationTools"
+  | "onMediaGenerationToolCall"
+> {
   readonly workspaceCwd?: string;
   readonly providerPresetId?: string;
   readonly provider?: PiRunnerProviderConfig;

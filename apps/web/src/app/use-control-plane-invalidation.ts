@@ -28,6 +28,7 @@ export function useControlPlaneInvalidation(input: {
   readonly localWebSocketRpcEnabled: boolean;
   readonly workspaceCwd: string;
   readonly selectedChannelId: string;
+  readonly selectedTeammateId: string;
   readonly channelRunsForArtifacts: readonly RunSession[];
   readonly setSkillLibraryRefreshToken: (update: (current: number) => number) => void;
   readonly refreshRuns: (cwd?: string) => Promise<void>;
@@ -43,6 +44,8 @@ export function useControlPlaneInvalidation(input: {
   readonly refreshChannelRunArtifacts: (cwd?: string, channelId?: string, channelRuns?: readonly RunSession[]) => Promise<void>;
   readonly refreshChannelExecutionActions: (cwd?: string, channelId?: string, channelRuns?: readonly RunSession[]) => Promise<void>;
   readonly refreshChannelActivity: () => Promise<void>;
+  readonly refreshSelectedChannelConversation: () => Promise<void>;
+  readonly invalidateSelectedTeammateConversation: () => void;
 }): ControlPlaneInvalidationController {
   const workspaceIdentity = input.workspaceCwd.trim() || "workspace:unavailable";
   const errorOwner = useFocusedDomainErrorOwner<"control-plane", string>(workspaceIdentity);
@@ -111,6 +114,16 @@ export function useControlPlaneInvalidation(input: {
       .find((domain) => changed.has(domain));
     if (conversationDomain) {
       trackRefresh(conversationDomain, "selected-conversation", input.refreshSelectedConversation(workspaceCwd));
+      if (input.selectedChannelId && !changed.has("runs")) {
+        trackRefresh(
+          conversationDomain,
+          `channel-conversation:${input.selectedChannelId}`,
+          input.refreshSelectedChannelConversation(),
+        );
+      }
+      if (input.selectedTeammateId) {
+        input.invalidateSelectedTeammateConversation();
+      }
     }
   };
 

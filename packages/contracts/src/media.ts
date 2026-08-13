@@ -6,6 +6,15 @@ export type MediaJobStatus = "queued" | "running" | "waiting_for_approval" | "su
 
 export type MediaOperation = "image_generate" | "image_edit" | "video_generate";
 
+export type ConversationMediaFailureCode =
+  | "generation_target_unavailable"
+  | "generation_configuration_required"
+  | "generation_content_policy_blocked"
+  | "generation_authorization_required"
+  | "generation_timed_out"
+  | "generation_result_unavailable"
+  | "generation_failed";
+
 export interface MediaJob {
   readonly id: string;
   readonly workspaceId: string;
@@ -18,6 +27,24 @@ export interface MediaJob {
   readonly artifactIds: readonly string[];
   readonly status: MediaJobStatus;
   readonly errorMessage?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface ConversationGeneratedMedia {
+  readonly mediaJobId: string;
+  readonly runId: string;
+  readonly messageId?: string;
+  readonly operation: Extract<MediaOperation, "image_generate" | "video_generate">;
+  readonly target: {
+    readonly kind: "provider" | "workflow";
+    readonly id: string;
+    readonly displayName: string;
+  };
+  readonly prompt: string;
+  readonly status: MediaJobStatus;
+  readonly artifacts: readonly RunArtifact[];
+  readonly failureCode?: ConversationMediaFailureCode;
   readonly createdAt: string;
   readonly updatedAt: string;
 }

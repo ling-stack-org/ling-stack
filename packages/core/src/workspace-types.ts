@@ -483,6 +483,7 @@ export interface WorkspaceSettings {
   readonly responseLanguage?: ResponseLanguagePreference;
   readonly lingConversationTone?: LingConversationTone;
   readonly defaultProviderPresetId?: string;
+  readonly mediaGenerationDefaults?: import("./media-generation-routing-types.js").WorkspaceMediaGenerationDefaults;
   readonly defaultAuthorizationMode?: AuthorizationMode;
   readonly defaultWorkspaceAccessMode?: WorkspaceAccessMode;
   readonly defaultPermissionMode?: SessionPermissionMode;
@@ -500,6 +501,7 @@ export interface UpdateWorkspaceSettingsInput {
   readonly responseLanguage?: ResponseLanguagePreference | null;
   readonly lingConversationTone?: LingConversationTone | null;
   readonly defaultProviderPresetId?: string | null;
+  readonly mediaGenerationDefaults?: import("./media-generation-routing-types.js").WorkspaceMediaGenerationDefaults | null;
   readonly defaultAuthorizationMode?: AuthorizationMode | null;
   readonly defaultWorkspaceAccessMode?: WorkspaceAccessMode | null;
   readonly defaultPermissionMode?: SessionPermissionMode | null;

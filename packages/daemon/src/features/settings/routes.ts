@@ -1,16 +1,22 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { SecretResolver } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import { readJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { buildEffectiveConfigResponse, parseWorkspaceSettingsUpdate } from "./effective-config.js";
+import {
+  assertMediaGenerationDefaultUpdate,
+  listConversationMediaGenerationTargets,
+} from "../media/conversation-targets.js";
 
 export async function handleWorkspaceSettings(
   request: IncomingMessage,
   response: ServerResponse,
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
+  secretResolver: SecretResolver,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -27,7 +33,13 @@ export async function handleWorkspaceSettings(
     }
     if (request.method === "PATCH") {
       const body = await readJsonBody(request, config.maxBodyBytes);
-      const settings = store.updateWorkspaceSettings(parseWorkspaceSettingsUpdate(body), new Date().toISOString());
+      const update = parseWorkspaceSettingsUpdate(body);
+      assertMediaGenerationDefaultUpdate({
+        current: store.getWorkspaceSettings().mediaGenerationDefaults,
+        next: update.mediaGenerationDefaults,
+        targets: listConversationMediaGenerationTargets(store, secretResolver),
+      });
+      const settings = store.updateWorkspaceSettings(update, new Date().toISOString());
       writeJson(response, 200, { cwd, settings });
       return;
     }

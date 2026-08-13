@@ -225,6 +225,7 @@ async function handleWorkflowItem(
       return;
     }
     if (input.request.method === "DELETE") {
+      assertWorkflowIsNotGenerationDefault(store, definition.id);
       writeJson(input.response, 200, { deleted: store.deleteMediaWorkflowDefinition(definition.id), workflowDefinitionId: definition.id });
       return;
     }
@@ -233,6 +234,7 @@ async function handleWorkflowItem(
   }
   if (input.route.action === "archive") {
     if (input.request.method !== "POST") return methodNotAllowed(input.response, input.request.method, "/media-workflows/:id/archive");
+    assertWorkflowIsNotGenerationDefault(store, definition.id);
     const archived = store.updateMediaWorkflowDefinition(definition.id, { status: "archived" }, now()) ?? definition;
     writeJson(input.response, 200, mediaWorkflowDefinitionDetail(store, archived));
     return;
@@ -265,6 +267,19 @@ async function handleWorkflowItem(
     if (input.request.method !== "POST") return methodNotAllowed(input.response, input.request.method, "/media-workflows/:id/activate");
     const activated = activateMediaWorkflow({ store, definition, version: requireVersion(store, version.id), now: now() });
     writeJson(input.response, 200, mediaWorkflowDefinitionDetail(store, activated));
+  }
+}
+
+function assertWorkflowIsNotGenerationDefault(store: RunStore, workflowDefinitionId: string): void {
+  const defaults = store.getWorkspaceSettings().mediaGenerationDefaults;
+  const usedFor = (["image", "video"] as const).filter((kind) => {
+    const target = defaults?.[kind];
+    return target?.kind === "workflow" && target.workflowDefinitionId === workflowDefinitionId;
+  });
+  if (usedFor.length > 0) {
+    throw new Error(
+      `该流程仍是工作区默认${usedFor.map((kind) => kind === "image" ? "图片" : "视频").join("和")}生成目标，请先在模型工作台更换或清除默认用途。`,
+    );
   }
 }
 

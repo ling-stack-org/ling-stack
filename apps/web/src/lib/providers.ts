@@ -16,6 +16,7 @@ import {
   resolveProviderModelCapabilitySnapshot,
   type ProviderModelCapabilitySnapshot,
 } from "@ling-stack/core/provider-model-capabilities";
+import { providerWorkbenchReady } from "./provider-workbench-readiness.js";
 
 type ProviderTranslate = (key: string, values?: Readonly<Record<string, string | number>>) => string;
 
@@ -385,7 +386,18 @@ export function canWorkbenchBatchCheckProvider(provider: ProviderPreset): boolea
 }
 
 export function isWorkbenchReadyProvider(provider: ProviderPreset): boolean {
-  return provider.enabled && providerSecretReady(provider) && provider.lastCheck?.ok === true;
+  const generationCapable = providerHasGenerationCapability(provider);
+  const generationRuntimeReady = generationOperations.some((operation) =>
+    providerSupportsGenerationOperation(provider, operation) &&
+    resolveGenerationProviderRuntimeState(provider, operation).canRun
+  );
+  return providerWorkbenchReady({
+    enabled: provider.enabled,
+    secretReady: providerSecretReady(provider),
+    latestCheckReady: provider.lastCheck?.ok === true,
+    generationCapable,
+    generationRuntimeReady,
+  });
 }
 
 export function isWorkbenchNeedsConfigProvider(provider: ProviderPreset): boolean {

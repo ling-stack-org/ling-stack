@@ -4,6 +4,12 @@ import type { MediaExecutionHandle } from "@ling-stack/providers";
 import type { RunStoreRegistry } from "../../../runtime/store-registry.js";
 import { redactTextWithSecrets } from "../../../shared/redaction.js";
 import { createMediaJobArtifacts, mediaExecutionHasRequiredArtifact } from "../artifact-collector.js";
+import {
+  bindMediaExecutionHandleToRuntime,
+  findConversationMediaWorkUnit,
+  prepareConversationMediaWorkUnitForExplicitRetry,
+  synchronizeConversationMediaWorkUnitTerminal,
+} from "../conversation-runtime-recovery.js";
 import type { MediaJobExecutionResult, MediaRuntimeHandle, RunMediaJobHooks } from "../executor.js";
 import { requiresMediaProductionApproval } from "../media-cost-approval.js";
 import { selectInitialMediaSceneResult } from "../scene-result-selection.js";
@@ -15,6 +21,7 @@ const MAX_POLL_ATTEMPTS = 10_800;
 const MEDIA_RUNTIME_SEMAPHORE_TTL_MS = 6 * 60 * 60 * 1000;
 const pendingOperationPrefix = "ling-pending:";
 const scheduled = new Map<string, ReturnType<typeof setTimeout>>();
+const inFlight = new Map<string, Promise<MediaJobExecutionResult>>();
 
 export async function runWorkflowMediaJobExecution(input: {
   readonly cwd: string;
@@ -22,6 +29,27 @@ export async function runWorkflowMediaJobExecution(input: {
   readonly secretResolver: SecretResolver;
   readonly mediaJobId: string;
   readonly hooks: RunMediaJobHooks;
+  readonly retryTerminal?: boolean;
+}): Promise<MediaJobExecutionResult> {
+  const key = `${input.cwd}\u0000${input.mediaJobId}`;
+  const existing = inFlight.get(key);
+  if (existing) return await existing;
+  const execution = runWorkflowMediaJobExecutionOwner(input);
+  inFlight.set(key, execution);
+  try {
+    return await execution;
+  } finally {
+    if (inFlight.get(key) === execution) inFlight.delete(key);
+  }
+}
+
+async function runWorkflowMediaJobExecutionOwner(input: {
+  readonly cwd: string;
+  readonly storeRegistry: RunStoreRegistry;
+  readonly secretResolver: SecretResolver;
+  readonly mediaJobId: string;
+  readonly hooks: RunMediaJobHooks;
+  readonly retryTerminal?: boolean;
 }): Promise<MediaJobExecutionResult> {
   const store = input.storeRegistry.getStore(input.cwd);
   let job = store.getMediaJob(input.mediaJobId);
@@ -31,6 +59,8 @@ export async function runWorkflowMediaJobExecution(input: {
   }
   const workflowVersionId = job.executionSource.workflowVersionId;
   if (job.status === "succeeded") {
+    settleExecutionHandle(store, job.id, "succeeded", "media-workflow-already-succeeded");
+    clearScheduled(job.id);
     selectInitialMediaSceneResult(store, job.id, new Date().toISOString());
     return { statusCode: 200, body: { mediaJob: job, artifacts: [] } };
   }
@@ -38,53 +68,103 @@ export async function runWorkflowMediaJobExecution(input: {
     return { statusCode: 409, body: { error: "media_job_waiting_for_approval", message: "媒体任务正在等待费用审批。" } };
   }
   let supervised: MediaRuntimeHandle | undefined;
+  let handle = store.getMediaJobExecutionHandle(job.id);
   let secretValue: string | undefined;
   try {
-    let handle = store.getMediaJobExecutionHandle(job.id);
     if (job.status === "waiting_for_approval") {
       job = store.updateMediaJobStatus(job.id, { status: "queued", errorMessage: null }, new Date().toISOString()) ?? job;
     }
-    if ((job.status === "failed" || job.status === "cancelled") && !handle) {
+    const terminalStatus = job.status === "failed" || job.status === "cancelled" ? job.status : undefined;
+    const retryingTerminal = terminalStatus !== undefined && input.retryTerminal === true && (!handle || isPendingHandle(handle));
+    if (terminalStatus && !retryingTerminal) {
+      const child = findConversationMediaWorkUnit(store, job.id);
+      const shouldAuditPreSubmissionCancellation = terminalStatus === "cancelled" &&
+        !handle && Boolean(child && !isTerminalWorkUnitStatus(child.status));
+      if (shouldAuditPreSubmissionCancellation) {
+        // Adopt the queued conversation child below so pre-submission cancellation still records one attempt.
+      } else {
+        if (terminalStatus === "cancelled" && handle && !isPendingHandle(handle)) {
+          await cancelPersistedWorkflowOperation(store, workflowVersionId, handle, input.secretResolver);
+        }
+        synchronizeConversationMediaWorkUnitTerminal(store, job.id, terminalStatus, new Date().toISOString());
+        settleExecutionHandle(store, job.id, terminalStatus, `media-workflow-already-${terminalStatus}`);
+        clearScheduled(job.id);
+        notifyProjection(input, job.id);
+        return terminalMediaJobResult(job);
+      }
+    }
+    if (retryingTerminal) {
+      if (handle && isPendingHandle(handle)) {
+        store.deleteMediaJobExecutionHandle(job.id);
+        handle = undefined;
+      }
       job = store.updateMediaJobStatus(job.id, { status: "queued", errorMessage: null }, new Date().toISOString()) ?? job;
+      const child = prepareConversationMediaWorkUnitForExplicitRetry(store, job.id, new Date().toISOString());
+      if (child && child.status !== "queued") {
+        throw new Error(`Conversation media work unit could not be retried: ${child.id} (${child.status}).`);
+      }
+      handle = store.getMediaJobExecutionHandle(job.id);
     }
-    const version = requireVersion(store, workflowVersionId);
-    const definition = requireDefinition(store, version.workflowDefinitionId);
-    const isTest = job.input.workflowTest === true;
-    if (!isTest && (definition.status !== "ready" || definition.currentVersionId !== version.id)) {
-      throw new Error("该工作流版本尚未启用，不能用于场景生成。");
-    }
-    const connection = requireConnection(store, definition.connectionId);
-    if (connection.status !== "ready") throw new Error("工作流连接尚未检查通过。");
-    secretValue = resolveMediaWorkflowSecret(connection, input.secretResolver);
-    const adapter = createComfyUiWorkflowAdapter({ store, connection, version, apiKey: secretValue });
-    supervised = restoreRuntimeHandle(store, handle) ?? input.hooks.startRuntimeWorkUnit({
+    supervised = restoreRuntimeHandle(store, handle) ?? restoreConversationRuntimeHandle(store, job.id) ?? input.hooks.startRuntimeWorkUnit({
       store,
       kind: "media_job",
       ownerType: "media_job",
       ownerId: job.id,
       linkedMediaJobId: job.id,
       idempotencyKey: `media_job:${job.id}:workflow:${randomUUID()}`,
-      request: { mediaJobId: job.id, workflowVersionId: version.id, operation: job.operation },
+      request: { mediaJobId: job.id, workflowVersionId, operation: job.operation },
     });
+    if (handle) {
+      handle = bindMediaExecutionHandleToRuntime(store, handle, supervised, new Date().toISOString());
+    }
+    if (job.status === "cancelled") {
+      if (handle && !isPendingHandle(handle)) {
+        await cancelPersistedWorkflowOperation(store, workflowVersionId, handle, input.secretResolver);
+      }
+      input.hooks.transitionRuntimeWorkUnitCancelled({
+        store,
+        workUnitId: supervised.workUnit.id,
+        attemptId: supervised.attempt.id,
+        reason: "媒体任务已取消。",
+      });
+      finishExecution(store, job.id, supervised, "cancelled", "media-workflow-cancelled-before-submission");
+      notifyProjection(input, job.id);
+      return { statusCode: 200, body: { mediaJob: job, artifacts: [] } };
+    }
+    if (job.status === "failed" && !retryingTerminal) {
+      terminalFailure(store, input.hooks, supervised, "media_workflow_failed", "媒体任务已经失败，需要用户明确重试。");
+      finishExecution(store, job.id, supervised, "failed", "media-workflow-already-failed");
+      notifyProjection(input, job.id);
+      return terminalMediaJobResult(job);
+    }
+    const version = requireVersion(store, workflowVersionId);
+    const definition = requireDefinition(store, version.workflowDefinitionId);
+    const isTest = job.input.workflowTest === true;
+    if (!isTest && (definition.status !== "ready" || definition.currentVersionId !== version.id)) {
+      throw mediaExecutionError("generation_target_not_runnable", "该工作流版本尚未启用，不能用于场景生成。");
+    }
+    const connection = requireConnection(store, definition.connectionId);
+    if (connection.status !== "ready") {
+      throw mediaExecutionError("invalid_request", "工作流连接尚未检查通过。");
+    }
+    secretValue = resolveMediaWorkflowSecret(connection, input.secretResolver);
+    const adapter = createComfyUiWorkflowAdapter({ store, connection, version, apiKey: secretValue });
     handle = handle ?? persistPendingHandle(store, job, supervised);
     if (!ensureSemaphore(store, job.workspaceId, connection.id, supervised)) {
       scheduleWorkflowPoll(input, POLL_INTERVAL_MS);
       return { statusCode: 202, body: { mediaJob: job, pending: true } };
     }
     recordHeartbeat(store, supervised);
-    if (job.status === "cancelled") {
-      if (!isPendingHandle(handle)) await adapter.cancel(toExecutionHandle(handle)).catch(() => undefined);
-      terminalFailure(store, input.hooks, supervised, "media_job_cancelled", "媒体任务已取消。");
-      finishExecution(store, job.id, supervised, "media-workflow-cancelled");
-      return { statusCode: 200, body: { mediaJob: job, artifacts: [] } };
-    }
     const running = job.status === "running"
       ? job
       : store.updateMediaJobStatus(job.id, { status: "running", errorMessage: null }, new Date().toISOString()) ?? job;
+    notifyProjection(input, job.id);
     if (isPendingHandle(handle)) {
         const values = isRecord(job.input.workflowInputValues) ? job.input.workflowInputValues : {};
         const submission = await adapter.submit({ jobId: job.id, prompt: job.prompt, inputValues: values, requestedAt: new Date().toISOString() });
-        if (submission.status === "failed") throw new Error(submission.errorMessage);
+        if (submission.status === "failed") {
+          throw mediaExecutionError(submission.errorCode ?? "media_workflow_failed", submission.errorMessage);
+        }
         handle = store.upsertMediaJobExecutionHandle({
           mediaJobId: job.id,
           adapterKind: submission.handle.adapterKind,
@@ -117,7 +197,9 @@ export async function runWorkflowMediaJobExecution(input: {
       scheduleWorkflowPoll(input, POLL_INTERVAL_MS);
       return { statusCode: 202, body: { mediaJob: running, pending: true } };
     }
-    if (poll.status === "failed") throw new Error(poll.errorMessage);
+    if (poll.status === "failed") {
+      throw mediaExecutionError(poll.errorCode ?? "media_workflow_failed", poll.errorMessage);
+    }
     handle = store.upsertMediaJobExecutionHandle({
       mediaJobId: job.id,
       adapterKind: handle.adapterKind,
@@ -127,9 +209,14 @@ export async function runWorkflowMediaJobExecution(input: {
       pollAttempts: handle.pollAttempts + 1,
     }, new Date().toISOString());
     const execution = await adapter.collectArtifacts(toExecutionHandle(handle));
-    if (execution.status === "failed") throw new Error(execution.errorMessage ?? "工作流产物收集失败。");
+    if (execution.status === "failed") {
+      throw mediaExecutionError(
+        execution.errorCode ?? "media_workflow_failed",
+        execution.errorMessage ?? "工作流产物收集失败。",
+      );
+    }
     if (!mediaExecutionHasRequiredArtifact(execution.artifacts, job.operation)) {
-      throw new Error("工作流没有返回当前任务需要的图片或视频结果。");
+      throw mediaExecutionError("media_result_unavailable", "工作流没有返回当前任务需要的图片或视频结果。");
     }
     const completedAt = new Date().toISOString();
     const artifacts = createMediaJobArtifacts(store, job, execution.artifacts, completedAt, [secretValue]);
@@ -138,6 +225,7 @@ export async function runWorkflowMediaJobExecution(input: {
       artifactIds: [...new Set([...job.artifactIds, ...artifacts.map((artifact) => artifact.id)])],
       errorMessage: null,
     }, completedAt) ?? job;
+    notifyProjection(input, job.id, artifacts.map((artifact) => artifact.id));
     selectInitialMediaSceneResult(store, job.id, completedAt);
     for (const artifact of artifacts) {
       store.appendRuntimeEvent({
@@ -159,19 +247,49 @@ export async function runWorkflowMediaJobExecution(input: {
         actor: "system",
         now: completedAt,
       });
-    finishExecution(store, job.id, supervised, "media-workflow-succeeded");
+    finishExecution(store, job.id, supervised, "succeeded", "media-workflow-succeeded");
     return { statusCode: 200, body: { mediaJob: succeeded, artifacts } };
   } catch (error) {
     const message = redactTextWithSecrets(error instanceof Error ? error.message : String(error), [secretValue]);
+    const errorCode = mediaExecutionErrorCode(error, "media_workflow_failed");
     const failed = store.updateMediaJobStatus(job.id, { status: "failed", errorMessage: message }, new Date().toISOString()) ?? job;
-    if (supervised) terminalFailure(store, input.hooks, supervised, "media_workflow_failed", message);
-    if (supervised) finishExecution(store, job.id, supervised, "media-workflow-failed");
+    notifyProjection(input, job.id);
+    if (supervised) terminalFailure(store, input.hooks, supervised, errorCode, message);
+    if (supervised) finishExecution(store, job.id, supervised, "failed", "media-workflow-failed");
     else {
-      store.deleteMediaJobExecutionHandle(job.id);
+      synchronizeConversationMediaWorkUnitTerminal(store, job.id, "failed", new Date().toISOString());
+      settleExecutionHandle(store, job.id, "failed", "media-workflow-failed-before-runtime-start");
       clearScheduled(job.id);
     }
     return { statusCode: 400, body: { error: "media_workflow_failed", message, mediaJob: failed } };
   }
+}
+
+function terminalMediaJobResult(job: MediaJob): MediaJobExecutionResult {
+  return job.status === "cancelled"
+    ? { statusCode: 200, body: { mediaJob: job, artifacts: [] } }
+    : {
+        statusCode: 200,
+        body: {
+          error: "media_job_already_failed",
+          message: job.errorMessage ?? "媒体任务已经失败，需要用户明确重试。",
+          mediaJob: job,
+        },
+      };
+}
+
+function isTerminalWorkUnitStatus(status: string): boolean {
+  return status === "succeeded" || status === "failed" || status === "cancelled";
+}
+
+function mediaExecutionError(code: string, message: string): Error & { readonly code: string } {
+  return Object.assign(new Error(message), { code });
+}
+
+function mediaExecutionErrorCode(error: unknown, fallback: string): string {
+  if (typeof error !== "object" || error === null || !("code" in error)) return fallback;
+  const code = (error as { readonly code?: unknown }).code;
+  return typeof code === "string" && code.trim() ? code.trim() : fallback;
 }
 
 export function resumePendingWorkflowMediaJobs(input: {
@@ -245,10 +363,43 @@ function recordHeartbeat(store: RunStore, supervised: MediaRuntimeHandle): void 
   });
 }
 
-function finishExecution(store: RunStore, mediaJobId: string, supervised: MediaRuntimeHandle, reason: string): void {
-  store.deleteMediaJobExecutionHandle(mediaJobId);
+function finishExecution(
+  store: RunStore,
+  mediaJobId: string,
+  supervised: MediaRuntimeHandle,
+  status: "succeeded" | "failed" | "cancelled",
+  reason: string,
+): void {
+  settleExecutionHandle(store, mediaJobId, status, reason);
   store.releaseRuntimeSemaphoreSlotsForOwner(supervised.attempt.id, new Date().toISOString(), reason);
   clearScheduled(mediaJobId);
+}
+
+function settleExecutionHandle(
+  store: RunStore,
+  mediaJobId: string,
+  status: "succeeded" | "failed" | "cancelled",
+  reason: string,
+): void {
+  const handle = store.getMediaJobExecutionHandle(mediaJobId);
+  if (!handle) return;
+  if (handle.attemptId) {
+    store.releaseRuntimeSemaphoreSlotsForOwner(handle.attemptId, new Date().toISOString(), reason);
+  }
+  if (status === "succeeded" || isPendingHandle(handle)) {
+    store.deleteMediaJobExecutionHandle(mediaJobId);
+    return;
+  }
+  store.upsertMediaJobExecutionHandle({
+    mediaJobId: handle.mediaJobId,
+    adapterKind: handle.adapterKind,
+    externalOperationId: handle.externalOperationId,
+    recovery: handle.recovery,
+    nextPollAt: null,
+    pollAttempts: handle.pollAttempts,
+    workUnitId: null,
+    attemptId: null,
+  }, new Date().toISOString());
 }
 
 function isPendingHandle(handle: NonNullable<ReturnType<RunStore["getMediaJobExecutionHandle"]>>): boolean {
@@ -262,7 +413,9 @@ function scheduleWorkflowPoll(
   clearScheduled(input.mediaJobId);
   const timer = setTimeout(() => {
     scheduled.delete(input.mediaJobId);
-    void runWorkflowMediaJobExecution(input);
+    void runWorkflowMediaJobExecution(input).catch(() => {
+      // The execution owner persists normal failures; this only closes entry-level promise rejection.
+    });
   }, Math.max(0, delayMs));
   timer.unref?.();
   scheduled.set(input.mediaJobId, timer);
@@ -281,8 +434,44 @@ function restoreRuntimeHandle(store: RunStore, handle: ReturnType<RunStore["getM
   return workUnit && attempt ? { workUnit, attempt } : undefined;
 }
 
+function restoreConversationRuntimeHandle(store: RunStore, mediaJobId: string): MediaRuntimeHandle | undefined {
+  const workUnit = findConversationMediaWorkUnit(store, mediaJobId);
+  const attempt = workUnit?.activeAttemptId ? store.getWorkUnitAttempt(workUnit.activeAttemptId) : undefined;
+  return workUnit && attempt ? { workUnit, attempt } : undefined;
+}
+
+function notifyProjection(
+  input: Parameters<typeof runWorkflowMediaJobExecution>[0],
+  mediaJobId: string,
+  createdArtifactIds?: readonly string[],
+): void {
+  try {
+    input.hooks.onMediaJobProjectionChanged?.({ cwd: input.cwd, mediaJobId, createdArtifactIds });
+  } catch {
+    // Projection invalidation is best-effort; persisted state remains authoritative.
+  }
+}
+
 function toExecutionHandle(handle: NonNullable<ReturnType<RunStore["getMediaJobExecutionHandle"]>>): MediaExecutionHandle {
   return { adapterKind: handle.adapterKind, externalOperationId: handle.externalOperationId, recovery: handle.recovery };
+}
+
+async function cancelPersistedWorkflowOperation(
+  store: RunStore,
+  workflowVersionId: string,
+  handle: NonNullable<ReturnType<RunStore["getMediaJobExecutionHandle"]>>,
+  secretResolver: SecretResolver,
+): Promise<void> {
+  try {
+    const version = requireVersion(store, workflowVersionId);
+    const definition = requireDefinition(store, version.workflowDefinitionId);
+    const connection = requireConnection(store, definition.connectionId);
+    const cancellationSecret = resolveMediaWorkflowSecret(connection, secretResolver);
+    const adapter = createComfyUiWorkflowAdapter({ store, connection, version, apiKey: cancellationSecret });
+    await adapter.cancel(toExecutionHandle(handle));
+  } catch {
+    // The local cancellation remains authoritative when the original workflow cannot be reconstructed.
+  }
 }
 
 function terminalFailure(store: RunStore, hooks: RunMediaJobHooks, supervised: { readonly workUnit: WorkUnit; readonly attempt: WorkUnitAttempt }, code: string, message: string): void {

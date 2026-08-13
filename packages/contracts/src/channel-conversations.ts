@@ -19,6 +19,7 @@ import type { ConversationActiveReplyTarget } from "./runtime.js";
 import type { LingThread } from "./threads.js";
 import type { LingTurn } from "./turns.js";
 import type { ChannelWorkflow, ChannelWorkflowOrchestrationResponse, ChannelWorkflowStep } from "./workflows.js";
+import type { ConversationGeneratedMedia } from "./media.js";
 
 export type ChannelConversationThread = LingThread & LingThreadContinuityV2 & {
   readonly nextItemSequence: number;
@@ -59,6 +60,7 @@ export interface ChannelConversationItemPageResponse {
   readonly turns: readonly LingTurn[];
   readonly items: readonly ConversationItemV1[];
   readonly decorations: readonly ChannelConversationItemDecoration[];
+  readonly generatedMedia: readonly ConversationGeneratedMedia[];
   readonly hasMore: boolean;
   /** Stable per-thread sequence cursor. The next page contains only lower sequences. */
   readonly nextBeforeSequence?: number;

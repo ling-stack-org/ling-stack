@@ -1,7 +1,7 @@
 # Ling Agent TerminalReport Protocol
 
 Status: canonical detailed design for terminal result synthesis
-Date: 2026-07-11
+Date: 2026-08-13
 Scope: channel workflows, direct runs, normal conversations, teammate private chats,
 multi-agent participation, terminal evidence, and shared conversation projection
 
@@ -42,6 +42,11 @@ Desktop, and CLI surfaces consume the same semantic result.
 
 Every executed user task gets at most one terminal report for each completed work
 generation.
+
+An ordinary `channel_ai_reply` is a conversational answer, not an executed user-task
+generation. It never receives a TerminalReport, even when its Run emits tool or evidence
+events such as starting a conversation-owned media job. The conversation projection for
+that media job owns its queued, running, success, and failure state.
 
 ```text
 user request
@@ -553,6 +558,7 @@ displayed in the ordinary final report.
 
 ```text
 workflow/run becomes terminal
+  -> verify that the source is eligible for terminal reporting
   -> determine owning Ling session and turn
   -> enter reporting state
   -> wait for terminal approval reconciliation and artifact import
@@ -582,6 +588,27 @@ The reporting barrier waits until:
 
 The barrier has a bounded timeout. Timeout does not fabricate completion; it adds an
 `unverified` risk and permits fallback publication from the available snapshot.
+
+### Eligibility And Recovery
+
+Terminal-report eligibility is one daemon-owned rule reused by real-time scheduling,
+direct processing, startup recovery, report APIs, and conversation projection.
+
+- workflow sources remain eligible;
+- explicit executed-task runs and turns remain eligible when their evidence satisfies
+  this protocol;
+- runs owned by a `channel_ai_reply` WorkUnit are ineligible, including legacy runs whose
+  WorkUnit link must be recovered through the reverse `linkedRunId` relation;
+- startup recovery must not reinterpret an ordinary completed reply as a task merely
+  because it contains tool, action, or artifact evidence;
+- a previously committed or published ineligible report remains in durable storage for
+  audit and compatibility, but report collection/detail APIs and the channel timeline do
+  not expose it;
+- eligibility never depends on matching visible markdown, titles, or phrases such as
+  `Done` or `任务已完成`.
+
+This filtering is intentionally non-destructive. It repairs the user-facing projection
+without rewriting or deleting historical user data.
 
 ### Synthesis Mode Selection
 
@@ -866,7 +893,7 @@ previews. Those remain independently expandable in their owning blocks.
 | Surface | TerminalReport behavior |
 | --- | --- |
 | Normal conversation | Show for executed work; omit for plain conversational answers |
-| Channel root/branch | Show one Ling-owned final result; include actual multi-agent participation |
+| Channel root/branch | Show one Ling-owned final result for workflows or explicit executed tasks; omit ordinary `channel_ai_reply` answers even when they start conversation-owned media work |
 | Teammate private chat | Show executed-work result privately; do not expose channel teammates or private evidence from other scopes |
 | Run/thread detail | Show report plus richer evidence links; keep raw runtime detail separate |
 

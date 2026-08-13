@@ -105,7 +105,8 @@ test("P13.1 uses model-first identity and keeps routine row actions visible", as
     has: page.locator(".provider-name-copy strong", { hasText: /^gpt-5\.4$/ }),
   });
   await expect(readyRow.locator(".provider-name-copy small")).toHaveText("Ready Relay");
-  await expect(readyRow.getByRole("button", { name: "Set default" })).toBeVisible();
+  await expect(page.locator(".provider-default-purpose-bar").getByLabel("Chat model")).toHaveValue("custom_default");
+  await expect(readyRow.getByRole("button", { name: /Set default|Current default/ })).toHaveCount(0);
   await expect(readyRow.getByRole("button", { name: "Check" })).toBeVisible();
   await expect(readyRow.getByRole("button", { name: "Edit" })).toBeVisible();
 
@@ -121,7 +122,7 @@ test("P13.1 uses model-first identity and keeps routine row actions visible", as
   const menu = page.getByRole("menu");
   await expect(menu.getByRole("menuitem", { name: "Edit" })).toHaveCount(0);
   await expect(menu.getByRole("menuitem", { name: "Check" })).toHaveCount(0);
-  await expect(menu.getByRole("menuitem", { name: "Clear default" })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "Clear default" })).toHaveCount(0);
   await expect(menu.getByRole("menuitem", { name: "Disable" })).toBeVisible();
   await expect(menu.getByRole("menuitem", { name: "Delete" })).toBeVisible();
   await page.keyboard.press("Escape");

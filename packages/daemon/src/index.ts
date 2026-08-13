@@ -38,12 +38,17 @@ import { ProviderStartupRefreshService } from "./features/providers/startup-refr
 import { ProviderImportPreflightService } from "./features/providers/import-preflight.js";
 import { ActiveDirectReplyRegistry } from "./features/teammates/direct-reply-active-registry.js";
 import { resumePendingMediaJobExecutions } from "./features/media/executor.js";
+import { publishConversationMediaProjectionChange } from "./features/media/conversation-events.js";
 import { ActiveRunRegistry } from "./runtime/active-runs.js";
 import { createRunnerRegistry, DEFAULT_RUNNER_ID, LEGACY_PI_RUNNER_ID, type RunnerRegistry } from "./runtime/runners.js";
 import { listExternalRunnerRegistrations } from "./runtime/external-runners.js";
 import { RunStoreRegistry, type RunStoreFactory } from "./runtime/store-registry.js";
 import { RuntimeSupervisor } from "./runtime/supervisor.js";
-import { startRuntimeWorkUnit, transitionWorkUnitTerminal } from "./runtime/work-units.js";
+import {
+  startRuntimeWorkUnit,
+  transitionWorkUnitCancelled,
+  transitionWorkUnitTerminal,
+} from "./runtime/work-units.js";
 import { routeRequest } from "./server/router.js";
 import { attachRpcWebSocketServer } from "./server/rpc.js";
 import { writeJson } from "./shared/response.js";
@@ -428,6 +433,22 @@ export function createDaemonServer(
               now: input.now,
               errorCode: input.errorCode,
               errorMessage: input.errorMessage,
+            });
+          },
+          transitionRuntimeWorkUnitCancelled: (input) => {
+            transitionWorkUnitCancelled(
+              input.store,
+              input.workUnitId,
+              input.attemptId,
+              input.reason,
+            );
+          },
+          onMediaJobProjectionChanged: (input) => {
+            publishConversationMediaProjectionChange({
+              store: storeRegistry.getStore(input.cwd),
+              controlPlaneEvents,
+              mediaJobId: input.mediaJobId,
+              createdArtifactIds: input.createdArtifactIds,
             });
           },
         },

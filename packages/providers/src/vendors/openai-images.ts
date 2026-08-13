@@ -45,7 +45,7 @@ export async function executeOpenAIImageGeneration(
     if (imageArtifacts.length === 0) {
       return {
         status: "failed",
-        errorCode: "invalid_request",
+        errorCode: "media_result_unavailable",
         errorMessage: "OpenAI Images response did not include image data.",
       };
     }
@@ -236,9 +236,24 @@ async function normalizeOpenAIImagesHttpFailure(response: MediaVendorHttpRespons
   const redactedBody = redactSecretText(body, redactionValues);
   return {
     status: "failed",
-    errorCode: mapMediaVendorHttpStatus(response.status),
+    errorCode: openAIImagesFailureCode(response.status, body),
     errorMessage: `OpenAI image generation failed with HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ""}.${
       redactedBody ? ` ${redactedBody}` : ""
     }`.trim(),
   };
+}
+
+function openAIImagesFailureCode(status: number, body: string): MediaVendorTransportResult["errorCode"] {
+  if (status === 400) {
+    const normalizedBody = body.toLowerCase();
+    if (
+      normalizedBody.includes("moderation_blocked") ||
+      normalizedBody.includes("safety_violations") ||
+      normalizedBody.includes("safety system") ||
+      normalizedBody.includes("content policy")
+    ) {
+      return "content_policy_blocked";
+    }
+  }
+  return mapMediaVendorHttpStatus(status);
 }

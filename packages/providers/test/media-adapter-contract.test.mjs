@@ -566,6 +566,86 @@ test("live media vendor transport calls OpenAI Images and stores b64 artifacts",
   });
 });
 
+test("OpenAI Images classifies content policy rejection separately from invalid configuration", async () => {
+  const openAIImageProvider = {
+    ...provider,
+    id: "provider_openai_image_policy",
+    kind: "openai-compatible",
+    displayName: "OpenAI Image",
+    providerId: "custom-openai-compatible",
+    model: "gpt-image-2",
+    capabilities: ["image_generate"],
+  };
+  const registry = createDefaultMediaAdapterRegistry({
+    mediaVendorTransport: createLiveMediaVendorTransport({
+      baseUrl: "https://api.openai.test/v1",
+      apiKeyRef: "env:OPENAI_API_KEY",
+      apiKeyConfigured: true,
+      apiKey: "test-key",
+      httpClient: async () => jsonResponse(400, {
+        error: {
+          message: "Request rejected by the safety system.",
+          code: "moderation_blocked",
+          moderation_details: { categories: ["sexual"] },
+        },
+      }),
+    }),
+  });
+  const resolution = resolveMediaAdapter(registry, openAIImageProvider);
+  assert.equal(resolution.ok, true);
+  assert.ok(resolution.adapter);
+
+  const result = await executeMediaJob(resolution.adapter, {
+    jobId: "media_job_live_openai_image_policy",
+    provider: openAIImageProvider,
+    operation: "image_generate",
+    prompt: "A request rejected by the upstream policy.",
+    input: {},
+    requestedAt: "2026-05-23T00:00:00.000Z",
+  });
+
+  assert.equal(result.status, "failed");
+  assert.equal(result.errorCode, "content_policy_blocked");
+  assert.deepEqual(result.artifacts, []);
+});
+
+test("OpenAI Images classifies a successful upstream response without image data as unavailable result", async () => {
+  const openAIImageProvider = {
+    ...provider,
+    id: "provider_openai_image_empty_result",
+    kind: "openai-compatible",
+    displayName: "OpenAI Image",
+    providerId: "custom-openai-compatible",
+    model: "gpt-image-2",
+    capabilities: ["image_generate"],
+  };
+  const registry = createDefaultMediaAdapterRegistry({
+    mediaVendorTransport: createLiveMediaVendorTransport({
+      baseUrl: "https://api.openai.test/v1",
+      apiKeyRef: "env:OPENAI_API_KEY",
+      apiKeyConfigured: true,
+      apiKey: "test-key",
+      httpClient: async () => jsonResponse(200, { data: [] }),
+    }),
+  });
+  const resolution = resolveMediaAdapter(registry, openAIImageProvider);
+  assert.equal(resolution.ok, true);
+  assert.ok(resolution.adapter);
+
+  const result = await executeMediaJob(resolution.adapter, {
+    jobId: "media_job_live_openai_image_empty_result",
+    provider: openAIImageProvider,
+    operation: "image_generate",
+    prompt: "A request that returns no generated image.",
+    input: {},
+    requestedAt: "2026-05-23T00:00:00.000Z",
+  });
+
+  assert.equal(result.status, "failed");
+  assert.equal(result.errorCode, "media_result_unavailable");
+  assert.equal(result.errorMessage, "OpenAI Images response did not include image data.");
+});
+
 test("live media vendor transport polls Seedance task status and downloads final video", async () => {
   const capturedRequests = [];
   const videoBytes = Uint8Array.from([0, 0, 0, 24, 102, 116, 121, 112, 109, 112, 52, 50]);

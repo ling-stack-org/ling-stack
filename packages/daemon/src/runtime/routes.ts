@@ -442,6 +442,14 @@ export function handleWorkUnitRoute(
   if (route.kind === "retry") {
     const now = new Date().toISOString();
     const current = resolved.store.getWorkUnit(workUnit.id) ?? workUnit;
+    if (current.status === "cancelled") {
+      writeJson(response, 409, {
+        error: "terminal_state",
+        message: "Cancelled work units cannot be retried from the runtime control plane.",
+        workUnit: current,
+      });
+      return;
+    }
     const transition = resolved.store.transitionWorkUnitStatus({
       workUnitId: current.id,
       expectedStatus: current.status,

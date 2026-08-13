@@ -19,6 +19,8 @@ import {
 import { filterQueuedChannelReplyMessages } from "./channel-reply-message-visibility.js";
 import type { ChannelReplyDispatchCoordinator } from "./channel-reply-dispatch-coordinator.js";
 import { getChannelMessageView } from "./conversation-item-messages.js";
+import { buildConversationGeneratedMediaProjection } from "../media/conversation-projection.js";
+import { terminalReportIsEligibleForDisplay } from "./terminal-report-eligibility.js";
 
 export function listChannelConversationItems(input: {
   readonly store: RunStore;
@@ -42,13 +44,18 @@ export function listChannelConversationItems(input: {
     items: page.items,
     replyDispatchCoordinator: input.replyDispatchCoordinator,
   });
+  const decorations = decorationsForItems(input.store, visibleItems);
   return {
     cwd: input.cwd,
     channelId: input.channel.id,
     thread: input.thread,
     turns: turnsForItems(input.store, visibleItems),
     items: visibleItems,
-    decorations: decorationsForItems(input.store, visibleItems),
+    decorations,
+    generatedMedia: buildConversationGeneratedMediaProjection({
+      store: input.store,
+      runIds: decorations.flatMap((decoration) => decoration.linkedRunId ? [decoration.linkedRunId] : []),
+    }),
     hasMore: page.nextBeforeSequence !== undefined,
     ...(page.nextBeforeSequence !== undefined ? { nextBeforeSequence: page.nextBeforeSequence } : {}),
   };
@@ -124,7 +131,16 @@ function filterVisibleTimelineItems(input: {
     )),
   );
   const visibleMessageIds = new Set(visibleMessages.map((message) => message.id));
-  return input.items.filter((item) => !isMessageLikeItem(item) || visibleMessageIds.has(item.id));
+  return input.items.filter((item) =>
+    !isIneligibleTerminalReportMessage(input.store, item.id) &&
+    (!isMessageLikeItem(item) || visibleMessageIds.has(item.id))
+  );
+}
+
+function isIneligibleTerminalReportMessage(store: RunStore, itemId: string): boolean {
+  if (!itemId.startsWith("message_terminal_report_")) return false;
+  const record = store.getTerminalReport(itemId.slice("message_".length));
+  return Boolean(record && !terminalReportIsEligibleForDisplay(store, record));
 }
 
 function decorationsForItems(

@@ -45,6 +45,9 @@ export class PiRunnerAdapter {
     const activeTools = [
       ...(options.tools ?? DEFAULT_TOOLS),
       ...(options.mcpTools?.map((tool) => tool.registeredName) ?? []),
+      ...(options.onMediaGenerationToolCall
+        ? (options.mediaGenerationTools ?? []).filter((tool) => tool.targets.length > 0).map((tool) => tool.name)
+        : []),
       ...(options.onToolHydrationRequest ? [TOOL_HYDRATION_LOAD_TOOL_NAME, TOOL_HYDRATION_CALL_TOOL_NAME] : []),
     ];
 

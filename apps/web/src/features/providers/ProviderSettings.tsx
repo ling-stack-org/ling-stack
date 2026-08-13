@@ -15,6 +15,8 @@ import type {
   ProviderPreset,
   ProviderTemplate,
   RunSession,
+  UpdateWorkspaceSettingsRequest,
+  WorkspaceSettings,
 } from "../../types.js";
 import { ProviderDeleteDialog } from "./ProviderDeleteDialog.js";
 import { ProviderEditorPanel } from "./ProviderEditorPanel.js";
@@ -37,6 +39,7 @@ import { useProviderEditorController } from "./useProviderEditorController.js";
 import { useProviderFeedbackController } from "./useProviderFeedbackController.js";
 import { useProviderRowCheckFeedback } from "./useProviderRowCheckFeedback.js";
 import { useProviderWorkbenchController } from "./useProviderWorkbenchController.js";
+import { ProviderDefaultPurposeBar } from "./ProviderDefaultPurposeBar.js";
 
 export interface ProviderSettingsProps {
   readonly cwd: string;
@@ -52,7 +55,6 @@ export interface ProviderSettingsProps {
   readonly checkScope: ProviderCheckScope | undefined;
   readonly batchResult: ProviderBatchResult | undefined;
   readonly operationWarning: string;
-  readonly selectedProviderId: string;
   readonly selectedTemplateId: string;
   readonly repairRun: RunSession | undefined;
   readonly isRunning: boolean;
@@ -66,8 +68,6 @@ export interface ProviderSettingsProps {
   readonly onDelete: (providerId: string) => void;
   readonly onCheck: (providerId: string) => void;
   readonly onCheckBatch: () => Promise<ProviderBatchResult | undefined>;
-  readonly onUse: (provider: ProviderPreset) => void;
-  readonly onStopUse: (provider: ProviderPreset) => void;
   readonly onToggleEnabled: (provider: ProviderPreset, enabled: boolean) => void;
   readonly onRerun: (run: RunSession) => void;
   readonly onOpenRun: (runId: string) => void;
@@ -76,13 +76,17 @@ export interface ProviderSettingsProps {
   readonly setupIntent?: ProviderSetupIntent | "";
   readonly onSetupIntentConsumed?: () => void;
   readonly settingsToolMode?: boolean;
+  readonly workspaceSettings?: WorkspaceSettings;
+  readonly onPatchWorkspaceSettings: (
+    patch: UpdateWorkspaceSettingsRequest,
+  ) => Promise<WorkspaceSettings | undefined>;
 }
 
 export function ProviderSettings(props: ProviderSettingsProps): React.JSX.Element {
   const { t } = useI18n();
   const {
     providers, form, templates, editingProviderId, selectedTemplateId, checkingProviderIds,
-    checkedProviderId, checkResult, checkScope, selectedProviderId, repairRun,
+    checkedProviderId, checkResult, checkScope, repairRun,
   } = props;
   const summary = useMemo(() => readProviderWorkbenchSummary(providers), [providers]);
   const isCheckingProviders = checkingProviderIds.length > 0;
@@ -101,7 +105,6 @@ export function ProviderSettings(props: ProviderSettingsProps): React.JSX.Elemen
   const repairProvider = repairProviderId ? providers.find((provider) => provider.id === repairProviderId) : undefined;
   const workbench = useProviderWorkbenchController({
     providers,
-    selectedProviderId,
     errorMessage: props.errorMessage,
     onDelete: props.onDelete,
   });
@@ -162,6 +165,12 @@ export function ProviderSettings(props: ProviderSettingsProps): React.JSX.Elemen
           onCheckBatch={() => void feedback.checkBatch()}
           settingsToolMode={props.settingsToolMode}
         />
+        <ProviderDefaultPurposeBar
+          cwd={props.cwd}
+          providers={providers}
+          workspaceSettings={props.workspaceSettings}
+          onPatchWorkspaceSettings={props.onPatchWorkspaceSettings}
+        />
         {props.errorMessage ? (
           <InlineFeedback className="provider-page-error inline-error" tone="danger" title={t("Error")}>
             <span>{props.errorMessage}</span>
@@ -189,7 +198,6 @@ export function ProviderSettings(props: ProviderSettingsProps): React.JSX.Elemen
         <ProviderRouteList
           providers={providers}
           filteredProviders={workbench.filteredProviders}
-          selectedProviderId={selectedProviderId}
           isLoading={props.isLoading}
           isCheckingProviders={isCheckingProviders}
           checkingProviderIds={checkingProviderIds}
@@ -204,8 +212,6 @@ export function ProviderSettings(props: ProviderSettingsProps): React.JSX.Elemen
           onEdit={editor.openEdit}
           onDelete={workbench.requestDelete}
           onCheck={rowCheckFeedback.check}
-          onUse={props.onUse}
-          onStopUse={props.onStopUse}
           onToggleEnabled={props.onToggleEnabled}
         />
         {workbench.filteredProviders.length > 0 ? (

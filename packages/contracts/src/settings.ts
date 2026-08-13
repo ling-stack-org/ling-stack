@@ -1,4 +1,5 @@
 import type { AuthorizationMode, PermissionPreset, SessionPermissionMode, WorkspaceAccessMode } from "./shared.js";
+import type { WorkspaceMediaGenerationDefaults } from "./media-generation-routing.js";
 
 export type ResponseLanguage = "zh-CN" | "en-US";
 
@@ -26,6 +27,7 @@ export interface WorkspaceSettings {
   readonly responseLanguage?: ResponseLanguagePreference;
   readonly lingConversationTone?: LingConversationTone;
   readonly defaultProviderPresetId?: string;
+  readonly mediaGenerationDefaults?: WorkspaceMediaGenerationDefaults;
   readonly defaultAuthorizationMode?: AuthorizationMode;
   readonly defaultWorkspaceAccessMode?: WorkspaceAccessMode;
   readonly defaultPermissionMode?: SessionPermissionMode;
@@ -43,6 +45,7 @@ export interface UpdateWorkspaceSettingsRequest {
   readonly responseLanguage?: ResponseLanguagePreference | null;
   readonly lingConversationTone?: LingConversationTone | null;
   readonly defaultProviderPresetId?: string | null;
+  readonly mediaGenerationDefaults?: WorkspaceMediaGenerationDefaults | null;
   readonly defaultAuthorizationMode?: AuthorizationMode | null;
   readonly defaultWorkspaceAccessMode?: WorkspaceAccessMode | null;
   readonly defaultPermissionMode?: SessionPermissionMode | null;

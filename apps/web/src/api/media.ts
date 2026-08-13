@@ -1,5 +1,6 @@
 import type {
   MediaJobArtifactListResponse,
+  ConversationMediaGenerationTargetsResponse,
   MediaJobFormState,
   MediaJobListResponse,
   MediaJobMutationResponse,
@@ -10,6 +11,12 @@ import { mediaJobFormToPayload } from "./media-payloads.js";
 
 export async function listMediaJobs(cwd: string, limit = 100): Promise<MediaJobListResponse> {
   return daemonClient.listMediaJobs(cwd, limit);
+}
+
+export async function getConversationMediaGenerationTargets(
+  cwd: string,
+): Promise<ConversationMediaGenerationTargetsResponse> {
+  return daemonClient.getConversationMediaGenerationTargets(cwd);
 }
 
 export async function createMediaJob(cwd: string, form: MediaJobFormState): Promise<MediaJobMutationResponse> {

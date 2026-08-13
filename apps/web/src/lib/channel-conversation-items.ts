@@ -5,11 +5,13 @@ import type {
   ChannelConversationTurnResponse,
   ConversationItemV1,
   ChannelMessage,
+  ConversationGeneratedMedia,
 } from "@ling-stack/contracts";
 import { projectConversationItemToChannelMessage } from "@ling-stack/contracts";
 
 export interface ChannelConversationMessagePage {
   readonly messages: readonly ChannelMessage[];
+  readonly generatedMedia: readonly ConversationGeneratedMedia[];
   readonly hasMore: boolean;
   readonly nextBeforeSequence?: number;
 }
@@ -19,6 +21,7 @@ export function projectChannelConversationItemPage(
 ): ChannelConversationMessagePage {
   return {
     messages: projectMessageItems(response.items, response.decorations, response.thread),
+    generatedMedia: response.generatedMedia,
     hasMore: response.hasMore,
     ...(response.nextBeforeSequence !== undefined
       ? { nextBeforeSequence: response.nextBeforeSequence }

@@ -11,6 +11,8 @@ import {
   getChannelMessageView,
   updatePendingAssistantMessage,
 } from "./conversation-item-messages.js";
+import { runHasConversationGeneratedMedia } from "../media/conversation-projection.js";
+import { resolveChannelResponseLanguage } from "./response-language.js";
 
 export interface ChannelReplyContinuationProjection {
   readonly sourceMessageId: string;
@@ -122,10 +124,24 @@ export function createChannelReplyContinuationProjection(input: {
       }
       const body = visibleChannelReplyText(rawText);
       if (!body) {
+        if (runHasConversationGeneratedMedia(input.store, run.id)) {
+          return finishContinuationReply(input.store, replyMessageId, {
+            body: "",
+            status: "ready",
+            errorMessage: null,
+          });
+        }
+        const emptyResponseMessage = resolveChannelResponseLanguage({
+          store: input.store,
+          channel,
+          sourceText: sourceMessage.body,
+        }).language === "zh-CN"
+          ? "模型没有返回可显示内容，请重试或切换模型。"
+          : "The model returned no displayable content. Retry or choose another model.";
         return finishContinuationReply(input.store, replyMessageId, {
-          body: "模型没有返回可显示内容，请重试或切换模型。",
+          body: emptyResponseMessage,
           status: "failed",
-          errorMessage: "Channel continuation completed without visible text.",
+          errorMessage: emptyResponseMessage,
         });
       }
       return finishContinuationReply(input.store, replyMessageId, {

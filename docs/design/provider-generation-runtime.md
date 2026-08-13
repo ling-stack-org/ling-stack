@@ -19,6 +19,11 @@ The resolver is also not an approval engine. Standalone Media Job runs do not cr
 scene runs, ordered project runs, and workflow tests create a media-owned approval
 before they dispatch the same generation runtime.
 
+Conversation generation uses this resolver through the separate
+[Conversation Media Generation Tools](conversation-media-generation-tools.md) contract.
+Runner tools never bypass readiness and never receive Provider secrets or raw transport
+configuration.
+
 ## Goals
 
 - Use one decision path for `image_generate`, `image_edit`, and `video_generate`.
@@ -28,6 +33,7 @@ before they dispatch the same generation runtime.
 - Prevent unknown image-looking or video-looking models from pretending to be runnable.
 - Keep Check cheap: it may validate static readiness for providers whose live check
   would create paid media output.
+- Provide the Provider half of the runnable conversation-generation target inventory.
 
 ## Non-goals
 
@@ -36,6 +42,7 @@ before they dispatch the same generation runtime.
 - No automatic adapter for every known image or video model family.
 - No automatic merging of multiple relays that expose the same model id.
 - No mobile-specific acceptance scope.
+- No keyword or prompt-text intent routing.
 
 ## Decision Ladder
 
@@ -72,6 +79,10 @@ Runtime readiness then applies stricter gates:
   runtime readiness.
 - `apps/web/e2e/support/mock-daemon.ts`
   uses the same core resolver so tests match daemon behavior.
+
+Conversation target routing is a consumer of this module, not part of the resolver. It may
+combine runnable Provider targets with ready Workflow targets, but it cannot weaken a
+Provider `canRun=false` result or infer capability from a display name.
 
 ## Runtime State
 
@@ -112,3 +123,6 @@ existing lightweight image probe because that behavior already exists.
 - Do not bypass the resolver in Web, daemon, or mock-daemon paths.
 - Do not silently migrate or delete existing provider records.
 - Do not add a new provider kind solely to classify a model as generated media.
+- Do not select the oldest Provider when multiple generation targets exist. Explicit target,
+  per-kind workspace default, unique runnable target, then user selection is the only valid
+  conversation routing ladder.

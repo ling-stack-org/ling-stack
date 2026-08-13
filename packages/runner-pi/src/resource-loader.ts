@@ -3,6 +3,7 @@ import { createLingStackApprovalExtension } from "./extensions/approval.js";
 import { createLingStackBashToolExtension } from "./extensions/bash.js";
 import { createLingStackFileMutationToolExtension } from "./extensions/file-mutation.js";
 import { createLingStackMcpProxyExtension } from "./extensions/mcp-proxy.js";
+import { createLingStackMediaGenerationExtension } from "./extensions/media-generation.js";
 import { createLingStackPermissionRequestExtension } from "./extensions/permissions.js";
 import { createLingStackToolHydrationExtension } from "./extensions/tool-hydration.js";
 import { createLingStackTaskContinuationExtension } from "./extensions/task-continuation.js";
@@ -32,6 +33,9 @@ export async function createLingStackResourceLoader(
       createLingStackApprovalExtension(options),
       ...(options.runtimeToolFeatures?.requestPermissions ? [createLingStackPermissionRequestExtension(options)] : []),
       ...(options.mcpTools?.length ? [createLingStackMcpProxyExtension(options)] : []),
+      ...(options.onMediaGenerationToolCall && options.mediaGenerationTools?.some((tool) => tool.targets.length > 0)
+        ? [createLingStackMediaGenerationExtension(options)]
+        : []),
       ...(options.onToolHydrationRequest ? [createLingStackToolHydrationExtension(options)] : []),
     ],
   });

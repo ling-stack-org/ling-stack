@@ -91,7 +91,7 @@ export function buildRunInterventionContinuationRequest(
       ? `conversation-user:intervention:${intervention.id}`
       : undefined),
     linkedMessageId: messageLink.linkedMessageId,
-    createdByActor: "local-user",
+    createdByActor: intervention.requestedBy,
     parentRunId: sourceRun.id,
     interventionId: intervention.id,
     continuationReason: intervention.mode,

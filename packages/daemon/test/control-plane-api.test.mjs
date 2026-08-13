@@ -292,6 +292,13 @@ test("work unit control APIs append compact redacted control-plane transition ev
     assert.equal(reconciled.workUnit.status, "stale");
     const cancelled = await postJson(`${daemon.url}/work-units/wu_control_queued_cancel/cancel?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(cancelled.workUnit.status, "cancelled");
+    const cancelledRetry = await fetch(`${daemon.url}/work-units/wu_control_queued_cancel/retry?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    assert.equal(cancelledRetry.status, 409);
+    assert.equal((await cancelledRetry.json()).error, "terminal_state");
 
     const listed = await getJson(`${daemon.url}/control-plane/events?cwd=${encodeURIComponent(cwd)}&afterSeq=0&limit=1000&domains=work_units`);
     const transitions = new Map(

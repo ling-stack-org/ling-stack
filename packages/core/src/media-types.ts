@@ -44,6 +44,12 @@ export interface UpdateMediaJobStatusInput {
 
 export type VideoGenerationInputMode = "text" | "image_reference";
 
+export interface ImageGenerationCapabilities {
+  readonly aspectRatios?: readonly string[];
+  readonly sizeByAspectRatio?: Readonly<Record<string, string>>;
+  readonly maxCount?: number;
+}
+
 export interface VideoGenerationCapabilities {
   readonly inputModes: readonly VideoGenerationInputMode[];
   readonly aspectRatios?: readonly string[];

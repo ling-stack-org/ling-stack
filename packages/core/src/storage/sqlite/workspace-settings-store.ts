@@ -47,6 +47,7 @@ export class SqliteWorkspaceSettingsStore {
       responseLanguage: nullableUpdate(input.responseLanguage, current.responseLanguage),
       lingConversationTone: nullableUpdate(input.lingConversationTone, current.lingConversationTone),
       defaultProviderPresetId: nullableUpdate(input.defaultProviderPresetId, current.defaultProviderPresetId),
+      mediaGenerationDefaults: nullableUpdate(input.mediaGenerationDefaults, current.mediaGenerationDefaults),
       defaultAuthorizationMode: permissionDefaults.authorizationMode,
       defaultWorkspaceAccessMode: permissionDefaults.workspaceAccessMode,
       defaultPermissionMode: permissionDefaults.permissionMode,
@@ -106,6 +107,7 @@ function parseWorkspaceSettings(value: string, updatedAt: string): WorkspaceSett
     responseLanguage: parseOptionalResponseLanguagePreference(parsed.responseLanguage),
     lingConversationTone: parseOptionalLingConversationTone(parsed.lingConversationTone),
     defaultProviderPresetId: typeof parsed.defaultProviderPresetId === "string" && parsed.defaultProviderPresetId.trim() ? parsed.defaultProviderPresetId : undefined,
+    mediaGenerationDefaults: parseMediaGenerationDefaults(parsed.mediaGenerationDefaults),
     defaultAuthorizationMode: parseOptionalAuthorizationMode(parsed.defaultAuthorizationMode) ?? legacySelection.authorizationMode,
     defaultWorkspaceAccessMode: parseOptionalWorkspaceAccessMode(parsed.defaultWorkspaceAccessMode) ?? legacySelection.workspaceAccessMode,
     defaultPermissionMode,
@@ -115,6 +117,32 @@ function parseWorkspaceSettings(value: string, updatedAt: string): WorkspaceSett
     skillGovernancePolicy: parseSkillGovernancePolicy(parsed.skillGovernancePolicy) ?? DEFAULT_SKILL_GOVERNANCE_POLICY,
     updatedAt: typeof parsed.updatedAt === "string" && parsed.updatedAt.trim() ? parsed.updatedAt : updatedAt,
   });
+}
+
+function parseMediaGenerationDefaults(value: unknown): WorkspaceSettings["mediaGenerationDefaults"] {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const image = parseMediaGenerationTargetRef(record.image);
+  const video = parseMediaGenerationTargetRef(record.video);
+  return image || video ? omitUndefined({ image, video }) : undefined;
+}
+
+function parseMediaGenerationTargetRef(
+  value: unknown,
+): NonNullable<WorkspaceSettings["mediaGenerationDefaults"]>["image"] {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  if (record.kind === "provider" && typeof record.providerPresetId === "string" && record.providerPresetId.trim()) {
+    return { kind: "provider", providerPresetId: record.providerPresetId.trim() };
+  }
+  if (record.kind === "workflow" && typeof record.workflowDefinitionId === "string" && record.workflowDefinitionId.trim()) {
+    return { kind: "workflow", workflowDefinitionId: record.workflowDefinitionId.trim() };
+  }
+  return undefined;
 }
 
 function resolvePermissionDefaults(

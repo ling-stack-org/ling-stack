@@ -5,6 +5,7 @@ import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
+import { terminalReportIsEligibleForDisplay } from "./terminal-report-eligibility.js";
 
 export async function handleTerminalReportItem(
   request: IncomingMessage,
@@ -26,7 +27,11 @@ export async function handleTerminalReportItem(
 
   try {
     const record = storeRegistry.getStore(cwd).getTerminalReport(reportId);
-    if (!record?.report || (record.status !== "committed" && record.status !== "fallback")) {
+    if (
+      !record?.report ||
+      !terminalReportIsEligibleForDisplay(storeRegistry.getStore(cwd), record) ||
+      (record.status !== "committed" && record.status !== "fallback")
+    ) {
       writeJson(response, 404, { error: "terminal_report_not_found", message: `Terminal report not found: ${reportId}` });
       return;
     }
@@ -62,6 +67,7 @@ export async function handleTerminalReportsCollection(
       sourceId: url.searchParams.get("sourceId") ?? undefined,
       limit: readOptionalIntegerQuery(url, "limit", 1),
     })
+      .filter((record) => terminalReportIsEligibleForDisplay(storeRegistry.getStore(cwd), record))
       .filter((record) => Boolean(record.report) && (record.status === "committed" || record.status === "fallback"))
       .map((record) => projectTerminalReportDto(record.report!));
     writeJson(response, 200, { reports });
@@ -104,6 +110,7 @@ export async function handleChannelTerminalReports(
       sourceId: url.searchParams.get("sourceId") ?? undefined,
       limit: readOptionalIntegerQuery(url, "limit", 1),
     })
+      .filter((record) => terminalReportIsEligibleForDisplay(store, record))
       .filter((record) => Boolean(record.report) && (record.status === "committed" || record.status === "fallback"))
       .map((record) => projectTerminalReportDto(record.report!));
     writeJson(response, 200, { reports });

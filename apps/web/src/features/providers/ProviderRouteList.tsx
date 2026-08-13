@@ -32,7 +32,6 @@ import { readProviderRouteRowView, type ProviderSetupIntent } from "./provider-w
 export function ProviderRouteList({
   providers,
   filteredProviders,
-  selectedProviderId,
   isLoading,
   isCheckingProviders,
   checkingProviderIds,
@@ -45,13 +44,10 @@ export function ProviderRouteList({
   onEdit,
   onDelete,
   onCheck,
-  onUse,
-  onStopUse,
   onToggleEnabled,
 }: {
   readonly providers: readonly ProviderPreset[];
   readonly filteredProviders: readonly ProviderPreset[];
-  readonly selectedProviderId: string;
   readonly isLoading: boolean;
   readonly isCheckingProviders: boolean;
   readonly checkingProviderIds: readonly string[];
@@ -64,8 +60,6 @@ export function ProviderRouteList({
   readonly onEdit: (provider: ProviderPreset) => void;
   readonly onDelete: (provider: ProviderPreset) => void;
   readonly onCheck: (providerId: string) => void;
-  readonly onUse: (provider: ProviderPreset) => void;
-  readonly onStopUse: (provider: ProviderPreset) => void;
   readonly onToggleEnabled: (provider: ProviderPreset, enabled: boolean) => void;
 }): React.JSX.Element {
   const { t } = useI18n();
@@ -124,11 +118,11 @@ export function ProviderRouteList({
             const providerIsChecking = checkingProviderIds.includes(provider.id) || provider.lastCheck?.code === "checking";
             const rowCheckResult = checkScope === "row" && checkedProviderId === provider.id ? checkResult : undefined;
             const rowCheckGuidance = rowCheckResult ? providerCheckDisplayGuidance(rowCheckResult, provider, t) : "";
-            const row = readProviderRouteRowView({ provider, selectedProviderId, rowCheckGuidance, t });
+            const row = readProviderRouteRowView({ provider, rowCheckGuidance, t });
             const tone = row.primaryStatusTone === "attention" ? "warning" : row.primaryStatusTone;
             return (
               <Fragment key={provider.id}>
-                <TableRow className={row.selectedForRun ? "provider-row selected" : "provider-row"}>
+                <TableRow className="provider-row">
                   <TableCell className="provider-name-cell">
                     <span className="provider-name-main">
                       <Tooltip content={row.sourceLabel}>
@@ -174,9 +168,7 @@ export function ProviderRouteList({
                       onCheck={onCheck}
                       onDelete={onDelete}
                       onEdit={onEdit}
-                      onStopUse={onStopUse}
                       onToggleEnabled={onToggleEnabled}
-                      onUse={onUse}
                     />
                   </TableCell>
                 </TableRow>

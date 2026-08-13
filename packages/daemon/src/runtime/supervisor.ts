@@ -296,7 +296,7 @@ export class RuntimeSupervisor {
 }
 
 function reconcileActiveWorkUnitFromLinkedTerminalRun(store: RuntimeSupervisorRuntimeStore, workUnit: WorkUnit, now: string): WorkUnit | undefined {
-  if (!workUnit.linkedRunId) {
+  if (workUnit.kind === "media_job" || !workUnit.linkedRunId) {
     return undefined;
   }
   const run = store.getRun(workUnit.linkedRunId);

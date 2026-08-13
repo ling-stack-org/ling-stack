@@ -54,6 +54,7 @@
 @import "./styles/shared/conversation-work-cell-activity.css";
 @import "./styles/shared/conversation-runtime-feedback.css";
 @import "./styles/shared/conversation-artifact-preview.css";
+@import "./styles/shared/conversation-generated-media.css";
 @import "./styles/shared/conversation-terminal-report.css";
 @import "./styles/channel-execution-proposal.css";
 @import "./styles/channel-workflow-status.css";

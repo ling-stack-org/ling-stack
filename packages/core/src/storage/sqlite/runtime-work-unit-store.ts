@@ -189,6 +189,10 @@ export class SqliteRuntimeWorkUnitStore {
       clauses.push("linked_message_id = ?");
       params.push(options.linkedMessageId);
     }
+    if (options.linkedMediaJobId) {
+      clauses.push("linked_media_job_id = ?");
+      params.push(options.linkedMediaJobId);
+    }
     params.push(limit);
     const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
     return this.context.database

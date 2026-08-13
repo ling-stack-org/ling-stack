@@ -268,6 +268,7 @@ export function AppShell(): React.JSX.Element {
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
   const channelFeedback = useChannelFeedbackController();
   const [skillLibraryRefreshToken, setSkillLibraryRefreshToken] = useState(0);
+  const [teammateConversationRefreshToken, setTeammateConversationRefreshToken] = useState(0);
   const [teammateCreateOpen, setTeammateCreateOpen] = useState(false);
   const workspaceTimelineLoadRef = useRef("");
   const channelEditFormSyncKeyRef = useRef("");
@@ -326,6 +327,7 @@ export function AppShell(): React.JSX.Element {
     taskEditForm,
     taskRunProviderId,
     channelMessages,
+    channelGeneratedMedia,
     memoryObjects,
     usedMemoryEvents,
     channelMessagesHasOlder,
@@ -1715,6 +1717,7 @@ export function AppShell(): React.JSX.Element {
     localWebSocketRpcEnabled: daemonFeatures.transports?.localWebSocketRpc === true,
     workspaceCwd: form.cwd.trim(),
     selectedChannelId,
+    selectedTeammateId: activeView === "teammates" ? selectedAiTeammate?.id ?? "" : "",
     channelRunsForArtifacts,
     setSkillLibraryRefreshToken,
     refreshRuns,
@@ -1730,6 +1733,12 @@ export function AppShell(): React.JSX.Element {
     refreshChannelRunArtifacts,
     refreshChannelExecutionActions,
     refreshChannelActivity,
+    refreshSelectedChannelConversation: () => selectedChannelId
+      ? refreshChannelMessages(selectedChannelId, selectedChannelMessageThreadId)
+      : Promise.resolve(),
+    invalidateSelectedTeammateConversation: () => {
+      setTeammateConversationRefreshToken((current) => current + 1);
+    },
   });
   const shellErrorFeedbackItems = useMemo(() => [
     {
@@ -2199,7 +2208,6 @@ export function AppShell(): React.JSX.Element {
         checkScope={providerCheckScope}
         batchResult={providerBatchResult}
         operationWarning={providerOperationWarning}
-        selectedProviderId={workspaceDefaultProviderPresetId}
         selectedTemplateId={selectedProviderTemplateId}
         repairRun={providerRepairRun}
         isRunning={isRunning}
@@ -2215,8 +2223,6 @@ export function AppShell(): React.JSX.Element {
         onDelete={(providerId) => void removeProvider(providerId)}
         onCheck={(providerId) => void runProviderCheck(providerId)}
         onCheckBatch={runProviderBatchCheck}
-        onUse={(provider) => applyProviderToRun(provider, { scope: "workspace" })}
-        onStopUse={(provider) => clearProviderFromRun(provider, { scope: "workspace" })}
         onToggleEnabled={(provider, enabled) => void toggleProviderEnabled(provider, enabled)}
         onRerun={(sourceRun) => void rerunRun(sourceRun)}
         onOpenRun={(runId) => {
@@ -2225,6 +2231,8 @@ export function AppShell(): React.JSX.Element {
         onClearCheckFeedback={clearProviderCheckFeedback}
         onClearRepair={() => setProviderRepairRunId("")}
         settingsToolMode
+        workspaceSettings={workspaceSettings}
+        onPatchWorkspaceSettings={(patch) => patchWorkspaceSettings(patch, { errorOwner: "caller" })}
       />
     ) : settingsWorkspaceToolView === "teammates" ? (
       <AiTeammatesPage
@@ -2432,6 +2440,7 @@ export function AppShell(): React.JSX.Element {
             tasks={tasks}
             taskForm={taskForm}
             channelMessages={channelMessages}
+            channelGeneratedMedia={channelGeneratedMedia}
             memoryById={memoryById}
             usedMemoryEvents={usedMemoryEvents}
             channelExecutionProposals={channelExecutionProposals}
@@ -2635,6 +2644,7 @@ export function AppShell(): React.JSX.Element {
                     approvals: selectedConversationDetail.approvals,
                     interventions: selectedConversationDetail.interventions,
                     terminalReports: selectedConversationDetail.terminalReports,
+                    generatedMedia: selectedConversationDetail.generatedMedia,
                   } : undefined}
                   conversationIdentity={conversationIdentity}
                   defaultProviderLabel={defaultConversationProviderLabel}
@@ -2769,6 +2779,7 @@ export function AppShell(): React.JSX.Element {
                 workspacePolicyError={settingsDomain.error?.scope === "load" ? settingsDomain.error.message : undefined}
                 onRefreshWorkspacePolicy={() => void refreshApprovalPolicy()}
                 settingsOpenRequest={teammateSettingsOpenRequest}
+                conversationRefreshToken={teammateConversationRefreshToken}
                 onSettingsOpenRequestConsumed={(requestId) => {
                   setTeammateSettingsOpenRequest((current) => current?.requestId === requestId ? undefined : current);
                 }}
@@ -2916,7 +2927,6 @@ export function AppShell(): React.JSX.Element {
                 checkScope={providerCheckScope}
                 batchResult={providerBatchResult}
                 operationWarning={providerOperationWarning}
-                selectedProviderId={workspaceDefaultProviderPresetId}
                 selectedTemplateId={selectedProviderTemplateId}
                 repairRun={providerRepairRun}
                 isRunning={isRunning}
@@ -2932,8 +2942,6 @@ export function AppShell(): React.JSX.Element {
                 onDelete={(providerId) => void removeProvider(providerId)}
                 onCheck={(providerId) => void runProviderCheck(providerId)}
                 onCheckBatch={runProviderBatchCheck}
-                onUse={(provider) => applyProviderToRun(provider, { scope: "workspace" })}
-                onStopUse={(provider) => clearProviderFromRun(provider, { scope: "workspace" })}
                 onToggleEnabled={(provider, enabled) => void toggleProviderEnabled(provider, enabled)}
                 onRerun={(sourceRun) => void rerunRun(sourceRun)}
                 onOpenRun={(runId) => {
@@ -2942,6 +2950,8 @@ export function AppShell(): React.JSX.Element {
                 }}
                 onClearCheckFeedback={clearProviderCheckFeedback}
                 onClearRepair={() => setProviderRepairRunId("")}
+                workspaceSettings={workspaceSettings}
+                onPatchWorkspaceSettings={(patch) => patchWorkspaceSettings(patch, { errorOwner: "caller" })}
                   />
                 ) : activeView === "plugins" ? (
                   <PluginManagerPage

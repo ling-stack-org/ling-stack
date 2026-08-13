@@ -10,6 +10,7 @@ import {
   processRunTerminalReport,
   processTurnTerminalReport,
   processWorkflowTerminalReport,
+  recoverTerminalReports,
 } from "../dist/features/channels/terminal-report-coordinator.js";
 import { maybeCreateWorkflowTerminalCoordinatorReply } from "../dist/features/channels/workflows.js";
 import { buildLingAgentSessionViewForChannel } from "../dist/features/channels/ling-agent-session-view.js";
@@ -89,6 +90,76 @@ test("terminal report coordinator stores executed conversation turns and skips p
     store.markRunSucceeded(plainRun.id, "2026-07-11T06:05:00.000Z");
     assert.equal(await processRunTerminalReport(store, plainRun.id, { now: "2026-07-11T06:06:00.000Z" }), undefined);
     assert.equal(store.listTerminalReports({ sourceKind: "run", sourceId: plainRun.id }).length, 0);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("terminal report recovery never turns an ordinary channel reply into a task completion message", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-terminal-report-channel-reply-recovery-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    configureTerminalReportStore(store, { enabled: true });
+    const now = "2026-07-12T06:00:00.000Z";
+    const channel = store.createChannel({ name: "Conversation channel", boundPath: cwd }, now);
+    const source = appendChannelItemFixture(store, {
+      channelId: channel.id,
+      authorType: "local-user",
+      body: "请生成一张图片",
+    }, now);
+    const reply = appendChannelItemFixture(store, {
+      channelId: channel.id,
+      replyToItemId: source.id,
+      kind: "ai_reply",
+      authorType: "ai-teammate",
+      authorId: "ling_agent",
+      body: "已开始生成图片。",
+      status: "ready",
+    }, "2026-07-12T06:00:01.000Z");
+    const runId = "run_terminal_report_channel_reply_recovery";
+    const task = store.createTask({ channelId: channel.id, title: "Channel reply", prompt: source.body }, now);
+    const run = store.createRun({
+      id: runId,
+      cwd,
+      taskId: task.id,
+      channelId: channel.id,
+      threadId: source.threadId,
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: task.id, title: task.title },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd, sourceMessageId: source.id, linkedMessageId: reply.id },
+      createdAt: "2026-07-12T06:00:03.000Z",
+    });
+    const workUnit = store.createWorkUnit({
+      workspaceId: channel.workspaceId,
+      kind: "channel_ai_reply",
+      ownerType: "channel_message",
+      ownerId: source.id,
+      channelId: channel.id,
+      idempotencyKey: "terminal-report-channel-reply-recovery",
+      createdByActor: "local-user",
+      request: { sourceMessageId: source.id },
+      linkedRunId: run.id,
+      linkedMessageId: reply.id,
+      now: "2026-07-12T06:00:04.000Z",
+    });
+    assert.equal(run.workUnitId, undefined);
+    assert.equal(store.listWorkUnits({ kind: "channel_ai_reply", linkedRunId: run.id })[0]?.id, workUnit.id);
+    store.appendEvent(run.id, "tool_start", { toolCallId: "image", toolName: "image_generate", args: {} });
+    store.appendEvent(run.id, "tool_end", { toolCallId: "image", toolName: "image_generate", isError: false });
+    store.markRunSucceeded(run.id, "2026-07-12T06:00:05.000Z");
+
+    await recoverTerminalReports(store);
+
+    assert.equal(store.listTerminalReports({ sourceKind: "run", sourceId: run.id }).length, 0);
+    assert.equal(
+      listChannelItemViewsFixture(store, { channelId: channel.id, limit: 100 })
+        .filter((message) => message.id.startsWith("message_terminal_report_"))
+        .length,
+      0,
+    );
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });
