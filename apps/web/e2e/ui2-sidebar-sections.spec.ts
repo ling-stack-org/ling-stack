@@ -19,10 +19,14 @@ test("Sidebar sections preserve geometry while channels and teammates load", asy
   await page.goto("/");
 
   const navigation = page.getByLabel("Ling Stack navigation");
-  await expect(navigation.locator('[data-sidebar-section="channels"] .sidebar-section-status')
-    .getByRole("status", { name: "Loading channels..." })).toBeVisible();
-  await expect(navigation.locator('[data-sidebar-section="teammates"] .sidebar-section-status')
-    .getByRole("status", { name: "Loading teammates..." })).toBeVisible();
+  const channelHeaderStatus = navigation.locator('[data-sidebar-section="channels"] .sidebar-section-status');
+  const teammateHeaderStatus = navigation.locator('[data-sidebar-section="teammates"] .sidebar-section-status');
+  await expect(channelHeaderStatus.getByRole("status", { name: "Loading channels..." })).toHaveCount(0);
+  await expect(teammateHeaderStatus.getByRole("status", { name: "Loading teammates..." })).toHaveCount(0);
+  await expect(channelHeaderStatus.locator(".sidebar-section-count")).toHaveText("0");
+  await expect(teammateHeaderStatus.locator(".sidebar-section-count")).toHaveText("0");
+  await expect(navigation.getByRole("status", { name: "Loading channels..." })).toBeVisible();
+  await expect(navigation.getByRole("status", { name: "Loading teammates..." })).toBeVisible();
   await expect(navigation.locator(".sidebar-section-skeleton-row")).toHaveCount(5);
   await captureEvidence(page, "1440x960-ling-light-loading.png");
 
