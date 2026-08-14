@@ -603,6 +603,11 @@ function PageLoadingFallback(): JSX.Element {
 
 Do not use a full-page skeleton that changes layout. Keep sidebar stable.
 
+Sidebar collection readiness is distinct from active-page detail loading and mutation busy state. The shell may
+project a first-load Skeleton only when a collection has no authoritative or cached rows. Selecting a conversation,
+channel, teammate, or primary View must not replace sidebar counts with a Spinner, clear rows, or remount sidebar
+sections. Background refresh keeps the last committed collection until the next snapshot is ready.
+
 ### Chunk Error Boundary
 
 Add a small error boundary for lazy chunk load failures:
