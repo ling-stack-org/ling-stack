@@ -72,7 +72,7 @@ importers:
         version: 5.3.0
       '@playwright/test':
         specifier: ^1.55.0
-        version: 1.60.0
+        version: 1.62.1
       '@types/react':
         specifier: ^19.2.18
         version: 19.2.18
@@ -87,7 +87,7 @@ importers:
         version: 3.0.1(ajv@8.20.0)
       electron:
         specifier: ^43.1.1
-        version: 43.1.1
+        version: 43.4.0
       electron-builder:
         specifier: ^26.15.3
         version: 26.15.3(electron-builder-squirrel-windows@26.15.3)
@@ -221,7 +221,7 @@ importers:
     devDependencies:
       '@playwright/test':
         specifier: ^1.55.0
-        version: 1.60.0
+        version: 1.62.1
       '@types/react':
         specifier: ^19.2.18
         version: 19.2.18
@@ -967,8 +967,8 @@ packages:
     resolution: {integrity: sha512-udeXFbgEhJ6JiB0uguwNVNkDy2FENfmtQwPcY+/iJ8GWeq18wkal1tKqa5YyeH0IqtX1vG0cGh8zfSYzyzVuLA==}
     engines: {node: '>=22.19.0'}
 
-  '@electron-internal/extract-zip@1.0.4':
-    resolution: {integrity: sha512-Zr1Vs7E9tpCNhZHDAbFVXc2gEVCG9RqPDjrno5+bdgB6LRAuvgyMHJut4NCVyYwtAieapMzc3fiQ3CSTi75ARg==}
+  '@electron-internal/extract-zip@1.0.5':
+    resolution: {integrity: sha512-+bqFCP98pLI0Tt0XQo1TmlXtwjWchISndDOxCkEcIuUgXWpBnLyRI+2DU+mesvnMMX6L1XDqYNA0lXNDHd/yiA==}
     engines: {node: '>=22.12.0'}
 
   '@electron/asar@3.4.1':
@@ -989,8 +989,8 @@ packages:
     resolution: {integrity: sha512-F+nKc0xW+kVbBRhFzaMgPy3KwmuNTYX1fx6+FxxoSnNgwYX6LD7AKBTWkU0MQ6IBoe7dz069CNkR673sPAgkCQ==}
     engines: {node: '>=14'}
 
-  '@electron/get@5.0.0':
-    resolution: {integrity: sha512-pjoBpru1KdEtcExBnuHAP1cAc/5faoedw0hzJkL3o4/IJp7HNF1+fbrdxT3gMYRX2oJfvnA/WXeCTVQpYYxyJA==}
+  '@electron/get@5.1.0':
+    resolution: {integrity: sha512-3kSBtG8ObcTVfXanm5vVJ6UnBLEVmVsRk1M+vGqCuMBV+XLCbJYuWQful+yIy0GQDsSlK0kHEriEHn7SPk4EnA==}
     engines: {node: '>=22.12.0'}
 
   '@electron/notarize@2.5.0':
@@ -1603,9 +1603,9 @@ packages:
     resolution: {integrity: sha512-ODOov0sGMJMf3jPonOkgGqPknTsu+DdQ7kD++gz8aI+aFMOMHFbWAA2taqXXVTdP+OTOQR/znGvSpmkeI0WTYQ==}
     engines: {node: '>=14.18.0'}
 
-  '@playwright/test@1.60.0':
-    resolution: {integrity: sha512-O71yZIbAh/PxDMNGns37GHBIfrVkEVyn+AXyIa5dOTfb4/xNvRWV+Vv/NMbNCtODB/pO7vLlF2OTmMVLhmr7Ag==}
-    engines: {node: '>=18'}
+  '@playwright/test@1.62.1':
+    resolution: {integrity: sha512-DTcUc8qii+cpHvtOwggMtBRMjKZHXYWdw8syRYu2vtzuq4Wxphqq4NfCs5Zt44L6mA8rfDfj+PHnxFc/FeK6mQ==}
+    engines: {node: '>=20'}
     hasBin: true
 
   '@protobufjs/aspromise@1.1.2':
@@ -2631,10 +2631,12 @@ packages:
   '@xmldom/xmldom@0.8.13':
     resolution: {integrity: sha512-KRYzxepc14G/CEpEGc3Yn+JKaAeT63smlDr+vjB8jRfgTBBI9wRj/nkQEO+ucV8p8I9bfKLWp37uHgFrbntPvw==}
     engines: {node: '>=10.0.0'}
+    deprecated: this version has critical issues, please update to the latest version
 
   '@xmldom/xmldom@0.9.10':
     resolution: {integrity: sha512-A9gOqLdi6cV4ibazAjcQufGj0B1y/vDqYrcuP6d/6x8P27gRS8643Dj9o1dEKtB6O7fwxb2FgBmJS2mX7gpvdw==}
     engines: {node: '>=14.6'}
+    deprecated: this version has critical issues, please update to the latest version
 
   '@xyflow/react@12.11.2':
     resolution: {integrity: sha512-eLAlDWJfWnQEhJwGMjlWdAXO9eYllKpliUmPQlAmOLxz6mExXuzMVDUKLMquixgkrtmMFFtug3jGKmYYld12cA==}
@@ -3457,8 +3459,8 @@ packages:
     resolution: {integrity: sha512-bO3y10YikuUwUuDUQRM4KfwNkKhnpVO7IPdbsrejwN9/AABJzzTQ4GeHwyzNSrVO+tEH3/Np255a3sVZpZDjvg==}
     engines: {node: '>=8.0.0'}
 
-  electron@43.1.1:
-    resolution: {integrity: sha512-I5c5vfuVvaXpWx3IZdwvXgxQW44+e7OP1wXGVQkogLeSFSkUZ6sLCcWV05AdEcs65AO5tAIJJwbp7ixw+LdarA==}
+  electron@43.4.0:
+    resolution: {integrity: sha512-3qxGF0CeQbiox5oWV1JlbWGQ1VerbmDhTFqW4sJ8h7uqTHniFYPObXJcDna0DMh32et0fFyKzz0YY8lJv3t5jg==}
     engines: {node: '>= 22.12.0'}
     hasBin: true
 
@@ -4931,14 +4933,14 @@ packages:
     resolution: {integrity: sha512-emEcLuomt2j03vxD54giVB4SxTjnsqkU692xZOZXHDVoYyypEm+b3jpiTcc+Cf+myooc+/Ly0z01jqeNHVgJGw==}
     engines: {node: '>=16.0.0'}
 
-  playwright-core@1.60.0:
-    resolution: {integrity: sha512-9bW6zvX/m0lEbgTKJ6YppOKx8H3VOPBMOCFh2irXFOT4BbHgrx5hPjwJYLT40Lu+4qtD36qKc/Hn56StUW57IA==}
-    engines: {node: '>=18'}
+  playwright-core@1.62.1:
+    resolution: {integrity: sha512-wPYSwEBJY9GHraISXqyqtx0na0LpO3XEX7jNDhntbex7tzUS7kLnZsOlFruFJB4Hi/rhDMjXGqHewDZ68nYZVw==}
+    engines: {node: '>=20'}
     hasBin: true
 
-  playwright@1.60.0:
-    resolution: {integrity: sha512-hheHdokM8cdqCb0lcE3s+zT4t4W+vvjpGxsZlDnikarzx8tSzMebh3UiFtgqwFwnTnjYQcsyMF8ei2mCO/tpeA==}
-    engines: {node: '>=18'}
+  playwright@1.62.1:
+    resolution: {integrity: sha512-0M+L3LAD8/nm554LOla9Ayx0j0tmFZ0FBcoQ7F1VuVHpM/XpiC8RcDzBQB8W5+hA8L22THxELzeF+2WcUzvcLg==}
+    engines: {node: '>=20'}
     hasBin: true
 
   plist@3.1.0:
@@ -6812,7 +6814,7 @@ snapshots:
       get-east-asian-width: 1.6.0
       marked: 18.0.5
 
-  '@electron-internal/extract-zip@1.0.4': {}
+  '@electron-internal/extract-zip@1.0.5': {}
 
   '@electron/asar@3.4.1':
     dependencies:
@@ -6845,13 +6847,13 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@electron/get@5.0.0':
+  '@electron/get@5.1.0':
     dependencies:
       debug: 4.4.3
       env-paths: 3.0.0
       graceful-fs: 4.2.11
       progress: 2.0.3
-      semver: 7.8.0
+      semver: 7.8.5
       sumchecker: 3.0.1
     optionalDependencies:
       undici: 7.29.0
@@ -7609,9 +7611,9 @@ snapshots:
       tslib: 2.8.1
       webcrypto-core: 1.9.2
 
-  '@playwright/test@1.60.0':
+  '@playwright/test@1.62.1':
     dependencies:
-      playwright: 1.60.0
+      playwright: 1.62.1
 
   '@protobufjs/aspromise@1.1.2': {}
 
@@ -9574,10 +9576,10 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  electron@43.1.1:
+  electron@43.4.0:
     dependencies:
-      '@electron-internal/extract-zip': 1.0.4
-      '@electron/get': 5.0.0
+      '@electron-internal/extract-zip': 1.0.5
+      '@electron/get': 5.1.0
       '@types/node': 24.13.3
     transitivePeerDependencies:
       - supports-color
@@ -10088,7 +10090,7 @@ snapshots:
       es6-error: 4.1.1
       matcher: 3.0.0
       roarr: 2.15.4
-      semver: 7.8.5
+      semver: 7.7.4
       serialize-error: 7.0.1
     optional: true
 
@@ -11183,11 +11185,11 @@ snapshots:
 
   node-abi@4.33.0:
     dependencies:
-      semver: 7.8.5
+      semver: 7.7.4
 
   node-api-version@0.2.1:
     dependencies:
-      semver: 7.8.5
+      semver: 7.7.4
 
   node-domexception@1.0.0: {}
 
@@ -11206,7 +11208,7 @@ snapshots:
       graceful-fs: 4.2.11
       nopt: 9.0.0
       proc-log: 6.1.0
-      semver: 7.8.5
+      semver: 7.7.4
       tar: 7.5.22
       tinyglobby: 0.2.17
       undici: 6.28.0
@@ -11369,11 +11371,11 @@ snapshots:
       pvutils: 1.1.5
       tslib: 2.8.1
 
-  playwright-core@1.60.0: {}
+  playwright-core@1.62.1: {}
 
-  playwright@1.60.0:
+  playwright@1.62.1:
     dependencies:
-      playwright-core: 1.60.0
+      playwright-core: 1.62.1
     optionalDependencies:
       fsevents: 2.3.2
 
