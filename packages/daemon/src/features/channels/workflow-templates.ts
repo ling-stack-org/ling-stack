@@ -22,6 +22,7 @@ import {
   type WorkflowStepTemplate,
   type WorkflowGraph,
 } from "@ling-stack/core";
+import { createWorkflowParticipantAuthorityV1 } from "@ling-stack/contracts";
 import { HttpError } from "../../errors.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import { loadWorkspaceRuntimeSettings } from "../../runtime/runner-settings.js";
@@ -163,6 +164,12 @@ export function compileWorkflowTemplate(store: RunStore, input: CompileWorkflowT
         prompt: renderTemplateStepPrompt(templateStep, input.objective),
         toParticipantId: resolved.toParticipantId,
         toParticipantLabel: resolved.toParticipantLabel,
+        participantAuthority: createWorkflowParticipantAuthorityV1({
+          kind: "workflow_definition",
+          origin: "builtin_template",
+          participantId: resolved.toParticipantId,
+          sourceId: template.id,
+        }),
         metadata: omitUndefined({
           workflowTemplateId: template.id,
           templateVersion: skillPack.version,
@@ -268,6 +275,12 @@ function compileCustomWorkflowTemplate(
         prompt: renderCustomTemplateStepPrompt(templateStep, input.objective),
         toParticipantId: resolved.toParticipantId,
         toParticipantLabel: resolved.toParticipantLabel,
+        participantAuthority: createWorkflowParticipantAuthorityV1({
+          kind: "workflow_definition",
+          origin: "custom_template",
+          participantId: resolved.toParticipantId,
+          sourceId: template.id,
+        }),
         metadata: omitUndefined(metadata),
       },
       now,

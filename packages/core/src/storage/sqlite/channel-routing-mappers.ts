@@ -1,9 +1,11 @@
 import type { SQLOutputValue } from "node:sqlite";
 import {
   isChannelIntentDecisionV2,
+  isRequiredParticipantManifestV1,
   isConversationContextProjectionMetadata,
   type ChannelIntentClarificationV2,
-  type ChannelIntentExecutionV2,
+  type ChannelIntentExecutionPlanV1,
+  type RequiredParticipantManifestV1,
 } from "@ling-stack/contracts";
 import {
   type ChannelIntentDecision,
@@ -59,12 +61,13 @@ export function mapChannelIntentDecision(row: Record<string, SQLOutputValue>): C
     contextProjectionVersion: readString(row, "context_projection_version"),
     action: readString(row, "action") as ChannelIntentDecision["action"],
     selectedTeammateIds: parseJsonStringArray(readNullableString(row, "selected_teammate_ids_json") ?? "[]"),
+    participantManifest: parseRequiredParticipantManifest(readString(row, "participant_manifest_json")),
     proposalId: readNullableString(row, "proposal_id"),
     resultItemIds: parseJsonStringArray(readNullableString(row, "result_item_ids_json") ?? "[]"),
     workflowId: readNullableString(row, "workflow_id"),
     reason: readString(row, "reason"),
     clarification: parseOptionalIntentObject<ChannelIntentClarificationV2>(readNullableString(row, "clarification_json")),
-    execution: parseOptionalIntentObject<ChannelIntentExecutionV2>(readNullableString(row, "execution_json")),
+    execution: parseOptionalIntentObject<ChannelIntentExecutionPlanV1>(readNullableString(row, "execution_json")),
     status: readString(row, "status") as ChannelIntentDecision["status"],
     createdBy: readString(row, "created_by") as ChannelIntentDecision["createdBy"],
     errorCode: readNullableString(row, "error_code"),
@@ -75,6 +78,14 @@ export function mapChannelIntentDecision(row: Record<string, SQLOutputValue>): C
     throw new Error(`Invalid Channel Intent v2 row: ${readString(row, "id")}`);
   }
   return decision;
+}
+
+function parseRequiredParticipantManifest(value: string): RequiredParticipantManifestV1 {
+  const parsed = parseJson(value);
+  if (!isRequiredParticipantManifestV1(parsed)) {
+    throw new Error("Expected valid RequiredParticipantManifestV1 from SQLite");
+  }
+  return parsed;
 }
 
 function parseOptionalIntentObject<T>(value: string | undefined): T | undefined {

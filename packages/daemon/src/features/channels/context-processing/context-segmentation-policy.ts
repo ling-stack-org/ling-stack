@@ -34,6 +34,7 @@ export interface ContextSegmentationBootstrapView {
 
 export type ProposeContextSegment = (
   view: ContextSegmentationBootstrapView,
+  signal?: AbortSignal,
 ) => Promise<ContextSegmentProposal>;
 
 export interface AssignContextSegmentInput {
@@ -41,6 +42,7 @@ export interface AssignContextSegmentInput {
   readonly sourceItemId: string;
   readonly explicitSegmentId?: string;
   readonly propose?: ProposeContextSegment;
+  readonly proposalTimeoutMs?: number;
   readonly now: string;
 }
 
@@ -48,7 +50,10 @@ export interface AssignContextSegmentResult extends ApplyTurnContextAssignmentRe
   readonly resolution: "user" | "structural" | "model_policy" | "conservative_fallback";
   readonly proposal?: ContextSegmentProposal;
   readonly bootstrap?: ContextSegmentationBootstrapView;
+  readonly fallbackReason?: "proposal_failed" | "proposal_timed_out" | "proposal_rejected";
 }
+
+export const DEFAULT_CONTEXT_SEGMENTATION_TIMEOUT_MS = 10_000;
 
 export async function assignContextSegmentForTurn(
   input: AssignContextSegmentInput,
@@ -66,6 +71,9 @@ export async function assignContextSegmentForTurn(
     }, input.now);
     return { ...applied, resolution: "user" };
   }
+
+  const recovered = recoverCompletedSegmentation(input.store, sourceItem.turnId!);
+  if (recovered) return recovered;
 
   const structural = resolveStructuralAntecedent(input.store, sourceItem);
   if (structural) {
@@ -98,10 +106,53 @@ export async function assignContextSegmentForTurn(
     return { ...applied, resolution: "conservative_fallback", bootstrap };
   }
 
-  const proposal = await input.propose(bootstrap);
-  validateProposalAgainstBootstrap(input.store, proposal, bootstrap);
+  let proposal: ContextSegmentProposal;
+  try {
+    proposal = await proposeWithDeadline(
+      input.propose,
+      bootstrap,
+      input.proposalTimeoutMs ?? DEFAULT_CONTEXT_SEGMENTATION_TIMEOUT_MS,
+    );
+    validateProposalAgainstBootstrap(input.store, proposal, bootstrap);
+  } catch (error) {
+    const applied = applyConservativeFallback(input.store, sourceItem, currentAssignment, input.now);
+    return {
+      ...applied,
+      resolution: "conservative_fallback",
+      bootstrap,
+      fallbackReason: error instanceof ContextSegmentationTimeoutError
+        ? "proposal_timed_out"
+        : error instanceof ContextSegmentationProposalRejectedError
+          ? "proposal_rejected"
+          : "proposal_failed",
+    };
+  }
   const applied = applyModelProposal(input.store, sourceItem, currentAssignment, proposal, input.now);
   return { ...applied, resolution: "model_policy", proposal, bootstrap };
+}
+
+function recoverCompletedSegmentation(
+  store: RunStore,
+  turnId: string,
+): AssignContextSegmentResult | undefined {
+  const assignment = store.getEffectiveTurnContextAssignment(turnId);
+  if (!assignment || assignment.policyVersion !== CONTEXT_SEGMENTATION_POLICY_VERSION) return undefined;
+  const segment = store.getContextSegment(assignment.segmentId);
+  if (!segment) throw new Error(`Context segmentation checkpoint references a missing segment: ${assignment.segmentId}`);
+  return {
+    segment,
+    assignment,
+    previousAssignment: assignment,
+    invalidatedSummaryIds: [],
+    idempotentReplay: true,
+    resolution: assignment.decisionSource === "user"
+      ? "user"
+      : assignment.decisionSource === "structural"
+        ? "structural"
+        : assignment.status === "provisional"
+          ? "conservative_fallback"
+          : "model_policy",
+  };
 }
 
 export function parseContextSegmentProposal(text: string): ContextSegmentProposal {
@@ -215,11 +266,12 @@ function buildCandidateCard(
     limit: 12,
   }).filter((item) => item.id !== sourceItem.id && item.visibility === "channel");
   const evidenceItems = items.slice(-4);
+  const latestEvidenceTurnId = [...evidenceItems].reverse().find((item) => item.turnId)?.turnId;
   return {
     segmentId: segment.id,
     state: segment.state,
     ...(segment.label ? { label: segment.label } : {}),
-    lastActiveTurnId: segment.lastActiveTurnId,
+    lastActiveTurnId: latestEvidenceTurnId ?? segment.lastActiveTurnId,
     ...(summaries[0]?.objective ? { objective: summaries[0].objective } : {}),
     evidenceItemIds: evidenceItems.map((item) => item.id),
     preview: evidenceItems.map(candidatePreview),
@@ -239,17 +291,21 @@ function validateProposalAgainstBootstrap(
   }
   if (proposal.action === "continue" || proposal.action === "switch_existing") {
     if (!candidateIds.has(proposal.segmentId)) {
-      throw new Error(`Context segmentation model invented or cannot access segment: ${proposal.segmentId}`);
+      throw new ContextSegmentationProposalRejectedError(`Context segmentation model invented or cannot access segment: ${proposal.segmentId}`);
     }
     for (const itemId of proposal.evidenceItemIds) {
       if (!evidenceIds.has(itemId)) {
-        throw new Error(`Context segmentation model invented or cannot access evidence item: ${itemId}`);
+        throw new ContextSegmentationProposalRejectedError(`Context segmentation model invented or cannot access evidence item: ${itemId}`);
       }
     }
     if (proposal.antecedentTurnId) {
+      const candidate = bootstrap.candidates.find((entry) => entry.segmentId === proposal.segmentId);
+      if (candidate?.lastActiveTurnId !== proposal.antecedentTurnId) {
+        throw new ContextSegmentationProposalRejectedError(`Context segmentation model invented or cannot access antecedent turn: ${proposal.antecedentTurnId}`);
+      }
       const antecedent = store.getEffectiveTurnContextAssignment(proposal.antecedentTurnId);
       if (!antecedent || antecedent.segmentId !== proposal.segmentId) {
-        throw new Error(`Context segmentation antecedent does not belong to proposed segment: ${proposal.antecedentTurnId}`);
+        throw new ContextSegmentationProposalRejectedError(`Context segmentation antecedent does not belong to proposed segment: ${proposal.antecedentTurnId}`);
       }
     }
     return;
@@ -259,10 +315,59 @@ function validateProposalAgainstBootstrap(
     : proposal.candidateSegmentIds;
   for (const segmentId of referencedIds) {
     if (!candidateIds.has(segmentId)) {
-      throw new Error(`Context segmentation model invented or cannot access segment: ${segmentId}`);
+      throw new ContextSegmentationProposalRejectedError(`Context segmentation model invented or cannot access segment: ${segmentId}`);
     }
   }
 }
+
+function applyConservativeFallback(
+  store: RunStore,
+  sourceItem: ConversationItemV1,
+  currentAssignment: TurnContextAssignment,
+  now: string,
+): ApplyTurnContextAssignmentResult {
+  return store.applyTurnContextAssignment({
+    turnId: sourceItem.turnId!,
+    target: { kind: "existing", segmentId: currentAssignment.segmentId },
+    status: "provisional",
+    decisionSource: "model_policy",
+    confidence: 0.5,
+    evidenceRefs: [{ type: "conversation_item", id: sourceItem.id }],
+    policyVersion: CONTEXT_SEGMENTATION_POLICY_VERSION,
+  }, now);
+}
+
+async function proposeWithDeadline(
+  propose: ProposeContextSegment,
+  view: ContextSegmentationBootstrapView,
+  timeoutMs: number,
+): Promise<ContextSegmentProposal> {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) {
+    throw new RangeError(`Invalid context segmentation timeout: ${timeoutMs}`);
+  }
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new ContextSegmentationTimeoutError(timeoutMs));
+    }, timeoutMs);
+    timer.unref?.();
+  });
+  try {
+    return await Promise.race([propose(view, controller.signal), timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+class ContextSegmentationTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Context segmentation proposal exceeded ${timeoutMs}ms.`);
+  }
+}
+
+class ContextSegmentationProposalRejectedError extends Error {}
 
 function applyModelProposal(
   store: RunStore,

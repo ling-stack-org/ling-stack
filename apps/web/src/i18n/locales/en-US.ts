@@ -2356,6 +2356,10 @@ export const enUS = {
     "{count} pending work items": "{count} pending work items",
     "Extensions": "Extensions",
     "Open Model Workbench": "Open Model Workbench",
+    "Open Channel Settings": "Open Channel Settings",
+    "Open teammate settings": "Open teammate settings",
+    "Model owner": "Model owner",
+    "Fixed model": "Fixed model",
     "Back to app": "Back to app",
     "Open Work Board": "Open Work Board",
     "Theme and language": "Theme and language",
@@ -4274,4 +4278,5 @@ export const enUS = {
     "Clarification question": "Clarification question",
     "Execution kind": "Execution kind",
     "Target kind": "Target kind",
+    "Dependencies": "Dependencies",
   } as const satisfies Readonly<Record<string, string>>;

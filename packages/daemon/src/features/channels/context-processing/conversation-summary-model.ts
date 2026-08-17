@@ -54,6 +54,7 @@ export function createModelConversationSummaryGenerator(input: {
         prompt,
         channelId: input.channel.id,
       },
+      signal: request.signal,
       onEvent: (event) => {
         if (event.type === "assistant_text_delta") deltas.push(event.text);
       },

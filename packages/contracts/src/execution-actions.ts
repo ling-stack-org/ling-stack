@@ -50,6 +50,7 @@ export interface ExecutionActionCommandOutputChunk {
 
 export interface ExecutionActionCommandEvidence {
   readonly command: string;
+  readonly outcome?: "succeeded" | "failed" | "timed_out" | "cancelled" | "unknown";
   readonly cwd?: string;
   readonly startedAt?: string;
   readonly completedAt?: string;

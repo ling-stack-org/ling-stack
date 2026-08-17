@@ -1,7 +1,9 @@
 import { isAbsolute, relative, resolve as resolvePath } from "node:path";
 import {
   DEFAULT_WORKSPACE_ID,
+  approvalSideEffectFingerprintV1,
   buildChannelTeamRiskReviewDecision,
+  createApprovalResumeBasisV1,
   defaultApprovalToolDecisions,
   riskyRunTools,
   syncExternalWorkActionForApproval,
@@ -137,6 +139,9 @@ export function expireStaleApproval(
 export function createRunApprovalHandler(options: {
   readonly store: RunStore;
   readonly run: RunSession;
+  readonly workUnitId: string;
+  readonly attemptId: string;
+  readonly delegatedRequirementFingerprint?: string;
   readonly approvalPolicy: ApprovalPolicy;
   readonly effectivePolicySnapshot?: EffectiveRunPolicySnapshot;
   readonly appendAndMaybeStream: (type: RunEventType, data: unknown) => RunEventEnvelope | undefined;
@@ -238,6 +243,7 @@ export function createRunApprovalHandler(options: {
         ...approvalInput,
         extraSecrets: options.extraSecrets,
       }, createdAt);
+      bindRunApprovalResumeBasis(options, denied, createdAt);
       appendApprovalCreatedControlPlaneEvent(
         options.store,
         options.controlPlaneEvents,
@@ -306,6 +312,7 @@ export function createRunApprovalHandler(options: {
       ...approvalInput,
       extraSecrets: options.extraSecrets,
     }, createdAt);
+    bindRunApprovalResumeBasis(options, approval, createdAt);
     appendApprovalCreatedControlPlaneEvent(
       options.store,
       options.controlPlaneEvents,
@@ -760,6 +767,48 @@ function toCreateApprovalRequestInput(
     payload,
     expiresAt: new Date(Date.now() + APPROVAL_TIMEOUT_MS).toISOString(),
   };
+}
+
+function bindRunApprovalResumeBasis(
+  options: Parameters<typeof createRunApprovalHandler>[0],
+  approval: ApprovalRequest,
+  now: string,
+): void {
+  if (!approval.runId || !approval.toolCallId) {
+    throw new Error(`Run approval is missing resume ownership: ${approval.id}`);
+  }
+  const checkpoint = options.store.getApprovalCheckpointForApproval(approval.id);
+  if (!checkpoint) {
+    throw new Error(`Approval checkpoint was not created: ${approval.id}`);
+  }
+  const resumeBasis = createApprovalResumeBasisV1({
+    approvalId: approval.id,
+    runId: approval.runId,
+    workUnitId: options.workUnitId,
+    priorAttemptId: options.attemptId,
+    workflowStepId: options.run.workflowStepId,
+    toolCallId: approval.toolCallId,
+    actionType: approval.actionType,
+    sideEffectFingerprint: approvalSideEffectFingerprintV1({
+      actionType: approval.actionType,
+      toolCallId: approval.toolCallId,
+      sideEffect: approval.payload,
+    }),
+    delegatedRequirementFingerprint: options.delegatedRequirementFingerprint,
+  });
+  const bound = options.store.updateApprovalCheckpointStatus(
+    checkpoint.id,
+    {
+      status: checkpoint.status,
+      expectedStatus: checkpoint.status,
+      expectedRevision: checkpoint.revision,
+      resumeBasis,
+    },
+    now,
+  );
+  if (!bound || bound.resumeBasis?.fingerprint !== resumeBasis.fingerprint) {
+    throw new Error(`Approval checkpoint resume basis could not be bound: ${approval.id}`);
+  }
 }
 
 function toApprovalPayload(request: PiRunnerApprovalRequest): ApprovalPayload {

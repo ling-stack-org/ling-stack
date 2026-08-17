@@ -65,6 +65,7 @@ export async function createAiChannelReply(input: {
   readonly completionMode?: "background" | "inline";
   readonly trackCompletion?: (completion: Promise<unknown>) => void;
   readonly replyMessageId?: string;
+  readonly replyRecoveryAttempt?: number;
   readonly disableWebEvidence?: boolean;
   readonly onRunLinked?: (runId: string) => void;
   readonly onDispatchSettled?: () => void;
@@ -76,11 +77,14 @@ export async function createAiChannelReply(input: {
     readonly onBlocked: (message: ChannelMessage) => void;
   };
 }): Promise<ChannelMessage> {
-  if (input.replyMessageId) {
-    const existing = getChannelMessageView(input.store, input.replyMessageId);
-    if (existing) {
+  const existingReply = input.replyMessageId
+    ? getChannelMessageView(input.store, input.replyMessageId)
+    : undefined;
+  if (existingReply) {
+    const existingItem = input.store.getConversationItem(existingReply.id);
+    if (existingItem?.status !== "pending") {
       notifyDispatchSettled(input.onDispatchSettled);
-      return existing;
+      return existingReply;
     }
   }
   const now = new Date().toISOString();
@@ -100,7 +104,9 @@ export async function createAiChannelReply(input: {
   if (!sourceItem?.turnId || sourceItem.channelId !== input.channel.id) {
     throw new Error(`Channel reply source item has no owning turn: ${input.sourceMessage.id}`);
   }
-  const pendingItem = input.store.appendConversationItem({
+  const pendingItem = existingReply
+    ? input.store.getConversationItem(existingReply.id)!
+    : input.store.appendConversationItem({
     ...(input.replyMessageId ? { id: input.replyMessageId } : {}),
     channelId: input.channel.id,
     threadId: sourceItem.threadId,
@@ -118,7 +124,7 @@ export async function createAiChannelReply(input: {
     },
     domainRefs: [{ type: "conversation_item", id: sourceItem.id, label: "reply source" }],
     ...(input.replyMessageId ? { idempotencyKey: `assistant-reply:${input.replyMessageId}` } : {}),
-  }, now);
+    }, now);
   const pending = projectConversationItemToChannelMessage(pendingItem);
   input.stream?.onReady(pending);
 
@@ -155,6 +161,7 @@ async function completeAiChannelReply(input: {
   readonly teamObserverBusEnabled?: boolean;
   readonly disableWebEvidence?: boolean;
   readonly onRunLinked?: (runId: string) => void;
+  readonly replyRecoveryAttempt?: number;
   readonly pending: ChannelMessage;
   readonly teammate: ReturnType<typeof resolveChannelReplyExecutionTarget>["teammate"];
   readonly canonicalTeammateId: string;
@@ -346,6 +353,7 @@ async function completeAiChannelReply(input: {
         observerBusError,
         parentRunId: execution.run.id,
         compactedRetry: true,
+        recoveryAttempt: input.replyRecoveryAttempt,
       });
     }
     if (execution.run.status === "queued" || execution.run.status === "running" || execution.run.status === "waiting_for_approval") {
@@ -489,6 +497,7 @@ async function startProjectedChannelReplyRun(input: {
   readonly observerBusError?: string;
   readonly parentRunId?: string;
   readonly compactedRetry?: boolean;
+  readonly recoveryAttempt?: number;
 }): Promise<{
   readonly run: RunSession;
   readonly projection: ReturnType<typeof createChannelReplyRunProjection>;
@@ -536,6 +545,7 @@ async function startProjectedChannelReplyRun(input: {
     channelParallelLimit: input.input.channelParallelLimit,
     parentRunId: input.parentRunId,
     compactedRetry: input.compactedRetry,
+    recoveryAttempt: input.recoveryAttempt ?? input.input.replyRecoveryAttempt,
     contextProjection: input.contextProjection,
   }), projection.sink);
   const runId = startedRunId ?? projection.runId();

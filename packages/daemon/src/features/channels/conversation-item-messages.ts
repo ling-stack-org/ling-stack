@@ -87,8 +87,37 @@ export function findChannelAssistantReplyForSource(input: {
     && item.status !== "failed"
     && item.domainRefs.some((ref) => ref.type === "conversation_item" && ref.id === source.id)
   );
-  if (!reply) return undefined;
-  return getChannelMessageView(input.store, reply.id);
+  return reply ? getChannelMessageView(input.store, reply.id) : undefined;
+}
+
+export function listChannelAssistantRepliesForSource(input: {
+  readonly store: ConversationItemMessageStore;
+  readonly sourceItemId: string;
+  readonly limit?: number;
+}): readonly ChannelMessage[] {
+  const source = input.store.getConversationItem(input.sourceItemId);
+  if (!source?.channelId || !source.turnId) return [];
+  const items = [];
+  let beforeItemId: string | undefined;
+  do {
+    const page = input.store.listConversationItemsByChannelPage({
+      channelId: source.channelId,
+      threadId: source.threadId,
+      kinds: ["assistant_message"],
+      effectiveOnly: true,
+      ...(beforeItemId ? { beforeItemId } : {}),
+      limit: input.limit ?? 500,
+    });
+    items.push(...page.items.filter((item) =>
+      item.turnId === source.turnId
+      && item.domainRefs.some((ref) => ref.type === "conversation_item" && ref.id === source.id)
+    ));
+    beforeItemId = page.nextBeforeItemId;
+  } while (beforeItemId);
+  return items
+    .sort((left, right) => left.sequence - right.sequence)
+    .map((item) => getChannelMessageView(input.store, item.id))
+    .filter((reply): reply is ChannelMessage => Boolean(reply));
 }
 
 export function updatePendingAssistantMessage(input: {

@@ -1,4 +1,4 @@
-import type { RunnerFallbackPolicy, RunnerFallbackReason, RunnerRequestSource } from "@ling-stack/core";
+import type { ApprovalActionType, RunnerFallbackPolicy, RunnerFallbackReason, RunnerRequestSource } from "@ling-stack/core";
 import type { RunnerToolHydrationCapability } from "@ling-stack/contracts";
 import type { PiRunnerProviderApi } from "@ling-stack/runner-pi";
 import type { RunnerAdapter } from "../context.js";
@@ -18,7 +18,22 @@ export interface RegisteredRunner {
   readonly toolHydration?: RunnerToolHydrationCapability;
   readonly featureFlag?: string;
   readonly disabledReason?: string;
+  readonly resumeCapabilities: RunnerResumeCapabilitiesV1;
 }
+
+export interface RunnerResumeCapabilitiesV1 {
+  readonly nativeResume: boolean;
+  readonly hostApprovalContinuation: readonly ApprovalActionType[];
+}
+
+export type RunnerRegistrationInput = Omit<RegisteredRunner, "resumeCapabilities"> & {
+  readonly resumeCapabilities?: RunnerResumeCapabilitiesV1;
+};
+
+export const noRunnerResumeCapabilities: RunnerResumeCapabilitiesV1 = {
+  nativeResume: false,
+  hostApprovalContinuation: [],
+};
 
 export interface RunnerResolutionInput {
   readonly requestedRunnerId?: string;
@@ -54,7 +69,11 @@ export function normalizeRunnerId(id: string | undefined): string | undefined {
   return id === LEGACY_PI_RUNNER_ID ? DEFAULT_RUNNER_ID : id;
 }
 
-export function createRunnerRegistry(runners: readonly RegisteredRunner[], defaultRunnerId: string = DEFAULT_RUNNER_ID): RunnerRegistry {
+export function createRunnerRegistry(registrations: readonly RunnerRegistrationInput[], defaultRunnerId: string = DEFAULT_RUNNER_ID): RunnerRegistry {
+  const runners: readonly RegisteredRunner[] = registrations.map((runner) => ({
+    ...runner,
+    resumeCapabilities: runner.resumeCapabilities ?? noRunnerResumeCapabilities,
+  }));
   const byId = new Map<string, RegisteredRunner>();
   for (const runner of runners) {
     registerRunnerId(byId, runner.id, runner);
@@ -130,6 +149,15 @@ export function createRunnerRegistry(runners: readonly RegisteredRunner[], defau
         runner,
       };
     },
+  };
+}
+
+export function resolveRunnerResumeCapabilities(runner: RegisteredRunner): RunnerResumeCapabilitiesV1 {
+  return {
+    nativeResume: runner.status === "enabled"
+      && runner.resumeCapabilities.nativeResume
+      && typeof runner.adapter.resumeTask === "function",
+    hostApprovalContinuation: runner.resumeCapabilities.hostApprovalContinuation,
   };
 }
 

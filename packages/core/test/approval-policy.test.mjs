@@ -7,6 +7,8 @@ import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import {
   authorizationAndAccessFromLegacyPermission,
+  approvalSideEffectFingerprintV1,
+  createApprovalResumeBasisV1,
   createSqliteRunStore,
   defaultAllowedWritePaths,
   defaultApprovalToolDecisions,
@@ -993,6 +995,964 @@ test("sqlite store updates approval checkpoint resume metadata", async () => {
     await rm(cwd, { recursive: true, force: true });
   }
 });
+
+test("sqlite store persists one immutable approval resume basis with revision fencing", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-approval-resume-basis-"));
+  const now = "2026-08-15T01:00:00.000Z";
+  let store = createSqliteRunStore(cwd);
+  try {
+    store.createRun({
+      id: "run_resume_basis",
+      cwd,
+      taskId: "task_resume_basis",
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: "task_resume_basis", title: "Approval resume basis" },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd },
+      createdAt: now,
+    });
+    const sideEffect = { type: "bash", cwd, command: "echo resume", riskFlags: [] };
+    const approval = store.createApprovalRequest({
+      runId: "run_resume_basis",
+      taskId: "task_resume_basis",
+      toolCallId: "tool_resume_basis",
+      actionType: "bash",
+      risk: "medium",
+      title: "Approve resume",
+      description: "echo resume",
+      payload: sideEffect,
+    }, now);
+    const checkpoint = store.getApprovalCheckpointForApproval(approval.id);
+    assert.ok(checkpoint);
+    assert.equal(checkpoint.revision, 0);
+
+    const resumeBasis = createApprovalResumeBasisV1({
+      approvalId: approval.id,
+      runId: approval.runId,
+      workUnitId: "work_unit_resume_basis",
+      priorAttemptId: "attempt_resume_basis_1",
+      workflowStepId: "workflow_step_resume_basis",
+      toolCallId: approval.toolCallId,
+      actionType: approval.actionType,
+      sideEffectFingerprint: approvalSideEffectFingerprintV1({
+        actionType: approval.actionType,
+        toolCallId: approval.toolCallId,
+        sideEffect,
+      }),
+      delegatedRequirementFingerprint: "requirement_resume_basis",
+    });
+    const bound = store.updateApprovalCheckpointStatus(checkpoint.id, {
+      status: "pending",
+      expectedStatus: "pending",
+      expectedRevision: 0,
+      resumeBasis,
+    }, "2026-08-15T01:01:00.000Z");
+    assert.ok(bound);
+    assert.equal(bound.revision, 1);
+    assert.deepEqual(bound.resumeBasis, resumeBasis);
+    assert.equal(store.updateApprovalCheckpointStatus(checkpoint.id, {
+      status: "resume_pending",
+      expectedStatus: "pending",
+      expectedRevision: 0,
+    }, "2026-08-15T01:02:00.000Z"), undefined);
+
+    const { schemaVersion: _schemaVersion, fingerprint: _fingerprint, ...resumeBasisInput } = resumeBasis;
+    const changedBasis = createApprovalResumeBasisV1({
+      ...resumeBasisInput,
+      priorAttemptId: "attempt_resume_basis_2",
+    });
+    assert.throws(() => store.updateApprovalCheckpointStatus(checkpoint.id, {
+      status: "resume_pending",
+      expectedStatus: "pending",
+      expectedRevision: 1,
+      resumeBasis: changedBasis,
+    }, "2026-08-15T01:03:00.000Z"), /resume basis is immutable/u);
+
+    store.close();
+    store = createSqliteRunStore(cwd);
+    const reopened = store.getApprovalCheckpointForApproval(approval.id);
+    assert.ok(reopened);
+    assert.equal(reopened.revision, 1);
+    assert.deepEqual(reopened.resumeBasis, resumeBasis);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("approval resume claim atomically binds the replacement Attempt and observer invalidations", async () => {
+  const fixture = await createApprovalResumeClaimFixture("atomic-success");
+  try {
+    const result = fixture.store.commitApprovalResumeClaim(fixture.claim);
+    assert.equal(result.ok, true);
+    assert.equal(result.checkpoint.status, "resume_pending");
+    assert.equal(result.checkpoint.revision, fixture.checkpoint.revision + 1);
+    assert.equal(result.checkpoint.runnerResumeHandle?.attemptId, fixture.claim.replacementAttempt.id);
+    assert.equal(result.run.status, "running");
+    assert.equal(result.workUnit.status, "running");
+    assert.equal(result.workUnit.activeAttemptId, fixture.claim.replacementAttempt.id);
+    assert.equal(result.attempt.status, "started");
+    assert.equal(fixture.store.getWorkUnitAttempt(fixture.priorAttempt.id)?.status, "lost");
+    assert.deepEqual(result.controlPlaneEvents.map((event) => event.domain), ["runs", "work_units", "approvals"]);
+    assert.equal(result.controlPlaneEvents.every((event) => event.cwd === fixture.cwd), true);
+    assert.equal(result.controlPlaneEvents.every((event) => Object.keys(event.data).length === 0), true);
+    assert.equal(
+      fixture.store.listRuntimeEvents(fixture.workUnit.id, { limit: 100 }).filter((event) =>
+        event.type === "work_unit_started" && event.attemptId === fixture.claim.replacementAttempt.id).length,
+      1,
+    );
+
+    const duplicate = fixture.store.commitApprovalResumeClaim(fixture.claim);
+    assert.deepEqual(duplicate, { ok: false, code: "approval_resume_checkpoint_stale" });
+    assert.equal(fixture.store.listWorkUnitAttempts(fixture.workUnit.id).length, 2);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("approval resume claim rolls back every durable write boundary", async (t) => {
+  const faults = [
+    {
+      name: "checkpoint",
+      trigger: (fixture) => `
+        CREATE TRIGGER fail_resume_checkpoint AFTER UPDATE OF status ON approval_checkpoints
+        WHEN NEW.id = '${fixture.checkpoint.id}' AND NEW.status = 'resume_pending'
+        BEGIN SELECT RAISE(ABORT, 'resume checkpoint fault'); END
+      `,
+    },
+    {
+      name: "attempt",
+      trigger: (fixture) => `
+        CREATE TRIGGER fail_resume_attempt AFTER INSERT ON work_unit_attempts
+        WHEN NEW.id = '${fixture.claim.replacementAttempt.id}'
+        BEGIN SELECT RAISE(ABORT, 'resume attempt fault'); END
+      `,
+    },
+    {
+      name: "work-unit",
+      trigger: (fixture) => `
+        CREATE TRIGGER fail_resume_work_unit AFTER UPDATE OF active_attempt_id ON work_units
+        WHEN NEW.id = '${fixture.workUnit.id}' AND NEW.active_attempt_id = '${fixture.claim.replacementAttempt.id}'
+        BEGIN SELECT RAISE(ABORT, 'resume work unit fault'); END
+      `,
+    },
+    {
+      name: "run",
+      trigger: (fixture) => `
+        CREATE TRIGGER fail_resume_run AFTER UPDATE OF status ON run_sessions
+        WHEN NEW.id = '${fixture.run.id}' AND NEW.status = 'running'
+        BEGIN SELECT RAISE(ABORT, 'resume run fault'); END
+      `,
+    },
+    {
+      name: "runtime-audit",
+      trigger: (fixture) => `
+        CREATE TRIGGER fail_resume_runtime AFTER INSERT ON runtime_events
+        WHEN NEW.attempt_id = '${fixture.claim.replacementAttempt.id}' AND NEW.type = 'work_unit_started'
+        BEGIN SELECT RAISE(ABORT, 'resume runtime fault'); END
+      `,
+    },
+    {
+      name: "control-plane",
+      trigger: (fixture) => `
+        CREATE TRIGGER fail_resume_control AFTER INSERT ON control_plane_events
+        WHEN NEW.idempotency_key LIKE 'approval-resume-claim:%'
+        BEGIN SELECT RAISE(ABORT, 'resume control fault'); END
+      `,
+    },
+  ];
+
+  for (const fault of faults) {
+    await t.test(fault.name, async () => {
+      const fixture = await createApprovalResumeClaimFixture(`rollback-${fault.name}`);
+      try {
+        const database = new DatabaseSync(fixture.store.paths.databasePath);
+        try {
+          database.exec(fault.trigger(fixture));
+        } finally {
+          database.close();
+        }
+        assert.throws(() => fixture.store.commitApprovalResumeClaim(fixture.claim), /resume .* fault/u);
+
+        const checkpoint = fixture.store.getApprovalCheckpoint(fixture.checkpoint.id);
+        const run = fixture.store.getRun(fixture.run.id);
+        const workUnit = fixture.store.getWorkUnit(fixture.workUnit.id);
+        assert.equal(checkpoint?.status, "approved");
+        assert.equal(checkpoint?.revision, fixture.checkpoint.revision);
+        assert.equal(checkpoint?.runnerResumeHandle, undefined);
+        assert.equal(run?.status, "waiting_for_approval");
+        assert.equal(workUnit?.status, "waiting_for_approval");
+        assert.equal(workUnit?.activeAttemptId, fixture.priorAttempt.id);
+        assert.equal(fixture.store.getWorkUnitAttempt(fixture.priorAttempt.id)?.status, "waiting_for_approval");
+        assert.equal(fixture.store.getWorkUnitAttempt(fixture.claim.replacementAttempt.id), undefined);
+        assert.equal(fixture.store.listControlPlaneEvents({ workspaceId: "workspace_default", limit: 100 }).length, 0);
+      } finally {
+        await fixture.close();
+      }
+    });
+  }
+});
+
+test("approval wait suspension atomically preserves pending and approved logical work", async (t) => {
+  for (const expectedCheckpointStatus of ["pending", "approved"]) {
+    await t.test(expectedCheckpointStatus, async () => {
+      const fixture = await createApprovalResumeClaimFixture(
+        `approval-wait-${expectedCheckpointStatus}`,
+        { approve: expectedCheckpointStatus === "approved" },
+      );
+      try {
+        const lifecycle = {
+          checkpoint: fixture.checkpoint,
+          run: fixture.run,
+          workUnit: fixture.workUnit,
+          attempt: fixture.priorAttempt,
+        };
+        acquireApprovalResumeRuntimeResources(fixture, lifecycle);
+
+        const suspended = fixture.store.commitApprovalResumeSuspension({
+          kind: "approval_wait",
+          checkpointId: fixture.checkpoint.id,
+          expectedCheckpointStatus,
+          expectedCheckpointRevision: fixture.checkpoint.revision,
+          approvalId: fixture.claim.approvalId,
+          runId: fixture.run.id,
+          expectedRunStatus: "waiting_for_approval",
+          workUnitId: fixture.workUnit.id,
+          expectedWorkUnitStatus: "waiting_for_approval",
+          attemptId: fixture.priorAttempt.id,
+          cause: "daemon_restart",
+          now: "2026-08-16T01:01:30.000Z",
+        });
+
+        assert.equal(suspended.ok, true);
+        assert.equal(suspended.checkpoint.status, expectedCheckpointStatus);
+        assert.equal(suspended.checkpoint.revision, fixture.checkpoint.revision + 1);
+        assert.equal(suspended.run.status, "waiting_for_approval");
+        assert.equal(suspended.workUnit.status, "waiting_for_approval");
+        assert.equal(suspended.workUnit.activeAttemptId, fixture.priorAttempt.id);
+        assert.equal(suspended.attempt.status, "lost");
+        assert.equal(fixture.store.getApprovalRequest(fixture.claim.approvalId)?.status, expectedCheckpointStatus);
+        assert.equal(fixture.store.getTask(fixture.task.id)?.status, "running");
+        assert.equal(fixture.store.listResourceLeases({ ownerType: "run", ownerId: fixture.run.id, status: "active" }).length, 0);
+        assert.equal(fixture.store.listRuntimeSemaphoreSlots({ ownerId: fixture.priorAttempt.id, status: "active" }).length, 0);
+        assert.deepEqual(suspended.controlPlaneEvents.map((event) => event.domain), ["runs", "work_units", "approvals"]);
+      } finally {
+        await fixture.close();
+      }
+    });
+  }
+});
+
+test("approval wait suspension rejects illegal lifecycle cross-products before writing", async () => {
+  const fixture = await createApprovalResumeClaimFixture("approval-wait-invalid-shape", { approve: false });
+  try {
+    const checkpoint = fixture.store.getApprovalCheckpoint(fixture.checkpoint.id);
+    const attempt = fixture.store.getWorkUnitAttempt(fixture.priorAttempt.id);
+    const runtimeEventCount = fixture.store.listRuntimeEvents(fixture.workUnit.id, { limit: 100 }).length;
+    const controlPlaneEventCount = fixture.store.listControlPlaneEvents({ workspaceId: "workspace_default", limit: 100 }).length;
+
+    assert.throws(() => fixture.store.commitApprovalResumeSuspension({
+      kind: "approval_wait",
+      checkpointId: fixture.checkpoint.id,
+      expectedCheckpointStatus: "pending",
+      expectedCheckpointRevision: fixture.checkpoint.revision,
+      approvalId: fixture.claim.approvalId,
+      runId: fixture.run.id,
+      expectedRunStatus: "running",
+      workUnitId: fixture.workUnit.id,
+      expectedWorkUnitStatus: "running",
+      attemptId: fixture.priorAttempt.id,
+      cause: "invalid-shape",
+      now: "2026-08-16T01:01:40.000Z",
+    }), /suspension lifecycle shape is invalid/u);
+
+    assert.deepEqual(fixture.store.getApprovalCheckpoint(fixture.checkpoint.id), checkpoint);
+    assert.deepEqual(fixture.store.getWorkUnitAttempt(fixture.priorAttempt.id), attempt);
+    assert.equal(fixture.store.listRuntimeEvents(fixture.workUnit.id, { limit: 100 }).length, runtimeEventCount);
+    assert.equal(
+      fixture.store.listControlPlaneEvents({ workspaceId: "workspace_default", limit: 100 }).length,
+      controlPlaneEventCount,
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("approval wait suspension rolls back every durable write boundary", async (t) => {
+  for (const fault of approvalResumeSuspensionFaults()) {
+    await t.test(fault.name, async () => {
+      const fixture = await createApprovalResumeClaimFixture(`approval-wait-rollback-${fault.name}`, { approve: false });
+      try {
+        const lifecycle = {
+          checkpoint: fixture.checkpoint,
+          run: fixture.run,
+          workUnit: fixture.workUnit,
+          attempt: fixture.priorAttempt,
+        };
+        acquireApprovalResumeRuntimeResources(fixture, lifecycle);
+        const runtimeEventCount = fixture.store.listRuntimeEvents(fixture.workUnit.id, { limit: 100 }).length;
+        const controlPlaneEventCount = fixture.store.listControlPlaneEvents({ workspaceId: "workspace_default", limit: 100 }).length;
+        const database = new DatabaseSync(fixture.store.paths.databasePath);
+        try {
+          database.exec(fault.trigger(fixture, lifecycle));
+        } finally {
+          database.close();
+        }
+
+        assert.throws(() => fixture.store.commitApprovalResumeSuspension({
+          kind: "approval_wait",
+          checkpointId: fixture.checkpoint.id,
+          expectedCheckpointStatus: "pending",
+          expectedCheckpointRevision: fixture.checkpoint.revision,
+          approvalId: fixture.claim.approvalId,
+          runId: fixture.run.id,
+          expectedRunStatus: "waiting_for_approval",
+          workUnitId: fixture.workUnit.id,
+          expectedWorkUnitStatus: "waiting_for_approval",
+          attemptId: fixture.priorAttempt.id,
+          cause: "daemon_restart",
+          now: "2026-08-16T01:01:50.000Z",
+        }), /resume suspension .* fault/u);
+
+        assert.equal(fixture.store.getApprovalCheckpoint(fixture.checkpoint.id)?.revision, fixture.checkpoint.revision);
+        assert.equal(fixture.store.getApprovalCheckpoint(fixture.checkpoint.id)?.status, "pending");
+        assert.equal(fixture.store.getRun(fixture.run.id)?.status, "waiting_for_approval");
+        assert.equal(fixture.store.getWorkUnit(fixture.workUnit.id)?.status, "waiting_for_approval");
+        assert.equal(fixture.store.getWorkUnitAttempt(fixture.priorAttempt.id)?.status, "waiting_for_approval");
+        assert.equal(fixture.store.getTask(fixture.task.id)?.status, "running");
+        assert.equal(fixture.store.listResourceLeases({ ownerType: "run", ownerId: fixture.run.id, status: "active" }).length, 1);
+        assert.equal(fixture.store.listRuntimeSemaphoreSlots({ ownerId: fixture.priorAttempt.id, status: "active" }).length, 1);
+        assert.equal(fixture.store.listRuntimeEvents(fixture.workUnit.id, { limit: 100 }).length, runtimeEventCount);
+        assert.equal(
+          fixture.store.listControlPlaneEvents({ workspaceId: "workspace_default", limit: 100 }).length,
+          controlPlaneEventCount,
+        );
+      } finally {
+        await fixture.close();
+      }
+    });
+  }
+});
+
+test("approval resume suspension atomically preserves logical work and releases runtime capacity", async () => {
+  const fixture = await createApprovalResumeClaimFixture("suspension-success");
+  try {
+    const claim = fixture.store.commitApprovalResumeClaim(fixture.claim);
+    assert.equal(claim.ok, true);
+    acquireApprovalResumeRuntimeResources(fixture, claim);
+
+    const suspended = fixture.store.commitApprovalResumeSuspension({
+      kind: "resume_pre_dispatch",
+      checkpointId: claim.checkpoint.id,
+      expectedCheckpointStatus: "resume_pending",
+      expectedCheckpointRevision: claim.checkpoint.revision,
+      approvalId: fixture.claim.approvalId,
+      runId: claim.run.id,
+      expectedRunStatus: "running",
+      workUnitId: claim.workUnit.id,
+      expectedWorkUnitStatus: "running",
+      attemptId: claim.attempt.id,
+      cause: "daemon_restart",
+      now: "2026-08-16T01:03:00.000Z",
+    });
+
+    assert.equal(suspended.ok, true);
+    assert.equal(suspended.checkpoint.status, "resume_pending");
+    assert.equal(suspended.checkpoint.revision, claim.checkpoint.revision + 1);
+    assert.equal(suspended.run.status, "running");
+    assert.equal(suspended.workUnit.status, "running");
+    assert.equal(suspended.workUnit.activeAttemptId, claim.attempt.id);
+    assert.equal(suspended.attempt.status, "lost");
+    assert.equal(fixture.store.getTask(fixture.task.id)?.status, "running");
+    assert.equal(fixture.store.listResourceLeases({ ownerType: "run", ownerId: claim.run.id, status: "active" }).length, 0);
+    assert.equal(fixture.store.listResourceLeases({ ownerType: "run", ownerId: claim.run.id, status: "released" }).length, 1);
+    assert.equal(fixture.store.listRuntimeSemaphoreSlots({ ownerId: claim.attempt.id, status: "active" }).length, 0);
+    assert.equal(fixture.store.listRuntimeSemaphoreSlots({ ownerId: claim.attempt.id, status: "released" }).length, 1);
+    assert.deepEqual(suspended.controlPlaneEvents.map((event) => event.domain), ["runs", "work_units", "approvals"]);
+    assert.equal(fixture.store.listRuntimeEvents(claim.workUnit.id, { limit: 100 }).some((event) =>
+      event.type === "work_unit_stale" && event.attemptId === claim.attempt.id), true);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("approval resume suspension rolls back every durable write boundary", async (t) => {
+  const faults = approvalResumeSuspensionFaults();
+
+  for (const fault of faults) {
+    await t.test(fault.name, async () => {
+      const fixture = await createApprovalResumeClaimFixture(`suspension-rollback-${fault.name}`);
+      try {
+        const claim = fixture.store.commitApprovalResumeClaim(fixture.claim);
+        assert.equal(claim.ok, true);
+        acquireApprovalResumeRuntimeResources(fixture, claim);
+        const controlEventCount = fixture.store.listControlPlaneEvents({ workspaceId: "workspace_default", limit: 100 }).length;
+        const runtimeEventCount = fixture.store.listRuntimeEvents(claim.workUnit.id, { limit: 100 }).length;
+        const database = new DatabaseSync(fixture.store.paths.databasePath);
+        try {
+          database.exec(fault.trigger(fixture, claim));
+        } finally {
+          database.close();
+        }
+
+        assert.throws(() => fixture.store.commitApprovalResumeSuspension({
+          kind: "resume_pre_dispatch",
+          checkpointId: claim.checkpoint.id,
+          expectedCheckpointStatus: "resume_pending",
+          expectedCheckpointRevision: claim.checkpoint.revision,
+          approvalId: fixture.claim.approvalId,
+          runId: claim.run.id,
+          expectedRunStatus: "running",
+          workUnitId: claim.workUnit.id,
+          expectedWorkUnitStatus: "running",
+          attemptId: claim.attempt.id,
+          cause: "daemon_restart",
+          now: "2026-08-16T01:03:00.000Z",
+        }), /resume suspension .* fault/u);
+
+        assert.equal(fixture.store.getApprovalCheckpoint(claim.checkpoint.id)?.revision, claim.checkpoint.revision);
+        assert.equal(fixture.store.getApprovalCheckpoint(claim.checkpoint.id)?.status, "resume_pending");
+        assert.equal(fixture.store.getRun(claim.run.id)?.status, "running");
+        assert.equal(fixture.store.getWorkUnit(claim.workUnit.id)?.status, "running");
+        assert.equal(fixture.store.getWorkUnitAttempt(claim.attempt.id)?.status, "started");
+        assert.equal(fixture.store.getTask(fixture.task.id)?.status, "running");
+        assert.equal(fixture.store.listResourceLeases({ ownerType: "run", ownerId: claim.run.id, status: "active" }).length, 1);
+        assert.equal(fixture.store.listRuntimeSemaphoreSlots({ ownerId: claim.attempt.id, status: "active" }).length, 1);
+        assert.equal(fixture.store.listRuntimeEvents(claim.workUnit.id, { limit: 100 }).length, runtimeEventCount);
+        assert.equal(
+          fixture.store.listControlPlaneEvents({ workspaceId: "workspace_default", limit: 100 }).length,
+          controlEventCount,
+        );
+      } finally {
+        await fixture.close();
+      }
+    });
+  }
+});
+
+test("approval resume terminal settlement atomically closes checkpoint, runtime, task, and capacity", async () => {
+  const fixture = await createApprovalResumeClaimFixture("terminal-success");
+  try {
+    const claim = fixture.store.commitApprovalResumeClaim(fixture.claim);
+    assert.equal(claim.ok, true);
+    acquireApprovalResumeRuntimeResources(fixture, claim);
+
+    const terminal = fixture.store.commitApprovalResumeTerminal({
+      kind: "verified_lineage",
+      checkpointId: claim.checkpoint.id,
+      expectedCheckpointStatus: "resume_pending",
+      expectedCheckpointRevision: claim.checkpoint.revision,
+      approvalId: fixture.claim.approvalId,
+      runId: claim.run.id,
+      expectedRunStatus: "running",
+      workUnitId: claim.workUnit.id,
+      expectedWorkUnitStatus: "running",
+      attemptId: claim.attempt.id,
+      status: "succeeded",
+      attemptStatus: "succeeded",
+      checkpointStatus: "resumed",
+      summaryPath: resolve(fixture.cwd, "summary.md"),
+      now: "2026-08-16T01:04:00.000Z",
+    });
+
+    assert.equal(terminal.ok, true);
+    assert.equal(terminal.checkpoint.status, "resumed");
+    assert.equal(terminal.run.status, "succeeded");
+    assert.equal(terminal.workUnit.status, "succeeded");
+    assert.equal(terminal.attempt.status, "succeeded");
+    assert.equal(fixture.store.getTask(fixture.task.id)?.status, "done");
+    assert.equal(fixture.store.listResourceLeases({ ownerType: "run", ownerId: claim.run.id, status: "active" }).length, 0);
+    assert.equal(fixture.store.listRuntimeSemaphoreSlots({ ownerId: claim.attempt.id, status: "active" }).length, 0);
+    assert.deepEqual(terminal.controlPlaneEvents.map((event) => event.domain), ["runs", "work_units", "approvals"]);
+    assert.deepEqual(fixture.store.commitApprovalResumeTerminal({
+      kind: "verified_lineage",
+      checkpointId: claim.checkpoint.id,
+      expectedCheckpointStatus: "resume_pending",
+      expectedCheckpointRevision: claim.checkpoint.revision,
+      approvalId: fixture.claim.approvalId,
+      runId: claim.run.id,
+      expectedRunStatus: "running",
+      workUnitId: claim.workUnit.id,
+      expectedWorkUnitStatus: "running",
+      attemptId: claim.attempt.id,
+      status: "succeeded",
+      attemptStatus: "succeeded",
+      checkpointStatus: "resumed",
+      now: "2026-08-16T01:04:00.000Z",
+    }), { ok: false, code: "approval_resume_terminal_stale" });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("approval resume terminal blocker preserves the detailed checkpoint failure reason", async () => {
+  const fixture = await createApprovalResumeClaimFixture("terminal-detailed-blocker");
+  try {
+    const claim = fixture.store.commitApprovalResumeClaim(fixture.claim);
+    assert.equal(claim.ok, true);
+    acquireApprovalResumeRuntimeResources(fixture, claim);
+
+    const terminal = fixture.store.commitApprovalResumeTerminal({
+      kind: "verified_lineage",
+      checkpointId: claim.checkpoint.id,
+      expectedCheckpointStatus: "resume_pending",
+      expectedCheckpointRevision: claim.checkpoint.revision,
+      approvalId: fixture.claim.approvalId,
+      runId: claim.run.id,
+      expectedRunStatus: "running",
+      workUnitId: claim.workUnit.id,
+      expectedWorkUnitStatus: "running",
+      attemptId: claim.attempt.id,
+      status: "failed",
+      attemptStatus: "failed",
+      checkpointStatus: "resume_failed",
+      errorCode: "approval_resume_unsupported",
+      errorMessage: "approval_resume_unsupported:file_write",
+      now: "2026-08-16T01:04:30.000Z",
+    });
+
+    assert.equal(terminal.ok, true);
+    assert.equal(terminal.checkpoint.resumeFailureReason, "approval_resume_unsupported:file_write");
+    assert.equal(terminal.run.errorMessage, "approval_resume_unsupported:file_write");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("approval resume terminal settlement rolls back every durable write boundary", async (t) => {
+  const faults = [
+    {
+      name: "checkpoint",
+      trigger: (fixture) => `
+        CREATE TRIGGER fail_resume_terminal_checkpoint AFTER UPDATE OF status ON approval_checkpoints
+        WHEN NEW.id = '${fixture.checkpoint.id}' AND NEW.status = 'resumed'
+        BEGIN SELECT RAISE(ABORT, 'resume terminal checkpoint fault'); END
+      `,
+    },
+    {
+      name: "run",
+      trigger: (_fixture, claim) => `
+        CREATE TRIGGER fail_resume_terminal_run AFTER UPDATE OF status ON run_sessions
+        WHEN NEW.id = '${claim.run.id}' AND NEW.status = 'succeeded'
+        BEGIN SELECT RAISE(ABORT, 'resume terminal run fault'); END
+      `,
+    },
+    {
+      name: "work-unit",
+      trigger: (_fixture, claim) => `
+        CREATE TRIGGER fail_resume_terminal_work_unit AFTER UPDATE OF status ON work_units
+        WHEN NEW.id = '${claim.workUnit.id}' AND NEW.status = 'succeeded'
+        BEGIN SELECT RAISE(ABORT, 'resume terminal work unit fault'); END
+      `,
+    },
+    {
+      name: "attempt",
+      trigger: (_fixture, claim) => `
+        CREATE TRIGGER fail_resume_terminal_attempt AFTER UPDATE OF status ON work_unit_attempts
+        WHEN NEW.id = '${claim.attempt.id}' AND NEW.status = 'succeeded'
+        BEGIN SELECT RAISE(ABORT, 'resume terminal attempt fault'); END
+      `,
+    },
+    {
+      name: "task",
+      trigger: (fixture) => `
+        CREATE TRIGGER fail_resume_terminal_task AFTER UPDATE OF status ON tasks
+        WHEN NEW.id = '${fixture.task.id}' AND NEW.status = 'done'
+        BEGIN SELECT RAISE(ABORT, 'resume terminal task fault'); END
+      `,
+    },
+    {
+      name: "runtime-audit",
+      trigger: (_fixture, claim) => `
+        CREATE TRIGGER fail_resume_terminal_runtime AFTER INSERT ON runtime_events
+        WHEN NEW.attempt_id = '${claim.attempt.id}' AND NEW.type = 'work_unit_succeeded'
+        BEGIN SELECT RAISE(ABORT, 'resume terminal runtime fault'); END
+      `,
+    },
+    {
+      name: "resource-lease",
+      trigger: (_fixture, claim) => `
+        CREATE TRIGGER fail_resume_terminal_lease AFTER UPDATE OF status ON resource_leases
+        WHEN NEW.owner_type = 'run' AND NEW.owner_id = '${claim.run.id}' AND NEW.status = 'released'
+        BEGIN SELECT RAISE(ABORT, 'resume terminal lease fault'); END
+      `,
+    },
+    {
+      name: "semaphore",
+      trigger: (_fixture, claim) => `
+        CREATE TRIGGER fail_resume_terminal_semaphore AFTER UPDATE OF status ON runtime_semaphore_slots
+        WHEN NEW.owner_id = '${claim.attempt.id}' AND NEW.status = 'released'
+        BEGIN SELECT RAISE(ABORT, 'resume terminal semaphore fault'); END
+      `,
+    },
+    {
+      name: "control-plane",
+      trigger: () => `
+        CREATE TRIGGER fail_resume_terminal_control AFTER INSERT ON control_plane_events
+        WHEN NEW.idempotency_key LIKE 'approval-resume-terminal:%'
+        BEGIN SELECT RAISE(ABORT, 'resume terminal control fault'); END
+      `,
+    },
+  ];
+
+  for (const fault of faults) {
+    await t.test(fault.name, async () => {
+      const fixture = await createApprovalResumeClaimFixture(`terminal-rollback-${fault.name}`);
+      try {
+        const claim = fixture.store.commitApprovalResumeClaim(fixture.claim);
+        assert.equal(claim.ok, true);
+        acquireApprovalResumeRuntimeResources(fixture, claim);
+        const controlEventCount = fixture.store.listControlPlaneEvents({ workspaceId: "workspace_default", limit: 100 }).length;
+        const runtimeEventCount = fixture.store.listRuntimeEvents(claim.workUnit.id, { limit: 100 }).length;
+        const database = new DatabaseSync(fixture.store.paths.databasePath);
+        try {
+          database.exec(fault.trigger(fixture, claim));
+        } finally {
+          database.close();
+        }
+
+        assert.throws(() => fixture.store.commitApprovalResumeTerminal({
+          kind: "verified_lineage",
+          checkpointId: claim.checkpoint.id,
+          expectedCheckpointStatus: "resume_pending",
+          expectedCheckpointRevision: claim.checkpoint.revision,
+          approvalId: fixture.claim.approvalId,
+          runId: claim.run.id,
+          expectedRunStatus: "running",
+          workUnitId: claim.workUnit.id,
+          expectedWorkUnitStatus: "running",
+          attemptId: claim.attempt.id,
+          status: "succeeded",
+          attemptStatus: "succeeded",
+          checkpointStatus: "resumed",
+          now: "2026-08-16T01:04:00.000Z",
+        }), /resume terminal .* fault/u);
+
+        assert.equal(fixture.store.getApprovalCheckpoint(claim.checkpoint.id)?.status, "resume_pending");
+        assert.equal(fixture.store.getApprovalCheckpoint(claim.checkpoint.id)?.revision, claim.checkpoint.revision);
+        assert.equal(fixture.store.getRun(claim.run.id)?.status, "running");
+        assert.equal(fixture.store.getWorkUnit(claim.workUnit.id)?.status, "running");
+        assert.equal(fixture.store.getWorkUnitAttempt(claim.attempt.id)?.status, "started");
+        assert.equal(fixture.store.getTask(fixture.task.id)?.status, "running");
+        assert.equal(fixture.store.listResourceLeases({ ownerType: "run", ownerId: claim.run.id, status: "active" }).length, 1);
+        assert.equal(fixture.store.listRuntimeSemaphoreSlots({ ownerId: claim.attempt.id, status: "active" }).length, 1);
+        assert.equal(fixture.store.listRuntimeEvents(claim.workUnit.id, { limit: 100 }).length, runtimeEventCount);
+        assert.equal(
+          fixture.store.listControlPlaneEvents({ workspaceId: "workspace_default", limit: 100 }).length,
+          controlEventCount,
+        );
+      } finally {
+        await fixture.close();
+      }
+    });
+  }
+});
+
+test("approval resume checkpoint quarantine blocks corrupt lineage without terminalizing guessed runtime rows", async () => {
+  const fixture = await createApprovalResumeClaimFixture("checkpoint-quarantine");
+  try {
+    const quarantined = fixture.store.commitApprovalResumeTerminal({
+      kind: "checkpoint_quarantine",
+      checkpointId: fixture.checkpoint.id,
+      expectedCheckpointStatus: "approved",
+      expectedCheckpointRevision: fixture.checkpoint.revision,
+      approvalId: fixture.claim.approvalId,
+      errorCode: "approval_resume_lineage_invalid",
+      errorMessage: "approval_resume_lineage_invalid:work_unit_mismatch",
+      now: "2026-08-16T01:04:00.000Z",
+    });
+
+    assert.equal(quarantined.ok, true);
+    assert.equal(quarantined.kind, "checkpoint_quarantine");
+    assert.equal(quarantined.checkpoint.status, "resume_failed");
+    assert.equal(quarantined.checkpoint.resumeFailureReason, "approval_resume_lineage_invalid:work_unit_mismatch");
+    assert.deepEqual(quarantined.controlPlaneEvents.map((event) => event.domain), ["approvals"]);
+    assert.equal(fixture.store.getRun(fixture.run.id)?.status, "waiting_for_approval");
+    assert.equal(fixture.store.getWorkUnit(fixture.workUnit.id)?.status, "waiting_for_approval");
+    assert.equal(fixture.store.getWorkUnitAttempt(fixture.priorAttempt.id)?.status, "waiting_for_approval");
+    assert.equal(fixture.store.getTask(fixture.task.id)?.status, "running");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("approval resume checkpoint quarantine rolls back checkpoint and invalidation together", async (t) => {
+  for (const fault of ["checkpoint", "control-plane"]) {
+    await t.test(fault, async () => {
+      const fixture = await createApprovalResumeClaimFixture(`checkpoint-quarantine-${fault}`);
+      try {
+        const database = new DatabaseSync(fixture.store.paths.databasePath);
+        try {
+          database.exec(fault === "checkpoint"
+            ? `
+              CREATE TRIGGER fail_resume_quarantine_checkpoint AFTER UPDATE OF status ON approval_checkpoints
+              WHEN NEW.id = '${fixture.checkpoint.id}' AND NEW.status = 'resume_failed'
+              BEGIN SELECT RAISE(ABORT, 'resume quarantine checkpoint fault'); END
+            `
+            : `
+              CREATE TRIGGER fail_resume_quarantine_control AFTER INSERT ON control_plane_events
+              WHEN NEW.idempotency_key LIKE 'approval-resume-quarantine:%'
+              BEGIN SELECT RAISE(ABORT, 'resume quarantine control fault'); END
+            `);
+        } finally {
+          database.close();
+        }
+        assert.throws(() => fixture.store.commitApprovalResumeTerminal({
+          kind: "checkpoint_quarantine",
+          checkpointId: fixture.checkpoint.id,
+          expectedCheckpointStatus: "approved",
+          expectedCheckpointRevision: fixture.checkpoint.revision,
+          approvalId: fixture.claim.approvalId,
+          errorCode: "approval_resume_lineage_invalid",
+          errorMessage: "approval_resume_lineage_invalid",
+          now: "2026-08-16T01:04:00.000Z",
+        }), /resume quarantine .* fault/u);
+        assert.equal(fixture.store.getApprovalCheckpoint(fixture.checkpoint.id)?.status, "approved");
+        assert.equal(fixture.store.getApprovalCheckpoint(fixture.checkpoint.id)?.revision, fixture.checkpoint.revision);
+        assert.equal(fixture.store.listControlPlaneEvents({ workspaceId: "workspace_default", limit: 100 }).length, 0);
+        assert.equal(fixture.store.getRun(fixture.run.id)?.status, "waiting_for_approval");
+      } finally {
+        await fixture.close();
+      }
+    });
+  }
+});
+
+function acquireApprovalResumeRuntimeResources(fixture, claim) {
+  assert.ok(fixture.store.acquireResourceLease({
+    workspaceId: "workspace_default",
+    resourceType: "bound_path",
+    resourceKey: fixture.cwd,
+    ownerType: "run",
+    ownerId: claim.run.id,
+    workUnitId: claim.workUnit.id,
+    attemptId: claim.attempt.id,
+    acquiredAt: "2026-08-16T01:02:10.000Z",
+    expiresAt: "2026-08-16T02:02:10.000Z",
+  }));
+  assert.ok(fixture.store.acquireRuntimeSemaphoreSlot({
+    workspaceId: "workspace_default",
+    resourceType: "runner",
+    resourceKey: "pi",
+    limit: 4,
+    ownerType: "work_unit_attempt",
+    ownerId: claim.attempt.id,
+    workUnitId: claim.workUnit.id,
+    attemptId: claim.attempt.id,
+    acquiredAt: "2026-08-16T01:02:10.000Z",
+    expiresAt: "2026-08-16T02:02:10.000Z",
+  }));
+}
+
+function approvalResumeSuspensionFaults() {
+  return [
+    {
+      name: "checkpoint",
+      trigger: (fixture, claim) => `
+        CREATE TRIGGER fail_resume_suspend_checkpoint AFTER UPDATE OF revision ON approval_checkpoints
+        WHEN NEW.id = '${fixture.checkpoint.id}' AND NEW.revision > ${claim.checkpoint.revision}
+        BEGIN SELECT RAISE(ABORT, 'resume suspension checkpoint fault'); END
+      `,
+    },
+    {
+      name: "attempt",
+      trigger: (_fixture, claim) => `
+        CREATE TRIGGER fail_resume_suspend_attempt AFTER UPDATE OF status ON work_unit_attempts
+        WHEN NEW.id = '${claim.attempt.id}' AND NEW.status = 'lost'
+        BEGIN SELECT RAISE(ABORT, 'resume suspension attempt fault'); END
+      `,
+    },
+    {
+      name: "resource-lease",
+      trigger: (_fixture, claim) => `
+        CREATE TRIGGER fail_resume_suspend_lease AFTER UPDATE OF status ON resource_leases
+        WHEN NEW.owner_type = 'run' AND NEW.owner_id = '${claim.run.id}' AND NEW.status = 'released'
+        BEGIN SELECT RAISE(ABORT, 'resume suspension lease fault'); END
+      `,
+    },
+    {
+      name: "semaphore",
+      trigger: (_fixture, claim) => `
+        CREATE TRIGGER fail_resume_suspend_semaphore AFTER UPDATE OF status ON runtime_semaphore_slots
+        WHEN NEW.owner_id = '${claim.attempt.id}' AND NEW.status = 'released'
+        BEGIN SELECT RAISE(ABORT, 'resume suspension semaphore fault'); END
+      `,
+    },
+    {
+      name: "runtime-audit",
+      trigger: (_fixture, claim) => `
+        CREATE TRIGGER fail_resume_suspend_runtime AFTER INSERT ON runtime_events
+        WHEN NEW.attempt_id = '${claim.attempt.id}' AND NEW.type = 'work_unit_stale'
+        BEGIN SELECT RAISE(ABORT, 'resume suspension runtime fault'); END
+      `,
+    },
+    {
+      name: "control-plane",
+      trigger: () => `
+        CREATE TRIGGER fail_resume_suspend_control AFTER INSERT ON control_plane_events
+        WHEN NEW.idempotency_key LIKE 'approval-resume-suspend:%'
+        BEGIN SELECT RAISE(ABORT, 'resume suspension control fault'); END
+      `,
+    },
+  ];
+}
+
+async function createApprovalResumeClaimFixture(suffix, options = {}) {
+  const cwd = await mkdtemp(resolve(tmpdir(), `ling-stack-core-approval-resume-claim-${suffix}-`));
+  const store = createSqliteRunStore(cwd);
+  const now = "2026-08-16T01:00:00.000Z";
+  const channel = store.createChannel({ name: `Approval resume ${suffix}`, boundPath: cwd }, now);
+  const task = store.createTask({
+    channelId: channel.id,
+    title: "Atomic resume claim",
+    prompt: "Resume the approved command.",
+  }, now);
+  const run = store.createRun({
+    id: `run_resume_claim_${suffix}`,
+    cwd,
+    taskId: task.id,
+    channelId: channel.id,
+    providerName: "test-provider",
+    providerModel: "test-model",
+    taskSnapshot: task,
+    providerSnapshot: { provider: "test-provider", model: "test-model" },
+    requestSnapshot: { cwd },
+    createdAt: now,
+  });
+  assert.equal(store.transitionTaskStatus({
+    taskId: task.id,
+    expectedStatus: "todo",
+    event: "claim",
+    actor: "system",
+    reason: `run:${run.id}`,
+    now,
+  }).ok, true);
+  assert.equal(store.transitionTaskStatus({
+    taskId: task.id,
+    expectedStatus: "claimed",
+    event: "start_run",
+    actor: "system",
+    reason: `run:${run.id}`,
+    currentRunId: run.id,
+    now,
+  }).ok, true);
+  store.markRunStarted(run.id, now);
+  const workUnit = store.createWorkUnit({
+    id: `work_unit_resume_claim_${suffix}`,
+    workspaceId: "workspace_default",
+    kind: "task_run",
+    ownerType: "run",
+    ownerId: run.id,
+    channelId: channel.id,
+    taskId: task.id,
+    runnerId: "pi",
+    effectiveRunnerId: "pi",
+    idempotencyKey: `resume-claim-${suffix}`,
+    createdByActor: "system",
+    request: { runId: run.id },
+    linkedRunId: run.id,
+    now,
+  });
+  const priorAttempt = store.createWorkUnitAttempt({
+    id: `attempt_resume_claim_${suffix}_1`,
+    workUnitId: workUnit.id,
+    attemptNumber: 1,
+    runtimeInstanceId: "runtime_before_restart",
+    runnerId: "pi",
+    effectiveRunnerId: "pi",
+    now,
+  });
+  store.linkRunToWorkUnit(run.id, workUnit.id, now);
+  store.transitionWorkUnitStatus({ workUnitId: workUnit.id, expectedStatus: "queued", event: "claim", actor: "system", now });
+  store.transitionWorkUnitStatus({ workUnitId: workUnit.id, expectedStatus: "claimed", event: "runner_started", actor: "runner", now });
+  store.transitionWorkUnitStatus({ workUnitId: workUnit.id, expectedStatus: "running", event: "approval_requested", actor: "system", now });
+  store.updateWorkUnitAttemptStatus({ attemptId: priorAttempt.id, status: "waiting_for_approval", now });
+  store.transitionRunStatus({ runId: run.id, expectedStatus: "running", event: "approval_requested", actor: "system", now });
+  const sideEffect = { type: "bash", cwd, command: "echo atomic-resume", riskFlags: [] };
+  const approval = store.createApprovalRequest({
+    runId: run.id,
+    taskId: run.taskId,
+    toolCallId: `tool_resume_claim_${suffix}`,
+    actionType: "bash",
+    risk: "medium",
+    title: "Approve atomic resume",
+    description: "echo atomic-resume",
+    payload: sideEffect,
+  }, now);
+  const initialCheckpoint = store.getApprovalCheckpointForApproval(approval.id);
+  assert.ok(initialCheckpoint);
+  const resumeBasis = createApprovalResumeBasisV1({
+    approvalId: approval.id,
+    runId: run.id,
+    workUnitId: workUnit.id,
+    priorAttemptId: priorAttempt.id,
+    toolCallId: approval.toolCallId,
+    actionType: approval.actionType,
+    sideEffectFingerprint: approvalSideEffectFingerprintV1({
+      actionType: approval.actionType,
+      toolCallId: approval.toolCallId,
+      sideEffect,
+    }),
+  });
+  assert.ok(store.updateApprovalCheckpointStatus(initialCheckpoint.id, {
+    status: "pending",
+    expectedStatus: "pending",
+    expectedRevision: initialCheckpoint.revision,
+    resumeBasis,
+  }, now));
+  if (options.approve !== false) {
+    const approved = store.approveApprovalRequest(approval.id, { reason: "atomic claim" }, "2026-08-16T01:01:00.000Z");
+    assert.equal(approved?.status, "approved");
+  }
+  const checkpoint = store.getApprovalCheckpointForApproval(approval.id);
+  assert.ok(checkpoint);
+  assert.equal(checkpoint.status, options.approve === false ? "pending" : "approved");
+  const attemptId = `attempt_resume_claim_${suffix}_2`;
+  const claim = {
+    checkpointId: checkpoint.id,
+    expectedCheckpointStatus: checkpoint.status,
+    expectedCheckpointRevision: checkpoint.revision,
+    approvalId: approval.id,
+    runId: run.id,
+    workUnitId: workUnit.id,
+    expectedActiveAttemptId: priorAttempt.id,
+    attemptToLoseId: priorAttempt.id,
+    replacementAttempt: {
+      id: attemptId,
+      workUnitId: workUnit.id,
+      attemptNumber: 2,
+      runtimeInstanceId: "runtime_after_restart",
+      runnerId: "pi",
+      effectiveRunnerId: "pi",
+      now: "2026-08-16T01:02:00.000Z",
+    },
+    runnerResumeHandle: {
+      kind: "ling_continuation",
+      runnerId: "pi",
+      runId: run.id,
+      attemptId,
+      verified: true,
+      payload: { schemaVersion: 1, approvalId: approval.id },
+    },
+    mode: "activate_waiting",
+    now: "2026-08-16T01:02:00.000Z",
+  };
+  return {
+    cwd,
+    store,
+    run: store.getRun(run.id),
+    task: store.getTask(task.id),
+    workUnit: store.getWorkUnit(workUnit.id),
+    priorAttempt: store.getWorkUnitAttempt(priorAttempt.id),
+    checkpoint,
+    claim,
+    async close() {
+      store.close();
+      await rm(cwd, { recursive: true, force: true });
+    },
+  };
+}
 
 test("sqlite store creates and resolves media approval requests", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-media-approval-"));

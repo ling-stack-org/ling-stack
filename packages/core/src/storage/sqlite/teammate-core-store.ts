@@ -141,9 +141,10 @@ export class SqliteTeammateCoreStore {
       params.push(options.providerPresetId);
     }
     const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
-    params.push(limit);
+    const offset = Math.max(options.offset ?? 0, 0);
+    params.push(limit, offset);
     return this.context.database
-      .prepare(`${aiTeammateSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY pinned DESC, display_name ASC, created_at ASC LIMIT ?`)
+      .prepare(`${aiTeammateSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY pinned DESC, display_name ASC, created_at ASC, id ASC LIMIT ? OFFSET ?`)
       .all(...params)
       .map((row) => mapAiTeammate(row as Record<string, SQLOutputValue>));
   }

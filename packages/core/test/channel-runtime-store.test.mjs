@@ -7,9 +7,12 @@ import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import {
   DEFAULT_WORKSPACE_ID,
+  approvalSideEffectFingerprintV1,
+  createApprovalResumeBasisV1,
   createSqliteRunStore,
   defaultChannelRuntimePolicy,
 } from "../dist/index.js";
+import { createRequiredParticipantManifestV1 } from "../../contracts/dist/index.js";
 
 test("sqlite channels persist default and edited runtime policy", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-runtime-"));
@@ -347,6 +350,24 @@ test("sqlite channel intent decisions round trip visible multi-reply ids", async
         contextProjection: contextProjectionForItem(store, message.id),
         action: "visible_multi_reply",
         selectedTeammateIds: ["teammate_builtin_architect", "teammate_builtin_engineer"],
+        participantManifest: createRequiredParticipantManifestV1([
+          {
+            participantId: "teammate_builtin_architect",
+            role: "architect",
+            requirement: "required",
+            expectedOutcome: "discussion_reply",
+            requiredOperationIds: [],
+            requestedBy: "selector_policy",
+          },
+          {
+            participantId: "teammate_builtin_engineer",
+            role: "engineer",
+            requirement: "required",
+            expectedOutcome: "discussion_reply",
+            requiredOperationIds: [],
+            requestedBy: "selector_policy",
+          },
+        ]),
         resultItemIds: [architectReply.id, engineerReply.id],
         reason: "Visible multi-reply created for discussion.",
         status: "accepted",
@@ -1658,6 +1679,203 @@ test("recoverStaleChannelWorkflows reconciles running steps from linked terminal
     assert.equal(store.getChannelWorkflowStep(step.id).status, "failed");
     assert.equal(store.getChannelWorkflow(workflow.id).status, "failed");
     assert.equal(store.listStateTransitionEvents({ entityType: "workflow_step", entityId: step.id }).some((event) => event.event === "fail"), true);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("startup recovery preserves a waiting Run with a valid pending approval resume checkpoint", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-runtime-recover-approval-checkpoint-"));
+  const now = "2026-08-15T04:00:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    const run = store.createRun({
+      id: "run_recover_approval_checkpoint",
+      cwd,
+      taskId: "task_recover_approval_checkpoint",
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: "task_recover_approval_checkpoint", title: "Recover approval" },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd },
+      createdAt: now,
+    });
+    store.markRunStarted(run.id, now);
+    const sideEffect = { type: "bash", cwd, command: "echo recover", riskFlags: [] };
+    const approval = store.createApprovalRequest({
+      runId: run.id,
+      taskId: run.taskId,
+      toolCallId: "tool_recover_approval_checkpoint",
+      actionType: "bash",
+      risk: "medium",
+      title: "Approve recovery",
+      description: "echo recover",
+      payload: sideEffect,
+    }, now);
+    store.transitionRunStatus({
+      runId: run.id,
+      expectedStatus: "running",
+      event: "approval_requested",
+      actor: "system",
+      now,
+    });
+    const checkpoint = store.getApprovalCheckpointForApproval(approval.id);
+    assert.ok(checkpoint);
+    const resumeBasis = createApprovalResumeBasisV1({
+      approvalId: approval.id,
+      runId: run.id,
+      workUnitId: "work_unit_recover_approval_checkpoint",
+      priorAttemptId: "attempt_recover_approval_checkpoint",
+      toolCallId: approval.toolCallId,
+      actionType: approval.actionType,
+      sideEffectFingerprint: approvalSideEffectFingerprintV1({
+        actionType: approval.actionType,
+        toolCallId: approval.toolCallId,
+        sideEffect,
+      }),
+    });
+    assert.ok(store.updateApprovalCheckpointStatus(checkpoint.id, {
+      status: "pending",
+      expectedStatus: "pending",
+      expectedRevision: checkpoint.revision,
+      resumeBasis,
+    }, now));
+
+    assert.equal(store.recoverStaleRuns("2026-08-15T04:01:00.000Z"), 0);
+    assert.equal(store.getRun(run.id).status, "waiting_for_approval");
+    assert.equal(store.getApprovalRequest(approval.id).status, "pending");
+    assert.equal(store.listEvents(run.id, { limit: 100 }).some((event) => event.type === "run_error"), false);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("workflow step success is rejected until required operation evidence is verified", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-workflow-operation-transition-"));
+  const now = "2026-08-12T16:30:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    const channel = store.createChannel({ name: "Operation transition", boundPath: cwd }, now);
+    const workflow = store.createChannelWorkflow({
+      channelId: channel.id,
+      title: "Operation transition",
+      objective: "Require verified operation evidence",
+      status: "running",
+      createdBy: "system",
+    }, now);
+    const executionPlan = {
+      operations: [{
+        id: "create_file",
+        kind: "file_create",
+        targetKind: "file",
+        targetRef: { type: "operation", id: "target:create_file", label: "app.js" },
+        required: true,
+        dependsOn: [],
+      }],
+    };
+    const step = store.createChannelWorkflowStep({
+      workflowId: workflow.id,
+      title: "Create app.js",
+      prompt: "Create app.js",
+      toParticipantId: "teammate_builtin_engineer",
+      toParticipantLabel: "Engineer",
+      status: "running",
+      metadata: { executionPlan, executionOperationIds: ["create_file"] },
+    }, now);
+
+    const rejected = store.transitionChannelWorkflowStepStatus({
+      workflowStepId: step.id,
+      expectedStatus: "running",
+      event: "succeed",
+      actor: "system",
+      now,
+    });
+    assert.deepEqual(rejected, { ok: false, code: "invalid_transition", currentStatus: "running" });
+
+    store.updateChannelWorkflowStep(step.id, {
+      metadata: {
+        ...step.metadata,
+        executionVerification: {
+          status: "verified",
+          checkedAt: now,
+          operationResults: [{ operationId: "create_file", status: "succeeded", evidenceActionIds: ["action_write_app"] }],
+        },
+      },
+    }, now);
+    const accepted = store.transitionChannelWorkflowStepStatus({
+      workflowStepId: step.id,
+      expectedStatus: "running",
+      event: "succeed",
+      actor: "system",
+      now,
+    });
+    assert.equal(accepted.ok, true);
+    assert.equal(store.getChannelWorkflowStep(step.id).status, "succeeded");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("startup recovery blocks execution-backed success without durable verification", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-workflow-operation-recovery-"));
+  const now = "2026-08-12T17:00:00.000Z";
+  const recoveredAt = "2026-08-12T17:01:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    const channel = store.createChannel({ name: "Operation recovery", boundPath: cwd }, now);
+    const workflow = store.createChannelWorkflow({
+      channelId: channel.id,
+      title: "Operation recovery",
+      objective: "Do not invent operation evidence on restart",
+      status: "running",
+      createdBy: "system",
+    }, now);
+    const step = store.createChannelWorkflowStep({
+      workflowId: workflow.id,
+      title: "Run command",
+      prompt: "Run node app.js",
+      toParticipantId: "teammate_builtin_qa",
+      toParticipantLabel: "QA",
+      status: "running",
+      metadata: {
+        executionPlan: {
+          operations: [{
+            id: "run_command",
+            kind: "run_command",
+            targetKind: "command",
+            targetRef: { type: "operation", id: "target:run_command", label: "node app.js" },
+            commandMatchPolicy: { kind: "exact_command", command: "node app.js" },
+            required: true,
+            dependsOn: [],
+          }],
+        },
+        executionOperationIds: ["run_command"],
+      },
+    }, now);
+    const task = store.createTask({ channelId: channel.id, title: "Run command", prompt: "Run node app.js" }, now);
+    const run = store.createRun({
+      id: "run_operation_recovery_without_verification",
+      cwd,
+      taskId: task.id,
+      channelId: channel.id,
+      workflowStepId: step.id,
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: task.id, title: task.title },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd },
+      createdAt: now,
+    });
+    store.markRunStarted(run.id, now);
+    store.markRunSucceeded(run.id, now);
+    store.updateChannelWorkflowStep(step.id, { taskId: task.id, runId: run.id }, now);
+
+    assert.ok(store.recoverStaleChannelWorkflows(recoveredAt) > 0);
+    assert.equal(store.getChannelWorkflowStep(step.id).status, "blocked");
+    assert.equal(store.getChannelWorkflow(workflow.id).status, "blocked");
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });

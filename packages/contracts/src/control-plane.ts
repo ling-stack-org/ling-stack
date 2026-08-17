@@ -22,6 +22,19 @@ export interface ControlPlaneEvent {
   readonly entityId: string;
   readonly action: string;
   readonly data: Readonly<Record<string, unknown>>;
+  readonly idempotencyKey?: string;
+}
+
+export type ControlPlaneReplayDisposition = "complete" | "snapshot_required";
+export type ControlPlaneReplaySnapshotReason = "cursor_unavailable" | "retention_gap" | "window_exceeded";
+
+export interface ControlPlaneReplayWindow {
+  readonly disposition: ControlPlaneReplayDisposition;
+  readonly requestedAfterSeq: number;
+  readonly replayFloorSeq: number;
+  readonly upperBoundSeq: number;
+  readonly nextAfterSeq: number;
+  readonly reason?: ControlPlaneReplaySnapshotReason;
 }
 
 export interface ControlPlaneDomainSnapshot {
@@ -51,10 +64,20 @@ export interface ControlPlaneEventsRequest {
 export interface ControlPlaneEventsResponse {
   readonly cwd: string;
   readonly workspaceId: string;
-  readonly afterSeq: number;
-  readonly limit: number;
+  readonly window: ControlPlaneReplayWindow;
   readonly events: readonly ControlPlaneEvent[];
 }
+
+export type ControlPlaneSubscribeResult =
+  | {
+      readonly disposition: "complete";
+      readonly subscriptionId: string;
+      readonly window: ControlPlaneReplayWindow;
+    }
+  | {
+      readonly disposition: "snapshot_required";
+      readonly window: ControlPlaneReplayWindow;
+    };
 
 export interface ControlPlaneLink {
   readonly href: string;

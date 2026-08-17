@@ -477,7 +477,8 @@ export function controlPlaneEventSelectSql(whereClause: string): string {
       entity_type,
       entity_id,
       action,
-      data_json
+      data_json,
+      idempotency_key
     FROM control_plane_events
     ${whereClause}
   `;
@@ -1079,6 +1080,7 @@ export function channelIntentDecisionSelectSql(whereClause: string): string {
       context_projection_version,
       action,
       selected_teammate_ids_json,
+      participant_manifest_json,
       proposal_id,
       result_item_ids_json,
       workflow_id,
@@ -1117,6 +1119,7 @@ export function channelExecutionProposalSelectSql(whereClause: string): string {
       linked_run_id,
       linked_workflow_id,
       error_message,
+      blocker_json,
       created_at,
       updated_at
     FROM channel_execution_proposals
@@ -1469,6 +1472,7 @@ export function channelWorkflowStepSelectSql(whereClause: string): string {
       prompt,
       to_participant_id,
       to_participant_label,
+      participant_authority_json,
       status,
       blocker,
       result_summary,
@@ -1558,6 +1562,8 @@ export function approvalCheckpointSelectSql(whereClause: string): string {
       side_effect_json,
       preview_artifact_ids_json,
       result_artifact_ids_json,
+      revision,
+      resume_basis_json,
       runner_resume_handle_json,
       created_at,
       updated_at,
@@ -1731,6 +1737,8 @@ export function artifactSelectSql(whereClause: string): string {
       title,
       content_type,
       size_bytes,
+      sealed_payload_json,
+      content_sha256,
       created_at
     FROM artifacts
     ${whereClause}

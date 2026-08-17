@@ -9132,6 +9132,590 @@ test("workflow activity uses review source instead of the legacy context run sur
   await expectConversationReviewSurface(page);
 });
 
+test("a terminal report published after workflow completion appears without reloading the channel", async ({ page }) => {
+  await useEnglishLocale(page);
+  await page.addInitScript(() => {
+    const subscribers = new Set<EventTarget>();
+    class TestEventSource extends EventTarget {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+      static readonly CLOSED = 2;
+      readonly CONNECTING = 0;
+      readonly OPEN = 1;
+      readonly CLOSED = 2;
+      readonly url: string;
+      readonly withCredentials = false;
+      readyState = TestEventSource.OPEN;
+      onopen: ((event: Event) => void) | null = null;
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+
+      constructor(url: string | URL) {
+        super();
+        this.url = String(url);
+        subscribers.add(this);
+      }
+
+      close(): void {
+        this.readyState = TestEventSource.CLOSED;
+        subscribers.delete(this);
+      }
+    }
+    Object.defineProperty(globalThis, "EventSource", { configurable: true, value: TestEventSource });
+    Object.defineProperty(globalThis, "__emitLateTerminalReportInvalidation", {
+      configurable: true,
+      value: () => {
+        const events = [
+          {
+            seq: 999,
+            workspaceId: "workspace_default",
+            cwd: "/workspace",
+            ts: "2026-08-10T00:01:04.000Z",
+            domain: "runs",
+            entityType: "workflow",
+            entityId: "workflow_late_terminal_report",
+            action: "workflow.completed",
+            data: {},
+          },
+          {
+            seq: 1000,
+            workspaceId: "workspace_default",
+            cwd: "/workspace",
+            ts: "2026-08-10T00:01:05.000Z",
+            domain: "work_units",
+            entityType: "terminal_report",
+            entityId: "terminal_report_late_terminal_report",
+            action: "terminal_report.published",
+            data: {},
+          },
+        ];
+        for (const data of events) {
+          const event = new MessageEvent("control_plane_event", { data: JSON.stringify(data) });
+          subscribers.forEach((subscriber) => subscriber.dispatchEvent(event));
+        }
+      },
+    });
+    Object.defineProperty(globalThis, "__readyLateTerminalReportControlPlane", {
+      configurable: true,
+      value: () => {
+        const ready = new MessageEvent("control_plane_replay_ready", {
+          data: JSON.stringify({
+            disposition: "complete",
+            requestedAfterSeq: 0,
+            replayFloorSeq: 0,
+            upperBoundSeq: 0,
+            nextAfterSeq: 0,
+          }),
+        });
+        subscribers.forEach((subscriber) => subscriber.dispatchEvent(ready));
+      },
+    });
+    Object.defineProperty(globalThis, "__lateTerminalReportSubscriberCount", {
+      configurable: true,
+      value: () => subscribers.size,
+    });
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const sourceMessageId = "message_late_terminal_report";
+  const workflowId = "workflow_late_terminal_report";
+  const stepId = "workflow_step_late_terminal_report";
+  const runId = "run_late_terminal_report";
+  const reportId = "terminal_report_late_terminal_report";
+  const sourceCreatedAt = "2026-08-10T00:00:00.000Z";
+  const terminalAt = "2026-08-10T00:01:00.000Z";
+  const reportAt = "2026-08-10T00:01:05.000Z";
+  const runSeed = state.runs[0];
+  if (!runSeed) throw new Error("Base run fixture is missing");
+
+  state.channelMessages = [{
+    id: sourceMessageId,
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    kind: "message",
+    intent: "discuss",
+    authorType: "local-user",
+    authorId: "local-user",
+    body: "Create and verify late-result.txt.",
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "ready",
+    createdAt: sourceCreatedAt,
+    updatedAt: sourceCreatedAt,
+  }];
+  state.channelWorkflows = [{
+    id: workflowId,
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    title: "Late terminal result",
+    objective: "Create and verify late-result.txt.",
+    status: "succeeded",
+    createdBy: "ling_agent",
+    metadata: { sourceMessageId },
+    createdAt: sourceCreatedAt,
+    updatedAt: terminalAt,
+  }];
+  state.channelWorkflowSteps = [{
+    id: stepId,
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    workflowId,
+    runId,
+    position: 1,
+    title: "Create and verify",
+    prompt: "Create and verify late-result.txt.",
+    toParticipantId: "engineer",
+    toParticipantLabel: "Engineer",
+    status: "succeeded",
+    resultSummary: "late-result.txt was created and verified.",
+    createdAt: sourceCreatedAt,
+    updatedAt: terminalAt,
+  }];
+  state.runs = [{
+    ...runSeed,
+    id: runId,
+    channelId: "channel_engineering",
+    workflowStepId: stepId,
+    status: "succeeded",
+    errorMessage: undefined,
+    createdAt: sourceCreatedAt,
+    startedAt: sourceCreatedAt,
+    endedAt: terminalAt,
+    updatedAt: terminalAt,
+  }];
+  state.approvals = [];
+  state.tasks = [];
+  state.terminalReports = [];
+  state.terminalReportResponseDelaysMs = [1_000];
+
+  await mockDaemon(page, state);
+  await page.route(/\/control-plane\/snapshot(?:\?.*)?$/, async (route) => {
+    await route.fulfill({
+      json: {
+        cwd,
+        workspaceId: "workspace_default",
+        generatedAt: "2026-08-10T00:00:00.000Z",
+        latestEventSeq: 0,
+        domains: {
+          runs: { ok: true, revision: 0, data: { activeRuns: [], recentRuns: [], stuck: { count: 0, workUnitIds: [] }, links: {} } },
+        },
+      },
+    });
+  });
+  await page.goto("/");
+  await expect.poll(() => page.evaluate(() =>
+    (globalThis as typeof globalThis & { __lateTerminalReportSubscriberCount: () => number })
+      .__lateTerminalReportSubscriberCount()
+  )).toBe(1);
+  await page.evaluate(() => {
+    (globalThis as typeof globalThis & { __readyLateTerminalReportControlPlane: () => void })
+      .__readyLateTerminalReportControlPlane();
+  });
+  await openEngineeringChannel(page);
+
+  const turn = page.locator(".conversation-turn").filter({ hasText: "Create and verify late-result.txt." });
+  await expect(turn.locator(".conversation-work-cell")).toBeVisible();
+  await expect(turn.locator(".terminal-report-block")).toHaveCount(0);
+  await expect.poll(() => state.terminalReportQueryCount ?? 0).toBeGreaterThan(0);
+  const queriesBeforePublication = state.terminalReportQueryCount ?? 0;
+  const itemQueriesBeforePublication = state.channelMessageQueries?.length ?? 0;
+
+  state.terminalReports.push({
+    schemaVersion: 1,
+    id: reportId,
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    sourceMessageId,
+    source: { kind: "workflow", id: workflowId },
+    status: "fallback",
+    language: "en-US",
+    outcome: {
+      status: "succeeded",
+      title: "Late terminal result rendered",
+      summary: "The report arrived after workflow completion.",
+      corrections: [],
+      sourceRefs: [{ kind: "workflow", id: workflowId, visibility: "conversation" }],
+    },
+    changes: [],
+    verification: [],
+    participants: [{
+      agentId: "engineer",
+      displayName: "Engineer",
+      status: "completed",
+      contribution: "Created and verified late-result.txt.",
+      sourceRefs: [{ kind: "workflow_step", id: stepId, visibility: "conversation" }],
+    }],
+    artifacts: [],
+    risks: [],
+    references: [],
+    evidenceSnapshotId: "snapshot_late_terminal_report",
+    evidenceFingerprint: "fingerprint_late_terminal_report",
+    synthesis: { mode: "deterministic_fallback", promptVersion: "terminal-report-v1", attemptCount: 0, validationCodes: [] },
+    createdAt: reportAt,
+    committedAt: reportAt,
+  });
+  state.channelMessages.push({
+    id: `message_${reportId}`,
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    kind: "ai_reply",
+    intent: "discuss",
+    authorType: "ai-teammate",
+    authorId: "ling_agent",
+    sourceItemId: sourceMessageId,
+    body: "Late terminal result rendered\n\nThe report arrived after workflow completion.",
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "ready",
+    createdAt: reportAt,
+    updatedAt: reportAt,
+  });
+
+  await page.evaluate(() => {
+    (globalThis as typeof globalThis & { __emitLateTerminalReportInvalidation: () => void })
+      .__emitLateTerminalReportInvalidation();
+  });
+
+  await expect.poll(() => state.terminalReportQueryCount ?? 0).toBeGreaterThan(queriesBeforePublication);
+  await expect.poll(() => state.channelMessageQueries?.length ?? 0).toBe(itemQueriesBeforePublication + 1);
+  await expect(turn.locator(".terminal-report-block")).toContainText("Late terminal result rendered");
+  await page.waitForTimeout(1_100);
+  await expect(turn.locator(".terminal-report-block")).toContainText("Late terminal result rendered");
+});
+
+test("control-plane reconnect replays from the last applied cursor and refreshes the selected channel once", async ({ page }) => {
+  await useEnglishLocale(page);
+  await page.addInitScript(() => {
+    const subscribers = new Set<EventTarget>();
+    const urls: string[] = [];
+    class TestEventSource extends EventTarget {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+      static readonly CLOSED = 2;
+      readonly CONNECTING = 0;
+      readonly OPEN = 1;
+      readonly CLOSED = 2;
+      readonly url: string;
+      readonly withCredentials = false;
+      readyState = TestEventSource.OPEN;
+      onopen: ((event: Event) => void) | null = null;
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+
+      constructor(url: string | URL) {
+        super();
+        this.url = String(url);
+        urls.push(this.url);
+        subscribers.add(this);
+      }
+
+      close(): void {
+        this.readyState = TestEventSource.CLOSED;
+        subscribers.delete(this);
+      }
+    }
+    Object.defineProperty(globalThis, "EventSource", { configurable: true, value: TestEventSource });
+    Object.defineProperty(globalThis, "__disconnectControlPlane", {
+      configurable: true,
+      value: () => {
+        for (const subscriber of [...subscribers]) {
+          subscriber.dispatchEvent(new Event("error"));
+        }
+      },
+    });
+    Object.defineProperty(globalThis, "__controlPlaneStreamUrls", {
+      configurable: true,
+      value: urls,
+    });
+    Object.defineProperty(globalThis, "__readyControlPlane", {
+      configurable: true,
+      value: (upperBoundSeq: number) => {
+        const ready = new MessageEvent("control_plane_replay_ready", {
+          data: JSON.stringify({
+            disposition: "complete",
+            requestedAfterSeq: upperBoundSeq,
+            replayFloorSeq: 0,
+            upperBoundSeq,
+            nextAfterSeq: upperBoundSeq,
+          }),
+        });
+        subscribers.forEach((subscriber) => subscriber.dispatchEvent(ready));
+      },
+    });
+    const emitInvalidation = (seq: number, domain: "runs" | "work_units" | "approvals", action: string) => {
+      const data = {
+        seq,
+        workspaceId: "workspace_default",
+        cwd: "/workspace",
+        ts: "2026-08-10T00:01:05.000Z",
+        domain,
+        entityType: domain === "runs" ? "run" : domain === "work_units" ? "work_unit" : "approval",
+        entityId: `approval_resume_${domain}`,
+        action,
+        data: {},
+      };
+      subscribers.forEach((subscriber) => subscriber.dispatchEvent(
+        new MessageEvent("control_plane_event", { data: JSON.stringify(data) }),
+      ));
+    };
+    Object.defineProperty(globalThis, "__emitReconnectInvalidations", {
+      configurable: true,
+      value: () => {
+        emitInvalidation(11, "runs", "run.approval_resume_finalized");
+        emitInvalidation(12, "work_units", "work_unit.approval_resume_finalized");
+        emitInvalidation(13, "approvals", "approval.resume_finalized");
+      },
+    });
+    Object.defineProperty(globalThis, "__emitApprovalOnlyInvalidation", {
+      configurable: true,
+      value: () => emitInvalidation(14, "approvals", "approval.resume_blocked"),
+    });
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const controlPlaneRun = state.runs[0];
+  if (!controlPlaneRun) throw new Error("Base run fixture is missing");
+  state.stateTransitions.push({
+    id: "transition_control_plane_cursor_10",
+    workspaceId: "workspace_default",
+    entityType: "run",
+    entityId: controlPlaneRun.id,
+    fromStatus: "queued",
+    toStatus: "running",
+    event: "control_plane_cursor_10_applied",
+    actor: "runtime",
+    createdAt: "2026-08-10T00:00:10.000Z",
+  });
+  await mockDaemon(page, state);
+  await page.route(/\/control-plane\/snapshot(?:\?.*)?$/, async (route) => {
+    await route.fulfill({
+      json: {
+        cwd,
+        workspaceId: "workspace_default",
+        generatedAt: "2026-08-10T00:00:00.000Z",
+        latestEventSeq: 10,
+        domains: {
+          runs: { ok: true, revision: 10, data: { activeRuns: [], recentRuns: [], stuck: { count: 0, workUnitIds: [] }, links: {} } },
+          work_units: { ok: true, revision: 10, data: { active: [], queued: [], stale: [], counts: {} } },
+        },
+      },
+    });
+  });
+  await page.goto("/");
+  await openEngineeringChannel(page);
+  await expect.poll(() => page.evaluate(() =>
+    (globalThis as typeof globalThis & { __controlPlaneStreamUrls: string[] }).__controlPlaneStreamUrls.length
+  )).toBe(1);
+  const itemQueriesBeforeInitialReady = state.channelMessageQueries?.length ?? 0;
+  await page.evaluate(() => {
+    (globalThis as typeof globalThis & { __readyControlPlane: (upperBoundSeq: number) => void })
+      .__readyControlPlane(10);
+  });
+  await expect.poll(() => state.channelMessageQueries?.length ?? 0)
+    .toBeGreaterThan(itemQueriesBeforeInitialReady);
+  await openChannelChatTools(page);
+  await expect(page.locator(".message-bubble").filter({ hasText: "control_plane_cursor_10_applied" }))
+    .toBeVisible();
+  state.stateTransitions.push({
+    id: "transition_control_plane_cursor_13",
+    workspaceId: "workspace_default",
+    entityType: "run",
+    entityId: controlPlaneRun.id,
+    fromStatus: "running",
+    toStatus: "waiting_for_approval",
+    event: "control_plane_cursor_13_applied",
+    actor: "runtime",
+    createdAt: "2026-08-10T00:00:13.000Z",
+  });
+  const itemQueriesBeforeReconnect = state.channelMessageQueries?.length ?? 0;
+  const approvalPolicyQueriesBeforeReconnect = state.approvalPolicyQueryCount ?? 0;
+
+  await page.evaluate(() => {
+    (globalThis as typeof globalThis & { __disconnectControlPlane: () => void }).__disconnectControlPlane();
+  });
+  await expect.poll(() => page.evaluate(() =>
+    (globalThis as typeof globalThis & { __controlPlaneStreamUrls: string[] }).__controlPlaneStreamUrls.length
+  ), { timeout: 5_000 }).toBe(2);
+  await page.evaluate(() => {
+    const scope = globalThis as typeof globalThis & {
+      __emitReconnectInvalidations: () => void;
+      __readyControlPlane: (upperBoundSeq: number) => void;
+    };
+    scope.__emitReconnectInvalidations();
+    scope.__readyControlPlane(13);
+  });
+  await expect.poll(() => state.channelMessageQueries?.length ?? 0, { timeout: 5_000 }).toBe(itemQueriesBeforeReconnect + 1);
+  await expect.poll(() => state.approvalPolicyQueryCount ?? 0, { timeout: 5_000 })
+    .toBe(approvalPolicyQueriesBeforeReconnect + 1);
+  await expect(page.locator(".message-bubble").filter({ hasText: "control_plane_cursor_13_applied" }))
+    .toBeVisible();
+  const streamUrls = await page.evaluate(() =>
+    (globalThis as typeof globalThis & { __controlPlaneStreamUrls: string[] }).__controlPlaneStreamUrls
+  );
+  expect(new URL(streamUrls[0] ?? "http://invalid").searchParams.get("afterSeq")).toBe("10");
+  expect(new URL(streamUrls[1] ?? "http://invalid").searchParams.get("afterSeq")).toBe("10");
+
+  await page.evaluate(() => {
+    (globalThis as typeof globalThis & { __disconnectControlPlane: () => void }).__disconnectControlPlane();
+  });
+  await expect.poll(() => page.evaluate(() =>
+    (globalThis as typeof globalThis & { __controlPlaneStreamUrls: string[] }).__controlPlaneStreamUrls.length
+  ), { timeout: 5_000 }).toBe(3);
+  const finalStreamUrls = await page.evaluate(() =>
+    (globalThis as typeof globalThis & { __controlPlaneStreamUrls: string[] }).__controlPlaneStreamUrls
+  );
+  expect(new URL(finalStreamUrls[2] ?? "http://invalid").searchParams.get("afterSeq")).toBe("13");
+
+  const approvalQueriesBeforeBlocker = state.approvalQueryCount ?? 0;
+  await page.evaluate(() => {
+    const scope = globalThis as typeof globalThis & {
+      __emitApprovalOnlyInvalidation: () => void;
+      __readyControlPlane: (upperBoundSeq: number) => void;
+    };
+    scope.__emitApprovalOnlyInvalidation();
+    scope.__readyControlPlane(14);
+  });
+  await expect.poll(() => state.approvalQueryCount ?? 0, { timeout: 5_000 }).toBe(approvalQueriesBeforeBlocker + 1);
+
+  await page.evaluate(() => {
+    (globalThis as typeof globalThis & { __disconnectControlPlane: () => void }).__disconnectControlPlane();
+  });
+  await expect.poll(() => page.evaluate(() =>
+    (globalThis as typeof globalThis & { __controlPlaneStreamUrls: string[] }).__controlPlaneStreamUrls.length
+  ), { timeout: 5_000 }).toBe(4);
+  const blockerStreamUrls = await page.evaluate(() =>
+    (globalThis as typeof globalThis & { __controlPlaneStreamUrls: string[] }).__controlPlaneStreamUrls
+  );
+  expect(new URL(blockerStreamUrls[3] ?? "http://invalid").searchParams.get("afterSeq")).toBe("14");
+});
+
+test("control-plane snapshot-required subscribes before refresh and applies an event committed after S", async ({ page }) => {
+  await useEnglishLocale(page);
+  await page.addInitScript(() => {
+    const subscribers = new Set<EventTarget>();
+    const urls: string[] = [];
+    class TestEventSource extends EventTarget {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+      static readonly CLOSED = 2;
+      readonly CONNECTING = 0;
+      readonly OPEN = 1;
+      readonly CLOSED = 2;
+      readonly url: string;
+      readonly withCredentials = false;
+      readyState = TestEventSource.OPEN;
+      onopen: ((event: Event) => void) | null = null;
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+      constructor(url: string | URL) {
+        super();
+        this.url = String(url);
+        urls.push(this.url);
+        subscribers.add(this);
+      }
+      close(): void {
+        this.readyState = TestEventSource.CLOSED;
+        subscribers.delete(this);
+      }
+    }
+    const emit = (name: string, data: unknown) => {
+      const event = new MessageEvent(name, { data: JSON.stringify(data) });
+      subscribers.forEach((subscriber) => subscriber.dispatchEvent(event));
+    };
+    Object.defineProperty(globalThis, "EventSource", { configurable: true, value: TestEventSource });
+    Object.defineProperty(globalThis, "__snapshotHandoff", {
+      configurable: true,
+      value: {
+        urls,
+        snapshotRequired: () => emit("control_plane_snapshot_required", {
+          disposition: "snapshot_required",
+          requestedAfterSeq: 5,
+          replayFloorSeq: 6,
+          upperBoundSeq: 8,
+          nextAfterSeq: 8,
+          reason: "retention_gap",
+        }),
+        eventAfterSnapshot: () => emit("control_plane_event", {
+          seq: 9,
+          workspaceId: "workspace_default",
+          cwd: "/workspace",
+          ts: "2026-08-10T00:01:09.000Z",
+          domain: "work_units",
+          entityType: "terminal_report",
+          entityId: "terminal_report_after_snapshot",
+          action: "terminal_report.published",
+          data: {},
+        }),
+        replayReady: () => emit("control_plane_replay_ready", {
+          disposition: "complete",
+          requestedAfterSeq: 8,
+          replayFloorSeq: 6,
+          upperBoundSeq: 8,
+          nextAfterSeq: 8,
+        }),
+        disconnect: () => subscribers.forEach((subscriber) => subscriber.dispatchEvent(new Event("error"))),
+      },
+    });
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  let snapshotSeq = 5;
+  await mockDaemon(page, state);
+  await page.route(/\/control-plane\/snapshot(?:\?.*)?$/, async (route) => {
+    await route.fulfill({
+      json: {
+        cwd,
+        workspaceId: "workspace_default",
+        generatedAt: "2026-08-10T00:00:00.000Z",
+        latestEventSeq: snapshotSeq,
+        domains: {
+          runs: { ok: true, revision: snapshotSeq, data: { activeRuns: [], recentRuns: [], stuck: { count: 0, workUnitIds: [] }, links: {} } },
+          work_units: { ok: true, revision: snapshotSeq, data: { active: [], queued: [], stale: [], counts: {} } },
+        },
+      },
+    });
+  });
+
+  await page.goto("/");
+  await openEngineeringChannel(page);
+  await expect.poll(() => page.evaluate(() =>
+    (globalThis as typeof globalThis & { __snapshotHandoff: { urls: string[] } }).__snapshotHandoff.urls.length
+  )).toBe(1);
+  await page.evaluate(() => {
+    (globalThis as typeof globalThis & { __snapshotHandoff: { snapshotRequired: () => void } })
+      .__snapshotHandoff.snapshotRequired();
+  });
+  snapshotSeq = 8;
+  await expect.poll(() => page.evaluate(() =>
+    (globalThis as typeof globalThis & { __snapshotHandoff: { urls: string[] } }).__snapshotHandoff.urls.length
+  )).toBe(2);
+  const itemQueriesBeforeHandoff = state.channelMessageQueries?.length ?? 0;
+  await page.evaluate(() => {
+    const handoff = (globalThis as typeof globalThis & {
+      __snapshotHandoff: { eventAfterSnapshot: () => void; replayReady: () => void };
+    }).__snapshotHandoff;
+    handoff.eventAfterSnapshot();
+    handoff.replayReady();
+  });
+  await expect.poll(() => state.channelMessageQueries?.length ?? 0, { timeout: 5_000 })
+    .toBeGreaterThan(itemQueriesBeforeHandoff);
+  await page.waitForTimeout(300);
+  await page.evaluate(() => {
+    (globalThis as typeof globalThis & { __snapshotHandoff: { disconnect: () => void } })
+      .__snapshotHandoff.disconnect();
+  });
+  await expect.poll(() => page.evaluate(() =>
+    (globalThis as typeof globalThis & { __snapshotHandoff: { urls: string[] } }).__snapshotHandoff.urls.length
+  ), { timeout: 5_000 }).toBe(3);
+  const urls = await page.evaluate(() =>
+    (globalThis as typeof globalThis & { __snapshotHandoff: { urls: string[] } }).__snapshotHandoff.urls
+  );
+  expect(new URL(urls[0] ?? "http://invalid").searchParams.get("afterSeq")).toBe("5");
+  expect(new URL(urls[1] ?? "http://invalid").searchParams.get("afterSeq")).toBe("8");
+  expect(new URL(urls[2] ?? "http://invalid").searchParams.get("afterSeq")).toBe("9");
+});
+
 test("local channel work-cell demo fixture renders a realistic multi-agent operation record", async ({ page }) => {
   const runtimeErrors: string[] = [];
   page.on("console", (message) => {

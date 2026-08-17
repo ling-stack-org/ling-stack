@@ -152,6 +152,9 @@ export interface ChannelMessageRenderersInput {
   readonly onOpenApprovalDetail: (approval: ApprovalRequest | undefined) => void;
   readonly onOpenContextSummaryInConversationDetail: (summary: ChannelContextSummary) => void;
   readonly onOpenRun: (runId: string) => void;
+  readonly onRepairProposalModelBinding: (
+    blocker: NonNullable<ChannelExecutionProposal["blocker"]>,
+  ) => void;
   readonly onOpenFileReference: () => void;
   readonly onOpenTerminalReportFile: (target: TerminalReportFileTarget) => void;
   readonly onOpenWorkspaceReview: (target: ConversationWorkspaceReviewTarget) => void;
@@ -818,6 +821,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
         onCancel={() => input.onCancelExecutionProposal(proposal)}
         onUpdate={input.onUpdateExecutionProposal}
         onOpenRun={input.onOpenRun}
+        onRepairModelBinding={input.onRepairProposalModelBinding}
       />
     );
   }

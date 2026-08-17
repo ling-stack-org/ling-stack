@@ -244,6 +244,51 @@ Rules:
 Future RPC and WebSocket adapters must call the same processors. They must not create a
 second approval path, secret resolver, or runtime state model.
 
+### Replay and subscription recovery
+
+Control-plane transports share one bounded replay-window evaluator over the per-workspace
+`control_plane_replay_state` row:
+
+```text
+requestedAfterSeq + domains + safe limit
+  -> replayFloorSeq + captured upperBoundSeq
+  -> events in (requestedAfterSeq, upperBoundSeq], limit + 1
+       complete           -> events + nextAfterSeq=upperBoundSeq
+       cursor unavailable -> snapshot_required
+       retention gap      -> snapshot_required
+       window exceeded    -> snapshot_required
+```
+
+Filtered domains and other workspaces may create numeric sequence gaps; they do not make
+the window incomplete. The durable floor/latest watermark survives an empty event table.
+Every append advances latest in the event transaction. Future deletion or compaction must
+advance the floor in the same transaction as deletion.
+
+SSE/RPC subscription setup is live-first but provisional:
+
+```text
+register provisional subscriber, no flush
+  -> read bounded replay window
+     -> snapshot_required: send/return disposition, close and unregister
+     -> complete: replay <= bound, signal ready, drain buffered > bound, activate
+     -> error: close and unregister before propagating
+```
+
+For RPC, activation occurs only after the subscribe response has been sent, so replay or
+live notifications cannot race ahead of the returned `subscriptionId`. A snapshot-required
+response is normal control flow and retains no subscription. Clients advance their
+reconnect cursor only after the canonical refresh triggered by an event succeeds; receipt
+alone is not acknowledgement.
+
+Approval-resume lifecycle uses the same observer rule. Resume claim, replacement-Attempt
+start, runtime suspension, terminal evidence, and structured resume blocker append
+content-free invalidations in the same SQLite transaction as their visible state change,
+in the existing `runs`, `work_units`, and `approvals` domains.
+Their idempotency keys bind checkpoint id, revision, Attempt id, and transition kind.
+Neither the event payload nor its delivery may consume an approval, start an Attempt, or
+advance fan-in. Live delivery, replay, and snapshot-required all reload the canonical
+projection before the client advances its applied cursor.
+
 ## Snapshot Domains
 
 | Domain | Snapshot purpose |

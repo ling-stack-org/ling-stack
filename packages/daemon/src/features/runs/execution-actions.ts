@@ -96,10 +96,9 @@ export function listExecutionActions(store: ExecutionActionStore, options: ListE
     .map((approval) => approvalToExecutionAction(store, approval))
     .filter((action) => !options.threadId || action.threadId === options.threadId)
     .filter((action) => !options.actionType || action.actionType === options.actionType);
-  const nonApprovalActions = options.status && approvalStatus
-    ? []
-    : listNonApprovalToolActions(store, options, limit, approvalActions);
-  return [...approvalActions, ...nonApprovalActions]
+  const toolActions = listToolActions(store, options, limit);
+  const actions = mergeApprovalToolLifecycles(approvalActions, toolActions);
+  return actions
     .filter((action) => !options.status || action.status === options.status)
     .filter((action) => !options.actionType || action.actionType === options.actionType)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
@@ -130,19 +129,17 @@ function approvalToExecutionAction(store: ExecutionActionStore, approval: Approv
     policySnapshot: readRunPolicySnapshot(run),
     createdAt: approval.createdAt,
     resolvedAt: approval.resolvedAt,
-    completedAt: approval.resolvedAt,
+    completedAt: approval.status === "approved" ? undefined : approval.resolvedAt,
   };
 }
 
-function listNonApprovalToolActions(
+function listToolActions(
   store: ExecutionActionStore,
   options: ListExecutionActionsOptions,
   limit: number,
-  approvalActions: readonly ExecutionAction[],
 ): ExecutionAction[] {
   const runs = collectRunsForActionReadModel(store, options, limit);
-  const approvalToolCallIds = new Set(approvalActions.map((action) => action.toolCallId).filter((id): id is string => Boolean(id)));
-  return runs.flatMap((run) => deriveToolActionsForRun(store, run, approvalToolCallIds));
+  return runs.flatMap((run) => deriveToolActionsForRun(store, run));
 }
 
 function collectRunsForActionReadModel(store: ExecutionActionStore, options: ListExecutionActionsOptions, limit: number): RunSession[] {
@@ -161,7 +158,6 @@ function collectRunsForActionReadModel(store: ExecutionActionStore, options: Lis
 function deriveToolActionsForRun(
   store: ExecutionActionStore,
   run: RunSession,
-  approvalToolCallIds: ReadonlySet<string>,
 ): ExecutionAction[] {
   const events = listAllRunEvents(store, run.id);
   const starts = new Map<string, RunEventEnvelope>();
@@ -181,9 +177,6 @@ function deriveToolActionsForRun(
   const toolCallIds = new Set([...starts.keys(), ...ends.keys()]);
   const actions: ExecutionAction[] = [];
   for (const toolCallId of toolCallIds) {
-    if (approvalToolCallIds.has(toolCallId)) {
-      continue;
-    }
     const start = starts.get(toolCallId);
     const end = ends.get(toolCallId);
     const source = start ?? end;
@@ -232,6 +225,68 @@ function deriveToolActionsForRun(
     });
   }
   return actions;
+}
+
+function mergeApprovalToolLifecycles(
+  approvalActions: readonly ExecutionAction[],
+  toolActions: readonly ExecutionAction[],
+): ExecutionAction[] {
+  const toolActionsByCorrelationKey = new Map<string, ExecutionAction>();
+  for (const toolAction of toolActions) {
+    const correlationKey = executionActionToolCorrelationKey(toolAction);
+    if (correlationKey) {
+      toolActionsByCorrelationKey.set(correlationKey, toolAction);
+    }
+  }
+  const approvalToolCorrelationKeys = new Set<string>();
+  const mergedApprovals = approvalActions.map((approvalAction) => {
+    const correlationKey = executionActionToolCorrelationKey(approvalAction);
+    if (!correlationKey) return approvalAction;
+    approvalToolCorrelationKeys.add(correlationKey);
+    const toolAction = toolActionsByCorrelationKey.get(correlationKey);
+    if (!toolAction) return approvalAction;
+    const executionStarted = approvalAction.status === "approved";
+    return {
+      ...approvalAction,
+      status: executionStarted ? toolAction.status : approvalAction.status,
+      targetRefs: mergeTargetRefs(approvalAction.targetRefs, toolAction.targetRefs),
+      ...(toolAction.commandEvidence ? { commandEvidence: toolAction.commandEvidence } : {}),
+      createdAt: earliestTimestamp(approvalAction.createdAt, toolAction.createdAt),
+      updatedAt: latestTimestamp(
+        approvalAction.updatedAt,
+        approvalAction.resolvedAt,
+        toolAction.updatedAt,
+        toolAction.executedAt,
+        toolAction.completedAt,
+      ),
+      ...(executionStarted && toolAction.executedAt ? { executedAt: toolAction.executedAt } : {}),
+      completedAt: executionStarted ? toolAction.completedAt : approvalAction.completedAt,
+    } satisfies ExecutionAction;
+  });
+  return [
+    ...mergedApprovals,
+    ...toolActions.filter((action) => {
+      const correlationKey = executionActionToolCorrelationKey(action);
+      return !correlationKey || !approvalToolCorrelationKeys.has(correlationKey);
+    }),
+  ];
+}
+
+function executionActionToolCorrelationKey(action: ExecutionAction): string | undefined {
+  return action.runId && action.toolCallId
+    ? JSON.stringify([action.runId, action.toolCallId])
+    : undefined;
+}
+
+function earliestTimestamp(left: string, right: string): string {
+  return left < right ? left : right;
+}
+
+function latestTimestamp(...values: readonly (string | undefined)[]): string | undefined {
+  return values.reduce<string | undefined>((latest, value) => {
+    if (!value) return latest;
+    return !latest || value > latest ? value : latest;
+  }, undefined);
 }
 
 function listAllRunEvents(store: ExecutionActionStore, runId: string): RunEventEnvelope[] {

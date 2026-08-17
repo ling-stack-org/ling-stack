@@ -78,6 +78,8 @@ export * from "./work-item-types.js";
 export * from "./terminal-report-types.js";
 export * from "./terminal-report-validation.js";
 export * from "./terminal-report-fallback.js";
+export * from "./terminal-report-publication-types.js";
+export * from "./workflow-completion-read-set.js";
 export * from "./conversation-revision-types.js";
 export * from "./conversation-item-store-types.js";
 export * from "./conversation-turn-ingest-types.js";

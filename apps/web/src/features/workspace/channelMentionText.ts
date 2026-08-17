@@ -24,7 +24,7 @@ export function mentionTokenExistsInText(body: string, mention: ChannelMention):
     if (!escaped) {
       return false;
     }
-    return new RegExp(`(^|\\s)@${escaped}(?=$|\\s|[.,!?;:，。！？；：)])`, "i").test(body);
+    return new RegExp(`(^|[\\s,.;:!?，。！？；：、（）()【】\\[\\]])@${escaped}(?=$|[\\s,.;:!?，。！？；：、（）()【】\\[\\]])`, "iu").test(body);
   });
 }
 

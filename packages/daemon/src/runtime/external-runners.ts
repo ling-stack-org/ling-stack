@@ -18,6 +18,7 @@ export interface ExternalRunnerProfile {
   readonly supportedProviderApis: readonly string[];
   readonly supportedTools: readonly string[];
   readonly capabilities: readonly string[];
+  readonly resumeCapabilities: RegisteredRunner["resumeCapabilities"];
 }
 
 export const externalRunnerProfiles: readonly ExternalRunnerProfile[] = [
@@ -29,6 +30,7 @@ export const externalRunnerProfiles: readonly ExternalRunnerProfile[] = [
     supportedProviderApis: ["openai-responses", "openai-completions"],
     supportedTools: ["read", "grep", "find", "ls"],
     capabilities: ["stream_text", "tool_events", "approval_interception", "artifacts", "native_resume"],
+    resumeCapabilities: { nativeResume: true, hostApprovalContinuation: [] },
   },
   {
     id: OPENCLAW_ACP_RUNNER_ID,
@@ -38,6 +40,7 @@ export const externalRunnerProfiles: readonly ExternalRunnerProfile[] = [
     supportedProviderApis: ["openai-responses", "openai-completions", "anthropic-messages"],
     supportedTools: ["read", "grep", "find", "ls"],
     capabilities: ["stream_text", "tool_events", "approval_interception", "artifacts", "mcp_tools"],
+    resumeCapabilities: { nativeResume: false, hostApprovalContinuation: [] },
   },
 ];
 
@@ -61,6 +64,7 @@ export function listExternalRunnerRegistrations(config: RunnerConfig = {}): Regi
       supportedProviderApis: profile.supportedProviderApis,
       supportedTools: profile.supportedTools,
       capabilities: profile.capabilities,
+      resumeCapabilities: profile.resumeCapabilities,
       featureFlag: profile.featureFlag,
       disabledReason: enabled ? undefined : futureRunnerDisabledReason(profile.displayName, runnerConfig),
     };

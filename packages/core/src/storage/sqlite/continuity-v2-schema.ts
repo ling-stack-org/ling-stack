@@ -328,6 +328,7 @@ function createReferenceTables(database: DatabaseSync): void {
       linked_run_id TEXT,
       linked_workflow_id TEXT,
       error_message TEXT,
+      blocker_json TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -451,7 +452,7 @@ function copyReferenceRows(database: DatabaseSync): void {
            title, prompt, assignee_teammate_id, acceptance_criteria_json,
            collaboration_steps_json, required_tools_json, risk_summary, response_language,
            shaping_json, status, linked_task_id, linked_run_id, linked_workflow_id,
-           error_message, created_at, updated_at
+           error_message, NULL AS blocker_json, created_at, updated_at
     FROM channel_execution_proposals${LEGACY_SUFFIX};
 
     INSERT INTO channel_intent_decisions

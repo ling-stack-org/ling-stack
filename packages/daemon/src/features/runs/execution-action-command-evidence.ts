@@ -44,7 +44,11 @@ export function deriveExecutionActionCommandEvidence(input: {
   readonly start?: RunEventEnvelope;
   readonly end?: RunEventEnvelope;
 }): ExecutionActionCommandEvidence | undefined {
+  const unifiedExecEnvelopePresent = hasUnifiedExecEnvelope(input.end);
   const result = readUnifiedExecResult(input.end);
+  const outcome = unifiedExecEnvelopePresent
+    ? readUnifiedExecOutcome(input.end) ?? "unknown"
+    : inferLegacyPiOutcome(input.end);
   const command = readCommand(result?.command) ?? readCommand(readToolArgs(input.start));
   if (!command) {
     return undefined;
@@ -53,10 +57,17 @@ export function deriveExecutionActionCommandEvidence(input: {
   const updateEvents = input.events.filter((event) =>
     event.type === "tool_update" && readToolCallId(event) === input.toolCallId,
   );
-  const streamedChunks = updateEvents
+  const structuredStreamedChunks = updateEvents
     .map(readOutputChunk)
     .filter((chunk): chunk is ExecutionActionCommandOutputChunk => Boolean(chunk));
-  const chunks = addFinalPreviewFallbacks(streamedChunks, result, input.end);
+  const legacyChunk = unifiedExecEnvelopePresent
+    ? undefined
+    : readLegacyPiOutputChunk(input.end) ?? readLatestLegacyPiUpdateChunk(updateEvents);
+  const chunks = addFinalPreviewFallbacks(
+    legacyChunk ? [legacyChunk] : structuredStreamedChunks,
+    result,
+    input.end,
+  );
   const bounded = boundOutputChunks(chunks);
   const latestEventSeq = Math.max(
     input.start?.seq ?? 0,
@@ -73,11 +84,12 @@ export function deriveExecutionActionCommandEvidence(input: {
 
   return {
     command,
+    outcome,
     cwd: result?.cwd ?? readString(readToolArgs(input.start), "cwd"),
     startedAt: result?.startedAt ?? input.start?.ts,
     completedAt: result?.endedAt ?? input.end?.ts,
     durationMs: result?.durationMs ?? durationBetween(input.start?.ts, input.end?.ts),
-    exitCode: result?.exitCode,
+    exitCode: result?.exitCode ?? inferLegacyPiExitCode(input.end, unifiedExecEnvelopePresent),
     signal: result?.signal,
     timedOut: result?.timedOut,
     cancelled: result?.cancelled,
@@ -92,19 +104,63 @@ export function deriveExecutionActionCommandEvidence(input: {
   };
 }
 
+function hasUnifiedExecEnvelope(event: RunEventEnvelope | undefined): boolean {
+  if (!event || !isRecord(event.data) || !isRecord(event.data.result)) {
+    return false;
+  }
+  const eventResult = event.data.result;
+  if (isRecord(eventResult.details) && "unifiedExec" in eventResult.details) {
+    return true;
+  }
+  if ("unifiedExec" in eventResult) {
+    return true;
+  }
+  return isUnifiedExecStatus(eventResult.status);
+}
+
+function inferLegacyPiExitCode(
+  end: RunEventEnvelope | undefined,
+  unifiedExecEnvelopePresent: boolean,
+): number | undefined {
+  if (unifiedExecEnvelopePresent || !end || !isRecord(end.data)) {
+    return undefined;
+  }
+  return end.data.isError === false ? 0 : undefined;
+}
+
+function inferLegacyPiOutcome(
+  end: RunEventEnvelope | undefined,
+): ExecutionActionCommandEvidence["outcome"] {
+  if (!end || !isRecord(end.data)) {
+    return undefined;
+  }
+  if (end.data.isError === false) {
+    return "succeeded";
+  }
+  if (end.data.isError === true) {
+    return "failed";
+  }
+  return "unknown";
+}
+
 export function executionActionStatusFromCommandEvidence(
   evidence: ExecutionActionCommandEvidence | undefined,
 ): "succeeded" | "failed" | "cancelled" | undefined {
   if (!evidence?.completedAt) {
     return undefined;
   }
-  if (evidence.cancelled) {
+  if (evidence.cancelled || evidence.outcome === "cancelled") {
     return "cancelled";
   }
-  if (evidence.timedOut || (evidence.exitCode !== undefined && evidence.exitCode !== 0)) {
+  if (
+    evidence.timedOut ||
+    evidence.outcome === "timed_out" ||
+    evidence.outcome === "failed" ||
+    (evidence.exitCode !== undefined && evidence.exitCode !== 0)
+  ) {
     return "failed";
   }
-  return evidence.exitCode === 0 ? "succeeded" : undefined;
+  return evidence.outcome === "succeeded" && evidence.exitCode === 0 ? "succeeded" : "failed";
 }
 
 function readOutputChunk(event: RunEventEnvelope): ExecutionActionCommandOutputChunk | undefined {
@@ -129,6 +185,46 @@ function readOutputChunk(event: RunEventEnvelope): ExecutionActionCommandOutputC
     byteCount: Buffer.byteLength(text, "utf8"),
     redacted: chunk.redacted === true,
     ts: typeof chunk.ts === "string" ? chunk.ts : event.ts,
+  };
+}
+
+function readLatestLegacyPiUpdateChunk(
+  updateEvents: readonly RunEventEnvelope[],
+): ExecutionActionCommandOutputChunk | undefined {
+  for (let index = updateEvents.length - 1; index >= 0; index -= 1) {
+    const chunk = readLegacyPiOutputChunk(updateEvents[index]);
+    if (chunk) {
+      return chunk;
+    }
+  }
+  return undefined;
+}
+
+function readLegacyPiOutputChunk(
+  event: RunEventEnvelope | undefined,
+): ExecutionActionCommandOutputChunk | undefined {
+  if (!event || !isRecord(event.data)) {
+    return undefined;
+  }
+  const container = event.type === "tool_update" ? event.data.partialResult : event.data.result;
+  if (!isRecord(container) || !Array.isArray(container.content)) {
+    return undefined;
+  }
+  const text = stripAnsi(container.content
+    .filter((block): block is Record<string, unknown> => isRecord(block))
+    .filter((block) => block.type === "text" && typeof block.text === "string")
+    .map((block) => block.text as string)
+    .join(""));
+  if (!text) {
+    return undefined;
+  }
+  return {
+    eventSeq: event.seq,
+    stream: "stdout",
+    text,
+    byteCount: Buffer.byteLength(text, "utf8"),
+    redacted: false,
+    ts: event.ts,
   };
 }
 
@@ -206,15 +302,7 @@ function boundOutputChunks(chunks: readonly ExecutionActionCommandOutputChunk[])
 }
 
 function readUnifiedExecResult(event: RunEventEnvelope | undefined): UnifiedExecResultLike | undefined {
-  if (!event || !isRecord(event.data)) {
-    return undefined;
-  }
-  const eventResult = event.data.result;
-  const candidate = isRecord(eventResult) && isRecord(eventResult.details)
-    ? eventResult.details.unifiedExec
-    : isRecord(eventResult) && "unifiedExec" in eventResult
-      ? eventResult.unifiedExec
-      : eventResult;
+  const candidate = readUnifiedExecCandidate(event);
   if (!isRecord(candidate) || !isUnifiedExecStatus(candidate.status)) {
     return undefined;
   }
@@ -246,6 +334,25 @@ function readUnifiedExecResult(event: RunEventEnvelope | undefined): UnifiedExec
     stderr: candidate.stderr,
     artifacts: candidate.artifacts.filter(isUnifiedExecArtifact),
   };
+}
+
+function readUnifiedExecOutcome(
+  event: RunEventEnvelope | undefined,
+): ExecutionActionCommandEvidence["outcome"] | undefined {
+  const candidate = readUnifiedExecCandidate(event);
+  return isRecord(candidate) && isUnifiedExecStatus(candidate.status) ? candidate.status : undefined;
+}
+
+function readUnifiedExecCandidate(event: RunEventEnvelope | undefined): unknown {
+  if (!event || !isRecord(event.data)) {
+    return undefined;
+  }
+  const eventResult = event.data.result;
+  return isRecord(eventResult) && isRecord(eventResult.details) && "unifiedExec" in eventResult.details
+    ? eventResult.details.unifiedExec
+    : isRecord(eventResult) && "unifiedExec" in eventResult
+      ? eventResult.unifiedExec
+      : eventResult;
 }
 
 function isUnifiedExecStatus(value: unknown): value is UnifiedExecResultLike["status"] {

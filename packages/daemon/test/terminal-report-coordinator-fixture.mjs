@@ -7,13 +7,15 @@ export function createTerminalWorkflowFixture(store, cwd, suffix = "default") {
     authorType: "local-user",
     body: "实现 TerminalReport",
   }, now);
+  const sourceItem = store.getConversationItem(sourceMessage.id);
+  if (!sourceItem?.turnId) throw new Error(`Terminal report fixture source Item has no Turn: ${sourceMessage.id}`);
   const workflow = store.createChannelWorkflow({
     channelId: channel.id,
     title: "实现 TerminalReport",
     objective: "实现 TerminalReport 并完成验证",
     status: "succeeded",
     createdBy: "ling_agent",
-    metadata: { sourceMessageId: sourceMessage.id, responseLanguage: "zh-CN" },
+    metadata: { sourceMessageId: sourceMessage.id, sourceTurnId: sourceItem.turnId, responseLanguage: "zh-CN" },
   }, "2026-07-11T05:01:00.000Z");
   const engineer = store.createChannelWorkflowStep({
     workflowId: workflow.id,

@@ -1,5 +1,12 @@
 # Multi-Agent Orchestrator
 
+Status: active; evidence-aware finalization, Completion Gate, approval-wait suspension,
+reconnect recovery, explicit participant preservation, participant authority/profile,
+and the aggregate source matrix are deterministic-green. Packaged multi-Agent execution
+is blocked on typed participant provider preflight before naked-ready,
+approval-resume/fan-in, and reconnect acceptance continue.
+Last verified: 2026-08-17
+
 ## Purpose
 
 This document defines the first automatic multi-agent orchestration engine for Ling
@@ -52,7 +59,9 @@ Implemented in the first backend slice:
   compiled workflow in one call.
 - `packages/daemon/src/features/channels/orchestrator.ts` performs a deterministic tick:
   it starts at most one eligible step, reuses `prepareWorkflowStepStart()`, and advances
-  only after a linked run reaches terminal state.
+  only after a linked run reaches terminal state. For manifest-backed Continuity v2
+  workflows, the active amendment further requires the shared evidence finalizer before
+  that step may advance.
 - `POST /workflows/:workflowId/orchestrate?cwd=...` triggers the manual tick and detached
   step run bridge.
 - Steps with `approvalGate` now create `workflow_step` approval records before the run
@@ -60,10 +69,11 @@ Implemented in the first backend slice:
   `waiting_for_approval` -> `running` or fail the workflow.
 - `GET /execution-actions` exposes workflow-step approvals with workflow and step target
   refs.
-- Startup recovery now reconciles non-terminal workflows from durable linked run state:
-  terminal linked runs complete/fail their steps, orphaned claimed/running steps become
-  blocked for explicit retry, and safe aggregate workflow state is repaired on store
-  startup.
+- Startup recovery repairs low-level non-terminal workflow/Run state: orphaned
+  claimed/running steps become blocked for explicit retry and legacy workflows may use
+  aggregate repair. Manifest-backed Continuity v2 workflows are the active hardening
+  slice: terminal linked Runs must pass the shared daemon finalizer/reconciler, and Core
+  startup must not infer semantic success from aggregate statuses.
 - The daemon test suite covers `autoplan-lite` compilation and all 8 generated steps
   progressing through the runner, including implementation/QA/ship pre-step gates.
 - The Web channel runtime drawer can create and immediately start the built-in
@@ -327,21 +337,217 @@ Step start:
 
 1. Acquire a `workflow_step` lease.
 2. Transition step `queued -> claimed -> running`.
-3. Build a task from step prompt, context packet, previous step outputs, teammate, and
+3. Resolve the exact `toParticipantId` against the canonical teammate store. Revalidate
+   current availability and the operation-derived required-tool subset. For a
+   manifest-backed step, reject any caller assignee override instead of reselecting.
+4. Bind the teammate's `systemPrompt`, `appendSystemPrompt`, and `approvalProfile` into
+   the workflow Run request. Keep tools limited to the workflow-required subset and keep
+   provider/runner selection graph-owned.
+5. Build a task from step prompt, context packet, previous step outputs, teammate, and
    skill.
-4. Start a run through the existing run coordinator.
-5. Link `taskId`, `runId`, and `workUnitId` back to the workflow step; the run request
+6. Start a run through the existing run coordinator.
+7. Link `taskId`, `runId`, and `workUnitId` back to the workflow step; the run request
    and run session also persist `workflowStepId` so run/thread evidence remains
-   queryable by workflow-step owner.
-6. Watch the run terminal state.
-7. Transition the step:
-   - `succeeded` if the run succeeded,
-   - `failed` if the run failed,
-   - `blocked` if the run is waiting on a human or preflight blocker,
-   - `cancelled` if the workflow or step was cancelled.
+   queryable by workflow-step owner. The persisted request snapshot freezes the actual
+   participant prompt fragments, approval profile, tools, provider, runner, and delegated
+   requirement for restart and Attempt replacement.
+8. Watch the run terminal state.
+9. Treat terminal Run state as a reconciliation trigger, not the step outcome:
+   - a succeeded execution/verification Run must first produce verified
+     `ExecutionAction` refs covering its required operation subset;
+   - a succeeded synthesis/review Run must first produce a validated output packet bound
+     to the same workflow, step, participant, and dependency refs;
+   - a Run that ends with ordinary assistant text only becomes
+     `blocked(delegated_outcome_missing)` for delegated work;
+   - a failed or cancelled Run records a typed negative delegated outcome and follows the
+     existing retry/failure policy.
+10. Persist the typed delegated outcome and only then transition the step to its compatible
+   terminal state. Step `succeeded` means its delegated requirement is satisfied, not
+   merely that the runner process exited successfully.
 
 The orchestrator must not call `PiRunnerAdapter` directly. It should always go through
 the same task/run coordinator used by user-started runs.
+
+Delegated completion follows one host-owned pipeline:
+
+```text
+terminal Run candidate
+  -> reload immutable DelegatedStepRequirement
+  -> verify outcome-specific durable evidence
+       execution/verification -> successful ExecutionAction refs
+       synthesis/review       -> sealed sourced output packet
+       discussion             -> attributed committed assistant Item
+       cannot continue        -> structured blocked/failed/cancelled outcome
+  -> atomically commit DelegatedOutcome + compatible step transition
+  -> evaluate RequiredParticipantManifest + immutable graph + fanInPolicy
+  -> atomically commit WorkflowCompletionEvaluation + compatible workflow transition
+```
+
+Assistant text such as “I will execute” or delivery status `ready` is never an input to
+this pipeline. An execution-backed participant must produce the required action evidence
+or an explicit structured negative outcome. A no-tool synthesis participant is legal only
+when it produces the sealed packet required by its immutable requirement. This is how
+Ling matches the useful Codex/Claude boundary: model narration and tool/result records are
+different item classes, while the host validates completion.
+
+Fan-in reads the accepted required-participant manifest and graph, not the set of rows or
+callbacks currently present. Restart may replace an Attempt under the same Run, but it
+cannot remove a participant, shrink a join, or convert approval/Run success into delegated
+evidence. Success is legal only after every required participant has a compatible typed
+outcome and every required operation/dependency/fan-in rule verifies against canonical
+rows.
+
+### Participant identity preservation
+
+The orchestrator consumes participant ids fixed by the accepted intent decision. It does
+not select a different teammate from a role, capability, default-agent, or roster lookup
+while compiling the proposal or graph. Those lookups are allowed only before the decision
+manifest is committed and only when the user did not explicitly name a teammate.
+
+```text
+accepted canonical mention ids
+  == decision manifest required ids
+  == proposal collaboration participant ids
+  == workflow metadata required ids
+  == graph node participant ids
+  == delegated Run participant ids
+```
+
+Equality is by canonical id, not role. Two same-role mentions remain two requirements.
+An explicitly requested participant that is unavailable or lacks tools produces a typed
+blocked decision/step and remains visible in the lineage; the orchestrator never repairs
+that shape by substituting a peer. If more than one explicit participant is present, the
+single-step compiler is ineligible. The multi-participant compiler must map all ids and
+operations or fail before any Run starts.
+
+Participant and operation ownership are immutable together. One shared daemon function
+maps each accepted operation to a resolved participant and derives that participant's
+required tools. The selector uses it for the decision manifest and blocker checks; the
+proposal/workflow compiler consumes the same mapping. It must not maintain a second
+role-based distribution algorithm.
+
+An existing proposal is an idempotency boundary. Retry/recovery returns its original
+accepted decision and manifest instead of resolving the current roster again. A proposal
+whose decision/manifest lineage is missing or inconsistent produces the structured
+`existing_proposal_participant_lineage_invalid` blocker and no Run. Raw exceptions and
+silent participant repair are both forbidden because either can leave an accepted source
+Turn without a recoverable terminal result.
+
+The graph step also carries the immutable `WorkflowParticipantAuthorityV1` defined in
+[Channel Conversation Continuity v2](channel-conversation-continuity-v2.md#participant-authority-hardening-normative).
+Authority kind is explicit: `channel_selection` requires current effective Channel
+membership/council validation, while `workflow_definition` requires only an active,
+visible exact teammate. The compiler writes authority, participant id, graph, manifest
+fingerprints, and source refs atomically. Missing/late provenance, authority/participant
+mismatch, or a caller PATCH that changes the assignee is a typed blocker, never a signal
+to infer authority from `sourceProposalId` absence.
+
+### Participant execution-profile propagation
+
+Identity preservation is necessary but not sufficient. The workflow adapter must also
+carry the selected teammate's execution profile into the concrete Run. This binding is
+owned by `prepareWorkflowStepStart()` rather than by the generic Run orchestrator:
+
+```text
+workflow step participant id
+  -> canonical teammate lookup
+  -> availability + membership + required-tool validation
+  -> WorkflowStepRunRequest
+       systemPrompt
+       appendSystemPrompt
+       approvalProfile
+       exact required tools
+  -> workflow approval-gate merge
+  -> generic Run orchestrator
+       selected Skill prompt/profile merge
+       workspace + Channel permission policy
+  -> immutable Run request snapshot
+```
+
+The generic Run orchestrator must not auto-hydrate every Run that happens to carry a
+`teammateId`. Selector, summarizer, and report Runs use explicit internal system roles;
+global hydration would mix participant persona into those control-plane prompts. The
+workflow adapter is the one place shared by manual step start, automatic orchestration,
+and step retry, so fixing it covers all new workflow Runs without creating another prompt
+authority.
+
+The assigned teammate's full `allowedTools` list is an authorization ceiling, not the
+Run tool list. The Run receives only `step.metadata.requiredTools`, with an absent value
+normalized to `[]`. The adapter validates that subset against the current teammate and
+the authority-aware workflow/Channel allowances; a missing capability blocks the assigned
+participant and never widens tools or substitutes another Agent.
+The teammate approval profile is the base profile. One shared run-policy adapter merges
+the workflow step gate, selected Skill, and session policy for manual start, automatic
+orchestration, retry, approval resume, and direct step start. Merges may only keep or
+increase restriction, so start-path differences cannot bypass a step gate.
+
+The first Run creation is the profile freeze point. Same-Run approval resume and daemon
+restart reuse the stored request snapshot. A user-visible retry that creates a new Run
+may resolve a newer canonical teammate profile, but it records a new immutable snapshot.
+Participant profile data is not copied into `RequiredParticipantManifestV1` and does not
+enter `WorkflowCompletionGateV1`: the manifest owns required identity/outcome, the Run
+snapshot owns actual execution configuration, and evidence owns completion.
+
+### Participant provider binding and preflight
+
+Provider selection is part of the execution profile, but it has its own durable owner.
+The orchestrator reuses the canonical resolution contract in
+[Conversation Model Binding And Creation Validation](conversation-model-binding-and-creation-validation.md#workflow-participant-model-preflight)
+instead of treating an absent `providerPresetId` as an invitation to guess:
+
+```text
+exact workflow participant
+  -> teammate binding mode
+     -> fixed                    -> teammate provider
+     -> workspace_default
+        -> Ling Agent in Channel -> Channel Ling Agent model
+        -> every other built-in  -> workspace default
+  -> typed readiness/capability preflight
+  -> graph/step effective binding snapshot
+  -> immutable Run request snapshot
+```
+
+The Channel's selected Ling Agent model cannot satisfy an unconfigured Engineer or QA.
+The workspace default cannot replace a broken fixed teammate binding. An ordinary Channel
+message cannot supply a per-message provider override. These fail-closed rules keep model
+ownership stable across private chat, Channels, retry, and restart.
+
+Proposal confirmation preflights all required participants as one set. If any provider
+binding is unresolved or unavailable, the daemon creates no workflow, Task, Run, approval,
+or tool action. It preserves the accepted decision, manifest, and proposal and returns a
+structured `workflow_participant_provider_unavailable` blocker that identifies the
+participant, binding source, reason, and repair surface. The UI renders that blocker on
+the proposal and exposes the corresponding Model Workbench, Channel Settings, or teammate
+settings action.
+
+Step start repeats readiness validation against the frozen provider id to catch deletion,
+disablement, secret loss, health-check failure, or capability drift after confirmation.
+It does not silently re-resolve to another scope. A repaired explicit retry may compile a
+new effective binding snapshot; a same-Run daemon restart or approval resume must reuse
+the original snapshot. A provider-blocked required participant remains required, so the
+Completion Gate cannot call partial fan-in success.
+
+### Single-participant normalization
+
+An `execute` decision with one required participant is still an orchestrated workflow.
+The compiler emits one manifest-backed step, and the started Run persists that step's
+`workflowStepId`. It does not invoke a parallel “direct teammate completion” path.
+
+```text
+single required Agent
+  -> one-entry RequiredParticipantManifestV1
+  -> one-node workflow graph
+  -> one linked Run
+  -> shared delegated-step finalizer
+  -> Completion Gate
+  -> TerminalReport publication
+```
+
+A normal ready acknowledgement may be published before the Run finishes so the user sees
+progress. It is not a graph output and cannot satisfy the participant requirement. The
+source Turn remains non-terminal until the report publication barrier commits. A brief
+post-Run reconciliation interval is allowed; terminal callback and startup recovery must
+both converge it without requiring SSE reconnect or another user turn.
 
 ## Prompt Assembly
 
@@ -421,9 +627,11 @@ state-machine transitions:
 | Step run started | none | `start` |
 | Step needs approval | `approval_requested` | `approval_requested` |
 | Approval granted | `approval_approved` | `approval_approved` |
+| Terminal Run evidence verified | none | `succeed` |
+| Terminal Run lacks required delegated outcome | `step_blocked` | `blocked` |
 | Step blocked | `step_blocked` | `blocked` |
 | Step failed | `step_failed` | `fail` |
-| All required steps done | `all_steps_succeeded` | none |
+| Completion gate atomically verified | `all_steps_succeeded` | none |
 | User cancels workflow | `cancel` | `cancel` for active/queued steps |
 
 Do not add new statuses unless a real UI or recovery distinction requires them.
@@ -452,10 +660,34 @@ Tick algorithm:
    gates.
 6. Find the first serial step or the bounded set of safe parallel siblings whose
    dependencies are satisfied.
-7. If no queued steps remain, transition workflow to `succeeded`.
-8. If a candidate step has a pre-step approval gate, create/attach approval and set
+7. Before accepting a linked Run's success, validate the step's required operation subset
+   against durable `ExecutionAction` evidence and persist the evidence action ids.
+   For synthesis/review steps with no required operation, persist and validate a
+   `ChannelWorkflowStepOutputPacket` artifact bound to the workflow, step, participant,
+   and source refs; runner prose or `resultSummary` alone is not completion evidence.
+8. Validate the workflow's immutable required-participant manifest against the graph.
+   Every required participant must have mapped steps and a typed delegated outcome; a
+   participant cannot disappear because another Agent produced a smaller proposal.
+9. Evaluate every join's declared branch set and `fanInPolicy`, including
+   `requireAllBranchesTerminal`. Incoming edges in the immutable workflow graph are the
+   branch authority. Materialized `dependsOnStepIds` and the set of rows currently present
+   must match that graph and cannot shrink it.
+10. Evaluate `WorkflowCompletionGateV1` over participant coverage, required operation
+   evidence, dependencies, fan-in policy, and termination policy whenever canonical state
+   changes. Commit its basis-bound snapshot plus the compatible pending, succeeded,
+   blocked, failed, or cancelled workflow effect in one SQLite transaction. The expected
+   read-set covers the source decision/plan, graph/termination, step/outcome bases, Run
+   rows/event watermarks, approvals, artifacts, and the derived action projection
+   fingerprint. A cached snapshot or only step timestamps are never sufficient.
+11. If a candidate step has a pre-step approval gate, create/attach approval and set
    `waiting_for_approval`.
-9. Otherwise start the step through task/run coordinator.
+12. Otherwise start the step through task/run coordinator.
+
+Run-terminal callbacks, post-step approvals, startup recovery, duplicate callbacks, and
+TerminalReport pre-publication checks all invoke the same canonical-state reconciliation
+kernel. None may carry a local `Run succeeded -> Step succeeded` or `all existing steps
+succeeded -> Workflow succeeded` shortcut. This keeps online execution and restart
+recovery behavior identical.
 
 Serial fallback still starts one step per tick. Safe parallel policy may start multiple
 siblings in one tick only when every candidate is safe and the runtime budget permits it.
@@ -481,13 +713,26 @@ The first implementation should support:
 | Failure | Required behavior |
 | --- | --- |
 | Missing teammate | Step becomes `blocked`; workflow becomes `blocked`. |
+| Manifest-backed assignee override | Reject with `workflow_participant_override_forbidden`; do not create Task or Run. |
+| Assigned teammate profile is missing or unavailable at Run start | Commit one typed pre-Run participant blocker; do not silently fall back to a same-role Agent. |
+| Required workflow tool is no longer allowed by the assigned teammate | Commit `workflow_participant_required_tools_unavailable`; do not widen tools or substitute. |
 | Missing skill binding | Step becomes `blocked` with `skill_not_bound`. |
 | Provider not runnable | Step becomes `blocked`; no run starts. |
 | Required tool not allowed | Step becomes `blocked`; no run starts. |
 | Pre-step approval denied | Step becomes `failed`; workflow becomes `failed`. |
-| Run fails | Step becomes `failed`; workflow becomes `failed` unless retry policy allows retry. |
+| Run fails | Persist typed `failed`; step/workflow follow failure policy unless retry remains legal. |
+| Run succeeds but required operation evidence is missing | Step becomes `blocked`; workflow cannot succeed. |
+| Required command action exits non-zero, times out, or is cancelled | Step becomes `failed` or remains retryable according to existing policy. |
+| Fan-in predecessor is terminal without verified required operations | Join remains blocked; downstream work does not start. |
+| Required participant has no mapped graph step | Workflow is blocked with `required_participant_missing`; no partial graph may report success. |
+| Delegated participant returns ordinary `ready` text only | Step remains non-terminal or becomes explicitly blocked; prose does not satisfy the participant outcome. |
+| Synthesis/review participant returns a sourced durable output packet without tools | Validate packet ownership and refs; it may satisfy synthesis without fabricating an execution action. |
+| Synthesis/review participant returns text but no output packet | Step remains blocked with missing delegated evidence. |
+| Fan-in context is stale, private, or rejected | Manifest-backed step commits typed `blocked` through the shared finalizer; direct context blocking is legacy-only. |
+| `requireAllBranchesTerminal` has an active or absent declared branch | Join remains pending/blocked and workflow success is illegal. |
 | Run waits for human | Step and workflow become `waiting_for_approval` or `blocked`. |
-| Daemon restarts mid-step | Reconcile linked work unit/run and resume from durable state. |
+| Daemon restarts while a participant waits for approval | Preserve the approval/checkpoint, keep the participant pending, attach a new attempt to the same Run after resolution, then reconcile evidence. |
+| Daemon restarts without a safe runner checkpoint | Mark the old attempt lost and surface a typed resume blocker; do not convert infrastructure loss to user cancellation. |
 | User cancels workflow | Active run is cancelled; queued steps become `cancelled`. |
 
 The first slice should not auto-retry failed implementation or release steps. Retry should
@@ -498,21 +743,95 @@ be a user action so side effects remain understandable.
 On daemon startup or explicit reconcile:
 
 1. Expire stale workflow-step leases using existing lease recovery.
-2. For each non-terminal workflow:
+2. Recover runtime attempts before workflow semantics:
+   - an explicit user/workflow cancellation remains terminal;
+   - a daemon-lifecycle suspension marks only the old `WorkUnitAttempt` lost;
+   - a pending `LingApprovalCheckpoint` preserves the same Run, workflow step, approval,
+     participant manifest, and evidence;
+   - approval resolution starts a fenced replacement attempt under that same Run through
+     verified native resume or Ling continuation;
+   - no safe resume produces `blocked(approval_resume_unsupported)`, never `cancelled`.
+3. For each non-terminal workflow:
    - reload active steps,
    - inspect linked task/run/work-unit state,
-   - repair stale `running` steps whose run is terminal,
+   - revalidate operation evidence before repairing stale `running` steps whose run is
+     terminal,
    - mark runner-lost steps `blocked` or `failed` according to recovery policy,
    - start no new steps unless auto-resume is enabled for the workflow.
-3. Append runtime events for every repair action.
+4. Recompute participant, operation, output-packet, dependency, and fan-in completion
+   from the source decision, immutable graph, current steps, actions, and approvals.
+   Persisted `completionGate` metadata is an audit cache; recovery never trusts its status
+   without recomputation.
+5. For workflows with a committed and published TerminalReport, reconcile the persisted
+   source `LingTurn` through the idempotent source-turn settlement path.
+6. Append runtime events for every repair action.
+
+Low-level Core startup recovery owns stale leases, lost Runs, and legal row transitions.
+It does not complete a manifest-backed workflow from step statuses alone. After those
+repairs, daemon startup invokes the same evidence-aware reconciliation kernel used by an
+online terminal callback. Post-step approvals enter that same kernel after approval state
+is durable, so an approval cannot stand in for execution evidence.
+
+The kernel is split by responsibility:
+
+- `workflow-step-finalizer.ts` reloads a step's current linked Run and immutable delegated
+  requirement, verifies the outcome-specific evidence, and atomically commits the typed
+  outcome plus compatible step transition against a deterministic evidence basis;
+- for synthesis/review, the finalizer creates or reuses a deterministic output packet
+  keyed by workflow, step, current Run terminal watermark, requirement fingerprint, and
+  canonical dependency/source refs before it commits success. Restart and duplicate
+  callbacks therefore reuse one packet rather than duplicating artifacts;
+- `workflow-reconciliation.ts` calls that finalizer for terminal candidates, reloads the
+  workflow, evaluates the graph-derived Completion Gate, and atomically persists the gate
+  plus its compatible pending, succeeded, blocked, failed, or cancelled workflow effect;
+- TerminalReport publication consumes the reconciler result and remains idempotent, but
+  is not imported by the semantic kernel.
+
+The Completion Gate evaluation returns both the gate and a typed expected read-set.
+`ExecutionAction` stays a derived read model over Run events, approvals, artifacts, and
+Run snapshots; the SQLite CAS validates those complete backing rows instead of importing
+daemon projection code or adding a duplicate action table. Synthesis/review output packets
+are content-addressed artifacts whose canonical JSON and SHA-256 digest are sealed in
+SQLite and checked by finalization, gate evaluation, and pre-publication validation.
+Negative workflow completion is not a side channel: approval denial, absent participants,
+blocked evidence, failure, and cancellation pass through this same evaluation and CAS.
+
+Callback Run ids and statuses are wake-up hints. The finalizer always follows the current
+step linkage, so a callback from an old retry cannot complete a newer attempt. A stale
+step/evidence basis causes reconciliation retry. It never leaves outcome metadata and
+step status half-committed.
+
+Attempt replacement caused by daemon restart is not a workflow retry. The workflow step
+keeps the same `runId` and immutable delegated requirement while `activeAttemptId`
+changes. Existing successful participant and operation evidence remains valid; only the
+unresolved participant continues. `requireAllBranchesTerminal` therefore remains pending
+through the interruption and can pass only after the resumed participant produces its
+typed outcome. If resume blocks or fails, the same Completion Gate publishes the
+negative/partial result; no restart-specific fan-in rule exists.
+
+`resume_pending` is also not participant completion. If the daemon dies again, startup
+classifies the bound replacement Attempt before the step finalizer runs:
+
+- no durable `tool_start`: one newer fenced Attempt may continue the same exact approval;
+- durable `tool_end`: the existing action enters normal delegated finalization;
+- `tool_start` without `tool_end`: the participant becomes
+  `blocked(approval_resume_effect_unknown)` and the workflow cannot verify;
+- already terminal Run/outcome: only idempotent workflow/publication reconciliation runs.
+
+Prior Engineer evidence remains valid in every case. QA does not become satisfied merely
+because a replacement Attempt existed or because an approval was already granted. The
+Completion Gate still requires QA's typed outcome and operation evidence, so a second
+restart cannot shrink the required participant set or bypass fan-in.
 
 Default recovery policy should be conservative:
 
 - resume planning/review/doc steps automatically only if no side-effect tools were
   involved,
 - do not auto-resume implementation, release, or external mutation steps,
-- require user confirmation for any step that previously reached approval or side-effect
-  execution.
+- a still-pending approval continues to wait; a durable approved grant may resume only the
+  same fingerprinted side effect before `tool_start`, without asking twice;
+- after `tool_start` without `tool_end`, block effect-unknown and require explicit user
+  resolution rather than retrying or silently issuing a new approval.
 
 ## API Surface
 
@@ -608,12 +927,27 @@ at most one eligible step.
 
 ### Slice 3: Terminal Step Reconciliation
 
-Status: implemented for successful and failed linked runs; successful terminal runs
-continue the next eligible step.
+Status: evidence-aware delegated finalization, five-state Completion Evaluation, full
+canonical read-set CAS, fan-in validation, and removal of direct Run-success shortcuts are
+focused green in the active Continuity v2 amendment. The full deterministic suite is
+green; packaged macOS verification remains pending.
 
 - After a linked run reaches terminal state, tick the workflow.
-- Store result summaries and artifact references on the step.
-- Advance to next eligible step only when the current step succeeded.
+- Persist the immutable delegated requirement on the graph step and Run request snapshot.
+- Backfill non-terminal manifest-backed steps through strict migration 115; require source
+  decision, manifest, graph, dependency, and operation ownership agreement, repair a
+  recorded-but-incomplete migration, and never guess terminal historical requirements.
+- Extract the shared step finalizer and workflow reconciler with the one-way dependency
+  direction described above.
+- Store result summaries as audit/context only; store validated actions/output packets as
+  completion evidence.
+- Give synthesis output packets deterministic attempt-bound ids and fingerprints so the
+  online, restart, and duplicate-callback paths converge on one artifact.
+- Persist one compatible typed delegated outcome or visible structured blocker.
+- Commit the typed outcome and step terminal transition atomically against the current
+  linked Run and evidence basis; retry reconciliation after stale compare-and-set.
+- Advance to the next eligible step only after the current step's delegated requirement
+  is satisfied.
 
 ### Slice 4: Approval Gates
 
@@ -626,10 +960,14 @@ existing run/tool approval hooks.
 
 ### Slice 5: Startup Recovery
 
-Status: implemented for backend store startup recovery.
+Status: low-level backend recovery and the shared daemon semantic reconciliation kernel
+are deterministic-suite green. Restart equivalence remains a required packaged macOS
+acceptance gate.
 
 - Reconcile non-terminal workflows on daemon startup.
 - Repair stale active steps from linked work-unit/run state.
+- Recompute typed outcomes, graph fan-in, and completion basis from canonical state; never
+  trust cached gates or aggregate step statuses alone.
 - Do not auto-start side-effectful steps after restart without user confirmation.
 
 ### Slice 6: Web Progress Card
@@ -675,20 +1013,48 @@ Daemon:
 - Denied or expired pre-step approvals fail the step/workflow before any runner starts.
 - Denied pre/post approvals follow durable `onApprovalDenied` policy.
 - Provider/preflight failures block the step without creating a run.
-- Terminal successful run advances the workflow on next tick.
+- Terminal successful run advances only after the delegated requirement and evidence
+  class validate on the next tick.
 - Failed run fails or blocks the workflow according to policy.
 - Run cancellation blocks or fails according to policy; workflow cancellation cancels
   active run, queued steps, and pending approvals.
 - `skip_if_optional` marks the failed step skipped and allows a later orchestrator tick to
   start downstream steps.
 - Startup reconcile repairs stale running steps.
+- Daemon shutdown at a pending tool approval marks only the old attempt lost; the Run,
+  approval checkpoint, workflow step, manifest, and prior participant evidence persist.
+- Approval resolution after restart creates one fenced replacement attempt under the
+  same Run and feeds its evidence through the same delegated finalizer and Completion
+  Gate.
+- Startup recovers `resume_pending` before Attempt creation and before `tool_start`
+  without duplicating the approved side effect.
+- Startup with `tool_start` but no `tool_end` blocks the required participant as
+  `approval_resume_effect_unknown`; it never retries or verifies fan-in.
+- Startup with a durable `tool_end` completes delegated finalization and fan-in without
+  executing the action again.
+- A second daemon suspension preserves pre-dispatch resume state; a real timeout fails
+  the participant and never becomes cancellation.
+- Explicit user/workflow cancellation still cancels the Run and approval; timeout and
+  runtime shutdown cannot produce a false `local-user` cancellation.
+- Online callback, post-step approval, startup recovery, duplicate callback, and
+  pre-publication validation produce the same step/workflow result from the same rows.
+- A terminal no-tool promise reply produces one structured blocker, never step success.
 
 Runner integration:
 
-- Step run uses selected teammate, skill prompt fragments, required tools, approval
-  profile, memory recall, provider preset, and runner id.
+- Step Run receives the exact selected teammate's base/append prompts and base approval
+  profile before selected Skill and session-policy merging.
+- The persisted Run request snapshot records teammate id, workflow step id, delegated
+  requirement, prompt fragments, approval profile, exact required tools, provider, and
+  runner; same-Run restart/resume reuses those values.
+- Step Run uses only workflow-required tools even when the teammate allows more tools.
+- Manual start, automatic orchestration, and retry all pass through the same participant
+  profile resolver; internal selector/report Runs are unaffected.
 - Side-effect tools still require existing approval hooks.
 - Runner final events cannot advance workflow without legal state transitions.
+- Runner `succeeded` cannot advance a step without verified required operation evidence.
+- Engineer-write -> QA-command fan-in does not advance when either action is missing,
+  failed, timed out, cancelled, targets the wrong file, or violates dependency order.
 
 Web:
 
@@ -726,7 +1092,7 @@ git diff --check
 - [Pi Coding Agent Integration](../pi-coding-agent-integration.md) remains the default
   single-step execution backend.
 
-## Open Questions
+## Resolved Questions And Future Optimizations
 
 Resolved by the detailed design:
 
@@ -739,7 +1105,9 @@ Resolved by the detailed design:
 - Workflow summaries start deterministic and source-linked; model-generated summaries are
   allowed only as evidence-backed additions.
 
-Still open:
+Non-blocking future optimizations:
 
-- Exact type file split for grouped workflow packet refs.
-- Whether requirement-shaping packet search needs a future SQLite index.
+- Grouped workflow packet refs may move to a dedicated type file when that reduces an
+  actually measured module-boundary cost; the current ownership contract is already fixed.
+- Requirement-shaping packet search gets a SQLite index only after query-plan or packaged
+  latency evidence shows the current access path is material.

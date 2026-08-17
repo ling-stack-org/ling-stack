@@ -8,6 +8,7 @@ import {
   createBuiltinAiTeammateId,
   createSqliteRunStore,
   initialAiTeammateModelBinding,
+  resolveEffectiveTeammateProvider,
   resolveEffectiveTeammateProviderPresetId,
 } from "../dist/index.js";
 
@@ -59,6 +60,63 @@ test("effective teammate model resolution keeps inherited and fixed ownership di
     surface: "private",
     requestedProviderPresetId: "provider_request_override",
   }), "provider_request_override");
+});
+
+test("typed effective teammate model resolution preserves owner and repair target", () => {
+  const builtIn = { id: "teammate_builtin_qa", modelBindingMode: "workspace_default" };
+  assert.deepEqual(resolveEffectiveTeammateProvider({
+    teammate: builtIn,
+    surface: "channel",
+    workspaceDefaultProviderPresetId: "provider_workspace",
+    channelDefaultProviderPresetId: "provider_channel",
+  }), {
+    kind: "resolved",
+    binding: {
+      schemaVersion: 1,
+      participantId: builtIn.id,
+      bindingMode: "workspace_default",
+      source: "workspace_default",
+      providerPresetId: "provider_workspace",
+    },
+  });
+  assert.deepEqual(resolveEffectiveTeammateProvider({
+    teammate: builtIn,
+    surface: "channel",
+    channelDefaultProviderPresetId: "provider_channel",
+  }), {
+    kind: "blocked",
+    reasonCode: "workspace_default_provider_missing",
+    participantId: builtIn.id,
+    bindingMode: "workspace_default",
+    source: "workspace_default",
+    owner: "workspace",
+    repairTarget: "model_workbench",
+  });
+
+  const lingAgent = { id: "ling_agent", modelBindingMode: "workspace_default" };
+  assert.deepEqual(resolveEffectiveTeammateProvider({
+    teammate: lingAgent,
+    surface: "channel",
+    workspaceDefaultProviderPresetId: "provider_workspace",
+    channelDefaultProviderPresetId: "provider_channel",
+  }).binding, {
+    schemaVersion: 1,
+    participantId: "ling_agent",
+    bindingMode: "workspace_default",
+    source: "channel_ling_agent_model",
+    providerPresetId: "provider_channel",
+  });
+
+  const fixed = { id: "teammate_custom", modelBindingMode: "fixed" };
+  assert.deepEqual(resolveEffectiveTeammateProvider({ teammate: fixed, surface: "channel" }), {
+    kind: "blocked",
+    reasonCode: "fixed_provider_missing",
+    participantId: fixed.id,
+    bindingMode: "fixed",
+    source: "teammate_fixed",
+    owner: "teammate",
+    repairTarget: "teammate_settings",
+  });
 });
 
 test("user-created teammates cannot opt into workspace default binding", () => {

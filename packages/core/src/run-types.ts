@@ -31,6 +31,12 @@ import type {
   ApprovalPolicyUpdateInput,
 } from "./approval-policy.js";
 import type {
+  CommitApprovalResumeClaimInput,
+  CommitApprovalResumeClaimResult,
+  CommitApprovalResumeSuspensionInput,
+  CommitApprovalResumeSuspensionResult,
+  CommitApprovalResumeTerminalInput,
+  CommitApprovalResumeTerminalResult,
   CreateApprovalCheckpointInput,
   LingApprovalCheckpoint,
   ListApprovalCheckpointsOptions,
@@ -276,6 +282,7 @@ import type {
 } from "./channel-runtime-types.js";
 import type {
   RunTransitionEvent,
+  LingTurnTransitionEvent,
   StateTransitionActor,
   TaskTransitionEvent,
   TransitionResult,
@@ -568,6 +575,16 @@ export interface LinkRunToLingTurnInput {
   readonly turnId: string;
   readonly runId: string;
   readonly role?: LingTurnRunRole;
+  readonly now: string;
+}
+
+export interface TransitionLingTurnStatusInput {
+  readonly turnId: string;
+  readonly expectedStatus?: LingTurnStatus;
+  readonly event: LingTurnTransitionEvent;
+  readonly actor: StateTransitionActor;
+  readonly reason?: string;
+  readonly idempotencyKey?: string;
   readonly now: string;
 }
 
@@ -1024,6 +1041,7 @@ export interface ExecutionActionCommandOutputChunk {
 
 export interface ExecutionActionCommandEvidence {
   readonly command: string;
+  readonly outcome?: "succeeded" | "failed" | "timed_out" | "cancelled" | "unknown";
   readonly cwd?: string;
   readonly startedAt?: string;
   readonly completedAt?: string;
@@ -1285,6 +1303,8 @@ export interface RunArtifact {
   readonly title?: string;
   readonly contentType?: string;
   readonly sizeBytes?: number;
+  readonly sealedPayload?: unknown;
+  readonly contentSha256?: string;
   readonly createdAt: string;
 }
 
@@ -1298,6 +1318,10 @@ export interface CreateRunArtifactInput {
   readonly title?: string;
   readonly contentType?: string;
   readonly sizeBytes?: number;
+  /** Canonical SQLite-owned JSON for evidence whose identity must survive file projection changes. */
+  readonly sealedPayload?: unknown;
+  /** Optional caller assertion. The store always recomputes this digest from sealedPayload. */
+  readonly contentSha256?: string;
   readonly createdAt: string;
 }
 
@@ -1323,6 +1347,7 @@ export interface ControlPlaneEvent {
   readonly entityId: string;
   readonly action: string;
   readonly data: Record<string, unknown>;
+  readonly idempotencyKey?: string;
 }
 
 export interface AppendControlPlaneEventInput {
@@ -1333,6 +1358,7 @@ export interface AppendControlPlaneEventInput {
   readonly entityId: string;
   readonly action: string;
   readonly data?: Record<string, unknown>;
+  readonly idempotencyKey?: string;
 }
 
 export interface ListControlPlaneEventsOptions {
@@ -1340,6 +1366,31 @@ export interface ListControlPlaneEventsOptions {
   readonly afterSeq?: number;
   readonly limit?: number;
   readonly domains?: readonly ControlPlaneDomain[];
+  readonly entityType?: string;
+  readonly entityId?: string;
+  readonly action?: string;
+}
+
+export interface ControlPlaneReplayState {
+  readonly workspaceId: string;
+  readonly replayFloorSeq: number;
+  readonly latestSeq: number;
+  readonly updatedAt: string;
+}
+
+export interface ReadControlPlaneReplayWindowInput {
+  readonly workspaceId: string;
+  readonly afterSeq: number;
+  readonly limit: number;
+  readonly domains?: readonly ControlPlaneDomain[];
+  readonly entityType?: string;
+  readonly entityId?: string;
+  readonly action?: string;
+}
+
+export interface ControlPlaneReplayWindowResult {
+  readonly window: import("@ling-stack/contracts").ControlPlaneReplayWindow;
+  readonly events: readonly ControlPlaneEvent[];
 }
 
 export interface RunStore {
@@ -1409,6 +1460,7 @@ export interface RunStore {
   getLingTurnForRun(runId: string): LingTurn | undefined;
   listLingTurnRuns(turnId: string): LingTurnRun[];
   reconcileLingTurnStatus(turnId: string, now: string): LingTurn | undefined;
+  transitionLingTurnStatus(input: TransitionLingTurnStatusInput): TransitionResult<LingTurnStatus>;
   createTerminalReportDraft(input: CreateLingTerminalReportInput, now: string): LingTerminalReportRecord;
   getTerminalReport(id: string): LingTerminalReportRecord | undefined;
   getTerminalReportForSource(
@@ -1421,6 +1473,12 @@ export interface RunStore {
   updateTerminalReportDraft(input: UpdateLingTerminalReportDraftInput): LingTerminalReportRecord;
   commitTerminalReport(input: CommitLingTerminalReportInput): LingTerminalReportRecord;
   markTerminalReportPublished(input: MarkLingTerminalReportPublishedInput): LingTerminalReportRecord;
+  commitTerminalReportPublication(
+    input: import("./terminal-report-publication-types.js").CommitTerminalReportPublicationInput,
+  ): import("./terminal-report-publication-types.js").CommitTerminalReportPublicationResult;
+  commitLegacyWorkflowPublication(
+    input: import("./terminal-report-publication-types.js").CommitLegacyWorkflowPublicationInput,
+  ): import("./terminal-report-publication-types.js").CommitLegacyWorkflowPublicationResult;
   failTerminalReport(input: FailLingTerminalReportInput): LingTerminalReportRecord;
   createRun(input: CreateRunInput): RunSession;
   markRunStarted(runId: string, startedAt: string): void;
@@ -1431,8 +1489,11 @@ export interface RunStore {
   markRunCancelled(runId: string, endedAt: string, summaryPath?: string): void;
   appendEvent(runId: string, type: RunEventType, data: unknown): RunEventEnvelope;
   appendControlPlaneEvent(input: AppendControlPlaneEventInput, now: string): ControlPlaneEvent;
+  getControlPlaneEventByIdempotency(workspaceId: string, idempotencyKey: string): ControlPlaneEvent | undefined;
   listControlPlaneEvents(options: ListControlPlaneEventsOptions): ControlPlaneEvent[];
   getLatestControlPlaneEventSeq(workspaceId: string): number;
+  getControlPlaneReplayState(workspaceId: string): ControlPlaneReplayState;
+  readControlPlaneReplayWindow(input: ReadControlPlaneReplayWindowInput): ControlPlaneReplayWindowResult;
   createChannelTeamEvidenceItem(input: CreateChannelTeamEvidenceItemInput, now: string): ChannelTeamEvidenceItem;
   getChannelTeamEvidenceItem(id: string): ChannelTeamEvidenceItem | undefined;
   listChannelTeamEvidenceItems(options: ListChannelTeamEvidenceItemsOptions): ChannelTeamEvidenceItem[];
@@ -1828,6 +1889,39 @@ export interface RunStore {
     readonly idempotencyKey?: string;
     readonly now: string;
   }): TransitionResult<ChannelWorkflow["status"]>;
+  commitChannelWorkflowCompletionEvaluation(input: {
+    readonly workflowId: string;
+    readonly evaluation: import("./workflow-completion-read-set.js").WorkflowCompletionEvaluationV1;
+    readonly now: string;
+  }): TransitionResult<ChannelWorkflow["status"]>;
+  commitChannelWorkflowStepFinalization(input: {
+    readonly workflowStepId: string;
+    readonly expectedStatus: "running" | "waiting_for_approval";
+    readonly expectedUpdatedAt: string;
+    readonly expectedRun:
+      | {
+          readonly kind: "linked_run";
+          readonly id: string;
+          readonly status: "succeeded" | "failed" | "cancelled";
+          readonly updatedAt: string;
+          readonly eventWatermark: { readonly count: number; readonly latestSeq: number };
+          readonly artifactIds: readonly string[];
+        }
+      | { readonly kind: "no_linked_run" };
+    readonly expectedApproval?: { readonly id: string; readonly status: ApprovalRequest["status"]; readonly resolvedAt?: string };
+    readonly finalStatus: "succeeded" | "blocked" | "failed" | "cancelled" | "skipped";
+    readonly delegatedOutcome: import("@ling-stack/contracts").DelegatedOutcomeV1;
+    readonly delegatedOutcomeBasisFingerprint: string;
+    readonly executionVerification?: import("@ling-stack/contracts").WorkflowStepExecutionVerificationV1;
+    readonly outputArtifactId?: string;
+    readonly resultContextReview?: import("./workspace-types.js").WorkflowFanInContextReview;
+    readonly resultSummary?: string;
+    readonly blocker?: string;
+    readonly actor: StateTransitionActor;
+    readonly reason: string;
+    readonly idempotencyKey: string;
+    readonly now: string;
+  }): TransitionResult<ChannelWorkflowStep["status"]>;
   createChannelWorkflowStep(input: CreateChannelWorkflowStepInput, now: string): ChannelWorkflowStep;
   getChannelWorkflowStep(id: string): ChannelWorkflowStep | undefined;
   listChannelWorkflowSteps(options: ListChannelWorkflowStepsOptions): ChannelWorkflowStep[];
@@ -1904,6 +1998,9 @@ export interface RunStore {
   getApprovalCheckpointForApproval(approvalId: string): LingApprovalCheckpoint | undefined;
   listApprovalCheckpoints(options?: ListApprovalCheckpointsOptions): LingApprovalCheckpoint[];
   updateApprovalCheckpointStatus(id: string, input: UpdateApprovalCheckpointStatusInput, now: string): LingApprovalCheckpoint | undefined;
+  commitApprovalResumeClaim(input: CommitApprovalResumeClaimInput): CommitApprovalResumeClaimResult;
+  commitApprovalResumeSuspension(input: CommitApprovalResumeSuspensionInput): CommitApprovalResumeSuspensionResult;
+  commitApprovalResumeTerminal(input: CommitApprovalResumeTerminalInput): CommitApprovalResumeTerminalResult;
   getApprovalPolicy(): ApprovalPolicy;
   updateApprovalPolicy(input: ApprovalPolicyUpdateInput, now: string): ApprovalPolicy;
   createOrReuseExternalWorkWorkflow(input: CreateExternalWorkWorkflowInput, now: string): ExternalWorkWorkflowResult;
@@ -2096,6 +2193,7 @@ export type LingThreadStoreFacet = RunStoreFacet<
   | "getLingTurnForRun"
   | "listLingTurnRuns"
   | "reconcileLingTurnStatus"
+  | "transitionLingTurnStatus"
 >;
 
 export type TerminalReportStoreFacet = RunStoreFacet<
@@ -2106,6 +2204,8 @@ export type TerminalReportStoreFacet = RunStoreFacet<
   | "updateTerminalReportDraft"
   | "commitTerminalReport"
   | "markTerminalReportPublished"
+  | "commitTerminalReportPublication"
+  | "commitLegacyWorkflowPublication"
   | "failTerminalReport"
 >;
 
@@ -2119,8 +2219,11 @@ export type RunExecutionStoreFacet = RunStoreFacet<
   | "markRunCancelled"
   | "appendEvent"
   | "appendControlPlaneEvent"
+  | "getControlPlaneEventByIdempotency"
   | "listControlPlaneEvents"
   | "getLatestControlPlaneEventSeq"
+  | "getControlPlaneReplayState"
+  | "readControlPlaneReplayWindow"
   | "getRun"
   | "listRuns"
   | "listEvents"

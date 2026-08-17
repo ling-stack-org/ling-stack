@@ -588,6 +588,10 @@ export const zhCN = {
     "Each teammate can bind a different provider preset.": "每个队友可以绑定不同模型预设。",
     "Bind a provider preset for this teammate.": "为这个队友绑定模型预设。",
     "Open Model Workbench": "打开模型工作台",
+    "Open Channel Settings": "打开频道设置",
+    "Open teammate settings": "打开队友设置",
+    "Model owner": "模型归属",
+    "Fixed model": "固定模型",
     "Model choices": "模型选择",
     "Avatar, name, and a compact working brief.": "头像、名称和简短工作说明。",
     "Basic information": "基础信息",
@@ -6122,4 +6126,5 @@ export const zhCN = {
   "Clarification question": "澄清问题",
   "Execution kind": "执行类型",
   "Target kind": "目标类型",
+  "Dependencies": "依赖项",
 } as const satisfies Readonly<Record<string, string>>;

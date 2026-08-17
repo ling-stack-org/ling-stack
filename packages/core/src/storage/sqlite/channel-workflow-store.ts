@@ -1,5 +1,17 @@
 import type { SQLOutputValue } from "node:sqlite";
-import { isConversationContextProjectionMetadata } from "@ling-stack/contracts";
+import {
+  createWorkflowParticipantAuthorityV1,
+  isConversationContextProjectionMetadata,
+  isDelegatedOutcomeV1,
+  isWorkflowCompletionGateV1,
+  isWorkflowParticipantAuthorityV1,
+  isWorkflowParticipantProviderBindingV1,
+} from "@ling-stack/contracts";
+import type { WorkflowCompletionGateV1 } from "@ling-stack/contracts";
+import {
+  buildWorkflowCompletionExpectedReadSet,
+  type WorkflowCompletionEvaluationV1,
+} from "../../workflow-completion-read-set.js";
 import type { CreateStateTransitionEventInput, StateTransitionEvent } from "../../channel-runtime-types.js";
 import {
   transitionWorkflow,
@@ -83,6 +95,52 @@ export interface SqliteChannelWorkflowStorePorts {
   ) => StateTransitionEvent | undefined;
   readonly recordStateTransitionEvent: (input: CreateStateTransitionEventInput) => StateTransitionEvent;
   readonly releaseResourceLeasesForWorkflowStep: (workflowStepId: string, releasedAt: string) => number;
+  readonly getChannelIntentDecision: (id: string) => import("../../workspace-types.js").ChannelIntentDecision | undefined;
+  readonly getRun: (id: string) => import("../../run-types.js").RunSession | undefined;
+  readonly listEvents: (runId: string, options?: import("../../run-types.js").ListRunEventsOptions) => import("../../run-types.js").RunEventEnvelope[];
+  readonly countEvents: (runId: string) => number;
+  readonly listApprovalRequests: (options?: import("../../approval-types.js").ListApprovalRequestsOptions) => import("../../approval-types.js").ApprovalRequest[];
+  readonly getArtifact: (id: string) => import("../../run-types.js").RunArtifact | undefined;
+  readonly listArtifacts: (runId: string) => import("../../run-types.js").RunArtifact[];
+}
+
+function completionTarget(
+  gateStatus: WorkflowCompletionGateV1["status"],
+  currentStatus: ChannelWorkflowStatus,
+): ChannelWorkflowStatus | undefined {
+  if (gateStatus === "pending") {
+    return currentStatus === "running" || currentStatus === "waiting_for_approval"
+      ? currentStatus
+      : undefined;
+  }
+  if (gateStatus === "verified") {
+    return currentStatus === "running" || currentStatus === "succeeded"
+      ? "succeeded"
+      : undefined;
+  }
+  if (gateStatus === "blocked") {
+    return currentStatus === "running" || currentStatus === "waiting_for_approval" || currentStatus === "blocked"
+      ? "blocked"
+      : undefined;
+  }
+  if (gateStatus === "failed") {
+    return currentStatus === "running" || currentStatus === "waiting_for_approval"
+      || currentStatus === "blocked" || currentStatus === "failed"
+      ? "failed"
+      : undefined;
+  }
+  return currentStatus === "draft" || currentStatus === "ready" || currentStatus === "running"
+    || currentStatus === "waiting_for_approval" || currentStatus === "blocked" || currentStatus === "cancelled"
+    ? "cancelled"
+    : undefined;
+}
+
+function completionTransitionEvent(targetStatus: ChannelWorkflowStatus): WorkflowTransitionEvent {
+  if (targetStatus === "succeeded") return "all_steps_succeeded";
+  if (targetStatus === "blocked") return "step_blocked";
+  if (targetStatus === "failed") return "step_failed";
+  if (targetStatus === "cancelled") return "cancel";
+  throw new Error(`No workflow completion transition event for target status: ${targetStatus}`);
 }
 
 export class SqliteChannelWorkflowStore {
@@ -620,6 +678,262 @@ export class SqliteChannelWorkflowStore {
     return result;
   }
 
+  commitChannelWorkflowCompletionEvaluation(input: {
+    readonly workflowId: string;
+    readonly evaluation: WorkflowCompletionEvaluationV1;
+    readonly now: string;
+  }): TransitionResult<ChannelWorkflowStatus> {
+    const expected = input.evaluation.expectedReadSet;
+    const gate = input.evaluation.gate;
+    const fallbackStatus = expected.workflow.status as ChannelWorkflowStatus;
+    if (!isWorkflowCompletionGateV1(gate) || expected.schemaVersion !== 1
+      || input.workflowId !== expected.workflow.id
+      || gate.basisFingerprint.trim().length === 0) {
+      return { ok: false, code: "invalid_transition", currentStatus: fallbackStatus };
+    }
+    const workflow = this.getChannelWorkflow(input.workflowId);
+    if (!workflow || workflow.status !== fallbackStatus || workflow.updatedAt !== expected.workflow.updatedAt) {
+      return { ok: false, code: "stale_transition", currentStatus: workflow?.status ?? fallbackStatus };
+    }
+    const expectedTarget = completionTarget(gate.status, workflow.status);
+    if (!expectedTarget) {
+      return { ok: false, code: "invalid_transition", currentStatus: workflow.status };
+    }
+    this.context.database.exec("BEGIN IMMEDIATE;");
+    try {
+      const currentWorkflow = this.getChannelWorkflow(input.workflowId);
+      const currentSteps = this.listChannelWorkflowSteps({ workflowId: input.workflowId, limit: 500 });
+      if (!currentWorkflow) {
+        this.context.database.exec("ROLLBACK;");
+        return { ok: false, code: "stale_transition", currentStatus: workflow.status };
+      }
+      const actual = buildWorkflowCompletionExpectedReadSet({
+        store: this.ports,
+        workflow: currentWorkflow,
+        steps: currentSteps,
+        derivedEvidence: expected.derivedEvidence,
+      });
+      if (actual.canonicalFingerprint !== expected.canonicalFingerprint
+        || JSON.stringify(actual) !== JSON.stringify(expected)) {
+        this.context.database.exec("ROLLBACK;");
+        return { ok: false, code: "stale_transition", currentStatus: currentWorkflow.status };
+      }
+      const currentGate = currentWorkflow.metadata?.completionGate;
+      if (currentWorkflow.status === expectedTarget
+        && currentGate?.basisFingerprint === gate.basisFingerprint
+        && currentGate.status === gate.status) {
+        this.context.database.exec("ROLLBACK;");
+        return { ok: true, from: currentWorkflow.status, to: currentWorkflow.status, duplicate: true };
+      }
+      const metadata = { ...currentWorkflow.metadata, completionGate: gate };
+      const update = this.context.database.prepare(`
+        UPDATE channel_workflows
+        SET status = ?, metadata_json = ?, updated_at = ?
+        WHERE id = ? AND status = ? AND updated_at = ?
+      `).run(
+        expectedTarget,
+        stringifyJson(metadata),
+        input.now,
+        input.workflowId,
+        workflow.status,
+        workflow.updatedAt,
+      );
+      if (Number(update.changes) === 0) {
+        this.context.database.exec("ROLLBACK;");
+        return { ok: false, code: "stale_transition", currentStatus: this.getChannelWorkflow(input.workflowId)?.status ?? workflow.status };
+      }
+      if (expectedTarget !== workflow.status) {
+        const event = completionTransitionEvent(expectedTarget);
+        this.ports.recordStateTransitionEvent({
+          workspaceId: workflow.workspaceId,
+          entityType: "workflow",
+          entityId: workflow.id,
+          fromStatus: workflow.status,
+          toStatus: expectedTarget,
+          event,
+          actor: "system",
+          reason: `completion_gate:${gate.basisFingerprint}`,
+          idempotencyKey: `completion_gate:${gate.basisFingerprint}`,
+          createdAt: input.now,
+        });
+      }
+      this.context.database.exec("COMMIT;");
+      return { ok: true, from: workflow.status, to: expectedTarget };
+    } catch (error) {
+      if (this.context.database.isTransaction) this.context.database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
+  commitChannelWorkflowStepFinalization(input: {
+    readonly workflowStepId: string;
+    readonly expectedStatus: "running" | "waiting_for_approval";
+    readonly expectedUpdatedAt: string;
+    readonly expectedRun:
+      | {
+          readonly kind: "linked_run";
+          readonly id: string;
+          readonly status: "succeeded" | "failed" | "cancelled";
+          readonly updatedAt: string;
+          readonly eventWatermark: { readonly count: number; readonly latestSeq: number };
+          readonly artifactIds: readonly string[];
+        }
+      | { readonly kind: "no_linked_run" };
+    readonly expectedApproval?: { readonly id: string; readonly status: import("../../approval-types.js").ApprovalRequest["status"]; readonly resolvedAt?: string };
+    readonly finalStatus: "succeeded" | "blocked" | "failed" | "cancelled" | "skipped";
+    readonly delegatedOutcome: import("@ling-stack/contracts").DelegatedOutcomeV1;
+    readonly delegatedOutcomeBasisFingerprint: string;
+    readonly executionVerification?: import("@ling-stack/contracts").WorkflowStepExecutionVerificationV1;
+    readonly outputArtifactId?: string;
+    readonly resultContextReview?: import("../../workspace-types.js").WorkflowFanInContextReview;
+    readonly resultSummary?: string;
+    readonly blocker?: string;
+    readonly actor: StateTransitionActor;
+    readonly reason: string;
+    readonly idempotencyKey: string;
+    readonly now: string;
+  }): TransitionResult<ChannelWorkflowStepStatus> {
+    if (!isDelegatedOutcomeV1(input.delegatedOutcome)) {
+      return { ok: false, code: "invalid_transition", currentStatus: input.expectedStatus };
+    }
+    if (input.finalStatus === "succeeded" && input.delegatedOutcome.kind !== "completed") {
+      return { ok: false, code: "invalid_transition", currentStatus: input.expectedStatus };
+    }
+    if (input.finalStatus === "failed" && input.delegatedOutcome.kind !== "failed") {
+      return { ok: false, code: "invalid_transition", currentStatus: input.expectedStatus };
+    }
+    if (input.finalStatus === "cancelled" && input.delegatedOutcome.kind !== "cancelled") {
+      return { ok: false, code: "invalid_transition", currentStatus: input.expectedStatus };
+    }
+    const expectedRunId = input.expectedRun.kind === "linked_run" ? input.expectedRun.id : undefined;
+    const step = this.getChannelWorkflowStep(input.workflowStepId);
+    if (!step || step.status !== input.expectedStatus || step.updatedAt !== input.expectedUpdatedAt || step.runId !== expectedRunId) {
+      return { ok: false, code: "stale_transition", currentStatus: step?.status ?? input.expectedStatus };
+    }
+    const event = input.finalStatus === "succeeded"
+      ? "succeed"
+      : input.finalStatus === "blocked"
+        ? "blocked"
+        : input.finalStatus === "failed"
+          ? "fail"
+          : input.finalStatus === "cancelled"
+            ? "cancel"
+            : "skip";
+    const transition = transitionWorkflowStep({
+      entityId: step.id,
+      currentStatus: step.status,
+      expectedStatus: input.expectedStatus,
+      event,
+      actor: input.actor,
+      reason: input.reason,
+      idempotencyKey: input.idempotencyKey,
+    });
+    if (!transition.ok) return transition;
+    this.context.database.exec("BEGIN IMMEDIATE;");
+    try {
+      let expectedArtifactIds: readonly string[] = [];
+      if (input.expectedRun.kind === "linked_run") {
+        const run = this.context.database.prepare(
+          "SELECT status, updated_at FROM run_sessions WHERE id = ?",
+        ).get(input.expectedRun.id) as Record<string, SQLOutputValue> | undefined;
+        if (!run || run.status !== input.expectedRun.status || run.updated_at !== input.expectedRun.updatedAt) {
+          this.context.database.exec("ROLLBACK;");
+          return { ok: false, code: "stale_transition", currentStatus: step.status };
+        }
+        const eventWatermark = this.context.database.prepare(`
+          SELECT COUNT(*) AS count, COALESCE(MAX(seq), 0) AS latest_seq
+          FROM run_events WHERE run_id = ?
+        `).get(input.expectedRun.id) as Record<string, SQLOutputValue>;
+        if (Number(eventWatermark.count) !== input.expectedRun.eventWatermark.count
+          || Number(eventWatermark.latest_seq) !== input.expectedRun.eventWatermark.latestSeq) {
+          this.context.database.exec("ROLLBACK;");
+          return { ok: false, code: "stale_transition", currentStatus: step.status };
+        }
+        const actualArtifactIds = (this.context.database.prepare(
+          "SELECT id FROM artifacts WHERE run_id = ? ORDER BY id ASC",
+        ).all(input.expectedRun.id) as Record<string, SQLOutputValue>[]).map((row) => String(row.id));
+        expectedArtifactIds = [...input.expectedRun.artifactIds].sort();
+        if (JSON.stringify(actualArtifactIds) !== JSON.stringify(expectedArtifactIds)) {
+          this.context.database.exec("ROLLBACK;");
+          return { ok: false, code: "stale_transition", currentStatus: step.status };
+        }
+      } else if (input.outputArtifactId || input.executionVerification) {
+        this.context.database.exec("ROLLBACK;");
+        return { ok: false, code: "invalid_transition", currentStatus: step.status };
+      }
+      if (input.expectedApproval) {
+        const approval = this.context.database.prepare(
+          "SELECT status, resolved_at FROM approval_requests WHERE id = ?",
+        ).get(input.expectedApproval.id) as Record<string, SQLOutputValue> | undefined;
+        if (!approval || approval.status !== input.expectedApproval.status
+          || (approval.resolved_at ?? undefined) !== input.expectedApproval.resolvedAt) {
+          this.context.database.exec("ROLLBACK;");
+          return { ok: false, code: "stale_transition", currentStatus: step.status };
+        }
+      }
+      const latest = this.context.database.prepare(
+        "SELECT status, run_id, updated_at, metadata_json FROM channel_workflow_steps WHERE id = ?",
+      ).get(step.id) as Record<string, SQLOutputValue> | undefined;
+      if (!latest || latest.status !== input.expectedStatus
+        || (latest.run_id ?? undefined) !== expectedRunId
+        || latest.updated_at !== input.expectedUpdatedAt) {
+        this.context.database.exec("ROLLBACK;");
+        return { ok: false, code: "stale_transition", currentStatus: step.status };
+      }
+      const metadata = {
+        ...(step.metadata ?? {}),
+        ...(input.executionVerification ? { executionVerification: input.executionVerification } : {}),
+        ...(input.outputArtifactId ? {
+          outputArtifactId: input.outputArtifactId,
+          outputArtifactIds: [...new Set([input.outputArtifactId, ...(step.metadata?.outputArtifactIds ?? []), ...expectedArtifactIds])],
+        } : {}),
+        ...(input.resultContextReview ? { resultContextReview: input.resultContextReview } : {}),
+        delegatedOutcome: input.delegatedOutcome,
+        delegatedOutcomeBasisFingerprint: input.delegatedOutcomeBasisFingerprint,
+      };
+      const runPredicate = input.expectedRun.kind === "linked_run" ? "run_id = ?" : "run_id IS NULL";
+      const update = this.context.database.prepare(`
+        UPDATE channel_workflow_steps
+        SET status = ?, blocker = ?, result_summary = ?, metadata_json = ?, updated_at = ?
+        WHERE id = ? AND status = ? AND ${runPredicate} AND updated_at = ?
+      `).run(
+        transition.to,
+        input.blocker ?? null,
+        input.resultSummary ?? null,
+        stringifyJson(metadata),
+        input.now,
+        step.id,
+        step.status,
+        ...(input.expectedRun.kind === "linked_run" ? [input.expectedRun.id] : []),
+        input.expectedUpdatedAt,
+      );
+      if (Number(update.changes) === 0) {
+        this.context.database.exec("ROLLBACK;");
+        return { ok: false, code: "stale_transition", currentStatus: step.status };
+      }
+      this.ports.recordStateTransitionEvent({
+        workspaceId: step.workspaceId,
+        entityType: "workflow_step",
+        entityId: step.id,
+        fromStatus: transition.from,
+        toStatus: transition.to,
+        event,
+        actor: input.actor,
+        reason: input.reason,
+        idempotencyKey: input.idempotencyKey,
+        createdAt: input.now,
+      });
+      this.context.database.exec("COMMIT;");
+      if (transition.to === "succeeded" || transition.to === "failed" || transition.to === "cancelled" || transition.to === "skipped") {
+        this.ports.releaseResourceLeasesForWorkflowStep(step.id, input.now);
+      }
+      return transition;
+    } catch (error) {
+      if (this.context.database.isTransaction) this.context.database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
   createChannelWorkflowStep(input: CreateChannelWorkflowStepInput, now: string): ChannelWorkflowStep {
     const workflow = this.getChannelWorkflow(input.workflowId);
     if (!workflow) {
@@ -632,8 +946,26 @@ export class SqliteChannelWorkflowStore {
       this.ports.assertContextSummaryInChannel(workflow.channelId, input.contextSummaryId);
     }
     const position = input.position ?? this.nextWorkflowStepPosition(input.workflowId);
+    const stepId = createChannelWorkflowStepId();
+    const participantAuthority = input.participantAuthority
+      ?? createWorkflowParticipantAuthorityV1({
+        kind: "channel_selection",
+        origin: "manual_channel_step",
+        participantId: input.toParticipantId,
+        sourceId: stepId,
+      });
+    if (!isWorkflowParticipantAuthorityV1(participantAuthority)
+      || participantAuthority.participantId !== input.toParticipantId) {
+      throw new Error(`Invalid participant authority for workflow step ${input.workflowId}`);
+    }
+    const providerBinding = input.metadata?.providerBinding;
+    if (providerBinding !== undefined
+      && (!isWorkflowParticipantProviderBindingV1(providerBinding)
+        || providerBinding.participantId !== input.toParticipantId)) {
+      throw new Error(`Invalid participant provider binding for workflow step ${input.workflowId}`);
+    }
     const step: ChannelWorkflowStep = {
-      id: createChannelWorkflowStepId(),
+      id: stepId,
       workspaceId: DEFAULT_WORKSPACE_ID,
       channelId: workflow.channelId,
       workflowId: workflow.id,
@@ -644,8 +976,11 @@ export class SqliteChannelWorkflowStore {
       prompt: input.prompt,
       toParticipantId: input.toParticipantId,
       toParticipantLabel: input.toParticipantLabel,
+      participantAuthority,
       status: input.status ?? "queued",
-      metadata: input.metadata,
+      metadata: input.metadata
+        ? { ...input.metadata, participantAuthority }
+        : { participantAuthority },
       createdAt: now,
       updatedAt: now,
     };
@@ -666,13 +1001,14 @@ export class SqliteChannelWorkflowStore {
           prompt,
           to_participant_id,
           to_participant_label,
+          participant_authority_json,
           status,
           blocker,
           result_summary,
           metadata_json,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         step.id,
@@ -688,6 +1024,7 @@ export class SqliteChannelWorkflowStore {
         step.prompt,
         step.toParticipantId,
         step.toParticipantLabel,
+        stringifyJson(step.participantAuthority),
         step.status,
         null,
         null,
@@ -732,6 +1069,11 @@ export class SqliteChannelWorkflowStore {
     if (!existing) {
       return undefined;
     }
+    const updateRecord = input as unknown as Record<string, unknown>;
+    if (Object.prototype.hasOwnProperty.call(updateRecord, "toParticipantId")
+      || Object.prototype.hasOwnProperty.call(updateRecord, "toParticipantLabel")) {
+      throw new Error(`Workflow participant binding is immutable for workflow step ${id}`);
+    }
     const sourceHandoffId = nullableUpdate(input.sourceHandoffId, existing.sourceHandoffId);
     const contextSummaryId = nullableUpdate(input.contextSummaryId, existing.contextSummaryId);
     const taskId = nullableUpdate(input.taskId, existing.taskId);
@@ -748,6 +1090,19 @@ export class SqliteChannelWorkflowStore {
     if (runId) {
       this.ports.assertRunInChannel(existing.channelId, runId);
     }
+    if (input.metadata?.participantAuthority
+      && (!isWorkflowParticipantAuthorityV1(input.metadata.participantAuthority)
+        || input.metadata.participantAuthority.fingerprint !== existing.participantAuthority.fingerprint)) {
+      throw new Error(`Workflow participant authority is immutable for workflow step ${id}`);
+    }
+    const existingProviderBinding = existing.metadata?.providerBinding;
+    const requestedProviderBinding = input.metadata?.providerBinding;
+    if (requestedProviderBinding !== undefined
+      && (!existingProviderBinding
+        || !isWorkflowParticipantProviderBindingV1(requestedProviderBinding)
+        || JSON.stringify(requestedProviderBinding) !== JSON.stringify(existingProviderBinding))) {
+      throw new Error(`Workflow participant provider binding is immutable for workflow step ${id}`);
+    }
     const next: ChannelWorkflowStep = {
       ...existing,
       sourceHandoffId,
@@ -757,12 +1112,22 @@ export class SqliteChannelWorkflowStore {
       position: input.position ?? existing.position,
       title: input.title ?? existing.title,
       prompt: input.prompt ?? existing.prompt,
-      toParticipantId: input.toParticipantId ?? existing.toParticipantId,
-      toParticipantLabel: input.toParticipantLabel ?? existing.toParticipantLabel,
       status: input.status ?? existing.status,
       blocker: nullableUpdate(input.blocker, existing.blocker),
       resultSummary: nullableUpdate(input.resultSummary, existing.resultSummary),
-      metadata: nullableUpdate(input.metadata, existing.metadata),
+      metadata: input.metadata === null
+        ? (existing.metadata ? {
+            ...existing.metadata,
+            participantAuthority: existing.participantAuthority,
+            ...(existingProviderBinding ? { providerBinding: existingProviderBinding } : {}),
+          } : undefined)
+        : input.metadata
+          ? {
+              ...input.metadata,
+              participantAuthority: existing.participantAuthority,
+              ...(existingProviderBinding ? { providerBinding: existingProviderBinding } : {}),
+            }
+          : existing.metadata,
       updatedAt: now,
     };
     this.context.database
@@ -776,8 +1141,6 @@ export class SqliteChannelWorkflowStore {
           position = ?,
           title = ?,
           prompt = ?,
-          to_participant_id = ?,
-          to_participant_label = ?,
           status = ?,
           blocker = ?,
           result_summary = ?,
@@ -793,8 +1156,6 @@ export class SqliteChannelWorkflowStore {
         next.position,
         next.title,
         next.prompt,
-        next.toParticipantId,
-        next.toParticipantLabel,
         next.status,
         next.blocker ?? null,
         next.resultSummary ?? null,
@@ -827,6 +1188,16 @@ export class SqliteChannelWorkflowStore {
       if (existing) {
         return { ok: true, from: step.status, to: step.status, duplicate: true };
       }
+    }
+    if (
+      input.event === "succeed"
+      && (step.metadata?.executionPlan || step.metadata?.delegatedRequirement)
+      && (
+        step.metadata.executionVerification?.status !== "verified"
+        || Boolean(step.metadata.delegatedRequirement) && step.metadata.delegatedOutcome?.kind !== "completed"
+      )
+    ) {
+      return { ok: false, code: "invalid_transition", currentStatus: step.status };
     }
     const result = transitionWorkflowStep({
       entityId: input.workflowStepId,

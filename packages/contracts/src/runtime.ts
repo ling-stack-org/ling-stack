@@ -108,6 +108,7 @@ export interface RuntimeInstance {
 export type WorkUnitKind =
   | "task_run"
   | "conversation_run"
+  | "channel_turn_dispatch"
   | "channel_ai_reply"
   | "channel_terminal_report"
   | "teammate_direct_reply"

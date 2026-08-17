@@ -1479,6 +1479,7 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
           linked_run_id TEXT,
           linked_workflow_id TEXT,
           error_message TEXT,
+          blocker_json TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
           FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,

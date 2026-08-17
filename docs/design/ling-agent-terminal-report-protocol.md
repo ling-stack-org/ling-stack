@@ -1,6 +1,6 @@
 # Ling Agent TerminalReport Protocol
 
-Status: canonical detailed design for terminal result synthesis
+Status: canonical detailed design; atomic workflow publication, reconnect, and the complete deterministic matrix are green; a fresh isolated macOS artifact is ready and packaged acceptance is pending
 Date: 2026-07-11
 Scope: channel workflows, direct runs, normal conversations, teammate private chats,
 multi-agent participation, terminal evidence, and shared conversation projection
@@ -20,11 +20,15 @@ Related docs:
 
 This document defines the user-facing terminal result protocol for Ling Agent work.
 
-The current implementation preserves runner assistant text as a workflow-step
-`resultSummary`, then creates a terminal coordinator message by selecting the last
-non-generic step summary and wrapping it in deterministic `Done` / `Result` copy. That
-path is durable and simple, but it is not a complete final-report contract. It cannot
-reliably explain:
+The legacy path preserves runner assistant text as a workflow-step `resultSummary`, then
+creates a terminal coordinator message by selecting the last non-generic step summary and
+wrapping it in deterministic `Done` / `Result` copy. The active implementation also has
+first-class TerminalReport records, evidence collection, synthesis, validation, and an
+atomic workflow publication barrier. Focused publication/restart, daemon transport, and
+Web reconnect tests and the full deterministic matrix are green; packaged macOS
+acceptance remains in progress. The legacy
+summary path is durable and simple, but it is not a
+complete final-report contract. It cannot reliably explain:
 
 - the final outcome and any necessary correction to the user's premise;
 - the important changes and behavior differences across multiple steps;
@@ -552,8 +556,10 @@ displayed in the ordinary final report.
 ## Generation Lifecycle
 
 ```text
-workflow/run becomes terminal
+workflow/run emits a terminal candidate
   -> determine owning Ling session and turn
+  -> reconcile delegated outcomes and recompute completion gate from canonical state
+  -> require an atomically committed compatible workflow terminal state
   -> enter reporting state
   -> wait for terminal approval reconciliation and artifact import
   -> collect bounded evidence snapshot
@@ -573,15 +579,43 @@ Terminal run state alone is not enough to publish.
 
 The reporting barrier waits until:
 
-- workflow and step state reconciliation is complete;
+- workflow and step state reconciliation is complete through the same kernel used by
+  online callbacks and startup recovery;
+- the workflow completion gate has evaluated the immutable required-participant manifest,
+  typed delegated outcomes, graph coverage, dependencies, and `fanInPolicy`;
+- every required participant has a satisfied or explicit non-success result; an absent
+  required participant is not treated as an empty successful branch;
+- approval-backed tool work has been folded into one `ExecutionAction` lifecycle by
+  `(runId, toolCallId)`; an `approved` approval without matching terminal tool evidence
+  remains non-successful;
+- every required operation declared by each workflow step has a persisted successful
+  verification result with matching `ExecutionAction` ids;
+- every required synthesis/review participant with no operation plan has a validated
+  workflow output-packet artifact bound to the same workflow, step, participant, and
+  resolvable source/output refs; naked runner prose is not reportable completion;
 - pending post-step approval resolution is reflected in step/workflow state;
 - output packet and expected artifact import attempts have completed;
 - in-flight execution actions for the terminal run have settled or timed out;
 - the terminal source has a stable `terminalAt` timestamp;
 - no required fan-in step remains non-terminal.
 
-The barrier has a bounded timeout. Timeout does not fabricate completion; it adds an
-`unverified` risk and permits fallback publication from the available snapshot.
+The barrier has a bounded timeout. Timeout does not fabricate operation completion. A
+missing optional check may add an `unverified` risk and permit fallback publication, but
+missing required operation evidence blocks the step/workflow and must produce a
+compatible blocked or failed report instead of a succeeded report.
+
+TerminalReport is a consumer of completion truth, not a second evaluator that can repair
+it. Before publishing a successful report, the coordinator re-runs canonical completion
+evaluation and compares its `basisFingerprint` to the atomically committed workflow gate.
+A mismatch, stale snapshot, missing participant, or changed evidence aborts successful
+publication and schedules reconciliation. Negative/blocked reports may describe the
+canonical blocker, but report synthesis never mutates step outcomes or actions.
+
+Pre-publication calls the same daemon semantic reconciler used by online callbacks,
+post-step approval, and startup. The reconciler does not import or call TerminalReport
+synthesis; it returns the refreshed workflow/gate and whether publication reconciliation
+is needed. This one-way dependency prevents recursive reporting and keeps a report retry
+from re-running delegated work.
 
 ### Synthesis Mode Selection
 
@@ -677,6 +711,25 @@ Validation is mandatory before publication.
 
 - Report outcome must be compatible with terminal workflow/run state.
 - A failed or blocked source cannot be reported as succeeded.
+- A non-verified workflow completion gate cannot be reported as succeeded. Report
+  synthesis may describe its blockers, but it cannot repair participant coverage or
+  create execution evidence.
+- A persisted verified gate snapshot is insufficient by itself. Publication requires the
+  snapshot's basis fingerprint to match a gate recomputed from the source decision,
+  immutable graph, current workflow/step rows, actions, output packets, approvals, and
+  termination policy. The atomic publication transaction revalidates the same typed
+  expected read-set before it writes the Item, publication marker, Turn event, or
+  invalidation.
+- Assistant-message `ready` state and statements such as “I will execute” are never
+  delegated outcomes and cannot satisfy participant or operation requirements.
+- A workflow or step with a missing, failed, cancelled, timed-out, non-zero, or
+  out-of-order required operation cannot be reported as succeeded even when its linked
+  Run says `succeeded`.
+- Command state comes from normalized execution evidence, not raw runner prose. A
+  structured unified-exec result requires an explicit numeric exit code for success. A
+  terminal legacy Pi bash `tool_end(isError=false)` may normalize to exit 0 only when no
+  unified-exec envelope exists; a legacy failure with no numeric code remains a generic
+  command failure rather than a fabricated non-zero exit.
 - `partially_succeeded` requires both completed output and a failed, blocked, cancelled,
   skipped, or unverified remainder.
 - Pending approval cannot be described as approved or denied.
@@ -693,6 +746,97 @@ Validation is mandatory before publication.
 
 The validator should reject unsupported structured claims rather than trying to repair
 them from prose.
+
+### Source turn publication barrier
+
+For an intent/proposal-owned workflow, `workflow.metadata.sourceTurnId` identifies the
+original user `LingTurn`. A committed report is published before that source turn becomes
+terminal. Publication and closure are idempotent:
+
+```text
+verified terminal workflow
+  -> committed TerminalReport
+  -> atomic publication barrier
+       one deterministic final_result Item
+       + publishedMessageId
+       + CAS source LingTurn to succeeded | blocked | failed | cancelled
+       + turn state-transition evidence
+       + one durable terminal_report.published invalidation
+  -> post-commit best-effort live SSE/RPC notification
+```
+
+`partially_succeeded` maps to a blocked source turn because user-visible work remains.
+Report synthesis or publication failure keeps the source turn recoverable and
+non-terminal. Startup recovery closes an open/running source turn only when it can find
+the already committed and published report; it never republishes the same result. When
+TerminalReport is disabled, the legacy coordinator final reply is the equivalent
+publication barrier and applies the same terminal mapping.
+
+Publication owns one SQLite transaction for the deterministic assistant Item, report
+publication marker, compatible source-turn settlement and transition event, and the
+content-free `work_units / terminal_report.published` control-plane event. It revalidates
+the fresh Completion Gate basis inside that boundary. An incompatible already-terminal
+source Turn aborts the whole transaction. Re-entry returns the existing published
+lineage, so there is never an Item without its marker, a marker without Turn closure, or
+a closed Turn without durable invalidation. The in-memory hub is notified after commit;
+a crash before that notification is recovered from the durable event row.
+
+Core derives the target Turn status from the fresh Completion Evaluation; the daemon does
+not pass it as an independent input. Report and evaluation must agree: verified maps only
+to succeeded, blocked maps only to blocked/partially-succeeded, failed to failed, and
+cancelled to cancelled. Core also validates the complete deterministic committed Item
+envelope and its report/workflow/source Item/source Turn refs before insert or duplicate
+reuse. A mismatched report outcome, arbitrary message payload, or partial pre-existing
+lineage is a typed conflict and writes nothing.
+
+`LingTurn.blocked` is settled but resumable. If a blocked or partially succeeded report
+finds the source Turn already blocked, publication commits one deterministic blocked
+settlement audit event in the same transaction instead of treating the lack of a state
+change as permission to omit audit lineage. `settle_blocked` is publication audit
+vocabulary, not a normal Turn state-machine transition, so it does not rewrite the
+already-blocked Turn or make it immutable. A later explicit resume may still move it back
+to running.
+
+The successful gate read-set validates canonical Run/event/approval/artifact backing rows.
+`ExecutionAction` remains their deterministic read model rather than becoming a duplicate
+table. Workflow output packets are the stricter case: their artifact row carries canonical
+sealed JSON plus a SHA-256 digest. The SQLite transaction recomputes that digest from the
+sealed payload before the packet can satisfy a delegated outcome, the Completion Gate, or
+publication. The filesystem file is an inspectable projection, not a second authority.
+
+The client re-reads canonical Channel Items and TerminalReports when it consumes that
+event. A transient reconnect resumes from the last **applied durable** sequence, not the
+last received byte or last opened connection. The cursor advances only after the event's
+canonical refresh has applied successfully. Events committed while disconnected then
+replay after that cursor. If the cursor is unavailable or outside retention, the client
+reads snapshot sequence `S`, subscribes after `S`, and performs one authoritative
+selected-Channel refresh covering state at or before `S`; it may not persist or
+acknowledge `S` without that refresh. SSE and local RPC register live delivery before
+reading replay, then merge by sequence, de-duplicate, and order the handoff batch. An
+event whose sequence is already applied is a no-op. Coalesced domains
+refresh runtime and the selected Channel
+projection once, without also refreshing the unrelated normal-Conversation surface.
+Request cancellation/generation fencing prevents an older empty report query from
+overwriting a newer committed result. No unbounded polling is part of this protocol.
+Equivalent Item snapshots are reconciled by durable Item identity and revision. A
+post-publication refresh must not remount an unchanged Item and thereby discard pending
+hover, focus, disclosure, selection, or preview state. Interaction state that must cross
+an Item revision is stored against stable Item/reference identity outside the replaceable
+render instance.
+Replay range completeness is evaluated against a captured upper bound and durable
+retention floor stored in per-workspace `control_plane_replay_state`. The floor survives
+an empty event table; every event append advances the latest watermark, and any future
+compaction must advance the floor in the same transaction as deletion. Sequence numbers
+belonging to another workspace or a filtered domain do not create a gap. A snapshot
+handoff reads sequence `S`, establishes a provisional live subscription after `S` while
+buffering, refreshes canonical state through `S`, and only then advances the applied
+cursor and drains later events.
+If replay lookup, merge, or initial flush throws after live-first registration, setup
+rolls back the provisional client and closes its response/listener before propagating the
+error. The applied cursor remains at the last successful value. Failed subscription setup
+does not leave an orphan that can consume later report invalidations. Reconnect never
+resubmits the accepted user request, restarts a Run, or invokes completion logic; it only
+reprojects durable state.
 
 ### Privacy Validation
 
@@ -914,6 +1058,10 @@ decision with source refs.
 - Denied approval that prevents work becomes a blocker/risk and changes the outcome.
 - A post-step approval that succeeds must be reflected in workflow/step state before the
   reporting barrier opens.
+- `resume_pending` is non-terminal and cannot open the reporting barrier.
+- `approval_resume_effect_unknown` is a structured blocker: report the affected
+  participant/operation and safe next action from canonical evidence, but do not claim
+  the side effect ran or did not run and do not offer an automatic retry.
 
 ## Failure, Cancellation, And Partial Completion
 
@@ -1052,6 +1200,19 @@ transcript snapshot references the report id for structured rendering.
 - Late post-publication evidence does not silently rewrite the report.
 - Long runner summaries remain evidence without forcing the final report to repeat them
   verbatim.
+- Legacy Pi bash final text is retained once as bounded command evidence, survives
+  restart reconstruction, and supports stdout-backed verification without duplicating
+  cumulative tool updates.
+- An incomplete structured unified-exec result cannot borrow the legacy Pi success
+  inference or produce a succeeded TerminalReport.
+- Online terminal callback, post-step approval, startup recovery, duplicate callback, and
+  pre-publication reconciliation derive the same delegated outcome and completion basis
+  from the same canonical rows.
+- A stale cached verified gate with removed/changed evidence cannot publish success.
+- One completed required participant plus one active, absent, or blocked participant
+  cannot publish a succeeded report.
+- An evidence mutation between gate evaluation and atomic commit fails compare-and-set and
+  causes recomputation rather than stale success.
 
 ### Web Tests
 
@@ -1064,6 +1225,12 @@ transcript snapshot references the report id for structured rendering.
 - Normal conversation and private chat show reports for executed work without channel
   multi-agent chrome.
 - Raw ids and provider metadata remain absent from the default conversation surface.
+- A delayed reference preview still opens when an equivalent canonical Item refresh lands
+  between pointer entry and the preview deadline.
+- A reconnect persists only the last applied durable sequence; a refresh failure replays
+  the event again rather than skipping the report.
+- Reconnect and snapshot fallback never resubmit the accepted Turn or restart delegated
+  work.
 
 ### Real Scenario Fixtures
 
@@ -1122,7 +1289,8 @@ At minimum, keep fixtures for:
 ## Migration Rules
 
 - Existing workflow/run/approval/artifact records remain valid.
-- Existing `resultSummary` data remains readable as step evidence.
+- Existing `resultSummary` data remains readable as audit/context input, but never
+  satisfies delegated completion or operation evidence.
 - Existing terminal coordinator messages remain transcript history.
 - New reports are generated only for new terminal work by default; optional backfill must
   be an explicit migration or maintenance operation.
@@ -1144,17 +1312,15 @@ At minimum, keep fixtures for:
 - Deterministic fallback is required.
 - Durable idempotency replaces terminal-message body matching.
 
-## Remaining Implementation Decisions
+## Remaining Implementation Parameters
 
-No unresolved product boundary remains.
+No unresolved product or authority boundary remains.
 
-Implementation slices still need to choose:
-
-- whether P2 initially stores report JSON in a compatibility artifact or introduces the
-  `ling_terminal_reports` table immediately;
-- which provider adapters can enforce structured final output natively;
-- the exact reporting-barrier timeout and retry budget;
-- the first shared package location for protocol types while conversation contracts are
-  still being extracted.
-
-These choices affect migration cost and sequencing, not the user-facing protocol.
+- `ling_terminal_reports` is the canonical durable report owner. The existing table and
+  store remain in use; a compatibility artifact is not an alternative authority.
+- Protocol types stay in the current Core conversation/report contract modules for this
+  slice. A future shared-package extraction may move files without changing ownership.
+- Provider-native structured final output is an adapter capability. Unsupported adapters
+  use strict JSON validation, one bounded retry, then deterministic fallback.
+- Exact reporting-barrier timeout and retry budgets are versioned runtime policy values
+  measured during packaged macOS acceptance, not architecture decisions.

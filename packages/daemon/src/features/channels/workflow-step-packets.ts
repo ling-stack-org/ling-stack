@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, relative, resolve as resolvePath } from "node:path";
 import {
@@ -6,6 +7,7 @@ import {
   type ChannelWorkflowStep,
   type ChannelWorkflowStepContextPacket,
   type ChannelWorkflowStepOutputPacket,
+  type DelegatedStepRequirementV1,
   type RunArtifact,
   type RunExecutionStoreFacet,
   type RunnerResolutionAudit,
@@ -74,6 +76,71 @@ export function createWorkflowStepOutputArtifact(input: {
     packet: buildWorkflowStepOutputPacket(input),
     now: input.now,
   });
+}
+
+export function prepareDeterministicWorkflowStepOutputArtifact(input: {
+  readonly store: WorkflowStepPacketStore;
+  readonly workflow: ChannelWorkflow;
+  readonly step: ChannelWorkflowStep;
+  readonly run: RunSession;
+  readonly requirement: DelegatedStepRequirementV1;
+  readonly now: string;
+}): RunArtifact {
+  const events = input.store.listEvents(input.run.id, { limit: 1000 });
+  const basis = {
+    schemaVersion: 1,
+    workflowId: input.workflow.id,
+    workflowStepId: input.step.id,
+    runId: input.run.id,
+    runStatus: input.run.status,
+    runUpdatedAt: input.run.updatedAt,
+    terminalEventCount: input.store.countEvents(input.run.id),
+    terminalEventSeq: events.at(-1)?.seq ?? 0,
+    requirementFingerprint: input.requirement.fingerprint,
+    dependencyStepIds: [...input.requirement.requiredDependencyStepIds].sort(),
+    sourceRefs: buildDeterministicOutputPacketSourceIdentity(input),
+  };
+  const fingerprint = createHash("sha256").update(JSON.stringify(basis)).digest("hex");
+  const artifactId = `artifact_workflow_output_${fingerprint.slice(0, 32)}`;
+  const existing = existingPacketArtifact(input.store, artifactId);
+  const artifact = existing ?? writeWorkflowStepPacketArtifact({
+    store: input.store,
+    run: input.run,
+    workflowId: input.workflow.id,
+    workflowStepId: input.step.id,
+    kind: "output",
+    artifactId,
+    artifactFileName: `output-${fingerprint}.json`,
+    title: `Workflow step output: ${input.step.title}`,
+    packet: buildWorkflowStepOutputPacket(input),
+    now: input.now,
+  });
+  if (artifact.runId !== input.run.id) {
+    throw new Error(`Deterministic workflow output artifact owner mismatch: ${artifact.id}`);
+  }
+  const packet = readWorkflowStepOutputPacketArtifact({ store: input.store, artifactId: artifact.id });
+  if (!packet || packet.workflowId !== input.workflow.id || packet.workflowStepId !== input.step.id
+    || packet.runId !== input.run.id || packet.teammateId !== input.step.toParticipantId) {
+    throw new Error(`Deterministic workflow output artifact content mismatch: ${artifact.id}`);
+  }
+  const latestStep = input.store.getChannelWorkflowStep(input.step.id) ?? input.step;
+  if (latestStep.runId !== input.run.id) {
+    throw new Error(`Deterministic workflow output artifact linked Run changed: ${input.step.id}`);
+  }
+  if (latestStep.metadata?.outputArtifactId !== artifact.id) {
+    input.store.updateChannelWorkflowStep(input.step.id, {
+      metadata: {
+        ...latestStep.metadata,
+        outputArtifactId: artifact.id,
+        outputArtifactIds: uniqueStrings([
+          artifact.id,
+          ...(latestStep.metadata?.outputArtifactIds ?? []),
+          ...input.store.listArtifacts(input.run.id).map((candidate) => candidate.id),
+        ]),
+      },
+    }, input.now);
+  }
+  return artifact;
 }
 
 export function buildWorkflowStepContextPacket(input: {
@@ -166,6 +233,10 @@ export function buildWorkflowPacketSourceRefs(input: {
     { type: "workflow", id: input.workflow.id, label: input.workflow.title },
     { type: "workflow_step", id: input.step.id, label: input.step.title },
   ];
+  for (const dependencyId of input.step.metadata?.dependsOnStepIds ?? []) {
+    const dependency = input.store.getChannelWorkflowStep(dependencyId);
+    refs.push({ type: "workflow_step", id: dependencyId, label: dependency?.title });
+  }
   if (input.step.contextSummaryId) {
     const summary = input.store.getChannelContextSummary(input.step.contextSummaryId);
     refs.push({ type: "context_summary", id: input.step.contextSummaryId, label: summary?.summary });
@@ -196,7 +267,7 @@ export function readWorkflowStepContextPacketArtifact(input: {
   readonly store: WorkflowStepPacketArtifactStore;
   readonly artifactId: string;
 }): ChannelWorkflowStepContextPacket | undefined {
-  const packet = readWorkflowStepPacketArtifact(input.store, input.artifactId);
+  const packet = readWorkflowStepPacketArtifact(input.store, input.artifactId, false);
   if (!isRecord(packet) || packet.schemaVersion !== 1 || typeof packet.workflowId !== "string" || typeof packet.workflowStepId !== "string") {
     return undefined;
   }
@@ -210,7 +281,7 @@ export function readWorkflowStepOutputPacketArtifact(input: {
   readonly store: WorkflowStepPacketArtifactStore;
   readonly artifactId: string;
 }): ChannelWorkflowStepOutputPacket | undefined {
-  const packet = readWorkflowStepPacketArtifact(input.store, input.artifactId);
+  const packet = readWorkflowStepPacketArtifact(input.store, input.artifactId, true);
   if (!isRecord(packet) || packet.schemaVersion !== 1 || typeof packet.workflowId !== "string" || typeof packet.workflowStepId !== "string") {
     return undefined;
   }
@@ -277,6 +348,8 @@ function writeWorkflowStepPacketArtifact(input: {
   readonly workflowId: string;
   readonly workflowStepId: string;
   readonly kind: "context" | "output";
+  readonly artifactId?: string;
+  readonly artifactFileName?: string;
   readonly title: string;
   readonly packet: ChannelWorkflowStepContextPacket | ChannelWorkflowStepOutputPacket;
   readonly now: string;
@@ -290,20 +363,45 @@ function writeWorkflowStepPacketArtifact(input: {
     input.workflowStepId,
   );
   mkdirSync(artifactDir, { recursive: true });
-  const artifactPath = resolvePath(artifactDir, `${input.kind}.json`);
+  const artifactPath = resolvePath(artifactDir, input.artifactFileName ?? `${input.kind}.json`);
   const content = `${JSON.stringify(input.packet, null, 2)}\n`;
-  writeFileSync(artifactPath, content, "utf8");
+  if (existsSync(artifactPath)) {
+    if (readFileSync(artifactPath, "utf8") !== content) {
+      throw new Error(`Workflow packet projection content conflict: ${artifactPath}`);
+    }
+  } else {
+    writeFileSync(artifactPath, content, { encoding: "utf8", flag: "wx" });
+  }
   const stats = statSync(artifactPath);
 
   return input.store.createArtifact({
+    id: input.artifactId,
     runId: input.run.id,
     type: "json",
     path: normalizeArtifactPath(relative(input.store.paths.artifactsDir, artifactPath)),
     title: input.title,
     contentType: "application/json; charset=utf-8",
     sizeBytes: Number(stats.size),
+    ...(input.kind === "output" ? { sealedPayload: input.packet } : {}),
     createdAt: input.now,
   });
+}
+
+function buildDeterministicOutputPacketSourceIdentity(input: {
+  readonly workflow: ChannelWorkflow;
+  readonly step: ChannelWorkflowStep;
+  readonly run: RunSession;
+  readonly requirement: DelegatedStepRequirementV1;
+}): readonly string[] {
+  return uniqueStrings([
+    `workflow:${input.workflow.id}`,
+    `workflow_step:${input.step.id}`,
+    `run:${input.run.id}`,
+    input.step.taskId ? `task:${input.step.taskId}` : undefined,
+    input.step.contextSummaryId ? `context_summary:${input.step.contextSummaryId}` : undefined,
+    input.step.metadata?.sourceMessageId ? `conversation_item:${input.step.metadata.sourceMessageId}` : undefined,
+    ...input.requirement.requiredDependencyStepIds.map((id) => `workflow_step:${id}`),
+  ]).sort();
 }
 
 function createWorkflowStepCompactionArtifacts(input: {
@@ -419,12 +517,24 @@ function existingPacketArtifact(store: WorkflowStepPacketArtifactStore, artifact
   if (!artifact) {
     return undefined;
   }
-  return artifactPathExists(store, artifact) ? artifact : undefined;
+  return sealedArtifactPayloadIsValid(artifact) || artifactPathExists(store, artifact)
+    ? artifact
+    : undefined;
 }
 
-function readWorkflowStepPacketArtifact(store: WorkflowStepPacketArtifactStore, artifactId: string): unknown {
+function readWorkflowStepPacketArtifact(
+  store: WorkflowStepPacketArtifactStore,
+  artifactId: string,
+  requireSealedPayload: boolean,
+): unknown {
   const artifact = existingPacketArtifact(store, artifactId);
   if (!artifact) {
+    return undefined;
+  }
+  if (sealedArtifactPayloadIsValid(artifact)) {
+    return artifact.sealedPayload;
+  }
+  if (requireSealedPayload) {
     return undefined;
   }
   try {
@@ -433,6 +543,13 @@ function readWorkflowStepPacketArtifact(store: WorkflowStepPacketArtifactStore, 
   } catch {
     return undefined;
   }
+}
+
+function sealedArtifactPayloadIsValid(artifact: RunArtifact): boolean {
+  if (artifact.sealedPayload === undefined || !artifact.contentSha256) return false;
+  return createHash("sha256")
+    .update(JSON.stringify(artifact.sealedPayload), "utf8")
+    .digest("hex") === artifact.contentSha256;
 }
 
 function artifactPathExists(store: WorkflowStepPacketArtifactStore, artifact: RunArtifact): boolean {

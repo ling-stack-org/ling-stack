@@ -32,11 +32,20 @@ import {
   recoverTerminalReports,
 } from "./features/channels/terminal-report-coordinator.js";
 import { ChannelReplyDispatchCoordinator } from "./features/channels/channel-reply-dispatch-coordinator.js";
+import { ChannelTurnDispatchWorkerRegistry } from "./features/channels/channel-turn-dispatch-worker.js";
+import { createChannelTurnDispatchExecutor } from "./features/channels/channel-turn-dispatch-executor.js";
+import { maybeScheduleRunTerminalReport } from "./features/channels/terminal-report-coordinator.js";
+import { reconcileAllContinuityWorkflows } from "./features/channels/workflow-reconciliation.js";
+import {
+  maybeQueueGoalContinuation,
+  maybeStartNextRunInterventionContinuation,
+} from "./features/runs/interventions.js";
 import { createDefaultMcpBroker } from "./features/mcp/broker.js";
 import { createSystemKeychainSecretStore } from "./features/providers/keychain-secret-store.js";
 import { ProviderStartupRefreshService } from "./features/providers/startup-refresh.js";
 import { ProviderImportPreflightService } from "./features/providers/import-preflight.js";
 import { ActiveDirectReplyRegistry } from "./features/teammates/direct-reply-active-registry.js";
+import { ApprovalResumeCoordinator } from "./features/runs/approval-resume-coordinator.js";
 import { resumePendingMediaJobExecutions } from "./features/media/executor.js";
 import { ActiveRunRegistry } from "./runtime/active-runs.js";
 import { createRunnerRegistry, DEFAULT_RUNNER_ID, LEGACY_PI_RUNNER_ID, type RunnerRegistry } from "./runtime/runners.js";
@@ -84,7 +93,9 @@ export {
   LEGACY_PI_RUNNER_ID,
   UnsupportedRunnerError,
   normalizeRunnerId,
+  resolveRunnerResumeCapabilities,
   type RegisteredRunner,
+  type RunnerResumeCapabilitiesV1,
   type RunnerRegistry,
   type RunnerResolution,
   type RunnerResolutionInput,
@@ -93,6 +104,7 @@ export type { RunnerFallbackReason } from "@ling-stack/core";
 export { ActiveRunRegistry } from "./runtime/active-runs.js";
 export { ActiveDirectReplyRegistry } from "./features/teammates/direct-reply-active-registry.js";
 export { ChannelReplyDispatchCoordinator } from "./features/channels/channel-reply-dispatch-coordinator.js";
+export { ChannelTurnDispatchWorkerRegistry } from "./features/channels/channel-turn-dispatch-worker.js";
 export { RunStoreRegistry } from "./runtime/store-registry.js";
 export { RuntimeSupervisor } from "./runtime/supervisor.js";
 export { StartupStateRegistry } from "./startup/state.js";
@@ -186,6 +198,9 @@ export function createDaemonServer(
   const providerImportPreflight = new ProviderImportPreflightService({ secretResolver, controlPlaneEvents });
   let automationSchedulers: AutomationSchedulerRegistry;
   let startupOptionalWarmups: StartupOptionalWarmupCoordinator;
+  let channelTurnDispatchWorker: ChannelTurnDispatchWorkerRegistry;
+  let channelTurnDispatchReady = false;
+  let approvalResumeCoordinator: ApprovalResumeCoordinator | undefined;
   const storeRegistry = new RunStoreRegistry(dependencies.storeFactory ?? createDefaultRunStore, {
     trustedWorkspaceRoots: [resolvedConfig.defaultWorkspaceCwd],
     onStoreInitialized: (cwd, store) => {
@@ -193,11 +208,15 @@ export function createDaemonServer(
         enabled: resolvedConfig.channels.terminalReports === true,
         runnerRegistry,
         secretResolver,
+        onPublished: ({ event }) => controlPlaneEvents.publish(event),
       });
+      approvalResumeCoordinator?.registerStore(store);
       startupOptionalWarmups?.start(cwd, store);
+      reconcileAllContinuityWorkflows(store, { cause: "startup" });
       if (resolvedConfig.channels.terminalReports === true) {
         void recoverTerminalReports(store).catch(() => undefined);
       }
+      if (channelTurnDispatchReady) channelTurnDispatchWorker?.start(store);
     },
   });
   let cuaDriverActivationCoordinator: CuaDriverDaemonActivationCoordinator | undefined;
@@ -297,6 +316,55 @@ export function createDaemonServer(
   });
   const activeDirectReplies = new ActiveDirectReplyRegistry();
   const channelReplyDispatchCoordinator = new ChannelReplyDispatchCoordinator();
+  const afterChannelRunTerminal = async (terminalRun: import("@ling-stack/core").RunSession): Promise<void> => {
+    const sourceRunId = terminalRun.parentRunId ?? terminalRun.id;
+    const store = storeRegistry.findStoreForRun(sourceRunId, terminalRun.cwd)
+      ?? storeRegistry.findStoreForRun(terminalRun.id, terminalRun.cwd);
+    if (!store) return;
+    maybeScheduleRunTerminalReport(store, terminalRun.id, { linkedRunId: terminalRun.id });
+    const goalContinuation = maybeQueueGoalContinuation({ terminalRun, store, activeRuns });
+    await maybeStartNextRunInterventionContinuation({
+      sourceRunId: goalContinuation?.sourceRunId ?? sourceRunId,
+      terminalRun,
+      store,
+      runnerRegistry,
+      storeRegistry,
+      activeRuns,
+      runtimeSupervisor,
+      secretResolver,
+      mcpBroker,
+      controlPlaneEvents,
+      startupState,
+      computerUsePreviews,
+    });
+  };
+  approvalResumeCoordinator = new ApprovalResumeCoordinator({
+    runtimeSupervisor,
+    activeRuns,
+    runnerRegistry,
+    controlPlaneEvents,
+    afterRunTerminal: afterChannelRunTerminal,
+  });
+  channelTurnDispatchWorker = new ChannelTurnDispatchWorkerRegistry(
+    runtimeSupervisor,
+    createChannelTurnDispatchExecutor({
+      config: resolvedConfig,
+      storeRegistry,
+      runnerRegistry,
+      activeRuns,
+      runtimeSupervisor,
+      secretResolver,
+      mcpBroker,
+      controlPlaneEvents,
+      startupState,
+      computerUsePreviews,
+      replyDispatchCoordinator: channelReplyDispatchCoordinator,
+      imageVisionSummarizer,
+      webFetch,
+      webResolveHostAddresses,
+      afterRunTerminal: afterChannelRunTerminal,
+    }),
+  );
   const remoteAccessManagementCapability = dependencies.remoteAccessManagementCapability
     ?? process.env.LING_MOBILE_ACCESS_MANAGEMENT_CAPABILITY
     ?? randomBytes(32).toString("base64url");
@@ -331,8 +399,10 @@ export function createDaemonServer(
     extensionRegistry,
     storeRegistry,
     activeRuns,
+    approvalResumeCoordinator,
     activeDirectReplies,
     channelReplyDispatchCoordinator,
+    channelTurnDispatchWorker,
     runtimeSupervisor,
     secretResolver,
     externalSecretStore,
@@ -411,6 +481,8 @@ export function createDaemonServer(
         await remoteAccess.startIfEnabled();
       }
       startupOptionalWarmups.start(resolvedConfig.defaultWorkspaceCwd, storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd));
+      channelTurnDispatchReady = true;
+      channelTurnDispatchWorker.start(storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd));
       resumePendingMediaJobExecutions({
         cwd: resolvedConfig.defaultWorkspaceCwd,
         storeRegistry,
@@ -434,14 +506,14 @@ export function createDaemonServer(
       });
     },
     stop: async () => {
+      channelTurnDispatchReady = false;
       cuaDriverActivationCoordinator.beginShutdown();
       const providerImportShutdown = providerImportPreflight.shutdown();
       await remoteAccess.stop();
       await new Promise<void>((resolve, reject) => {
-        activeRuns.cancelAll();
+        activeRuns.suspendAll("daemon_restart");
         activeDirectReplies.cancelAll();
         channelReplyDispatchCoordinator.close();
-        runtimeSupervisor.releaseAll();
         backgroundSchedulers.stopAll();
         automationSchedulers.stopAll();
         controlPlaneEvents.closeAll();
@@ -459,9 +531,11 @@ export function createDaemonServer(
         server.closeAllConnections();
       });
       await activeRuns.waitForIdle();
+      await channelTurnDispatchWorker.close();
       await automationSchedulers.waitForIdle();
       await providerImportShutdown;
       await cuaDriverActivationCoordinator.shutdown();
+      runtimeSupervisor.releaseAll();
       storeRegistry.closeAll();
     },
   };
@@ -514,6 +588,7 @@ export function createDefaultRunnerRegistry(
       supportedProviderApis: extension.supportedProviderApis,
       supportedTools: extension.supportedTools,
       capabilities: piCapabilities,
+      resumeCapabilities: extension.resumeCapabilities,
       toolHydration: piToolHydration,
     },
     ...listExternalRunnerRegistrations(config),

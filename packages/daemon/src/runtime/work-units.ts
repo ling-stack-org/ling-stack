@@ -262,6 +262,9 @@ export function transitionWorkUnitTerminal(
   if (!current || isTerminalWorkUnitStatus(current.status) || current.status === "stale") {
     return;
   }
+  if (current.activeAttemptId && current.activeAttemptId !== input.attemptId) {
+    return;
+  }
   const transition = store.transitionWorkUnitStatus({
     workUnitId: input.workUnitId,
     expectedStatus: current.status,

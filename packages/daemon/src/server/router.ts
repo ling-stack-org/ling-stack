@@ -353,6 +353,7 @@ export async function routeRequest(
     activeRuns,
     activeDirectReplies,
     channelReplyDispatchCoordinator,
+    channelTurnDispatchWorker,
     runtimeSupervisor,
     secretResolver,
     externalSecretStore,
@@ -2003,56 +2004,26 @@ export async function routeRequest(
       return;
     }
     if (channelRoute.action === "turns") {
-      const channelTurnsCwd = url.searchParams.get("cwd") ?? "";
-      await handleChannelTurnsCollection(request, response, config, storeRegistry, channelRoute.channelId, (input) =>
-        createAiChannelReply({
-          startRun: startTeammateDirectRun,
-          secretResolver,
-          webFetch: context.webFetch,
-          webResolveHostAddresses: context.webResolveHostAddresses,
-          ...input,
-          trackCompletion: (completion) => activeRuns.trackCompletion(completion),
-          teamObserverBusEnabled: config.channels.teamObserverBus === true,
-        }),
-        (input) => confirmAndOrchestrateChannelProposal({
-          store: input.store,
-          cwd: channelTurnsCwd,
-          proposalId: input.proposalId,
-        }),
-        {
-          runnerRegistry,
-          secretResolver,
-          config,
-        },
-        imageVisionSummarizer,
+      await handleChannelTurnsCollection(
+        request,
+        response,
+        config,
+        storeRegistry,
+        channelRoute.channelId,
         channelReplyDispatchCoordinator,
+        channelTurnDispatchWorker,
       );
       return;
     }
     if (channelRoute.action === "turns-stream") {
-      const channelTurnsCwd = url.searchParams.get("cwd") ?? "";
-      await handleChannelTurnStream(request, response, config, storeRegistry, channelRoute.channelId, (input) =>
-        createAiChannelReply({
-          startRun: startTeammateDirectRun,
-          secretResolver,
-          webFetch: context.webFetch,
-          webResolveHostAddresses: context.webResolveHostAddresses,
-          ...input,
-          trackCompletion: (completion) => activeRuns.trackCompletion(completion),
-          teamObserverBusEnabled: config.channels.teamObserverBus === true,
-        }),
-        (input) => confirmAndOrchestrateChannelProposal({
-          store: input.store,
-          cwd: channelTurnsCwd,
-          proposalId: input.proposalId,
-        }),
-        {
-          runnerRegistry,
-          secretResolver,
-          config,
-        },
-        imageVisionSummarizer,
+      await handleChannelTurnStream(
+        request,
+        response,
+        config,
+        storeRegistry,
+        channelRoute.channelId,
         channelReplyDispatchCoordinator,
+        channelTurnDispatchWorker,
       );
       return;
     }
@@ -2521,6 +2492,7 @@ export async function routeRequest(
   const approvalRoute = parseApprovalRoute(url.pathname);
   if (approvalRoute) {
     await handleApprovalItem(request, response, config, storeRegistry, approvalRoute, controlPlaneEvents, ({ cwd, store, approval, now }) => {
+      context.approvalResumeCoordinator.resumeAfterApproval({ store, approval });
       syncWorkflowApprovalDecision(store, approval, now);
       return syncMediaJobForApprovalDecision({
         cwd,
