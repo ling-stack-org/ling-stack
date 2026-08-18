@@ -21,7 +21,7 @@
     "@ling-stack/remote-protocol": "workspace:*",
     "@ling-stack/runner-pi": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "mammoth": "1.12.0",
+    "mammoth": "1.12.1",
     "pdf-parse": "2.4.5",
     "ws": "^8.21.0"
   },
