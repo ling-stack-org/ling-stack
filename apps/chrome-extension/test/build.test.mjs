@@ -10,7 +10,7 @@ const root = resolve(import.meta.dirname, "..");
 const bootstrapDist = resolve(root, "dist-store-bootstrap");
 const bootstrapZip = resolve(root, "ling-for-chrome-store-bootstrap.zip");
 
-test("store bootstrap build omits the development key and identity", async () => {
+test("store bootstrap build omits the production key and identity", async () => {
   try {
     await execFileAsync(process.execPath, [resolve(root, "scripts/build.mjs"), "--store-bootstrap"]);
     const manifest = JSON.parse(await readFile(resolve(bootstrapDist, "manifest.json"), "utf8"));

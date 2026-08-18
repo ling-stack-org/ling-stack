@@ -35,7 +35,7 @@ for (const file of files) {
 const zip = createZip(archive);
 await writeFile(zipPath, zip);
 await writeFile(join(dist, "build-metadata.json"), `${JSON.stringify({
-  identityMode: storeBootstrap ? "store-bootstrap" : "development",
+  identityMode: storeBootstrap ? "store-bootstrap" : "production",
   extensionId: storeBootstrap ? null : extensionIdFromKey(manifest.key),
   version: manifest.version,
   manifestSha256: createHash("sha256").update(await readFile(join(dist, "manifest.json"))).digest("hex"),

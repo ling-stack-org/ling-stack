@@ -46,7 +46,7 @@ import { RuntimeSupervisor } from "./runtime/supervisor.js";
 import { startRuntimeWorkUnit, transitionWorkUnitTerminal } from "./runtime/work-units.js";
 import { routeRequest } from "./server/router.js";
 import { attachRpcWebSocketServer } from "./server/rpc.js";
-import { CHROME_BROWSER_DEVELOPMENT_EXTENSION_ID } from "@ling-stack/contracts";
+import { CHROME_BROWSER_DEFAULT_EXTENSION_IDS } from "@ling-stack/contracts";
 import { ChromeBrowserSessionController } from "./features/browser-extension/session-controller.js";
 import { attachChromeBrowserWebSocketServer } from "./features/browser-extension/websocket-server.js";
 import { ChromeBrowserPluginService, normalizeChromeBrowserStoreUrl } from "./features/plugins/chrome-browser.js";
@@ -512,7 +512,7 @@ export function createDaemonServer(
 
 function readChromeBrowserExtensionIds(value: string | undefined): readonly string[] {
   const configured = value?.split(",").map((item) => item.trim()).filter(Boolean) ?? [];
-  return configured.length > 0 ? configured : [CHROME_BROWSER_DEVELOPMENT_EXTENSION_ID];
+  return configured.length > 0 ? configured : CHROME_BROWSER_DEFAULT_EXTENSION_IDS;
 }
 
 function createDefaultRunStore(cwd: string) {

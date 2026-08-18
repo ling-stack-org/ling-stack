@@ -1,7 +1,12 @@
 export const CHROME_BROWSER_PLUGIN_ID = "built-in:chrome";
 export const CHROME_BROWSER_MCP_SERVER_ID = "mcp_chrome_browser";
 export const CHROME_BROWSER_PROTOCOL = "ling.chrome.v1";
-export const CHROME_BROWSER_DEVELOPMENT_EXTENSION_ID = "ggmhibjboaedlnidbemkefonahjgcapc";
+export const CHROME_BROWSER_PRODUCTION_EXTENSION_ID = "mbmlnnfhebclljonhedpjghbhibfapei";
+export const CHROME_BROWSER_LEGACY_DEVELOPMENT_EXTENSION_ID = "ggmhibjboaedlnidbemkefonahjgcapc";
+export const CHROME_BROWSER_DEFAULT_EXTENSION_IDS = [
+  CHROME_BROWSER_PRODUCTION_EXTENSION_ID,
+  CHROME_BROWSER_LEGACY_DEVELOPMENT_EXTENSION_ID,
+] as const;
 export const CHROME_BROWSER_MAX_MESSAGE_BYTES = 1024 * 1024;
 export const CHROME_BROWSER_PAIRING_CODE_MAX_LENGTH = 128;
 export const CHROME_BROWSER_CREDENTIAL_MAX_LENGTH = 256;

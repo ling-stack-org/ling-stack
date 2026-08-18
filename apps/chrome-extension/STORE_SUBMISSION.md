@@ -32,7 +32,7 @@ Remote code declaration: `No`. All executable extension code is packaged in the 
 
 ## Data Disclosure Draft
 
-Review these statements against the final public privacy policy before submission:
+These disclosures are reflected in the public [Ling for Chrome Privacy Policy](PRIVACY.md):
 
 - Page titles, HTTP(S) URLs, visible page text, interactive-element labels and visible screenshots
   are processed only when an approved Ling browser tool requests them.
@@ -51,12 +51,8 @@ user checks the explicit-consent control. Review the dashboard categories for at
 content` and `Web history`; separately confirm whether the local Ling pairing credential should be
 declared as `Authentication information`.
 
-Required human input:
-
-- a reviewed, publicly reachable privacy-policy URL;
-- the verified publisher identity and support contact;
-- confirmation that the store questionnaire matches the final product deployment and retention
-  policy.
+The publisher contact email must be verified in the Dashboard before submission. Final submission
+and publication remain human actions.
 
 ## Submission Assets
 
@@ -74,8 +70,7 @@ Required human input:
   - Connect Chrome drawer with the pairing flow; do not include a live pairing credential.
   - Extension popup in Connected and Unpaired states.
 
-Use `STORE_LISTING.md` as the Dashboard field copy and review
-`PRIVACY_DISCLOSURE_DRAFT.md` before publishing it at a stable public URL.
+Use `STORE_LISTING.md` as the Dashboard field copy and `PRIVACY.md` as the stable public policy.
 
 Generate the 1280x800 Plugin Manager screenshots without adding them to Git:
 
@@ -89,19 +84,15 @@ The output is `/tmp/ling-plugin-manager-chrome-light.png` and
 ## Release Gate
 
 1. Run `corepack pnpm --filter @ling-stack/chrome-extension test`.
-2. Run `corepack pnpm --filter @ling-stack/chrome-extension build:store-bootstrap` and upload the
-   resulting bootstrap ZIP as a new, unpublished Dashboard item. This package intentionally omits
-   the repository's development key.
-3. Copy the Dashboard Item ID and public key from the Package tab.
-4. Replace `manifest.json.key` with the Dashboard public key. Replace and rename
-   `CHROME_BROWSER_DEVELOPMENT_EXTENSION_ID` to the production extension ID across contracts,
-   daemon defaults and tests.
-5. Run `corepack pnpm --filter @ling-stack/chrome-extension build` twice, confirm the ZIP hash is
-   stable, and verify the unpacked ID equals the Dashboard Item ID.
-6. Complete privacy, permission and prominent-disclosure review.
-7. Upload the final ZIP to the existing Dashboard item without changing the store-issued key.
-8. Record the published Web Store URL in the release configuration.
-9. Install from the Web Store in official Chrome and rerun the six-tool, revoke, prompt-injection
+2. Confirm the committed manifest key derives Dashboard Item ID
+   `mbmlnnfhebclljonhedpjghbhibfapei`.
+3. Run `corepack pnpm --filter @ling-stack/chrome-extension build` twice, confirm the ZIP hash is
+   stable, and verify the built ID equals the Dashboard Item ID.
+4. Complete privacy, permission, listing, contact, and reviewer-instruction fields.
+5. Upload the final ZIP to the existing Dashboard item without changing the store-issued key.
+6. Submit for review as a human publisher action.
+7. Record the published Web Store URL in the release configuration.
+8. Install from the Web Store in official Chrome and rerun the six-tool, revoke, prompt-injection
    boundary and cancellation acceptance flow.
 
 Do not use enterprise force-install policy, native messaging or command-line side loading as a

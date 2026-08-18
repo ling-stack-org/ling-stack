@@ -1,19 +1,18 @@
 # Ling for Chrome Store Listing
-Status: submission draft. Replace every `REQUIRED_...` placeholder and complete privacy/legal
-review before uploading or publishing.
+Status: Chrome Web Store submission copy for item `mbmlnnfhebclljonhedpjghbhibfapei`.
 
 ## Dashboard Fields
 
 | Field | Value |
 | --- | --- |
 | Product name | Ling for Chrome |
-| Category | Productivity |
-| Default language | English |
+| Category | Developer Tools |
+| Default language | Chinese (China) |
 | English summary | Let Ling complete user-approved tasks in the Chrome tabs you connect. |
 | Chinese summary | 让 Ling 在你连接的 Chrome 标签页中完成经你批准的任务。 |
-| Privacy policy URL | `REQUIRED_PUBLIC_PRIVACY_POLICY_URL` |
-| Support email | `REQUIRED_SUPPORT_EMAIL` |
-| Support URL | `REQUIRED_SUPPORT_URL` |
+| Privacy policy URL | `https://github.com/tianxiaochannel-oss88/ling-stack/blob/main/apps/chrome-extension/PRIVACY.md` |
+| Support email | Verified publisher contact configured in the Dashboard; not stored in source |
+| Support URL | `https://github.com/tianxiaochannel-oss88/ling-stack/issues` |
 
 ## English Description
 
@@ -74,15 +73,16 @@ Declare conservatively and reconcile the final answers with the published privac
 | --- | --- |
 | Website content | Yes: bounded visible text, interactive labels, and visible screenshots for approved tasks. |
 | Web history | Yes: HTTP(S) URLs and page titles of tabs involved in approved tasks. |
-| Authentication information | Review required: the one-time pairing credential is local and revocable, but should be disclosed if the Dashboard definition includes local application credentials. |
-| Personal communications | No by design; review again if a user directs Ling to a messaging page. |
+| Authentication information | Yes: a local, revocable Ling pairing credential is stored in `chrome.storage.local`. |
+| Personal communications | Yes: selected visible page content can include communications when a user explicitly directs Ling to that page. |
 | Analytics or advertising | No. |
 | Sale of user data | No. |
 | Use unrelated to the single purpose | No. |
 
 ## Reviewer Instructions
 
-1. Install Ling Desktop from `REQUIRED_REVIEW_BUILD_URL` and start the local daemon.
+1. Follow the public [Quick Start From Source](../../README.md#quick-start-from-source) to start the
+   local daemon and Web UI. No Ling test account is required.
 2. In Ling, open Plugin Manager, enable Chrome, and request a one-time pairing code.
 3. Open the extension, enter the workspace path and pairing code, accept the disclosure, and connect.
 4. Run the six browser tools from Ling: tabs, snapshot, navigate, click, type, and screenshot.

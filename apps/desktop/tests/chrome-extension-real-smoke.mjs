@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { chromium } from "@playwright/test";
 import {
-  CHROME_BROWSER_DEVELOPMENT_EXTENSION_ID,
+  CHROME_BROWSER_PRODUCTION_EXTENSION_ID,
   CHROME_BROWSER_PLUGIN_ID,
 } from "@ling-stack/contracts";
 import { createSqliteRunStore } from "../../../packages/core/dist/index.js";
@@ -39,7 +39,7 @@ store.upsertManagedPlugin({
 }, new Date().toISOString());
 const controller = new ChromeBrowserSessionController({
   workspaceCwd,
-  allowedExtensionIds: [CHROME_BROWSER_DEVELOPMENT_EXTENSION_ID],
+  allowedExtensionIds: [CHROME_BROWSER_PRODUCTION_EXTENSION_ID],
   getStore: () => store,
 });
 const server = createServer(async (request, response) => {
@@ -108,7 +108,7 @@ try {
   popup.setDefaultTimeout(10_000);
   await popup.setViewportSize({ width: 360, height: 600 });
   console.log("chrome-smoke:popup");
-  await popup.goto(`chrome-extension://${CHROME_BROWSER_DEVELOPMENT_EXTENSION_ID}/popup.html`);
+  await popup.goto(`chrome-extension://${CHROME_BROWSER_PRODUCTION_EXTENSION_ID}/popup.html`);
   await popup.evaluate((daemonBaseUrl) => chrome.storage.local.set({ "ling.chrome.daemonBaseUrl": daemonBaseUrl }), baseUrl);
   await popup.reload();
   const consentScreenshot = `/tmp/ling-chrome-extension-consent-${colorScheme}-${browserLocale}.png`;
@@ -188,7 +188,7 @@ try {
 
   console.log(JSON.stringify({
     ok: true,
-    extensionId: CHROME_BROWSER_DEVELOPMENT_EXTENSION_ID,
+    extensionId: CHROME_BROWSER_PRODUCTION_EXTENSION_ID,
     toolChecks: ["chrome_tabs", "chrome_snapshot", "chrome_click", "chrome_type", "chrome_navigate", "chrome_screenshot"],
     colorScheme,
     browserChannel,
