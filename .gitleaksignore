@@ -31,5 +31,6 @@ ee3cee21d7ef15f3c0cf6c70815d5e89907c6f7f:packages/providers/test/media-adapter-c
 347b65a4a675d08223b1bd9cabe188020594238f:packages/providers/test/media-adapter-contract.test.mjs:generic-api-key:26
 9067d8d8cd29ad4a79adf40ab4b7c17137598146:packages/core/test/approval-policy.test.mjs:generic-api-key:132
 
-# Public Chrome manifest key used only to keep the development extension ID stable.
+# Public Chrome manifest keys used only to derive stable extension IDs.
 942b94bd3794394033a78be7cf0bfaa064a35acf:apps/chrome-extension/manifest.json:generic-api-key:9
+0831039d1cd39d648099007284c40c3c725a8b9e:apps/chrome-extension/manifest.json:generic-api-key:9
