@@ -130,17 +130,17 @@ Validated on macOS on 2026-08-17:
 - The extension ZIP is deterministic and contains a store-compliant 128x128 Ling icon. An unsigned arm64 macOS
   App, ZIP and DMG build successfully; the final DMG contains byte-identical ZIP, build metadata,
   README, Store submission checklist and MIT LICENSE resources.
-- A separate deterministic Store-bootstrap build omits the development manifest key and marks its
-  identity as pending, so the first Dashboard upload can produce the authoritative production Item
-  ID and public key without pretending the development ID is final.
+- A separate deterministic Store-bootstrap build produced the unpublished Dashboard item. The
+  Store-issued public key is now committed, the final package derives production Item ID
+  `mbmlnnfhebclljonhedpjghbhibfapei`, and the legacy development ID remains allowlisted only for
+  compatibility.
 - Official Google Chrome 151 rejects command-line extension loading with `ERR_BLOCKED_BY_CLIENT`.
   The successful local automation therefore remains explicitly Chromium-only and confirms that Ling
   must not claim or exercise Chrome installation authority.
 
 Open release gates:
 
-- create the unpublished Chrome Web Store item from the bootstrap package, bind the returned public
-  key and Item ID into the final source, then publish and record the listing URL;
+- submit the completed Chrome Web Store item for review, then publish and record the listing URL;
 - repeat acceptance in official Chrome from the Web Store-installed package;
 - complete Developer ID-signed macOS and signed Windows clean-host acceptance. The local arm64
   macOS package is structurally verified but unsigned because this machine has no valid signing

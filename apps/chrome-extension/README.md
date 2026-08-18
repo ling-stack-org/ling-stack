@@ -12,9 +12,11 @@ Production installation remains Chrome Web Store-owned. For local development on
 The extension does not request access to cookies, passwords, history, bookmarks, downloads,
 `chrome.debugger`, `webRequest`, or native messaging.
 
-The stable development extension ID is `ggmhibjboaedlnidbemkefonahjgcapc`. It is not the production
-Chrome Web Store Item ID. The Store bootstrap flow obtains the production public key before release.
+The production Chrome Web Store extension ID is `mbmlnnfhebclljonhedpjghbhibfapei`. The manifest
+public key is committed so local builds and the Store package keep the same reviewed identity. The
+legacy development ID remains daemon-allowlisted only for compatibility with earlier local builds.
 
 Before publication, follow [Chrome Web Store Submission](STORE_SUBMISSION.md) and use the prepared
-[Dashboard copy](STORE_LISTING.md) plus [store assets](store-assets/README.md). A reviewed public
-privacy-policy URL and publisher account remain human release gates.
+[Dashboard copy](STORE_LISTING.md), [privacy policy](PRIVACY.md), and
+[store assets](store-assets/README.md). Publisher contact verification and final submission remain
+human release gates.

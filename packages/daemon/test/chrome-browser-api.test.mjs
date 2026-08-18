@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
 import {
-  CHROME_BROWSER_DEVELOPMENT_EXTENSION_ID,
+  CHROME_BROWSER_DEFAULT_EXTENSION_IDS,
+  CHROME_BROWSER_LEGACY_DEVELOPMENT_EXTENSION_ID,
+  CHROME_BROWSER_PRODUCTION_EXTENSION_ID,
   CHROME_BROWSER_MCP_SERVER_ID,
   CHROME_BROWSER_PLUGIN_ID,
   CHROME_BROWSER_PROTOCOL,
@@ -15,8 +17,11 @@ import { createDaemonServer } from "../dist/index.js";
 test("built-in Chrome plugin pairs an allowlisted extension and exposes six MCP tools", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-chrome-api-"));
   const runner = new ChromeToolRunner();
+  assert.deepEqual(CHROME_BROWSER_DEFAULT_EXTENSION_IDS, [
+    CHROME_BROWSER_PRODUCTION_EXTENSION_ID,
+    CHROME_BROWSER_LEGACY_DEVELOPMENT_EXTENSION_ID,
+  ]);
   const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd }, {
-    chromeBrowserExtensionIds: [CHROME_BROWSER_DEVELOPMENT_EXTENSION_ID],
     runner,
   });
   await daemon.start();
@@ -62,7 +67,7 @@ test("built-in Chrome plugin pairs an allowlisted extension and exposes six MCP 
       method: "POST",
       headers: {
         "content-type": "application/json",
-        origin: `chrome-extension://${CHROME_BROWSER_DEVELOPMENT_EXTENSION_ID}`,
+        origin: `chrome-extension://${CHROME_BROWSER_PRODUCTION_EXTENSION_ID}`,
       },
       body: {
         protocol: CHROME_BROWSER_PROTOCOL,
@@ -169,7 +174,7 @@ class ChromeToolRunner {
 
 function connectChrome(url, credential) {
   return new Promise((resolve, reject) => {
-    const socket = new WebSocket(url, { origin: `chrome-extension://${CHROME_BROWSER_DEVELOPMENT_EXTENSION_ID}` });
+    const socket = new WebSocket(url, { origin: `chrome-extension://${CHROME_BROWSER_PRODUCTION_EXTENSION_ID}` });
     socket.once("open", () => {
       socket.send(JSON.stringify({
         protocol: CHROME_BROWSER_PROTOCOL,

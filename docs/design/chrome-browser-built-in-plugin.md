@@ -63,9 +63,10 @@ protocol:           ling.chrome.v1
 extension package:  @ling-stack/chrome-extension
 ```
 
-The Chrome Web Store extension ID is a release input bound to the committed manifest public key.
-Development and production IDs must be explicit allowlist entries; the daemon never accepts an
-arbitrary `chrome-extension://` origin.
+The production Chrome Web Store extension ID is `mbmlnnfhebclljonhedpjghbhibfapei`, derived from
+the Store-issued public key committed in the manifest. The legacy development ID
+`ggmhibjboaedlnidbemkefonahjgcapc` remains an explicit compatibility allowlist entry. The daemon
+never accepts an arbitrary `chrome-extension://` origin.
 
 ## User Experience
 

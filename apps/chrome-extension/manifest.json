@@ -6,7 +6,7 @@
   "version_name": "0.1.0",
   "description": "Let Ling work with tabs you explicitly connect in Chrome.",
   "minimum_chrome_version": "116",
-  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1GyFgnilneLDoOcrSUY4ZyTSovpcWgtmE8PIlZt3VFzvXY5jJNxRAhB6DQK5eqI5lEyC2tSWhiYV0aZn77EY8AqHI0sBjFjmwG/65fA9/RDYq+/ggPPj7MIATK+WLm/EPN9rwqsib9eWN8sUAQRqujcI4O/1UMjFXQClzK5i3sgXEbWBtLA6ApPHzVSC4i1R73U6Ga9vvwww/wizCnZ1g0TF4hnF709RZQQRzOpKJX6EYUQdPqFzQi5bk+DpjgimFh5py7uQAblkfsizSRt4WwrDiRyyoo3Ltwuz2lJIULaHki9DbGoa14zNicLokZo4v/qYqZ6dFUCsQEHm7MJ1RwIDAQAB",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs80/DkpmElXvs5WaMeSJMLx0gXsic1agpjX2CeDX6duwlQhJaQ6Hmgk2U25SmNCilrZPVRYoofKXPqKBnGHSBPqlAP33dQahFEnVG2CONlpqKYGZSawsY8L7zIOJ/WvWICqhE80wEv2S4SjHRe1YhbRTPGrO06PP1AsJYfGNn5TWOUNP0rxnvvc/Ih3VinwFrbpOUPpG4cWglVdL6na4lt3ga4GE7HGr+QNKNb6c//EjZucBbboMgMebcuRbjS3Bgoy1SOKGZJgtU1ZDzcncB7i0JLiYlmDzUc7XJsrrv1iewQqVZCpBUt35iw0K7575xARj4igpkUW8nMLyAunqSwIDAQAB",
   "permissions": [
     "scripting",
     "storage"
