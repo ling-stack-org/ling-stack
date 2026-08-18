@@ -46,6 +46,11 @@ import { RuntimeSupervisor } from "./runtime/supervisor.js";
 import { startRuntimeWorkUnit, transitionWorkUnitTerminal } from "./runtime/work-units.js";
 import { routeRequest } from "./server/router.js";
 import { attachRpcWebSocketServer } from "./server/rpc.js";
+import { CHROME_BROWSER_DEVELOPMENT_EXTENSION_ID } from "@ling-stack/contracts";
+import { ChromeBrowserSessionController } from "./features/browser-extension/session-controller.js";
+import { attachChromeBrowserWebSocketServer } from "./features/browser-extension/websocket-server.js";
+import { ChromeBrowserPluginService, normalizeChromeBrowserStoreUrl } from "./features/plugins/chrome-browser.js";
+import { createChromeBrowserGenerationBroker } from "./features/plugins/chrome-browser-generation-broker.js";
 import { writeJson } from "./shared/response.js";
 import { StartupOptionalWarmupCoordinator } from "./startup/optional-warmups.js";
 import { StartupStateRegistry } from "./startup/state.js";
@@ -143,6 +148,15 @@ export {
   type CuaDriverGenerationBrokerErrorCode,
 } from "./features/plugins/cua-driver-generation-broker.js";
 export { CuaDriverDaemonActivationCoordinator } from "./features/plugins/cua-driver-daemon-composition.js";
+export {
+  ChromeBrowserSessionController,
+  ChromeBrowserSessionError,
+  chromeExtensionIdFromOrigin,
+} from "./features/browser-extension/session-controller.js";
+export { attachChromeBrowserWebSocketServer } from "./features/browser-extension/websocket-server.js";
+export { handleChromeBrowserPair } from "./features/browser-extension/routes.js";
+export { ChromeBrowserPluginService, createChromeBrowserDescriptor, normalizeChromeBrowserStoreUrl } from "./features/plugins/chrome-browser.js";
+export { createChromeBrowserGenerationBroker, chromeBrowserTools } from "./features/plugins/chrome-browser-generation-broker.js";
 
 export interface DaemonServer {
   readonly server: Server;
@@ -200,6 +214,19 @@ export function createDaemonServer(
       }
     },
   });
+  const chromeBrowserSessions = new ChromeBrowserSessionController({
+    workspaceCwd: resolvedConfig.defaultWorkspaceCwd,
+    allowedExtensionIds: dependencies.chromeBrowserExtensionIds
+      ?? readChromeBrowserExtensionIds(process.env.LING_CHROME_EXTENSION_IDS),
+    getStore: (cwd) => storeRegistry.getStore(cwd),
+  });
+  const chromeBrowserPlugin = new ChromeBrowserPluginService({
+    controller: chromeBrowserSessions,
+    getStore: (cwd) => storeRegistry.getStore(cwd),
+    storeUrl: normalizeChromeBrowserStoreUrl(process.env.LING_CHROME_EXTENSION_STORE_URL),
+  });
+  chromeBrowserSessions.setStateChangeListener((cwd) => chromeBrowserPlugin.handleSessionStateChange(cwd));
+  chromeBrowserPlugin.sync(resolvedConfig.defaultWorkspaceCwd);
   let cuaDriverActivationCoordinator: CuaDriverDaemonActivationCoordinator | undefined;
   let lockedComputerControl: LockedComputerControlRegistry | undefined;
   const cuaDriverDesktopBridgeAuthority = new CuaDriverDesktopBridgeAuthority({
@@ -252,8 +279,13 @@ export function createDaemonServer(
     activationService: cuaDriverActivationService,
     clientPool: cuaDriverClientPool,
   });
-  const mcpBroker = createCuaDriverGenerationBroker({
+  const chromeBrowserMcpBroker = createChromeBrowserGenerationBroker({
     baseBroker: baseMcpBroker,
+    workspaceCwd: resolvedConfig.defaultWorkspaceCwd,
+    controller: chromeBrowserSessions,
+  });
+  const mcpBroker = createCuaDriverGenerationBroker({
+    baseBroker: chromeBrowserMcpBroker,
     bundledEnabled: bundledCuaDriverEnabled,
     workspaceCwd: resolvedConfig.defaultWorkspaceCwd,
     leaseRegistry: cuaDriverDesktopBridgeAuthority.leaseRegistry,
@@ -362,6 +394,8 @@ export function createDaemonServer(
       ?? process.env.LING_DESKTOP_BRIDGE_TOKEN,
     computerUseTargetOwnershipTimeoutMs: dependencies.computerUseTargetOwnershipTimeoutMs,
     remoteAccess,
+    chromeBrowserSessions,
+    chromeBrowserPlugin,
   };
   const server = createServer(async (request, response) => {
     try {
@@ -378,6 +412,13 @@ export function createDaemonServer(
     }
   });
   const rpcWebSocketServer = attachRpcWebSocketServer(server, context);
+  const chromeBrowserWebSocketServer = attachChromeBrowserWebSocketServer({
+    server,
+    controller: chromeBrowserSessions,
+    host: resolvedConfig.host,
+    port: resolvedConfig.port,
+    workspaceCwd: resolvedConfig.defaultWorkspaceCwd,
+  });
 
   return {
     server,
@@ -448,6 +489,8 @@ export function createDaemonServer(
         computerUsePreviews.closeAll();
         cuaDriverDesktopBridgeAuthority.clear();
         lockedComputerControl?.close();
+        chromeBrowserSessions.close();
+        chromeBrowserWebSocketServer.close();
         rpcWebSocketServer.close();
         server.close((error) => {
           if (error) {
@@ -465,6 +508,11 @@ export function createDaemonServer(
       storeRegistry.closeAll();
     },
   };
+}
+
+function readChromeBrowserExtensionIds(value: string | undefined): readonly string[] {
+  const configured = value?.split(",").map((item) => item.trim()).filter(Boolean) ?? [];
+  return configured.length > 0 ? configured : [CHROME_BROWSER_DEVELOPMENT_EXTENSION_ID];
 }
 
 function createDefaultRunStore(cwd: string) {

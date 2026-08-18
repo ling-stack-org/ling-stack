@@ -98,6 +98,10 @@
   color: var(--ling-text-muted);
 }
 
+.plugin-table-name > .plugin-table-chrome-icon {
+  color: var(--ling-status-info);
+}
+
 .plugin-table-name-copy {
   display: grid;
   min-width: 0;

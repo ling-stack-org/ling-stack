@@ -1,4 +1,5 @@
 import type {
+  ChromeBrowserPairingStartResponse,
   ManagedPluginApplyPresetRequest,
   ManagedPluginApplyPresetResponse,
   ManagedPluginCheckResponse,
@@ -47,6 +48,14 @@ export async function connectManagedPlugin(
   input: ManagedPluginConnectRequest = {},
 ): Promise<ManagedPluginConnectResponse> {
   return daemonClient.connectManagedPlugin(cwd, pluginId, input);
+}
+
+export async function startChromeBrowserPairing(cwd: string, pluginId: string): Promise<ChromeBrowserPairingStartResponse> {
+  return daemonClient.startChromeBrowserPairing(cwd, pluginId);
+}
+
+export async function revokeChromeBrowserAccess(cwd: string, pluginId: string): Promise<ManagedPluginMutationResponse> {
+  return daemonClient.revokeChromeBrowserAccess(cwd, pluginId);
 }
 
 export async function applyManagedPluginPreset(

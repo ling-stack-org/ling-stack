@@ -1,8 +1,47 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildBundledCuaDriverView } from "../src/features/plugins/plugin-manager-bundled-cua-view-model.ts";
+import { buildChromePluginView } from "../src/features/plugins/plugin-manager-chrome-view-model.ts";
 
 const t = (value) => value;
+
+test("Chrome built-in plugin distinguishes disabled, extension-required, waiting, incompatible, and ready states", () => {
+  const disabled = buildChromePluginView(chromePlugin({ status: "disabled" }), t);
+  assert.equal(disabled?.primaryState.id, "disabled");
+  assert.equal(disabled?.primaryAction?.id, "enable");
+
+  const required = buildChromePluginView(chromePlugin({
+    status: "enabled",
+    setup: chromeSetup({ browserState: "extension_required", paired: false, connected: false }),
+  }), t);
+  assert.equal(required?.primaryState.id, "setup-missing");
+  assert.equal(required?.primaryAction?.id, "connect-chrome");
+
+  const waiting = buildChromePluginView(chromePlugin({
+    status: "enabled",
+    setup: chromeSetup({ browserState: "waiting_for_chrome", paired: true, connected: false }),
+  }), t);
+  assert.equal(waiting?.primaryState.id, "connecting");
+  assert.equal(waiting?.showCheckAction, true);
+  assert.equal(waiting?.menuActions[0]?.id, "revoke-chrome");
+
+  const incompatible = buildChromePluginView(chromePlugin({
+    status: "enabled",
+    setup: chromeSetup({ browserState: "incompatible", paired: true, connected: false }),
+  }), t);
+  assert.equal(incompatible?.primaryState.id, "failed");
+  assert.equal(incompatible?.primaryState.label, "Needs attention");
+  assert.equal(incompatible?.primaryAction?.id, "connect-chrome");
+  assert.equal(incompatible?.showCheckAction, true);
+
+  const ready = buildChromePluginView(chromePlugin({
+    status: "enabled",
+    setup: chromeSetup({ browserState: "ready", paired: true, connected: true }),
+  }), t);
+  assert.equal(ready?.primaryState.id, "ready");
+  assert.equal(ready?.primaryAction, undefined);
+  assert.equal(ready?.showDisableAction, true);
+});
 
 test("bundled Cua Driver maps every provider state without exposing installation guidance", () => {
   const cases = [
@@ -225,5 +264,42 @@ function externalPlugin() {
       canRefreshPackage: false,
       canRuntimePreview: false,
     },
+  };
+}
+
+function chromePlugin(overrides = {}) {
+  return {
+    id: "built-in:chrome",
+    displayName: "Chrome",
+    version: "0.1.0",
+    sourceKind: "built-in",
+    status: "disabled",
+    trustSummary: "Uses an explicitly paired extension.",
+    contributions: [],
+    linkedResources: [],
+    actions: {
+      canEnable: true,
+      canDisable: false,
+      canCheck: true,
+      canApplyPreset: false,
+      canInstall: false,
+      canUninstall: false,
+      canRefreshPackage: false,
+      canRuntimePreview: false,
+    },
+    ...overrides,
+  };
+}
+
+function chromeSetup(overrides = {}) {
+  return {
+    kind: "browser_extension",
+    state: "missing",
+    checkedAt: "2026-08-17T00:00:00.000Z",
+    browserFamily: "chrome",
+    browserState: "extension_required",
+    paired: false,
+    connected: false,
+    ...overrides,
   };
 }

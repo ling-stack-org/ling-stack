@@ -16,6 +16,7 @@ broker, teammate bindings, and approval policy as the execution authority.
 
 Related docs:
 
+- [Chrome Browser Built-in Plugin](chrome-browser-built-in-plugin.md)
 - [Bundled Embedded Cua Driver](cua-driver-bundled-embedded.md)
 - [Bundled Embedded Cua Driver Detailed Design](cua-driver-bundled-embedded-detailed-design.md)
 - [Core Tools, Runners, MCP Tools, and Plugin Boundary](core-tools-runtime-boundary.md)
@@ -75,6 +76,9 @@ resolution, third-party install APIs, and remote marketplaces stay deferred.
   policy, resource leases, and state machines.
 - Preserve the existing internal registry and MCP server APIs.
 - Add `cua-driver` as the first high-risk trusted local preset.
+- Add Chrome as the first user-facing product-managed built-in plugin. Chrome uses an explicitly
+  installed Ling extension and contributes a logical MCP server; it does not load arbitrary plugin
+  code inside the daemon.
 
 The implemented trusted-local preset remains the external fallback. Packaged macOS and
 Windows Desktop may project the same stable product id through `bundled_embedded`

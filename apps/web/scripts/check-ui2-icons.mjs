@@ -21,6 +21,7 @@ const typedActionOwners = [
   "src/features/navigation/SidebarSection.tsx",
   "src/features/navigation/SidebarSectionMenu.tsx",
   "src/features/plugins/CuaDriverInstallDrawer.tsx",
+  "src/features/plugins/ChromeBrowserConnectDrawer.tsx",
   "src/features/plugins/PluginRowActions.tsx",
   "src/features/profile/ProfileSettingsSurface.tsx",
   "src/features/providers/ProviderModelImportPanel.tsx",

@@ -46,7 +46,7 @@ export interface ManagedPluginSetupGuide {
 }
 
 export interface ManagedPluginSetupView {
-  readonly kind: "local_binary";
+  readonly kind: "local_binary" | "browser_extension";
   readonly state: ManagedPluginSetupState;
   readonly checkedAt: string;
   readonly detectedCommand?: string;
@@ -89,6 +89,14 @@ export interface ManagedPluginSetupView {
     readonly command: string;
     readonly explicit: true;
   };
+  readonly browserFamily?: "chrome";
+  readonly browserState?: import("@ling-stack/contracts").ChromeBrowserSetupState;
+  readonly paired?: boolean;
+  readonly connected?: boolean;
+  readonly extensionVersion?: string;
+  readonly browserVersion?: string;
+  readonly lastSeenAt?: string;
+  readonly storeUrl?: string;
 }
 
 export type ManagedPluginContributionKind =
@@ -186,6 +194,7 @@ export type ManagedPluginEventType =
   | "contribution_linked"
   | "contribution_disabled"
   | "connected"
+  | "access_revoked"
   | "installed"
   | "uninstalled"
   | "package_refreshed"

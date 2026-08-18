@@ -52,9 +52,9 @@ export function buildManagedPluginRuntimePreview(input: {
   if (!record?.enabled) {
     blockers.push("Plugin is disabled.");
   }
-  if (!bundledEmbedded && (!packageRecord || packageRecord.status !== "installed")) {
+  if (input.descriptor.sourceKind !== "built-in" && !bundledEmbedded && (!packageRecord || packageRecord.status !== "installed")) {
     blockers.push("Plugin package is not installed.");
-  } else if (!bundledEmbedded && packageRecord && !cacheRefExists(input.store.paths, packageRecord.cacheRef)) {
+  } else if (input.descriptor.sourceKind !== "built-in" && !bundledEmbedded && packageRecord && !cacheRefExists(input.store.paths, packageRecord.cacheRef)) {
     blockers.push("Installed plugin package cache is missing.");
   }
   const health = input.store.getManagedPluginHealthSnapshot(input.descriptor.id, input.now);
