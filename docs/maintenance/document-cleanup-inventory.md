@@ -12,8 +12,9 @@ The cleanup started with 549 Markdown files in the `docs/` working-tree baseline
 general cleanup, UI2 consolidation, and implementation-plan normalization, 213 Markdown
 files remained. The open-source-readiness batch added two long-lived governance and
 release documents, the data-revalidation contract, and the secondary-copy contract added
-four current authorities, so the classified tree contains 217 Markdown files, a net
-reduction of 332 files. The
+four current authorities. Subsequent conversation-continuity, Sidebar-stability, and Chrome
+plugin work added four protected authorities, so the classified tree contains 221 Markdown
+files, a net reduction of 328 files. The
 governance record, canonical design index,
 implementation-status index, publication checklist, and release policy are the long-lived
 navigation documents.
@@ -64,14 +65,14 @@ unclassified or review-pending files.
 | Retained class | Files | Rule |
 | --- | ---: | --- |
 | `CANONICAL_CONTRACT` - product and architecture contracts | 120 | Current capability or bounded subsystem authority |
-| `PROTECTED_SAFETY_RUNTIME` - safety, migration, recovery, and runtime contracts | 24 | Deletion requires explicit security or architecture review |
-| `ACTIVE_PROTECTED_PLAN` - active or protected implementation plans | 14 | Material work remains, or the plan is part of a high-risk implementation boundary |
+| `PROTECTED_SAFETY_RUNTIME` - safety, migration, recovery, and runtime contracts | 26 | Deletion requires explicit security or architecture review |
+| `ACTIVE_PROTECTED_PLAN` - active or protected implementation plans | 16 | Material work remains, or the plan is part of a high-risk implementation boundary |
 | `ADR_RELEASE_API` - ADR, release, and daemon API authority | 9 | Permanent architecture or release evidence |
 | `UI2_CONTRACT` - UI2 contracts | 40 | Current foundation, architecture, component, module, theme, and index rules |
 | `UI2_MIGRATION_RELEASE` - UI2 migration and release authority | 2 | One compatibility record and one packaged Desktop release checklist |
 | `UI2_ACTIVE_PLAN` - active UI2 implementation plans | 4 | Work Board, Startup/Diagnostics, Workspace Tools, and protected Desktop theme publication |
 | `GOVERNANCE_INDEX` - governance and indexes | 4 | Canonical design index, implementation-status index, cleanup record, and publication checklist |
-| **Total** | **217** | |
+| **Total** | **221** | |
 
 ## Path Classification
 
@@ -98,10 +99,13 @@ aggregate counts in the same change whenever a document is added, deleted or rec
 | `docs/design/channel-context-budget-manager.md` | `CANONICAL_CONTRACT` |
 | `docs/design/channel-context-processing-layer-implementation-plan.md` | `ACTIVE_PROTECTED_PLAN` |
 | `docs/design/channel-context-processing-layer.md` | `CANONICAL_CONTRACT` |
+| `docs/design/channel-conversation-continuity-v2.md` | `PROTECTED_SAFETY_RUNTIME` |
 | `docs/design/channel-intent-workflow-selector.md` | `CANONICAL_CONTRACT` |
 | `docs/design/channel-message-streaming.md` | `CANONICAL_CONTRACT` |
 | `docs/design/channel-settings-tabbed-information-architecture.md` | `CANONICAL_CONTRACT` |
 | `docs/design/channel-team-operating-system.md` | `CANONICAL_CONTRACT` |
+| `docs/design/chrome-browser-built-in-plugin-implementation-plan.md` | `ACTIVE_PROTECTED_PLAN` |
+| `docs/design/chrome-browser-built-in-plugin.md` | `PROTECTED_SAFETY_RUNTIME` |
 | `docs/design/cli-run-io-completion-p1.md` | `CANONICAL_CONTRACT` |
 | `docs/design/cli-v0.1.md` | `CANONICAL_CONTRACT` |
 | `docs/design/codex-inspired-runtime-tools-p2-permissions-shell-snapshots.md` | `CANONICAL_CONTRACT` |
@@ -215,6 +219,7 @@ aggregate counts in the same change whenever a document is added, deleted or rec
 | `docs/design/settings-advanced-workspace-policy-productization.md` | `CANONICAL_CONTRACT` |
 | `docs/design/settings-archived-items-permanent-delete.md` | `CANONICAL_CONTRACT` |
 | `docs/design/sidebar-archive-conversations-teammates.md` | `CANONICAL_CONTRACT` |
+| `docs/design/sidebar-navigation-stability-implementation-plan.md` | `ACTIVE_PROTECTED_PLAN` |
 | `docs/design/skill-candidates-and-protocol-governance.md` | `CANONICAL_CONTRACT` |
 | `docs/design/skill-capability-model-and-library-simplification.md` | `CANONICAL_CONTRACT` |
 | `docs/design/skill-context-optimization.md` | `CANONICAL_CONTRACT` |

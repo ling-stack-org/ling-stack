@@ -6,6 +6,10 @@ import {
   resolveRuntimePaths,
   type LingStackRuntimePaths,
 } from "../runtime-paths.js";
+import type {
+  ChromeBrowserCredentialRecord,
+  UpsertChromeBrowserCredentialInput,
+} from "../chrome-browser-types.js";
 import {
   type ApprovalRequest,
   type CreateApprovalRequestInput,
@@ -509,6 +513,7 @@ import { SqliteProviderStore } from "./sqlite/provider-store.js";
 import { SqliteMcpStore } from "./sqlite/mcp-store.js";
 import { SqliteManagedPluginStore } from "./sqlite/managed-plugin-store.js";
 import { SqliteCuaDriverActivationStore } from "./sqlite/cua-driver-activation-store.js";
+import { SqliteChromeBrowserCredentialStore } from "./sqlite/chrome-browser-credential-store.js";
 import { SqliteConversationItemStore } from "./sqlite/conversation-item-store.js";
 import { SqliteConversationTurnIngestStore } from "./sqlite/conversation-turn-ingest-store.js";
 import { SqliteConversationThreadTopologyStore } from "./sqlite/conversation-thread-topology-store.js";
@@ -594,6 +599,7 @@ export class SqliteRunStore implements RunStore {
   private readonly mcps: SqliteMcpStore;
   private readonly managedPlugins: SqliteManagedPluginStore;
   private readonly cuaDriverActivation: SqliteCuaDriverActivationStore;
+  private readonly chromeBrowserCredentials: SqliteChromeBrowserCredentialStore;
   private readonly mediaJobs: SqliteMediaStore;
   private readonly mediaWorkflows: SqliteMediaWorkflowStore;
   private readonly approvalPolicies: SqliteApprovalPolicyStore;
@@ -687,6 +693,7 @@ export class SqliteRunStore implements RunStore {
       managedPlugins: this.managedPlugins,
       mcps: this.mcps,
     });
+    this.chromeBrowserCredentials = new SqliteChromeBrowserCredentialStore(this.database);
     this.mediaJobs = new SqliteMediaStore({ database: this.database });
     this.mediaWorkflows = new SqliteMediaWorkflowStore({ database: this.database });
     this.approvalPolicies = new SqliteApprovalPolicyStore({ database: this.database });
@@ -3210,6 +3217,32 @@ export class SqliteRunStore implements RunStore {
     return this.cuaDriverActivation.commitCuaDriverActivation(input);
   }
 
+  upsertChromeBrowserCredential(
+    input: UpsertChromeBrowserCredentialInput,
+    now: string,
+  ): ChromeBrowserCredentialRecord {
+    return this.chromeBrowserCredentials.upsertChromeBrowserCredential(input, now);
+  }
+
+  getChromeBrowserCredential(
+    workspaceId: string,
+    pluginId: string,
+    extensionId: string,
+  ): ChromeBrowserCredentialRecord | undefined {
+    return this.chromeBrowserCredentials.getChromeBrowserCredential(workspaceId, pluginId, extensionId);
+  }
+
+  listChromeBrowserCredentials(
+    workspaceId: string,
+    pluginId: string,
+  ): ChromeBrowserCredentialRecord[] {
+    return this.chromeBrowserCredentials.listChromeBrowserCredentials(workspaceId, pluginId);
+  }
+
+  revokeChromeBrowserCredentials(workspaceId: string, pluginId: string, now: string): number {
+    return this.chromeBrowserCredentials.revokeChromeBrowserCredentials(workspaceId, pluginId, now);
+  }
+
   upsertMcpStatusSnapshot(snapshot: McpRuntimeStatusSnapshot, now: string): McpRuntimeStatusSnapshot {
     return this.mcps.upsertMcpStatusSnapshot(snapshot, now);
   }
@@ -3264,6 +3297,10 @@ export class SqliteRunStore implements RunStore {
     now: string,
   ): TeammateMcpBinding[] {
     return this.mcps.replaceTeammateMcpBindings(teammateId, bindings, now);
+  }
+
+  upsertLingAgentChromeBrowserBinding(enabled: boolean, now: string): TeammateMcpBinding {
+    return this.mcps.upsertLingAgentChromeBrowserBinding(enabled, now);
   }
 
   listTeammateMcpBindings(teammateId: string): TeammateMcpBinding[] {

@@ -184,6 +184,7 @@ import {
   handlePluginsCollection,
 } from "../features/plugins/routes.js";
 import { handleCuaDriverLeaseRoute } from "../features/plugins/cua-driver-lease-routes.js";
+import { handleChromeBrowserPair } from "../features/browser-extension/routes.js";
 import { handleWorkItemRoute, handleWorkItemsCollection } from "../features/work-items/routes.js";
 import { handleWorkspaceDirectorySelect, handleWorkspaceTerminalCommand, handleWorkspaceTerminalProfile } from "../features/workspace-directory/routes.js";
 import {
@@ -664,6 +665,7 @@ export async function routeRequest(
       extensionRegistry,
       mcpBroker,
       context.lockedComputerControl,
+      context.chromeBrowserPlugin,
     );
     return;
   }
@@ -691,7 +693,13 @@ export async function routeRequest(
       secretResolver,
       cuaDriverActivationService,
       managedPluginRoute,
+      context.chromeBrowserPlugin,
     );
+    return;
+  }
+
+  if (url.pathname === "/browser-extension/v1/pair") {
+    await handleChromeBrowserPair(request, response, config, context.chromeBrowserSessions);
     return;
   }
 

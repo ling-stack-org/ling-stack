@@ -10,6 +10,7 @@ import { buildPluginManagerCopy } from "./plugin-manager-copy.js";
 import type { PluginActionHandlers, PluginManagerPageProps } from "./plugin-manager-types.js";
 import { PluginUninstallDialog } from "./PluginUninstallDialog.js";
 import { usePluginManagerController } from "./usePluginManagerController.js";
+import { ChromeBrowserConnectDrawer } from "./ChromeBrowserConnectDrawer.js";
 
 export type { PluginManagerPageProps } from "./plugin-manager-types.js";
 
@@ -77,6 +78,13 @@ export function PluginManagerPage(props: PluginManagerPageProps): React.JSX.Elem
       owner,
       mutate: (request) => props.onDisable(pluginId, request),
     }),
+    onOpenChromeConnect: controller.openChromeConnect,
+    onRevokeChrome: (pluginId) => void controller.runMutation({
+      pluginId,
+      action: "revoke",
+      owner,
+      mutate: (request) => props.onRevokeChrome(pluginId, request),
+    }),
   });
   const rowHandlers = buildHandlers("row");
   const detailHandlers = buildHandlers("detail");
@@ -84,10 +92,14 @@ export function PluginManagerPage(props: PluginManagerPageProps): React.JSX.Elem
   const detailRow = controller.rows.find((row) => row.id === controller.detailPluginId);
   const guidePlugin = props.plugins.find((plugin) => plugin.id === controller.guidePluginId);
   const uninstallPlugin = props.plugins.find((plugin) => plugin.id === controller.uninstallPluginId);
+  const chromeConnectPlugin = props.plugins.find((plugin) => plugin.id === controller.chromeConnectPluginId);
   const detailPending = detailPlugin ? controller.pendingActionFor(detailPlugin.id, "detail") : undefined;
   const guidePending = guidePlugin ? controller.pendingActionFor(guidePlugin.id, "guide", "connect") : undefined;
   const uninstallPending = uninstallPlugin
     ? controller.pendingActionFor(uninstallPlugin.id, "uninstall", "uninstall")
+    : undefined;
+  const chromeConnectPending = chromeConnectPlugin
+    ? controller.pendingActionFor(chromeConnectPlugin.id, "chrome-connect")
     : undefined;
 
   return (
@@ -172,6 +184,28 @@ export function PluginManagerPage(props: PluginManagerPageProps): React.JSX.Elem
           mutate: (request) => props.onUninstall(pluginId, request),
         })}
         plugin={uninstallPlugin}
+      />
+      <ChromeBrowserConnectDrawer
+        actionFailure={chromeConnectPlugin ? controller.actionFailureFor(chromeConnectPlugin.id, "chrome-connect") : undefined}
+        busy={Boolean(chromeConnectPending)}
+        onClose={controller.closeChromeConnect}
+        onRefresh={props.onRefresh}
+        onRevoke={async (pluginId) => {
+          await controller.runMutation({
+            pluginId,
+            action: "revoke",
+            owner: "chrome-connect",
+            mutate: (request) => props.onRevokeChrome(pluginId, request),
+          });
+        }}
+        onStartPairing={(pluginId) => controller.runMutation({
+          pluginId,
+          action: "pairing",
+          owner: "chrome-connect",
+          mutate: (request) => props.onStartChromePairing(pluginId, request),
+        })}
+        open={Boolean(controller.chromeConnectPluginId)}
+        plugin={chromeConnectPlugin}
       />
     </div>
   );

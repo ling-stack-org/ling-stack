@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "Ling for Chrome",
+  "short_name": "Ling",
+  "version": "0.1.0",
+  "version_name": "0.1.0",
+  "description": "Let Ling work with tabs you explicitly connect in Chrome.",
+  "minimum_chrome_version": "116",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1GyFgnilneLDoOcrSUY4ZyTSovpcWgtmE8PIlZt3VFzvXY5jJNxRAhB6DQK5eqI5lEyC2tSWhiYV0aZn77EY8AqHI0sBjFjmwG/65fA9/RDYq+/ggPPj7MIATK+WLm/EPN9rwqsib9eWN8sUAQRqujcI4O/1UMjFXQClzK5i3sgXEbWBtLA6ApPHzVSC4i1R73U6Ga9vvwww/wizCnZ1g0TF4hnF709RZQQRzOpKJX6EYUQdPqFzQi5bk+DpjgimFh5py7uQAblkfsizSRt4WwrDiRyyoo3Ltwuz2lJIULaHki9DbGoa14zNicLokZo4v/qYqZ6dFUCsQEHm7MJ1RwIDAQAB",
+  "permissions": [
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Ling for Chrome"
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  }
+}

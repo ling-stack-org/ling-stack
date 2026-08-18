@@ -34,6 +34,8 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
+  apps/chrome-extension: {}
+
   apps/desktop:
     dependencies:
       '@ling-stack/api-client':

@@ -1,0 +1,14 @@
+{
+  "name": "@ling-stack/chrome-extension",
+  "version": "0.1.0",
+  "description": "Ling built-in Chrome browser control extension",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "build:store-bootstrap": "node scripts/build.mjs --store-bootstrap",
+    "test": "node --test test/*.test.mjs",
+    "typecheck": "node --check src/background.js && node --check src/content-script.js && node --check src/popup.js && node --check src/protocol.js"
+  }
+}

@@ -10,6 +10,7 @@ import type {
   PluginRowView,
   PluginStatusFilter,
 } from "./plugin-manager-types.js";
+import { buildChromePluginView } from "./plugin-manager-chrome-view-model.js";
 
 export function buildPluginRowView(
   plugin: ManagedPluginView,
@@ -20,20 +21,23 @@ export function buildPluginRowView(
   actionFailure?: PluginActionFailure,
 ): PluginRowView {
   const bundledCua = buildBundledCuaDriverView(plugin, t);
+  const chrome = buildChromePluginView(plugin, t);
   const settledPrimaryState = actionFailure
     ? { id: "failed", label: t("Needs attention"), tone: "danger" } satisfies PluginPrimaryStateView
-    : bundledCua?.primaryState ?? deriveSettledState(plugin, now, t);
+    : chrome?.primaryState ?? bundledCua?.primaryState ?? deriveSettledState(plugin, now, t);
   const rowBusyAction = busyPluginId === plugin.id ? busyAction : undefined;
   const primaryState = rowBusyAction
     ? { id: "busy", label: busyStateLabel(rowBusyAction, t), tone: "info" } satisfies PluginPrimaryStateView
     : settledPrimaryState;
-  const actions = bundledCua
+  const actions = chrome
+    ? { primaryAction: chrome.primaryAction, menuActions: chrome.menuActions }
+    : bundledCua
     ? { primaryAction: bundledCua.primaryAction, menuActions: [] }
     : deriveActions(plugin, settledPrimaryState, t, actionFailure);
   return {
     id: plugin.id,
     name: plugin.displayName,
-    description: bundledCua?.description ?? (plugin.id === "trusted-local:cua-driver"
+    description: chrome?.description ?? bundledCua?.description ?? (plugin.id === "trusted-local:cua-driver"
       ? t("Controls desktop apps through the local Cua Driver.")
       : plugin.description?.trim() ?? ""),
     sourceKind: plugin.sourceKind,
@@ -43,15 +47,16 @@ export function buildPluginRowView(
     filterGroup: stateFilterGroup(settledPrimaryState.id),
     primaryAction: actions.primaryAction,
     checkActionLabel: bundledCua?.checkActionLabel,
-    showCheckAction: bundledCua?.showCheckAction
+    showCheckAction: chrome?.showCheckAction ?? bundledCua?.showCheckAction
       ?? (plugin.actions.canCheck && actions.primaryAction?.id !== "check"),
-    showDisableAction: bundledCua?.showDisableAction ?? (plugin.actions.canDisable
+    showDisableAction: chrome?.showDisableAction ?? bundledCua?.showDisableAction ?? (plugin.actions.canDisable
       && plugin.sourceKind === "trusted-local-preset"
       && actions.primaryAction?.id !== "disable"),
     showDetailsAction: bundledCua ? actions.primaryAction?.id !== "details" : true,
     menuActions: actions.menuActions,
     busyAction: rowBusyAction,
     actionFailure,
+    ...(chrome ? { icon: "chrome" as const } : {}),
   };
 }
 
@@ -191,6 +196,8 @@ function stateFilterGroup(state: PluginPrimaryStateView["id"]): Exclude<PluginSt
 
 function busyStateLabel(actionId: PluginBusyAction, t: Translate): string {
   if (actionId === "check" || actionId === "connect") return t("Checking...");
+  if (actionId === "pairing") return t("Connect Chrome");
+  if (actionId === "revoke") return t("Remove Chrome access");
   if (actionId === "enable") return t("Enable");
   if (actionId === "disable") return t("Disable");
   if (actionId === "install") return t("Install");
