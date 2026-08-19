@@ -617,7 +617,7 @@ async function processCandidate(input: {
     });
     input.response.schedulerStates.push(retryState);
   } finally {
-    input.store.releaseResourceLeasesForOwner(subjectLease.ownerType, subjectLease.ownerId, new Date().toISOString());
+    input.store.releaseResourceLeasesForOwner("system", subjectLease.ownerId, new Date().toISOString());
   }
 }
 

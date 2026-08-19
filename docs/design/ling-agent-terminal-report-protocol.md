@@ -1,6 +1,10 @@
 # Ling Agent TerminalReport Protocol
 
-Status: canonical detailed design; atomic workflow publication, reconnect, and the complete deterministic matrix are green; a fresh isolated macOS artifact is ready and packaged acceptance is pending
+Status: canonical detailed design; semantic publication/reconnect behavior and explicit
+Node 22 transaction ownership exist. Required-participant coverage and the
+single-terminal-projection amendment are implemented in the active WIP and focused
+regressions are green. The corrected full Daemon aggregate and repository gates must be
+rerun before fresh packaged macOS acceptance.
 Date: 2026-07-11
 Scope: channel workflows, direct runs, normal conversations, teammate private chats,
 multi-agent participation, terminal evidence, and shared conversation projection
@@ -201,6 +205,7 @@ interface TerminalReportEvidenceSnapshot {
   readonly operations: readonly TerminalReportEvidenceOperation[];
   readonly checks: readonly TerminalReportEvidenceCheck[];
   readonly participants: readonly TerminalReportEvidenceParticipant[];
+  readonly requiredParticipantCoverage: readonly TerminalReportRequiredParticipantCoverage[];
   readonly artifacts: readonly TerminalReportEvidenceArtifact[];
   readonly approvals: readonly TerminalReportEvidenceApproval[];
   readonly risks: readonly TerminalReportEvidenceRisk[];
@@ -227,6 +232,7 @@ The snapshot is assembled from existing durable state:
 | Operations | execution actions and normalized run events |
 | Checks | test/check command actions, check artifacts, step gates, completion verification |
 | Participants | actual workflow step assignees, run teammate ids, promoted contribution records |
+| Required participant coverage | immutable participant manifest plus committed Completion Gate results |
 | Artifacts | run artifacts, output packets, changed paths, validated external work refs |
 | Approvals | approval requests and checkpoints |
 | Risks | blockers, failures, denied approvals, skipped required checks, unresolved diagnostics |
@@ -324,6 +330,27 @@ interface TerminalReportEvidenceParticipant {
 Participation is based on actual execution or a promoted contribution record. Roster
 membership, selector candidacy, or an unstarted workflow step does not count.
 
+Required coverage is a separate audit fact and is not a contribution summary:
+
+```ts
+interface TerminalReportRequiredParticipantCoverage {
+  readonly agentId: string;
+  readonly status: "satisfied" | "missing" | "blocked" | "failed" | "cancelled";
+  readonly workflowStepIds: readonly string[];
+  readonly evidenceRefs: readonly DelegatedEvidenceRefV1[];
+  readonly reasonCode?: string;
+  readonly sourceRefs: readonly TerminalReportSourceRef[];
+}
+```
+
+The collector emits one row for every manifest participant whose requirement is
+`required`, even when no step or Run started. `participants` continues to mean actual
+contributions; `requiredParticipantCoverage` proves whether fan-in was satisfied. A
+`missing`, `blocked`, `failed`, or `cancelled` required row affects the report outcome and
+produces a source-linked blocker/risk. It cannot disappear because the contribution
+summary omits unstarted agents. Optional participants remain contribution-only facts and
+never enlarge the required quorum unless the immutable graph marks them as a dependency.
+
 The Ling Agent coordinator is not repeated as a participant unless it performed a
 distinct recorded contribution that is useful to the user. It remains the report owner.
 
@@ -411,6 +438,7 @@ interface TerminalReport {
   readonly changes: readonly TerminalReportChange[];
   readonly verification: readonly TerminalReportVerification[];
   readonly participants: readonly TerminalReportParticipant[];
+  readonly requiredParticipantCoverage: readonly TerminalReportRequiredParticipantCoverage[];
   readonly artifacts: readonly TerminalReportArtifact[];
   readonly risks: readonly TerminalReportRisk[];
   readonly references: readonly TerminalReportSourceRef[];
@@ -497,6 +525,9 @@ Rules:
 
 - Omit `participants` when no specialist actually participated.
 - Do not show unstarted, merely selected, or ambient observer teammates.
+- Always persist required-participant coverage for workflow reports. The default UI may
+  omit satisfied rows that add no useful contribution text, but it must render every
+  non-satisfied required row in the blocked/failed/partial outcome.
 - Multiple rounds by the same agent aggregate into one participant contribution in the
   final report; process history keeps each round in its original row.
 - Agent display names are presentation data. Stable identity remains `agentId`.
@@ -780,6 +811,29 @@ source Turn aborts the whole transaction. Re-entry returns the existing publishe
 lineage, so there is never an Item without its marker, a marker without Turn closure, or
 a closed Turn without durable invalidation. The in-memory hub is notified after commit;
 a crash before that notification is recovered from the durable event row.
+
+The marker has one source-level uniqueness key:
+`(workspaceId, sourceKind, sourceId, sourceTurnId, publicationKind=final_result)`.
+Completion Gate basis and report revision are validation/version fields, not publication
+identity. Before commit they may replace a draft through compare-and-set. After commit,
+re-entry returns the same `terminalReportId` and `finalResultItemId`; a later revision may
+update that Item only under an explicitly versioned correction protocol and can never
+append a second terminal Item. Web reconciliation keys by the durable Item id and applies
+its revision in place.
+
+Transaction participation is explicit. The publication store binds a narrow
+`appendControlPlaneEventWithinTransaction()` port; that writer appends the event and
+replay watermark but never begins, commits, or rolls back. The public standalone event
+append always owns its own transaction and is forbidden inside this barrier. Neither
+path may inspect `DatabaseSync.isTransaction` to decide whether it owns the transaction.
+
+The publication method that issued `BEGIN IMMEDIATE` is the only owner. On any exception
+it attempts `ROLLBACK` unconditionally, ignores only a rollback failure, and rethrows the
+original error. This rule also applies to the reporting-disabled legacy workflow
+publication barrier. Fault-injection acceptance must prove both all-or-nothing lineage
+and that a new transaction can start on the same connection after the failed call. A
+nested `BEGIN`, a skipped rollback, or an in-memory event emitted before commit is a P1
+protocol violation.
 
 Core derives the target Turn status from the fresh Completion Evaluation; the daemon does
 not pass it as an independent input. Report and evaluation must agree: verified maps only
@@ -1178,7 +1232,8 @@ transcript snapshot references the report id for structured rendering.
 - Outcome incompatible with source state fails validation.
 - Passed verification without check evidence fails validation.
 - Changed path without file/diff/action evidence fails validation.
-- Participant without actual activity fails validation.
+- Participant contribution without actual activity fails validation; a manifest-required
+  coverage row may be `missing` without becoming a contribution.
 - PR/commit/deployment claim without validated external ref fails validation.
 - Secret-adjacent evidence is excluded from visible fields.
 - Empty optional sections remain absent rather than rendering placeholders.
@@ -1188,7 +1243,8 @@ transcript snapshot references the report id for structured rendering.
 - Single direct run produces a concise report with real changed paths and checks.
 - Multi-step workflow aggregates all relevant steps instead of selecting only the last
   result summary.
-- Multi-agent workflow includes only agents that actually started work.
+- Multi-agent contribution summary includes only agents that actually started work, while
+  required-participant coverage contains every immutable manifest member.
 - A second round by one agent remains separate in process history but aggregates in the
   final participant contribution.
 - Approval reconciliation completes before report publication.
@@ -1211,6 +1267,8 @@ transcript snapshot references the report id for structured rendering.
 - A stale cached verified gate with removed/changed evidence cannot publish success.
 - One completed required participant plus one active, absent, or blocked participant
   cannot publish a succeeded report.
+- A required participant with no step/Run appears as `missing` coverage and a visible
+  blocker; an optional unstarted participant remains absent from the contribution UI.
 - An evidence mutation between gate evaluation and atomic commit fails compare-and-set and
   causes recomputation rather than stale success.
 
@@ -1218,7 +1276,10 @@ transcript snapshot references the report id for structured rendering.
 
 - Final result renders below the folded process history and above the artifact strip.
 - Artifact count/path data is not duplicated inside nested cards.
-- Participant summary appears only for actual multi-agent participation.
+- Participant contribution summary appears only for actual multi-agent participation;
+  required missing/blocked rows still appear in outcome risks/blockers.
+- Workflow cards never render a second terminal summary/count after `final_result` is
+  committed, including after replay, reconnect, or duplicate callback.
 - Empty verification, risk, participant, and artifact sections do not render.
 - Expanding final result does not expand or collapse individual operation rows.
 - Operation, diff, command, and artifact disclosures preserve their own state.
@@ -1279,6 +1340,10 @@ At minimum, keep fixtures for:
 - Project committed reports into typed `final_result` blocks.
 - Render participant summary and artifact strip in their agreed positions.
 - Remove duplicate final summary/count presentation from workflow cards.
+- After a report commits, workflow/activity cards remain folded progress/evidence only.
+  They may link to the report but cannot publish another terminal summary, success count,
+  or assistant final message. The publication marker plus `final_result` Item is the
+  single user-visible terminal projection.
 
 ### P5: Cleanup And Hardening
 

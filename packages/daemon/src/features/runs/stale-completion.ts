@@ -103,9 +103,10 @@ function appendRuntimeIgnoredCompletionEvent(
   envelope: RunEventEnvelope,
 ): void {
   try {
-    store.appendRuntimeEvent({
+    store.appendRuntimeDiagnosticEvent({
       workUnitId,
       attemptId: payload.attemptId,
+      ...(currentAttemptFence(store, payload.attemptId)),
       type: "stale_runner_completion_ignored",
       actor: "runner",
       ts: envelope.ts,
@@ -118,6 +119,16 @@ function appendRuntimeIgnoredCompletionEvent(
   } catch {
     // Runtime events are a diagnostic projection; the run event is authoritative.
   }
+}
+
+function currentAttemptFence(
+  store: RunStore,
+  attemptId: string | undefined,
+): { readonly runtimeInstanceId: string; readonly fencingToken: string } | Record<string, never> {
+  const attempt = attemptId ? store.getWorkUnitAttempt(attemptId) : undefined;
+  return attempt
+    ? { runtimeInstanceId: attempt.runtimeInstanceId, fencingToken: attempt.fencingToken }
+    : {};
 }
 
 function hasMatchingIgnoredCompletionEvent(

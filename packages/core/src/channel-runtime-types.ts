@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { RuntimeAttemptFenceV1 } from "@ling-stack/contracts";
 import type { StateEntityType, StateTransitionActor } from "./state-machines.js";
 
 export type ChannelSourceKind = "local" | "slack" | "feishu" | "github" | "email" | "custom";
@@ -33,6 +34,9 @@ export type ResourceType =
 
 export type ResourceLeaseOwnerType = "run" | "workflow_step" | "work_unit_attempt" | "system";
 
+/** Owners whose leases are intentionally independent of a runtime Attempt. */
+export type ResourceLeaseOwnerLevelType = "workflow_step" | "system";
+
 export type ResourceLeaseStatus = "active" | "released" | "expired";
 
 export interface ResourceLease {
@@ -48,22 +52,33 @@ export interface ResourceLease {
   readonly lastRenewedAt?: string;
   readonly releasedAt?: string;
   readonly releaseReason?: string;
+  /** Runtime-owned leases carry all four fence fields; owner-level leases do not. */
   readonly workUnitId?: string;
   readonly attemptId?: string;
+  readonly runtimeInstanceId?: string;
+  readonly fencingToken?: string;
 }
 
-export interface CreateResourceLeaseInput {
+interface CreateResourceLeaseBase {
   readonly workspaceId: string;
   readonly resourceType: ResourceType;
   readonly resourceKey: string;
-  readonly ownerType: ResourceLeaseOwnerType;
   readonly ownerId: string;
   readonly acquiredAt: string;
   readonly expiresAt: string;
   readonly lastRenewedAt?: string;
-  readonly workUnitId?: string;
-  readonly attemptId?: string;
 }
+
+export type CreateResourceLeaseInput = CreateResourceLeaseBase & (
+  | (RuntimeAttemptFenceV1 & { readonly ownerType: "run" | "work_unit_attempt" })
+  | {
+      readonly ownerType: "workflow_step" | "system";
+      readonly workUnitId?: never;
+      readonly attemptId?: never;
+      readonly runtimeInstanceId?: never;
+      readonly fencingToken?: never;
+    }
+);
 
 export interface ListResourceLeasesOptions {
   readonly status?: ResourceLeaseStatus;

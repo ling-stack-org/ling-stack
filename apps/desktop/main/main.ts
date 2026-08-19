@@ -158,6 +158,8 @@ let unregisterIpc: (() => void) | undefined;
 let unregisterThemePackageIpc: (() => void) | undefined;
 let unregisterLockedControlPreview: (() => void) | undefined;
 let desktopRuntime: DesktopRuntime | undefined;
+let desktopDaemonAutomaticRecoveryArmed = false;
+let desktopDaemonAutomaticRecoveryUsed = false;
 let computerUse: ComputerUsePreviewCoordinator | undefined;
 const desktopNavigationIntents = new DesktopNavigationIntentStore();
 const desktopRendererThemeStore = new DesktopRendererThemeStore(
@@ -388,6 +390,9 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
           desktopBridgeToken: bridgeToken,
           cuaDriverFeatureFlags: featureFlags,
           ...(smokeHeadless && app.runningUnderARM64Translation ? { startupTimeoutMs: 60_000 } : {}),
+          onUnexpectedExit: (details) => {
+            requestDesktopDaemonRecovery(details);
+          },
           onDiagnostic: logStartup,
         }),
         daemonBaseUrl,
@@ -437,6 +442,7 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
     return false;
   }
   logStartup("daemon.connected", { ownedByDesktop: desktopRuntime.status.ownedByDesktop });
+  desktopDaemonAutomaticRecoveryArmed = desktopRuntime.status.ownedByDesktop;
   if (!computerUse) {
     const descriptorRegistry = new InMemoryComputerUsePreviewDescriptorRegistry();
     if (fakeComputerUseMode) {
@@ -674,6 +680,50 @@ function logStartup(event: string, details: Readonly<Record<string, unknown>> = 
   } catch {
     // Startup logging must never become a second startup failure.
   }
+}
+
+function requestDesktopDaemonRecovery(details: {
+  readonly baseUrl: string;
+  readonly code: number | null;
+  readonly signal: NodeJS.Signals | null;
+}): void {
+  const runtime = desktopRuntime;
+  if (!runtime) {
+    // Startup failures are handled by ensureDesktopDaemonWithStartupRecovery;
+    // there is no composed runtime to recover until the first handshake wins.
+    return;
+  }
+  if (desktopDaemonAutomaticRecoveryUsed) {
+    logStartup("daemon.unexpected_exit_recovery_skipped", {
+      baseUrl: details.baseUrl,
+      reason: "automatic_recovery_budget_exhausted",
+    });
+    return;
+  }
+  if (!desktopDaemonAutomaticRecoveryArmed) {
+    return;
+  }
+  desktopDaemonAutomaticRecoveryArmed = false;
+  desktopDaemonAutomaticRecoveryUsed = true;
+  logStartup("daemon.unexpected_exit_recovery_started", {
+    baseUrl: details.baseUrl,
+    code: details.code,
+    signal: details.signal,
+  });
+  void runtime.ensureStarted().then(
+    (status) => {
+      logStartup("daemon.unexpected_exit_recovered", {
+        baseUrl: details.baseUrl,
+        ownedByDesktop: status.ownedByDesktop,
+      });
+    },
+    (error) => {
+      logStartup("daemon.unexpected_exit_recovery_failed", {
+        baseUrl: details.baseUrl,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    },
+  );
 }
 
 function isLoopbackDaemonUrl(value: string): boolean {

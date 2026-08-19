@@ -12,6 +12,7 @@ import {
   type RunStorePathsFacet,
   type RuntimeSupervisorStoreFacet,
   type SecretResolver,
+  toRuntimeAttemptFence,
 } from "@ling-stack/core";
 import {
   executeMediaJob as executeMediaAdapterJob,
@@ -138,6 +139,8 @@ export async function runProviderMediaJobExecution(input: {
       store.appendRuntimeEvent({
         workUnitId: supervised.workUnit.id,
         attemptId: supervised.attempt.id,
+        runtimeInstanceId: supervised.attempt.runtimeInstanceId,
+        fencingToken: supervised.attempt.fencingToken,
         type: "artifact_created",
         actor: "provider",
         ts: completedAt,
@@ -297,6 +300,8 @@ function ensureSemaphore(store: ProviderExecutionStore, provider: ProviderPreset
     ownerId: supervised.attempt.id,
     workUnitId: supervised.workUnit.id,
     attemptId: supervised.attempt.id,
+    runtimeInstanceId: supervised.attempt.runtimeInstanceId,
+    fencingToken: supervised.attempt.fencingToken,
     acquiredAt,
     expiresAt: new Date(Date.now() + MEDIA_RUNTIME_SEMAPHORE_TTL_MS).toISOString(),
   });
@@ -304,6 +309,8 @@ function ensureSemaphore(store: ProviderExecutionStore, provider: ProviderPreset
   store.appendRuntimeEvent({
     workUnitId: supervised.workUnit.id,
     attemptId: supervised.attempt.id,
+    runtimeInstanceId: supervised.attempt.runtimeInstanceId,
+    fencingToken: supervised.attempt.fencingToken,
     type: "semaphore_acquired",
     actor: "system",
     ts: acquiredAt,
@@ -317,6 +324,7 @@ function recordHeartbeat(store: ProviderExecutionStore, supervised: MediaRuntime
     workUnitId: supervised.workUnit.id,
     attemptId: supervised.attempt.id,
     runtimeInstanceId: supervised.attempt.runtimeInstanceId,
+    fencingToken: supervised.attempt.fencingToken,
     ts: now(),
     source: "provider",
     detail: { phase },
@@ -330,7 +338,7 @@ function finishExecution(
   reason: string,
 ): void {
   store.deleteMediaJobExecutionHandle(mediaJobId);
-  store.releaseRuntimeSemaphoreSlotsForOwner(supervised.attempt.id, now(), reason);
+  store.releaseRuntimeSemaphoreSlotsForAttempt(toRuntimeAttemptFence(supervised.attempt), now(), reason);
   clearScheduled(mediaJobId);
 }
 

@@ -11,6 +11,7 @@ import {
   type RunStorePathsFacet,
   type RuntimeSupervisorStoreFacet,
   type WorkUnit,
+  toRuntimeAttemptFence,
 } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../config.js";
 import { HttpError } from "../errors.js";
@@ -27,7 +28,7 @@ import {
   type LockedTaskContinuationSnapshot,
 } from "./locked-task-continuation.js";
 
-const RUNTIME_SCHEMA_VERSION = 22;
+const RUNTIME_SCHEMA_VERSION = 23;
 
 export type RuntimeSupervisorRuntimeStore = RunStorePathsFacet & RuntimeSupervisorStoreFacet & RunExecutionStoreFacet;
 
@@ -258,6 +259,7 @@ export class RuntimeSupervisor {
     }
     this.reconciledCwds.add(cwd);
     const now = new Date().toISOString();
+    store.expireRuntimeSemaphoreSlots(now);
     const candidates = [
       ...store.listWorkUnits({ status: "claimed", limit: 500 }),
       ...store.listWorkUnits({ status: "running", limit: 500 }),
@@ -350,22 +352,28 @@ function preserveRecoverableApprovalWorkUnit(
   if (attempt && !isTerminalAttemptStatus(attempt.status)) {
     store.updateWorkUnitAttemptStatus({
       attemptId: attempt.id,
+      workUnitId: attempt.workUnitId,
+      runtimeInstanceId: attempt.runtimeInstanceId,
+      fencingToken: attempt.fencingToken,
       status: "lost",
       now,
       endedAt: now,
       errorCode: "runtime_suspend",
       errorMessage: "runtime-startup-recoverable-approval",
     });
-    store.releaseRuntimeSemaphoreSlotsForOwner(attempt.id, now, "runtime-startup-recoverable-approval");
-    for (const lease of store.listResourceLeases({ workUnitId: workUnit.id, status: "active", limit: 500 })) {
-      store.releaseResourceLeasesForOwner(lease.ownerType, lease.ownerId, now);
-    }
-    store.appendRuntimeEvent({
-      workUnitId: workUnit.id,
-      attemptId: attempt.id,
+    store.releaseRuntimeSemaphoreSlotsForAttempt(toRuntimeAttemptFence(attempt), now, "runtime-startup-recoverable-approval");
+    const lostAttempt = store.getWorkUnitAttempt(attempt.id) ?? attempt;
+    store.appendTerminalRuntimeAudit({
+      capability: {
+        workUnitId: lostAttempt.workUnitId,
+        attemptId: lostAttempt.id,
+        runtimeInstanceId: lostAttempt.runtimeInstanceId,
+        fencingToken: lostAttempt.fencingToken,
+        attemptStatus: "lost",
+        transitionedAt: now,
+      },
       type: "work_unit_stale",
       actor: "system",
-      ts: now,
       data: { reason: "runtime_suspend", recoverableApprovalId: approval.id },
     });
   }

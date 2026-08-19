@@ -51,6 +51,54 @@ test("Desktop daemon starts in the selected workspace and stops the owned child"
   assert.equal(lifecycle.status.state, "disconnected");
 });
 
+test("unexpected owned child exit emits one recovery signal while intentional stop stays silent", async () => {
+  const child = createFakeChild({ exitOnTerm: false });
+  const exits = [];
+  let healthChecks = 0;
+  const lifecycle = new DesktopDaemonLifecycle({
+    baseUrl: "http://127.0.0.1:17993",
+    daemonEntryPath: existingEntryPath,
+    defaultWorkspaceCwd: "/tmp/ling-desktop-unexpected-exit-workspace",
+    fetch: async () => {
+      healthChecks += 1;
+      return healthChecks === 1
+        ? Promise.reject(new TypeError("fetch failed"))
+        : daemonHealth("/tmp/ling-desktop-unexpected-exit-workspace");
+    },
+    probePort: async () => "free",
+    spawnDaemon: () => child,
+    onUnexpectedExit: (details) => exits.push(details),
+  });
+
+  await lifecycle.ensureStarted();
+  child.exitCode = 23;
+  child.emit("exit", 23, null);
+  child.emit("exit", 23, null);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(exits, [{
+    baseUrl: "http://127.0.0.1:17993",
+    code: 23,
+    signal: null,
+  }]);
+
+  const intentionallyStoppedChild = createFakeChild();
+  const intentionalExits = [];
+  const intentionalLifecycle = new DesktopDaemonLifecycle({
+    baseUrl: "http://127.0.0.1:17994",
+    daemonEntryPath: existingEntryPath,
+    defaultWorkspaceCwd: "/tmp/ling-desktop-intentional-stop-workspace",
+    fetch: async () => daemonHealth("/tmp/ling-desktop-intentional-stop-workspace"),
+    probePort: async () => "free",
+    spawnDaemon: () => intentionallyStoppedChild,
+    onUnexpectedExit: (details) => intentionalExits.push(details),
+  });
+  await intentionalLifecycle.ensureStarted();
+  await intentionalLifecycle.stopOwnedDaemon();
+
+  assert.deepEqual(intentionalExits, []);
+});
+
 test("Desktop daemon escalates to SIGKILL when startup cleanup cannot stop the child", async () => {
   const child = createFakeChild({ exitOnTerm: false });
   const diagnostics = [];

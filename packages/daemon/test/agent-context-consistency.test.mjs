@@ -440,6 +440,42 @@ test("fan-in rebases metadata-only stamps and rejects private leaks or relevant 
   }
 });
 
+test("agent result Items from the consumed source Turn do not invalidate its input context", async () => {
+  const fixture = await createFixture();
+  try {
+    const prepared = prepareStep(fixture, fixture.engineerStep.id);
+    const consumed = prepared.runRequest.contextPack.agentContext;
+    assert.ok(consumed);
+
+    fixture.store.appendConversationItem({
+      channelId: fixture.channel.id,
+      threadId: fixture.sourceItem.threadId,
+      turnId: fixture.sourceItem.turnId,
+      kind: "assistant_message",
+      status: "committed",
+      actorType: "ling_agent",
+      actorId: "ling_agent",
+      visibility: "channel",
+      payload: {
+        body: "The source Turn produced a progress result.",
+        format: "markdown",
+        streaming: false,
+        deliveryStatus: "ready",
+      },
+    }, "2026-08-10T01:00:30.000Z");
+
+    const review = reviewWorkflowAgentContextStamp({
+      store: fixture.store,
+      dependencyWorkflowStepId: fixture.engineerStep.id,
+      consumed,
+    }).review;
+    assert.equal(review.status, "accepted_current");
+  } finally {
+    fixture.store.close();
+    await rm(fixture.cwd, { recursive: true, force: true });
+  }
+});
+
 test("sequential dependencies reject stale agent context before entering a downstream prompt", async () => {
   const fixture = await createFixture();
   try {

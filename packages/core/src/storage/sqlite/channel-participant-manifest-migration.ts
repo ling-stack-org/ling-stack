@@ -8,6 +8,7 @@ import {
   type RequiredParticipantRequestedByV1,
   type RequiredParticipantV1,
 } from "@ling-stack/contracts";
+import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 
 export const CHANNEL_PARTICIPANT_MANIFEST_MIGRATION_VERSION = 114;
 export const CHANNEL_PARTICIPANT_MANIFEST_MIGRATION_NAME = "add_channel_required_participant_manifest";
@@ -74,7 +75,7 @@ export function applyChannelParticipantManifestMigration(
     input.database.exec("COMMIT;");
     return true;
   } catch (error) {
-    if (input.database.isTransaction) input.database.exec("ROLLBACK;");
+    rollbackOwnedSqliteTransaction(input.database);
     throw error;
   }
 }

@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { isChannelIntentExecutionPlanV1 } from "@ling-stack/contracts";
+import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 
 export const CHANNEL_INTENT_EXECUTION_PLAN_MIGRATION_VERSION = 113;
 export const CHANNEL_INTENT_EXECUTION_PLAN_MIGRATION_NAME = "upgrade_channel_intent_execution_to_operation_plan";
@@ -75,7 +76,7 @@ export function applyChannelIntentExecutionPlanMigration(
     input.database.exec("COMMIT;");
     return true;
   } catch (error) {
-    if (input.database.isTransaction) input.database.exec("ROLLBACK;");
+    rollbackOwnedSqliteTransaction(input.database);
     throw error;
   }
 }

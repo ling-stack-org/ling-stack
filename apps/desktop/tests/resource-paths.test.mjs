@@ -45,7 +45,7 @@ test("packaged Web entry keeps public assets relative and exposes the shared mac
   const javascriptBundles = await readJavascriptBundles(join(webDistRoot, "assets"));
 
   assert.match(script, /icons\/ling-stack-gpt-image-2-icon\.png/u);
-  assert.match(script, /avatars\/teammates/u);
+  assert.match(javascriptBundles, /avatars\/teammates/u);
   const [conversationMark, teammateAvatar] = await Promise.all([
     readFile(join(webDistRoot, "icons", "ling-stack-gpt-image-2-icon.png")),
     readFile(join(webDistRoot, "avatars", "teammates", "engineer.png")),

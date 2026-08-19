@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, cp, link, mkdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { access, cp, link, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createServer } from "node:net";
 import test from "node:test";
@@ -613,11 +613,16 @@ test("root, final, child symlink and hardlink installations are rejected without
 });
 
 test("special filesystem entries mark an installation corrupt", { skip: process.platform === "win32" }, async (t) => {
-  const fixture = await createRepositoryFixture();
-  t.after(() => rm(fixture.temporaryRoot, { recursive: true, force: true }));
-  await fixture.repository.initialize();
-  assert.equal((await fixture.repository.install(archiveRequest(archiveFor("socket-theme")))).ok, true);
-  const socketPath = join(fixture.themesRoot, "socket-theme", "runtime.sock");
+  const temporaryRoot = await mkdtemp("/tmp/ling-theme-socket-");
+  const themesRoot = join(temporaryRoot, "themes");
+  const repository = new DesktopThemePackageRepository({
+    themesRoot,
+    decodeImage: async () => ({ width: 1, height: 1 }),
+  });
+  t.after(() => rm(temporaryRoot, { recursive: true, force: true }));
+  await repository.initialize();
+  assert.equal((await repository.install(archiveRequest(archiveFor("socket-theme")))).ok, true);
+  const socketPath = join(themesRoot, "socket-theme", "runtime.sock");
   const server = createServer();
   await new Promise((resolve, reject) => {
     server.once("error", reject);
@@ -625,7 +630,7 @@ test("special filesystem entries mark an installation corrupt", { skip: process.
   });
   t.after(() => new Promise((resolve) => server.close(resolve)));
   const restarted = new DesktopThemePackageRepository({
-    themesRoot: fixture.themesRoot,
+    themesRoot,
     decodeImage: async () => ({ width: 1, height: 1 }),
   });
   const bootstrap = await restarted.initialize();

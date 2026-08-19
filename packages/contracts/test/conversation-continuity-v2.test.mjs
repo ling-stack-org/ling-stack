@@ -569,21 +569,29 @@ test("required participant manifest has deterministic identity and rejects mutat
 test("delegated outcomes require typed durable evidence", () => {
   assert.equal(isDelegatedOutcomeV1({
     kind: "completed",
+    workflowId: "workflow-1",
+    workflowStepId: "step-engineer",
     participantId: "teammate_builtin_engineer",
     evidenceRefs: [{ kind: "execution_action", id: "action-1" }],
   }), true);
   assert.equal(isDelegatedOutcomeV1({
     kind: "completed",
+    workflowId: "workflow-1",
+    workflowStepId: "step-architect",
     participantId: "teammate_builtin_architect",
     evidenceRefs: [{ kind: "workflow_output_packet", id: "artifact-1" }],
   }), true);
   assert.equal(isDelegatedOutcomeV1({
     kind: "completed",
+    workflowId: "workflow-1",
+    workflowStepId: "step-engineer",
     participantId: "teammate_builtin_engineer",
     evidenceRefs: [],
   }), false);
   assert.equal(isDelegatedOutcomeV1({
     kind: "completed",
+    workflowId: "workflow-1",
+    workflowStepId: "step-engineer",
     participantId: "teammate_builtin_engineer",
     evidenceActionIds: ["action-1"],
     outputItemIds: [],

@@ -127,10 +127,12 @@ export function isDelegatedOutcomeV1(value: unknown): value is DelegatedOutcomeV
     Array.isArray(refs) && refs.every(isDelegatedEvidenceRefV1)
       && new Set(refs.map((ref) => `${ref.kind}:${ref.id}`)).size === refs.length;
   if (record.kind === "completed") {
-    return isNonEmptyText(record.participantId)
+    return isNonEmptyText(record.workflowId)
+      && isNonEmptyText(record.workflowStepId)
+      && isNonEmptyText(record.participantId)
       && evidenceRefsValid(record.evidenceRefs)
       && record.evidenceRefs.length > 0
-      && Object.keys(record).every((key) => key === "kind" || key === "participantId" || key === "evidenceRefs");
+      && Object.keys(record).every((key) => ["kind", "workflowId", "workflowStepId", "participantId", "evidenceRefs"].includes(key));
   }
   if (record.kind === "workflow_started") {
     return isNonEmptyText(record.workflowId)
@@ -138,20 +140,25 @@ export function isDelegatedOutcomeV1(value: unknown): value is DelegatedOutcomeV
       && Object.keys(record).every((key) => key === "kind" || key === "workflowId" || key === "participantManifestFingerprint");
   }
   if (record.kind === "blocked") {
-    return (record.participantId === undefined || isNonEmptyText(record.participantId))
-      && isNonEmptyText(record.code)
+    return isNonEmptyText(record.workflowId)
+      && isNonEmptyText(record.workflowStepId)
+      && isNonEmptyText(record.participantId)
+      && isDelegatedBlockCodeV1(record.code)
       && isNonEmptyText(record.reason)
       && Array.isArray(record.missingRequirements)
       && record.missingRequirements.every(isNonEmptyText)
-      && (record.evidenceRefs === undefined || evidenceRefsValid(record.evidenceRefs))
-      && Object.keys(record).every((key) => ["kind", "participantId", "code", "reason", "missingRequirements", "evidenceRefs"].includes(key));
+      && record.missingRequirements.length > 0
+      && evidenceRefsValid(record.evidenceRefs)
+      && Object.keys(record).every((key) => ["kind", "workflowId", "workflowStepId", "participantId", "code", "reason", "missingRequirements", "evidenceRefs"].includes(key));
   }
   if (record.kind === "failed" || record.kind === "cancelled") {
-    return (record.participantId === undefined || isNonEmptyText(record.participantId))
-      && isNonEmptyText(record.code)
+    return isNonEmptyText(record.workflowId)
+      && isNonEmptyText(record.workflowStepId)
+      && isNonEmptyText(record.participantId)
+      && isDelegatedTerminalCodeForKindV1(record.kind, record.code)
       && isNonEmptyText(record.reason)
       && evidenceRefsValid(record.evidenceRefs)
-      && Object.keys(record).every((key) => ["kind", "participantId", "code", "reason", "evidenceRefs"].includes(key));
+      && Object.keys(record).every((key) => ["kind", "workflowId", "workflowStepId", "participantId", "code", "reason", "evidenceRefs"].includes(key));
   }
   return false;
 }
@@ -621,9 +628,83 @@ export interface DelegatedStepRequirementV1 {
   readonly fingerprint: string;
 }
 
+export const delegatedBlockCodeValuesV1 = [
+  "delegated_outcome_missing",
+  "delegated_requirement_invalid",
+  "delegated_run_missing",
+  "delegated_run_owner_mismatch",
+  "required_participant_missing",
+  "required_participant_evidence_missing",
+  "required_operation_missing_evidence",
+  "required_operation_evidence_missing",
+  "required_operation_failed",
+  "required_participant_output_packet_missing",
+  "participant_operation_assignment_incomplete",
+  "required_participant_operation_mismatch",
+  "participant_required_tools_unavailable",
+  "participant_unavailable_in_channel",
+  "workflow_participant_authority_invalid",
+  "workflow_participant_override_forbidden",
+  "workflow_participant_not_found",
+  "workflow_participant_unavailable",
+  "workflow_participant_required_tools_unavailable",
+  "workflow_participant_provider_unavailable",
+  "workflow_participant_provider_binding_missing",
+  "workflow_participant_provider_binding_invalid",
+  "workflow_participant_provider_override_forbidden",
+  "existing_proposal_participant_lineage_invalid",
+  "runtime_interrupted_no_checkpoint",
+  "approval_resume_unsupported",
+  "approval_resume_effect_unknown",
+  "approval_resume_lineage_invalid",
+  "approval_resume_mismatch",
+  "approval_resume_checkpoint_missing",
+  "approval_resume_owner_mismatch",
+  "approval_resume_tool_mismatch",
+  "approval_resume_requirement_mismatch",
+  "approval_resume_lineage_missing",
+  "approval_resume_state_mismatch",
+  "approval_resume_checkpoint_stale",
+  "approval_resume_state_stale",
+  "agent_context_missing",
+  "agent_context_stale",
+  "agent_context_private_leak",
+] as const;
+
+export type DelegatedBlockCodeV1 = (typeof delegatedBlockCodeValuesV1)[number];
+
+export const delegatedTerminalCodeValuesV1 = [
+  "delegated_run_failed",
+  "delegated_run_cancelled",
+  "required_operation_failed",
+  "post_step_approval_denied",
+  "runner_failed",
+  "runner_cancelled",
+  "runtime_interrupted_no_checkpoint",
+] as const;
+
+export type DelegatedTerminalCodeV1 = (typeof delegatedTerminalCodeValuesV1)[number];
+
+function isDelegatedBlockCodeV1(value: unknown): value is DelegatedBlockCodeV1 {
+  return delegatedBlockCodeValuesV1.includes(value as DelegatedBlockCodeV1);
+}
+
+function isDelegatedTerminalCodeForKindV1(
+  kind: "failed" | "cancelled",
+  value: unknown,
+): value is DelegatedTerminalCodeV1 {
+  if (!delegatedTerminalCodeValuesV1.includes(value as DelegatedTerminalCodeV1)) return false;
+  if (kind === "cancelled") {
+    return value === "delegated_run_cancelled" || value === "runner_cancelled";
+  }
+  return value !== "delegated_run_cancelled" && value !== "runner_cancelled";
+}
+
 export type DelegatedOutcomeV1 =
   | {
       readonly kind: "completed";
+      readonly workflowId: string;
+      readonly workflowStepId: string;
       readonly participantId: string;
       readonly evidenceRefs: readonly DelegatedEvidenceRefV1[];
     }
@@ -634,16 +715,20 @@ export type DelegatedOutcomeV1 =
     }
   | {
       readonly kind: "blocked";
-      readonly participantId?: string;
-      readonly code: string;
+      readonly workflowId: string;
+      readonly workflowStepId: string;
+      readonly participantId: string;
+      readonly code: DelegatedBlockCodeV1;
       readonly reason: string;
       readonly missingRequirements: readonly string[];
-      readonly evidenceRefs?: readonly DelegatedEvidenceRefV1[];
-    }
+      readonly evidenceRefs: readonly DelegatedEvidenceRefV1[];
+  }
   | {
       readonly kind: "failed" | "cancelled";
-      readonly participantId?: string;
-      readonly code: string;
+      readonly workflowId: string;
+      readonly workflowStepId: string;
+      readonly participantId: string;
+      readonly code: DelegatedTerminalCodeV1;
       readonly reason: string;
       readonly evidenceRefs: readonly DelegatedEvidenceRefV1[];
     };
@@ -1319,6 +1404,8 @@ export interface ResourceLease {
   readonly releaseReason?: string;
   readonly workUnitId?: string;
   readonly attemptId?: string;
+  readonly runtimeInstanceId?: string;
+  readonly fencingToken?: string;
 }
 
 export type StateEntityType = "task" | "run" | "approval" | "media_job" | "workflow" | "workflow_step" | "work_unit" | "turn";

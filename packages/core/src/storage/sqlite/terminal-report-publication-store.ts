@@ -20,6 +20,7 @@ import type {
   TerminalReportPublicationConflictCode,
 } from "../../terminal-report-publication-types.js";
 import { DEFAULT_WORKSPACE_ID, LING_AGENT_ID, type ChannelWorkflow, type ChannelWorkflowStep } from "../../workspace-types.js";
+import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 import type { SqliteStoreContext } from "./store-context.js";
 
 type PublicationItem = AppendConversationItemInput<"assistant_message">;
@@ -49,7 +50,10 @@ export interface SqliteTerminalReportPublicationStorePorts {
   ) => StateTransitionEvent | undefined;
   readonly recordStateTransitionEvent: (input: CreateStateTransitionEventInput) => StateTransitionEvent;
   readonly getControlPlaneEventByIdempotency: (workspaceId: string, idempotencyKey: string) => ControlPlaneEvent | undefined;
-  readonly appendControlPlaneEvent: (input: AppendControlPlaneEventInput, now: string) => ControlPlaneEvent;
+  readonly appendControlPlaneEventWithinTransaction: (
+    input: AppendControlPlaneEventInput,
+    now: string,
+  ) => ControlPlaneEvent;
 }
 
 export class SqliteTerminalReportPublicationStore {
@@ -71,7 +75,7 @@ export class SqliteTerminalReportPublicationStore {
       this.context.database.exec("COMMIT;");
       return result;
     } catch (error) {
-      if (this.context.database.isTransaction) this.context.database.exec("ROLLBACK;");
+      rollbackOwnedSqliteTransaction(this.context.database);
       throw error;
     }
   }
@@ -155,11 +159,11 @@ export class SqliteTerminalReportPublicationStore {
       }
       const item = this.ports.appendConversationItemWithinTransaction(input.publicationItem, input.now);
       settleSourceTurn(this.context, this.ports, sourceTurn, workflow, item.id, targetStatus, input.now);
-      const event = this.ports.appendControlPlaneEvent(eventInput, input.now);
+      const event = this.ports.appendControlPlaneEventWithinTransaction(eventInput, input.now);
       this.context.database.exec("COMMIT;");
       return { ok: true, item, sourceTurnId: sourceTurn.id, sourceTurnStatus: targetStatus, controlPlaneEvent: event, duplicate: false };
     } catch (error) {
-      if (this.context.database.isTransaction) this.context.database.exec("ROLLBACK;");
+      rollbackOwnedSqliteTransaction(this.context.database);
       throw error;
     }
   }
@@ -311,7 +315,7 @@ export class SqliteTerminalReportPublicationStore {
     if (!sameSettlement(settlement, sourceTurn.id, targetStatus, expectedEvent)) {
       return conflict("source_turn_conflict");
     }
-    const controlPlaneEvent = this.ports.appendControlPlaneEvent(eventInput, input.now);
+    const controlPlaneEvent = this.ports.appendControlPlaneEventWithinTransaction(eventInput, input.now);
     return {
       ok: true,
       reportId: report.id,

@@ -1040,10 +1040,31 @@ test("restart resume fails closed when the exact approved side effect has no saf
     await postJson(`${daemon.url}/approvals/${encodeURIComponent(approvalId)}/approve?cwd=${encodeURIComponent(cwd)}`, {
       reason: "approve exact write",
     });
-    await waitForCondition(async () => {
-      const current = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
-      return current.status === "failed";
-    }, "Timed out waiting for unsupported resume to fail closed.");
+    try {
+      await waitForCondition(async () => {
+        const current = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
+        return current.status === "failed";
+      }, "Timed out waiting for unsupported resume to fail closed.");
+    } catch (error) {
+      const diagnosticStore = createSqliteRunStore(cwd);
+      try {
+        const diagnosticRun = diagnosticStore.getRun(runId);
+        const diagnosticCheckpoint = diagnosticStore.getApprovalCheckpointForApproval(approvalId);
+        const diagnosticWorkUnit = diagnosticRun?.workUnitId ? diagnosticStore.getWorkUnit(diagnosticRun.workUnitId) : undefined;
+        const diagnosticAttempt = diagnosticWorkUnit?.activeAttemptId
+          ? diagnosticStore.getWorkUnitAttempt(diagnosticWorkUnit.activeAttemptId)
+          : undefined;
+        throw new Error(
+          `${error instanceof Error ? error.message : String(error)} `
+          + `run=${diagnosticRun?.status ?? "missing"} `
+          + `workUnit=${diagnosticWorkUnit?.status ?? "missing"} `
+          + `attempt=${diagnosticAttempt?.status ?? "missing"} `
+          + `checkpoint=${diagnosticCheckpoint?.status ?? "missing"}`,
+        );
+      } finally {
+        diagnosticStore.close();
+      }
+    }
 
     const store = createSqliteRunStore(cwd);
     try {
@@ -4053,6 +4074,8 @@ test("work unit retry and reconcile APIs operate on durable supervisor state", a
         ownerId: attempt.id,
         workUnitId: running.id,
         attemptId: attempt.id,
+        runtimeInstanceId: attempt.runtimeInstanceId,
+        fencingToken: attempt.fencingToken,
         acquiredAt: "2026-06-04T01:01:02.000Z",
         expiresAt: "2026-06-04T01:11:02.000Z",
       });
@@ -4065,6 +4088,8 @@ test("work unit retry and reconcile APIs operate on durable supervisor state", a
         ownerId: attempt.id,
         workUnitId: running.id,
         attemptId: attempt.id,
+        runtimeInstanceId: attempt.runtimeInstanceId,
+        fencingToken: attempt.fencingToken,
         acquiredAt: "2026-06-04T01:01:03.000Z",
         expiresAt: "2026-06-04T01:11:03.000Z",
       });

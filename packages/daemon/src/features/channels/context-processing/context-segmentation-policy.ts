@@ -352,7 +352,6 @@ async function proposeWithDeadline(
       controller.abort();
       reject(new ContextSegmentationTimeoutError(timeoutMs));
     }, timeoutMs);
-    timer.unref?.();
   });
   try {
     return await Promise.race([propose(view, controller.signal), timeout]);

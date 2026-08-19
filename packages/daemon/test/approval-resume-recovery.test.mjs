@@ -321,10 +321,16 @@ async function createResumeFixture(suffix, command) {
     now,
   });
   store.linkRunToWorkUnit(run.id, workUnit.id, now);
-  store.transitionWorkUnitStatus({ workUnitId: workUnit.id, expectedStatus: "queued", event: "claim", actor: "system", now });
-  store.transitionWorkUnitStatus({ workUnitId: workUnit.id, expectedStatus: "claimed", event: "runner_started", actor: "runner", now });
-  store.transitionWorkUnitStatus({ workUnitId: workUnit.id, expectedStatus: "running", event: "approval_requested", actor: "system", now });
-  store.updateWorkUnitAttemptStatus({ attemptId: priorAttempt.id, status: "waiting_for_approval", now });
+  const priorFence = {
+    workUnitId: workUnit.id,
+    attemptId: priorAttempt.id,
+    runtimeInstanceId: priorAttempt.runtimeInstanceId,
+    fencingToken: priorAttempt.fencingToken,
+  };
+  store.transitionWorkUnitStatus({ ...priorFence, activeAttemptId: priorAttempt.id, expectedStatus: "queued", event: "claim", actor: "system", now });
+  store.transitionWorkUnitStatus({ ...priorFence, expectedStatus: "claimed", event: "runner_started", actor: "runner", now });
+  store.transitionWorkUnitStatus({ ...priorFence, expectedStatus: "running", event: "approval_requested", actor: "system", now });
+  store.updateWorkUnitAttemptStatus({ ...priorFence, status: "waiting_for_approval", now });
   store.transitionRunStatus({ runId: run.id, expectedStatus: "running", event: "approval_requested", actor: "system", now });
   const payload = { type: "bash", cwd, command, riskFlags: [] };
   const approval = store.createApprovalRequest({

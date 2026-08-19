@@ -396,6 +396,11 @@ function createDarwinLock() {
         runtime: {
           args: ["mcp", "--embedded", "--host-bundle-id", "com.lingstack.desktop"],
           stateHomeEnvironmentVariable: "CUA_DRIVER_STATE_HOME",
+          inputFencePortEnvironmentVariable: "CUA_DRIVER_INPUT_FENCE_PORT",
+          inputFenceTokenEnvironmentVariable: "CUA_DRIVER_INPUT_FENCE_TOKEN",
+          inputEpochEnvironmentVariable: "CUA_DRIVER_INPUT_EPOCH",
+          inputFenceProtocolVersion: 1,
+          inputFenceAdmission: "mutating_tool_call_v1",
           stateSchemaVersion: 1,
           stateHomeRequiredInEmbeddedMode: true,
           telemetryEnabled: false,
@@ -424,6 +429,7 @@ function createPatchSet() {
       { id: "ling-managed-readiness-v1", sha256: "9".repeat(64) },
       { id: "ling-managed-lifetime-v1", sha256: "a".repeat(64) },
       { id: "ling-windows-capability-errors-v1", sha256: "b".repeat(64) },
+      { id: "ling-provider-input-fence-v1", sha256: "c".repeat(64) },
     ],
     touchedPaths: ["libs/cua-driver/rust/src/main.rs"],
   };

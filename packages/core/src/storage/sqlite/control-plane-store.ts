@@ -7,7 +7,7 @@ import {
   type ReadControlPlaneReplayWindowInput,
 } from "../../run-types.js";
 import { redactSecrets } from "../../redaction.js";
-import { readNumber, stringifyJson } from "./helpers.js";
+import { readNumber, rollbackOwnedSqliteTransaction, stringifyJson } from "./helpers.js";
 import { mapControlPlaneEvent } from "./control-plane-mappers.js";
 import { controlPlaneEventSelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
@@ -20,58 +20,83 @@ export class SqliteControlPlaneStore {
   }
 
   appendControlPlaneEvent(input: AppendControlPlaneEventInput, now: string): ControlPlaneEvent {
-    if (input.idempotencyKey) {
-      const existing = this.getControlPlaneEventByIdempotency(input.workspaceId, input.idempotencyKey);
-      if (existing) {
-        assertSameControlPlaneEvent(existing, input);
-        return existing;
-      }
-    }
-    const ownsTransaction = !this.context.database.isTransaction;
+    return this.appendControlPlaneEventWithTransactionOwnership(input, now, true);
+  }
+
+  /**
+   * Appends as part of a caller-owned SQLite transaction.
+   *
+   * Node 22 can report `DatabaseSync.isTransaction === false` after `BEGIN IMMEDIATE`.
+   * Atomic composition therefore passes ownership explicitly instead of probing runtime
+   * state and accidentally issuing a nested `BEGIN`.
+   */
+  appendControlPlaneEventWithinTransaction(
+    input: AppendControlPlaneEventInput,
+    now: string,
+  ): ControlPlaneEvent {
+    return this.appendControlPlaneEventWithTransactionOwnership(input, now, false);
+  }
+
+  private appendControlPlaneEventWithTransactionOwnership(
+    input: AppendControlPlaneEventInput,
+    now: string,
+    ownsTransaction: boolean,
+  ): ControlPlaneEvent {
     if (ownsTransaction) this.context.database.exec("BEGIN IMMEDIATE;");
     try {
-    const redactedData = redactSecrets(input.data ?? {}) as Record<string, unknown>;
-    this.context.database
-      .prepare(`
-        INSERT INTO control_plane_events (
-          workspace_id,
-          cwd,
-          ts,
-          domain,
-          entity_type,
-          entity_id,
-          action,
-          data_json,
-          idempotency_key
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `)
-      .run(
-        input.workspaceId,
-        input.cwd,
-        now,
-        input.domain,
-        input.entityType,
-        input.entityId,
-        input.action,
-        stringifyJson(redactedData),
-        input.idempotencyKey ?? null,
-      );
-    const seq = readNumber(this.context.database.prepare("SELECT last_insert_rowid() AS seq").get(), "seq");
-    const event = this.getControlPlaneEvent(seq);
-    if (!event) {
-      throw new Error(`Failed to append control-plane event: ${seq}`);
-    }
-    this.context.database.prepare(`
-      INSERT INTO control_plane_replay_state (workspace_id, replay_floor_seq, latest_seq, updated_at)
-      VALUES (?, 0, ?, ?)
-      ON CONFLICT(workspace_id) DO UPDATE SET
-        latest_seq = MAX(control_plane_replay_state.latest_seq, excluded.latest_seq),
-        updated_at = excluded.updated_at
-    `).run(input.workspaceId, event.seq, now);
-    if (ownsTransaction) this.context.database.exec("COMMIT;");
-    return event;
+      const redactedData = redactSecrets(input.data ?? {}) as Record<string, unknown>;
+      const inserted = this.context.database
+        .prepare(`
+          INSERT INTO control_plane_events (
+            workspace_id,
+            cwd,
+            ts,
+            domain,
+            entity_type,
+            entity_id,
+            action,
+            data_json,
+            idempotency_key
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(workspace_id, idempotency_key) WHERE idempotency_key IS NOT NULL
+          DO NOTHING
+        `)
+        .run(
+          input.workspaceId,
+          input.cwd,
+          now,
+          input.domain,
+          input.entityType,
+          input.entityId,
+          input.action,
+          stringifyJson(redactedData),
+          input.idempotencyKey ?? null,
+        );
+      if (Number(inserted.changes) === 0 && input.idempotencyKey) {
+        const existing = this.getControlPlaneEventByIdempotency(input.workspaceId, input.idempotencyKey);
+        if (!existing) {
+          throw new Error(`Control-plane event idempotency insert lost: ${input.idempotencyKey}`);
+        }
+        assertSameControlPlaneEvent(existing, input);
+        if (ownsTransaction) this.context.database.exec("COMMIT;");
+        return existing;
+      }
+      const seq = readNumber(this.context.database.prepare("SELECT last_insert_rowid() AS seq").get(), "seq");
+      const event = this.getControlPlaneEvent(seq);
+      if (!event) {
+        throw new Error(`Failed to append control-plane event: ${seq}`);
+      }
+      this.context.database.prepare(`
+        INSERT INTO control_plane_replay_state (workspace_id, replay_floor_seq, latest_seq, updated_at)
+        VALUES (?, 0, ?, ?)
+        ON CONFLICT(workspace_id) DO UPDATE SET
+          latest_seq = MAX(control_plane_replay_state.latest_seq, excluded.latest_seq),
+          updated_at = excluded.updated_at
+      `).run(input.workspaceId, event.seq, now);
+      if (ownsTransaction) this.context.database.exec("COMMIT;");
+      return event;
     } catch (error) {
-      if (ownsTransaction && this.context.database.isTransaction) this.context.database.exec("ROLLBACK;");
+      if (ownsTransaction) rollbackOwnedSqliteTransaction(this.context.database);
       throw error;
     }
   }

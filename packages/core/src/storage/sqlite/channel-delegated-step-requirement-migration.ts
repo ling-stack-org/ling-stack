@@ -9,6 +9,7 @@ import {
   type RequiredParticipantV1,
   type WorkflowGraph,
 } from "@ling-stack/contracts";
+import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 
 export const CHANNEL_DELEGATED_STEP_REQUIREMENT_MIGRATION_VERSION = 115;
 export const CHANNEL_DELEGATED_STEP_REQUIREMENT_MIGRATION_NAME = "materialize_channel_delegated_step_requirements";
@@ -50,7 +51,7 @@ export function applyChannelDelegatedStepRequirementMigration(
     input.database.exec("COMMIT;");
     return true;
   } catch (error) {
-    if (input.database.isTransaction) input.database.exec("ROLLBACK;");
+    rollbackOwnedSqliteTransaction(input.database);
     throw error;
   }
 }

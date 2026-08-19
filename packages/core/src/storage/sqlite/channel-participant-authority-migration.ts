@@ -4,6 +4,7 @@ import {
   isWorkflowParticipantAuthorityV1,
   type WorkflowParticipantAuthorityV1,
 } from "@ling-stack/contracts";
+import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 
 export const CHANNEL_PARTICIPANT_AUTHORITY_MIGRATION_VERSION = 119;
 export const CHANNEL_PARTICIPANT_AUTHORITY_MIGRATION_NAME = "add_channel_participant_authority";
@@ -51,7 +52,7 @@ export function applyChannelParticipantAuthorityMigration(input: ChannelParticip
     }
     database.exec("COMMIT;");
   } catch (error) {
-    if (database.isTransaction) database.exec("ROLLBACK;");
+    rollbackOwnedSqliteTransaction(database);
     throw error;
   }
 

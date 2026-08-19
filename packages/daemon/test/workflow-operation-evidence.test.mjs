@@ -803,11 +803,13 @@ test("synthesis participant completes with a bound output packet but not naked t
         ...step.metadata,
         outputArtifactId: artifact.id,
         delegatedOutcomeBasisFingerprint: "dsbv1_test_synthesis_packet",
-        delegatedOutcome: {
-          kind: "completed",
-          participantId: "teammate_builtin_architect",
-          evidenceRefs: [{ kind: "workflow_output_packet", id: artifact.id }],
-        },
+      delegatedOutcome: {
+        kind: "completed",
+        workflowId: workflow.id,
+        workflowStepId: step.id,
+        participantId: "teammate_builtin_architect",
+        evidenceRefs: [{ kind: "workflow_output_packet", id: artifact.id }],
+      },
       },
     }, now);
     gate = evaluateWorkflowCompletionGate({ store, workflow, steps: [step], now });
@@ -1022,6 +1024,145 @@ test("delegated finalization is idempotent across duplicate callbacks", async ()
   }
 });
 
+test("delegated finalization rolls back the step and transition event and keeps the connection reusable", async (t) => {
+  for (const boundary of ["step", "transition_event"]) {
+    await t.test(boundary, async () => {
+      const fixture = await createMultiAgentOperationFixture(`finalization-rollback-${boundary}`);
+      try {
+        appendToolAction(fixture.store, fixture.engineerRun.id, "write_app", "write", {
+          path: "app.js",
+          content: "console.log('ok')",
+        }, false);
+        fixture.store.markRunSucceeded(fixture.engineerRun.id, "2026-08-12T17:05:10.000Z");
+        const beforeStep = fixture.store.getChannelWorkflowStep(fixture.engineerStep.id);
+        const beforeEvents = fixture.store.listStateTransitionEvents({
+          entityType: "workflow_step",
+          entityId: fixture.engineerStep.id,
+        });
+        fixture.store.database.exec(delegatedFinalizationCrashTrigger(boundary, fixture.engineerStep.id));
+
+        assert.throws(() => finalizeDelegatedWorkflowStepFromCanonicalState({
+          store: fixture.store,
+          workflowStepId: fixture.engineerStep.id,
+          cause: "run_terminal",
+          now: "2026-08-12T17:05:11.000Z",
+        }), /injected_delegated_finalization_crash/u);
+        assert.deepEqual(fixture.store.getChannelWorkflowStep(fixture.engineerStep.id), beforeStep);
+        assert.deepEqual(fixture.store.listStateTransitionEvents({
+          entityType: "workflow_step",
+          entityId: fixture.engineerStep.id,
+        }), beforeEvents);
+        appendRollbackRecoveryProbe(
+          fixture.store,
+          fixture.engineerRun.cwd,
+          `delegated-finalization-${boundary}`,
+          "2026-08-12T17:05:11.500Z",
+        );
+        fixture.store.database.exec(`DROP TRIGGER ${delegatedFinalizationCrashTriggerName(boundary)};`);
+
+        const recovered = finalizeDelegatedWorkflowStepFromCanonicalState({
+          store: fixture.store,
+          workflowStepId: fixture.engineerStep.id,
+          cause: "run_terminal",
+          now: "2026-08-12T17:05:12.000Z",
+        });
+        assert.equal(recovered.status, "finalized");
+        assert.equal(recovered.step.status, "succeeded");
+        assert.equal(recovered.step.metadata.delegatedOutcome.kind, "completed");
+        assert.equal(fixture.store.listStateTransitionEvents({
+          entityType: "workflow_step",
+          entityId: fixture.engineerStep.id,
+        }).filter((event) => event.event === "succeed").length, 1);
+      } finally {
+        await fixture.close();
+      }
+    });
+  }
+});
+
+test("completion evaluation rolls back workflow state and event and succeeds on the same connection", async (t) => {
+  for (const boundary of ["workflow", "transition_event"]) {
+    await t.test(boundary, async () => {
+      const fixture = await createMultiAgentOperationFixture(`completion-rollback-${boundary}`);
+      try {
+        appendToolAction(fixture.store, fixture.engineerRun.id, "write_app", "write", {
+          path: "app.js",
+          content: "console.log('ok')",
+        }, false);
+        fixture.store.markRunSucceeded(fixture.engineerRun.id, "2026-08-12T17:06:10.000Z");
+        assert.equal(finalizeDelegatedWorkflowStepFromCanonicalState({
+          store: fixture.store,
+          workflowStepId: fixture.engineerStep.id,
+          cause: "run_terminal",
+          now: "2026-08-12T17:06:11.000Z",
+        }).status, "finalized");
+        appendBashAction(fixture.store, fixture.qaRun.id, "node app.js", {
+          exitCode: 0,
+          timedOut: false,
+          cancelled: false,
+        });
+        fixture.store.markRunSucceeded(fixture.qaRun.id, "2026-08-12T17:06:12.000Z");
+        assert.equal(finalizeDelegatedWorkflowStepFromCanonicalState({
+          store: fixture.store,
+          workflowStepId: fixture.qaStep.id,
+          cause: "run_terminal",
+          now: "2026-08-12T17:06:13.000Z",
+        }).status, "finalized");
+
+        const workflow = fixture.store.getChannelWorkflow(fixture.workflow.id);
+        assert.equal(workflow.status, "running");
+        const evaluation = evaluateWorkflowCompletion({
+          store: fixture.store,
+          workflow,
+          steps: fixture.store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 }),
+          now: "2026-08-12T17:06:14.000Z",
+        });
+        assert.equal(evaluation.gate.status, "verified");
+        const beforeWorkflow = fixture.store.getChannelWorkflow(workflow.id);
+        const beforeEvents = fixture.store.listStateTransitionEvents({
+          entityType: "workflow",
+          entityId: workflow.id,
+        });
+        fixture.store.database.exec(workflowCompletionCrashTrigger(boundary, workflow.id));
+
+        assert.throws(() => fixture.store.commitChannelWorkflowCompletionEvaluation({
+          workflowId: workflow.id,
+          evaluation,
+          now: "2026-08-12T17:06:15.000Z",
+        }), /injected_workflow_completion_crash/u);
+        assert.deepEqual(fixture.store.getChannelWorkflow(workflow.id), beforeWorkflow);
+        assert.deepEqual(fixture.store.listStateTransitionEvents({
+          entityType: "workflow",
+          entityId: workflow.id,
+        }), beforeEvents);
+        appendRollbackRecoveryProbe(
+          fixture.store,
+          fixture.engineerRun.cwd,
+          `workflow-completion-${boundary}`,
+          "2026-08-12T17:06:15.500Z",
+        );
+        fixture.store.database.exec(`DROP TRIGGER ${workflowCompletionCrashTriggerName(boundary)};`);
+
+        const recovered = fixture.store.commitChannelWorkflowCompletionEvaluation({
+          workflowId: workflow.id,
+          evaluation,
+          now: "2026-08-12T17:06:16.000Z",
+        });
+        assert.deepEqual(recovered, { ok: true, from: "running", to: "succeeded" });
+        const completedWorkflow = fixture.store.getChannelWorkflow(workflow.id);
+        assert.equal(completedWorkflow.status, "succeeded");
+        assert.equal(completedWorkflow.metadata.completionGate.status, "verified");
+        assert.equal(fixture.store.listStateTransitionEvents({
+          entityType: "workflow",
+          entityId: workflow.id,
+        }).filter((event) => event.event === "all_steps_succeeded").length, 1);
+      } finally {
+        await fixture.close();
+      }
+    });
+  }
+});
+
 test("startup reconciliation finalizes terminal delegated Runs with the online rules", async () => {
   const fixture = await createMultiAgentOperationFixture("startup-reconcile");
   try {
@@ -1098,10 +1239,13 @@ test("participant preflight blocker atomically replaces workflow_started before 
     assert.equal(step.runId, undefined);
     assert.deepEqual(step.metadata.delegatedOutcome, {
       kind: "blocked",
+      workflowId: fixture.workflow.id,
+      workflowStepId: fixture.engineerStep.id,
       participantId: step.toParticipantId,
       code: "workflow_participant_required_tools_unavailable",
       reason: "The assigned participant no longer allows write.",
       missingRequirements: ["tool:write"],
+      evidenceRefs: [],
     });
     assert.ok(step.metadata.delegatedOutcomeBasisFingerprint);
   } finally {
@@ -1699,6 +1843,40 @@ async function createSynthesisFinalizationFixture(suffix) {
 function appendToolAction(store, runId, toolCallId, toolName, args, isError) {
   store.appendEvent(runId, "tool_start", { toolCallId, toolName, args });
   store.appendEvent(runId, "tool_end", { toolCallId, toolName, isError });
+}
+
+function delegatedFinalizationCrashTrigger(boundary, workflowStepId) {
+  return boundary === "step"
+    ? `CREATE TRIGGER crash_delegated_step_update AFTER UPDATE OF status ON channel_workflow_steps WHEN NEW.id = '${workflowStepId}' AND NEW.status = 'succeeded' BEGIN SELECT RAISE(ABORT, 'injected_delegated_finalization_crash'); END;`
+    : `CREATE TRIGGER crash_delegated_step_transition AFTER INSERT ON state_transition_events WHEN NEW.entity_type = 'workflow_step' AND NEW.entity_id = '${workflowStepId}' AND NEW.event = 'succeed' BEGIN SELECT RAISE(ABORT, 'injected_delegated_finalization_crash'); END;`;
+}
+
+function delegatedFinalizationCrashTriggerName(boundary) {
+  return boundary === "step" ? "crash_delegated_step_update" : "crash_delegated_step_transition";
+}
+
+function workflowCompletionCrashTrigger(boundary, workflowId) {
+  return boundary === "workflow"
+    ? `CREATE TRIGGER crash_workflow_completion_update AFTER UPDATE OF status ON channel_workflows WHEN NEW.id = '${workflowId}' AND NEW.status = 'succeeded' BEGIN SELECT RAISE(ABORT, 'injected_workflow_completion_crash'); END;`
+    : `CREATE TRIGGER crash_workflow_completion_transition AFTER INSERT ON state_transition_events WHEN NEW.entity_type = 'workflow' AND NEW.entity_id = '${workflowId}' AND NEW.event = 'all_steps_succeeded' BEGIN SELECT RAISE(ABORT, 'injected_workflow_completion_crash'); END;`;
+}
+
+function workflowCompletionCrashTriggerName(boundary) {
+  return boundary === "workflow" ? "crash_workflow_completion_update" : "crash_workflow_completion_transition";
+}
+
+function appendRollbackRecoveryProbe(store, cwd, suffix, now) {
+  const event = store.appendControlPlaneEvent({
+    workspaceId: "workspace_default",
+    cwd,
+    domain: "runs",
+    entityType: "run",
+    entityId: `rollback_recovery_${suffix}`,
+    action: "run.rollback_recovery_probe",
+    data: {},
+    idempotencyKey: `rollback-recovery:${suffix}`,
+  }, now);
+  assert.equal(event.entityId, `rollback_recovery_${suffix}`);
 }
 
 function appendBashAction(store, runId, command, result) {

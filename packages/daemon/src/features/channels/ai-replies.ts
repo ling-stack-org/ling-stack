@@ -1,5 +1,6 @@
 import {
   projectConversationItemToChannelMessage,
+  toRuntimeAttemptFence,
   type Channel,
   type ChannelMessage,
   type RunSession,
@@ -517,17 +518,21 @@ async function startProjectedChannelReplyRun(input: {
         progressEvents: input.webProgressEvents,
       });
       if (input.observerBusError) {
-        input.input.store.appendRuntimeEvent({
-          workUnitId,
-          attemptId,
-          type: "work_unit_progress",
-          actor: "system",
+        const event = {
+          type: "work_unit_progress" as const,
+          actor: "system" as const,
           ts: new Date().toISOString(),
           data: {
             channelTeamObserverBus: "failed",
             error: input.observerBusError,
           },
-        });
+        };
+        const linkedAttempt = attemptId ? input.input.store.getWorkUnitAttempt(attemptId) : undefined;
+        if (linkedAttempt) {
+          input.input.store.appendRuntimeEvent({ ...toRuntimeAttemptFence(linkedAttempt), ...event });
+        } else if (!attemptId) {
+          input.input.store.appendRuntimeEvent({ workUnitId, ...event });
+        }
       }
       notifyRunLinked(input.input.onRunLinked, runId);
     },

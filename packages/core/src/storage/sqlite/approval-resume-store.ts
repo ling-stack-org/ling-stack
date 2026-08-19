@@ -14,14 +14,17 @@ import type {
   ControlPlaneEvent,
   RunSession,
 } from "../../run-types.js";
-import type {
-  AppendRuntimeEventInput,
-  CreateWorkUnitAttemptInput,
-  WorkUnit,
-  WorkUnitAttempt,
+import {
+  toRuntimeAttemptFence,
+  type AppendRuntimeEventInput,
+  type AppendTerminalRuntimeAuditInput,
+  type CreateWorkUnitAttemptInput,
+  type RuntimeAttemptFenceV1,
+  type WorkUnit,
+  type WorkUnitAttempt,
 } from "../../runtime-supervisor-types.js";
-import type { ResourceLeaseOwnerType } from "../../channel-runtime-types.js";
 import type { RunTransitionEvent, StateTransitionActor, TaskTransitionEvent, TransitionResult, WorkUnitTransitionEvent } from "../../state-machines.js";
+import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 import type { SqliteStoreContext } from "./store-context.js";
 
 interface ApprovalResumeStorePorts {
@@ -45,23 +48,15 @@ interface ApprovalResumeStorePorts {
     readonly errorMessage?: string | null;
   }) => TransitionResult<RunSession["status"]>;
   readonly getWorkUnit: (id: string) => WorkUnit | undefined;
-  readonly transitionWorkUnitStatus: (input: {
-    readonly workUnitId: string;
-    readonly expectedStatus: WorkUnit["status"];
-    readonly event: WorkUnitTransitionEvent;
-    readonly actor: StateTransitionActor;
-    readonly reason?: string;
-    readonly idempotencyKey?: string;
-    readonly now: string;
-    readonly activeAttemptId?: string | null;
-    readonly endedAt?: string | null;
-    readonly errorCode?: string | null;
-    readonly errorMessage?: string | null;
-  }) => TransitionResult<WorkUnit["status"]>;
+  readonly transitionWorkUnitStatus: (input: Parameters<import("../../run-types.js").RunStore["transitionWorkUnitStatus"]>[0]) => TransitionResult<WorkUnit["status"]>;
   readonly getWorkUnitAttempt: (id: string) => WorkUnitAttempt | undefined;
   readonly createWorkUnitAttempt: (input: CreateWorkUnitAttemptInput) => WorkUnitAttempt;
+  readonly createWorkUnitAttemptWithinTransaction: (input: CreateWorkUnitAttemptInput) => WorkUnitAttempt;
   readonly updateWorkUnitAttemptStatus: (input: {
     readonly attemptId: string;
+    readonly workUnitId: string;
+    readonly runtimeInstanceId: string;
+    readonly fencingToken: string;
     readonly status: WorkUnitAttempt["status"];
     readonly now: string;
     readonly startedAt?: string;
@@ -70,9 +65,13 @@ interface ApprovalResumeStorePorts {
     readonly errorCode?: string | null;
     readonly errorMessage?: string | null;
   }) => WorkUnitAttempt | undefined;
-  readonly releaseRuntimeSemaphoreSlotsForOwner: (ownerId: string, releasedAt: string, releaseReason: string) => number;
+  readonly releaseRuntimeSemaphoreSlotsForAttempt: (fence: RuntimeAttemptFenceV1, releasedAt: string, releaseReason: string) => number;
   readonly appendRuntimeEvent: (input: AppendRuntimeEventInput) => unknown;
-  readonly appendControlPlaneEvent: (input: AppendControlPlaneEventInput, now: string) => ControlPlaneEvent;
+  readonly appendTerminalRuntimeAudit: (input: AppendTerminalRuntimeAuditInput) => unknown;
+  readonly appendControlPlaneEventWithinTransaction: (
+    input: AppendControlPlaneEventInput,
+    now: string,
+  ) => ControlPlaneEvent;
   readonly getTask: (id: string) => { readonly id: string; readonly status: string } | undefined;
   readonly transitionTaskStatus: (input: {
     readonly taskId: string;
@@ -84,11 +83,7 @@ interface ApprovalResumeStorePorts {
     readonly now: string;
     readonly currentRunId?: string | null;
   }) => TransitionResult<import("../../workspace-types.js").Task["status"]>;
-  readonly releaseResourceLeasesForOwner: (
-    ownerType: ResourceLeaseOwnerType,
-    ownerId: string,
-    releasedAt: string,
-  ) => number;
+  readonly releaseResourceLeasesForAttempt: (fence: RuntimeAttemptFenceV1, releasedAt: string, releaseReason: string) => number;
   readonly getDefaultControlPlaneScope: () => { readonly workspaceId: string; readonly cwd: string };
 }
 
@@ -117,9 +112,6 @@ export class SqliteApprovalResumeStore {
   ) {}
 
   commitApprovalResumeClaim(input: CommitApprovalResumeClaimInput): CommitApprovalResumeClaimResult {
-    if (this.context.database.isTransaction) {
-      throw new Error("Approval resume claim cannot join an unrelated SQLite transaction.");
-    }
     this.context.database.exec("BEGIN IMMEDIATE;");
     try {
       const checkpoint = this.ports.getApprovalCheckpoint(input.checkpointId);
@@ -165,6 +157,9 @@ export class SqliteApprovalResumeStore {
         if (!isAttemptTerminal(attemptToLose.status)) {
           const lost = this.ports.updateWorkUnitAttemptStatus({
             attemptId: attemptToLose.id,
+            workUnitId: attemptToLose.workUnitId,
+            runtimeInstanceId: attemptToLose.runtimeInstanceId,
+            fencingToken: attemptToLose.fencingToken,
             status: "lost",
             now: input.now,
             endedAt: input.now,
@@ -175,8 +170,14 @@ export class SqliteApprovalResumeStore {
             throw new ApprovalResumeClaimAbort("approval_resume_attempt_conflict");
           }
         }
-        this.ports.releaseRuntimeSemaphoreSlotsForOwner(
-          attemptToLose.id,
+        const attemptToLoseFence = toRuntimeAttemptFence(attemptToLose);
+        this.ports.releaseResourceLeasesForAttempt(
+          attemptToLoseFence,
+          input.now,
+          "approval-resume-replaced-before-tool-start",
+        );
+        this.ports.releaseRuntimeSemaphoreSlotsForAttempt(
+          attemptToLoseFence,
           input.now,
           "approval-resume-replaced-before-tool-start",
         );
@@ -193,7 +194,7 @@ export class SqliteApprovalResumeStore {
         throw new ApprovalResumeClaimAbort("approval_resume_checkpoint_stale");
       }
 
-      const createdAttempt = this.ports.createWorkUnitAttempt({
+      const createdAttempt = this.ports.createWorkUnitAttemptWithinTransaction({
         ...input.replacementAttempt,
         status: "created",
       });
@@ -202,6 +203,9 @@ export class SqliteApprovalResumeStore {
       }
       const attempt = this.ports.updateWorkUnitAttemptStatus({
         attemptId: createdAttempt.id,
+        workUnitId: createdAttempt.workUnitId,
+        runtimeInstanceId: createdAttempt.runtimeInstanceId,
+        fencingToken: createdAttempt.fencingToken,
         status: "started",
         now: input.now,
         startedAt: input.now,
@@ -216,6 +220,9 @@ export class SqliteApprovalResumeStore {
       if (input.mode === "activate_waiting") {
         const workUnitTransition = this.ports.transitionWorkUnitStatus({
           workUnitId: workUnit.id,
+          attemptId: attempt.id,
+          runtimeInstanceId: attempt.runtimeInstanceId,
+          fencingToken: attempt.fencingToken,
           expectedStatus: "waiting_for_approval",
           event: "approval_approved",
           actor: "local-user",
@@ -244,6 +251,8 @@ export class SqliteApprovalResumeStore {
       this.ports.appendRuntimeEvent({
         workUnitId: workUnit.id,
         attemptId: attempt.id,
+        runtimeInstanceId: attempt.runtimeInstanceId,
+        fencingToken: attempt.fencingToken,
         type: "work_unit_started",
         actor: "system",
         ts: input.now,
@@ -275,7 +284,7 @@ export class SqliteApprovalResumeStore {
         controlPlaneEvents,
       };
     } catch (error) {
-      if (this.context.database.isTransaction) this.context.database.exec("ROLLBACK;");
+      rollbackOwnedSqliteTransaction(this.context.database);
       if (error instanceof ApprovalResumeClaimAbort) {
         return { ok: false, code: error.code };
       }
@@ -286,9 +295,6 @@ export class SqliteApprovalResumeStore {
   commitApprovalResumeSuspension(input: CommitApprovalResumeSuspensionInput): CommitApprovalResumeSuspensionResult {
     if (!isValidApprovalResumeSuspensionShape(input)) {
       throw new Error("Approval resume suspension lifecycle shape is invalid.");
-    }
-    if (this.context.database.isTransaction) {
-      throw new Error("Approval resume suspension cannot join an unrelated SQLite transaction.");
     }
     this.context.database.exec("BEGIN IMMEDIATE;");
     try {
@@ -325,6 +331,9 @@ export class SqliteApprovalResumeStore {
       }, input.now);
       const lostAttempt = this.ports.updateWorkUnitAttemptStatus({
         attemptId: attempt.id,
+        workUnitId: attempt.workUnitId,
+        runtimeInstanceId: attempt.runtimeInstanceId,
+        fencingToken: attempt.fencingToken,
         status: "lost",
         now: input.now,
         endedAt: input.now,
@@ -334,14 +343,13 @@ export class SqliteApprovalResumeStore {
       if (!updatedCheckpoint || !lostAttempt || lostAttempt.status !== "lost") {
         throw new ApprovalResumeTransitionAbort("approval_resume_suspension_stale");
       }
-      this.ports.releaseResourceLeasesForOwner("run", run.id, input.now);
-      this.ports.releaseRuntimeSemaphoreSlotsForOwner(attempt.id, input.now, "approval-resume-suspended");
-      this.ports.appendRuntimeEvent({
-        workUnitId: workUnit.id,
-        attemptId: attempt.id,
+      const suspendedFence = toRuntimeAttemptFence(lostAttempt);
+      this.ports.releaseResourceLeasesForAttempt(suspendedFence, input.now, "approval-resume-suspended");
+      this.ports.releaseRuntimeSemaphoreSlotsForAttempt(suspendedFence, input.now, "approval-resume-suspended");
+      this.ports.appendTerminalRuntimeAudit({
+        capability: toTerminalAuditCapability(lostAttempt, input.now),
         type: "work_unit_stale",
         actor: "system",
-        ts: input.now,
         data: { reason: "runtime_suspend", cause: input.cause, recoverable: true, checkpointId: checkpoint.id },
       });
       const controlPlaneEvents = appendResumeInvalidations(this.ports, {
@@ -357,7 +365,7 @@ export class SqliteApprovalResumeStore {
       this.context.database.exec("COMMIT;");
       return reloadSuspensionResult(this.ports, checkpoint.id, run.id, workUnit.id, attempt.id, controlPlaneEvents);
     } catch (error) {
-      if (this.context.database.isTransaction) this.context.database.exec("ROLLBACK;");
+      rollbackOwnedSqliteTransaction(this.context.database);
       if (error instanceof ApprovalResumeTransitionAbort) {
         return {
           ok: false,
@@ -373,9 +381,6 @@ export class SqliteApprovalResumeStore {
   commitApprovalResumeTerminal(input: CommitApprovalResumeTerminalInput): CommitApprovalResumeTerminalResult {
     if (input.kind === "checkpoint_quarantine") {
       return this.commitApprovalResumeCheckpointQuarantine(input);
-    }
-    if (this.context.database.isTransaction) {
-      throw new Error("Approval resume terminal transition cannot join an unrelated SQLite transaction.");
     }
     this.context.database.exec("BEGIN IMMEDIATE;");
     try {
@@ -422,6 +427,13 @@ export class SqliteApprovalResumeStore {
       });
       const workUnitTransition = this.ports.transitionWorkUnitStatus({
         workUnitId: workUnit.id,
+        attemptId: attempt.id,
+        activeAttemptId: attempt.id,
+        runtimeInstanceId: attempt.runtimeInstanceId,
+        fencingToken: attempt.fencingToken,
+        ...(attempt.status === "lost" ? {
+          terminalAttemptOwnership: { kind: "lost_attempt_reconciliation" as const },
+        } : {}),
         expectedStatus: input.expectedWorkUnitStatus,
         event: input.status === "succeeded" ? "runner_succeeded" : "runner_failed",
         actor: "system",
@@ -432,23 +444,36 @@ export class SqliteApprovalResumeStore {
         errorCode: input.errorCode ?? null,
         errorMessage: input.errorMessage ?? null,
       });
-      const updatedAttempt = this.ports.updateWorkUnitAttemptStatus({
-        attemptId: attempt.id,
-        status: input.attemptStatus,
-        now: input.now,
-        endedAt: input.now,
-        errorCode: input.errorCode ?? null,
-        errorMessage: input.errorMessage ?? null,
-      });
+      const updatedAttempt = isAttemptTerminal(attempt.status) && attempt.status === input.attemptStatus
+        ? attempt
+        : this.ports.updateWorkUnitAttemptStatus({
+            attemptId: attempt.id,
+            workUnitId: attempt.workUnitId,
+            runtimeInstanceId: attempt.runtimeInstanceId,
+            fencingToken: attempt.fencingToken,
+            status: input.attemptStatus,
+            now: input.now,
+            endedAt: input.now,
+            errorCode: input.errorCode ?? null,
+            errorMessage: input.errorMessage ?? null,
+          });
       if (!updatedCheckpoint || !runTransition.ok || !workUnitTransition.ok || !updatedAttempt) {
         throw new ApprovalResumeTransitionAbort("approval_resume_terminal_stale");
       }
-      this.ports.appendRuntimeEvent({
-        workUnitId: workUnit.id,
-        attemptId: attempt.id,
-        type: input.status === "succeeded" ? "work_unit_succeeded" : "work_unit_failed",
+      if (!isAttemptTerminal(updatedAttempt.status)) {
+        throw new ApprovalResumeTransitionAbort("approval_resume_terminal_audit_ownership_mismatch");
+      }
+      // A startup-recovered lost Attempt may already have its terminal audit
+      // stamped at the original loss time. Reusing that exact timestamp lets
+      // terminal settlement finish the logical Run without publishing a second
+      // runtime terminal event.
+      const terminalTransitionedAt = updatedAttempt.status === "lost"
+        ? updatedAttempt.endedAt ?? input.now
+        : input.now;
+      this.ports.appendTerminalRuntimeAudit({
+        capability: toTerminalAuditCapability(updatedAttempt, terminalTransitionedAt),
+        type: terminalRuntimeEventType(updatedAttempt.status),
         actor: "system",
-        ts: input.now,
         data: {
           reason: input.errorCode ?? "approval_resume",
           fromStatus: input.expectedWorkUnitStatus,
@@ -470,8 +495,9 @@ export class SqliteApprovalResumeStore {
         });
         if (!taskTransition.ok) throw new ApprovalResumeTransitionAbort("approval_resume_terminal_stale");
       }
-      this.ports.releaseResourceLeasesForOwner("run", run.id, input.now);
-      this.ports.releaseRuntimeSemaphoreSlotsForOwner(attempt.id, input.now, "approval-resume-finished");
+      const terminalFence = toRuntimeAttemptFence(updatedAttempt);
+      this.ports.releaseResourceLeasesForAttempt(terminalFence, input.now, "approval-resume-finished");
+      this.ports.releaseRuntimeSemaphoreSlotsForAttempt(terminalFence, input.now, "approval-resume-finished");
       const controlPlaneEvents = appendResumeInvalidations(this.ports, {
         workspaceId: workUnit.workspaceId,
         cwd: run.cwd,
@@ -485,7 +511,7 @@ export class SqliteApprovalResumeStore {
       this.context.database.exec("COMMIT;");
       return reloadTerminalResult(this.ports, checkpoint.id, run.id, workUnit.id, attempt.id, controlPlaneEvents);
     } catch (error) {
-      if (this.context.database.isTransaction) this.context.database.exec("ROLLBACK;");
+      rollbackOwnedSqliteTransaction(this.context.database);
       if (error instanceof ApprovalResumeTransitionAbort) {
         return {
           ok: false,
@@ -501,9 +527,6 @@ export class SqliteApprovalResumeStore {
   private commitApprovalResumeCheckpointQuarantine(
     input: Extract<CommitApprovalResumeTerminalInput, { readonly kind: "checkpoint_quarantine" }>,
   ): CommitApprovalResumeTerminalResult {
-    if (this.context.database.isTransaction) {
-      throw new Error("Approval resume checkpoint quarantine cannot join an unrelated SQLite transaction.");
-    }
     this.context.database.exec("BEGIN IMMEDIATE;");
     try {
       const checkpoint = this.ports.getApprovalCheckpoint(input.checkpointId);
@@ -525,7 +548,7 @@ export class SqliteApprovalResumeStore {
         throw new ApprovalResumeTransitionAbort("approval_resume_terminal_stale");
       }
       const scope = this.ports.getDefaultControlPlaneScope();
-      const controlPlaneEvent = this.ports.appendControlPlaneEvent({
+      const controlPlaneEvent = this.ports.appendControlPlaneEventWithinTransaction({
         workspaceId: scope.workspaceId,
         cwd: scope.cwd,
         domain: "approvals",
@@ -547,7 +570,7 @@ export class SqliteApprovalResumeStore {
         controlPlaneEvents: [controlPlaneEvent],
       };
     } catch (error) {
-      if (this.context.database.isTransaction) this.context.database.exec("ROLLBACK;");
+      rollbackOwnedSqliteTransaction(this.context.database);
       if (error instanceof ApprovalResumeTransitionAbort) {
         return {
           ok: false,
@@ -586,7 +609,7 @@ function appendClaimInvalidations(
     { domain: "work_units" as const, entityType: "work_unit", entityId: input.workUnitId, action: "work_unit.approval_resume_claimed" },
     { domain: "approvals" as const, entityType: "approval", entityId: input.approvalId, action: "approval.resume_claimed" },
   ];
-  return definitions.map((definition) => ports.appendControlPlaneEvent({
+  return definitions.map((definition) => ports.appendControlPlaneEventWithinTransaction({
     workspaceId,
     cwd,
     ...definition,
@@ -613,7 +636,7 @@ function appendResumeInvalidations(
     { domain: "work_units" as const, entityType: "work_unit", entityId: input.workUnitId, action: `work_unit.approval_resume_${input.action}` },
     { domain: "approvals" as const, entityType: "approval", entityId: input.approvalId, action: `approval.resume_${input.action}` },
   ];
-  return definitions.map((definition) => ports.appendControlPlaneEvent({
+  return definitions.map((definition) => ports.appendControlPlaneEventWithinTransaction({
     workspaceId: input.workspaceId,
     cwd: input.cwd,
     ...definition,
@@ -666,6 +689,31 @@ function terminalIdempotencyKey(input: CommitApprovalResumeVerifiedTerminalInput
   return `approval-resume-terminal:${input.checkpointId}:${input.expectedCheckpointRevision}:${input.attemptId}:${input.status}:${suffix}`;
 }
 
-function isAttemptTerminal(status: WorkUnitAttempt["status"]): boolean {
+function isAttemptTerminal(
+  status: WorkUnitAttempt["status"],
+): status is Extract<WorkUnitAttempt["status"], "succeeded" | "failed" | "cancelled" | "lost"> {
   return status === "succeeded" || status === "failed" || status === "cancelled" || status === "lost";
+}
+
+function toTerminalAuditCapability(
+  attempt: WorkUnitAttempt,
+  transitionedAt: string,
+): AppendTerminalRuntimeAuditInput["capability"] {
+  if (!isAttemptTerminal(attempt.status) || attempt.endedAt !== transitionedAt) {
+    throw new ApprovalResumeTransitionAbort("approval_resume_terminal_audit_ownership_mismatch");
+  }
+  return {
+    ...toRuntimeAttemptFence(attempt),
+    attemptStatus: attempt.status,
+    transitionedAt,
+  };
+}
+
+function terminalRuntimeEventType(
+  status: Extract<WorkUnitAttempt["status"], "succeeded" | "failed" | "cancelled" | "lost">,
+): AppendTerminalRuntimeAuditInput["type"] {
+  if (status === "succeeded") return "work_unit_succeeded";
+  if (status === "failed") return "work_unit_failed";
+  if (status === "cancelled") return "work_unit_cancelled";
+  return "work_unit_stale";
 }

@@ -30,6 +30,7 @@ import {
   type WorkUnit,
   type WorkUnitAttempt,
   type WorkUnitKind,
+  toRuntimeAttemptFence,
   resolveSkillSourceRuntimeView,
 } from "@ling-stack/core";
 import type {
@@ -469,8 +470,8 @@ export async function executeRunRequest(
       store,
       runRequest,
       runId,
-      workUnitId: workUnit.id,
-      attemptId: attempt.id,
+      workUnit,
+      attempt,
       now: createdAt,
     });
     acquireRunRuntimeSemaphores({
@@ -489,11 +490,14 @@ export async function executeRunRequest(
       runRequest,
       runId,
       leases: preparedConcurrency.leases,
-      attemptId: attempt.id,
+      attempt,
       now: createdAt,
     });
     const claimTransition = store.transitionWorkUnitStatus({
       workUnitId: workUnit.id,
+      attemptId: attempt.id,
+      runtimeInstanceId: attempt.runtimeInstanceId,
+      fencingToken: attempt.fencingToken,
       expectedStatus: "queued",
       event: "claim",
       actor: "system",
@@ -501,12 +505,14 @@ export async function executeRunRequest(
       activeAttemptId: attempt.id,
     });
     if (!claimTransition.ok) {
-      releasePreparedRunResources(store, preparedConcurrency.leases, attempt.id, createdAt, "work-unit-claim-failed");
+      releasePreparedRunResources(store, attempt, createdAt, "work-unit-claim-failed");
       throw new Error(`Work unit claim failed: ${claimTransition.code}`);
     }
     store.appendRuntimeEvent({
       workUnitId: workUnit.id,
       attemptId: attempt.id,
+      runtimeInstanceId: attempt.runtimeInstanceId,
+      fencingToken: attempt.fencingToken,
       type: "work_unit_claimed",
       actor: "system",
       ts: createdAt,
@@ -683,7 +689,7 @@ export async function executeRunRequest(
   } catch (error) {
     if (error instanceof QueueableRunConflictError && store && workUnit && attempt && resolvedProvider) {
       const queuedAt = new Date().toISOString();
-      releasePreparedRunResources(store, preparedConcurrency.leases, attempt.id, queuedAt, "queued-conflict");
+      releasePreparedRunResources(store, attempt, queuedAt, "queued-conflict");
       run = createQueuedRunForConflict({
         store,
         storeRegistry,
@@ -718,35 +724,48 @@ export async function executeRunRequest(
       sink.end();
       return run.id;
     }
-    if (preparedConcurrency.leases.length > 0) {
+    if (preparedConcurrency.leases.length > 0 && store && attempt) {
       const now = new Date().toISOString();
-      for (const lease of preparedConcurrency.leases) {
-        store?.releaseResourceLeasesForOwner(lease.ownerType, lease.ownerId, now);
-      }
+      store.releaseResourceLeasesForAttempt(toRuntimeAttemptFence(attempt), now, "run-prepare-failed");
     }
     if (store && workUnit && !isTerminalWorkUnitStatus(store.getWorkUnit(workUnit.id)?.status ?? workUnit.status)) {
       const now = new Date().toISOString();
       const message = error instanceof Error ? error.message : String(error);
-      const failed = store.transitionWorkUnitStatus({
-        workUnitId: workUnit.id,
-        expectedStatus: store.getWorkUnit(workUnit.id)?.status,
-        event: "runner_failed",
-        actor: "system",
-        reason: message,
-        now,
-        endedAt: now,
-        errorCode: error instanceof HttpError ? error.code : "run_prepare_failed",
-        errorMessage: message,
-      });
-      if (failed.ok) {
-        store.appendRuntimeEvent({
+      const currentAttempt = attempt?.id ? store.getWorkUnitAttempt(attempt.id) : undefined;
+      const errorCode = error instanceof HttpError ? error.code : "run_prepare_failed";
+      if (currentAttempt) {
+        transitionWorkUnitTerminal(store, {
           workUnitId: workUnit.id,
-          attemptId: attempt?.id,
-          type: "work_unit_failed",
+          attemptId: currentAttempt.id,
+          event: "runner_failed",
+          attemptStatus: "failed",
+          runtimeEventType: "work_unit_failed",
           actor: "system",
-          ts: now,
-          data: { message },
+          now,
+          errorCode,
+          errorMessage: message,
         });
+      } else {
+        const failed = store.transitionWorkUnitStatus({
+          workUnitId: workUnit.id,
+          expectedStatus: store.getWorkUnit(workUnit.id)?.status,
+          event: "runner_failed",
+          actor: "system",
+          reason: message,
+          now,
+          endedAt: now,
+          errorCode,
+          errorMessage: message,
+        });
+        if (failed.ok) {
+          store.appendRuntimeEvent({
+            workUnitId: workUnit.id,
+            type: "work_unit_failed",
+            actor: "system",
+            ts: now,
+            data: { message },
+          });
+        }
       }
     }
     if (store && thread && !run) {
@@ -822,7 +841,8 @@ export async function executeRunRequest(
       store.recordRuntimeHeartbeat({
         workUnitId: workUnit.id,
         attemptId: attempt.id,
-        runtimeInstanceId: runtime.runtimeInstanceId,
+        runtimeInstanceId: attempt.runtimeInstanceId,
+        fencingToken: attempt.fencingToken,
         ts,
         source,
         detail,
@@ -861,6 +881,10 @@ export async function executeRunRequest(
     const now = new Date().toISOString();
     const transition = store.transitionWorkUnitStatus({
       workUnitId: workUnit.id,
+      attemptId: attempt.id,
+      activeAttemptId: attempt.id,
+      runtimeInstanceId: attempt.runtimeInstanceId,
+      fencingToken: attempt.fencingToken,
       expectedStatus: current.status,
       event,
       actor: "system",
@@ -871,6 +895,9 @@ export async function executeRunRequest(
     if (transition.ok) {
       store.updateWorkUnitAttemptStatus({
         attemptId: attempt.id,
+        workUnitId: attempt.workUnitId,
+        runtimeInstanceId: attempt.runtimeInstanceId,
+        fencingToken: attempt.fencingToken,
         status: "cancelling",
         now,
         abortRequestedAt: now,
@@ -880,6 +907,8 @@ export async function executeRunRequest(
       store.appendRuntimeEvent({
         workUnitId: workUnit.id,
         attemptId: attempt.id,
+        runtimeInstanceId: attempt.runtimeInstanceId,
+        fencingToken: attempt.fencingToken,
         type: "work_unit_cancelling",
         actor: "system",
         ts: now,
@@ -999,6 +1028,10 @@ export async function executeRunRequest(
     }
     const workUnitStartTransition = store.transitionWorkUnitStatus({
       workUnitId: workUnit.id,
+      attemptId: attempt.id,
+      activeAttemptId: attempt.id,
+      runtimeInstanceId: attempt.runtimeInstanceId,
+      fencingToken: attempt.fencingToken,
       expectedStatus: "claimed",
       event: "runner_started",
       actor: "runner",
@@ -1011,6 +1044,9 @@ export async function executeRunRequest(
     }
     store.updateWorkUnitAttemptStatus({
       attemptId: attempt.id,
+      workUnitId: attempt.workUnitId,
+      runtimeInstanceId: attempt.runtimeInstanceId,
+      fencingToken: attempt.fencingToken,
       status: "started",
       now: runStartedAt,
       startedAt: runStartedAt,
@@ -1019,6 +1055,8 @@ export async function executeRunRequest(
     store.appendRuntimeEvent({
       workUnitId: workUnit.id,
       attemptId: attempt.id,
+      runtimeInstanceId: attempt.runtimeInstanceId,
+      fencingToken: attempt.fencingToken,
       type: "work_unit_started",
       actor: "runner",
       ts: runStartedAt,
@@ -1297,6 +1335,18 @@ export async function executeRunRequest(
         streamEnvelope,
       });
       transitionWorkUnitCancelled(store, workUnit.id, attempt.id, "cancelled");
+      const staleEvent = auditIgnoredRunnerCompletion({
+        store,
+        run,
+        workUnit,
+        attempt,
+        reportedStatus: "succeeded",
+        reason: "run_cancelled",
+        now: cancelledAt,
+      });
+      if (staleEvent) {
+        streamEnvelope(staleEvent);
+      }
       appendRunCancelledControlPlaneEvent(store, options.controlPlaneEvents, workspaceCwd, run, previousStatus, cancelledAt);
       appendWorkUnitTransitionControlPlaneEvent(store, options.controlPlaneEvents, workspaceCwd, workUnit.id, "cancelling", "cancelled", run.id, cancelledAt);
       syncLingThreadForTerminalRun(store, run.id, cancelledAt);
@@ -1401,8 +1451,9 @@ export async function executeRunRequest(
   } finally {
     clearInterval(heartbeatTimer);
     clearHardTimeout();
-    store.releaseResourceLeasesForOwner("run", run.id, new Date().toISOString());
-    store.releaseRuntimeSemaphoreSlotsForOwner(attempt.id, new Date().toISOString(), "run-finished");
+    const releaseAt = new Date().toISOString();
+    store.releaseResourceLeasesForAttempt(toRuntimeAttemptFence(attempt), releaseAt, "run-finished");
+    store.releaseRuntimeSemaphoreSlotsForAttempt(toRuntimeAttemptFence(attempt), releaseAt, "run-finished");
     activeRuns.delete(run.id);
     try {
       const terminalRun = store.getRun(run.id);

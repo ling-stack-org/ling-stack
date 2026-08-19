@@ -3,6 +3,7 @@ import {
   type RunEventEnvelope,
   type RunStatus,
   type RunStore,
+  toRuntimeAttemptFence,
 } from "@ling-stack/core";
 import { transitionWorkUnitCancelled } from "../../runtime/work-units.js";
 import { writeTerminalSummary } from "./terminal.js";
@@ -83,11 +84,15 @@ export function ensureRunCancelled(input: {
       currentRunId: input.runId,
     });
   }
-  input.store.releaseResourceLeasesForOwner("run", input.runId, endedAt);
   if (current.workUnitId) {
     const workUnit = input.store.getWorkUnit(current.workUnitId);
     const attemptId = workUnit?.activeAttemptId ?? input.store.listWorkUnitAttempts(current.workUnitId).at(-1)?.id;
     if (attemptId) {
+      const attempt = input.store.getWorkUnitAttempt(attemptId);
+      if (attempt) {
+        input.store.releaseResourceLeasesForAttempt(toRuntimeAttemptFence(attempt), endedAt, "cancelled");
+        input.store.releaseRuntimeSemaphoreSlotsForAttempt(toRuntimeAttemptFence(attempt), endedAt, "cancelled");
+      }
       transitionWorkUnitCancelled(input.store, current.workUnitId, attemptId, input.reason);
     }
   }

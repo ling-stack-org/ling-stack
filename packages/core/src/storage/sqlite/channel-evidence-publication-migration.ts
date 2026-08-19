@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import type { DatabaseSync, SQLOutputValue } from "node:sqlite";
+import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 
 export const CHANNEL_EVIDENCE_PUBLICATION_MIGRATION_VERSION = 116;
 export const CHANNEL_EVIDENCE_PUBLICATION_MIGRATION_NAME = "seal_channel_evidence_and_publication_events";
@@ -42,7 +43,7 @@ export function applyChannelEvidencePublicationMigration(
     input.database.exec("COMMIT;");
     return true;
   } catch (error) {
-    if (input.database.isTransaction) input.database.exec("ROLLBACK;");
+    rollbackOwnedSqliteTransaction(input.database);
     throw error;
   }
 }

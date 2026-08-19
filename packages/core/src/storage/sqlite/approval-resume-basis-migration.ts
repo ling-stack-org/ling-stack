@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 
 export const APPROVAL_RESUME_BASIS_MIGRATION_VERSION = 118;
 export const APPROVAL_RESUME_BASIS_MIGRATION_NAME = "add_approval_resume_basis";
@@ -33,7 +34,7 @@ export function applyApprovalResumeBasisMigration(input: ApprovalResumeBasisMigr
     input.database.exec("COMMIT;");
     return true;
   } catch (error) {
-    if (input.database.isTransaction) input.database.exec("ROLLBACK;");
+    rollbackOwnedSqliteTransaction(input.database);
     throw error;
   }
 }

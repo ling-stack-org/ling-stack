@@ -20,9 +20,10 @@ import { CONTROL_PLANE_REPLAY_STATE_MIGRATION_VERSION } from "../dist/storage/sq
 import { APPROVAL_RESUME_BASIS_MIGRATION_VERSION } from "../dist/storage/sqlite/approval-resume-basis-migration.js";
 import { CHANNEL_PARTICIPANT_AUTHORITY_MIGRATION_VERSION } from "../dist/storage/sqlite/channel-participant-authority-migration.js";
 import { CHANNEL_PROPOSAL_BLOCKER_MIGRATION_VERSION } from "../dist/storage/sqlite/channel-proposal-blocker-migration.js";
+import { RUNTIME_ATTEMPT_FENCE_MIGRATION_VERSION } from "../dist/storage/sqlite/runtime-attempt-fence-migration.js";
 import { createRequiredParticipantManifestV1, createWorkflowParticipantAuthorityV1, workflowGraphFingerprintV1 } from "../../contracts/dist/index.js";
 
-test("fresh database applies migrations 113 through 120 with reopen and integrity invariants", async (t) => {
+test("fresh database applies migrations 113 through 121 with reopen and integrity invariants", async (t) => {
   const cwd = await mkdtemp(join(tmpdir(), "ling-channel-completion-fresh-migrations-"));
   t.after(() => rm(cwd, { recursive: true, force: true }));
   createSqliteRunStore(cwd).close();
@@ -33,7 +34,7 @@ test("fresh database applies migrations 113 through 120 with reopen and integrit
     SELECT version FROM schema_migrations
     WHERE version BETWEEN ? AND ?
     ORDER BY version ASC
-  `).all(CHANNEL_INTENT_EXECUTION_PLAN_MIGRATION_VERSION, CHANNEL_PROPOSAL_BLOCKER_MIGRATION_VERSION)
+  `).all(CHANNEL_INTENT_EXECUTION_PLAN_MIGRATION_VERSION, RUNTIME_ATTEMPT_FENCE_MIGRATION_VERSION)
     .map((row) => row.version);
   assert.deepEqual(versions, [
     CHANNEL_INTENT_EXECUTION_PLAN_MIGRATION_VERSION,
@@ -44,7 +45,14 @@ test("fresh database applies migrations 113 through 120 with reopen and integrit
     APPROVAL_RESUME_BASIS_MIGRATION_VERSION,
     CHANNEL_PARTICIPANT_AUTHORITY_MIGRATION_VERSION,
     CHANNEL_PROPOSAL_BLOCKER_MIGRATION_VERSION,
+    RUNTIME_ATTEMPT_FENCE_MIGRATION_VERSION,
   ]);
+  for (const table of ["work_unit_attempts", "runtime_events", "runtime_heartbeats", "runtime_semaphore_slots", "resource_leases"]) {
+    assert.ok(database.prepare(`SELECT 1 FROM pragma_table_info(?) WHERE name = 'fencing_token'`).get(table));
+  }
+  assert.ok(database.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_work_unit_attempts_active'",
+  ).get());
   const intentColumns = new Map(database.prepare("PRAGMA table_info(channel_intent_decisions)").all()
     .map((row) => [row.name, row]));
   assert.equal(intentColumns.get("participant_manifest_json")?.notnull, 1);

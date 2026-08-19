@@ -10,8 +10,10 @@ import {
   delegatedStepFinalizationBasisFingerprintV1,
   delegatedStepRequirementFingerprintV1,
   isDelegatedStepRequirementV1,
+  type DelegatedBlockCodeV1,
   type DelegatedEvidenceRefV1,
   type DelegatedOutcomeV1,
+  type DelegatedTerminalCodeV1,
   type WorkflowStepExecutionVerificationV1,
 } from "@ling-stack/contracts";
 import { isRecord } from "../../shared/validation.js";
@@ -54,7 +56,7 @@ const DEFAULT_WORKFLOW_STEP_POLICY: WorkflowStepPolicy = {
 export function blockDelegatedWorkflowStepBeforeRun(input: {
   readonly store: RunStore;
   readonly workflowStepId: string;
-  readonly code: string;
+  readonly code: DelegatedBlockCodeV1;
   readonly reason: string;
   readonly missingRequirements: readonly string[];
   readonly now?: string;
@@ -200,7 +202,7 @@ export function finalizeDelegatedWorkflowStepFromCanonicalState(input: {
     const reason = approval.decisionReason ?? `Workflow post-step approval ${approval.status}.`;
     return commitCandidate(input.store, workflow, step, run, {
       finalStatus: failurePolicyStatus(resolveWorkflowStepPolicy(step).onApprovalDenied),
-      outcome: failedOutcome(step, "failed", `post_step_approval_${approval.status}`, reason),
+      outcome: failedOutcome(step, "failed", "post_step_approval_denied", reason),
       blocker: reason,
       resultSummary: undefined,
     }, input.cause, now, approval);
@@ -221,7 +223,12 @@ export function finalizeDelegatedWorkflowStepFromCanonicalState(input: {
     }
     return commitCandidate(input.store, workflow, step, run, {
       finalStatus: failurePolicyStatus(policy),
-      outcome: failedOutcome(step, run.status, `delegated_run_${run.status}`, reason),
+      outcome: failedOutcome(
+        step,
+        run.status,
+        run.status === "failed" ? "delegated_run_failed" : "delegated_run_cancelled",
+        reason,
+      ),
       blocker: reason,
       resultSummary: undefined,
     }, input.cause, now, approval);
@@ -274,7 +281,13 @@ export function finalizeDelegatedWorkflowStepFromCanonicalState(input: {
   }
   return commitCandidate(input.store, workflow, step, run, {
     finalStatus: "succeeded",
-    outcome: { kind: "completed", participantId: step.toParticipantId, evidenceRefs },
+    outcome: {
+      kind: "completed",
+      workflowId: step.workflowId,
+      workflowStepId: step.id,
+      participantId: step.toParticipantId,
+      evidenceRefs,
+    },
     executionVerification: verification,
     outputArtifactId: evidenceRefs.find((ref) => ref.kind === "workflow_output_packet")?.id,
     blocker: undefined,
@@ -282,9 +295,11 @@ export function finalizeDelegatedWorkflowStepFromCanonicalState(input: {
   }, input.cause, now, approval);
 }
 
-function approvalResumeBlockerCode(reason: string): string | undefined {
+function approvalResumeBlockerCode(reason: string): DelegatedBlockCodeV1 | undefined {
   const code = reason.split(":", 1)[0];
   return code === "approval_resume_unsupported"
+    || code === "approval_resume_effect_unknown"
+    || code === "approval_resume_lineage_invalid"
     || code === "approval_resume_mismatch"
     || code === "approval_resume_checkpoint_missing"
     || code === "approval_resume_owner_mismatch"
@@ -394,12 +409,39 @@ function evidenceRefsForSuccessfulStep(
   return [...new Set(evidenceIds)].map((id) => ({ kind: "execution_action", id }));
 }
 
-function blockedOutcome(step: ChannelWorkflowStep, code: string, reason: string, missingRequirements: readonly string[]): DelegatedOutcomeV1 {
-  return { kind: "blocked", participantId: step.toParticipantId, code, reason, missingRequirements };
+function blockedOutcome(
+  step: ChannelWorkflowStep,
+  code: DelegatedBlockCodeV1,
+  reason: string,
+  missingRequirements: readonly string[],
+): DelegatedOutcomeV1 {
+  return {
+    kind: "blocked",
+    workflowId: step.workflowId,
+    workflowStepId: step.id,
+    participantId: step.toParticipantId,
+    code,
+    reason,
+    missingRequirements,
+    evidenceRefs: [],
+  };
 }
 
-function failedOutcome(step: ChannelWorkflowStep, kind: "failed" | "cancelled", code: string, reason: string): DelegatedOutcomeV1 {
-  return { kind, participantId: step.toParticipantId, code, reason, evidenceRefs: [] };
+function failedOutcome(
+  step: ChannelWorkflowStep,
+  kind: "failed" | "cancelled",
+  code: DelegatedTerminalCodeV1,
+  reason: string,
+): DelegatedOutcomeV1 {
+  return {
+    kind,
+    workflowId: step.workflowId,
+    workflowStepId: step.id,
+    participantId: step.toParticipantId,
+    code,
+    reason,
+    evidenceRefs: [],
+  };
 }
 
 function resolveWorkflowStepPolicy(step: ChannelWorkflowStep): WorkflowStepPolicy {

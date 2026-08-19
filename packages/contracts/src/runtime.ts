@@ -137,6 +137,14 @@ export type WorkUnitAttemptStatus =
   | "cancelled"
   | "lost";
 
+export interface RuntimeAttemptFenceV1 {
+  readonly workUnitId: string;
+  readonly attemptId: string;
+  readonly runtimeInstanceId: string;
+  /** Opaque decimal generation. Consumers must not coerce this value to Number. */
+  readonly fencingToken: string;
+}
+
 export type RuntimeEventType =
   | "work_unit_created"
   | "work_unit_queued"
@@ -297,6 +305,7 @@ export interface WorkUnitAttempt {
   readonly id: string;
   readonly workUnitId: string;
   readonly attemptNumber: number;
+  readonly fencingToken: string;
   readonly runtimeInstanceId: string;
   readonly runnerId: string;
   readonly requestedRunnerId?: string;
@@ -318,6 +327,8 @@ export interface RuntimeEvent {
   readonly id: string;
   readonly workUnitId: string;
   readonly attemptId?: string;
+  readonly runtimeInstanceId?: string;
+  readonly fencingToken?: string;
   readonly seq: number;
   readonly ts: string;
   readonly type: RuntimeEventType;
@@ -338,6 +349,8 @@ export interface RuntimeSemaphoreSlot {
   readonly ownerId: string;
   readonly workUnitId: string;
   readonly attemptId: string;
+  readonly runtimeInstanceId: string;
+  readonly fencingToken: string;
   readonly status: RuntimeSemaphoreSlotStatus;
   readonly acquiredAt: string;
   readonly lastRenewedAt: string;

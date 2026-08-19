@@ -1187,6 +1187,7 @@ test("approval resume claim rolls back every durable write boundary", async (t) 
         assert.equal(fixture.store.getWorkUnitAttempt(fixture.priorAttempt.id)?.status, "waiting_for_approval");
         assert.equal(fixture.store.getWorkUnitAttempt(fixture.claim.replacementAttempt.id), undefined);
         assert.equal(fixture.store.listControlPlaneEvents({ workspaceId: "workspace_default", limit: 100 }).length, 0);
+        assertApprovalResumeConnectionReusable(fixture, `claim-${fault.name}`);
       } finally {
         await fixture.close();
       }
@@ -1328,6 +1329,7 @@ test("approval wait suspension rolls back every durable write boundary", async (
           fixture.store.listControlPlaneEvents({ workspaceId: "workspace_default", limit: 100 }).length,
           controlPlaneEventCount,
         );
+        assertApprovalResumeConnectionReusable(fixture, `approval-wait-suspension-${fault.name}`);
       } finally {
         await fixture.close();
       }
@@ -1424,6 +1426,7 @@ test("approval resume suspension rolls back every durable write boundary", async
           fixture.store.listControlPlaneEvents({ workspaceId: "workspace_default", limit: 100 }).length,
           controlEventCount,
         );
+        assertApprovalResumeConnectionReusable(fixture, `resume-suspension-${fault.name}`);
       } finally {
         await fixture.close();
       }
@@ -1642,6 +1645,7 @@ test("approval resume terminal settlement rolls back every durable write boundar
           fixture.store.listControlPlaneEvents({ workspaceId: "workspace_default", limit: 100 }).length,
           controlEventCount,
         );
+        assertApprovalResumeConnectionReusable(fixture, `terminal-${fault.name}`);
       } finally {
         await fixture.close();
       }
@@ -1712,12 +1716,27 @@ test("approval resume checkpoint quarantine rolls back checkpoint and invalidati
         assert.equal(fixture.store.getApprovalCheckpoint(fixture.checkpoint.id)?.revision, fixture.checkpoint.revision);
         assert.equal(fixture.store.listControlPlaneEvents({ workspaceId: "workspace_default", limit: 100 }).length, 0);
         assert.equal(fixture.store.getRun(fixture.run.id)?.status, "waiting_for_approval");
+        assertApprovalResumeConnectionReusable(fixture, `quarantine-${fault}`);
       } finally {
         await fixture.close();
       }
     });
   }
 });
+
+function assertApprovalResumeConnectionReusable(fixture, suffix) {
+  const event = fixture.store.appendControlPlaneEvent({
+    workspaceId: "workspace_default",
+    cwd: fixture.cwd,
+    domain: "approvals",
+    entityType: "approval",
+    entityId: fixture.claim.approvalId,
+    action: "approval.rollback_recovery_probe",
+    data: {},
+    idempotencyKey: `approval-resume-rollback-recovery:${suffix}`,
+  }, "2026-08-16T01:05:00.000Z");
+  assert.equal(event.entityId, fixture.claim.approvalId);
+}
 
 function acquireApprovalResumeRuntimeResources(fixture, claim) {
   assert.ok(fixture.store.acquireResourceLease({
@@ -1728,6 +1747,8 @@ function acquireApprovalResumeRuntimeResources(fixture, claim) {
     ownerId: claim.run.id,
     workUnitId: claim.workUnit.id,
     attemptId: claim.attempt.id,
+    runtimeInstanceId: claim.attempt.runtimeInstanceId,
+    fencingToken: claim.attempt.fencingToken,
     acquiredAt: "2026-08-16T01:02:10.000Z",
     expiresAt: "2026-08-16T02:02:10.000Z",
   }));
@@ -1740,6 +1761,8 @@ function acquireApprovalResumeRuntimeResources(fixture, claim) {
     ownerId: claim.attempt.id,
     workUnitId: claim.workUnit.id,
     attemptId: claim.attempt.id,
+    runtimeInstanceId: claim.attempt.runtimeInstanceId,
+    fencingToken: claim.attempt.fencingToken,
     acquiredAt: "2026-08-16T01:02:10.000Z",
     expiresAt: "2026-08-16T02:02:10.000Z",
   }));
@@ -1864,10 +1887,16 @@ async function createApprovalResumeClaimFixture(suffix, options = {}) {
     now,
   });
   store.linkRunToWorkUnit(run.id, workUnit.id, now);
-  store.transitionWorkUnitStatus({ workUnitId: workUnit.id, expectedStatus: "queued", event: "claim", actor: "system", now });
-  store.transitionWorkUnitStatus({ workUnitId: workUnit.id, expectedStatus: "claimed", event: "runner_started", actor: "runner", now });
-  store.transitionWorkUnitStatus({ workUnitId: workUnit.id, expectedStatus: "running", event: "approval_requested", actor: "system", now });
-  store.updateWorkUnitAttemptStatus({ attemptId: priorAttempt.id, status: "waiting_for_approval", now });
+  const priorFence = {
+    workUnitId: workUnit.id,
+    attemptId: priorAttempt.id,
+    runtimeInstanceId: priorAttempt.runtimeInstanceId,
+    fencingToken: priorAttempt.fencingToken,
+  };
+  store.transitionWorkUnitStatus({ ...priorFence, activeAttemptId: priorAttempt.id, expectedStatus: "queued", event: "claim", actor: "system", now });
+  store.transitionWorkUnitStatus({ ...priorFence, expectedStatus: "claimed", event: "runner_started", actor: "runner", now });
+  store.transitionWorkUnitStatus({ ...priorFence, expectedStatus: "running", event: "approval_requested", actor: "system", now });
+  store.updateWorkUnitAttemptStatus({ ...priorFence, status: "waiting_for_approval", now });
   store.transitionRunStatus({ runId: run.id, expectedStatus: "running", event: "approval_requested", actor: "system", now });
   const sideEffect = { type: "bash", cwd, command: "echo atomic-resume", riskFlags: [] };
   const approval = store.createApprovalRequest({

@@ -3,6 +3,7 @@ import {
   createRuntimeSemaphoreSlotId,
   type AcquireRuntimeSemaphoreSlotInput,
   type ListRuntimeSemaphoreSlotsOptions,
+  type RuntimeAttemptFenceV1,
   type RuntimeSemaphoreSlot,
 } from "../../runtime-supervisor-types.js";
 import { readNumber } from "./helpers.js";
@@ -17,6 +18,7 @@ export class SqliteRuntimeSemaphoreStore {
     const id = createRuntimeSemaphoreSlotId();
     try {
       this.context.database.exec("BEGIN IMMEDIATE;");
+      this.expireRuntimeSemaphoreSlots(input.acquiredAt);
       const activeCount = readNumber(
         this.context.database
           .prepare(`
@@ -42,13 +44,15 @@ export class SqliteRuntimeSemaphoreStore {
             owner_id,
             work_unit_id,
             attempt_id,
+            runtime_instance_id,
+            fencing_token,
             status,
             acquired_at,
             last_renewed_at,
             expires_at,
             released_at,
             release_reason
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)
         `)
         .run(
           id,
@@ -59,6 +63,8 @@ export class SqliteRuntimeSemaphoreStore {
           input.ownerId,
           input.workUnitId,
           input.attemptId,
+          input.runtimeInstanceId,
+          input.fencingToken,
           input.acquiredAt,
           input.acquiredAt,
           input.expiresAt,
@@ -83,16 +89,81 @@ export class SqliteRuntimeSemaphoreStore {
       .prepare(`
         UPDATE runtime_semaphore_slots
         SET status = 'released', released_at = ?, release_reason = ?
-        WHERE owner_id = ? AND status = 'active'
+        WHERE owner_id = ? AND owner_type = 'system' AND status = 'active'
       `)
       .run(releasedAt, releaseReason, ownerId);
     return Number(result.changes);
   }
 
-  renewRuntimeSemaphoreSlotsForAttempt(attemptId: string, renewedAt: string): number {
+  renewRuntimeSemaphoreSlotsForAttempt(fence: RuntimeAttemptFenceV1, renewedAt: string): number {
     const result = this.context.database
-      .prepare("UPDATE runtime_semaphore_slots SET last_renewed_at = ? WHERE attempt_id = ? AND status = 'active'")
-      .run(renewedAt, attemptId);
+      .prepare(`
+        UPDATE runtime_semaphore_slots
+        SET last_renewed_at = ?
+        WHERE work_unit_id = ?
+          AND attempt_id = ?
+          AND runtime_instance_id = ?
+          AND fencing_token = ?
+          AND status = 'active'
+          AND EXISTS (
+            SELECT 1
+            FROM work_unit_attempts AS attempts
+            JOIN work_units AS units ON units.id = attempts.work_unit_id
+            WHERE attempts.id = runtime_semaphore_slots.attempt_id
+              AND attempts.work_unit_id = runtime_semaphore_slots.work_unit_id
+              AND attempts.runtime_instance_id = runtime_semaphore_slots.runtime_instance_id
+              AND attempts.fencing_token = runtime_semaphore_slots.fencing_token
+              AND units.active_attempt_id = attempts.id
+          )
+      `)
+      .run(renewedAt, fence.workUnitId, fence.attemptId, fence.runtimeInstanceId, fence.fencingToken);
+    return Number(result.changes);
+  }
+
+  releaseRuntimeSemaphoreSlotsForAttempt(
+    fence: RuntimeAttemptFenceV1,
+    releasedAt: string,
+    releaseReason: string,
+  ): number {
+    const result = this.context.database
+      .prepare(`
+        UPDATE runtime_semaphore_slots
+        SET status = 'released', released_at = ?, release_reason = ?
+        WHERE work_unit_id = ?
+          AND attempt_id = ?
+          AND runtime_instance_id = ?
+          AND fencing_token = ?
+          AND status = 'active'
+          AND EXISTS (
+            SELECT 1
+            FROM work_unit_attempts AS attempts
+            JOIN work_units AS units ON units.id = attempts.work_unit_id
+            WHERE attempts.id = runtime_semaphore_slots.attempt_id
+              AND attempts.work_unit_id = runtime_semaphore_slots.work_unit_id
+              AND attempts.runtime_instance_id = runtime_semaphore_slots.runtime_instance_id
+              AND attempts.fencing_token = runtime_semaphore_slots.fencing_token
+              AND units.active_attempt_id = attempts.id
+          )
+      `)
+      .run(
+        releasedAt,
+        releaseReason,
+        fence.workUnitId,
+        fence.attemptId,
+        fence.runtimeInstanceId,
+        fence.fencingToken,
+      );
+    return Number(result.changes);
+  }
+
+  expireRuntimeSemaphoreSlots(now: string): number {
+    const result = this.context.database
+      .prepare(`
+        UPDATE runtime_semaphore_slots
+        SET status = 'expired', released_at = ?, release_reason = COALESCE(release_reason, 'expired')
+        WHERE status = 'active' AND expires_at <= ?
+      `)
+      .run(now, now);
     return Number(result.changes);
   }
 

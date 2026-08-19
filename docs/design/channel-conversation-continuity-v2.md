@@ -1,14 +1,19 @@
 # Channel Conversation Continuity v2
 
-Status: implemented and accepted in source plus an isolated packaged macOS client.
-Contracts/Core/Daemon/API/Web validation, typecheck, build, lint, i18n, documentation,
-license, public-safety, dependency-security, and diff checks are green for the supported
-scope. Packaged acceptance covers ordinary continuity, long-context recall, file and Node
-execution, typed missing-provider blocking, naked-ready blocking, Engineer + QA fan-in,
-daemon restart/approval resume, reconnect, and canonical SQLite lineage. Delivery review,
-PR, CI, merge, remote-main verification, and exact QA cleanup remain.
+Status: semantic completion/recovery is implemented and has historical isolated packaged
+macOS acceptance. Delivery was reopened at the Node 22 SQLite transaction-composition
+boundary, and the supplemental Attempt-fence, typed-outcome, required-coverage, and
+single-terminal-projection hardening is now present in the active WIP. Earlier packaged
+evidence proves the behavior contract, but it predates those corrections and is not
+release evidence for the current source. Focused S3.5 source regressions are green; the
+corrected full Daemon aggregate, repository-wide source gates, and fresh packaged
+naked-ready, Engineer + QA fan-in, daemon restart, SSE reconnect, and canonical
+SQLite-lineage acceptance remain. Current release verdict: source implementation exists,
+but S3.5 verification, packaged behavior, and delivery are not cleared. The current
+release can close only after the active S3.5/S4/S5/S6 gates in the execution plan pass on
+one post-hardening artifact.
 Date: 2026-08-08
-Last verified: 2026-08-17
+Last verified: 2026-08-18
 Scope: channel conversation persistence, Thread/Turn/Item topology, context segmentation,
 context projection, rolling summaries, multi-agent recovery, and Channel Intent Decision v2
 
@@ -42,7 +47,7 @@ PR #432 passed remote CI on its final head and the merged `main` commit passed r
 49 API Client, 40 Remote Protocol, 45 Web unit, 113 Channel E2E, and 15 adjacent
 Channel E2E tests. Issue #421 closed from PR #432 after the merge.
 
-The 2026-08-12 execution-completion amendment below closes three post-delivery gaps that
+The 2026-08-12 execution-completion amendment below closed three post-delivery gaps that
 are not covered by those historical test counts: one `execute` decision must describe all
 required operations, a workflow cannot succeed without evidence for every required
 operation, and the source user `LingTurn` must reach the same durable terminal outcome
@@ -57,7 +62,8 @@ passed package integrity, isolated startup, health, provider readiness, packaged
 restart/reconnect, and SQLite-lineage acceptance.
 
 The next packaged run passed file creation, Node execution, evidence publication, and
-single-Agent completion. The accepted single-Agent `execute` request compiled to one
+single-Agent completion. This is historical behavior evidence, not current release
+evidence. The accepted single-Agent `execute` request compiled to one
 manifest-backed workflow step; its Run, step, workflow, TerminalReport, and source Turn
 converged to `succeeded` through the shared completion protocol. A sample taken during
 terminalization briefly saw the ready acknowledgement while the source Turn was still
@@ -156,6 +162,13 @@ identity and is not notarized, so `spctl` exits `3`; this is valid for local pac
 but not a distribution-readiness claim. The missing-workspace-default blocker body is
 still English inside the Chinese UI and remains a presentation-localization follow-up,
 not a completion or recovery correctness gap.
+
+That artifact remains historical behavior evidence after the Node 22 transaction defect
+was reproduced. Aggregate publication/recovery stores could bind a standalone control-
+plane event writer, which attempted a nested `BEGIN IMMEDIATE`; their catch paths also
+trusted `DatabaseSync.isTransaction` before rollback even though Node 22 can report false
+inside the owned transaction. The semantic lineage above is unchanged, but fresh release
+acceptance must follow the explicit transaction-owner amendment in principle 36.
 
 ## Decision Summary
 
@@ -307,6 +320,49 @@ The approved decisions are:
     the exact participant, applies authority-specific membership rules, computes
     `requiredTools ?? []` as a fail-closed subset, and merges teammate/step/Skill/session
     approval policy by the strictest rule before freezing the Run snapshot.
+36. SQLite transaction participation is explicit. A standalone control-plane event append
+    always owns `BEGIN IMMEDIATE`, commit, and best-effort rollback. Aggregate stores bind
+    only `appendControlPlaneEventWithinTransaction()`, which writes the event and replay
+    watermark without opening or closing the caller's transaction. The owner that issued
+    `BEGIN IMMEDIATE` attempts rollback on every exceptional exit and preserves the
+    original error; runtime code never infers ownership from
+    `DatabaseSync.isTransaction`. In-memory SSE/RPC publication remains post-commit only.
+37. Attempt fencing is a Runtime Control Plane contract, not an orchestrator convention.
+    Each logical Work Unit/Run has at most one active Attempt pointer. An Attempt carries
+    the immutable `runtimeInstanceId` and monotonically unique `fencingToken` issued by
+    its claim transaction. Every mutating callback, heartbeat, lease release, evidence
+    append, approval consumption, and terminal transition must compare-and-set that
+    tuple; a late callback from any older Attempt may be recorded as diagnostic evidence
+    only and can never change canonical work state.
+38. Daemon restart recovery is bounded by a durable checkpoint. At a safe approval
+    checkpoint, restart keeps the same logical Run, step, manifest, approval, and prior
+    evidence, marks the old Attempt `lost`, and creates one new fenced Attempt. Without a
+    safe checkpoint, Ling does not promise automatic continuation: the work-kind policy
+    publishes a typed `runtime_interrupted_no_checkpoint` block/failure. A durable
+    `tool_start` without `tool_end` always becomes effect-unknown and is never retried.
+    This is not a workflow retry and never creates a new Run or reselects participants.
+39. Required-participant coverage and actual participation are separate report facts.
+    Completion Gate input must contain every manifest-required participant, including
+    `missing`, `blocked`, `failed`, or `cancelled` results. TerminalReport may omit
+    optional or never-started agents from the visible contribution summary, but it must
+    retain a source-linked required-coverage record so a missing required participant is
+    shown as a blocker rather than as an empty or successful contribution.
+40. Delegated outcome validation is closed and evidence-bearing. `completed` requires
+    at least one unique evidence ref and the host verifies operation coverage for the
+    immutable requirement. Block codes come from a closed `DelegatedBlockCodeV1` set;
+    blocked/failed/cancelled outcomes carry host-owned participant/workflow/step refs
+    and may not be fabricated by model text. A blocked outcome always has the
+    `evidenceRefs` property, but the array may be empty when no action started; in that
+    case its non-empty `missingRequirements` and closed code must be derived from
+    canonical Host state. Missing evidence fields, empty completed evidence, and unknown
+    block codes are rejected before persistence.
+41. `TerminalReport` is the only user-visible terminal result. Workflow cards and
+    activity rows may show folded progress/evidence while a Run is active, but after a
+    committed report they cannot publish a second terminal summary/count. A report
+    publication marker and final-result Item are one idempotent terminal projection,
+    uniquely keyed by the owning source/Turn rather than a mutable gate/report revision;
+    duplicate callbacks, replay, and reconnect may refresh the same durable Item but
+    never create another terminal publication.
 
 ## Execution Truth Ladder
 
@@ -394,6 +450,37 @@ shared reconciler and startup recovery independently redrives the same canonical
 A reconnect, browser refresh, or new user message must not be required to trigger
 completion. If canonical state does not converge, recovery publishes a structured blocker
 instead of treating the acknowledgement as the result.
+
+### Completion Gate success predicate
+
+The success condition is a conjunction over the accepted authority set, not a count of
+successful callbacks or currently materialized step rows:
+
+```text
+verified(workflow) =
+  decision/manifest lineage is valid
+  AND immutable graph fingerprint is valid
+  AND every required participant is represented by its accepted graph step(s)
+  AND every required participant has DelegatedOutcomeV1.completed
+  AND every completed outcome resolves to the evidence class required by its assignment
+  AND every required operation and dependency is satisfied in graph order
+  AND fanInPolicy permits termination
+```
+
+A required participant that is absent, active, or otherwise non-terminal keeps the gate
+`pending`. A required participant with a validated `blocked`, `failed`, or `cancelled`
+outcome produces the compatible non-successful workflow result. Invalid lineage,
+requirements, or evidence fail closed as `blocked`; they never become a smaller quorum.
+Optional participants do not enlarge the required quorum unless the immutable graph or
+`fanInPolicy` explicitly makes their output a dependency. Once accepted, recovery cannot
+remove a required participant, replace it with another same-role participant, or rewrite
+the policy to make the join pass.
+
+The gate is recomputed from canonical rows by the shared semantic reconciler on online
+terminal callbacks, post-approval continuation, daemon startup, duplicate callbacks, and
+pre-publication validation. Those triggers may request reconciliation; none may supply a
+success result. This keeps one predicate authoritative across single-Agent execution,
+multi-Agent fan-in, restart recovery, and reconnect-driven refresh.
 
 ## Problem And Evidence
 
@@ -1571,11 +1658,58 @@ type DelegatedEvidenceRefV1 =
   | { readonly kind: "artifact"; readonly id: string }
   | { readonly kind: "conversation_item"; readonly id: string };
 
+type DelegatedBlockCodeV1 =
+  | "delegated_outcome_missing"
+  | "delegated_requirement_invalid"
+  | "delegated_run_missing"
+  | "delegated_run_owner_mismatch"
+  | "required_participant_missing"
+  | "required_participant_evidence_missing"
+  | "required_operation_missing_evidence"
+  | "required_operation_evidence_missing"
+  | "required_operation_failed"
+  | "required_participant_output_packet_missing"
+  | "participant_operation_assignment_incomplete"
+  | "required_participant_operation_mismatch"
+  | "participant_required_tools_unavailable"
+  | "participant_unavailable_in_channel"
+  | "workflow_participant_unavailable"
+  | "workflow_participant_required_tools_unavailable"
+  | "workflow_participant_provider_unavailable"
+  | "existing_proposal_participant_lineage_invalid"
+  | "runtime_interrupted_no_checkpoint"
+  | "approval_resume_unsupported"
+  | "approval_resume_effect_unknown"
+  | "approval_resume_lineage_invalid"
+  | "approval_resume_mismatch"
+  | "approval_resume_checkpoint_missing"
+  | "approval_resume_owner_mismatch"
+  | "approval_resume_tool_mismatch"
+  | "approval_resume_requirement_mismatch"
+  | "approval_resume_lineage_missing"
+  | "approval_resume_state_mismatch"
+  | "approval_resume_checkpoint_stale"
+  | "approval_resume_state_stale"
+  | "agent_context_missing"
+  | "agent_context_stale"
+  | "agent_context_private_leak";
+
+type DelegatedTerminalCodeV1 =
+  | "delegated_run_failed"
+  | "delegated_run_cancelled"
+  | "required_operation_failed"
+  | "post_step_approval_denied"
+  | "runner_failed"
+  | "runner_cancelled"
+  | "runtime_interrupted_no_checkpoint";
+
 type DelegatedOutcomeV1 =
   | {
       readonly kind: "completed";
+      readonly workflowId: string;
+      readonly workflowStepId: string;
       readonly participantId: string;
-      readonly evidenceRefs: readonly DelegatedEvidenceRefV1[];
+      readonly evidenceRefs: readonly [DelegatedEvidenceRefV1, ...DelegatedEvidenceRefV1[]];
     }
   | {
       readonly kind: "workflow_started";
@@ -1584,26 +1718,43 @@ type DelegatedOutcomeV1 =
     }
   | {
       readonly kind: "blocked";
-      readonly participantId?: string;
-      readonly code: string;
+      readonly workflowId: string;
+      readonly workflowStepId: string;
+      readonly participantId: string;
+      readonly code: DelegatedBlockCodeV1;
       readonly reason: string;
-      readonly missingRequirements: readonly string[];
-      readonly evidenceRefs?: readonly DelegatedEvidenceRefV1[];
+      readonly missingRequirements: readonly [string, ...string[]];
+      readonly evidenceRefs: readonly DelegatedEvidenceRefV1[];
     }
   | {
       readonly kind: "failed" | "cancelled";
-      readonly participantId?: string;
-      readonly code: string;
+      readonly workflowId: string;
+      readonly workflowStepId: string;
+      readonly participantId: string;
+      readonly code: DelegatedTerminalCodeV1;
       readonly reason: string;
       readonly evidenceRefs: readonly DelegatedEvidenceRefV1[];
     };
 ```
 
 `workflow_started` is a durable ownership handoff, not user-task completion.
-`completed` is accepted only after every reference resolves to a committed authority and
-the evidence class matches the participant's expected outcome. `blocked`, `failed`, and
-`cancelled` are explicit terminal facts; they are not generated by recognizing phrases
-in assistant prose.
+`completed` requires at least one unique evidence ref. The host resolves every ref to a
+committed authority, verifies the workflow/step/participant binding, and checks that the
+evidence class covers the immutable requirement's operation/dependency set. A blocked
+outcome carries the same host-owned workflow/step/participant binding, a closed
+`DelegatedBlockCodeV1`, a non-empty reason and missing-requirement tuple, and an explicit
+`evidenceRefs` array. The array may be empty only when no canonical action or output
+exists; the host must retain every available ref and cannot invent one to satisfy the
+schema. `blocked`, `failed`, and `cancelled` are explicit terminal facts; they are not
+generated by recognizing phrases in assistant prose. Unknown block codes, a missing
+evidence field, empty completed evidence, duplicate refs, or a binding mismatch are
+rejected before the outcome is persisted.
+
+`failed` and `cancelled` use the closed `DelegatedTerminalCodeV1` set as well. Provider-
+specific detail stays in host-owned diagnostic fields/reason text; it cannot introduce a
+new terminal state by smuggling an arbitrary code. `approval_resume_effect_unknown` is
+always a `blocked` outcome, never a generic failure, because the side effect's existence
+is unresolved.
 
 Evidence requirements are outcome-specific:
 
@@ -1882,6 +2033,14 @@ their explicit failure policy. Missing manifest coverage is
 `required_participant_missing`; a terminal branch without required evidence is
 `required_participant_evidence_missing`; an unexecuted all-terminal join is
 `fan_in_incomplete`.
+
+The persisted gate result is also the source for TerminalReport required-participant
+coverage. It must contain one row for every accepted required participant, including a
+`missing` row when no graph step or Run exists and negative rows for blocked/failed/
+cancelled outcomes. The report may project only actual contributions into its compact
+participant summary, but it may not erase those required rows from evidence or risk
+sections. This prevents a required participant from being misrepresented as merely an
+unstarted optional teammate.
 
 TerminalReport consumes the committed gate snapshot. It summarizes the result and forms
 the publication barrier, but it cannot mutate the manifest, fabricate delegated
@@ -2377,6 +2536,12 @@ Terminal workflow state and final-result publication are separate commits becaus
 synthesis may outlive the Run and workflow transition. A client that queries reports when
 the workflow first becomes terminal can therefore receive an authoritative empty result.
 That empty result must not become a permanent cache entry.
+
+`TerminalReport` plus its committed `final_result` Item is the only user-visible terminal
+result. Workflow cards and activity rows remain folded progress/evidence surfaces after
+publication; they may link to the report, but cannot emit a second summary, count, or
+assistant final message. Replayed publication events, duplicate callbacks, and reconnect
+refreshes are idempotent projections of the same report marker.
 
 The delivery contract is:
 

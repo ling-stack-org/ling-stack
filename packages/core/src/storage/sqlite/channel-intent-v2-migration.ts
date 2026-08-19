@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { createRequiredParticipantManifestV1 } from "@ling-stack/contracts";
+import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 
 export const CHANNEL_INTENT_V2_MIGRATION_VERSION = 111;
 export const CHANNEL_INTENT_V2_MIGRATION_NAME = "replace_channel_intent_decisions_with_v2";
@@ -82,7 +83,7 @@ export function applyChannelIntentV2Migration(input: ChannelIntentV2MigrationCon
     input.database.exec("COMMIT;");
     return true;
   } catch (error) {
-    if (input.database.isTransaction) input.database.exec("ROLLBACK;");
+    rollbackOwnedSqliteTransaction(input.database);
     throw error;
   }
 }

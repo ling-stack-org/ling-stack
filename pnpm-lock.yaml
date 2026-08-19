@@ -36,6 +36,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@napi-rs/canvas':
+        specifier: 0.1.80
+        version: 0.1.80
       '@ling-stack/api-client':
         specifier: workspace:*
         version: link:../../packages/api-client

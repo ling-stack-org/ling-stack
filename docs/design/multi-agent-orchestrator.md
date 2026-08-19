@@ -2,10 +2,13 @@
 
 Status: active; evidence-aware finalization, Completion Gate, approval-wait suspension,
 reconnect recovery, explicit participant preservation, participant authority/profile,
-and the aggregate source matrix are deterministic-green. Packaged multi-Agent execution
-is blocked on typed participant provider preflight before naked-ready,
-approval-resume/fan-in, and reconnect acceptance continue.
-Last verified: 2026-08-17
+and typed provider preflight exist. Explicit Node 22 transaction ownership, its fault
+matrix, and the pre-S3.5 source matrix are green. The Runtime fence, closed
+delegated-outcome binding, required-participant coverage, and single-terminal-publication
+amendments are implemented in the active WIP and focused regressions are green. The full
+Daemon/source matrix must be regenerated before fresh packaged naked-ready,
+approval-resume/fan-in, and reconnect acceptance.
+Last verified: 2026-08-18
 
 ## Purpose
 
@@ -809,6 +812,13 @@ through the interruption and can pass only after the resumed participant produce
 typed outcome. If resume blocks or fails, the same Completion Gate publishes the
 negative/partial result; no restart-specific fan-in rule exists.
 
+The fence is a Runtime Control Plane contract, not an orchestrator convention. Every
+mutable callback carries `activeAttemptId`, `runtimeInstanceId`, and the claim-issued
+`fencingToken`; Core compare-and-set rejects any tuple that is not current. Rejected
+callbacks cannot append actions/evidence, consume approvals, release current leases, or
+emit terminal invalidations. Daemon restart uses the typed `runtime_suspend/daemon_restart`
+path and never enters generic `stale -> queued` workflow retry.
+
 `resume_pending` is also not participant completion. If the daemon dies again, startup
 classifies the bound replacement Attempt before the step finalizer runs:
 
@@ -832,6 +842,13 @@ Default recovery policy should be conservative:
   same fingerprinted side effect before `tool_start`, without asking twice;
 - after `tool_start` without `tool_end`, block effect-unknown and require explicit user
   resolution rather than retrying or silently issuing a new approval.
+
+This policy has a deliberate guarantee boundary. A safe durable approval checkpoint can
+resume the same Run with one replacement Attempt. A stop without such a checkpoint does
+not promise automatic continuation; the work-kind policy emits
+`runtime_interrupted_no_checkpoint` as a typed block/failure. A `tool_start` without a
+matching `tool_end` is always effect-unknown and is never retried. These are recovery
+states, not a smaller fan-in quorum and not permission to create a new Run.
 
 ## API Surface
 

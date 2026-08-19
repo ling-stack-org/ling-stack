@@ -418,7 +418,9 @@ export function resourceLeaseSelectSql(whereClause: string): string {
       released_at,
       release_reason,
       work_unit_id,
-      attempt_id
+      attempt_id,
+      runtime_instance_id,
+      fencing_token
     FROM resource_leases
     ${whereClause}
   `;
@@ -490,6 +492,7 @@ export function workUnitAttemptSelectSql(whereClause: string): string {
       id,
       work_unit_id,
       attempt_number,
+      fencing_token,
       runtime_instance_id,
       runner_id,
       requested_runner_id,
@@ -516,6 +519,8 @@ export function runtimeEventSelectSql(whereClause: string): string {
       id,
       work_unit_id,
       attempt_id,
+      runtime_instance_id,
+      fencing_token,
       seq,
       ts,
       type,
@@ -537,6 +542,8 @@ export function runtimeSemaphoreSlotSelectSql(whereClause: string): string {
       owner_id,
       work_unit_id,
       attempt_id,
+      runtime_instance_id,
+      fencing_token,
       status,
       acquired_at,
       last_renewed_at,

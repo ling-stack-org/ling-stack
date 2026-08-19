@@ -291,8 +291,8 @@ export class ApprovalResumeCoordinator {
           tools: ["bash"],
         },
         runId: input.run.id,
-        workUnitId: input.workUnit.id,
-        attemptId: input.attempt.id,
+        workUnit: input.workUnit,
+        attempt: input.attempt,
         now: new Date().toISOString(),
       });
       acquireRunRuntimeSemaphores({
@@ -524,7 +524,7 @@ export class ApprovalResumeCoordinator {
       expectedWorkUnitStatus: lineage.workUnitStatus,
       attemptId: lineage.attempt.id,
       status: "failed",
-      attemptStatus: reason === "approval_resume_effect_unknown" ? "lost" : "failed",
+      attemptStatus: lineage.attempt.status === "lost" || reason === "approval_resume_effect_unknown" ? "lost" : "failed",
       checkpointStatus: "resume_failed",
       errorCode: reason.split(":", 1)[0],
       errorMessage: reason,

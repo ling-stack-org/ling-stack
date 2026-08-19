@@ -60,6 +60,7 @@ import { renderUsedMemoryPromptForView } from "../memory/prompt.js";
 import { reviewWorkflowFanInContext } from "./workflow-fanin.js";
 import type { PreselectedMemoryUse } from "../runs/schemas.js";
 import type {
+  DelegatedBlockCodeV1,
   DelegatedStepRequirementV1,
   WorkflowParticipantProviderBindingV1,
 } from "@ling-stack/contracts";
@@ -726,7 +727,7 @@ export function prepareWorkflowStepStart(
   const block = (
     message: string,
     participantProfileBlocker?: {
-      readonly code: string;
+      readonly code: DelegatedBlockCodeV1;
       readonly reason: string;
       readonly missingRequirements: readonly string[];
     },

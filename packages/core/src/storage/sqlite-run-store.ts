@@ -310,7 +310,9 @@ import {
 } from "../run-types.js";
 import {
   type AcquireRuntimeSemaphoreSlotInput,
+  type AppendRuntimeDiagnosticEventInput,
   type AppendRuntimeEventInput,
+  type AppendTerminalRuntimeAuditInput,
   type CreateWorkUnitAttemptInput,
   type CreateWorkUnitInput,
   type ListRuntimeEventsOptions,
@@ -319,6 +321,7 @@ import {
   type RecordRuntimeHeartbeatInput,
   type RuntimeEvent,
   type RuntimeHeartbeat,
+  type RuntimeAttemptFenceV1,
   type RuntimeSemaphoreSlot,
   type WorkUnit,
   type WorkUnitAttempt,
@@ -349,7 +352,7 @@ import {
   type ListResourceLeasesOptions,
   type ListStateTransitionEventsOptions,
   type ResourceLease,
-  type ResourceLeaseOwnerType,
+  type ResourceLeaseOwnerLevelType,
   type StateTransitionEvent,
 } from "../channel-runtime-types.js";
 import {
@@ -508,6 +511,7 @@ import { applyControlPlaneReplayStateMigration } from "./sqlite/control-plane-re
 import { applyApprovalResumeBasisMigration } from "./sqlite/approval-resume-basis-migration.js";
 import { applyChannelParticipantAuthorityMigration } from "./sqlite/channel-participant-authority-migration.js";
 import { applyChannelProposalBlockerMigration } from "./sqlite/channel-proposal-blocker-migration.js";
+import { applyRuntimeAttemptFenceMigration } from "./sqlite/runtime-attempt-fence-migration.js";
 import {
   isJsonRecord,
   isRecord,
@@ -746,10 +750,14 @@ export class SqliteRunStore implements RunStore {
         findStateTransitionByIdempotency: (entityType, entityId, idempotencyKey) =>
           this.findStateTransitionByIdempotency(entityType, entityId, idempotencyKey),
         recordStateTransitionEvent: (input) => this.recordStateTransitionEvent(input),
-        renewResourceLeasesForAttempt: (attemptId, renewedAt) =>
-          this.resourceLeases.renewActiveResourceLeasesForAttempt(attemptId, renewedAt),
-        renewRuntimeSemaphoreSlotsForAttempt: (attemptId, renewedAt) =>
-          this.runtimeSemaphores.renewRuntimeSemaphoreSlotsForAttempt(attemptId, renewedAt),
+        renewResourceLeasesForAttempt: (fence, renewedAt) =>
+          this.resourceLeases.renewResourceLeasesForAttempt(fence, renewedAt),
+        renewRuntimeSemaphoreSlotsForAttempt: (fence, renewedAt) =>
+          this.runtimeSemaphores.renewRuntimeSemaphoreSlotsForAttempt(fence, renewedAt),
+        releaseResourceLeasesForAttempt: (fence, releasedAt, releaseReason) =>
+          this.resourceLeases.releaseResourceLeasesForAttempt(fence, releasedAt, releaseReason),
+        releaseRuntimeSemaphoreSlotsForAttempt: (fence, releasedAt, releaseReason) =>
+          this.runtimeSemaphores.releaseRuntimeSemaphoreSlotsForAttempt(fence, releasedAt, releaseReason),
       },
     );
     this.lingThreads = new SqliteLingThreadStore(
@@ -1074,7 +1082,8 @@ export class SqliteRunStore implements RunStore {
         recordStateTransitionEvent: (input) => this.recordStateTransitionEvent(input),
         getControlPlaneEventByIdempotency: (workspaceId, idempotencyKey) =>
           this.getControlPlaneEventByIdempotency(workspaceId, idempotencyKey),
-        appendControlPlaneEvent: (input, now) => this.controlPlane.appendControlPlaneEvent(input, now),
+        appendControlPlaneEventWithinTransaction: (input, now) =>
+          this.controlPlane.appendControlPlaneEventWithinTransaction(input, now),
       },
     );
     this.channelCore = new SqliteChannelCoreStore(
@@ -1148,15 +1157,18 @@ export class SqliteRunStore implements RunStore {
         transitionWorkUnitStatus: (input) => this.transitionWorkUnitStatus(input),
         getWorkUnitAttempt: (id) => this.getWorkUnitAttempt(id),
         createWorkUnitAttempt: (input) => this.createWorkUnitAttempt(input),
+        createWorkUnitAttemptWithinTransaction: (input) => this.createWorkUnitAttemptWithinTransaction(input),
         updateWorkUnitAttemptStatus: (input) => this.updateWorkUnitAttemptStatus(input),
-        releaseRuntimeSemaphoreSlotsForOwner: (ownerId, releasedAt, releaseReason) =>
-          this.releaseRuntimeSemaphoreSlotsForOwner(ownerId, releasedAt, releaseReason),
+        releaseRuntimeSemaphoreSlotsForAttempt: (fence, releasedAt, releaseReason) =>
+          this.releaseRuntimeSemaphoreSlotsForAttempt(fence, releasedAt, releaseReason),
         appendRuntimeEvent: (input) => this.appendRuntimeEvent(input),
-        appendControlPlaneEvent: (input, now) => this.appendControlPlaneEvent(input, now),
+        appendTerminalRuntimeAudit: (input) => this.appendTerminalRuntimeAudit(input),
+        appendControlPlaneEventWithinTransaction: (input, now) =>
+          this.controlPlane.appendControlPlaneEventWithinTransaction(input, now),
         getTask: (id) => this.getTask(id),
         transitionTaskStatus: (input) => this.transitionTaskStatus(input),
-        releaseResourceLeasesForOwner: (ownerType, ownerId, releasedAt) =>
-          this.releaseResourceLeasesForOwner(ownerType, ownerId, releasedAt),
+        releaseResourceLeasesForAttempt: (fence, releasedAt, releaseReason) =>
+          this.releaseResourceLeasesForAttempt(fence, releasedAt, releaseReason),
         getDefaultControlPlaneScope: () => ({ workspaceId: DEFAULT_WORKSPACE_ID, cwd: this.paths.cwd }),
       },
     );
@@ -1221,6 +1233,15 @@ export class SqliteRunStore implements RunStore {
           recordMigration: (version, name) => this.recordMigration(version, name),
         });
         applyChannelProposalBlockerMigration({
+          database: this.database,
+          hasMigration: (version) => this.hasMigration(version),
+          hasColumn: (tableName, columnName) => this.hasColumn(tableName, columnName),
+          recordMigration: (version, name) => this.recordMigration(version, name),
+        });
+        // Runtime fencing is the final migration in the current clean-break line.
+        // It must run after the base runtime tables and after the Continuity/approval
+        // migrations so every existing Attempt projection can be backfilled atomically.
+        applyRuntimeAttemptFenceMigration({
           database: this.database,
           hasMigration: (version) => this.hasMigration(version),
           hasColumn: (tableName, columnName) => this.hasColumn(tableName, columnName),
@@ -1686,27 +1707,18 @@ export class SqliteRunStore implements RunStore {
     return this.runSessions.linkRunToWorkUnit(runId, workUnitId, now);
   }
 
-  transitionWorkUnitStatus(input: {
-    readonly workUnitId: string;
-    readonly expectedStatus?: WorkUnitStatus;
-    readonly event: WorkUnitTransitionEvent;
-    readonly actor: StateTransitionActor;
-    readonly reason?: string;
-    readonly idempotencyKey?: string;
-    readonly now: string;
-    readonly activeAttemptId?: string | null;
-    readonly startedAt?: string;
-    readonly endedAt?: string | null;
-    readonly lastEventAt?: string;
-    readonly lastHeartbeatAt?: string;
-    readonly errorCode?: string | null;
-    readonly errorMessage?: string | null;
-  }): TransitionResult<WorkUnitStatus> {
+  transitionWorkUnitStatus(
+    input: Parameters<RunStore["transitionWorkUnitStatus"]>[0],
+  ): TransitionResult<WorkUnitStatus> {
     return this.runtimeWorkUnits.transitionWorkUnitStatus(input);
   }
 
   createWorkUnitAttempt(input: CreateWorkUnitAttemptInput): WorkUnitAttempt {
     return this.runtimeWorkUnits.createWorkUnitAttempt(input);
+  }
+
+  private createWorkUnitAttemptWithinTransaction(input: CreateWorkUnitAttemptInput): WorkUnitAttempt {
+    return this.runtimeWorkUnits.createWorkUnitAttemptWithinTransaction(input);
   }
 
   getWorkUnitAttempt(attemptId: string): WorkUnitAttempt | undefined {
@@ -1717,23 +1729,28 @@ export class SqliteRunStore implements RunStore {
     return this.runtimeWorkUnits.listWorkUnitAttempts(workUnitId);
   }
 
-  updateWorkUnitAttemptStatus(input: {
-    readonly attemptId: string;
-    readonly status: WorkUnitAttempt["status"];
-    readonly now: string;
-    readonly startedAt?: string;
-    readonly endedAt?: string;
-    readonly lastEventAt?: string;
-    readonly lastHeartbeatAt?: string;
-    readonly abortRequestedAt?: string;
-    readonly errorCode?: string | null;
-    readonly errorMessage?: string | null;
-  }): WorkUnitAttempt | undefined {
+  updateWorkUnitAttemptStatus(
+    input: Parameters<RunStore["updateWorkUnitAttemptStatus"]>[0],
+  ): WorkUnitAttempt | undefined {
     return this.runtimeWorkUnits.updateWorkUnitAttemptStatus(input);
+  }
+
+  transitionWorkUnitAttemptTerminal(
+    input: Parameters<RunStore["transitionWorkUnitAttemptTerminal"]>[0],
+  ): boolean {
+    return this.runtimeWorkUnits.transitionWorkUnitAttemptTerminal(input);
   }
 
   appendRuntimeEvent(input: AppendRuntimeEventInput): RuntimeEvent {
     return this.runtimeWorkUnits.appendRuntimeEvent(input);
+  }
+
+  appendTerminalRuntimeAudit(input: AppendTerminalRuntimeAuditInput): RuntimeEvent {
+    return this.runtimeWorkUnits.appendTerminalRuntimeAudit(input);
+  }
+
+  appendRuntimeDiagnosticEvent(input: AppendRuntimeDiagnosticEventInput): RuntimeEvent {
+    return this.runtimeWorkUnits.appendRuntimeDiagnosticEvent(input);
   }
 
   listRuntimeEvents(workUnitId: string, options: ListRuntimeEventsOptions = {}): RuntimeEvent[] {
@@ -1748,8 +1765,24 @@ export class SqliteRunStore implements RunStore {
     return this.runtimeSemaphores.acquireRuntimeSemaphoreSlot(input);
   }
 
+  renewRuntimeSemaphoreSlotsForAttempt(fence: RuntimeAttemptFenceV1, renewedAt: string): number {
+    return this.runtimeSemaphores.renewRuntimeSemaphoreSlotsForAttempt(fence, renewedAt);
+  }
+
+  releaseRuntimeSemaphoreSlotsForAttempt(
+    fence: RuntimeAttemptFenceV1,
+    releasedAt: string,
+    releaseReason: string,
+  ): number {
+    return this.runtimeSemaphores.releaseRuntimeSemaphoreSlotsForAttempt(fence, releasedAt, releaseReason);
+  }
+
   releaseRuntimeSemaphoreSlotsForOwner(ownerId: string, releasedAt: string, releaseReason: string): number {
     return this.runtimeSemaphores.releaseRuntimeSemaphoreSlotsForOwner(ownerId, releasedAt, releaseReason);
+  }
+
+  expireRuntimeSemaphoreSlots(now: string): number {
+    return this.runtimeSemaphores.expireRuntimeSemaphoreSlots(now);
   }
 
   listRuntimeSemaphoreSlots(options: ListRuntimeSemaphoreSlotsOptions = {}): RuntimeSemaphoreSlot[] {
@@ -1902,7 +1935,19 @@ export class SqliteRunStore implements RunStore {
     return this.resourceLeases.acquireResourceLease(input);
   }
 
-  releaseResourceLeasesForOwner(ownerType: ResourceLeaseOwnerType, ownerId: string, releasedAt: string): number {
+  renewResourceLeasesForAttempt(fence: RuntimeAttemptFenceV1, renewedAt: string): number {
+    return this.resourceLeases.renewResourceLeasesForAttempt(fence, renewedAt);
+  }
+
+  releaseResourceLeasesForAttempt(
+    fence: RuntimeAttemptFenceV1,
+    releasedAt: string,
+    releaseReason: string,
+  ): number {
+    return this.resourceLeases.releaseResourceLeasesForAttempt(fence, releasedAt, releaseReason);
+  }
+
+  releaseResourceLeasesForOwner(ownerType: ResourceLeaseOwnerLevelType, ownerId: string, releasedAt: string): number {
     return this.resourceLeases.releaseResourceLeasesForOwner(ownerType, ownerId, releasedAt);
   }
 

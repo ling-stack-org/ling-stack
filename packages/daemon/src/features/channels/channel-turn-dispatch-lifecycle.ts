@@ -105,6 +105,8 @@ export function claimAcceptedChannelTurnDispatch(input: {
   input.store.appendRuntimeEvent({
     workUnitId: claimedWorkUnit.id,
     attemptId: attempt.id,
+    runtimeInstanceId: attempt.runtimeInstanceId,
+    fencingToken: attempt.fencingToken,
     type: "work_unit_started",
     actor: "system",
     ts: startedAt,

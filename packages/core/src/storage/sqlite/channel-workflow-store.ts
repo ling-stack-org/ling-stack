@@ -52,7 +52,7 @@ import {
   type WorkflowSelectorDecisionStatus,
   type WorkflowSelectorTargetKind,
 } from "../../workspace-types.js";
-import { nullableUpdate, readNumber, stringifyJson } from "./helpers.js";
+import { nullableUpdate, readNumber, rollbackOwnedSqliteTransaction, stringifyJson } from "./helpers.js";
 import {
   mapChannelWorkflow,
   mapChannelWorkflowStep,
@@ -760,7 +760,7 @@ export class SqliteChannelWorkflowStore {
       this.context.database.exec("COMMIT;");
       return { ok: true, from: workflow.status, to: expectedTarget };
     } catch (error) {
-      if (this.context.database.isTransaction) this.context.database.exec("ROLLBACK;");
+      rollbackOwnedSqliteTransaction(this.context.database);
       throw error;
     }
   }
@@ -929,7 +929,7 @@ export class SqliteChannelWorkflowStore {
       }
       return transition;
     } catch (error) {
-      if (this.context.database.isTransaction) this.context.database.exec("ROLLBACK;");
+      rollbackOwnedSqliteTransaction(this.context.database);
       throw error;
     }
   }

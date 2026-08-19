@@ -135,6 +135,84 @@ test("atomic publication rolls back every internal write boundary", async (t) =>
           action: "terminal_report.published",
           limit: 10,
         }).length, 0);
+        appendRollbackRecoveryProbe(fixture.store, fixture.cwd, `terminal-report-${boundary}`);
+        fixture.store.database.exec(`DROP TRIGGER ${publicationCrashTriggerName(boundary)};`);
+
+        const recovered = publishWorkflowTerminalReport({
+          store: fixture.store,
+          report: fixture.report,
+          now: "2026-08-12T20:00:11.000Z",
+        });
+        assert.equal(recovered?.id, messageId);
+        assert.equal(fixture.store.getTerminalReport(fixture.report.id).publishedMessageId, messageId);
+        assert.equal(fixture.store.getLingTurn(fixture.sourceTurn.id).status, "succeeded");
+        assert.equal(fixture.store.listStateTransitionEvents({ entityType: "turn", entityId: fixture.sourceTurn.id })
+          .filter((event) => event.reason?.includes(`published:${messageId}`)).length, 1);
+        assert.equal(fixture.store.listControlPlaneEvents({
+          workspaceId: "workspace_default",
+          entityType: "terminal_report",
+          entityId: fixture.report.id,
+          action: "terminal_report.published",
+          limit: 10,
+        }).length, 1);
+        assert.equal(publishWorkflowTerminalReport({
+          store: fixture.store,
+          report: fixture.report,
+          now: "2026-08-12T20:00:12.000Z",
+        })?.id, messageId);
+      } finally {
+        await fixture.close();
+      }
+    });
+  }
+});
+
+test("legacy workflow publication rolls back every internal write boundary and remains retryable", async (t) => {
+  for (const boundary of ["item", "turn", "turn_event", "publication_event"]) {
+    await t.test(boundary, async () => {
+      const fixture = await createManifestPublicationFixture(`legacy-rollback-${boundary}`, "succeeded");
+      try {
+        const input = legacyPublicationInput(fixture);
+        const messageId = input.publicationItem.id;
+        const database = new DatabaseSync(resolveRuntimePaths(fixture.cwd).databasePath);
+        database.exec(legacyCrashTrigger(boundary, messageId, fixture.workflow.id, fixture.sourceTurn.id));
+        database.close();
+
+        assert.throws(
+          () => fixture.store.commitLegacyWorkflowPublication(input),
+          /injected_legacy_publication_crash/u,
+        );
+        assert.equal(fixture.store.getConversationItem(messageId), undefined);
+        assert.equal(fixture.store.getLingTurn(fixture.sourceTurn.id).status, fixture.sourceTurn.status);
+        assert.equal(fixture.store.listStateTransitionEvents({ entityType: "turn", entityId: fixture.sourceTurn.id })
+          .some((event) => event.reason?.includes(`published:${messageId}`)), false);
+        assert.equal(fixture.store.listControlPlaneEvents({
+          workspaceId: "workspace_default",
+          entityType: "workflow",
+          entityId: fixture.workflow.id,
+          action: "workflow.final_result_published",
+          limit: 10,
+        }).length, 0);
+        appendRollbackRecoveryProbe(fixture.store, fixture.cwd, `legacy-publication-${boundary}`);
+        fixture.store.database.exec(`DROP TRIGGER ${legacyPublicationCrashTriggerName(boundary)};`);
+
+        const recovered = fixture.store.commitLegacyWorkflowPublication(input);
+        assert.equal(recovered.ok, true);
+        assert.equal(recovered.duplicate, false);
+        assert.equal(recovered.item.id, messageId);
+        assert.equal(recovered.sourceTurnStatus, "succeeded");
+        const duplicate = fixture.store.commitLegacyWorkflowPublication(legacyPublicationInput(fixture));
+        assert.equal(duplicate.ok, true);
+        assert.equal(duplicate.duplicate, true);
+        assert.equal(fixture.store.listStateTransitionEvents({ entityType: "turn", entityId: fixture.sourceTurn.id })
+          .filter((event) => event.reason?.includes(`published:${messageId}`)).length, 1);
+        assert.equal(fixture.store.listControlPlaneEvents({
+          workspaceId: "workspace_default",
+          entityType: "workflow",
+          entityId: fixture.workflow.id,
+          action: "workflow.final_result_published",
+          limit: 10,
+        }).length, 1);
       } finally {
         await fixture.close();
       }
@@ -451,6 +529,43 @@ function publicationInput(fixture) {
   };
 }
 
+function legacyPublicationInput(fixture) {
+  const workflow = fixture.store.getChannelWorkflow(fixture.workflow.id);
+  const sourceTurn = fixture.store.getLingTurn(fixture.sourceTurn.id);
+  const evaluation = evaluateWorkflowCompletion({
+    store: fixture.store,
+    workflow,
+    steps: fixture.store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 }),
+    now: fixture.publishAt,
+  });
+  const messageId = `message_workflow_terminal_${workflow.id}`;
+  return {
+    expectedWorkflowId: workflow.id,
+    expectedCompletion: evaluation,
+    expectedSourceTurn: { id: sourceTurn.id, status: sourceTurn.status, updatedAt: sourceTurn.updatedAt },
+    publicationItem: {
+      id: messageId,
+      channelId: workflow.channelId,
+      threadId: sourceTurn.threadId,
+      turnId: sourceTurn.id,
+      kind: "assistant_message",
+      status: "committed",
+      actorType: "ling_agent",
+      actorId: "ling_agent",
+      visibility: "channel",
+      payload: { body: "Workflow completed.", format: "markdown", streaming: false, deliveryStatus: "ready" },
+      domainRefs: [
+        { type: "workflow", id: workflow.id },
+        { type: "conversation_item", id: fixture.sourceItem.id },
+        { type: "turn", id: sourceTurn.id },
+      ],
+      idempotencyKey: `workflow-terminal:${workflow.id}`,
+    },
+    publicationEventIdempotencyKey: `workflow-terminal:${workflow.id}:published`,
+    now: fixture.publishAt,
+  };
+}
+
 function projectionFor(item, assignment) {
   return {
     projectionVersion: `projection:${item.id}:${assignment.revision}`,
@@ -475,6 +590,49 @@ function crashTrigger(boundary, messageId, reportId, turnId) {
     publication_event: `CREATE TRIGGER crash_publication_event BEFORE INSERT ON control_plane_events WHEN NEW.entity_type = 'terminal_report' AND NEW.entity_id = '${reportId}' BEGIN SELECT RAISE(ABORT, 'injected_publication_crash'); END;`,
   };
   return definitions[boundary];
+}
+
+function publicationCrashTriggerName(boundary) {
+  return {
+    item: "crash_publication_item",
+    report: "crash_publication_report",
+    turn: "crash_publication_turn",
+    turn_event: "crash_publication_turn_event",
+    publication_event: "crash_publication_event",
+  }[boundary];
+}
+
+function legacyCrashTrigger(boundary, messageId, workflowId, turnId) {
+  const definitions = {
+    item: `CREATE TRIGGER crash_legacy_publication_item BEFORE INSERT ON conversation_items WHEN NEW.id = '${messageId}' BEGIN SELECT RAISE(ABORT, 'injected_legacy_publication_crash'); END;`,
+    turn: `CREATE TRIGGER crash_legacy_publication_turn BEFORE UPDATE OF status ON ling_turns WHEN NEW.id = '${turnId}' BEGIN SELECT RAISE(ABORT, 'injected_legacy_publication_crash'); END;`,
+    turn_event: `CREATE TRIGGER crash_legacy_publication_turn_event BEFORE INSERT ON state_transition_events WHEN NEW.entity_type = 'turn' AND NEW.entity_id = '${turnId}' BEGIN SELECT RAISE(ABORT, 'injected_legacy_publication_crash'); END;`,
+    publication_event: `CREATE TRIGGER crash_legacy_publication_event BEFORE INSERT ON control_plane_events WHEN NEW.entity_type = 'workflow' AND NEW.entity_id = '${workflowId}' BEGIN SELECT RAISE(ABORT, 'injected_legacy_publication_crash'); END;`,
+  };
+  return definitions[boundary];
+}
+
+function legacyPublicationCrashTriggerName(boundary) {
+  return {
+    item: "crash_legacy_publication_item",
+    turn: "crash_legacy_publication_turn",
+    turn_event: "crash_legacy_publication_turn_event",
+    publication_event: "crash_legacy_publication_event",
+  }[boundary];
+}
+
+function appendRollbackRecoveryProbe(store, cwd, suffix) {
+  const event = store.appendControlPlaneEvent({
+    workspaceId: "workspace_default",
+    cwd,
+    domain: "runs",
+    entityType: "run",
+    entityId: `rollback_recovery_${suffix}`,
+    action: "run.rollback_recovery_probe",
+    data: {},
+    idempotencyKey: `rollback-recovery:${suffix}`,
+  }, "2026-08-12T20:00:10.500Z");
+  assert.equal(event.entityId, `rollback_recovery_${suffix}`);
 }
 
 function assertNoPublication(fixture, expectedTurnStatus = fixture.sourceTurn.status) {

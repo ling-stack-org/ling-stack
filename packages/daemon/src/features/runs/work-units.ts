@@ -12,10 +12,16 @@ export function syncWorkUnitForRunEvent(
   if (!current || isTerminalWorkUnitStatus(current.status) || current.status === "stale") {
     return;
   }
+  const attempt = store.getWorkUnitAttempt(attemptId);
+  if (!attempt || attempt.workUnitId !== workUnitId || current.activeAttemptId !== attempt.id) return;
   const now = envelope.ts;
   if (type === "approval_requested" && current.status === "running") {
     const transition = store.transitionWorkUnitStatus({
       workUnitId,
+      attemptId: attempt.id,
+      activeAttemptId: attempt.id,
+      runtimeInstanceId: attempt.runtimeInstanceId,
+      fencingToken: attempt.fencingToken,
       expectedStatus: current.status,
       event: "approval_requested",
       actor: "system",
@@ -23,10 +29,20 @@ export function syncWorkUnitForRunEvent(
       lastEventAt: now,
     });
     if (transition.ok) {
-      store.updateWorkUnitAttemptStatus({ attemptId, status: "waiting_for_approval", now, lastEventAt: now });
+      store.updateWorkUnitAttemptStatus({
+        attemptId,
+        workUnitId: attempt.workUnitId,
+        runtimeInstanceId: attempt.runtimeInstanceId,
+        fencingToken: attempt.fencingToken,
+        status: "waiting_for_approval",
+        now,
+        lastEventAt: now,
+      });
       store.appendRuntimeEvent({
         workUnitId,
         attemptId,
+        runtimeInstanceId: attempt.runtimeInstanceId,
+        fencingToken: attempt.fencingToken,
         type: "work_unit_approval_requested",
         actor: "system",
         ts: now,
@@ -38,13 +54,25 @@ export function syncWorkUnitForRunEvent(
   if (type === "approval_approved" && current.status === "waiting_for_approval") {
     store.transitionWorkUnitStatus({
       workUnitId,
+      attemptId: attempt.id,
+      activeAttemptId: attempt.id,
+      runtimeInstanceId: attempt.runtimeInstanceId,
+      fencingToken: attempt.fencingToken,
       expectedStatus: current.status,
       event: "approval_approved",
       actor: "local-user",
       now,
       lastEventAt: now,
     });
-    store.updateWorkUnitAttemptStatus({ attemptId, status: "started", now, lastEventAt: now });
+    store.updateWorkUnitAttemptStatus({
+      attemptId,
+      workUnitId: attempt.workUnitId,
+      runtimeInstanceId: attempt.runtimeInstanceId,
+      fencingToken: attempt.fencingToken,
+      status: "started",
+      now,
+      lastEventAt: now,
+    });
     return;
   }
   if ((type === "approval_denied" || type === "approval_expired") && current.status === "waiting_for_approval") {
@@ -70,9 +98,13 @@ export function appendRuntimeProgressForRunEvent(
   envelope: RunEventEnvelope,
 ): void {
   try {
+    const attempt = store.getWorkUnitAttempt(attemptId);
+    if (!attempt || attempt.workUnitId !== workUnitId) return;
     store.appendRuntimeEvent({
       workUnitId,
       attemptId,
+      runtimeInstanceId: attempt.runtimeInstanceId,
+      fencingToken: attempt.fencingToken,
       type: type === "artifact_created" ? "artifact_created" : "work_unit_progress",
       actor: "runner",
       ts: envelope.ts,

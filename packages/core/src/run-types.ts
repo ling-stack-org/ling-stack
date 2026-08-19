@@ -276,7 +276,7 @@ import type {
   ListResourceLeasesOptions,
   ListStateTransitionEventsOptions,
   ResourceLease,
-  ResourceLeaseOwnerType,
+  ResourceLeaseOwnerLevelType,
   ResourceLeaseStatus,
   StateTransitionEvent,
 } from "./channel-runtime-types.js";
@@ -293,6 +293,7 @@ import type {
 import type {
   AcquireRuntimeSemaphoreSlotInput,
   AppendRuntimeEventInput,
+  AppendTerminalRuntimeAuditInput,
   CreateWorkUnitAttemptInput,
   CreateWorkUnitInput,
   ListRuntimeEventsOptions,
@@ -301,7 +302,10 @@ import type {
   RecordRuntimeHeartbeatInput,
   RuntimeEvent,
   RuntimeHeartbeat,
+  RuntimeAttemptFenceV1,
   RuntimeSemaphoreSlot,
+  TerminalAttemptStatus,
+  TerminalRuntimeEventType,
   WorkUnit,
   WorkUnitAttempt,
   WorkUnitStatus,
@@ -1558,12 +1562,26 @@ export interface RunStore {
     readonly lastHeartbeatAt?: string;
     readonly errorCode?: string | null;
     readonly errorMessage?: string | null;
-  }): TransitionResult<WorkUnitStatus>;
+  } & (
+    | {
+        readonly attemptId?: never;
+        readonly runtimeInstanceId?: never;
+        readonly fencingToken?: never;
+        readonly terminalAttemptOwnership?: never;
+      }
+    | (RuntimeAttemptFenceV1 & {
+        /** Core-only reconciliation authority after the current process-owned Attempt is durably lost. */
+        readonly terminalAttemptOwnership?: { readonly kind: "lost_attempt_reconciliation" };
+      })
+  )): TransitionResult<WorkUnitStatus>;
   createWorkUnitAttempt(input: CreateWorkUnitAttemptInput): WorkUnitAttempt;
   getWorkUnitAttempt(attemptId: string): WorkUnitAttempt | undefined;
   listWorkUnitAttempts(workUnitId: string): WorkUnitAttempt[];
   updateWorkUnitAttemptStatus(input: {
     readonly attemptId: string;
+    readonly workUnitId: string;
+    readonly runtimeInstanceId: string;
+    readonly fencingToken: string;
     readonly status: WorkUnitAttempt["status"];
     readonly now: string;
     readonly startedAt?: string;
@@ -1574,11 +1592,29 @@ export interface RunStore {
     readonly errorCode?: string | null;
     readonly errorMessage?: string | null;
   }): WorkUnitAttempt | undefined;
+  /**
+   * Atomically closes the canonical Work Unit, its current Attempt, and the
+   * terminal runtime audit event under one Attempt fence.
+   */
+  transitionWorkUnitAttemptTerminal(input: RuntimeAttemptFenceV1 & {
+    readonly event: WorkUnitTransitionEvent;
+    readonly attemptStatus: TerminalAttemptStatus;
+    readonly runtimeEventType: TerminalRuntimeEventType;
+    readonly actor: StateTransitionActor;
+    readonly now: string;
+    readonly errorCode?: string;
+    readonly errorMessage?: string;
+  }): boolean;
   appendRuntimeEvent(input: AppendRuntimeEventInput): RuntimeEvent;
+  appendTerminalRuntimeAudit(input: AppendTerminalRuntimeAuditInput): RuntimeEvent;
+  appendRuntimeDiagnosticEvent(input: import("./runtime-supervisor-types.js").AppendRuntimeDiagnosticEventInput): RuntimeEvent;
   listRuntimeEvents(workUnitId: string, options?: ListRuntimeEventsOptions): RuntimeEvent[];
   recordRuntimeHeartbeat(input: RecordRuntimeHeartbeatInput): RuntimeHeartbeat;
   acquireRuntimeSemaphoreSlot(input: AcquireRuntimeSemaphoreSlotInput): RuntimeSemaphoreSlot | undefined;
+  renewRuntimeSemaphoreSlotsForAttempt(fence: RuntimeAttemptFenceV1, renewedAt: string): number;
+  releaseRuntimeSemaphoreSlotsForAttempt(fence: RuntimeAttemptFenceV1, releasedAt: string, releaseReason: string): number;
   releaseRuntimeSemaphoreSlotsForOwner(ownerId: string, releasedAt: string, releaseReason: string): number;
+  expireRuntimeSemaphoreSlots(now: string): number;
   listRuntimeSemaphoreSlots(options?: ListRuntimeSemaphoreSlotsOptions): RuntimeSemaphoreSlot[];
   createArtifact(input: CreateRunArtifactInput): RunArtifact;
   getArtifact(artifactId: string): RunArtifact | undefined;
@@ -1619,7 +1655,9 @@ export interface RunStore {
     readonly errorMessage?: string | null;
   }): TransitionResult<RunStatus>;
   acquireResourceLease(input: CreateResourceLeaseInput): ResourceLease | undefined;
-  releaseResourceLeasesForOwner(ownerType: ResourceLeaseOwnerType, ownerId: string, releasedAt: string): number;
+  renewResourceLeasesForAttempt(fence: RuntimeAttemptFenceV1, renewedAt: string): number;
+  releaseResourceLeasesForAttempt(fence: RuntimeAttemptFenceV1, releasedAt: string, releaseReason: string): number;
+  releaseResourceLeasesForOwner(ownerType: ResourceLeaseOwnerLevelType, ownerId: string, releasedAt: string): number;
   expireResourceLeases(now: string): number;
   listResourceLeases(options?: ListResourceLeasesOptions): ResourceLease[];
   getBlockingResourceLease(resourceType: ResourceLease["resourceType"], resourceKey: string): ResourceLease | undefined;
@@ -2253,11 +2291,17 @@ export type RuntimeSupervisorStoreFacet = RunStoreFacet<
   | "getWorkUnitAttempt"
   | "listWorkUnitAttempts"
   | "updateWorkUnitAttemptStatus"
+  | "transitionWorkUnitAttemptTerminal"
   | "appendRuntimeEvent"
+  | "appendTerminalRuntimeAudit"
+  | "appendRuntimeDiagnosticEvent"
   | "listRuntimeEvents"
   | "recordRuntimeHeartbeat"
   | "acquireRuntimeSemaphoreSlot"
+  | "renewRuntimeSemaphoreSlotsForAttempt"
+  | "releaseRuntimeSemaphoreSlotsForAttempt"
   | "releaseRuntimeSemaphoreSlotsForOwner"
+  | "expireRuntimeSemaphoreSlots"
   | "listRuntimeSemaphoreSlots"
   | "recoverStaleRuns"
   | "recoverStaleChannelWorkflows"
@@ -2267,6 +2311,8 @@ export type RuntimeSupervisorStoreFacet = RunStoreFacet<
   | "transitionTaskStatus"
   | "transitionRunStatus"
   | "acquireResourceLease"
+  | "renewResourceLeasesForAttempt"
+  | "releaseResourceLeasesForAttempt"
   | "releaseResourceLeasesForOwner"
   | "expireResourceLeases"
   | "listResourceLeases"

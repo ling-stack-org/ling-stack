@@ -1,4 +1,5 @@
 import type { DatabaseSync, SQLOutputValue } from "node:sqlite";
+import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 
 export const CONTROL_PLANE_REPLAY_STATE_MIGRATION_VERSION = 117;
 export const CONTROL_PLANE_REPLAY_STATE_MIGRATION_NAME = "add_control_plane_replay_state";
@@ -42,7 +43,7 @@ export function applyControlPlaneReplayStateMigration(input: ControlPlaneReplayS
     input.database.exec("COMMIT;");
     return true;
   } catch (error) {
-    if (input.database.isTransaction) input.database.exec("ROLLBACK;");
+    rollbackOwnedSqliteTransaction(input.database);
     throw error;
   }
 }

@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { defaultProviderTemplates, executeExternalWorkAction } from "@ling-stack/core";
+import { defaultProviderTemplates, executeExternalWorkAction, toRuntimeAttemptFence } from "@ling-stack/core";
 import type { AiTeammate, RunSession, RunStore, TeammateDirectMessage, TeammateDirectThread } from "@ling-stack/core";
 import type { DaemonContext } from "../context.js";
 import { HttpError } from "../errors.js";
@@ -876,9 +876,12 @@ export async function routeRequest(
       {
         startRuntimeWorkUnit: (input) => startRuntimeWorkUnit({ ...input, runtimeSupervisor }),
         appendArtifactRuntimeEvent: (input) => {
+          const attempt = input.store.getWorkUnitAttempt(input.attemptId);
+          if (!attempt) {
+            throw new Error(`Runtime attempt not found while recording artifact evidence: ${input.attemptId}`);
+          }
           input.store.appendRuntimeEvent({
-            workUnitId: input.workUnitId,
-            attemptId: input.attemptId,
+            ...toRuntimeAttemptFence(attempt),
             type: "artifact_created",
             actor: "system",
             ts: input.now,

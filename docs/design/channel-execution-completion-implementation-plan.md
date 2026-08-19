@@ -1,12 +1,24 @@
 # Channel Execution Completion Implementation Plan
 
-Status: implementation and packaged macOS acceptance complete. The deterministic source
-matrix, fresh artifact, ordinary/long-context conversation, real file and Node actions,
-typed missing-provider and naked-ready blockers, Engineer + QA restart/fan-in, reconnect,
-and SQLite lineage audit are green. The remaining work is final review, PR/CI, merge,
-remote-main verification, and exact QA cleanup.
+Status: the existing semantic source implementation and deterministic verification are
+green. The supplemental Runtime fence, typed delegated-outcome, required-coverage, and
+single-terminal-projection hardening is now present in the active WIP and its focused
+source regressions are green. S3.5 remains open until the corrected full Daemon aggregate,
+repository-wide source matrix, and diff review pass. One pre-hardening signed macOS
+artifact exists only as reproduction evidence; packaged behavior, SQLite-lineage
+acceptance, and delivery remain open.
+The existing delegated-outcome, required-participant fan-in, Run/Attempt recovery, and
+reconnect paths are implemented; the new contract amendments make their missing fencing,
+negative coverage, and terminal-projection assertions explicit. Earlier focused/package
+evidence remains useful reproduction evidence. It is not release evidence for the current
+source: Node 22 Daemon aggregation exposed nested transactions and incomplete rollback in
+the publication/workflow
+composition path. The explicit-ownership fault matrix, full official Node 22 Core and
+Daemon suites, repository gates, and Channel E2E were green before S3.5. The old artifacts
+remain stale; the post-hardening aggregate rerun and fresh packaged macOS acceptance are
+still open.
 Owner: channel intent, workflow orchestration, terminal report, and continuity maintainers
-Last verified: 2026-08-17
+Last verified: 2026-08-18
 Canonical contract: [Channel Conversation Continuity v2](channel-conversation-continuity-v2.md)
 Code anchors: `packages/contracts/src/conversation-continuity.ts`,
 `packages/core/src/storage/sqlite/ling-turn-store.ts`,
@@ -111,7 +123,9 @@ specialist fallback. The defect is that proposal validation leaks an untyped con
 error and hides the binding owner/repair action. T8d.2d now centralizes typed model
 resolution and preflight, preserves fail-closed ownership, and adds both missing-config
 and configured cases. The daemon fixture, late-race/restart regressions, broad source
-matrix, and final packaged acceptance are now complete.
+matrix, and final packaged acceptance for that pre-transaction checkpoint completed.
+Those package results became historical evidence when the transaction-composition source
+changed.
 
 This plan does not redesign Continuity v2, add a second action-result store, or create a
 new multi-Agent protocol. It extends the existing intent, workflow, `ExecutionAction`,
@@ -119,21 +133,62 @@ TerminalReport, and turn state authorities.
 
 ## Execution Plan From The Current Checkpoint
 
-The implementation is past the source-design slices. Contracts, persistence, finalization,
-fan-in, approval resume, replay, Web projection, participant authority/profile, and typed
-provider preflight already exist in the active WIP. Work continues from the current source
-checkpoint, not from the old artifact that exposed the provider bug. A packaged red result
-may reopen only the owning slice below; it does not authorize a broad rewrite or a second
-completion/recovery path.
+The semantic completion design is implemented, but source closeout is reopened at its
+SQLite composition boundary. Contracts, persistence, finalization, fan-in, approval
+resume, replay, Web projection, participant authority/profile, and typed provider
+preflight already exist in the active WIP. The current correction must preserve those
+authorities and replace ambient transaction detection with explicit ownership. It must
+not add a second completion/recovery path.
 
 | Phase | Scope | Entry gate | Exit evidence | Code-change rule |
 | --- | --- | --- | --- | --- |
-| S0: source closeout [complete] | Fix the daemon test fixture and add late-provider, frozen-binding, and same-Run snapshot regressions; keep provider ownership fail-closed | current source diff and focused Contracts/Core green | focused Daemon provider-preflight cases green; no product path reaches the raw constructor error | test and narrowly scoped adapter changes only; no fallback or generic Run hydration |
-| S1: deterministic matrix [complete] | Run Contracts/Core/Daemon/API/Web focused and full suites, migrations, typecheck, build, lint, i18n, docs, security, public-safety, and diff checks | S0 | Contracts 41/41, Core 427/427, Daemon 1041/1041, API 49/49, Web 47/47, builds and static gates green | no packaged QA on a red source matrix |
-| S2: fresh package [complete] | Build, sign, hash, and preflight one new macOS artifact in isolated home/workspace/ports; retain old artifacts as reproduction evidence | S1 | ZIP/DMG hashes frozen; bundle signature, resource root, isolated daemon health, and provider readiness green | no production daemon/app termination; no artifact mutation after hash |
-| S3: packaged behavior [complete] | Run missing-default blocker, configured Engineer + QA, naked-ready, restart/approval resume, and SSE reconnect | S2 | typed blockers; same Run/new Attempt recovery; both required participants verified before fan-in; one final report/Turn settlement | never parse ready prose or resubmit Turns |
-| S4: SQLite lineage [complete] | Audit Thread/Turn/Item, decision, manifest, authority, graph, Run/Attempt, approval, actions, outcomes, Completion Gate, TerminalReport, and transition rows | S3 | one source lineage; Attempt 1 lost, Attempt 2 succeeded; no cancellation impersonation; integrity green | data mismatch reopens the earliest truth-layer owner |
-| S5: delivery [in progress] | Run diff review, broad gates, PR/CI, merge, verify actual remote `main` merge commit, then clean only exact QA resources | S4 | merged reviewed change and remote-main parity | no merge while packaged or lineage evidence is incomplete |
+| S0: contract freeze [complete] | Lock completion authorities plus explicit SQLite transaction ownership and record the current Node 22 checkpoint | current WIP and failing Daemon aggregate | this document, TerminalReport protocol, and control-plane design agree on one owner per transaction | design only; no status may claim packaged completion |
+| S1: transaction composition [complete] | Keep the explicit standalone/within-transaction control-plane API, TerminalReport/approval/workflow joined wiring, removal of runtime `isTransaction` ownership decisions, and owner rollback helper; prove aggregate rollback plus same-connection reuse | S0 | focused transaction matrix passes 150/150 under official Node 22; a later transaction starts successfully after every injected fault | no savepoint workaround, ambient transaction probing, or compatibility alias |
+| S2: deterministic matrix [complete] | Run focused Daemon publication/workflow cases, Node 22 full Core and Daemon suites, then API/Web/contracts and repository static gates | S1 | Core 429/429, Daemon 1052/1052 twice, Contracts 41/41, API 49/49, Web 47/47, Channel E2E 116/116, typecheck/build/static/CI package matrix green | no packaged QA on a red source matrix |
+| S3: fresh package [complete] | Build, sign, hash, and preflight one new macOS artifact in isolated home/workspace/ports; retain old artifacts only as reproduction evidence | S2 | ZIP/DMG identity, bundle signature, resource root, isolated daemon health, workspace default provider, and provider readiness are frozen and green | no production daemon/app termination; no reuse of pre-fix hashes |
+| S3.5: contract hardening [verification in progress] | Close the implemented Attempt fencing, typed outcome binding/codes, required-participant coverage, and single terminal projection through the full source matrix and diff review | S3 | old callbacks cannot mutate current Attempt; empty/unknown outcomes fail closed; missing required coverage persists; no second terminal publication; full Daemon aggregate and repository gates are green | fix only failures owned by these contracts; no new authority or second recovery path |
+| S4: packaged behavior [pending] | Run missing-default blocker, configured Engineer + QA, naked-ready, restart/approval resume, and SSE reconnect | S3.5 | typed blockers; same Run/new Attempt recovery; all required participants verified before fan-in; one final report/Turn settlement | never parse ready prose or resubmit Turns |
+| S5: SQLite lineage [pending] | Audit Thread/Turn/Item, decision, manifest, authority, graph, Run/Attempt, approval, actions, outcomes, Completion Gate, TerminalReport, event, and transition rows | S4 | one source lineage; no half-publication, leaked transaction, duplicate event, or cancellation impersonation; integrity green | data mismatch reopens the earliest truth-layer owner |
+| S6: delivery [pending] | Run final diff review, PR/CI, merge, verify actual remote `main` merge commit, then clean only exact QA resources | S5 | merged reviewed change and remote-main parity | no merge while packaged or lineage evidence is incomplete |
+
+Current S3.5 checkpoint: Daemon build, Contracts 41/41, Core 432/432, focused
+Daemon 181/181, Web 47/47, and the corrected tool-surface cases 5/5 are green. The first
+full Daemon aggregate after the hardening passed 1048/1052; all four failures were test
+expectations that counted the new `work_unit_claimed` audit event as the target event.
+Those assertions now filter by event type and pass focused. The official full Daemon
+aggregate has not yet been rerun, so S3.5 remains open and none of these counts are
+packaged release evidence.
+
+### Active release checkpoint and phase authority
+
+The table above is the only active release phase namespace. The current checkpoint is
+`S3` complete, `S3.5` implemented but still under aggregate verification, `S4` blocked
+on that verification, and `S5/S6` pending. The older `A*`, `R*`, `T8*`,
+`T9*`, `H*`, and Delivery S0-S5 labels below are historical implementation/audit
+references. They explain why the source reached this checkpoint, but they cannot close a
+current release gate and their historical `complete/green/verified` wording must not be
+read as current packaged evidence. Only one post-S3.5 artifact identity may close S4/S5.
+
+The active release DAG is intentionally explicit:
+
+```text
+S3 pre-hardening artifact
+  -> S3.5 implemented contract hardening + full source closeout
+  -> rebuild post-hardening artifact
+  -> S4.1 naked-ready + missing-provider packaged blockers
+  -> S4.2 Engineer + QA required fan-in
+  -> S4.3 daemon restart matrix (checkpoint and no-checkpoint boundaries)
+  -> S4.4 SSE/RPC reconnect recovery and single publication
+  -> S5.1 packaged SQLite upgrade/reopen fixture
+  -> S5.2 canonical Thread/Turn/Item/Run/Attempt/evidence lineage audit
+  -> S6 review -> PR/CI -> merge -> actual remote-main commit verification -> exact cleanup
+```
+
+S4.1-S4.4 may reuse the same isolated packaged root and artifact hashes, but each case
+must record its own durable ids and pass/fail evidence. A reconnect or GUI refresh is an
+observer action only and cannot be used to advance the DAG. A red S4 case reopens the
+earliest owning runtime/completion slice; it does not weaken S5 or convert historical
+evidence into a pass.
 
 ### Authority hardening implementation sequence
 
@@ -157,22 +212,328 @@ fail-closed eligibility check.
 The dependency graph is:
 
 ```text
-A1-A4 source contracts/authorities/preflight
-  -> S0 fixture + regression closeout
-      -> S1 broad deterministic green
-          -> S2 fresh packaged macOS artifact
-              -> S3 GUI recovery/continuity acceptance
-                  -> S4 SQLite lineage audit
-                      -> S5 review/PR/merge/cleanup
+A1-A4 historical source contracts/authorities/preflight
+  -> S0 contract freeze
+      -> S1 explicit transaction composition
+          -> S2 broad deterministic green
+              -> S3 fresh packaged macOS artifact
+                  -> S3.5 implemented hardening + aggregate source verification
+                      -> S4 GUI recovery/continuity acceptance
+                          -> S5 SQLite lineage audit
+                              -> S6 review/PR/merge/cleanup
 ```
 
-The phases are deliberately sequential. Source closeout proves that typed provider
-ownership is real before packaging. S1 proves the broad deterministic matrix is green.
-S2 freezes one artifact identity. S3 proves that ordinary `ready` text cannot impersonate
+The phases are deliberately sequential. S1 proves the corrected transaction composition
+before any broad or packaged claim. S2 proves the deterministic matrix is green. S3
+freezes one artifact identity. S4 proves that ordinary `ready` text cannot impersonate
 work, process loss cannot shrink the participant set or cancel logical work, and observer
-loss cannot restart or complete work. S4 validates that the visible behavior and SQLite
-authority tell the same story. Test commands may run in parallel, but edits to the
+loss cannot restart or complete work. S3.5 first promotes the fencing, typed outcome,
+coverage, and single-publication amendments into source, so S4 is run only against the
+post-hardening artifact. S5 validates that the visible behavior and SQLite authority tell
+the same story. Test commands may run in parallel, but edits to the
 completion/recovery spine remain coordinated in this one isolated worktree.
+
+### Active implementation tasks
+
+These are the only tasks that should be scheduled next. They are deliberately smaller
+than the historical T8/T9 slices so every task has one observable exit condition.
+
+| Task | Scope and required behavior | Primary modules | Exit evidence |
+| --- | --- | --- | --- |
+| S3.5 | Close the implemented `activeAttemptId + runtimeInstanceId + fencingToken` CAS fence, closed `DelegatedBlockCodeV1`/workflow-step binding, required-participant coverage projection, and single-terminal-publication rule. Re-run the full Daemon aggregate after the corrected event-type assertions, then typecheck/build/static gates and review the complete diff. | Contracts, Core Runtime/SQLite, daemon finalizer/gate, TerminalReport/Web | focused source suites remain green; full Daemon and repository gates pass with no stale-write, invalid-outcome, missing-coverage, or duplicate-publication regression |
+| S4.1 | Rebuild the post-S3.5 packaged app and run naked `ready` plus missing-provider cases. A delegated Run with only assistant text remains non-terminal, then becomes one typed blocker; missing provider creates no workflow, Run, approval, or side effect. | packaging harness, daemon delegated finalizer, Web report projection | post-hardening artifact hash, SQLite blocker lineage, zero side-effect/workflow counts, one source-Turn settlement |
+| S4.2 | Execute Engineer + QA with both required manifest members. Fan-in waits for every required outcome/operation/dependency; a missing/blocked/failed participant cannot pass by callback count. TerminalReport includes required coverage and actual contributions separately. | workflow Completion Gate, TerminalReport evidence/renderer, daemon integration | one verified gate only after both outcomes, report has two coverage rows, no second terminal summary |
+| S4.3 | Exercise restart at no checkpoint, approval checkpoint, before `tool_start`, between `tool_start`/`tool_end`, and after `tool_end`. Preserve same Run/manifest/evidence where safe, fence a new Attempt, reject old callbacks, and fail closed for unknown effects or no-checkpoint work. | Runtime Control Plane, approval-resume coordinator, Core Attempt store | old Attempt `lost`, new `activeAttemptId`/fence tuple, no duplicate side effect, typed blocker for unsafe windows |
+| S4.4 | Drop/reconnect SSE and local RPC across terminalization. Resume from `lastAppliedSeq`, refresh canonical state before cursor advance, and prove reconnect never reposts a Turn, starts a Run, or publishes another report. | control-plane replay/SSE/RPC, Web projection | one final Item/report/Turn settlement and unchanged Run/step counts after reconnect |
+| S5.1 | Open a packaged upgrade fixture from the prior schema, apply migrations 119-121, reopen the same SQLite connection after injected faults, and run `foreign_key_check` plus `integrity_check`. | Core migrations, SQLite stores, packaged data root | migration/reopen/rollback matrix green; no leaked transaction or half-publication |
+| S5.2 | Audit one canonical lineage from Thread -> Turn -> Item -> decision/manifest/graph -> Run/Attempt -> actions/outcomes -> Completion Gate -> TerminalReport -> event/transition rows. | Core SQLite inspection and daemon audit tooling | ids/fingerprints/statuses agree; no cancellation impersonation, duplicate event, or orphan publication |
+| S6 | Review only the post-S5.2 diff, create PR, wait for CI, merge, verify the actual remote `main` merge commit, then remove only the exact new QA root/processes. | repository delivery workflow | remote-main SHA matches merge commit; cleanup list is exact and reversible |
+
+Attempt fencing is a prerequisite for S4.3, not a GUI-only assertion: `activeAttemptId`,
+`runtimeInstanceId`, and `fencingToken` must be part of the Runtime contract and every
+mutating write must compare-and-set that tuple. `runtime_suspend/daemon_restart` is not a
+generic stale retry. A no-checkpoint restart is explicitly bounded by work-kind policy;
+the plan does not promise automatic recovery for arbitrary in-flight side effects.
+
+S3.5 is not complete when the happy-path callback carries a fence. It closes only when
+the store ports make the ownership boundary impossible to bypass:
+
+| API class | Contract | Stale/missing fence behavior |
+| --- | --- | --- |
+| Canonical mutation | `RuntimeAttemptFenceV1` is required and all three fence fields participate in one CAS | typed `stale_attempt`; no evidence, approval, lease, terminal, or invalidation write |
+| Diagnostic callback | separate `StaleAttemptDiagnosticInput`; no canonical mutation fields | append one bounded diagnostic event at most; never upgrades to evidence |
+| Read/projection | may use Work Unit/Attempt ids | read-only; cannot renew or release resources |
+| Lease/semaphore renew/release | compare the owning Attempt fence in the resource update | idempotent for the same tuple; cannot release a replacement Attempt's resource |
+| Terminal audit | one-use owner capability returned by the preceding terminal transition, or one owner transaction | a caller-supplied boolean or attempt-id-only callback is rejected |
+
+The source checklist must therefore include every adapter that currently passes only an
+`attemptId`, every optional `fencingToken`/`runtimeInstanceId` in Core and Daemon ports,
+and every generic `release*ForOwner` call reachable from Run, Work Unit, workflow-step,
+approval-resume, media, channel, or startup-recovery paths. Generic owner release may
+remain only for explicitly owner-level `workflow_step` and `system` jobs; the Core type
+and SQLite runtime boundary reject it for `run` or `work_unit_attempt`. Migration 121 is
+a pre-release clean break: it deletes unfenced transient runtime rows instead of
+backfilling or compatibly releasing them, marks their active Work Unit stale, preserves
+Thread/Turn/Item content, and rejects any remaining active unfenced runtime row.
+
+The restart classifier is also part of S3.5 source closure. Startup must scan
+`resume_pending` before Attempt creation and classify the durable checkpoint/tool window:
+
+```text
+safe checkpoint + no tool_start -> same Run, one replacement Attempt
+no checkpoint                  -> same Run becomes typed blocked, no retry
+tool_start without tool_end    -> effect-unknown blocked, no retry
+tool_end present               -> reconstruct evidence, finalize once
+terminal publication present   -> reconcile ids only
+```
+
+SSE/RPC reconnect is tested as an observer-only operation. It may replay from a sequence
+cursor or return a fresh snapshot, but it cannot create a Turn/Run/Attempt, repost input,
+or publish a result. The Web surface renders an acknowledgement as `accepted/pending`;
+only the committed `finalResultItemId` and source-Turn terminal transition unlock the
+final-result presentation.
+
+S3.5 source coverage map:
+
+```text
+runtime callback
+  ├── current (attemptId, runtimeInstanceId, fencingToken) -> CAS may mutate canonical rows
+  └── stale/unknown tuple -> diagnostic-only; evidence/approval/lease/terminal writes rejected
+
+delegated outcome validator
+  ├── completed + unique refs + requirement coverage -> persist outcome
+  ├── blocked + closed code + host binding -> persist negative outcome
+  └── empty refs / unknown code / mismatched binding -> reject before persistence
+
+required manifest -> Completion Gate -> TerminalReport
+  ├── every required participant -> coverage row (satisfied or negative)
+  ├── actual execution -> compact contribution summary
+  └── committed final_result -> workflow card stays folded; duplicate terminal publication rejected
+```
+
+### Worktree parallelization strategy
+
+The source hardening is split into independent lanes only where the module ownership is
+disjoint. The packaged and delivery lanes remain strictly sequential because they consume
+one exact artifact and one canonical SQLite lineage.
+
+| Lane/step | Module boundary | Depends on |
+| --- | --- | --- |
+| A1: Outcome contract | `packages/contracts` and delegated-finalizer fixtures | S0 contract freeze |
+| A2: Attempt fence | `packages/core` Runtime/SQLite and daemon runtime callbacks | S0 contract freeze |
+| A3: Report projection | TerminalReport Core/Web projection and duplicate-publication tests | S0 contract freeze |
+| B: Source integration | Completion Gate, workflow reconciliation, migration registration, cross-package typechecks | A1 + A2 + A3 |
+| C: Deterministic source matrix | Contracts/Core/Daemon/API/Web tests and static gates | B |
+| D: Packaged macOS acceptance | packaged app, isolated daemon, GUI/E2E harness, SQLite audit | C |
+| E: Delivery | review, PR/CI, merge, remote-main verification, exact cleanup | D |
+
+Execution order:
+
+```text
+           ┌── A1 Outcome contract ──┐
+S0 ────────┼── A2 Attempt fence ──────┼──> B Source integration -> C Matrix
+           └── A3 Report projection ──┘                         -> D macOS package
+                                                               -> E delivery
+```
+
+A1, A2, and A3 may be developed in separate worktrees because they touch different
+authorities. B must be merged into one worktree before the source matrix; it is the first
+point where the finalizer, store ports, migrations, and Web projection can expose contract
+drift. Do not run D from multiple artifacts, and do not parallelize E with D: a packaged
+failure must reopen the owning source lane rather than be hidden by a later merge.
+
+Conflict flags:
+
+- A2 and B both touch Core SQLite store interfaces and migration registration; keep their
+  integration sequential or merge A2 before B.
+- A1 and B both touch daemon finalizer types; resolve the contract first, then wire it once.
+- A3 and B both touch TerminalReport publication identity; the publication key must be
+  decided once and reused by Core and Web, never independently rebased.
+
+### What already exists and is reused
+
+| Existing authority | Reused for this plan | Not rebuilt |
+| --- | --- | --- |
+| `LingThread -> LingTurn -> ConversationItem` | durable source timeline and source-Turn settlement | no second transcript/history table |
+| `ExecutionAction` derived from Run events/approvals/artifacts | operation evidence and replay validation | no parallel `execution_actions` store |
+| `RequiredParticipantManifestV1` + immutable graph | required fan-in set and branch authority | no callback-count quorum or role re-selection |
+| `WorkflowCompletionGateV1` | one success predicate for online/restart/reconnect | no TerminalReport-owned completion judge |
+| `WorkUnit` + `WorkUnitAttempt` + approval checkpoint | same-Run restart and fenced attempt replacement | no new retry queue or fake exactly-once shell executor |
+| replay watermark + SSE/RPC snapshot handoff | observer recovery after reconnect | no client-owned cursor truth |
+
+The implementation must extend these authorities in place. Introducing a second result
+store, a second participant manifest, a prose parser for completion, or an SSE-owned
+recovery queue is an architectural regression and is out of scope.
+
+### S3.5 contract supplement (implementation-level)
+
+This section turns the four locked design rules into source-level obligations. It does
+not introduce a second workflow engine, action store, or history model. The existing
+`LingThread -> LingTurn -> ConversationItem`, `ExecutionAction`, workflow graph,
+Completion Gate, and TerminalReport remain the only authorities.
+
+#### 1. Attempt fence and mutation rule
+
+The Runtime Control Plane carries one immutable fence for every process-owned Attempt:
+
+```ts
+interface RuntimeAttemptFenceV1 {
+  readonly workUnitId: string;
+  readonly attemptId: string;
+  readonly runId?: string;
+  readonly runtimeInstanceId: string;
+  readonly fencingToken: string;
+}
+```
+
+`fencingToken` is an opaque decimal string in TypeScript and a monotonically increasing
+per-Work-Unit generation in SQLite. It is minted once at Attempt claim and is never
+reused. The canonical `work_units.active_attempt_id` points to the only live Attempt; the
+Attempt row stores `runtimeInstanceId` and `fencingToken`. The claim transaction must
+atomically fence the previous live Attempt, insert the replacement, advance
+`active_attempt_id`, and append the runtime audit event. A partial unique index over
+non-terminal Attempt states is an additional storage guard, not a substitute for the
+compare-and-set.
+
+Every mutating Runtime API accepts the complete fence and checks all of the following in
+one CAS predicate:
+
+```text
+work_unit.active_attempt_id == fence.attemptId
+AND attempt.work_unit_id == fence.workUnitId
+AND (fence.runId is absent OR work_unit.linked_run_id == fence.runId)
+AND attempt.runtime_instance_id == fence.runtimeInstanceId
+AND attempt.fencing_token == fence.fencingToken
+AND attempt.status is non-terminal
+```
+
+This covers heartbeat, runtime event/evidence append, tool start/end, approval consume,
+lease/semaphore release, Run/Work Unit/step terminal transition, and startup repair. A
+stale or unknown fence returns a typed `stale_attempt` result and may append only a
+bounded diagnostic event. It cannot mutate canonical evidence, consume approval,
+release the current Attempt's resources, or publish an invalidation. The source change
+must add migration 121 (clean-break v2) for the token/index/audit shape and update every
+mapper, store port, and callback adapter in the same slice. The daemon Runtime snapshot
+schema moves from 22 to 23; a v22 snapshot is refetched/rebuilt rather than accepted with
+a fabricated token.
+
+#### 2. Closed delegated outcome contract
+
+`DelegatedOutcomeV1` is host-authored and persists only after validation against the
+immutable step requirement. `DelegatedBlockCodeV1` and `DelegatedTerminalCodeV1` are
+closed unions; provider-specific diagnostics live in reason/evidence fields:
+
+```text
+completed  = workflowId + workflowStepId + participantId
+             + >=1 unique evidence refs
+             + all required operations/dependencies covered
+blocked    = same binding + closed DelegatedBlockCodeV1
+             + non-empty reason + >=1 missing requirement
+             + evidenceRefs property (array may be empty before any side effect)
+failed/cancelled = same binding + closed DelegatedTerminalCodeV1 + evidenceRefs array
+workflow_started = durable handoff only; never a completed step
+```
+
+The validator rejects unknown block/terminal codes, kind-incompatible terminal codes,
+unknown fields, duplicate refs, empty
+completed evidence, missing binding, binding mismatch, and evidence kinds outside the
+step requirement before the SQLite mapper/store is called. Assistant text, delivery
+state `ready`, Run status, and callback arrival are not valid inputs to this validator.
+The finalizer is the only constructor for terminal delegated outcomes; model output can
+request an action or propose a blocker but cannot supply participant completion or
+workflow status. In particular, `approval_resume_effect_unknown` must be normalized to a
+blocked outcome even when the underlying Run has failed, while `runtime_interrupted_no_checkpoint`
+is mapped to blocked or failed only by the immutable work-kind recovery policy.
+
+#### 3. Required coverage versus actual participation
+
+Completion Gate evaluates the accepted immutable manifest, not the rows that happen to
+exist. It must emit one result for every required participant:
+
+```text
+requiredCoverage[participantId] =
+  satisfied | missing | blocked | failed | cancelled
+```
+
+The TerminalReport projection keeps this required-coverage set separate from the
+optional `participants` contribution summary. `participants` answers “who actually
+contributed evidence”; `requiredCoverage` answers “which accepted obligations were
+covered and which were not.” A required participant with no step/Run is therefore a
+visible `missing` blocker, while an optional never-started Agent is not fabricated as a
+failure. The UI renders missing/blocked/failed required rows in evidence/risk sections
+and does not count them as successful contributions.
+
+#### 4. One terminal projection and recovery boundaries
+
+`TerminalReport + final_result ConversationItem + source LingTurn settlement` is one
+idempotent publication identity. Its unique key is the owning workspace/source/Turn plus
+`publicationKind=final_result`, not a mutable Completion Gate or report revision. The
+publication store revalidates the fresh Completion Gate read-set and returns the already
+committed lineage when that source key exists. The Web projector reconciles by the
+durable `finalResultItemId`; `terminalReportRevisionKey` may refresh that same Item but is
+never a second identity. It folds the workflow card after `final_result` exists. Replays,
+duplicate callbacks, SSE reconnects, and browser refreshes only re-project that committed
+identity.
+
+Restart is classified from SQLite, never from process-local memory:
+
+```text
+safe checkpoint, no tool_start       -> fence old Attempt, create one new Attempt, continue same Run
+no checkpoint                        -> runtime_interrupted_no_checkpoint, no automatic side-effect retry
+tool_start without tool_end          -> approval_resume_effect_unknown, no retry, typed blocker
+tool_end present, terminal rows open -> reconstruct evidence and finalize once
+Run/outcome already terminal          -> semantic reconciliation/publication only
+```
+
+SSE/RPC reconnect performs canonical snapshot/replay and advances the cursor only after
+the refresh succeeds. It never creates a Turn, Run, Attempt, approval, outcome, or
+publication. These rules are intentionally clean-break v2; no v1 dual-read, alias, or
+silent default is added.
+
+#### 5. Terminal audit sequencing and ownership
+
+Terminalization has two different writes that must not be conflated:
+
+```text
+owner holds current fence
+  -> transition Work Unit / Attempt to terminal
+  -> append exactly one terminal runtime audit with the same fence
+  -> release only that Attempt's resources
+  -> let the Completion/Report owner reconcile canonical outcome
+```
+
+The terminal audit is an audit fact, not a new lease on a terminal Attempt. The
+`allowTerminalAttemptAudit` capability is therefore valid only when all of these are
+true:
+
+1. the caller already proved the complete current `RuntimeAttemptFenceV1`;
+2. the caller performed the immediately preceding terminal transition in the same
+   owner-controlled transaction or in an idempotent handoff whose transition result is
+   retained;
+3. the audit event's `attemptId`, `runtimeInstanceId`, and `fencingToken` equal the
+   transition owner tuple; and
+4. the event type is one of the closed terminal-audit types for that transition.
+
+An old callback, a callback that only knows `attemptId`, or a caller that observes a
+terminal row without owning its transition cannot use this capability. Such a callback
+is diagnostic-only. A terminal audit may not consume approval, append action/evidence,
+change `activeAttemptId`, alter Completion Gate/TerminalReport state, or publish a client
+invalidation. If the audit append fails, the owning transaction rolls back the terminal
+transition; no path is allowed to leave a terminal row without its required audit and
+then treat the work as successfully finalized. The implementation must make this
+ownership explicit in the store API instead of relying on a default boolean at call
+sites.
+
+#### S3.5 focused exit matrix
+
+| Contract | Required source regression | Must remain false |
+| --- | --- | --- |
+| Attempt fence | old Attempt callback after replacement is diagnostic-only | old callback changes evidence, approval, lease, Run, step, or report |
+| Terminal audit | current owner can atomically record the final audit after terminal transition | normal terminal cancellation/failure/media/channel paths fail with a false stale-fence error, or an unowned callback bypasses the fence |
+| Outcome validator | invalid binding/code/empty completed refs rejected before persistence | `ready` text or Run success creates `completed` |
+| Required coverage | Engineer + QA with QA absent/blocked keeps a negative QA row | callback count or Engineer-only quorum verifies fan-in |
+| Terminal projection | duplicate callback/reconnect returns same report/item/turn ids | second final-result Item, terminal summary, or Turn settlement |
+| Restart classifier | all four checkpoint/tool windows converge from SQLite | duplicate side effect, new Run, participant reselection, or infrastructure-as-user-cancel |
 
 ### Phase failure ownership
 
@@ -184,6 +545,18 @@ P2 red -> Runtime suspension / approval resume / Completion Gate
 P3 red -> Control-plane replay / Web projection
 P4 red -> earliest mismatched canonical owner from the truth ladder
 P5 red -> review, CI, or delivery only; do not reinterpret runtime evidence
+```
+
+For the active tail, ownership is narrower:
+
+```text
+S4.1 red -> delegated finalizer / typed outcome validator / provider preflight
+S4.2 red -> required manifest, Completion Gate, or TerminalReport coverage projection
+S4.3 red -> Runtime Attempt fence, checkpoint classifier, or approval-resume transaction
+S4.4 red -> replay floor/cursor, SSE/RPC handoff, or Web refresh generation fence
+S5.1 red -> migration/transaction owner/reopen boundary
+S5.2 red -> earliest mismatched canonical row in the truth ladder
+S6 red -> repository delivery only; never reinterpret a packaged runtime failure
 ```
 
 No phase is allowed to "fix" a lower layer by weakening the next layer. In particular,
@@ -200,6 +573,23 @@ The transferable pattern is the authority split, not either product's private ru
 | Codex | A durable Thread contains Turns and typed Items; assistant messages, tool calls/results, approvals, plans, and errors are separate lifecycle items. A client reconnects to state instead of making prose authoritative. | Keep `LingThread -> LingTurn -> ConversationItem`; normalize tools into `ExecutionAction`; treat SSE/RPC as replayable projection transports. |
 | Claude Code | Ordinary final text and tool use/results are different protocol events; permission mode gates side effects; a Session can continue/resume without treating the last text as proof that a tool ran. | Keep runner text as narration, require typed tool/output evidence, route approvals through Ling policy, and reconstruct from durable rows after restart. |
 | Ling multi-Agent | Neither single-agent reference provides Ling's workflow-wide participant/fan-in truth. | Add immutable required-participant manifest, workflow graph, delegated outcomes, and one evidence-backed Completion Gate. |
+
+## Document authority and release-stage precedence
+
+The documents answer different questions; none may silently override another at runtime:
+
+| Concern | Canonical document/authority | What it owns |
+| --- | --- | --- |
+| Thread/Turn/Item topology, context projection, delegated outcome, Completion Gate, and reconnect invariants | [Channel Conversation Continuity v2](channel-conversation-continuity-v2.md) | semantic truth and cross-domain invariants |
+| Work Unit/Attempt lifecycle, runtime fence, leases, checkpoint suspension, and control-plane replay | [Runtime Control Plane](runtime-control-plane-detailed-design.md) plus Runtime Supervisor | process recovery and observer delivery |
+| Evidence collection, required coverage projection, report schema, and final-result rendering | [TerminalReport Protocol](ling-agent-terminal-report-protocol.md) | report data and user-visible terminal projection |
+| Workflow packet/side-effect policy and safe parallelism | [Multi-Agent App Detailed Design](multi-agent-app-detailed-design.md) | workflow shaping and operation policy |
+| Execution order, test commands, packaged evidence, and delivery gates | this implementation plan | current release state only |
+
+When two documents disagree, the more specific authority above wins for its concern;
+this plan records the conflict and updates the owning contract rather than adding a
+caller-side exception. Phase labels outside the active S3.5/S4/S5/S6 DAG are historical audit
+references only.
 
 Therefore Ling should not parse “I will execute”, “done”, or localized equivalents. A
 delegated runner either has host-validated evidence, returns a schema-valid blocker, or
@@ -237,6 +627,7 @@ participant-profile adapter bug and the broad suite exposed its provenance follo
 | Orchestrator accepts text/Run success | terminal callbacks and post-approval paths had separate completion shortcuts | make every callback a wake-up only; reload the immutable requirement and canonical evidence through one delegated finalizer |
 | Multi-Agent fan-in succeeds too early | the materialized step set could be mistaken for the accepted required branch set | preserve one immutable required-participant manifest and graph; run one Completion Gate over all required participants, operations, dependencies, and fan-in policy |
 | Restart/reconnect packaged behavior is unproven | daemon lifetime was collapsed into business cancellation, and transport tests alone cannot prove a packaged Desktop lifecycle | split Run from Attempt, resume only from durable checkpoints, make all observer events post-commit invalidations, then verify the real packaged daemon/PID/SSE/SQLite lineage |
+| Atomic completion fails under Node 22 | aggregate stores called a standalone event writer that could open a nested transaction, while rollback branches trusted `DatabaseSync.isTransaction`, which can report false after `BEGIN IMMEDIATE` | make transaction ownership explicit in the API and composition root; joined writers never begin/commit/rollback, owners always best-effort rollback and preserve the original failure |
 
 Codex and Claude Code supply the first two structural lessons: text, tool request, tool
 result, and permission are different protocol facts. Ling must add the third and fourth
@@ -258,6 +649,7 @@ one flag or one prompt. The design locks these responsibilities:
 | Daemon process -> logical Run | typed stop intent, active attempt, approval checkpoint, current Run/work-unit state | explicit cancellation, typed failure, or recoverable attempt suspension | mapping daemon shutdown/timeout AbortError to `local-user` cancellation |
 | Delegated steps -> workflow | accepted participant manifest, immutable graph, all required step outcomes/evidence, termination policy | one `WorkflowCompletionEvaluationV1` committed with its workflow effect | succeeding from “all rows currently present are successful” |
 | Workflow -> user result | committed report plus a fresh Completion Evaluation read-set | final Item, report marker, source Turn settlement/event, and invalidation in one transaction | sequential publication writes or trusting a cached verified gate |
+| Aggregate transaction -> nested store write | explicit caller-owned transaction capability | joined write with no `BEGIN`, `COMMIT`, or `ROLLBACK`; owner commits or rolls back the aggregate | probing `DatabaseSync.isTransaction`, silently joining through a standalone API, or allowing a nested writer to close the caller's transaction |
 | SQLite -> connected client | durable sequence replay or buffered snapshot handoff | canonical Channel/runtime projection and advanced last-applied cursor | using last-received cursor, fixed client pagination, or reconnecting by resubmitting work |
 
 The host, not the model, is authoritative at every boundary. A model can request tools,
@@ -289,6 +681,67 @@ Any other report/evaluation pair is a typed publication conflict and writes noth
 
 This is the complete long-term structure. No additional action table, completion table,
 workflow engine, or message-text classifier is required.
+
+### SQLite transaction ownership amendment
+
+Completion correctness depends on atomic publication and recovery writes. Transaction
+membership is therefore a compile-time composition decision, not a runtime guess. The
+same store may expose two deliberately different entry points:
+
+```ts
+interface StandaloneControlPlaneEventWriter {
+  appendControlPlaneEvent(input: AppendControlPlaneEventInput, now: string): ControlPlaneEvent;
+}
+
+interface TransactionalControlPlaneEventWriter {
+  appendControlPlaneEventWithinTransaction(
+    input: AppendControlPlaneEventInput,
+    now: string,
+  ): ControlPlaneEvent;
+}
+```
+
+The standalone method always owns one `BEGIN IMMEDIATE -> COMMIT/ROLLBACK` lifecycle.
+The transactional method assumes the caller already owns the transaction and performs
+only the row writes. It never opens, commits, or rolls back a transaction. Aggregate
+ports use the transactional name as part of their interface, so a future composition
+cannot accidentally bind the standalone writer without a visible type/diff change.
+
+```text
+TerminalReport / approval-resume / workflow aggregate owner
+  -> BEGIN IMMEDIATE
+  -> canonical state writes
+  -> appendControlPlaneEventWithinTransaction
+       event row + replay watermark only
+  -> COMMIT
+  -> publish returned event to in-memory SSE/RPC hub
+
+any write throws
+  -> owner attempts ROLLBACK unconditionally
+       rollback error is suppressed
+       original domain/SQLite error is rethrown
+  -> no in-memory publish
+```
+
+`DatabaseSync.isTransaction` is not an ownership authority. Runtime code in this
+completion/recovery spine must not use it to decide whether to begin, join, or roll back.
+An owner knows that it issued `BEGIN IMMEDIATE`; its catch path therefore attempts
+`ROLLBACK` regardless of the property value. A joined writer knows from its port which
+transaction it belongs to. The old precondition checks that inspect `isTransaction` are
+removed rather than retained as unreliable safety checks; an accidental nested call
+fails at `BEGIN` and its caller wiring is fixed.
+
+This amendment applies to:
+
+- standalone and aggregate control-plane event append;
+- TerminalReport and legacy workflow publication;
+- approval-resume claim, suspension, terminal, and quarantine commits;
+- workflow-step finalization and workflow Completion Evaluation commits.
+
+Migration helpers are audited separately in the same source-closeout slice because they
+also own transactions, but they do not gain a dual standalone/joined API. This is a
+direct pre-release correction: no alias, ambient auto-join, savepoint shim, or dual path
+is added.
 
 ### T7 review hardening amendment
 
@@ -508,6 +961,7 @@ unchanged. It never uses a malformed resume basis as authority to fail unrelated
 | Workflow reconciliation | new focused `workflow-reconciliation.ts` | make online callback, approval, startup, duplicate callback, and pre-publication use the same canonical-state kernel |
 | Workflow completion | focused `workflow-completion-gate.ts`, called only through workflow reconciliation for manifest-backed settlement | pure participant/graph equality, operation/dependency/fan-in/termination evaluation plus typed canonical read-set |
 | Publication | existing TerminalReport coordinator/publisher plus a focused Core publication store | consume a fresh completion basis; derive the report/Turn outcome mapping; atomically create/reuse the final Item, mark the report published, settle the source Turn, append its transition event, and append one durable invalidation |
+| SQLite transaction composition | `sqlite-run-store.ts`, `control-plane-store.ts`, `terminal-report-publication-store.ts`, `approval-resume-store.ts`, and `channel-workflow-store.ts` | expose explicit standalone/joined event capabilities, bind aggregate ports to joined writes, and make each transaction owner roll back without ambient probing |
 | Low-level recovery | Core runtime recovery coordinator | repair leases, lost Runs, and legal process-state rows; never decide manifest-backed semantic success |
 | Live projection recovery | control-plane store/event hub, API transports, and Web invalidation hook | own a durable replay floor and scoped replay window; reconnect or snapshot canonical projections without restarting accepted work |
 
@@ -960,9 +1414,10 @@ should preserve and finish them rather than restart the feature:
 
 | Capability | Current worktree | Remaining work |
 | --- | --- | --- |
+| SQLite transaction composition | explicit standalone/joined append, TerminalReport, approval-resume, workflow/publication, and migration owner rollback are present; the official Node 22 transaction fault matrix passes 150/150 with same-connection recovery after every injected fault | retain the boundary through fresh packaged restart/reconnect acceptance |
 | Thread -> Turn -> Item continuity and shared context projection | implemented in the active diff with targeted tests | retain and regression-test |
 | Typed multi-operation execution plan and operation evidence | implemented and consumed by the shared delegated-outcome/gate path | retain and run the full regression matrix |
-| Source-turn closure, TerminalReport publication, invalidation, and durable dispatch | focused atomic barrier is implemented: final Item, report marker, source Turn settlement/audit event, and durable invalidation commit in one transaction | retain deterministic and packaged recovery evidence |
+| Source-turn closure, TerminalReport publication, invalidation, and durable dispatch | semantic atomic barrier exists, its port binds only the explicit joined append, and TerminalReport plus legacy publication fault/reuse cases are green | regenerate the remaining deterministic and packaged recovery evidence |
 | Explicit mention routing | canonical-id de-duplication, complete-inventory plain-text fallback, known-unavailable identity persistence, explicit-id-first executable selection, same-role preservation, and named-tool fail-closed behavior are implemented | retain the focused/full Daemon evidence and prove the corrected identity in a newly built package |
 | Participant requirement | manifest, fingerprint, decision/workflow persistence, strict migration 114, identity equality, one shared operation-owner/required-tool derivation path, accepted-proposal reuse, and idempotent partial-lineage blocking are implemented | retain identity and blocker behavior through the final deterministic matrix and packaged acceptance |
 | Participant execution profile | exact base/append prompts, approval profile, operation-derived tools, and typed participant authority now reach the Run; focused profile 3/3, atomic blocker 1/1, workflow operation/evidence 51/51 pass | retain the source correction in the broad matrix and rebuild before rerunning naked-ready |
@@ -970,7 +1425,7 @@ should preserve and finish them rather than restart the feature:
 | Operation evidence | daemon-owned `exact_command | executable` policy is materialized separately from the model proposal and verified through structured `ExecutionAction`; labels are display-only and unsafe wrappers/chains fail closed | prove the exact packaged file + Node lineage |
 | Migrations 113-118 | fresh/upgrade, recorded-version repair/sealing, conflict rollback, reopen/rerun, foreign-key, integrity, empty replay-floor, and approval-resume-basis fixtures are focused green | retain in the full Core regression matrix |
 | Multi-Agent fan-in | unified five-state Completion Evaluation/read-set CAS, Engineer+QA, missing evidence, sealed synthesis packet, approval, duplicate callback, startup, late callback, and authority-class mutation tests are deterministic-suite green | exercise the real packaged Engineer+QA fan-in scenario |
-| TerminalReport and source Turn | focused atomic publication store is implemented; source status is Core-derived, partial lineage conflicts fail closed, blocked settlement stays resumable, and legacy reporting-disabled workflow publication uses an equivalent barrier | retain the focused-green T4 boundary and run it again in the full suite/package matrix |
+| TerminalReport and source Turn | source status is Core-derived, partial lineage conflicts fail closed, blocked settlement stays resumable, both TerminalReport plus legacy publication use joined event append with owner rollback, and per-boundary fault/reuse assertions pass | run the remaining full source and fresh packaged matrices |
 | Replay state and bounded window | migration 117, append watermark, durable floor/latest state, typed replay disposition, bounded `limit + 1` query, legal filtered gaps, and empty-table floor behavior are implemented; Core typecheck and 4/4 focused replay tests pass | retain in full Core/daemon recovery suites and packaged reconnect acceptance |
 | SSE/RPC recovery | REST/SSE/RPC share the Core evaluator and coalesce/sort helper; provisional subscribers cannot flush early; RPC replies precede notifications; Web tracks received/applied cursors and uses subscribe-before-refresh snapshot handoff | retain recovery regressions and packaged reconnect acceptance |
 | Turn transition observability | Core publication writes durable `turn` state transitions and Contracts/API accept the same entity type | retain real HTTP/SQLite lineage verification in the aggregate/package matrix |
@@ -979,7 +1434,7 @@ should preserve and finish them rather than restart the feature:
 | Atomic resume suspension and terminal settlement | discriminated initial-wait/resume-pre-dispatch suspension, terminal/quarantine settlement, and direct-writer removal are implemented; 43/43 focused Core cases, Core 423/423, and Daemon 1026/1026 pass | retain the atomic boundary through packaged lifecycle acceptance |
 | Runner capability and timeout semantics | typed capability resolution, Pi `nativeResume=false`, bounded bash continuation, and real hard-timeout failure reached focused-green checkpoints | retain and include in the aggregate deterministic rerun |
 | Resume live projection | claim/suspend/finalize/block invalidations are transactionally returned; targeted Web reconnect replay and quarantine refresh pass; the test synchronization fix passes 5/5 focused and the aggregate Channel suite passes 116/116 | packaged reconnect proves the same projection; retain it in delivery evidence |
-| Packaged macOS recovery | final source, identity/profile/authority/provider preflight, fresh artifact, naked-ready, restart/fan-in, reconnect, and SQLite lineage are green | retain the exact artifact hashes and lineage evidence through delivery |
+| Packaged macOS recovery | prior artifact proved identity/profile/authority/provider preflight, naked-ready, restart/fan-in, reconnect, and SQLite lineage | stale after source changes; build one new artifact and repeat all required scenarios |
 
 The packaged recovery row has a concrete reproduced result. The isolated provider is
 ready; ordinary conversation, long-context recall, and the file + Node one-step workflow
@@ -1028,7 +1483,43 @@ the clean full Daemon rerun and is not classified as a product regression.
 
 ### Exact verification checkpoint
 
-The current source checkpoint is:
+The current correction checkpoint is:
+
+- official Node 22 control-plane storage passes 6/6, including standalone rollback,
+  post-fault reuse, forbidden ambient auto-join, and caller-owned rollback;
+- the original five-file Daemon reproduction passes 290/290 with zero failures and zero
+  cancellations after explicit transaction ownership and owner rollback are applied;
+- the focused transaction-owner/fault-recovery matrix passes 150/150, including
+  TerminalReport, legacy publication, approval-resume, delegated-step, and workflow
+  Completion Evaluation boundaries with a same-connection recovery write after faults;
+- the full official Node 22 Core suite passes 429/429 and the Daemon suite passes
+  1052/1052 twice with zero failures and zero cancellations;
+- Contracts 41/41, API Client 49/49, Web 47/47, Channel E2E 116/116, repository
+  typecheck/build/lint/i18n/docs/licenses/public/dependency-security checks, and the exact
+  CI package/Web test aggregation are green;
+- all packaged ZIP/DMG hashes produced before this source correction are stale.
+
+The three Daemon cancellations had one root. The awaited segmentation deadline in
+`context-segmentation-policy.ts` called `unref()` on its only timer. A stalled proposal
+Promise and its abort listener do not keep Node alive, so the test process can resolve its
+event loop before the timeout aborts the proposal. The stalled-proposal test is then
+`cancelledByParent`; the next two tests in the file are only collateral cancellations.
+The local fix keeps the timer referenced while `proposeWithDeadline()` awaits the race
+and retains abort-on-timeout plus `clearTimeout()` in `finally`. The projector file now
+passes 5/5 and both full Daemon runs pass 1052/1052. This was a Continuity liveness defect
+discovered by the broad gate, not evidence that transaction contamination returned.
+
+The reproduced pre-correction Node 22 checkpoint was:
+
+- approval-policy focused tests passed 62/62;
+- approval-policy plus control-plane focused tests passed 67/67;
+- full Core passed 428/428 and `git diff --check` passed;
+- full Daemon was red: 1041 total, 1014 passed, 24 failed, and 3 cancelled;
+- the primary failure was `cannot start a transaction within a transaction` from
+  TerminalReport/legacy publication event append, followed by connection contamination
+  when an owner catch skipped rollback.
+
+The prior semantic/source/package checkpoint was:
 
 - Contracts 41/41, Core 427/427, and Daemon 1041/1041 are green after the final
   participant-binding, graph-coverage, operation-dependency, and accepted-Turn
@@ -1057,9 +1548,11 @@ The current source checkpoint is:
   failure outside the requested macOS scope. No `apps/desktop` source is changed by this
   slice, so the PR must report that exclusion instead of claiming every root test green.
 
-These results certify the source and packaged Desktop boundaries. The only remaining
-order is T9: final diff/scope review, exact staging, PR/CI, merge, remote-main verification,
-and cleanup of only the recorded QA processes and temporary root.
+These earlier results certify the semantic behavior of the artifact that produced them,
+but they do not certify the current source. The Node 22 aggregate Daemon run now reaches
+the same atomic publication paths and exposes `cannot start a transaction within a
+transaction`. Until the active tail below is green, the old package hashes and GUI
+evidence are reproduction evidence only.
 
 The old fixed-1000 replay functions and one-cursor client loop are the reproduced T5
 defects and have been removed rather than preserved as compatibility paths. T4's
@@ -1075,10 +1568,19 @@ sequential publisher has already been removed from manifest-backed workflow publ
 - Existing WorkUnit CAS, leases, and startup recovery repair low-level process state.
   Manifest-backed semantic finalization moves to the daemon kernel that can read intent,
   graph, actions, packets, and reports.
+- Existing WorkUnit/Attempt rows are extended as the Runtime fence authority: the
+  `activeAttemptId` pointer, `runtimeInstanceId`, and `fencingToken` gate every mutable
+  callback. Restart recovery replaces only the process Attempt under the same Run; it
+  does not create a second workflow retry path.
 - Existing TerminalReport records and final-result Items remain the publication authority.
-  They consume completion truth and do not create it.
+  They consume completion truth and do not create it. Required-participant coverage is
+  persisted separately from actual contribution summaries so missing required work stays
+  visible without pretending an unstarted optional agent participated.
 - Existing control-plane sequence log, replay, snapshot, and Web invalidation flow remain
   the reconnect mechanism. No polling service or SSE-owned state is introduced.
+- Existing `SqliteControlPlaneStore` remains the only event/replay-watermark writer. The
+  correction splits its transaction-owning and caller-joined capabilities; it does not
+  add a new event store, queue, or publication table.
 - Existing canonical Item mentions remain the participant identity authority. The fix
   changes selector precedence and proposal compilation; it does not add another roster,
   mention table, or participant store.
@@ -1113,6 +1615,7 @@ accepted user Item
                                            + exact required-tool subset
                                       -> immutable Run request snapshot
                                       -> Agent Runs / ExecutionActions
+                                      -> fenced Attempt callbacks
                                       -> DelegatedOutcome per required participant
                                       -> WorkflowCompletionGate
                                            participant coverage
@@ -1121,11 +1624,31 @@ accepted user Item
                                            + fanInPolicy
                                            + termination policy
                                       -> TerminalReport publication barrier
+                                           required coverage rows + actual contributions
+                                           one final_result publication only
                                       -> source LingTurn settled
                                       -> control-plane invalidation
 ```
 
 ## Remaining Implementation Order
+
+The active tail uses the S3.5/S4/S5/S6 namespace defined above:
+
+```text
+S3.5 implemented hardening + full source closeout
+  -> rebuild post-hardening artifact
+      -> S4.1 naked-ready + missing-provider packaged blockers
+          -> S4.2 Engineer + QA required fan-in and TerminalReport coverage
+              -> S4.3 daemon restart checkpoint/no-checkpoint and Attempt-fence matrix
+                  -> S4.4 SSE/RPC reconnect recovery and single publication
+                      -> S5.1 packaged SQLite upgrade/reopen/rollback fixture
+                          -> S5.2 canonical lineage audit
+                              -> S6 review, PR, CI, merge, remote-main verification, exact cleanup
+```
+
+The earlier R9/R10 and T9.1-T9.5 labels remain below as implementation history. Their
+prior package/lineage claims are superseded by this reopened tail; only S3.5 source
+evidence plus S4/S5 evidence from the post-transaction-owner artifact can close delivery.
 
 ```text
 R1 known-unavailable participant blocker [done]
@@ -1151,8 +1674,9 @@ R1 known-unavailable participant blocker [done]
                                                                               -> R8d.2c.1 participant execution-profile propagation [focused green]
                                                                                   -> R8d.2c.2 participant-authority provenance correction [implemented; broad source matrix green]
                                                                                       -> R8d.2d typed participant-provider preflight [implemented; full Daemon green]
-                                                                                          -> R8d fresh packaged macOS acceptance + SQLite audit [complete]
-                                                                                              -> R9 final review, PR, CI, merge, remote-main verification, cleanup [in progress]
+                                                                                          -> R8d prior packaged macOS acceptance + SQLite audit [historical green]
+                                                                                              -> R9 transaction-source/package revalidation [reopened]
+                                                                                                  -> R10 final review, PR, CI, merge, remote-main verification, cleanup [pending]
 ```
 
 R1-R6 are focused green, the earlier R7 deterministic matrix is green, and R7H has closed the six
@@ -1174,7 +1698,9 @@ showed the Run request lacked the selected teammate's profile. T8d.2c.1 now pass
 profile, blocker, and evidence gates. T8d.2c.2 is source-complete, and T8d.2d has added
 the typed provider-binding preflight. The fixture, late-race cases, full 1041-test Daemon
 suite, fresh artifact, naked-ready blocker, required Engineer + QA restart/fan-in,
-reconnect, and canonical SQLite audit are green. R9 is now the only remaining lane.
+reconnect, and canonical SQLite audit were green for the prior artifact. R9 now closes
+the newly observed transaction-composition defect and regenerates that evidence before
+R10 delivery.
 
 Suggested review-sized commits after implementation and verification:
 
@@ -1187,16 +1713,31 @@ Suggested review-sized commits after implementation and verification:
 7. participant execution-profile/authority and typed provider-preflight correction;
 8. fresh isolated packaged macOS acceptance and SQLite lineage evidence.
 
-Commit/PR/merge work begins only after T8d passes. The user has already authorized T9 for
-this branch, so no additional routine approval gate is required after verification;
+Commit/PR/merge work begins only after S5.2 revalidation passes. The user has already
+authorized delivery for this branch, so no additional routine approval gate is required after verification;
 destructive cleanup still follows normal exact-target checks.
 
 ## Implementation Tasks
 
-This is the remaining delivery order from the current verified source, not a restatement of completed
-Continuity v2 work:
+This is the active delivery order from the current source. The earlier T9.* rows are
+retained immediately below as historical source-closeout evidence, not as open release
+phases:
 
-All remaining behavior rows are P1 because each closes a required boundary in the same
+| Task | Status | Priority | Effort (human / Codex) | Concrete change | Depends on | Exit evidence |
+| --- | --- | --- | --- | --- | --- | --- |
+| S3.5 | verification in progress | P1 | ~1-2d / ~2-4h | Retain migration 121, Runtime snapshot v23 and full Attempt fence CAS, closed delegated-outcome binding/codes, required coverage, and one terminal projection; rerun the full Daemon/repository matrix and fix only contract-owned regressions | S3 | focused suites remain green; full Daemon/typecheck/build/static gates pass; diff review finds no fence or publication bypass |
+| S4.1 | pending | P1 | packaged runtime | Fresh packaged naked-ready and missing-provider blockers; no ready-text completion, no partial workflow/Run | S3.5 | typed blocker lineage, zero side-effect/workflow counts, one source-Turn settlement |
+| S4.2 | pending | P1 | packaged runtime | Engineer + QA required fan-in and TerminalReport required-coverage projection; no callback-count quorum or duplicate terminal card | S4.1 | every required participant has a typed outcome/evidence or negative row; one final report/Item/Turn |
+| S4.3 | pending | P1 | packaged runtime | Restart matrix with no checkpoint, safe approval checkpoint, pre/post `tool_start`, and stale old-callback fencing | S4.2 | same Run/new fenced Attempt where safe; typed no-checkpoint/effect-unknown blockers; no duplicate side effect |
+| S4.4 | pending | P1 | packaged runtime | SSE/RPC reconnect and snapshot/replay recovery from `lastAppliedSeq` | S4.3 | refresh-before-cursor, no resubmit, unchanged Run/report/Turn counts, one terminal publication |
+| S5.1 | pending | P1 | ~2h / ~15m plus fixture | Packaged old-schema upgrade through migrations 119-121, injected rollback, same-connection reopen, foreign-key/integrity checks | S4.4 | no leaked transaction, half-publication, or migration lineage mismatch |
+| S5.2 | pending | P1 | ~2h / ~15m | Audit canonical Thread/Turn/Item/decision/manifest/graph/Run/Attempt/action/outcome/gate/report/event lineage | S5.1 | all ids/fingerprints/statuses agree; no cancellation impersonation or duplicate event |
+| S6 | pending | P1 | ~2h / ~15m plus CI | Review and precisely stage only this slice, create PR, wait for CI, merge, verify actual remote-main merge commit, and clean exact QA resources | S5.2 | PR merged, remote `main` contains the verified commit, protected WIP and production Ling remain untouched |
+
+The table below is historical Continuity v2 work retained for traceability. Its completed
+rows are not substitutes for S4/S5 revalidation.
+
+The historical behavior rows were P1 because each closed a required boundary in the same
 correctness chain. T7f was P2 cleanup that removed dormant competing paths in the same
 branch. Inline pipeline diagrams should be kept
 next to the non-obvious transaction/state logic in the Core workflow store,
@@ -1248,7 +1789,7 @@ duplicating the diagrams.
 | T8d.2 | complete; packaged blocker green | P1 | ~1h / ~10m plus provider runtime | Force a required Agent to return naked ready/promise text without a tool or sealed packet | T8d.2d plus refreshed deterministic matrix | zero tool actions/approvals; finalizer emits one typed missing-evidence blocker; source Turn is blocked |
 | T8d.3 | complete; packaged restart/fan-in green | P1 | ~3h / ~30m plus restart/runtime | Run required Engineer + QA fan-in; restart while QA waits for bash approval, then approve after restart | T8d.2 | same Run/approval/step/manifest survive; Attempt 1 is lost, Attempt 2 succeeds; both evidence refs verify fan-in exactly once |
 | T8d.4 | complete; packaged reconnect/SQLite green | P1 | ~2h / ~20m plus runtime | Reconnect across Desktop daemon restart and audit the final SQLite lineage | T8d.3 | client converges without resubmit; one final Item/report/source-Turn settlement; no cancellation impersonation or skipped participant |
-| T9 | in progress | P1 | ~2h plus CI / ~20m plus CI | Re-run final pre-landing review, commit intentional files, push/create PR, wait for CI, merge, verify remote `main`, and clean exact QA resources | T8d.4 | merged commit is remote main head; no requested work remains unmerged |
+| T9 (historical delivery lane) | superseded by active S6 | P1 | ~2h plus CI / ~20m plus CI | Re-run final pre-landing review, commit intentional files, push/create PR, wait for CI, merge, verify remote `main`, and clean exact QA resources | T8d.4 | Historical only; current delivery must pass S3.5/S4/S5, then close through S6 |
 
 ### T8a file and responsibility map
 
@@ -1522,7 +2063,8 @@ accepted Turn depends on a transport exception for terminalization.
 
 ### T8d.2c participant execution-profile propagation
 
-Status: source implementation and final packaged acceptance complete. The earlier packaged T8d.2
+Status: source implementation and the pre-T9 packaged acceptance were complete for this
+slice. The earlier packaged T8d.2
 proved the Item, decision, manifest, workflow, step, and Run all retained PromiseBot's
 canonical id while its Run snapshot omitted `systemPrompt`, `appendSystemPrompt`, and
 `approvalProfile`. The source adapter now propagates those fields. Profile coverage passes
@@ -1659,7 +2201,10 @@ focused implementation
                                         -> participant model-binding preflight (T8d.2d) [complete; full Daemon green]
                                           -> refreshed deterministic matrix [complete]
                                             -> fresh isolated packaged macOS GUI and SQLite audit (T8d) [complete]
-                                              -> review / PR / CI / merge / cleanup (T9) [in progress]
+                                              -> explicit transaction ownership + rollback (T9.1-T9.2) [complete]
+                                                -> Node 22 deterministic matrix (T9.3-T9.4) [complete]
+                                                  -> fresh macOS package + lineage acceptance (T9.5) [historical ledger]
+                                                    -> review / PR / CI / merge / cleanup (T10) [historical ledger]
 ```
 
 Do not start packaged QA while any deterministic gate/recovery test fails. A package that
@@ -1822,15 +2367,55 @@ would create more conflicts than useful concurrency across the current large WIP
 | H2 | T8d.2c participant execution-profile + authority correction [complete] | daemon Channel workflow adapter, authority store, tests | broad source matrix green |
 | H3 | T8d.2d provider-preflight fixture and late-race regressions [complete] | Contracts/Core/Daemon model binding, proposal/step adapters, tests | full Daemon and provider cases green |
 | H4 | T8d fresh packaged macOS scenarios [complete] | isolated artifact/runtime, GUI, SSE, SQLite | artifact, restart/fan-in/reconnect, and lineage green |
-| H5 | review/ship/merge/remote-main verification/cleanup [in progress] | repository delivery and exact QA resources | H4 packaged and lineage evidence complete |
+| I | T9.1-T9.2 explicit transaction ownership, wiring, rollback, and fault injection [complete] | Core SQLite control-plane/publication/workflow/recovery stores | H4 historical evidence plus Node 22 reproduction |
+| J | T9.3-T9.4 focused and broad deterministic verification [complete] | Core, Daemon, API, Web, repository gates | I green |
+| K0 | S3.5 Runtime fence/outcome/coverage/terminal-projection aggregate verification [in progress] | Contracts, Core Runtime/SQLite, daemon finalizer/gate, TerminalReport/Web | J green and hardening implemented |
+| K1 | S4.1 naked-ready and missing-provider packaged blockers [pending] | isolated artifact/runtime, GUI, daemon finalizer | K0 green |
+| K2 | S4.2 Engineer + QA fan-in and required coverage [pending] | workflow gate, TerminalReport, GUI, SQLite | K1 green |
+| K3 | S4.3 daemon restart checkpoint/no-checkpoint and Attempt fencing [pending] | Runtime Control Plane, approval resume, GUI, SQLite | K2 green |
+| K4 | S4.4 SSE/RPC reconnect and one terminal publication [pending] | replay transport, Web, GUI, SQLite | K3 green |
+| K5 | S5.1-S5.2 packaged SQLite upgrade/reopen and canonical lineage [pending] | Core migrations/stores, packaged data root, audit | K4 green |
+| K6 | S6 review/PR/CI/merge/remote-main/cleanup [pending] | repository delivery and exact QA resources | K5 green |
 
 Lanes A-C are complete, D is green, T8b captured the packaged failure, E/F/G/G2 are
-green, and H0-H4 are complete. H5 is the only remaining delivery lane. No second
-implementation worktree is recommended.
+green, and H0-H4 are historical completed work. K0 -> K1 -> K2 -> K3 -> K4
+-> K5 -> K6 is the active sequential tail. No second implementation worktree is recommended because the current edits share
+the same SQLite composition root and failure-contaminated connection.
 
 ## Test Coverage Map
 
 ```text
+NODE 22 TRANSACTION COMPOSITION                         PACKAGED USER FLOWS
+standalone control-plane append                         delegated execution
+  ├── [TEST EXISTS] success + monotonic replay state      ├── [HISTORICAL] naked ready blocks
+  ├── [VERIFIED T9.1] replay-state fault rolls back all rows ├── [REVERIFY] real action evidence completes
+  └── [VERIFIED T9.1] never ambient-auto-joins            └── [REVERIFY] final Item/Turn publishes once
+
+caller-owned aggregate transaction                     multi-Agent/recovery
+  ├── [DONE IN WIP] TerminalReport uses joined append     ├── [REVERIFY] all required participants gate fan-in
+  ├── [DONE IN WIP] approval-resume uses joined append    ├── [REVERIFY] restart keeps same Run/new Attempt
+  ├── [DONE IN WIP] publication/workflow owners roll back └── [REVERIFY] SSE reconnect does not resubmit work
+  ├── [VERIFIED T9.2] every fault proves next transaction starts
+  ├── [VERIFIED T9.3] official Node 22 full Core 429/429
+  └── [VERIFIED T9.3] referenced segmentation deadline + official Node 22 full Daemon zero-cancelled rerun
+
+CRITICAL REGRESSION: a nested `BEGIN IMMEDIATE` or skipped rollback can leave the shared
+connection inside a transaction. One failure then contaminates later requests/tests and
+can prevent TerminalReport, fan-in, and recovery convergence. T9.1-T9.3 are release gates,
+not optional hardening.
+
+ACTIVE S4/S5 ACCEPTANCE MATRIX
+fresh post-S3.5 packaged artifact
+  ├── S4.1 [GAP] naked `ready` -> typed blocker; no workflow/Run/side effect
+  ├── S4.2 [GAP] Engineer + QA -> both required coverage rows before verified fan-in
+  ├── S4.3 [GAP] no checkpoint -> typed interruption; safe checkpoint -> same Run/new fenced Attempt
+  │             ├── before `tool_start` -> one retry
+  │             ├── `tool_start` without `tool_end` -> effect-unknown, never retry
+  │             └── after `tool_end` -> finalize existing evidence once
+  ├── S4.4 [GAP] SSE/RPC reconnect -> lastAppliedSeq refresh/replay, no resubmit/publication duplicate
+  ├── S5.1 [GAP] old SQLite fixture -> migrations 119-121 -> rollback/reopen/integrity checks
+  └── S5.2 [GAP] canonical Thread/Turn/Item/Run/Attempt/evidence lineage matches final report
+
 ACCEPTANCE / AVAILABILITY
 accepted Item + canonical mentions
   ├── [TARGETED EXISTS] alias/text de-duplication
@@ -1960,8 +2545,9 @@ isolated signed .app + non-Git workspace
   └── [VERIFIED T8d.4 PACKAGED] reconnect + one final Item/source-Turn/SQLite lineage
 ```
 
-All packaged P1 exit conditions are closed. No test gap is deferred to a follow-up TODO,
-so this plan does not create or update `TODOS.md`.
+The prior artifact closed the semantic packaged P1 scenarios, but T9 transaction-source
+changes reopen their release evidence. T9.1-T9.5 are historical evidence; the active
+S3.5/S4/S5 tasks remain in this plan rather than being deferred to `TODOS.md`.
 
 ## Delivery Slices
 
@@ -2219,6 +2805,14 @@ adoption.
   `terminal_report.published` invalidation. Any stale basis or incompatible terminal Turn
   aborts the entire transaction. Use the equivalent legacy final-reply barrier when
   reporting is disabled.
+- Bind the publication store's control-plane port only to
+  `appendControlPlaneEventWithinTransaction()`. Its port name must retain the
+  `WithinTransaction` suffix. The standalone control-plane append is forbidden inside
+  both TerminalReport and legacy publication barriers.
+- The publication barrier owns rollback. Its catch path attempts `ROLLBACK` without
+  consulting `DatabaseSync.isTransaction`, suppresses only a rollback failure, and
+  rethrows the original error. A failed barrier must leave the connection able to begin
+  a new transaction immediately.
 - Implement the barrier in a focused Core publication store. The durable invalidation
   uses its migration-116 idempotency key inside the transaction; remove list-before-append
   deduplication. If a blocked/partial report finds the Turn already blocked, append one
@@ -2268,6 +2862,8 @@ adoption.
 
 Tests: success, partial/blocked, failure, cancellation, approval wait/resume, report
 failure, reporting-disabled fallback, crash injection at every publication-barrier write,
+standalone-versus-joined event append wiring, Node 22 nested-transaction regression,
+post-fault next-transaction success,
 daemon restart, duplicate callback, report committed
 after the workflow-terminal query returned empty, publication-event replay, reconnect
 from the last cursor, replay-window overflow/retention-gap snapshot handoff,
@@ -2336,9 +2932,14 @@ a committed synthesis output packet, and idempotent completion-gate recomputatio
 ### S5: Verification and macOS acceptance
 
 - Run Contracts, Core, Daemon, TerminalReport, orchestrator, and Channel E2E suites.
+- Run Core and Daemon under the official Node 22 binary used by the packaged daemon.
+  Zero cancelled tests is part of the gate; a later failure caused by a leaked earlier
+  transaction is not an independent flaky test.
 - Before packaging, run the exact/executable policy matrix and confirm the persisted
   operation in the API/SQLite no longer derives authority from `targetRef.label`.
-- Build the latest macOS Desktop package without replacing or stopping an unrelated
+- Build the latest macOS Desktop package after the final source verification. Any ZIP,
+  DMG, signature, or GUI result produced before the transaction-ownership correction is
+  stale and cannot satisfy this gate. Do not replace or stop an unrelated
   running client.
 - Launch the built package by its resolved absolute executable path for programmatic
   package/smoke gates. A GUI driver that exposes only bundle-id launch may first register
@@ -2484,7 +3085,10 @@ regresses.
 | Output packet | projected file is overwritten or missing after the packet was sealed | keep SQLite sealed JSON/digest authoritative; repair projection for inspection without changing completion | Core artifact + gate integration | completed synthesis stays auditable; export shows a repair diagnostic |
 | Output packet | required artifact row lacks valid sealed JSON/digest | block and reconcile; neither row id nor projected file alone is accepted | Core artifact + gate integration | synthesis is visibly blocked, never called complete |
 | Fan-in | Engineer is complete while QA is active, absent, or failed | graph/manifest gate prevents verified completion | gate integration + packaged GUI | QA state/blocker remains visible |
+| Required-participant projection | a required QA step has no graph/Run while an optional teammate never starts | Completion Gate and TerminalReport emit a required `missing` coverage row; only actual contributions enter the compact participant list | gate/TerminalReport contract + Web + packaged GUI | missing required work is a visible blocker, optional unstarted agents stay hidden |
+| Attempt fencing | an old daemon callback arrives after a replacement Attempt is active | compare `activeAttemptId + runtimeInstanceId + fencingToken`; stale callbacks are diagnostic-only and cannot append evidence, consume approval, release current resources, or settle work | Core CAS/concurrency + daemon lifecycle + packaged GUI | no stale evidence or duplicate side effect |
 | Shutdown intent | Desktop restarts the daemon while QA waits for approval | suspend the old attempt, preserve Run/approval/checkpoint/step/manifest/evidence, and never call user cancellation | active-run + daemon lifecycle integration | approval remains actionable; no false cancellation |
+| No safe checkpoint | daemon stops during a work-kind with no durable safe resume boundary | apply explicit work-kind policy and publish `runtime_interrupted_no_checkpoint`; do not promise automatic continuation or create a new Run | daemon startup matrix + packaged GUI | typed block/failure with recoverable next action |
 | Approval resume | the same approval resolves after restart | validate checkpoint fingerprint, start one fenced replacement attempt under the same Run, and consume the grant only for the exact side effect | Core checkpoint + daemon resume integration + packaged GUI | QA continues once; prior Engineer evidence remains |
 | Approval resume | the side effect, target, scope, requirement, or active attempt changed | reject the resume basis and require a new approval or publish typed `approval_resume_mismatch` blocker | CAS/concurrency integration | visible blocker; no unapproved or duplicate side effect |
 | Approval resume | Pi has no native session handle after restart | use bounded Ling continuation with a new attempt; do not claim the in-memory Pi session survived | runner conformance + daemon integration | task resumes from durable facts or blocks explicitly |
@@ -2507,6 +3111,7 @@ regresses.
 | Snapshot handoff | event commits after snapshot sequence `S` but before canonical refresh finishes | provisional subscription buffers `> S`; apply after refresh and cursor advance | Web E2E + packaged GUI | new report appears once without a gap |
 | Client refresh | older empty query resolves after the report query | generation fence drops stale response | Web E2E | final result remains rendered |
 | Source Turn | duplicate callback/recovery publishes again | deterministic ids + publication uniqueness + CAS settlement | daemon integration + SQLite audit | one final result and one settled Turn |
+| Terminal projection | workflow card emits a summary after `final_result` is committed | TerminalReport publication marker is the single terminal authority; cards remain folded progress/evidence | Web + replay/reconnect + packaged GUI | exactly one user-visible terminal result |
 
 There are no intentionally silent failures in this slice. Diagnostic-only replay setup
 errors may be logged, but they retain the prior cursor and reconnect; accepted work and
@@ -2516,6 +3121,12 @@ canonical completion state never depend on that observer being alive.
 
 - Windows packaging and Windows QA: the user explicitly limited this acceptance cycle to
   macOS; no cross-platform behavior contract changes.
+- A repository-wide SQLite transaction framework or savepoint abstraction: T9 audits the
+  completion/recovery spine and its migration owners, but does not rewrite unrelated
+  stores that do not compose these aggregate writes.
+- Ambient auto-join compatibility based on `DatabaseSync.isTransaction`: the repository
+  is pre-release, so callers bind the correct explicit API and incorrect composition
+  fails visibly.
 - A new workflow engine, event bus, completion table, or transcript store: existing
   SQLite domain authorities already contain the required facts.
 - Permanent legacy readers or enum aliases: Ling is pre-release, so local development
@@ -2574,6 +3185,13 @@ canonical completion state never depend on that observer being alive.
 | Actual command is `echo node app.js` for planned `node app.js` | exact structured command match fails; no operation evidence is credited |
 | POSIX file evidence differs only by case | target match fails on macOS/Linux; Windows retains case-insensitive matching |
 | Runner omits requested command | step/workflow blocked, no succeeded final result |
+| Delegated Agent emits only `ready`/"I will execute" | source Turn stays non-terminal until host writes a typed blocker; no action/workflow success is inferred |
+| Required QA has no graph step or Run | Completion Gate and TerminalReport contain QA=`missing`; fan-in cannot verify and the visible result is blocked/partial |
+| Old Attempt callback arrives after daemon restart | fence mismatch makes it diagnostic-only; no evidence, approval, resource, step, or report mutation occurs |
+| Restart without safe checkpoint | work-kind policy emits `runtime_interrupted_no_checkpoint`; no new Run or silent retry is created |
+| Restart after `tool_start` before `tool_end` | `approval_resume_effect_unknown` is persisted and no local side effect is replayed |
+| SSE/RPC reconnect after final publication | replay from `lastAppliedSeq` refreshes once; Run/step/report/Turn counts remain unchanged |
+| Package opens a pre-correction SQLite fixture | migrations 119-121 apply, same connection can begin a new transaction after injected faults, `foreign_key_check` is empty, and `integrity_check` is `ok` |
 | Node exits non-zero or times out | step/workflow failed or retryable per policy, negative evidence retained |
 | Single Agent performs both operations | both operations verified before the one step succeeds |
 | Engineer writes, QA runs | each step verifies its subset; fan-in requires both |
@@ -2767,6 +3385,11 @@ Participant-profile resolution adds one indexed teammate lookup per new workflow
 adds a bounded effective-Channel membership check only for proposal-backed steps. Durable
 workflow-definition steps avoid a roster/membership scan. Same-Run restart/resume reads
 the existing Run snapshot and adds no teammate lookup or prompt reconstruction.
+Explicit transaction ownership adds no query, provider call, or polling. Joined event
+append keeps the existing event-row plus replay-watermark writes inside the aggregate's
+single `BEGIN IMMEDIATE`; it removes a nested begin and does not add a savepoint. A
+best-effort rollback is constant work on an error path and preserves the original error
+for diagnosis.
 
 ### Security and privacy
 
@@ -2798,12 +3421,17 @@ teammate bindings stay separate. T8d.2d adds a typed shared resolver, proposal/s
 preflight, binding-source snapshots, and repair projection; it does not add implicit
 fallback or synchronize Channel creation into workspace settings.
 
-No architecture decision remains open for this slice. The source implementation now
-includes migration 119/120, trusted compiler origins, immutable participant/provider
-bindings, shared run policy, typed provider preflight, and repair projection. The daemon
-fixture, late-race regressions, broad deterministic gates, fresh packaged artifact, GUI
-recovery, reconnect, SQLite lineage acceptance, and final diff review are complete. The
-remaining work is PR/CI, merge, remote-main verification, and exact cleanup. Exact deadlines, retry limits, UI
+No architecture decision remains open for this slice. The explicit transaction-owner
+amendment is resolved in favor of separately named standalone and joined APIs, with no
+ambient `isTransaction` inference or compatibility alias. The source implementation
+already includes migration 119/120, trusted compiler origins, immutable participant/provider
+bindings, shared run policy, typed provider preflight, and repair projection. S3.5 still
+needs to promote the explicit Runtime fence, closed outcome codes/bindings, required
+coverage projection, and single terminal publication into source. The previous
+daemon/package acceptance is historical evidence; S3.5/S4/S5 must build on the completed
+Node 22 transaction-owner correction, close the remaining contract gaps, and regenerate
+broad and packaged evidence before PR/CI, merge, remote-main verification, and exact
+cleanup. Exact deadlines, retry limits, UI
 wording, and whether optional participants are shown expanded by default remain versioned
 policy/UI settings. Host-bound operation ids and a structured wrapper/chaining AST are
 explicitly deferred and cannot be approximated by this slice.
@@ -2814,7 +3442,7 @@ explicitly deferred and cannot be approximated by this slice.
 | --- | --- | --- | --- | --- | --- |
 | CEO Review | `plan-ceo-review` | Scope and strategy | 0 | NOT RUN | Existing product boundary retained; no scope expansion needed |
 | Codex Review | `codex review` | Independent second opinion | 1 | RESOLVED IN SOURCE | Historical authority/tool/approval gaps are encoded by typed authority, immutable binding, and shared policy |
-| Eng Review | `plan-eng-review` + pre-landing review | Architecture and tests | 23 | CLEAN | Two final replay/migration findings were reproduced, fixed, and full Core/Daemon green |
+| Eng Review | `plan-eng-review` + pre-landing review | Architecture and tests | 25 | CLEAN (PLAN) | Explicit transaction ownership, fault recovery, and deterministic source matrix are green; S3.5/S4/S5 packaged and delivery evidence remain |
 | Design Review | diff-scoped lite review | UI/UX gaps | 1 | CLEAN | No new UI design language or code-level accessibility/style regression |
 | DX Review | `plan-devex-review` | Developer experience gaps | 0 | NOT RUN | Not required for this runtime correctness slice |
 
@@ -2830,7 +3458,8 @@ workspace/Channel/fixed ownership matrix and gains typed preflight rather than f
 The historical review rows remain as audit history; they do not represent an unresolved
 product choice.
 
-**VERDICT:** IMPLEMENTATION, ACCEPTANCE, AND FINAL DIFF REVIEW CLEARED; PR/CI, merge,
-remote-main verification, and exact cleanup remain.
+**VERDICT:** DESIGN AND EXISTING SOURCE GATES CLEARED; SUPPLEMENTAL S3.5 SOURCE
+HARDENING AND PACKAGED DELIVERY NOT CLEARED. S3.5/S4/S5 must pass before PR/CI merge,
+remote-main verification, or exact cleanup.
 
 NO UNRESOLVED DECISIONS

@@ -134,6 +134,150 @@ test("sqlite control-plane events append with monotonic seq and list filters", a
   }
 });
 
+test("sqlite control-plane append rolls back every write when its owned transaction fails", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-control-plane-rollback-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const database = new DatabaseSync(resolve(cwd, ".ling-stack", "ling-stack.sqlite"));
+    try {
+      database.exec(`
+        CREATE TRIGGER fail_control_plane_replay_state
+        BEFORE INSERT ON control_plane_replay_state
+        BEGIN SELECT RAISE(ABORT, 'control-plane replay-state fault'); END;
+      `);
+    } finally {
+      database.close();
+    }
+
+    assert.throws(() => store.appendControlPlaneEvent({
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      cwd,
+      domain: "runs",
+      entityType: "run",
+      entityId: "run_rollback",
+      action: "run.completed",
+      data: {},
+    }, "2026-06-06T00:00:00.000Z"), /control-plane replay-state fault/u);
+
+    assert.deepEqual(store.listControlPlaneEvents({ workspaceId: DEFAULT_WORKSPACE_ID }), []);
+    assert.equal(store.getControlPlaneReplayState(DEFAULT_WORKSPACE_ID).latestSeq, 0);
+
+    const repairedDatabase = new DatabaseSync(resolve(cwd, ".ling-stack", "ling-stack.sqlite"));
+    try {
+      repairedDatabase.exec("DROP TRIGGER fail_control_plane_replay_state;");
+    } finally {
+      repairedDatabase.close();
+    }
+    const recovered = store.appendControlPlaneEvent({
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      cwd,
+      domain: "runs",
+      entityType: "run",
+      entityId: "run_after_rollback",
+      action: "run.completed",
+      data: {},
+    }, "2026-06-06T00:00:01.000Z");
+    assert.equal(recovered.entityId, "run_after_rollback");
+    assert.equal(store.getControlPlaneReplayState(DEFAULT_WORKSPACE_ID).latestSeq, recovered.seq);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("control-plane idempotency returns the competing committed event instead of raising UNIQUE", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-control-plane-idempotency-race-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    store.database.exec(`
+      CREATE TRIGGER inject_competing_control_plane_event
+      BEFORE INSERT ON control_plane_events
+      WHEN NEW.idempotency_key = 'control-plane-race-key'
+        AND NEW.ts != 'trigger-injected'
+      BEGIN
+        INSERT INTO control_plane_events (
+          workspace_id,
+          cwd,
+          ts,
+          domain,
+          entity_type,
+          entity_id,
+          action,
+          data_json,
+          idempotency_key
+        ) VALUES (
+          NEW.workspace_id,
+          NEW.cwd,
+          'trigger-injected',
+          NEW.domain,
+          NEW.entity_type,
+          NEW.entity_id,
+          NEW.action,
+          NEW.data_json,
+          NEW.idempotency_key
+        );
+        INSERT INTO control_plane_replay_state (workspace_id, replay_floor_seq, latest_seq, updated_at)
+        VALUES (NEW.workspace_id, 0, last_insert_rowid(), 'trigger-injected')
+        ON CONFLICT(workspace_id) DO UPDATE SET
+          latest_seq = MAX(control_plane_replay_state.latest_seq, excluded.latest_seq),
+          updated_at = excluded.updated_at;
+      END;
+    `);
+
+    const event = store.appendControlPlaneEvent({
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      cwd,
+      domain: "runs",
+      entityType: "run",
+      entityId: "run_idempotency_race",
+      action: "run.completed",
+      data: { status: "succeeded" },
+      idempotencyKey: "control-plane-race-key",
+    }, "2026-06-06T00:20:00.000Z");
+
+    assert.equal(event.entityId, "run_idempotency_race");
+    assert.equal(event.idempotencyKey, "control-plane-race-key");
+    assert.equal(store.listControlPlaneEvents({ workspaceId: DEFAULT_WORKSPACE_ID }).length, 1);
+    assert.equal(store.getControlPlaneReplayState(DEFAULT_WORKSPACE_ID).latestSeq, event.seq);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("control-plane standalone and caller-owned transaction capabilities never auto-join", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-control-plane-ownership-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    store.database.exec("BEGIN IMMEDIATE;");
+    assert.throws(() => store.appendControlPlaneEvent({
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      cwd,
+      domain: "runs",
+      entityType: "run",
+      entityId: "run_illegal_ambient_join",
+      action: "run.completed",
+      data: {},
+    }, "2026-06-06T00:10:00.000Z"), /cannot start a transaction within a transaction/u);
+
+    const joined = store.controlPlane.appendControlPlaneEventWithinTransaction({
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      cwd,
+      domain: "runs",
+      entityType: "run",
+      entityId: "run_joined",
+      action: "run.completed",
+      data: {},
+    }, "2026-06-06T00:10:01.000Z");
+    assert.equal(joined.entityId, "run_joined");
+    store.database.exec("ROLLBACK;");
+    assert.deepEqual(store.listControlPlaneEvents({ workspaceId: DEFAULT_WORKSPACE_ID }), []);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("control-plane replay floor survives an empty event table", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-control-plane-floor-"));
   const store = createSqliteRunStore(cwd);
