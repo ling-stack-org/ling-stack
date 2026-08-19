@@ -3978,6 +3978,65 @@ export function createMockManagedPlugins(): MockManagedPlugin[] {
   ];
 }
 
+export function createMockChromePlugin(overrides: Partial<MockManagedPlugin> = {}): MockManagedPlugin {
+  const setup = overrides.setup ?? {
+    kind: "browser_extension" as const,
+    state: "missing" as const,
+    checkedAt: "2026-08-17T00:00:00.000Z",
+    browserFamily: "chrome" as const,
+    browserState: "extension_required" as const,
+    paired: false,
+    connected: false,
+  };
+  const status = overrides.status ?? "disabled";
+  return {
+    id: "built-in:chrome",
+    displayName: "Chrome",
+    version: "0.1.0",
+    sourceKind: "built-in",
+    status,
+    description: "Control Chrome with Ling.",
+    trustSummary: "Uses an explicitly paired Ling extension and existing MCP approvals.",
+    contributions: [{
+      kind: "mcp-server",
+      id: "mcp_chrome_browser",
+      label: "Chrome browser tools",
+      capabilities: ["browser:tabs", "browser:read", "browser:interact", "browser:screenshot"],
+      sideEffectLevel: "external",
+      defaultApproval: "ask",
+      linkedResourceId: "mcp_chrome_browser",
+      linkedResourcePresent: true,
+      enabled: setup.connected === true,
+    }],
+    health: overrides.health ?? createMockPluginHealth(
+      "built-in:chrome",
+      status === "enabled" && setup.connected ? "ready" : status === "enabled" ? "failed" : "disabled",
+      setup.connected ? "Chrome extension is connected." : "Install and pair the Ling Chrome extension.",
+    ),
+    setup,
+    linkedResources: [{
+      kind: "mcp-server",
+      id: "mcp_chrome_browser",
+      present: true,
+      enabled: setup.connected === true,
+      displayName: "Chrome browser",
+    }],
+    events: overrides.events ?? [],
+    actions: {
+      canEnable: status !== "enabled",
+      canDisable: status === "enabled",
+      canCheck: true,
+      canApplyPreset: false,
+      canInstall: false,
+      canUninstall: false,
+      canRefreshPackage: false,
+      canRuntimePreview: false,
+      ...overrides.actions,
+    },
+    ...overrides,
+  };
+}
+
 export function createMockCuaPlugin(overrides: Partial<MockManagedPlugin> = {}): MockManagedPlugin {
   const linked = overrides.linkedResources?.[0];
   const setup = overrides.setup ?? {
@@ -8437,6 +8496,31 @@ export async function handleDaemonRoute(
         events: appendMockPluginEvent(plugin, "connected", `Connected MCP server ${server.id}.`, { linkedResourceId: server.id }),
       });
       await route.fulfill({ json: { plugin: updated, linkedMcpServer: toPublicMockMcpServer(server, state) } });
+      return;
+    }
+    if (action === "pairing" && request.method() === "POST" && plugin.id === "built-in:chrome") {
+      await route.fulfill({ json: {
+        pluginId: plugin.id,
+        pairingCode: "LING-CHROME-PAIR",
+        expiresAt: "2099-08-17T00:05:00.000Z",
+      } });
+      return;
+    }
+    if (action === "revoke" && request.method() === "POST" && plugin.id === "built-in:chrome") {
+      const updated = updateMockPlugin(state, plugin.id, createMockChromePlugin({
+        ...plugin,
+        status: "enabled",
+        setup: {
+          kind: "browser_extension",
+          state: "missing",
+          checkedAt: "2026-08-17T00:02:00.000Z",
+          browserFamily: "chrome",
+          browserState: "extension_required",
+          paired: false,
+          connected: false,
+        },
+      }));
+      await route.fulfill({ json: { plugin: updated, health: updated.health } });
       return;
     }
     if (action === "validate-package" && request.method() === "POST") {

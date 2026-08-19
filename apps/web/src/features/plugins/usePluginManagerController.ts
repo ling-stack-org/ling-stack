@@ -29,6 +29,7 @@ export interface PluginManagerController {
   readonly createOpen: boolean;
   readonly detailPluginId: string;
   readonly guidePluginId: string;
+  readonly chromeConnectPluginId: string;
   readonly uninstallPluginId: string;
   readonly loadError: string;
   readonly retainedRefreshError: boolean;
@@ -42,6 +43,8 @@ export interface PluginManagerController {
   readonly closeDetails: () => void;
   readonly openGuide: (pluginId: string) => void;
   readonly closeGuide: () => void;
+  readonly openChromeConnect: (pluginId: string) => void;
+  readonly closeChromeConnect: () => void;
   readonly requestUninstall: (pluginId: string) => void;
   readonly cancelUninstall: () => void;
   readonly completeUninstall: () => void;
@@ -77,6 +80,7 @@ export function usePluginManagerController(input: {
   const [createOpen, setCreateOpen] = useState(false);
   const [detailPluginId, setDetailPluginId] = useState("");
   const [guidePluginId, setGuidePluginId] = useState("");
+  const [chromeConnectPluginId, setChromeConnectPluginId] = useState("");
   const [uninstallPluginId, setUninstallPluginId] = useState("");
   const [uninstallReturnPluginId, setUninstallReturnPluginId] = useState("");
   const requestSequenceRef = useRef(0);
@@ -112,11 +116,15 @@ export function usePluginManagerController(input: {
       input.clearActionErrors({ pluginId: guidePluginId, owner: "guide" });
       setGuidePluginId("");
     }
+    if (chromeConnectPluginId && !ids.has(chromeConnectPluginId)) {
+      input.clearActionErrors({ pluginId: chromeConnectPluginId, owner: "chrome-connect" });
+      setChromeConnectPluginId("");
+    }
     if (uninstallPluginId && !ids.has(uninstallPluginId)) {
       input.clearActionErrors({ pluginId: uninstallPluginId, owner: "uninstall" });
       setUninstallPluginId("");
     }
-  }, [detailPluginId, guidePluginId, input.clearActionErrors, input.plugins, uninstallPluginId]);
+  }, [chromeConnectPluginId, detailPluginId, guidePluginId, input.clearActionErrors, input.plugins, uninstallPluginId]);
 
   function clearOverlayError(pluginId: string, owner: PluginActionOwner): void {
     if (pluginId) input.clearActionErrors({ pluginId, owner });
@@ -135,6 +143,11 @@ export function usePluginManagerController(input: {
   function closeGuide(): void {
     clearOverlayError(guidePluginId, "guide");
     setGuidePluginId("");
+  }
+
+  function closeChromeConnect(): void {
+    clearOverlayError(chromeConnectPluginId, "chrome-connect");
+    setChromeConnectPluginId("");
   }
 
   function cancelUninstall(): void {
@@ -186,6 +199,7 @@ export function usePluginManagerController(input: {
     createOpen,
     detailPluginId,
     guidePluginId,
+    chromeConnectPluginId,
     uninstallPluginId,
     loadError: input.loadError,
     retainedRefreshError: Boolean(input.loadError),
@@ -196,6 +210,7 @@ export function usePluginManagerController(input: {
     openCreate: () => {
       closeDetails();
       closeGuide();
+      closeChromeConnect();
       cancelUninstall();
       input.clearActionErrors({ pluginId: PLUGIN_DRAFT_ID, owner: "create" });
       setCreateOpen(true);
@@ -204,6 +219,7 @@ export function usePluginManagerController(input: {
     openDetails: (pluginId) => {
       closeCreate();
       closeGuide();
+      closeChromeConnect();
       cancelUninstall();
       if (detailPluginId && detailPluginId !== pluginId) clearOverlayError(detailPluginId, "detail");
       setDetailPluginId(pluginId);
@@ -212,17 +228,30 @@ export function usePluginManagerController(input: {
     openGuide: (pluginId) => {
       closeCreate();
       closeDetails();
+      closeChromeConnect();
       cancelUninstall();
       if (guidePluginId && guidePluginId !== pluginId) clearOverlayError(guidePluginId, "guide");
       setGuidePluginId(pluginId);
     },
     closeGuide,
+    openChromeConnect: (pluginId) => {
+      closeCreate();
+      closeDetails();
+      closeGuide();
+      cancelUninstall();
+      if (chromeConnectPluginId && chromeConnectPluginId !== pluginId) {
+        clearOverlayError(chromeConnectPluginId, "chrome-connect");
+      }
+      setChromeConnectPluginId(pluginId);
+    },
+    closeChromeConnect,
     requestUninstall: (pluginId) => {
       setUninstallReturnPluginId(detailPluginId === pluginId ? pluginId : "");
       closeCreate();
       if (detailPluginId && detailPluginId !== pluginId) closeDetails();
       setDetailPluginId("");
       closeGuide();
+      closeChromeConnect();
       if (uninstallPluginId && uninstallPluginId !== pluginId) clearOverlayError(uninstallPluginId, "uninstall");
       setUninstallPluginId(pluginId);
     },

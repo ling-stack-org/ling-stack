@@ -407,6 +407,10 @@ import type {
   CuaDriverActivationState,
 } from "./cua-driver-activation-types.js";
 import type {
+  ChromeBrowserCredentialRecord,
+  UpsertChromeBrowserCredentialInput,
+} from "./chrome-browser-types.js";
+import type {
   CreateMemoryObjectInput,
   ApplyMemoryReviewActionInput,
   CreateMemoryReviewDecisionInput,
@@ -2087,6 +2091,10 @@ export interface RunStore {
   ensureCuaDriverActivationState(pluginId: string, now: string): CuaDriverActivationState;
   getCuaDriverActivationState(pluginId: string): CuaDriverActivationState | undefined;
   commitCuaDriverActivation(input: CommitCuaDriverActivationInput): CommitCuaDriverActivationResult;
+  upsertChromeBrowserCredential(input: UpsertChromeBrowserCredentialInput, now: string): ChromeBrowserCredentialRecord;
+  getChromeBrowserCredential(workspaceId: string, pluginId: string, extensionId: string): ChromeBrowserCredentialRecord | undefined;
+  listChromeBrowserCredentials(workspaceId: string, pluginId: string): ChromeBrowserCredentialRecord[];
+  revokeChromeBrowserCredentials(workspaceId: string, pluginId: string, now: string): number;
   upsertMcpStatusSnapshot(snapshot: McpRuntimeStatusSnapshot, now: string): McpRuntimeStatusSnapshot;
   getMcpStatusSnapshot(serverId: string, now?: string): McpRuntimeStatusSnapshot | undefined;
   deleteMcpStatusSnapshot(serverId: string): boolean;
@@ -2104,6 +2112,7 @@ export interface RunStore {
     bindings: readonly ReplaceTeammateMcpBindingInput[],
     now: string,
   ): TeammateMcpBinding[];
+  upsertLingAgentChromeBrowserBinding(enabled: boolean, now: string): TeammateMcpBinding;
   listTeammateMcpBindings(teammateId: string): TeammateMcpBinding[];
   createAutomationDefinition(input: CreateAutomationDefinitionInput, now: string): AutomationDefinition;
   getAutomationDefinition(automationId: string): AutomationDefinition | undefined;
@@ -2615,6 +2624,7 @@ export type McpStoreFacet = RunStoreFacet<
   | "replaceMcpServerTools"
   | "listMcpTools"
   | "replaceTeammateMcpBindings"
+  | "upsertLingAgentChromeBrowserBinding"
   | "listTeammateMcpBindings"
 >;
 
@@ -2622,6 +2632,13 @@ export type CuaDriverActivationStoreFacet = RunStoreFacet<
   | "ensureCuaDriverActivationState"
   | "getCuaDriverActivationState"
   | "commitCuaDriverActivation"
+>;
+
+export type ChromeBrowserCredentialStoreFacet = RunStoreFacet<
+  | "upsertChromeBrowserCredential"
+  | "getChromeBrowserCredential"
+  | "listChromeBrowserCredentials"
+  | "revokeChromeBrowserCredentials"
 >;
 
 export type AutomationStoreFacet = RunStoreFacet<

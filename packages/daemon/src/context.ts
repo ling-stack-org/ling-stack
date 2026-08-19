@@ -43,6 +43,8 @@ import type { CuaDriverLeaseMcpClient } from "./features/plugins/cua-driver-leas
 import type { CuaDriverDaemonActivationCoordinator } from "./features/plugins/cua-driver-daemon-composition.js";
 import type { RemoteAccessController } from "./features/remote-access/controller.js";
 import type { RemoteReplyDispatcher } from "./features/remote-access/dispatch-worker.js";
+import type { ChromeBrowserSessionController } from "./features/browser-extension/session-controller.js";
+import type { ChromeBrowserPluginService } from "./features/plugins/chrome-browser.js";
 
 export interface RunnerAdapter {
   runTask(options: PiRunnerRunOptions): Promise<PiRunnerResult>;
@@ -160,6 +162,7 @@ export interface DaemonDependencies {
   readonly remoteAccessStateDir?: string;
   /** Pass null only for fail-closed embedding/tests that intentionally disable Mobile send. */
   readonly remoteReplyDispatcher?: RemoteReplyDispatcher | null;
+  readonly chromeBrowserExtensionIds?: readonly string[];
 }
 
 export interface DaemonContext {
@@ -197,4 +200,6 @@ export interface DaemonContext {
   readonly computerUseRouteToken?: string;
   readonly computerUseTargetOwnershipTimeoutMs?: number;
   readonly remoteAccess: RemoteAccessController;
+  readonly chromeBrowserSessions: ChromeBrowserSessionController;
+  readonly chromeBrowserPlugin: ChromeBrowserPluginService;
 }

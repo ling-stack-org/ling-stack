@@ -50,3 +50,46 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.chrome-connect-body {
+  display: grid;
+  align-content: start;
+  gap: var(--ling-space-4);
+}
+
+.chrome-pairing-code {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  align-items: center;
+  gap: var(--ling-space-3);
+  min-width: 0;
+  padding: var(--ling-space-4);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  background: var(--ling-bg-subtle);
+}
+
+.chrome-pairing-code > span {
+  display: grid;
+  gap: var(--ling-space-1);
+  min-width: 0;
+}
+
+.chrome-pairing-code small,
+.chrome-pairing-expiry {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+}
+
+.chrome-pairing-code code {
+  overflow: hidden;
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chrome-pairing-expiry {
+  min-height: var(--ling-line-xs);
+  margin: 0;
+}

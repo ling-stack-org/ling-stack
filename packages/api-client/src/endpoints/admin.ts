@@ -2,6 +2,7 @@ import type {
   ApprovalListResponse,
   ApprovalMutationResponse,
   ApprovalPolicyResponse,
+  ChromeBrowserPairingStartResponse,
   CreateMediaJobRequest,
   CreateMediaProjectRequest,
   CreateMediaSceneRequest,
@@ -200,6 +201,22 @@ export const adminEndpoints = {
       input: ManagedPluginConnectRequest = {},
     ): Promise<ManagedPluginConnectResponse> {
       return this._post(`/plugins/${encodeURIComponent(pluginId)}/connect`, { cwd }, input);
+    },
+
+  async startChromeBrowserPairing(
+      this: LingDaemonEndpointContext,
+      cwd: string,
+      pluginId: string,
+    ): Promise<ChromeBrowserPairingStartResponse> {
+      return this._post(`/plugins/${encodeURIComponent(pluginId)}/pairing`, { cwd }, {});
+    },
+
+  async revokeChromeBrowserAccess(
+      this: LingDaemonEndpointContext,
+      cwd: string,
+      pluginId: string,
+    ): Promise<ManagedPluginMutationResponse> {
+      return this._post(`/plugins/${encodeURIComponent(pluginId)}/revoke`, { cwd }, {});
     },
 
   async applyManagedPluginPreset(this: LingDaemonEndpointContext,

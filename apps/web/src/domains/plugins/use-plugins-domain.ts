@@ -10,19 +10,21 @@ import {
   installManagedPlugin,
   listManagedPlugins,
   refreshManagedPluginPackage,
+  revokeChromeBrowserAccess,
+  startChromeBrowserPairing,
   uninstallManagedPlugin,
   validatePluginPackage,
 } from "../../api.js";
 import type { DomainController, DomainError } from "../../app/domain-controller.js";
-import type { ManagedPluginCreateRequest, ManagedPluginView } from "../../types.js";
+import type { ChromeBrowserPairingStartResponse, ManagedPluginCreateRequest, ManagedPluginView } from "../../types.js";
 import { PluginActionRequestFence, pluginActionKey } from "./plugin-action-fence.js";
 export { PluginActionRequestFence, pluginActionKey } from "./plugin-action-fence.js";
 
-export type PluginBusyAction = "create" | "apply" | "check" | "connect" | "enable" | "disable" | "validate" | "install" | "uninstall" | "refresh-package" | "runtime-preview";
+export type PluginBusyAction = "create" | "apply" | "check" | "connect" | "pairing" | "revoke" | "enable" | "disable" | "validate" | "install" | "uninstall" | "refresh-package" | "runtime-preview";
 
 export const PLUGIN_DRAFT_ID = "draft";
 
-export type PluginActionOwner = "create" | "detected-connect" | "row" | "detail" | "guide" | "uninstall" | "computer-control";
+export type PluginActionOwner = "create" | "detected-connect" | "row" | "detail" | "guide" | "chrome-connect" | "uninstall" | "computer-control";
 
 export interface PluginActionRequest {
   readonly owner: PluginActionOwner;
@@ -72,6 +74,8 @@ export interface PluginsActions {
   readonly previewPluginRuntime: (pluginId: string, request: PluginActionRequest) => Promise<void>;
   readonly enablePlugin: (pluginId: string, request: PluginActionRequest) => Promise<void>;
   readonly disablePlugin: (pluginId: string, request: PluginActionRequest) => Promise<void>;
+  readonly startChromePairing: (pluginId: string, request: PluginActionRequest) => Promise<ChromeBrowserPairingStartResponse | undefined>;
+  readonly revokeChromeAccess: (pluginId: string, request: PluginActionRequest) => Promise<void>;
   readonly clearPluginActionErrors: (filter: PluginActionErrorFilter) => void;
   readonly resetForCwd: () => void;
 }
@@ -242,6 +246,20 @@ export function usePluginsDomain(input: {
       input.translate("Plugin disabled."));
   }
 
+  async function startChromePairing(
+    pluginId: string,
+    request: PluginActionRequest,
+  ): Promise<ChromeBrowserPairingStartResponse | undefined> {
+    return runPluginOperation(pluginId, "pairing", request, async (cwd) => ({
+      value: await startChromeBrowserPairing(cwd, pluginId),
+    }));
+  }
+
+  async function revokeChromeAccess(pluginId: string, request: PluginActionRequest): Promise<void> {
+    await mutatePlugin(pluginId, "revoke", request, async (cwd) => (await revokeChromeBrowserAccess(cwd, pluginId)).plugin, () =>
+      input.translate("Chrome access removed."));
+  }
+
   async function mutatePlugin(
     pluginId: string,
     action: PluginBusyAction,
@@ -360,6 +378,8 @@ export function usePluginsDomain(input: {
       previewPluginRuntime,
       enablePlugin,
       disablePlugin,
+      startChromePairing,
+      revokeChromeAccess,
       clearPluginActionErrors,
       resetForCwd,
     },

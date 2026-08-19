@@ -226,6 +226,8 @@ const REMOTE_UNREAD_ENTITY_MIGRATION_NAME = "deduplicate_remote_run_unread_entit
 const AI_EVOLUTION_SKILL_LIFECYCLE_MIGRATION_NAME = "repair_ai_evolution_skill_lifecycle";
 const WORKFLOW_AGENT_CONTEXT_MIGRATION_VERSION = 112;
 const WORKFLOW_AGENT_CONTEXT_MIGRATION_NAME = "add_workflow_agent_context_stamp";
+const CHROME_BROWSER_CREDENTIALS_MIGRATION_VERSION = 113;
+const CHROME_BROWSER_CREDENTIALS_MIGRATION_NAME = "create_chrome_browser_credentials";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -5578,5 +5580,27 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       );
     `);
     context.recordMigration(REMOTE_UNREAD_ENTITY_MIGRATION_VERSION, REMOTE_UNREAD_ENTITY_MIGRATION_NAME);
+  }
+
+  if (!context.hasMigration(CHROME_BROWSER_CREDENTIALS_MIGRATION_VERSION)) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS chrome_browser_credentials (
+        workspace_id TEXT NOT NULL,
+        plugin_id TEXT NOT NULL,
+        extension_id TEXT NOT NULL,
+        credential_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        revoked_at TEXT,
+        PRIMARY KEY(workspace_id, plugin_id, extension_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_chrome_browser_credentials_active
+      ON chrome_browser_credentials(workspace_id, plugin_id, revoked_at, updated_at);
+    `);
+    context.recordMigration(
+      CHROME_BROWSER_CREDENTIALS_MIGRATION_VERSION,
+      CHROME_BROWSER_CREDENTIALS_MIGRATION_NAME,
+    );
   }
 }

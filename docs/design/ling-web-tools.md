@@ -6,7 +6,10 @@ Ling Agent should answer questions that require current public web evidence with
 
 - `web_search`: a Ling global tool backed by a configured web-search backend provider when one can return citations, with a host-owned public search fallback when model-provider search cannot produce source URLs.
 - `open_url` / `read_url`: public URL body extraction for explicit URL-reading requests.
-- `browser`: deferred; interactive browser control requires a separate session, approval, and audit model.
+- `browser`: delivered through the separately enabled
+  [Chrome Browser Built-in Plugin](chrome-browser-built-in-plugin.md). It uses an authenticated local
+  extension session and the existing MCP approval/audit pipeline; it is not part of automatic public
+  search or URL evidence enrichment.
 
 ## Current Slice
 
@@ -197,7 +200,8 @@ When the turn envelope already contains an available materialized link body, the
 
 ### browser
 
-Codex Browser Use is not directly portable into Ling Agent as a simple function call. It carries a live browser session, UI interaction targets, screenshots, event timing, and user-visible side effects. Ling needs its own contract before exposing this:
+Codex Browser Use is not directly portable into Ling Agent as a simple function call. Ling exposes
+interactive control only through the explicit Chrome built-in plugin contract:
 
 - user approval before navigation that changes account state or submits forms;
 - session lifecycle and artifact capture;
@@ -205,7 +209,9 @@ Codex Browser Use is not directly portable into Ling Agent as a simple function 
 - network and origin policy;
 - replayable audit evidence in the channel/work-unit timeline.
 
-Until that exists, Ling supports current public lookup and public URL reading, not interactive browser automation.
+The plugin supplies those capabilities as MCP tools, so existing binding, approval, cancellation and
+run-event ownership remain authoritative. When the plugin is disabled or Chrome is disconnected, Ling
+continues to support public lookup and URL reading but does not pretend interactive control is available.
 
 ## Conversation Evidence UI
 

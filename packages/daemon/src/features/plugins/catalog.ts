@@ -29,6 +29,11 @@ import { readBundledCuaDriverSetupMetadata } from "./cua-driver-catalog-projecti
 import { listBundledPackageDescriptors } from "./source-index.js";
 import { buildManagedPluginRuntimePreview, toManagedPluginPackageView } from "./runtime-injection.js";
 import { isBundledEmbeddedCuaDriverRuntime } from "./cua-driver-runtime-mode.js";
+import { CHROME_BROWSER_PLUGIN_ID } from "@ling-stack/contracts";
+import {
+  buildChromeBrowserSetupView,
+  createChromeBrowserDescriptor,
+} from "./chrome-browser.js";
 
 const sourceOrder = new Map([
   ["built-in", 0],
@@ -167,7 +172,7 @@ function listProductManagedBuiltInPluginDescriptors(
   extensionRegistry: LingExtensionRegistry,
 ): readonly ManagedPluginDescriptor[] {
   void extensionRegistry;
-  return [];
+  return [createChromeBrowserDescriptor()];
 }
 
 function shouldIncludePersistedManagedPluginRecord(record: ManagedPluginRecord): boolean {
@@ -246,8 +251,21 @@ function createManagedPluginView(input: {
   const bundledSetupMetadata = bundledProjection
     ? readBundledCuaDriverSetupMetadata(input.health?.details, process.platform)
     : {};
-  const setup = input.descriptor.id === CUA_DRIVER_PLUGIN_ID
-    ? buildCuaDriverSetupView({
+  const setup = input.descriptor.id === CHROME_BROWSER_PLUGIN_ID
+    ? buildChromeBrowserSetupView(input.health ?? createPluginHealthSnapshot({
+        pluginId: CHROME_BROWSER_PLUGIN_ID,
+        now: input.now,
+        status: input.record?.enabled ? "failed" : "disabled",
+        message: input.record?.enabled ? "Install and pair the Ling Chrome extension." : "Chrome plugin is disabled.",
+        details: {
+          browserFamily: "chrome",
+          browserState: "extension_required",
+          paired: false,
+          connected: false,
+        },
+      }))
+    : input.descriptor.id === CUA_DRIVER_PLUGIN_ID
+      ? buildCuaDriverSetupView({
         store: input.store,
         now: input.now,
         platform: process.platform,
@@ -266,8 +284,8 @@ function createManagedPluginView(input: {
               },
             }
           : {}),
-      })
-    : undefined;
+        })
+      : undefined;
   const recordEnabled = input.descriptor.id === CUA_DRIVER_PLUGIN_ID
     ? bundledProjection
       ? effectiveEnabled

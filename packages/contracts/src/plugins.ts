@@ -12,6 +12,7 @@ import type {
   CuaDriverWindowsReadinessSnapshot,
 } from "./cua-driver-bundled.js";
 import type { LockedComputerControlProjectionV1 } from "./locked-computer-control.js";
+import type { ChromeBrowserSetupState } from "./chrome-browser.js";
 
 export type ManagedPluginSourceKind = "built-in" | "bundled" | "trusted-local-preset";
 
@@ -32,7 +33,7 @@ export interface ManagedPluginSetupGuide {
 }
 
 export interface ManagedPluginSetupView {
-  readonly kind: "local_binary";
+  readonly kind: "local_binary" | "browser_extension";
   readonly state: ManagedPluginSetupState;
   readonly checkedAt: string;
   readonly detectedCommand?: string;
@@ -62,6 +63,14 @@ export interface ManagedPluginSetupView {
   readonly externalOverride?: CuaDriverExternalOverride;
   /** Optional V1 projection. Older Desktop/daemon pairs ignore it and remain fixed Off. */
   readonly lockedControl?: LockedComputerControlProjectionV1;
+  readonly browserFamily?: "chrome";
+  readonly browserState?: ChromeBrowserSetupState;
+  readonly paired?: boolean;
+  readonly connected?: boolean;
+  readonly extensionVersion?: string;
+  readonly browserVersion?: string;
+  readonly lastSeenAt?: string;
+  readonly storeUrl?: string;
 }
 
 /**
@@ -69,6 +78,7 @@ export interface ManagedPluginSetupView {
  * legacy local_binary setup fields so old clients always see known values.
  */
 export interface CuaDriverSetupView extends ManagedPluginSetupView {
+  readonly kind: "local_binary";
   readonly schemaVersion: 2;
   readonly distribution: CuaDriverDistribution;
   readonly platform: CuaDriverPlatform;
@@ -77,6 +87,14 @@ export interface CuaDriverSetupView extends ManagedPluginSetupView {
   readonly effectiveEnabled: boolean;
   readonly limitations: readonly CuaDriverLimitation[];
   readonly lockedControl?: LockedComputerControlProjectionV1;
+}
+
+export interface ChromeBrowserSetupView extends ManagedPluginSetupView {
+  readonly kind: "browser_extension";
+  readonly browserFamily: "chrome";
+  readonly browserState: ChromeBrowserSetupState;
+  readonly paired: boolean;
+  readonly connected: boolean;
 }
 
 export type ManagedPluginContributionKind =
@@ -139,6 +157,7 @@ export interface ManagedPluginEvent {
     | "contribution_linked"
     | "contribution_disabled"
     | "connected"
+    | "access_revoked"
     | "installed"
     | "uninstalled"
     | "package_refreshed"

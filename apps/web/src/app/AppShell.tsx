@@ -702,6 +702,8 @@ export function AppShell(): React.JSX.Element {
     previewPluginRuntime,
     enablePlugin,
     disablePlugin,
+    startChromePairing,
+    revokeChromeAccess,
     clearPluginActionErrors,
     resetForCwd: resetPluginsForCwd,
   } = pluginsDomain.actions;
@@ -2965,6 +2967,8 @@ export function AppShell(): React.JSX.Element {
                     onRuntimePreview={previewPluginRuntime}
                     onEnable={enablePlugin}
                     onDisable={disablePlugin}
+                    onStartChromePairing={startChromePairing}
+                    onRevokeChrome={revokeChromeAccess}
                     onClearActionErrors={clearPluginActionErrors}
                     onOpenMcpSettings={() => {
                       void refreshMcp();
