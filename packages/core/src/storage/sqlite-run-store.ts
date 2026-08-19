@@ -1784,10 +1784,6 @@ export class SqliteRunStore implements RunStore {
     return this.runtimeSemaphores.releaseRuntimeSemaphoreSlotsForAttempt(fence, releasedAt, releaseReason);
   }
 
-  releaseRuntimeSemaphoreSlotsForOwner(ownerId: string, releasedAt: string, releaseReason: string): number {
-    return this.runtimeSemaphores.releaseRuntimeSemaphoreSlotsForOwner(ownerId, releasedAt, releaseReason);
-  }
-
   expireRuntimeSemaphoreSlots(now: string): number {
     return this.runtimeSemaphores.expireRuntimeSemaphoreSlots(now);
   }

@@ -56,6 +56,14 @@ async function loadOrCreateDesktopBridgeTokenFile(filePath: string): Promise<str
 }
 
 async function replaceInvalidDesktopBridgeToken(filePath: string): Promise<void> {
+  // Another process may have published a valid replacement after the initial
+  // read classified this path as invalid. Re-check before claiming the path;
+  // otherwise a late contender could quarantine the already-published token
+  // and publish a second credential.
+  const current = await readDesktopBridgeToken(filePath);
+  if (current.kind === "valid") {
+    return;
+  }
   const quarantinePath = createQuarantineTokenPath(filePath);
   const token = createDesktopBridgeToken();
   let quarantined = false;

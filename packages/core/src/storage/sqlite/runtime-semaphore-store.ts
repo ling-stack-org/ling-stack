@@ -84,17 +84,6 @@ export class SqliteRuntimeSemaphoreStore {
     return slot ? mapRuntimeSemaphoreSlot(slot as Record<string, SQLOutputValue>) : undefined;
   }
 
-  releaseRuntimeSemaphoreSlotsForOwner(ownerId: string, releasedAt: string, releaseReason: string): number {
-    const result = this.context.database
-      .prepare(`
-        UPDATE runtime_semaphore_slots
-        SET status = 'released', released_at = ?, release_reason = ?
-        WHERE owner_id = ? AND owner_type = 'system' AND status = 'active'
-      `)
-      .run(releasedAt, releaseReason, ownerId);
-    return Number(result.changes);
-  }
-
   renewRuntimeSemaphoreSlotsForAttempt(fence: RuntimeAttemptFenceV1, renewedAt: string): number {
     const result = this.context.database
       .prepare(`

@@ -1617,7 +1617,6 @@ export interface RunStore {
   acquireRuntimeSemaphoreSlot(input: AcquireRuntimeSemaphoreSlotInput): RuntimeSemaphoreSlot | undefined;
   renewRuntimeSemaphoreSlotsForAttempt(fence: RuntimeAttemptFenceV1, renewedAt: string): number;
   releaseRuntimeSemaphoreSlotsForAttempt(fence: RuntimeAttemptFenceV1, releasedAt: string, releaseReason: string): number;
-  releaseRuntimeSemaphoreSlotsForOwner(ownerId: string, releasedAt: string, releaseReason: string): number;
   expireRuntimeSemaphoreSlots(now: string): number;
   listRuntimeSemaphoreSlots(options?: ListRuntimeSemaphoreSlotsOptions): RuntimeSemaphoreSlot[];
   createArtifact(input: CreateRunArtifactInput): RunArtifact;
@@ -2309,7 +2308,6 @@ export type RuntimeSupervisorStoreFacet = RunStoreFacet<
   | "acquireRuntimeSemaphoreSlot"
   | "renewRuntimeSemaphoreSlotsForAttempt"
   | "releaseRuntimeSemaphoreSlotsForAttempt"
-  | "releaseRuntimeSemaphoreSlotsForOwner"
   | "expireRuntimeSemaphoreSlots"
   | "listRuntimeSemaphoreSlots"
   | "recoverStaleRuns"
