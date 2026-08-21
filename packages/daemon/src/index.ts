@@ -46,9 +46,14 @@ import { RuntimeSupervisor } from "./runtime/supervisor.js";
 import { startRuntimeWorkUnit, transitionWorkUnitTerminal } from "./runtime/work-units.js";
 import { routeRequest } from "./server/router.js";
 import { attachRpcWebSocketServer } from "./server/rpc.js";
-import { CHROME_BROWSER_DEFAULT_EXTENSION_IDS } from "@ling-stack/contracts";
+import {
+  CHROME_BROWSER_DEFAULT_EXTENSION_IDS,
+  CHROME_BROWSER_PLUGIN_ID,
+  CHROME_BROWSER_PRODUCTION_EXTENSION_ID,
+} from "@ling-stack/contracts";
 import { ChromeBrowserSessionController } from "./features/browser-extension/session-controller.js";
 import { attachChromeBrowserWebSocketServer } from "./features/browser-extension/websocket-server.js";
+import { createChromeBrowserNativeBroker } from "./features/browser-extension/native-broker.js";
 import { ChromeBrowserPluginService, normalizeChromeBrowserStoreUrl } from "./features/plugins/chrome-browser.js";
 import { createChromeBrowserGenerationBroker } from "./features/plugins/chrome-browser-generation-broker.js";
 import { writeJson } from "./shared/response.js";
@@ -154,6 +159,7 @@ export {
   chromeExtensionIdFromOrigin,
 } from "./features/browser-extension/session-controller.js";
 export { attachChromeBrowserWebSocketServer } from "./features/browser-extension/websocket-server.js";
+export { createChromeBrowserNativeBroker } from "./features/browser-extension/native-broker.js";
 export { handleChromeBrowserPair } from "./features/browser-extension/routes.js";
 export { ChromeBrowserPluginService, createChromeBrowserDescriptor, normalizeChromeBrowserStoreUrl } from "./features/plugins/chrome-browser.js";
 export { createChromeBrowserGenerationBroker, chromeBrowserTools } from "./features/plugins/chrome-browser-generation-broker.js";
@@ -223,9 +229,32 @@ export function createDaemonServer(
   const chromeBrowserPlugin = new ChromeBrowserPluginService({
     controller: chromeBrowserSessions,
     getStore: (cwd) => storeRegistry.getStore(cwd),
-    storeUrl: normalizeChromeBrowserStoreUrl(process.env.LING_CHROME_EXTENSION_STORE_URL),
+    storeUrl: normalizeChromeBrowserStoreUrl(process.env.LING_CHROME_EXTENSION_STORE_URL)
+      ?? `https://chromewebstore.google.com/detail/${CHROME_BROWSER_PRODUCTION_EXTENSION_ID}`,
+    ...(process.env.LING_BROWSER_HOST_PATH ? { hostPath: process.env.LING_BROWSER_HOST_PATH } : {}),
   });
-  chromeBrowserSessions.setStateChangeListener((cwd) => chromeBrowserPlugin.handleSessionStateChange(cwd));
+  let lastChromeBrowserProjection = "";
+  chromeBrowserSessions.setStateChangeListener((cwd, snapshot) => {
+    chromeBrowserPlugin.handleSessionStateChange(cwd);
+    const projection = JSON.stringify({
+      connected: snapshot.connected,
+      hostState: snapshot.hostState,
+      extensionState: snapshot.extensionState,
+      transport: snapshot.transport ?? null,
+      extensionVersion: snapshot.extensionVersion ?? null,
+    });
+    if (projection === lastChromeBrowserProjection) return;
+    lastChromeBrowserProjection = projection;
+    appendControlPlaneEvent(storeRegistry.getStore(cwd), controlPlaneEvents, {
+      workspaceId: "workspace_default",
+      cwd,
+      domain: "mcp",
+      entityType: "managed_plugin",
+      entityId: CHROME_BROWSER_PLUGIN_ID,
+      action: "chrome_browser.connection_changed",
+      data: JSON.parse(projection) as Record<string, unknown>,
+    });
+  });
   chromeBrowserPlugin.sync(resolvedConfig.defaultWorkspaceCwd);
   let cuaDriverActivationCoordinator: CuaDriverDaemonActivationCoordinator | undefined;
   let lockedComputerControl: LockedComputerControlRegistry | undefined;
@@ -419,6 +448,19 @@ export function createDaemonServer(
     port: resolvedConfig.port,
     workspaceCwd: resolvedConfig.defaultWorkspaceCwd,
   });
+  const chromeBrowserNativeBroker = (dependencies.chromeBrowserNativeMessagingEnabled
+    ?? process.env.NODE_TEST_CONTEXT === undefined)
+    ? createChromeBrowserNativeBroker({
+        controller: chromeBrowserSessions,
+        workspaceCwd: resolvedConfig.defaultWorkspaceCwd,
+        ...(dependencies.chromeBrowserHostPath ?? process.env.LING_BROWSER_HOST_PATH
+          ? { hostPath: dependencies.chromeBrowserHostPath ?? process.env.LING_BROWSER_HOST_PATH }
+          : {}),
+        ...(dependencies.chromeBrowserRuntimeDescriptorPath ?? process.env.LING_BROWSER_HOST_RUNTIME_DESCRIPTOR
+          ? { descriptorPath: dependencies.chromeBrowserRuntimeDescriptorPath ?? process.env.LING_BROWSER_HOST_RUNTIME_DESCRIPTOR }
+          : {}),
+      })
+    : undefined;
 
   return {
     server,
@@ -437,6 +479,12 @@ export function createDaemonServer(
         server.listen(resolvedConfig.port, resolvedConfig.host, () => {
           server.off("error", reject);
           resolve();
+        });
+      });
+      await chromeBrowserNativeBroker?.start().catch(() => {
+        chromeBrowserSessions.observeNativeState({
+          cwd: resolvedConfig.defaultWorkspaceCwd,
+          hostState: "missing",
         });
       });
       await warmDefaultWorkspaceStartup({
@@ -478,6 +526,7 @@ export function createDaemonServer(
       cuaDriverActivationCoordinator.beginShutdown();
       const providerImportShutdown = providerImportPreflight.shutdown();
       await remoteAccess.stop();
+      await chromeBrowserNativeBroker?.close();
       await new Promise<void>((resolve, reject) => {
         activeRuns.cancelAll();
         activeDirectReplies.cancelAll();

@@ -80,6 +80,8 @@ part of the current product acceptance scope.
 - [Media Production Experience](media-production-experience-refinement.md)
 - [Media External Workflows](media-production-external-workflows.md)
 - [Plugin Manager](plugin-manager.md)
+- [Chrome Browser Built-in Plugin](chrome-browser-built-in-plugin.md)
+- [Chrome Native Messaging Implementation Plan](chrome-browser-built-in-plugin-implementation-plan.md)
 - [Automations](automations.md)
 - [External Work Orchestration](external-work-orchestration.md)
 

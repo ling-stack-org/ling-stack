@@ -196,7 +196,7 @@ function stateFilterGroup(state: PluginPrimaryStateView["id"]): Exclude<PluginSt
 
 function busyStateLabel(actionId: PluginBusyAction, t: Translate): string {
   if (actionId === "check" || actionId === "connect") return t("Checking...");
-  if (actionId === "pairing") return t("Connect Chrome");
+  if (actionId === "repair-chrome-host") return t("Repair connection");
   if (actionId === "revoke") return t("Remove Chrome access");
   if (actionId === "enable") return t("Enable");
   if (actionId === "disable") return t("Disable");

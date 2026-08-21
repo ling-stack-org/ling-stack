@@ -93,6 +93,9 @@ export interface ManagedPluginSetupView {
   readonly browserState?: import("@ling-stack/contracts").ChromeBrowserSetupState;
   readonly paired?: boolean;
   readonly connected?: boolean;
+  readonly transport?: import("@ling-stack/contracts").ChromeBrowserTransportKind;
+  readonly hostState?: import("@ling-stack/contracts").ChromeBrowserHostState;
+  readonly extensionState?: import("@ling-stack/contracts").ChromeBrowserExtensionState;
   readonly extensionVersion?: string;
   readonly browserVersion?: string;
   readonly lastSeenAt?: string;

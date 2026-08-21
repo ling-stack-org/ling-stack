@@ -48,6 +48,7 @@ export interface PluginPrimaryStateView {
 export type PluginActionId =
   | "apply"
   | "connect-chrome"
+  | "repair-chrome-host"
   | "revoke-chrome"
   | "guide"
   | "install"
@@ -152,6 +153,7 @@ export interface PluginActionHandlers {
   readonly onEnable: (pluginId: string) => void;
   readonly onDisable: (pluginId: string) => void;
   readonly onOpenChromeConnect: (pluginId: string) => void;
+  readonly onRepairChromeHost: (pluginId: string) => void;
   readonly onRevokeChrome: (pluginId: string) => void;
 }
 
@@ -173,7 +175,7 @@ export interface PluginManagerPageProps {
   readonly onRuntimePreview: (pluginId: string, request: PluginActionRequest) => Promise<void>;
   readonly onEnable: (pluginId: string, request: PluginActionRequest) => Promise<void>;
   readonly onDisable: (pluginId: string, request: PluginActionRequest) => Promise<void>;
-  readonly onStartChromePairing: (pluginId: string, request: PluginActionRequest) => Promise<import("../../types.js").ChromeBrowserPairingStartResponse | undefined>;
+  readonly onRepairChromeHost: (pluginId: string, request: PluginActionRequest) => Promise<void>;
   readonly onRevokeChrome: (pluginId: string, request: PluginActionRequest) => Promise<void>;
   readonly onClearActionErrors: (filter: PluginActionErrorFilter) => void;
   readonly onOpenMcpSettings: () => void;

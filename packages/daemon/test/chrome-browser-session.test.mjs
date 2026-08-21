@@ -302,6 +302,37 @@ test("Chrome plugin synchronization is idempotent for MCP authority", async () =
   }
 });
 
+test("Chrome Host repair installs the current Host and projects it as ready without pairing", async () => {
+  const { cwd, store, controller } = await fixture();
+  const calls = [];
+  try {
+    const service = new ChromeBrowserPluginService({
+      controller,
+      getStore: () => store,
+      hostPath: "/Applications/Ling.app/Contents/Resources/browser-host/ling-browser-host",
+      installHost: async (input) => {
+        calls.push(input);
+        return {
+          installed: true,
+          platform: "darwin",
+          hostPath: input.hostPath,
+          manifestPaths: ["/tmp/com.lingstack.browser.json"],
+          missing: [],
+        };
+      },
+    });
+    const health = await service.repairHost(cwd, "2026-08-17T00:03:00.000Z");
+    assert.deepEqual(calls, [{ hostPath: "/Applications/Ling.app/Contents/Resources/browser-host/ling-browser-host" }]);
+    assert.equal(controller.snapshot(cwd).hostState, "ready");
+    assert.notEqual(health.details.browserState, "host_missing");
+    assert.equal(controller.snapshot(cwd).paired, false);
+  } finally {
+    controller.close();
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 function connectChrome(url, credential) {
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(url, { origin: `chrome-extension://${extensionId}` });

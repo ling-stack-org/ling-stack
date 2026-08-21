@@ -153,6 +153,9 @@ export interface DaemonDependencies {
   /** Pass null only for fail-closed embedding/tests that intentionally disable Mobile send. */
   readonly remoteReplyDispatcher?: RemoteReplyDispatcher | null;
   readonly chromeBrowserExtensionIds?: readonly string[];
+  readonly chromeBrowserNativeMessagingEnabled?: boolean;
+  readonly chromeBrowserHostPath?: string;
+  readonly chromeBrowserRuntimeDescriptorPath?: string;
 }
 
 export interface DaemonContext {

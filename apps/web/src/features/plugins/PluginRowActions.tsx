@@ -137,6 +137,7 @@ function PluginIconAction({
 
 export function runPluginAction(action: PluginActionId, pluginId: string, handlers: PluginActionHandlers): void {
   if (action === "connect-chrome") return handlers.onOpenChromeConnect(pluginId);
+  if (action === "repair-chrome-host") return handlers.onRepairChromeHost(pluginId);
   if (action === "revoke-chrome") return handlers.onRevokeChrome(pluginId);
   if (action === "guide") return handlers.onOpenInstallGuide(pluginId);
   if (action === "details") return handlers.onOpenDetails(pluginId);
@@ -158,6 +159,7 @@ export function pluginActionIcon(action: PluginActionId): React.JSX.Element {
 
 function pluginActionIconComponent(action: PluginActionId): LucideIcon {
   if (action === "connect-chrome") return Globe2;
+  if (action === "repair-chrome-host") return Wrench;
   if (action === "revoke-chrome") return Unplug;
   if (action === "apply") return Wrench;
   if (action === "guide" || action === "install") return Download;
@@ -172,7 +174,8 @@ function pluginActionIconComponent(action: PluginActionId): LucideIcon {
 function actionIsBusy(action: PluginActionId, busyAction: PluginBusyAction | undefined): boolean {
   if (!busyAction) return false;
   if (action === "guide") return busyAction === "connect";
-  if (action === "connect-chrome") return busyAction === "pairing";
+  if (action === "connect-chrome") return false;
+  if (action === "repair-chrome-host") return busyAction === "repair-chrome-host";
   if (action === "revoke-chrome") return busyAction === "revoke";
   return action === busyAction;
 }

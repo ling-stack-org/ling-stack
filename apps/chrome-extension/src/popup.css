@@ -64,8 +64,7 @@ h1 {
   line-height: 1.45;
 }
 
-section,
-label {
+section {
   display: grid;
   gap: 8px;
 }
@@ -74,25 +73,11 @@ label {
   display: none !important;
 }
 
-label span {
-  color: var(--popup-muted);
-  font-size: 12px;
-}
-
-input:not([type="checkbox"]),
 button {
   min-height: 36px;
   border: 1px solid var(--popup-border);
   border-radius: 6px;
   font: inherit;
-}
-
-input:not([type="checkbox"]) {
-  box-sizing: border-box;
-  width: 100%;
-  padding: 0 10px;
-  background: var(--popup-control);
-  color: var(--popup-text);
 }
 
 button {
@@ -107,9 +92,18 @@ button:disabled {
   opacity: 0.55;
 }
 
-#disconnect {
+[data-tone="secondary"] {
   background: transparent;
   color: var(--popup-text);
+}
+
+.connection-state {
+  gap: 4px;
+}
+
+#description {
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .privacy-disclosure {
@@ -119,24 +113,8 @@ button:disabled {
   border-left: 2px solid var(--popup-border);
 }
 
-.privacy-disclosure p,
-.consent-row span {
+.privacy-disclosure p {
   color: var(--popup-muted);
   font-size: 12px;
   line-height: 1.45;
-}
-
-.consent-row {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr);
-  align-items: start;
-  gap: 8px;
-  cursor: pointer;
-}
-
-.consent-row input {
-  width: 16px;
-  height: 16px;
-  margin: 1px 0 0;
-  accent-color: var(--popup-primary);
 }

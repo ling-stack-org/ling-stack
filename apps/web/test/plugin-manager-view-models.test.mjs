@@ -5,7 +5,7 @@ import { buildChromePluginView } from "../src/features/plugins/plugin-manager-ch
 
 const t = (value) => value;
 
-test("Chrome built-in plugin distinguishes disabled, extension-required, waiting, incompatible, and ready states", () => {
+test("Chrome built-in plugin distinguishes automatic Host and extension connection states", () => {
   const disabled = buildChromePluginView(chromePlugin({ status: "disabled" }), t);
   assert.equal(disabled?.primaryState.id, "disabled");
   assert.equal(disabled?.primaryAction?.id, "enable");
@@ -17,13 +17,28 @@ test("Chrome built-in plugin distinguishes disabled, extension-required, waiting
   assert.equal(required?.primaryState.id, "setup-missing");
   assert.equal(required?.primaryAction?.id, "connect-chrome");
 
+  const hostMissing = buildChromePluginView(chromePlugin({
+    status: "enabled",
+    setup: chromeSetup({ browserState: "host_missing", paired: false, connected: false }),
+  }), t);
+  assert.equal(hostMissing?.primaryState.label, "Connection component missing");
+  assert.equal(hostMissing?.primaryAction?.id, "repair-chrome-host");
+  assert.equal(hostMissing?.showCheckAction, false);
+
   const waiting = buildChromePluginView(chromePlugin({
     status: "enabled",
     setup: chromeSetup({ browserState: "waiting_for_chrome", paired: true, connected: false }),
   }), t);
   assert.equal(waiting?.primaryState.id, "connecting");
-  assert.equal(waiting?.showCheckAction, true);
-  assert.equal(waiting?.menuActions[0]?.id, "revoke-chrome");
+  assert.equal(waiting?.showCheckAction, false);
+  assert.deepEqual(waiting?.menuActions, []);
+
+  const paused = buildChromePluginView(chromePlugin({
+    status: "enabled",
+    setup: chromeSetup({ browserState: "paused", paired: false, connected: false }),
+  }), t);
+  assert.equal(paused?.primaryState.label, "Paused");
+  assert.equal(paused?.primaryAction?.label, "Resume in Chrome");
 
   const incompatible = buildChromePluginView(chromePlugin({
     status: "enabled",
@@ -32,7 +47,8 @@ test("Chrome built-in plugin distinguishes disabled, extension-required, waiting
   assert.equal(incompatible?.primaryState.id, "failed");
   assert.equal(incompatible?.primaryState.label, "Needs attention");
   assert.equal(incompatible?.primaryAction?.id, "connect-chrome");
-  assert.equal(incompatible?.showCheckAction, true);
+  assert.equal(incompatible?.primaryAction?.label, "Update Chrome connection");
+  assert.equal(incompatible?.showCheckAction, false);
 
   const ready = buildChromePluginView(chromePlugin({
     status: "enabled",

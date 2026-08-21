@@ -6,8 +6,10 @@ node_modules/
 dist/
 dist-types/
 build/
+packages/browser-host/native/target/
 !apps/desktop/build/
 apps/desktop/build/*
+!apps/desktop/build/installer.nsh
 !apps/desktop/build/icon.icns
 !apps/desktop/build/icon.ico
 .turbo/

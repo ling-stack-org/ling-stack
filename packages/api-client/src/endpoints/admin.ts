@@ -222,6 +222,14 @@ export const adminEndpoints = {
       return this._post(`/plugins/${encodeURIComponent(pluginId)}/revoke`, { cwd }, {});
     },
 
+  async repairChromeBrowserHost(
+      this: LingDaemonEndpointContext,
+      cwd: string,
+      pluginId: string,
+    ): Promise<ManagedPluginCheckResponse> {
+      return this._post(`/plugins/${encodeURIComponent(pluginId)}/repair-browser-host`, { cwd }, {});
+    },
+
   async applyManagedPluginPreset(this: LingDaemonEndpointContext,
       cwd: string,
       pluginId: string,

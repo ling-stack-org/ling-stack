@@ -30,6 +30,7 @@ test("built-in Chrome plugin pairs an allowlisted extension and exposes six MCP 
   const baseUrl = `http://127.0.0.1:${address.port}`;
   const pluginUrl = `${baseUrl}/plugins/${encodeURIComponent(CHROME_BROWSER_PLUGIN_ID)}`;
   let socket;
+  let socketCommandCount = 0;
   try {
     const initial = await getJson(`${baseUrl}/plugins?cwd=${encodeURIComponent(cwd)}`);
     const chrome = initial.plugins.find((plugin) => plugin.id === CHROME_BROWSER_PLUGIN_ID);
@@ -37,12 +38,12 @@ test("built-in Chrome plugin pairs an allowlisted extension and exposes six MCP 
     assert.equal(chrome.sourceKind, "built-in");
     assert.equal(chrome.status, "disabled");
     assert.equal(chrome.setup.kind, "browser_extension");
-    assert.equal(chrome.setup.browserState, "extension_required");
+    assert.equal(chrome.setup.browserState, "host_missing");
 
     const enabled = await postJson(`${pluginUrl}/enable?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(enabled.plugin.status, "enabled");
     assert.equal(enabled.plugin.health.status, "failed");
-    assert.equal(enabled.plugin.setup.browserState, "extension_required");
+    assert.equal(enabled.plugin.setup.browserState, "host_missing");
     const lingAgentBindings = await getJson(`${baseUrl}/teammates/ling_agent/mcp?cwd=${encodeURIComponent(cwd)}`);
     const chromeBinding = lingAgentBindings.bindings.find((binding) => binding.serverId === CHROME_BROWSER_MCP_SERVER_ID);
     assert.equal(chromeBinding.mode, "all_current_tools");
@@ -84,6 +85,7 @@ test("built-in Chrome plugin pairs an allowlisted extension and exposes six MCP 
       paired.json.credential,
     );
     socket.on("message", (data) => {
+      socketCommandCount += 1;
       const command = JSON.parse(data.toString());
       socket.send(JSON.stringify({
         protocol: CHROME_BROWSER_PROTOCOL,
@@ -125,13 +127,27 @@ test("built-in Chrome plugin pairs an allowlisted extension and exposes six MCP 
         thinkingLevel: "off",
       }),
     });
-    const runText = await runResponse.text();
+    const runTextPromise = runResponse.text();
+    assert.equal(runResponse.ok, true);
+    let approvalList;
+    await waitFor(async () => {
+      approvalList = await getJson(`${baseUrl}/approvals?cwd=${encodeURIComponent(cwd)}&status=pending`);
+      return approvalList.approvals.length === 1;
+    });
+    assert.equal(socketCommandCount, 0, "Chrome must not receive a command before MCP approval");
+    await postJson(
+      `${baseUrl}/approvals/${encodeURIComponent(approvalList.approvals[0].id)}/approve?cwd=${encodeURIComponent(cwd)}`,
+      { reason: "approved for Chrome integration test" },
+    );
+    const runText = await runTextPromise;
     assert.equal(runResponse.ok, true, runText);
+    assert.equal(socketCommandCount, 1);
     assert.equal(runner.chromeToolCount, 6);
     assert.match(runner.chromeResult, /untrusted_web_content/);
     assert.match(runner.chromeResult, /Browser/);
 
     const revoked = await postJson(`${pluginUrl}/revoke?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(revoked.plugin.status, "disabled");
     assert.equal(revoked.plugin.setup.paired, false);
     assert.equal(revoked.plugin.setup.connected, false);
     const serialized = JSON.stringify(await getJson(`${baseUrl}/plugins?cwd=${encodeURIComponent(cwd)}`));
@@ -153,6 +169,16 @@ class ChromeToolRunner {
     this.chromeToolCount = options.mcpTools.filter((tool) => tool.serverId === CHROME_BROWSER_MCP_SERVER_ID).length;
     assert.ok(definition);
     assert.equal(definition.defaultApproval, "ask");
+    assert.ok(options.onApprovalRequired);
+    const decision = await options.onApprovalRequired({
+      toolCallId: "chrome_tool_call",
+      toolName: definition.registeredName,
+      input: {},
+      task: options.task,
+      cwd: options.cwd,
+      defaultApproval: definition.defaultApproval,
+    });
+    assert.equal(decision.approved, true);
     const result = await options.onMcpToolCall({
       registeredName: definition.registeredName,
       toolCallId: "chrome_tool_call",

@@ -37,6 +37,7 @@ export function useControlPlaneInvalidation(input: {
   readonly refreshApprovalPolicy: () => Promise<void>;
   readonly refreshProviders: (cwd?: string) => Promise<void>;
   readonly refreshMcp: (cwd?: string) => Promise<void>;
+  readonly refreshPlugins: (cwd?: string) => Promise<void>;
   readonly refreshRuntimeSettings: () => Promise<void>;
   readonly refreshAiTeammates: (cwd?: string) => Promise<void>;
   readonly refreshUsedMemoryAudit: (cwd?: string) => Promise<void>;
@@ -87,6 +88,7 @@ export function useControlPlaneInvalidation(input: {
     }
     if (changed.has("mcp")) {
       trackRefresh("mcp", "list", input.refreshMcp(workspaceCwd));
+      trackRefresh("mcp", "plugins", input.refreshPlugins(workspaceCwd));
     }
     if (changed.has("runners")) {
       trackRefresh("runners", "settings", input.refreshRuntimeSettings());

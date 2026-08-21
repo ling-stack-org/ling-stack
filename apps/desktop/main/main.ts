@@ -16,6 +16,7 @@ import {
   type CuaDriverFeatureFlags,
   type ComputerUsePreviewProjection,
 } from "@ling-stack/contracts";
+import { installBrowserHost } from "@ling-stack/browser-host";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, mkdirSync } from "node:fs";
@@ -308,7 +309,17 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
     webIndexPath: resources.webIndexPath,
     daemonEntryPath: resources.daemonEntryPath,
     previewIndexPath: resources.previewIndexPath,
+    browserHostPath: resources.browserHostPath,
   });
+  try {
+    await installBrowserHost({ hostPath: resources.browserHostPath });
+    logStartup("browser_host.registered", { packaged: app.isPackaged });
+  } catch (error) {
+    logStartup("browser_host.registration_unavailable", {
+      packaged: app.isPackaged,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
   if (realCaptureSmokeMode && realCaptureSmokeDescriptor) {
     await verifyRealCaptureRequestProvenance(resources.previewIndexPath, realCaptureSmokeDescriptor);
     if (!attempt.isCurrent()) {
@@ -386,6 +397,7 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
           daemonEntryPath: resources.daemonEntryPath,
           defaultWorkspaceCwd,
           desktopBridgeToken: bridgeToken,
+          browserHostPath: resources.browserHostPath,
           cuaDriverFeatureFlags: featureFlags,
           ...(smokeHeadless && app.runningUnderARM64Translation ? { startupTimeoutMs: 60_000 } : {}),
           onDiagnostic: logStartup,

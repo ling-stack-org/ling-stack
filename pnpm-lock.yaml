@@ -41,6 +41,9 @@ importers:
       '@ling-stack/api-client':
         specifier: workspace:*
         version: link:../../packages/api-client
+      '@ling-stack/browser-host':
+        specifier: workspace:*
+        version: link:../../packages/browser-host
       '@ling-stack/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -246,8 +249,17 @@ importers:
         specifier: workspace:*
         version: link:../contracts
 
+  packages/browser-host:
+    dependencies:
+      '@ling-stack/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+
   packages/cli:
     dependencies:
+      '@ling-stack/browser-host':
+        specifier: workspace:*
+        version: link:../browser-host
       '@ling-stack/core':
         specifier: workspace:*
         version: link:../core
@@ -326,6 +338,9 @@ importers:
 
   packages/daemon:
     dependencies:
+      '@ling-stack/browser-host':
+        specifier: workspace:*
+        version: link:../browser-host
       '@ling-stack/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -2636,10 +2651,12 @@ packages:
   '@xmldom/xmldom@0.8.13':
     resolution: {integrity: sha512-KRYzxepc14G/CEpEGc3Yn+JKaAeT63smlDr+vjB8jRfgTBBI9wRj/nkQEO+ucV8p8I9bfKLWp37uHgFrbntPvw==}
     engines: {node: '>=10.0.0'}
+    deprecated: this version has critical issues, please update to the latest version
 
   '@xmldom/xmldom@0.9.10':
     resolution: {integrity: sha512-A9gOqLdi6cV4ibazAjcQufGj0B1y/vDqYrcuP6d/6x8P27gRS8643Dj9o1dEKtB6O7fwxb2FgBmJS2mX7gpvdw==}
     engines: {node: '>=14.6'}
+    deprecated: this version has critical issues, please update to the latest version
 
   '@xyflow/react@12.11.2':
     resolution: {integrity: sha512-eLAlDWJfWnQEhJwGMjlWdAXO9eYllKpliUmPQlAmOLxz6mExXuzMVDUKLMquixgkrtmMFFtug3jGKmYYld12cA==}

@@ -74,6 +74,7 @@ export interface DesktopDaemonLifecycleOptions {
   }) => ChildProcess;
   readonly executablePath?: string;
   readonly desktopBridgeToken?: string;
+  readonly browserHostPath?: string;
   readonly cuaDriverFeatureFlags?: CuaDriverFeatureFlags;
   /** Test seam for evaluating the platform-specific bundled gate. */
   readonly platform?: string;
@@ -218,6 +219,7 @@ export class DesktopDaemonLifecycle {
           LING_STACK_HOST: url.hostname,
           LING_STACK_PORT: url.port || (url.protocol === "https:" ? "443" : "80"),
           LING_STACK_DEFAULT_WORKSPACE_CWD: this.defaultWorkspaceCwd,
+          ...(this.options.browserHostPath ? { LING_BROWSER_HOST_PATH: this.options.browserHostPath } : {}),
           ...(this.options.desktopBridgeToken
             ? {
                 LING_DESKTOP_BRIDGE_TOKEN: this.options.desktopBridgeToken,

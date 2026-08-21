@@ -79,6 +79,12 @@ export function PluginManagerPage(props: PluginManagerPageProps): React.JSX.Elem
       mutate: (request) => props.onDisable(pluginId, request),
     }),
     onOpenChromeConnect: controller.openChromeConnect,
+    onRepairChromeHost: (pluginId) => void controller.runMutation({
+      pluginId,
+      action: "repair-chrome-host",
+      owner,
+      mutate: (request) => props.onRepairChromeHost(pluginId, request),
+    }),
     onRevokeChrome: (pluginId) => void controller.runMutation({
       pluginId,
       action: "revoke",
@@ -189,20 +195,11 @@ export function PluginManagerPage(props: PluginManagerPageProps): React.JSX.Elem
         actionFailure={chromeConnectPlugin ? controller.actionFailureFor(chromeConnectPlugin.id, "chrome-connect") : undefined}
         busy={Boolean(chromeConnectPending)}
         onClose={controller.closeChromeConnect}
-        onRefresh={props.onRefresh}
-        onRevoke={async (pluginId) => {
-          await controller.runMutation({
-            pluginId,
-            action: "revoke",
-            owner: "chrome-connect",
-            mutate: (request) => props.onRevokeChrome(pluginId, request),
-          });
-        }}
-        onStartPairing={(pluginId) => controller.runMutation({
+        onRepairHost={(pluginId) => controller.runMutation({
           pluginId,
-          action: "pairing",
+          action: "repair-chrome-host",
           owner: "chrome-connect",
-          mutate: (request) => props.onStartChromePairing(pluginId, request),
+          mutate: (request) => props.onRepairChromeHost(pluginId, request),
         })}
         open={Boolean(controller.chromeConnectPluginId)}
         plugin={chromeConnectPlugin}

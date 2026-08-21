@@ -72,7 +72,7 @@ import type { ChromeBrowserPluginService } from "./chrome-browser.js";
 export type ManagedPluginRoute =
   | {
       readonly pluginId: string;
-      readonly action?: "enable" | "disable" | "check" | "connect" | "pairing" | "revoke" | "apply-preset" | "validate-package" | "install" | "uninstall" | "refresh-package" | "runtime-preview";
+      readonly action?: "enable" | "disable" | "check" | "connect" | "pairing" | "revoke" | "repair-browser-host" | "apply-preset" | "validate-package" | "install" | "uninstall" | "refresh-package" | "runtime-preview";
     };
 
 const bundledCanonicalCuaDriverActions = new Set<NonNullable<ManagedPluginRoute["action"]>>([
@@ -249,6 +249,12 @@ export async function handlePluginItem(
         writeJson(response, health.status === "ready" ? 200 : 400, health.status === "ready"
           ? { plugin, health }
           : { error: readChromeHealthError(health), message: health.message ?? "Chrome is not connected.", plugin, health });
+        return;
+      }
+      if (request.method === "POST" && route.action === "repair-browser-host") {
+        const health = await chromeBrowserPlugin.repairHost(cwd);
+        const plugin = getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: route.pluginId, includeEvents: true, cuaDriverRuntimeAuthority: mcpBroker.cuaDriverRuntimeAuthority, cuaDriverFeatureFlags: config.cuaDriver });
+        writeJson(response, 200, { plugin, health });
         return;
       }
       if (request.method === "POST" && route.action === "pairing") {

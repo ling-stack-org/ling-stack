@@ -58,6 +58,10 @@ export async function revokeChromeBrowserAccess(cwd: string, pluginId: string): 
   return daemonClient.revokeChromeBrowserAccess(cwd, pluginId);
 }
 
+export async function repairChromeBrowserHost(cwd: string, pluginId: string): Promise<ManagedPluginCheckResponse> {
+  return daemonClient.repairChromeBrowserHost(cwd, pluginId);
+}
+
 export async function applyManagedPluginPreset(
   cwd: string,
   pluginId: string,

@@ -39,6 +39,7 @@ import {
   type DoctorStatus,
 } from "./doctor/checks.js";
 import { CliError, errorMessage } from "./errors.js";
+import { runBrowserHostCommand } from "./browser-host-command.js";
 import { generateCompletionScript, supportedCompletionShells, type CompletionShell } from "./completion/scripts.js";
 import { parseRunStreamRecord, type RunEventEnvelope, type RunStreamRecord } from "./run/events.js";
 import { readRunPromptInput } from "./run/input.js";
@@ -277,6 +278,8 @@ async function dispatch(parsed: ParsedGlobalArgs): Promise<number> {
       return await handleMemory(rest, parsed.options);
     case "daemon":
       return await handleDaemon(rest, parsed.options);
+    case "browser-host":
+      return await handleBrowserHost(rest, parsed.options);
     case "restart":
       return await handleLocalRestart(rest, parsed.options);
     case "status":
@@ -308,6 +311,25 @@ async function dispatch(parsed: ParsedGlobalArgs): Promise<number> {
     default:
       throw new CliError(2, "unknown_command", `Unknown command: ${command}`);
   }
+}
+
+async function handleBrowserHost(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const result = await runBrowserHostCommand(args);
+  if (options.json) {
+    printJson({ ok: true, ...result });
+    return result.action === "status" && !result.installed ? 4 : 0;
+  }
+  if (result.action === "install") {
+    console.log(result.installed ? "Ling Browser Host installed" : "Ling Browser Host installation is incomplete");
+  } else if (result.action === "uninstall") {
+    console.log("Ling Browser Host uninstalled");
+  } else {
+    console.log(result.installed ? "Ling Browser Host is installed" : "Ling Browser Host is not installed");
+  }
+  if (!result.installed && result.action !== "uninstall") {
+    for (const path of result.missing) console.log(`Missing: ${path}`);
+  }
+  return result.action === "status" && !result.installed ? 4 : 0;
 }
 
 async function handleInit(args: readonly string[], options: GlobalOptions): Promise<number> {
@@ -7490,6 +7512,10 @@ function printCommandHelp(command: string, subcommand?: string): void {
     printDaemonHelp(subcommand);
     return;
   }
+  if (command === "browser-host") {
+    printBrowserHostHelp();
+    return;
+  }
   if (command === "ui") {
     printUiHelp();
     return;
@@ -7522,6 +7548,9 @@ Usage:
   ling-stack [global options] daemon stop
   ling-stack [global options] daemon restart
   ling-stack [global options] daemon logs
+  ling-stack [global options] browser-host install
+  ling-stack [global options] browser-host status
+  ling-stack [global options] browser-host uninstall
   ling-stack [global options] provider list
   ling-stack [global options] provider add <kind> --name <name> --provider-id <id> --model <model>
   ling-stack [global options] provider show <id>
@@ -7932,5 +7961,19 @@ Notes:
   The current --cwd is passed to the daemon as LING_STACK_DEFAULT_WORKSPACE_CWD for first-run Web defaults.
   Background lifecycle state is stored under .ling-stack/daemon and logs under .ling-stack/logs.
   stop and restart refuse active work by default; use --force for explicit operator override.
+`);
+}
+
+function printBrowserHostHelp(): void {
+  console.log(`Usage:
+  ling-stack browser-host install
+  ling-stack browser-host status
+  ling-stack browser-host uninstall
+
+Behavior:
+  Builds and registers the current source Ling Browser Host for Chrome and Chromium.
+  The Host connects Ling for Chrome automatically; no workspace path or pairing code is required.
+  Install and uninstall modify only the current user's Ling Native Messaging manifests and, on
+  Windows, the exact Ling HKCU registry entries.
 `);
 }

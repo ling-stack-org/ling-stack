@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
@@ -34,12 +35,19 @@ for (const file of files) {
 }
 const zip = createZip(archive);
 await writeFile(zipPath, zip);
+let sourceCommit = "unknown";
+try {
+  sourceCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: packageRoot, encoding: "utf8" }).trim();
+} catch {
+  // Source archives without Git metadata remain buildable but cannot claim a commit identity.
+}
 await writeFile(join(dist, "build-metadata.json"), `${JSON.stringify({
   identityMode: storeBootstrap ? "store-bootstrap" : "production",
   extensionId: storeBootstrap ? null : extensionIdFromKey(manifest.key),
   version: manifest.version,
   manifestSha256: createHash("sha256").update(await readFile(join(dist, "manifest.json"))).digest("hex"),
   zipSha256: createHash("sha256").update(zip).digest("hex"),
+  sourceCommit,
 }, null, 2)}\n`);
 
 async function listFiles(root) {
