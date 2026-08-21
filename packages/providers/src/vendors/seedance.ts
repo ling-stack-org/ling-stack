@@ -55,6 +55,7 @@ export async function submitSeedanceVideoTask(
       return { status: "failed", errorCode: "invalid_request", errorMessage: "Seedance video task response did not include task id." };
     }
     const statusEndpoint = `${options.baseUrl?.replace(/\/+$/, "")}/contents/generations/tasks/${encodeURIComponent(externalOperationId)}`;
+    const requestSummary = summarizeSeedanceRequest(payload);
     return {
       status: "submitted",
       handle: {
@@ -62,8 +63,7 @@ export async function submitSeedanceVideoTask(
         externalOperationId,
         recovery: {
           statusEndpoint,
-          request: payload,
-          createResponse: redactSecrets(createResponse, mediaVendorRedactionValues(options)),
+          requestSummary,
           ...(extractSeedanceVideoUrl(createResponse) ? { videoUrl: extractSeedanceVideoUrl(createResponse) } : {}),
         },
       },
@@ -114,9 +114,9 @@ export async function pollSeedanceVideoTask(
       return {
         status: "succeeded",
         recovery: {
-          ...handle.recovery,
+          statusEndpoint,
+          requestSummary: handle.recovery.requestSummary,
           videoUrl,
-          statusResponse: redactSecrets(statusResponse, mediaVendorRedactionValues(options)),
         },
       };
     }
@@ -163,9 +163,7 @@ export async function collectSeedanceVideoArtifacts(
               mode: "live_seedance_video_generate_final",
               taskId: handle.externalOperationId,
               statusEndpoint: readRecoveryString(handle.recovery, "statusEndpoint"),
-              request: handle.recovery.request,
-              createResponse: handle.recovery.createResponse,
-              statusResponse: handle.recovery.statusResponse,
+              requestSummary: handle.recovery.requestSummary,
             }, mediaVendorRedactionValues(options)), null, 2),
           },
           videoArtifact,
@@ -253,9 +251,7 @@ export async function executeSeedanceVideoTask(
             endpoint,
             statusEndpoint,
             taskId,
-            request: payload,
-            createResponse: createJson,
-            statusResponse: final.statusResponse,
+            requestSummary: summarizeSeedanceRequest(payload),
           }, mediaVendorRedactionValues(options)), null, 2),
         },
         videoArtifact,
@@ -468,6 +464,8 @@ function videoExtensionFromUrl(url: URL): string | undefined {
 
 function buildSeedanceVideoTaskPayload(plan: MediaVendorRequestPlan): Record<string, unknown> {
   const input = isRecord(plan.payload.input) ? plan.payload.input : {};
+  const videoImageInputs = plan.payload.videoImageInputs ?? [];
+  assertSeedanceVideoImageInputs(videoImageInputs, plan.provider.model);
   return removeUndefined({
     model: plan.provider.model,
     content: [
@@ -475,10 +473,71 @@ function buildSeedanceVideoTaskPayload(plan: MediaVendorRequestPlan): Record<str
         type: "text",
         text: plan.payload.prompt,
       },
+      ...videoImageInputs.map((image) => ({
+        type: "image_url",
+        image_url: { url: image.imageUrl },
+        role: image.role,
+      })),
     ],
     ratio: typeof input.ratio === "string" ? input.ratio : "16:9",
     duration: typeof input.duration === "number" ? input.duration : 5,
     watermark: typeof input.watermark === "boolean" ? input.watermark : false,
+  });
+}
+
+function assertSeedanceVideoImageInputs(
+  inputs: NonNullable<MediaVendorRequestPlan["payload"]["videoImageInputs"]>,
+  model: string,
+): void {
+  if (inputs.length === 0) {
+    return;
+  }
+  const roles = new Set(inputs.map((input) => input.role));
+  if (roles.size > 1) {
+    throw new MediaAdapterExecutionError("invalid_request", "Seedance image inputs must use one role.");
+  }
+  if (inputs.some((input) => !/^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(input.imageUrl))) {
+    throw new MediaAdapterExecutionError("invalid_request", "Seedance image inputs must use JPEG, PNG, or WebP Data URLs.");
+  }
+  const version = resolveSeedanceVersion(model);
+  if (!version) {
+    throw new MediaAdapterExecutionError("unsupported_capability", "Unknown Seedance model versions do not accept image inputs.");
+  }
+  const role = inputs[0]?.role;
+  if (role === "first_frame" && inputs.length !== 1) {
+    throw new MediaAdapterExecutionError("invalid_request", "Seedance first-frame mode requires exactly one image.");
+  }
+  if (role === "reference_image") {
+    const limit = version === "2.0" ? 9 : version === "2.5" ? 30 : undefined;
+    if (!limit) {
+      throw new MediaAdapterExecutionError("unsupported_capability", `Seedance ${version} does not accept reference images.`);
+    }
+    if (inputs.length > limit) {
+      throw new MediaAdapterExecutionError("invalid_request", `Seedance ${version} accepts at most ${limit} reference images.`);
+    }
+  }
+}
+
+function resolveSeedanceVersion(model: string): "1.0" | "1.5" | "2.0" | "2.5" | undefined {
+  const normalized = model.trim().toLowerCase().replace(/[:\s._/]+/g, "-");
+  const match = normalized.match(/(?:^|-)seedance-(1-0|1-5|2-0|2-5)(?:-|$)/);
+  return match?.[1]?.replace("-", ".") as "1.0" | "1.5" | "2.0" | "2.5" | undefined;
+}
+
+function summarizeSeedanceRequest(payload: Record<string, unknown>): Record<string, unknown> {
+  const content = Array.isArray(payload.content) ? payload.content : [];
+  const images = content.filter((item) => isRecord(item) && item.type === "image_url");
+  const role = images.length > 0 && isRecord(images[0]) &&
+      (images[0].role === "first_frame" || images[0].role === "reference_image")
+    ? images[0].role
+    : undefined;
+  return removeUndefined({
+    model: typeof payload.model === "string" ? payload.model : undefined,
+    ratio: typeof payload.ratio === "string" ? payload.ratio : undefined,
+    duration: typeof payload.duration === "number" ? payload.duration : undefined,
+    watermark: typeof payload.watermark === "boolean" ? payload.watermark : undefined,
+    inputMode: role ?? "text",
+    imageCount: images.length,
   });
 }
 

@@ -8,6 +8,7 @@ import type {
   StoryboardFocusRequest,
 } from "./media-production-types.js";
 import { useMediaProductionController } from "./use-media-production-controller.js";
+import { useMediaProjectImageUploads } from "./use-media-project-image-uploads.js";
 import { StoryboardCanvas } from "./StoryboardCanvas.js";
 import { SceneInspector } from "./SceneInspector.js";
 import { ProjectSceneOutline } from "./ProjectSceneOutline.js";
@@ -69,6 +70,11 @@ export function MediaProductionWorkspace({
   });
   const workflowController = useMediaWorkflowController({ cwd, onJobsChanged });
   const project = state.project;
+  const imageUploadState = useMediaProjectImageUploads({
+    cwd,
+    projectId: project?.mediaProject.id ?? "",
+    sceneIds: project?.scenes.map((scene) => scene.id) ?? [],
+  });
   const busyAction = mediaProductionLegacyBusyAction(state.busy);
   const videoProviders = useMemo(() => providers.filter((provider) => {
     const runtime = resolveMediaProviderRuntimeState(provider, "video_generate");
@@ -80,13 +86,15 @@ export function MediaProductionWorkspace({
     ? project.scenes.map((scene) => deriveSceneReadiness({
       scene,
       project: project.mediaProject,
+      assets: project.assets,
       providers,
       sceneRuns: project.sceneRuns,
       jobs: mediaJobs,
       artifactsByJob: mediaArtifactsByJob,
       workflows: workflowController.state.workflows,
+      imageInputsPending: imageUploadState.pendingSceneIds.has(scene.id),
     }))
-    : [], [mediaArtifactsByJob, mediaJobs, project, providers, workflowController.state.workflows]);
+    : [], [imageUploadState.pendingSceneIds, mediaArtifactsByJob, mediaJobs, project, providers, workflowController.state.workflows]);
   const projectRunReview = useMemo(() => deriveProjectRunReview(sceneReadiness), [sceneReadiness]);
   const workflowLibraryOpen = overlay.kind === "workflow";
   const workflowLibraryTab = workflowLibraryOpen ? overlay.tab : "workflows";
@@ -332,6 +340,8 @@ export function MediaProductionWorkspace({
                     cwd={cwd}
                     scene={selectedScene}
                     project={project.mediaProject}
+                    projectAssets={project.assets}
+                    projectScenes={project.scenes}
                     sceneRuns={project.sceneRuns}
                     providers={providers}
                     workflows={workflowController.state.workflows}
@@ -342,6 +352,7 @@ export function MediaProductionWorkspace({
                     busyAction={busyAction}
                     sceneUpdateBusy={state.busy.sceneUpdateIds.includes(selectedScene.id)}
                     actions={actions}
+                    imageUploadState={imageUploadState}
                     onClose={() => setRightDockOpen(false)}
                     onRequestDelete={(target) => {
                       sceneDeleteSnapshotRef.current = target;

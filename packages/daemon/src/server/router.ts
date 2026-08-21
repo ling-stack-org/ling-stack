@@ -169,6 +169,10 @@ import {
   parseMediaSceneRunRoute,
 } from "../features/media/production-routes.js";
 import {
+  handleMediaProjectAssetRoute,
+  parseMediaProjectAssetRoute,
+} from "../features/media/project-asset-routes.js";
+import {
   handleMediaWorkflowAnalyze,
   handleMediaWorkflowConnectionsCollection,
   handleMediaWorkflowImport,
@@ -2497,6 +2501,12 @@ export async function routeRequest(
       launchMediaJob,
       mediaProjectRoute,
     );
+    return;
+  }
+
+  const mediaProjectAssetRoute = parseMediaProjectAssetRoute(url.pathname);
+  if (mediaProjectAssetRoute) {
+    handleMediaProjectAssetRoute(request, response, config, storeRegistry, mediaProjectAssetRoute);
     return;
   }
 

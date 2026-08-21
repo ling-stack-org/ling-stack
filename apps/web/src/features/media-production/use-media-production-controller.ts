@@ -32,11 +32,13 @@ import type {
   MediaProductionFailure,
   MediaProductionFailureOwner,
   MediaProductionMutationOutcome,
+  MediaProductionMutationToken,
   MediaProductionRetryIntent,
   MediaProductionState,
   MediaProductionToastIntent,
   MediaScenePatch,
 } from "./media-production-types.js";
+import { useMediaProjectAssetActions } from "./use-media-project-asset-actions.js";
 
 type ProjectRequestOwner = "project-list" | "project-detail";
 
@@ -46,13 +48,6 @@ interface RequestToken {
   readonly owner: ProjectRequestOwner;
   readonly requestId: number;
   readonly subjectId?: string;
-}
-
-interface MutationToken {
-  readonly cwd: string;
-  readonly epoch: number;
-  readonly key: string;
-  readonly requestId: number;
 }
 
 interface ControllerInput {
@@ -115,18 +110,33 @@ export function useMediaProductionController(input: ControllerInput): {
     && token.requestId === requestRef.current[token.owner]
   ), []);
 
-  const beginMutation = useCallback((key: string): MutationToken => {
+  const beginMutation = useCallback((key: string): MediaProductionMutationToken => {
     const requestId = (mutationRequestRef.current[key] ?? 0) + 1;
     mutationRequestRef.current[key] = requestId;
     return { cwd: activeCwdRef.current, epoch: epochRef.current, key, requestId };
   }, []);
 
-  const isCurrentMutation = useCallback((token: MutationToken): boolean => (
+  const isCurrentMutation = useCallback((token: MediaProductionMutationToken): boolean => (
     mountedRef.current
     && token.cwd === activeCwdRef.current
     && token.epoch === epochRef.current
     && mutationRequestRef.current[token.key] === token.requestId
   ), []);
+
+  const releaseMutation = useCallback((token: MediaProductionMutationToken): void => {
+    if (mutationRequestRef.current[token.key] === token.requestId) {
+      delete mutationRequestRef.current[token.key];
+    }
+  }, []);
+
+  const projectAssetActions = useMediaProjectAssetActions({
+    stateRef,
+    activeCwdRef,
+    commit,
+    beginMutation,
+    isCurrentMutation,
+    releaseMutation,
+  });
 
   const loadProjectDetail = useCallback(async (
     projectId: string,
@@ -717,6 +727,8 @@ export function useMediaProductionController(input: ControllerInput): {
       createProject: createProjectAction,
       updateProject: updateProjectAction,
       deleteProject: deleteProjectAction,
+      createProjectAsset: projectAssetActions.createProjectAsset,
+      deleteProjectAsset: projectAssetActions.deleteProjectAsset,
       createScene: createSceneAction,
       updateScene: updateSceneAction,
       reorderScenes: reorderScenesAction,
@@ -746,33 +758,33 @@ function createFailure(input: {
   };
 }
 
-function succeededOutcome(): MediaProductionMutationOutcome {
-  return { ok: true, value: undefined };
+function succeededOutcome<T = undefined>(value: T = undefined as T): MediaProductionMutationOutcome<T> {
+  return { ok: true, value };
 }
 
-function failedOutcome(
+function failedOutcome<T = undefined>(
   owner: MediaProductionFailureOwner,
   productMessageKey: string,
   retryIntent: MediaProductionRetryIntent,
   subjectId?: string,
-): MediaProductionMutationOutcome {
+): MediaProductionMutationOutcome<T> {
   return { ok: false, failure: { owner, productMessageKey, retryIntent, subjectId } };
 }
 
-function staleOutcome(
+function staleOutcome<T = undefined>(
   owner: MediaProductionFailureOwner,
   retryIntent: MediaProductionRetryIntent,
   subjectId?: string,
-): MediaProductionMutationOutcome {
-  return failedOutcome(owner, "This request no longer applies to the current workspace.", retryIntent, subjectId);
+): MediaProductionMutationOutcome<T> {
+  return failedOutcome<T>(owner, "This request no longer applies to the current workspace.", retryIntent, subjectId);
 }
 
-function busyOutcome(
+function busyOutcome<T = undefined>(
   owner: MediaProductionFailureOwner,
   retryIntent: MediaProductionRetryIntent,
   subjectId?: string,
-): MediaProductionMutationOutcome {
-  return failedOutcome(owner, "This action is already in progress.", retryIntent, subjectId);
+): MediaProductionMutationOutcome<T> {
+  return failedOutcome<T>(owner, "This action is already in progress.", retryIntent, subjectId);
 }
 
 function commitMutationFailure(

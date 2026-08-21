@@ -1,13 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ImageIcon, Settings2, Workflow } from "lucide-react";
+import { Settings2, Workflow } from "lucide-react";
 import { resolveMediaProviderRuntimeState } from "@ling-stack/core/provider-media-normalization";
-import { artifactContentUrl } from "../../api.js";
 import { useI18n } from "../../i18n.js";
 import { Button, Checkbox, Field, InlineFeedback, Input, InspectorSection, Select, Textarea } from "../../shared/ui/index.js";
-import type { MediaProject, MediaScene, MediaWorkflowInputField, MediaWorkflowDefinitionDetail, ProviderPreset, RunArtifact } from "../../types.js";
+import type { MediaProject, MediaProjectAsset, MediaScene, MediaSceneVideoImageInput, MediaWorkflowInputField, MediaWorkflowDefinitionDetail, ProviderPreset, RunArtifact } from "../../types.js";
 import type { MediaProductionActions, MediaProductionFailure, MediaScenePatch } from "./media-production-types.js";
-import { deriveSceneSourceProjection, workflowFieldSceneValue } from "./media-production-view-models.js";
-type SettingsField = "executionMode" | "provider" | "workflow" | "ratio" | "duration" | "references" | `workflow:${string}`;
+import {
+  deriveSceneSourceProjection,
+  shouldShowVideoImageInputs,
+  workflowFieldSceneValue,
+} from "./media-production-view-models.js";
+import { SceneVideoImageInputs } from "./SceneVideoImageInputs.js";
+import type { MediaProjectImageUploadState } from "./use-media-project-image-uploads.js";
+type SettingsField = "executionMode" | "provider" | "workflow" | "ratio" | "duration" | "videoImages" | `workflow:${string}`;
 interface ExecutionDraft {
   readonly executionMode: MediaScene["executionMode"];
   readonly providerPresetId: string;
@@ -15,28 +20,35 @@ interface ExecutionDraft {
   readonly ratio: string;
   readonly durationSeconds: number;
   readonly referenceArtifactIds: readonly string[];
+  readonly videoImageInputs: readonly MediaSceneVideoImageInput[];
   readonly workflowInputValues: Readonly<Record<string, unknown>>;
 }
 export function SceneExecutionSettings({
   cwd,
   scene,
   project,
+  projectAssets,
+  projectScenes,
   providers,
   workflows,
   imageArtifacts,
   sceneUpdateBusy,
   actions,
+  imageUploadState,
   onConfigureVideoModel,
   onOpenWorkflowLibrary,
 }: {
   readonly cwd: string;
   readonly scene: MediaScene;
   readonly project: MediaProject;
+  readonly projectAssets: readonly MediaProjectAsset[];
+  readonly projectScenes: readonly MediaScene[];
   readonly providers: readonly ProviderPreset[];
   readonly workflows: readonly MediaWorkflowDefinitionDetail[];
   readonly imageArtifacts: readonly RunArtifact[];
   readonly sceneUpdateBusy: boolean;
   readonly actions: MediaProductionActions;
+  readonly imageUploadState: MediaProjectImageUploadState;
   readonly onConfigureVideoModel: () => void;
   readonly onOpenWorkflowLibrary: () => void;
 }): React.JSX.Element {
@@ -53,6 +65,10 @@ export function SceneExecutionSettings({
     setFailures({});
   }, [scene.id]);
 
+  useEffect(() => {
+    setDraft((current) => ({ ...current, videoImageInputs: [...scene.videoImageInputs] }));
+  }, [scene.videoImageInputs]);
+
   const draftScene = useMemo<MediaScene>(() => ({
     ...scene,
     ...draft,
@@ -66,14 +82,15 @@ export function SceneExecutionSettings({
     setFailures((current) => omitFailure(current, field));
     actions.clearFailure("scene-update", scene.id);
   };
-  const save = async (field: SettingsField, patch: MediaScenePatch): Promise<void> => {
-    if (busyFields.has(field)) return;
+  const save = async (field: SettingsField, patch: MediaScenePatch): Promise<boolean> => {
+    if (busyFields.has(field)) return false;
     const targetSceneId = scene.id;
     setBusyFields((current) => addField(current, field));
     clearFailure(field);
     const outcome = await actions.updateScene(targetSceneId, patch);
     if (sceneIdRef.current === targetSceneId && !outcome.ok) setFailures((current) => ({ ...current, [field]: outcome.failure }));
     if (sceneIdRef.current === targetSceneId) setBusyFields((current) => removeField(current, field));
+    return outcome.ok;
   };
   const retry = async (field: SettingsField, failure: MediaProductionFailure): Promise<void> => {
     if (busyFields.has(field)) return;
@@ -143,6 +160,10 @@ export function SceneExecutionSettings({
           authorityScene={scene}
           source={source}
           imageArtifacts={imageArtifacts}
+          projectAssets={projectAssets}
+          projectScenes={projectScenes}
+          actions={actions}
+          imageUploadState={imageUploadState}
           busyFields={busyFields}
           sceneUpdateBusy={sceneUpdateBusy}
           failures={failures}
@@ -156,12 +177,30 @@ export function SceneExecutionSettings({
   );
 }
 
-function DirectSettings(input: SettingsBranchProps & { readonly cwd: string }): React.JSX.Element {
+function DirectSettings(input: DirectSettingsProps): React.JSX.Element {
   const { t } = useI18n();
   const capability = !input.source.blocker && input.source.selectedProvider
     ? resolveMediaProviderRuntimeState(input.source.selectedProvider, "video_generate").videoGeneration
     : undefined;
   return <>
+    {shouldShowVideoImageInputs(input.scene, capability) ? (
+      <SceneVideoImageInputs
+        cwd={input.cwd}
+        scene={input.scene}
+        projectAssets={input.projectAssets}
+        projectScenes={input.projectScenes}
+        imageArtifacts={input.imageArtifacts}
+        capability={capability}
+        disabled={input.sceneUpdateBusy || input.busyFields.has("videoImages")}
+        actions={input.actions}
+        imageUploadState={input.imageUploadState}
+        onChange={async (videoImageInputs) => {
+          input.updateDraft("videoImageInputs", videoImageInputs, "videoImages");
+          return await input.save("videoImages", { videoImageInputs });
+        }}
+      />
+    ) : null}
+    {input.feedback("videoImages")}
     <Field className="field" label={t("Default video model")}>
       <Select value={input.draft.providerPresetId} disabled={input.sceneUpdateBusy} loading={input.busyFields.has("provider")} invalid={Boolean(input.failures.provider)} onChange={(event) => {
         const providerPresetId = event.target.value;
@@ -194,7 +233,6 @@ function DirectSettings(input: SettingsBranchProps & { readonly cwd: string }): 
         </Field>
       </div>
       {input.feedback("ratio")}{input.feedback("duration")}
-      {capability.inputModes.includes("image_reference") ? <ReferenceAssets {...input} /> : null}
     </> : null}
   </>;
 }
@@ -244,25 +282,6 @@ function WorkflowField({ field, input }: { readonly field: MediaWorkflowInputFie
   </div>;
 }
 
-function ReferenceAssets(input: SettingsBranchProps & { readonly cwd: string }): React.JSX.Element {
-  const { t } = useI18n();
-  return <div className="reference-asset-picker compact">
-    <div className="scene-inspector-section-head"><span className="field-label">{t("References")}</span><small>{t("Current workspace")}</small></div>
-    {input.imageArtifacts.length ? <div className="reference-asset-grid">{input.imageArtifacts.map((artifact) => {
-      const selected = input.draft.referenceArtifactIds.includes(artifact.id);
-      return <div className={`reference-asset${selected ? " selected" : ""}`} key={artifact.id}>
-        <img src={artifactContentUrl(artifact.id, input.cwd)} alt="" />
-        <Checkbox checked={selected} disabled={input.sceneUpdateBusy} loading={input.busyFields.has("references")} label={artifact.title ?? t("Generated result")} onChange={() => {
-          const referenceArtifactIds = selected ? input.draft.referenceArtifactIds.filter((id) => id !== artifact.id) : [...input.draft.referenceArtifactIds, artifact.id];
-          input.updateDraft("referenceArtifactIds", referenceArtifactIds, "references");
-          void input.save("references", { referenceArtifactIds });
-        }} />
-      </div>;
-    })}</div> : <p className="scene-inspector-hint"><ImageIcon size={14} />{t("No artifacts")}</p>}
-    {input.feedback("references")}
-  </div>;
-}
-
 interface SettingsBranchProps {
   readonly draft: ExecutionDraft;
   readonly scene: MediaScene;
@@ -273,9 +292,17 @@ interface SettingsBranchProps {
   readonly sceneUpdateBusy: boolean;
   readonly failures: Readonly<Partial<Record<SettingsField, MediaProductionFailure>>>;
   readonly updateDraft: <Key extends keyof ExecutionDraft>(key: Key, value: ExecutionDraft[Key], field: SettingsField) => void;
-  readonly save: (field: SettingsField, patch: MediaScenePatch) => Promise<void>;
+  readonly save: (field: SettingsField, patch: MediaScenePatch) => Promise<boolean>;
   readonly feedback: (field: SettingsField) => React.JSX.Element | null;
   readonly onRepair: () => void;
+}
+
+interface DirectSettingsProps extends SettingsBranchProps {
+  readonly cwd: string;
+  readonly projectAssets: readonly MediaProjectAsset[];
+  readonly projectScenes: readonly MediaScene[];
+  readonly actions: MediaProductionActions;
+  readonly imageUploadState: MediaProjectImageUploadState;
 }
 
 function SourceRepair({ actionLabel, label, icon, onClick }: { readonly actionLabel: string; readonly label: string; readonly icon: React.JSX.Element; readonly onClick: () => void }): React.JSX.Element {
@@ -291,7 +318,7 @@ function FieldFailure({ failure, busy, onRetry, onClear }: { readonly failure: M
 }
 
 function sceneDraft(scene: MediaScene): ExecutionDraft {
-  return { executionMode: scene.executionMode, providerPresetId: scene.providerPresetId ?? "", workflowDefinitionId: scene.workflowDefinitionId ?? "", ratio: scene.ratio, durationSeconds: scene.durationSeconds, referenceArtifactIds: [...scene.referenceArtifactIds], workflowInputValues: { ...scene.workflowInputValues } };
+  return { executionMode: scene.executionMode, providerPresetId: scene.providerPresetId ?? "", workflowDefinitionId: scene.workflowDefinitionId ?? "", ratio: scene.ratio, durationSeconds: scene.durationSeconds, referenceArtifactIds: [...scene.referenceArtifactIds], videoImageInputs: [...scene.videoImageInputs], workflowInputValues: { ...scene.workflowInputValues } };
 }
 
 function workflowFieldPatch(field: MediaWorkflowInputField, value: unknown, scene: MediaScene): MediaScenePatch {

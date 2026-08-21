@@ -228,6 +228,8 @@ const WORKFLOW_AGENT_CONTEXT_MIGRATION_VERSION = 112;
 const WORKFLOW_AGENT_CONTEXT_MIGRATION_NAME = "add_workflow_agent_context_stamp";
 const CHROME_BROWSER_CREDENTIALS_MIGRATION_VERSION = 113;
 const CHROME_BROWSER_CREDENTIALS_MIGRATION_NAME = "create_chrome_browser_credentials";
+const MEDIA_PROJECT_ASSETS_MIGRATION_VERSION = 114;
+const MEDIA_PROJECT_ASSETS_MIGRATION_NAME = "create_media_project_assets";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -5595,5 +5597,41 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       CHROME_BROWSER_CREDENTIALS_MIGRATION_VERSION,
       CHROME_BROWSER_CREDENTIALS_MIGRATION_NAME,
     );
+  }
+
+  const hasMediaProjectAssetsMigration = context.hasMigration(MEDIA_PROJECT_ASSETS_MIGRATION_VERSION);
+  if (
+    !hasMediaProjectAssetsMigration ||
+    !context.hasTable("media_project_assets") ||
+    !context.hasColumn("media_scenes", "video_image_inputs_json")
+  ) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS media_project_assets (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        file_name TEXT NOT NULL,
+        content_type TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        width INTEGER NOT NULL,
+        height INTEGER NOT NULL,
+        checksum TEXT NOT NULL,
+        source_artifact_id TEXT,
+        path TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+        FOREIGN KEY(project_id) REFERENCES media_projects(id) ON DELETE CASCADE,
+        UNIQUE(workspace_id, project_id, checksum)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_media_project_assets_project_created
+      ON media_project_assets(workspace_id, project_id, created_at DESC);
+    `);
+    if (!context.hasColumn("media_scenes", "video_image_inputs_json")) {
+      database.exec("ALTER TABLE media_scenes ADD COLUMN video_image_inputs_json TEXT NOT NULL DEFAULT '[]';");
+    }
+    if (!hasMediaProjectAssetsMigration) {
+      context.recordMigration(MEDIA_PROJECT_ASSETS_MIGRATION_VERSION, MEDIA_PROJECT_ASSETS_MIGRATION_NAME);
+    }
   }
 }

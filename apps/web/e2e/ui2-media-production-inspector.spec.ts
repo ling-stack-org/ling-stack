@@ -88,6 +88,176 @@ test("MP-08 Run validates the visible prompt and commits it before creating a ta
   expect(errors).toEqual([]);
 });
 
+test("MP-I2V uploads reusable images, imports generated results, and requires an explicit first-frame choice", async ({ page }) => {
+  const errors = collectBrowserErrors(page);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const state = directFixture();
+  state.providers = [
+    seedanceProvider("provider_seedance_20", "doubao-seedance-2-0-260128", "Seedance 2.0"),
+    seedanceProvider("provider_seedance_15", "doubao-seedance-1-5-pro-251215", "Seedance 1.5"),
+  ];
+  state.mediaProjects[0].defaultProviderPresetId = "provider_seedance_20";
+  state.mediaScenes = [{ ...scene("scene_i2v", "Image to video", "Camera moves around the subject", 0), providerPresetId: "provider_seedance_20" }];
+  state.mediaJobs = [job("job_generated_source", "succeeded", "2026-07-23T04:00:00.000Z", undefined, ["artifact_generated_source"])];
+  state.artifactsByMediaJob.job_generated_source = [artifact("artifact_generated_source", "job_generated_source")];
+  const control = routeControl();
+  control.assetCreateDelayMs = 180;
+  await prepare(page, state, control);
+  await openInspector(page);
+
+  const inspector = page.locator(".scene-inspector");
+  await expect(inspector.getByText("Image inputs", { exact: true })).toBeVisible();
+  await inspector.locator(".scene-video-image-file-input").setInputFiles({
+    name: "reference.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2G7sAAAAASUVORK5CYII=", "base64"),
+  });
+  await expect(inspector.getByText("Uploading", { exact: true })).toBeVisible();
+  await expect(inspector.getByRole("button", { name: "Run", exact: true })).toBeDisabled();
+  expect(control.runCalls.scene_i2v ?? 0).toBe(0);
+  await expect.poll(() => state.mediaProjectAssets).toHaveLength(1);
+  await expect.poll(() => state.mediaScenes[0].videoImageInputs).toEqual([{ assetId: "media_project_asset_1", role: "reference_image" }]);
+  await expect(inspector.getByText("Selected 1 of 9", { exact: true })).toBeVisible();
+
+  await inspector.getByRole("button", { name: "Project images", exact: true }).click();
+  const library = page.getByRole("dialog", { name: "Choose project images" });
+  await library.getByRole("tab", { name: "Generated images" }).click();
+  await library.getByRole("button", { name: "Add to project" }).click();
+  await expect.poll(() => state.mediaProjectAssets).toHaveLength(2);
+  await library.getByRole("button", { name: "Use selected images" }).click();
+  await expect(library).toHaveCount(0);
+  await expect.poll(() => state.mediaScenes[0].videoImageInputs).toEqual([
+    { assetId: "media_project_asset_1", role: "reference_image" },
+    { assetId: "media_project_asset_2", role: "reference_image" },
+  ]);
+  const lightScreenshot = await page.screenshot({ path: "test-results/media-i2v-light-1440x1000.png", animations: "disabled", caret: "hide" });
+  await test.info().attach("media-i2v-light-1440x1000", { body: lightScreenshot, contentType: "image/png" });
+
+  await inspector.getByLabel("Default video model").selectOption("provider_seedance_15");
+  await expect(inspector.getByText("Current model does not support reference images.", { exact: true })).toBeVisible();
+  await expect(inspector.getByRole("button", { name: "Run", exact: true })).toBeDisabled();
+  await inspector.getByRole("radio", { name: "Starting frame", exact: true }).click();
+  const firstFrame = page.getByRole("dialog", { name: "Choose a starting frame" });
+  await expect(firstFrame).toBeVisible();
+  await firstFrame.getByRole("button", { name: /artifact_generated_source/u }).click();
+  await firstFrame.getByRole("button", { name: "Use selected images" }).click();
+  await expect.poll(() => state.mediaScenes[0].videoImageInputs).toEqual([{ assetId: "media_project_asset_1", role: "first_frame" }]);
+  await expect(inspector.getByText("Starting frame", { exact: true })).toBeVisible();
+  await expect(inspector.getByRole("button", { name: "Upload image", exact: true })).toBeDisabled();
+  await expect(inspector.getByRole("button", { name: "Run", exact: true })).toBeEnabled();
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "zh-CN");
+    localStorage.setItem("ling-stack.themePreference", "dark");
+    localStorage.setItem("ling-stack.themeSelection", JSON.stringify({ mode: "fixed", themeId: "ling-dark" }));
+    localStorage.setItem("ling-stack.themeBootstrapSelection", JSON.stringify({ mode: "fixed", themeId: "ling-dark" }));
+  });
+  await page.reload();
+  await openInspector(page);
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expect(page.locator(".scene-inspector").getByText("Starting frame", { exact: true })).toBeVisible();
+  await page.locator(".scene-inspector-scroll").evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  await expect(page.locator(".scene-inspector").getByText("Image inputs", { exact: true })).toBeVisible();
+  const darkScreenshot = await page.screenshot({ path: "test-results/media-i2v-dark-1280x800.png", animations: "disabled", caret: "hide" });
+  await test.info().attach("media-i2v-dark-1280x800", { body: darkScreenshot, contentType: "image/png" });
+  expect(errors).toEqual([]);
+});
+
+test("MP-I2V keeps delayed uploads gated across scene navigation", async ({ page }) => {
+  const errors = collectBrowserErrors(page);
+  const state = directFixture();
+  state.providers = [seedanceProvider("provider_seedance_20", "doubao-seedance-2-0-260128", "Seedance 2.0")];
+  state.mediaProjects[0].defaultProviderPresetId = "provider_seedance_20";
+  state.mediaScenes = [
+    { ...scene("scene_i2v_pending", "Pending image scene", "Move around the subject", 0), providerPresetId: "provider_seedance_20" },
+    { ...scene("scene_i2v_ready", "Ready text scene", "A slow camera push", 1), providerPresetId: "provider_seedance_20" },
+  ];
+  const control = routeControl();
+  control.assetCreateGate = deferred<void>();
+  await prepare(page, state, control);
+  await openInspector(page);
+
+  const inspector = page.locator(".scene-inspector");
+  await inspector.locator(".scene-video-image-file-input").setInputFiles({
+    name: "delayed-reference.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2G7sAAAAASUVORK5CYII=", "base64"),
+  });
+  await expect(inspector.getByText("Uploading", { exact: true })).toBeVisible();
+  await expect(inspector.getByRole("button", { name: "Run", exact: true })).toBeDisabled();
+
+  await page.locator(".storyboard-scene-node").nth(1).click();
+  await expect(inspector).toHaveAttribute("data-scene-id", "scene_i2v_ready");
+  await expect(page.locator(".media-production-primary-action")).toContainText("1 scene");
+  await page.locator(".media-production-primary-action").click();
+  const review = page.locator('[data-media-production-dialog="project-run-review"]');
+  await expect(review.locator('[data-project-run-ready-count="1"]')).toBeVisible();
+  await expect(review.locator('[data-project-run-skipped-count="1"]')).toBeVisible();
+  await expect(review.getByText("Pending image scene", { exact: true })).toBeVisible();
+  await expect(review.getByText("Finish or remove pending image uploads before running.", { exact: true })).toBeVisible();
+  await review.getByRole("button", { name: "Cancel", exact: true }).click();
+  expect(control.runCalls.scene_i2v_pending ?? 0).toBe(0);
+
+  await page.locator(".storyboard-scene-node").first().click();
+  await expect(inspector).toHaveAttribute("data-scene-id", "scene_i2v_pending");
+  await expect(inspector.getByText("Uploading", { exact: true })).toBeVisible();
+  await expect(inspector.getByRole("button", { name: "Run", exact: true })).toBeDisabled();
+
+  control.assetCreateGate.resolve();
+  await expect.poll(() => state.mediaScenes[0].videoImageInputs).toEqual([
+    { assetId: "media_project_asset_1", role: "reference_image" },
+  ]);
+  await expect(inspector.getByText("Uploading", { exact: true })).toHaveCount(0);
+  await expect(inspector.getByRole("button", { name: "Run", exact: true })).toBeEnabled();
+  expect(control.runCalls.scene_i2v_pending ?? 0).toBe(0);
+  expect(errors).toEqual([]);
+});
+
+test("MP-I2V preserves independent uploads started from different scenes", async ({ page }) => {
+  const errors = collectBrowserErrors(page);
+  const state = directFixture();
+  state.providers = [seedanceProvider("provider_seedance_20", "doubao-seedance-2-0-260128", "Seedance 2.0")];
+  state.mediaProjects[0].defaultProviderPresetId = "provider_seedance_20";
+  state.mediaScenes = [
+    { ...scene("scene_i2v_first", "First image scene", "Move around the first subject", 0), providerPresetId: "provider_seedance_20" },
+    { ...scene("scene_i2v_second", "Second image scene", "Move around the second subject", 1), providerPresetId: "provider_seedance_20" },
+  ];
+  const control = routeControl();
+  control.assetCreateGate = deferred<void>();
+  await prepare(page, state, control);
+  await openInspector(page);
+
+  const inspector = page.locator(".scene-inspector");
+  await inspector.locator(".scene-video-image-file-input").setInputFiles({
+    name: "first.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2G7sAAAAASUVORK5CYII=", "base64"),
+  });
+  await expect(inspector.getByText("Uploading", { exact: true })).toBeVisible();
+
+  await page.locator(".storyboard-scene-node").nth(1).click();
+  await expect(inspector).toHaveAttribute("data-scene-id", "scene_i2v_second");
+  await inspector.locator(".scene-video-image-file-input").setInputFiles({
+    name: "second.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2G7sAAAAASUVORK5CYII=", "base64"),
+  });
+  await expect(inspector.getByText("Uploading", { exact: true })).toBeVisible();
+
+  control.assetCreateGate.resolve();
+  await expect.poll(() => state.mediaScenes.find((item) => item.id === "scene_i2v_first")?.videoImageInputs).toHaveLength(1);
+  await expect.poll(() => state.mediaScenes.find((item) => item.id === "scene_i2v_second")?.videoImageInputs).toHaveLength(1);
+  await expect(inspector.getByText("Uploading", { exact: true })).toHaveCount(0);
+
+  await page.locator(".storyboard-scene-node").first().click();
+  await expect(inspector).toHaveAttribute("data-scene-id", "scene_i2v_first");
+  await expect(inspector.getByText("Uploading", { exact: true })).toHaveCount(0);
+  await expect(inspector.getByRole("button", { name: "Run", exact: true })).toBeEnabled();
+  expect(control.runCalls.scene_i2v_first ?? 0).toBe(0);
+  expect(control.runCalls.scene_i2v_second ?? 0).toBe(0);
+  expect(errors).toEqual([]);
+});
+
 test("MP-09 workflow source drift exposes one repair route and never mixes direct controls", async ({ page }) => {
   const errors = collectBrowserErrors(page);
   const state = workflowFixture();
@@ -269,6 +439,8 @@ interface InspectorRouteControl {
   failNextSceneUpdate: number;
   sceneUpdateCalls: number;
   actionDelayMs: number;
+  assetCreateDelayMs: number;
+  assetCreateGate?: ReturnType<typeof deferred<void>>;
   runCalls: Record<string, number>;
   cancelCalls: Record<string, number>;
   selectCalls: Record<string, number>;
@@ -278,7 +450,7 @@ interface InspectorRouteControl {
 }
 
 function routeControl(): InspectorRouteControl {
-  return { failNextSceneUpdate: 0, sceneUpdateCalls: 0, actionDelayMs: 0, runCalls: {}, cancelCalls: {}, selectCalls: {}, duplicateCalls: {}, deleteCalls: {}, requestOrder: [] };
+  return { failNextSceneUpdate: 0, sceneUpdateCalls: 0, actionDelayMs: 0, assetCreateDelayMs: 0, runCalls: {}, cancelCalls: {}, selectCalls: {}, duplicateCalls: {}, deleteCalls: {}, requestOrder: [] };
 }
 
 async function prepare(page: Page, state: MockState, control: InspectorRouteControl): Promise<void> {
@@ -290,6 +462,10 @@ async function prepare(page: Page, state: MockState, control: InspectorRouteCont
 async function handleInspectorRoute(route: Route, control: InspectorRouteControl): Promise<void> {
   const request = route.request();
   const path = new URL(request.url()).pathname;
+  if (request.method() === "POST" && /^\/media-projects\/[^/]+\/assets$/u.test(path)) {
+    if (control.assetCreateGate) await control.assetCreateGate.promise;
+    await delay(control.assetCreateDelayMs);
+  }
   if (request.method() === "PATCH" && /^\/media-scenes\/[^/]+$/u.test(path)) {
     control.sceneUpdateCalls += 1;
     const body = await request.postDataJSON() as { readonly prompt?: unknown };
@@ -402,6 +578,10 @@ function scene(id: string, title: string, prompt: string, sortOrder: number): Mo
 
 function videoProvider(): Record<string, unknown> {
   return { id: "provider_video", kind: "seedance", displayName: "Studio Video", providerId: "seedance", model: "seedance-ui2", api: "media-job", baseUrl: "https://example.invalid/v3", apiKeyRef: "env:VIDEO_KEY", apiKeyConfigured: true, headers: {}, input: ["text"], compat: { mediaVendorTransport: { mode: "live" } }, capabilities: ["video_generate"], enabled: true, createdAt: "2026-07-23T00:00:00.000Z", updatedAt: "2026-07-23T00:00:00.000Z" };
+}
+
+function seedanceProvider(id: string, model: string, displayName: string): Record<string, unknown> {
+  return { ...videoProvider(), id, model, displayName, input: ["text", "image"] };
 }
 
 function workflow(id: string, name: string, status: "ready" | "archived"): Record<string, unknown> {

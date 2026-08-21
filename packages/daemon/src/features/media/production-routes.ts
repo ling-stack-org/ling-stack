@@ -4,8 +4,10 @@ import {
   type MediaProject,
   type MediaScene,
   type MediaSceneExecutionMode,
+  type MediaSceneVideoImageInput,
   type RunStore,
   type SecretResolver,
+  type VideoGenerationCapabilities,
 } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
@@ -25,8 +27,13 @@ import {
 import { assertMediaJobProvider } from "./provider.js";
 import { cancelPendingMediaProductionApprovals } from "./media-cost-approval.js";
 import { requireConnection, requireDefinition, requireVersion, resolveMediaWorkflowSecret } from "./workflows/workflow-service.js";
+import {
+  handleMediaProjectAssetsCollection,
+  stageMediaProjectAssetContentsForDeletion,
+  toPublicMediaProjectAsset,
+} from "./project-asset-routes.js";
 
-export type MediaProjectRouteAction = "scenes" | "reorder" | "run";
+export type MediaProjectRouteAction = "assets" | "scenes" | "reorder" | "run";
 export type MediaSceneRouteAction = "run" | "duplicate" | "select-run";
 
 export interface MediaProjectRoute {
@@ -64,7 +71,7 @@ export async function handleMediaProjectsCollection(
     if (request.method === "POST") {
       const input = parseCreateMediaProject(await readJsonBody(request, config.maxBodyBytes));
       const mediaProject = store.createMediaProject(input, now());
-      writeJson(response, 201, { mediaProject, scenes: [], sceneRuns: [] });
+      writeJson(response, 201, { mediaProject, assets: [], scenes: [], sceneRuns: [] });
       return;
     }
     methodNotAllowed(response, request.method, "/media-projects");
@@ -96,6 +103,10 @@ export async function handleMediaProjectRoute(
     }
     if (!route.action) {
       await handleMediaProjectItem(request, response, config, store, project);
+      return;
+    }
+    if (route.action === "assets") {
+      await handleMediaProjectAssetsCollection(request, response, config, store, project);
       return;
     }
     if (route.action === "scenes") {
@@ -172,6 +183,7 @@ export async function handleMediaSceneRoute(
         ratio: scene.ratio,
         durationSeconds: scene.durationSeconds,
         referenceArtifactIds: scene.referenceArtifactIds,
+        videoImageInputs: scene.videoImageInputs,
         canvasPosition: { x: scene.canvasPosition.x + 56, y: scene.canvasPosition.y + 48 },
       }, now());
       writeJson(response, 201, { mediaScene: duplicate });
@@ -238,7 +250,7 @@ export function parseMediaProjectRoute(pathname: string): MediaProjectRoute | un
   if (
     segments.length === 3 &&
     segments[0] === "media-projects" &&
-    (segments[2] === "scenes" || segments[2] === "reorder" || segments[2] === "run")
+    (segments[2] === "assets" || segments[2] === "scenes" || segments[2] === "reorder" || segments[2] === "run")
   ) {
     return { mediaProjectId: segments[1], action: segments[2] };
   }
@@ -286,7 +298,17 @@ async function handleMediaProjectItem(
     return;
   }
   if (request.method === "DELETE") {
-    store.deleteMediaProject(project.id);
+    const assets = store.listMediaProjectAssets(project.id);
+    const contentDeletion = stageMediaProjectAssetContentsForDeletion(store, project, assets);
+    try {
+      if (!store.deleteMediaProject(project.id)) {
+        throw new HttpError(404, "media_project_not_found", `媒体项目不存在：${project.id}`);
+      }
+    } catch (error) {
+      contentDeletion.rollback();
+      throw error;
+    }
+    contentDeletion.commit();
     writeJson(response, 200, { deleted: true, mediaProjectId: project.id });
     return;
   }
@@ -488,23 +510,55 @@ function prepareSceneRun(
   if (capabilities.durationsSeconds && !capabilities.durationsSeconds.includes(scene.durationSeconds)) {
     throw new HttpError(400, "unsupported_capability", `当前模型不支持 ${scene.durationSeconds} 秒时长。`);
   }
-  if (scene.referenceArtifactIds.length > 0) {
-    if (!capabilities.inputModes.includes("image_reference")) {
-      throw new HttpError(400, "unsupported_capability", "当前视频模型尚未支持参考图生成。");
-    }
-    for (const artifactId of scene.referenceArtifactIds) {
-      const artifact = store.getArtifact(artifactId);
-      if (!artifact || artifact.type !== "image") {
-        throw new HttpError(400, "invalid_reference_artifact", "参考素材必须是当前工作区中已有的图片结果。");
-      }
-    }
-  }
+  const videoImageInputs = prepareDirectVideoImageInputs(store, project, scene, capabilities);
   const input = {
     ratio: scene.ratio,
     duration: scene.durationSeconds,
-    ...(scene.referenceArtifactIds.length ? { referenceArtifactIds: [...scene.referenceArtifactIds] } : {}),
+    ...(videoImageInputs.length ? { videoImageInputs } : {}),
   };
   return { mode: "direct", scene, provider, input };
+}
+
+function prepareDirectVideoImageInputs(
+  store: RunStore,
+  project: MediaProject,
+  scene: MediaScene,
+  capabilities: VideoGenerationCapabilities,
+): readonly { readonly assetId: string; readonly role: MediaSceneVideoImageInput["role"]; readonly checksum: string }[] {
+  if (scene.videoImageInputs.length === 0) {
+    return [];
+  }
+  const role = scene.videoImageInputs[0]?.role;
+  if (!role || scene.videoImageInputs.some((input) => input.role !== role)) {
+    throw new HttpError(400, "invalid_media_asset", "同一场景的图片必须使用相同用途。");
+  }
+  if (!capabilities.inputModes.includes(role)) {
+    throw new HttpError(
+      400,
+      "unsupported_capability",
+      role === "first_frame" ? "当前视频模型不支持起始画面生成。" : "当前视频模型不支持参考图片生成。",
+    );
+  }
+  if (role === "first_frame" && scene.videoImageInputs.length !== 1) {
+    throw new HttpError(400, "invalid_media_asset", "起始画面模式只能选择一张图片。");
+  }
+  if (
+    role === "reference_image" &&
+    (!capabilities.maxReferenceImages || scene.videoImageInputs.length > capabilities.maxReferenceImages)
+  ) {
+    throw new HttpError(
+      400,
+      "invalid_media_asset",
+      `当前视频模型最多支持 ${capabilities.maxReferenceImages ?? 0} 张参考图片。`,
+    );
+  }
+  return scene.videoImageInputs.map((input) => {
+    const asset = store.getMediaProjectAsset(input.assetId);
+    if (!asset || asset.projectId !== project.id) {
+      throw new HttpError(400, "invalid_media_asset", "场景图片必须来自当前媒体项目。");
+    }
+    return { assetId: asset.id, role: input.role, checksum: asset.checksum };
+  });
 }
 
 function persistSceneRun(
@@ -604,6 +658,7 @@ function resolveProjectRunScenes(
 function mediaProjectDetail(store: RunStore, project: MediaProject) {
   return {
     mediaProject: project,
+    assets: store.listMediaProjectAssets(project.id).map(toPublicMediaProjectAsset),
     scenes: store.listMediaScenes(project.id),
     sceneRuns: store.listMediaSceneRuns({ projectId: project.id }),
   };
@@ -649,6 +704,7 @@ function parseCreateMediaScene(value: unknown) {
     ratio: readOptionalString(value, "ratio"),
     durationSeconds: readOptionalPositiveInteger(value, "durationSeconds"),
     referenceArtifactIds: readOptionalStringArray(value, "referenceArtifactIds"),
+    videoImageInputs: readOptionalVideoImageInputs(value, "videoImageInputs"),
     canvasPosition: readCanvasPosition(value, "canvasPosition"),
   };
 }
@@ -668,6 +724,7 @@ function parseUpdateMediaScene(value: unknown) {
     ratio: readOptionalString(value, "ratio"),
     durationSeconds: readOptionalPositiveInteger(value, "durationSeconds"),
     referenceArtifactIds: readOptionalStringArray(value, "referenceArtifactIds"),
+    videoImageInputs: readOptionalVideoImageInputs(value, "videoImageInputs"),
     canvasPosition: readCanvasPosition(value, "canvasPosition"),
   };
 }
@@ -704,6 +761,29 @@ function readOptionalPositiveInteger(record: Record<string, unknown>, key: strin
     throw new Error(`${key} 必须是正整数`);
   }
   return value;
+}
+
+function readOptionalVideoImageInputs(
+  record: Record<string, unknown>,
+  key: string,
+): readonly MediaSceneVideoImageInput[] | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(`${key} 必须是数组`);
+  }
+  return value.map((item) => {
+    if (!isRecord(item)) {
+      throw new Error(`${key} 中的图片输入必须是对象`);
+    }
+    const role = readString(item, "role");
+    if (role !== "first_frame" && role !== "reference_image") {
+      throw new Error("图片用途必须是 first_frame 或 reference_image");
+    }
+    return { assetId: readString(item, "assetId"), role };
+  });
 }
 
 function materializeSceneWorkflowInputs(
