@@ -10,6 +10,7 @@
 
 - [模型工作台视频生产台](model-workbench-video-production-studio.md)
 - [媒体与自动化工作台收口](media-automations-workbench-refinement.md)
+- [媒体生产图生视频详细设计](media-production-image-to-video-detailed-design.md)
 
 ## 1. 产品问题与目标
 
@@ -40,7 +41,8 @@ Ling 已经能从模型工作台真实生成视频，但当前生产台仍像一
 
 - 时间线、拼接、转场、字幕、配音、FFmpeg、成片导出；
 - 外部工作流、第三方媒体平台、URL 工作流或未验证模型；
-- 参考图能力扩展。Seedance 仍只显示真实可运行的文本视频输入；
+- 图生视频不由本次历史体验收口合同定义；后续能力由
+  [媒体生产图生视频详细设计](media-production-image-to-video-detailed-design.md)承接，并继续遵守本页布局与准备度规则；
 - 聊天、频道、AI 队友的模型选择或生成语义变更；
 - 移动端专项验收。
 

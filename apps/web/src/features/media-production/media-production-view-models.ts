@@ -2,6 +2,7 @@ import { resolveMediaProviderRuntimeState } from "@ling-stack/core/provider-medi
 import type {
   MediaJob,
   MediaProject,
+  MediaProjectAsset,
   MediaScene,
   MediaSceneRun,
   MediaWorkflowDefinitionDetail,
@@ -87,13 +88,15 @@ export interface ProjectRunReview {
 export function deriveSceneReadiness(input: {
   readonly scene: MediaScene;
   readonly project: MediaProject;
+  readonly assets: readonly MediaProjectAsset[];
   readonly providers: readonly ProviderPreset[];
   readonly workflows?: readonly MediaWorkflowDefinitionDetail[];
   readonly sceneRuns: readonly MediaSceneRun[];
   readonly jobs: readonly MediaJob[];
   readonly artifactsByJob: Readonly<Record<string, readonly RunArtifact[]>>;
+  readonly imageInputsPending?: boolean;
 }): SceneReadiness {
-  const { scene, project, providers, workflows = [], sceneRuns, jobs, artifactsByJob } = input;
+  const { scene, project, assets, providers, workflows = [], sceneRuns, jobs, artifactsByJob } = input;
   const jobsById = new Map(jobs.map((job) => [job.id, job]));
   const runs = sceneRuns
     .filter((run) => run.sceneId === scene.id)
@@ -122,6 +125,9 @@ export function deriveSceneReadiness(input: {
   const sourceIdentity = source.mode === "workflow"
     ? source.selectedWorkflow ? { workflow: source.selectedWorkflow } : {}
     : source.selectedProvider ? { provider: source.selectedProvider } : {};
+  const directImageIssue = source.mode === "direct" && source.selectedProvider
+    ? deriveVideoImageInputIssue(scene, assets, resolveMediaProviderRuntimeState(source.selectedProvider, "video_generate").videoGeneration)
+    : undefined;
 
   if (latestJobActive) {
     const awaitingApproval = latestJob?.status === "waiting_for_approval";
@@ -136,13 +142,26 @@ export function deriveSceneReadiness(input: {
     });
   }
 
+  if (input.imageInputsPending) {
+    return readiness(scene, {
+      state: hasCurrentResult ? "current_result" : "needs_attention",
+      label: { key: hasCurrentResult ? "Generated result" : "Not ready" },
+      reason: { key: "Finish or remove pending image uploads before running." },
+      primaryAction: "none",
+      blockerFieldLabel: "Image inputs",
+      canRun: false,
+      ...runContext,
+      ...sourceIdentity,
+    });
+  }
+
   if (hasCurrentResult) {
     return readiness(scene, {
       state: "current_result",
       label: { key: "Generated result" },
-      reason: { key: latestIssue ? "Generated · last attempt failed" : "Generated · skipped in batch" },
-      primaryAction: latestIssue ? "open-history" : "run",
-      canRun: true,
+      reason: directImageIssue ?? { key: latestIssue ? "Generated · last attempt failed" : "Generated · skipped in batch" },
+      primaryAction: directImageIssue ? "none" : latestIssue ? "open-history" : "run",
+      canRun: !directImageIssue,
       ...runContext,
       ...sourceIdentity,
     });
@@ -152,9 +171,9 @@ export function deriveSceneReadiness(input: {
     return readiness(scene, {
       state: "needs_attention",
       label: { key: "Needs attention" },
-      reason: { key: "Last attempt incomplete · retry available" },
-      primaryAction: "run",
-      canRun: true,
+      reason: directImageIssue ?? { key: "Last attempt incomplete · retry available" },
+      primaryAction: directImageIssue ? "none" : "run",
+      canRun: !directImageIssue,
       ...runContext,
       ...sourceIdentity,
     });
@@ -210,6 +229,19 @@ export function deriveSceneReadiness(input: {
     });
   }
 
+  if (directImageIssue) {
+    return readiness(scene, {
+      state: "needs_model",
+      label: { key: "Not ready" },
+      reason: directImageIssue,
+      primaryAction: "none",
+      blockerFieldLabel: "Image inputs",
+      canRun: false,
+      ...runContext,
+      ...sourceIdentity,
+    });
+  }
+
   const runtime = source.selectedProvider
     ? resolveMediaProviderRuntimeState(source.selectedProvider, "video_generate")
     : undefined;
@@ -244,6 +276,37 @@ export function deriveSceneReadiness(input: {
     ...runContext,
     ...sourceIdentity,
   });
+}
+
+export function deriveVideoImageInputIssue(
+  scene: Pick<MediaScene, "videoImageInputs">,
+  assets: readonly Pick<MediaProjectAsset, "id">[],
+  capability: import("../../types.js").VideoGenerationCapabilities | undefined,
+): MediaProductionLabel | undefined {
+  if (scene.videoImageInputs.length === 0) return undefined;
+  const roles = new Set(scene.videoImageInputs.map((item) => item.role));
+  if (roles.size !== 1) return { key: "Use one image purpose per scene." };
+  const missingAsset = scene.videoImageInputs.some((item) => !assets.some((asset) => asset.id === item.assetId));
+  if (missingAsset) return { key: "One or more project images are no longer available." };
+  const role = scene.videoImageInputs[0]?.role;
+  if (!role || !capability?.inputModes.includes(role)) {
+    return { key: role === "first_frame" ? "Current model does not support a starting frame." : "Current model does not support reference images." };
+  }
+  if (role === "first_frame" && scene.videoImageInputs.length !== 1) {
+    return { key: "Choose one starting frame." };
+  }
+  if (role === "reference_image" && scene.videoImageInputs.length > (capability.maxReferenceImages ?? 0)) {
+    return { key: "This model supports up to {count} reference images.", values: { count: capability.maxReferenceImages ?? 0 } };
+  }
+  return undefined;
+}
+
+export function shouldShowVideoImageInputs(
+  scene: Pick<MediaScene, "videoImageInputs">,
+  capability: import("../../types.js").VideoGenerationCapabilities | undefined,
+): boolean {
+  return scene.videoImageInputs.length > 0
+    || Boolean(capability?.inputModes.some((mode) => mode === "first_frame" || mode === "reference_image"));
 }
 
 export function deriveSceneSourceProjection(input: {

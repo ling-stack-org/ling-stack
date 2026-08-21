@@ -44,6 +44,30 @@ const builtinMediaModelOptions: Record<ProviderAdapterMediaKind, readonly Provid
       input: ["text", "image"],
       capabilities: ["video_generate"],
     },
+    {
+      id: "doubao-seedance-1-5-pro-251215",
+      displayName: "Doubao Seedance 1.5 Pro",
+      ownedBy: "volcengine",
+      api: "media-job",
+      input: ["text", "image"],
+      capabilities: ["video_generate"],
+    },
+    {
+      id: "doubao-seedance-2-0-260128",
+      displayName: "Doubao Seedance 2.0",
+      ownedBy: "volcengine",
+      api: "media-job",
+      input: ["text", "image"],
+      capabilities: ["video_generate"],
+    },
+    {
+      id: "doubao-seedance-2-5-260628",
+      displayName: "Doubao Seedance 2.5",
+      ownedBy: "volcengine",
+      api: "media-job",
+      input: ["text", "image"],
+      capabilities: ["video_generate"],
+    },
   ],
   jimeng: [
     {

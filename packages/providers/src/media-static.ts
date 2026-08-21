@@ -212,7 +212,8 @@ function renderStaticVendorMediaResult(
   plan: MediaVendorRequestPlan,
   transportMode: MediaVendorTransportMode,
 ): string {
-  const requestPlan = JSON.stringify(plan, null, 2);
+  const requestPlan = JSON.stringify(redactSecrets(plan), (_key, value) =>
+    typeof value === "string" && value.startsWith("data:image/") ? "[REDACTED_MEDIA_DATA_URL]" : value, 2);
   return [
     "# Media job static result",
     "",

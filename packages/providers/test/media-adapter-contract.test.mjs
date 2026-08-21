@@ -176,7 +176,8 @@ test("resolved vendor adapter stubs emit redacted request plans without live cal
   assert.match(result.artifacts[0].content ?? "", /Vendor request plan/);
   assert.match(result.artifacts[0].content ?? "", /"mode": "static_vendor_request_plan"/);
   assert.match(result.artifacts[0].content ?? "", /"liveCall": false/);
-  assert.match(result.artifacts[0].content ?? "", /"apiKeyRef": "env:SEEDREAM_API_KEY"/);
+  assert.match(result.artifacts[0].content ?? "", /"apiKeyRef": "\[REDACTED\]"/);
+  assert.doesNotMatch(result.artifacts[0].content ?? "", /env:SEEDREAM_API_KEY/);
   assert.match(result.artifacts[0].content ?? "", /Transport: disabled/);
   assert.match(result.artifacts[0].content ?? "", /No vendor media API was called/);
   assert.doesNotMatch(result.artifacts[0].content ?? "", /sk-test_123456789/);
@@ -650,6 +651,121 @@ test("live media vendor transport polls Seedance task status and downloads final
   });
   assert.equal(capturedRequests.at(-1).url, "https://media.example.invalid/generated/video-1.mp4");
   assert.deepEqual(capturedRequests.at(-1).init.headers, {});
+});
+
+test("Seedance task submission sends role-bearing image inputs without persisting their Data URLs", async () => {
+  const capturedRequests = [];
+  const providerWithModel = {
+    ...provider,
+    id: "provider_seedance_2_0",
+    kind: "seedance",
+    displayName: "Seedance 2.0",
+    providerId: "seedance",
+    model: "doubao-seedance-2-0-260128",
+    capabilities: ["video_generate"],
+  };
+  const resolution = resolveMediaAdapter(createDefaultMediaAdapterRegistry({
+    mediaVendorTransport: createLiveMediaVendorTransport({
+      baseUrl: "https://media.example.invalid",
+      apiKeyRef: "env:SEEDANCE_API_KEY",
+      apiKeyConfigured: true,
+      apiKey: "test-key",
+      httpClient: async (url, init) => {
+        capturedRequests.push({ url, init });
+        return jsonResponse(200, { id: "task_image_input" });
+      },
+    }),
+  }), providerWithModel);
+  assert.equal(resolution.ok, true);
+  assert.ok(resolution.adapter?.submit);
+
+  const imageUrl = "data:image/png;base64,aGVsbG8=";
+  const submission = await resolution.adapter.submit({
+    jobId: "media_job_seedance_image_input",
+    provider: providerWithModel,
+    operation: "video_generate",
+    prompt: "Move the camera slowly.",
+    input: { ratio: "16:9", duration: 5 },
+    videoImageInputs: [{ role: "reference_image", imageUrl }],
+    requestedAt: "2026-08-21T00:00:00.000Z",
+  });
+
+  assert.equal(submission.status, "submitted");
+  assert.equal(capturedRequests.length, 1);
+  assert.deepEqual(JSON.parse(capturedRequests[0].init.body ?? "{}"), {
+    model: "doubao-seedance-2-0-260128",
+    content: [
+      { type: "text", text: "Move the camera slowly." },
+      { type: "image_url", image_url: { url: imageUrl }, role: "reference_image" },
+    ],
+    ratio: "16:9",
+    duration: 5,
+    watermark: false,
+  });
+  assert.doesNotMatch(JSON.stringify(submission), /data:image|aGVsbG8/);
+  if (submission.status === "submitted") {
+    assert.deepEqual(submission.handle.recovery.requestSummary, {
+      model: "doubao-seedance-2-0-260128",
+      ratio: "16:9",
+      duration: 5,
+      watermark: false,
+      inputMode: "reference_image",
+      imageCount: 1,
+    });
+  }
+});
+
+test("Seedance image input validation fails closed for unknown versions and provider limits", async () => {
+  let requestCount = 0;
+  const registry = createDefaultMediaAdapterRegistry({
+    mediaVendorTransport: createLiveMediaVendorTransport({
+      baseUrl: "https://media.example.invalid",
+      apiKeyRef: "env:SEEDANCE_API_KEY",
+      apiKeyConfigured: true,
+      apiKey: "test-key",
+      httpClient: async () => {
+        requestCount += 1;
+        return jsonResponse(200, { id: `task_${requestCount}` });
+      },
+    }),
+  });
+  const image = { role: "reference_image", imageUrl: "data:image/png;base64,YQ==" };
+
+  async function submit(model, videoImageInputs) {
+    const configured = {
+      ...provider,
+      id: `provider_${model}`,
+      kind: "seedance",
+      providerId: "seedance",
+      model,
+      capabilities: ["video_generate"],
+    };
+    const resolution = resolveMediaAdapter(registry, configured);
+    assert.ok(resolution.adapter?.submit);
+    return await resolution.adapter.submit({
+      jobId: `job_${model}`,
+      provider: configured,
+      operation: "video_generate",
+      prompt: "Animate this image.",
+      input: {},
+      videoImageInputs,
+      requestedAt: "2026-08-21T00:00:00.000Z",
+    });
+  }
+
+  await assert.rejects(() => submit("doubao-seedance-next", [image]), /Unknown Seedance model versions/);
+  await assert.rejects(() => submit("doubao-seedance-1-5-pro-251215", [image]), /does not accept reference images/);
+  await assert.rejects(() => submit("doubao-seedance-2-0-260128", Array.from({ length: 10 }, () => image)), /at most 9/);
+  await assert.rejects(() => submit("doubao-seedance-2-5-260628", Array.from({ length: 31 }, () => image)), /at most 30/);
+  assert.equal(requestCount, 0);
+
+  const firstFrame = await submit("doubao-seedance-1-5-pro-251215", [{ ...image, role: "first_frame" }]);
+  assert.equal(firstFrame.status, "submitted");
+  const nineReferences = await submit("doubao-seedance-2-0-260128", Array.from({ length: 9 }, () => image));
+  assert.equal(nineReferences.status, "submitted");
+  const thirtyReferences = await submit("doubao-seedance-2-5-260628", Array.from({ length: 30 }, () => image));
+  assert.equal(thirtyReferences.status, "submitted");
+  assert.equal(requestCount, 3);
 });
 
 test("live media vendor transport rejects Seedance success without final video", async () => {

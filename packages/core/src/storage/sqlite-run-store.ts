@@ -360,6 +360,7 @@ import {
 } from "../state-machines.js";
 import {
   type CreateMediaProjectInput,
+  type CreateMediaProjectAssetInput,
   type CreateMediaJobInput,
   type CreateMediaSceneInput,
   type CreateMediaSceneRunInput,
@@ -367,6 +368,7 @@ import {
   type MediaJobExecutionHandle,
   type MediaJob,
   type MediaProject,
+  type MediaProjectAsset,
   type MediaScene,
   type MediaSceneRun,
   type UpdateMediaProjectInput,
@@ -3481,6 +3483,26 @@ export class SqliteRunStore implements RunStore {
 
   deleteMediaProject(id: string): boolean {
     return this.mediaJobs.deleteMediaProject(id);
+  }
+
+  createMediaProjectAsset(input: CreateMediaProjectAssetInput, now: string): MediaProjectAsset {
+    return this.mediaJobs.createMediaProjectAsset(input, now);
+  }
+
+  getMediaProjectAsset(id: string): MediaProjectAsset | undefined {
+    return this.mediaJobs.getMediaProjectAsset(id);
+  }
+
+  listMediaProjectAssets(projectId: string): MediaProjectAsset[] {
+    return this.mediaJobs.listMediaProjectAssets(projectId);
+  }
+
+  findMediaProjectAssetByChecksum(projectId: string, checksum: string): MediaProjectAsset | undefined {
+    return this.mediaJobs.findMediaProjectAssetByChecksum(projectId, checksum);
+  }
+
+  deleteMediaProjectAsset(id: string): boolean {
+    return this.mediaJobs.deleteMediaProjectAsset(id);
   }
 
   createMediaScene(input: CreateMediaSceneInput, now: string): MediaScene {

@@ -105,6 +105,28 @@ Check must not create paid output for OpenAI Images or Seedance. Those providers
 return static readiness when all runtime gates are satisfied. Seedream may keep the
 existing lightweight image probe because that behavior already exists.
 
+## Video Input Modes
+
+`video_generate` remains one operation. Runtime readiness additionally returns verified
+input modes for the exact model version:
+
+```ts
+type VideoGenerationInputMode = "text" | "first_frame" | "reference_image";
+```
+
+- Seedance 1.0 Pro, 1.0 Pro Fast, and 1.5 Pro expose `text` and `first_frame`.
+- Seedance 2.0 exposes those modes plus up to 9 `reference_image` inputs.
+- Seedance 2.5 exposes those modes plus up to 30 `reference_image` inputs.
+- Unrecognized Seedance versions remain text-only until a verified mapping is added.
+
+First-frame and reference-image inputs are mutually exclusive in one request. Capability
+metadata controls Web visibility and daemon validation; Provider Preset `compat` data
+cannot grant a mode that the connected adapter does not verify.
+
+Local image content is materialized by daemon immediately before adapter submission.
+Resolver state, preset records, Media Job input, snapshots, logs, and recovery handles
+contain only stable local references and safe metadata, never Base64 image bytes.
+
 ## Hard Stops
 
 - Do not show generation models in conversation/chat provider selectors.
