@@ -34,6 +34,29 @@ Windows bundled target 使用两条独立判定轴：`bundled_embedded` 表示 h
 | Windows ARM64 | 不支持 | 不生成安装包或 provider payload |
 | Linux | 不支持 | provider gate 必须 fail closed |
 
+## Chrome Native Messaging Host 发布边界
+
+Desktop 从 Chrome 扩展 `0.1.1` 起同时分发当前平台的 `Ling Browser Host`。Host 名称固定为
+`com.lingstack.browser`，只负责 Chrome Native Messaging 长度帧与 daemon 私有 loopback
+broker 之间的转发，不包含工作区选择、浏览器业务命令、模型调用或审批逻辑。
+
+每个 Desktop 候选必须把 Host 纳入与主应用相同的源提交和发布证据：
+
+- macOS arm64：Host 位于 `.app/Contents/Resources/browser-host/`，具有可执行权限，包含在
+  Developer ID/hardened runtime 的逐 Mach-O 校验中；启动后幂等写入用户级 Chrome 与
+  Chromium `NativeMessagingHosts` manifest。拖拽删除应用后，残留 manifest 不得包含凭据，
+  且只能指向已不存在的应用内路径。
+- Windows x64：Host 位于安装目录的私有 `resources\\browser-host` 下，纳入 app/NSIS
+  hash 与 Authenticode 分层验证；启动后写入用户级 manifest 和 HKCU Chrome/Chromium
+  注册表。NSIS uninstall 必须删除 Ling 自己的两个注册表项和 manifest，不能触碰其他 Host。
+- 源码模式：`ling-stack browser-host install|status|uninstall` 是唯一受支持的开发 Host
+  生命周期入口；不得要求用户在扩展中填写工作区、daemon URL 或配对码。
+
+打包测试必须验证 Host 版本、Native 协议、扩展版本、extension ID、Host SHA、扩展
+manifest SHA、扩展 ZIP SHA 与 source commit 一致。macOS 本机结构检查或 Windows
+self-hosted 构建不能替代 Developer ID/notarization、Authenticode/SmartScreen 和 clean-host
+安装/升级/卸载验收。
+
 开发阶段仓库为 private，不启用应用自动更新。公开后使用 GitHub Releases；无需改变安装包
 身份，只需在 release workflow 发布现已保留的 updater companion assets。最终用户可见文件：
 
@@ -71,6 +94,8 @@ Windows 发布决策记录显式关闭。
 ```bash
 corepack pnpm --filter @ling-stack/desktop typecheck
 corepack pnpm --filter @ling-stack/desktop build
+corepack pnpm --filter @ling-stack/browser-host test
+corepack pnpm --filter @ling-stack/browser-host build:native
 corepack pnpm --filter @ling-stack/desktop verify:release-schemas
 corepack pnpm --filter @ling-stack/web build
 corepack pnpm --filter @ling-stack/web typecheck

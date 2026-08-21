@@ -260,7 +260,7 @@ function createManagedPluginView(input: {
         pluginId: CHROME_BROWSER_PLUGIN_ID,
         now: input.now,
         status: input.record?.enabled ? "failed" : "disabled",
-        message: input.record?.enabled ? "Install and pair the Ling Chrome extension." : "Chrome plugin is disabled.",
+        message: input.record?.enabled ? "Install or open Ling for Chrome. Connection is automatic." : "Chrome plugin is disabled.",
         details: {
           browserFamily: "chrome",
           browserState: "extension_required",

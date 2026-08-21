@@ -1307,6 +1307,7 @@ test("uses expected managed plugin routes", async () => {
   await client.checkManagedPlugin("/repo path", "trusted-local:cua-driver");
   await client.enableManagedPlugin("/repo path", "trusted-local:cua-driver");
   await client.disableManagedPlugin("/repo path", "trusted-local:cua-driver", { reason: "pause" });
+  await client.repairChromeBrowserHost("/repo path", "built-in:chrome");
 
   assert.equal(mock.calls[0].method, "GET");
   assert.equal(mock.calls[0].url, "http://daemon.test/plugins?cwd=%2Frepo+path");
@@ -1320,6 +1321,7 @@ test("uses expected managed plugin routes", async () => {
   assert.equal(mock.calls[5].url, "http://daemon.test/plugins/trusted-local%3Acua-driver/enable?cwd=%2Frepo+path");
   assert.equal(mock.calls[6].url, "http://daemon.test/plugins/trusted-local%3Acua-driver/disable?cwd=%2Frepo+path");
   assert.deepEqual(JSON.parse(mock.calls[6].body), { reason: "pause" });
+  assert.equal(mock.calls[7].url, "http://daemon.test/plugins/built-in%3Achrome/repair-browser-host?cwd=%2Frepo+path");
 });
 
 test("uses expected teammate private data lifecycle routes", async () => {

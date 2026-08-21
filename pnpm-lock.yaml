@@ -44,6 +44,9 @@ importers:
       '@ling-stack/api-client':
         specifier: workspace:*
         version: link:../../packages/api-client
+      '@ling-stack/browser-host':
+        specifier: workspace:*
+        version: link:../../packages/browser-host
       '@ling-stack/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -249,8 +252,17 @@ importers:
         specifier: workspace:*
         version: link:../contracts
 
+  packages/browser-host:
+    dependencies:
+      '@ling-stack/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+
   packages/cli:
     dependencies:
+      '@ling-stack/browser-host':
+        specifier: workspace:*
+        version: link:../browser-host
       '@ling-stack/core':
         specifier: workspace:*
         version: link:../core
@@ -329,6 +341,9 @@ importers:
 
   packages/daemon:
     dependencies:
+      '@ling-stack/browser-host':
+        specifier: workspace:*
+        version: link:../browser-host
       '@ling-stack/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -2746,7 +2761,6 @@ packages:
     resolution: {integrity: sha512-A9gOqLdi6cV4ibazAjcQufGj0B1y/vDqYrcuP6d/6x8P27gRS8643Dj9o1dEKtB6O7fwxb2FgBmJS2mX7gpvdw==}
     engines: {node: '>=14.6'}
     deprecated: this version has critical issues, please update to the latest version
-
   '@xmldom/xmldom@0.9.12':
     resolution: {integrity: sha512-5AXjrcMClTryPe9LgZrygpB1lj7s0S9E0+W+AHaVKAVyHanafK86iPSvG5xHVSp/jC+VH1UXu0TAEmY279xH7A==}
     engines: {node: '>=14.6'}

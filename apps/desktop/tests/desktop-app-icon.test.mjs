@@ -17,7 +17,11 @@ test("Desktop packaging uses Ling brand icons and an explicit per-user Windows p
     oneClick: true,
     perMachine: false,
     packElevateHelper: false,
+    include: "build/installer.nsh",
   });
+  const installer = await readFile(resolve(desktopRoot, packageJson.build.nsis.include), "utf8");
+  assert.match(installer, /DeleteRegKey HKCU "Software\\Google\\Chrome\\NativeMessagingHosts\\com\.lingstack\.browser"/u);
+  assert.match(installer, /DeleteRegKey HKCU "Software\\Chromium\\NativeMessagingHosts\\com\.lingstack\.browser"/u);
 
   const icns = await readFile(resolve(desktopRoot, packageJson.build.mac.icon));
   assert.equal(icns.subarray(0, 4).toString("ascii"), "icns");

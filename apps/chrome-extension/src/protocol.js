@@ -1,4 +1,6 @@
 export const PROTOCOL = "ling.chrome.v1";
+export const NATIVE_PROTOCOL = "ling.chrome.native.v1";
+export const NATIVE_HOST_NAME = "com.lingstack.browser";
 export const DEFAULT_DAEMON_BASE_URL = "http://127.0.0.1:17891";
 export const MAX_TEXT_LENGTH = 64 * 1024;
 export const MAX_ELEMENTS = 300;
@@ -16,6 +18,37 @@ export const commandMethods = new Set([
   "chrome_type",
   "chrome_screenshot",
 ]);
+
+const nativeErrorCodes = new Set([
+  "host_missing",
+  "ling_unavailable",
+  "descriptor_invalid",
+  "origin_forbidden",
+  "plugin_disabled",
+  "version_incompatible",
+  "native_protocol_invalid",
+]);
+
+export function validateNativeControlMessage(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid native control message");
+  if (value.type === "ready") {
+    assertExactKeys(value, ["protocol", "type", "connected", "migratedLegacyCredential"]);
+    if (value.protocol !== NATIVE_PROTOCOL
+      || typeof value.connected !== "boolean"
+      || typeof value.migratedLegacyCredential !== "boolean") {
+      throw new Error("Invalid native ready message");
+    }
+    return value;
+  }
+  if (value.type === "error") {
+    assertExactKeys(value, ["protocol", "type", "code"]);
+    if (value.protocol !== NATIVE_PROTOCOL || !nativeErrorCodes.has(value.code)) {
+      throw new Error("Invalid native error message");
+    }
+    return value;
+  }
+  throw new Error("Unsupported native control message");
+}
 
 export function isAllowedPageUrl(value) {
   try {

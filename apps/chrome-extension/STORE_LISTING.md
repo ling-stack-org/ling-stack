@@ -12,19 +12,21 @@ Status: Chrome Web Store submission copy for item `mbmlnnfhebclljonhedpjghbhibfa
 | Chinese summary | 让 Ling 在你连接的 Chrome 标签页中完成经你批准的任务。 |
 | Privacy policy URL | `https://gist.github.com/gansx/f3c0ff09aea80b7c1301f5946bf26012` |
 | Support email | Verified publisher contact configured in the Dashboard; not stored in source |
-| Support URL | `https://github.com/tianxiaochannel-oss88/ling-stack/issues` |
+| Homepage URL | Leave blank until a public product page exists |
+| Support URL | Leave blank until a public support page exists |
 
 ## English Description
 
-Ling for Chrome connects your existing Chrome profile to the Ling desktop app running on your
-computer. It lets Ling list tabs, read a bounded visible-page snapshot, navigate, click, type into
-non-password fields, and capture the visible viewport only after you enable the Chrome plugin and
-approve the relevant browser tool.
+Ling for Chrome automatically connects your existing Chrome profile to the Ling desktop app running
+on your computer through Chrome Native Messaging. It lets Ling list tabs, read a bounded visible-page
+snapshot, navigate, click, type into non-password fields, and capture the visible viewport only after
+you enable the Chrome plugin and approve the relevant browser tool.
 
 You stay in control:
 
 - Every browser tool asks for approval by default.
-- The extension connects only to the Ling daemon running on your computer.
+- The extension connects only to the installed Ling Browser Host and local Ling daemon on your computer.
+- No workspace path, daemon address, or pairing code is required.
 - Page access is injected only for an approved action; there is no always-on content script.
 - You can revoke the connection from Ling or disconnect the extension at any time.
 - Ling for Chrome does not read Chrome passwords, cookies, history, bookmarks, or downloads.
@@ -35,9 +37,9 @@ telemetry endpoint.
 
 ## Chinese Description
 
-Ling 浏览器扩展将你现有的 Chrome 配置连接到本机运行的 Ling 桌面应用。启用 Chrome 插件并批准相应的
-浏览器工具后，Ling 才能列出标签页、读取有限的可见页面快照、导航、点击、向非密码字段输入文字，以及
-截取当前可见区域。
+Ling 浏览器扩展通过 Chrome Native Messaging 自动将你现有的 Chrome 配置连接到本机运行的 Ling
+桌面应用，无需填写工作区路径、daemon 地址或配对码。启用 Chrome 插件并批准相应的浏览器工具后，
+Ling 才能列出标签页、读取有限的可见页面快照、导航、点击、向非密码字段输入文字，以及截取当前可见区域。
 
 控制权始终在你手中：
 
@@ -60,7 +62,8 @@ can perform explicitly approved browser reading and interaction tasks.
 | Permission | Dashboard justification |
 | --- | --- |
 | `scripting` | Injects the packaged Ling content script into the selected HTTP(S) tab only after the user approves a snapshot, click, or type request. |
-| `storage` | Stores the local Ling workspace binding and a revocable pairing credential in this Chrome profile. |
+| `storage` | Stores only the extension pause state and temporarily reads version 0.1.0 local connection values for one-time migration; legacy values are deleted after Native Messaging succeeds. |
+| `nativeMessaging` | Connects to the installed `com.lingstack.browser` Host, which forwards approved browser commands only to the private loopback broker of the Ling app running on the same computer. |
 | `<all_urls>` | Allows approved actions and visible-viewport capture after navigation across user-selected HTTP(S) pages. Runtime validation rejects browser-internal, file, data, and JavaScript URLs. |
 
 Remote code: **No**. All executable extension code is included in the uploaded ZIP.
@@ -73,7 +76,7 @@ Declare conservatively and reconcile the final answers with the published privac
 | --- | --- |
 | Website content | Yes: bounded visible text, interactive labels, and visible screenshots for approved tasks. |
 | Web history | Yes: HTTP(S) URLs and page titles of tabs involved in approved tasks. |
-| Authentication information | Yes: a local, revocable Ling pairing credential is stored in `chrome.storage.local`. |
+| Authentication information | Yes temporarily: version 0.1.1 may read and delete a local version 0.1.0 pairing credential during one-time migration. New connections do not create one. |
 | Personal communications | Yes: selected visible page content can include communications when a user explicitly directs Ling to that page. |
 | Analytics or advertising | No. |
 | Sale of user data | No. |
@@ -81,13 +84,14 @@ Declare conservatively and reconcile the final answers with the published privac
 
 ## Reviewer Instructions
 
-1. Follow the public [Quick Start From Source](../../README.md#quick-start-from-source) to start the
-   local daemon and Web UI. No Ling test account is required.
-2. In Ling, open Plugin Manager, enable Chrome, and request a one-time pairing code.
-3. Open the extension, enter the workspace path and pairing code, accept the disclosure, and connect.
+1. No Ling test account is required. Install and open the current Ling Desktop test build, which
+   registers the local `com.lingstack.browser` Native Messaging Host.
+2. In Ling, open Plugin Manager and enable Chrome.
+3. Open the extension. It connects automatically; no workspace path, daemon address, pairing code,
+   or cloud account is required.
 4. Run the six browser tools from Ling: tabs, snapshot, navigate, click, type, and screenshot.
-5. Verify that every tool asks for approval by default and that revoking access disconnects the
-   extension.
+5. Verify that every tool asks for approval by default, Pause disables command activation, and
+   disabling or revoking Chrome in Ling tears down the connection.
 
 Reviewer test account: not required for Ling. Tests should use public pages and must not require a
 signed-in third-party account.

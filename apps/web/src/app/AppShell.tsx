@@ -702,7 +702,7 @@ export function AppShell(): React.JSX.Element {
     previewPluginRuntime,
     enablePlugin,
     disablePlugin,
-    startChromePairing,
+    repairChromeHost,
     revokeChromeAccess,
     clearPluginActionErrors,
     resetForCwd: resetPluginsForCwd,
@@ -1726,6 +1726,7 @@ export function AppShell(): React.JSX.Element {
     refreshApprovalPolicy,
     refreshProviders,
     refreshMcp,
+    refreshPlugins,
     refreshRuntimeSettings,
     refreshAiTeammates,
     refreshUsedMemoryAudit,
@@ -2972,7 +2973,7 @@ export function AppShell(): React.JSX.Element {
                     onRuntimePreview={previewPluginRuntime}
                     onEnable={enablePlugin}
                     onDisable={disablePlugin}
-                    onStartChromePairing={startChromePairing}
+                    onRepairChromeHost={repairChromeHost}
                     onRevokeChrome={revokeChromeAccess}
                     onClearActionErrors={clearPluginActionErrors}
                     onOpenMcpSettings={() => {

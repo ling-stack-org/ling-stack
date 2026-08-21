@@ -1,0 +1,23 @@
+{
+  "name": "@ling-stack/browser-host",
+  "version": "0.1.1",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "corepack pnpm --filter @ling-stack/contracts build && tsc -p tsconfig.json",
+    "build:native": "node scripts/build-native.mjs",
+    "typecheck": "corepack pnpm --filter @ling-stack/contracts build && tsc -p tsconfig.json --noEmit",
+    "lint": "echo \"lint not configured yet\"",
+    "test": "corepack pnpm build && node --test test/*.test.mjs && cargo test --manifest-path native/Cargo.toml"
+  },
+  "dependencies": {
+    "@ling-stack/contracts": "workspace:*"
+  }
+}

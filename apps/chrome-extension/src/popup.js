@@ -1,31 +1,33 @@
 const copy = {
   en: {
     title: "Ling for Chrome",
-    workspace: "Workspace path",
-    pairingCode: "Pairing code",
-    connect: "Connect",
-    disconnect: "Disconnect this extension",
     dataDisclosure: "For browser tasks you approve in Ling, this extension may share HTTP(S) page URLs, visible text, interactive labels, and visible screenshots with your local Ling app.",
     privacy: "Ling does not read Chrome passwords, cookies, history, or bookmarks.",
-    consent: "I understand and agree to connect this Chrome profile to my local Ling workspace.",
-    connected: "Connected to Ling",
-    paired: "Waiting for Ling",
-    disconnected: "Not connected",
-    checking: "Checking connection...",
+    checking: ["Checking connection...", "Ling is detecting the local connection component."],
+    connected: ["Connected to Ling", "Ling can use this Chrome profile after you approve a browser task."],
+    host_missing: ["Connection component needs repair", "Open Ling to install or repair the local connection component."],
+    ling_unavailable: ["Ling is not running", "Open Ling, then reconnect this extension."],
+    incompatible: ["Update required", "Update Ling and this extension, then reconnect."],
+    plugin_disabled: ["Chrome is not enabled", "Enable Chrome in Ling Plugin Manager, then reconnect."],
+    paused: ["Paused", "Ling cannot use this Chrome profile until you resume."],
+    pause: "Pause",
+    resume: "Resume",
+    reconnect: "Reconnect",
   },
   zh: {
     title: "Ling 浏览器扩展",
-    workspace: "工作区路径",
-    pairingCode: "配对码",
-    connect: "连接",
-    disconnect: "断开此扩展",
     dataDisclosure: "仅在你批准 Ling 浏览器任务后，此扩展才会与本机 Ling 应用共享 HTTP(S) 页面网址、可见文字、交互元素标签和可见截图。",
     privacy: "Ling 不会读取 Chrome 密码、Cookie、历史记录或书签。",
-    consent: "我了解并同意将此 Chrome 配置连接到本机 Ling 工作区。",
-    connected: "已连接 Ling",
-    paired: "正在等待 Ling",
-    disconnected: "尚未连接",
-    checking: "正在检查连接...",
+    checking: ["正在检查连接", "Ling 正在检测本机连接组件。"],
+    connected: ["已连接 Ling", "你批准浏览器任务后，Ling 才能使用当前 Chrome。"],
+    host_missing: ["连接组件需要修复", "打开 Ling 即可安装或修复本机连接组件。"],
+    ling_unavailable: ["Ling 未运行", "请先打开 Ling，再重新连接。"],
+    incompatible: ["需要更新", "请更新 Ling 和此扩展，然后重新连接。"],
+    plugin_disabled: ["Chrome 未启用", "请先在 Ling 插件管理器中启用 Chrome。"],
+    paused: ["已暂停", "恢复前，Ling 无法使用当前 Chrome。"],
+    pause: "暂停",
+    resume: "恢复",
+    reconnect: "重新连接",
   },
 };
 
@@ -36,84 +38,51 @@ for (const element of document.querySelectorAll("[data-i18n]")) {
 }
 
 const statusElement = document.querySelector("#status");
-const pairingSection = document.querySelector("#pairing");
-const connectedSection = document.querySelector("#connected");
-const cwdInput = document.querySelector("#cwd");
-const codeInput = document.querySelector("#pairing-code");
-const consentInput = document.querySelector("#consent");
-const connectButton = document.querySelector("#connect");
-const disconnectButton = document.querySelector("#disconnect");
+const descriptionElement = document.querySelector("#description");
 const activeTabElement = document.querySelector("#active-tab");
-let pairingBusy = false;
-let refreshBusy = false;
+const primaryAction = document.querySelector("#primary-action");
+let currentState = "checking";
+let actionBusy = false;
 
-connectButton.addEventListener("click", async () => {
-  if (!consentInput.checked || pairingBusy) return;
-  pairingBusy = true;
-  syncConnectAvailability();
-  let result;
+primaryAction.addEventListener("click", async () => {
+  if (actionBusy) return;
+  actionBusy = true;
+  render();
   try {
-    result = await chrome.runtime.sendMessage({
-      type: "pair",
-      cwd: cwdInput.value,
-      pairingCode: codeInput.value,
-    });
-  } catch {
-    pairingBusy = false;
-    statusElement.textContent = t.disconnected;
-    syncConnectAvailability();
-    return;
-  }
-  if (!result?.ok) {
-    pairingBusy = false;
-    statusElement.textContent = result?.error ?? t.disconnected;
-    syncConnectAvailability();
-  } else {
-    pairingBusy = false;
-    consentInput.checked = false;
+    await chrome.runtime.sendMessage({ type: currentState === "connected" ? "pause" : "resume" });
     await refresh();
+  } catch {
+    currentState = "ling_unavailable";
+    render();
+  } finally {
+    actionBusy = false;
+    render();
   }
 });
 
-disconnectButton.addEventListener("click", async () => {
-  await chrome.runtime.sendMessage({ type: "disconnect" });
-  consentInput.checked = false;
-  await refresh();
+chrome.runtime.onMessage.addListener((message) => {
+  if (message?.type === "ling.chrome.status_changed") void refresh();
 });
-
-for (const control of [cwdInput, codeInput, consentInput]) {
-  control.addEventListener("input", syncConnectAvailability);
-  control.addEventListener("change", syncConnectAvailability);
-}
 
 async function refresh() {
-  if (refreshBusy) return;
-  refreshBusy = true;
   try {
     const result = await chrome.runtime.sendMessage({ type: "status" });
-    if (!result?.ok) {
-      statusElement.textContent = result?.error ?? t.disconnected;
-      return;
-    }
-    cwdInput.value = result.cwd ?? cwdInput.value;
-    pairingSection.hidden = result.paired;
-    connectedSection.hidden = !result.paired;
-    if (result.paired) codeInput.value = "";
-    statusElement.textContent = result.connected ? t.connected : result.paired ? t.paired : t.disconnected;
-    activeTabElement.textContent = result.activeTab?.title ?? "";
-    syncConnectAvailability();
+    currentState = result?.ok && typeof result.state === "string" ? result.state : "ling_unavailable";
+    activeTabElement.textContent = result?.activeTab?.title ?? "";
   } catch {
-    statusElement.textContent = t.disconnected;
-  } finally {
-    refreshBusy = false;
+    currentState = "ling_unavailable";
   }
+  render();
 }
 
-function syncConnectAvailability() {
-  connectButton.disabled = pairingBusy || !consentInput.checked || !cwdInput.value.trim() || !codeInput.value.trim();
+function render() {
+  const stateCopy = t[currentState] ?? t.ling_unavailable;
+  statusElement.textContent = stateCopy[0];
+  descriptionElement.textContent = stateCopy[1];
+  primaryAction.textContent = currentState === "connected" ? t.pause : currentState === "paused" ? t.resume : t.reconnect;
+  primaryAction.disabled = actionBusy || currentState === "checking";
+  primaryAction.dataset.tone = currentState === "connected" ? "secondary" : "primary";
 }
 
-statusElement.textContent = t.checking;
-syncConnectAvailability();
+render();
 void refresh();
-window.setInterval(() => void refresh(), 1_000);

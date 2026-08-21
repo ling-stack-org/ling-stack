@@ -82,9 +82,20 @@ jobs:
       - name: Run focused package contracts
         run: >-
           node --test
+          apps/desktop/tests/chrome-extension-package.test.mjs
           apps/desktop/tests/cua-driver-artifact-layout.test.mjs
           apps/desktop/tests/cua-driver-electron-package.test.mjs
           apps/desktop/tests/cua-driver-darwin-platform-signer.test.mjs
+
+      - name: Verify Native Host protocol and daemon bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack pnpm --filter @ling-stack/browser-host test
+          corepack pnpm --filter @ling-stack/daemon build
+          node --test \
+            packages/daemon/test/chrome-browser-native-broker.test.mjs \
+            packages/daemon/test/chrome-browser-native-host-process.test.mjs
 
       - name: Build locked Cua Driver once
         shell: bash
@@ -117,15 +128,31 @@ jobs:
           release="apps/desktop/release"
           app="$release/mac-arm64/Ling Stack.app"
           provider="$app/Contents/Resources/providers/cua-driver/0.8.3-ling.1/darwin/ling-cua-driver"
+          browser_host="$app/Contents/Resources/browser-host/ling-browser-host"
+          browser_host_metadata="$app/Contents/Resources/browser-host/build-metadata.json"
 
           test -d "$app"
           test -x "$provider"
+          test -x "$browser_host"
+          test -f "$browser_host_metadata"
           test "$(lipo -archs "$app/Contents/MacOS/Ling Stack")" = "arm64"
           test "$(lipo -archs "$provider")" = "arm64"
+          test "$(lipo -archs "$browser_host")" = "arm64"
           codesign --verify --deep --strict "$app"
           codesign --verify --strict "$provider"
+          codesign --verify --strict "$browser_host"
           test "$(codesign -dv --verbose=4 "$app" 2>&1 | sed -n 's/^TeamIdentifier=//p')" = "$LING_CUA_DARWIN_EXPECTED_TEAM_ID"
           test "$(codesign -dv --verbose=4 "$provider" 2>&1 | sed -n 's/^TeamIdentifier=//p')" = "$LING_CUA_DARWIN_EXPECTED_TEAM_ID"
+          test "$(codesign -dv --verbose=4 "$browser_host" 2>&1 | sed -n 's/^TeamIdentifier=//p')" = "$LING_CUA_DARWIN_EXPECTED_TEAM_ID"
+          node -e 'const fs=require("node:fs"); const value=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); if (value.platform !== "darwin-arm64" || value.sourceCommit !== process.env.GITHUB_SHA) process.exit(1)' "$browser_host_metadata"
+          asar_path="${GITHUB_WORKSPACE}/$app/Contents/Resources/app.asar"
+          asar_listing="$(corepack pnpm --filter @ling-stack/desktop exec asar list "$asar_path")"
+          if grep -Eq 'node_modules/@ling-stack/browser-host/(dist/native|native|scripts|src|test)(/|$)' <<< "$asar_listing"; then
+            echo "Browser Host source or native payload was duplicated inside app.asar." >&2
+            exit 1
+          fi
+          test ! -e "$app/Contents/Resources/app.asar.unpacked/node_modules/@ling-stack/browser-host/native"
+          test ! -e "$app/Contents/Resources/app.asar.unpacked/node_modules/@ling-stack/browser-host/dist/native"
 
           shopt -s nullglob
           dmgs=("$release"/Ling-Stack-*-macos-arm64.dmg)
@@ -223,9 +250,20 @@ jobs:
       - name: Run focused package contracts
         run: >-
           node --test
+          apps/desktop/tests/chrome-extension-package.test.mjs
           apps/desktop/tests/cua-driver-artifact-layout.test.mjs
           apps/desktop/tests/cua-driver-electron-package.test.mjs
           apps/desktop/tests/windows-cua-driver-provider.test.mjs
+
+      - name: Verify Native Host protocol and daemon bridge
+        shell: pwsh
+        run: |
+          corepack pnpm --filter @ling-stack/browser-host test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          corepack pnpm --filter @ling-stack/daemon build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --test packages/daemon/test/chrome-browser-native-broker.test.mjs packages/daemon/test/chrome-browser-native-host-process.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build locked Cua Driver once
         shell: pwsh
@@ -253,8 +291,10 @@ jobs:
           $app = Join-Path $release "win-unpacked/Ling Stack.exe"
           $provider = Join-Path $release "win-unpacked/resources/providers/cua-driver/0.8.3-ling.1/win32-x64/payload/ling-cua-driver.exe"
           $seal = Join-Path $release "win-unpacked/resources/providers/cua-driver/0.8.3-ling.1/win32-x64/payload/provider-seal.json"
+          $browserHost = Join-Path $release "win-unpacked/resources/browser-host/ling-browser-host.exe"
+          $browserHostMetadataPath = Join-Path $release "win-unpacked/resources/browser-host/build-metadata.json"
 
-          foreach ($path in @($app, $provider, $seal)) {
+          foreach ($path in @($app, $provider, $seal, $browserHost, $browserHostMetadataPath)) {
             if (!(Test-Path -LiteralPath $path -PathType Leaf)) {
               throw "Missing packaged file: $path"
             }
@@ -270,12 +310,35 @@ jobs:
           }
           Assert-X64Pe $app
           Assert-X64Pe $provider
+          Assert-X64Pe $browserHost
+
+          $browserHostMetadata = Get-Content -LiteralPath $browserHostMetadataPath -Raw | ConvertFrom-Json
+          if ($browserHostMetadata.platform -ne "win32-x64" -or $browserHostMetadata.sourceCommit -ne $env:GITHUB_SHA) {
+            throw "Browser Host metadata does not match the packaged source and platform."
+          }
+          $browserHostHash = (Get-FileHash -LiteralPath $browserHost -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($browserHostHash -ne [string]$browserHostMetadata.hostSha256) {
+            throw "Packaged Browser Host hash does not match build metadata."
+          }
+          $asarPath = Join-Path $release "win-unpacked/resources/app.asar"
+          $asarListing = (& corepack pnpm --filter @ling-stack/desktop exec asar list $asarPath) -join "`n"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to inspect packaged app.asar."
+          }
+          if ($asarListing -match 'node_modules[\\/]@ling-stack[\\/]browser-host[\\/](dist[\\/]native|native|scripts|src|test)([\\/]|$)') {
+            throw "Browser Host source or native payload was duplicated inside app.asar."
+          }
+          $unpackedBrowserHost = Join-Path $release "win-unpacked/resources/app.asar.unpacked/node_modules/@ling-stack/browser-host"
+          if ((Test-Path -LiteralPath (Join-Path $unpackedBrowserHost "native")) -or
+              (Test-Path -LiteralPath (Join-Path $unpackedBrowserHost "dist/native"))) {
+            throw "Browser Host native payload was duplicated outside app.asar."
+          }
 
           $installers = @(Get-ChildItem -Path $release -File -Filter "Ling-Stack-*-windows-x64-setup.exe")
           if ($installers.Count -ne 1) {
             throw "Expected exactly one Windows Setup, found $($installers.Count)"
           }
-          foreach ($path in @($app, $provider, $installers[0].FullName)) {
+          foreach ($path in @($app, $provider, $browserHost, $installers[0].FullName)) {
             $signature = Get-AuthenticodeSignature -FilePath $path
             if ([string]$signature.Status -ne "NotSigned") {
               throw "Development product must remain unsigned: $path ($($signature.Status))"

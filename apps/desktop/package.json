@@ -8,7 +8,7 @@
   "private": true,
   "main": "./dist/main/main.js",
   "scripts": {
-    "build": "corepack pnpm build:office-driver && corepack pnpm --filter @ling-stack/chrome-extension build && corepack pnpm --filter @ling-stack/web build && corepack pnpm --filter @ling-stack/daemon build && tsc -p tsconfig.main.json && esbuild preload/main-window.ts preload/computer-use-preview.ts --bundle --platform=node --format=cjs --external:electron --outdir=dist/preload --out-extension:.js=.cjs && esbuild ../../packages/daemon/dist/cli.js --bundle --platform=node --format=esm --banner:js=\"import { createRequire as __lingCreateRequire } from 'node:module'; const require = __lingCreateRequire(import.meta.url);\" --outfile=dist/daemon/cli.mjs && vite build --config vite.config.ts",
+    "build": "corepack pnpm build:office-driver && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/chrome-extension build && corepack pnpm --filter @ling-stack/web build && corepack pnpm --filter @ling-stack/daemon build && tsc -p tsconfig.main.json && esbuild preload/main-window.ts preload/computer-use-preview.ts --bundle --platform=node --format=cjs --external:electron --outdir=dist/preload --out-extension:.js=.cjs && esbuild ../../packages/daemon/dist/cli.js --bundle --platform=node --format=esm --banner:js=\"import { createRequire as __lingCreateRequire } from 'node:module'; const require = __lingCreateRequire(import.meta.url);\" --outfile=dist/daemon/cli.mjs && vite build --config vite.config.ts",
     "build:office-driver": "node scripts/build-office-driver.mjs",
     "typecheck": "corepack pnpm --filter @ling-stack/ui-react build && corepack pnpm --filter @ling-stack/api-client build && tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
     "dev": "corepack pnpm build && electron .",
@@ -22,7 +22,7 @@
     "smoke:computer-use": "corepack pnpm build && node tests/run-computer-use-smoke.mjs",
     "smoke:computer-use:real": "corepack pnpm build && node tests/run-computer-use-smoke.mjs --real",
     "smoke:computer-use:windows-provider": "corepack pnpm build && node tests/run-windows-provider-smoke.mjs",
-    "smoke:chrome-extension:real": "corepack pnpm --filter @ling-stack/chrome-extension build && corepack pnpm --filter @ling-stack/daemon build && node tests/chrome-extension-real-smoke.mjs",
+    "smoke:chrome-extension:real": "corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/browser-host build:native && corepack pnpm --filter @ling-stack/chrome-extension build && corepack pnpm --filter @ling-stack/daemon build && node tests/chrome-extension-real-smoke.mjs",
     "verify:release-schemas": "node tests/validate-release-evidence-schemas.mjs",
     "verify:windows-provider": "node tests/verify-windows-cua-driver-provider.mjs",
     "produce:windows-acceptance-handoff": "node tests/produce-windows-acceptance-handoff.mjs",
@@ -40,14 +40,15 @@
     "package:signing-feasibility": "node tests/run-cua-driver-signing-builder-fixture.mjs",
     "screenshots:update:computer-use": "corepack pnpm build && electron tests/screenshot-app --update",
     "screenshots:verify:computer-use": "corepack pnpm build && electron tests/screenshot-app",
-    "package:mac": "corepack pnpm build && node scripts/cua-driver-electron-package.mjs --platform darwin -- --mac dmg zip --arm64",
-    "package:win": "corepack pnpm build && node scripts/cua-driver-electron-package.mjs --platform win32-x64 -- --win nsis --x64"
+    "package:mac": "corepack pnpm --filter @ling-stack/browser-host build:native && corepack pnpm build && node scripts/cua-driver-electron-package.mjs --platform darwin -- --mac dmg zip --arm64",
+    "package:win": "corepack pnpm --filter @ling-stack/browser-host build:native && corepack pnpm build && node scripts/cua-driver-electron-package.mjs --platform win32-x64 -- --win nsis --x64"
   },
   "dependencies": {
-    "@napi-rs/canvas": "0.1.80",
+    "@ling-stack/browser-host": "workspace:*",
     "@ling-stack/api-client": "workspace:*",
     "@ling-stack/contracts": "workspace:*",
     "@ling-stack/ui-react": "workspace:*",
+    "@napi-rs/canvas": "0.1.80",
     "lucide-react": "^1.29.0",
     "mammoth": "1.12.0",
     "pdf-parse": "2.4.5",
@@ -80,7 +81,13 @@
     },
     "files": [
       "dist/**/*",
-      "package.json"
+      "package.json",
+      "!**/node_modules/@ling-stack/browser-host/dist/native{,/**/*}",
+      "!**/node_modules/@ling-stack/browser-host/native{,/**/*}",
+      "!**/node_modules/@ling-stack/browser-host/scripts{,/**/*}",
+      "!**/node_modules/@ling-stack/browser-host/src{,/**/*}",
+      "!**/node_modules/@ling-stack/browser-host/test{,/**/*}",
+      "!**/node_modules/@ling-stack/browser-host/tsconfig.json"
     ],
     "extraResources": [
       {
@@ -119,6 +126,15 @@
       {
         "from": "../../LICENSE",
         "to": "browser-extension/LICENSE"
+      },
+      {
+        "from": "../../packages/browser-host/dist/native",
+        "to": "browser-host",
+        "filter": [
+          "ling-browser-host",
+          "ling-browser-host.exe",
+          "build-metadata.json"
+        ]
       }
     ],
     "mac": {
@@ -141,7 +157,8 @@
     "nsis": {
       "oneClick": true,
       "perMachine": false,
-      "packElevateHelper": false
+      "packElevateHelper": false,
+      "include": "build/installer.nsh"
     }
   }
 }

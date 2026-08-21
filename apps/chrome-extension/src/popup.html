@@ -12,32 +12,18 @@
         <img src="icons/icon-128.png" alt="" />
         <div>
           <h1 data-i18n="title">Ling for Chrome</h1>
-          <p id="status">Checking connection...</p>
+          <p id="status" aria-live="polite">Checking connection...</p>
         </div>
       </header>
-      <section id="pairing">
-        <label>
-          <span data-i18n="workspace">Workspace path</span>
-          <input id="cwd" autocomplete="off" spellcheck="false" />
-        </label>
-        <label>
-          <span data-i18n="pairingCode">Pairing code</span>
-          <input id="pairing-code" autocomplete="one-time-code" spellcheck="false" />
-        </label>
-        <div class="privacy-disclosure" role="note">
-          <p data-i18n="dataDisclosure">For browser tasks you approve in Ling, this extension may share HTTP(S) page URLs, visible text, interactive labels, and visible screenshots with your local Ling app.</p>
-          <p data-i18n="privacy">Ling does not read Chrome passwords, cookies, history, or bookmarks.</p>
-        </div>
-        <label class="consent-row">
-          <input id="consent" type="checkbox" />
-          <span data-i18n="consent">I understand and agree to connect this Chrome profile to my local Ling workspace.</span>
-        </label>
-        <button id="connect" type="button" data-i18n="connect" disabled>Connect</button>
-      </section>
-      <section id="connected" hidden>
+      <section class="connection-state">
+        <p id="description"></p>
         <p id="active-tab"></p>
-        <button id="disconnect" type="button" data-i18n="disconnect">Disconnect this extension</button>
       </section>
+      <section class="privacy-disclosure" role="note">
+        <p data-i18n="dataDisclosure">For browser tasks you approve in Ling, this extension may share HTTP(S) page URLs, visible text, interactive labels, and visible screenshots with your local Ling app.</p>
+        <p data-i18n="privacy">Ling does not read Chrome passwords, cookies, history, or bookmarks.</p>
+      </section>
+      <button id="primary-action" type="button" disabled></button>
     </main>
     <script type="module" src="popup.js"></script>
   </body>

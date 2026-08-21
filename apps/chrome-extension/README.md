@@ -7,10 +7,12 @@ Production installation remains Chrome Web Store-owned. For local development on
 1. Run `corepack pnpm --filter @ling-stack/chrome-extension build`.
 2. Open `chrome://extensions`, enable Developer mode, and choose `Load unpacked`.
 3. Select `apps/chrome-extension/dist`.
-4. Enable Chrome in Ling Plugin Manager and enter the generated pairing code in the extension popup.
+4. Run `corepack pnpm ling browser-host install` once for this source checkout.
+5. Enable Chrome in Ling Plugin Manager. The extension connects automatically while Ling is running.
 
 The extension does not request access to cookies, passwords, history, bookmarks, downloads,
-`chrome.debugger`, `webRequest`, or native messaging.
+`chrome.debugger`, or `webRequest`. It uses `nativeMessaging` only to reach the signed local Ling
+Browser Host; the Host forwards the existing reviewed browser protocol and does not read page data.
 
 The production Chrome Web Store extension ID is `mbmlnnfhebclljonhedpjghbhibfapei`. The manifest
 public key is committed so local builds and the Store package keep the same reviewed identity. The

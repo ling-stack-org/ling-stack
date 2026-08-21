@@ -12,7 +12,12 @@ import type {
   CuaDriverWindowsReadinessSnapshot,
 } from "./cua-driver-bundled.js";
 import type { LockedComputerControlProjectionV1 } from "./locked-computer-control.js";
-import type { ChromeBrowserSetupState } from "./chrome-browser.js";
+import type {
+  ChromeBrowserExtensionState,
+  ChromeBrowserHostState,
+  ChromeBrowserSetupState,
+  ChromeBrowserTransportKind,
+} from "./chrome-browser.js";
 import type {
   OfficeDocumentsSetupState,
   OfficeDriverCapability,
@@ -72,6 +77,9 @@ export interface ManagedPluginSetupView {
   readonly browserState?: ChromeBrowserSetupState;
   readonly paired?: boolean;
   readonly connected?: boolean;
+  readonly transport?: ChromeBrowserTransportKind;
+  readonly hostState?: ChromeBrowserHostState;
+  readonly extensionState?: ChromeBrowserExtensionState;
   readonly extensionVersion?: string;
   readonly browserVersion?: string;
   readonly lastSeenAt?: string;
@@ -107,6 +115,8 @@ export interface ChromeBrowserSetupView extends ManagedPluginSetupView {
   readonly browserState: ChromeBrowserSetupState;
   readonly paired: boolean;
   readonly connected: boolean;
+  readonly hostState: ChromeBrowserHostState;
+  readonly extensionState: ChromeBrowserExtensionState;
 }
 
 export type ManagedPluginContributionKind =
