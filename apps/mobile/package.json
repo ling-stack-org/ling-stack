@@ -34,9 +34,9 @@
     "expo-network": "~57.0.1",
     "expo-secure-store": "~57.0.1",
     "react": "19.2.8",
-    "react-native": "0.86.2",
-    "react-native-safe-area-context": "~5.8.1",
-    "react-native-screens": "~4.26.0"
+    "react-native": "0.87.0",
+    "react-native-safe-area-context": "~5.9.0",
+    "react-native-screens": "~4.27.0"
   },
   "devDependencies": {
     "expo-doctor": "1.20.1",
