@@ -1,18 +1,20 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
-  CHROME_BROWSER_MAX_MESSAGE_BYTES,
   CHROME_BROWSER_PLUGIN_ID,
   CHROME_BROWSER_PROTOCOL,
   parseChromeBrowserExtensionMessage,
   type ChromeBrowserCommand,
+  type ChromeBrowserExtensionState,
+  type ChromeBrowserHostState,
   type ChromeBrowserMethod,
   type ChromeBrowserPairingRequest,
+  type ChromeBrowserTransportKind,
 } from "@ling-stack/contracts";
 import type {
   ChromeBrowserCredentialStoreFacet,
   ManagedPluginStoreFacet,
 } from "@ling-stack/core";
-import { WebSocket, type RawData } from "ws";
+import type { ChromeBrowserSessionTransport } from "./transport.js";
 
 type ChromeBrowserSessionStore = ChromeBrowserCredentialStoreFacet & ManagedPluginStoreFacet;
 
@@ -45,6 +47,9 @@ export interface ChromeBrowserSessionSnapshot {
   readonly browserVersion?: string;
   readonly connectedAt?: string;
   readonly lastSeenAt?: string;
+  readonly transport?: ChromeBrowserTransportKind;
+  readonly hostState: ChromeBrowserHostState;
+  readonly extensionState: ChromeBrowserExtensionState;
 }
 
 export interface ChromeBrowserPairingGrant {
@@ -78,7 +83,7 @@ interface PendingCommand {
 
 interface ActiveSession {
   readonly generation: number;
-  readonly socket: WebSocket;
+  readonly transport: ChromeBrowserSessionTransport;
   readonly extensionId: string;
   readonly extensionVersion: string;
   readonly browserVersion?: string;
@@ -105,7 +110,7 @@ export class ChromeBrowserSessionController {
   private readonly pairings = new Map<string, PendingPairing>();
   private readonly sessions = new Map<string, ActiveSession>();
   private readonly failures = new Map<string, SessionFailure>();
-  private readonly unauthenticatedSockets = new Set<WebSocket>();
+  private readonly unauthenticatedTransports = new Set<ChromeBrowserSessionTransport>();
   private readonly allowedExtensionIds: ReadonlySet<string>;
   private readonly now: () => Date;
   private readonly token: (bytes: number) => string;
@@ -117,6 +122,8 @@ export class ChromeBrowserSessionController {
   private commandSequence = 0;
   private closed = false;
   private stateListener?: (cwd: string, snapshot: ChromeBrowserSessionSnapshot) => void;
+  private hostState: ChromeBrowserHostState = "missing";
+  private extensionState: ChromeBrowserExtensionState = "not_detected";
 
   constructor(private readonly options: ChromeBrowserSessionControllerOptions) {
     this.allowedExtensionIds = new Set(options.allowedExtensionIds.map(normalizeExtensionId));
@@ -144,6 +151,7 @@ export class ChromeBrowserSessionController {
       throw new ChromeBrowserSessionError("chrome_browser_disabled", "Enable the Chrome plugin before pairing.");
     }
     this.failures.delete(cwd);
+    if (this.extensionState === "incompatible") this.extensionState = "not_detected";
     const pairingCode = this.token(24);
     const expiresAtMs = this.now().getTime() + this.pairingTtlMs;
     this.pairings.set(cwd, { codeHash: hashSecret(pairingCode), expiresAtMs, attempts: 0 });
@@ -202,22 +210,19 @@ export class ChromeBrowserSessionController {
     this.publish(cwd);
   }
 
-  acceptSocket(cwd: string, extensionId: string, socket: WebSocket): void {
+  acceptLegacyTransport(cwd: string, extensionId: string, transport: ChromeBrowserSessionTransport): void {
     this.assertOpen();
     const normalizedExtensionId = this.assertAllowedExtensionId(extensionId);
     this.store(cwd);
-    this.unauthenticatedSockets.add(socket);
+    this.unauthenticatedTransports.add(transport);
     let authenticated = false;
     const helloTimer = setTimeout(() => {
-      if (!authenticated) socket.close(4001, "chrome_hello_timeout");
+      if (!authenticated) transport.close(4001, "chrome_hello_timeout");
     }, this.helloTimeoutMs);
 
-    socket.on("message", (data) => {
+    transport.onMessage((data) => {
       try {
-        if (rawDataBytes(data) > CHROME_BROWSER_MAX_MESSAGE_BYTES) {
-          throw new ChromeBrowserSessionError("chrome_browser_protocol_invalid", "Chrome message exceeds the size limit.");
-        }
-        const message = parseChromeBrowserExtensionMessage(JSON.parse(rawDataText(data)));
+        const message = parseChromeBrowserExtensionMessage(JSON.parse(data));
         if (!authenticated) {
           if (message.type !== "hello") {
             throw new ChromeBrowserSessionError("chrome_browser_protocol_invalid", "Chrome must authenticate first.");
@@ -225,33 +230,85 @@ export class ChromeBrowserSessionController {
           this.authenticate(cwd, normalizedExtensionId, message.credential);
           authenticated = true;
           clearTimeout(helloTimer);
-          this.unauthenticatedSockets.delete(socket);
-          this.activateSession(cwd, normalizedExtensionId, socket, {
+          this.unauthenticatedTransports.delete(transport);
+          this.activateSession(cwd, normalizedExtensionId, transport, {
             extensionVersion: message.extensionVersion,
             browserVersion: message.browserVersion,
           });
           return;
         }
-        this.handleSessionMessage(cwd, socket, message);
+        this.handleSessionMessage(cwd, transport, message);
       } catch (error) {
         const failure = error instanceof ChromeBrowserSessionError
           ? error
           : new ChromeBrowserSessionError("chrome_browser_protocol_invalid", "Chrome protocol is invalid.");
         this.recordSessionFailure(cwd, failure.code);
-        socket.close(4002, failure.code);
+        transport.close(4002, failure.code);
       }
     });
-    socket.on("close", () => {
+    transport.onClose(() => {
       clearTimeout(helloTimer);
-      this.unauthenticatedSockets.delete(socket);
+      this.unauthenticatedTransports.delete(transport);
       const session = this.sessions.get(cwd);
-      if (session?.socket === socket) {
+      if (session?.transport === transport) {
         this.failSession(cwd, new ChromeBrowserSessionError("chrome_browser_disconnected", "Chrome disconnected."));
       }
     });
-    socket.on("error", () => {
-      if (socket.readyState === WebSocket.OPEN) socket.close(1011, "chrome_socket_error");
+    transport.onError(() => {
+      if (transport.isOpen()) transport.close(1011, "chrome_socket_error");
     });
+  }
+
+  acceptNativeTransport(
+    cwd: string,
+    extensionId: string,
+    transport: ChromeBrowserSessionTransport,
+    metadata: { readonly extensionVersion: string; readonly browserVersion?: string },
+  ): { readonly migratedLegacyCredential: boolean } {
+    this.assertOpen();
+    const normalizedExtensionId = this.assertAllowedExtensionId(extensionId);
+    const store = this.store(cwd);
+    if (store.getManagedPlugin(CHROME_BROWSER_PLUGIN_ID)?.enabled !== true) {
+      throw new ChromeBrowserSessionError("chrome_browser_disabled", "Chrome access is disabled in Ling.");
+    }
+    const migratedLegacyCredential = store.revokeChromeBrowserCredentials(
+      "workspace_default",
+      CHROME_BROWSER_PLUGIN_ID,
+      this.now().toISOString(),
+    ) > 0;
+    this.failures.delete(cwd);
+    this.hostState = "ready";
+    this.extensionState = "connected";
+    this.activateSession(cwd, normalizedExtensionId, transport, metadata);
+    transport.onMessage((data) => {
+      try {
+        this.handleSessionMessage(cwd, transport, parseChromeBrowserExtensionMessage(JSON.parse(data)));
+      } catch {
+        this.recordSessionFailure(cwd, "chrome_browser_protocol_invalid");
+        transport.close(4002, "chrome_browser_protocol_invalid");
+      }
+    });
+    transport.onClose(() => {
+      const session = this.sessions.get(cwd);
+      if (session?.transport === transport) {
+        this.failSession(cwd, new ChromeBrowserSessionError("chrome_browser_disconnected", "Chrome disconnected."));
+      }
+    });
+    transport.onError(() => {
+      if (transport.isOpen()) transport.close(1011, "chrome_socket_error");
+    });
+    return { migratedLegacyCredential };
+  }
+
+  observeNativeState(input: {
+    readonly cwd: string;
+    readonly hostState?: ChromeBrowserHostState;
+    readonly extensionState?: ChromeBrowserExtensionState;
+  }): void {
+    this.store(input.cwd);
+    if (input.hostState) this.hostState = input.hostState;
+    if (input.extensionState) this.extensionState = input.extensionState;
+    this.publish(input.cwd);
   }
 
   snapshot(cwd: string): ChromeBrowserSessionSnapshot {
@@ -262,7 +319,9 @@ export class ChromeBrowserSessionController {
     const failure = this.failures.get(cwd);
     return {
       paired,
-      connected: Boolean(session && session.socket.readyState === WebSocket.OPEN),
+      connected: Boolean(session && session.transport.isOpen()),
+      hostState: this.hostState,
+      extensionState: session?.transport.kind === "native_messaging" ? "connected" : this.extensionState,
       ...(failure ? { errorCode: failure.code, errorAt: failure.at } : {}),
       ...(session
         ? {
@@ -271,6 +330,7 @@ export class ChromeBrowserSessionController {
             ...(session.browserVersion ? { browserVersion: session.browserVersion } : {}),
             connectedAt: session.connectedAt,
             lastSeenAt: session.lastSeenAt,
+            transport: session.transport.kind,
           }
         : {}),
     };
@@ -284,7 +344,7 @@ export class ChromeBrowserSessionController {
   ): Promise<unknown> {
     this.assertOpen();
     const session = this.sessions.get(cwd);
-    if (!session || session.socket.readyState !== WebSocket.OPEN) {
+    if (!session || !session.transport.isOpen()) {
       return Promise.reject(new ChromeBrowserSessionError("chrome_browser_disconnected", "Chrome is not connected."));
     }
     if (signal?.aborted) {
@@ -323,8 +383,7 @@ export class ChromeBrowserSessionController {
         timer,
         ...(abort && signal ? { abort, signal } : {}),
       });
-      session.socket.send(JSON.stringify(command), (error) => {
-        if (!error) return;
+      void session.transport.send(JSON.stringify(command)).catch(() => {
         const pending = session.pending.get(id);
         if (!pending) return;
         session.pending.delete(id);
@@ -341,14 +400,14 @@ export class ChromeBrowserSessionController {
     this.pairings.clear();
     this.failures.clear();
     for (const cwd of [...this.sessions.keys()]) this.closeSession(cwd, 1001, "daemon_shutdown");
-    for (const socket of this.unauthenticatedSockets) socket.terminate();
-    this.unauthenticatedSockets.clear();
+    for (const transport of this.unauthenticatedTransports) transport.terminate();
+    this.unauthenticatedTransports.clear();
   }
 
   private activateSession(
     cwd: string,
     extensionId: string,
-    socket: WebSocket,
+    transport: ChromeBrowserSessionTransport,
     metadata: { readonly extensionVersion: string; readonly browserVersion?: string },
   ): void {
     this.closeSession(cwd, 4000, "chrome_session_replaced");
@@ -356,7 +415,7 @@ export class ChromeBrowserSessionController {
     const now = this.now().toISOString();
     const session: ActiveSession = {
       generation: ++this.generation,
-      socket,
+      transport,
       extensionId,
       extensionVersion: metadata.extensionVersion,
       ...(metadata.browserVersion ? { browserVersion: metadata.browserVersion } : {}),
@@ -371,11 +430,11 @@ export class ChromeBrowserSessionController {
 
   private handleSessionMessage(
     cwd: string,
-    socket: WebSocket,
+    transport: ChromeBrowserSessionTransport,
     message: ReturnType<typeof parseChromeBrowserExtensionMessage>,
   ): void {
     const session = this.sessions.get(cwd);
-    if (!session || session.socket !== socket) {
+    if (!session || session.transport !== transport) {
       throw new ChromeBrowserSessionError("chrome_browser_credential_invalid", "Chrome session is no longer current.");
     }
     if (message.type === "hello") {
@@ -431,15 +490,14 @@ export class ChromeBrowserSessionController {
       pending.reject(new ChromeBrowserSessionError("chrome_browser_disconnected", "Chrome session ended."));
     }
     session.pending.clear();
-    if (session.socket.readyState === WebSocket.OPEN || session.socket.readyState === WebSocket.CONNECTING) {
-      session.socket.close(code, reason.slice(0, 123));
-    }
+    session.transport.close(code, reason.slice(0, 123));
   }
 
   private failSession(cwd: string, error: Error): void {
     const session = this.sessions.get(cwd);
     if (!session) return;
     this.sessions.delete(cwd);
+    if (session.transport.kind === "native_messaging") this.extensionState = "not_detected";
     if (session.heartbeatTimer) clearTimeout(session.heartbeatTimer);
     for (const pending of session.pending.values()) {
       clearTimeout(pending.timer);
@@ -474,6 +532,7 @@ export class ChromeBrowserSessionController {
   private recordSessionFailure(cwd: string, code: ChromeBrowserSessionErrorCode): void {
     if (code !== "chrome_browser_protocol_invalid" && code !== "chrome_browser_credential_invalid") return;
     this.failures.set(cwd, { code, at: this.now().toISOString() });
+    this.extensionState = "incompatible";
     this.publish(cwd);
   }
 
@@ -504,18 +563,4 @@ function safeHashEquals(left: string, right: string): boolean {
   const leftBuffer = Buffer.from(left, "hex");
   const rightBuffer = Buffer.from(right, "hex");
   return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
-}
-
-function rawDataText(data: RawData): string {
-  if (typeof data === "string") return data;
-  if (data instanceof ArrayBuffer) return Buffer.from(data).toString("utf8");
-  if (Array.isArray(data)) return Buffer.concat(data).toString("utf8");
-  return data.toString("utf8");
-}
-
-function rawDataBytes(data: RawData): number {
-  if (typeof data === "string") return Buffer.byteLength(data);
-  if (data instanceof ArrayBuffer) return data.byteLength;
-  if (Array.isArray(data)) return data.reduce((total, item) => total + item.byteLength, 0);
-  return data.byteLength;
 }

@@ -4003,16 +4003,19 @@ export function createMockChromePlugin(overrides: Partial<MockManagedPlugin> = {
     browserState: "extension_required" as const,
     paired: false,
     connected: false,
+    hostState: "ready" as const,
+    extensionState: "not_detected" as const,
+    storeUrl: "https://chromewebstore.google.com/detail/mbmlnnfhebclljonhedpjghbhibfapei",
   };
   const status = overrides.status ?? "disabled";
   return {
     id: "built-in:chrome",
     displayName: "Chrome",
-    version: "0.1.0",
+    version: "0.1.1",
     sourceKind: "built-in",
     status,
     description: "Control Chrome with Ling.",
-    trustSummary: "Uses an explicitly paired Ling extension and existing MCP approvals.",
+    trustSummary: "Uses the local Ling Browser Host and existing MCP approvals.",
     contributions: [{
       kind: "mcp-server",
       id: "mcp_chrome_browser",
@@ -4027,7 +4030,7 @@ export function createMockChromePlugin(overrides: Partial<MockManagedPlugin> = {
     health: overrides.health ?? createMockPluginHealth(
       "built-in:chrome",
       status === "enabled" && setup.connected ? "ready" : status === "enabled" ? "failed" : "disabled",
-      setup.connected ? "Chrome extension is connected." : "Install and pair the Ling Chrome extension.",
+      setup.connected ? "Chrome extension is connected." : "Install or open Ling for Chrome. Connection is automatic.",
     ),
     setup,
     linkedResources: [{
@@ -8520,6 +8523,26 @@ export async function handleDaemonRoute(
         pairingCode: "LING-CHROME-PAIR",
         expiresAt: "2099-08-17T00:05:00.000Z",
       } });
+      return;
+    }
+    if (action === "repair-browser-host" && request.method() === "POST" && plugin.id === "built-in:chrome") {
+      const updated = updateMockPlugin(state, plugin.id, createMockChromePlugin({
+        ...plugin,
+        status: "enabled",
+        setup: {
+          kind: "browser_extension",
+          state: "missing",
+          checkedAt: "2026-08-17T00:01:30.000Z",
+          browserFamily: "chrome",
+          browserState: "extension_required",
+          paired: false,
+          connected: false,
+          hostState: "ready",
+          extensionState: "not_detected",
+          storeUrl: "https://chromewebstore.google.com/detail/mbmlnnfhebclljonhedpjghbhibfapei",
+        },
+      }));
+      await route.fulfill({ json: { plugin: updated, health: updated.health } });
       return;
     }
     if (action === "revoke" && request.method() === "POST" && plugin.id === "built-in:chrome") {

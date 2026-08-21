@@ -24,13 +24,22 @@ test("packaged resourcesRoot is Electron process.resourcesPath", async (t) => {
   const fixture = await createFixture(t);
   const packagedResourcesPath = join(fixture.root, "packaged-resources");
   await mkdir(join(packagedResourcesPath, "web"), { recursive: true });
+  await mkdir(join(packagedResourcesPath, "browser-host"), { recursive: true });
   await writeFile(join(packagedResourcesPath, "web", "index.html"), "fixture");
+  await writeFile(
+    join(packagedResourcesPath, "browser-host", process.platform === "win32" ? "ling-browser-host.exe" : "ling-browser-host"),
+    "fixture",
+  );
   const app = { isPackaged: true, getAppPath: () => fixture.appPath };
 
   assert.equal(resolveDesktopResourcesRoot(app, packagedResourcesPath), resolve(packagedResourcesPath));
   const paths = await resolveDesktopResourcePaths(app, packagedResourcesPath);
   assert.equal(paths.resourcesRoot, resolve(packagedResourcesPath));
   assert.equal(paths.webIndexPath, resolve(packagedResourcesPath, "web/index.html"));
+  assert.equal(
+    paths.browserHostPath,
+    resolve(packagedResourcesPath, "browser-host", process.platform === "win32" ? "ling-browser-host.exe" : "ling-browser-host"),
+  );
 });
 
 test("packaged Web entry keeps public assets relative and exposes the shared macOS drag contract", async () => {
@@ -88,11 +97,16 @@ async function createFixture(t) {
     mkdir(join(appPath, "dist", "daemon"), { recursive: true }),
     mkdir(join(appPath, "dist", "renderer", "computer-use-preview"), { recursive: true }),
     mkdir(join(appPath, "resources"), { recursive: true }),
+    mkdir(join(root, "packages", "browser-host", "dist", "native"), { recursive: true }),
   ]);
   await Promise.all([
     writeFile(join(root, "apps", "web", "dist", "index.html"), "fixture"),
     writeFile(join(appPath, "dist", "daemon", "cli.mjs"), "fixture"),
     writeFile(join(appPath, "dist", "renderer", "computer-use-preview", "index.html"), "fixture"),
+    writeFile(
+      join(root, "packages", "browser-host", "dist", "native", process.platform === "win32" ? "ling-browser-host.exe" : "ling-browser-host"),
+      "fixture",
+    ),
   ]);
   return { root, appPath };
 }

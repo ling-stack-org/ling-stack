@@ -5,6 +5,7 @@ import {
   chromeExtensionIdFromOrigin,
   type ChromeBrowserSessionController,
 } from "./session-controller.js";
+import { createChromeBrowserWebSocketTransport } from "./transport.js";
 
 export interface ChromeBrowserWebSocketServerHandle {
   close(): void;
@@ -38,7 +39,7 @@ export function attachChromeBrowserWebSocketServer(input: {
     }
     wss.handleUpgrade(request, socket, head, (webSocket) => {
       try {
-        input.controller.acceptSocket(cwd, extensionId, webSocket);
+        input.controller.acceptLegacyTransport(cwd, extensionId, createChromeBrowserWebSocketTransport(webSocket));
       } catch {
         webSocket.close(4003, "chrome_connection_rejected");
       }

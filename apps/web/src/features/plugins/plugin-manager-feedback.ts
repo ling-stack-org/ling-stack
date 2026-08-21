@@ -21,7 +21,7 @@ export function buildPluginActionFailure(
 
 function pluginRetryAction(action: PluginBusyAction): PluginActionId | undefined {
   if (action === "create" || action === "connect") return undefined;
-  if (action === "pairing") return "connect-chrome";
+  if (action === "repair-chrome-host") return "repair-chrome-host";
   if (action === "revoke") return "revoke-chrome";
   return action;
 }
@@ -30,7 +30,7 @@ export function pluginActionLabel(action: PluginBusyAction, t: Translate): strin
   if (action === "create") return t("Add plugin");
   if (action === "apply") return t("Apply preset");
   if (action === "connect") return t("Recheck");
-  if (action === "pairing") return t("Connect Chrome");
+  if (action === "repair-chrome-host") return t("Repair connection");
   if (action === "revoke") return t("Remove Chrome access");
   if (action === "install") return t("Install");
   if (action === "check") return t("Check");

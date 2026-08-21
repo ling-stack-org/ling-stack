@@ -30,7 +30,7 @@ export function buildChromePluginView(plugin: ManagedPluginView, t: Translate): 
     return {
       description: t("Control Chrome with Ling."),
       primaryState: { id: "ready", label: t("Connected"), tone: "success" },
-      menuActions: setup.paired ? [action("revoke-chrome", t("Remove Chrome access"), "danger")] : [],
+      menuActions: [],
       showCheckAction: true,
       showDisableAction: true,
     };
@@ -39,9 +39,29 @@ export function buildChromePluginView(plugin: ManagedPluginView, t: Translate): 
     return {
       description: t("Control Chrome with Ling."),
       primaryState: { id: "failed", label: t("Needs attention"), tone: "danger" },
-      primaryAction: action("connect-chrome", t("Connect Chrome")),
-      menuActions: setup.paired ? [action("revoke-chrome", t("Remove Chrome access"), "danger")] : [],
-      showCheckAction: true,
+      primaryAction: action("connect-chrome", t("Update Chrome connection")),
+      menuActions: [],
+      showCheckAction: false,
+      showDisableAction: true,
+    };
+  }
+  if (setup?.browserState === "host_missing") {
+    return {
+      description: t("Control Chrome with Ling."),
+      primaryState: { id: "setup-missing", label: t("Connection component missing"), tone: "warning" },
+      primaryAction: action("repair-chrome-host", t("Repair connection")),
+      menuActions: [],
+      showCheckAction: false,
+      showDisableAction: true,
+    };
+  }
+  if (setup?.browserState === "paused") {
+    return {
+      description: t("Control Chrome with Ling."),
+      primaryState: { id: "stale", label: t("Paused"), tone: "neutral" },
+      primaryAction: action("connect-chrome", t("Resume in Chrome")),
+      menuActions: [],
+      showCheckAction: false,
       showDisableAction: true,
     };
   }
@@ -51,9 +71,9 @@ export function buildChromePluginView(plugin: ManagedPluginView, t: Translate): 
     primaryState: waiting
       ? { id: "connecting", label: t("Waiting for Chrome"), tone: "info" }
       : { id: "setup-missing", label: t("Extension required"), tone: "warning" },
-    primaryAction: action("connect-chrome", t("Connect Chrome")),
-    menuActions: setup?.paired ? [action("revoke-chrome", t("Remove Chrome access"), "danger")] : [],
-    showCheckAction: waiting,
+    primaryAction: action("connect-chrome", waiting ? t("Open Ling for Chrome") : t("Open Chrome Web Store")),
+    menuActions: [],
+    showCheckAction: false,
     showDisableAction: true,
   };
 }
