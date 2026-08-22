@@ -8765,6 +8765,44 @@ test("channel composer keeps thinking visible for acknowledged sends before comp
   await expect(channelFeed.getByText("正在思考...")).toHaveCount(0, { timeout: 3_000 });
 });
 
+test("pending channel reply polling refreshes messages without refreshing global activity", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.channelMessages = [{
+    id: "msg_pending_background_poll",
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    kind: "ai_reply",
+    intent: "discuss",
+    authorType: "ai-teammate",
+    authorId: "ling_agent",
+    body: "等待审批中的回复。",
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "pending",
+    createdAt: "2026-05-25T00:40:00.000Z",
+    updatedAt: "2026-05-25T00:40:00.000Z",
+  }];
+  await mockDaemon(page, state);
+  const daemonPaths: string[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.port === "17891") {
+      daemonPaths.push(url.pathname);
+    }
+  });
+  await page.goto("/");
+  await openEngineeringChannel(page);
+  await page.waitForTimeout(250);
+  daemonPaths.length = 0;
+
+  await expect.poll(() => daemonPaths.filter((path) => path === "/channels/channel_engineering/items").length).toBeGreaterThan(0);
+  expect(daemonPaths).not.toContain("/tasks");
+  expect(daemonPaths).not.toContain("/work-items");
+});
+
 test("channel conversation turn shows thinking for empty pending ai replies", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "zh-CN");
