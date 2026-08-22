@@ -32,6 +32,7 @@ import {
 import type { DomainController, DomainError } from "../../app/domain-controller.js";
 import { deriveChannelTasks } from "../../lib/channel-artifacts.js";
 import { projectChannelConversationItemPage } from "../../lib/channel-conversation-items.js";
+import { channelMessagesEqual } from "../../lib/channel-message-equality.js";
 import {
   defaultChannelCreateForm,
   defaultChannelEditForm,
@@ -1168,13 +1169,6 @@ function mergeChannelMessages(
     merged.push(message);
   }
   return merged;
-}
-
-function channelMessagesEqual(
-  currentMessages: readonly ChannelMessage[],
-  nextMessages: readonly ChannelMessage[],
-): boolean {
-  return JSON.stringify(currentMessages) === JSON.stringify(nextMessages);
 }
 
 interface ChannelTransitionEntity {
