@@ -4203,6 +4203,75 @@ test("channel intent selector creates workflow proposals for execution-shaped al
   }
 });
 
+test("multi-participant concrete file workflow preserves operation-derived tools", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-multi-participant-file-tools-"));
+  const runner = new RecordingRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Concrete multi-agent execution",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
+    })).channel;
+    const participants = ["teammate_builtin_engineer", "teammate_builtin_qa"];
+    for (const teammateId of participants) {
+      await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+        providerPresetId: provider.id,
+      });
+      await putJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/channels?cwd=${encodeURIComponent(cwd)}`, {
+        memberships: [{ channelId: channel.id }],
+      });
+    }
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: "@Engineer @QA 请协作完成一个最小可验证任务：由 Engineer 创建 r5-channel-proof.txt，内容为 continuity-v2-r5-proof；然后由 QA 读取并验证内容。只有 Engineer 和 QA 都完成并提供真实 evidence 后才报告成功。",
+      mentions: [
+        { id: "teammate_builtin_engineer", label: "Engineer", kind: "ai-teammate" },
+        { id: "teammate_builtin_qa", label: "QA", kind: "ai-teammate" },
+      ],
+      requestAiReply: true,
+    });
+
+    assertCoordinatorWorkflowStartReply(created);
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const decision = store.listChannelIntentDecisions({ sourceItemId: created.message.id, limit: 20 })
+      .find((candidate) => candidate.workflowId === created.autoStartedWorkflow.workflow.id);
+    assert.ok(decision);
+    assert.equal(decision.action, "execute");
+    assert.deepEqual(decision.participantManifest.participants.map((participant) => participant.participantId), participants);
+    assert.deepEqual(decision.participantManifest.participants.map((participant) => participant.requiredOperationIds), [["create_file"], ["verify_target"]]);
+
+    const proposal = store.listChannelExecutionProposals({
+      channelId: channel.id,
+      sourceMessageId: created.message.id,
+      limit: 20,
+    })[0];
+    assert.ok(proposal);
+    assert.deepEqual(proposal.requiredTools, ["write", "bash"]);
+    assert.equal(created.autoStartedWorkflow.workflowSteps.length, 2);
+    assert.deepEqual(created.autoStartedWorkflow.workflowSteps.map((step) => step.toParticipantId), participants);
+    assert.deepEqual(created.autoStartedWorkflow.workflowSteps.map((step) => step.metadata.executionOperationIds), [["create_file"], ["verify_target"]]);
+    assert.deepEqual(created.autoStartedWorkflow.workflowSteps.map((step) => step.metadata.requiredTools), [["write"], ["bash"]]);
+    assert.deepEqual(runner.runs[0].tools, ["write"]);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("channel intent selector does not assign specialists outside current channel", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-intent-roster-boundary-"));
   const runner = new RecordingRunner();

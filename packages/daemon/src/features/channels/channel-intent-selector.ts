@@ -858,11 +858,22 @@ function createWorkflowProposal(
     return recoverExistingProposalLineage(input, existingProposal);
   }
 
-  const execution = decisionAction === "execute" ? genericWorkflowExecutionPlan(input) : undefined;
+  // A multi-role request can still be classified as workflow_proposal because it
+  // needs proposal evidence before starting. Once the current turn contains a
+  // concrete file operation, however, the accepted decision must carry the same
+  // typed operation plan that the later graph compiler will consume. Otherwise the
+  // manifest has participants but no owned operations and the Run is created with
+  // an empty tool set. The materializer is deliberately narrow and fail-closed: it
+  // only derives operations from an independently validated single-step file intent
+  // and never invents a command or a target.
+  const execution = decisionAction === "execute"
+    ? genericWorkflowExecutionPlan(input)
+    : deriveMultiParticipantExecutionPlan(input, participants);
+  const persistedDecisionAction = execution ? "execute" : decisionAction;
   const participantManifest = createParticipantManifest(
     input,
     participants.map((participant) => participant.teammate),
-    decisionAction,
+    persistedDecisionAction,
     execution,
   );
 
@@ -884,13 +895,16 @@ function createWorkflowProposal(
     buildRiskSummary(reasonCode, responseLanguage),
     ...fallbackRecommendations,
   ].join("\n\n");
+  const requiredTools = execution
+    ? requiredToolsForExecutionOperations(execution.operations)
+    : [];
   const proposal = input.store.createChannelExecutionProposal(
     {
       channelId: input.channel.id,
       sourceMessageId: input.sourceMessage.id,
       proposedByTeammateId: proposedBy.id,
       title: buildProposalTitle(input.sourceMessage.body, reasonCode),
-      prompt: buildProposalPrompt(input.sourceMessage.body, participants, responseLanguage),
+      prompt: buildProposalPrompt(input.sourceMessage.body, participants, responseLanguage, execution),
       assigneeTeammateId: assignee.id,
       acceptanceCriteria: buildAcceptanceCriteria(responseLanguage),
       collaborationSteps: participants.map((participant) => ({
@@ -899,7 +913,7 @@ function createWorkflowProposal(
         summary: roleSummary(participant.role, responseLanguage),
         ...(participant.sources && participant.sources.length > 0 ? { sources: participant.sources } : {}),
       })),
-      requiredTools: deriveRequiredTools(participants),
+      requiredTools,
       riskSummary,
       responseLanguage,
       shaping: buildProposalShaping(input, buildProposalTitle(input.sourceMessage.body, reasonCode), now),
@@ -908,12 +922,12 @@ function createWorkflowProposal(
     now,
   );
   const decision = persistIntentDecision(input, {
-    action: decisionAction,
+    action: persistedDecisionAction,
     selectedTeammateIds: participantManifest.participants.map((participant) => participant.participantId),
     participantManifest,
     proposalId: proposal.id,
     ...(execution ? { execution } : {}),
-    reason: decisionReason ?? `${decisionAction === "execute" ? "Executable workflow proposal" : "Workflow proposal"} created from channel intent: ${reasonCode}.`,
+    reason: decisionReason ?? `${persistedDecisionAction === "execute" ? "Executable workflow proposal" : "Workflow proposal"} created from channel intent: ${reasonCode}.`,
     status: "accepted",
     createdBy,
   });
@@ -937,11 +951,19 @@ function createSingleStepExecutableProposal(
   if (participants.length === 0) {
     return createClarifyReply(input, "missing_target", createdBy, decisionReason ?? "No active teammate is available for this executable request.");
   }
+  const execution = participants.length > 1
+    ? deriveMultiParticipantExecutionPlan(input, participants, executableIntent.execution)
+    : executableIntent.execution;
+  const operationPlan = execution ?? executableIntent.execution;
+  const operationOwners = assignExecutionOperationOwners(
+    operationPlan.operations,
+    participants.map((participant) => ({ teammate: participant.teammate })),
+  );
   const participantManifest = createParticipantManifest(
     input,
     participants.map((participant) => participant.teammate),
     "execute",
-    executableIntent.execution,
+    operationPlan,
   );
 
   const responseLanguage = resolveChannelResponseLanguage({
@@ -949,7 +971,7 @@ function createSingleStepExecutableProposal(
     channel: input.channel,
     sourceText: input.sourceMessage.body,
   }).language;
-  const blocker = executableProposalBlocker(input, executableIntent, participants, participantManifest, responseLanguage);
+  const blocker = executableProposalBlocker(input, executableIntent, participants, participantManifest, responseLanguage, operationPlan);
   const fallbackSpecialistRoleKeys = [...new Set<AiTeammate["roleKey"]>(participants.flatMap((participant) => {
     const fallbackRoleKey = participant.fallbackSpecialistRoleKey
       ?? (isLingAgentExecutorId(participant.teammate.id) ? executableIntent.rolePreferences[0] : undefined);
@@ -964,22 +986,38 @@ function createSingleStepExecutableProposal(
     : fallbackSpecialistRoleKeys.length > 0
       ? `${executableIntent.riskSummary}\n\n${fallbackSpecialistRoleKeys.map((roleKey) => lingAgentFallbackRecommendation(roleKey, responseLanguage)).join("\n")}`
       : executableIntent.riskSummary;
+  const requiredTools = requiredToolsForExecutionOperations(operationPlan.operations);
+  const acceptanceCriteria = participants.length > 1
+    ? [
+        ...executableIntent.acceptanceCriteria,
+        "Every required participant completes its owned operation subset with successful host evidence before the workflow can succeed.",
+      ]
+    : executableIntent.acceptanceCriteria;
   const proposal = input.store.createChannelExecutionProposal(
     {
       channelId: input.channel.id,
       sourceMessageId: input.sourceMessage.id,
       proposedByTeammateId: proposedBy.id,
       title: executableIntent.title,
-      prompt: buildSingleStepExecutablePrompt(input.sourceMessage.body, executableIntent, responseLanguage),
+      prompt: participants.length > 1
+        ? buildMultiParticipantExecutablePrompt(input.sourceMessage.body, executableIntent, participants, operationPlan, operationOwners, responseLanguage)
+        : buildSingleStepExecutablePrompt(input.sourceMessage.body, executableIntent, responseLanguage),
       assigneeTeammateId: assignee.id,
-      acceptanceCriteria: executableIntent.acceptanceCriteria,
-      collaborationSteps: participants.map((participant) => ({
+      acceptanceCriteria,
+      collaborationSteps: participants.map((participant, index) => ({
         teammateId: participant.teammate.id,
         action: participant.role.action,
-        summary: executableIntent.actionSummary,
+        summary: participants.length > 1
+          ? summarizeOwnedExecutionOperations(
+              participant.teammate.displayName,
+              ownedExecutionOperations(operationPlan.operations, operationOwners, index),
+              executableIntent.actionSummary,
+              responseLanguage,
+            )
+          : executableIntent.actionSummary,
         ...(participant.sources && participant.sources.length > 0 ? { sources: participant.sources } : {}),
       })),
-      requiredTools: executableIntent.requiredTools,
+      requiredTools,
       riskSummary,
       responseLanguage,
       ...(blocker ? {} : { shaping: buildProposalShaping(input, executableIntent.title, now) }),
@@ -993,10 +1031,10 @@ function createSingleStepExecutableProposal(
     selectedTeammateIds: participantManifest.participants.map((participant) => participant.participantId),
     participantManifest,
     proposalId: proposal.id,
-    execution: executableIntent.execution,
+    execution: operationPlan,
     reason: blocker?.technicalReason
-      ? `Direct single-step executable proposal blocked for ${executableIntent.kind}: ${blocker.technicalReason}`
-      : decisionReason ?? `Direct single-step executable proposal created for ${executableIntent.kind}.`,
+      ? `${participants.length > 1 ? "Multi-participant" : "Direct single-step"} executable proposal blocked for ${executableIntent.kind}: ${blocker.technicalReason}`
+      : decisionReason ?? `${participants.length > 1 ? "Multi-participant" : "Direct single-step"} executable proposal created for ${executableIntent.kind}.`,
     status: "accepted",
     createdBy,
     errorCode: blocker?.errorCode,
@@ -1796,7 +1834,7 @@ function uniqueStrings(values: readonly string[]): readonly string[] {
 function extractRequestedFileContent(text: string): string | undefined {
   const match = /(?:内容是|内容为|写入|写成|改成|如下|content\s*(?:is|:)|with\s+content)\s*[:：]?\s*([\s\S]+)$/iu.exec(text);
   const content = match?.[1]
-    ?.replace(/(?:，|,)\s*(?:然后|接着|再|and\s+then|then)\s*(?:运行|执行|跑|验证|测试|检查|run|execute|verify|test|check)\b[\s\S]*$/iu, "")
+    ?.replace(/(?:，|,|；|;)\s*(?:然后|接着|再|and\s+then|then)\s*(?:由\s+[^，。；;!?！？]{0,40}?\s*)?(?:运行|执行|跑|读取|读一下|查看|验证|测试|检查|run|execute|read|inspect|verify|test|check)[\s\S]*$/iu, "")
     .trim();
   return content && content.length > 0 ? content : undefined;
 }
@@ -2021,6 +2059,76 @@ function operationPlanForText(
       dependsOn: [],
     }],
   };
+}
+
+function deriveMultiParticipantExecutionPlan(
+  input: ChannelIntentSelectorInput,
+  participants: readonly ProposalParticipantSelection[],
+  baseExecution?: ChannelIntentExecutionPlanV1,
+): ChannelIntentExecutionPlanV1 | undefined {
+  if (participants.length < 2) {
+    return undefined;
+  }
+  const execution = baseExecution ?? detectSingleStepExecutableIntent(input)?.execution;
+  if (!execution) {
+    return undefined;
+  }
+
+  const operations = [...execution.operations];
+  const fileOperation = operations.find((operation) => operation.kind === "file_create" || operation.kind === "file_edit");
+  const text = normalizeWhitespace(input.sourceMessage.body);
+  const requestsVerification = /(读取|读一下|阅读|验证|检查|测试|验收|查看|read|verify|check|test|validate|inspect)/iu.test(text);
+
+  // Prefer a host-materialized exact content check when the request contains
+  // literal file content. Exit-code evidence from that exact command proves the
+  // QA step read and compared the target instead of merely mentioning it.
+  // Without literal content, retain the bounded path-scoped open operation.
+  if (fileOperation
+    && requestsVerification
+    && !operations.some((operation) => operation.kind === "run_command" || operation.kind === "open_local_target")) {
+    const expectedContent = resolveFileContentForRequest(input, text, fileOperation.targetRef.label ?? "").content;
+    const exactVerificationCommand = expectedContent
+      ? materializeFileContentVerificationCommand(fileOperation.targetRef.label ?? "", expectedContent)
+      : undefined;
+    if (exactVerificationCommand) {
+      operations.push({
+        id: "verify_target",
+        kind: "run_command",
+        targetKind: "command",
+        targetRef: {
+          type: "operation",
+          id: `${input.sourceMessage.id}:verify_target`,
+          label: `verify ${fileOperation.targetRef.label ?? "file"} content`,
+        },
+        commandMatchPolicy: { kind: "exact_command", command: exactVerificationCommand },
+        required: true,
+        dependsOn: [fileOperation.id],
+      });
+    } else if (!expectedContent) {
+      operations.push({
+        id: "verify_target",
+        kind: "open_local_target",
+        targetKind: "file",
+        targetRef: {
+          type: "operation",
+          id: `${input.sourceMessage.id}:verify_target`,
+          label: fileOperation.targetRef.label,
+        },
+        required: true,
+        dependsOn: [fileOperation.id],
+      });
+    }
+  }
+
+  return operations.length > 0 ? { operations } : undefined;
+}
+
+function materializeFileContentVerificationCommand(target: string, expectedContent: string): string | undefined {
+  if (!target || !expectedContent) return undefined;
+  const targetBase64 = Buffer.from(target, "utf8").toString("base64");
+  const contentBase64 = Buffer.from(expectedContent, "utf8").toString("base64");
+  const command = `node -e "const fs=require('fs');const p=Buffer.from('${targetBase64}','base64').toString('utf8');const e=Buffer.from('${contentBase64}','base64').toString('utf8');if(fs.readFileSync(p,'utf8')!==e)process.exit(1)"`;
+  return command.length <= 512 ? command : undefined;
 }
 
 function genericWorkflowExecutionPlan(input: ChannelIntentSelectorInput): ChannelIntentExecutionPlanV1 {
@@ -2371,12 +2479,13 @@ function executableProposalBlocker(
   participants: readonly ProposalParticipantSelection[],
   participantManifest: RequiredParticipantManifestV1,
   responseLanguage: ResponseLanguage,
+  execution: ChannelIntentExecutionPlanV1 = executableIntent.execution,
 ): SingleStepExecutableBlocker | undefined {
   const userMessages: string[] = [];
   const technicalReasons: string[] = [];
   let errorCode: string | undefined;
   const manifestByParticipantId = new Map(participantManifest.participants.map((participant) => [participant.participantId, participant]));
-  const operationById = new Map(executableIntent.execution.operations.map((operation) => [operation.id, operation]));
+  const operationById = new Map(execution.operations.map((operation) => [operation.id, operation]));
   for (const participant of participants) {
     const teammate = participant.teammate;
     if (!teammateCanWorkInEffectiveChannel(input.store, input.channel, teammate.id)) {
@@ -2392,7 +2501,7 @@ function executableProposalBlocker(
       return operation?.required ? [operation] : [];
     });
     if (participants.length > 1
-      && executableIntent.execution.operations.some((operation) => operation.required)
+      && execution.operations.some((operation) => operation.required)
       && ownedRequiredOperations.length === 0) {
       userMessages.push(responseLanguage === "zh-CN"
         ? `${teammate.displayName} 没有可安全分配的必需操作；请明确该参与者负责的执行或验证步骤。`
@@ -2461,6 +2570,80 @@ function buildSingleStepExecutablePrompt(
     "Permission boundary: proposal evidence only declares the tools and target for this task; undeclared tools, paths, commands, MCP actions, or external side effects must use runtime permission request.",
     "Start boundary: Ling Agent Session may auto-start when scope is clear and required tools are not denied; high-risk side effects remain governed by runtime approval policy, and incomplete work must be clarified first.",
   ].join("\n");
+}
+
+function buildMultiParticipantExecutablePrompt(
+  messageBody: string,
+  executableIntent: SingleStepExecutableIntent,
+  participants: readonly ProposalParticipantSelection[],
+  execution: ChannelIntentExecutionPlanV1,
+  operationOwners: ReadonlyMap<string, number>,
+  responseLanguage: ResponseLanguage,
+): string {
+  const operationLines = execution.operations.map((operation) => {
+    const ownerIndex = operationOwners.get(operation.id);
+    const owner = ownerIndex === undefined ? undefined : participants[ownerIndex]?.teammate.displayName;
+    const dependency = operation.dependsOn.length > 0 ? `; depends on ${operation.dependsOn.join(", ")}` : "";
+    const commandPolicy = operation.commandMatchPolicy?.kind === "exact_command"
+      ? `; exact command: ${operation.commandMatchPolicy.command}`
+      : operation.commandMatchPolicy?.kind === "executable"
+        ? `; executable: ${operation.commandMatchPolicy.executable}`
+        : "";
+    return `- ${operation.id}: ${operation.kind} -> ${operation.targetRef.label ?? operation.targetKind}${owner ? `; owner ${owner}` : ""}${dependency}${commandPolicy}`;
+  });
+  const participantLines = participants.map((participant, index) => {
+    const owned = ownedExecutionOperations(execution.operations, operationOwners, index);
+    return `- ${participant.teammate.displayName}: ${owned.map((operation) => operation.id).join(", ") || "no operation"}`;
+  });
+  const header = responseLanguage === "zh-CN"
+    ? "这条用户消息是一个多参与者可执行 workflow。"
+    : "The user message is a multi-participant executable workflow.";
+  const originalLabel = responseLanguage === "zh-CN" ? "原始请求" : "Original request";
+  const operationsLabel = responseLanguage === "zh-CN" ? "已物化的执行操作" : "Materialized execution operations";
+  const participantsLabel = responseLanguage === "zh-CN" ? "参与者操作归属" : "Participant operation ownership";
+  return [
+    header,
+    "",
+    `${originalLabel}: ${normalizeWhitespace(messageBody)}`,
+    "",
+    executableIntent.prompt,
+    "",
+    `${operationsLabel}:`,
+    ...operationLines,
+    "",
+    `${participantsLabel}:`,
+    ...participantLines,
+    "",
+    responseLanguage === "zh-CN"
+      ? "每个参与者只能完成自己拥有的操作；后续参与者必须等待依赖操作的 Host evidence。最终成功需要所有 required participant 和 operation evidence 都通过。"
+      : "Each participant may complete only its owned operations; later participants must wait for dependency Host evidence. Final success requires every required participant and operation evidence to verify.",
+    "Permission boundary: undeclared tools, paths, commands, MCP actions, or external side effects require a separate runtime permission request.",
+  ].join("\n");
+}
+
+function summarizeOwnedExecutionOperations(
+  displayName: string,
+  operations: readonly ChannelIntentExecutionOperationV1[],
+  fallback: string,
+  responseLanguage: ResponseLanguage,
+): string {
+  if (operations.length === 0) {
+    return fallback;
+  }
+  const labels = operations.map((operation) => {
+    const target = operation.targetRef.label ?? operation.targetKind;
+    if (responseLanguage === "zh-CN") {
+      if (operation.kind === "file_create") return `创建 ${target}`;
+      if (operation.kind === "file_edit") return `修改 ${target}`;
+      if (operation.kind === "open_local_target") return `读取/检查 ${target}`;
+      return `执行 ${target}`;
+    }
+    if (operation.kind === "file_create") return `create ${target}`;
+    if (operation.kind === "file_edit") return `edit ${target}`;
+    if (operation.kind === "open_local_target") return `read/check ${target}`;
+    return `run ${target}`;
+  });
+  return `${displayName}: ${labels.join(responseLanguage === "zh-CN" ? "，" : ", ")}`;
 }
 
 function chooseClarifyingTeammate(input: ChannelIntentSelectorInput): AiTeammate | undefined {
@@ -2628,8 +2811,11 @@ function buildProposalPrompt(
   messageBody: string,
   participants: readonly ProposalParticipantSelection[],
   responseLanguage: ResponseLanguage,
+  execution?: ChannelIntentExecutionPlanV1,
 ): string {
   const steps = participants.map((participant, index) => `${index + 1}. ${participant.teammate.displayName}: ${roleSummary(participant.role, responseLanguage)}`);
+  const operations = execution?.operations.map((operation) =>
+    `- ${operation.id}: ${operation.kind} (${operation.targetRef.label ?? operation.targetKind})${operation.dependsOn.length > 0 ? ` after ${operation.dependsOn.join(", ")}` : ""}`);
   if (responseLanguage === "zh-CN") {
     return [
       "这条用户消息看起来是一个需要协作执行的工作流请求。",
@@ -2638,6 +2824,7 @@ function buildProposalPrompt(
       "",
       "建议协作步骤:",
       ...steps,
+      ...(operations && operations.length > 0 ? ["", "已物化的执行操作:", ...operations] : []),
       "",
       "多步骤协作默认等待用户确认；清晰可执行任务在所需工具未被 deny 时可由 Ling Agent Session 自动开始，副作用继续由 runtime approval policy 控制。",
     ].join("\n");
@@ -2649,6 +2836,7 @@ function buildProposalPrompt(
     "",
     "Proposed collaboration:",
     ...steps,
+    ...(operations && operations.length > 0 ? ["", "Materialized operations:", ...operations] : []),
     "",
     "Multi-step collaboration waits for user confirmation by default; clear executable work may be auto-started by Ling Agent Session when required tools are not denied, while side effects remain governed by runtime approval policy.",
   ].join("\n");
@@ -2666,18 +2854,6 @@ function buildAcceptanceCriteria(responseLanguage: ResponseLanguage): readonly s
         "Run each implementation step through the existing channel task/run path.",
         "Keep selector, handoff, run, approval, and artifact evidence expandable.",
       ];
-}
-
-function deriveRequiredTools(
-  participants: readonly ProposalParticipantSelection[],
-): ChannelExecutionProposal["requiredTools"] {
-  const tools = new Set<ChannelExecutionProposal["requiredTools"][number]>();
-  for (const participant of participants) {
-    for (const tool of participant.teammate.allowedTools) {
-      tools.add(tool);
-    }
-  }
-  return [...tools];
 }
 
 function buildRiskSummary(reasonCode: IntentReasonCode, responseLanguage: ResponseLanguage): string {
