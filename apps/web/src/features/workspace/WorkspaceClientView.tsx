@@ -508,6 +508,7 @@ export function WorkspaceClientView({
   onRunActivityTriageAction,
   onLoadOlderChannelMessages,
   onRefreshChannelMessages,
+  onRefreshPendingChannelReply,
   onRefreshChannelActivity,
   onRefreshExternalWorkCiTriage,
   onRefreshWorkItems,
@@ -693,6 +694,7 @@ export function WorkspaceClientView({
   readonly onRunActivityTriageAction: (draft: ChannelActivityTriageDraft) => Promise<ChannelActivityTriageResult>;
   readonly onLoadOlderChannelMessages: () => void;
   readonly onRefreshChannelMessages: () => void;
+  readonly onRefreshPendingChannelReply: () => void;
   readonly onRefreshChannelActivity: () => Promise<void>;
   readonly onRefreshExternalWorkCiTriage: () => void;
   readonly onRefreshWorkItems: () => void;
@@ -2009,18 +2011,17 @@ export function WorkspaceClientView({
     });
   }, [channelBrief]);
 
+  const hasPendingReply = channelMessages.some((message) => message.kind === "ai_reply" && message.status === "pending");
+
   useEffect(() => {
-    const hasPendingReply = channelMessages.some((message) => message.kind === "ai_reply" && message.status === "pending");
     if (!selectedChannelId || !hasPendingReply) {
       return undefined;
     }
     const intervalId = globalThis.setInterval(() => {
-      onRefreshChannelMessages();
-      onRefreshChannelActivity();
-      onRefreshWorkItems();
+      onRefreshPendingChannelReply();
     }, 1_000);
     return () => globalThis.clearInterval(intervalId);
-  }, [channelMessages, onRefreshChannelActivity, onRefreshChannelMessages, onRefreshWorkItems, selectedChannelId]);
+  }, [hasPendingReply, onRefreshPendingChannelReply, selectedChannelId]);
 
   useEffect(() => {
     if (!selectedTaskId || !selectedTask) {
