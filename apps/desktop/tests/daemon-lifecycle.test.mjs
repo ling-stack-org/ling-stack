@@ -39,6 +39,7 @@ test("Desktop daemon starts in the selected workspace and stops the owned child"
     spawnInputs[0].env.LING_STACK_DEFAULT_WORKSPACE_CWD,
     canonicalWorkspace("/tmp/ling-desktop-workspace"),
   );
+  assert.equal(spawnInputs[0].env.LING_STACK_RUNTIME_UNIFIED_EXEC, "1");
   assert.equal(spawnInputs[0].env.ELECTRON_RUN_AS_NODE, "1");
 
   const repeatedStatus = await lifecycle.ensureStarted();

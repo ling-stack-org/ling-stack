@@ -4236,14 +4236,13 @@ test("multi-participant concrete file workflow preserves operation-derived tools
     }
 
     const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
-      body: "@Engineer @QA 请协作完成一个最小可验证任务：由 Engineer 创建 r5-channel-proof.txt，内容为 continuity-v2-r5-proof；然后由 QA 读取并验证内容。只有 Engineer 和 QA 都完成并提供真实 evidence 后才报告成功。",
+      body: "@Engineer @QA 请协作完成一个最小可验证任务：由 Engineer 创建 r5-channel-proof.txt，内容为 continuity-v2-r5-proof；QA 执行命令验证文件内容。Engineer 与 QA 都必须完成并提供真实 evidence 后才报告成功。",
       mentions: [
         { id: "teammate_builtin_engineer", label: "Engineer", kind: "ai-teammate" },
         { id: "teammate_builtin_qa", label: "QA", kind: "ai-teammate" },
       ],
       requestAiReply: true,
     });
-
     assertCoordinatorWorkflowStartReply(created);
     const store = stores.get(cwd);
     assert.ok(store);
@@ -4253,6 +4252,14 @@ test("multi-participant concrete file workflow preserves operation-derived tools
     assert.equal(decision.action, "execute");
     assert.deepEqual(decision.participantManifest.participants.map((participant) => participant.participantId), participants);
     assert.deepEqual(decision.participantManifest.participants.map((participant) => participant.requiredOperationIds), [["create_file"], ["verify_target"]]);
+    const verificationOperation = decision.execution?.operations.find((operation) => operation.id === "verify_target");
+    assert.equal(verificationOperation?.commandMatchPolicy?.kind, "exact_command");
+    assert.ok(verificationOperation?.commandMatchPolicy?.kind === "exact_command");
+    assert.match(
+      verificationOperation.commandMatchPolicy.command,
+      new RegExp(`Buffer\\.from\\('${Buffer.from("continuity-v2-r5-proof", "utf8").toString("base64")}\\',\\s*'base64'\\)`),
+    );
+    assert.doesNotMatch(verificationOperation.commandMatchPolicy.command, /QA/u);
 
     const proposal = store.listChannelExecutionProposals({
       channelId: channel.id,

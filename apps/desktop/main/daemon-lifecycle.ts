@@ -224,6 +224,11 @@ export class DesktopDaemonLifecycle {
           LING_STACK_HOST: url.hostname,
           LING_STACK_PORT: url.port || (url.protocol === "https:" ? "443" : "80"),
           LING_STACK_DEFAULT_WORKSPACE_CWD: this.defaultWorkspaceCwd,
+          // Desktop is the trusted local host for command execution. The
+          // daemon still applies its approval policy and persists validated
+          // command evidence; this only makes the bash surface available to
+          // the packaged runner.
+          LING_STACK_RUNTIME_UNIFIED_EXEC: "1",
           ...(this.options.desktopBridgeToken
             ? {
                 LING_DESKTOP_BRIDGE_TOKEN: this.options.desktopBridgeToken,

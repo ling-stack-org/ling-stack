@@ -476,6 +476,44 @@ test("agent result Items from the consumed source Turn do not invalidate its inp
   }
 });
 
+test("workflow step input excludes pre-existing coordinator Items from its freshness stamp", async () => {
+  const fixture = await createFixture();
+  try {
+    const coordinatorItem = fixture.store.appendConversationItem({
+      channelId: fixture.channel.id,
+      threadId: fixture.sourceItem.threadId,
+      turnId: fixture.sourceItem.turnId,
+      kind: "assistant_message",
+      status: "committed",
+      actorType: "ling_agent",
+      actorId: "ling_agent",
+      visibility: "channel",
+      payload: {
+        body: "Confirmed. Starting the workflow now.",
+        format: "markdown",
+        streaming: false,
+        deliveryStatus: "ready",
+      },
+    }, "2026-08-10T01:00:20.000Z");
+
+    const prepared = prepareStep(fixture, fixture.engineerStep.id);
+    const consumed = prepared.runRequest.contextPack.agentContext;
+    assert.ok(consumed);
+    assert.equal(
+      consumed.contextProjection.sourceRefs.some((ref) => ref.type === "conversation_item" && ref.id === coordinatorItem.id),
+      false,
+    );
+    assert.equal(reviewWorkflowAgentContextStamp({
+      store: fixture.store,
+      dependencyWorkflowStepId: fixture.engineerStep.id,
+      consumed,
+    }).review.status, "accepted_current");
+  } finally {
+    fixture.store.close();
+    await rm(fixture.cwd, { recursive: true, force: true });
+  }
+});
+
 test("sequential dependencies reject stale agent context before entering a downstream prompt", async () => {
   const fixture = await createFixture();
   try {

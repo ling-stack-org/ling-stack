@@ -336,7 +336,14 @@ function selectDeterministicChannelWorkflowIntent(input: ChannelIntentSelectorIn
   }
 
   const reasonCode = detectWorkflowIntentReason(input.sourceMessage);
-  if (reasonCode && reasonCode !== "explicit_workflow_start") {
+  // Explicit mentions are materialized before intent selection. Once more than
+  // one participant is requested, execution verbs inside a participant's
+  // operation (for example `@QA 执行命令…`) must not collapse the request into
+  // a single-agent direct workflow. Preserve the full participant manifest and
+  // compile the multi-agent graph first; the resulting decision may still be
+  // `execute` and auto-start according to the normal workflow policy.
+  const hasMultiParticipantMention = explicitRequestedParticipantIds(input).length > 1;
+  if (reasonCode && (reasonCode !== "explicit_workflow_start" || hasMultiParticipantMention)) {
     return createWorkflowIntentResult(input, reasonCode, "deterministic");
   }
   const executableIntent = detectSingleStepExecutableIntent(input);
@@ -1835,6 +1842,13 @@ function extractRequestedFileContent(text: string): string | undefined {
   const match = /(?:内容是|内容为|写入|写成|改成|如下|content\s*(?:is|:)|with\s+content)\s*[:：]?\s*([\s\S]+)$/iu.exec(text);
   const content = match?.[1]
     ?.replace(/(?:，|,|；|;)\s*(?:然后|接着|再|and\s+then|then)\s*(?:由\s+[^，。；;!?！？]{0,40}?\s*)?(?:运行|执行|跑|读取|读一下|查看|验证|测试|检查|run|execute|read|inspect|verify|test|check)[\s\S]*$/iu, "")
+    // A multi-participant request may name the verifying participant directly
+    // (`；QA 执行命令…`) without a transitional word such as `然后`. That
+    // clause is workflow instructions, not literal file content. Keep the
+    // parser conservative: only trim a delimited suffix when a participant
+    // token is immediately followed by an execution/verification verb, so
+    // semicolons inside ordinary file content remain untouched.
+    ?.replace(/(?:，|,|；|;)\s*(?:由\s*)?(?:@?[\p{L}\p{N}_-]+)\s*(?:运行|执行|跑|读取|读一下|查看|验证|测试|检查|run|execute|read|inspect|verify|test|check)[\s\S]*$/iu, "")
     .trim();
   return content && content.length > 0 ? content : undefined;
 }
@@ -2001,7 +2015,11 @@ function attachmentMaterializationBlocker(
 }
 
 function referencesAttachmentBody(text: string): boolean {
-  return /(附件|附图|截图|图片|图里|文件内容|这个文件|这个图|这张图|这份文档|attached file|attachment|screenshot|image|this file|this document)/iu.test(text);
+  // "文件内容" is also common in an explicit local-file verification request
+  // (for example, `QA 执行命令验证文件内容`). Treat it as attachment intent
+  // only when the user names an attachment/image/document surface explicitly;
+  // otherwise the ordinary workspace target resolver owns the file.
+  return /(附件|附图|截图|图片|图里|这个图|这张图|这份文档|attached file|attachment|screenshot|image|this document)/iu.test(text);
 }
 
 function referencesLinkBody(text: string): boolean {

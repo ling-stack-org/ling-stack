@@ -152,14 +152,30 @@ async function runOwnedUnixProcess(command, args, options) {
       const stdoutValue = stdout.value(normalized.encoding);
       const stderrValue = stderr.value(normalized.encoding);
       if (groupKillError) {
-        reject(decorateError(
-          ownershipCleanupError(groupKillError),
-          normalized.commandLine,
-          stdoutValue,
-          stderrValue,
-          true,
-          exitSignal,
-        ));
+        const cleanupError = ownershipCleanupError(groupKillError);
+        if (forcedError) {
+          // Preserve the operation's primary diagnostic (for example, a
+          // maxBuffer or abort error) while exposing the independent cleanup
+          // failure for callers that need to quarantine/retry the boundary.
+          attachCleanupError(forcedError, cleanupError);
+          reject(decorateError(
+            forcedError,
+            normalized.commandLine,
+            stdoutValue,
+            stderrValue,
+            true,
+            exitSignal ?? OWNED_PROCESS_KILL_SIGNAL,
+          ));
+        } else {
+          reject(decorateError(
+            cleanupError,
+            normalized.commandLine,
+            stdoutValue,
+            stderrValue,
+            true,
+            exitSignal,
+          ));
+        }
         return;
       }
       if (forcedError) {
@@ -370,6 +386,19 @@ function ownershipCleanupError(cause) {
   const error = new Error("failed to terminate the owned Unix process group", { cause });
   error.code = "ERR_OWNED_PROCESS_CLEANUP";
   return error;
+}
+
+function attachCleanupError(error, cleanupError) {
+  if (!(error instanceof Error) || !Object.isExtensible(error)) return;
+  try {
+    Object.defineProperty(error, "cleanupError", {
+      configurable: true,
+      enumerable: false,
+      value: cleanupError,
+    });
+  } catch {
+    // Preserve the primary operation failure when diagnostic metadata is locked.
+  }
 }
 
 function invalidOwnedGroupMarker(cause) {
