@@ -1174,18 +1174,7 @@ function channelMessagesEqual(
   currentMessages: readonly ChannelMessage[],
   nextMessages: readonly ChannelMessage[],
 ): boolean {
-  if (currentMessages.length !== nextMessages.length) {
-    return false;
-  }
-  return currentMessages.every((current, index) => {
-    const next = nextMessages[index];
-    return current.id === next?.id &&
-      current.kind === next.kind &&
-      current.threadId === next.threadId &&
-      current.status === next.status &&
-      current.updatedAt === next.updatedAt &&
-      current.body === next.body;
-  });
+  return JSON.stringify(currentMessages) === JSON.stringify(nextMessages);
 }
 
 interface ChannelTransitionEntity {
