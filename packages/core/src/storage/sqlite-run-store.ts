@@ -3305,6 +3305,10 @@ export class SqliteRunStore implements RunStore {
     return this.mcps.upsertLingAgentChromeBrowserBinding(enabled, now);
   }
 
+  upsertLingAgentBuiltInMcpBinding(serverId: string, enabled: boolean, now: string): TeammateMcpBinding {
+    return this.mcps.upsertLingAgentBuiltInMcpBinding(serverId, enabled, now);
+  }
+
   listTeammateMcpBindings(teammateId: string): TeammateMcpBinding[] {
     return this.mcps.listTeammateMcpBindings(teammateId);
   }
