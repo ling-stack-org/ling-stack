@@ -1,4 +1,4 @@
-import { ExternalLink, MoreHorizontal, Plug } from "lucide-react";
+import { ExternalLink, FileSpreadsheet, MoreHorizontal, Plug } from "lucide-react";
 import { Fragment, useEffect, useRef, useState } from "react";
 import {
   Button,
@@ -76,8 +76,8 @@ export function PluginDetailDrawer({
               description={view.sourceVersion}
               title={(
                 <span className="plugin-detail-title">
-                  <Plug aria-hidden="true" />
-                  <span>{plugin.displayName}</span>
+                  {row.icon === "office" ? <FileSpreadsheet aria-hidden="true" /> : <Plug aria-hidden="true" />}
+                  <span>{row.name}</span>
                   <StatusIndicator label={row.primaryState.label} tone={row.primaryState.tone} />
                 </span>
               )}

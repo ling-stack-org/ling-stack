@@ -21,10 +21,15 @@
     "@ling-stack/remote-protocol": "workspace:*",
     "@ling-stack/runner-pi": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "@xmldom/xmldom": "0.9.12",
+    "docx": "9.7.1",
     "image-size": "1.2.1",
-    "mammoth": "1.12.0",
+    "jszip": "3.10.1",
+    "officeparser": "7.8.0",
     "pdf-parse": "2.4.5",
-    "ws": "^8.21.0"
+    "pptxgenjs": "4.0.1",
+    "ws": "^8.21.0",
+    "xlsx-populate": "1.21.0"
   },
   "devDependencies": {
     "@types/pdf-parse": "1.1.5",

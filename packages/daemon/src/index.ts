@@ -51,6 +51,9 @@ import { ChromeBrowserSessionController } from "./features/browser-extension/ses
 import { attachChromeBrowserWebSocketServer } from "./features/browser-extension/websocket-server.js";
 import { ChromeBrowserPluginService, normalizeChromeBrowserStoreUrl } from "./features/plugins/chrome-browser.js";
 import { createChromeBrowserGenerationBroker } from "./features/plugins/chrome-browser-generation-broker.js";
+import { OfficeDriverController } from "./features/office-documents/driver-controller.js";
+import { OfficeDocumentsPluginService } from "./features/plugins/office-documents.js";
+import { createOfficeDocumentsGenerationBroker } from "./features/plugins/office-documents-generation-broker.js";
 import { writeJson } from "./shared/response.js";
 import { StartupOptionalWarmupCoordinator } from "./startup/optional-warmups.js";
 import { StartupStateRegistry } from "./startup/state.js";
@@ -157,6 +160,14 @@ export { attachChromeBrowserWebSocketServer } from "./features/browser-extension
 export { handleChromeBrowserPair } from "./features/browser-extension/routes.js";
 export { ChromeBrowserPluginService, createChromeBrowserDescriptor, normalizeChromeBrowserStoreUrl } from "./features/plugins/chrome-browser.js";
 export { createChromeBrowserGenerationBroker, chromeBrowserTools } from "./features/plugins/chrome-browser-generation-broker.js";
+export { OfficeDriverController } from "./features/office-documents/driver-controller.js";
+export { OfficeDocumentsPluginService, createOfficeDocumentsDescriptor } from "./features/plugins/office-documents.js";
+export {
+  createOfficeDocumentsGenerationBroker,
+  officeAllTools,
+  officeDocumentTools,
+  officeToolsForCapabilities,
+} from "./features/plugins/office-documents-generation-broker.js";
 
 export interface DaemonServer {
   readonly server: Server;
@@ -227,6 +238,12 @@ export function createDaemonServer(
   });
   chromeBrowserSessions.setStateChangeListener((cwd) => chromeBrowserPlugin.handleSessionStateChange(cwd));
   chromeBrowserPlugin.sync(resolvedConfig.defaultWorkspaceCwd);
+  const officeDriverController = new OfficeDriverController();
+  const officeDocumentsPlugin = new OfficeDocumentsPluginService({
+    controller: officeDriverController,
+    getStore: (cwd) => storeRegistry.getStore(cwd),
+  });
+  officeDocumentsPlugin.sync(resolvedConfig.defaultWorkspaceCwd);
   let cuaDriverActivationCoordinator: CuaDriverDaemonActivationCoordinator | undefined;
   let lockedComputerControl: LockedComputerControlRegistry | undefined;
   const cuaDriverDesktopBridgeAuthority = new CuaDriverDesktopBridgeAuthority({
@@ -284,8 +301,13 @@ export function createDaemonServer(
     workspaceCwd: resolvedConfig.defaultWorkspaceCwd,
     controller: chromeBrowserSessions,
   });
-  const mcpBroker = createCuaDriverGenerationBroker({
+  const officeDocumentsMcpBroker = createOfficeDocumentsGenerationBroker({
     baseBroker: chromeBrowserMcpBroker,
+    workspaceCwd: resolvedConfig.defaultWorkspaceCwd,
+    controller: officeDriverController,
+  });
+  const mcpBroker = createCuaDriverGenerationBroker({
+    baseBroker: officeDocumentsMcpBroker,
     bundledEnabled: bundledCuaDriverEnabled,
     workspaceCwd: resolvedConfig.defaultWorkspaceCwd,
     leaseRegistry: cuaDriverDesktopBridgeAuthority.leaseRegistry,
@@ -396,6 +418,8 @@ export function createDaemonServer(
     remoteAccess,
     chromeBrowserSessions,
     chromeBrowserPlugin,
+    officeDriverController,
+    officeDocumentsPlugin,
   };
   const server = createServer(async (request, response) => {
     try {
@@ -490,6 +514,7 @@ export function createDaemonServer(
         cuaDriverDesktopBridgeAuthority.clear();
         lockedComputerControl?.close();
         chromeBrowserSessions.close();
+        officeDriverController.close();
         chromeBrowserWebSocketServer.close();
         rpcWebSocketServer.close();
         server.close((error) => {

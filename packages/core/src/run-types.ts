@@ -1985,6 +1985,7 @@ export interface RunStore {
     now: string,
   ): TeammateMcpBinding[];
   upsertLingAgentChromeBrowserBinding(enabled: boolean, now: string): TeammateMcpBinding;
+  upsertLingAgentBuiltInMcpBinding(serverId: string, enabled: boolean, now: string): TeammateMcpBinding;
   listTeammateMcpBindings(teammateId: string): TeammateMcpBinding[];
   createAutomationDefinition(input: CreateAutomationDefinitionInput, now: string): AutomationDefinition;
   getAutomationDefinition(automationId: string): AutomationDefinition | undefined;
@@ -2488,6 +2489,7 @@ export type McpStoreFacet = RunStoreFacet<
   | "listMcpTools"
   | "replaceTeammateMcpBindings"
   | "upsertLingAgentChromeBrowserBinding"
+  | "upsertLingAgentBuiltInMcpBinding"
   | "listTeammateMcpBindings"
 >;
 
