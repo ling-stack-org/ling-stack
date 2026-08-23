@@ -408,6 +408,117 @@ test("unified exec bash=ask waits for approval before running", async () => {
   }
 });
 
+test("approval wait does not consume runtime idle or hard timeout budgets", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-approval-timeout-wait-"));
+  const runner = new ApprovalProbeRunner({
+    toolCallId: "tool_approval_timeout_wait",
+    toolName: "bash",
+    input: { command: "printf 'approval-wait-ok\\n'" },
+  });
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory(workspaceCwd) {
+      const store = createSqliteRunStore(workspaceCwd);
+      const createWorkUnit = store.createWorkUnit.bind(store);
+      store.createWorkUnit = (input) => createWorkUnit({
+        ...input,
+        timeoutPolicy: {
+          heartbeatIntervalMs: 10,
+          heartbeatTimeoutMs: 500,
+          idleTimeoutMs: 40,
+          hardTimeoutMs: 80,
+          cancelGraceMs: 20,
+        },
+      });
+      stores.set(workspaceCwd, store);
+      return store;
+    },
+  });
+  try {
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "ask" } });
+    const response = await postRunStream(daemon.url, runBody(cwd, "task_approval_timeout_wait"));
+    const sse = createSseReader(response);
+    const ready = await sse.nextEvent();
+    assert.equal(ready.event, "ready");
+    const runId = ready.data.runId;
+    const requested = await waitForSseEvent(sse, "approval_requested");
+    const approvalId = requested.data.data.approvalId;
+
+    await new Promise((resolveWait) => setTimeout(resolveWait, 150));
+    const waiting = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(waiting.status, "waiting_for_approval");
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const waitingWorkUnit = store.getWorkUnit(waiting.workUnitId);
+    assert.equal(waitingWorkUnit?.status, "waiting_for_approval");
+    const supervisor = await getJson(`${daemon.url}/runtime/supervisor?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(supervisor.stuck.some((workUnit) => workUnit.id === waiting.workUnitId), false);
+
+    await postJson(`${daemon.url}/approvals/${encodeURIComponent(approvalId)}/approve?cwd=${encodeURIComponent(cwd)}`, {
+      reason: "approval wait timeout regression",
+    });
+    await sse.collectRemaining();
+    const completed = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(completed.status, "succeeded");
+    assert.equal(runner.decisions.length, 1);
+    assert.equal(runner.decisions[0].approved, true);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("approval resume restores the hard timeout budget after an externally persisted decision", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-approval-timeout-resume-"));
+  const runner = new ApprovalProbeRunner({
+    toolCallId: "tool_approval_timeout_resume",
+    toolName: "bash",
+    input: { command: "printf 'approval-resume-timeout\\n'" },
+  }, false, 140);
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory(workspaceCwd) {
+      const store = createSqliteRunStore(workspaceCwd);
+      const createWorkUnit = store.createWorkUnit.bind(store);
+      store.createWorkUnit = (input) => createWorkUnit({
+        ...input,
+        timeoutPolicy: {
+          heartbeatIntervalMs: 10,
+          heartbeatTimeoutMs: 500,
+          idleTimeoutMs: 500,
+          hardTimeoutMs: 60,
+          cancelGraceMs: 20,
+        },
+      });
+      stores.set(workspaceCwd, store);
+      return store;
+    },
+  });
+  try {
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "ask" } });
+    const response = await postRunStream(daemon.url, runBody(cwd, "task_approval_timeout_resume"));
+    const sse = createSseReader(response);
+    const ready = await sse.nextEvent();
+    assert.equal(ready.event, "ready");
+    const runId = ready.data.runId;
+    const requested = await waitForSseEvent(sse, "approval_requested");
+    const approvalId = requested.data.data.approvalId;
+
+    await postJson(`${daemon.url}/approvals/${encodeURIComponent(approvalId)}/approve?cwd=${encodeURIComponent(cwd)}`, {
+      reason: "resume hard-timeout regression",
+    });
+    await sse.collectRemaining();
+    const completed = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(completed.status, "failed");
+    assert.match(completed.errorMessage ?? "", /hard_timeout/u);
+    assert.equal(runner.decisions.length, 1);
+    assert.equal(runner.decisions[0].approved, true);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("unified exec nonzero exit returns a handled failed result", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-unified-exec-nonzero-"));
   const runner = new UnifiedExecProbeRunner({
@@ -4807,9 +4918,10 @@ class NonApprovalToolLifecycleRunner {
 }
 
 class ApprovalProbeRunner {
-  constructor(request, emitHandledToolLifecycle = false) {
+  constructor(request, emitHandledToolLifecycle = false, delayAfterDecisionMs = 0) {
     this.request = request;
     this.emitHandledToolLifecycle = emitHandledToolLifecycle;
+    this.delayAfterDecisionMs = delayAfterDecisionMs;
     this.decisions = [];
     this.runs = [];
   }
@@ -4853,6 +4965,23 @@ class ApprovalProbeRunner {
           ? { error: decision.handledResult?.content?.[0]?.text }
           : { approved: decision.approved, reason: decision.reason },
         isError: decision.handledResult?.isError ?? !decision.approved,
+      });
+    }
+    if (this.delayAfterDecisionMs > 0) {
+      await new Promise((resolveDelay, rejectDelay) => {
+        const timer = setTimeout(() => {
+          options.signal?.removeEventListener("abort", onAbort);
+          resolveDelay();
+        }, this.delayAfterDecisionMs);
+        const onAbort = () => {
+          clearTimeout(timer);
+          rejectDelay(options.signal?.reason ?? new Error("runner_aborted"));
+        };
+        if (options.signal?.aborted) {
+          onAbort();
+        } else {
+          options.signal?.addEventListener("abort", onAbort, { once: true });
+        }
       });
     }
 

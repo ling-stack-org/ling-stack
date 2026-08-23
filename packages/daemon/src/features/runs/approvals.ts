@@ -155,6 +155,25 @@ export function createRunApprovalHandler(options: {
   readonly workspaceCwd?: string;
   readonly unifiedExecEnabled?: boolean;
   readonly shellSnapshotEnabled?: boolean;
+  /**
+   * Pauses the owning run's execution timeout before approval state is
+   * materialized. This must happen before the first SQLite write because a
+   * slow write must not race the hard-timeout timer while the run is becoming
+   * a durable approval wait.
+   */
+  readonly onApprovalWaitStarted?: () => void;
+  /**
+   * Notifies the owning run loop after a durable approval decision is observed.
+   * The decision event may have been appended by the HTTP approval route before
+   * this handler polls it, so callers must not infer this transition solely
+   * from appendAndMaybeStream being invoked.
+   */
+  readonly onApprovalResolved?: (approval: ApprovalRequest) => void;
+  /**
+   * Replays the derived projections for a decision event that was persisted by
+   * the approval HTTP route before this run loop observed it.
+   */
+  readonly onExistingApprovalDecisionEvent?: (envelope: RunEventEnvelope) => void;
 }): PiRunnerRunOptions["onApprovalRequired"] {
   return async (request: PiRunnerApprovalRequest) => {
     const unifiedExecBash = options.unifiedExecEnabled === true && request.toolName === "bash";
@@ -328,6 +347,10 @@ export function createRunApprovalHandler(options: {
       };
     }
 
+    // Enter the durable approval wait before creating the request, preview
+    // artifacts, or changing the Run status. Those writes can be slower than
+    // the remaining runtime budget, especially in a busy SQLite process.
+    options.onApprovalWaitStarted?.();
     const createdAt = new Date().toISOString();
     const approval = options.store.createApprovalRequest({
       ...approvalInput,
@@ -426,7 +449,9 @@ export function createRunApprovalHandler(options: {
       afterSeq: requestEvent?.seq ?? 0,
       appendAndMaybeStream: options.appendAndMaybeStream,
       streamEnvelope: options.streamEnvelope,
+      onExistingEvent: options.onExistingApprovalDecisionEvent,
     });
+    options.onApprovalResolved?.(resolvedApproval);
 
     if (resolvedApproval.status === "approved") {
       let handledResult;
@@ -1010,9 +1035,11 @@ export function streamOrAppendApprovalDecisionEvent(options: {
   readonly afterSeq: number;
   readonly appendAndMaybeStream: (type: RunEventType, data: unknown) => RunEventEnvelope | undefined;
   readonly streamEnvelope: (envelope: RunEventEnvelope) => void;
+  readonly onExistingEvent?: (envelope: RunEventEnvelope) => void;
 }): void {
   const existingEvent = findApprovalDecisionEvent(options.store, options.approval, options.afterSeq);
   if (existingEvent) {
+    options.onExistingEvent?.(existingEvent);
     options.streamEnvelope(existingEvent);
     return;
   }
