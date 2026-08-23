@@ -27,6 +27,7 @@ import {
 } from "@ling-stack/core";
 import type { PiRunnerProviderConfig, PiRunnerRunOptions } from "@ling-stack/runner-pi";
 import type {
+  ChannelIntentExecutionOperationV1,
   ConversationContextProjectionMetadata,
   DelegatedStepRequirementV1,
   WorkflowParticipantProviderBindingV1,
@@ -59,6 +60,8 @@ export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired
   readonly workflowStepId?: string;
   /** Internal-only immutable delegated completion requirement. External request parsing does not accept it. */
   readonly delegatedRequirement?: DelegatedStepRequirementV1;
+  /** Internal-only Host execution bindings for workflow-owned operations. */
+  readonly executionOperationBindings?: readonly ChannelIntentExecutionOperationV1[];
   readonly threadId?: string;
   readonly turnId?: string;
   readonly runnerId?: string;

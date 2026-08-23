@@ -60,6 +60,7 @@ import { renderUsedMemoryPromptForView } from "../memory/prompt.js";
 import { reviewWorkflowFanInContext } from "./workflow-fanin.js";
 import type { PreselectedMemoryUse } from "../runs/schemas.js";
 import type {
+  ChannelIntentExecutionOperationV1,
   DelegatedBlockCodeV1,
   DelegatedStepRequirementV1,
   WorkflowParticipantProviderBindingV1,
@@ -69,6 +70,7 @@ import { resolveWorkflowHandoffExecutionContext } from "./workflow-handoffs.js";
 import { evaluateWorkflowCompletion, evaluateWorkflowCompletionGate } from "./workflow-completion-gate.js";
 import { completeWorkflowIfStepsFinished } from "./workflow-completion.js";
 import { blockDelegatedWorkflowStepBeforeRun } from "./workflow-step-finalizer.js";
+import { workflowStepExecutionOperationBindings } from "./workflow-operation-evidence.js";
 import {
   resolveWorkflowParticipantRunProfile,
 } from "./workflow-participant-run-profile.js";
@@ -87,6 +89,8 @@ export interface WorkflowStepRunRequest {
   readonly teammateId?: string;
   readonly workflowStepId?: string;
   readonly delegatedRequirement?: DelegatedStepRequirementV1;
+  /** Internal-only Host execution bindings for workflow-owned operations. */
+  readonly executionOperationBindings?: readonly ChannelIntentExecutionOperationV1[];
   readonly requestedSkillId?: string;
   readonly skipProviderPreflight?: boolean;
   readonly skipMemoryRecall?: boolean;
@@ -935,6 +939,7 @@ export function prepareWorkflowStepStart(
     teammateId: assigneeTeammateId,
     workflowStepId: step.id,
     delegatedRequirement: step.metadata?.delegatedRequirement,
+    executionOperationBindings: workflowStepExecutionOperationBindings(step),
     skipProviderPreflight: input.skipProviderPreflight ?? false,
     skipMemoryRecall: true,
     preselectedMemoryUse: renderedMemory.memoryIds.length > 0

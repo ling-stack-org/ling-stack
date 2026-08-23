@@ -12,6 +12,15 @@ import type {
 import { listExecutionActions } from "../runs/execution-actions.js";
 import { commandMatchesPolicy } from "./command-operation-match.js";
 
+export function workflowStepExecutionOperationBindings(
+  step: ChannelWorkflowStep,
+): readonly ChannelIntentExecutionOperationV1[] {
+  const plan = step.metadata?.executionPlan;
+  if (!plan) return [];
+  const ownedIds = new Set(step.metadata?.executionOperationIds ?? plan.operations.map((operation) => operation.id));
+  return plan.operations.filter((operation) => ownedIds.has(operation.id));
+}
+
 export function verifyWorkflowStepExecutionOperations(input: {
   readonly store: RunStore;
   readonly step: ChannelWorkflowStep;
@@ -19,8 +28,7 @@ export function verifyWorkflowStepExecutionOperations(input: {
 }): WorkflowStepExecutionVerificationV1 | undefined {
   const plan = input.step.metadata?.executionPlan;
   if (!plan) return undefined;
-  const ownedIds = new Set(input.step.metadata?.executionOperationIds ?? plan.operations.map((operation) => operation.id));
-  const ownedOperations = plan.operations.filter((operation) => ownedIds.has(operation.id));
+  const ownedOperations = workflowStepExecutionOperationBindings(input.step);
   if (ownedOperations.length === 0) return undefined;
   const actions = input.step.runId
     ? listExecutionActions(input.store, { runId: input.step.runId, limit: 500 })

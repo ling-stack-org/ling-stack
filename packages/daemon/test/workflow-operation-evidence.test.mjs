@@ -31,7 +31,34 @@ import {
   processWorkflowTerminalReport,
 } from "../dist/features/channels/terminal-report-coordinator.js";
 import { ApprovalResumeCoordinator } from "../dist/features/runs/approval-resume-coordinator.js";
+import { workflowExactCommandBindingRejection } from "../dist/features/runs/approvals.js";
 import { ActiveRunRegistry } from "../dist/runtime/active-runs.js";
+
+test("Host rejects a workflow bash command that is not the owned exact operation", () => {
+  const binding = operation(
+    "verify_target",
+    "run_command",
+    "command",
+    "node app.js",
+    [],
+    { kind: "exact_command", command: "node app.js" },
+  );
+  assert.match(
+    workflowExactCommandBindingRejection({
+      bindings: [binding],
+      request: { toolName: "bash", input: { command: "node -e \"console.log('ok')\"" } },
+    }),
+    /Expected one of: node app\.js/u,
+  );
+  assert.equal(workflowExactCommandBindingRejection({
+    bindings: [binding],
+    request: { toolName: "bash", input: { command: "node app.js" } },
+  }), undefined);
+  assert.equal(workflowExactCommandBindingRejection({
+    bindings: [{ ...binding, commandMatchPolicy: { kind: "executable", executable: "node" } }],
+    request: { toolName: "bash", input: { command: "node -e \"console.log('ok')\"" } },
+  }), undefined);
+});
 
 test("natural-language executable materialization requires a nearby execution objective", () => {
   assert.deepEqual(materializeCommandIntent("然后运行 Node 调用 formatProof(\"7319\") 验证"), {
@@ -637,6 +664,148 @@ test("approval restart resume feeds QA evidence through the shared multi-agent c
     );
     assert.equal(fixture.store.listRuntimeSemaphoreSlots({ workUnitId: workUnit.id, status: "active" }).length, 0);
     assert.equal(fixture.store.listResourceLeases({ workUnitId: workUnit.id, status: "active" }).length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("approval resume rejects a command that no longer matches the workflow binding", async () => {
+  const fixture = await createMultiAgentOperationFixture("approval-resume-binding-mismatch");
+  try {
+    const now = "2026-08-15T02:10:00.000Z";
+    const workUnit = fixture.store.createWorkUnit({
+      workspaceId: "workspace_default",
+      kind: "task_run",
+      ownerType: "run",
+      ownerId: fixture.qaRun.id,
+      channelId: fixture.workflow.channelId,
+      taskId: fixture.qaTask.id,
+      teammateId: fixture.qaStep.toParticipantId,
+      runnerId: "pi",
+      effectiveRunnerId: "pi",
+      idempotencyKey: "qa-approval-resume-binding-mismatch-work-unit",
+      createdByActor: "system",
+      request: { workflowStepId: fixture.qaStep.id },
+      linkedRunId: fixture.qaRun.id,
+      now,
+    });
+    const attempt = fixture.store.createWorkUnitAttempt({
+      workUnitId: workUnit.id,
+      attemptNumber: 1,
+      runtimeInstanceId: "runtime_before_restart",
+      runnerId: "pi",
+      effectiveRunnerId: "pi",
+      now,
+    });
+    fixture.store.transitionWorkUnitStatus({
+      workUnitId: workUnit.id,
+      expectedStatus: "queued",
+      event: "claim",
+      actor: "system",
+      now,
+      activeAttemptId: attempt.id,
+    });
+    fixture.store.transitionWorkUnitStatus({
+      workUnitId: workUnit.id,
+      expectedStatus: "claimed",
+      event: "runner_started",
+      actor: "runner",
+      now,
+    });
+    fixture.store.transitionWorkUnitStatus({
+      workUnitId: workUnit.id,
+      expectedStatus: "running",
+      event: "approval_requested",
+      actor: "system",
+      now,
+    });
+    fixture.store.updateWorkUnitAttemptStatus({ attemptId: attempt.id, status: "waiting_for_approval", now });
+    fixture.store.linkRunToWorkUnit(fixture.qaRun.id, workUnit.id, now);
+    fixture.store.transitionRunStatus({
+      runId: fixture.qaRun.id,
+      expectedStatus: "running",
+      event: "approval_requested",
+      actor: "system",
+      now,
+    });
+    const approval = fixture.store.createApprovalRequest({
+      runId: fixture.qaRun.id,
+      taskId: fixture.qaTask.id,
+      toolCallId: "qa_mismatched_resume_command",
+      actionType: "bash",
+      risk: "medium",
+      title: "Approve QA Node verification",
+      description: "node -e semantic substitute",
+      payload: {
+        type: "bash",
+        cwd: fixture.store.paths.cwd,
+        command: "node -e \"console.log('semantic substitute')\"",
+        riskFlags: [],
+      },
+    }, now);
+    const checkpoint = fixture.store.getApprovalCheckpointForApproval(approval.id);
+    assert.ok(checkpoint);
+    const requirement = fixture.store.getChannelWorkflowStep(fixture.qaStep.id).metadata.delegatedRequirement;
+    assert.ok(requirement);
+    const resumeBasis = createApprovalResumeBasisV1({
+      approvalId: approval.id,
+      runId: fixture.qaRun.id,
+      workUnitId: workUnit.id,
+      priorAttemptId: attempt.id,
+      workflowStepId: fixture.qaStep.id,
+      toolCallId: approval.toolCallId,
+      actionType: approval.actionType,
+      sideEffectFingerprint: approvalSideEffectFingerprintV1({
+        actionType: approval.actionType,
+        toolCallId: approval.toolCallId,
+        sideEffect: approval.payload,
+      }),
+      delegatedRequirementFingerprint: requirement.fingerprint,
+    });
+    fixture.store.updateApprovalCheckpointStatus(checkpoint.id, {
+      status: "pending",
+      expectedStatus: "pending",
+      expectedRevision: checkpoint.revision,
+      resumeBasis,
+    }, now);
+    const approved = fixture.store.approveApprovalRequest(approval.id, { reason: "resume mismatched QA" }, "2026-08-15T02:10:10.000Z");
+
+    const activeRuns = new ActiveRunRegistry();
+    const coordinator = new ApprovalResumeCoordinator({
+      activeRuns,
+      runnerRegistry: {
+        get() {
+          return {
+            id: "pi",
+            displayName: "Pi",
+            status: "enabled",
+            adapter: { async runTask() { return { taskId: "unused", events: [], messages: [] }; } },
+            resumeCapabilities: { nativeResume: false, hostApprovalContinuation: ["bash"] },
+          };
+        },
+        list() { return []; },
+        resolve() { throw new Error("unused"); },
+      },
+      runtimeSupervisor: {
+        getRuntime() {
+          return { runtimeInstanceId: "runtime_after_restart" };
+        },
+      },
+    });
+    const started = coordinator.resumeAfterApproval({ store: fixture.store, approval: approved });
+    assert.equal(started.status, "started");
+    await activeRuns.waitForIdle();
+
+    const run = fixture.store.getRun(fixture.qaRun.id);
+    const step = fixture.store.getChannelWorkflowStep(fixture.qaStep.id);
+    const workflow = fixture.store.getChannelWorkflow(fixture.workflow.id);
+    assert.equal(run.status, "failed");
+    assert.equal(step.status, "blocked");
+    assert.equal(step.metadata.delegatedOutcome.kind, "blocked");
+    assert.equal(step.metadata.delegatedOutcome.code, "approval_resume_tool_mismatch");
+    assert.equal(workflow.status, "blocked");
+    assert.equal(fixture.store.getApprovalCheckpoint(checkpoint.id).status, "resume_failed");
+    assert.equal(fixture.store.listEvents(fixture.qaRun.id, { limit: 500 }).some((event) => event.type === "tool_start"), false);
   } finally {
     await fixture.close();
   }

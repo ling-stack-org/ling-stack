@@ -10,7 +10,11 @@ import {
   type WorkflowGraph,
   type WorkflowGraphNode,
 } from "@ling-stack/core";
-import type { WorkflowParticipantProviderBindingV1 } from "@ling-stack/contracts";
+import type {
+  ChannelIntentExecutionOperationV1,
+  ChannelIntentExecutionPlanV1,
+  WorkflowParticipantProviderBindingV1,
+} from "@ling-stack/contracts";
 import { HttpError } from "../../errors.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import { teammateCanWorkInEffectiveChannel } from "./channel-teammate-availability.js";
@@ -135,7 +139,12 @@ function confirmChannelExecutionProposalWorkflowOrThrow(
     return { ...participant, providerBinding: preflight.binding };
   });
 
-  const graph = buildProposalWorkflowGraph(proposal, providerBoundParticipants);
+  const graph = buildProposalWorkflowGraph(
+    proposal,
+    providerBoundParticipants,
+    requiredExecutionPlan,
+    operationOwners,
+  );
   const responseLanguage = proposalResponseLanguage(proposal);
   const compiled = compileWorkflowGraph(
     input.store,
@@ -297,13 +306,20 @@ function resolveProposalParticipants(
 function buildProposalWorkflowGraph(
   proposal: ChannelExecutionProposal,
   participants: readonly ProposalParticipant[],
+  executionPlan?: ChannelIntentExecutionPlanV1,
+  operationOwners: ReadonlyMap<string, number> = new Map(),
 ): WorkflowGraph {
   const boundedRequiredTools = isSingleStepBoundedToolsProposal(proposal) ? proposal.requiredTools : [];
   const nodes = participants.map((participant, index): WorkflowGraphNode => ({
     id: `proposal_step_${index + 1}`,
     kind: "step" as const,
     name: stepTitle(participant.step, participant.teammate),
-    prompt: stepPrompt(proposal, participant.step, participant.teammate),
+    prompt: stepPrompt(
+      proposal,
+      participant.step,
+      participant.teammate,
+      executionPlan ? ownedExecutionOperations(executionPlan.operations, operationOwners, index) : [],
+    ),
     teammateId: participant.teammate.id,
     ...(participant.providerBinding ? {
       providerPresetId: participant.providerBinding.providerPresetId,
@@ -392,8 +408,10 @@ function stepPrompt(
   proposal: ChannelExecutionProposal,
   step: ChannelExecutionProposalStep,
   teammate: AiTeammate,
+  ownedOperations: readonly ChannelIntentExecutionOperationV1[] = [],
 ): string {
   const responseLanguage = proposalResponseLanguage(proposal);
+  const operationBinding = renderOwnedOperationBinding(ownedOperations, responseLanguage);
   return [
     `Confirmed proposal:\n${proposal.title}`,
     `Overall scope:\n${proposal.prompt}`,
@@ -403,6 +421,7 @@ function stepPrompt(
     proposal.acceptanceCriteria.length > 0
       ? `Acceptance criteria:\n${proposal.acceptanceCriteria.map((criterion) => `- ${criterion}`).join("\n")}`
       : undefined,
+    operationBinding,
     isSingleStepBoundedToolsProposal(proposal) && proposal.requiredTools.length > 0
       ? `Confirmed task-scoped tools:\n${proposal.requiredTools.join(", ")}`
       : undefined,
@@ -412,6 +431,32 @@ function stepPrompt(
     "Do not use tools, write paths, commands, MCP actions, or external side effects beyond the confirmed task scope; request runtime permission if the work needs an undeclared escalation.",
     "Return a concise terminal summary and any artifacts or decisions needed by later steps.",
   ].filter((part): part is string => Boolean(part)).join("\n\n");
+}
+
+function renderOwnedOperationBinding(
+  operations: readonly ChannelIntentExecutionOperationV1[],
+  responseLanguage: ResponseLanguage,
+): string | undefined {
+  if (operations.length === 0) return undefined;
+  const lines = operations.map((operation) => {
+    const target = operation.targetRef.label ?? operation.targetKind;
+    const dependency = operation.dependsOn.length > 0
+      ? `; depends on ${operation.dependsOn.join(", ")}`
+      : "";
+    const command = operation.commandMatchPolicy?.kind === "exact_command"
+      ? `; exact command: ${operation.commandMatchPolicy.command}`
+      : operation.commandMatchPolicy?.kind === "executable"
+        ? `; executable: ${operation.commandMatchPolicy.executable}`
+        : "";
+    return `- ${operation.id}: ${operation.kind} -> ${target}${dependency}${command}`;
+  });
+  const header = responseLanguage === "zh-CN"
+    ? "Host 已物化的操作绑定（这是完成判定的权威，不是显示建议）："
+    : "Host-materialized operation bindings (authoritative for completion, not display advice):";
+  const rule = responseLanguage === "zh-CN"
+    ? "只能执行自己拥有的操作。标记为 exact command 的命令必须逐字执行；不能用语义等价的替代命令。若无法按绑定执行，返回结构化 blocked，不要用 ready 或叙述文本代替。"
+    : "Execute only the operations owned by this step. An exact command must be run exactly; do not substitute a semantically equivalent command. If the binding cannot be executed, return structured blocked instead of ready text or narration.";
+  return [header, ...lines, rule].join("\n");
 }
 
 function proposalResponseLanguage(proposal: ChannelExecutionProposal): ResponseLanguage {

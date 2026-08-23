@@ -4317,7 +4317,57 @@ test("multi-participant concrete file workflow preserves operation-derived tools
     assert.deepEqual(created.autoStartedWorkflow.workflowSteps.map((step) => step.toParticipantId), participants);
     assert.deepEqual(created.autoStartedWorkflow.workflowSteps.map((step) => step.metadata.executionOperationIds), [["create_file"], ["verify_target"]]);
     assert.deepEqual(created.autoStartedWorkflow.workflowSteps.map((step) => step.metadata.requiredTools), [["write"], ["bash"]]);
+    const [engineerStep, qaStep] = created.autoStartedWorkflow.workflowSteps;
+    assert.match(engineerStep.prompt, /create_file: file_create -> r5-channel-proof\.txt/u);
+    assert.match(qaStep.prompt, /verify_target: run_command -> verify r5-channel-proof\.txt content/u);
+    assert.ok(
+      qaStep.prompt.includes(`exact command: ${verificationOperation.commandMatchPolicy.command}`),
+      "QA step prompt must carry the exact Host-materialized command used by Completion Gate",
+    );
+    assert.match(qaStep.prompt, /不能用语义等价的替代命令/u);
     assert.deepEqual(runner.runs[0].tools, ["write"]);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("workflow Host binding rejects a semantic substitute before Completion Gate", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-exact-command-boundary-"));
+  const runner = new MismatchedExactCommandRunner();
+  const daemon = await startDaemonForTest(runner, undefined, { channels: { intentSelector: true } });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Exact command boundary",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read", "bash"],
+    })).channel;
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent("teammate_builtin_qa")}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+    });
+    await putJson(`${daemon.url}/teammates/${encodeURIComponent("teammate_builtin_qa")}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      memberships: [{ channelId: channel.id }],
+    });
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: "@QA 执行 `node app.js` 验证，并且必须提供真实 evidence。",
+      mentions: [{ id: "teammate_builtin_qa", label: "QA", kind: "ai-teammate" }],
+      requestAiReply: true,
+    });
+    assertCoordinatorWorkflowStartReply(created);
+    await waitForCondition(() => runner.decisions.length === 1, "workflow exact-command binding rejection");
+    assert.equal(runner.decisions[0].approved, false);
+    assert.match(runner.decisions[0].reason, /exact command binding rejected bash/u);
+    await waitForCondition(async () => {
+      const steps = await getJson(`${daemon.url}/workflows/${encodeURIComponent(created.autoStartedWorkflow.workflow.id)}/steps?cwd=${encodeURIComponent(cwd)}`);
+      return steps.workflowSteps.every((step) =>
+        step.status === "blocked" && step.metadata?.delegatedOutcome?.kind === "blocked");
+    }, "workflow to remain blocked after Host rejection");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -14550,6 +14600,60 @@ class DelayedCommandEvidenceRunner {
   releaseExecution() {
     this.pendingExecution?.();
     this.pendingExecution = undefined;
+  }
+}
+
+class MismatchedExactCommandRunner {
+  constructor() {
+    this.decisions = [];
+    this.executionRuns = [];
+  }
+
+  async runTask(options) {
+    if (/terminal report synthesizer/i.test(options.systemPrompt ?? "")) {
+      options.onEvent?.({ type: "assistant_text_delta", text: "{}" });
+      return { taskId: options.task.id, messages: ["{}"], events: [] };
+    }
+    if (/channel intent selector/i.test(options.systemPrompt ?? "")) {
+      const text = JSON.stringify({
+        action: "execute",
+        reason: "The user explicitly requested one bounded command execution.",
+        execution: {
+          operations: [{
+            id: "run_command",
+            kind: "run_command",
+            targetKind: "command",
+            required: true,
+            dependsOn: [],
+          }],
+        },
+      });
+      options.onEvent?.({ type: "assistant_text_delta", text });
+      return { taskId: options.task.id, messages: [text], events: [] };
+    }
+
+    this.executionRuns.push(options);
+    const toolCallId = "mismatched_exact_command";
+    const input = { command: "node -e \"console.log('semantic substitute')\"" };
+    options.onEvent?.({ type: "tool_start", toolCallId, toolName: "bash", args: input });
+    const decision = await options.onApprovalRequired?.({
+      toolCallId,
+      toolName: "bash",
+      input,
+      task: options.task,
+      cwd: options.cwd,
+    });
+    this.decisions.push(decision);
+    options.onEvent?.({
+      type: "tool_end",
+      toolCallId,
+      toolName: "bash",
+      result: { approved: decision?.approved, reason: decision?.reason },
+      isError: !decision?.approved,
+    });
+    const text = decision?.approved ? "Unexpectedly executed substitute command." : "Blocked: exact command binding did not match.";
+    options.onEvent?.({ type: "assistant_text_delta", text });
+    return { taskId: options.task.id, messages: [text], events: [] };
   }
 }
 

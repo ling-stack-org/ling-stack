@@ -26,6 +26,7 @@ import {
   type RuntimeSupervisorStoreFacet,
   type SkillApprovalProfile,
 } from "@ling-stack/core";
+import type { ChannelIntentExecutionOperationV1 } from "@ling-stack/contracts";
 import type { PiRunnerApprovalRequest, PiRunnerRunOptions } from "@ling-stack/runner-pi";
 import { isRecord } from "../../shared/validation.js";
 import type { ControlPlaneEventHub } from "../control-plane/events.js";
@@ -54,6 +55,7 @@ import {
   applyRiskReviewToPolicyDecision,
 } from "./risk-review-approval-adapter.js";
 import { evaluatePlanModeApprovalDenial } from "./plan-mode-policy.js";
+import { commandMatchesPolicy } from "../channels/command-operation-match.js";
 
 const APPROVAL_TIMEOUT_MS = 30 * 60 * 1000;
 const APPROVAL_POLL_INTERVAL_MS = 500;
@@ -142,6 +144,7 @@ export function createRunApprovalHandler(options: {
   readonly workUnitId: string;
   readonly attemptId: string;
   readonly delegatedRequirementFingerprint?: string;
+  readonly executionOperationBindings?: readonly ChannelIntentExecutionOperationV1[];
   readonly approvalPolicy: ApprovalPolicy;
   readonly effectivePolicySnapshot?: EffectiveRunPolicySnapshot;
   readonly appendAndMaybeStream: (type: RunEventType, data: unknown) => RunEventEnvelope | undefined;
@@ -155,6 +158,24 @@ export function createRunApprovalHandler(options: {
 }): PiRunnerRunOptions["onApprovalRequired"] {
   return async (request: PiRunnerApprovalRequest) => {
     const unifiedExecBash = options.unifiedExecEnabled === true && request.toolName === "bash";
+    const bindingRejection = workflowExactCommandBindingRejection({
+      bindings: options.executionOperationBindings,
+      request,
+    });
+    if (bindingRejection) {
+      return {
+        approved: false,
+        reason: bindingRejection,
+        ...(unifiedExecBash
+          ? {
+              handledResult: createUnifiedExecDeniedResult({
+                toolCallId: request.toolCallId,
+                reason: bindingRejection,
+              }),
+            }
+          : {}),
+      };
+    }
     let patchMetadata: ReturnType<typeof createPatchApprovalMetadata> | undefined;
     try {
       patchMetadata = createPatchApprovalMetadata(request);
@@ -473,6 +494,35 @@ export function createRunApprovalHandler(options: {
         : {}),
     };
   };
+}
+
+/**
+ * Enforce workflow-owned exact commands before approval or execution. Completion
+ * Gate still rechecks the resulting Host evidence after the tool returns.
+ */
+export function workflowExactCommandBindingRejection(input: {
+  readonly bindings?: readonly ChannelIntentExecutionOperationV1[];
+  readonly request: Pick<PiRunnerApprovalRequest, "toolName" | "input">;
+}): string | undefined {
+  if (input.request.toolName !== "bash") return undefined;
+  const exactBindings = (input.bindings ?? []).filter((operation) =>
+    operation.kind === "run_command"
+      && operation.targetKind === "command"
+      && operation.commandMatchPolicy?.kind === "exact_command",
+  );
+  if (exactBindings.length === 0) return undefined;
+  const command = readInputString(input.request.input, "command", "");
+  if (exactBindings.some((operation) =>
+    operation.commandMatchPolicy?.kind === "exact_command"
+      && commandMatchesPolicy(command, operation.commandMatchPolicy))) {
+    return undefined;
+  }
+  const expected = exactBindings
+    .map((operation) => operation.commandMatchPolicy)
+    .filter((policy): policy is Extract<NonNullable<ChannelIntentExecutionOperationV1["commandMatchPolicy"]>, { kind: "exact_command" }> =>
+      policy?.kind === "exact_command")
+    .map((policy) => policy.command);
+  return `Workflow exact command binding rejected bash. Expected one of: ${expected.join("; ")}`;
 }
 
 export function mergeApprovalPolicyWithProfile(policy: ApprovalPolicy, profile: SkillApprovalProfile | undefined): ApprovalPolicy {

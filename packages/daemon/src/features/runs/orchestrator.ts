@@ -1090,6 +1090,7 @@ export async function executeRunRequest(
       workUnitId: workUnit.id,
       attemptId: attempt.id,
       delegatedRequirementFingerprint: runRequest.delegatedRequirement?.fingerprint,
+      executionOperationBindings: runRequest.executionOperationBindings,
       approvalPolicy,
       effectivePolicySnapshot,
       appendAndMaybeStream,

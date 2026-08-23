@@ -16,6 +16,8 @@ import { resolveRunnerResumeCapabilities, type RunnerRegistry } from "../../runt
 import type { RuntimeSupervisor } from "../../runtime/supervisor.js";
 import type { ControlPlaneEventHub } from "../control-plane/events.js";
 import { finalizeOrchestratedWorkflowStepRun } from "../channels/orchestrator.js";
+import { workflowExactCommandBindingRejection } from "./approvals.js";
+import { workflowStepExecutionOperationBindings } from "../channels/workflow-operation-evidence.js";
 import { acquireRunRuntimeSemaphores, prepareRunConcurrency } from "./concurrency.js";
 import { executeUnifiedBashTool } from "./unified-exec.js";
 import { appendRuntimeProgressForRunEvent, syncWorkUnitForRunEvent } from "./work-units.js";
@@ -318,6 +320,17 @@ export class ApprovalResumeCoordinator {
         cwd: payload.cwd,
         defaultApproval: "allow",
       };
+      const workflowStep = input.run.workflowStepId
+        ? input.store.getChannelWorkflowStep(input.run.workflowStepId)
+        : undefined;
+      const bindingRejection = workflowExactCommandBindingRejection({
+        bindings: workflowStep ? workflowStepExecutionOperationBindings(workflowStep) : undefined,
+        request,
+      });
+      if (bindingRejection) {
+        this.failResume(input.store, input.checkpoint, `approval_resume_tool_mismatch:${bindingRejection}`);
+        return;
+      }
       if (input.abortController.signal.aborted) {
         throw input.abortController.signal.reason ?? new Error("approval_resume_suspended_before_tool_start");
       }
