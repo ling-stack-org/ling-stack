@@ -39,6 +39,12 @@ export function isStuckWorkUnit(workUnit: WorkUnit, now: Date): boolean {
   if (!isActiveWorkUnitStatus(workUnit.status)) {
     return false;
   }
+  // Approval waits are durable user decisions, not stalled execution. Their
+  // own approval expiry is the wait bound; runtime idle/hard budgets must not
+  // classify the work unit as stuck while it remains waiting.
+  if (workUnit.status === "waiting_for_approval") {
+    return false;
+  }
   const heartbeatAge = ageMs(workUnit.lastHeartbeatAt, now);
   if (heartbeatAge !== undefined && heartbeatAge > workUnit.timeoutPolicy.heartbeatTimeoutMs) {
     return true;

@@ -835,6 +835,7 @@ export async function executeRunRequest(
   let taskContinuationWaitDepth = 0;
   let pauseHardTimeout = (): void => undefined;
   let resumeHardTimeout = (): void => undefined;
+  let requestExpiredHardTimeout = (): boolean => false;
   const recordRuntimeHeartbeat = (source: "supervisor" | "runner" = "supervisor", detail?: unknown): void => {
     const ts = new Date().toISOString();
     try {
@@ -931,6 +932,17 @@ export async function executeRunRequest(
       lastRuntimeActivityAt = Date.now();
       return;
     }
+    if (current.status === "waiting_for_approval") {
+      // Approval is a durable user wait with its own expiry. It must not consume
+      // the execution idle budget while the runner is blocked on the decision.
+      lastRuntimeActivityAt = Date.now();
+      return;
+    }
+    // Timer callbacks can be delayed together when the event loop is busy. If
+    // both budgets have elapsed by the time the heartbeat runs, the earlier
+    // hard deadline is authoritative; do not let this observer race it into an
+    // idle_timeout terminal state merely because its callback ran first.
+    if (requestExpiredHardTimeout()) return;
     if (Date.now() - lastRuntimeActivityAt > current.timeoutPolicy.idleTimeoutMs) {
       requestRuntimeAbort("idle_timeout");
     }
@@ -941,6 +953,8 @@ export async function executeRunRequest(
   let hardTimeoutRemainingMs = workUnit.timeoutPolicy.hardTimeoutMs;
   let hardTimeoutActiveSince = performance.now();
   let hardTimeoutTimer: ReturnType<typeof setTimeout> | undefined;
+  let hardTimeoutPauseDepth = 0;
+  let approvalHardTimeoutPaused = false;
   let runtimeStarted = false;
   const clearHardTimeout = (): void => {
     if (!hardTimeoutTimer) return;
@@ -952,10 +966,14 @@ export async function executeRunRequest(
     hardTimeoutActiveSince = now;
   };
   const scheduleHardTimeout = (): void => {
-    if (hardTimeoutTimer || !runtimeStarted || taskContinuationWaitDepth > 0 || abortController.signal.aborted) return;
+    if (hardTimeoutTimer || !runtimeStarted || hardTimeoutPauseDepth > 0 || abortController.signal.aborted) return;
     const delay = Math.max(1, hardTimeoutRemainingMs);
     hardTimeoutTimer = setTimeout(() => {
       hardTimeoutTimer = undefined;
+      if (store.getWorkUnit(workUnit.id)?.status === "waiting_for_approval") {
+        pauseHardTimeout();
+        return;
+      }
       accountHardTimeout();
       if (hardTimeoutRemainingMs <= 0) {
         requestRuntimeAbort("hard_timeout");
@@ -966,11 +984,16 @@ export async function executeRunRequest(
     if (typeof hardTimeoutTimer.unref === "function") hardTimeoutTimer.unref();
   };
   pauseHardTimeout = (): void => {
+    hardTimeoutPauseDepth += 1;
+    if (hardTimeoutPauseDepth > 1) return;
     accountHardTimeout();
     clearHardTimeout();
     if (hardTimeoutRemainingMs <= 0) requestRuntimeAbort("hard_timeout");
   };
   resumeHardTimeout = (): void => {
+    if (hardTimeoutPauseDepth === 0) return;
+    hardTimeoutPauseDepth -= 1;
+    if (hardTimeoutPauseDepth > 0) return;
     hardTimeoutActiveSince = performance.now();
     if (!runtimeStarted) return;
     if (hardTimeoutRemainingMs <= 0) {
@@ -978,6 +1001,23 @@ export async function executeRunRequest(
       return;
     }
     scheduleHardTimeout();
+  };
+  const beginApprovalHardTimeoutPause = (): void => {
+    if (approvalHardTimeoutPaused) return;
+    approvalHardTimeoutPaused = true;
+    pauseHardTimeout();
+  };
+  const endApprovalHardTimeoutPause = (): void => {
+    if (!approvalHardTimeoutPaused) return;
+    approvalHardTimeoutPaused = false;
+    resumeHardTimeout();
+  };
+  requestExpiredHardTimeout = (): boolean => {
+    if (!runtimeStarted || hardTimeoutPauseDepth > 0 || abortController.signal.aborted) return false;
+    const activeElapsedMs = Math.max(0, performance.now() - hardTimeoutActiveSince);
+    if (activeElapsedMs < hardTimeoutRemainingMs) return false;
+    requestRuntimeAbort("hard_timeout");
+    return true;
   };
   const appendAndMaybeStream = (type: RunEventType, data: unknown): RunEventEnvelope | undefined => {
     if (persistenceError) {
@@ -993,6 +1033,13 @@ export async function executeRunRequest(
     try {
       const envelope = store.appendEvent(run.id, type, redactSecrets(data, resolvedSecretValues));
       lastRuntimeActivityAt = Date.now();
+      if (type === "approval_requested") {
+        // The approval handler starts this pause before persistence. Keep the
+        // event-side update idempotent for paths that append the event first.
+        beginApprovalHardTimeoutPause();
+      } else if (type === "approval_approved") {
+        endApprovalHardTimeoutPause();
+      }
       if (type === "run_error") {
         persistedRunError = true;
       }
@@ -1101,6 +1148,18 @@ export async function executeRunRequest(
       workspaceCwd,
       unifiedExecEnabled: runnerRequest.runtimeToolFeatures?.unifiedExec === true,
       shellSnapshotEnabled: runnerRequest.runtimeToolFeatures?.shellSnapshot === true,
+      onApprovalWaitStarted: beginApprovalHardTimeoutPause,
+      onApprovalResolved: (approval) => {
+        // The decision may already have a durable Run event (for example when
+        // the HTTP approval route won the race). Always release the matching
+        // in-memory wait exactly once, independent of event append ownership.
+        endApprovalHardTimeoutPause();
+      },
+      onExistingApprovalDecisionEvent: (envelope) => {
+        syncWorkUnitForRunEvent(store, workUnit.id, attempt.id, envelope.type, envelope);
+        appendRuntimeProgressForRunEvent(store, workUnit.id, attempt.id, envelope.type, envelope);
+        syncLingThreadForRunEvent(store, run, envelope.type, envelope);
+      },
     });
     const result = await runnerResolution.runner.adapter.runTask({
       ...runnerRequest,

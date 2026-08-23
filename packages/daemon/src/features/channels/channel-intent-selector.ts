@@ -474,7 +474,12 @@ function createModelAssistedExecuteResult(input: ChannelIntentSelectorInput, out
           `Model classified the turn as execute/run_command, but no bounded command or check was materialized. Model reason: ${output.reason}`,
         );
   }
-  if (operationKinds.has("run_command") && !materializeCommandIntent(text)) {
+  const canMaterializeDelegatedFileVerification =
+    (operationKinds.has("file_create") || operationKinds.has("file_edit"))
+    && explicitRequestedParticipantIds(input).length >= 2;
+  if (operationKinds.has("run_command")
+    && !materializeCommandIntent(text)
+    && !canMaterializeDelegatedFileVerification) {
     const responseLanguage = resolveChannelResponseLanguage({
       store: input.store,
       channel: input.channel,
@@ -1849,6 +1854,11 @@ function extractRequestedFileContent(text: string): string | undefined {
     // token is immediately followed by an execution/verification verb, so
     // semicolons inside ordinary file content remain untouched.
     ?.replace(/(?:，|,|；|;)\s*(?:由\s*)?(?:@?[\p{L}\p{N}_-]+)\s*(?:运行|执行|跑|读取|读一下|查看|验证|测试|检查|run|execute|read|inspect|verify|test|check)[\s\S]*$/iu, "")
+    // Participant instructions often include a short handoff clause before
+    // the verb (`QA 必须在 Engineer 完成后验证…`). Treat that bounded clause
+    // as workflow metadata too, while keeping the delimiter requirement so
+    // semicolons that belong to literal file content are preserved.
+    ?.replace(/(?:，|,|；|;)\s*(?:由\s*)?(?:@?[\p{L}\p{N}_-]+)\s*(?:(?:必须|需要|应当|应该|要|需).{0,40}?|must\s+|should\s+)?(?:在[^，。；;!?！？]{0,60}?(?:完成|写入|之后|后)\s*)?(?:运行|执行|跑|读取|读一下|查看|验证|测试|检查|run|execute|read|inspect|verify|test|check)[\s\S]*$/iu, "")
     .trim();
   return content && content.length > 0 ? content : undefined;
 }

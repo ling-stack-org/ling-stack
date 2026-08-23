@@ -1666,6 +1666,16 @@ function isWorkflowStepEligible(step: ChannelWorkflowStep, steps: readonly Chann
   if (dependencies.length !== (step.metadata?.dependsOnStepIds ?? []).length) {
     return false;
   }
+  // A fan-in that declares all-branches-terminal is a barrier, even when its
+  // graph edge uses `any_succeeded` to describe the success condition. Starting
+  // it after the first successful branch would consume the only queued step;
+  // the completion gate would then remain pending forever when another branch
+  // is still running. Keep the barrier at scheduling time, not only in the
+  // post-run evidence builder.
+  if (step.metadata?.fanInPolicy?.requireAllBranchesTerminal
+    && !dependencies.every((dependency) => isTerminalWorkflowStepStatus(dependency.status))) {
+    return false;
+  }
   const mode = step.metadata?.dependencyMode ?? "all_succeeded";
   if (mode === "any_succeeded") {
     return dependencies.length === 0 || dependencies.some((dependency) => dependency.status === "succeeded");

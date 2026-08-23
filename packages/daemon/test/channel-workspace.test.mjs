@@ -5315,6 +5315,81 @@ test("model-assisted create-and-run materializes ordered write and Node operatio
   }
 });
 
+test("model-assisted multi-agent file verification synthesizes Host content evidence when no command is supplied", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-model-multi-agent-file-verify-"));
+  const runner = new ScriptedRunner([
+    JSON.stringify({
+      action: "execute",
+      reason: "Engineer writes the file and QA verifies its literal content.",
+      execution: {
+        operations: [
+          { id: "create_file", kind: "file_create", targetKind: "file", required: true, dependsOn: [] },
+          { id: "run_command", kind: "run_command", targetKind: "command", required: true, dependsOn: ["create_file"] },
+        ],
+      },
+    }),
+    "Engineer completed the file write.",
+    "QA completed the content verification.",
+  ]);
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  }, { channels: { intentSelector: true } });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Model multi-agent file verification",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read", "write", "bash"],
+    })).channel;
+    for (const teammateId of ["teammate_builtin_engineer", "teammate_builtin_qa"]) {
+      await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+        providerPresetId: provider.id,
+      });
+      await putJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/channels?cwd=${encodeURIComponent(cwd)}`, {
+        memberships: [{ channelId: channel.id }],
+      });
+    }
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: "@Engineer @QA 请协作创建 proof.txt，内容为 model-multi-agent-ok；QA 必须在 Engineer 完成后验证文件内容。",
+      mentions: [
+        { id: "teammate_builtin_engineer", label: "Engineer", kind: "ai-teammate" },
+        { id: "teammate_builtin_qa", label: "QA", kind: "ai-teammate" },
+      ],
+      requestAiReply: true,
+    });
+
+    assertCoordinatorWorkflowStartReply(created);
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const decision = store.listChannelIntentDecisions({ sourceItemId: created.message.id, limit: 20 })
+      .find((candidate) => candidate.action === "execute");
+    assert.ok(decision);
+    const verificationOperation = decision.execution?.operations.find((operation) => operation.id === "verify_target");
+    assert.equal(verificationOperation?.kind, "run_command");
+    assert.equal(verificationOperation?.commandMatchPolicy?.kind, "exact_command");
+    assert.match(verificationOperation?.commandMatchPolicy?.command ?? "", /node -e/u);
+    assert.match(
+      verificationOperation?.commandMatchPolicy?.command ?? "",
+      new RegExp(`Buffer\\.from\\('${Buffer.from("model-multi-agent-ok", "utf8").toString("base64")}','base64'\\)`),
+    );
+    assert.equal(created.autoStartedWorkflow.workflowSteps.length, 2);
+    assert.deepEqual(created.autoStartedWorkflow.workflowSteps.map((step) => step.metadata.executionOperationIds), [["create_file"], ["verify_target"]]);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("model-assisted natural-language Node work materializes executable evidence policy", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-model-node-executable-"));
   const runner = new ScriptedRunner([
@@ -10630,6 +10705,115 @@ test("workflow dependencyMode any_succeeded can start a fan-in after mixed termi
   }
 });
 
+test("fan-in requireAllBranchesTerminal is a scheduling barrier even with any_succeeded", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-fanin-barrier-"));
+  const runner = new ParallelDelayedRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, {
+      capabilities: ["chat", "reasoning", "tool_call"],
+    })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = await createWorkflowTestChannel(daemon.url, cwd, "Fan-in barrier workflow");
+    await patchJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}?cwd=${encodeURIComponent(cwd)}`, {
+      defaultProviderPresetId: provider.id,
+      allowedTools: ["read"],
+      runtimePolicy: {
+        maxConcurrentRuns: 2,
+        schedulingMode: "smart",
+        writeLockScope: "boundPath",
+        allowReadOnlyParallel: true,
+        queueOnConflict: true,
+      },
+    });
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const workflow = store.createChannelWorkflow({
+      channelId: channel.id,
+      title: "Fan-in barrier",
+      objective: "Do not start synthesis before every branch is terminal.",
+      status: "ready",
+      createdBy: "local-user",
+    }, new Date().toISOString());
+    const succeeded = createParallelWorkflowStep(store, workflow.id, "Succeeded branch", {
+      branchGroupId: "branch-a",
+      providerPresetId: provider.id,
+      status: "succeeded",
+    });
+    const pending = createParallelWorkflowStep(store, workflow.id, "Pending branch", {
+      branchGroupId: "branch-b",
+      providerPresetId: provider.id,
+      status: "queued",
+      autoStart: false,
+    });
+    const fanIn = createParallelWorkflowStep(store, workflow.id, "Barrier fan-in", {
+      branchGroupId: "join",
+      joinGroupId: "join-barrier",
+      providerPresetId: provider.id,
+      position: 3,
+      dependsOnStepIds: [succeeded.id, pending.id],
+      dependencyMode: "any_succeeded",
+      maxParallelSiblings: 2,
+      fanInPolicy: {
+        mode: "memory_candidates",
+        requireAllBranchesTerminal: true,
+        includeFailedBranches: true,
+        createSummaryArtifact: false,
+        createMemoryCandidates: false,
+        memoryCandidateScope: "channel",
+        maxInputArtifacts: 8,
+      },
+    });
+    const independent = createParallelWorkflowStep(store, workflow.id, "Independent queued branch", {
+      branchGroupId: "branch-c",
+      providerPresetId: provider.id,
+      position: 4,
+      maxParallelSiblings: 2,
+    });
+
+    const before = await postJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}/orchestrate?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(before.status, "started");
+    assert.equal(before.startedSteps.length, 1);
+    assert.equal(before.workflowStep.id, independent.id);
+    assert.equal(runner.runs.length, 1);
+    assert.equal(runner.runs[0].task.title, independent.title);
+    assert.equal(store.getChannelWorkflowStep(fanIn.id).status, "queued");
+
+    const cancelled = store.transitionChannelWorkflowStepStatus({
+      workflowStepId: pending.id,
+      expectedStatus: "queued",
+      event: "cancel",
+      actor: "system",
+      reason: "pending branch was cancelled after its predecessor was unavailable",
+      now: new Date().toISOString(),
+    });
+    assert.equal(cancelled.ok, true);
+
+    runner.resolveAll("independent branch complete");
+    await waitForCondition(
+      () => store.getChannelWorkflowStep(independent.id)?.status === "succeeded",
+      "independent branch to finish before fan-in",
+    );
+    await postJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}/orchestrate?cwd=${encodeURIComponent(cwd)}`, {});
+    await waitForCondition(
+      () => runner.runs.filter((run) => run.task.title === fanIn.title).length === 1,
+      "fan-in to start after every dependency becomes terminal",
+    );
+    assert.equal(runner.runs.filter((run) => run.task.title === fanIn.title).length, 1);
+  } finally {
+    runner.resolveAll("cleanup");
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("workflow fan-in creates summary artifact, memory candidate, selector decision, and evidence drilldown", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-fanin-evidence-"));
   const runner = new RecordingRunner();
@@ -15029,6 +15213,7 @@ function createParallelWorkflowStep(store, workflowId, title, metadata = {}) {
         dependsOnStepIds: metadata.dependsOnStepIds,
         dependencyMode: metadata.dependencyMode,
         fanInPolicy: metadata.fanInPolicy,
+        autoStart: metadata.autoStart,
         maxParallelSiblings: metadata.maxParallelSiblings,
         providerPresetId: metadata.providerPresetId,
         requiredTools: metadata.omitRequiredTools ? undefined : metadata.requiredTools ?? ["read"],

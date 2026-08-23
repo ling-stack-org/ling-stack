@@ -746,6 +746,35 @@ test("workflow step context pack delegates through workflow step context view wi
   assert.equal(pack.sourceRefs.some((ref) => ref.type === "workflow_handoff_intent" && ref.id === "handoff_1"), true);
 });
 
+test("workflow step context names the managed worktree as the authoritative execution cwd", () => {
+  const channel = createChannel({
+    boundPath: "/tmp/project",
+    workspaceBinding: {
+      mode: "managed_worktree",
+      status: "ready",
+      executionPath: "/tmp/project/.ling-stack/worktrees/channels/channel_1",
+      worktreePath: "/tmp/project/.ling-stack/worktrees/channels/channel_1",
+      updatedAt: now,
+    },
+  });
+  const view = buildWorkflowStepContextView({
+    store: createWorkflowStepStore(),
+    channel,
+    workflow: createWorkflow(),
+    step: createWorkflowStep(),
+    prompt: "Create proof.txt in the current workspace.",
+    workflowSteps: [createWorkflowStep()],
+    protocolSection: createProtocolSection(channel),
+    budget: { mode: "model_unknown", inputBudgetTokens: 4096 },
+  });
+
+  const objective = view.sections.find((section) => section.id === "workflow_objective");
+  assert.ok(objective);
+  assert.match(objective.text, /Execution cwd \(authoritative\): \/tmp\/project\/\.ling-stack\/worktrees\/channels\/channel_1/u);
+  assert.match(objective.text, /All relative file paths resolve from the execution cwd/u);
+  assert.match(objective.text, /Do not write to the bound parent workspace/u);
+});
+
 test("selector context view filters private memory and raw evidence sources", () => {
   const view = buildChannelContextView({
     kind: "selector_view",
@@ -1355,6 +1384,7 @@ function createWorkflowStepStore() {
     ["artifact_run", { id: "artifact_run", title: "Run artifact", path: "/tmp/project/run.log" }],
   ]);
   return {
+    paths: { cwd: "/tmp/project" },
     getProviderPreset: () => undefined,
     getWorkspaceSettings: () => ({}),
     getChannelCollaborationProtocolOverride: () => undefined,
