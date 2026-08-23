@@ -70,7 +70,9 @@ and publication remain human actions.
   - Connect Chrome drawer with the pairing flow; do not include a live pairing credential.
   - Extension popup in Connected and Unpaired states.
 
-Use `STORE_LISTING.md` as the Dashboard field copy and `PRIVACY.md` as the stable public policy.
+Use `STORE_LISTING.md` as the Dashboard field copy and `PRIVACY.md` as the policy source. The
+Dashboard points to the public GitHub Gist recorded in `STORE_LISTING.md`; keep that Gist
+byte-for-byte aligned with `PRIVACY.md` whenever the policy changes.
 
 Generate the 1280x800 Plugin Manager screenshots without adding them to Git:
 

@@ -1,8 +1,8 @@
 # 模型工作台视频生产台
 
-状态：active contract；项目、场景、异步执行与结果生命周期已实施
+状态：active contract；图生视频扩展已实施并完成本地验证，真实 Provider 验收等待显式付费授权
 
-日期：2026-07-13
+日期：2026-08-21
 
 范围：桌面 Web 媒体生产、模型工作台视频能力、分镜项目、场景运行与视频产物
 
@@ -13,6 +13,7 @@
 - [Model Workbench UI 2.0](./ui2.0升级/modules/09-Model-Workbench.md)
 - [媒体生产体验收口](media-production-experience-refinement.md)
 - [媒体生产第三方工作流接入](media-production-external-workflows.md)
+- [媒体生产图生视频详细设计](media-production-image-to-video-detailed-design.md)
 
 ## Purpose
 
@@ -24,6 +25,7 @@ Ling 已能通过 Media Job 运行单次图片或视频生成。这个合同将�
 
 ```text
 Media Project
+  -> reusable Media Project Assets
   -> ordered Media Scenes
     -> Media Scene Runs
       -> existing Media Jobs
@@ -32,8 +34,9 @@ Media Project
 
 | Object | Owns | Does not own |
 | --- | --- | --- |
-| Media Project | 项目名称、默认模型、画布视口、场景集合 | 视频文件、供应商任务状态 |
-| Media Scene | 分镜内容、顺序、模型覆盖、比例、时长、参考素材、节点坐标 | 历史运行结果 |
+| Media Project | 项目名称、默认模型、画布视口、场景集合、可复用输入素材 | 视频产物、供应商任务状态 |
+| Media Project Asset | 上传或从既有图片产物导入的不可变项目素材 | 场景角色、生成任务状态 |
+| Media Scene | 分镜内容、顺序、模型覆盖、比例、时长、带角色图片输入、节点坐标 | 历史运行结果 |
 | Media Scene Run | 一次场景运行的模型/输入快照与 Media Job 关联 | Provider 密钥、最终 artifact 字节 |
 | Media Job | 单次 Provider 生成的状态、错误、artifact id | 项目画布和场景编辑状态 |
 
@@ -44,17 +47,18 @@ Media Project
 ## Experience Contract
 
 当前实现已覆盖：项目/场景 CRUD、`sortOrder`、能力驱动字段、可恢复视频任务、首次成功结果自动采用、
-后续结果手动选择、场景级预览和空提示词就地校验。实现状态不扩大为时间线、剪辑或未验证图片参考能力。
+后续结果手动选择、场景级预览和空提示词就地校验。图生视频按本合同与
+[详细设计](media-production-image-to-video-detailed-design.md)扩展，不扩大为时间线或剪辑能力。
 
 顶部入口名称为“媒体生产”。页面有两个页内视图：
 
 - `生产台`：默认视图。左侧项目与场景列表，中间分镜画布，右侧场景检查器和素材选择器。
 - `生成任务`：既有 Media Job 列表、详情、失败恢复和产物下载。项目生成的子任务也在这里可见。
 
-分镜画布使用节点表达场景和已绑定的参考素材：
+分镜画布使用节点表达场景和已绑定的输入素材：
 
 - 场景节点显示标题、简短提示词、模型、比例、时长、状态和当前选用结果缩略信息；
-- 参考素材节点只能指向当前工作区中已有的 image artifact；
+- 输入素材来自当前媒体项目素材库；上传图片和既有 image artifact 都必须先成为项目素材；
 - 场景间顺序连线按 `sortOrder` 渲染；节点坐标不会生成隐式依赖；
 - 选择场景后，所有可编辑字段进入右侧检查器，不在节点上堆叠复杂输入；
 - 有当前结果的场景节点显示固定预览图标，点击后打开当前选用视频，不改变场景选择且不触发生成；
@@ -66,13 +70,15 @@ Media Project
 
 ## Model Workbench Boundary
 
-`MediaOperation` 继续使用 `video_generate`。图片参考不是一个伪造的新 operation，而是视频模型的输入模式。
+`MediaOperation` 继续使用 `video_generate`。文生视频、首帧图生视频和参考图生视频是同一 operation
+下的输入模式，不能伪造新的 Provider capability。
 
 ```ts
-type VideoGenerationInputMode = "text" | "image_reference";
+type VideoGenerationInputMode = "text" | "first_frame" | "reference_image";
 
 interface VideoGenerationCapabilities {
   readonly inputModes: readonly VideoGenerationInputMode[];
+  readonly maxReferenceImages?: number;
   readonly aspectRatios?: readonly string[];
   readonly durationsSeconds?: readonly number[];
 }
@@ -82,10 +88,13 @@ Generation Runtime Resolver 只有在 Provider Preset 已启用、密钥和 Base
 
 规则：
 
-1. 未知模型不能通过手填 JSON 获得 `image_reference` 能力。
-2. Seedance 初始只声明 `text`，因为当前 Adapter 仅发送文本、比例、时长和水印。
-3. 只有供应商字段映射、真实 smoke 和最终视频 artifact 校验都完成后，Adapter 才能声明 `image_reference`。
-4. 聊天、频道和 AI 队友的模型选择逻辑不消费这些媒体输入模式。
+1. 未知模型不能通过手填 JSON 获得图片输入能力，无法确认版本时只声明 `text`。
+2. Seedance 1.0/1.5 声明 `text + first_frame`；Seedance 2.0/2.5 额外声明
+   `reference_image`，上限分别为 9/30 张。
+3. 首帧和参考图是互斥运行模式：首帧只能一张，参考图按模型上限选择多张。
+4. 没有图片时隐式使用 `text`；存在图片时由图片角色决定运行模式，不增加重复的模式开关。
+5. 只有供应商字段映射、请求测试和最终视频 artifact 校验完成后才向 Web 暴露对应图片模式。
+6. 聊天、频道和 AI 队友的模型选择逻辑不消费这些媒体输入模式。
 
 ## Execution And Recovery
 
@@ -98,7 +107,8 @@ cancel(handle) -> cancelled | unsupported
 collectArtifacts(handle) -> artifacts
 ```
 
-Provider 返回的任务 ID、必要的无密钥状态定位信息和 Adapter 类型保存在 Media Job Execution Handle 中。密钥、Authorization Header 和完整 Provider 响应不能写入该记录。
+Provider 返回的任务 ID、必要的无密钥状态定位信息和 Adapter 类型保存在 Media Job Execution Handle 中。
+密钥、Authorization Header、图片 Base64、完整请求和完整 Provider 响应不能写入该记录。
 
 后台 dispatcher 负责提交、轮询、取消和恢复：
 
@@ -114,12 +124,17 @@ Provider 返回的任务 ID、必要的无密钥状态定位信息和 Adapter �
 
 ## Storage And Safety
 
-新增项目、场景、场景运行与执行句柄表；既有 `media_jobs` 和 `artifacts` 保持兼容。所有引用素材必须：
+项目素材是独立于生成产物的持久对象，存放在当前工作区边界内。既有 `media_jobs`、`artifacts` 和
+ComfyUI 使用的 `referenceArtifactIds` 保持兼容。所有直接视频图片输入必须：
 
 - 属于当前 workspace；
-- 是已有 artifact；
-- 内容类型为 image；
-- 只在模型声明 `image_reference` 时进入 provider payload。
+- 属于当前 Media Project；
+- 是经过格式、大小、尺寸、比例和路径校验的不可变图片素材；
+- 带有 `first_frame` 或 `reference_image` 角色；
+- 只在模型声明对应角色时进入 Provider payload。
+
+上传图片和从既有图片 artifact 导入都要复制为项目素材，避免来源运行被清理后破坏场景。Media Job 和
+Scene Run 只保存素材 id、角色、校验值和可读摘要；图片字节仅在 daemon 提交前临时物化。
 
 Provider snapshot、输入 snapshot 和错误信息必须进行现有密钥脱敏。下载最终视频仍不得向产物 URL 转发 Provider Authorization Header。
 
@@ -127,7 +142,8 @@ Provider snapshot、输入 snapshot 和错误信息必须进行现有密钥脱�
 
 - 任意 HTTP、Webhook 或把工作流伪装成模型；受控 ComfyUI 媒体工作流见独立合同；
 - 视频裁切、拼接、转场、字幕、配音、FFmpeg 渲染与最终成片；
-- 外部 URL、浏览器本地绝对路径或未归档文件作为参考素材；
+- 外部 URL、浏览器本地绝对路径或未归档文件直接进入 Provider；
+- 尾帧、参考视频/音频和全模态视频编辑；
 - 自动选择未知模型、自动运行项目或对运行中场景修改输入快照；
 - 移动端专项设计。
 
@@ -137,7 +153,11 @@ Provider snapshot、输入 snapshot 和错误信息必须进行现有密钥脱�
 - 用户输入提示词后可直接点击“运行”；系统先保存屏幕上的当前输入再提交生成，不要求用户先让输入框失焦；
 - 空提示词点击“运行”时只显示字段内错误并聚焦输入框，不创建 Scene Run 或 Media Job；
 - 只有真实可运行的视频模型可被选择；
-- 文本模型不显示参考素材入口；未来已验证图片参考模型可选择当前工作区图片 artifact；
+- 没有图片时保持文生视频；上传或选择图片后可按模型能力选择“参考图片”或“起始画面”；
+- Seedance 1.0/1.5 不显示参考图片选项，Seedance 2.0/2.5 可按上限选择参考图片；
+- 素材上传中、角色不兼容、图片超限或素材跨项目时不创建 Scene Run 或 Media Job；
+- 文件读取、素材创建和场景绑定使用发起时的项目/场景身份；切换项目后的旧响应不能写入新选择；
+- 上传失败或场景绑定尚未完成时，单场景和项目批量运行都必须保持不可提交；
 - 场景历史运行、失败和产物均可追溯，独立 Media Job 历史不受影响；
 - 首次成功结果自动显示“已生成”；重新生成中保留旧视频，第二次成功只有在用户设为当前后才更新预览；
 - 用户点击画布预览后，视频使用真实 controls、静音自动播放并允许手动取消静音；图片保持静态预览。弹窗支持 Esc、遮罩和关闭按钮，关闭后停止播放；

@@ -45,6 +45,8 @@ import type { RemoteAccessController } from "./features/remote-access/controller
 import type { RemoteReplyDispatcher } from "./features/remote-access/dispatch-worker.js";
 import type { ChromeBrowserSessionController } from "./features/browser-extension/session-controller.js";
 import type { ChromeBrowserPluginService } from "./features/plugins/chrome-browser.js";
+import type { OfficeDriverController } from "./features/office-documents/driver-controller.js";
+import type { OfficeDocumentsPluginService } from "./features/plugins/office-documents.js";
 
 export interface RunnerAdapter {
   runTask(options: PiRunnerRunOptions): Promise<PiRunnerResult>;
@@ -99,6 +101,8 @@ export interface McpBrokerOptions {
   readonly workspaceCwd?: string;
   readonly now?: () => string;
   readonly signal?: AbortSignal;
+  readonly runId?: string;
+  readonly toolCallId?: string;
   /** Synchronous authorization fence run after transport completion. */
   readonly assertResultCurrent?: () => void;
   readonly lockedControlExecution?: {
@@ -202,4 +206,6 @@ export interface DaemonContext {
   readonly remoteAccess: RemoteAccessController;
   readonly chromeBrowserSessions: ChromeBrowserSessionController;
   readonly chromeBrowserPlugin: ChromeBrowserPluginService;
+  readonly officeDriverController: OfficeDriverController;
+  readonly officeDocumentsPlugin: OfficeDocumentsPluginService;
 }

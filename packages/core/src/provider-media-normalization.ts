@@ -7,6 +7,7 @@ import type {
 } from "./provider-types.js";
 import {
   inferGenerationModelFamily,
+  resolveSeedanceModelVersion,
   shouldAutoEnableLiveMediaTransport,
   type GenerationModelFamilyId,
 } from "./provider-generation-models.js";
@@ -190,8 +191,16 @@ function resolveVerifiedVideoGenerationCapabilities(
   familyId: GenerationModelFamilyId | undefined,
 ): VideoGenerationCapabilities | undefined {
   if (familyId === "volcengine-seedance" && (provider.kind === "seedance" || provider.providerId === "seedance")) {
+    const version = resolveSeedanceModelVersion(provider.modelId ?? provider.model);
+    const inputModes: VideoGenerationCapabilities["inputModes"] = version === "2.0" || version === "2.5"
+      ? ["text", "first_frame", "reference_image"]
+      : version === "1.0" || version === "1.5"
+        ? ["text", "first_frame"]
+        : ["text"];
     return {
-      inputModes: ["text"],
+      inputModes,
+      ...(version === "2.0" ? { maxReferenceImages: 9 } : {}),
+      ...(version === "2.5" ? { maxReferenceImages: 30 } : {}),
       aspectRatios: ["16:9", "9:16", "1:1", "4:3", "3:4"],
       durationsSeconds: [5, 10],
     };

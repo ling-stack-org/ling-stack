@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
+import { deflateSync } from "node:zlib";
 import { DEFAULT_WORKSPACE_ID, createSqliteRunStore } from "../../core/dist/index.js";
 import { createDaemonServer } from "../dist/index.js";
 import { auditIgnoredRunnerCompletion } from "../dist/features/runs/stale-completion.js";
@@ -2769,6 +2771,348 @@ test("media production API persists storyboard order independently from canvas p
   }
 });
 
+test("media production project assets validate, persist, serve and protect scene references", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-project-assets-"));
+  const daemon = await startDaemonForTest(new ApprovalProbeRunner({
+    toolCallId: "tool_unused_media_project_assets",
+    toolName: "bash",
+  }));
+  try {
+    const project = await postJson(`${daemon.url}/media-projects?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Image input project",
+    });
+    assert.deepEqual(project.assets, []);
+    const imageBytes = createPngDimensionFixture(1280, 720);
+    const uploadUrl = `${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}/assets?cwd=${encodeURIComponent(cwd)}`;
+    const uploaded = await postJson(uploadUrl, {
+      kind: "upload",
+      fileName: "opening.png",
+      contentType: "image/png",
+      contentBase64: imageBytes.toString("base64"),
+    });
+    assert.equal(uploaded.asset.contentType, "image/png");
+    assert.equal(uploaded.asset.width, 1280);
+    assert.equal(uploaded.asset.height, 720);
+    assert.match(uploaded.asset.checksum, /^sha256:[a-f0-9]{64}$/);
+    assert.equal("path" in uploaded.asset, false);
+    const assetStore = createSqliteRunStore(cwd);
+    const uploadedAssetPath = (() => {
+      try {
+        const persisted = assetStore.getMediaProjectAsset(uploaded.asset.id);
+        assert.ok(persisted);
+        return resolve(assetStore.paths.attachmentsDir, persisted.path);
+      } finally {
+        assetStore.close();
+      }
+    })();
+    await access(uploadedAssetPath);
+
+    const duplicate = await postJson(uploadUrl, {
+      kind: "upload",
+      fileName: "same-content.png",
+      contentType: "image/png",
+      contentBase64: imageBytes.toString("base64"),
+    });
+    assert.equal(duplicate.asset.id, uploaded.asset.id);
+    const assets = await getJson(uploadUrl);
+    assert.deepEqual(assets.assets.map((asset) => asset.id), [uploaded.asset.id]);
+    assert.equal(assets.assets.some((asset) => "path" in asset), false);
+    const projectDetail = await getJson(`${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(projectDetail.assets.some((asset) => "path" in asset), false);
+
+    const contentResponse = await fetch(`${daemon.url}/media-project-assets/${encodeURIComponent(uploaded.asset.id)}/content?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(contentResponse.status, 200);
+    assert.equal(contentResponse.headers.get("content-type"), "image/png");
+    assert.deepEqual(Buffer.from(await contentResponse.arrayBuffer()), imageBytes);
+
+    const mismatch = await postJsonExpectError(uploadUrl, {
+      kind: "upload",
+      fileName: "mismatch.jpg",
+      contentType: "image/jpeg",
+      contentBase64: imageBytes.toString("base64"),
+    });
+    assert.equal(mismatch.status, 400);
+    assert.equal(mismatch.body.error, "invalid_media_asset");
+
+    const truncated = await postJsonExpectError(uploadUrl, {
+      kind: "upload",
+      fileName: "truncated.png",
+      contentType: "image/png",
+      contentBase64: imageBytes.subarray(0, 24).toString("base64"),
+    });
+    assert.equal(truncated.status, 400);
+    assert.equal(truncated.body.error, "invalid_media_asset");
+
+    const oversized = await postJsonExpectError(uploadUrl, {
+      kind: "upload",
+      fileName: "oversized.png",
+      contentType: "image/png",
+      contentBase64: Buffer.alloc(25 * 1024 * 1024 + 1).toString("base64"),
+    });
+    assert.equal(oversized.status, 400);
+    assert.equal(oversized.body.error, "invalid_media_asset");
+    assert.match(oversized.body.message, /1 字节到 25 MiB/);
+
+    const scene = await postJson(`${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}/scenes?cwd=${encodeURIComponent(cwd)}`, {
+      title: "Opening",
+      prompt: "Camera moves forward.",
+      videoImageInputs: [{ assetId: uploaded.asset.id, role: "reference_image" }],
+    });
+    assert.deepEqual(scene.mediaScene.videoImageInputs, [{ assetId: uploaded.asset.id, role: "reference_image" }]);
+    const blockedDelete = await fetch(`${daemon.url}/media-project-assets/${encodeURIComponent(uploaded.asset.id)}?cwd=${encodeURIComponent(cwd)}`, {
+      method: "DELETE",
+    });
+    assert.equal(blockedDelete.status, 409);
+    assert.equal((await blockedDelete.json()).error, "media_project_asset_in_use");
+
+    await patchJson(`${daemon.url}/media-scenes/${encodeURIComponent(scene.mediaScene.id)}?cwd=${encodeURIComponent(cwd)}`, {
+      videoImageInputs: [],
+    });
+    const deleted = await fetch(`${daemon.url}/media-project-assets/${encodeURIComponent(uploaded.asset.id)}?cwd=${encodeURIComponent(cwd)}`, {
+      method: "DELETE",
+    });
+    assert.equal(deleted.status, 200);
+    assert.equal((await deleted.json()).deleted, true);
+    await assert.rejects(access(uploadedAssetPath), (error) => error?.code === "ENOENT");
+
+    const projectAsset = await postJson(uploadUrl, {
+      kind: "upload",
+      fileName: "project-cleanup.png",
+      contentType: "image/png",
+      contentBase64: createPngDimensionFixture(1024, 1024).toString("base64"),
+    });
+    const projectAssetStore = createSqliteRunStore(cwd);
+    const projectAssetPath = (() => {
+      try {
+        const persisted = projectAssetStore.getMediaProjectAsset(projectAsset.asset.id);
+        assert.ok(persisted);
+        return resolve(projectAssetStore.paths.attachmentsDir, persisted.path);
+      } finally {
+        projectAssetStore.close();
+      }
+    })();
+    await access(projectAssetPath);
+    const deletedProject = await fetch(`${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}?cwd=${encodeURIComponent(cwd)}`, {
+      method: "DELETE",
+    });
+    assert.equal(deletedProject.status, 200);
+    await assert.rejects(access(projectAssetPath), (error) => error?.code === "ENOENT");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("media production project asset upload rejects a symlinked project directory", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-project-asset-symlink-"));
+  const outside = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-project-asset-outside-"));
+  const daemon = await startDaemonForTest(new ApprovalProbeRunner({
+    toolCallId: "tool_unused_media_project_asset_symlink",
+    toolName: "bash",
+  }));
+  try {
+    const project = await postJson(`${daemon.url}/media-projects?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Symlink boundary project",
+    });
+    const store = createSqliteRunStore(cwd);
+    const mediaProjectsRoot = resolve(store.paths.attachmentsDir, "media-projects");
+    store.close();
+    await mkdir(mediaProjectsRoot, { recursive: true });
+    await symlink(outside, resolve(mediaProjectsRoot, project.mediaProject.id), process.platform === "win32" ? "junction" : "dir");
+
+    const rejected = await postJsonExpectError(
+      `${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}/assets?cwd=${encodeURIComponent(cwd)}`,
+      {
+        kind: "upload",
+        fileName: "outside.png",
+        contentType: "image/png",
+        contentBase64: createPngDimensionFixture(1280, 720).toString("base64"),
+      },
+    );
+    assert.equal(rejected.status, 403);
+    assert.equal(rejected.body.error, "media_project_asset_outside_root");
+    assert.deepEqual(await readdir(outside), []);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test("media production materializes project images only for the Seedance submission call", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-project-i2v-"));
+  const daemon = await startDaemonForTest(new ApprovalProbeRunner({
+    toolCallId: "tool_unused_media_project_i2v",
+    toolName: "bash",
+  }));
+  const seedance = await startMockSeedreamServer();
+  process.env.LING_STACK_TEST_MEDIA_KEY = "test-media-i2v-key";
+  try {
+    const provider = await createMediaProvider(daemon.url, cwd, {
+      kind: "seedance",
+      displayName: "Seedance 2.0",
+      providerId: "seedance",
+      model: "doubao-seedance-2-0-260128",
+      capabilities: ["video_generate"],
+      input: ["text", "image"],
+      baseUrl: seedance.url,
+      apiKeyRef: "env:LING_STACK_TEST_MEDIA_KEY",
+      compat: { mediaVendorTransport: { mode: "live" } },
+    });
+    const project = await postJson(`${daemon.url}/media-projects?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Image-to-video project",
+      defaultProviderPresetId: provider.provider.id,
+    });
+    const imageBytes = createPngDimensionFixture(1280, 720);
+    const uploaded = await postJson(`${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}/assets?cwd=${encodeURIComponent(cwd)}`, {
+      kind: "upload",
+      fileName: "reference.png",
+      contentType: "image/png",
+      contentBase64: imageBytes.toString("base64"),
+    });
+    const scene = await postJson(`${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}/scenes?cwd=${encodeURIComponent(cwd)}`, {
+      title: "Reference scene",
+      prompt: "Move the camera around the subject.",
+      videoImageInputs: [{ assetId: uploaded.asset.id, role: "reference_image" }],
+    });
+
+    const run = await postJson(`${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}/run?cwd=${encodeURIComponent(cwd)}`, {
+      sceneIds: [scene.mediaScene.id],
+    });
+    const stableInputs = [{
+      assetId: uploaded.asset.id,
+      role: "reference_image",
+      checksum: uploaded.asset.checksum,
+    }];
+    assert.deepEqual(run.mediaJobs[0].input.videoImageInputs, stableInputs);
+    assert.deepEqual(run.mediaSceneRuns[0].inputSnapshot.videoImageInputs, stableInputs);
+    assert.doesNotMatch(JSON.stringify(run), /data:image|;base64,/);
+
+    await waitForMediaJobStatus(daemon.url, cwd, run.mediaJobs[0].id, "succeeded");
+    const request = seedance.requests.find((item) => item.method === "POST" && item.path.endsWith("/contents/generations/tasks"));
+    assert.ok(request);
+    assert.deepEqual(request.body.content, [
+      { type: "text", text: "Move the camera around the subject." },
+      {
+        type: "image_url",
+        image_url: { url: `data:image/png;base64,${imageBytes.toString("base64")}` },
+        role: "reference_image",
+      },
+    ]);
+
+    const store = createSqliteRunStore(cwd);
+    let assetPath = "";
+    try {
+      const persistedJob = store.getMediaJob(run.mediaJobs[0].id);
+      const persistedSceneRun = store.getMediaSceneRun(run.mediaSceneRuns[0].id);
+      const persistedAsset = store.getMediaProjectAsset(uploaded.asset.id);
+      assert.ok(persistedJob);
+      assert.ok(persistedSceneRun);
+      assert.ok(persistedAsset);
+      assert.equal(store.getMediaJobExecutionHandle(run.mediaJobs[0].id), undefined);
+      assert.doesNotMatch(JSON.stringify({ persistedJob, persistedSceneRun }), /data:image|;base64,/);
+      assetPath = resolve(store.paths.attachmentsDir, persistedAsset.path);
+    } finally {
+      store.close();
+    }
+    const artifacts = await getJson(`${daemon.url}/media-jobs/${encodeURIComponent(run.mediaJobs[0].id)}/artifacts?cwd=${encodeURIComponent(cwd)}`);
+    assert.doesNotMatch(JSON.stringify(artifacts), /data:image|;base64,/);
+
+    const providerPostCount = seedance.requests.filter((item) => item.method === "POST" && item.path.endsWith("/contents/generations/tasks")).length;
+    await writeFile(assetPath, Buffer.from("tampered-image"));
+    const tamperedRun = await postJson(`${daemon.url}/media-scenes/${encodeURIComponent(scene.mediaScene.id)}/run?cwd=${encodeURIComponent(cwd)}`, {});
+    const failed = await waitForMediaJobStatus(daemon.url, cwd, tamperedRun.mediaJob.id, "failed");
+    assert.match(failed.mediaJob.errorMessage, /大小已发生变化|校验失败/);
+    assert.equal(
+      seedance.requests.filter((item) => item.method === "POST" && item.path.endsWith("/contents/generations/tasks")).length,
+      providerPostCount,
+    );
+  } finally {
+    delete process.env.LING_STACK_TEST_MEDIA_KEY;
+    await seedance.close();
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("media production rejects corrupt persisted image inputs before creating a paid job", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-corrupt-media-inputs-"));
+  const daemon = await startDaemonForTest(new ApprovalProbeRunner({
+    toolCallId: "tool_unused_corrupt_media_inputs",
+    toolName: "bash",
+  }));
+  const seedance = await startMockSeedreamServer();
+  process.env.LING_STACK_TEST_MEDIA_KEY = "test-corrupt-media-inputs-key";
+  try {
+    const provider = await createMediaProvider(daemon.url, cwd, {
+      kind: "seedance",
+      displayName: "Seedance 2.0",
+      providerId: "seedance",
+      model: "doubao-seedance-2-0-260128",
+      capabilities: ["video_generate"],
+      input: ["text", "image"],
+      baseUrl: seedance.url,
+      apiKeyRef: "env:LING_STACK_TEST_MEDIA_KEY",
+      compat: { mediaVendorTransport: { mode: "live" } },
+    });
+    const project = await postJson(`${daemon.url}/media-projects?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Corrupt persistence boundary",
+      defaultProviderPresetId: provider.provider.id,
+    });
+    const uploaded = await postJson(
+      `${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}/assets?cwd=${encodeURIComponent(cwd)}`,
+      {
+        kind: "upload",
+        fileName: "reference.png",
+        contentType: "image/png",
+        contentBase64: createPngDimensionFixture(1280, 720).toString("base64"),
+      },
+    );
+    const scene = await postJson(
+      `${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}/scenes?cwd=${encodeURIComponent(cwd)}`,
+      {
+        title: "Must not fall back",
+        prompt: "Animate this reference image.",
+        videoImageInputs: [{ assetId: uploaded.asset.id, role: "reference_image" }],
+      },
+    );
+
+    const store = createSqliteRunStore(cwd);
+    const databasePath = store.paths.databasePath;
+    store.close();
+    const database = new DatabaseSync(databasePath);
+    try {
+      database.prepare("UPDATE media_scenes SET video_image_inputs_json = ? WHERE id = ?")
+        .run("{", scene.mediaScene.id);
+    } finally {
+      database.close();
+    }
+
+    const providerPostsBefore = seedance.requests.filter(
+      (request) => request.method === "POST" && request.path.endsWith("/contents/generations/tasks"),
+    ).length;
+    const rejected = await postJsonExpectError(
+      `${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}/run?cwd=${encodeURIComponent(cwd)}`,
+      { sceneIds: [scene.mediaScene.id] },
+    );
+    assert.equal(rejected.status, 400);
+    assert.equal(rejected.body.error, "bad_request");
+    assert.match(rejected.body.message, /Invalid SQLite media scene video_image_inputs_json/);
+    assert.equal(await mediaJobCount(daemon.url, cwd), 0);
+    assert.equal(
+      seedance.requests.filter(
+        (request) => request.method === "POST" && request.path.endsWith("/contents/generations/tasks"),
+      ).length,
+      providerPostsBefore,
+    );
+  } finally {
+    delete process.env.LING_STACK_TEST_MEDIA_KEY;
+    await seedance.close();
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("media production project run validates every legacy target before creating any scene run", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-project-run-"));
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
@@ -2801,6 +3145,18 @@ test("media production project run validates every legacy target before creating
       title: "Missing prompt",
       prompt: "",
     });
+    const referenceImage = createPngDimensionFixture(1280, 720);
+    const uploaded = await postJson(`${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}/assets?cwd=${encodeURIComponent(cwd)}`, {
+      kind: "upload",
+      fileName: "unsupported-reference.png",
+      contentType: "image/png",
+      contentBase64: referenceImage.toString("base64"),
+    });
+    const unsupportedReferenceScene = await postJson(`${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}/scenes?cwd=${encodeURIComponent(cwd)}`, {
+      title: "Unsupported reference",
+      prompt: "Animate the reference image.",
+      videoImageInputs: [{ assetId: uploaded.asset.id, role: "reference_image" }],
+    });
 
     const legacyFailure = await postJsonExpectError(`${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}/run?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(legacyFailure.status, 400);
@@ -2828,6 +3184,16 @@ test("media production project run validates every legacy target before creating
       firstCompletedDetail.scenes.find((scene) => scene.id === readyScene.mediaScene.id)?.selectedMediaSceneRunId,
       selectedRun.mediaSceneRuns[0].id,
     );
+
+    const incompatibleBatch = await postJsonExpectError(`${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}/run?cwd=${encodeURIComponent(cwd)}`, {
+      sceneIds: [readyScene.mediaScene.id, unsupportedReferenceScene.mediaScene.id],
+    });
+    assert.equal(incompatibleBatch.status, 400);
+    assert.equal(incompatibleBatch.body.error, "unsupported_capability");
+    assert.match(incompatibleBatch.body.message, /不支持参考图片/);
+    assert.equal(await mediaJobCount(daemon.url, cwd), 1);
+    const afterIncompatibleBatch = await getJson(`${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(afterIncompatibleBatch.sceneRuns.length, 1);
 
     const regeneration = await postJson(`${daemon.url}/media-scenes/${encodeURIComponent(readyScene.mediaScene.id)}/run?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(regeneration.approval, undefined);
@@ -5315,6 +5681,42 @@ function parseSseBlock(block) {
     event,
     data: JSON.parse(dataLines.join("\n")),
   };
+}
+
+function createPngDimensionFixture(width, height) {
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header[8] = 8;
+  header[9] = 0;
+  const scanlines = Buffer.alloc((width + 1) * height);
+  return Buffer.concat([
+    Buffer.from("89504e470d0a1a0a", "hex"),
+    createPngChunk("IHDR", header),
+    createPngChunk("IDAT", deflateSync(scanlines)),
+    createPngChunk("IEND", Buffer.alloc(0)),
+  ]);
+}
+
+function createPngChunk(type, data) {
+  const typeBytes = Buffer.from(type, "ascii");
+  const chunk = Buffer.alloc(12 + data.length);
+  chunk.writeUInt32BE(data.length, 0);
+  typeBytes.copy(chunk, 4);
+  data.copy(chunk, 8);
+  chunk.writeUInt32BE(crc32(Buffer.concat([typeBytes, data])), 8 + data.length);
+  return chunk;
+}
+
+function crc32(bytes) {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
 }
 
 function withTimeout(promise, timeoutMs, message) {

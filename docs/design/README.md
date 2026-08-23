@@ -2,7 +2,7 @@
 
 Status: canonical documentation index
 Owner: repository maintainers
-Last verified: 2026-08-16
+Last verified: 2026-08-22
 Document type: governance index
 Code and test anchors: each linked contract owns its anchors
 
@@ -82,6 +82,7 @@ part of the current product acceptance scope.
 - [Media Production Experience](media-production-experience-refinement.md)
 - [Media External Workflows](media-production-external-workflows.md)
 - [Plugin Manager](plugin-manager.md)
+- [Office Documents Native Plugin](office-documents-native-plugin.md)
 - [Automations](automations.md)
 - [External Work Orchestration](external-work-orchestration.md)
 

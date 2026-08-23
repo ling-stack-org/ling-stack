@@ -169,6 +169,10 @@ import {
   parseMediaSceneRunRoute,
 } from "../features/media/production-routes.js";
 import {
+  handleMediaProjectAssetRoute,
+  parseMediaProjectAssetRoute,
+} from "../features/media/project-asset-routes.js";
+import {
   handleMediaWorkflowAnalyze,
   handleMediaWorkflowConnectionsCollection,
   handleMediaWorkflowImport,
@@ -184,6 +188,7 @@ import {
   handlePluginsCollection,
 } from "../features/plugins/routes.js";
 import { handleCuaDriverLeaseRoute } from "../features/plugins/cua-driver-lease-routes.js";
+import { handleOfficeDriverRoute } from "../features/office-documents/driver-routes.js";
 import { handleChromeBrowserPair } from "../features/browser-extension/routes.js";
 import { handleWorkItemRoute, handleWorkItemsCollection } from "../features/work-items/routes.js";
 import { handleWorkspaceDirectorySelect, handleWorkspaceTerminalCommand, handleWorkspaceTerminalProfile } from "../features/workspace-directory/routes.js";
@@ -456,6 +461,9 @@ export async function routeRequest(
   if (await handleCuaDriverLeaseRoute(request, response, context)) {
     return;
   }
+  if (await handleOfficeDriverRoute(request, response, context)) {
+    return;
+  }
   if (request.method === "GET" && url.pathname === "/health") {
     writeJson(response, 200, {
       ok: true,
@@ -695,6 +703,7 @@ export async function routeRequest(
       cuaDriverActivationService,
       managedPluginRoute,
       context.chromeBrowserPlugin,
+      context.officeDocumentsPlugin,
     );
     return;
   }
@@ -2471,6 +2480,12 @@ export async function routeRequest(
       launchMediaJob,
       mediaProjectRoute,
     );
+    return;
+  }
+
+  const mediaProjectAssetRoute = parseMediaProjectAssetRoute(url.pathname);
+  if (mediaProjectAssetRoute) {
+    handleMediaProjectAssetRoute(request, response, config, storeRegistry, mediaProjectAssetRoute);
     return;
   }
 

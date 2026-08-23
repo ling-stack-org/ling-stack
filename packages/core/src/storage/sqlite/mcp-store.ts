@@ -409,13 +409,16 @@ export class SqliteMcpStore {
   }
 
   upsertLingAgentChromeBrowserBinding(enabled: boolean, now: string): TeammateMcpBinding {
+    return this.upsertLingAgentBuiltInMcpBinding("mcp_chrome_browser", enabled, now);
+  }
+
+  upsertLingAgentBuiltInMcpBinding(serverId: string, enabled: boolean, now: string): TeammateMcpBinding {
     const teammateId = "ling_agent";
-    const serverId = "mcp_chrome_browser";
     if (!this.ports.getAiTeammate(teammateId)) {
       throw new Error("Ling Agent is unavailable.");
     }
     if (!this.getMcpServer(serverId)) {
-      throw new Error("Chrome browser MCP server is unavailable.");
+      throw new Error(`Built-in MCP server is unavailable: ${serverId}`);
     }
     this.context.database.prepare(`
       INSERT INTO teammate_mcp_bindings (
@@ -430,7 +433,7 @@ export class SqliteMcpStore {
         updated_at = excluded.updated_at
     `).run(teammateId, serverId, enabled ? 1 : 0, now, now);
     const binding = this.listTeammateMcpBindings(teammateId).find((candidate) => candidate.serverId === serverId);
-    if (!binding) throw new Error("Failed to persist Ling Agent Chrome browser binding.");
+    if (!binding) throw new Error("Failed to persist Ling Agent built-in MCP binding.");
     return binding;
   }
 

@@ -1,5 +1,6 @@
 import type {
   CreateMediaProjectRequest,
+  CreateMediaProjectAssetRequest,
   CreateMediaSceneRequest,
   CreateMediaWorkflowConnectionRequest,
   ImportMediaWorkflowRequest,
@@ -9,6 +10,7 @@ import type {
   MediaProductionProjectRunResponse,
   MediaProductionSceneRunResponse,
   MediaProjectMutationResponse,
+  MediaProjectAssetMutationResponse,
   MediaSceneDetailResponse,
   MediaSceneMutationResponse,
   MediaSceneReorderResponse,
@@ -45,6 +47,22 @@ export function updateMediaProject(cwd: string, mediaProjectId: string, input: U
 
 export function deleteMediaProject(cwd: string, mediaProjectId: string): Promise<MediaProductionDeleteResponse> {
   return daemonClient.deleteMediaProject(cwd, mediaProjectId);
+}
+
+export function createMediaProjectAsset(
+  cwd: string,
+  mediaProjectId: string,
+  input: CreateMediaProjectAssetRequest,
+): Promise<MediaProjectAssetMutationResponse> {
+  return daemonClient.createMediaProjectAsset(cwd, mediaProjectId, input);
+}
+
+export function deleteMediaProjectAsset(cwd: string, mediaProjectAssetId: string): Promise<MediaProductionDeleteResponse> {
+  return daemonClient.deleteMediaProjectAsset(cwd, mediaProjectAssetId);
+}
+
+export function mediaProjectAssetContentUrl(cwd: string, mediaProjectAssetId: string): string {
+  return daemonClient.mediaProjectAssetContentUrl(cwd, mediaProjectAssetId);
 }
 
 export function createMediaScene(cwd: string, mediaProjectId: string, input: CreateMediaSceneRequest): Promise<MediaSceneMutationResponse> {

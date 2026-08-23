@@ -129,55 +129,6 @@
   font-size: 10px;
 }
 
-.reference-asset-picker.compact {
-  display: grid;
-  gap: 8px;
-  margin-top: 2px;
-}
-
-.reference-asset-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 7px;
-  max-height: 176px;
-  overflow: auto;
-}
-
-.reference-asset {
-  position: relative;
-  width: 100%;
-  height: auto;
-  aspect-ratio: 1;
-  overflow: hidden;
-  padding: 0;
-}
-
-.reference-asset.selected {
-  border-color: var(--ling-border-focus);
-  box-shadow: inset 0 0 0 2px var(--ling-border-focus);
-}
-
-.reference-asset img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.reference-asset > span:last-child {
-  position: absolute;
-  right: 4px;
-  bottom: 4px;
-  max-width: calc(100% - 8px);
-  overflow: hidden;
-  padding: 2px 4px;
-  border-radius: 3px;
-  background: var(--ling-bg-overlay);
-  color: var(--ling-text-inverse);
-  font-size: 9px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .scene-field-failure-actions,
 .scene-run-failure-actions {
   flex-wrap: wrap;

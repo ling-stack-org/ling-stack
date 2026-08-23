@@ -34,3 +34,4 @@ ee3cee21d7ef15f3c0cf6c70815d5e89907c6f7f:packages/providers/test/media-adapter-c
 # Public Chrome manifest keys used only to derive stable extension IDs.
 942b94bd3794394033a78be7cf0bfaa064a35acf:apps/chrome-extension/manifest.json:generic-api-key:9
 0831039d1cd39d648099007284c40c3c725a8b9e:apps/chrome-extension/manifest.json:generic-api-key:9
+f6e30a7bcebac3617626e64c2a1a0c872b3ed5d2:apps/chrome-extension/manifest.json:generic-api-key:9

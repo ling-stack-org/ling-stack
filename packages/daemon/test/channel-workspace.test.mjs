@@ -4,8 +4,9 @@ import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promise
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import test from "node:test";
+import { Document, Packer, Paragraph } from "docx";
 import {
   DEFAULT_WORKSPACE_ID,
   createCompositeSecretResolver,
@@ -34,6 +35,7 @@ import { officeExtractorV1 } from "../dist/features/channels/materialization/ext
 import { pdfExtractorV1 } from "../dist/features/channels/materialization/extractors/pdf.js";
 import { attachmentMaterializationFingerprint, linkPreviewMaterializationFingerprint } from "../dist/features/channels/materialization/fingerprints.js";
 import { materializeInlineChannelInputs } from "../dist/features/channels/materialization/inline.js";
+import { OfficeArtifactService } from "../dist/features/office-documents/artifacts.js";
 import { materializeInlineTeammateDirectInputs } from "../dist/features/teammates/direct-materialization.js";
 import { ensureDirectWorkspaceReady } from "../dist/features/teammates/direct-workspace.js";
 import { createInitialWorkspaceBinding, createManagedGitWorktree, resolveGitRepoRoot } from "../dist/features/workspaces/managed-worktrees.js";
@@ -88,8 +90,10 @@ async function readPdfFixtureBytes() {
 }
 
 async function readDocxFixtureBytes() {
-  const mammothDir = dirname(require.resolve("mammoth/package.json"));
-  return readFile(resolve(mammothDir, "test", "test-data", "single-paragraph.docx"));
+  const document = new Document({
+    sections: [{ children: [new Paragraph("Walking on imported air")] }],
+  });
+  return Buffer.from(await Packer.toBuffer(document));
 }
 
 test("health exposes channel auto_route capability", async () => {
@@ -1926,9 +1930,10 @@ test("cached public link body lets Ling answer without materialization clarify",
   }
 });
 
-test("pdf and docx extractors materialize bounded attachment text", async () => {
+test("pdf and OOXML extractors materialize bounded attachment text", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-document-extractors-"));
   const store = createSqliteRunStore(cwd);
+  const officeArtifacts = new OfficeArtifactService();
   try {
     await mkdir(store.paths.attachmentsDir, { recursive: true });
     const channel = store.createChannel({
@@ -1996,12 +2001,19 @@ test("pdf and docx extractors materialize bounded attachment text", async () => 
     assert.match(docxResult.contentText, /Walking on imported air/);
     assert.deepEqual(docxResult.structuredSummary, { format: "docx", warnings: [] });
 
+    const pptxPath = resolve(store.paths.attachmentsDir, "slides.pptx");
+    await officeArtifacts.createPresentation(cwd, {
+      path: pptxPath,
+      title: "Ling Office fixture",
+      slides: [{ title: "Native presentation", bullets: ["Bounded extraction"] }],
+    });
+    const pptxBytes = await readFile(pptxPath);
     const pptxAttachment = store.createChannelAttachment({
       channelId: channel.id,
       kind: "office",
       fileName: "slides.pptx",
       contentType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-      sizeBytes: 128,
+      sizeBytes: pptxBytes.byteLength,
       path: "slides.pptx",
       createdAt: "2026-06-11T00:05:00.000Z",
     });
@@ -2012,14 +2024,47 @@ test("pdf and docx extractors materialize bounded attachment text", async () => 
       sourceId: pptxAttachment.id,
       sourceFingerprint: "pptx-fingerprint",
       requestedBy: "turn_envelope",
-      maxBytes: 4096,
+      maxBytes: 512 * 1024,
       maxChars: 100,
       now: "2026-06-11T00:06:00.000Z",
       attachment: pptxAttachment,
       attachmentsDir: store.paths.attachmentsDir,
     });
-    assert.equal(pptxResult.status, "unsupported");
-    assert.equal(pptxResult.errorCode, "unsupported_office_format");
+    assert.equal(pptxResult.status, "available", JSON.stringify(pptxResult));
+    assert.match(pptxResult.contentText, /Native presentation/u);
+    assert.deepEqual(pptxResult.structuredSummary, { format: "pptx", warnings: [] });
+
+    const xlsxPath = resolve(store.paths.attachmentsDir, "metrics.xlsx");
+    await officeArtifacts.createWorkbook(cwd, {
+      path: xlsxPath,
+      sheets: [{ name: "Summary", rows: [["Metric", "Value"], ["Active users", 42]] }],
+    });
+    const xlsxBytes = await readFile(xlsxPath);
+    const xlsxAttachment = store.createChannelAttachment({
+      channelId: channel.id,
+      kind: "office",
+      fileName: "metrics.xlsx",
+      contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      sizeBytes: xlsxBytes.byteLength,
+      path: "metrics.xlsx",
+      createdAt: "2026-06-11T00:07:00.000Z",
+    });
+    const xlsxResult = await officeExtractorV1.materialize({
+      workspaceId: xlsxAttachment.workspaceId,
+      channelId: channel.id,
+      sourceKind: "attachment",
+      sourceId: xlsxAttachment.id,
+      sourceFingerprint: "xlsx-fingerprint",
+      requestedBy: "turn_envelope",
+      maxBytes: 512 * 1024,
+      maxChars: 100,
+      now: "2026-06-11T00:08:00.000Z",
+      attachment: xlsxAttachment,
+      attachmentsDir: store.paths.attachmentsDir,
+    });
+    assert.equal(xlsxResult.status, "available", JSON.stringify(xlsxResult));
+    assert.match(xlsxResult.contentText, /Active users/u);
+    assert.deepEqual(xlsxResult.structuredSummary, { format: "xlsx", warnings: [] });
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });

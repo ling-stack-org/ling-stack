@@ -2,10 +2,12 @@ import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
 import { redactSecrets } from "../../redaction.js";
 import {
   createMediaProjectId,
+  createMediaProjectAssetId,
   createMediaJobId,
   createMediaSceneId,
   createMediaSceneRunId,
   type CreateMediaProjectInput,
+  type CreateMediaProjectAssetInput,
   type CreateMediaJobInput,
   type CreateMediaSceneInput,
   type CreateMediaSceneRunInput,
@@ -15,6 +17,7 @@ import {
   type MediaJobExecutionHandle,
   type MediaJob,
   type MediaProject,
+  type MediaProjectAsset,
   type MediaScene,
   type MediaSceneRun,
   type UpdateMediaProjectInput,
@@ -27,6 +30,7 @@ import { mapMediaJob } from "./approval-media-mappers.js";
 import {
   mapMediaJobExecutionHandle,
   mapMediaProject,
+  mapMediaProjectAsset,
   mapMediaScene,
   mapMediaSceneRun,
 } from "./media-production-mappers.js";
@@ -211,6 +215,84 @@ export class SqliteMediaStore {
     `).all(DEFAULT_WORKSPACE_ID).map(mapMediaProject);
   }
 
+  createMediaProjectAsset(input: CreateMediaProjectAssetInput, now: string): MediaProjectAsset {
+    const project = this.getMediaProject(input.projectId);
+    if (!project) {
+      throw new Error(`Media project not found: ${input.projectId}`);
+    }
+    const asset: MediaProjectAsset = {
+      id: input.id ?? createMediaProjectAssetId(),
+      projectId: project.id,
+      fileName: input.fileName.trim(),
+      contentType: input.contentType,
+      sizeBytes: input.sizeBytes,
+      width: input.width,
+      height: input.height,
+      checksum: input.checksum,
+      sourceArtifactId: input.sourceArtifactId,
+      path: input.path,
+      createdAt: now,
+    };
+    assertMediaProjectAssetValues(asset);
+    this.context.database.prepare(`
+      INSERT INTO media_project_assets (
+        id, workspace_id, project_id, file_name, content_type, size_bytes, width, height,
+        checksum, source_artifact_id, path, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(workspace_id, project_id, checksum) DO NOTHING
+    `).run(
+      asset.id,
+      DEFAULT_WORKSPACE_ID,
+      asset.projectId,
+      asset.fileName,
+      asset.contentType,
+      asset.sizeBytes,
+      asset.width,
+      asset.height,
+      asset.checksum,
+      asset.sourceArtifactId ?? null,
+      asset.path,
+      asset.createdAt,
+    );
+    const created = this.findMediaProjectAssetByChecksum(asset.projectId, asset.checksum);
+    if (!created) {
+      throw new Error(`Failed to create media project asset: ${asset.id}`);
+    }
+    return created;
+  }
+
+  getMediaProjectAsset(id: string): MediaProjectAsset | undefined {
+    const row = this.context.database.prepare(`${mediaProjectAssetSelectSql("WHERE id = ? AND workspace_id = ?")}`)
+      .get(id, DEFAULT_WORKSPACE_ID);
+    return row ? mapMediaProjectAsset(row) : undefined;
+  }
+
+  listMediaProjectAssets(projectId: string): MediaProjectAsset[] {
+    return this.context.database.prepare(`${mediaProjectAssetSelectSql("WHERE project_id = ? AND workspace_id = ?")} ORDER BY created_at DESC`)
+      .all(projectId, DEFAULT_WORKSPACE_ID)
+      .map(mapMediaProjectAsset);
+  }
+
+  findMediaProjectAssetByChecksum(projectId: string, checksum: string): MediaProjectAsset | undefined {
+    const row = this.context.database.prepare(`${mediaProjectAssetSelectSql("WHERE project_id = ? AND workspace_id = ? AND checksum = ?")}`)
+      .get(projectId, DEFAULT_WORKSPACE_ID, checksum);
+    return row ? mapMediaProjectAsset(row) : undefined;
+  }
+
+  deleteMediaProjectAsset(id: string): boolean {
+    const asset = this.getMediaProjectAsset(id);
+    if (!asset) {
+      return false;
+    }
+    const inUse = this.listMediaScenes(asset.projectId)
+      .some((scene) => scene.videoImageInputs.some((input) => input.assetId === asset.id));
+    if (inUse) {
+      throw new Error(`Media project asset is in use: ${id}`);
+    }
+    return this.context.database.prepare("DELETE FROM media_project_assets WHERE id = ? AND workspace_id = ?")
+      .run(id, DEFAULT_WORKSPACE_ID).changes > 0;
+  }
+
   updateMediaProject(id: string, input: UpdateMediaProjectInput, now: string): MediaProject | undefined {
     const existing = this.getMediaProject(id);
     if (!existing) {
@@ -276,18 +358,21 @@ export class SqliteMediaStore {
       ratio: input.ratio ?? "16:9",
       durationSeconds: input.durationSeconds ?? 5,
       referenceArtifactIds: [...(input.referenceArtifactIds ?? [])],
+      videoImageInputs: [...(input.videoImageInputs ?? [])],
       canvasPosition: normalizeCanvasPosition(input.canvasPosition),
       createdAt: now,
       updatedAt: now,
     };
     assertMediaSceneValues(scene);
+    this.assertMediaSceneVideoImageInputs(scene);
 
     this.context.database.prepare(`
       INSERT INTO media_scenes (
         id, project_id, sort_order, title, prompt, provider_preset_id, ratio, duration_seconds,
         execution_mode, workflow_definition_id, workflow_input_values_json,
-        reference_artifact_ids_json, canvas_position_json, selected_media_scene_run_id, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        reference_artifact_ids_json, video_image_inputs_json, canvas_position_json,
+        selected_media_scene_run_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       scene.id,
       scene.projectId,
@@ -301,6 +386,7 @@ export class SqliteMediaStore {
       scene.workflowDefinitionId ?? null,
       stringifyJson(scene.workflowInputValues),
       stringifyJson(scene.referenceArtifactIds),
+      stringifyJson(scene.videoImageInputs),
       stringifyJson(scene.canvasPosition),
       null,
       scene.createdAt,
@@ -341,6 +427,7 @@ export class SqliteMediaStore {
       ratio: input.ratio ?? existing.ratio,
       durationSeconds: input.durationSeconds ?? existing.durationSeconds,
       referenceArtifactIds: input.referenceArtifactIds === undefined ? existing.referenceArtifactIds : [...input.referenceArtifactIds],
+      videoImageInputs: input.videoImageInputs === undefined ? existing.videoImageInputs : [...input.videoImageInputs],
       canvasPosition: input.canvasPosition === undefined ? existing.canvasPosition : normalizeCanvasPosition(input.canvasPosition),
       selectedMediaSceneRunId: input.selectedMediaSceneRunId === undefined
         ? existing.selectedMediaSceneRunId
@@ -348,12 +435,14 @@ export class SqliteMediaStore {
       updatedAt: now,
     };
     assertMediaSceneValues(scene);
+    this.assertMediaSceneVideoImageInputs(scene);
 
     this.context.database.prepare(`
       UPDATE media_scenes
       SET sort_order = ?, title = ?, prompt = ?, provider_preset_id = ?, ratio = ?, duration_seconds = ?,
           execution_mode = ?, workflow_definition_id = ?, workflow_input_values_json = ?,
-          reference_artifact_ids_json = ?, canvas_position_json = ?, selected_media_scene_run_id = ?, updated_at = ?
+          reference_artifact_ids_json = ?, video_image_inputs_json = ?, canvas_position_json = ?,
+          selected_media_scene_run_id = ?, updated_at = ?
       WHERE id = ?
     `).run(
       scene.sortOrder,
@@ -366,6 +455,7 @@ export class SqliteMediaStore {
       scene.workflowDefinitionId ?? null,
       stringifyJson(scene.workflowInputValues),
       stringifyJson(scene.referenceArtifactIds),
+      stringifyJson(scene.videoImageInputs),
       stringifyJson(scene.canvasPosition),
       scene.selectedMediaSceneRunId ?? null,
       scene.updatedAt,
@@ -543,14 +633,46 @@ export class SqliteMediaStore {
     const sortOrder = row.sort_order;
     return (typeof sortOrder === "bigint" ? Number(sortOrder) : sortOrder ?? -1) + 1;
   }
+
+  private assertMediaSceneVideoImageInputs(scene: Pick<MediaScene, "projectId" | "videoImageInputs">): void {
+    const assetIds = new Set<string>();
+    let role: MediaScene["videoImageInputs"][number]["role"] | undefined;
+    for (const input of scene.videoImageInputs) {
+      if (!input.assetId || (input.role !== "first_frame" && input.role !== "reference_image")) {
+        throw new Error("Media scene image input is invalid");
+      }
+      if (assetIds.has(input.assetId)) {
+        throw new Error("Media scene image inputs must not contain duplicates");
+      }
+      assetIds.add(input.assetId);
+      if (role && role !== input.role) {
+        throw new Error("Media scene image inputs must use one role");
+      }
+      role = input.role;
+      const asset = this.getMediaProjectAsset(input.assetId);
+      if (!asset || asset.projectId !== scene.projectId) {
+        throw new Error(`Media project asset not found in scene project: ${input.assetId}`);
+      }
+    }
+  }
 }
 
 function mediaSceneSelectSql(whereClause: string): string {
   return `
     SELECT id, project_id, sort_order, title, prompt, provider_preset_id, ratio, duration_seconds,
            execution_mode, workflow_definition_id, workflow_input_values_json,
-           reference_artifact_ids_json, canvas_position_json, selected_media_scene_run_id, created_at, updated_at
+           reference_artifact_ids_json, video_image_inputs_json, canvas_position_json,
+           selected_media_scene_run_id, created_at, updated_at
     FROM media_scenes
+    ${whereClause}
+  `;
+}
+
+function mediaProjectAssetSelectSql(whereClause: string): string {
+  return `
+    SELECT id, project_id, file_name, content_type, size_bytes, width, height, checksum,
+           source_artifact_id, path, created_at
+    FROM media_project_assets
     ${whereClause}
   `;
 }
@@ -599,5 +721,17 @@ function assertMediaSceneValues(scene: Pick<MediaScene, "title" | "sortOrder" | 
   }
   if (!Number.isInteger(scene.durationSeconds) || scene.durationSeconds <= 0) {
     throw new Error("Media scene duration must be a positive integer");
+  }
+}
+
+function assertMediaProjectAssetValues(asset: MediaProjectAsset): void {
+  if (!asset.fileName || !asset.checksum || !asset.path) {
+    throw new Error("Media project asset metadata is required");
+  }
+  if (!Number.isInteger(asset.sizeBytes) || asset.sizeBytes <= 0) {
+    throw new Error("Media project asset size must be a positive integer");
+  }
+  if (!Number.isInteger(asset.width) || asset.width <= 0 || !Number.isInteger(asset.height) || asset.height <= 0) {
+    throw new Error("Media project asset dimensions must be positive integers");
   }
 }

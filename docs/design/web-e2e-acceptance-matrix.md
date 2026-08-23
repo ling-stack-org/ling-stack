@@ -156,7 +156,7 @@ behavior. Parser correctness and cache behavior belong in daemon/core tests.
 | M1 cache/registry | none unless transcript changes | SQLite round trip, cache hit/miss, fingerprint invalidation |
 | M2 text attachment | existing README/text attachment flow | extractor success/too-large/missing-file/truncation |
 | M3 link body | public link summary and local/private link clarify | URL policy, redirect blocking, timeout, content-type, size limit |
-| M4 PDF/Office | PDF/DOCX extracted-answer happy path plus unsupported fallback when visible | daemon parser fixtures for PDF/DOCX success, `.pptx`/`.xlsx` unsupported, too-large/missing/truncated |
+| M4 PDF/Office | PDF and supported OOXML extracted-answer happy paths plus bounded fallback | daemon parser fixtures for PDF/DOCX/XLSX/PPTX success, unsafe/unsupported features, too-large/missing/truncated |
 | M5 automatic attachment understanding | image vision/OCR happy path, unsupported image fallback, no status-chip regression | provider capability/failure/cached-summary tests |
 | M6 details polish | details drawer and mobile visual smoke | payload/schema tests |
 
@@ -207,7 +207,7 @@ from leaking into browser assertions.
 | P1-1 | PDF automatic extraction | PDF attachment, materialization completes as `available` | Ask `summarize this PDF` or attach with a PDF question | Ling summarizes naturally from extracted text without asking to inspect first | Raw materialization JSON and status labels hidden |
 | P1-2 | PDF unsupported or blocked | Encrypted/unsupported PDF or extractor failure | Ask `summarize this PDF` | Ling says it could not read the PDF and asks for readable upload or pasted text | No PDF summary invented, no status badge |
 | P1-3 | Office automatic extraction | `.docx` attachment, materialization completes as `available` | Ask to summarize doc | Ling uses bounded extracted text without asking to inspect first | Truncation details appear only in evidence/details when applicable |
-| P1-4 | Office unsupported | `.pptx`/`.xlsx` or extractor failure | Ask to use document content | Ling asks for supported export or pasted content | No document body summary invented, no status badge |
+| P1-4 | Office unsupported | Macro-enabled/unsafe OOXML or extractor failure | Ask to use document content | Ling asks for a supported OOXML export or pasted content | No document body summary invented, no status badge |
 | P1-5 | Image OCR/vision automatic | Image materialization row `available` | Ask a screenshot/UI question | Ling uses extractor summary directly, not filename inference or inspect-first copy | Evidence links to materialization status |
 | P1-6 | Link body extraction success | Public link materialization row `available` | Ask to summarize link | Ling summarizes extracted body and shows link chip | Final URL and status in evidence |
 | P1-7 | Link body extraction timeout | Public link extraction failed | Ask to summarize link | Ling says it could not read the page and offers retry/paste path | No stale title-only body summary, technical timeout details only in evidence |

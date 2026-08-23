@@ -21,6 +21,7 @@ export function createMediaVendorRequestPlan(
     payload: {
       prompt: request.prompt,
       input: redactSecrets(request.input),
+      ...(request.videoImageInputs?.length ? { videoImageInputs: request.videoImageInputs } : {}),
     },
     notes: [
       `${definition.displayName} is resolved through the media adapter registry.`,

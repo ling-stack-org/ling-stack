@@ -66,6 +66,7 @@ import { loadOrCreateDesktopBridgeToken } from "./bridge-token.js";
 import { registerDesktopIpc } from "./ipc.js";
 import { registerDesktopThemePackageIpc } from "./theme-packages/theme-package-ipc.js";
 import { DesktopMobileAccessClient } from "./mobile-access/client.js";
+import { OfficeDriverRuntime, resolveOfficeDriverExecutablePath } from "./office-driver/runtime.js";
 import { DesktopThemePackageRepository } from "./theme-packages/theme-package-repository.js";
 import { DesktopNavigationIntentStore } from "./navigation-intent.js";
 import { openDesktopOwnerWindow } from "./owner-window.js";
@@ -160,6 +161,7 @@ let unregisterLockedControlPreview: (() => void) | undefined;
 let desktopRuntime: DesktopRuntime | undefined;
 let desktopDaemonAutomaticRecoveryArmed = false;
 let desktopDaemonAutomaticRecoveryUsed = false;
+let officeDriverRuntime: OfficeDriverRuntime | undefined;
 let computerUse: ComputerUsePreviewCoordinator | undefined;
 const desktopNavigationIntents = new DesktopNavigationIntentStore();
 const desktopRendererThemeStore = new DesktopRendererThemeStore(
@@ -443,6 +445,31 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
   }
   logStartup("daemon.connected", { ownedByDesktop: desktopRuntime.status.ownedByDesktop });
   desktopDaemonAutomaticRecoveryArmed = desktopRuntime.status.ownedByDesktop;
+  if (!officeDriverRuntime) {
+    const officeDriverExecutablePath = resolveOfficeDriverExecutablePath({
+      appPath: app.getAppPath(),
+      resourcesRoot: resources.resourcesRoot,
+      packaged: app.isPackaged,
+    });
+    if (officeDriverExecutablePath) {
+      officeDriverRuntime = new OfficeDriverRuntime({
+        daemonBaseUrl,
+        bridgeToken,
+        desktopInstanceId: desktopRuntime.desktopInstanceId,
+        executablePath: officeDriverExecutablePath,
+        recoveryRoot: resolve(app.getPath("userData"), "recovery", "office"),
+        onDiagnostic: logStartup,
+      });
+      await officeDriverRuntime.start();
+      logStartup("office_driver.started", { platform: process.platform });
+    }
+  }
+  if (!attempt.isCurrent()) {
+    const staleOfficeDriverRuntime = officeDriverRuntime;
+    officeDriverRuntime = undefined;
+    await staleOfficeDriverRuntime?.stop();
+    return false;
+  }
   if (!computerUse) {
     const descriptorRegistry = new InMemoryComputerUsePreviewDescriptorRegistry();
     if (fakeComputerUseMode) {
@@ -1948,6 +1975,10 @@ async function shutdown(): Promise<void> {
 
   await attemptCleanup(() => windowsProviderSmokeCommandReader?.close());
   await attemptCleanup(() => mainSession?.closeAllConnections());
+
+  const activeOfficeDriverRuntime = officeDriverRuntime;
+  officeDriverRuntime = undefined;
+  await attemptCleanup(() => activeOfficeDriverRuntime?.stop());
 
   const activeDesktopRuntime = desktopRuntime;
   desktopRuntime = undefined;

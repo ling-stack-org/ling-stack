@@ -22,6 +22,7 @@ import {
   type MediaExecutionResult,
 } from "@ling-stack/providers";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
+import { HttpError } from "../../errors.js";
 import { redactTextWithSecrets } from "../../shared/redaction.js";
 import { resolveProviderSecret } from "../providers/secrets.js";
 import { createMediaJobArtifacts, mediaExecutionHasRequiredArtifact } from "./artifact-collector.js";
@@ -29,6 +30,7 @@ import type { MediaJobExecutionResult, MediaRuntimeHandle, RunMediaJobHooks } fr
 import { requiresMediaProductionApproval } from "./media-cost-approval.js";
 import { assertMediaJobProvider, createMediaAdapterForProvider } from "./provider.js";
 import { selectInitialMediaSceneResult } from "./scene-result-selection.js";
+import { materializeMediaJobVideoImageInputs } from "./video-image-materializer.js";
 
 const POLL_INTERVAL_MS = 2_000;
 const MAX_POLL_ATTEMPTS = 10_800;
@@ -114,10 +116,10 @@ export async function runProviderMediaJobExecution(input: {
     job = job.status === "running"
       ? job
       : store.updateMediaJobStatus(job.id, { status: "running", errorMessage: null }, now()) ?? job;
-    const request = mediaExecutionRequest(job, provider);
+    const requestJob = job;
     const tick = hasRecoverableLifecycle(adapter)
-      ? await runRecoverableTick(store, job, adapter, request, handle)
-      : await runNonRecoverableExecution(store, job, adapter, request, handle);
+      ? await runRecoverableTick(store, job, adapter, () => mediaExecutionRequest(store, requestJob, provider), handle)
+      : await runNonRecoverableExecution(store, job, adapter, () => mediaExecutionRequest(store, requestJob, provider), handle);
     if (tick.pending) {
       scheduleProviderPoll(input, tick.delayMs);
       return { statusCode: 202, body: { mediaJob: job, pending: true } };
@@ -161,15 +163,16 @@ export async function runProviderMediaJobExecution(input: {
     return { statusCode: 200, body: { mediaJob: succeeded, artifacts } };
   } catch (error) {
     const message = redactTextWithSecrets(error instanceof Error ? error.message : String(error), [secretValue]);
+    const errorCode = error instanceof HttpError ? error.code : "media_job_execution_failed";
     const failed = store.updateMediaJobStatus(job.id, { status: "failed", errorMessage: message }, now()) ?? job;
     if (supervised) {
-      terminalFailure(store, input.hooks, supervised, "media_job_execution_failed", message);
+      terminalFailure(store, input.hooks, supervised, errorCode, message);
       finishExecution(store, job.id, supervised, "media-job-failed");
     } else {
       store.deleteMediaJobExecutionHandle(job.id);
       clearScheduled(job.id);
     }
-    return { statusCode: 200, body: { error: "media_job_execution_failed", message, mediaJob: failed } };
+    return { statusCode: error instanceof HttpError ? error.statusCode : 200, body: { error: errorCode, message, mediaJob: failed } };
   }
 }
 
@@ -196,12 +199,12 @@ async function runRecoverableTick(
   store: ProviderExecutionStore,
   job: MediaJob,
   adapter: MediaAdapter & Required<Pick<MediaAdapter, "submit" | "poll" | "collectArtifacts">>,
-  request: MediaExecutionRequest,
+  createRequest: () => MediaExecutionRequest,
   handle: NonNullable<ReturnType<ProviderExecutionStore["getMediaJobExecutionHandle"]>>,
 ): Promise<{ readonly pending: true; readonly delayMs: number } | { readonly pending: false; readonly execution: MediaExecutionResult }> {
   let current = handle;
   if (isPendingHandle(current)) {
-    const submission = await adapter.submit(request);
+    const submission = await adapter.submit(createRequest());
     if (submission.status === "failed") {
       return { pending: false, execution: { status: "failed", artifacts: [], errorCode: submission.errorCode, errorMessage: submission.errorMessage } };
     }
@@ -250,7 +253,7 @@ async function runNonRecoverableExecution(
   store: ProviderExecutionStore,
   job: MediaJob,
   adapter: MediaAdapter,
-  request: MediaExecutionRequest,
+  createRequest: () => MediaExecutionRequest,
   handle: NonNullable<ReturnType<ProviderExecutionStore["getMediaJobExecutionHandle"]>>,
 ): Promise<{ readonly pending: false; readonly execution: MediaExecutionResult }> {
   if (!isPendingHandle(handle) && handle.recovery.phase === "nonrecoverable_execution") {
@@ -266,7 +269,7 @@ async function runNonRecoverableExecution(
     recovery: { phase: "nonrecoverable_execution" },
     nextPollAt: null,
   }, now());
-  return { pending: false, execution: await executeMediaAdapterJob(adapter, request) };
+  return { pending: false, execution: await executeMediaAdapterJob(adapter, createRequest()) };
 }
 
 function persistPendingHandle(
@@ -342,7 +345,14 @@ function finishExecution(
   clearScheduled(mediaJobId);
 }
 
-function mediaExecutionRequest(job: MediaJob, provider: ProviderPreset): MediaExecutionRequest {
+function mediaExecutionRequest(
+  store: ProviderExecutionStore,
+  job: MediaJob,
+  provider: ProviderPreset,
+): MediaExecutionRequest {
+  const videoImageInputs = job.operation === "video_generate"
+    ? materializeMediaJobVideoImageInputs(store, job)
+    : [];
   return {
     jobId: job.id,
     provider: {
@@ -359,6 +369,7 @@ function mediaExecutionRequest(job: MediaJob, provider: ProviderPreset): MediaEx
     operation: job.operation,
     prompt: job.prompt,
     input: job.input,
+    ...(videoImageInputs.length ? { videoImageInputs } : {}),
     requestedAt: now(),
   };
 }

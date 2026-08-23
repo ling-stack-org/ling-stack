@@ -10,7 +10,7 @@ Status: Chrome Web Store submission copy for item `mbmlnnfhebclljonhedpjghbhibfa
 | Default language | Chinese (China) |
 | English summary | Let Ling complete user-approved tasks in the Chrome tabs you connect. |
 | Chinese summary | 让 Ling 在你连接的 Chrome 标签页中完成经你批准的任务。 |
-| Privacy policy URL | `https://github.com/tianxiaochannel-oss88/ling-stack/blob/main/apps/chrome-extension/PRIVACY.md` |
+| Privacy policy URL | `https://gist.github.com/gansx/f3c0ff09aea80b7c1301f5946bf26012` |
 | Support email | Verified publisher contact configured in the Dashboard; not stored in source |
 | Support URL | `https://github.com/tianxiaochannel-oss88/ling-stack/issues` |
 

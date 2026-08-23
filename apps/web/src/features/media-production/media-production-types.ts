@@ -1,5 +1,7 @@
 import type {
+  CreateMediaProjectAssetRequest,
   MediaProject,
+  MediaProjectAsset,
   MediaScene,
   MediaSceneRun,
   ProviderPreset,
@@ -21,6 +23,8 @@ export type MediaProductionFailureOwner =
   | "project-create"
   | "project-update"
   | "project-delete"
+  | "asset-create"
+  | "asset-delete"
   | "scene-create"
   | "scene-update"
   | "scene-duplicate"
@@ -45,6 +49,8 @@ export type MediaProductionRetryIntent =
   | { readonly kind: "project-create" }
   | { readonly kind: "project-update"; readonly projectId: string; readonly patch: UpdateMediaProjectRequest }
   | { readonly kind: "project-delete"; readonly projectId: string }
+  | { readonly kind: "asset-create"; readonly projectId: string }
+  | { readonly kind: "asset-delete"; readonly projectId: string; readonly assetId: string }
   | { readonly kind: "scene-create"; readonly projectId: string }
   | { readonly kind: "scene-update"; readonly sceneId: string; readonly patch: UpdateMediaSceneRequest }
   | { readonly kind: "scene-duplicate"; readonly sceneId: string }
@@ -73,6 +79,13 @@ export interface MediaProductionFailure {
 export type MediaProductionMutationOutcome<T = undefined> =
   | { readonly ok: true; readonly value: T }
   | { readonly ok: false; readonly failure: MediaProductionFailure };
+
+export interface MediaProductionMutationToken {
+  readonly cwd: string;
+  readonly epoch: number;
+  readonly key: string;
+  readonly requestId: number;
+}
 
 export interface MediaProductionBusyState {
   readonly projectList: boolean;
@@ -118,6 +131,7 @@ export interface StoryboardFocusRequest {
 
 export interface MediaProductionProjectDetail {
   readonly mediaProject: MediaProject;
+  readonly assets: readonly MediaProjectAsset[];
   readonly scenes: readonly MediaScene[];
   readonly sceneRuns: readonly MediaSceneRun[];
 }
@@ -145,6 +159,8 @@ export interface MediaProductionActions {
   readonly createProject: () => Promise<MediaProductionMutationOutcome>;
   readonly updateProject: (patch: UpdateMediaProjectRequest) => Promise<MediaProductionMutationOutcome>;
   readonly deleteProject: (projectId: string) => Promise<MediaProductionMutationOutcome>;
+  readonly createProjectAsset: (projectId: string, input: CreateMediaProjectAssetRequest) => Promise<MediaProductionMutationOutcome<MediaProjectAsset>>;
+  readonly deleteProjectAsset: (assetId: string) => Promise<MediaProductionMutationOutcome>;
   readonly createScene: () => Promise<MediaProductionMutationOutcome>;
   readonly updateScene: (sceneId: string, patch: MediaScenePatch) => Promise<MediaProductionMutationOutcome>;
   readonly reorderScenes: (sceneIds: readonly string[]) => Promise<MediaProductionMutationOutcome>;

@@ -4,11 +4,15 @@ import type {
   MediaCanvasViewport,
   MediaJobExecutionHandle,
   MediaProject,
+  MediaProjectAsset,
   MediaScene,
+  MediaSceneVideoImageInput,
   MediaSceneRun,
 } from "../../media-types.js";
 import {
+  isRecord,
   omitUndefined,
+  parseJson,
   parseJsonObject,
   parseJsonStringArray,
   readNullableString,
@@ -33,6 +37,22 @@ export function mapMediaProject(row: Record<string, SQLOutputValue>): MediaProje
   });
 }
 
+export function mapMediaProjectAsset(row: Record<string, SQLOutputValue>): MediaProjectAsset {
+  return omitUndefined({
+    id: readString(row, "id"),
+    projectId: readString(row, "project_id"),
+    fileName: readString(row, "file_name"),
+    contentType: readString(row, "content_type") as MediaProjectAsset["contentType"],
+    sizeBytes: readNumber(row, "size_bytes"),
+    width: readNumber(row, "width"),
+    height: readNumber(row, "height"),
+    checksum: readString(row, "checksum"),
+    sourceArtifactId: readNullableString(row, "source_artifact_id"),
+    path: readString(row, "path"),
+    createdAt: readString(row, "created_at"),
+  });
+}
+
 export function mapMediaScene(row: Record<string, SQLOutputValue>): MediaScene {
   return omitUndefined({
     id: readString(row, "id"),
@@ -47,10 +67,44 @@ export function mapMediaScene(row: Record<string, SQLOutputValue>): MediaScene {
     ratio: readString(row, "ratio"),
     durationSeconds: readNumber(row, "duration_seconds"),
     referenceArtifactIds: parseJsonStringArray(readString(row, "reference_artifact_ids_json")),
+    videoImageInputs: parseVideoImageInputs(readString(row, "video_image_inputs_json")),
     canvasPosition: parseCanvasPosition(readString(row, "canvas_position_json")),
     selectedMediaSceneRunId: readNullableString(row, "selected_media_scene_run_id"),
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
+  });
+}
+
+function parseVideoImageInputs(value: string): MediaSceneVideoImageInput[] {
+  let parsed: unknown;
+  try {
+    parsed = parseJson(value);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Invalid SQLite media scene video_image_inputs_json: ${message}`);
+  }
+  if (!Array.isArray(parsed)) {
+    throw new Error("Invalid SQLite media scene video_image_inputs_json: expected an array");
+  }
+
+  const assetIds = new Set<string>();
+  let sharedRole: MediaSceneVideoImageInput["role"] | undefined;
+  return parsed.map((item, index) => {
+    if (!isRecord(item) || typeof item.assetId !== "string" || item.assetId.trim().length === 0) {
+      throw new Error(`Invalid SQLite media scene video_image_inputs_json item at index ${index}: expected a non-empty assetId`);
+    }
+    if (item.role !== "first_frame" && item.role !== "reference_image") {
+      throw new Error(`Invalid SQLite media scene video_image_inputs_json item at index ${index}: unsupported role`);
+    }
+    if (assetIds.has(item.assetId)) {
+      throw new Error(`Invalid SQLite media scene video_image_inputs_json item at index ${index}: duplicate assetId`);
+    }
+    if (sharedRole && sharedRole !== item.role) {
+      throw new Error("Invalid SQLite media scene video_image_inputs_json: image roles must not be mixed");
+    }
+    assetIds.add(item.assetId);
+    sharedRole = item.role;
+    return { assetId: item.assetId, role: item.role };
   });
 }
 

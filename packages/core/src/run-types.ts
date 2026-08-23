@@ -56,6 +56,7 @@ import type {
 } from "./managed-official-skill-source-types.js";
 import type {
   CreateMediaProjectInput,
+  CreateMediaProjectAssetInput,
   CreateMediaJobInput,
   CreateMediaSceneInput,
   CreateMediaSceneRunInput,
@@ -63,6 +64,7 @@ import type {
   MediaJobExecutionHandle,
   MediaJob,
   MediaProject,
+  MediaProjectAsset,
   MediaScene,
   MediaSceneRun,
   UpdateMediaProjectInput,
@@ -1999,6 +2001,11 @@ export interface RunStore {
   listMediaProjects(): MediaProject[];
   updateMediaProject(id: string, input: UpdateMediaProjectInput, now: string): MediaProject | undefined;
   deleteMediaProject(id: string): boolean;
+  createMediaProjectAsset(input: CreateMediaProjectAssetInput, now: string): MediaProjectAsset;
+  getMediaProjectAsset(id: string): MediaProjectAsset | undefined;
+  listMediaProjectAssets(projectId: string): MediaProjectAsset[];
+  findMediaProjectAssetByChecksum(projectId: string, checksum: string): MediaProjectAsset | undefined;
+  deleteMediaProjectAsset(id: string): boolean;
   createMediaScene(input: CreateMediaSceneInput, now: string): MediaScene;
   getMediaScene(id: string): MediaScene | undefined;
   listMediaScenes(projectId: string): MediaScene[];
@@ -2112,6 +2119,7 @@ export interface RunStore {
     now: string,
   ): TeammateMcpBinding[];
   upsertLingAgentChromeBrowserBinding(enabled: boolean, now: string): TeammateMcpBinding;
+  upsertLingAgentBuiltInMcpBinding(serverId: string, enabled: boolean, now: string): TeammateMcpBinding;
   listTeammateMcpBindings(teammateId: string): TeammateMcpBinding[];
   createAutomationDefinition(input: CreateAutomationDefinitionInput, now: string): AutomationDefinition;
   getAutomationDefinition(automationId: string): AutomationDefinition | undefined;
@@ -2535,6 +2543,11 @@ export type MediaStoreFacet = RunStoreFacet<
   | "listMediaProjects"
   | "updateMediaProject"
   | "deleteMediaProject"
+  | "createMediaProjectAsset"
+  | "getMediaProjectAsset"
+  | "listMediaProjectAssets"
+  | "findMediaProjectAssetByChecksum"
+  | "deleteMediaProjectAsset"
   | "createMediaScene"
   | "getMediaScene"
   | "listMediaScenes"
@@ -2623,6 +2636,7 @@ export type McpStoreFacet = RunStoreFacet<
   | "listMcpTools"
   | "replaceTeammateMcpBindings"
   | "upsertLingAgentChromeBrowserBinding"
+  | "upsertLingAgentBuiltInMcpBinding"
   | "listTeammateMcpBindings"
 >;
 
