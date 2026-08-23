@@ -128,6 +128,148 @@ test("execution action projection reads command completion after the first event
   assert.match(actions[0].commandEvidence.outputTail.map((chunk) => chunk.text).join(""), /final output/u);
 });
 
+test("legacy Pi bash success normalizes exit zero and keeps one final cumulative output", () => {
+  const start = event(1, "tool_start", {
+    toolCallId: "tool-legacy-success",
+    toolName: "bash",
+    args: { command: "node continuity-v2-node.js" },
+  });
+  const firstUpdate = event(2, "tool_update", {
+    toolCallId: "tool-legacy-success",
+    toolName: "bash",
+    partialResult: { content: [{ type: "text", text: "CONTINUITY" }] },
+  });
+  const secondUpdate = event(3, "tool_update", {
+    toolCallId: "tool-legacy-success",
+    toolName: "bash",
+    partialResult: { content: [{ type: "text", text: "CONTINUITY_V2_NODE_OK\n" }] },
+  });
+  const end = event(4, "tool_end", {
+    toolCallId: "tool-legacy-success",
+    toolName: "bash",
+    result: { content: [{ type: "text", text: "\u001b[32mCONTINUITY_V2_NODE_OK\u001b[0m\n" }] },
+    isError: false,
+  });
+
+  const evidence = deriveExecutionActionCommandEvidence({
+    events: [start, firstUpdate, secondUpdate, end],
+    toolCallId: "tool-legacy-success",
+    start,
+    end,
+  });
+
+  assert.ok(evidence);
+  assert.equal(evidence.outcome, "succeeded");
+  assert.equal(evidence.exitCode, 0);
+  assert.equal(executionActionStatusFromCommandEvidence(evidence), "succeeded");
+  assert.equal(evidence.outputTail.length, 1);
+  assert.equal(evidence.outputTail[0].text, "CONTINUITY_V2_NODE_OK\n");
+  assert.equal(evidence.outputByteCount, Buffer.byteLength("CONTINUITY_V2_NODE_OK\n", "utf8"));
+});
+
+test("active legacy Pi bash keeps only the latest cumulative update", () => {
+  const start = event(1, "tool_start", {
+    toolCallId: "tool-legacy-active",
+    toolName: "bash",
+    args: { command: "pnpm test" },
+  });
+  const updates = [
+    event(2, "tool_update", {
+      toolCallId: "tool-legacy-active",
+      toolName: "bash",
+      partialResult: { content: [{ type: "text", text: "one\n" }] },
+    }),
+    event(3, "tool_update", {
+      toolCallId: "tool-legacy-active",
+      toolName: "bash",
+      partialResult: { content: [{ type: "text", text: "one\ntwo\n" }] },
+    }),
+  ];
+
+  const evidence = deriveExecutionActionCommandEvidence({
+    events: [start, ...updates],
+    toolCallId: "tool-legacy-active",
+    start,
+  });
+
+  assert.ok(evidence);
+  assert.equal(evidence.outcome, undefined);
+  assert.equal(evidence.outputTail.length, 1);
+  assert.equal(evidence.outputTail[0].text, "one\ntwo\n");
+  assert.doesNotMatch(evidence.outputTail[0].text, /one\none/u);
+});
+
+test("legacy Pi failure keeps an unknown exit code", () => {
+  const start = event(1, "tool_start", {
+    toolCallId: "tool-legacy-failure",
+    toolName: "bash",
+    args: { command: "node missing.js" },
+  });
+  const end = event(2, "tool_end", {
+    toolCallId: "tool-legacy-failure",
+    toolName: "bash",
+    result: { content: [{ type: "text", text: "failed\n" }] },
+    isError: true,
+  });
+
+  const evidence = deriveExecutionActionCommandEvidence({
+    events: [start, end],
+    toolCallId: "tool-legacy-failure",
+    start,
+    end,
+  });
+
+  assert.ok(evidence);
+  assert.equal(evidence.outcome, "failed");
+  assert.equal(evidence.exitCode, undefined);
+  assert.equal(executionActionStatusFromCommandEvidence(evidence), "failed");
+  assert.equal(evidence.outputTail[0].text, "failed\n");
+});
+
+test("incomplete unified exec success does not borrow legacy Pi exit zero", () => {
+  const start = event(1, "tool_start", {
+    toolCallId: "tool-unified-incomplete",
+    toolName: "bash",
+    args: { command: "node app.js" },
+  });
+  const end = event(2, "tool_end", {
+    toolCallId: "tool-unified-incomplete",
+    toolName: "bash",
+    isError: false,
+    result: {
+      content: [{ type: "text", text: "must not become legacy output\n" }],
+      details: {
+        unifiedExec: {
+          status: "succeeded",
+          cwd: "/repo",
+          command: { command: "node app.js" },
+          startedAt: start.ts,
+          endedAt: "2026-07-13T00:00:02.000Z",
+          durationMs: 1000,
+          timedOut: false,
+          cancelled: false,
+          stdout: { byteCount: 0, lineCount: 0, preview: "", truncated: false },
+          stderr: { byteCount: 0, lineCount: 0, preview: "", truncated: false },
+          artifacts: [],
+        },
+      },
+    },
+  });
+
+  const evidence = deriveExecutionActionCommandEvidence({
+    events: [start, end],
+    toolCallId: "tool-unified-incomplete",
+    start,
+    end,
+  });
+
+  assert.ok(evidence);
+  assert.equal(evidence.outcome, "succeeded");
+  assert.equal(evidence.exitCode, undefined);
+  assert.equal(executionActionStatusFromCommandEvidence(evidence), "failed");
+  assert.deepEqual(evidence.outputTail, []);
+});
+
 function event(seq, type, data, runId = "run-live") {
   return {
     id: `event-${seq}`,

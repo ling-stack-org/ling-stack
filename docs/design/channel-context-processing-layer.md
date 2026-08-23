@@ -122,6 +122,20 @@ The layer should be deterministic where possible. Model calls may help summarize
 compact large inputs, but local policy must decide scope, sensitivity, source refs, and
 whether a compacted item can be used.
 
+Provider-backed segmentation and durable-summary generation are advisory preprocessing,
+not dispatch ownership. Both calls run with short policy deadlines and cancellation. A
+segmentation timeout commits the conservative bootstrap assignment. A summary timeout
+keeps the last committed summary and uses a deterministic, permission-filtered recent
+tail within the resolved provider budget. If required current-turn input cannot fit, the
+caller publishes a typed visible blocker instead of leaving the source turn open.
+
+These calls run inside the daemon-owned Channel turn dispatcher, never inside an HTTP/SSE
+response lifecycle. Their committed assignment/summary records are recovery checkpoints.
+If the daemon exits after an external inference returns but before its record commits,
+the read-only inference may be repeated; canonical writes remain idempotent and no
+assistant item, Run, or workflow may be duplicated. Cancellation caused by a client
+disconnect is not propagated into Context Processing.
+
 ### Conversation continuity input
 
 Context consumers must not independently scan fixed recent-message windows. The canonical

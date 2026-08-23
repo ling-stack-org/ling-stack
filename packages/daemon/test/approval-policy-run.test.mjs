@@ -9,6 +9,7 @@ import { test } from "node:test";
 import { deflateSync } from "node:zlib";
 import { DEFAULT_WORKSPACE_ID, createSqliteRunStore } from "../../core/dist/index.js";
 import { createDaemonServer } from "../dist/index.js";
+import { auditIgnoredRunnerCompletion } from "../dist/features/runs/stale-completion.js";
 import { ensureGitRepoForChannelPost } from "./git-test-helpers.mjs";
 
 test("health includes the configured default workspace cwd", async () => {
@@ -800,8 +801,287 @@ test("bash=ask pauses the run until the approval is resolved", async () => {
     assert.equal(secondRun.threadId, waitingRun.threadId);
     const runsForThread = await getJson(`${daemon.url}/runs?cwd=${encodeURIComponent(cwd)}&threadId=${encodeURIComponent(waitingRun.threadId)}`);
     assert.deepEqual(runsForThread.runs.map((run) => run.id), [second.runId, runId]);
+    const actionsForThread = await getJson(`${daemon.url}/execution-actions?cwd=${encodeURIComponent(cwd)}&threadId=${encodeURIComponent(waitingRun.threadId)}`);
+    assert.equal(actionsForThread.actions.length, 2);
+    assert.deepEqual(new Set(actionsForThread.actions.map((action) => action.runId)), new Set([runId, second.runId]));
+    assert.equal(actionsForThread.actions.every((action) => action.toolCallId === "tool_bash_ask"), true);
   } finally {
     await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("daemon shutdown preserves a pending approval instead of recording user cancellation", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-approval-shutdown-"));
+  const runner = new ApprovalProbeRunner({
+    toolCallId: "tool_bash_shutdown",
+    toolName: "bash",
+    input: { command: "echo resume-after-restart" },
+  });
+  const daemon = await startDaemonForTest(runner);
+  let stopped = false;
+  try {
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "ask" } });
+    const response = await postRunStream(daemon.url, runBody(cwd, "task_bash_shutdown"));
+    const sse = createSseReader(response);
+    const ready = await sse.nextEvent();
+    assert.equal(ready.event, "ready");
+    const runId = ready.data.runId;
+
+    const requested = await waitForSseEvent(sse, "approval_requested");
+    const approvalId = requested.data.data.approvalId;
+
+    await daemon.close();
+    stopped = true;
+    await sse.collectRemaining().catch(() => {});
+
+    const store = createSqliteRunStore(cwd);
+    try {
+      const run = store.getRun(runId);
+      const approval = store.getApprovalRequest(approvalId);
+      const checkpoint = store.getApprovalCheckpointForApproval(approvalId);
+      const events = store.listEvents(runId, { limit: 1_000 });
+
+      assert.equal(run?.status, "waiting_for_approval");
+      assert.equal(approval?.status, "pending");
+      assert.equal(approval?.resolvedBy, undefined);
+      assert.equal(checkpoint?.status, "pending");
+      assert.equal(checkpoint?.revision, 2);
+      assert.equal(checkpoint?.resumeBasis?.approvalId, approvalId);
+      assert.equal(checkpoint?.resumeBasis?.runId, runId);
+      assert.equal(checkpoint?.resumeBasis?.toolCallId, "tool_bash_shutdown");
+      assert.equal(checkpoint?.resumeBasis?.sideEffectFingerprint.length, 64);
+      assert.equal(checkpoint?.resumeBasis?.fingerprint.length, 64);
+      const workUnit = run?.workUnitId ? store.getWorkUnit(run.workUnitId) : undefined;
+      const attempt = workUnit?.activeAttemptId ? store.getWorkUnitAttempt(workUnit.activeAttemptId) : undefined;
+      assert.equal(workUnit?.status, "waiting_for_approval");
+      assert.ok(attempt);
+      assert.equal(attempt?.status, "lost");
+      assert.equal(attempt?.errorCode, "runtime_suspend");
+      assert.equal(store.listResourceLeases({ ownerType: "run", ownerId: runId, status: "active" }).length, 0);
+      assert.equal(store.listRuntimeSemaphoreSlots({ ownerId: attempt.id, status: "active" }).length, 0);
+      assert.deepEqual(
+        store.listControlPlaneEvents({ workspaceId: "workspace_default", limit: 1_000 })
+          .filter((event) => event.entityId === runId || event.entityId === workUnit?.id || event.entityId === approvalId)
+          .filter((event) => event.action.includes("approval_resume_suspended"))
+          .map((event) => event.domain),
+        ["runs", "work_units"],
+      );
+      assert.equal(
+        store.listControlPlaneEvents({ workspaceId: "workspace_default", limit: 1_000 })
+          .some((event) => event.domain === "approvals"
+            && event.entityId === approvalId
+            && event.action === "approval.resume_suspended"),
+        true,
+      );
+      assert.equal(events.some((event) => event.type === "run_cancelled"), false);
+      assert.equal(events.some((event) => event.type === "approval_cancelled"), false);
+    } finally {
+      store.close();
+    }
+  } finally {
+    if (!stopped) {
+      await daemon.close();
+    }
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("a real orchestrator hard timeout fails the Run instead of recording cancellation", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-hard-timeout-"));
+  const runner = new AbortAwareBlockingRunner();
+  const stores = new Map();
+  const storeFactory = (workspaceCwd) => {
+    const store = createSqliteRunStore(workspaceCwd);
+    const createWorkUnit = store.createWorkUnit.bind(store);
+    store.createWorkUnit = (input) => createWorkUnit({
+      ...input,
+      timeoutPolicy: {
+        heartbeatIntervalMs: 10,
+        heartbeatTimeoutMs: 50,
+        idleTimeoutMs: 5_000,
+        hardTimeoutMs: 40,
+        cancelGraceMs: 20,
+      },
+    });
+    stores.set(workspaceCwd, store);
+    return store;
+  };
+  const daemon = await startDaemonForTest(runner, { storeFactory }, { defaultWorkspaceCwd: cwd });
+  try {
+    const { runId } = await postRunAndCollectEvents(daemon.url, runBody(cwd, "task_hard_timeout"));
+    const run = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(run.status, "failed");
+    assert.equal(run.errorMessage, "hard_timeout");
+
+    const store = stores.get(cwd);
+    const workUnit = store.getWorkUnit(run.workUnitId);
+    const attempt = store.getWorkUnitAttempt(workUnit.activeAttemptId);
+    assert.equal(workUnit.status, "failed");
+    assert.equal(workUnit.errorCode, "hard_timeout");
+    assert.equal(attempt.status, "failed");
+    assert.equal(attempt.errorCode, "hard_timeout");
+    assert.equal(store.listEvents(runId, { limit: 1_000 }).some((event) => event.type === "run_cancelled"), false);
+    assert.equal(store.listEvents(runId, { limit: 1_000 }).some((event) => event.type === "approval_cancelled"), false);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("approved checkpoint resumes the same Run with one fenced replacement attempt after daemon restart", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-approval-restart-resume-"));
+  const command = "printf 'resumed-ok\\n' > resumed-after-restart.txt";
+  const firstRunner = new ApprovalProbeRunner({
+    toolCallId: "tool_bash_restart_resume",
+    toolName: "bash",
+    input: { command },
+  });
+  let daemon = await startDaemonForTest(firstRunner);
+  let daemonOpen = true;
+  try {
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "ask" } });
+    const response = await postRunStream(daemon.url, runBody(cwd, "task_bash_restart_resume"));
+    const sse = createSseReader(response);
+    const ready = await sse.nextEvent();
+    const runId = ready.data.runId;
+    const requested = await waitForSseEvent(sse, "approval_requested");
+    const approvalId = requested.data.data.approvalId;
+
+    await daemon.close();
+    daemonOpen = false;
+    await sse.collectRemaining().catch(() => {});
+
+    const secondRunner = new ApprovalProbeRunner({
+      toolCallId: "tool_unused_after_restart",
+      toolName: "bash",
+      input: { command: "echo must-not-run" },
+    });
+    daemon = await startDaemonForTest(secondRunner, {}, { defaultWorkspaceCwd: cwd });
+    daemonOpen = true;
+    const approved = await postJson(`${daemon.url}/approvals/${encodeURIComponent(approvalId)}/approve?cwd=${encodeURIComponent(cwd)}`, {
+      reason: "resume exact approved command",
+    });
+    assert.equal(approved.approval.status, "approved");
+
+    await waitForCondition(async () => {
+      const current = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
+      return current.status === "succeeded";
+    }, "Timed out waiting for resumed Run to succeed.");
+
+    assert.equal(await readFile(resolve(cwd, "resumed-after-restart.txt"), "utf8"), "resumed-ok\n");
+    assert.equal(secondRunner.runs.length, 0);
+    const actions = await getJson(`${daemon.url}/execution-actions?cwd=${encodeURIComponent(cwd)}&runId=${encodeURIComponent(runId)}`);
+    const resumedAction = actions.actions.find((action) => action.toolCallId === "tool_bash_restart_resume");
+    assert.equal(resumedAction?.status, "succeeded");
+    assert.equal(resumedAction?.commandEvidence?.exitCode, 0);
+
+    const store = createSqliteRunStore(cwd);
+    try {
+      const run = store.getRun(runId);
+      assert.equal(run?.status, "succeeded");
+      const workUnit = run?.workUnitId ? store.getWorkUnit(run.workUnitId) : undefined;
+      const attempts = workUnit ? store.listWorkUnitAttempts(workUnit.id) : [];
+      assert.equal(attempts.length, 2);
+      assert.equal(attempts[0]?.status, "lost");
+      assert.equal(attempts[1]?.status, "succeeded");
+      assert.equal(workUnit?.activeAttemptId, attempts[1]?.id);
+      const checkpoint = store.getApprovalCheckpointForApproval(approvalId);
+      assert.equal(checkpoint?.status, "resumed");
+      assert.equal(checkpoint?.runnerResumeHandle?.attemptId, attempts[1]?.id);
+      assert.equal(checkpoint?.resumeBasis?.priorAttemptId, attempts[0]?.id);
+      assert.equal(store.listEvents(runId, { limit: 1_000 }).filter((event) => event.type === "run_cancelled").length, 0);
+      const stale = auditIgnoredRunnerCompletion({
+        store,
+        run,
+        workUnit,
+        attempt: attempts[0],
+        reportedStatus: "succeeded",
+        now: "2026-08-15T02:30:00.000Z",
+      });
+      assert.equal(stale?.type, "stale_runner_completion_ignored");
+      assert.equal(stale?.data.reason, "attempt_not_current");
+      assert.equal(store.getRun(runId)?.status, "succeeded");
+      assert.equal(store.listWorkUnitAttempts(workUnit.id).filter((entry) => entry.status === "succeeded").length, 1);
+    } finally {
+      store.close();
+    }
+  } finally {
+    if (daemonOpen) await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("restart resume fails closed when the exact approved side effect has no safe continuation", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-approval-resume-unsupported-"));
+  const runner = new ApprovalProbeRunner({
+    toolCallId: "tool_write_resume_unsupported",
+    toolName: "write",
+    input: { path: "unsupported-after-restart.txt", content: "must not be written" },
+  });
+  let daemon = await startDaemonForTest(runner);
+  let daemonOpen = true;
+  try {
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { write: "ask" } });
+    const response = await postRunStream(daemon.url, runBody(cwd, "task_write_resume_unsupported"));
+    const sse = createSseReader(response);
+    const ready = await sse.nextEvent();
+    const runId = ready.data.runId;
+    const requested = await waitForSseEvent(sse, "approval_requested");
+    const approvalId = requested.data.data.approvalId;
+    await daemon.close();
+    daemonOpen = false;
+    await sse.collectRemaining().catch(() => {});
+
+    daemon = await startDaemonForTest(new ApprovalProbeRunner({
+      toolCallId: "tool_unused_resume_unsupported",
+      toolName: "bash",
+      input: { command: "echo unused" },
+    }), {}, { defaultWorkspaceCwd: cwd });
+    daemonOpen = true;
+    await postJson(`${daemon.url}/approvals/${encodeURIComponent(approvalId)}/approve?cwd=${encodeURIComponent(cwd)}`, {
+      reason: "approve exact write",
+    });
+    try {
+      await waitForCondition(async () => {
+        const current = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
+        return current.status === "failed";
+      }, "Timed out waiting for unsupported resume to fail closed.");
+    } catch (error) {
+      const diagnosticStore = createSqliteRunStore(cwd);
+      try {
+        const diagnosticRun = diagnosticStore.getRun(runId);
+        const diagnosticCheckpoint = diagnosticStore.getApprovalCheckpointForApproval(approvalId);
+        const diagnosticWorkUnit = diagnosticRun?.workUnitId ? diagnosticStore.getWorkUnit(diagnosticRun.workUnitId) : undefined;
+        const diagnosticAttempt = diagnosticWorkUnit?.activeAttemptId
+          ? diagnosticStore.getWorkUnitAttempt(diagnosticWorkUnit.activeAttemptId)
+          : undefined;
+        throw new Error(
+          `${error instanceof Error ? error.message : String(error)} `
+          + `run=${diagnosticRun?.status ?? "missing"} `
+          + `workUnit=${diagnosticWorkUnit?.status ?? "missing"} `
+          + `attempt=${diagnosticAttempt?.status ?? "missing"} `
+          + `checkpoint=${diagnosticCheckpoint?.status ?? "missing"}`,
+        );
+      } finally {
+        diagnosticStore.close();
+      }
+    }
+
+    const store = createSqliteRunStore(cwd);
+    try {
+      const run = store.getRun(runId);
+      const checkpoint = store.getApprovalCheckpointForApproval(approvalId);
+      assert.equal(run?.status, "failed");
+      assert.match(run?.errorMessage ?? "", /^approval_resume_unsupported:file_write/u);
+      assert.equal(checkpoint?.status, "resume_failed");
+      assert.match(checkpoint?.resumeFailureReason ?? "", /^approval_resume_unsupported:file_write/u);
+      await assert.rejects(() => readFile(resolve(cwd, "unsupported-after-restart.txt"), "utf8"), /ENOENT/u);
+    } finally {
+      store.close();
+    }
+  } finally {
+    if (daemonOpen) await daemon.close();
     await rm(cwd, { recursive: true, force: true });
   }
 });
@@ -827,6 +1107,8 @@ test("approval execution actions expose preview and result artifacts", async () 
     assert.equal(waitingActions.actions.length, 1);
     assert.deepEqual(waitingActions.actions[0].previewArtifactIds, requested.data.data.previewArtifactIds);
     assert.deepEqual(waitingActions.actions[0].resultArtifactIds, []);
+    assert.equal(waitingActions.actions[0].status, "waiting_for_approval");
+    assert.equal(waitingActions.actions[0].executedAt, undefined);
 
     const previewContent = await fetch(`${daemon.url}/artifacts/${encodeURIComponent(waitingActions.actions[0].previewArtifactIds[0])}/content?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(previewContent.status, 200);
@@ -841,7 +1123,11 @@ test("approval execution actions expose preview and result artifacts", async () 
 
     const completedActions = await getJson(`${daemon.url}/execution-actions?cwd=${encodeURIComponent(cwd)}&runId=${encodeURIComponent(runId)}`);
     assert.equal(completedActions.actions.length, 1);
-    assert.equal(completedActions.actions[0].status, "approved");
+    assert.equal(completedActions.actions[0].status, "succeeded");
+    assert.equal(completedActions.actions[0].approvalId, approvalId);
+    assert.equal(completedActions.actions[0].toolCallId, "tool_action_artifacts");
+    assert.ok(completedActions.actions[0].executedAt);
+    assert.ok(completedActions.actions[0].completedAt);
     assert.equal(completedActions.actions[0].resultArtifactIds.length, 1);
     const resultContent = await fetch(`${daemon.url}/artifacts/${encodeURIComponent(completedActions.actions[0].resultArtifactIds[0])}/content?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(resultContent.status, 200);
@@ -1368,7 +1654,7 @@ test("approved patch fails closed when target changes after preview", async () =
     toolCallId: "tool_patch_conflict",
     toolName: "write",
     input: { patchText },
-  });
+  }, true);
   const daemon = await startDaemonForTest(runner);
   try {
     const response = await postRunStream(daemon.url, runBody(cwd, "task_patch_conflict"));
@@ -1391,6 +1677,10 @@ test("approved patch fails closed when target changes after preview", async () =
     assert.equal(runner.decisions[0].handledResult.details.status, "conflict");
 
     const actions = await getJson(`${daemon.url}/execution-actions?cwd=${encodeURIComponent(cwd)}&runId=${encodeURIComponent(runId)}`);
+    assert.equal(actions.actions.length, 1);
+    assert.equal(actions.actions[0].approvalId, approvalId);
+    assert.equal(actions.actions[0].toolCallId, "tool_patch_conflict");
+    assert.equal(actions.actions[0].status, "failed");
     assert.equal(actions.actions[0].resultArtifactIds.length, 1);
     const resultContent = await fetch(`${daemon.url}/artifacts/${encodeURIComponent(actions.actions[0].resultArtifactIds[0])}/content?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(resultContent.status, 200);
@@ -4150,6 +4440,8 @@ test("work unit retry and reconcile APIs operate on durable supervisor state", a
         ownerId: attempt.id,
         workUnitId: running.id,
         attemptId: attempt.id,
+        runtimeInstanceId: attempt.runtimeInstanceId,
+        fencingToken: attempt.fencingToken,
         acquiredAt: "2026-06-04T01:01:02.000Z",
         expiresAt: "2026-06-04T01:11:02.000Z",
       });
@@ -4162,6 +4454,8 @@ test("work unit retry and reconcile APIs operate on durable supervisor state", a
         ownerId: attempt.id,
         workUnitId: running.id,
         attemptId: attempt.id,
+        runtimeInstanceId: attempt.runtimeInstanceId,
+        fencingToken: attempt.fencingToken,
         acquiredAt: "2026-06-04T01:01:03.000Z",
         expiresAt: "2026-06-04T01:11:03.000Z",
       });
@@ -4398,6 +4692,12 @@ class ApprovalArtifactRunner {
       provider: options.provider.provider,
       model: options.provider.model,
     });
+    options.onEvent?.({
+      type: "tool_start",
+      toolCallId: "tool_action_artifacts",
+      toolName: "bash",
+      args: { command: "echo sk-test_action_preview_secret" },
+    });
     const decision = await options.onApprovalRequired?.({
       toolCallId: "tool_action_artifacts",
       toolName: "bash",
@@ -4507,8 +4807,9 @@ class NonApprovalToolLifecycleRunner {
 }
 
 class ApprovalProbeRunner {
-  constructor(request) {
+  constructor(request, emitHandledToolLifecycle = false) {
     this.request = request;
+    this.emitHandledToolLifecycle = emitHandledToolLifecycle;
     this.decisions = [];
     this.runs = [];
   }
@@ -4529,7 +4830,14 @@ class ApprovalProbeRunner {
       provider: options.provider.provider,
       model: options.provider.model,
     });
-
+    if (this.emitHandledToolLifecycle) {
+      options.onEvent?.({
+        type: "tool_start",
+        toolCallId: this.request.toolCallId,
+        toolName: this.request.toolName,
+        args: this.request.input,
+      });
+    }
     const decision = await options.onApprovalRequired?.({
       ...this.request,
       task: options.task,
@@ -4541,8 +4849,10 @@ class ApprovalProbeRunner {
         type: "tool_end",
         toolCallId: this.request.toolCallId,
         toolName: this.request.toolName,
-        result: { approved: decision.approved, reason: decision.reason },
-        isError: !decision.approved,
+        result: this.emitHandledToolLifecycle
+          ? { error: decision.handledResult?.content?.[0]?.text }
+          : { approved: decision.approved, reason: decision.reason },
+        isError: decision.handledResult?.isError ?? !decision.approved,
       });
     }
 
@@ -4780,6 +5090,29 @@ class BlockingRunner {
 
   release() {
     this._release?.();
+  }
+}
+
+class AbortAwareBlockingRunner {
+  async runTask(options) {
+    options.onEvent?.({
+      type: "run_start",
+      taskId: options.task.id,
+      cwd: options.cwd,
+      provider: options.provider.provider,
+      model: options.provider.model,
+    });
+    await new Promise((resolveWait, rejectWait) => {
+      if (options.signal?.aborted) {
+        rejectWait(options.signal.reason ?? new Error("aborted"));
+        return;
+      }
+      options.signal?.addEventListener("abort", () => {
+        rejectWait(options.signal.reason ?? new Error("aborted"));
+      }, { once: true });
+      if (!options.signal) resolveWait();
+    });
+    return { taskId: options.task.id, events: [], messages: [] };
   }
 }
 

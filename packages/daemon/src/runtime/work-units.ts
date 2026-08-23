@@ -4,11 +4,13 @@ import {
   type RunExecutionStoreFacet,
   type RunStorePathsFacet,
   type RuntimeSupervisorStoreFacet,
-  type RuntimeEvent,
+  type TerminalAttemptStatus,
+  type TerminalRuntimeEventType,
   type WorkUnit,
   type WorkUnitAttempt,
   type WorkUnitKind,
   type WorkUnitStatus,
+  toRuntimeAttemptFence,
 } from "@ling-stack/core";
 import { DEFAULT_RUNNER_ID } from "./runners.js";
 import type { RuntimeSupervisor } from "./supervisor.js";
@@ -60,40 +62,33 @@ function ageMs(value: string | undefined, now: Date): number | undefined {
 export function markWorkUnitStale(store: RuntimeWorkUnitStore, workUnit: WorkUnit, now: string, reason: string): WorkUnit {
   const attempt = workUnit.activeAttemptId ? store.getWorkUnitAttempt(workUnit.activeAttemptId) : undefined;
   const event = workUnit.status === "cancelling" ? "cancel_timeout" : "runner_lost";
-  const transition = store.transitionWorkUnitStatus({
-    workUnitId: workUnit.id,
-    expectedStatus: workUnit.status,
-    event,
-    actor: "system",
-    reason,
-    now,
-    endedAt: now,
-    errorCode: "runtime_stale",
-    errorMessage: reason,
-  });
-  if (transition.ok) {
-    store.appendRuntimeEvent({
-      workUnitId: workUnit.id,
-      attemptId: attempt?.id,
-      type: "work_unit_stale",
-      actor: "system",
-      ts: now,
-      data: { reason, fromStatus: transition.from },
-    });
-  }
   if (attempt) {
-    store.updateWorkUnitAttemptStatus({
-      attemptId: attempt.id,
-      status: "lost",
+    const transitioned = store.transitionWorkUnitAttemptTerminal({
+      ...toRuntimeAttemptFence(attempt),
+      event: event as WorkUnitTransitionEvent,
+      attemptStatus: "lost",
+      runtimeEventType: "work_unit_stale",
+      actor: "system",
       now,
-      endedAt: now,
       errorCode: "runtime_stale",
       errorMessage: reason,
     });
-    store.releaseRuntimeSemaphoreSlotsForOwner(attempt.id, now, "stale-released");
-  }
-  for (const lease of store.listResourceLeases({ workUnitId: workUnit.id, status: "active", limit: 500 })) {
-    store.releaseResourceLeasesForOwner(lease.ownerType, lease.ownerId, now);
+    if (transitioned) {
+      store.releaseRuntimeSemaphoreSlotsForAttempt(toRuntimeAttemptFence(attempt), now, "stale-released");
+      store.releaseResourceLeasesForAttempt(toRuntimeAttemptFence(attempt), now, "stale-released");
+    }
+  } else {
+    store.transitionWorkUnitStatus({
+        workUnitId: workUnit.id,
+        expectedStatus: workUnit.status,
+        event: event as WorkUnitTransitionEvent,
+        actor: "system",
+        reason,
+        now,
+        endedAt: now,
+        errorCode: "runtime_stale",
+        errorMessage: reason,
+      });
   }
   return store.getWorkUnit(workUnit.id) ?? workUnit;
 }
@@ -176,6 +171,9 @@ export function startRuntimeWorkUnit(input: {
   });
   input.store.updateWorkUnitAttemptStatus({
     attemptId: attempt.id,
+    workUnitId: attempt.workUnitId,
+    runtimeInstanceId: attempt.runtimeInstanceId,
+    fencingToken: attempt.fencingToken,
     status: "started",
     now,
     startedAt: now,
@@ -184,6 +182,8 @@ export function startRuntimeWorkUnit(input: {
   input.store.appendRuntimeEvent({
     workUnitId: workUnit.id,
     attemptId: attempt.id,
+    runtimeInstanceId: attempt.runtimeInstanceId,
+    fencingToken: attempt.fencingToken,
     type: "work_unit_started",
     actor: "runner",
     ts: now,
@@ -236,10 +236,8 @@ export function releaseWorkUnitRuntimeResources(
   releaseReason: string,
 ): WorkUnit {
   for (const attempt of store.listWorkUnitAttempts(workUnit.id)) {
-    store.releaseRuntimeSemaphoreSlotsForOwner(attempt.id, now, releaseReason);
-  }
-  for (const lease of store.listResourceLeases({ workUnitId: workUnit.id, status: "active", limit: 500 })) {
-    store.releaseResourceLeasesForOwner(lease.ownerType, lease.ownerId, now);
+    store.releaseRuntimeSemaphoreSlotsForAttempt(toRuntimeAttemptFence(attempt), now, releaseReason);
+    store.releaseResourceLeasesForAttempt(toRuntimeAttemptFence(attempt), now, releaseReason);
   }
   return store.getWorkUnit(workUnit.id) ?? workUnit;
 }
@@ -250,51 +248,25 @@ export function transitionWorkUnitTerminal(
     readonly workUnitId: string;
     readonly attemptId: string;
     readonly event: WorkUnitTransitionEvent;
-    readonly attemptStatus: WorkUnitAttempt["status"];
-    readonly runtimeEventType: RuntimeEvent["type"];
+    readonly attemptStatus: TerminalAttemptStatus;
+    readonly runtimeEventType: TerminalRuntimeEventType;
     readonly actor: WorkUnitTransitionActor;
     readonly now: string;
     readonly errorCode?: string;
     readonly errorMessage?: string;
   },
 ): void {
-  const current = store.getWorkUnit(input.workUnitId);
-  if (!current || isTerminalWorkUnitStatus(current.status) || current.status === "stale") {
-    return;
-  }
-  const transition = store.transitionWorkUnitStatus({
-    workUnitId: input.workUnitId,
-    expectedStatus: current.status,
+  const attempt = store.getWorkUnitAttempt(input.attemptId);
+  if (!attempt || attempt.workUnitId !== input.workUnitId) return;
+  store.transitionWorkUnitAttemptTerminal({
+    ...toRuntimeAttemptFence(attempt),
     event: input.event,
+    attemptStatus: input.attemptStatus,
+    runtimeEventType: input.runtimeEventType,
     actor: input.actor,
     now: input.now,
-    endedAt: input.now,
-    errorCode: input.errorCode ?? null,
-    errorMessage: input.errorMessage ?? null,
-  });
-  if (!transition.ok) {
-    return;
-  }
-  store.updateWorkUnitAttemptStatus({
-    attemptId: input.attemptId,
-    status: input.attemptStatus,
-    now: input.now,
-    endedAt: input.now,
-    errorCode: input.errorCode ?? null,
-    errorMessage: input.errorMessage ?? null,
-  });
-  store.appendRuntimeEvent({
-    workUnitId: input.workUnitId,
-    attemptId: input.attemptId,
-    type: input.runtimeEventType,
-    actor: input.actor === "runner" ? "runner" : input.actor === "provider" ? "provider" : "system",
-    ts: input.now,
-    data: {
-      fromStatus: transition.from,
-      toStatus: transition.to,
-      errorCode: input.errorCode,
-      errorMessage: input.errorMessage,
-    },
+    errorCode: input.errorCode,
+    errorMessage: input.errorMessage,
   });
 }
 

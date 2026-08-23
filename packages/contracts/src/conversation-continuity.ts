@@ -9,6 +9,7 @@ export const conversationDomainRefTypes = [
   "task",
   "workflow",
   "workflow_step",
+  "terminal_report",
   "approval",
   "artifact",
   "handoff",
@@ -377,10 +378,115 @@ export interface ChannelIntentClarificationV2 {
   readonly question: string;
 }
 
-export interface ChannelIntentExecutionV2 {
+export const commandMatchExecutableValuesV1 = [
+  "bun",
+  "cargo",
+  "go",
+  "make",
+  "node",
+  "npm",
+  "npx",
+  "pnpm",
+  "pytest",
+  "python",
+  "python3",
+  "swift",
+  "xcodebuild",
+  "yarn",
+] as const;
+
+export type CommandMatchExecutableV1 = (typeof commandMatchExecutableValuesV1)[number];
+
+export type CommandMatchPolicyV1 =
+  | {
+      readonly kind: "exact_command";
+      readonly command: string;
+    }
+  | {
+      readonly kind: "executable";
+      readonly executable: CommandMatchExecutableV1;
+    };
+
+export interface ChannelIntentExecutionOperationV1 {
+  readonly id: string;
   readonly kind: "file_create" | "file_edit" | "open_local_target" | "run_command";
   readonly targetKind: "file" | "directory" | "command" | "workspace";
-  readonly targetRef?: ConversationDomainRef;
+  readonly targetRef: ConversationDomainRef;
+  readonly commandMatchPolicy?: CommandMatchPolicyV1;
+  readonly required: boolean;
+  readonly dependsOn: readonly string[];
+}
+
+export interface ChannelIntentExecutionPlanV1 {
+  readonly operations: readonly ChannelIntentExecutionOperationV1[];
+}
+
+export const requiredParticipantRequirementsV1 = ["required", "optional"] as const;
+export type RequiredParticipantRequirementV1 = (typeof requiredParticipantRequirementsV1)[number];
+
+export const requiredParticipantExpectedOutcomesV1 = [
+  "discussion_reply",
+  "execution",
+  "verification",
+  "synthesis",
+] as const;
+export type RequiredParticipantExpectedOutcomeV1 = (typeof requiredParticipantExpectedOutcomesV1)[number];
+
+export const requiredParticipantRequestedByValuesV1 = [
+  "structured_mention",
+  "explicit_role",
+  "selector_policy",
+] as const;
+export type RequiredParticipantRequestedByV1 = (typeof requiredParticipantRequestedByValuesV1)[number];
+
+export interface RequiredParticipantV1 {
+  readonly participantId: string;
+  readonly role: string;
+  readonly requirement: RequiredParticipantRequirementV1;
+  readonly expectedOutcome: RequiredParticipantExpectedOutcomeV1;
+  readonly requiredOperationIds: readonly string[];
+  readonly requestedBy: RequiredParticipantRequestedByV1;
+}
+
+export interface RequiredParticipantManifestV1 {
+  readonly schemaVersion: 1;
+  readonly participants: readonly RequiredParticipantV1[];
+  readonly fingerprint: string;
+}
+
+export function createRequiredParticipantManifestV1(
+  participants: readonly RequiredParticipantV1[],
+): RequiredParticipantManifestV1 {
+  const copied = participants.map((participant) => ({
+    ...participant,
+    requiredOperationIds: [...participant.requiredOperationIds],
+  }));
+  return {
+    schemaVersion: 1,
+    participants: copied,
+    fingerprint: requiredParticipantManifestFingerprintV1(copied),
+  };
+}
+
+export function requiredParticipantManifestFingerprintV1(
+  participants: readonly RequiredParticipantV1[],
+): string {
+  const canonical = [...participants]
+    .map((participant) => ({
+      participantId: participant.participantId,
+      role: participant.role,
+      requirement: participant.requirement,
+      expectedOutcome: participant.expectedOutcome,
+      requiredOperationIds: [...participant.requiredOperationIds].sort(),
+      requestedBy: participant.requestedBy,
+    }))
+    .sort((left, right) => left.participantId.localeCompare(right.participantId));
+  let hash = 0xcbf29ce484222325n;
+  for (const byte of new TextEncoder().encode(JSON.stringify(canonical))) {
+    hash ^= BigInt(byte);
+    hash = BigInt.asUintN(64, hash * 0x100000001b3n);
+  }
+  return `rpmv1_${hash.toString(16).padStart(16, "0")}`;
 }
 
 export interface ChannelIntentDecisionV2 {
@@ -394,12 +500,13 @@ export interface ChannelIntentDecisionV2 {
   readonly contextProjectionVersion: string;
   readonly action: ChannelIntentDecisionV2Action;
   readonly selectedTeammateIds: readonly string[];
+  readonly participantManifest: RequiredParticipantManifestV1;
   readonly proposalId?: string;
   readonly resultItemIds: readonly string[];
   readonly workflowId?: string;
   readonly reason: string;
   readonly clarification?: ChannelIntentClarificationV2;
-  readonly execution?: ChannelIntentExecutionV2;
+  readonly execution?: ChannelIntentExecutionPlanV1;
   readonly status: ChannelIntentDecisionV2Status;
   readonly createdBy: ChannelIntentDecisionV2CreatedBy;
   readonly errorCode?: string;

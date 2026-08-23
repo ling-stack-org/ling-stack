@@ -22,6 +22,7 @@ export function buildChannelReplyRunRequest(input: {
   readonly channelParallelLimit?: number;
   readonly parentRunId?: string;
   readonly compactedRetry?: boolean;
+  readonly recoveryAttempt?: number;
   readonly contextProjection: ConversationContextProjectionMetadata;
 }): RunRequest {
   const thread = ensureChannelReplyThread(input.store, input.channel, input.sourceMessage);
@@ -52,9 +53,7 @@ export function buildChannelReplyRunRequest(input: {
     contextProjection: input.contextProjection,
     channelParallelLimit: input.channelParallelLimit,
     parentRunId: input.parentRunId,
-    idempotencyKey: input.compactedRetry
-      ? `channel_ai_reply:${input.sourceMessage.id}:${input.replyMessage.id}:compacted`
-      : `channel_ai_reply:${input.sourceMessage.id}:${input.replyMessage.id}`,
+    idempotencyKey: channelReplyIdempotencyKey(input),
     task: {
       id: input.sourceMessage.id,
       title: `Channel discussion in ${input.channel.name}`,
@@ -62,6 +61,19 @@ export function buildChannelReplyRunRequest(input: {
       channelId: input.channel.id,
     },
   };
+}
+
+function channelReplyIdempotencyKey(input: {
+  readonly sourceMessage: ChannelMessage;
+  readonly replyMessage: ChannelMessage;
+  readonly compactedRetry?: boolean;
+  readonly recoveryAttempt?: number;
+}): string {
+  const base = `channel_ai_reply:${input.sourceMessage.id}:${input.replyMessage.id}`;
+  const recovery = input.recoveryAttempt && input.recoveryAttempt > 0
+    ? `${base}:recovery:${input.recoveryAttempt}`
+    : base;
+  return input.compactedRetry ? `${recovery}:compacted` : recovery;
 }
 
 export function ensureChannelReplyThread(

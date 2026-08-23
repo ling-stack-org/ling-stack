@@ -2,6 +2,7 @@ import { appendChannelItemFixture, getChannelItemViewFixture, listChannelItemVie
 import assert from "node:assert/strict";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
@@ -13,16 +14,22 @@ import {
   projectConversationItemToChannelMessage,
   resolveStoragePaths,
 } from "../../core/dist/index.js";
+import { createRequiredParticipantManifestV1, createWorkflowParticipantAuthorityV1 } from "../../contracts/dist/index.js";
 import { createDaemonServer } from "../dist/index.js";
 import { buildContextPack, resolveProviderContextBudget } from "../dist/features/channels/context-packs.js";
 import { routeChannelMessageReply } from "../dist/features/channels/channel-message-router.js";
 import { resolveChannelReplyExecutionTarget } from "../dist/features/channels/channel-reply-execution-target.js";
+import { resolveWorkflowParticipantRunProfile } from "../dist/features/channels/workflow-participant-run-profile.js";
+import { preflightWorkflowParticipantProvider } from "../dist/features/channels/workflow-participant-provider.js";
+import { prepareWorkflowStepStart } from "../dist/features/channels/workflows.js";
 import { planConversationContextSummary } from "../dist/features/channels/context-processing/conversation-summary-coordinator.js";
 import { buildLingAgentSessionViewForChannel } from "../dist/features/channels/ling-agent-session-view.js";
 import { buildLingAgentTurnEnvelope } from "../dist/features/channels/ling-agent-turn-envelope.js";
 import { assertChannelWorkspaceReady } from "../dist/features/channels/workspace.js";
 import { findActiveChannelReplyRun } from "../dist/features/channels/channel-reply-dispatch.js";
 import { availabilityIncidentInputForProviderRuntimeFailure } from "../dist/features/channels/provider-runtime-observations.js";
+import { selectChannelWorkflowIntent } from "../dist/features/channels/channel-intent-selector.js";
+import { confirmChannelExecutionProposalWorkflow } from "../dist/features/channels/proposal-workflows.js";
 import { linkBodyExtractorV1 } from "../dist/features/channels/materialization/extractors/link-body.js";
 import { officeExtractorV1 } from "../dist/features/channels/materialization/extractors/office.js";
 import { pdfExtractorV1 } from "../dist/features/channels/materialization/extractors/pdf.js";
@@ -34,6 +41,27 @@ import { ensureDirectWorkspaceReady } from "../dist/features/teammates/direct-wo
 import { createInitialWorkspaceBinding, createManagedGitWorktree, resolveGitRepoRoot } from "../dist/features/workspaces/managed-worktrees.js";
 import { prepareChannelCreateBody } from "./conversation-model-test-fixture.mjs";
 import { ensureEmptyGitRepo, ensureGitRepo, ensureGitRepoForChannelPost } from "./git-test-helpers.mjs";
+
+const require = createRequire(import.meta.url);
+
+function projectionFor(item, assignment) {
+  return {
+    projectionVersion: `projection:${item.id}:${assignment.revision}`,
+    sourceStateFingerprint: `source-state:${item.id}:${assignment.revision}`,
+    threadId: item.threadId,
+    turnId: item.turnId,
+    segmentId: assignment.segmentId,
+    throughItemSequence: item.sequence,
+    summaryIds: [],
+    sourceRefs: [
+      { type: "thread", id: item.threadId },
+      { type: "turn", id: item.turnId },
+      { type: "conversation_item", id: item.id },
+    ],
+    policyVersion: "test-projector-v1",
+    visibilityFingerprint: "channel_shared",
+  };
+}
 
 async function readPdfFixtureBytes() {
   const content = "BT\n/F1 24 Tf\n100 700 Td\n(Ling PDF fixture) Tj\nET";
@@ -2916,6 +2944,107 @@ test("channel messages persist and AI blocker replies do not drop the user messa
   }
 });
 
+test("known unavailable teammate is accepted and replayed as one typed Channel blocker", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-unavailable-participant-"));
+  const runner = new RecordingRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const teammateId = "teammate_builtin_engineer";
+    await putJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      memberships: [{ channelId: channel.id }],
+    });
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+      status: "paused",
+    });
+    const body = {
+      body: "@Engineer 请执行这个任务",
+      mentions: [],
+      requestAiReply: true,
+      idempotencyKey: "unavailable-participant-replay",
+    };
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, body);
+    assert.equal(created.message.mentions[0].id, teammateId);
+    assert.equal(created.aiReply.status, "blocked");
+    assert.equal(created.aiReply.errorMessage, `participant_unavailable_in_channel:${teammateId}`);
+    assert.match(created.aiReply.body, /当前无法在此频道参与/);
+
+    const replay = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, body);
+    assert.equal(replay.message.id, created.message.id);
+    assert.equal(replay.aiReply.id, created.aiReply.id);
+    assert.equal(runner.runs.length, 0);
+
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const sourceItem = store.getConversationItem(created.message.id);
+    assert.ok(sourceItem?.turnId);
+    const dispatch = store.findWorkUnitByIdempotency({
+      kind: "channel_turn_dispatch",
+      ownerType: "ling_turn",
+      ownerId: sourceItem.turnId,
+      idempotencyKey: `channel-turn-dispatch:${sourceItem.turnId}`,
+    });
+    assert.deepEqual(dispatch.request.unavailableRequestedParticipantIds, [teammateId]);
+    assert.deepEqual(sourceItem.payload.mentions.map((mention) => mention.id), [teammateId]);
+    assert.equal(dispatch.status, "succeeded");
+    assert.equal(store.getLingTurn(sourceItem.turnId).status, "blocked");
+    const turnTransitions = await getJson(
+      `${daemon.url}/state-transitions?cwd=${encodeURIComponent(cwd)}&entityType=turn&entityId=${encodeURIComponent(sourceItem.turnId)}`,
+    );
+    assert.equal(turnTransitions.transitions.every((transition) => transition.entityType === "turn"), true);
+    assert.equal(turnTransitions.transitions.every((transition) => transition.entityId === sourceItem.turnId), true);
+    assert.equal(turnTransitions.transitions.some((transition) => transition.toStatus === "blocked"), true);
+    assert.equal(store.listConversationItemsForTurn({ turnId: sourceItem.turnId })
+      .filter((item) => item.kind === "assistant_message").length, 1);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("unavailable participant produces the same typed blocker over Channel SSE", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-unavailable-participant-sse-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const teammateId = "teammate_builtin_engineer";
+    await putJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      memberships: [{ channelId: channel.id }],
+    });
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+      hidden: true,
+    });
+    const response = await fetch(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns/stream?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        body: "@Engineer 请检查这个任务",
+        mentions: [],
+        requestAiReply: true,
+      }),
+    });
+    assert.equal(response.status, 200);
+    const events = parseSseEvents(await response.text());
+    assert.deepEqual(events.map((event) => event.event), ["ready", "blocked"]);
+    assert.equal(events.at(-1).data.aiReply.status, "blocked");
+    assert.equal(events.at(-1).data.aiReply.errorMessage, `participant_unavailable_in_channel:${teammateId}`);
+    assert.deepEqual(events[0].data.message.mentions.map((mention) => mention.id), [teammateId]);
+    assert.equal(runner.runs.length, 0);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("channel discussion uses the mentioned teammate provider preset", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-mentioned-teammate-provider-"));
   const runner = new RecordingRunner();
@@ -3765,6 +3894,9 @@ test("channel hard summary uses the effective workspace provider before dispatch
     })).provider;
     await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
     await setWorkspaceDefaultProvider(daemon.url, cwd, provider.id);
+    await putJson(`${daemon.url}/teammates/${encodeURIComponent("teammate_builtin_engineer")}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      memberships: [{ channelId: channel.id }],
+    });
     const store = stores.get(cwd);
     assert.ok(store);
     const thread = store.resolveOrCreateConversationThread({
@@ -3916,7 +4048,8 @@ test("default_teammate routes root messages through Ling Agent without proposals
     assert.equal(created.aiReply.authorId, "ling_agent");
     const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
     const finalReply = listed.messages.find((message) => message.id === created.aiReply.id);
-    assert.match(finalReply.body, /ling_task_proposal/);
+    assert.equal(finalReply.body, "Visible default reply");
+    assert.doesNotMatch(finalReply.body, /ling_task_proposal/);
     assert.equal(runner.runs.length, 1);
     assert.match(runner.runs[0].systemPrompt, /Do not include hidden proposal blocks/);
     assert.match(runner.runs[0].task.prompt, /Current teammate: Ling Agent \(id: ling_agent, role: custom\)/);
@@ -4115,6 +4248,132 @@ test("channel intent selector creates workflow proposals for execution-shaped al
   }
 });
 
+test("multi-participant concrete file workflow preserves operation-derived tools", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-multi-participant-file-tools-"));
+  const runner = new RecordingRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Concrete multi-agent execution",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
+    })).channel;
+    const participants = ["teammate_builtin_engineer", "teammate_builtin_qa"];
+    for (const teammateId of participants) {
+      await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+        providerPresetId: provider.id,
+      });
+      await putJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/channels?cwd=${encodeURIComponent(cwd)}`, {
+        memberships: [{ channelId: channel.id }],
+      });
+    }
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: "@Engineer @QA 请协作完成一个最小可验证任务：由 Engineer 创建 r5-channel-proof.txt，内容为 continuity-v2-r5-proof；QA 执行命令验证文件内容。Engineer 与 QA 都必须完成并提供真实 evidence 后才报告成功。",
+      mentions: [
+        { id: "teammate_builtin_engineer", label: "Engineer", kind: "ai-teammate" },
+        { id: "teammate_builtin_qa", label: "QA", kind: "ai-teammate" },
+      ],
+      requestAiReply: true,
+    });
+    assertCoordinatorWorkflowStartReply(created);
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const decision = store.listChannelIntentDecisions({ sourceItemId: created.message.id, limit: 20 })
+      .find((candidate) => candidate.workflowId === created.autoStartedWorkflow.workflow.id);
+    assert.ok(decision);
+    assert.equal(decision.action, "execute");
+    assert.deepEqual(decision.participantManifest.participants.map((participant) => participant.participantId), participants);
+    assert.deepEqual(decision.participantManifest.participants.map((participant) => participant.requiredOperationIds), [["create_file"], ["verify_target"]]);
+    const verificationOperation = decision.execution?.operations.find((operation) => operation.id === "verify_target");
+    assert.equal(verificationOperation?.commandMatchPolicy?.kind, "exact_command");
+    assert.ok(verificationOperation?.commandMatchPolicy?.kind === "exact_command");
+    assert.match(
+      verificationOperation.commandMatchPolicy.command,
+      new RegExp(`Buffer\\.from\\('${Buffer.from("continuity-v2-r5-proof", "utf8").toString("base64")}\\',\\s*'base64'\\)`),
+    );
+    assert.doesNotMatch(verificationOperation.commandMatchPolicy.command, /QA/u);
+
+    const proposal = store.listChannelExecutionProposals({
+      channelId: channel.id,
+      sourceMessageId: created.message.id,
+      limit: 20,
+    })[0];
+    assert.ok(proposal);
+    assert.deepEqual(proposal.requiredTools, ["write", "bash"]);
+    assert.equal(created.autoStartedWorkflow.workflowSteps.length, 2);
+    assert.deepEqual(created.autoStartedWorkflow.workflowSteps.map((step) => step.toParticipantId), participants);
+    assert.deepEqual(created.autoStartedWorkflow.workflowSteps.map((step) => step.metadata.executionOperationIds), [["create_file"], ["verify_target"]]);
+    assert.deepEqual(created.autoStartedWorkflow.workflowSteps.map((step) => step.metadata.requiredTools), [["write"], ["bash"]]);
+    const [engineerStep, qaStep] = created.autoStartedWorkflow.workflowSteps;
+    assert.match(engineerStep.prompt, /create_file: file_create -> r5-channel-proof\.txt/u);
+    assert.match(qaStep.prompt, /verify_target: run_command -> verify r5-channel-proof\.txt content/u);
+    assert.ok(
+      qaStep.prompt.includes(`exact command: ${verificationOperation.commandMatchPolicy.command}`),
+      "QA step prompt must carry the exact Host-materialized command used by Completion Gate",
+    );
+    assert.match(qaStep.prompt, /不能用语义等价的替代命令/u);
+    assert.deepEqual(runner.runs[0].tools, ["write"]);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("workflow Host binding rejects a semantic substitute before Completion Gate", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-exact-command-boundary-"));
+  const runner = new MismatchedExactCommandRunner();
+  const daemon = await startDaemonForTest(runner, undefined, { channels: { intentSelector: true } });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Exact command boundary",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read", "bash"],
+    })).channel;
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent("teammate_builtin_qa")}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+    });
+    await putJson(`${daemon.url}/teammates/${encodeURIComponent("teammate_builtin_qa")}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      memberships: [{ channelId: channel.id }],
+    });
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: "@QA 执行 `node app.js` 验证，并且必须提供真实 evidence。",
+      mentions: [{ id: "teammate_builtin_qa", label: "QA", kind: "ai-teammate" }],
+      requestAiReply: true,
+    });
+    assertCoordinatorWorkflowStartReply(created);
+    await waitForCondition(() => runner.decisions.length === 1, "workflow exact-command binding rejection");
+    assert.equal(runner.decisions[0].approved, false);
+    assert.match(runner.decisions[0].reason, /exact command binding rejected bash/u);
+    await waitForCondition(async () => {
+      const steps = await getJson(`${daemon.url}/workflows/${encodeURIComponent(created.autoStartedWorkflow.workflow.id)}/steps?cwd=${encodeURIComponent(cwd)}`);
+      return steps.workflowSteps.every((step) =>
+        step.status === "blocked" && step.metadata?.delegatedOutcome?.kind === "blocked");
+    }, "workflow to remain blocked after Host rejection");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("channel intent selector does not assign specialists outside current channel", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-intent-roster-boundary-"));
   const runner = new RecordingRunner();
@@ -4225,7 +4484,6 @@ test("channel intent selector uses attached AI council specialists without copyi
       source.councilId === developmentCouncilId &&
       source.councilDisplayName === "Development Council"
     ));
-
     const designerChannels = await getJson(`${daemon.url}/teammates/${encodeURIComponent("teammate_builtin_designer")}/channels?cwd=${encodeURIComponent(cwd)}`);
     const qaChannels = await getJson(`${daemon.url}/teammates/${encodeURIComponent("teammate_builtin_qa")}/channels?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(designerChannels.memberships.some((membership) => membership.channelId === channel.id), false);
@@ -4302,7 +4560,7 @@ test("channel intent selector asks one clarify question for underspecified work 
 
 test("channel intent selector auto-starts explicit direct workflow proposals", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-intent-direct-workflow-"));
-  const runner = new RecordingRunner();
+  const runner = new WorkflowEvidenceRunner();
   const daemon = await startDaemonForTest(runner);
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
@@ -4332,7 +4590,12 @@ test("channel intent selector auto-starts explicit direct workflow proposals", a
     assertCoordinatorWorkflowStartReply(created);
     assert.equal(created.autoStartedWorkflow.workflowSteps.length, 3);
     await waitForCondition(() => runner.runs.length === 3, "direct workflow proposal runner sequence");
-    const listedMessages = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/items?cwd=${encodeURIComponent(cwd)}`);
+    let listedMessages;
+    await waitForCondition(async () => {
+      listedMessages = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/items?cwd=${encodeURIComponent(cwd)}`);
+      return listedMessages.messages.some((message) =>
+        message.kind === "ai_reply" && message.authorId === "ling_agent" && /^(完成：|Done:)/u.test(message.body));
+    }, "direct workflow terminal publication");
     const terminalReply = assertCoordinatorWorkflowTerminalReply(listedMessages.messages);
     assert.match(terminalReply.body, /结果：Designer reply/);
 
@@ -4514,8 +4777,8 @@ test("explicit command request becomes execute with bounded bash tools", async (
     const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 2);
     assert(decisions.decisions.every((decision) => decision.action === "execute"));
-    assert(decisions.decisions.every((decision) => decision.execution.kind === "run_command"));
-    assert(decisions.decisions.every((decision) => decision.execution.targetKind === "command"));
+    assert(decisions.decisions.every((decision) => decision.execution.operations[0].kind === "run_command"));
+    assert(decisions.decisions.every((decision) => decision.execution.operations[0].targetKind === "command"));
     assert.equal(runner.runs.length, 1);
     assert.deepEqual(runner.runs[0].tools, ["bash"]);
     assert.match(runner.runs[0].task.prompt, /pnpm test/);
@@ -4806,7 +5069,7 @@ test("model-assisted thread follow-up opens recent target from typed operation k
     JSON.stringify({
       action: "execute",
       reason: "User wants to preview the recent local artifact.",
-      execution: { kind: "open_local_target", targetKind: "file" },
+      execution: { operations: [{ id: "open_target", kind: "open_local_target", targetKind: "file", required: true, dependsOn: [] }] },
     }),
     "Opened local target.",
   ]);
@@ -4891,7 +5154,7 @@ test("model-assisted thread follow-up writes the recent local target without phr
     JSON.stringify({
       action: "execute",
       reason: "User is asking Ling to write the previously discussed file locally.",
-      execution: { kind: "file_create", targetKind: "file" },
+      execution: { operations: [{ id: "create_file", kind: "file_create", targetKind: "file", required: true, dependsOn: [] }] },
     }),
     "Created local file.",
   ]);
@@ -4980,13 +5243,1082 @@ test("model-assisted thread follow-up writes the recent local target without phr
   }
 });
 
+test("model-assisted create-and-run materializes ordered write and Node operations", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-model-create-run-"));
+  const runner = new ScriptedRunner([
+    JSON.stringify({
+      action: "execute",
+      reason: "User explicitly requested a file write followed by a Node verification.",
+      execution: {
+        operations: [
+          { id: "create_file", kind: "file_create", targetKind: "file", required: true, dependsOn: [] },
+          { id: "run_command", kind: "run_command", targetKind: "command", required: true, dependsOn: ["create_file"] },
+        ],
+      },
+    }),
+    "Created and ran app.js.",
+  ]);
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  }, { channels: { intentSelector: true } });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Model create and run",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read", "write", "bash"],
+    })).channel;
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: "创建 app.js，内容是 console.log('ok')，然后运行 node app.js 验证。",
+    });
+
+    assertCoordinatorWorkflowStartReply(created);
+    assert.equal(created.autoStartedWorkflow.workflowSteps.length, 1);
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const sourceItem = store.getConversationItem(created.message.id);
+    assert.ok(sourceItem?.turnId);
+    assert.equal(created.autoStartedWorkflow.workflow.metadata.sourceTurnId, sourceItem.turnId);
+    const [step] = created.autoStartedWorkflow.workflowSteps;
+    assert.deepEqual(step.metadata.requiredTools, ["write", "bash"]);
+    assert.deepEqual(step.metadata.executionOperationIds, ["create_file", "run_command"]);
+    assert.deepEqual(step.metadata.executionPlan.operations.map((operation) => ({
+      id: operation.id,
+      kind: operation.kind,
+      dependsOn: operation.dependsOn,
+      label: operation.targetRef?.label,
+      commandMatchPolicy: operation.commandMatchPolicy,
+    })), [
+      { id: "create_file", kind: "file_create", dependsOn: [], label: "app.js", commandMatchPolicy: undefined },
+      {
+        id: "run_command",
+        kind: "run_command",
+        dependsOn: ["create_file"],
+        label: "node app.js",
+        commandMatchPolicy: { kind: "exact_command", command: "node app.js" },
+      },
+    ]);
+    assert.deepEqual(runner.runs[1].tools, ["write", "bash"]);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("model-assisted natural-language Node work materializes executable evidence policy", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-model-node-executable-"));
+  const runner = new ScriptedRunner([
+    JSON.stringify({
+      action: "execute",
+      reason: "User requested a file write followed by a Node invocation.",
+      execution: {
+        operations: [
+          { id: "create_file", kind: "file_create", targetKind: "file", required: true, dependsOn: [] },
+          { id: "run_command", kind: "run_command", targetKind: "command", required: true, dependsOn: ["create_file"] },
+        ],
+      },
+    }),
+    "Created and invoked the proof function.",
+  ]);
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  }, { channels: { intentSelector: true } });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Natural Node invocation",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read", "write", "bash"],
+    })).channel;
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: "创建 continuity-v2-proof.js，内容是导出 formatProof，然后运行 Node 调用 formatProof(\"7319\") 验证。",
+    });
+
+    assertCoordinatorWorkflowStartReply(created);
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const decision = store.listChannelIntentDecisions({ sourceItemId: created.message.id, limit: 10 })
+      .find((candidate) => candidate.action === "execute");
+    assert.ok(decision?.execution);
+    const commandOperation = decision.execution.operations.find((operation) => operation.id === "run_command");
+    assert.deepEqual(commandOperation?.commandMatchPolicy, { kind: "executable", executable: "node" });
+    assert.equal(commandOperation?.targetRef?.label, "Node");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("partial existing proposal lineage becomes one durable blocker without participant reselection", async () => {
+  for (const scenario of [
+    {
+      name: "single-step",
+      body: "创建 orphan-proof.js，内容是 console.log('proof')。",
+      requiredTools: ["write"],
+    },
+    {
+      name: "multi-participant",
+      body: "请让 Engineer 和 QA 一起实现并测试这个功能。",
+      requiredTools: ["read"],
+    },
+  ]) {
+    const cwd = await mkdtemp(resolve(tmpdir(), `ling-stack-channel-partial-proposal-${scenario.name}-`));
+    const store = createSqliteRunStore(cwd);
+    try {
+      const { channel, message } = createStoreChannelAndMessage(store, cwd, scenario.body);
+      const proposal = store.createChannelExecutionProposal({
+        channelId: channel.id,
+        sourceMessageId: message.id,
+        proposedByTeammateId: "ling_agent",
+        title: `Partial ${scenario.name} proposal`,
+        prompt: scenario.body,
+        assigneeTeammateId: "ling_agent",
+        requiredTools: scenario.requiredTools,
+        riskSummary: "Simulated crash after proposal persistence and before decision persistence.",
+        status: "draft",
+      }, "2026-08-16T11:00:00.000Z");
+
+      const first = await selectChannelWorkflowIntent({
+        store,
+        channel,
+        sourceMessage: message,
+        secretResolver: createCompositeSecretResolver({ env: {} }),
+      });
+
+      assert.equal(first.action, "blocked");
+      assert.equal(first.proposalId, proposal.id);
+      assert.equal(first.errorCode, "existing_proposal_participant_lineage_invalid");
+      assert.equal(first.aiReply.status, "blocked");
+      assert.equal(first.aiReply.errorMessage, `existing_proposal_participant_lineage_invalid:${proposal.id}`);
+      assert.equal(store.listChannelIntentDecisions({ sourceItemId: message.id, limit: 20 }).length, 0);
+      assert.equal(store.listChannelWorkflows({ channelId: channel.id, limit: 20 }).length, 0);
+      assert.equal(store.listRuns({ channelId: channel.id, limit: 20 }).length, 0);
+
+      const repeated = await selectChannelWorkflowIntent({
+        store,
+        channel,
+        sourceMessage: message,
+        secretResolver: createCompositeSecretResolver({ env: {} }),
+      });
+      assert.equal(repeated.action, "blocked");
+      assert.equal(repeated.aiReply.id, first.aiReply.id);
+      assert.equal(
+        store.listConversationItemsForTurn({ turnId: store.getConversationItem(message.id).turnId })
+          .filter((item) => item.kind === "assistant_message" && item.payload.deliveryStatus === "blocked").length,
+        1,
+      );
+    } finally {
+      store.close();
+      await rm(cwd, { recursive: true, force: true });
+    }
+  }
+});
+
+test("partial existing proposal lineage is blocked consistently over JSON and SSE dispatch", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-partial-proposal-transport-"));
+  const runner = new RecordingRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      const appendConversationUserTurn = store.appendConversationUserTurn.bind(store);
+      store.appendConversationUserTurn = (input, now) => {
+        const accepted = appendConversationUserTurn(input, now);
+        const existing = store.listChannelExecutionProposals({
+          channelId: input.channelId,
+          sourceMessageId: accepted.item.id,
+          limit: 1,
+        })[0];
+        if (!existing && input.userInstruction.includes("orphan-transport")) {
+          store.createChannelExecutionProposal({
+            channelId: input.channelId,
+            sourceMessageId: accepted.item.id,
+            proposedByTeammateId: "ling_agent",
+            title: "Injected partial proposal lineage",
+            prompt: input.userInstruction,
+            assigneeTeammateId: "ling_agent",
+            requiredTools: ["write"],
+            riskSummary: "Injected between accepted-turn commit and selector dispatch.",
+            status: "draft",
+          }, now);
+        }
+        return accepted;
+      };
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Partial proposal transport",
+      status: "active",
+      boundPath: cwd,
+      allowedTools: ["read", "write"],
+    })).channel;
+    const requestBody = {
+      body: "创建 orphan-transport-json.js，内容是 console.log('proof')。",
+      requestAiReply: true,
+      idempotencyKey: "partial-proposal-json",
+    };
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, requestBody);
+    assert.equal(created.aiReply.status, "blocked");
+    assert.match(created.aiReply.errorMessage, /^existing_proposal_participant_lineage_invalid:proposal_/);
+    const replay = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, requestBody);
+    assert.equal(replay.message.id, created.message.id);
+    assert.equal(replay.aiReply.id, created.aiReply.id);
+
+    const sseResponse = await fetch(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns/stream?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        body: "创建 orphan-transport-sse.js，内容是 console.log('proof')。",
+        requestAiReply: true,
+        idempotencyKey: "partial-proposal-sse",
+      }),
+    });
+    assert.equal(sseResponse.status, 200);
+    const events = parseSseEvents(await sseResponse.text());
+    assert.equal(events[0].event, "ready");
+    assert.equal(events.at(-1).event, "blocked");
+    assert.equal(events.some((event) => event.event === "error"), false);
+    assert.match(events.at(-1).data.aiReply.errorMessage, /^existing_proposal_participant_lineage_invalid:proposal_/);
+
+    const store = stores.get(cwd);
+    assert.ok(store);
+    for (const sourceMessageId of [created.message.id, events[0].data.message.id]) {
+      const sourceItem = store.getConversationItem(sourceMessageId);
+      assert.ok(sourceItem?.turnId);
+      assert.equal(store.getLingTurn(sourceItem.turnId).status, "blocked");
+      const dispatch = store.findWorkUnitByIdempotency({
+        kind: "channel_turn_dispatch",
+        ownerType: "ling_turn",
+        ownerId: sourceItem.turnId,
+        idempotencyKey: `channel-turn-dispatch:${sourceItem.turnId}`,
+      });
+      assert.equal(dispatch.status, "succeeded");
+      assert.equal(store.listConversationItemsForTurn({ turnId: sourceItem.turnId })
+        .filter((item) => item.kind === "assistant_message" && item.payload.deliveryStatus === "blocked").length, 1);
+      assert.equal(store.listChannelIntentDecisions({ sourceItemId: sourceMessageId, limit: 20 }).length, 0);
+    }
+    assert.equal(store.listChannelWorkflows({ channelId: channel.id, limit: 20 }).length, 0);
+    assert.equal(store.listRuns({ channelId: channel.id, limit: 20 }).length, 0);
+    assert.equal(runner.runs.length, 0);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("explicit custom executable participant is preserved ahead of same-role fallback", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-explicit-participant-preservation-"));
+  const command = `node -e "process.stdout.write('proof:7319')"`;
+  const systemPrompt = "PROMISEBOT_BASE_PROFILE_MARKER: return the configured participant behavior.";
+  const appendSystemPrompt = "PROMISEBOT_APPEND_PROFILE_MARKER: preserve the delegated participant profile.";
+  const approvalProfile = {
+    mode: "standard",
+    risk: "high",
+    requiredForTools: ["bash"],
+    requiredForActions: ["git_push"],
+  };
+  const runner = new DelayedCommandEvidenceRunner(command);
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  }, { channels: { intentSelector: true, terminalReports: true } });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const builtInEngineerId = "teammate_builtin_engineer";
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent(builtInEngineerId)}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+      allowedTools: ["read", "bash"],
+    });
+    const customEngineer = (await postJson(`${daemon.url}/teammates?cwd=${encodeURIComponent(cwd)}`, {
+      roleKey: "engineer",
+      displayName: "PromiseBot",
+      description: "Runs the explicitly assigned verification command.",
+      providerPresetId: provider.id,
+      systemPrompt,
+      appendSystemPrompt: [appendSystemPrompt],
+      allowedTools: ["read", "bash"],
+      approvalProfile,
+      status: "active",
+    })).teammate;
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Explicit participant preservation",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      defaultTeammateId: builtInEngineerId,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read", "bash"],
+    })).channel;
+    for (const teammateId of [builtInEngineerId, customEngineer.id]) {
+      await putJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/channels?cwd=${encodeURIComponent(cwd)}`, {
+        memberships: [{ channelId: channel.id }],
+      });
+    }
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: `；@PromiseBot 运行 \`${command}\` 并验证输出严格等于 proof:7319。`,
+      mentions: [
+        { id: customEngineer.id, label: customEngineer.displayName, kind: "ai-teammate" },
+        { id: customEngineer.id, label: customEngineer.displayName, kind: "ai-teammate" },
+      ],
+      requestAiReply: true,
+    });
+
+    assertCoordinatorWorkflowStartReply(created);
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const sourceItem = store.getConversationItem(created.message.id);
+    assert.deepEqual(sourceItem.payload.mentions.map((mention) => mention.id), [customEngineer.id]);
+    const workflowId = created.autoStartedWorkflow.workflow.id;
+    const decision = store.listChannelIntentDecisions({ sourceItemId: sourceItem.id, limit: 20 })
+      .find((candidate) => candidate.workflowId === workflowId);
+    assert.ok(decision);
+    assert.deepEqual(decision.participantManifest.participants.map((participant) => participant.participantId), [customEngineer.id]);
+    assert.deepEqual(decision.selectedTeammateIds, [customEngineer.id]);
+    const proposal = store.listChannelExecutionProposals({
+      channelId: channel.id,
+      sourceMessageId: sourceItem.id,
+      limit: 20,
+    })[0];
+    assert.ok(proposal);
+    assert.equal(proposal.assigneeTeammateId, customEngineer.id);
+    assert.deepEqual(proposal.collaborationSteps.map((step) => step.teammateId), [customEngineer.id]);
+    assert.deepEqual(
+      created.autoStartedWorkflow.workflow.metadata.requiredParticipantManifest.participants
+        .map((participant) => participant.participantId),
+      [customEngineer.id],
+    );
+    assert.equal(created.autoStartedWorkflow.workflowSteps.length, 1);
+    const [step] = created.autoStartedWorkflow.workflowSteps;
+    assert.equal(step.toParticipantId, customEngineer.id);
+    assert.equal(step.participantAuthority.kind, "channel_selection");
+    assert.equal(step.participantAuthority.origin, "channel_intent_proposal");
+    assert.equal(step.participantAuthority.sourceId, proposal.id);
+    assert.equal(step.participantAuthority.participantId, customEngineer.id);
+    assert.deepEqual(step.metadata.providerBinding, {
+      schemaVersion: 1,
+      participantId: customEngineer.id,
+      bindingMode: "fixed",
+      source: "teammate_fixed",
+      providerPresetId: provider.id,
+    });
+    assert.equal(step.metadata.delegatedRequirement.participantId, customEngineer.id);
+    await waitForCondition(() => runner.executionRuns.length === 1, "explicit custom participant execution run to start");
+    const executionRun = runner.executionRuns[0];
+    assert.equal(executionRun.systemPrompt, systemPrompt);
+    assert.equal(executionRun.appendSystemPrompt.includes(appendSystemPrompt), true);
+    assert.deepEqual(executionRun.tools, ["bash"]);
+    const run = store.getRun(store.getChannelWorkflowStep(step.id).runId);
+    assert.equal(run.teammateId, customEngineer.id);
+    assert.equal(run.requestSnapshot.systemPrompt, systemPrompt);
+    assert.equal(run.requestSnapshot.appendSystemPrompt.includes(appendSystemPrompt), true);
+    assert.deepEqual(run.requestSnapshot.approvalProfile, approvalProfile);
+    assert.deepEqual(run.requestSnapshot.tools, ["bash"]);
+    assert.deepEqual(run.requestSnapshot.providerBinding, step.metadata.providerBinding);
+    assert.equal(JSON.stringify({ decision, proposal, workflow: created.autoStartedWorkflow.workflow, step, run }).includes(builtInEngineerId), false);
+
+    const assigneeOverride = resolveWorkflowParticipantRunProfile({
+      store,
+      channel: store.getChannel(channel.id),
+      step: store.getChannelWorkflowStep(step.id),
+      requestedAssigneeTeammateId: builtInEngineerId,
+      requiredTools: ["bash"],
+    });
+    assert.equal(assigneeOverride.kind, "blocked");
+    assert.equal(assigneeOverride.code, "workflow_participant_override_forbidden");
+    assert.deepEqual(assigneeOverride.missingRequirements, ["assigned_participant"]);
+
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent(customEngineer.id)}?cwd=${encodeURIComponent(cwd)}`, {
+      allowedTools: ["read"],
+    });
+    const toolShrink = resolveWorkflowParticipantRunProfile({
+      store,
+      channel: store.getChannel(channel.id),
+      step: store.getChannelWorkflowStep(step.id),
+      requestedAssigneeTeammateId: customEngineer.id,
+      requiredTools: ["bash"],
+    });
+    assert.equal(toolShrink.kind, "blocked");
+    assert.equal(toolShrink.code, "workflow_participant_required_tools_unavailable");
+    assert.deepEqual(toolShrink.missingRequirements, ["tool:bash"]);
+    assert.equal(runner.executionRuns.length, 1);
+
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent(customEngineer.id)}?cwd=${encodeURIComponent(cwd)}`, {
+      status: "paused",
+    });
+    const recovered = await selectChannelWorkflowIntent({
+      store,
+      channel: store.getChannel(channel.id),
+      sourceMessage: projectConversationItemToChannelMessage(sourceItem),
+      secretResolver: createCompositeSecretResolver({ env: {} }),
+    });
+    assert.equal(recovered.action, "workflow_proposal");
+    assert.equal(recovered.proposal.id, proposal.id);
+    assert.equal(recovered.proposal.assigneeTeammateId, customEngineer.id);
+    assert.equal(recovered.intentDecisionId, decision.id);
+  } finally {
+    runner.releaseExecution();
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("workflow-definition authority does not require a direct Channel membership row", async (t) => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-workflow-definition-authority-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const now = "2026-08-16T02:00:00.000Z";
+    const channel = store.createChannel({
+      name: "Workflow authority",
+      boundPath: cwd,
+      allowedTools: ["read"],
+    }, now);
+    store.replaceTeammateChannelMemberships("teammate_builtin_engineer", [], now);
+    const workflow = store.createChannelWorkflow({
+      channelId: channel.id,
+      title: "Graph-owned participant",
+      objective: "Run an assigned graph participant.",
+      status: "ready",
+      createdBy: "local-user",
+    }, now);
+    const step = store.createChannelWorkflowStep({
+      workflowId: workflow.id,
+      title: "Engineer step",
+      prompt: "Read the workspace.",
+      toParticipantId: "teammate_builtin_engineer",
+      toParticipantLabel: "Engineer",
+      participantAuthority: createWorkflowParticipantAuthorityV1({
+        kind: "workflow_definition",
+        origin: "workflow_graph",
+        participantId: "teammate_builtin_engineer",
+        sourceId: "graph-authority-test",
+      }),
+      metadata: { requiredTools: ["read"] },
+    }, now);
+    const resolution = resolveWorkflowParticipantRunProfile({
+      store,
+      channel,
+      step,
+      requiredTools: ["read"],
+    });
+    assert.equal(resolution.kind, "ready");
+    assert.equal(resolution.teammateId, "teammate_builtin_engineer");
+  } finally {
+    store.close();
+  }
+});
+
+test("proposal provider preflight blocks missing workspace default and freezes configured participant bindings", async (t) => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-workflow-provider-preflight-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const now = "2026-08-17T02:00:00.000Z";
+    const channel = store.createChannel({
+      name: "Provider preflight",
+      boundPath: cwd,
+      defaultProviderPresetId: "provider_channel_ling_agent",
+      allowedTools: ["read"],
+    }, now);
+    for (const teammateId of ["teammate_builtin_engineer", "teammate_builtin_qa"]) {
+      store.replaceTeammateChannelMemberships(teammateId, [{ channelId: channel.id }], now);
+    }
+    const thread = store.resolveOrCreateConversationThread({
+      surfaceKind: "channel_root",
+      channelId: channel.id,
+      title: "Engineer and QA",
+      objective: "Engineer implements and QA verifies.",
+    }, now).thread;
+    const accepted = store.appendConversationUserTurn({
+      channelId: channel.id,
+      threadId: thread.id,
+      title: "Engineer and QA",
+      userInstruction: "Engineer and QA",
+      payload: { body: "Engineer and QA", format: "plain_text", mentions: [], attachmentIds: [], linkPreviewIds: [], fileRefs: [] },
+      idempotencyKey: "workflow-provider-preflight",
+    }, now);
+    const manifest = createRequiredParticipantManifestV1([
+      {
+        participantId: "teammate_builtin_engineer",
+        role: "engineer",
+        requirement: "required",
+        expectedOutcome: "execution",
+        requiredOperationIds: [],
+        requestedBy: "structured_mention",
+      },
+      {
+        participantId: "teammate_builtin_qa",
+        role: "qa",
+        requirement: "required",
+        expectedOutcome: "verification",
+        requiredOperationIds: [],
+        requestedBy: "structured_mention",
+      },
+    ]);
+    const proposal = store.createChannelExecutionProposal({
+      channelId: channel.id,
+      sourceMessageId: accepted.item.id,
+      proposedByTeammateId: "ling_agent",
+      title: "Engineer and QA",
+      prompt: "Engineer and QA",
+      assigneeTeammateId: "teammate_builtin_engineer",
+      collaborationSteps: [
+        { teammateId: "teammate_builtin_engineer", action: "coordinated", summary: "Implement." },
+        { teammateId: "teammate_builtin_qa", action: "reviewed", summary: "Verify." },
+      ],
+      status: "draft",
+    }, now);
+    store.createChannelIntentDecision({
+      channelId: channel.id,
+      sourceItemId: accepted.item.id,
+      contextProjection: projectionFor(
+        accepted.item,
+        store.getEffectiveTurnContextAssignment(accepted.turnId),
+      ),
+      action: "workflow_proposal",
+      selectedTeammateIds: ["teammate_builtin_engineer", "teammate_builtin_qa"],
+      participantManifest: manifest,
+      proposalId: proposal.id,
+      reason: "Engineer implements and QA verifies.",
+      status: "accepted",
+      createdBy: "deterministic",
+    }, now);
+
+    let validationCalls = 0;
+    assert.throws(() => confirmChannelExecutionProposalWorkflow({
+      store,
+      cwd,
+      proposalId: proposal.id,
+      validateRunRequest: () => { validationCalls += 1; },
+      now,
+    }), /no workspace default is configured/);
+    assert.equal(validationCalls, 0);
+    const blocked = store.getChannelExecutionProposal(proposal.id);
+    assert.equal(blocked.status, "blocked");
+    assert.equal(blocked.blocker.code, "workflow_participant_provider_unavailable");
+    assert.equal(blocked.blocker.reasonCode, "workspace_default_provider_missing");
+    assert.equal(blocked.blocker.owner, "workspace");
+    assert.equal(blocked.blocker.repairTarget, "model_workbench");
+    assert.equal(blocked.blocker.providerPresetId, undefined);
+    assert.equal(store.listChannelWorkflows({ channelId: channel.id, limit: 20 }).length, 0);
+
+    store.updateWorkspaceSettings({ defaultProviderPresetId: "provider_workspace" }, now);
+    const validatedProviderIds = [];
+    const confirmed = confirmChannelExecutionProposalWorkflow({
+      store,
+      cwd,
+      proposalId: proposal.id,
+      validateRunRequest: (request) => { validatedProviderIds.push(request.providerPresetId); },
+      now: "2026-08-17T02:01:00.000Z",
+    });
+    assert.deepEqual(validatedProviderIds, ["provider_workspace", "provider_workspace"]);
+    assert.equal(confirmed.proposal.status, "accepted");
+    assert.equal(confirmed.proposal.blocker, undefined);
+    assert.equal(confirmed.proposal.errorMessage, undefined);
+    assert.deepEqual(confirmed.workflowSteps.map((step) => step.metadata.providerBinding), [
+      {
+        schemaVersion: 1,
+        participantId: "teammate_builtin_engineer",
+        bindingMode: "workspace_default",
+        source: "workspace_default",
+        providerPresetId: "provider_workspace",
+      },
+      {
+        schemaVersion: 1,
+        participantId: "teammate_builtin_qa",
+        bindingMode: "workspace_default",
+        source: "workspace_default",
+        providerPresetId: "provider_workspace",
+      },
+    ]);
+    assert.deepEqual(confirmed.workflowSteps.map((step) => step.metadata.providerPresetId), [
+      "provider_workspace",
+      "provider_workspace",
+    ]);
+
+    const engineerStep = confirmed.workflowSteps[0];
+    const engineer = store.getAiTeammate(engineerStep.toParticipantId);
+    assert.ok(engineer);
+    store.updateWorkspaceSettings({ defaultProviderPresetId: "provider_workspace_repaired" }, "2026-08-17T02:02:00.000Z");
+    const resumedProviderIds = [];
+    const resumed = preflightWorkflowParticipantProvider({
+      store,
+      channel,
+      teammate: engineer,
+      cwd,
+      validateRunRequest: (request) => { resumedProviderIds.push(request.providerPresetId); },
+      frozenBinding: engineerStep.metadata.providerBinding,
+    });
+    assert.equal(resumed.kind, "ready");
+    assert.deepEqual(resumedProviderIds, ["provider_workspace"]);
+    assert.equal(resumed.binding.providerPresetId, "provider_workspace");
+
+    const unavailable = preflightWorkflowParticipantProvider({
+      store,
+      channel,
+      teammate: engineer,
+      cwd,
+      validateRunRequest: () => { throw new Error("Provider disabled after proposal confirmation."); },
+      frozenBinding: engineerStep.metadata.providerBinding,
+    });
+    assert.equal(unavailable.kind, "blocked");
+    assert.equal(unavailable.blocker.reasonCode, "provider_unavailable");
+    assert.equal(unavailable.blocker.providerPresetId, "provider_workspace");
+    assert.equal(unavailable.blocker.owner, "workspace");
+
+    const override = prepareWorkflowStepStart(
+      store,
+      engineerStep.id,
+      { mode: "create_and_run_task", providerPresetId: "provider_workspace_repaired" },
+      cwd,
+      () => undefined,
+    );
+    assert.equal(override.kind, "blocked");
+    const blockedStep = store.getChannelWorkflowStep(engineerStep.id);
+    assert.equal(blockedStep.metadata.delegatedOutcome.kind, "blocked");
+    assert.equal(blockedStep.metadata.delegatedOutcome.code, "workflow_participant_provider_override_forbidden");
+    assert.equal(blockedStep.taskId, undefined);
+    assert.equal(blockedStep.runId, undefined);
+
+    const qaStep = confirmed.workflowSteps[1];
+    const {
+      providerBinding: _providerBinding,
+      dependsOnStepIds: _dependsOnStepIds,
+      ...qaMetadataWithoutBinding
+    } = qaStep.metadata;
+    store.database.prepare("UPDATE channel_workflow_steps SET metadata_json = ? WHERE id = ?")
+      .run(JSON.stringify(qaMetadataWithoutBinding), qaStep.id);
+    const missingBinding = prepareWorkflowStepStart(
+      store,
+      qaStep.id,
+      { mode: "create_and_run_task" },
+      cwd,
+      () => undefined,
+    );
+    assert.equal(missingBinding.kind, "blocked");
+    assert.match(missingBinding.blocker, /no valid frozen provider binding/);
+    const missingBindingStep = store.getChannelWorkflowStep(qaStep.id);
+    assert.equal(missingBindingStep.taskId, undefined);
+    assert.equal(missingBindingStep.runId, undefined);
+  } finally {
+    store.close();
+  }
+});
+
+test("explicit executable participant missing a required tool blocks without substitution", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-explicit-participant-tool-block-"));
+  const command = `node -e "process.stdout.write('proof:7319')"`;
+  const runner = new DelayedCommandEvidenceRunner(command);
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  }, { channels: { intentSelector: true } });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const builtInEngineerId = "teammate_builtin_engineer";
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent(builtInEngineerId)}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+      allowedTools: ["read", "bash"],
+    });
+    const namedEngineer = (await postJson(`${daemon.url}/teammates?cwd=${encodeURIComponent(cwd)}`, {
+      roleKey: "engineer",
+      displayName: "ReadOnlyBot",
+      description: "Explicitly assigned but intentionally lacks bash.",
+      providerPresetId: provider.id,
+      allowedTools: ["read"],
+      approvalProfile: { mode: "none" },
+      status: "active",
+    })).teammate;
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Explicit participant tool blocker",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      defaultTeammateId: builtInEngineerId,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read", "bash"],
+    })).channel;
+    for (const teammateId of [builtInEngineerId, namedEngineer.id]) {
+      await putJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/channels?cwd=${encodeURIComponent(cwd)}`, {
+        memberships: [{ channelId: channel.id }],
+      });
+    }
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: `；@ReadOnlyBot 运行 \`${command}\` 并验证输出。`,
+      mentions: [{ id: namedEngineer.id, label: namedEngineer.displayName, kind: "ai-teammate" }],
+      requestAiReply: true,
+    });
+
+    assert.equal(created.autoStartedWorkflow, undefined);
+    assert.equal(runner.executionRuns.length, 0);
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const proposal = store.listChannelExecutionProposals({
+      channelId: channel.id,
+      sourceMessageId: created.message.id,
+      limit: 20,
+    })[0];
+    assert.ok(proposal);
+    assert.equal(proposal.status, "blocked");
+    assert.equal(proposal.assigneeTeammateId, namedEngineer.id);
+    assert.match(proposal.errorMessage, /缺少所需工具: bash|missing required tools: bash/i);
+    const decision = store.listChannelIntentDecisions({ sourceItemId: created.message.id, limit: 20 })
+      .find((candidate) => candidate.proposalId === proposal.id);
+    assert.ok(decision);
+    assert.deepEqual(decision.selectedTeammateIds, [namedEngineer.id]);
+    assert.deepEqual(decision.participantManifest.participants.map((participant) => participant.participantId), [namedEngineer.id]);
+    assert.equal(decision.errorCode, "participant_required_tools_unavailable");
+    assert.equal(JSON.stringify({ decision, proposal }).includes(builtInEngineerId), false);
+  } finally {
+    runner.releaseExecution();
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("distinct explicit same-role participants remain separate workflow requirements", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-explicit-same-role-participants-"));
+  const runner = new DelayedFileCommandRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  }, { channels: { intentSelector: true } });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const participants = [];
+    for (const displayName of ["BuilderOne", "BuilderTwo"]) {
+      participants.push((await postJson(`${daemon.url}/teammates?cwd=${encodeURIComponent(cwd)}`, {
+        roleKey: "engineer",
+        displayName,
+        description: `${displayName} owns one explicitly assigned operation.`,
+        providerPresetId: provider.id,
+        allowedTools: ["read", "write", "bash"],
+        approvalProfile: { mode: "none" },
+        status: "active",
+      })).teammate);
+    }
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Explicit same-role participants",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read", "write", "bash"],
+    })).channel;
+    for (const participant of participants) {
+      await putJson(`${daemon.url}/teammates/${encodeURIComponent(participant.id)}/channels?cwd=${encodeURIComponent(cwd)}`, {
+        memberships: [{ channelId: channel.id }],
+      });
+    }
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: "@BuilderOne @BuilderTwo 创建 participant-proof.js，内容是 console.log('proof')，然后运行 node participant-proof.js 验证。",
+      mentions: participants.map((participant) => ({
+        id: participant.id,
+        label: participant.displayName,
+        kind: "ai-teammate",
+      })),
+      requestAiReply: true,
+    });
+
+    assertCoordinatorWorkflowStartReply(created);
+    const participantIds = participants.map((participant) => participant.id);
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const decision = store.listChannelIntentDecisions({ sourceItemId: created.message.id, limit: 20 })
+      .find((candidate) => candidate.workflowId === created.autoStartedWorkflow.workflow.id);
+    assert.ok(decision);
+    assert.deepEqual(decision.selectedTeammateIds, participantIds);
+    assert.deepEqual(decision.participantManifest.participants.map((participant) => participant.participantId), participantIds);
+    assert.deepEqual(decision.participantManifest.participants.map((participant) => participant.requestedBy), ["structured_mention", "structured_mention"]);
+    assert.deepEqual(decision.participantManifest.participants.map((participant) => participant.requiredOperationIds), [["create_file"], ["run_command"]]);
+    const proposal = store.listChannelExecutionProposals({
+      channelId: channel.id,
+      sourceMessageId: created.message.id,
+      limit: 20,
+    })[0];
+    assert.deepEqual(proposal.collaborationSteps.map((step) => step.teammateId), participantIds);
+    assert.equal(created.autoStartedWorkflow.workflowSteps.length, 2);
+    assert.deepEqual(created.autoStartedWorkflow.workflowSteps.map((step) => step.toParticipantId), participantIds);
+    assert.deepEqual(created.autoStartedWorkflow.workflowSteps.map((step) => step.metadata.executionOperationIds), [["create_file"], ["run_command"]]);
+    await waitForCondition(() => runner.executionRuns.length === 1, "first explicit same-role participant run to start");
+  } finally {
+    runner.releaseAll();
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("multi-participant executable request blocks when one explicit participant owns no required operation", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-explicit-operation-assignment-block-"));
+  const command = `node -e "process.stdout.write('proof:7319')"`;
+  const runner = new DelayedCommandEvidenceRunner(command);
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  }, { channels: { intentSelector: true } });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const participants = [];
+    for (const displayName of ["RunnerOne", "RunnerTwo"]) {
+      participants.push((await postJson(`${daemon.url}/teammates?cwd=${encodeURIComponent(cwd)}`, {
+        roleKey: "engineer",
+        displayName,
+        description: `${displayName} is explicitly requested for one command.`,
+        providerPresetId: provider.id,
+        allowedTools: ["read", "bash"],
+        approvalProfile: { mode: "none" },
+        status: "active",
+      })).teammate);
+    }
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Explicit operation assignment blocker",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read", "bash"],
+    })).channel;
+    for (const participant of participants) {
+      await putJson(`${daemon.url}/teammates/${encodeURIComponent(participant.id)}/channels?cwd=${encodeURIComponent(cwd)}`, {
+        memberships: [{ channelId: channel.id }],
+      });
+    }
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: `@RunnerOne @RunnerTwo 运行 \`${command}\` 并验证输出。`,
+      mentions: participants.map((participant) => ({
+        id: participant.id,
+        label: participant.displayName,
+        kind: "ai-teammate",
+      })),
+      requestAiReply: true,
+    });
+
+    assert.equal(created.autoStartedWorkflow, undefined);
+    assert.equal(runner.executionRuns.length, 0);
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const proposal = store.listChannelExecutionProposals({
+      channelId: channel.id,
+      sourceMessageId: created.message.id,
+      limit: 20,
+    })[0];
+    assert.equal(proposal.status, "blocked");
+    assert.match(proposal.errorMessage, /没有可安全分配的必需操作|no safely assignable required operation/i);
+    const decision = store.listChannelIntentDecisions({ sourceItemId: created.message.id, limit: 20 })
+      .find((candidate) => candidate.proposalId === proposal.id);
+    assert.ok(decision);
+    assert.deepEqual(decision.selectedTeammateIds, participants.map((participant) => participant.id));
+    assert.equal(decision.errorCode, "participant_operation_assignment_incomplete");
+  } finally {
+    runner.releaseExecution();
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("single-participant execute acknowledgement stays non-terminal until callback publication settles the source turn", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-single-participant-convergence-"));
+  const command = `node -e "process.stdout.write('proof:7319')"`;
+  const runner = new DelayedCommandEvidenceRunner(command);
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  }, { channels: { intentSelector: true, terminalReports: true } });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const engineerId = "teammate_builtin_engineer";
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent(engineerId)}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+    });
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Single participant convergence",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      defaultTeammateId: engineerId,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read", "bash"],
+    })).channel;
+    await putJson(`${daemon.url}/teammates/${encodeURIComponent(engineerId)}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      memberships: [{ channelId: channel.id }],
+    });
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: `；@Engineer 运行 \`${command}\` 并验证输出严格等于 proof:7319。`,
+      requestAiReply: true,
+    });
+
+    assertCoordinatorWorkflowStartReply(created);
+    assert.equal(created.autoStartedWorkflow.workflowSteps.length, 1);
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const sourceItem = store.getConversationItem(created.message.id);
+    assert.ok(sourceItem?.turnId);
+    const workflowId = created.autoStartedWorkflow.workflow.id;
+    const [step] = created.autoStartedWorkflow.workflowSteps;
+    const acceptedDecision = store.listChannelIntentDecisions({ sourceItemId: sourceItem.id, limit: 20 })
+      .find((decision) => decision.workflowId === workflowId);
+    assert.ok(acceptedDecision);
+    assert.deepEqual(acceptedDecision.participantManifest.participants.map((participant) => ({
+      participantId: participant.participantId,
+      requirement: participant.requirement,
+      expectedOutcome: participant.expectedOutcome,
+    })), [{
+      participantId: engineerId,
+      requirement: "required",
+      expectedOutcome: "execution",
+    }]);
+    await waitForCondition(() => runner.executionRuns.length === 1, "single participant execution run to start");
+    const runningStep = store.getChannelWorkflowStep(step.id);
+    const runningRun = store.getRun(runningStep.runId);
+    assert.equal(runningRun.status, "running");
+    assert.equal(runningRun.workflowStepId, step.id);
+    assert.equal(store.getLingTurn(sourceItem.turnId).status, "running");
+    assert.equal(store.getConversationItem(created.aiReply.id).payload.deliveryStatus, "ready");
+    assert.deepEqual(store.listTerminalReports({ sourceKind: "workflow", sourceId: workflowId, limit: 20 }), []);
+
+    runner.releaseExecution();
+    await waitForCondition(
+      () => store.getLingTurn(sourceItem.turnId)?.status === "succeeded",
+      "single participant callback publication to settle the source turn",
+    );
+
+    const finalRun = store.getRun(runningRun.id);
+    const finalStep = store.getChannelWorkflowStep(step.id);
+    const finalWorkflow = store.getChannelWorkflow(workflowId);
+    const reports = store.listTerminalReports({ sourceKind: "workflow", sourceId: workflowId, limit: 20 });
+    assert.equal(finalRun.status, "succeeded");
+    assert.equal(finalStep.status, "succeeded");
+    assert.equal(finalStep.metadata.delegatedOutcome.kind, "completed");
+    assert.equal(finalWorkflow.status, "succeeded");
+    assert.equal(finalWorkflow.metadata.completionGate.status, "verified");
+    assert.equal(reports.length, 1);
+    assert.ok(reports[0].publishedMessageId);
+    assert.equal(store.listConversationItemsForTurn({ turnId: sourceItem.turnId })
+      .filter((item) => item.id === reports[0].publishedMessageId).length, 1);
+    assert.equal(store.listStateTransitionEvents({ entityType: "turn", entityId: sourceItem.turnId })
+      .filter((event) => event.toStatus === "succeeded").length, 1);
+    assert.equal(store.listControlPlaneEvents({
+      workspaceId: sourceItem.workspaceId,
+      domains: ["work_units"],
+      entityType: "terminal_report",
+      entityId: reports[0].id,
+      action: "terminal_report.published",
+      limit: 20,
+    }).length, 1);
+  } finally {
+    runner.releaseExecution();
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("model-assisted create-and-run clarifies when the required command is missing", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-model-create-run-command-clarify-"));
+  const runner = new ScriptedRunner([
+    JSON.stringify({
+      action: "execute",
+      reason: "User requested a file write and a follow-up run, but supplied no exact command.",
+      execution: {
+        operations: [
+          { id: "create_file", kind: "file_create", targetKind: "file", required: true, dependsOn: [] },
+          { id: "run_command", kind: "run_command", targetKind: "command", required: true, dependsOn: ["create_file"] },
+        ],
+      },
+    }),
+  ]);
+  const daemon = await startDaemonForTest(runner, {}, { channels: { intentSelector: true } });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Model create and run command clarify",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read", "write", "bash"],
+    })).channel;
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: "创建 app.js，内容是 console.log('ok')，然后运行验证。",
+    });
+
+    assert.equal(created.autoStartedWorkflow, undefined);
+    assert.equal(created.aiReply.status, "ready");
+    assert.match(created.aiReply.body, /命令|command/i);
+    const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.deepEqual(proposals.proposals, []);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(decisions.decisions.length, 1);
+    assert.equal(decisions.decisions[0].action, "clarify");
+    assert.deepEqual(decisions.decisions[0].clarification.missingFields, ["command"]);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("model-assisted thread follow-up clarifies instead of creating empty recent target", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-thread-model-followup-empty-file-"));
   const runner = new ScriptedRunner([
     JSON.stringify({
       action: "execute",
       reason: "User is asking Ling to write the previously discussed file locally.",
-      execution: { kind: "file_create", targetKind: "file" },
+      execution: { operations: [{ id: "create_file", kind: "file_create", targetKind: "file", required: true, dependsOn: [] }] },
     }),
   ]);
   const stores = new Map();
@@ -5060,7 +6392,7 @@ test("model-assisted local write request clarifies when no target validates", as
     JSON.stringify({
       action: "execute",
       reason: "User is asking Ling to write something locally.",
-      execution: { kind: "file_create", targetKind: "file" },
+      execution: { operations: [{ id: "create_file", kind: "file_create", targetKind: "file", required: true, dependsOn: [] }] },
     }),
   ]);
   const daemon = await startDaemonForTest(runner, {}, { channels: { intentSelector: true } });
@@ -5579,7 +6911,7 @@ test("Ling Agent fallback edits code proposal when no Engineer teammate can run"
   }
 });
 
-test("single-step file creation starts with task-scoped write when channel lacks static write tool", async () => {
+test("single-step file creation blocks when channel lacks the required write tool", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-single-step-file-channel-readonly-"));
   const runner = new RecordingRunner();
   const daemon = await startDaemonForTest(runner);
@@ -5602,22 +6934,21 @@ test("single-step file creation starts with task-scoped write when channel lacks
     });
 
     assertCoordinatorWorkflowStartReply(created);
-    assert.equal(created.autoStartedWorkflow.orchestration.status, "started", created.autoStartedWorkflow.orchestration.blocker);
+    assert.equal(created.autoStartedWorkflow.orchestration.status, "blocked");
+    assert.match(created.autoStartedWorkflow.orchestration.blocker, /channel|tools|write/i);
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(proposals.proposals.length, 1);
     assert.equal(proposals.proposals[0].status, "accepted");
     assert.equal(proposals.proposals[0].linkedWorkflowId, created.autoStartedWorkflow.workflow.id);
     assert.deepEqual(proposals.proposals[0].requiredTools, ["write"]);
-    assert.equal(proposals.proposals[0].errorMessage, undefined);
+    assert.ok(proposals.proposals[0].errorMessage || created.autoStartedWorkflow.orchestration.blocker);
     assert.match(proposals.proposals[0].riskSummary, /write/);
-    assert.doesNotMatch(proposals.proposals[0].riskSummary, /频道缺少所需工具/);
     const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(routeDecisions.decisions, []);
 
     assert.deepEqual(created.autoStartedWorkflow.workflowSteps[0].metadata.requiredTools, ["write"]);
     assert.equal(created.autoStartedWorkflow.workflowSteps[0].metadata.sourceProposalId, proposals.proposals[0].id);
-    assert.equal(runner.runs.length, 1);
-    assert.deepEqual(runner.runs[0].tools, ["write"]);
+    assert.equal(runner.runs.length, 0);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -6024,6 +7355,55 @@ test("model-assisted channel intent selector does not fall back to phrase-rule w
   }
 });
 
+test("model execution proposal cannot declare command evidence authority", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-model-command-authority-"));
+  const runner = new ScriptedRunner([
+    JSON.stringify({
+      action: "execute",
+      reason: "Run Node.",
+      execution: {
+        operations: [{
+          id: "run_command",
+          kind: "run_command",
+          targetKind: "command",
+          commandMatchPolicy: { kind: "executable", executable: "node" },
+          required: true,
+          dependsOn: [],
+        }],
+      },
+    }),
+    "请确认是否按明确的本地命令执行。",
+  ]);
+  const daemon = await startDaemonForTest(runner, {}, { channels: { intentSelector: true } });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Model command authority",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read", "bash"],
+    })).channel;
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: "运行 node app.js",
+    });
+
+    assert.equal(created.autoStartedWorkflow, undefined);
+    await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(decisions.decisions.length, 1);
+    assert.equal(decisions.decisions[0].action, "reply");
+    assert.match(decisions.decisions[0].reason, /output was unavailable or invalid/i);
+    assert.equal(decisions.decisions[0].execution, undefined);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("issue #421 article continuation stays reply while an explicit README save executes", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-issue-421-article-"));
   const runner = new ScriptedRunner([
@@ -6034,7 +7414,7 @@ test("issue #421 article continuation stays reply while an explicit README save 
     JSON.stringify({
       action: "execute",
       reason: "The user explicitly requested a local README write.",
-      execution: { kind: "file_create", targetKind: "file" },
+      execution: { operations: [{ id: "create_file", kind: "file_create", targetKind: "file", required: true, dependsOn: [] }] },
     }),
     "README.md saved.",
   ]);
@@ -6099,8 +7479,8 @@ test("issue #421 article continuation stays reply while an explicit README save 
     const saveDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(save.message.id)}`);
     assert.equal(saveDecisions.decisions.length, 2);
     assert(saveDecisions.decisions.every((decision) => decision.action === "execute"));
-    assert(saveDecisions.decisions.every((decision) => decision.execution.kind === "file_create"));
-    assert(saveDecisions.decisions.every((decision) => decision.execution.targetKind === "file"));
+    assert(saveDecisions.decisions.every((decision) => decision.execution.operations[0].kind === "file_create"));
+    assert(saveDecisions.decisions.every((decision) => decision.execution.operations[0].targetKind === "file"));
     assert(saveDecisions.decisions.every((decision) => decision.proposalId === saveProposals.proposals[0].id));
     assert(saveDecisions.decisions.every((decision) => {
       assertIntentDecisionInspectPayloadIsSafe(decision);
@@ -6522,6 +7902,9 @@ test("explicit mentions still reply and keep proposal extraction enabled", async
     await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
       providerPresetId: provider.id,
     });
+    await putJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      memberships: [{ channelId: channel.id }],
+    });
 
     const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "@Designer 这个明确任务可以处理吗？",
@@ -6686,7 +8069,8 @@ test("auto_route uses the model selector and records accepted route evidence", a
     assert.equal(created.aiReply.authorId, "ling_agent");
     const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
     const finalReply = listed.messages.find((message) => message.id === created.aiReply.id);
-    assert.match(finalReply.body, /ling_task_proposal/);
+    assert.equal(finalReply.body, "Designer auto route reply");
+    assert.doesNotMatch(finalReply.body, /ling_task_proposal/);
     assert.equal(runner.runs.length, 2);
     assert.match(runner.runs[0].systemPrompt, /channel message router/i);
     assert.match(runner.runs[0].task.prompt, /Decide whether one AI teammate should reply/);
@@ -6832,6 +8216,9 @@ test("channel AI replies return pending message before runner finishes", async (
     const teammateId = "teammate_builtin_designer";
     await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
       providerPresetId: provider.id,
+    });
+    await putJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      memberships: [{ channelId: channel.id }],
     });
 
     const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
@@ -7986,6 +9373,12 @@ test("workflow graph compiles into durable steps and emits standardized packets"
     assert.equal(compiled.workflow.metadata.termination.onFailedRequiredNode, "fail_workflow");
     assert.equal(compiled.workflowSteps.length, 2);
     assert.deepEqual(compiled.workflowSteps.map((step) => step.metadata.graphNodeId), ["plan", "review"]);
+    for (const step of compiled.workflowSteps) {
+      assert.equal(step.participantAuthority.kind, "workflow_definition");
+      assert.equal(step.participantAuthority.origin, "workflow_graph");
+      assert.equal(step.participantAuthority.sourceId, "graph_test");
+      assert.equal(step.participantAuthority.participantId, step.toParticipantId);
+    }
     assert.equal(compiled.workflowSteps[1].metadata.dependsOnStepIds.length, 1);
     assert.equal(compiled.workflowSteps[1].metadata.dependsOnStepIds[0], compiled.workflowSteps[0].id);
 
@@ -9401,6 +10794,14 @@ test("workflow step retry starts a blocked step after configuration is repaired"
     assert.equal(retried.workflowStep.metadata.templateStepId, "product-discovery");
     await waitForCondition(() => runner.runs.length >= 1, "workflow retry runner start");
     assert.equal(runner.runs[0].task.title, "Product Discovery");
+    const roster = await getJson(`${daemon.url}/teammates?cwd=${encodeURIComponent(cwd)}&includeHidden=true&includeDisabled=true`);
+    const assignedTeammate = roster.teammates.find((teammate) => teammate.id === retried.workflowStep.toParticipantId);
+    assert.ok(assignedTeammate);
+    assert.equal(runner.runs[0].systemPrompt, assignedTeammate.systemPrompt);
+    assert.deepEqual(
+      runner.runs[0].appendSystemPrompt.slice(0, assignedTeammate.appendSystemPrompt.length),
+      assignedTeammate.appendSystemPrompt,
+    );
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -10455,6 +11856,9 @@ test("memory API scopes lexical recall and channel replies audit used memory", a
     assert.equal(check.ok, true);
     await patchJson(`${daemon.url}/teammates/${encodeURIComponent("teammate_builtin_designer")}?cwd=${encodeURIComponent(cwd)}`, {
       providerPresetId: provider.id,
+    });
+    await putJson(`${daemon.url}/teammates/${encodeURIComponent("teammate_builtin_designer")}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      memberships: [{ channelId: channel.id }],
     });
     const channelMemory = (await postJson(`${daemon.url}/memory?cwd=${encodeURIComponent(cwd)}`, {
       scopeType: "channel",
@@ -13107,6 +14511,187 @@ class RecordingRunner {
   }
 }
 
+class WorkflowEvidenceRunner {
+  constructor() {
+    this.runs = [];
+  }
+
+  async runTask(options) {
+    this.runs.push(options);
+    const toolCallId = `workflow_read_${this.runs.length}`;
+    options.onEvent?.({
+      type: "tool_start",
+      toolCallId,
+      toolName: "read",
+      args: { path: "package.json" },
+    });
+    options.onEvent?.({
+      type: "tool_end",
+      toolCallId,
+      toolName: "read",
+      result: { path: "package.json", content: [{ type: "text", text: "fixture" }] },
+      isError: false,
+    });
+    options.onEvent?.({ type: "assistant_text_delta", text: "Designer reply" });
+    return {
+      taskId: options.task.id,
+      messages: ["Designer reply"],
+      events: [],
+    };
+  }
+}
+
+class DelayedCommandEvidenceRunner {
+  constructor(command) {
+    this.command = command;
+    this.executionRuns = [];
+    this.selectorRuns = [];
+    this.reportRuns = [];
+    this.pendingExecution = undefined;
+  }
+
+  async runTask(options) {
+    if (/terminal report synthesizer/i.test(options.systemPrompt ?? "")) {
+      this.reportRuns.push(options);
+      options.onEvent?.({ type: "assistant_text_delta", text: "{}" });
+      return { taskId: options.task.id, messages: ["{}"], events: [] };
+    }
+    if (/channel intent selector/i.test(options.systemPrompt ?? "")) {
+      this.selectorRuns.push(options);
+      const text = JSON.stringify({
+        action: "execute",
+        reason: "The user explicitly requested one bounded command execution.",
+        execution: {
+          operations: [{
+            id: "run_command",
+            kind: "run_command",
+            targetKind: "command",
+            required: true,
+            dependsOn: [],
+          }],
+        },
+      });
+      options.onEvent?.({ type: "assistant_text_delta", text });
+      return { taskId: options.task.id, messages: [text], events: [] };
+    }
+    this.executionRuns.push(options);
+    await new Promise((resolveExecution) => {
+      this.pendingExecution = resolveExecution;
+    });
+    const toolCallId = "single_participant_node";
+    options.onEvent?.({
+      type: "tool_start",
+      toolCallId,
+      toolName: "bash",
+      args: { command: this.command },
+    });
+    options.onEvent?.({
+      type: "tool_end",
+      toolCallId,
+      toolName: "bash",
+      result: { content: [{ type: "text", text: "proof:7319" }] },
+      isError: false,
+    });
+    const text = "Verified proof:7319.";
+    options.onEvent?.({ type: "assistant_text_delta", text });
+    return { taskId: options.task.id, messages: [text], events: [] };
+  }
+
+  releaseExecution() {
+    this.pendingExecution?.();
+    this.pendingExecution = undefined;
+  }
+}
+
+class MismatchedExactCommandRunner {
+  constructor() {
+    this.decisions = [];
+    this.executionRuns = [];
+  }
+
+  async runTask(options) {
+    if (/terminal report synthesizer/i.test(options.systemPrompt ?? "")) {
+      options.onEvent?.({ type: "assistant_text_delta", text: "{}" });
+      return { taskId: options.task.id, messages: ["{}"], events: [] };
+    }
+    if (/channel intent selector/i.test(options.systemPrompt ?? "")) {
+      const text = JSON.stringify({
+        action: "execute",
+        reason: "The user explicitly requested one bounded command execution.",
+        execution: {
+          operations: [{
+            id: "run_command",
+            kind: "run_command",
+            targetKind: "command",
+            required: true,
+            dependsOn: [],
+          }],
+        },
+      });
+      options.onEvent?.({ type: "assistant_text_delta", text });
+      return { taskId: options.task.id, messages: [text], events: [] };
+    }
+
+    this.executionRuns.push(options);
+    const toolCallId = "mismatched_exact_command";
+    const input = { command: "node -e \"console.log('semantic substitute')\"" };
+    options.onEvent?.({ type: "tool_start", toolCallId, toolName: "bash", args: input });
+    const decision = await options.onApprovalRequired?.({
+      toolCallId,
+      toolName: "bash",
+      input,
+      task: options.task,
+      cwd: options.cwd,
+    });
+    this.decisions.push(decision);
+    options.onEvent?.({
+      type: "tool_end",
+      toolCallId,
+      toolName: "bash",
+      result: { approved: decision?.approved, reason: decision?.reason },
+      isError: !decision?.approved,
+    });
+    const text = decision?.approved ? "Unexpectedly executed substitute command." : "Blocked: exact command binding did not match.";
+    options.onEvent?.({ type: "assistant_text_delta", text });
+    return { taskId: options.task.id, messages: [text], events: [] };
+  }
+}
+
+class DelayedFileCommandRunner {
+  constructor() {
+    this.executionRuns = [];
+    this.selectorRuns = [];
+    this.pendingResolvers = [];
+  }
+
+  async runTask(options) {
+    if (/channel intent selector/i.test(options.systemPrompt ?? "")) {
+      this.selectorRuns.push(options);
+      const text = JSON.stringify({
+        action: "execute",
+        reason: "The user explicitly requested a file write followed by a Node verification.",
+        execution: {
+          operations: [
+            { id: "create_file", kind: "file_create", targetKind: "file", required: true, dependsOn: [] },
+            { id: "run_command", kind: "run_command", targetKind: "command", required: true, dependsOn: ["create_file"] },
+          ],
+        },
+      });
+      options.onEvent?.({ type: "assistant_text_delta", text });
+      return { taskId: options.task.id, messages: [text], events: [] };
+    }
+    this.executionRuns.push(options);
+    await new Promise((resolveExecution) => this.pendingResolvers.push(resolveExecution));
+    const text = "Execution released for cleanup.";
+    options.onEvent?.({ type: "assistant_text_delta", text });
+    return { taskId: options.task.id, messages: [text], events: [] };
+  }
+
+  releaseAll() {
+    this.pendingResolvers.splice(0).forEach((resolveExecution) => resolveExecution());
+  }
+}
+
 class DirectToolRunner {
   constructor() {
     this.runs = [];
@@ -13430,6 +15015,12 @@ function createParallelWorkflowStep(store, workflowId, title, metadata = {}) {
       prompt: `Complete ${title}.`,
       toParticipantId: "teammate_builtin_engineer",
       toParticipantLabel: "Engineer",
+      participantAuthority: createWorkflowParticipantAuthorityV1({
+        kind: "workflow_definition",
+        origin: "workflow_graph",
+        participantId: "teammate_builtin_engineer",
+        sourceId: workflowId,
+      }),
       status: metadata.status,
       metadata: {
         templateStepId: title.toLowerCase().replaceAll(" ", "-"),
@@ -13738,6 +15329,7 @@ function assertIntentDecisionInspectPayloadIsSafe(decision) {
     "contextProjectionVersion",
     "action",
     "selectedTeammateIds",
+    "participantManifest",
     "proposalId",
     "resultItemIds",
     "workflowId",

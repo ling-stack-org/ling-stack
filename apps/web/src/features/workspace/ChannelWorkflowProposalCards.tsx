@@ -42,6 +42,7 @@ import type {
   ChannelWorkflowStep,
   ChannelWorkflowStepContextPacket,
   ChannelWorkflowStepStartMode,
+  EffectiveConversationModelSourceV1,
   RunArtifact,
   RunSession,
   UpdateChannelExecutionProposalRequest,
@@ -250,6 +251,9 @@ function WorkflowStepCard({
           {metadata.skillId ? <span>{t("Skill")}: {metadata.skillId}</span> : null}
           {metadata.requestedRunnerId ? <span>{t("Runner")}: {metadata.requestedRunnerId}</span> : null}
           {metadata.providerPresetId ? <span>{t("Provider")}: {metadata.providerPresetId}</span> : null}
+          {metadata.providerBinding ? (
+            <span>{t("Model owner")}: {t(workflowProviderBindingSourceLabel(metadata.providerBinding.source))}</span>
+          ) : null}
           {workflowSourceLabel ? <span>{t("Source")}: {workflowSourceLabel}</span> : null}
           {metadata.dependsOnStepIds?.length ? <span>{t("Depends")}: {metadata.dependsOnStepIds.length}</span> : null}
           {metadata.preStepApprovalId ? <span>{t("Pre-step approval")}: {metadata.preStepApprovalId}</span> : null}
@@ -982,6 +986,7 @@ export function ChannelExecutionProposalCard({
   onCancel,
   onUpdate,
   onOpenRun,
+  onRepairModelBinding,
 }: {
   readonly proposal: ChannelExecutionProposal;
   readonly assigneeLabel: string;
@@ -997,6 +1002,7 @@ export function ChannelExecutionProposalCard({
     input: UpdateChannelExecutionProposalRequest,
   ) => Promise<ChannelExecutionProposal | undefined>;
   readonly onOpenRun: (runId: string) => void;
+  readonly onRepairModelBinding: (blocker: NonNullable<ChannelExecutionProposal["blocker"]>) => void;
 }): React.JSX.Element {
   const { t } = useI18n();
   const [editing, setEditing] = useState(false);
@@ -1157,7 +1163,19 @@ export function ChannelExecutionProposalCard({
           <span>{proposal.riskSummary}</span>
         </div>
       ) : null}
-      {proposal.errorMessage ? (
+      {proposal.blocker ? (
+        <div className="channel-proposal-error">
+          <CircleAlert size={14} />
+          <span>{proposal.blocker.message}</span>
+          <button
+            className="secondary-button compact-button"
+            type="button"
+            onClick={() => proposal.blocker && onRepairModelBinding(proposal.blocker)}
+          >
+            {t(proposalModelRepairLabel(proposal.blocker.repairTarget))}
+          </button>
+        </div>
+      ) : proposal.errorMessage ? (
         <div className="channel-proposal-error">
           <CircleAlert size={14} />
           <span>{proposal.errorMessage}</span>
@@ -1549,6 +1567,22 @@ function extractProposalPathTarget(value: string): string | undefined {
 function trimPermissionTarget(value: string): string | undefined {
   const trimmed = value.trim().replace(/^[`"']+/u, "").replace(/[`"',，。；;:)]+$/u, "").replace(/\.$/u, "");
   return trimmed ? truncatePreview(trimmed, 180) : undefined;
+}
+
+function proposalModelRepairLabel(
+  repairTarget: NonNullable<ChannelExecutionProposal["blocker"]>["repairTarget"],
+): string {
+  if (repairTarget === "channel_settings") return "Open Channel Settings";
+  if (repairTarget === "teammate_settings") return "Open teammate settings";
+  return "Open Model Workbench";
+}
+
+function workflowProviderBindingSourceLabel(
+  source: EffectiveConversationModelSourceV1,
+): string {
+  if (source === "channel_ling_agent_model") return "Ling Agent model";
+  if (source === "teammate_fixed") return "Fixed model";
+  return "Workspace default";
 }
 
 function executionProposalStatusLabel(status: ChannelExecutionProposal["status"]): string {

@@ -10,7 +10,10 @@ import {
   type LinkRunToLingTurnInput,
   type ListLingTurnsOptions,
   type RunSession,
+  type TransitionLingTurnStatusInput,
 } from "../../run-types.js";
+import type { CreateStateTransitionEventInput, StateTransitionEvent } from "../../channel-runtime-types.js";
+import { transitionLingTurn, type TransitionResult } from "../../state-machines.js";
 import { redactSecrets } from "../../redaction.js";
 import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
 import { readNumber } from "./helpers.js";
@@ -23,6 +26,12 @@ export interface SqliteLingTurnStorePorts {
   readonly getRun: (runId: string) => RunSession | undefined;
   readonly rebuildLingThreadMetadata: (threadId: string | undefined, now: string) => void;
   readonly rebuildLingThreadMetadataForTurn: (turnId: string | undefined, now: string) => void;
+  readonly findStateTransitionByIdempotency: (
+    entityType: "turn",
+    entityId: string,
+    idempotencyKey: string,
+  ) => StateTransitionEvent | undefined;
+  readonly recordStateTransitionEvent: (input: CreateStateTransitionEventInput) => StateTransitionEvent;
 }
 
 export class SqliteLingTurnStore {
@@ -229,6 +238,62 @@ export class SqliteLingTurnStore {
       );
     this.ports.rebuildLingThreadMetadata(turn.threadId, now);
     return this.getLingTurn(turnId);
+  }
+
+  transitionLingTurnStatus(input: TransitionLingTurnStatusInput): TransitionResult<LingTurnStatus> {
+    const turn = this.getLingTurn(input.turnId);
+    if (!turn) {
+      return { ok: false, code: "stale_transition", currentStatus: input.expectedStatus ?? "cancelled" };
+    }
+    let eventIdempotencyKey = input.idempotencyKey;
+    if (input.idempotencyKey) {
+      const existing = this.ports.findStateTransitionByIdempotency("turn", input.turnId, input.idempotencyKey);
+      if (existing) {
+        if (existing.toStatus === turn.status) {
+          return { ok: true, from: turn.status, to: turn.status, duplicate: true };
+        }
+        eventIdempotencyKey = `${input.idempotencyKey}:repair:${turn.status}`;
+        const repair = this.ports.findStateTransitionByIdempotency("turn", input.turnId, eventIdempotencyKey);
+        if (repair && repair.toStatus === turn.status) {
+          return { ok: true, from: turn.status, to: turn.status, duplicate: true };
+        }
+      }
+    }
+    const result = transitionLingTurn({
+      entityId: input.turnId,
+      currentStatus: turn.status,
+      expectedStatus: input.expectedStatus,
+      event: input.event,
+      actor: input.actor,
+      reason: input.reason,
+      idempotencyKey: eventIdempotencyKey,
+    });
+    if (!result.ok) return result;
+    const completed = result.to === "succeeded" || result.to === "failed" || result.to === "cancelled" || result.to === "superseded";
+    const update = this.context.database
+      .prepare(`
+        UPDATE ling_turns
+        SET status = ?, active_run_id = NULL, updated_at = ?, completed_at = ?
+        WHERE id = ? AND status = ?
+      `)
+      .run(result.to, input.now, completed ? (turn.completedAt ?? input.now) : null, input.turnId, result.from);
+    if (Number(update.changes) === 0) {
+      return { ok: false, code: "stale_transition", currentStatus: this.getLingTurn(input.turnId)?.status ?? turn.status };
+    }
+    this.ports.recordStateTransitionEvent({
+      workspaceId: turn.workspaceId,
+      entityType: "turn",
+      entityId: turn.id,
+      fromStatus: result.from,
+      toStatus: result.to,
+      event: input.event,
+      actor: input.actor,
+      reason: input.reason,
+      idempotencyKey: eventIdempotencyKey,
+      createdAt: input.now,
+    });
+    this.ports.rebuildLingThreadMetadata(turn.threadId, input.now);
+    return result;
   }
 
   insertLingTurnRun(turnId: string, runId: string, role: LingTurnRunRole, createdAt: string): LingTurnRun {

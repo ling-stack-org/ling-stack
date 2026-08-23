@@ -1,12 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { createRequire } from "node:module";
 import { copyFile, link, mkdir, readFile, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, relative, resolve } from "node:path";
 import { DOMParser, XMLSerializer } from "@xmldom/xmldom";
 import JSZip from "jszip";
 import { Document, HeadingLevel, Packer, Paragraph, Table, TableCell, TableRow, TextRun } from "docx";
 import { OfficeParser } from "officeparser";
+import PptxGenJSModule from "pptxgenjs";
+import XlsxPopulateModule from "xlsx-populate";
 
 type XlsxCellValue = string | number | boolean | Date | null;
 
@@ -59,8 +60,12 @@ interface PptxPresentation {
   writeFile(options: { fileName: string; compression: boolean }): Promise<unknown>;
 }
 
-const PptxGenJS = createRequire(import.meta.url)("pptxgenjs") as new () => PptxPresentation;
-const XlsxPopulate = createRequire(import.meta.url)("xlsx-populate") as XlsxPopulateFactory;
+// These must remain static imports. The Desktop package bundles the daemon CLI
+// into a single asar-local module; a runtime createRequire() would resolve
+// against the packaged CLI and leave the daemon's workspace dependencies out of
+// the app, causing packaged startup to fail before the workspace opens.
+const PptxGenJS = PptxGenJSModule as unknown as new () => PptxPresentation;
+const XlsxPopulate = XlsxPopulateModule as unknown as XlsxPopulateFactory;
 
 const MAX_OFFICE_FILE_BYTES = 50 * 1024 * 1024;
 const MAX_EXTRACTED_TEXT = 100_000;

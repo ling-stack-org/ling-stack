@@ -1,6 +1,7 @@
 import type { Server } from "node:http";
 import type { Duplex } from "node:stream";
 import { DEFAULT_WORKSPACE_ID, redactSecrets, type ControlPlaneDomain, type ControlPlaneEvent, type RunEventEnvelope, type RunSession } from "@ling-stack/core";
+import type { ControlPlaneSubscribeResult } from "@ling-stack/contracts";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import type { DaemonContext } from "../context.js";
 import { maybeScheduleRunTerminalReport } from "../features/channels/terminal-report-coordinator.js";
@@ -12,13 +13,12 @@ import {
   CONTROL_PLANE_SSE_QUEUE_HARD_LIMIT,
   CONTROL_PLANE_SSE_QUEUE_WARNING_THRESHOLD,
 } from "../features/control-plane/events.js";
+import { coalesceAndSortControlPlaneEvents } from "../features/control-plane/event-queue.js";
 import {
   ControlPlaneBadDomainError,
   ControlPlaneBadRequestError,
   buildControlPlaneSnapshot,
-  latestControlPlaneEventSeq,
   listControlPlaneEventsForResponse,
-  listControlPlaneSseReplayEvents,
   parseControlPlaneDomains,
 } from "../features/control-plane/processors.js";
 import { executeRunRequest, type RunExecutionSink } from "../features/runs/orchestrator.js";
@@ -126,6 +126,15 @@ class RpcConnection {
     }
 
     try {
+      if (request.method === "controlPlane.subscribe") {
+        if (request.id === undefined) {
+          throw rpcError(-32600, "subscription_response_required", "controlPlane.subscribe requires a request id.");
+        }
+        const prepared = this.prepareControlPlaneSubscription(request.params);
+        this.send({ jsonrpc: "2.0", id, result: prepared.result });
+        prepared.activate?.();
+        return;
+      }
       const result = await this.dispatch(request.method, request.params);
       if (request.id !== undefined) {
         this.send({ jsonrpc: "2.0", id, result });
@@ -165,8 +174,6 @@ class RpcConnection {
         const parsed = this.readControlPlaneEventParams(params);
         return listControlPlaneEventsForResponse(this.context, parsed);
       }
-      case "controlPlane.subscribe":
-        return this.subscribeControlPlane(params);
       case "controlPlane.unsubscribe":
         return this.unsubscribeControlPlane(params);
       case "runs.start":
@@ -201,40 +208,56 @@ class RpcConnection {
     };
   }
 
-  private subscribeControlPlane(params: unknown): unknown {
+  private prepareControlPlaneSubscription(params: unknown): {
+    readonly result: ControlPlaneSubscribeResult;
+    readonly activate?: () => void;
+  } {
     const parsed = this.readControlPlaneEventParams({
       ...readParamsRecord(params),
       limit: CONTROL_PLANE_POLL_MAX_LIMIT,
     });
     const subscriptionId = `cp_${this.nextSubscriptionId}`;
     this.nextSubscriptionId += 1;
+    let hubSubscription: ReturnType<DaemonContext["controlPlaneEvents"]["subscribeListener"]> | undefined;
     const subscription: RpcSubscription = {
       id: subscriptionId,
       cwd: parsed.cwd,
       domains: parsed.domains,
-      closeHub: () => undefined,
+      closeHub: () => hubSubscription?.close(),
       queue: [],
       overLimitFlushes: 0,
     };
-    const hubSubscription = this.context.controlPlaneEvents.subscribeListener({
-      workspaceId: DEFAULT_WORKSPACE_ID,
-      cwd: parsed.cwd,
-      domains: parsed.domains,
-      onEvent: (event) => this.enqueueControlPlaneEvent(subscription, event),
-    });
-    const stored: RpcSubscription = {
-      ...subscription,
-      closeHub: () => hubSubscription.close(),
-    };
-    this.subscriptions.set(subscriptionId, stored);
-    for (const event of listControlPlaneSseReplayEvents(this.context, parsed)) {
-      this.enqueueControlPlaneEvent(stored, event);
+    try {
+      hubSubscription = this.context.controlPlaneEvents.subscribeListener({
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        cwd: parsed.cwd,
+        domains: parsed.domains,
+        onEvent: (event) => this.enqueueControlPlaneEvent(subscription, event),
+      });
+      const replay = listControlPlaneEventsForResponse(this.context, parsed);
+      if (replay.window.disposition === "snapshot_required") {
+        hubSubscription.close();
+        return {
+          result: {
+            disposition: "snapshot_required",
+            window: replay.window,
+          },
+        };
+      }
+      this.subscriptions.set(subscriptionId, subscription);
+      return {
+        result: {
+          disposition: "complete",
+          subscriptionId,
+          window: replay.window,
+        },
+        activate: () => hubSubscription?.activate(replay.events),
+      };
+    } catch (error) {
+      hubSubscription?.close();
+      this.subscriptions.delete(subscriptionId);
+      throw error;
     }
-    this.flushControlPlaneSubscription(stored);
-    return {
-      subscriptionId,
-      latestEventSeq: latestControlPlaneEventSeq(this.context, parsed.cwd),
-    };
   }
 
   private unsubscribeControlPlane(params: unknown): unknown {
@@ -585,25 +608,7 @@ function normalizeRpcError(error: unknown): { readonly jsonRpcCode: number; read
 }
 
 function coalesceControlPlaneQueue(queue: ControlPlaneEvent[]): void {
-  const preserved: ControlPlaneEvent[] = [];
-  const coalesced = new Map<string, { event: ControlPlaneEvent; count: number }>();
-  for (const event of queue) {
-    if (event.action.startsWith("approval.") || event.action === "run.completed" || event.action === "run.cancelled") {
-      preserved.push(event);
-      continue;
-    }
-    const key = `${event.domain}:${event.entityType}:${event.entityId}:${event.action}`;
-    const existing = coalesced.get(key);
-    coalesced.set(key, existing ? { event, count: existing.count + 1 } : { event, count: 1 });
-  }
-  queue.splice(0, queue.length, ...preserved, ...[...coalesced.values()].map(({ event, count }) => ({
-    ...event,
-    data: {
-      ...event.data,
-      summary: count > 1 ? "coalesced control-plane invalidations" : event.data.summary,
-      count,
-    },
-  })));
+  queue.splice(0, queue.length, ...coalesceAndSortControlPlaneEvents(queue));
 }
 
 function readRunWorkspaceCwd(run: RunSession): string | undefined {

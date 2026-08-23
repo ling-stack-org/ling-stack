@@ -8,6 +8,7 @@ import {
   type Task,
   type WorkUnit,
   type WorkUnitAttempt,
+  toRuntimeAttemptFence,
 } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
 import { DEFAULT_RUNNER_ID } from "../../runtime/work-units.js";
@@ -30,8 +31,8 @@ export function prepareRunConcurrency(input: {
   readonly store: RunStore;
   readonly runRequest: RunRequest;
   readonly runId: string;
-  readonly workUnitId?: string;
-  readonly attemptId?: string;
+  readonly workUnit: WorkUnit;
+  readonly attempt: WorkUnitAttempt;
   readonly now: string;
 }): PreparedRunConcurrency {
   input.store.expireResourceLeases(input.now);
@@ -64,8 +65,8 @@ export function prepareRunConcurrency(input: {
   const leases: ResourceLease[] = [];
   const leaseInputs = buildRunLeaseInputs({
     runId: input.runId,
-    workUnitId: input.workUnitId,
-    attemptId: input.attemptId,
+    workUnit: input.workUnit,
+    attempt: input.attempt,
     runRequest: input.runRequest,
     channel,
     taskId: task ? taskId : undefined,
@@ -76,9 +77,7 @@ export function prepareRunConcurrency(input: {
     const lease = input.store.acquireResourceLease(leaseInput);
     if (!lease) {
       const blockingLease = input.store.getBlockingResourceLease(leaseInput.resourceType, leaseInput.resourceKey);
-      for (const acquiredLease of leases) {
-        input.store.releaseResourceLeasesForOwner(acquiredLease.ownerType, acquiredLease.ownerId, input.now);
-      }
+      input.store.releaseResourceLeasesForAttempt(toRuntimeAttemptFence(input.attempt), input.now, "run-concurrency-conflict");
       const message = blockingLease
         ? `Resource is locked by ${blockingLease.ownerType}:${blockingLease.ownerId}: ${blockingLease.resourceType}:${blockingLease.resourceKey}`
         : `Resource is locked: ${leaseInput.resourceType}:${leaseInput.resourceKey}`;
@@ -104,7 +103,7 @@ export function claimPreparedRunTask(input: {
   readonly runRequest: RunRequest;
   readonly runId: string;
   readonly leases: readonly ResourceLease[];
-  readonly attemptId?: string;
+  readonly attempt: WorkUnitAttempt;
   readonly now: string;
 }): void {
   const task = input.task;
@@ -125,28 +124,23 @@ export function claimPreparedRunTask(input: {
     if (result.ok) {
       return;
     }
-    releasePreparedRunResources(input.store, input.leases, input.attemptId, input.now, "task-claim-failed");
+    releasePreparedRunResources(input.store, input.attempt, input.now, "task-claim-failed");
     throw new HttpError(409, result.code, `Task transition failed: ${result.code}`);
   }
   if (task.status !== "claimed") {
-    releasePreparedRunResources(input.store, input.leases, input.attemptId, input.now, "task-not-runnable");
+    releasePreparedRunResources(input.store, input.attempt, input.now, "task-not-runnable");
     throw new HttpError(409, "task_not_runnable", `Task ${task.id} is ${task.status}`);
   }
 }
 
 export function releasePreparedRunResources(
   store: RunStore,
-  leases: readonly ResourceLease[],
-  attemptId: string | undefined,
+  attempt: WorkUnitAttempt,
   now: string,
   semaphoreReason: string,
 ): void {
-  for (const lease of leases) {
-    store.releaseResourceLeasesForOwner(lease.ownerType, lease.ownerId, now);
-  }
-  if (attemptId) {
-    store.releaseRuntimeSemaphoreSlotsForOwner(attemptId, now, semaphoreReason);
-  }
+  store.releaseResourceLeasesForAttempt(toRuntimeAttemptFence(attempt), now, semaphoreReason);
+  store.releaseRuntimeSemaphoreSlotsForAttempt(toRuntimeAttemptFence(attempt), now, semaphoreReason);
 }
 
 export function acquireRunRuntimeSemaphores(input: {
@@ -192,14 +186,14 @@ export function acquireRunRuntimeSemaphores(input: {
       ownerId: input.attempt.id,
       workUnitId: input.workUnit.id,
       attemptId: input.attempt.id,
+      runtimeInstanceId: input.attempt.runtimeInstanceId,
+      fencingToken: input.attempt.fencingToken,
       acquiredAt: input.now,
       expiresAt,
     });
     if (!slot) {
-      input.store.releaseRuntimeSemaphoreSlotsForOwner(input.attempt.id, input.now, "semaphore-conflict");
-      for (const lease of input.store.listResourceLeases({ workUnitId: input.workUnit.id, status: "active", limit: 500 })) {
-        input.store.releaseResourceLeasesForOwner(lease.ownerType, lease.ownerId, input.now);
-      }
+      input.store.releaseRuntimeSemaphoreSlotsForAttempt(toRuntimeAttemptFence(input.attempt), input.now, "semaphore-conflict");
+      input.store.releaseResourceLeasesForAttempt(toRuntimeAttemptFence(input.attempt), input.now, "semaphore-conflict");
       const message = `Runtime semaphore is full: ${slotInput.resourceType}:${slotInput.resourceKey}`;
       if (input.channel?.runtimePolicy.queueOnConflict) {
         throw new QueueableRunConflictError("runtime_semaphore_conflict", message, input.channel);
@@ -209,6 +203,8 @@ export function acquireRunRuntimeSemaphores(input: {
     input.store.appendRuntimeEvent({
       workUnitId: input.workUnit.id,
       attemptId: input.attempt.id,
+      runtimeInstanceId: input.attempt.runtimeInstanceId,
+      fencingToken: input.attempt.fencingToken,
       type: "semaphore_acquired",
       actor: "system",
       ts: input.now,
@@ -224,8 +220,8 @@ export function acquireRunRuntimeSemaphores(input: {
 
 function buildRunLeaseInputs(input: {
   readonly runId: string;
-  readonly workUnitId?: string;
-  readonly attemptId?: string;
+  readonly workUnit: WorkUnit;
+  readonly attempt: WorkUnitAttempt;
   readonly runRequest: RunRequest;
   readonly channel?: Channel;
   readonly taskId?: string;
@@ -238,8 +234,10 @@ function buildRunLeaseInputs(input: {
     ownerId: input.runId,
     acquiredAt: input.now,
     expiresAt,
-    workUnitId: input.workUnitId,
-    attemptId: input.attemptId,
+    workUnitId: input.workUnit.id,
+    attemptId: input.attempt.id,
+    runtimeInstanceId: input.attempt.runtimeInstanceId,
+    fencingToken: input.attempt.fencingToken,
   });
   const leases: Parameters<RunStore["acquireResourceLease"]>[0][] = [];
 

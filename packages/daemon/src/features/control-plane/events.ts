@@ -5,12 +5,13 @@ import type {
   ControlPlaneEvent,
   RunExecutionStoreFacet,
 } from "@ling-stack/core";
+import type { ControlPlaneReplayWindow } from "@ling-stack/contracts";
 import { writeSse } from "../../shared/response.js";
+import { coalesceAndSortControlPlaneEvents } from "./event-queue.js";
 
 export const CONTROL_PLANE_POLL_DEFAULT_LIMIT = 200;
 export const CONTROL_PLANE_POLL_MAX_LIMIT = 1000;
 export const CONTROL_PLANE_SSE_HEARTBEAT_MS = 15_000;
-export const CONTROL_PLANE_SSE_INITIAL_REPLAY_LIMIT = 1000;
 export const CONTROL_PLANE_SSE_QUEUE_HARD_LIMIT = 500;
 export const CONTROL_PLANE_SSE_QUEUE_WARNING_THRESHOLD = 400;
 export const CONTROL_PLANE_SSE_FLUSH_MS = 100;
@@ -21,7 +22,13 @@ export interface ControlPlaneStreamSubscription {
 }
 
 export interface ControlPlaneEventListenerSubscription {
+  activate(replayEvents: readonly ControlPlaneEvent[]): void;
   close(): void;
+}
+
+export interface ControlPlaneReplayWindowResult {
+  readonly window: ControlPlaneReplayWindow;
+  readonly events: readonly ControlPlaneEvent[];
 }
 
 interface ControlPlaneStreamClient {
@@ -34,6 +41,7 @@ interface ControlPlaneStreamClient {
   heartbeatTimer?: NodeJS.Timeout;
   flushTimer?: NodeJS.Timeout;
   overLimitFlushes: number;
+  phase: "provisional" | "active";
   closed: boolean;
 }
 
@@ -43,6 +51,8 @@ interface ControlPlaneEventListenerClient {
   readonly cwd: string;
   readonly domains?: ReadonlySet<ControlPlaneDomain>;
   readonly onEvent: (event: ControlPlaneEvent) => void;
+  readonly queue: ControlPlaneEvent[];
+  phase: "provisional" | "active";
   closed: boolean;
 }
 
@@ -57,6 +67,7 @@ export class ControlPlaneEventHub {
     readonly domains?: readonly ControlPlaneDomain[];
     readonly response: ServerResponse;
     readonly latestEventSeq: () => number;
+    readonly replayWindow: () => ControlPlaneReplayWindowResult;
   }): ControlPlaneStreamSubscription {
     const client: ControlPlaneStreamClient = {
       id: this.nextClientId,
@@ -66,10 +77,28 @@ export class ControlPlaneEventHub {
       response: input.response,
       queue: [],
       overLimitFlushes: 0,
+      phase: "provisional",
       closed: false,
     };
     this.nextClientId += 1;
     this.clients.add(client);
+
+    try {
+      const replay = input.replayWindow();
+      if (replay.window.disposition === "snapshot_required") {
+        writeSse(client.response, "control_plane_snapshot_required", replay.window);
+        this.closeClient(client);
+        return { close: () => this.closeClient(client) };
+      }
+      mergeClientReplayEvents(client, replay.events);
+      flushClientQueueThrough(client, replay.window.upperBoundSeq, () => this.closeClient(client));
+      writeSse(client.response, "control_plane_replay_ready", replay.window);
+      client.phase = "active";
+      flushClientQueue(client, () => this.closeClient(client));
+    } catch (error) {
+      this.closeClient(client);
+      throw error;
+    }
 
     const sendHeartbeat = (): void => {
       if (client.closed || client.response.writableEnded) {
@@ -101,11 +130,14 @@ export class ControlPlaneEventHub {
       cwd: input.cwd,
       domains: input.domains && input.domains.length > 0 ? new Set(input.domains) : undefined,
       onEvent: input.onEvent,
+      queue: [],
+      phase: "provisional",
       closed: false,
     };
     this.nextClientId += 1;
     this.listeners.add(client);
     return {
+      activate: (replayEvents) => this.activateListener(client, replayEvents),
       close: () => this.closeListener(client),
     };
   }
@@ -121,7 +153,7 @@ export class ControlPlaneEventHub {
       if (!listenerMatchesEvent(listener, event)) {
         continue;
       }
-      listener.onEvent(trimOversizedEvent(event));
+      enqueueListenerEvent(listener, event);
     }
   }
 
@@ -157,6 +189,18 @@ export class ControlPlaneEventHub {
     }
     client.closed = true;
     this.listeners.delete(client);
+  }
+
+  private activateListener(client: ControlPlaneEventListenerClient, replayEvents: readonly ControlPlaneEvent[]): void {
+    if (client.closed || client.phase === "active") {
+      return;
+    }
+    mergeListenerReplayEvents(client, replayEvents);
+    client.phase = "active";
+    while (client.queue.length > 0 && !client.closed) {
+      const event = client.queue.shift();
+      if (event) client.onEvent(event);
+    }
   }
 }
 
@@ -211,7 +255,17 @@ function enqueueClientEvent(client: ControlPlaneStreamClient, event: ControlPlan
   if (client.queue.length >= CONTROL_PLANE_SSE_QUEUE_WARNING_THRESHOLD) {
     coalesceClientQueue(client);
   }
-  scheduleClientFlush(client, close);
+  if (client.phase === "active") scheduleClientFlush(client, close);
+}
+
+function mergeClientReplayEvents(client: ControlPlaneStreamClient, replayEvents: readonly ControlPlaneEvent[]): void {
+  const bySeq = new Map(client.queue.map((event) => [event.seq, event]));
+  for (const event of replayEvents) {
+    if (clientMatchesEvent(client, event)) {
+      bySeq.set(event.seq, trimOversizedEvent(event));
+    }
+  }
+  client.queue.splice(0, client.queue.length, ...[...bySeq.values()].sort((left, right) => left.seq - right.seq));
 }
 
 function scheduleClientFlush(client: ControlPlaneStreamClient, close: () => void): void {
@@ -222,6 +276,19 @@ function scheduleClientFlush(client: ControlPlaneStreamClient, close: () => void
     client.flushTimer = undefined;
     flushClientQueue(client, close);
   }, CONTROL_PLANE_SSE_FLUSH_MS);
+}
+
+function flushClientQueueThrough(client: ControlPlaneStreamClient, upperBoundSeq: number, close: () => void): void {
+  if (client.closed || client.response.writableEnded) {
+    close();
+    return;
+  }
+  while (client.queue.length > 0 && !client.response.writableEnded) {
+    const event = client.queue[0];
+    if (!event || event.seq > upperBoundSeq) break;
+    client.queue.shift();
+    writeSse(client.response, "control_plane_event", event);
+  }
 }
 
 function flushClientQueue(client: ControlPlaneStreamClient, close: () => void): void {
@@ -255,37 +322,26 @@ function flushClientQueue(client: ControlPlaneStreamClient, close: () => void): 
 }
 
 function coalesceClientQueue(client: ControlPlaneStreamClient): void {
-  const preserved: ControlPlaneEvent[] = [];
-  const coalesced = new Map<string, { event: ControlPlaneEvent; count: number }>();
-
-  for (const event of client.queue) {
-    if (shouldPreserveEvent(event)) {
-      preserved.push(event);
-      continue;
-    }
-    const key = `${event.domain}:${event.entityType}:${event.entityId}:${event.action}`;
-    const existing = coalesced.get(key);
-    if (existing) {
-      coalesced.set(key, { event, count: existing.count + 1 });
-    } else {
-      coalesced.set(key, { event, count: 1 });
-    }
-  }
-
-  client.queue.splice(0, client.queue.length, ...preserved, ...[...coalesced.values()].map(({ event, count }) => ({
-    ...event,
-    data: {
-      ...event.data,
-      summary: count > 1 ? "coalesced control-plane invalidations" : event.data.summary,
-      count,
-    },
-  })));
+  client.queue.splice(0, client.queue.length, ...coalesceAndSortControlPlaneEvents(client.queue));
 }
 
-function shouldPreserveEvent(event: ControlPlaneEvent): boolean {
-  return (
-    event.action.startsWith("approval.") ||
-    event.action === "run.completed" ||
-    event.action === "run.cancelled"
-  );
+function enqueueListenerEvent(client: ControlPlaneEventListenerClient, event: ControlPlaneEvent): void {
+  if (client.closed) return;
+  const trimmed = trimOversizedEvent(event);
+  if (client.phase === "active") {
+    client.onEvent(trimmed);
+    return;
+  }
+  client.queue.push(trimmed);
+}
+
+function mergeListenerReplayEvents(
+  client: ControlPlaneEventListenerClient,
+  replayEvents: readonly ControlPlaneEvent[],
+): void {
+  const bySeq = new Map(client.queue.map((event) => [event.seq, event]));
+  for (const event of replayEvents) {
+    if (listenerMatchesEvent(client, event)) bySeq.set(event.seq, trimOversizedEvent(event));
+  }
+  client.queue.splice(0, client.queue.length, ...[...bySeq.values()].sort((left, right) => left.seq - right.seq));
 }

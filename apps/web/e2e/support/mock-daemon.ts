@@ -132,6 +132,8 @@ export interface MockState {
   teammatePrivateAttachments: unknown[];
   conversationAttachments: unknown[];
   terminalReports: unknown[];
+  terminalReportQueryCount?: number;
+  terminalReportResponseDelaysMs?: number[];
   retentionTombstones: unknown[];
   automationDefinitions: unknown[];
   failThreadHardDeleteForThreadIds?: string[];
@@ -160,6 +162,8 @@ export interface MockState {
   approvals: MockApproval[];
   approvalCheckpoints: LingApprovalCheckpoint[];
   approvalPolicy: MockApprovalPolicy;
+  approvalQueryCount?: number;
+  approvalPolicyQueryCount?: number;
   lastApprovalPolicyPatch?: Record<string, unknown>;
   externalWorkActions: MockExternalWorkAction[];
   artifactsByExternalAction: Record<string, MockArtifact[]>;
@@ -7425,6 +7429,25 @@ export async function handleDaemonRoute(
     });
     return;
   }
+  if (request.method() === "GET" && path === "/control-plane/events") {
+    const afterSeq = Number.parseInt(url.searchParams.get("afterSeq") ?? "0", 10);
+    const limit = Number.parseInt(url.searchParams.get("limit") ?? "200", 10);
+    await route.fulfill({
+      json: {
+        cwd,
+        workspaceId: "workspace_default",
+        window: {
+          disposition: "complete",
+          requestedAfterSeq: afterSeq,
+          replayFloorSeq: 0,
+          upperBoundSeq: afterSeq,
+          nextAfterSeq: afterSeq,
+        },
+        events: [],
+      },
+    });
+    return;
+  }
   if (request.method() === "GET" && path === "/control-plane/stream") {
     await route.fulfill({ status: 204 });
     return;
@@ -12759,6 +12782,7 @@ export async function handleDaemonRoute(
   }
   const channelTerminalReportsMatch = /^\/channels\/([^/]+)\/terminal-reports$/.exec(path);
   if (request.method() === "GET" && (path === "/terminal-reports" || channelTerminalReportsMatch)) {
+    state.terminalReportQueryCount = (state.terminalReportQueryCount ?? 0) + 1;
     const channelId = channelTerminalReportsMatch
       ? decodeURIComponent(channelTerminalReportsMatch[1])
       : undefined;
@@ -12774,6 +12798,10 @@ export async function handleDaemonRoute(
       if (sourceId && source.id !== sourceId) return false;
       return true;
     });
+    const responseDelayMs = state.terminalReportResponseDelaysMs?.shift() ?? 0;
+    if (responseDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, responseDelayMs));
+    }
     await route.fulfill({ json: { reports } });
     return;
   }
@@ -13652,6 +13680,7 @@ export async function handleDaemonRoute(
     return;
   }
   if (request.method() === "GET" && path === "/approvals") {
+    state.approvalQueryCount = (state.approvalQueryCount ?? 0) + 1;
     const runId = url.searchParams.get("runId");
     const mediaJobId = url.searchParams.get("mediaJobId");
     const approvals = state.approvals.filter((approval) =>
@@ -14107,6 +14136,7 @@ export async function handleDaemonRoute(
   }
 
   if (request.method() === "GET" && path === "/approval-policy") {
+    state.approvalPolicyQueryCount = (state.approvalPolicyQueryCount ?? 0) + 1;
     await route.fulfill({ json: { cwd, policy: state.approvalPolicy } });
     return;
   }

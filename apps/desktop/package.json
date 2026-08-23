@@ -44,6 +44,7 @@
     "package:win": "corepack pnpm build && node scripts/cua-driver-electron-package.mjs --platform win32-x64 -- --win nsis --x64"
   },
   "dependencies": {
+    "@napi-rs/canvas": "0.1.80",
     "@ling-stack/api-client": "workspace:*",
     "@ling-stack/contracts": "workspace:*",
     "@ling-stack/ui-react": "workspace:*",

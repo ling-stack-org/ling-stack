@@ -101,6 +101,31 @@ test("effective config reports user defaults and workspace execution sources", a
   }
 });
 
+test("desktop runtime env enables unified exec without overriding an explicit daemon setting", async () => {
+  const previousUnifiedExec = process.env.LING_STACK_RUNTIME_UNIFIED_EXEC;
+  process.env.LING_STACK_RUNTIME_UNIFIED_EXEC = "1";
+  const enabled = createDaemonServer({
+    host: "127.0.0.1",
+    port: 0,
+    runtimeTools: {},
+  });
+  const explicitlyDisabled = createDaemonServer({
+    host: "127.0.0.1",
+    port: 0,
+    runtimeTools: { unifiedExec: false },
+  });
+  try {
+    assert.equal(enabled.config.runtimeTools.unifiedExec, true);
+    assert.equal(explicitlyDisabled.config.runtimeTools.unifiedExec, false);
+  } finally {
+    if (previousUnifiedExec === undefined) {
+      delete process.env.LING_STACK_RUNTIME_UNIFIED_EXEC;
+    } else {
+      process.env.LING_STACK_RUNTIME_UNIFIED_EXEC = previousUnifiedExec;
+    }
+  }
+});
+
 test("effective config reports user settings diagnostics without applying invalid values", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-effective-config-invalid-workspace-"));
   const userRoot = await mkdtemp(resolve(tmpdir(), "ling-stack-effective-config-invalid-user-"));

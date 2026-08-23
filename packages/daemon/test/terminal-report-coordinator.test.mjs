@@ -10,7 +10,9 @@ import {
   processRunTerminalReport,
   processTurnTerminalReport,
   processWorkflowTerminalReport,
+  recoverTerminalReports,
 } from "../dist/features/channels/terminal-report-coordinator.js";
+import { ControlPlaneEventHub } from "../dist/features/control-plane/events.js";
 import { maybeCreateWorkflowTerminalCoordinatorReply } from "../dist/features/channels/workflows.js";
 import { buildLingAgentSessionViewForChannel } from "../dist/features/channels/ling-agent-session-view.js";
 import { createTerminalWorkflowFixture } from "./terminal-report-coordinator-fixture.mjs";
@@ -100,7 +102,13 @@ test("terminal report coordinator commits fallback, publishes once, and closes i
   const store = createSqliteRunStore(cwd);
   try {
     const fixture = createTerminalWorkflowFixture(store, cwd, "enabled");
-    configureTerminalReportStore(store, { enabled: true, barrierDeadlineMs: 50, barrierPollIntervalMs: 5 });
+    const controlPlaneEvents = new ControlPlaneEventHub();
+    configureTerminalReportStore(store, {
+      enabled: true,
+      barrierDeadlineMs: 50,
+      barrierPollIntervalMs: 5,
+      onPublished: ({ event }) => controlPlaneEvents.publish(event),
+    });
     const result = await processWorkflowTerminalReport(store, fixture.workflow.id, {
       now: "2026-07-11T05:04:00.000Z",
     });
@@ -123,6 +131,81 @@ test("terminal report coordinator commits fallback, publishes once, and closes i
     assert.equal(repeated.message?.id, result.message?.id);
     assert.equal(listChannelItemViewsFixture(store, { channelId: fixture.channel.id, limit: 100 }).filter((message) => message.id === result.message?.id).length, 1);
     assert.equal(store.listTerminalReports({ sourceKind: "workflow", sourceId: fixture.workflow.id }).length, 1);
+    const publicationEvents = store.listControlPlaneEvents({
+      workspaceId: "workspace_default",
+      domains: ["work_units"],
+      limit: 100,
+    }).filter((event) => event.action === "terminal_report.published");
+    assert.equal(publicationEvents.length, 1);
+    assert.deepEqual(publicationEvents[0]?.data, {
+      channelId: fixture.channel.id,
+      sourceKind: "workflow",
+      sourceId: fixture.workflow.id,
+      publishedMessageId: result.message?.id,
+      status: "fallback",
+    });
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("terminal report recovery reuses the atomic publication event without duplicating the result", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-terminal-report-publication-recovery-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const fixture = createTerminalWorkflowFixture(store, cwd, "publication-recovery");
+    configureTerminalReportStore(store, {
+      enabled: true,
+      barrierDeadlineMs: 50,
+      barrierPollIntervalMs: 5,
+    });
+    const published = await processWorkflowTerminalReport(store, fixture.workflow.id, {
+      now: "2026-07-11T05:04:00.000Z",
+    });
+    assert.ok(published.message);
+    assert.equal(store.listControlPlaneEvents({
+      workspaceId: "workspace_default",
+      domains: ["work_units"],
+      entityType: "terminal_report",
+      entityId: published.record.id,
+      action: "terminal_report.published",
+      limit: 10,
+    }).length, 1);
+
+    const controlPlaneEvents = new ControlPlaneEventHub();
+    configureTerminalReportStore(store, {
+      enabled: true,
+      barrierDeadlineMs: 50,
+      barrierPollIntervalMs: 5,
+      onPublished: ({ event }) => controlPlaneEvents.publish(event),
+    });
+    await recoverTerminalReports(store);
+    const recovered = store.getTerminalReport(published.record.id);
+    assert.equal(recovered?.id, published.record.id);
+    assert.equal(recovered?.publishedMessageId, published.message?.id);
+    assert.equal(listChannelItemViewsFixture(store, { channelId: fixture.channel.id, limit: 100 })
+      .filter((message) => message.id === published.message?.id).length, 1);
+    assert.equal(store.listControlPlaneEvents({
+      workspaceId: "workspace_default",
+      domains: ["work_units"],
+      entityType: "terminal_report",
+      entityId: published.record.id,
+      action: "terminal_report.published",
+      limit: 10,
+    }).length, 1);
+
+    await processWorkflowTerminalReport(store, fixture.workflow.id, {
+      now: "2026-07-11T05:06:00.000Z",
+    });
+    assert.equal(store.listControlPlaneEvents({
+      workspaceId: "workspace_default",
+      domains: ["work_units"],
+      entityType: "terminal_report",
+      entityId: published.record.id,
+      action: "terminal_report.published",
+      limit: 10,
+    }).length, 1);
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });

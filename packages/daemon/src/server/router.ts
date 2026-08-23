@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { defaultProviderTemplates, executeExternalWorkAction } from "@ling-stack/core";
+import { defaultProviderTemplates, executeExternalWorkAction, toRuntimeAttemptFence } from "@ling-stack/core";
 import type { AiTeammate, RunSession, RunStore, TeammateDirectMessage, TeammateDirectThread } from "@ling-stack/core";
 import type { DaemonContext } from "../context.js";
 import { HttpError } from "../errors.js";
@@ -359,6 +359,7 @@ export async function routeRequest(
     activeRuns,
     activeDirectReplies,
     channelReplyDispatchCoordinator,
+    channelTurnDispatchWorker,
     runtimeSupervisor,
     secretResolver,
     externalSecretStore,
@@ -892,9 +893,12 @@ export async function routeRequest(
       {
         startRuntimeWorkUnit: (input) => startRuntimeWorkUnit({ ...input, runtimeSupervisor }),
         appendArtifactRuntimeEvent: (input) => {
+          const attempt = input.store.getWorkUnitAttempt(input.attemptId);
+          if (!attempt) {
+            throw new Error(`Runtime attempt not found while recording artifact evidence: ${input.attemptId}`);
+          }
           input.store.appendRuntimeEvent({
-            workUnitId: input.workUnitId,
-            attemptId: input.attemptId,
+            ...toRuntimeAttemptFence(attempt),
             type: "artifact_created",
             actor: "system",
             ts: input.now,
@@ -2020,56 +2024,26 @@ export async function routeRequest(
       return;
     }
     if (channelRoute.action === "turns") {
-      const channelTurnsCwd = url.searchParams.get("cwd") ?? "";
-      await handleChannelTurnsCollection(request, response, config, storeRegistry, channelRoute.channelId, (input) =>
-        createAiChannelReply({
-          startRun: startTeammateDirectRun,
-          secretResolver,
-          webFetch: context.webFetch,
-          webResolveHostAddresses: context.webResolveHostAddresses,
-          ...input,
-          trackCompletion: (completion) => activeRuns.trackCompletion(completion),
-          teamObserverBusEnabled: config.channels.teamObserverBus === true,
-        }),
-        (input) => confirmAndOrchestrateChannelProposal({
-          store: input.store,
-          cwd: channelTurnsCwd,
-          proposalId: input.proposalId,
-        }),
-        {
-          runnerRegistry,
-          secretResolver,
-          config,
-        },
-        imageVisionSummarizer,
+      await handleChannelTurnsCollection(
+        request,
+        response,
+        config,
+        storeRegistry,
+        channelRoute.channelId,
         channelReplyDispatchCoordinator,
+        channelTurnDispatchWorker,
       );
       return;
     }
     if (channelRoute.action === "turns-stream") {
-      const channelTurnsCwd = url.searchParams.get("cwd") ?? "";
-      await handleChannelTurnStream(request, response, config, storeRegistry, channelRoute.channelId, (input) =>
-        createAiChannelReply({
-          startRun: startTeammateDirectRun,
-          secretResolver,
-          webFetch: context.webFetch,
-          webResolveHostAddresses: context.webResolveHostAddresses,
-          ...input,
-          trackCompletion: (completion) => activeRuns.trackCompletion(completion),
-          teamObserverBusEnabled: config.channels.teamObserverBus === true,
-        }),
-        (input) => confirmAndOrchestrateChannelProposal({
-          store: input.store,
-          cwd: channelTurnsCwd,
-          proposalId: input.proposalId,
-        }),
-        {
-          runnerRegistry,
-          secretResolver,
-          config,
-        },
-        imageVisionSummarizer,
+      await handleChannelTurnStream(
+        request,
+        response,
+        config,
+        storeRegistry,
+        channelRoute.channelId,
         channelReplyDispatchCoordinator,
+        channelTurnDispatchWorker,
       );
       return;
     }
@@ -2544,6 +2518,7 @@ export async function routeRequest(
   const approvalRoute = parseApprovalRoute(url.pathname);
   if (approvalRoute) {
     await handleApprovalItem(request, response, config, storeRegistry, approvalRoute, controlPlaneEvents, ({ cwd, store, approval, now }) => {
+      context.approvalResumeCoordinator.resumeAfterApproval({ store, approval });
       syncWorkflowApprovalDecision(store, approval, now);
       return syncMediaJobForApprovalDecision({
         cwd,

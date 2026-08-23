@@ -1094,6 +1094,13 @@ export function WorkspaceClientView({
       .join("|");
     return [workflowsSignature, stepsSignature, runsSignature, approvalsSignature].join("\n");
   }, [approvals, channelRuns, channelWorkflowSteps, channelWorkflows, selectedChannelId]);
+  const committedAssistantItemRevisionSignature = useMemo(
+    () => channelMessagesForDisplay
+      .filter((message) => message.channelId === selectedChannelId && message.kind === "ai_reply" && message.status !== "pending")
+      .map((message) => [message.id, message.revision ?? 1, message.status, message.updatedAt].join(":"))
+      .join("|"),
+    [channelMessagesForDisplay, selectedChannelId],
+  );
   useEffect(() => {
     const workspaceCwd = cwd.trim();
     if (!workspaceCwd || !selectedChannelId) {
@@ -1115,7 +1122,7 @@ export function WorkspaceClientView({
     return () => {
       cancelled = true;
     };
-  }, [channelCollaborationCardRefreshSignature, cwd, selectedChannelId]);
+  }, [channelCollaborationCardRefreshSignature, committedAssistantItemRevisionSignature, cwd, selectedChannelId]);
   useEffect(() => {
     const workspaceCwd = cwd.trim();
     if (!workspaceCwd || !selectedChannelId) {
@@ -3286,6 +3293,30 @@ export function WorkspaceClientView({
       setChannelReplacementRetryingMessageId(undefined);
     }
   }
+
+  function repairProposalModelBinding(
+    blocker: NonNullable<ChannelExecutionProposal["blocker"]>,
+  ): void {
+    if (blocker.repairTarget === "model_workbench") {
+      onOpenProviders();
+      return;
+    }
+    if (blocker.repairTarget === "channel_settings") {
+      openChannelSettingsPage();
+      return;
+    }
+    channelHeader.closeSearch();
+    setTeammateManagerOpen(true);
+    setChannelSettingsPageOpen(false);
+    setChannelEnvironmentPageOpen(false);
+    setEnvironmentCommitDialogOpen(false);
+    setProgressPopoverOpen(false);
+    setWorkspaceSettingsOpen(false);
+    setActivityToolsOpen(false);
+    setSidePanelOpen(false);
+    onChannelCreateOpenChange(false);
+  }
+
   const messageRenderers = createChannelMessageRenderers({
     activeRunId,
     allLocalTeammateById,
@@ -3340,6 +3371,7 @@ export function WorkspaceClientView({
     onOpenApprovalDetail: openApprovalDetail,
     onOpenContextSummaryInConversationDetail: openContextSummaryInConversationDetail,
     onOpenRun: openRunInPanel,
+    onRepairProposalModelBinding: repairProposalModelBinding,
     onOpenFileReference: () => openRightDockPage("files"),
     onOpenTerminalReportFile: (target) => openRightDockPage("files", target),
     onOpenWorkspaceReview: (target) => openRightDockPage("review", undefined, {

@@ -7,9 +7,8 @@ import {
   type RunStore,
   type RunSummary,
   type WorkUnit,
-  type WorkUnitAttempt,
   type WorkUnitStatus,
-  type RuntimeEvent,
+  toRuntimeAttemptFence,
 } from "@ling-stack/core";
 import { syncLingThreadForRunEvent, syncLingThreadForTerminalRun } from "./features/runs/threads.js";
 
@@ -163,11 +162,15 @@ export class RunControlService {
         currentRunId: input.run.id,
       });
     }
-    input.store.releaseResourceLeasesForOwner("run", input.run.id, endedAt);
     if (current.workUnitId) {
       const workUnit = input.store.getWorkUnit(current.workUnitId);
       const attemptId = workUnit?.activeAttemptId ?? input.store.listWorkUnitAttempts(current.workUnitId).at(-1)?.id;
       if (attemptId) {
+        const attempt = input.store.getWorkUnitAttempt(attemptId);
+        if (attempt) {
+          input.store.releaseResourceLeasesForAttempt(toRuntimeAttemptFence(attempt), endedAt, "cancelled");
+          input.store.releaseRuntimeSemaphoreSlotsForAttempt(toRuntimeAttemptFence(attempt), endedAt, "cancelled");
+        }
         this.transitionWorkUnitCancelled(input.store, current.workUnitId, attemptId, input.reason);
       }
       if (workUnit) {
@@ -235,10 +238,8 @@ export class RunControlService {
 
   private releaseWorkUnitRuntimeResources(store: RunStore, workUnit: WorkUnit, now: string, releaseReason: string): WorkUnit {
     for (const attempt of store.listWorkUnitAttempts(workUnit.id)) {
-      store.releaseRuntimeSemaphoreSlotsForOwner(attempt.id, now, releaseReason);
-    }
-    for (const lease of store.listResourceLeases({ workUnitId: workUnit.id, status: "active", limit: 500 })) {
-      store.releaseResourceLeasesForOwner(lease.ownerType, lease.ownerId, now);
+      store.releaseRuntimeSemaphoreSlotsForAttempt(toRuntimeAttemptFence(attempt), now, releaseReason);
+      store.releaseResourceLeasesForAttempt(toRuntimeAttemptFence(attempt), now, releaseReason);
     }
     return store.getWorkUnit(workUnit.id) ?? workUnit;
   }
@@ -248,12 +249,18 @@ export class RunControlService {
     if (!current || isTerminalWorkUnitStatus(current.status) || current.status === "stale") {
       return;
     }
+    const attempt = store.getWorkUnitAttempt(attemptId);
+    if (!attempt || attempt.workUnitId !== workUnitId || current.activeAttemptId !== attemptId) return;
     const now = new Date().toISOString();
     const cancelling =
       current.status === "cancelling"
         ? { ok: true as const, from: current.status, to: current.status }
         : store.transitionWorkUnitStatus({
             workUnitId,
+            attemptId: attempt.id,
+            activeAttemptId: attempt.id,
+            runtimeInstanceId: attempt.runtimeInstanceId,
+            fencingToken: attempt.fencingToken,
             expectedStatus: current.status,
             event: "cancel",
             actor: "local-user",
@@ -268,8 +275,7 @@ export class RunControlService {
       return;
     }
     this.transitionWorkUnitTerminal(store, {
-      workUnitId,
-      attemptId,
+      ...toRuntimeAttemptFence(attempt),
       event: "runner_cancelled",
       attemptStatus: "cancelled",
       runtimeEventType: "work_unit_cancelled",
@@ -282,56 +288,9 @@ export class RunControlService {
 
   private transitionWorkUnitTerminal(
     store: RunStore,
-    input: {
-      readonly workUnitId: string;
-      readonly attemptId: string;
-      readonly event: Parameters<RunStore["transitionWorkUnitStatus"]>[0]["event"];
-      readonly attemptStatus: WorkUnitAttempt["status"];
-      readonly runtimeEventType: RuntimeEvent["type"];
-      readonly actor: Parameters<RunStore["transitionWorkUnitStatus"]>[0]["actor"];
-      readonly now: string;
-      readonly errorCode?: string;
-      readonly errorMessage?: string;
-    },
+    input: Parameters<RunStore["transitionWorkUnitAttemptTerminal"]>[0],
   ): void {
-    const current = store.getWorkUnit(input.workUnitId);
-    if (!current || isTerminalWorkUnitStatus(current.status) || current.status === "stale") {
-      return;
-    }
-    const transition = store.transitionWorkUnitStatus({
-      workUnitId: input.workUnitId,
-      expectedStatus: current.status,
-      event: input.event,
-      actor: input.actor,
-      now: input.now,
-      endedAt: input.now,
-      errorCode: input.errorCode ?? null,
-      errorMessage: input.errorMessage ?? null,
-    });
-    if (!transition.ok) {
-      return;
-    }
-    store.updateWorkUnitAttemptStatus({
-      attemptId: input.attemptId,
-      status: input.attemptStatus,
-      now: input.now,
-      endedAt: input.now,
-      errorCode: input.errorCode ?? null,
-      errorMessage: input.errorMessage ?? null,
-    });
-    store.appendRuntimeEvent({
-      workUnitId: input.workUnitId,
-      attemptId: input.attemptId,
-      type: input.runtimeEventType,
-      actor: input.actor === "runner" ? "runner" : input.actor === "provider" ? "provider" : "system",
-      ts: input.now,
-      data: {
-        fromStatus: transition.from,
-        toStatus: transition.to,
-        errorCode: input.errorCode,
-        errorMessage: input.errorMessage,
-      },
-    });
+    store.transitionWorkUnitAttemptTerminal(input);
   }
 }
 

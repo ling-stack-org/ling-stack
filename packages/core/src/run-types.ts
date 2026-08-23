@@ -31,6 +31,12 @@ import type {
   ApprovalPolicyUpdateInput,
 } from "./approval-policy.js";
 import type {
+  CommitApprovalResumeClaimInput,
+  CommitApprovalResumeClaimResult,
+  CommitApprovalResumeSuspensionInput,
+  CommitApprovalResumeSuspensionResult,
+  CommitApprovalResumeTerminalInput,
+  CommitApprovalResumeTerminalResult,
   CreateApprovalCheckpointInput,
   LingApprovalCheckpoint,
   ListApprovalCheckpointsOptions,
@@ -272,12 +278,13 @@ import type {
   ListResourceLeasesOptions,
   ListStateTransitionEventsOptions,
   ResourceLease,
-  ResourceLeaseOwnerType,
+  ResourceLeaseOwnerLevelType,
   ResourceLeaseStatus,
   StateTransitionEvent,
 } from "./channel-runtime-types.js";
 import type {
   RunTransitionEvent,
+  LingTurnTransitionEvent,
   StateTransitionActor,
   TaskTransitionEvent,
   TransitionResult,
@@ -288,6 +295,7 @@ import type {
 import type {
   AcquireRuntimeSemaphoreSlotInput,
   AppendRuntimeEventInput,
+  AppendTerminalRuntimeAuditInput,
   CreateWorkUnitAttemptInput,
   CreateWorkUnitInput,
   ListRuntimeEventsOptions,
@@ -296,7 +304,10 @@ import type {
   RecordRuntimeHeartbeatInput,
   RuntimeEvent,
   RuntimeHeartbeat,
+  RuntimeAttemptFenceV1,
   RuntimeSemaphoreSlot,
+  TerminalAttemptStatus,
+  TerminalRuntimeEventType,
   WorkUnit,
   WorkUnitAttempt,
   WorkUnitStatus,
@@ -574,6 +585,16 @@ export interface LinkRunToLingTurnInput {
   readonly turnId: string;
   readonly runId: string;
   readonly role?: LingTurnRunRole;
+  readonly now: string;
+}
+
+export interface TransitionLingTurnStatusInput {
+  readonly turnId: string;
+  readonly expectedStatus?: LingTurnStatus;
+  readonly event: LingTurnTransitionEvent;
+  readonly actor: StateTransitionActor;
+  readonly reason?: string;
+  readonly idempotencyKey?: string;
   readonly now: string;
 }
 
@@ -1030,6 +1051,7 @@ export interface ExecutionActionCommandOutputChunk {
 
 export interface ExecutionActionCommandEvidence {
   readonly command: string;
+  readonly outcome?: "succeeded" | "failed" | "timed_out" | "cancelled" | "unknown";
   readonly cwd?: string;
   readonly startedAt?: string;
   readonly completedAt?: string;
@@ -1291,6 +1313,8 @@ export interface RunArtifact {
   readonly title?: string;
   readonly contentType?: string;
   readonly sizeBytes?: number;
+  readonly sealedPayload?: unknown;
+  readonly contentSha256?: string;
   readonly createdAt: string;
 }
 
@@ -1304,6 +1328,10 @@ export interface CreateRunArtifactInput {
   readonly title?: string;
   readonly contentType?: string;
   readonly sizeBytes?: number;
+  /** Canonical SQLite-owned JSON for evidence whose identity must survive file projection changes. */
+  readonly sealedPayload?: unknown;
+  /** Optional caller assertion. The store always recomputes this digest from sealedPayload. */
+  readonly contentSha256?: string;
   readonly createdAt: string;
 }
 
@@ -1329,6 +1357,7 @@ export interface ControlPlaneEvent {
   readonly entityId: string;
   readonly action: string;
   readonly data: Record<string, unknown>;
+  readonly idempotencyKey?: string;
 }
 
 export interface AppendControlPlaneEventInput {
@@ -1339,6 +1368,7 @@ export interface AppendControlPlaneEventInput {
   readonly entityId: string;
   readonly action: string;
   readonly data?: Record<string, unknown>;
+  readonly idempotencyKey?: string;
 }
 
 export interface ListControlPlaneEventsOptions {
@@ -1346,6 +1376,31 @@ export interface ListControlPlaneEventsOptions {
   readonly afterSeq?: number;
   readonly limit?: number;
   readonly domains?: readonly ControlPlaneDomain[];
+  readonly entityType?: string;
+  readonly entityId?: string;
+  readonly action?: string;
+}
+
+export interface ControlPlaneReplayState {
+  readonly workspaceId: string;
+  readonly replayFloorSeq: number;
+  readonly latestSeq: number;
+  readonly updatedAt: string;
+}
+
+export interface ReadControlPlaneReplayWindowInput {
+  readonly workspaceId: string;
+  readonly afterSeq: number;
+  readonly limit: number;
+  readonly domains?: readonly ControlPlaneDomain[];
+  readonly entityType?: string;
+  readonly entityId?: string;
+  readonly action?: string;
+}
+
+export interface ControlPlaneReplayWindowResult {
+  readonly window: import("@ling-stack/contracts").ControlPlaneReplayWindow;
+  readonly events: readonly ControlPlaneEvent[];
 }
 
 export interface RunStore {
@@ -1415,6 +1470,7 @@ export interface RunStore {
   getLingTurnForRun(runId: string): LingTurn | undefined;
   listLingTurnRuns(turnId: string): LingTurnRun[];
   reconcileLingTurnStatus(turnId: string, now: string): LingTurn | undefined;
+  transitionLingTurnStatus(input: TransitionLingTurnStatusInput): TransitionResult<LingTurnStatus>;
   createTerminalReportDraft(input: CreateLingTerminalReportInput, now: string): LingTerminalReportRecord;
   getTerminalReport(id: string): LingTerminalReportRecord | undefined;
   getTerminalReportForSource(
@@ -1427,6 +1483,12 @@ export interface RunStore {
   updateTerminalReportDraft(input: UpdateLingTerminalReportDraftInput): LingTerminalReportRecord;
   commitTerminalReport(input: CommitLingTerminalReportInput): LingTerminalReportRecord;
   markTerminalReportPublished(input: MarkLingTerminalReportPublishedInput): LingTerminalReportRecord;
+  commitTerminalReportPublication(
+    input: import("./terminal-report-publication-types.js").CommitTerminalReportPublicationInput,
+  ): import("./terminal-report-publication-types.js").CommitTerminalReportPublicationResult;
+  commitLegacyWorkflowPublication(
+    input: import("./terminal-report-publication-types.js").CommitLegacyWorkflowPublicationInput,
+  ): import("./terminal-report-publication-types.js").CommitLegacyWorkflowPublicationResult;
   failTerminalReport(input: FailLingTerminalReportInput): LingTerminalReportRecord;
   createRun(input: CreateRunInput): RunSession;
   markRunStarted(runId: string, startedAt: string): void;
@@ -1437,8 +1499,11 @@ export interface RunStore {
   markRunCancelled(runId: string, endedAt: string, summaryPath?: string): void;
   appendEvent(runId: string, type: RunEventType, data: unknown): RunEventEnvelope;
   appendControlPlaneEvent(input: AppendControlPlaneEventInput, now: string): ControlPlaneEvent;
+  getControlPlaneEventByIdempotency(workspaceId: string, idempotencyKey: string): ControlPlaneEvent | undefined;
   listControlPlaneEvents(options: ListControlPlaneEventsOptions): ControlPlaneEvent[];
   getLatestControlPlaneEventSeq(workspaceId: string): number;
+  getControlPlaneReplayState(workspaceId: string): ControlPlaneReplayState;
+  readControlPlaneReplayWindow(input: ReadControlPlaneReplayWindowInput): ControlPlaneReplayWindowResult;
   createChannelTeamEvidenceItem(input: CreateChannelTeamEvidenceItemInput, now: string): ChannelTeamEvidenceItem;
   getChannelTeamEvidenceItem(id: string): ChannelTeamEvidenceItem | undefined;
   listChannelTeamEvidenceItems(options: ListChannelTeamEvidenceItemsOptions): ChannelTeamEvidenceItem[];
@@ -1503,12 +1568,26 @@ export interface RunStore {
     readonly lastHeartbeatAt?: string;
     readonly errorCode?: string | null;
     readonly errorMessage?: string | null;
-  }): TransitionResult<WorkUnitStatus>;
+  } & (
+    | {
+        readonly attemptId?: never;
+        readonly runtimeInstanceId?: never;
+        readonly fencingToken?: never;
+        readonly terminalAttemptOwnership?: never;
+      }
+    | (RuntimeAttemptFenceV1 & {
+        /** Core-only reconciliation authority after the current process-owned Attempt is durably lost. */
+        readonly terminalAttemptOwnership?: { readonly kind: "lost_attempt_reconciliation" };
+      })
+  )): TransitionResult<WorkUnitStatus>;
   createWorkUnitAttempt(input: CreateWorkUnitAttemptInput): WorkUnitAttempt;
   getWorkUnitAttempt(attemptId: string): WorkUnitAttempt | undefined;
   listWorkUnitAttempts(workUnitId: string): WorkUnitAttempt[];
   updateWorkUnitAttemptStatus(input: {
     readonly attemptId: string;
+    readonly workUnitId: string;
+    readonly runtimeInstanceId: string;
+    readonly fencingToken: string;
     readonly status: WorkUnitAttempt["status"];
     readonly now: string;
     readonly startedAt?: string;
@@ -1519,11 +1598,28 @@ export interface RunStore {
     readonly errorCode?: string | null;
     readonly errorMessage?: string | null;
   }): WorkUnitAttempt | undefined;
+  /**
+   * Atomically closes the canonical Work Unit, its current Attempt, and the
+   * terminal runtime audit event under one Attempt fence.
+   */
+  transitionWorkUnitAttemptTerminal(input: RuntimeAttemptFenceV1 & {
+    readonly event: WorkUnitTransitionEvent;
+    readonly attemptStatus: TerminalAttemptStatus;
+    readonly runtimeEventType: TerminalRuntimeEventType;
+    readonly actor: StateTransitionActor;
+    readonly now: string;
+    readonly errorCode?: string;
+    readonly errorMessage?: string;
+  }): boolean;
   appendRuntimeEvent(input: AppendRuntimeEventInput): RuntimeEvent;
+  appendTerminalRuntimeAudit(input: AppendTerminalRuntimeAuditInput): RuntimeEvent;
+  appendRuntimeDiagnosticEvent(input: import("./runtime-supervisor-types.js").AppendRuntimeDiagnosticEventInput): RuntimeEvent;
   listRuntimeEvents(workUnitId: string, options?: ListRuntimeEventsOptions): RuntimeEvent[];
   recordRuntimeHeartbeat(input: RecordRuntimeHeartbeatInput): RuntimeHeartbeat;
   acquireRuntimeSemaphoreSlot(input: AcquireRuntimeSemaphoreSlotInput): RuntimeSemaphoreSlot | undefined;
-  releaseRuntimeSemaphoreSlotsForOwner(ownerId: string, releasedAt: string, releaseReason: string): number;
+  renewRuntimeSemaphoreSlotsForAttempt(fence: RuntimeAttemptFenceV1, renewedAt: string): number;
+  releaseRuntimeSemaphoreSlotsForAttempt(fence: RuntimeAttemptFenceV1, releasedAt: string, releaseReason: string): number;
+  expireRuntimeSemaphoreSlots(now: string): number;
   listRuntimeSemaphoreSlots(options?: ListRuntimeSemaphoreSlotsOptions): RuntimeSemaphoreSlot[];
   createArtifact(input: CreateRunArtifactInput): RunArtifact;
   getArtifact(artifactId: string): RunArtifact | undefined;
@@ -1564,7 +1660,9 @@ export interface RunStore {
     readonly errorMessage?: string | null;
   }): TransitionResult<RunStatus>;
   acquireResourceLease(input: CreateResourceLeaseInput): ResourceLease | undefined;
-  releaseResourceLeasesForOwner(ownerType: ResourceLeaseOwnerType, ownerId: string, releasedAt: string): number;
+  renewResourceLeasesForAttempt(fence: RuntimeAttemptFenceV1, renewedAt: string): number;
+  releaseResourceLeasesForAttempt(fence: RuntimeAttemptFenceV1, releasedAt: string, releaseReason: string): number;
+  releaseResourceLeasesForOwner(ownerType: ResourceLeaseOwnerLevelType, ownerId: string, releasedAt: string): number;
   expireResourceLeases(now: string): number;
   listResourceLeases(options?: ListResourceLeasesOptions): ResourceLease[];
   getBlockingResourceLease(resourceType: ResourceLease["resourceType"], resourceKey: string): ResourceLease | undefined;
@@ -1834,6 +1932,39 @@ export interface RunStore {
     readonly idempotencyKey?: string;
     readonly now: string;
   }): TransitionResult<ChannelWorkflow["status"]>;
+  commitChannelWorkflowCompletionEvaluation(input: {
+    readonly workflowId: string;
+    readonly evaluation: import("./workflow-completion-read-set.js").WorkflowCompletionEvaluationV1;
+    readonly now: string;
+  }): TransitionResult<ChannelWorkflow["status"]>;
+  commitChannelWorkflowStepFinalization(input: {
+    readonly workflowStepId: string;
+    readonly expectedStatus: "running" | "waiting_for_approval";
+    readonly expectedUpdatedAt: string;
+    readonly expectedRun:
+      | {
+          readonly kind: "linked_run";
+          readonly id: string;
+          readonly status: "succeeded" | "failed" | "cancelled";
+          readonly updatedAt: string;
+          readonly eventWatermark: { readonly count: number; readonly latestSeq: number };
+          readonly artifactIds: readonly string[];
+        }
+      | { readonly kind: "no_linked_run" };
+    readonly expectedApproval?: { readonly id: string; readonly status: ApprovalRequest["status"]; readonly resolvedAt?: string };
+    readonly finalStatus: "succeeded" | "blocked" | "failed" | "cancelled" | "skipped";
+    readonly delegatedOutcome: import("@ling-stack/contracts").DelegatedOutcomeV1;
+    readonly delegatedOutcomeBasisFingerprint: string;
+    readonly executionVerification?: import("@ling-stack/contracts").WorkflowStepExecutionVerificationV1;
+    readonly outputArtifactId?: string;
+    readonly resultContextReview?: import("./workspace-types.js").WorkflowFanInContextReview;
+    readonly resultSummary?: string;
+    readonly blocker?: string;
+    readonly actor: StateTransitionActor;
+    readonly reason: string;
+    readonly idempotencyKey: string;
+    readonly now: string;
+  }): TransitionResult<ChannelWorkflowStep["status"]>;
   createChannelWorkflowStep(input: CreateChannelWorkflowStepInput, now: string): ChannelWorkflowStep;
   getChannelWorkflowStep(id: string): ChannelWorkflowStep | undefined;
   listChannelWorkflowSteps(options: ListChannelWorkflowStepsOptions): ChannelWorkflowStep[];
@@ -1915,6 +2046,9 @@ export interface RunStore {
   getApprovalCheckpointForApproval(approvalId: string): LingApprovalCheckpoint | undefined;
   listApprovalCheckpoints(options?: ListApprovalCheckpointsOptions): LingApprovalCheckpoint[];
   updateApprovalCheckpointStatus(id: string, input: UpdateApprovalCheckpointStatusInput, now: string): LingApprovalCheckpoint | undefined;
+  commitApprovalResumeClaim(input: CommitApprovalResumeClaimInput): CommitApprovalResumeClaimResult;
+  commitApprovalResumeSuspension(input: CommitApprovalResumeSuspensionInput): CommitApprovalResumeSuspensionResult;
+  commitApprovalResumeTerminal(input: CommitApprovalResumeTerminalInput): CommitApprovalResumeTerminalResult;
   getApprovalPolicy(): ApprovalPolicy;
   updateApprovalPolicy(input: ApprovalPolicyUpdateInput, now: string): ApprovalPolicy;
   createOrReuseExternalWorkWorkflow(input: CreateExternalWorkWorkflowInput, now: string): ExternalWorkWorkflowResult;
@@ -2113,6 +2247,7 @@ export type LingThreadStoreFacet = RunStoreFacet<
   | "getLingTurnForRun"
   | "listLingTurnRuns"
   | "reconcileLingTurnStatus"
+  | "transitionLingTurnStatus"
 >;
 
 export type TerminalReportStoreFacet = RunStoreFacet<
@@ -2123,6 +2258,8 @@ export type TerminalReportStoreFacet = RunStoreFacet<
   | "updateTerminalReportDraft"
   | "commitTerminalReport"
   | "markTerminalReportPublished"
+  | "commitTerminalReportPublication"
+  | "commitLegacyWorkflowPublication"
   | "failTerminalReport"
 >;
 
@@ -2136,8 +2273,11 @@ export type RunExecutionStoreFacet = RunStoreFacet<
   | "markRunCancelled"
   | "appendEvent"
   | "appendControlPlaneEvent"
+  | "getControlPlaneEventByIdempotency"
   | "listControlPlaneEvents"
   | "getLatestControlPlaneEventSeq"
+  | "getControlPlaneReplayState"
+  | "readControlPlaneReplayWindow"
   | "getRun"
   | "listRuns"
   | "listEvents"
@@ -2167,11 +2307,16 @@ export type RuntimeSupervisorStoreFacet = RunStoreFacet<
   | "getWorkUnitAttempt"
   | "listWorkUnitAttempts"
   | "updateWorkUnitAttemptStatus"
+  | "transitionWorkUnitAttemptTerminal"
   | "appendRuntimeEvent"
+  | "appendTerminalRuntimeAudit"
+  | "appendRuntimeDiagnosticEvent"
   | "listRuntimeEvents"
   | "recordRuntimeHeartbeat"
   | "acquireRuntimeSemaphoreSlot"
-  | "releaseRuntimeSemaphoreSlotsForOwner"
+  | "renewRuntimeSemaphoreSlotsForAttempt"
+  | "releaseRuntimeSemaphoreSlotsForAttempt"
+  | "expireRuntimeSemaphoreSlots"
   | "listRuntimeSemaphoreSlots"
   | "recoverStaleRuns"
   | "recoverStaleChannelWorkflows"
@@ -2181,6 +2326,8 @@ export type RuntimeSupervisorStoreFacet = RunStoreFacet<
   | "transitionTaskStatus"
   | "transitionRunStatus"
   | "acquireResourceLease"
+  | "renewResourceLeasesForAttempt"
+  | "releaseResourceLeasesForAttempt"
   | "releaseResourceLeasesForOwner"
   | "expireResourceLeases"
   | "listResourceLeases"

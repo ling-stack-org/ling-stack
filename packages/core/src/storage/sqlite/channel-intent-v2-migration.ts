@@ -1,7 +1,11 @@
 import type { DatabaseSync } from "node:sqlite";
+import { createRequiredParticipantManifestV1 } from "@ling-stack/contracts";
+import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 
 export const CHANNEL_INTENT_V2_MIGRATION_VERSION = 111;
 export const CHANNEL_INTENT_V2_MIGRATION_NAME = "replace_channel_intent_decisions_with_v2";
+
+const EMPTY_MANIFEST_JSON = JSON.stringify(createRequiredParticipantManifestV1([])).replaceAll("'", "''");
 
 export interface ChannelIntentV2MigrationContext {
   readonly database: DatabaseSync;
@@ -37,6 +41,7 @@ export function applyChannelIntentV2Migration(input: ChannelIntentV2MigrationCon
           'no_reply', 'reply', 'visible_multi_reply', 'clarify', 'workflow_proposal', 'execute'
         )),
         selected_teammate_ids_json TEXT NOT NULL,
+        participant_manifest_json TEXT NOT NULL DEFAULT '${EMPTY_MANIFEST_JSON}',
         proposal_id TEXT,
         result_item_ids_json TEXT NOT NULL,
         workflow_id TEXT,
@@ -78,7 +83,7 @@ export function applyChannelIntentV2Migration(input: ChannelIntentV2MigrationCon
     input.database.exec("COMMIT;");
     return true;
   } catch (error) {
-    if (input.database.isTransaction) input.database.exec("ROLLBACK;");
+    rollbackOwnedSqliteTransaction(input.database);
     throw error;
   }
 }

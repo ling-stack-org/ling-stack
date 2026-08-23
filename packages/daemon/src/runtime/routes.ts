@@ -63,7 +63,7 @@ export function handleListStateTransitions(response: ServerResponse, url: URL, s
     return;
   }
   const entityType = url.searchParams.get("entityType") ?? undefined;
-  if (entityType !== undefined && !["task", "run", "approval", "media_job", "workflow", "workflow_step", "work_unit"].includes(entityType)) {
+  if (entityType !== undefined && !["task", "run", "approval", "media_job", "workflow", "workflow_step", "work_unit", "turn"].includes(entityType)) {
     writeJson(response, 400, { error: "bad_request", message: "entityType is invalid" });
     return;
   }
@@ -630,6 +630,7 @@ function isWorkUnitKind(value: string): value is WorkUnitKind {
   return (
     value === "task_run" ||
     value === "conversation_run" ||
+    value === "channel_turn_dispatch" ||
     value === "channel_ai_reply" ||
     value === "channel_terminal_report" ||
     value === "teammate_direct_reply" ||

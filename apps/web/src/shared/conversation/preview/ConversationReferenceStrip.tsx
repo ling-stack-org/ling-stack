@@ -1,4 +1,3 @@
-import { useEffect, useRef, useState } from "react";
 import { FileText, Globe2 } from "lucide-react";
 
 export interface ConversationReferenceItem {
@@ -19,59 +18,8 @@ export function ConversationReferenceStrip({
   readonly references: readonly ConversationReferenceItem[];
   readonly ariaLabel: string;
 }): React.JSX.Element | null {
-  const [activeId, setActiveId] = useState("");
-  const openTimerRef = useRef<number | undefined>(undefined);
-  const closeTimerRef = useRef<number | undefined>(undefined);
-
-  useEffect(() => () => {
-    if (openTimerRef.current !== undefined) {
-      globalThis.clearTimeout(openTimerRef.current);
-    }
-    if (closeTimerRef.current !== undefined) {
-      globalThis.clearTimeout(closeTimerRef.current);
-    }
-  }, []);
-
   if (references.length === 0) {
     return null;
-  }
-
-  function clearOpenTimer(): void {
-    if (openTimerRef.current !== undefined) {
-      globalThis.clearTimeout(openTimerRef.current);
-      openTimerRef.current = undefined;
-    }
-  }
-
-  function clearCloseTimer(): void {
-    if (closeTimerRef.current !== undefined) {
-      globalThis.clearTimeout(closeTimerRef.current);
-      closeTimerRef.current = undefined;
-    }
-  }
-
-  function scheduleOpen(id: string): void {
-    clearOpenTimer();
-    clearCloseTimer();
-    openTimerRef.current = globalThis.setTimeout(() => {
-      setActiveId(id);
-      openTimerRef.current = undefined;
-    }, 450);
-  }
-
-  function openImmediately(id: string): void {
-    clearOpenTimer();
-    clearCloseTimer();
-    setActiveId(id);
-  }
-
-  function scheduleClose(): void {
-    clearOpenTimer();
-    clearCloseTimer();
-    closeTimerRef.current = globalThis.setTimeout(() => {
-      setActiveId("");
-      closeTimerRef.current = undefined;
-    }, 120);
   }
 
   return (
@@ -84,30 +32,19 @@ export function ConversationReferenceStrip({
             {reference.meta ? <small>{reference.meta}</small> : null}
           </>
         );
-        const interactionProps = {
-          onMouseEnter: () => scheduleOpen(reference.id),
-          onMouseLeave: scheduleClose,
-          onFocus: () => openImmediately(reference.id),
-          onBlur: scheduleClose,
-        };
         return (
           <span key={reference.id} className="conversation-reference-item">
             {reference.href ? (
-              <a className="conversation-reference-trigger" href={reference.href} target="_blank" rel="noreferrer" {...interactionProps}>
+              <a className="conversation-reference-trigger" href={reference.href} target="_blank" rel="noreferrer">
                 {content}
               </a>
             ) : (
-              <button className="conversation-reference-trigger" type="button" onClick={reference.onOpen} disabled={!reference.onOpen} {...interactionProps}>
+              <button className="conversation-reference-trigger" type="button" onClick={reference.onOpen} disabled={!reference.onOpen}>
                 {content}
               </button>
             )}
-            {activeId === reference.id && (reference.previewTitle || reference.previewText || reference.meta) ? (
-              <span
-                className="conversation-reference-preview"
-                role="tooltip"
-                onMouseEnter={clearCloseTimer}
-                onMouseLeave={scheduleClose}
-              >
+            {reference.previewTitle || reference.previewText || reference.meta ? (
+              <span className="conversation-reference-preview" role="tooltip">
                 <strong>{reference.previewTitle ?? reference.label}</strong>
                 {reference.previewText ? <span>{reference.previewText}</span> : null}
                 {reference.meta ? <small>{reference.meta}</small> : null}

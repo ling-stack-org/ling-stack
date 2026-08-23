@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type {
   ApprovalActionType,
   ApprovalPayload,
@@ -6,6 +6,8 @@ import type {
   ApprovalRisk,
   ApprovalStatus,
 } from "./approval-types.js";
+import type { ControlPlaneEvent, RunSession } from "./run-types.js";
+import type { CreateWorkUnitAttemptInput, WorkUnit, WorkUnitAttempt } from "./runtime-supervisor-types.js";
 
 export type LingApprovalCheckpointStatus =
   | ApprovalStatus
@@ -21,6 +23,20 @@ export interface RunnerResumeHandle {
   readonly handleRef?: string;
   readonly payload?: Record<string, unknown>;
   readonly verified?: boolean;
+}
+
+export interface ApprovalResumeBasisV1 {
+  readonly schemaVersion: 1;
+  readonly approvalId: string;
+  readonly runId: string;
+  readonly workUnitId: string;
+  readonly priorAttemptId: string;
+  readonly workflowStepId?: string;
+  readonly toolCallId: string;
+  readonly actionType: ApprovalActionType;
+  readonly sideEffectFingerprint: string;
+  readonly delegatedRequirementFingerprint?: string;
+  readonly fingerprint: string;
 }
 
 export interface LingApprovalCheckpoint {
@@ -41,6 +57,8 @@ export interface LingApprovalCheckpoint {
   readonly sideEffect: ApprovalPayload;
   readonly previewArtifactIds: readonly string[];
   readonly resultArtifactIds: readonly string[];
+  readonly revision: number;
+  readonly resumeBasis?: ApprovalResumeBasisV1;
   readonly runnerResumeHandle?: RunnerResumeHandle;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -54,6 +72,7 @@ export interface CreateApprovalCheckpointInput {
   readonly status?: LingApprovalCheckpointStatus;
   readonly previewArtifactIds?: readonly string[];
   readonly resultArtifactIds?: readonly string[];
+  readonly resumeBasis?: ApprovalResumeBasisV1;
   readonly runnerResumeHandle?: RunnerResumeHandle;
 }
 
@@ -64,6 +83,9 @@ export interface UpdateApprovalCheckpointStatusInput {
   readonly resumeFailureReason?: string | null;
   readonly previewArtifactIds?: readonly string[];
   readonly resultArtifactIds?: readonly string[];
+  readonly expectedStatus?: LingApprovalCheckpointStatus;
+  readonly expectedRevision?: number;
+  readonly resumeBasis?: ApprovalResumeBasisV1;
   readonly runnerResumeHandle?: RunnerResumeHandle | null;
 }
 
@@ -76,6 +98,133 @@ export interface ListApprovalCheckpointsOptions {
   readonly workflowStepId?: string;
   readonly limit?: number;
 }
+
+export type ApprovalResumeClaimMode = "activate_waiting" | "replace_running";
+
+export interface CommitApprovalResumeClaimInput {
+  readonly checkpointId: string;
+  readonly expectedCheckpointStatus: "approved" | "resume_pending";
+  readonly expectedCheckpointRevision: number;
+  readonly approvalId: string;
+  readonly runId: string;
+  readonly workUnitId: string;
+  readonly expectedActiveAttemptId: string;
+  readonly attemptToLoseId?: string;
+  readonly replacementAttempt: CreateWorkUnitAttemptInput & { readonly id: string };
+  readonly runnerResumeHandle: RunnerResumeHandle;
+  readonly mode: ApprovalResumeClaimMode;
+  readonly now: string;
+}
+
+export type CommitApprovalResumeClaimResult =
+  | {
+      readonly ok: true;
+      readonly checkpoint: LingApprovalCheckpoint;
+      readonly run: RunSession;
+      readonly workUnit: WorkUnit;
+      readonly attempt: WorkUnitAttempt;
+      readonly controlPlaneEvents: readonly ControlPlaneEvent[];
+    }
+  | {
+      readonly ok: false;
+      readonly code:
+        | "approval_resume_checkpoint_stale"
+        | "approval_resume_lineage_mismatch"
+        | "approval_resume_run_state_stale"
+        | "approval_resume_work_unit_state_stale"
+        | "approval_resume_attempt_conflict"
+        | "approval_resume_transition_failed";
+    };
+
+export interface CommitApprovalResumeVerifiedTerminalInput {
+  readonly kind: "verified_lineage";
+  readonly checkpointId: string;
+  readonly expectedCheckpointStatus: "approved" | "resume_pending";
+  readonly expectedCheckpointRevision: number;
+  readonly approvalId: string;
+  readonly runId: string;
+  readonly expectedRunStatus: "waiting_for_approval" | "running";
+  readonly workUnitId: string;
+  readonly expectedWorkUnitStatus: "waiting_for_approval" | "running";
+  readonly attemptId: string;
+  readonly status: "succeeded" | "failed";
+  readonly attemptStatus: "succeeded" | "failed" | "lost";
+  readonly checkpointStatus: "resumed" | "resume_failed";
+  readonly errorCode?: string;
+  readonly errorMessage?: string;
+  readonly summaryPath?: string;
+  readonly now: string;
+}
+
+export interface CommitApprovalResumeCheckpointQuarantineInput {
+  readonly kind: "checkpoint_quarantine";
+  readonly checkpointId: string;
+  readonly expectedCheckpointStatus: "approved" | "resume_pending";
+  readonly expectedCheckpointRevision: number;
+  readonly approvalId: string;
+  readonly errorCode: string;
+  readonly errorMessage: string;
+  readonly now: string;
+}
+
+export type CommitApprovalResumeTerminalInput =
+  | CommitApprovalResumeVerifiedTerminalInput
+  | CommitApprovalResumeCheckpointQuarantineInput;
+
+export type CommitApprovalResumeTerminalResult =
+  | {
+      readonly ok: true;
+      readonly kind: "verified_lineage";
+      readonly checkpoint: LingApprovalCheckpoint;
+      readonly run: RunSession;
+      readonly workUnit: WorkUnit;
+      readonly attempt: WorkUnitAttempt;
+      readonly controlPlaneEvents: readonly ControlPlaneEvent[];
+    }
+  | {
+      readonly ok: true;
+      readonly kind: "checkpoint_quarantine";
+      readonly checkpoint: LingApprovalCheckpoint;
+      readonly controlPlaneEvents: readonly ControlPlaneEvent[];
+    }
+  | { readonly ok: false; readonly code: "approval_resume_terminal_stale" | "approval_resume_lineage_mismatch" };
+
+interface CommitApprovalResumeSuspensionBaseInput {
+  readonly checkpointId: string;
+  readonly expectedCheckpointRevision: number;
+  readonly approvalId: string;
+  readonly runId: string;
+  readonly workUnitId: string;
+  readonly attemptId: string;
+  readonly cause: string;
+  readonly now: string;
+}
+
+export type CommitApprovalResumeSuspensionInput = CommitApprovalResumeSuspensionBaseInput & (
+  | {
+      readonly kind: "approval_wait";
+      readonly expectedCheckpointStatus: "pending" | "approved";
+      readonly expectedRunStatus: "waiting_for_approval";
+      readonly expectedWorkUnitStatus: "waiting_for_approval";
+    }
+  | {
+      readonly kind: "resume_pre_dispatch";
+      readonly expectedCheckpointStatus: "resume_pending";
+      readonly expectedRunStatus: "running";
+      readonly expectedWorkUnitStatus: "running";
+    }
+);
+
+export type CommitApprovalResumeSuspensionResult =
+  | {
+      readonly ok: true;
+      readonly checkpoint: LingApprovalCheckpoint;
+      readonly run: RunSession;
+      readonly workUnit: WorkUnit;
+      readonly attempt: WorkUnitAttempt;
+      readonly controlPlaneEvents: readonly ControlPlaneEvent[];
+    }
+  | { readonly ok: false; readonly code: "approval_resume_suspension_stale" | "approval_resume_lineage_mismatch" };
 
 export const approvalCheckpointStatuses: readonly LingApprovalCheckpointStatus[] = [
   "pending",
@@ -90,4 +239,61 @@ export const approvalCheckpointStatuses: readonly LingApprovalCheckpointStatus[]
 
 export function createApprovalCheckpointId(): string {
   return `approval_checkpoint_${randomUUID()}`;
+}
+
+export function approvalSideEffectFingerprintV1(input: {
+  readonly actionType: ApprovalActionType;
+  readonly toolCallId: string;
+  readonly sideEffect: ApprovalPayload;
+}): string {
+  return sha256StableJson({
+    schemaVersion: 1,
+    actionType: input.actionType,
+    toolCallId: input.toolCallId,
+    sideEffect: input.sideEffect,
+  });
+}
+
+export function createApprovalResumeBasisV1(input: Omit<ApprovalResumeBasisV1, "schemaVersion" | "fingerprint">): ApprovalResumeBasisV1 {
+  const value = { schemaVersion: 1 as const, ...input };
+  return { ...value, fingerprint: sha256StableJson(value) };
+}
+
+export function isApprovalResumeBasisV1(value: unknown): value is ApprovalResumeBasisV1 {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  if (record.schemaVersion !== 1
+    || !isNonEmptyString(record.approvalId)
+    || !isNonEmptyString(record.runId)
+    || !isNonEmptyString(record.workUnitId)
+    || !isNonEmptyString(record.priorAttemptId)
+    || !isNonEmptyString(record.toolCallId)
+    || !isNonEmptyString(record.actionType)
+    || !isNonEmptyString(record.sideEffectFingerprint)
+    || !isNonEmptyString(record.fingerprint)) {
+    return false;
+  }
+  if (record.workflowStepId !== undefined && !isNonEmptyString(record.workflowStepId)) return false;
+  if (record.delegatedRequirementFingerprint !== undefined && !isNonEmptyString(record.delegatedRequirementFingerprint)) return false;
+  const { fingerprint, ...basis } = record;
+  return fingerprint === sha256StableJson(basis);
+}
+
+function sha256StableJson(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(sortJson(value)), "utf8").digest("hex");
+}
+
+function sortJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJson);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([, entry]) => entry !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => [key, sortJson(entry)]),
+  );
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
 }

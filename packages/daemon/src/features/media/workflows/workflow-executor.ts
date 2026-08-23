@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { MediaJob, RunStore, SecretResolver, WorkUnit, WorkUnitAttempt } from "@ling-stack/core";
+import { toRuntimeAttemptFence, type MediaJob, type RunStore, type SecretResolver, type WorkUnit, type WorkUnitAttempt } from "@ling-stack/core";
 import type { MediaExecutionHandle } from "@ling-stack/providers";
 import type { RunStoreRegistry } from "../../../runtime/store-registry.js";
 import { redactTextWithSecrets } from "../../../shared/redaction.js";
@@ -143,6 +143,8 @@ export async function runWorkflowMediaJobExecution(input: {
       store.appendRuntimeEvent({
         workUnitId: supervised.workUnit.id,
         attemptId: supervised.attempt.id,
+        runtimeInstanceId: supervised.attempt.runtimeInstanceId,
+        fencingToken: supervised.attempt.fencingToken,
         type: "artifact_created",
         actor: "system",
         ts: completedAt,
@@ -219,6 +221,8 @@ function ensureSemaphore(
     ownerId: supervised.attempt.id,
     workUnitId: supervised.workUnit.id,
     attemptId: supervised.attempt.id,
+    runtimeInstanceId: supervised.attempt.runtimeInstanceId,
+    fencingToken: supervised.attempt.fencingToken,
     acquiredAt,
     expiresAt: new Date(Date.now() + MEDIA_RUNTIME_SEMAPHORE_TTL_MS).toISOString(),
   });
@@ -226,6 +230,8 @@ function ensureSemaphore(
   store.appendRuntimeEvent({
     workUnitId: supervised.workUnit.id,
     attemptId: supervised.attempt.id,
+    runtimeInstanceId: supervised.attempt.runtimeInstanceId,
+    fencingToken: supervised.attempt.fencingToken,
     type: "semaphore_acquired",
     actor: "system",
     ts: acquiredAt,
@@ -239,6 +245,7 @@ function recordHeartbeat(store: RunStore, supervised: MediaRuntimeHandle): void 
     workUnitId: supervised.workUnit.id,
     attemptId: supervised.attempt.id,
     runtimeInstanceId: supervised.attempt.runtimeInstanceId,
+    fencingToken: supervised.attempt.fencingToken,
     ts: new Date().toISOString(),
     source: "provider",
     detail: { phase: "workflow_tick" },
@@ -247,7 +254,7 @@ function recordHeartbeat(store: RunStore, supervised: MediaRuntimeHandle): void 
 
 function finishExecution(store: RunStore, mediaJobId: string, supervised: MediaRuntimeHandle, reason: string): void {
   store.deleteMediaJobExecutionHandle(mediaJobId);
-  store.releaseRuntimeSemaphoreSlotsForOwner(supervised.attempt.id, new Date().toISOString(), reason);
+  store.releaseRuntimeSemaphoreSlotsForAttempt(toRuntimeAttemptFence(supervised.attempt), new Date().toISOString(), reason);
   clearScheduled(mediaJobId);
 }
 

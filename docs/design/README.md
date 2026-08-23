@@ -35,6 +35,8 @@ CI/Release artifacts instead of the default documentation tree.
 - [Conversation Shared Capabilities](conversation-shared-capabilities.md)
 - [Run Interruption And Continuation](run-interruption-continuation.md)
 - [Channel Context Processing Layer](channel-context-processing-layer.md)
+- [Channel Conversation Continuity v2](channel-conversation-continuity-v2.md)
+- [Channel Execution Completion Implementation Plan](channel-execution-completion-implementation-plan.md)
 - [Channel Team Operating System](channel-team-operating-system.md)
 - [Ling Agent Session](ling-agent-session.md)
 - [Ling Agent Terminal Report Protocol](ling-agent-terminal-report-protocol.md)

@@ -1,6 +1,8 @@
 import type {
   ControlPlaneDomain,
   ControlPlaneEvent,
+  ControlPlaneReplayWindow,
+  ControlPlaneSubscribeResult,
   ControlPlaneSnapshotResponse,
   RunnerListItem,
   RunnersDomainSnapshot,
@@ -92,6 +94,78 @@ export function parseControlPlaneRpcEventMessage(data: string): ControlPlaneEven
   } catch {
     return undefined;
   }
+}
+
+export function parseControlPlaneReplayWindowMessage(data: string): ControlPlaneReplayWindow | undefined {
+  try {
+    return parseControlPlaneReplayWindow(JSON.parse(data));
+  } catch {
+    return undefined;
+  }
+}
+
+export function parseControlPlaneRpcSubscribeMessage(
+  data: string,
+  requestId: number,
+): { readonly result?: ControlPlaneSubscribeResult; readonly error: boolean } | undefined {
+  try {
+    const parsed = JSON.parse(data) as {
+      readonly id?: unknown;
+      readonly result?: unknown;
+      readonly error?: unknown;
+    };
+    if (parsed.id !== requestId) return undefined;
+    if (parsed.error !== undefined) return { error: true };
+    const result = parseControlPlaneSubscribeResult(parsed.result);
+    return result ? { result, error: false } : { error: true };
+  } catch {
+    return { error: true };
+  }
+}
+
+function parseControlPlaneSubscribeResult(value: unknown): ControlPlaneSubscribeResult | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as { readonly disposition?: unknown; readonly subscriptionId?: unknown; readonly window?: unknown };
+  const window = parseControlPlaneReplayWindow(record.window);
+  if (!window || record.disposition !== window.disposition) return undefined;
+  if (record.disposition === "snapshot_required") {
+    return { disposition: "snapshot_required", window };
+  }
+  if (record.disposition === "complete" && typeof record.subscriptionId === "string" && record.subscriptionId.length > 0) {
+    return { disposition: "complete", subscriptionId: record.subscriptionId, window };
+  }
+  return undefined;
+}
+
+function parseControlPlaneReplayWindow(value: unknown): ControlPlaneReplayWindow | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  if ((record.disposition !== "complete" && record.disposition !== "snapshot_required")
+    || !isNonNegativeInteger(record.requestedAfterSeq)
+    || !isNonNegativeInteger(record.replayFloorSeq)
+    || !isNonNegativeInteger(record.upperBoundSeq)
+    || !isNonNegativeInteger(record.nextAfterSeq)) {
+    return undefined;
+  }
+  const reason = record.reason;
+  if (reason !== undefined
+    && reason !== "cursor_unavailable"
+    && reason !== "retention_gap"
+    && reason !== "window_exceeded") {
+    return undefined;
+  }
+  return {
+    disposition: record.disposition,
+    requestedAfterSeq: record.requestedAfterSeq,
+    replayFloorSeq: record.replayFloorSeq,
+    upperBoundSeq: record.upperBoundSeq,
+    nextAfterSeq: record.nextAfterSeq,
+    ...(reason ? { reason } : {}),
+  } as ControlPlaneReplayWindow;
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
 export function workUnitsFromControlPlaneSnapshot(snapshot: WorkUnitsDomainSnapshot): readonly WorkUnit[] {

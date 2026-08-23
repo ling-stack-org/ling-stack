@@ -47,6 +47,10 @@ test("Conversation turn ingest atomically appends user item, turn and assignment
   const replay = ingest.appendUserTurn(input, "2026-08-09T14:01:00.000Z");
   assert.equal(replay.idempotentReplay, true);
   assert.deepEqual(replay.item, created.item);
+  assert.throws(() => ingest.appendUserTurn({
+    ...input,
+    payload: { ...input.payload, body: "Different request with a reused key." },
+  }, "2026-08-09T14:01:01.000Z"), /idempotency key belongs to another input/);
   assert.equal(fixture.database.prepare("SELECT COUNT(*) AS count FROM ling_turns WHERE id = ?").get(input.turnId).count, 1);
   assert.equal(fixture.database.prepare("SELECT next_item_sequence FROM ling_threads WHERE id = ?").get(input.threadId).next_item_sequence, 2);
 });

@@ -174,6 +174,9 @@ export class SqliteConversationContextStore {
       const invalidatedSummaryIds = previousAssignment && previousAssignment.segmentId !== segment.id
         ? this.invalidateSegmentSummaries([previousAssignment.segmentId, segment.id])
         : [];
+      if (previousAssignment && previousAssignment.segmentId !== segment.id) {
+        this.refreshSegmentLastActiveTurn(previousAssignment.segmentId, now);
+      }
       const updatedSegment = this.getContextSegment(segment.id);
       if (!updatedSegment) throw new Error(`Context segment disappeared after assignment: ${segment.id}`);
       this.context.database.exec("COMMIT");
@@ -188,6 +191,32 @@ export class SqliteConversationContextStore {
       this.context.database.exec("ROLLBACK");
       throw error;
     }
+  }
+
+  private refreshSegmentLastActiveTurn(segmentId: string, now: string): void {
+    const latest = this.context.database.prepare(`
+      SELECT assignments.turn_id
+      FROM turn_context_assignments assignments
+      INNER JOIN ling_turns turns ON turns.id = assignments.turn_id
+      WHERE assignments.segment_id = ?
+        AND NOT EXISTS (
+          SELECT 1
+          FROM turn_context_assignments newer
+          WHERE newer.turn_id = assignments.turn_id
+            AND newer.revision > assignments.revision
+        )
+      ORDER BY turns.created_at DESC, assignments.revision DESC, assignments.turn_id DESC
+      LIMIT 1
+    `).get(segmentId) as Record<string, SQLOutputValue> | undefined;
+    // An empty segment remains addressable for explicit user correction and audit.
+    // Archiving it here would make a historical turn impossible to move back to its
+    // original context; lifecycle cleanup, not assignment correction, owns archival.
+    if (!latest) return;
+    this.context.database.prepare(`
+      UPDATE context_segments
+      SET last_active_turn_id = ?, revision = revision + 1, updated_at = ?
+      WHERE id = ?
+    `).run(readString(latest, "turn_id"), now, segmentId);
   }
 
   getConversationContextSummary(summaryId: string): ConversationContextSummary | undefined {

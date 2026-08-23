@@ -1,5 +1,15 @@
 import type { SQLOutputValue } from "node:sqlite";
-import { isConversationContextProjectionMetadata } from "@ling-stack/contracts";
+import {
+  isWorkflowParticipantAuthorityV1,
+  isWorkflowParticipantProviderBindingV1,
+  isChannelIntentExecutionPlanV1,
+  isConversationContextProjectionMetadata,
+  isDelegatedStepRequirementV1,
+  isDelegatedOutcomeV1,
+  isRequiredParticipantManifestV1,
+  isWorkflowCompletionGateV1,
+  type WorkflowParticipantAuthorityV1,
+} from "@ling-stack/contracts";
 import type { RunTool } from "../../approval-policy.js";
 import type { SkillApprovalProfile } from "../../skill-types.js";
 import {
@@ -154,6 +164,10 @@ export function mapChannelWorkflowStep(row: Record<string, SQLOutputValue>): Cha
     prompt: readString(row, "prompt"),
     toParticipantId: readString(row, "to_participant_id"),
     toParticipantLabel: readString(row, "to_participant_label"),
+    participantAuthority: parseRequiredWorkflowParticipantAuthority(
+      readNullableString(row, "participant_authority_json"),
+      readString(row, "to_participant_id"),
+    ),
     status: readString(row, "status") as ChannelWorkflowStepStatus,
     blocker: readNullableString(row, "blocker"),
     resultSummary: readNullableString(row, "result_summary"),
@@ -161,6 +175,25 @@ export function mapChannelWorkflowStep(row: Record<string, SQLOutputValue>): Cha
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
   });
+}
+
+function parseRequiredWorkflowParticipantAuthority(
+  value: string | undefined,
+  participantId: string,
+): WorkflowParticipantAuthorityV1 {
+  if (!value) {
+    throw new Error(`Missing participant authority for workflow step participant ${participantId}`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value) as unknown;
+  } catch {
+    throw new Error(`Invalid participant authority JSON for workflow step participant ${participantId}`);
+  }
+  if (!isWorkflowParticipantAuthorityV1(parsed) || parsed.participantId !== participantId) {
+    throw new Error(`Participant authority mismatch for workflow step participant ${participantId}`);
+  }
+  return parsed;
 }
 
 function parseOptionalChannelWorkflowStepMetadata(value: string | undefined): ChannelWorkflowStepMetadata | undefined {
@@ -178,6 +211,7 @@ function parseOptionalChannelWorkflowStepMetadata(value: string | undefined): Ch
   }
   const record = parsed as Record<string, unknown>;
   return omitUndefined({
+    providerBinding: parseOptionalWorkflowParticipantProviderBinding(record.providerBinding),
     workflowTemplateId: readOptionalStringValue(record.workflowTemplateId),
     templateVersion: readOptionalStringValue(record.templateVersion),
     templateStepId: readOptionalStringValue(record.templateStepId),
@@ -195,6 +229,16 @@ function parseOptionalChannelWorkflowStepMetadata(value: string | undefined): Ch
     effectiveRunnerId: normalizeStoredRunnerId(readOptionalStringValue(record.effectiveRunnerId)),
     providerPresetId: readOptionalStringValue(record.providerPresetId),
     requiredTools: readOptionalRunToolListValue(record.requiredTools),
+    executionPlan: isChannelIntentExecutionPlanV1(record.executionPlan)
+      ? record.executionPlan
+      : undefined,
+    executionOperationIds: readOptionalStringListValue(record.executionOperationIds),
+    executionVerification: parseOptionalWorkflowStepExecutionVerification(record.executionVerification),
+    delegatedRequirement: isDelegatedStepRequirementV1(record.delegatedRequirement)
+      ? record.delegatedRequirement
+      : undefined,
+    delegatedOutcome: parseOptionalDelegatedOutcome(record.delegatedOutcome),
+    delegatedOutcomeBasisFingerprint: readOptionalStringValue(record.delegatedOutcomeBasisFingerprint),
     autoStart: typeof record.autoStart === "boolean" ? record.autoStart : undefined,
     approvalGate: parseOptionalApprovalProfileValue(record.approvalGate),
     preStepApprovalId: readOptionalStringValue(record.preStepApprovalId),
@@ -216,6 +260,16 @@ function parseOptionalChannelWorkflowStepMetadata(value: string | undefined): Ch
     fanInContextReviews: parseOptionalWorkflowFanInContextReviews(record.fanInContextReviews),
     resultContextReview: parseWorkflowFanInContextReview(record.resultContextReview),
   });
+}
+
+function parseOptionalWorkflowParticipantProviderBinding(
+  value: unknown,
+): ChannelWorkflowStepMetadata["providerBinding"] {
+  if (value === undefined) return undefined;
+  if (!isWorkflowParticipantProviderBindingV1(value)) {
+    throw new Error("Invalid workflow participant provider binding in step metadata");
+  }
+  return value;
 }
 
 function parseOptionalWorkflowFanInContextReviews(value: unknown): readonly WorkflowFanInContextReview[] | undefined {
@@ -272,12 +326,76 @@ function parseOptionalChannelWorkflowMetadata(value: string | undefined): Channe
     workflowGraphId: readOptionalStringValue(record.workflowGraphId),
     workflowGraphSchemaVersion: readOptionalPositiveIntegerValue(record.workflowGraphSchemaVersion),
     workflowGraphArtifactId: readOptionalStringValue(record.workflowGraphArtifactId),
+    workflowGraph: parseOptionalWorkflowGraphValue(record.workflowGraph),
+    workflowGraphFingerprint: readOptionalStringValue(record.workflowGraphFingerprint),
     termination: parseOptionalWorkflowTerminationPolicyValue(record.termination),
     maxParallelSteps: readOptionalPositiveIntegerValue(record.maxParallelSteps),
     sourceProposalId: readOptionalStringValue(record.sourceProposalId),
     sourceMessageId: readOptionalStringValue(record.sourceMessageId),
+    sourceTurnId: readOptionalStringValue(record.sourceTurnId),
+    sourceIntentDecisionId: readOptionalStringValue(record.sourceIntentDecisionId),
+    requiredParticipantManifest: isRequiredParticipantManifestV1(record.requiredParticipantManifest)
+      ? record.requiredParticipantManifest
+      : undefined,
+    completionGate: parseOptionalWorkflowCompletionGate(record.completionGate),
     responseLanguage: parseOptionalResponseLanguage(record.responseLanguage),
   });
+}
+
+function parseOptionalDelegatedOutcome(value: unknown): ChannelWorkflowStepMetadata["delegatedOutcome"] | undefined {
+  return isDelegatedOutcomeV1(value) ? value : undefined;
+}
+
+function parseOptionalWorkflowCompletionGate(value: unknown): ChannelWorkflowMetadata["completionGate"] | undefined {
+  return isWorkflowCompletionGateV1(value) ? value : undefined;
+}
+
+function parseOptionalWorkflowGraphValue(value: unknown): ChannelWorkflowMetadata["workflowGraph"] | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  if (record.schemaVersion !== 1 || typeof record.id !== "string" || typeof record.name !== "string"
+    || typeof record.entryNodeId !== "string" || !Array.isArray(record.nodes) || !Array.isArray(record.edges)
+    || !record.termination || typeof record.termination !== "object" || Array.isArray(record.termination)) return undefined;
+  return value as NonNullable<ChannelWorkflowMetadata["workflowGraph"]>;
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function parseOptionalWorkflowStepExecutionVerification(
+  value: unknown,
+): ChannelWorkflowStepMetadata["executionVerification"] | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  if ((record.status !== "pending" && record.status !== "verified" && record.status !== "blocked" && record.status !== "failed")
+    || typeof record.checkedAt !== "string"
+    || !Array.isArray(record.operationResults)) {
+    return undefined;
+  }
+  const operationResults = record.operationResults.map((item) => {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) return undefined;
+    const result = item as Record<string, unknown>;
+    if (typeof result.operationId !== "string"
+      || (result.status !== "succeeded" && result.status !== "missing" && result.status !== "failed" && result.status !== "out_of_order")
+      || !Array.isArray(result.evidenceActionIds)
+      || result.evidenceActionIds.some((id) => typeof id !== "string")
+      || (result.reasonCode !== undefined && typeof result.reasonCode !== "string")) {
+      return undefined;
+    }
+    return {
+      operationId: result.operationId,
+      status: result.status,
+      evidenceActionIds: result.evidenceActionIds as string[],
+      ...(typeof result.reasonCode === "string" ? { reasonCode: result.reasonCode } : {}),
+    };
+  });
+  if (operationResults.some((result) => result === undefined)) return undefined;
+  return {
+    status: record.status,
+    checkedAt: record.checkedAt,
+    operationResults: operationResults as NonNullable<ChannelWorkflowStepMetadata["executionVerification"]>["operationResults"],
+  };
 }
 
 function parseOptionalWorkflowTerminationPolicyValue(value: unknown): ChannelWorkflowMetadata["termination"] | undefined {

@@ -50,8 +50,11 @@ export function decideLingAgentAutoStart(input: {
     return blocked("policy_requires_confirmation", "Proposal is already linked to executable work.");
   }
   const directWorkflow = isDirectWorkflowProposal(store, sourceMessage, proposal);
-  if (proposal.collaborationSteps.length !== 1 && !directWorkflow) {
-    return blocked("policy_requires_confirmation", "Multi-step collaboration requires user confirmation before start.");
+  if (!directWorkflow) {
+    return blocked(
+      "policy_requires_confirmation",
+      "Workflow proposals require explicit confirmation; only typed executable proposals may auto-start.",
+    );
   }
   for (const step of proposal.collaborationSteps.length > 0 ? proposal.collaborationSteps : [{ teammateId: proposal.assigneeTeammateId }]) {
     const participantId = step.teammateId;

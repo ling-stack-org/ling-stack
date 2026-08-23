@@ -35,6 +35,7 @@ import {
   type UpdateProposedPlanArtifactInput,
 } from "@ling-stack/core";
 import type { PiRunnerProviderConfig } from "@ling-stack/runner-pi";
+import { createWorkflowParticipantAuthorityV1 } from "@ling-stack/contracts";
 import { HttpError } from "../../errors.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readOptionalIntegerQuery, readOptionalJsonBody } from "../../shared/request.js";
@@ -2390,6 +2391,12 @@ function applyProposedPlanAction(
       ].filter(Boolean).join("\n"),
       toParticipantId: stepPreview.ownerId || "local-user",
       toParticipantLabel: stepPreview.ownerLabel || "Unassigned",
+      participantAuthority: createWorkflowParticipantAuthorityV1({
+        kind: "workflow_definition",
+        origin: "proposed_plan",
+        participantId: stepPreview.ownerId || "local-user",
+        sourceId: plan.id,
+      }),
       status: "queued",
       metadata: {
         sourceMessageId: plan.sourceMessageId,

@@ -1,10 +1,11 @@
 import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
+import type { RuntimeAttemptFenceV1 } from "../../runtime-supervisor-types.js";
 import {
   createResourceLeaseId,
   type CreateResourceLeaseInput,
   type ListResourceLeasesOptions,
   type ResourceLease,
-  type ResourceLeaseOwnerType,
+  type ResourceLeaseOwnerLevelType,
 } from "../../channel-runtime-types.js";
 import { mapResourceLease } from "./runtime-work-mappers.js";
 import { resourceLeaseSelectSql } from "./select-sql.js";
@@ -18,6 +19,24 @@ export class SqliteResourceLeaseStore {
   }
 
   acquireResourceLease(input: CreateResourceLeaseInput): ResourceLease | undefined {
+    if (!isValidResourceLeaseInput(input)) {
+      return undefined;
+    }
+    if (input.ownerType === "run" || input.ownerType === "work_unit_attempt") {
+      const fencedAttempt = this.context.database.prepare(`
+        SELECT 1 AS ok
+        FROM work_unit_attempts AS attempts
+        JOIN work_units AS units ON units.id = attempts.work_unit_id
+        WHERE attempts.id = ?
+          AND attempts.work_unit_id = ?
+          AND attempts.runtime_instance_id = ?
+          AND attempts.fencing_token = ?
+          AND units.active_attempt_id = attempts.id
+      `).get(input.attemptId, input.workUnitId, input.runtimeInstanceId, input.fencingToken);
+      if (!fencedAttempt) {
+        return undefined;
+      }
+    }
     const lease: ResourceLease = {
       id: createResourceLeaseId(),
       workspaceId: input.workspaceId,
@@ -31,6 +50,8 @@ export class SqliteResourceLeaseStore {
       lastRenewedAt: input.lastRenewedAt ?? input.acquiredAt,
       workUnitId: input.workUnitId,
       attemptId: input.attemptId,
+      runtimeInstanceId: input.runtimeInstanceId,
+      fencingToken: input.fencingToken,
     };
     try {
       this.context.database
@@ -49,8 +70,10 @@ export class SqliteResourceLeaseStore {
             released_at,
             release_reason,
             work_unit_id,
-            attempt_id
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            attempt_id,
+            runtime_instance_id,
+            fencing_token
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
         .run(
           lease.id,
@@ -67,6 +90,8 @@ export class SqliteResourceLeaseStore {
           null,
           lease.workUnitId ?? null,
           lease.attemptId ?? null,
+          lease.runtimeInstanceId ?? null,
+          lease.fencingToken ?? null,
         );
       return lease;
     } catch {
@@ -74,21 +99,74 @@ export class SqliteResourceLeaseStore {
     }
   }
 
-  releaseResourceLeasesForOwner(ownerType: ResourceLeaseOwnerType, ownerId: string, releasedAt: string): number {
+  releaseResourceLeasesForOwner(ownerType: ResourceLeaseOwnerLevelType, ownerId: string, releasedAt: string): number {
+    if (ownerType !== "workflow_step" && ownerType !== "system") {
+      throw new Error("Owner-level resource lease release requires workflow_step or system ownership");
+    }
     const result = this.context.database
       .prepare(`
         UPDATE resource_leases
         SET status = 'released', released_at = ?, release_reason = COALESCE(release_reason, 'released')
-        WHERE owner_type = ? AND owner_id = ? AND status = 'active'
+        WHERE owner_type = ? AND owner_id = ? AND status = 'active' AND attempt_id IS NULL
       `)
       .run(releasedAt, ownerType, ownerId);
     return Number(result.changes);
   }
 
-  renewActiveResourceLeasesForAttempt(attemptId: string, renewedAt: string): number {
+  renewResourceLeasesForAttempt(fence: RuntimeAttemptFenceV1, renewedAt: string): number {
     const result = this.context.database
-      .prepare("UPDATE resource_leases SET last_renewed_at = ? WHERE attempt_id = ? AND status = 'active'")
-      .run(renewedAt, attemptId);
+      .prepare(`
+        UPDATE resource_leases
+        SET last_renewed_at = ?
+        WHERE work_unit_id = ?
+          AND attempt_id = ?
+          AND runtime_instance_id = ?
+          AND fencing_token = ?
+          AND status = 'active'
+          AND EXISTS (
+            SELECT 1
+            FROM work_unit_attempts AS attempts
+            JOIN work_units AS units ON units.id = attempts.work_unit_id
+            WHERE attempts.id = resource_leases.attempt_id
+              AND attempts.work_unit_id = resource_leases.work_unit_id
+              AND attempts.runtime_instance_id = resource_leases.runtime_instance_id
+              AND attempts.fencing_token = resource_leases.fencing_token
+              AND units.active_attempt_id = attempts.id
+          )
+      `)
+      .run(renewedAt, fence.workUnitId, fence.attemptId, fence.runtimeInstanceId, fence.fencingToken);
+    return Number(result.changes);
+  }
+
+  releaseResourceLeasesForAttempt(fence: RuntimeAttemptFenceV1, releasedAt: string, releaseReason: string): number {
+    const result = this.context.database
+      .prepare(`
+        UPDATE resource_leases
+        SET status = 'released', released_at = ?, release_reason = ?
+        WHERE work_unit_id = ?
+          AND attempt_id = ?
+          AND runtime_instance_id = ?
+          AND fencing_token = ?
+          AND status = 'active'
+          AND EXISTS (
+            SELECT 1
+            FROM work_unit_attempts AS attempts
+            JOIN work_units AS units ON units.id = attempts.work_unit_id
+            WHERE attempts.id = resource_leases.attempt_id
+              AND attempts.work_unit_id = resource_leases.work_unit_id
+              AND attempts.runtime_instance_id = resource_leases.runtime_instance_id
+              AND attempts.fencing_token = resource_leases.fencing_token
+              AND units.active_attempt_id = attempts.id
+          )
+      `)
+      .run(
+        releasedAt,
+        releaseReason,
+        fence.workUnitId,
+        fence.attemptId,
+        fence.runtimeInstanceId,
+        fence.fencingToken,
+      );
     return Number(result.changes);
   }
 
@@ -149,4 +227,21 @@ export class SqliteResourceLeaseStore {
       .get(DEFAULT_WORKSPACE_ID, resourceType, resourceKey);
     return row ? mapResourceLease(row) : undefined;
   }
+}
+
+function isValidResourceLeaseInput(input: CreateResourceLeaseInput): boolean {
+  if (input.ownerType === "run" || input.ownerType === "work_unit_attempt") {
+    return isNonEmptyString(input.workUnitId)
+      && isNonEmptyString(input.attemptId)
+      && isNonEmptyString(input.runtimeInstanceId)
+      && isNonEmptyString(input.fencingToken);
+  }
+  return input.workUnitId === undefined
+    && input.attemptId === undefined
+    && input.runtimeInstanceId === undefined
+    && input.fencingToken === undefined;
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
 }

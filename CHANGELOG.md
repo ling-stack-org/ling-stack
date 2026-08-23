@@ -10,12 +10,16 @@ release versions will follow [Semantic Versioning](https://semver.org/spec/v2.0.
 
 ### Added
 
+- Durable Channel execution completion now tracks required participants, operation evidence,
+  fan-in, final reports, and source-turn settlement as one recoverable workflow lineage.
 - Public contribution, support, security, and community-governance documents.
 - GitHub Issue Forms, pull request template, CODEOWNERS, Dependabot, and generic CI.
 - Local Markdown-link, dependency-license, and public-repository safety checks.
 
 ### Changed
 
+- Accepted Channel turns now survive daemon and stream reconnects, including approval waits
+  that resume on the same logical Run with a new process attempt.
 - Removed the duplicate normal-conversation processing card while Ling Agent is only
   thinking, while preserving action, approval, and report evidence.
 - Simplified conversation message identity chrome and removed duplicate terminal-report
@@ -27,6 +31,8 @@ release versions will follow [Semantic Versioning](https://semver.org/spec/v2.0.
 
 ### Fixed
 
+- Delegated Agent promise/ready text can no longer complete work without tool or output
+  evidence, and missing participant model bindings now fail before creating a workflow or Run.
 - Channels and private teammate chats now continue in the selected Local workspace when
   Git is unavailable or the directory is not a Git repository, while missing workspaces
   and explicit managed-worktree creation still fail closed.

@@ -326,6 +326,35 @@
   font-size: 11px;
   line-height: 1.45;
   text-align: left;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity var(--ling-motion-fast) var(--ling-ease-standard),
+    visibility var(--ling-motion-instant) var(--ling-ease-linear) var(--ling-motion-fast);
+}
+
+.conversation-reference-preview::after {
+  position: absolute;
+  right: 0;
+  bottom: -6px;
+  left: 0;
+  height: 6px;
+  content: "";
+}
+
+.conversation-reference-item:hover > .conversation-reference-preview {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+  transition-delay: var(--ling-motion-attention);
+}
+
+.conversation-reference-item:focus-within > .conversation-reference-preview {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+  transition-delay: var(--ling-motion-instant);
 }
 
 .conversation-reference-preview > strong {
