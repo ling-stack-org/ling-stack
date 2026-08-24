@@ -24,6 +24,7 @@ export interface ChannelHeaderToolbarProps {
   readonly onToggleEmptyTeammateAction: () => void;
   readonly onToggleProgress: () => void;
   readonly progressActive: boolean;
+  readonly progressExpanded: boolean;
   readonly progressLabel: string;
   readonly searchActive: boolean;
   readonly searchDisabled: boolean;
@@ -52,6 +53,7 @@ export function ChannelHeaderToolbar({
   onToggleEmptyTeammateAction,
   onToggleProgress,
   progressActive,
+  progressExpanded,
   progressLabel,
   searchActive,
   searchDisabled,
@@ -96,6 +98,7 @@ export function ChannelHeaderToolbar({
           <WorkspaceToolbarIconButton
             actionId="summary"
             active={progressActive}
+            aria-expanded={progressExpanded}
             className="task-toolbar-progress"
             icon={ListChecks}
             label={progressLabel}

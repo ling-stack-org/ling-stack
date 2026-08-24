@@ -104,6 +104,7 @@ import { TeammateSettingsHeader } from "./TeammateSettingsHeader.js";
 import { TeammateSettingsNavigation } from "./TeammateSettingsNavigation.js";
 import { TeammateSkillsTab } from "./TeammateSkillsTab.js";
 import { useWorkspaceRightDockController } from "../workspace/useWorkspaceRightDockController.js";
+import { useConversationSummaryLayout } from "../workspace/conversation-summary-layout.js";
 import { useConversationHeaderController } from "../workspace/useConversationHeaderController.js";
 import { buildTeammatePrivateModelNotice, teammatePrivateMessageSearchText } from "./teammate-private-chat-view-models.js";
 import {
@@ -625,9 +626,13 @@ export function TeammateWorkspace({
     intentOpen: chatDockOpen,
     resizeObserverKey: `${teammate.id}:${cwd.trim()}`,
   });
-  const chatSummaryDockOffset = chatDockController.expanded
-    ? chatDockController.width + 8
-    : 0;
+  const chatSummaryLayout = useConversationSummaryLayout({
+    requestedOpen: chatSummaryOpen,
+    containerWidth: chatDockController.containerWidth,
+    dockVisible: chatDockController.visible,
+    dockWidth: chatDockController.width,
+  });
+  const chatSummaryDockOffset = chatSummaryLayout.dockOffset;
   const chatSummaryDockMotion = chatDockOpen
     ? "header->main"
     : chatDockController.visible
@@ -1574,6 +1579,7 @@ export function TeammateWorkspace({
           searchQuery={messageSearchQuery}
           searchTriggerRef={chatHeaderController.searchTriggerRef}
           summaryOpen={chatSummaryOpen}
+          summaryVisible={chatSummaryLayout.visible}
           summaryDockOffset={chatSummaryDockOffset}
           summaryDockResizing={chatDockController.resizing}
           summaryDockMotion={chatSummaryDockMotion}
@@ -1757,7 +1763,8 @@ export function TeammateWorkspace({
             </button>
           )}
           terminalOpen={chatTerminalOpen}
-          summaryOpen={chatSummaryOpen}
+          summaryVisible={chatSummaryLayout.visible}
+          summaryLayoutStyle={chatSummaryLayout.style}
           onDockPageRequestConsumed={(nonce) => {
             setChatDockPageRequest((current) => current?.nonce === nonce ? undefined : current);
           }}

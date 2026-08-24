@@ -22,6 +22,7 @@ export interface ChannelRightDockController {
   readonly expanded: boolean;
   readonly resizing: boolean;
   readonly width: number;
+  readonly containerWidth: number;
   readonly motionState: ConversationPanelMotionState;
   readonly motionUntilRef: MutableRefObject<number>;
   readonly windowStyle: CSSProperties;
@@ -52,6 +53,7 @@ export function useChannelRightDockController(input: ChannelRightDockControllerI
     expanded: controller.expanded,
     resizing: controller.resizing,
     width: controller.width,
+    containerWidth: controller.containerWidth,
     motionState: controller.motionState,
     motionUntilRef: controller.motionUntilRef,
     windowStyle: controller.layoutStyle,
