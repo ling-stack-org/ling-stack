@@ -13,6 +13,8 @@ Production installation remains Chrome Web Store-owned. For local development on
 The extension does not request access to cookies, passwords, history, bookmarks, downloads,
 `chrome.debugger`, or `webRequest`. It uses `nativeMessaging` only to reach the signed local Ling
 Browser Host; the Host forwards the existing reviewed browser protocol and does not read page data.
+The `alarms` permission only wakes the Manifest V3 worker to restore that local connection after
+Ling restarts or a temporary disconnect.
 
 The production Chrome Web Store extension ID is `mbmlnnfhebclljonhedpjghbhibfapei`. The manifest
 public key is committed so local builds and the Store package keep the same reviewed identity. The

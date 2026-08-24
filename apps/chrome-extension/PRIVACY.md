@@ -1,6 +1,6 @@
 # Ling for Chrome Privacy Policy
 
-Last updated: August 21, 2026
+Last updated: August 24, 2026
 
 Ling for Chrome is an optional browser extension that connects Chrome to the Ling application
 running on the same computer. This policy explains the information the extension processes, why it
@@ -25,10 +25,13 @@ For an approved browser task, the extension may process:
 - personal communications visible on a selected page when the user explicitly directs Ling to
   work with that page.
 
-The extension stores only its paused state in `chrome.storage.local`. Version `0.1.1` may briefly
-read a workspace binding, loopback daemon address, and revocable pairing credential left by version
-`0.1.0` to complete a one-time local migration. Those legacy values are deleted after the first
-successful Native Messaging connection and are never created for new connections.
+The extension stores only its paused state in `chrome.storage.local`. While Chrome is running,
+`chrome.storage.session` may hold a numeric reconnect attempt counter, and `chrome.alarms` wakes the
+extension after its background worker sleeps. Neither contains page data, a workspace, an address,
+or a credential. Version `0.1.2` may briefly read a workspace binding, loopback daemon address, and
+revocable pairing credential left by version `0.1.0` to complete a one-time local migration. Those
+legacy values are deleted after the first successful Native Messaging connection and are never
+created for new connections.
 
 The extension does not request or read Chrome passwords, cookies, browsing-history records,
 bookmarks, downloads, saved payment information, password-field values, or file-input values. It
@@ -50,9 +53,10 @@ advertising, or remote telemetry endpoints.
 ## Retention And Deletion
 
 The paused state remains until the user resumes, clears extension storage, or uninstalls the
-extension. Legacy version `0.1.0` connection values remain only until migration, revocation, storage
-clearing, or uninstall. Ling stores only a SHA-256 hash of a legacy raw pairing credential and
-revokes it when Native Messaging migration succeeds.
+extension. The reconnect counter is cleared after connection, pause, or browser-session shutdown.
+Legacy version `0.1.0` connection values remain only until migration, revocation, storage clearing,
+or uninstall. Ling stores only a SHA-256 hash of a legacy raw pairing credential and revokes it when
+Native Messaging migration succeeds.
 
 Approved browser task inputs and bounded results may remain in Ling's local run history until the
 user deletes that history through Ling's local data controls. Uninstalling the extension removes

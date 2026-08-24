@@ -5,13 +5,15 @@ test("stale Chrome sockets cannot clear the current heartbeat or execute command
   const original = {
     chrome: globalThis.chrome,
     clearInterval: globalThis.clearInterval,
+    clearTimeout: globalThis.clearTimeout,
     navigator: globalThis.navigator,
     setInterval: globalThis.setInterval,
+    setTimeout: globalThis.setTimeout,
     WebSocket: globalThis.WebSocket,
   };
   const sockets = [];
   const activeIntervals = new Set();
-  const runtimeListeners = { installed: undefined, message: undefined, startup: undefined };
+  const runtimeListeners = { alarm: undefined, installed: undefined, message: undefined, startup: undefined };
   let tabQueries = 0;
 
   class FakeWebSocket {
@@ -61,9 +63,15 @@ test("stale Chrome sockets cannot clear the current heartbeat or execute command
   Object.defineProperty(globalThis, "chrome", {
     configurable: true,
     value: {
+      alarms: {
+        clear: async () => true,
+        create: () => undefined,
+        get: async () => undefined,
+        onAlarm: { addListener: (listener) => { runtimeListeners.alarm = listener; } },
+      },
       runtime: {
         connectNative: () => { throw new Error("Specified native messaging host not found"); },
-        getManifest: () => ({ version: "0.1.1" }),
+        getManifest: () => ({ version: "0.1.2" }),
         onInstalled: { addListener: (listener) => { runtimeListeners.installed = listener; } },
         onMessage: { addListener: (listener) => { runtimeListeners.message = listener; } },
         onStartup: { addListener: (listener) => { runtimeListeners.startup = listener; } },
@@ -75,6 +83,11 @@ test("stale Chrome sockets cannot clear the current heartbeat or execute command
           get: async (keys) => Object.fromEntries(keys.filter((key) => key in stored).map((key) => [key, stored[key]])),
           remove: async (keys) => { for (const key of keys) delete stored[key]; },
           set: async (values) => Object.assign(stored, values),
+        },
+        session: {
+          get: async () => ({}),
+          remove: async () => undefined,
+          set: async () => undefined,
         },
       },
       tabs: {
@@ -93,6 +106,8 @@ test("stale Chrome sockets cannot clear the current heartbeat or execute command
     return handle;
   };
   globalThis.clearInterval = (handle) => { activeIntervals.delete(handle); };
+  globalThis.setTimeout = () => ({ type: "timeout" });
+  globalThis.clearTimeout = () => undefined;
 
   try {
     await import(`../src/background.js?stale-socket-test=${Date.now()}`);
@@ -102,6 +117,7 @@ test("stale Chrome sockets cannot clear the current heartbeat or execute command
     first.open();
     assert.equal(activeIntervals.size, 1);
 
+    runtimeListeners.startup();
     runtimeListeners.startup();
     await settle();
     assert.equal(sockets.length, 2);
@@ -141,6 +157,8 @@ test("stale Chrome sockets cannot clear the current heartbeat or execute command
     Object.defineProperty(globalThis, "WebSocket", { configurable: true, value: original.WebSocket });
     globalThis.setInterval = original.setInterval;
     globalThis.clearInterval = original.clearInterval;
+    globalThis.setTimeout = original.setTimeout;
+    globalThis.clearTimeout = original.clearTimeout;
   }
 });
 
@@ -148,13 +166,15 @@ test("Native connection owns commands and removes legacy workspace credentials a
   const original = {
     chrome: globalThis.chrome,
     clearInterval: globalThis.clearInterval,
+    clearTimeout: globalThis.clearTimeout,
     navigator: globalThis.navigator,
     setInterval: globalThis.setInterval,
+    setTimeout: globalThis.setTimeout,
     WebSocket: globalThis.WebSocket,
   };
   const ports = [];
   const activeIntervals = new Set();
-  const runtimeListeners = { installed: undefined, message: undefined, startup: undefined };
+  const runtimeListeners = { alarm: undefined, installed: undefined, message: undefined, startup: undefined };
   const stored = {
     "ling.chrome.credential": "legacy-credential",
     "ling.chrome.cwd": "/tmp/legacy-workspace",
@@ -188,6 +208,12 @@ test("Native connection owns commands and removes legacy workspace credentials a
   Object.defineProperty(globalThis, "chrome", {
     configurable: true,
     value: {
+      alarms: {
+        clear: async () => true,
+        create: () => undefined,
+        get: async () => undefined,
+        onAlarm: { addListener: (listener) => { runtimeListeners.alarm = listener; } },
+      },
       runtime: {
         connectNative: (name) => {
           assert.equal(name, "com.lingstack.browser");
@@ -195,7 +221,7 @@ test("Native connection owns commands and removes legacy workspace credentials a
           ports.push(port);
           return port;
         },
-        getManifest: () => ({ version: "0.1.1" }),
+        getManifest: () => ({ version: "0.1.2" }),
         onInstalled: { addListener: (listener) => { runtimeListeners.installed = listener; } },
         onMessage: { addListener: (listener) => { runtimeListeners.message = listener; } },
         onStartup: { addListener: (listener) => { runtimeListeners.startup = listener; } },
@@ -207,6 +233,11 @@ test("Native connection owns commands and removes legacy workspace credentials a
           get: async (keys) => Object.fromEntries(keys.filter((key) => key in stored).map((key) => [key, stored[key]])),
           remove: async (keys) => { for (const key of keys) delete stored[key]; },
           set: async (values) => Object.assign(stored, values),
+        },
+        session: {
+          get: async () => ({}),
+          remove: async () => undefined,
+          set: async () => undefined,
         },
       },
       tabs: {
@@ -230,6 +261,8 @@ test("Native connection owns commands and removes legacy workspace credentials a
     return handle;
   };
   globalThis.clearInterval = (handle) => { activeIntervals.delete(handle); };
+  globalThis.setTimeout = () => ({ type: "timeout" });
+  globalThis.clearTimeout = () => undefined;
 
   try {
     await import(`../src/background.js?native-migration-test=${Date.now()}`);
@@ -238,7 +271,7 @@ test("Native connection owns commands and removes legacy workspace credentials a
     assert.deepEqual(ports[0].messages[0], {
       protocol: "ling.chrome.native.v1",
       type: "hello",
-      extensionVersion: "0.1.1",
+      extensionVersion: "0.1.2",
       browserVersion: "Chrome/151 Ling native test",
       paused: false,
     });
@@ -285,6 +318,8 @@ test("Native connection owns commands and removes legacy workspace credentials a
     Object.defineProperty(globalThis, "WebSocket", { configurable: true, value: original.WebSocket });
     globalThis.setInterval = original.setInterval;
     globalThis.clearInterval = original.clearInterval;
+    globalThis.setTimeout = original.setTimeout;
+    globalThis.clearTimeout = original.clearTimeout;
   }
 });
 

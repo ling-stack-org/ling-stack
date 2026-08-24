@@ -36,7 +36,8 @@ Windows bundled target 使用两条独立判定轴：`bundled_embedded` 表示 h
 
 ## Chrome Native Messaging Host 发布边界
 
-Desktop 从 Chrome 扩展 `0.1.1` 起同时分发当前平台的 `Ling Browser Host`。Host 名称固定为
+Desktop 从 Chrome 扩展 `0.1.1` 起同时分发当前平台的 `Ling Browser Host`。扩展 `0.1.2`
+通过持久 MV3 Alarm 在 Desktop 重启或短暂断线后自动恢复。Host 名称固定为
 `com.lingstack.browser`，只负责 Chrome Native Messaging 长度帧与 daemon 私有 loopback
 broker 之间的转发，不包含工作区选择、浏览器业务命令、模型调用或审批逻辑。
 
@@ -174,6 +175,8 @@ unzip -t 'apps/desktop/release/Ling-Stack-0.0.0-macos-arm64.zip'
 
 unsigned job 必须验证：
 
+- Electron Fuses 修改完成后，整个 `.app` 使用明确的 ad-hoc identity `-` 重新签名，并通过
+  `codesign --verify --deep --strict`；该验证只说明本机可执行，不构成 Developer ID 证据；
 - `CFBundleIdentifier=com.lingstack.desktop`；
 - `CFBundleIconFile=icon.icns`，且 arm64 bundle 内图标与提交的 Ling icon 字节一致；
 - main executable 和 embedded provider 都只能是 arm64 Mach-O；

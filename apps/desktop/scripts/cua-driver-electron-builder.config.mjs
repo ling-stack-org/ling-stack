@@ -64,6 +64,12 @@ export default {
   ],
   mac: {
     ...baseBuild.mac,
+    ...(signingProfile.signingTier === "unsigned_dev"
+      ? {
+          identity: "-",
+          hardenedRuntime: false,
+        }
+      : {}),
     ...(packageProvider
       ? {
           sign: "./scripts/cua-driver-signing/electron-builder-mac-sign.mjs",

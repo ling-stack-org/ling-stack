@@ -38,7 +38,7 @@ const store = createSqliteRunStore(workspaceCwd);
 const descriptor = {
   id: CHROME_BROWSER_PLUGIN_ID,
   displayName: "Chrome",
-  version: "0.1.1",
+  version: "0.1.2",
   sourceKind: "built-in",
   trustSummary: "Real Chrome Native Messaging smoke fixture.",
   contributions: [],

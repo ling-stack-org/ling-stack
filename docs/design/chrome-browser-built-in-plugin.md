@@ -2,7 +2,7 @@
 
 Status: active product, security, and transport contract
 Owner: Browser integration, Desktop, daemon, and release maintainers
-Last verified: 2026-08-21
+Last verified: 2026-08-24
 Code and test anchors: `apps/chrome-extension`, `packages/browser-host`,
 `packages/daemon/src/features/browser-extension`, `apps/web/src/features/plugins`, and
 `apps/desktop/tests/chrome-extension-*.mjs`
@@ -13,7 +13,8 @@ Ling exposes Chrome as a product-managed built-in plugin. It contributes one log
 whose six tools operate the user's existing Google Chrome profile after the extension is installed,
 the plugin is enabled, and the normal MCP approval is granted.
 
-Version `0.1.1` uses Chrome Native Messaging for automatic local discovery:
+Version `0.1.2` uses Chrome Native Messaging for automatic local discovery and persistent MV3
+reconnection:
 
 ```text
 Ling conversation / teammate / channel
@@ -29,7 +30,7 @@ Ling conversation / teammate / channel
 
 The extension never selects a workspace and never receives a workspace path. The daemon binds the
 session to its current workspace authority. Legacy HTTP pairing and WebSocket transport remain only
-for already-installed `0.1.0` credentials during the `0.1.1` migration window.
+for already-installed `0.1.0` credentials during the `0.1.1`/`0.1.2` migration window.
 
 ## Goals
 
@@ -50,7 +51,7 @@ for already-installed `0.1.0` credentials during the `0.1.1` migration window.
 - No arbitrary JavaScript evaluation, network interception, or response-body capture.
 - No control of browser-internal, extension, file, data, or JavaScript URLs.
 - No second browser permission engine, business protocol, tool registry, or database.
-- No Firefox, Safari, Edge, Brave, Opera, or Vivaldi support in `0.1.1`.
+- No Firefox, Safari, Edge, Brave, Opera, or Vivaldi support in `0.1.2`.
 
 ## Stable Identities
 
@@ -61,7 +62,7 @@ business protocol:          ling.chrome.v1
 native transport protocol:  ling.chrome.native.v1
 native host name:           com.lingstack.browser
 extension package:          @ling-stack/chrome-extension
-extension version:          0.1.1
+extension version:          0.1.2
 ```
 
 The production extension ID is `mbmlnnfhebclljonhedpjghbhibfapei`. The existing development ID
@@ -102,7 +103,7 @@ refresh loop that causes status flicker.
    and exposes tools only when the plugin is enabled.
 7. Each browser command still enters the normal MCP approval path.
 
-If Native Messaging is unavailable and `0.1.0` credentials already exist, `0.1.1` may silently use
+If Native Messaging is unavailable and `0.1.0` credentials already exist, `0.1.2` may silently use
 the legacy WebSocket path. New users are never shown the legacy pairing UI. On the first successful
 Native connection, the daemon revokes the legacy credential and the extension deletes credential,
 workspace, and daemon-address keys from `chrome.storage.local`.
@@ -116,12 +117,16 @@ content script. Required permissions are:
 nativeMessaging
 scripting
 storage
+alarms
 host_permissions: <all_urls>
 ```
 
-`storage` owns only the paused state and the one-release legacy migration. It must not persist a
-workspace, daemon URL, or newly issued credential. `<all_urls>` remains necessary for approved
-visible-viewport capture after navigation; runtime policy still rejects non-HTTP(S) pages.
+`storage.local` owns only the paused state and the one-release legacy migration.
+`storage.session` may hold a non-sensitive reconnect attempt counter while Chrome is running.
+Neither area may persist a new workspace, daemon URL, startup token, or newly issued credential.
+`alarms` provides a durable wake-up after the MV3 worker is suspended. `<all_urls>` remains
+necessary for approved visible-viewport capture after navigation; runtime policy still rejects
+non-HTTP(S) pages.
 
 The popup shows only:
 
@@ -134,6 +139,19 @@ The popup shows only:
 
 It never shows workspace, daemon address, pairing code, credential, extension ID, or an authorization
 checkbox. Browser tool approvals remain in Ling at the moment of use.
+
+## MV3 Connection Recovery
+
+Installation, Chrome startup, popup retry, Native disconnect, legacy disconnect, and
+`chrome.alarms.onAlarm` all enter one single-flight connection state machine. A stale attempt may not
+replace a newer connection or clear its heartbeat.
+
+Unexpected disconnect schedules the named `ling.chrome.reconnect` alarm with bounded exponential
+backoff capped at 30 seconds. The current worker may also perform a short immediate retry, but the
+alarm is the durable source of truth and must survive worker suspension. Successful connection,
+pause, plugin disable, or an intentional replacement clears the alarm and session retry counter.
+With Chrome active and the machine awake, a suspended worker must reconnect within 35 seconds
+without opening the popup. Sleep time is excluded; recovery begins again when Chrome resumes.
 
 ## Native Host Contract
 
@@ -223,14 +241,19 @@ The deterministic extension build records extension version, extension ID, manif
 SHA-256, and source commit SHA. Desktop carries the matching platform Host and manifest templates.
 The Host is part of macOS signing verification and Windows NSIS/hash verification.
 
-The final Web Store ZIP must be rebuilt from the exact merged `main` commit after CI passes. Store
-copy and privacy policy must explain `nativeMessaging`, automatic local discovery, legacy credential
-migration, and the absence of workspace storage. Review approval uses automatic publishing.
+Normal releases rebuild the final Web Store ZIP from the exact merged `main` commit after CI passes.
+The user-authorized `0.1.2` recovery release is a narrow exception: it may be built from a clean,
+locally committed repair branch after all local gates pass, without pushing or opening a PR. Build
+metadata must bind that exact commit. Store copy and privacy policy must explain `nativeMessaging`,
+`alarms`, automatic local discovery, legacy credential migration, and the absence of workspace
+storage. Review approval uses automatic publishing.
 
 ## Acceptance
 
 - A fresh Web Store install connects after Ling starts without path, address, pairing code, or
   credential entry.
+- Desktop restart after the worker has become idle reconnects without opening the extension popup;
+  an awake Chrome instance recovers within 35 seconds.
 - macOS arm64 and Windows x64 Host build, install, status, upgrade, and uninstall tests pass.
 - Host, extension, paused, incompatible, disabled, and Ling-unavailable states are distinct.
 - Native requests contain no `cwd`; workspace switching follows daemon authority.
@@ -244,5 +267,7 @@ migration, and the absence of workspace storage. Review approval uses automatic 
 - Do not add remote relay, cloud authority, public broker binding, or direct extension-to-model path.
 - Do not accept workspace, daemon URL, credential, or arbitrary origin from the new extension UI.
 - Do not duplicate MCP approval, tool registration, cancellation, or session business semantics.
-- Do not upload `0.1.1` until macOS real-Chrome and Windows x64 build/package gates pass.
+- Do not upload `0.1.2` until current-mac isolated-profile acceptance, worker-idle recovery, and
+  platform-neutral Host/extension protocol tests pass. This reconnect-only release does not require
+  a new Windows installer build because Host and daemon wire protocols are unchanged.
 - Do not describe an unsigned or structurally inspected Host as release-signed.
