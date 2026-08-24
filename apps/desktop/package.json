@@ -21,6 +21,7 @@
     "performance:computer-use:real": "corepack pnpm build && node --expose-gc tests/computer-use-performance-harness.mjs --real",
     "smoke:computer-use": "corepack pnpm build && node tests/run-computer-use-smoke.mjs",
     "smoke:computer-use:real": "corepack pnpm build && node tests/run-computer-use-smoke.mjs --real",
+    "smoke:continuity:mac": "node tests/run-packaged-continuity-smoke.mjs",
     "smoke:computer-use:windows-provider": "corepack pnpm build && node tests/run-windows-provider-smoke.mjs",
     "smoke:chrome-extension:real": "corepack pnpm --filter @ling-stack/chrome-extension build && corepack pnpm --filter @ling-stack/daemon build && node tests/chrome-extension-real-smoke.mjs",
     "verify:release-schemas": "node tests/validate-release-evidence-schemas.mjs",
