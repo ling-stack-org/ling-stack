@@ -1,5 +1,9 @@
 .normal-conversation-page.with-right-dock {
-  grid-template-columns: minmax(0, 1fr) var(--workspace-right-dock-layout-handle-width, 0px) var(--workspace-right-dock-layout-width, 0px);
+  grid-template-columns:
+    minmax(0, 1fr)
+    var(--conversation-summary-layout-width, 0px)
+    var(--workspace-right-dock-layout-handle-width, 0px)
+    var(--workspace-right-dock-layout-width, 0px);
   grid-template-rows: 48px minmax(0, 1fr) auto;
   column-gap: 0;
 }
@@ -9,12 +13,12 @@
 }
 
 .normal-conversation-page.with-right-dock > .workspace-right-dock-resize-handle {
-  grid-column: 2;
+  grid-column: 3;
   grid-row: 1 / 4;
 }
 
 .normal-conversation-page.with-right-dock > .workspace-right-dock-frame {
-  grid-column: 3;
+  grid-column: 4;
   grid-row: 1 / 4;
   align-self: stretch;
 }
@@ -195,7 +199,7 @@
 
 @media (max-width: 900px) {
   .normal-conversation-page.with-right-dock {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) 0 0 0;
   }
 
   .normal-conversation-page.with-right-dock > .workspace-right-dock-resize-handle,

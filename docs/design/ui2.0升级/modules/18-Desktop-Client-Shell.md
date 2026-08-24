@@ -193,6 +193,12 @@ Native Window Chrome
   ancestor，交互后代统一 carve out 为 `no-drag`。
 - 不允许把高 z-index 透明 sibling layer 铺过 Header controls；底层 sibling 的 `no-drag` 不能可靠恢复点击。
 - Sidebar collapsed 时只移除 Sidebar strip，不能移除 Home 或 active Header drag target。
+- Sidebar expanded 时允许将收起按钮放入 Sidebar 所有的 titlebar 空行，但按钮必须在
+  traffic-light exclusion 右侧、保持 `32x32` 且声明 `no-drag`；其余空白区继续属于拖拽层。
+- Sidebar drag sibling 必须在该控件前结束，为 `32px` 控件和相邻间距保留至少 `42px`
+  的真实 pointer gap；不得依赖控件自身 z-index 穿透透明 drag layer。
+- Sidebar collapsed 时 titlebar 不额外塞入控件；compact rail 的首两个行动固定为
+  `Show navigation` / `New conversation`，均保持 `36x36`。
 - Settings fullscreen、Media、Channel、普通对话、AI 队友私聊/设置和所有顶级 View 必须有稳定 owner。
 - Web、Windows main window 和 PiP 不挂载该 chrome；Windows 继续 native title bar。
 - Dialog、Drawer、Menu、Popover、Toast、Tooltip 和 scrim 必须始终高于 chrome 并保持 pointer/focus ownership。
@@ -268,7 +274,8 @@ Native Window Chrome
   no unauthorized kill；`resource-startup-recovery.test.mjs` 覆盖资源重试、诊断和 headless fail-closed。
 - `window-factory.test` or equivalent：size、title bar、navigation denial、bootstrap background。
 - `macos-titlebar.spec.ts`：Home、Conversation、Channel、Settings、Media 和代表性 shared Header
-  drag marker、Sidebar expanded/collapsed、no-drag controls、真实 Dialog/Menu overlay ownership and zero layout shift。
+  drag marker、Sidebar expanded/collapsed、no-drag controls、收起按钮与 traffic lights 几何避让、
+  compact rail 顺序、真实 Dialog/Menu overlay ownership and zero layout shift。
 - packaged macOS coordinate smoke：drag 前后 `BrowserWindow` bounds 改变，no-drag action 不误移动，finally 复位。
 - `app.spec.ts` / `desktop-computer-use-bridge.spec.ts`：shared Web placement and browser/Desktop parity。
 - macOS screenshot：minimum/default/large，Ling Light/Dark，traffic-light clearance。

@@ -28,6 +28,7 @@ export function TeammateChatHeader({
   searchQuery,
   searchTriggerRef,
   summaryOpen,
+  summaryVisible,
   summaryDockOffset,
   summaryDockResizing,
   summaryDockMotion,
@@ -58,6 +59,7 @@ export function TeammateChatHeader({
   readonly searchQuery: string;
   readonly searchTriggerRef: Ref<HTMLButtonElement>;
   readonly summaryOpen: boolean;
+  readonly summaryVisible: boolean;
   readonly summaryDockOffset: number;
   readonly summaryDockResizing: boolean;
   readonly summaryDockMotion?: string;
@@ -87,7 +89,7 @@ export function TeammateChatHeader({
       className={[
         "teammate-chat-header",
         searchOpen ? "searching" : "",
-        summaryOpen ? "summary-open" : "",
+        summaryVisible ? "summary-open" : "",
       ].filter(Boolean).join(" ")}
       aria-label={t("AI teammate private chat")}
       data-desktop-window-drag-region="true"
@@ -145,6 +147,7 @@ export function TeammateChatHeader({
         fileCount={attachmentCount}
         filesLabel={t("{label}: {count}", { label: t("Private attachments"), count: attachmentCount })}
         summaryActive={summaryOpen}
+        summaryExpanded={summaryVisible}
         summaryLabel={t("Summary")}
         terminalActive={terminalOpen}
         terminalDisabled={terminalDisabled}
@@ -167,7 +170,7 @@ export function TeammateChatHeader({
         </div>
       ) : null}
       <ConversationSummaryPopover
-        open={summaryOpen}
+        open={summaryVisible}
         title={t("Environment")}
         subtitle={teammate.displayName}
         rows={summaryRows}

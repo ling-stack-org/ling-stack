@@ -249,6 +249,7 @@ import { ChannelComposer } from "./ChannelComposer.js";
 import { ChannelActivityWorkspace } from "./ChannelActivityWorkspace.js";
 import { ChannelFeedLatestControl, ChannelFeedStatus } from "./ChannelFeedChrome.js";
 import { useChannelRightDockController } from "./useChannelRightDockController.js";
+import { useConversationSummaryLayout } from "./conversation-summary-layout.js";
 import { useChannelBottomPanelResizeController } from "./useChannelBottomPanelResizeController.js";
 import { useChannelMessageFeed } from "./ChannelMessageFeed.js";
 import {
@@ -3984,9 +3985,17 @@ export function WorkspaceClientView({
     !teammateManagerOpen &&
     !channelUtilityPageOpen &&
     channelHasProgressPopoverContent;
-  const progressPopoverCanRender = progressPopoverVisible;
+  const progressSummaryLayout = useConversationSummaryLayout({
+    requestedOpen: progressPopoverVisible,
+    containerWidth: channelRightDock.containerWidth,
+    dockVisible: channelRightDockVisible,
+    dockWidth: channelRightDock.width,
+  });
+  const progressPopoverCanRender = progressSummaryLayout.visible;
   const progressPopoverPresence = useConversationPanelPresence(progressPopoverCanRender, false);
-  const progressPopoverShouldRender = progressPopoverPresence.rendered && progressPopoverPlacementAvailable;
+  const progressPopoverShouldRender = progressPopoverPresence.rendered
+    && progressPopoverPlacementAvailable
+    && progressSummaryLayout.visible;
   const progressPopoverMotionClass = progressPopoverPresence.expanded ? "is-popover-expanded" : "is-popover-collapsed";
   const progressPopoverNode = (
     <ProgressPopover
@@ -4001,8 +4010,12 @@ export function WorkspaceClientView({
   const taskWorkbenchWindowStyle = {
     ...channelRightDock.windowStyle,
     ...channelBottomPanelResize.panelStyle,
+    ...progressSummaryLayout.style,
   } as CSSProperties;
-  const taskWorkbenchMainStyle = channelRightDock.mainStyle;
+  const taskWorkbenchMainStyle = {
+    ...channelRightDock.mainStyle,
+    ...progressSummaryLayout.style,
+  } as CSSProperties;
 
   function toggleChannelTeammateManager(): void {
     const nextOpen = !teammateManagerOpen;
@@ -4028,7 +4041,7 @@ export function WorkspaceClientView({
         `right-dock-motion-${channelRightDock.motionState}`,
         channelRightDockVisible ? "with-channel-side-panel" : "",
         channelRightDockVisible ? (channelRightDockExpanded ? "channel-right-dock-expanded" : "channel-right-dock-collapsed") : "",
-        progressPopoverCanRender ? "with-channel-progress-popover" : "",
+        progressSummaryLayout.visible ? "with-channel-progress-popover" : "",
         channelBottomPanelVisible ? "with-channel-bottom-panel" : "",
         channelBottomPanelResize.resizing ? "is-resizing-channel-bottom-panel" : "",
       ].filter(Boolean).join(" ")}
@@ -4240,7 +4253,8 @@ export function WorkspaceClientView({
           emptyTeammateActionDisabled={!selectedChannelId}
           emptyTeammateActionLabel={t("AI teammate management")}
           onToggleEmptyTeammateAction={toggleChannelTeammateManager}
-          progressActive={progressPopoverPresence.rendered}
+          progressActive={progressPopoverVisible}
+          progressExpanded={progressSummaryLayout.visible && progressPopoverPresence.expanded}
           progressLabel={t("Summary")}
           onToggleProgress={() => {
             if (!channelHasProgressPopoverContent) {

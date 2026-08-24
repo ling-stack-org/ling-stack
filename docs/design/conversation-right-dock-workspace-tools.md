@@ -136,7 +136,9 @@ inventing their own compact variants.
   or line-height changes that push the input outside the header.
 - Summary opens exactly one popover anchored under the top-right toolbar. Its width,
   border, shadow, z-index, motion, and close behavior follow the channel
-  Summary/Progress popover. Opening Search, Terminal, or Details closes Summary.
+  Summary/Progress popover. Opening Search closes Summary. Terminal may coexist because
+  it consumes vertical space. Details may coexist only through the shared horizontal
+  space contract below; it must never leave Summary covering the conversation.
 - Terminal opens the bottom terminal panel using the same visual contract as channel. If
   the surface has no workspace folder, the icon stays disabled with an accessible reason.
 - The conversation record column and composer column for normal conversation and private
@@ -147,6 +149,36 @@ Acceptance for this slice is visual, not just structural: at `1440x960` and `128
 channel, normal conversation, and teammate private chat should show the same top-right
 icon rhythm, no search-input overflow on focus, one non-overlapping summary popover, and
 matching conversation-column width.
+
+### Summary Space Contract
+
+Channel, normal conversation, and teammate private chat share one responsive Summary
+placement policy. A surface must not infer availability from viewport width alone or
+maintain a private dock-offset rule.
+
+- `summaryRequested` records the user's open intent. `summaryVisible` records whether the
+  current geometry can render it. Temporary concealment must not clear the intent.
+- Summary has a `280px` panel and a `16px` conversation-side gap. When visible it reserves
+  a `296px` layout column between the conversation and the right-dock resize handle.
+- The conversation layout keeps at least `560px` for records and Composer plus the shared
+  `48px` horizontal gutter. Summary is visible only when the root can also hold the
+  current right dock and its `8px` handle.
+- When space is available, feed and Composer occupy the same conversation column and move
+  left together. Summary, feed, avatars, Composer, resize handle, and right dock must have
+  pairwise non-overlapping rectangles.
+- When space is insufficient, Summary is not rendered and is not interactive. Widening the
+  window, collapsing Sidebar, narrowing or closing Details automatically restores it.
+- Availability is computed from the stable root width and target dock reservation, not
+  from the already-reflowed conversation child. The threshold uses bounded hysteresis so
+  a one-pixel resize cannot create repeated mount/unmount flashing.
+- Root measurement follows the actual mounted element, not only the lifetime of its ref
+  object. Conditional Home-to-conversation mounting and conversation identity changes must
+  synchronously rebind width observation before projecting Summary availability.
+- The Summary action may stay pressed while temporarily concealed, but `aria-expanded`
+  reports actual visibility. Activating the pressed action again clears the open intent.
+- No implementation may compress the Summary card, reduce the existing icon-button sizes,
+  shrink the conversation below its minimum, or introduce document-level horizontal
+  scrolling to preserve simultaneous visibility.
 
 ## External Patterns To Borrow
 

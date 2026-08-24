@@ -39,7 +39,8 @@ export function TeammatePrivateChatSurface(props: TeammatePrivateChatSurfaceProp
     onWorkspaceAccessModeChange,
     privateComposerSending,
     slashCommands,
-    summaryOpen,
+    summaryVisible,
+    summaryLayoutStyle,
     teammate,
     terminalOpen,
     visibleMessages,
@@ -76,12 +77,14 @@ export function TeammatePrivateChatSurface(props: TeammatePrivateChatSurfaceProp
       style={{
         ...dockController.containerStyle,
         ...bottomPanelResize.panelStyle,
+        ...summaryLayoutStyle,
       }}
       className={[
         "teammate-private-chat",
         `right-dock-motion-${dockController.motionState}`,
         dockController.visible ? "with-right-dock" : "",
-        dockController.visible ? (summaryOpen ? "summary-panel-expanded" : "summary-panel-collapsed") : "",
+        summaryVisible ? "with-conversation-summary" : "",
+        dockController.visible ? (summaryVisible ? "summary-panel-expanded" : "summary-panel-collapsed") : "",
         dockController.visible && !dockController.expanded ? "workspace-right-dock-collapsed" : "",
         terminalPresence.rendered ? "with-bottom-terminal" : "",
         dockController.resizing ? "is-resizing-workspace-right-dock" : "",

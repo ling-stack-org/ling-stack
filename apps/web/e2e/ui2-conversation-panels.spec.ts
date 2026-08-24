@@ -3,6 +3,10 @@ import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState, createChatProvider, createMockTeammate } from "./support/mock-state";
+import {
+  installNormalConversationFixture,
+  normalConversationFixtureTitle,
+} from "./support/normal-conversation-fixture";
 import { openEngineeringChannel } from "./support/test-helpers";
 
 const evidenceDirectory = fileURLToPath(new URL(
@@ -11,7 +15,7 @@ const evidenceDirectory = fileURLToPath(new URL(
 ));
 
 test("channel summary stays visible while the details dock opens", async ({ page }) => {
-  await useEnglishLightSurface(page);
+  await useEnglishLightSurface(page, 1728);
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
   await openEngineeringChannel(page);
@@ -50,20 +54,18 @@ test("channel summary stays visible while the details dock opens", async ({ page
 });
 
 test("normal conversation summary uses the channel panel motion", async ({ page }) => {
-  await useEnglishLightSurface(page);
+  await useEnglishLightSurface(page, 1728);
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [createChatProvider({
     id: "provider_ui2_conversation_panels",
     displayName: "Local Relay",
     model: "gpt-5.5",
   })];
+  installNormalConversationFixture(state);
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "New conversation" }).click();
-  const home = page.getByLabel("Conversation home");
-  await home.getByRole("textbox", { name: "Conversation message" }).fill("Verify shared conversation panel motion");
-  await home.getByRole("button", { name: "Send" }).click();
+  await openNormalConversationFixture(page);
 
   const conversation = page.getByLabel("Conversation page");
   const toolbar = conversation.getByRole("toolbar", { name: "Conversation workspace toolbar" });
@@ -110,13 +112,18 @@ test("normal conversation summary uses the channel panel motion", async ({ page 
   await expect.poll(async () => summary.evaluate((element) => getComputedStyle(element).transitionDuration)).toContain("0s");
   await expect.poll(async () => (await dockFrame.boundingBox())?.width ?? 0).toBeGreaterThan(dockWidthBeforeResize + 80);
   await page.mouse.move(1, dockHandleBox!.y + 80, { steps: 4 });
-  await expect.poll(async () => (await dockFrame.boundingBox())?.width ?? 0).toBeLessThanOrEqual(720);
+  const maximumDockWidth = await page.evaluate(() => Math.floor(globalThis.innerWidth * 0.5));
+  await expect.poll(async () => (await dockFrame.boundingBox())?.width ?? 0).toBeLessThanOrEqual(maximumDockWidth);
+  await expect(summary).toBeHidden();
+  await expect(toolbar.getByRole("button", { name: "Summary" })).toHaveAttribute("aria-pressed", "true");
+  await expect(toolbar.getByRole("button", { name: "Summary" })).toHaveAttribute("aria-expanded", "false");
   await page.mouse.up();
-  await expect(summary).not.toHaveAttribute("data-right-dock-motion", "resizing");
 
+  await toolbar.getByRole("button", { name: "Hide details" }).click();
+  await expect(page.getByLabel("Conversation workspace dock")).toHaveCount(0);
+  await expect(summary).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(summary).toHaveCount(0);
-  await expect(page.getByLabel("Conversation workspace dock")).toBeVisible();
   await expect(toolbar.getByRole("button", { name: "Summary" })).not.toHaveAttribute("aria-pressed", "true");
 
   await toolbar.getByRole("button", { name: "Summary" }).click();
@@ -151,7 +158,7 @@ test("normal conversation summary uses the channel panel motion", async ({ page 
 });
 
 test("AI teammate summary uses the channel panel motion", async ({ page }) => {
-  await useEnglishLightSurface(page);
+  await useEnglishLightSurface(page, 1728);
   const teammateName = "Ling Engineer";
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [createChatProvider({
@@ -193,7 +200,7 @@ test("AI teammate summary uses the channel panel motion", async ({ page }) => {
 
 test("conversation panels remove spatial motion when reduced motion is requested", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await useEnglishLightSurface(page);
+  await useEnglishLightSurface(page, 1728);
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
   await openEngineeringChannel(page);
@@ -209,9 +216,52 @@ test("conversation panels remove spatial motion when reduced motion is requested
   ))).toBe(true);
 });
 
+test("summary intent survives constrained Details geometry and restores when Sidebar or Details releases space", async ({ page }) => {
+  await useEnglishLightSurface(page, 1440);
+  const teammateName = "Ling Engineer";
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [createChatProvider({
+    id: "provider_ui2_summary_restore",
+    displayName: "Local Relay",
+    model: "gpt-5.5",
+  })];
+  state.aiTeammates = [createMockTeammate({
+    id: "teammate_ui2_summary_restore",
+    displayName: teammateName,
+  })];
+  installNormalConversationFixture(state);
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await openEngineeringChannel(page);
+  await expectSummaryConcealAndRestore(
+    page,
+    page.getByRole("toolbar", { name: "Workspace task toolbar" }),
+    page.locator(".channel-progress-popover"),
+    page.getByLabel("Channel workspace dock"),
+  );
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: teammateName }).click();
+  await expectSummaryConcealAndRestore(
+    page,
+    page.getByRole("toolbar", { name: "Private chat actions" }),
+    page.locator(".teammate-private-summary-panel"),
+    page.getByLabel("Private chat workspace dock"),
+  );
+
+  await openNormalConversationFixture(page);
+  await expectSummaryConcealAndRestore(
+    page,
+    page.getByRole("toolbar", { name: "Conversation workspace toolbar" }),
+    page.locator(".normal-conversation-summary-panel"),
+    page.getByLabel("Conversation workspace dock"),
+  );
+});
+
 for (const fixture of [
-  { theme: "light" as const, width: 1440, height: 960 },
-  { theme: "dark" as const, width: 1280, height: 800 },
+  { theme: "light" as const, width: 1728, height: 960, summaryWithDock: true },
+  { theme: "light" as const, width: 1440, height: 960, summaryWithDock: false },
+  { theme: "dark" as const, width: 1280, height: 800, summaryWithDock: false },
 ]) {
   test(`conversation panels keep the channel visual contract at ${fixture.width}x${fixture.height} ${fixture.theme}`, async ({ page }) => {
     const runtimeErrors = collectRuntimeErrors(page);
@@ -227,6 +277,7 @@ for (const fixture of [
       id: `teammate_ui2_panels_${fixture.theme}`,
       displayName: teammateName,
     })];
+    installNormalConversationFixture(state);
     await mockDaemon(page, state);
     await page.goto("/");
 
@@ -236,6 +287,9 @@ for (const fixture of [
       channelToolbar,
       page.locator(".channel-progress-popover"),
       page.getByLabel("Channel workspace dock"),
+      fixture.summaryWithDock,
+      page.locator(".activity-chat-layout"),
+      page.locator('[data-conversation-composer][data-surface="channel"]'),
     );
     await captureEvidence(page, evidenceFilename(fixture, "channel-summary-dock"));
     await channelToolbar.getByRole("button", { name: "Summary" }).click();
@@ -248,21 +302,24 @@ for (const fixture of [
       teammateToolbar,
       page.locator(".teammate-private-summary-panel"),
       page.getByLabel("Private chat workspace dock"),
+      fixture.summaryWithDock,
+      page.locator(".teammate-message-list"),
+      page.locator('[data-conversation-composer][data-surface="teammate_direct"]'),
     );
     await captureEvidence(page, evidenceFilename(fixture, "teammate-summary-dock"));
     await teammateToolbar.getByRole("button", { name: "Summary" }).click();
     await openBottomTerminal(page, teammateToolbar);
     await captureEvidence(page, evidenceFilename(fixture, "teammate-terminal"));
 
-    await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "New conversation" }).click();
-    const home = page.getByLabel("Conversation home");
-    await home.getByRole("textbox", { name: "Conversation message" }).fill("Verify shared conversation panels");
-    await home.getByRole("button", { name: "Send" }).click();
+    await openNormalConversationFixture(page);
     const conversationToolbar = page.getByRole("toolbar", { name: "Conversation workspace toolbar" });
     await openSummaryAndDock(
       conversationToolbar,
       page.locator(".normal-conversation-summary-panel"),
       page.getByLabel("Conversation workspace dock"),
+      fixture.summaryWithDock,
+      page.locator(".normal-conversation-feed-frame"),
+      page.locator('[data-conversation-composer][data-surface="normal_conversation"]'),
     );
     await captureEvidence(page, evidenceFilename(fixture, "normal-summary-dock"));
     await conversationToolbar.getByRole("button", { name: "Summary" }).click();
@@ -274,8 +331,17 @@ for (const fixture of [
   });
 }
 
-async function useEnglishLightSurface(page: Page): Promise<void> {
-  await prepareSurface(page, "light", 1440, 960);
+async function useEnglishLightSurface(page: Page, width = 1440): Promise<void> {
+  await prepareSurface(page, "light", width, 960);
+}
+
+async function openNormalConversationFixture(page: Page): Promise<void> {
+  await page
+    .getByLabel("Ling Stack navigation")
+    .locator(".sidebar-recent-row")
+    .filter({ hasText: normalConversationFixtureTitle })
+    .click();
+  await expect(page.getByLabel("Conversation page")).toBeVisible();
 }
 
 async function prepareSurface(page: Page, theme: "light" | "dark", width: number, height: number): Promise<void> {
@@ -294,23 +360,85 @@ async function openSummaryAndDock(
   toolbar: import("@playwright/test").Locator,
   summary: import("@playwright/test").Locator,
   dock: import("@playwright/test").Locator,
+  summaryWithDock = true,
+  feed?: import("@playwright/test").Locator,
+  composer?: import("@playwright/test").Locator,
 ): Promise<void> {
   await toolbar.getByRole("button", { name: "Summary" }).click();
   await expect(summary).toBeVisible();
   await toolbar.getByRole("button", { name: "Show details" }).click();
   await expect(dock).toBeVisible();
-  await expect(summary).toBeVisible();
-  await expect(summary).toHaveAttribute("data-right-dock-motion", "open");
+  const summaryButton = toolbar.getByRole("button", { name: "Summary" });
+  await expect(summaryButton).toHaveAttribute("aria-pressed", "true");
+  await expect(summaryButton).toHaveAttribute("aria-expanded", summaryWithDock ? "true" : "false");
   await expect.poll(async () => dock.evaluate((element) => {
     const rect = element.getBoundingClientRect();
     return rect.left < globalThis.innerWidth && rect.right <= globalThis.innerWidth + 1;
   })).toBe(true);
   await expect.poll(async () => Math.round((await dock.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(300);
+  if (!summaryWithDock) {
+    await expect(summary).toBeHidden();
+    return;
+  }
+  await expect(summary).toBeVisible();
+  await expect(summary).toHaveAttribute("data-right-dock-motion", "open");
+  if (feed && composer) await expectConversationSummaryGeometry(feed, composer, summary, dock);
+}
+
+async function expectConversationSummaryGeometry(
+  feed: import("@playwright/test").Locator,
+  composer: import("@playwright/test").Locator,
+  summary: import("@playwright/test").Locator,
+  dock: import("@playwright/test").Locator,
+): Promise<void> {
   await expect.poll(async () => {
-    const summaryBox = await summary.boundingBox();
-    const dockBox = await dock.boundingBox();
-    return summaryBox && dockBox ? Math.round(dockBox.x - (summaryBox.x + summaryBox.width)) : -1;
-  }).toBeGreaterThanOrEqual(4);
+    const [feedBox, composerBox, summaryBox, dockBox] = await Promise.all([
+      feed.boundingBox(),
+      composer.boundingBox(),
+      summary.boundingBox(),
+      dock.boundingBox(),
+    ]);
+    if (!feedBox || !composerBox || !summaryBox || !dockBox) return undefined;
+    return {
+      axesMatch: Math.abs(feedBox.x - composerBox.x) <= 1 && Math.abs(feedBox.width - composerBox.width) <= 1,
+      conversationClearsSummary: Math.max(feedBox.x + feedBox.width, composerBox.x + composerBox.width) <= summaryBox.x + 1,
+      summaryClearsDock: summaryBox.x + summaryBox.width <= dockBox.x - 4,
+    };
+  }).toEqual({
+    axesMatch: true,
+    conversationClearsSummary: true,
+    summaryClearsDock: true,
+  });
+}
+
+async function expectSummaryConcealAndRestore(
+  page: Page,
+  toolbar: import("@playwright/test").Locator,
+  summary: import("@playwright/test").Locator,
+  dock: import("@playwright/test").Locator,
+): Promise<void> {
+  const summaryButton = toolbar.getByRole("button", { name: "Summary" });
+  await summaryButton.click();
+  await expect(summary).toBeVisible();
+  await toolbar.getByRole("button", { name: "Show details" }).click();
+  await expect(dock).toBeVisible();
+  await expect(summary).toBeHidden();
+  await expect(summaryButton).toHaveAttribute("aria-pressed", "true");
+  await expect(summaryButton).toHaveAttribute("aria-expanded", "false");
+
+  await page.getByRole("button", { name: "Hide navigation" }).click();
+  await expect(summary).toBeVisible();
+  await expect(summaryButton).toHaveAttribute("aria-expanded", "true");
+  await page.getByRole("button", { name: "Show navigation" }).click();
+  await expect(summary).toBeHidden();
+  await expect(summaryButton).toHaveAttribute("aria-expanded", "false");
+
+  await toolbar.getByRole("button", { name: "Hide details" }).click();
+  await expect(dock).toHaveCount(0);
+  await expect(summary).toBeVisible();
+  await expect(summaryButton).toHaveAttribute("aria-expanded", "true");
+  await summaryButton.click();
+  await expect(summaryButton).not.toHaveAttribute("aria-pressed", "true");
 }
 
 async function openBottomTerminal(
