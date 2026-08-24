@@ -1,21 +1,36 @@
 # Channel Conversation Continuity v2
 
-Status: semantic completion/recovery is implemented and has historical isolated packaged
-macOS acceptance. Delivery was reopened at the Node 22 SQLite transaction-composition
-boundary, and the supplemental Attempt-fence, typed-outcome, required-coverage, and
-single-terminal-projection hardening is now present in the active WIP. Earlier packaged
-evidence proves the behavior contract, but it predates those corrections and is not
-release evidence for the current source. Focused S3.5 source regressions are green; the
-corrected full Daemon aggregate, repository-wide source gates, and fresh packaged
-naked-ready, Engineer + QA fan-in, daemon restart, SSE reconnect, and canonical
-SQLite-lineage acceptance remain. Current release verdict: source implementation exists,
-but S3.5 verification, packaged behavior, and delivery are not cleared. The current
-release can close only after the active S3.5/S4/S5/S6 gates in the execution plan pass on
-one post-hardening artifact.
+Status: semantic completion/recovery is implemented. The current post-hardening source
+matrix is green, and one fresh macOS arm64 artifact has passed configured Engineer + QA
+fan-in, real Host write/command evidence, naked-`ready` blocking, missing-provider
+blocking, daemon restart, SSE disconnect/reconnect, replay idempotency, and canonical
+SQLite-lineage checks. The no-checkpoint/effect-unknown packaged restart windows and
+old-schema upgrade/rollback fixture remain before delivery is cleared. Historical
+package hashes are not reused as current release evidence.
 Date: 2026-08-08
-Last verified: 2026-08-18
+Last verified: 2026-08-25
 Scope: channel conversation persistence, Thread/Turn/Item topology, context segmentation,
 context projection, rolling summaries, multi-agent recovery, and Channel Intent Decision v2
+
+## Current release checkpoint (2026-08-25)
+
+The clean delivery worktree is based on `origin/main` at `90635c83e6ec6645699a45c114c59905c996ec12`.
+Source gates pass: Contracts `46/46`, Core `444/444`, and Daemon `1090/1090`.
+The fresh packaged smoke runner is `apps/desktop/tests/run-packaged-continuity-smoke.mjs`
+(`pnpm --filter @ling-stack/desktop smoke:continuity:mac`). Its post-build evidence is:
+
+- ZIP SHA-256: `9ef68c72589d3e59cd1235eaa7fff718ef73f83a73c7c15ec73c91e9e539938a`;
+- DMG SHA-256: `bbb3aa92e64e166afb42a2c34a7f2cc52e5fe1681876dd2b69f6783fc78917ef`;
+- bundle `codesign --verify --deep --strict`: passed;
+- packaged smoke: passed, including launch/health, SSE disconnect/reconnect, real
+  Engineer write, exact QA command, required-participant fan-in, one TerminalReport and
+  final Item, naked-`ready` and missing-provider blockers, daemon restart, replay
+  idempotency, foreign-key check, and integrity check.
+
+The package uses an Apple Development identity and is not notarized; `spctl` rejection
+(`exit 3`) is expected for this local QA artifact and is not a distribution-readiness
+claim. The packaged no-checkpoint/effect-unknown restart windows and S5.1 old-schema
+migration/rollback remain open in the active execution plan.
 
 Related docs:
 
