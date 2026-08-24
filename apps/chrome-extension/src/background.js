@@ -18,23 +18,40 @@ const storageKeys = {
   daemonBaseUrl: "ling.chrome.daemonBaseUrl",
   paused: "ling.chrome.paused",
 };
+const sessionStorageKeys = {
+  reconnectAttempt: "ling.chrome.reconnectAttempt",
+};
+const RECONNECT_ALARM = "ling.chrome.reconnect";
+const RECONNECT_MAX_DELAY_MS = 30_000;
+const RECONNECT_DURABLE_WAKE_MS = 30_000;
 
 let nativeConnection;
 let legacySocket;
 let heartbeatTimer;
 let reconnectTimer;
-let reconnectDelayMs = 1_000;
+let connectionLoop;
+let connectionRequested = false;
 let connectionState = "checking";
 let activeTransport = "none";
 const intentionalSocketClosures = new WeakSet();
 const intentionalNativeClosures = new WeakSet();
 
 chrome.runtime.onInstalled.addListener(() => {
-  void connectPreferredSession();
+  void requestConnection();
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  void connectPreferredSession();
+  void requestConnection();
+});
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name !== RECONNECT_ALARM) return;
+  if (["connected", "paused", "plugin_disabled", "incompatible"].includes(connectionState)) {
+    void clearReconnectState();
+    return;
+  }
+  clearReconnectTimer();
+  void chrome.alarms.clear(RECONNECT_ALARM).then(() => requestConnection());
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -44,23 +61,19 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return true;
 });
 
-void connectPreferredSession();
+void requestConnection();
 
 async function handlePopupMessage(message) {
   if (!message || typeof message !== "object") throw new Error("Invalid extension request");
   if (message.type === "status") return { ok: true, ...(await status()) };
   if (message.type === "connect" || message.type === "resume") {
     await chrome.storage.local.set({ [storageKeys.paused]: false });
-    await connectPreferredSession();
+    await requestConnection({ refresh: true });
     return { ok: true, ...(await status()) };
   }
   if (message.type === "pause") {
     await chrome.storage.local.set({ [storageKeys.paused]: true });
-    clearConnections();
-    connectionState = "paused";
-    activeTransport = "none";
-    publishStatusChanged();
-    await connectNativeSession(true);
+    await requestConnection({ refresh: true });
     return { ok: true, ...(await status()) };
   }
   throw new Error("Unsupported extension request");
@@ -79,6 +92,33 @@ async function status() {
   };
 }
 
+function requestConnection({ refresh = false } = {}) {
+  if (connectionLoop) {
+    if (refresh) connectionRequested = true;
+    return connectionLoop;
+  }
+  connectionRequested = true;
+  connectionLoop = runConnectionLoop()
+    .catch(async () => {
+      connectionState = "ling_unavailable";
+      activeTransport = "none";
+      publishStatusChanged();
+      await scheduleReconnect();
+    })
+    .finally(() => {
+      connectionLoop = undefined;
+      if (connectionRequested) void requestConnection();
+    });
+  return connectionLoop;
+}
+
+async function runConnectionLoop() {
+  while (connectionRequested) {
+    connectionRequested = false;
+    await connectPreferredSession();
+  }
+}
+
 async function connectPreferredSession() {
   clearConnections();
   const stored = await chrome.storage.local.get([storageKeys.paused]);
@@ -86,6 +126,7 @@ async function connectPreferredSession() {
   connectionState = paused ? "paused" : "checking";
   activeTransport = "none";
   publishStatusChanged();
+  if (paused) await clearReconnectState();
   await connectNativeSession(paused);
 }
 
@@ -96,7 +137,7 @@ async function connectNativeSession(paused) {
   } catch {
     connectionState = paused ? "paused" : "host_missing";
     publishStatusChanged();
-    if (!paused) await connectLegacyStoredSession();
+    if (!paused) await fallbackOrReconnect();
     return;
   }
   const connection = { port, errorCode: undefined, connected: false };
@@ -114,14 +155,20 @@ async function connectNativeSession(paused) {
     const nativeError = chrome.runtime.lastError?.message ?? "";
     if (paused) {
       connectionState = "paused";
+      void clearReconnectState();
     } else if (connection.errorCode) {
       connectionState = nativeErrorState(connection.errorCode);
+      if (connectionState === "host_missing" || connectionState === "ling_unavailable") {
+        void fallbackOrReconnect();
+      } else {
+        void clearReconnectState();
+      }
     } else if (isNativeHostMissingError(nativeError)) {
       connectionState = "host_missing";
-      void connectLegacyStoredSession();
+      void fallbackOrReconnect();
     } else {
       connectionState = "ling_unavailable";
-      scheduleReconnect();
+      void scheduleReconnect();
     }
     publishStatusChanged();
   });
@@ -134,9 +181,10 @@ async function connectNativeSession(paused) {
       paused,
     });
   } catch {
+    clearNativeConnection();
     connectionState = paused ? "paused" : "host_missing";
     publishStatusChanged();
-    if (!paused) await connectLegacyStoredSession();
+    if (!paused) await fallbackOrReconnect();
   }
 }
 
@@ -150,24 +198,34 @@ async function handleNativeMessage(connection, message) {
     control = validateNativeControlMessage(message);
   } catch {
     connection.errorCode = "native_protocol_invalid";
+    await clearReconnectState();
+    if (nativeConnection !== connection) return;
     connectionState = "incompatible";
     publishStatusChanged();
     return;
   }
   if (control.type === "error") {
     connection.errorCode = control.code;
-    connectionState = nativeErrorState(control.code);
+    const nextState = nativeErrorState(control.code);
+    if (nextState === "incompatible" || nextState === "plugin_disabled") {
+      await clearReconnectState();
+    }
+    if (nativeConnection !== connection) return;
+    connectionState = nextState;
     publishStatusChanged();
     return;
   }
   if (!control.connected) {
+    await clearReconnectState();
+    if (nativeConnection !== connection) return;
     connectionState = "paused";
     activeTransport = "none";
     publishStatusChanged();
     return;
   }
+  await clearReconnectState();
+  if (nativeConnection !== connection) return;
   connection.connected = true;
-  reconnectDelayMs = 1_000;
   connectionState = "connected";
   activeTransport = "native_messaging";
   clearLegacySocket();
@@ -177,7 +235,12 @@ async function handleNativeMessage(connection, message) {
     storageKeys.cwd,
     storageKeys.daemonBaseUrl,
   ]);
+  if (nativeConnection !== connection || !connection.connected) return;
   publishStatusChanged();
+}
+
+async function fallbackOrReconnect() {
+  if (!await connectLegacyStoredSession()) await scheduleReconnect();
 }
 
 async function connectLegacyStoredSession() {
@@ -190,7 +253,9 @@ async function connectLegacyStoredSession() {
   const credential = stored[storageKeys.credential];
   const cwd = stored[storageKeys.cwd];
   const daemonBaseUrl = stored[storageKeys.daemonBaseUrl] ?? DEFAULT_DAEMON_BASE_URL;
-  if (stored[storageKeys.paused] === true || typeof credential !== "string" || typeof cwd !== "string") return;
+  if (stored[storageKeys.paused] === true || typeof credential !== "string" || typeof cwd !== "string") {
+    return false;
+  }
   clearLegacySocket();
   const next = new WebSocket(websocketUrl(daemonBaseUrl, cwd));
   legacySocket = next;
@@ -200,7 +265,7 @@ async function connectLegacyStoredSession() {
       next.close(1000, "ling_session_replaced");
       return;
     }
-    reconnectDelayMs = 1_000;
+    void clearReconnectState();
     connectionState = "connected";
     activeTransport = "legacy_websocket";
     next.send(JSON.stringify({
@@ -224,27 +289,56 @@ async function connectLegacyStoredSession() {
     clearHeartbeat();
     if (intentionalSocketClosures.has(next)) return;
     if (shouldForgetCredentialAfterSocketClose(event)) {
-      reconnectDelayMs = 1_000;
       void chrome.storage.local.remove([storageKeys.credential, storageKeys.cwd, storageKeys.daemonBaseUrl]);
       connectionState = "host_missing";
       publishStatusChanged();
+      void scheduleReconnect();
       return;
     }
     connectionState = "ling_unavailable";
     publishStatusChanged();
-    scheduleReconnect();
+    void scheduleReconnect();
   });
+  return true;
 }
 
-function scheduleReconnect() {
+async function scheduleReconnect() {
+  const paused = (await chrome.storage.local.get([storageKeys.paused]))[storageKeys.paused] === true;
+  if (paused) {
+    await clearReconnectState();
+    return;
+  }
+  const existingAlarm = await chrome.alarms.get(RECONNECT_ALARM);
+  if (!existingAlarm) {
+    chrome.alarms.create(RECONNECT_ALARM, { when: Date.now() + RECONNECT_DURABLE_WAKE_MS });
+  }
+  if (reconnectTimer) return;
+  const stored = await chrome.storage.session.get([sessionStorageKeys.reconnectAttempt]);
+  const attempt = Number.isInteger(stored[sessionStorageKeys.reconnectAttempt])
+    ? Math.max(0, stored[sessionStorageKeys.reconnectAttempt])
+    : 0;
+  const delayMs = Math.min(1_000 * (2 ** attempt), RECONNECT_MAX_DELAY_MS);
+  await chrome.storage.session.set({ [sessionStorageKeys.reconnectAttempt]: attempt + 1 });
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = undefined;
+    void requestConnection();
+  }, delayMs);
+}
+
+async function clearReconnectState() {
+  clearReconnectTimer();
+  await Promise.all([
+    chrome.alarms.clear(RECONNECT_ALARM),
+    chrome.storage.session.remove([sessionStorageKeys.reconnectAttempt]),
+  ]);
+}
+
+function clearReconnectTimer() {
   if (reconnectTimer) clearTimeout(reconnectTimer);
-  reconnectTimer = setTimeout(() => void connectPreferredSession(), reconnectDelayMs);
-  reconnectDelayMs = Math.min(reconnectDelayMs * 2, 30_000);
+  reconnectTimer = undefined;
 }
 
 function clearConnections() {
-  if (reconnectTimer) clearTimeout(reconnectTimer);
-  reconnectTimer = undefined;
   clearNativeConnection();
   clearLegacySocket();
 }

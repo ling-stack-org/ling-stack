@@ -11,8 +11,8 @@ test("Chrome manifest uses the Web Store production identity and minimal Native 
   const digest = createHash("sha256").update(Buffer.from(manifest.key, "base64")).digest().subarray(0, 16);
   const extensionId = [...digest].flatMap((byte) => [byte >> 4, byte & 15]).map((nibble) => String.fromCharCode(97 + nibble)).join("");
   assert.equal(extensionId, "mbmlnnfhebclljonhedpjghbhibfapei");
-  assert.equal(manifest.version, "0.1.1");
-  assert.deepEqual(manifest.permissions.sort(), ["nativeMessaging", "scripting", "storage"]);
+  assert.equal(manifest.version, "0.1.2");
+  assert.deepEqual(manifest.permissions.sort(), ["alarms", "nativeMessaging", "scripting", "storage"]);
   for (const forbidden of ["cookies", "debugger", "downloads", "history", "bookmarks", "webRequest"]) {
     assert.equal(manifest.permissions.includes(forbidden), false);
   }

@@ -62,7 +62,8 @@ can perform explicitly approved browser reading and interaction tasks.
 | Permission | Dashboard justification |
 | --- | --- |
 | `scripting` | Injects the packaged Ling content script into the selected HTTP(S) tab only after the user approves a snapshot, click, or type request. |
-| `storage` | Stores only the extension pause state and temporarily reads version 0.1.0 local connection values for one-time migration; legacy values are deleted after Native Messaging succeeds. |
+| `storage` | Stores the pause state, a session-only numeric reconnect attempt, and temporarily reads version 0.1.0 local connection values for one-time migration; no workspace, address, or new credential is stored. |
+| `alarms` | Wakes the Manifest V3 background worker to restore the local Ling connection after Desktop restarts or a temporary disconnect; it does not collect browsing data. |
 | `nativeMessaging` | Connects to the installed `com.lingstack.browser` Host, which forwards approved browser commands only to the private loopback broker of the Ling app running on the same computer. |
 | `<all_urls>` | Allows approved actions and visible-viewport capture after navigation across user-selected HTTP(S) pages. Runtime validation rejects browser-internal, file, data, and JavaScript URLs. |
 
@@ -76,7 +77,7 @@ Declare conservatively and reconcile the final answers with the published privac
 | --- | --- |
 | Website content | Yes: bounded visible text, interactive labels, and visible screenshots for approved tasks. |
 | Web history | Yes: HTTP(S) URLs and page titles of tabs involved in approved tasks. |
-| Authentication information | Yes temporarily: version 0.1.1 may read and delete a local version 0.1.0 pairing credential during one-time migration. New connections do not create one. |
+| Authentication information | Yes temporarily: version 0.1.2 may read and delete a local version 0.1.0 pairing credential during one-time migration. New connections do not create one. |
 | Personal communications | Yes: selected visible page content can include communications when a user explicitly directs Ling to that page. |
 | Analytics or advertising | No. |
 | Sale of user data | No. |
@@ -87,8 +88,9 @@ Declare conservatively and reconcile the final answers with the published privac
 1. No Ling test account is required. Install and open the current Ling Desktop test build, which
    registers the local `com.lingstack.browser` Native Messaging Host.
 2. In Ling, open Plugin Manager and enable Chrome.
-3. Open the extension. It connects automatically; no workspace path, daemon address, pairing code,
-   or cloud account is required.
+3. The extension connects automatically; no workspace path, daemon address, pairing code, popup
+   action, or cloud account is required. Restart Ling and confirm the connection recovers within
+   35 seconds without opening the popup.
 4. Run the six browser tools from Ling: tabs, snapshot, navigate, click, type, and screenshot.
 5. Verify that every tool asks for approval by default, Pause disables command activation, and
    disabling or revoking Chrome in Ling tears down the connection.

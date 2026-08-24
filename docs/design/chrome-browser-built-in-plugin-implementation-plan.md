@@ -2,16 +2,16 @@
 
 Status: active implementation plan
 Owner: Browser integration, Desktop, daemon, Web, and release maintainers
-Last verified: 2026-08-21
-Baseline: `main@43fc109fbaf0b215768c8293a7974e68a713d8ef`
+Last verified: 2026-08-24
+Baseline: `main@90635c83e6ec6645699a45c114c59905c996ec12`
 Source contract: [Chrome Browser Built-in Plugin](chrome-browser-built-in-plugin.md)
 
 ## Scope
 
-Upgrade Ling for Chrome from manual workspace pairing to automatic Native Messaging discovery in
-extension `0.1.1`. Deliver macOS arm64 and Windows x64 Host builds, source-mode lifecycle commands,
-shared daemon transports, product status projection, deterministic packaging, and Web Store
-resubmission without changing browser tools, MCP approval, or database schema.
+Upgrade Ling for Chrome from manual workspace pairing to automatic Native Messaging discovery, then
+repair MV3 lifecycle recovery in extension `0.1.2`. Deliver persistent reconnect wake-up, macOS
+engineering-package signing, deterministic packaging, and Web Store resubmission without changing
+browser tools, MCP approval, Native wire protocols, or database schema.
 
 ## Slice 1: Contracts And Documentation
 
@@ -53,20 +53,23 @@ broker failure, repeat install, upgrade, status, and uninstall tests pass.
 Exit gate: Native auto-binding, single-session replacement, pause, disable, revoke, timeout,
 cancellation, descriptor expiry, legacy fallback, migration cleanup, and shutdown races pass.
 
-## Slice 4: Extension `0.1.1`
+## Slice 4: Extension `0.1.2`
 
-- Add `nativeMessaging`, retain `storage` only for pause and legacy migration, and remove all new
-  workspace/address/credential writes.
+- Add `nativeMessaging` and `alarms`; retain storage only for pause, transient reconnect metadata,
+  and legacy migration, and remove all new workspace/address/credential writes.
 - Connect Native first, report status/versions, execute existing `ling.chrome.v1` commands, and send
   shared heartbeats/results.
 - If Host is unavailable and old credentials exist, silently use the V1 WebSocket path.
 - On Native ready, remove legacy credential, cwd, and daemon URL keys.
 - Replace popup pairing fields with connected, Ling unavailable, update required, and paused states
   plus Retry and Pause/Resume actions.
+- Route install, startup, disconnect, Alarm, and popup events through one single-flight connection
+  state machine. Persist only the retry attempt in `storage.session`; clear retry state on success,
+  pause, disable, or intentional replacement.
 
 Exit gate: popup has no workspace, pairing, address, credential, or consent controls; first install,
-restart, pause/resume, Host missing, Ling unavailable, incompatible, fallback, and migration tests
-pass.
+worker-idle restart without opening the popup, pause/resume, Host missing, Ling unavailable,
+incompatible, fallback, and migration tests pass. Awake-Chrome recovery is at most 35 seconds.
 
 ## Slice 5: Desktop Packaging And Product UI
 
@@ -76,6 +79,8 @@ pass.
   identity, SHA, and source commit metadata.
 - Add macOS signing coverage and Windows NSIS uninstall cleanup for exact Ling manifest/registry
   entries.
+- Explicitly ad-hoc sign `unsigned_dev` macOS engineering apps after Electron Fuses are applied and
+  require `codesign --verify --deep --strict`; do not upgrade that evidence to Developer ID status.
 - Replace Plugin Manager pairing-code generation/copy/expiry UI with automatic detection and
   actionable Host, extension, paused, incompatible, disabled, and Ling-unavailable states.
 - Update Chinese/English copy and remove one-second pairing polling/flicker.
@@ -89,14 +94,13 @@ Light/Dark, with no invalid refresh action or loading flicker.
   relevant Playwright, and `git diff --check`.
 - Run current-mac official Chrome acceptance in an isolated profile across all six tools, MCP
   approval, Desktop restart, workspace switch, extension restart, pause, revoke, and migration.
-- Run the Windows x64 self-hosted Host build, framing/lifecycle tests, NSIS layout, hash, registry,
-  and uninstall checks. Failure blocks Store upload.
-- Create a PR, wait for CI, merge to `main`, and rebuild `ling-for-chrome.zip` from that exact merge
-  commit. Record source, manifest, and ZIP SHA-256 values.
-- Synchronize the public privacy Gist, upload `0.1.1`, update permission justification and reviewer
-  instructions, and save the Store draft.
-- Ask for action-time confirmation immediately before `Submit for review`; submit with automatic
-  publishing and verify the item is under review at draft version `0.1.1`.
+- Run platform-neutral Host framing/lifecycle tests. Do not build a new Windows installer for this
+  reconnect-only release because Host and daemon wire protocols are unchanged.
+- Keep the repair branch local, create no PR or push, and build `ling-for-chrome.zip` from the exact
+  clean local commit that passed acceptance. Record source, manifest, and ZIP SHA-256 values.
+- Upload `0.1.2` only after isolated-profile Chrome acceptance passes, update the `alarms` permission
+  justification and reviewer instructions, submit with automatic publishing, and verify the item is
+  under review at draft version `0.1.2`.
 
 ## Verification Commands
 
@@ -124,8 +128,8 @@ git diff --check
 ## Non-Goals And Hard Stops
 
 - No new database table, browser tool, MCP approval path, remote relay, or public broker.
-- No new UI for legacy pairing and no new credential issuance for `0.1.1` users.
+- No new UI for legacy pairing and no new credential issuance for `0.1.2` users.
 - No direct Host business logic, model access, workspace selection, or browser API access.
-- No Store upload before the Windows x64 gate and current-mac real Chrome acceptance pass.
+- No Store upload before current-mac real Chrome acceptance and platform-neutral protocol gates pass.
 - No claim that local unsigned artifacts satisfy Developer ID, notarization, Authenticode,
   SmartScreen, or clean-machine release gates.

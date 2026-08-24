@@ -23,7 +23,8 @@ Single purpose:
 | Permission | Justification |
 | --- | --- |
 | `scripting` | Inject the packaged Ling content script into the selected HTTP(S) tab only after an approved snapshot, click or type request. The manifest has no always-on content script. |
-| `storage` | Store only the paused state and temporarily read/delete version 0.1.0 local pairing values during one-time migration. New connections never store a workspace, daemon URL, or credential. |
+| `storage` | Store the paused state, a session-only numeric reconnect attempt, and temporarily read/delete version 0.1.0 local pairing values during one-time migration. New connections never store a workspace, daemon URL, or credential. |
+| `alarms` | Wake the Manifest V3 background worker to restore the local Native Messaging connection after Ling restarts or a temporary disconnect. No browser content is read by the alarm. |
 | `nativeMessaging` | Connect to the installed `com.lingstack.browser` Host, which forwards approved commands only to the private loopback broker of the Ling app running on the same computer. |
 | `<all_urls>` | Chrome requires this host permission (or temporary `activeTab`) for `captureVisibleTab`; Ling needs durable, approved screenshot access after navigation. Runtime code rejects browser-internal, file, data and JavaScript URLs. |
 
@@ -43,7 +44,7 @@ These disclosures are reflected in the public [Ling for Chrome Privacy Policy](P
   broker selected by the fixed protocol; it has no analytics, advertising or remote telemetry endpoint.
 - When an approved browser result is used in an AI task, Ling may include bounded relevant content
   in a request to the model provider configured and selected by the user.
-- Version `0.1.1` may read a raw `0.1.0` pairing credential once for migration. Native success
+- Version `0.1.2` may read a raw `0.1.0` pairing credential once for migration. Native success
   revokes its SHA-256 hash in Ling and deletes the credential, workspace, and daemon URL from Chrome.
 - Ling run records may retain approved tool inputs and bounded results according to Ling's local run
   history policy.
@@ -94,10 +95,13 @@ The output is `/tmp/ling-plugin-manager-chrome-light.png` and
 3. Run `corepack pnpm --filter @ling-stack/chrome-extension build` twice, confirm the ZIP hash is
    stable, and verify the built ID equals the Dashboard Item ID.
 4. Complete privacy, permission, listing, contact, and reviewer-instruction fields.
-5. Upload the final ZIP to the existing Dashboard item without changing the store-issued key.
-6. Submit for review as a human publisher action.
-7. Record the published Web Store URL in the release configuration.
-8. Install from the Web Store in official Chrome and rerun the six-tool, revoke, prompt-injection
+5. In an isolated official Chrome profile, load `apps/chrome-extension/dist` and verify automatic
+   reconnect after Ling has been stopped longer than the worker idle interval.
+6. Only after local acceptance passes, upload the final ZIP to the existing Dashboard item without
+   changing the store-issued key.
+7. Submit for review as the already-authorized publisher action and select automatic publishing.
+8. Record the published Web Store URL in the release configuration.
+9. Install from the Web Store in official Chrome and rerun the six-tool, revoke, prompt-injection
    boundary and cancellation acceptance flow.
 
 Do not use enterprise force-install policy or command-line side loading as a substitute for normal
@@ -110,3 +114,4 @@ extension; it does not install the extension.
 - [Fill out the privacy fields](https://developer.chrome.com/docs/webstore/cws-dashboard-privacy)
 - [User Data FAQ](https://developer.chrome.com/docs/webstore/program-policies/user-data-faq)
 - [chrome.tabs permissions and captureVisibleTab](https://developer.chrome.com/docs/extensions/reference/api/tabs)
+- [chrome.alarms](https://developer.chrome.com/docs/extensions/reference/api/alarms)

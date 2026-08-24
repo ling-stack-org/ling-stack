@@ -18,7 +18,7 @@ test("store bootstrap build omits the production key and identity", async () => 
     assert.equal("key" in manifest, false);
     assert.equal(metadata.identityMode, "store-bootstrap");
     assert.equal(metadata.extensionId, null);
-    assert.equal(metadata.version, "0.1.1");
+    assert.equal(metadata.version, "0.1.2");
     assert.match(metadata.sourceCommit, /^[a-f0-9]{40}$/u);
     for (const iconPath of Object.values(manifest.icons)) {
       assert.equal((await stat(resolve(bootstrapDist, iconPath))).size > 0, true);
