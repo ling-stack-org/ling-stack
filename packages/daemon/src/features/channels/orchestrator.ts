@@ -142,7 +142,7 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
     return reconciled;
   }
   const currentWorkflow = input.store.getChannelWorkflow(workflow.id) ?? workflow;
-  const steps = input.store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 });
+  const steps = input.store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
   const activeStepCount = countActiveWorkflowSteps(steps);
   const approvedGatedSteps = steps.filter((step) => step.status === "running" && step.metadata?.preStepApprovalId && !step.runId && !step.taskId);
   const eligibleSteps = [
@@ -427,7 +427,7 @@ export function cancelChannelWorkflow(input: CancelWorkflowInput): CancelWorkflo
   if (workflow.status === "cancelled") {
     return {
       workflow,
-      workflowSteps: input.store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 }),
+      workflowSteps: input.store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true }),
       cancelledRunIds: [],
       cancelledApprovalIds: [],
     };
@@ -441,7 +441,7 @@ export function cancelChannelWorkflow(input: CancelWorkflowInput): CancelWorkflo
   const cancelledRunIds: string[] = [];
   const cancelledApprovalIds: string[] = [];
 
-  for (const step of input.store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 })) {
+  for (const step of input.store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true })) {
     for (const approval of input.store.listApprovalRequests({ workflowStepId: step.id, status: "pending", limit: 500 })) {
       const cancelled = input.store.cancelApprovalRequest(
         approval.id,
@@ -494,7 +494,7 @@ export function cancelChannelWorkflow(input: CancelWorkflowInput): CancelWorkflo
 
   return {
     workflow: input.store.getChannelWorkflow(workflow.id) ?? workflow,
-    workflowSteps: input.store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 }),
+    workflowSteps: input.store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true }),
     cancelledRunIds,
     cancelledApprovalIds,
   };
@@ -516,7 +516,7 @@ export async function retryChannelWorkflowStep(input: RetryWorkflowStepInput): P
     throw new HttpError(409, "workflow_terminal", `Workflow ${workflow.id} is already ${workflow.status}.`);
   }
 
-  const steps = input.store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 });
+  const steps = input.store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
   if (!isWorkflowStepEligible(step, steps)) {
     return {
       status: "blocked",
@@ -1006,7 +1006,7 @@ function maybeRequestPostStepApproval(
 }
 
 function reconcileWorkflowStepRuns(store: RunStore, workflowId: string): WorkflowOrchestrationResult | { readonly status: "open" } {
-  const steps = store.listChannelWorkflowSteps({ workflowId, limit: 500 });
+  const steps = store.listChannelWorkflowSteps({ workflowId, complete: true });
   const workflow = store.getChannelWorkflow(workflowId);
   if (!workflow) {
     throw new HttpError(404, "workflow_not_found", `Channel workflow not found: ${workflowId}`);
@@ -1054,7 +1054,7 @@ function reconcileWorkflowStepRuns(store: RunStore, workflowId: string): Workflo
   if (latest.status === "succeeded") {
     return { status: "completed", workflow: latest };
   }
-  const blocked = store.listChannelWorkflowSteps({ workflowId, status: "blocked", limit: 500 })[0];
+  const blocked = store.listChannelWorkflowSteps({ workflowId, status: "blocked", complete: true })[0];
   if (blocked) {
     return { status: "blocked", workflow: latest, workflowStep: blocked, blocker: blocked.blocker ?? "Workflow step is blocked." };
   }

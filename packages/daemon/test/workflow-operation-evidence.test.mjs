@@ -18,7 +18,10 @@ import {
 } from "../dist/features/channels/orchestrator.js";
 import { verifyWorkflowStepExecutionOperations } from "../dist/features/channels/workflow-operation-evidence.js";
 import { syncWorkflowSourceTurnProgress } from "../dist/features/channels/workflow-source-turn.js";
-import { createWorkflowStepOutputArtifact } from "../dist/features/channels/workflow-step-packets.js";
+import {
+  createWorkflowStepOutputArtifact,
+  extractWorkflowStepChangedPaths,
+} from "../dist/features/channels/workflow-step-packets.js";
 import { evaluateWorkflowCompletion, evaluateWorkflowCompletionGate } from "../dist/features/channels/workflow-completion-gate.js";
 import { materializeWorkflowDelegatedStepRequirements } from "../dist/features/channels/workflow-step-requirement.js";
 import {
@@ -32,7 +35,91 @@ import {
 } from "../dist/features/channels/terminal-report-coordinator.js";
 import { ApprovalResumeCoordinator } from "../dist/features/runs/approval-resume-coordinator.js";
 import { workflowExactCommandBindingRejection } from "../dist/features/runs/approvals.js";
+import {
+  listAllExecutionActionsForRun,
+  listExecutionActions,
+} from "../dist/features/runs/execution-actions.js";
 import { ActiveRunRegistry } from "../dist/runtime/active-runs.js";
+
+test("workflow changed paths come only from succeeded typed workspace action refs", () => {
+  assert.deepEqual(extractWorkflowStepChangedPaths({
+    actions: [
+      { actionType: "write", status: "succeeded", targetRefs: [{ type: "file", path: "src/index.ts" }] },
+      { actionType: "edit", status: "succeeded", targetRefs: [{ type: "file", path: "src/index.ts" }] },
+      { actionType: "write", status: "waiting_for_approval", targetRefs: [{ type: "file", path: "src/pending.ts" }] },
+      { actionType: "edit", status: "failed", targetRefs: [{ type: "file", path: "src/failed.ts" }] },
+      { actionType: "write", status: "succeeded", targetRefs: [{ type: "file", path: "workflows/internal.json" }] },
+      { actionType: "write", status: "succeeded", targetRefs: [{ type: "file", path: "../outside.txt" }] },
+    ],
+  }), ["src/index.ts", "workflows/internal.json"]);
+  assert.deepEqual(extractWorkflowStepChangedPaths({
+    cwd: "/workspace/project",
+    actions: [
+      { actionType: "write", status: "succeeded", targetRefs: [{ type: "file", path: "/workspace/project/src/index.ts" }] },
+      { actionType: "edit", status: "succeeded", targetRefs: [{ type: "file", path: "/tmp/outside.ts" }] },
+    ],
+  }), ["src/index.ts"]);
+});
+
+test("complete Run action evidence retains an early write after later reads", async () => {
+  const fixture = await createOperationFixture("complete-action-history", []);
+  try {
+    fixture.store.appendEvent(fixture.run.id, "tool_start", {
+      toolCallId: "aaa_write",
+      toolName: "write",
+      args: { path: "created.txt", content: "created" },
+    });
+    fixture.store.appendEvent(fixture.run.id, "tool_end", {
+      toolCallId: "aaa_write",
+      toolName: "write",
+      isError: false,
+    });
+    for (let index = 0; index < 501; index += 1) {
+      const toolCallId = `read_${String(index).padStart(3, "0")}`;
+      fixture.store.appendEvent(fixture.run.id, "tool_start", {
+        toolCallId,
+        toolName: "read",
+        args: { path: `read-${index}.txt` },
+      });
+      fixture.store.appendEvent(fixture.run.id, "tool_end", {
+        toolCallId,
+        toolName: "read",
+        isError: false,
+      });
+    }
+    const bounded = listExecutionActions(fixture.store, { runId: fixture.run.id, limit: 500 });
+    const complete = listAllExecutionActionsForRun(fixture.store, fixture.run.id);
+    assert.equal(bounded.some((action) => action.toolCallId === "aaa_write"), false);
+    assert.ok(complete.some((action) => action.toolCallId === "aaa_write"));
+    assert.equal(complete.length, 502);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("tool-end touchedPaths become every real file target", async () => {
+  const fixture = await createOperationFixture("patch-touched-paths", []);
+  try {
+    fixture.store.appendEvent(fixture.run.id, "tool_start", {
+      toolCallId: "patch_write",
+      toolName: "write",
+      args: { path: "2 files", content: "patch" },
+    });
+    fixture.store.appendEvent(fixture.run.id, "tool_end", {
+      toolCallId: "patch_write",
+      toolName: "write",
+      isError: false,
+      result: { details: { status: "applied", touchedPaths: ["src/a.ts", "workflows/foo.yml"] } },
+    });
+    const action = listAllExecutionActionsForRun(fixture.store, fixture.run.id)
+      .find((candidate) => candidate.toolCallId === "patch_write");
+    assert.ok(action);
+    assert.deepEqual(action.targetRefs.filter((ref) => ref.type === "file").map((ref) => ref.path), ["src/a.ts", "workflows/foo.yml"]);
+    assert.deepEqual(extractWorkflowStepChangedPaths({ cwd: fixture.cwd, actions: [action] }), ["src/a.ts", "workflows/foo.yml"]);
+  } finally {
+    await fixture.close();
+  }
+});
 
 test("Host rejects a workflow bash command that is not the owned exact operation", () => {
   const binding = operation(
@@ -657,6 +744,13 @@ test("approval restart resume feeds QA evidence through the shared multi-agent c
     assert.equal(qaStep.status, "succeeded");
     assert.equal(qaStep.metadata.executionVerification.status, "verified");
     assert.equal(qaStep.metadata.delegatedOutcome.kind, "completed");
+    const replacementAttemptId = fixture.store.getWorkUnit(workUnit.id).activeAttemptId;
+    assert.ok(replacementAttemptId);
+    assert.notEqual(replacementAttemptId, attempt.id);
+    assert.equal(qaStep.metadata.delegatedOutcome.lineage.attemptId, replacementAttemptId);
+    const resumedApprovalAction = listExecutionActions(fixture.store, { runId: fixture.qaRun.id, complete: true })
+      .find((action) => action.id === `approval:${approval.id}`);
+    assert.equal(resumedApprovalAction?.attemptId, replacementAttemptId);
     assert.equal(workflow.metadata.completionGate.status, "verified");
     assert.deepEqual(
       workflow.metadata.completionGate.participantResults.map((participant) => [participant.participantId, participant.status]),
@@ -839,6 +933,39 @@ test("generic delegated workflow with no declared operations validates successfu
   }
 });
 
+test("ready-only delegated text cannot be treated as successful execution", async () => {
+  const fixture = await createGenericDelegatedActionFixture("ready-only");
+  try {
+    fixture.store.appendEvent(fixture.run.id, "assistant_text_delta", { text: "ready" });
+    fixture.store.markRunSucceeded(fixture.run.id, "2026-08-12T14:06:10.000Z");
+    finalizeOrchestratedWorkflowStepRun(
+      fixture.store,
+      fixture.step.id,
+      fixture.step.taskId ?? fixture.run.taskId,
+      fixture.store.getRun(fixture.run.id),
+      "2026-08-12T14:06:11.000Z",
+    );
+    const step = fixture.store.getChannelWorkflowStep(fixture.step.id);
+    const workflow = fixture.store.getChannelWorkflow(fixture.workflow.id);
+    const outcome = step.metadata.delegatedOutcome;
+    assert.equal(step.status, "blocked");
+    assert.equal(workflow.status, "blocked");
+    assert.equal(outcome.kind, "blocked");
+    assert.equal(outcome.code, "delegated_outcome_missing");
+    assert.deepEqual(outcome.evidenceRefs, []);
+    assert.equal(outcome.lineage.runId, fixture.run.id);
+    assert.equal(outcome.lineage.attemptId, `attempt_run_generic_action_ready-only`);
+    assert.deepEqual(outcome.lineage.sourceRefs, [
+      { type: "workflow", id: fixture.workflow.id },
+      { type: "workflow_step", id: fixture.step.id },
+      { type: "run", id: fixture.run.id },
+      { type: "attempt", id: "attempt_run_generic_action_ready-only" },
+    ]);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("approval resume unsupported is a structured delegated blocker, not workflow success or cancellation", async () => {
   const fixture = await createGenericDelegatedActionFixture("approval-resume-unsupported");
   try {
@@ -977,6 +1104,20 @@ test("synthesis participant completes with a bound output packet but not naked t
         workflowId: workflow.id,
         workflowStepId: step.id,
         participantId: "teammate_builtin_architect",
+        lineage: {
+          workflowId: workflow.id,
+          workflowStepId: step.id,
+          participantId: "teammate_builtin_architect",
+          runId: run.id,
+          attemptId: "attempt_run_synthesis_packet",
+          sourceRefs: [
+            { type: "workflow", id: workflow.id },
+            { type: "workflow_step", id: step.id },
+            { type: "run", id: run.id },
+            { type: "attempt", id: "attempt_run_synthesis_packet" },
+            { type: "artifact", id: artifact.id },
+          ],
+        },
         evidenceRefs: [{ kind: "workflow_output_packet", id: artifact.id }],
       },
       },
@@ -1094,6 +1235,10 @@ test("approval wait and resume update the workflow source turn immediately", asy
       createdAt: now,
     });
     store.markRunStarted(run.id, now);
+    store.appendEvent(run.id, "run_created", {
+      attemptId: "attempt_source_turn_approval",
+      workUnitId: "work_unit_source_turn_approval",
+    });
     store.updateChannelWorkflowStep(step.id, { taskId: task.id, runId: run.id }, now);
     store.markRunSucceeded(run.id, "2026-08-12T15:00:10.000Z");
     finalizeOrchestratedWorkflowStepRun(store, step.id, task.id, store.getRun(run.id), "2026-08-12T15:00:11.000Z");
@@ -1287,6 +1432,19 @@ test("completion evaluation rolls back workflow state and event and succeeds on 
           now: "2026-08-12T17:06:14.000Z",
         });
         assert.equal(evaluation.gate.status, "verified");
+        const fabricated = {
+          ...evaluation,
+          gate: { ...evaluation.gate, basisFingerprint: "wcbv1_fabricated" },
+        };
+        assert.deepEqual(fixture.store.commitChannelWorkflowCompletionEvaluation({
+          workflowId: workflow.id,
+          evaluation: fabricated,
+          now: "2026-08-12T17:06:14.500Z",
+        }), {
+          ok: false,
+          code: "invalid_transition",
+          currentStatus: "running",
+        });
         const beforeWorkflow = fixture.store.getChannelWorkflow(workflow.id);
         const beforeEvents = fixture.store.listStateTransitionEvents({
           entityType: "workflow",
@@ -1414,6 +1572,17 @@ test("participant preflight blocker atomically replaces workflow_started before 
       code: "workflow_participant_required_tools_unavailable",
       reason: "The assigned participant no longer allows write.",
       missingRequirements: ["tool:write"],
+      lineage: {
+        workflowId: fixture.workflow.id,
+        workflowStepId: fixture.engineerStep.id,
+        participantId: step.toParticipantId,
+        runId: null,
+        attemptId: null,
+        sourceRefs: [
+          { type: "workflow", id: fixture.workflow.id },
+          { type: "workflow_step", id: fixture.engineerStep.id },
+        ],
+      },
       evidenceRefs: [],
     });
     assert.ok(step.metadata.delegatedOutcomeBasisFingerprint);
@@ -1645,6 +1814,10 @@ async function createOperationFixture(suffix, operations, policy) {
     createdAt: now,
   });
   store.markRunStarted(run.id, now);
+  store.appendEvent(run.id, "run_created", {
+    attemptId: `attempt_operation_${suffix}`,
+    workUnitId: `work_unit_operation_${suffix}`,
+  });
   store.updateChannelWorkflowStep(step.id, { taskId: task.id, runId: run.id }, now);
   return {
     store,
@@ -1915,6 +2088,51 @@ function createFixtureRun(store, cwd, channelId, workflowStepId, task, id, now) 
     createdAt: now,
   });
   store.markRunStarted(run.id, now);
+  const workUnit = store.createWorkUnit({
+    id: `work_unit_${id}`,
+    workspaceId: "workspace_default",
+    kind: "task_run",
+    ownerType: "run",
+    ownerId: run.id,
+    channelId,
+    taskId: task.id,
+    runnerId: "pi",
+    effectiveRunnerId: "pi",
+    idempotencyKey: `fixture-work-unit:${id}`,
+    createdByActor: "system",
+    request: { workflowStepId },
+    linkedRunId: run.id,
+    now,
+  });
+  const attempt = store.createWorkUnitAttempt({
+    id: `attempt_${id}`,
+    workUnitId: workUnit.id,
+    attemptNumber: 1,
+    runtimeInstanceId: `fixture-runtime:${id}`,
+    runnerId: "pi",
+    effectiveRunnerId: "pi",
+    now,
+  });
+  store.transitionWorkUnitStatus({
+    workUnitId: workUnit.id,
+    expectedStatus: "queued",
+    event: "claim",
+    actor: "system",
+    now,
+    activeAttemptId: attempt.id,
+  });
+  store.transitionWorkUnitStatus({
+    workUnitId: workUnit.id,
+    expectedStatus: "claimed",
+    event: "runner_started",
+    actor: "runner",
+    now,
+  });
+  store.linkRunToWorkUnit(run.id, workUnit.id, now);
+  store.appendEvent(run.id, "run_created", {
+    attemptId: attempt.id,
+    workUnitId: workUnit.id,
+  });
   return store.getRun(run.id);
 }
 

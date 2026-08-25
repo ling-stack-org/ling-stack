@@ -678,6 +678,7 @@ export async function executeRunRequest(
     store.appendEvent(run.id, "run_created", {
       taskId: run.taskId,
       workUnitId: workUnit.id,
+      attemptId: attempt.id,
       workspaceCwd,
       cwd: run.cwd,
       threadId: thread.id,

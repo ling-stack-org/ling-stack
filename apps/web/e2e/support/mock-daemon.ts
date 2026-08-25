@@ -329,6 +329,7 @@ export interface MockExecutionAction {
   workspaceId: string;
   threadId?: string;
   runId?: string;
+  attemptId?: string;
   workUnitId?: string;
   approvalId?: string;
   toolCallId?: string;

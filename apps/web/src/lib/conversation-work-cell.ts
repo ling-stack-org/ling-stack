@@ -1266,6 +1266,9 @@ function executionActionEvidenceRow(
       actionId: action.id,
       toolCallId: action.toolCallId,
       runId: action.runId,
+      attemptId: action.attemptId,
+      turnRunRole: operationExecution.turnRunRole,
+      participantId: operationExecution.participantId,
       workUnitId: action.workUnitId,
       workflowStepId: action.targetRefs.find((ref) => ref.type === "workflow_step")?.id,
       actionType: action.actionType,
@@ -1277,6 +1280,7 @@ function executionActionEvidenceRow(
       durationMs: action.commandEvidence.durationMs,
       exitCode: action.commandEvidence.exitCode,
       latestEventSeq: action.commandEvidence.latestEventSeq,
+      sourceRefs: operationExecution.sourceRefs,
       outputTruncated: action.commandEvidence.outputTruncated,
       stdoutArtifactId: action.commandEvidence.stdoutArtifactId,
       stderrArtifactId: action.commandEvidence.stderrArtifactId,
@@ -1350,6 +1354,7 @@ function executionActionExecutionView(
     actionId: action.id,
     toolCallId: action.toolCallId,
     runId: action.runId,
+    attemptId: action.attemptId,
     turnRunRole: context.turnRunRole,
     participantId: context.participantId,
     workUnitId: action.workUnitId,
@@ -1357,6 +1362,7 @@ function executionActionExecutionView(
     actionType: action.actionType,
     status: action.status,
     updatedAt: action.updatedAt ?? action.completedAt ?? action.executedAt ?? action.createdAt,
+    latestEventSeq: action.commandEvidence?.latestEventSeq,
     sourceRefs: executionActionSourceRefs(action, workflowStepId),
   };
 }
@@ -1370,6 +1376,9 @@ function executionActionSourceRefs(action: ExecutionAction, workflowStepId: stri
   }
   if (action.workUnitId) {
     refs.push({ kind: "work_unit", id: action.workUnitId });
+  }
+  if (action.attemptId) {
+    refs.push({ kind: "attempt", id: action.attemptId });
   }
   if (action.toolCallId) {
     refs.push({ kind: "tool_call", id: action.toolCallId });

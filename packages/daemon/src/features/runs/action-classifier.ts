@@ -58,6 +58,7 @@ export function classifyToolAction(input: {
   readonly toolName: string;
   readonly toolCallId: string;
   readonly args: unknown;
+  readonly result?: unknown;
   readonly isError?: boolean;
 }): ClassifiedAction {
   if (input.toolName === "bash") {
@@ -78,21 +79,41 @@ export function classifyToolAction(input: {
   }
 
   if (input.toolName === "write") {
-    const path = readInputString(input.args, "path", "<unknown>");
+    const path = readInputString(input.args, "path", "");
+    const touchedPaths = readToolResultTouchedPaths(input.result);
     const content = readInputString(input.args, "content", "");
     const classified = classifyPayloadAction({
       type: "file_write",
       path,
+      ...(touchedPaths.length > 0 ? { touchedPaths } : {}),
       bytes: Buffer.byteLength(content, "utf8"),
       preview: truncate(content, 160),
     }, input.run.cwd);
-    return { ...classified, targetRefs: mergeTargetRefs(classified.targetRefs, buildCommonRefs(input.run, input.toolCallId)) };
+    return {
+      ...classified,
+      targetRefs: mergeTargetRefs(
+        touchedPaths.length > 0 || isUsableToolFilePath(path) ? classified.targetRefs : [],
+        buildCommonRefs(input.run, input.toolCallId),
+      ),
+    };
   }
 
   if (input.toolName === "edit") {
-    const path = readInputString(input.args, "path", "<unknown>");
-    const classified = classifyPayloadAction({ type: "file_edit", path, diffPreview: "" }, input.run.cwd);
-    return { ...classified, targetRefs: mergeTargetRefs(classified.targetRefs, buildCommonRefs(input.run, input.toolCallId)) };
+    const path = readInputString(input.args, "path", "");
+    const touchedPaths = readToolResultTouchedPaths(input.result);
+    const classified = classifyPayloadAction({
+      type: "file_edit",
+      path,
+      diffPreview: "",
+      ...(touchedPaths.length > 0 ? { touchedPaths } : {}),
+    }, input.run.cwd);
+    return {
+      ...classified,
+      targetRefs: mergeTargetRefs(
+        touchedPaths.length > 0 || isUsableToolFilePath(path) ? classified.targetRefs : [],
+        buildCommonRefs(input.run, input.toolCallId),
+      ),
+    };
   }
 
   if (isReadOnlyTool(input.toolName)) {
@@ -217,14 +238,19 @@ function classifyPayloadAction(payload: ApprovalPayload, cwd = ""): ClassifiedAc
     };
   }
   if (payload.type === "file_write" || payload.type === "file_edit") {
+    const paths = payload.touchedPaths && payload.touchedPaths.length > 0
+      ? payload.touchedPaths
+      : [payload.path];
     return {
       actionType: payload.type === "file_write" ? "write" : "edit",
       risk: "medium",
       scopes: ["workspace_write"],
       scopeSummary: "workspace_write",
       title: payload.type === "file_write" ? "File write" : "File edit",
-      summary: payload.path,
-      targetRefs: [{ type: "file", path: payload.path, label: payload.path }],
+      summary: paths.join(", "),
+      targetRefs: paths
+        .filter(isUsableToolFilePath)
+        .map((path) => ({ type: "file", path, label: path })),
     };
   }
   if (payload.type === "tool_call") {
@@ -506,6 +532,21 @@ function isApprovalActionType(value: string): value is ApprovalActionType {
 
 function readInputString(value: unknown, key: string, fallback: string): string {
   return isRecord(value) && typeof value[key] === "string" ? value[key] : fallback;
+}
+
+function isUsableToolFilePath(value: string): boolean {
+  const path = value.trim();
+  return path.length > 0 && path !== "<unknown>";
+}
+
+function readToolResultTouchedPaths(value: unknown): readonly string[] {
+  if (!isRecord(value) || !isRecord(value.details) || !Array.isArray(value.details.touchedPaths)) {
+    return [];
+  }
+  return [...new Set(value.details.touchedPaths
+    .filter((path): path is string => typeof path === "string")
+    .map((path) => path.trim())
+    .filter(isUsableToolFilePath))];
 }
 
 function readEventString(event: RunEventEnvelope, key: string): string | undefined {

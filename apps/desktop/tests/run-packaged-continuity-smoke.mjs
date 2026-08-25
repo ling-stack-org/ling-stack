@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { arch, platform, release, tmpdir, type as osType, version as osVersion } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
@@ -20,11 +20,15 @@ if (process.platform !== "darwin") {
 
 const appExecutable = resolve(options.app ?? defaultApp);
 const artifact = options.artifact ? resolve(options.artifact) : defaultArtifact;
+const packagedContentsPath = resolve(dirname(appExecutable), "..");
+const browserHostMetadataPath = join(packagedContentsPath, "Resources", "browser-host", "build-metadata.json");
+const browserHostDefaultExecutable = process.arch === "x64" ? "ling-browser-host.exe" : "ling-browser-host";
 const runRoot = options.output ? resolve(options.output) : await mkdtemp(join(tmpdir(), "ling-packaged-continuity-"));
 const userData = join(runRoot, "user-data");
 const lingHome = join(runRoot, "ling-stack-home");
 const workspace = join(runRoot, "workspace");
 const logs = join(runRoot, "logs");
+const desktopStartupLog = join(userData, "desktop-startup.log");
 const proofFileName = "r5-packaged-proof.txt";
 const proofContent = "continuity-v2-r5-proof";
 const exactVerificationCommand = `node -e "const fs=require('fs');const p=Buffer.from('${Buffer.from(proofFileName, "utf8").toString("base64")}','base64').toString('utf8');const e=Buffer.from('${Buffer.from(proofContent, "utf8").toString("base64")}','base64').toString('utf8');if(fs.readFileSync(p,'utf8')!==e)process.exit(1)"`;
@@ -32,14 +36,32 @@ await mkdir(workspace, { recursive: true });
 await mkdir(logs, { recursive: true });
 
 const report = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   kind: "ling-desktop-macos-packaged-continuity",
   status: "running",
   appExecutable,
   artifact,
   runRoot,
+  environment: {
+    platform: platform(),
+    architecture: arch(),
+    osType: osType(),
+    osRelease: release(),
+    osVersion: osVersion(),
+    nodeVersion: process.version,
+  },
+  paths: {
+    workspace,
+    userData,
+    lingHome,
+    logs,
+    desktopStartupLog,
+    browserHostMetadata: browserHostMetadataPath,
+  },
   checks: [],
 };
+
+const launchedSessions = [];
 
 function check(id, status, details) {
   report.checks.push({ id, status, details });
@@ -51,6 +73,82 @@ function hashFile(path) {
     const hash = createHash("sha256");
     readFile(path).then((bytes) => resolveHash(hash.update(bytes).digest("hex")), reject);
   });
+}
+
+function commandOutput(command, args) {
+  try {
+    return execFileSync(command, args, { encoding: "utf8" }).trim();
+  } catch {
+    return undefined;
+  }
+}
+
+function readMacOsMetadata() {
+  return {
+    productName: commandOutput("/usr/bin/sw_vers", ["-productName"]),
+    productVersion: commandOutput("/usr/bin/sw_vers", ["-productVersion"]),
+    buildVersion: commandOutput("/usr/bin/sw_vers", ["-buildVersion"]),
+  };
+}
+
+async function readJson(path) {
+  return JSON.parse(await readFile(path, "utf8"));
+}
+
+async function readDesktopStartupEvents() {
+  try {
+    return (await readFile(desktopStartupLog, "utf8"))
+      .split(/\r?\n/u)
+      .filter(Boolean)
+      .flatMap((line) => {
+        try {
+          const value = JSON.parse(line);
+          return value && typeof value === "object" ? [value] : [];
+        } catch {
+          return [];
+        }
+      });
+  } catch {
+    return [];
+  }
+}
+
+async function updateSessionProcessEvidence(session, health) {
+  if (!session) return;
+  session.daemonCwd = typeof health?.defaultWorkspaceCwd === "string"
+    ? health.defaultWorkspaceCwd
+    : undefined;
+  const events = await readDesktopStartupEvents();
+  const startedAt = Date.parse(session.startedAt);
+  const spawned = events
+    .filter((event) => event.event === "daemon.spawned" && typeof event.ts === "string")
+    .filter((event) => Number.isNaN(startedAt) || Date.parse(event.ts) >= startedAt)
+    .at(-1);
+  if (Number.isInteger(spawned?.pid)) session.daemonPid = spawned.pid;
+}
+
+async function flushSessionLogs(session) {
+  if (!session) return;
+  await writeFile(session.stdoutPath, session.stdout.join(""), "utf8");
+  await writeFile(session.stderrPath, session.stderr.join(""), "utf8");
+  report.processes = launchedSessions.map((candidate) => ({
+    launchIndex: candidate.launchIndex,
+    appPid: candidate.child.pid ?? null,
+    appCwd: candidate.cwd,
+    daemonPid: candidate.daemonPid ?? null,
+    daemonCwd: candidate.daemonCwd ?? null,
+    startedAt: candidate.startedAt,
+    stoppedAt: candidate.stoppedAt ?? null,
+    exitCode: candidate.child.exitCode,
+    signal: candidate.child.signalCode,
+    stdoutPath: candidate.stdoutPath,
+    stderrPath: candidate.stderrPath,
+  }));
+  report.logs = {
+    desktopStartup: desktopStartupLog,
+    stdout: launchedSessions.map((candidate) => candidate.stdoutPath),
+    stderr: launchedSessions.map((candidate) => candidate.stderrPath),
+  };
 }
 
 async function freePort() {
@@ -243,16 +341,20 @@ async function request(baseUrl, path, init = {}) {
   throw lastError ?? new Error("request_failed");
 }
 
-async function waitForHealth(baseUrl) {
+async function waitForHealth(baseUrl, session) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     const response = await request(baseUrl, "/health");
-    if (response.status === 200 && response.body?.ok === true) return response.body;
+    if (response.status === 200 && response.body?.ok === true) {
+      await updateSessionProcessEvidence(session, response.body);
+      return response.body;
+    }
     await sleep(200);
   }
   throw new Error("packaged_daemon_health_timeout");
 }
 
 function launch(baseUrl, cwd) {
+  const launchIndex = launchedSessions.length + 1;
   const child = spawn(appExecutable, [`--user-data-dir=${userData}`], {
     cwd,
     env: {
@@ -267,17 +369,32 @@ function launch(baseUrl, cwd) {
   const stderr = [];
   child.stdout.on("data", (chunk) => stdout.push(String(chunk)));
   child.stderr.on("data", (chunk) => stderr.push(String(chunk)));
-  return { child, stdout, stderr };
+  const session = {
+    launchIndex,
+    child,
+    stdout,
+    stderr,
+    cwd,
+    startedAt: new Date().toISOString(),
+    stdoutPath: join(logs, `app-${launchIndex}.stdout.log`),
+    stderrPath: join(logs, `app-${launchIndex}.stderr.log`),
+  };
+  launchedSessions.push(session);
+  return session;
 }
 
 async function stop(session) {
-  if (!session?.child || session.child.exitCode !== null) return;
-  session.child.kill("SIGTERM");
-  await Promise.race([
-    new Promise((resolveExit) => session.child.once("exit", resolveExit)),
-    sleep(5_000),
-  ]);
-  if (session.child.exitCode === null) session.child.kill("SIGKILL");
+  if (!session?.child) return;
+  if (session.child.exitCode === null) {
+    session.child.kill("SIGTERM");
+    await Promise.race([
+      new Promise((resolveExit) => session.child.once("exit", resolveExit)),
+      sleep(5_000),
+    ]);
+    if (session.child.exitCode === null) session.child.kill("SIGKILL");
+  }
+  session.stoppedAt = new Date().toISOString();
+  await flushSessionLogs(session);
 }
 
 function jsonHeaders() {
@@ -596,9 +713,36 @@ function readSqliteAudit(databasePath, ids) {
 let session;
 let mockProvider;
 try {
+  report.environment.macos = readMacOsMetadata();
+  const artifactSha256 = await hashFile(artifact);
+  report.artifactSha256 = artifactSha256;
+  const browserHostMetadata = await readJson(browserHostMetadataPath);
+  const browserHostExecutable = join(dirname(browserHostMetadataPath), browserHostMetadata.executable ?? browserHostDefaultExecutable);
+  const browserHostSourceExecutable = join(repositoryRoot, "packages/browser-host/dist/native", browserHostMetadata.executable ?? browserHostDefaultExecutable);
+  const browserHostSourceSha256 = await hashFile(browserHostSourceExecutable);
+  const browserHostPackagedSha256 = await hashFile(browserHostExecutable);
+  if (browserHostMetadata.hostSha256 !== browserHostSourceSha256) {
+    throw new Error(`browser_host_source_hash_mismatch:${JSON.stringify({ expected: browserHostMetadata.hostSha256, actual: browserHostSourceSha256 })}`);
+  }
+  report.browserHost = {
+    metadataPath: browserHostMetadataPath,
+    sourceExecutable: browserHostSourceExecutable,
+    packagedExecutable: browserHostExecutable,
+    metadata: browserHostMetadata,
+    sourceSha256: browserHostSourceSha256,
+    packagedSha256: browserHostPackagedSha256,
+    packagingChangedBytes: browserHostSourceSha256 !== browserHostPackagedSha256,
+  };
   check("artifact", "passed", {
-    sha256: await hashFile(artifact),
+    sha256: artifactSha256,
     app: appExecutable,
+  });
+  check("browser_host_build", "passed", {
+    sourceSha256: browserHostSourceSha256,
+    packagedSha256: browserHostPackagedSha256,
+    packagingChangedBytes: browserHostSourceSha256 !== browserHostPackagedSha256,
+    sourceCommit: browserHostMetadata.sourceCommit,
+    platform: browserHostMetadata.platform,
   });
   const daemonPort = await freePort();
   const baseUrl = `http://127.0.0.1:${daemonPort}`;
@@ -616,7 +760,7 @@ try {
   await stop(session);
   repairPreReleaseMigrationFixture(releaseMigrationFixture.databasePath);
   session = launch(baseUrl, workspace);
-  const health = await waitForHealth(baseUrl);
+  const health = await waitForHealth(baseUrl, session);
   check("launch", "passed", {
     pid: session.child.pid,
     daemonPort,
@@ -948,7 +1092,7 @@ try {
   await safeRestart.sse.close();
   await stop(session);
   session = launch(baseUrl, workspace);
-  await waitForHealth(baseUrl);
+  await waitForHealth(baseUrl, session);
   const safeApprove = await request(baseUrl, `/approvals/${encodeURIComponent(safeApprovalId)}/approve${cwdQuery}`, {
     method: "POST",
     headers: jsonHeaders(),
@@ -978,7 +1122,7 @@ try {
   await noCheckpoint.sse.close();
   await stop(session);
   session = launch(baseUrl, workspace);
-  await waitForHealth(baseUrl);
+  await waitForHealth(baseUrl, session);
   const noCheckpointFailed = await waitForRunStatus(baseUrl, workspace, noCheckpointRunId, "failed", "packaged_no_checkpoint_timeout");
   if (!String(noCheckpointFailed.errorMessage ?? "").includes("runtime_interrupted_no_checkpoint")) {
     throw new Error(`packaged_no_checkpoint_reason:${noCheckpointFailed.errorMessage ?? "missing"}`);
@@ -1013,7 +1157,7 @@ try {
   await effectUnknown.sse.close();
   await stop(session);
   session = launch(baseUrl, workspace);
-  await waitForHealth(baseUrl);
+  await waitForHealth(baseUrl, session);
   const effectApprove = await request(baseUrl, `/approvals/${encodeURIComponent(effectApprovalId)}/approve${cwdQuery}`, {
     method: "POST",
     headers: jsonHeaders(),
@@ -1026,7 +1170,7 @@ try {
   // still in flight; waiting for terminal output would miss the crash window.
   await stop(session);
   session = launch(baseUrl, workspace);
-  await waitForHealth(baseUrl);
+  await waitForHealth(baseUrl, session);
   const effectUnknownFailed = await waitForRunStatus(baseUrl, workspace, effectRunId, "failed", "packaged_effect_unknown_timeout");
   const effectDatabase = new DatabaseSync(databasePathFor(workspace), { readOnly: true });
   try {
@@ -1062,7 +1206,7 @@ try {
   check("sqlite_lineage_before_restart", "passed", beforeRestartAudit);
 
   session = launch(baseUrl, workspace);
-  const recoveredHealth = await waitForHealth(baseUrl);
+  const recoveredHealth = await waitForHealth(baseUrl, session);
   const recoveredItemsResponse = await request(baseUrl, `/channels/${encodeURIComponent(channelId)}/items${cwdQuery}`);
   const recoveredItems = recoveredItemsResponse.body.items ?? [];
   const recoveredUsers = recoveredItems.filter((item) => item.kind === "user_message");
@@ -1085,6 +1229,23 @@ try {
     sqlite: afterRestartAudit,
   });
 
+  report.finalUiState = {
+    surface: "channel",
+    channelId,
+    workflowId: workflow.id,
+    workflowStatus: workflow.status,
+    completionGateStatus: workflow.metadata?.completionGate?.status ?? null,
+    terminalReportStatus: terminalReportsResponse.body.reports[0]?.outcome?.status ?? null,
+    visibleItemCount: recoveredItems.length,
+    userItemCount: recoveredUsers.length,
+    terminalReportItemCount: recoveredItems.filter((item) => item.kind === "assistant_message").length,
+    sseReconnectReady: recoveredReplay.text.includes("event: ready"),
+    daemonReadiness: recoveredHealth.readiness,
+    canonicalReplayIdempotent: true,
+  };
+
+  await stop(session);
+  session = undefined;
   report.status = "passed";
   report.finishedAt = new Date().toISOString();
   await writeFile(join(runRoot, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
@@ -1092,6 +1253,7 @@ try {
 } catch (error) {
   report.status = "failed";
   report.error = { message: error instanceof Error ? error.message : String(error) };
+  await flushSessionLogs(session).catch(() => undefined);
   report.finishedAt = new Date().toISOString();
   await writeFile(join(runRoot, "report.json"), `${JSON.stringify(report, null, 2)}\n`).catch(() => undefined);
   console.error(JSON.stringify({ type: "result", ...report }));

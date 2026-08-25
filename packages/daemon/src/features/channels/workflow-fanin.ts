@@ -157,7 +157,7 @@ function collectDependencyOutputs(
   workflowId: string,
   step: ChannelWorkflowStep,
 ): readonly WorkflowStepOutputRef[] {
-  const stepsById = new Map(store.listChannelWorkflowSteps({ workflowId, limit: 500 }).map((candidate) => [candidate.id, candidate] as const));
+  const stepsById = new Map(store.listChannelWorkflowSteps({ workflowId, complete: true }).map((candidate) => [candidate.id, candidate] as const));
   return (step.metadata?.dependsOnStepIds ?? [])
     .map((dependencyId) => stepsById.get(dependencyId))
     .filter((dependency): dependency is ChannelWorkflowStep => Boolean(dependency))
@@ -186,7 +186,7 @@ function dependencySteps(
   step: ChannelWorkflowStep,
 ): readonly ChannelWorkflowStep[] {
   const stepsById = new Map(
-    store.listChannelWorkflowSteps({ workflowId, limit: 500 }).map((candidate) => [candidate.id, candidate] as const),
+    store.listChannelWorkflowSteps({ workflowId, complete: true }).map((candidate) => [candidate.id, candidate] as const),
   );
   return (step.metadata?.dependsOnStepIds ?? [])
     .map((dependencyId) => stepsById.get(dependencyId))

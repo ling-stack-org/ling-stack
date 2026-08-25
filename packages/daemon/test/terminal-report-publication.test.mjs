@@ -438,6 +438,10 @@ async function createManifestPublicationFixture(suffix, outcome) {
     createdAt: "2026-08-12T20:00:04.000Z",
   });
   store.markRunStarted(run.id, "2026-08-12T20:00:04.000Z");
+  store.appendEvent(run.id, "run_created", {
+    attemptId: `attempt_publication_${suffix}`,
+    workUnitId: `work_unit_publication_${suffix}`,
+  });
   store.appendEvent(run.id, "assistant_text_delta", { text: "Synthesis complete." });
   store.updateChannelWorkflowStep(step.id, { taskId: task.id, runId: run.id }, "2026-08-12T20:00:05.000Z");
   if (outcome === "succeeded") {

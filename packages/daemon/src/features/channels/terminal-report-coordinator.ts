@@ -180,7 +180,7 @@ export async function processWorkflowTerminalReport(
   const workflow = store.getChannelWorkflow(workflowId);
   if (!workflow) throw new Error(`Workflow not found: ${workflowId}`);
   if (workflow.status === "succeeded" && workflow.metadata?.requiredParticipantManifest) {
-    const steps = store.listChannelWorkflowSteps({ workflowId, limit: 500 });
+    const steps = store.listChannelWorkflowSteps({ workflowId, complete: true });
     const gate = evaluateWorkflowCompletionGate({
       store,
       workflow,

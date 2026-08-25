@@ -162,9 +162,18 @@ export class SqliteApprovalRequestStore {
       clauses.push("workflow_step_id = ?");
       params.push(options.workflowStepId);
     }
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    if (options.complete) {
+      if (!options.runId && !options.mediaJobId && !options.externalWorkActionId && !options.workflowStepId) {
+        throw new Error("Complete approval history requires a durable owner scope.");
+      }
+      return this.context.database
+        .prepare(`${approvalRequestSelectSql(whereClause)} ORDER BY created_at DESC`)
+        .all(...params)
+        .map(mapApprovalRequest);
+    }
     const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
     params.push(limit);
-    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
     return this.context.database
       .prepare(`${approvalRequestSelectSql(whereClause)} ORDER BY created_at DESC LIMIT ?`)
       .all(...params)

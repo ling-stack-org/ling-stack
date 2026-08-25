@@ -123,7 +123,7 @@ export function buildLingAgentSessionViewForChannel(input: {
   readonly channelId: string;
 }): LingAgentSessionView {
   const workflows = input.store.listChannelWorkflows({ channelId: input.channelId, limit: 100 });
-  const workflowSteps = workflows.flatMap((workflow) => input.store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 }));
+  const workflowSteps = workflows.flatMap((workflow) => input.store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true }));
   const workflowStepIds = new Set(workflowSteps.map((step) => step.id));
   const proposalRunIds = new Set<string>();
   const proposals = input.store.listChannelExecutionProposals({ channelId: input.channelId, limit: 100 });

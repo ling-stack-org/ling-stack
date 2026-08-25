@@ -693,15 +693,18 @@ function isWorkflowSelectorTargetKindValue(value: unknown): value is WorkflowSel
 function isWorkflowPacketSourceRefTypeValue(value: unknown): value is WorkflowPacketSourceRef["type"] {
   return (
     value === "channel_message" ||
+    value === "conversation_item" ||
     value === "channel_brief" ||
     value === "channel_decision" ||
     value === "context_summary" ||
     value === "task" ||
     value === "run" ||
+    value === "attempt" ||
     value === "workflow" ||
     value === "workflow_step" ||
     value === "workflow_handoff_intent" ||
     value === "workflow_selector_decision" ||
+    value === "execution_action" ||
     value === "artifact" ||
     value === "approval" ||
     value === "memory"

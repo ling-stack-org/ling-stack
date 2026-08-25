@@ -30,7 +30,7 @@ export function buildWorkflowCollaborationCardFromStore(input: {
   readonly store: ChannelCollaborationCardStore;
   readonly workflow: ChannelWorkflow;
 }): CollaborationTaskCardModel | undefined {
-  const steps = input.store.listChannelWorkflowSteps({ workflowId: input.workflow.id, limit: 500 });
+  const steps = input.store.listChannelWorkflowSteps({ workflowId: input.workflow.id, complete: true });
   if (steps.length === 0) {
     return undefined;
   }

@@ -66,10 +66,13 @@ export function projectConversationCommandBatches(
 
 export function isCommandBatchEligible(row: ConversationWorkCellRow): boolean {
   const command = row.commandExecution;
+  const operation = row.operationExecution;
   return Boolean(
     command &&
     row.presentation === "shell" &&
     Boolean(command.runId) &&
+    Boolean(command.attemptId ?? operation?.attemptId) &&
+    Boolean(command.turnRunRole ?? operation?.turnRunRole) &&
     Boolean(command.toolCallId) &&
     command.actionType === "bash" &&
     command.risk === "low" &&
@@ -90,6 +93,9 @@ function sameCommandScope(left: ConversationWorkCellRow | undefined, right: Conv
     leftCommand &&
     rightCommand &&
     leftCommand.runId === rightCommand.runId &&
+    (leftCommand.attemptId ?? leftOperation?.attemptId) === (rightCommand.attemptId ?? rightOperation?.attemptId) &&
+    (leftCommand.turnRunRole ?? leftOperation?.turnRunRole) === (rightCommand.turnRunRole ?? rightOperation?.turnRunRole) &&
+    (leftCommand.participantId ?? leftOperation?.participantId) === (rightCommand.participantId ?? rightOperation?.participantId) &&
     leftCommand.workUnitId === rightCommand.workUnitId &&
     leftCommand.workflowStepId === rightCommand.workflowStepId &&
     (!leftOperation || !rightOperation || (
@@ -114,6 +120,7 @@ function buildCommandBatch(
   }
   const runId = first.row.commandExecution?.runId ?? "run";
   const operation = first.row.operationExecution;
+  const command = first.row.commandExecution;
   const durationValues = commands.map((command) => command.durationMs);
   const durationMs = durationValues.every((value): value is number => value !== undefined)
     ? durationValues.reduce((sum, value) => sum + value, 0)
@@ -129,12 +136,13 @@ function buildCommandBatch(
     defaultExpanded: false,
     actionIds: commands.map((command) => command.actionId),
     runId: operation?.runId ?? runId,
-    attemptId: operation?.attemptId,
-    turnRunRole: operation?.turnRunRole,
-    participantId: operation?.participantId,
-    workUnitId: operation?.workUnitId ?? first.row.commandExecution?.workUnitId,
-    workflowStepId: operation?.workflowStepId ?? first.row.commandExecution?.workflowStepId,
-    sourceRefs: uniqueSourceRefs(commands.flatMap((command) => command.row.operationExecution?.sourceRefs ?? [])),
+    attemptId: operation?.attemptId ?? command?.attemptId,
+    attemptNumber: operation?.attemptNumber ?? command?.attemptNumber,
+    turnRunRole: operation?.turnRunRole ?? command?.turnRunRole,
+    participantId: operation?.participantId ?? command?.participantId,
+    workUnitId: operation?.workUnitId ?? command?.workUnitId,
+    workflowStepId: operation?.workflowStepId ?? command?.workflowStepId,
+    sourceRefs: uniqueSourceRefs(commands.flatMap((command) => command.row.operationExecution?.sourceRefs ?? command.row.commandExecution?.sourceRefs ?? [])),
     commands,
   };
 }

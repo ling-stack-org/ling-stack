@@ -151,6 +151,16 @@ test("activity projection does not batch a read without source references", () =
   assert.deepEqual(items.map((item) => item.kind), ["operation", "operation", "operation"]);
 });
 
+test("activity projection keeps reads atomic when attempt lineage is missing", () => {
+  const items = projectConversationActivity([
+    readRow("one", "run-1", "src/one.ts", { attemptId: undefined }),
+    readRow("two", "run-1", "src/two.ts"),
+    readRow("three", "run-1", "src/three.ts"),
+  ]);
+
+  assert.deepEqual(items.map((item) => item.kind), ["operation", "operation", "operation"]);
+});
+
 test("activity projection keeps a logical action note with its evidence row", () => {
   const noteExecution = operationExecution("one", "run-1", "read", "succeeded", [fileRef("src/one.ts")]);
   const items = projectConversationActivity([
@@ -198,6 +208,7 @@ test("activity summary counts logical actions once and excludes notes and failur
 
   assert.deepEqual(summary, {
     editedFileCount: 2,
+    editedItemCount: 1,
     readItemCount: 1,
     commandCount: 1,
     hasStructuredActions: true,
@@ -216,6 +227,8 @@ function commandRow(id, runId, commandText, durationMs, overrides = {}) {
       actionId: id,
       toolCallId: "toolCallId" in overrides ? overrides.toolCallId : `tool-${id}`,
       runId,
+      attemptId: overrides.attemptId ?? (runId ? `attempt-${runId}` : undefined),
+      turnRunRole: overrides.turnRunRole ?? "primary",
       actionType: overrides.actionType ?? "bash",
       risk: overrides.risk ?? "low",
       status,
@@ -244,6 +257,8 @@ function operationExecution(actionId, runId, actionType, status, sourceRefs = []
   return {
     actionId,
     runId,
+    attemptId: overrides.attemptId ?? (runId ? `attempt-${runId}` : undefined),
+    turnRunRole: overrides.turnRunRole ?? "primary",
     actionType,
     status,
     sourceRefs,

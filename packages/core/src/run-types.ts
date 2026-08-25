@@ -1079,6 +1079,7 @@ export interface ExecutionAction {
   readonly workspaceId: string;
   readonly threadId?: string;
   readonly runId?: string;
+  readonly attemptId?: string;
   readonly workUnitId?: string;
   readonly approvalId?: string;
   readonly toolCallId?: string;

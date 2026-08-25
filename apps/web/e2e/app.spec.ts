@@ -21,6 +21,12 @@ async function useEnglishLocale(page: Page): Promise<void> {
   });
 }
 
+const readyProviderCheck = {
+  ok: true,
+  message: "Ready",
+  checkedAt: "2026-08-25T00:00:00.000Z",
+} as const;
+
 function mockCommandExecutionAction(
   id: string,
   threadId: string,
@@ -35,6 +41,7 @@ function mockCommandExecutionAction(
     workspaceId: "workspace_default",
     threadId,
     runId,
+    attemptId: `attempt_${runId}`,
     toolCallId: `tool_${id}`,
     actionType: "bash",
     risk: "low",
@@ -279,7 +286,7 @@ test("sidebar sections collapse locally and keep group action menus", async ({ p
 test("sidebar archive hides conversations and teammates without deleting data", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
-  state.providers = [createChatProvider({ id: "provider_local", displayName: "Local Relay", model: "gpt-5.5" })];
+  state.providers = [createChatProvider({ id: "provider_local", displayName: "Local Relay", model: "gpt-5.5", lastCheck: readyProviderCheck })];
   state.aiTeammates = [createMockTeammate({ id: "teammate_sidebar_designer", displayName: "Designer" })];
   await mockDaemon(page, state);
   await page.goto("/");
@@ -340,8 +347,9 @@ test("sidebar archive hides conversations and teammates without deleting data", 
 
 test("recent conversations only show records created from the conversation home", async ({ page }) => {
   await useEnglishLocale(page);
+  await page.setViewportSize({ width: 1600, height: 900 });
   const state = createBaseState({ approvalStatus: "expired" });
-  state.providers = [createChatProvider({ id: "provider_local", displayName: "Local Relay", model: "gpt-5.5" })];
+  state.providers = [createChatProvider({ id: "provider_local", displayName: "Local Relay", model: "gpt-5.5", lastCheck: readyProviderCheck })];
   state.aiTeammates = [createMockTeammate({ id: "teammate_sidebar_designer", displayName: "Designer" })];
   await mockDaemon(page, state);
   await page.goto("/");
@@ -576,7 +584,7 @@ test("normal conversation renders inline approvals and resolves them from the co
 test("normal conversation full access confirms before creating the run", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
-  state.providers = [createChatProvider({ id: "provider_local", displayName: "Local Relay", model: "gpt-5.5" })];
+  state.providers = [createChatProvider({ id: "provider_local", displayName: "Local Relay", model: "gpt-5.5", lastCheck: readyProviderCheck })];
   state.workspaceSettings = {
     ...state.workspaceSettings,
     defaultAuthorizationMode: "always",
@@ -623,7 +631,7 @@ test("normal conversation full access confirms before creating the run", async (
 test("normal conversation composer sends and replays uploaded attachments", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
-  state.providers = [createChatProvider({ id: "provider_local", displayName: "Local Relay", model: "gpt-5.5" })];
+  state.providers = [createChatProvider({ id: "provider_local", displayName: "Local Relay", model: "gpt-5.5", lastCheck: readyProviderCheck })];
   await mockDaemon(page, state);
   await page.goto("/");
 
@@ -1259,7 +1267,7 @@ test("persisted normal conversation without work evidence renders only the assis
 
 test("conversation home follows user language and shows thinking as off", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "expired" });
-  state.providers = [createChatProvider({ id: "provider_local", displayName: "Local Relay", model: "gpt-5.5" })];
+  state.providers = [createChatProvider({ id: "provider_local", displayName: "Local Relay", model: "gpt-5.5", lastCheck: readyProviderCheck })];
   await mockDaemon(page, state);
   await page.goto("/");
 
@@ -1422,7 +1430,7 @@ test("conversation home uses plus as the single attachment entry and keeps slash
 test("conversation home sends with workspace cwd without a folder picker", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
-  state.providers = [createChatProvider({ id: "provider_local", displayName: "Local Relay", model: "gpt-5.5" })];
+  state.providers = [createChatProvider({ id: "provider_local", displayName: "Local Relay", model: "gpt-5.5", lastCheck: readyProviderCheck })];
   await mockDaemon(page, state);
   await page.goto("/");
 
