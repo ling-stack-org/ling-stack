@@ -55,6 +55,8 @@ export function createQueuedRunForConflict(input: {
     threadId: input.thread?.id,
     turnId: input.turn?.id,
     turnRunRole: input.turnRunRole,
+    contextViewId: input.runRequest.contextProjection?.contextViewId,
+    contextViewCreatedAt: input.runRequest.contextProjection?.contextViewCreatedAt,
     createdAt: input.queuedAt,
   });
   input.store.linkRunToWorkUnit(run.id, input.workUnit.id, input.queuedAt);

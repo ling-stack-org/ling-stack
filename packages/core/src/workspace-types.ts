@@ -2261,6 +2261,7 @@ export interface WorkflowStepContextPackSnapshot {
     readonly id: string;
     readonly role: string;
     readonly priority: string;
+    readonly compactionSurvival?: string;
     readonly estimatedTokens?: number;
     readonly sourceRefIds?: readonly string[];
     readonly metadata?: Record<string, unknown>;

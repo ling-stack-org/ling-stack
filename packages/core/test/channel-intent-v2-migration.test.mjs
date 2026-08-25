@@ -21,9 +21,10 @@ import { APPROVAL_RESUME_BASIS_MIGRATION_VERSION } from "../dist/storage/sqlite/
 import { CHANNEL_PARTICIPANT_AUTHORITY_MIGRATION_VERSION } from "../dist/storage/sqlite/channel-participant-authority-migration.js";
 import { CHANNEL_PROPOSAL_BLOCKER_MIGRATION_VERSION } from "../dist/storage/sqlite/channel-proposal-blocker-migration.js";
 import { RUNTIME_ATTEMPT_FENCE_MIGRATION_VERSION } from "../dist/storage/sqlite/runtime-attempt-fence-migration.js";
+import { RUN_CONTEXT_VIEW_LINEAGE_MIGRATION_VERSION } from "../dist/storage/sqlite/run-context-view-lineage-migration.js";
 import { createRequiredParticipantManifestV1, createWorkflowParticipantAuthorityV1, workflowGraphFingerprintV1 } from "../../contracts/dist/index.js";
 
-test("fresh database applies migrations 113 through 121 with reopen and integrity invariants", async (t) => {
+test("fresh database applies migrations 113 through 122 with reopen and integrity invariants", async (t) => {
   const cwd = await mkdtemp(join(tmpdir(), "ling-channel-completion-fresh-migrations-"));
   t.after(() => rm(cwd, { recursive: true, force: true }));
   createSqliteRunStore(cwd).close();
@@ -34,7 +35,7 @@ test("fresh database applies migrations 113 through 121 with reopen and integrit
     SELECT version FROM schema_migrations
     WHERE version BETWEEN ? AND ?
     ORDER BY version ASC
-  `).all(CHANNEL_INTENT_EXECUTION_PLAN_MIGRATION_VERSION, RUNTIME_ATTEMPT_FENCE_MIGRATION_VERSION)
+  `).all(CHANNEL_INTENT_EXECUTION_PLAN_MIGRATION_VERSION, RUN_CONTEXT_VIEW_LINEAGE_MIGRATION_VERSION)
     .map((row) => row.version);
   assert.deepEqual(versions, [
     CHANNEL_INTENT_EXECUTION_PLAN_MIGRATION_VERSION,
@@ -46,7 +47,11 @@ test("fresh database applies migrations 113 through 121 with reopen and integrit
     CHANNEL_PARTICIPANT_AUTHORITY_MIGRATION_VERSION,
     CHANNEL_PROPOSAL_BLOCKER_MIGRATION_VERSION,
     RUNTIME_ATTEMPT_FENCE_MIGRATION_VERSION,
+    RUN_CONTEXT_VIEW_LINEAGE_MIGRATION_VERSION,
   ]);
+  const runColumns = new Set(database.prepare("PRAGMA table_info(run_sessions)").all().map((row) => row.name));
+  assert.equal(runColumns.has("context_view_id"), true);
+  assert.equal(runColumns.has("context_view_created_at"), true);
   for (const table of ["work_unit_attempts", "runtime_events", "runtime_heartbeats", "runtime_semaphore_slots", "resource_leases"]) {
     assert.ok(database.prepare(`SELECT 1 FROM pragma_table_info(?) WHERE name = 'fencing_token'`).get(table));
   }

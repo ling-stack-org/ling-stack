@@ -587,6 +587,8 @@ export async function executeRunRequest(
       parentRunId: runRequest.parentRunId,
       interventionId: runRequest.interventionId,
       continuationReason: runRequest.continuationReason,
+      contextViewId: runRequest.contextProjection?.contextViewId,
+      contextViewCreatedAt: runRequest.contextProjection?.contextViewCreatedAt,
       createdAt,
     });
     store.linkRunToWorkUnit(run.id, workUnit.id, createdAt);

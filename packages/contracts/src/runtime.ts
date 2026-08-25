@@ -487,6 +487,8 @@ export interface RunSession {
   readonly parentRunId?: string;
   readonly interventionId?: string;
   readonly continuationReason?: RunContinuationReason;
+  readonly contextViewId?: string;
+  readonly contextViewCreatedAt?: string;
   readonly summaryPath?: string;
   readonly errorMessage?: string;
   readonly createdAt: string;

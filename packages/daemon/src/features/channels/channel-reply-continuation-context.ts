@@ -1,4 +1,5 @@
 import type { ChannelMessage, RunIntervention, RunSession, RunStore } from "@ling-stack/core";
+import type { ConversationContextProjectionMetadata } from "@ling-stack/contracts";
 import { buildChannelReplyContextPack, renderContextPack } from "./context-packs.js";
 import { ensureChannelReplyThread } from "./channel-reply-execution.js";
 import { resolveChannelReplyExecutionTarget } from "./channel-reply-execution-target.js";
@@ -14,6 +15,7 @@ export interface ChannelReplyContinuationContext {
   readonly providerPresetId: string;
   readonly threadId: string;
   readonly turnId: string;
+  readonly contextProjection?: ConversationContextProjectionMetadata;
   readonly runnerId?: string;
 }
 
@@ -96,6 +98,7 @@ export function buildChannelReplyContinuationContext(input: {
     providerPresetId: target.providerPresetId,
     threadId,
     turnId: sourceItem.turnId,
+    contextProjection: contextPack.contextProjection,
     ...(target.teammate?.runnerId ? { runnerId: target.teammate.runnerId } : {}),
   };
 }

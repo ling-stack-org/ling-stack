@@ -12,6 +12,29 @@ Last verified: 2026-08-25
 Scope: channel conversation persistence, Thread/Turn/Item topology, context segmentation,
 context projection, rolling summaries, multi-agent recovery, and Channel Intent Decision v2
 
+## Harness Integration Boundary
+
+The Ling product model and the execution harness are deliberately adjacent, not
+interchangeable. Adapters may translate between them, but neither side may silently
+become the other's authority:
+
+1. **Timeline authority.** The Ling timeline is the only conversation authority. A
+   harness transcript is execution evidence and a message projection only; it must not
+   be replayed as canonical conversation history.
+2. **Immutable run input.** `ChannelContextView` is the immutable projection captured
+   before a Run is created. It is not mutable Channel state, and later Channel changes
+   must not rewrite the Run's input lineage.
+3. **Product versus execution semantics.** `LingThread` and `LingTurn` describe product
+   conversation semantics. Codex Thread and Turn describe harness execution semantics.
+   The adapter preserves both identities and does not merge the two models.
+4. **Approval protocol bridge.** Ling approval is an asynchronous, durable,
+   event-driven product event. Harness approval is a synchronous, blocking RPC. The
+   approval adapter bridges the wait and wake-up semantics while keeping Ling's event
+   as the source of truth.
+5. **Durable approval ownership.** Durable approvals are managed by Ling. The harness
+   only implements the approval adapter and reports request/decision evidence; it does
+   not own approval persistence or lifecycle authority.
+
 ## Current release checkpoint (2026-08-25)
 
 The clean delivery worktree is based on `origin/main` at `90635c83e6ec6645699a45c114c59905c996ec12`.

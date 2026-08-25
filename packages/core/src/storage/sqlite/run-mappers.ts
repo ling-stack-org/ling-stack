@@ -224,6 +224,8 @@ export function mapRunSession(row: Record<string, SQLOutputValue>): RunSession {
     parentRunId: readNullableString(row, "parent_run_id"),
     interventionId: readNullableString(row, "intervention_id"),
     continuationReason: readNullableRunContinuationReason(row, "continuation_reason"),
+    contextViewId: readNullableString(row, "context_view_id"),
+    contextViewCreatedAt: readNullableString(row, "context_view_created_at"),
     summaryPath: readNullableString(row, "summary_path"),
     errorMessage: readNullableString(row, "error_message"),
     createdAt: readString(row, "created_at"),

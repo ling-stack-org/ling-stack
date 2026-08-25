@@ -1118,6 +1118,9 @@ export interface RunSession {
   readonly parentRunId?: string;
   readonly interventionId?: string;
   readonly continuationReason?: RunContinuationReason;
+  /** Immutable context projection lineage captured before execution started. */
+  readonly contextViewId?: string;
+  readonly contextViewCreatedAt?: string;
   readonly summaryPath?: string;
   readonly errorMessage?: string;
   readonly createdAt: string;
@@ -1156,6 +1159,8 @@ export interface CreateRunInput {
   readonly parentRunId?: string;
   readonly interventionId?: string;
   readonly continuationReason?: RunContinuationReason;
+  readonly contextViewId?: string;
+  readonly contextViewCreatedAt?: string;
   readonly createdAt: string;
 }
 

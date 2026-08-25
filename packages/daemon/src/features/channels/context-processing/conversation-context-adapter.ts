@@ -46,6 +46,7 @@ export function buildProjectedConversationContextSlice(input: {
     id: "conversation_projection_items",
     role: "evidence",
     priority: "high",
+    compactionSurvival: "summarize",
     title: "Conversation projection items",
     text: [
       "Conversation context selected by Continuity v2 for the current segment:",
@@ -96,6 +97,7 @@ function buildProjectionSharedCoreSection(
     id: "conversation_projection_shared_core",
     role: "evidence",
     priority: "high",
+    compactionSurvival: "summarize",
     title: "Conversation projection shared core",
     text: [
       `Shared context core for segment ${projection.segment.label ?? projection.segment.id}:`,

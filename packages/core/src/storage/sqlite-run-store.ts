@@ -518,6 +518,7 @@ import { applyApprovalResumeBasisMigration } from "./sqlite/approval-resume-basi
 import { applyChannelParticipantAuthorityMigration } from "./sqlite/channel-participant-authority-migration.js";
 import { applyChannelProposalBlockerMigration } from "./sqlite/channel-proposal-blocker-migration.js";
 import { applyRuntimeAttemptFenceMigration } from "./sqlite/runtime-attempt-fence-migration.js";
+import { applyRunContextViewLineageMigration } from "./sqlite/run-context-view-lineage-migration.js";
 import {
   isJsonRecord,
   isRecord,
@@ -1247,10 +1248,17 @@ export class SqliteRunStore implements RunStore {
           hasColumn: (tableName, columnName) => this.hasColumn(tableName, columnName),
           recordMigration: (version, name) => this.recordMigration(version, name),
         });
-        // Runtime fencing is the final migration in the current clean-break line.
-        // It must run after the base runtime tables and after the Continuity/approval
-        // migrations so every existing Attempt projection can be backfilled atomically.
+        // Runtime fencing runs after the base runtime tables and after the
+        // Continuity/approval migrations so every existing Attempt projection can be
+        // backfilled atomically. Run context lineage is applied immediately after it
+        // so the run-session query shape is complete before the store is exposed.
         applyRuntimeAttemptFenceMigration({
+          database: this.database,
+          hasMigration: (version) => this.hasMigration(version),
+          hasColumn: (tableName, columnName) => this.hasColumn(tableName, columnName),
+          recordMigration: (version, name) => this.recordMigration(version, name),
+        });
+        applyRunContextViewLineageMigration({
           database: this.database,
           hasMigration: (version) => this.hasMigration(version),
           hasColumn: (tableName, columnName) => this.hasColumn(tableName, columnName),

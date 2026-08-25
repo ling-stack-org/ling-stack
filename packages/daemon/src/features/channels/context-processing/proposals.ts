@@ -50,6 +50,7 @@ export function buildWorkflowProposalContextView(input: BuildWorkflowProposalCon
       id: "proposal_current_turn",
       role: "user",
       priority: "must_keep",
+      compactionSurvival: "summarize",
       title: "Current proposal turn",
       text: [`Channel: ${input.channel.name}`, "Latest user turn:", renderLingAgentTurnEnvelopeForPrompt(envelope)].join("\n"),
       sourceRefIds: [input.sourceMessage.id, input.channel.id],
@@ -61,6 +62,7 @@ export function buildWorkflowProposalContextView(input: BuildWorkflowProposalCon
       id: "proposal_active_work",
       role: "evidence",
       priority: "medium",
+      compactionSurvival: "discard",
       title: "Active work",
       text: activeWorkSources.length > 0
         ? ["Active work:", ...activeWorkSources.map((source) => `${source.title} (${String(source.metadata.entityType ?? source.kind)}:${String(source.metadata.status ?? "unknown")})`)].join("\n")
