@@ -47,6 +47,9 @@ maintained runtimes execute scoped work; humans remain in control of risky side 
   Model Workbench.
 - **Run auditable agent work:** execute tasks through the Pi coding-agent adapter while
   preserving events, approvals, artifacts, and session history.
+- **Inspect structured channel transcripts:** view tool calls and results, approvals,
+  handoffs, artifacts, operations, and final results as typed content layers while
+  operator-only and agent-private items stay out of the channel transcript.
 - **Control authority:** apply workspace permission presets and require confirmation for
   file writes, shell commands, paid media generation, and other governed actions.
 - **Manage reusable skills:** import, edit, bind, and review skills without treating a
