@@ -69,6 +69,7 @@ export interface MockState {
   channelBranches: unknown[];
   channelWorkspaceGitStatusByChannel: Record<string, WorkspaceGitStatus | MockWorkspaceGitStatusFailure>;
   channelMessages: unknown[];
+  channelConversationItemExtras?: unknown[];
   channelMessageRouteDecisions: unknown[];
   channelIntentDecisions: unknown[];
   channelTurnContexts: Record<string, Record<string, unknown>>;
@@ -1212,6 +1213,7 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     channelBranches: [],
     channelWorkspaceGitStatusByChannel: {},
     channelMessages: [],
+    channelConversationItemExtras: [],
     channelMessageRouteDecisions: [],
     channelIntentDecisions: [],
     channelTurnContexts: {},
@@ -11476,16 +11478,30 @@ export async function handleDaemonRoute(
       .filter((entry) => beforeSequence === undefined || Number(entry.item.sequence) < beforeSequence);
     const pageStart = Math.max(0, visibleEntries.length - limit);
     const pageEntries = visibleEntries.slice(pageStart);
+    const extraItems = (state.channelConversationItemExtras ?? [])
+      .filter((item): item is Record<string, unknown> => isRecord(item))
+      .filter((item) => item.channelId === channelId && item.threadId === thread.id)
+      .filter((item) => beforeSequence === undefined || Number(item.sequence) < beforeSequence)
+      .sort((left, right) => Number(left.sequence ?? 0) - Number(right.sequence ?? 0));
+    const pageItems = [
+      ...pageEntries.map((entry) => entry.item),
+      ...extraItems,
+    ].sort((left, right) => Number(left.sequence ?? 0) - Number(right.sequence ?? 0));
     const turnById = new Map(pageEntries.map((entry) => [entry.turn.id, entry.turn]));
-    thread.nextItemSequence = mockChannelConversationEntries(state, channelId)
-      .filter((entry) => entry.item.threadId === thread.id).length + 1;
+    thread.nextItemSequence = Math.max(
+      ...mockChannelConversationEntries(state, channelId)
+        .filter((entry) => entry.item.threadId === thread.id)
+        .map((entry) => Number(entry.item.sequence ?? 0)),
+      ...extraItems.map((item) => Number(item.sequence ?? 0)),
+      0,
+    ) + 1;
     await route.fulfill({
       json: {
         cwd,
         channelId,
         thread,
         turns: [...turnById.values()],
-        items: pageEntries.map((entry) => entry.item),
+        items: pageItems,
         decorations: mockChannelConversationDecorations(pageEntries),
         generatedMedia: mockConversationGeneratedMediaForRunIds(
           state,
