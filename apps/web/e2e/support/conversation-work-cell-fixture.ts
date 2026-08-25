@@ -94,6 +94,31 @@ export function installActiveChannelWorkCellFixture(state: MockState): {
   return result;
 }
 
+export function installExplorationWorkCellFixture(state: MockState, readCount = 3): {
+  readonly runId: string;
+  readonly threadId: string;
+} {
+  const result = installChannelWorkCellFixture(state, "exploration");
+  const readPaths = [
+    "apps/web/src/lib/conversation-work-cell.ts",
+    "apps/web/src/lib/workflow-progress.ts",
+    "apps/web/src/shared/conversation/blocks/ConversationWorkCell.tsx",
+    "packages/conversation-ui-core/src/activity-projection.ts",
+    "packages/conversation-ui-core/src/command-batching.ts",
+    "apps/web/src/styles/shared/conversation-work-cell-activity.css",
+  ];
+  state.executionActions = [
+    ...Array.from({ length: readCount }, (_, index) => readAction(
+      index < 3 ? ["one", "two", "three"][index]! : `item-${index + 1}`,
+      result.threadId,
+      result.runId,
+      readPaths[index % readPaths.length]!,
+      index,
+    )),
+  ];
+  return result;
+}
+
 export function installNormalWorkCellFixture(state: MockState): string {
   const title = "Focused normal WorkCell";
   const threadId = "thread_ui2_normal_work_cell";
@@ -233,6 +258,35 @@ function completedCommandActions(threadId: string, runId: string, suffix: string
     commandAction(`i18n_${suffix}`, threadId, runId, "corepack pnpm --filter @ling-stack/web check:i18n", 700),
     commandAction(`diff_${suffix}`, threadId, runId, "git diff --check", 300),
   ];
+}
+
+function readAction(
+  id: string,
+  threadId: string,
+  runId: string,
+  path: string,
+  index: number,
+): MockExecutionAction {
+  const actionTime = new Date(Date.parse(startedAt) + ((index + 1) * 8_000)).toISOString();
+  return {
+    id: `execution_action_read_${id}`,
+    workspaceId,
+    threadId,
+    runId,
+    toolCallId: `tool_read_${id}`,
+    actionType: "read",
+    risk: "low",
+    status: "succeeded",
+    title: "Read file",
+    summary: `Read ${path}`,
+    targetRefs: [{ type: "file", path, label: path }],
+    previewArtifactIds: [],
+    resultArtifactIds: [],
+    createdAt: actionTime,
+    updatedAt: actionTime,
+    executedAt: actionTime,
+    completedAt: actionTime,
+  };
 }
 
 function commandAction(
