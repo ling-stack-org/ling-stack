@@ -842,16 +842,15 @@ function ChannelIntentInspectContent({
           </>
         ) : null}
         {decision.execution ? (
-          <>
-            <div>
-              <dt>{t("Execution kind")}</dt>
-              <dd>{decision.execution.kind}</dd>
-            </div>
-            <div>
-              <dt>{t("Target kind")}</dt>
-              <dd>{decision.execution.targetKind}</dd>
-            </div>
-          </>
+          <div>
+            <dt>{t("Operations")}</dt>
+            <dd>{decision.execution.operations.map((operation) => [
+              `${operation.id}: ${operation.kind}`,
+              `${t("Target kind")}: ${operation.targetKind}`,
+              operation.required ? t("Required") : t("Optional"),
+              `${t("Dependencies")}: ${formatOptionalIdList(operation.dependsOn, t)}`,
+            ].join(" · ")).join("; ")}</dd>
+          </div>
         ) : null}
         <div>
           <dt>{t("Proposal")}</dt>

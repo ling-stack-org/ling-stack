@@ -6,8 +6,298 @@ import type { MemoryObject } from "./memory.js";
 import type { RunSession, RunnerFallbackReason, RunnerRequestSource } from "./runtime.js";
 import type { ResponseLanguage } from "./settings.js";
 import type { RunTool } from "./shared.js";
+import type { WorkflowParticipantProviderBindingV1 } from "./conversation-model-binding.js";
 import type { Task } from "./tasks.js";
-import type { ConversationContextProjectionMetadata } from "./conversation-continuity.js";
+import type {
+  ChannelIntentExecutionPlanV1,
+  ConversationContextProjectionMetadata,
+  RequiredParticipantManifestV1,
+} from "./conversation-continuity.js";
+
+export type WorkflowParticipantAuthorityKindV1 = "channel_selection" | "workflow_definition";
+
+export type WorkflowParticipantAuthorityOriginV1 =
+  | "channel_intent_proposal"
+  | "builtin_template"
+  | "custom_template"
+  | "workflow_graph"
+  | "channel_handoff"
+  | "external_work"
+  | "proposed_plan"
+  | "manual_channel_step"
+  | "legacy_migration";
+
+export interface WorkflowParticipantAuthorityV1 {
+  readonly schemaVersion: 1;
+  readonly kind: WorkflowParticipantAuthorityKindV1;
+  readonly origin: WorkflowParticipantAuthorityOriginV1;
+  readonly participantId: string;
+  readonly sourceId: string;
+  readonly fingerprint: string;
+}
+
+export function createWorkflowParticipantAuthorityV1(input: {
+  readonly kind: WorkflowParticipantAuthorityKindV1;
+  readonly origin: WorkflowParticipantAuthorityOriginV1;
+  readonly participantId: string;
+  readonly sourceId: string;
+}): WorkflowParticipantAuthorityV1 {
+  const base = {
+    schemaVersion: 1 as const,
+    kind: input.kind,
+    origin: input.origin,
+    participantId: input.participantId,
+    sourceId: input.sourceId,
+  };
+  return {
+    ...base,
+    fingerprint: workflowFingerprint("wpa1", base),
+  };
+}
+
+export function isWorkflowParticipantAuthorityV1(value: unknown): value is WorkflowParticipantAuthorityV1 {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  if (record.schemaVersion !== 1
+    || (record.kind !== "channel_selection" && record.kind !== "workflow_definition")
+    || typeof record.origin !== "string"
+    || typeof record.participantId !== "string"
+    || record.participantId.trim().length === 0
+    || typeof record.sourceId !== "string"
+    || record.sourceId.trim().length === 0
+    || typeof record.fingerprint !== "string"
+    || !Object.keys(record).every((key) => ["schemaVersion", "kind", "origin", "participantId", "sourceId", "fingerprint"].includes(key))) {
+    return false;
+  }
+  const origins: readonly WorkflowParticipantAuthorityOriginV1[] = [
+    "channel_intent_proposal",
+    "builtin_template",
+    "custom_template",
+    "workflow_graph",
+    "channel_handoff",
+    "external_work",
+    "proposed_plan",
+    "manual_channel_step",
+    "legacy_migration",
+  ];
+  if (!origins.includes(record.origin as WorkflowParticipantAuthorityOriginV1)) return false;
+  const channelSelectionOrigins: readonly WorkflowParticipantAuthorityOriginV1[] = [
+    "channel_intent_proposal",
+    "manual_channel_step",
+    "legacy_migration",
+  ];
+  const workflowDefinitionOrigins: readonly WorkflowParticipantAuthorityOriginV1[] = [
+    "builtin_template",
+    "custom_template",
+    "workflow_graph",
+    "channel_handoff",
+    "external_work",
+    "proposed_plan",
+  ];
+  const validKindOrigin = record.kind === "channel_selection"
+    ? channelSelectionOrigins.includes(record.origin as WorkflowParticipantAuthorityOriginV1)
+    : workflowDefinitionOrigins.includes(record.origin as WorkflowParticipantAuthorityOriginV1);
+  if (!validKindOrigin) return false;
+  const base = {
+    schemaVersion: 1 as const,
+    kind: record.kind as WorkflowParticipantAuthorityKindV1,
+    origin: record.origin as WorkflowParticipantAuthorityOriginV1,
+    participantId: record.participantId as string,
+    sourceId: record.sourceId as string,
+  };
+  return record.fingerprint === workflowFingerprint("wpa1", base);
+}
+
+function isNonEmptyText(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+export function isDelegatedEvidenceRefV1(value: unknown): value is DelegatedEvidenceRefV1 {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return Object.keys(record).every((key) => key === "kind" || key === "id")
+    && delegatedEvidenceRefKindsV1.includes(record.kind as DelegatedEvidenceRefKindV1)
+    && isNonEmptyText(record.id);
+}
+
+export function isDelegatedOutcomeV1(value: unknown): value is DelegatedOutcomeV1 {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  const evidenceRefsValid = (refs: unknown): refs is readonly DelegatedEvidenceRefV1[] =>
+    Array.isArray(refs) && refs.every(isDelegatedEvidenceRefV1)
+      && new Set(refs.map((ref) => `${ref.kind}:${ref.id}`)).size === refs.length;
+  if (record.kind === "completed") {
+    return isNonEmptyText(record.workflowId)
+      && isNonEmptyText(record.workflowStepId)
+      && isNonEmptyText(record.participantId)
+      && evidenceRefsValid(record.evidenceRefs)
+      && record.evidenceRefs.length > 0
+      && Object.keys(record).every((key) => ["kind", "workflowId", "workflowStepId", "participantId", "evidenceRefs"].includes(key));
+  }
+  if (record.kind === "workflow_started") {
+    return isNonEmptyText(record.workflowId)
+      && isNonEmptyText(record.participantManifestFingerprint)
+      && Object.keys(record).every((key) => key === "kind" || key === "workflowId" || key === "participantManifestFingerprint");
+  }
+  if (record.kind === "blocked") {
+    return isNonEmptyText(record.workflowId)
+      && isNonEmptyText(record.workflowStepId)
+      && isNonEmptyText(record.participantId)
+      && isDelegatedBlockCodeV1(record.code)
+      && isNonEmptyText(record.reason)
+      && Array.isArray(record.missingRequirements)
+      && record.missingRequirements.every(isNonEmptyText)
+      && record.missingRequirements.length > 0
+      && evidenceRefsValid(record.evidenceRefs)
+      && Object.keys(record).every((key) => ["kind", "workflowId", "workflowStepId", "participantId", "code", "reason", "missingRequirements", "evidenceRefs"].includes(key));
+  }
+  if (record.kind === "failed" || record.kind === "cancelled") {
+    return isNonEmptyText(record.workflowId)
+      && isNonEmptyText(record.workflowStepId)
+      && isNonEmptyText(record.participantId)
+      && isDelegatedTerminalCodeForKindV1(record.kind, record.code)
+      && isNonEmptyText(record.reason)
+      && evidenceRefsValid(record.evidenceRefs)
+      && Object.keys(record).every((key) => ["kind", "workflowId", "workflowStepId", "participantId", "code", "reason", "evidenceRefs"].includes(key));
+  }
+  return false;
+}
+
+export function workflowGraphFingerprintV1(graph: WorkflowGraph): string {
+  return workflowFingerprint("wgfv1", {
+    schemaVersion: graph.schemaVersion,
+    id: graph.id,
+    entryNodeId: graph.entryNodeId,
+    nodes: [...graph.nodes].map((node) => ({
+      id: node.id,
+      kind: node.kind,
+      teammateId: node.teammateId,
+      teammateTemplateId: node.teammateTemplateId,
+      councilSlotKey: node.councilSlotKey,
+      providerPresetId: node.providerPresetId,
+      providerBinding: node.providerBinding,
+      requiredTools: [...(node.requiredTools ?? [])].sort(),
+      branchGroupId: node.branchGroupId,
+      joinGroupId: node.joinGroupId,
+    })).sort((left, right) => left.id.localeCompare(right.id)),
+    edges: [...graph.edges].map((edge) => ({
+      id: edge.id,
+      fromNodeId: edge.fromNodeId,
+      toNodeId: edge.toNodeId,
+      condition: edge.condition.kind,
+    })).sort((left, right) => left.id.localeCompare(right.id)),
+    termination: graph.termination,
+  });
+}
+
+export function workflowCompletionBasisFingerprintV1(value: unknown): string {
+  return workflowFingerprint("wcbv1", value);
+}
+
+export function delegatedStepRequirementFingerprintV1(
+  value: Omit<DelegatedStepRequirementV1, "fingerprint">,
+): string {
+  return workflowFingerprint("dsrv1", {
+    schemaVersion: value.schemaVersion,
+    workflowId: value.workflowId,
+    workflowStepId: value.workflowStepId,
+    participantId: value.participantId,
+    participantManifestFingerprint: value.participantManifestFingerprint,
+    expectedOutcome: value.expectedOutcome,
+    requiredOperationIds: [...value.requiredOperationIds].sort(),
+    requiredDependencyStepIds: [...value.requiredDependencyStepIds].sort(),
+    acceptedEvidenceKinds: [...value.acceptedEvidenceKinds].sort(),
+  });
+}
+
+export function delegatedStepFinalizationBasisFingerprintV1(value: unknown): string {
+  return workflowFingerprint("dsbv1", value);
+}
+
+function workflowFingerprint(prefix: string, value: unknown): string {
+  let hash = 0xcbf29ce484222325n;
+  for (const byte of new TextEncoder().encode(JSON.stringify(value))) {
+    hash ^= BigInt(byte);
+    hash = BigInt.asUintN(64, hash * 0x100000001b3n);
+  }
+  return `${prefix}_${hash.toString(16).padStart(16, "0")}`;
+}
+
+export function isWorkflowCompletionGateV1(value: unknown): value is WorkflowCompletionGateV1 {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  if (!Object.keys(record).every((key) => [
+    "schemaVersion", "status", "sourceIntentDecisionId", "participantManifestFingerprint",
+    "graphFingerprint", "basisFingerprint", "participantResults", "checkedAt",
+  ].includes(key))
+    || record.schemaVersion !== 1
+    || !["pending", "verified", "blocked", "failed", "cancelled"].includes(String(record.status))
+    || !isNonEmptyText(record.sourceIntentDecisionId)
+    || !isNonEmptyText(record.participantManifestFingerprint)
+    || !isNonEmptyText(record.graphFingerprint)
+    || !isNonEmptyText(record.basisFingerprint)
+    || !isNonEmptyText(record.checkedAt)
+    || !Number.isFinite(Date.parse(record.checkedAt))
+    || !Array.isArray(record.participantResults)) return false;
+  const ids = new Set<string>();
+  for (const result of record.participantResults) {
+    if (!result || typeof result !== "object" || Array.isArray(result)) return false;
+    const item = result as Record<string, unknown>;
+    if (!Object.keys(item).every((key) => [
+      "participantId", "workflowStepIds", "status", "evidenceRefs", "reasonCode",
+    ].includes(key))
+      || !isNonEmptyText(item.participantId)
+      || ids.has(item.participantId)
+      || !Array.isArray(item.workflowStepIds)
+      || !item.workflowStepIds.every(isNonEmptyText)
+      || !["satisfied", "missing", "blocked", "failed", "cancelled"].includes(String(item.status))
+      || !Array.isArray(item.evidenceRefs)
+      || !item.evidenceRefs.every(isDelegatedEvidenceRefV1)
+      || (item.reasonCode !== undefined && !isNonEmptyText(item.reasonCode))) return false;
+    ids.add(item.participantId);
+  }
+  return true;
+}
+
+export function isDelegatedStepRequirementV1(value: unknown): value is DelegatedStepRequirementV1 {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  if (!Object.keys(record).every((key) => [
+    "schemaVersion", "workflowId", "workflowStepId", "participantId",
+    "participantManifestFingerprint", "expectedOutcome", "requiredOperationIds",
+    "requiredDependencyStepIds", "acceptedEvidenceKinds", "fingerprint",
+  ].includes(key))
+    || record.schemaVersion !== 1
+    || !isNonEmptyText(record.workflowId)
+    || !isNonEmptyText(record.workflowStepId)
+    || !isNonEmptyText(record.participantId)
+    || !isNonEmptyText(record.participantManifestFingerprint)
+    || !["execution", "verification", "synthesis"].includes(String(record.expectedOutcome))
+    || !isUniqueNonEmptyTextArray(record.requiredOperationIds)
+    || !isUniqueNonEmptyTextArray(record.requiredDependencyStepIds)
+    || !Array.isArray(record.acceptedEvidenceKinds)
+    || record.acceptedEvidenceKinds.length === 0
+    || !record.acceptedEvidenceKinds.every((kind) => delegatedEvidenceRefKindsV1.includes(kind as DelegatedEvidenceRefKindV1))
+    || new Set(record.acceptedEvidenceKinds).size !== record.acceptedEvidenceKinds.length
+    || !isNonEmptyText(record.fingerprint)) return false;
+  return record.fingerprint === delegatedStepRequirementFingerprintV1({
+    schemaVersion: 1,
+    workflowId: record.workflowId,
+    workflowStepId: record.workflowStepId,
+    participantId: record.participantId,
+    participantManifestFingerprint: record.participantManifestFingerprint,
+    expectedOutcome: record.expectedOutcome as DelegatedStepRequirementV1["expectedOutcome"],
+    requiredOperationIds: record.requiredOperationIds,
+    requiredDependencyStepIds: record.requiredDependencyStepIds,
+    acceptedEvidenceKinds: record.acceptedEvidenceKinds as DelegatedStepRequirementV1["acceptedEvidenceKinds"],
+  });
+}
+
+function isUniqueNonEmptyTextArray(value: unknown): value is readonly string[] {
+  return Array.isArray(value)
+    && value.every(isNonEmptyText)
+    && new Set(value).size === value.length;
+}
 
 export type ChannelWorkflowStatus =
   | "draft"
@@ -311,7 +601,167 @@ export interface ChannelWorkflowStepOutputPacket {
   readonly generatedAt: string;
 }
 
+export const delegatedEvidenceRefKindsV1 = [
+  "execution_action",
+  "workflow_output_packet",
+  "artifact",
+  "conversation_item",
+] as const;
+
+export type DelegatedEvidenceRefKindV1 = (typeof delegatedEvidenceRefKindsV1)[number];
+
+export interface DelegatedEvidenceRefV1 {
+  readonly kind: DelegatedEvidenceRefKindV1;
+  readonly id: string;
+}
+
+export interface DelegatedStepRequirementV1 {
+  readonly schemaVersion: 1;
+  readonly workflowId: string;
+  readonly workflowStepId: string;
+  readonly participantId: string;
+  readonly participantManifestFingerprint: string;
+  readonly expectedOutcome: "execution" | "verification" | "synthesis";
+  readonly requiredOperationIds: readonly string[];
+  readonly requiredDependencyStepIds: readonly string[];
+  readonly acceptedEvidenceKinds: readonly DelegatedEvidenceRefKindV1[];
+  readonly fingerprint: string;
+}
+
+export const delegatedBlockCodeValuesV1 = [
+  "delegated_outcome_missing",
+  "delegated_requirement_invalid",
+  "delegated_run_missing",
+  "delegated_run_owner_mismatch",
+  "required_participant_missing",
+  "required_participant_evidence_missing",
+  "required_operation_missing_evidence",
+  "required_operation_evidence_missing",
+  "required_operation_failed",
+  "required_participant_output_packet_missing",
+  "participant_operation_assignment_incomplete",
+  "required_participant_operation_mismatch",
+  "participant_required_tools_unavailable",
+  "participant_unavailable_in_channel",
+  "workflow_participant_authority_invalid",
+  "workflow_participant_override_forbidden",
+  "workflow_participant_not_found",
+  "workflow_participant_unavailable",
+  "workflow_participant_required_tools_unavailable",
+  "workflow_participant_provider_unavailable",
+  "workflow_participant_provider_binding_missing",
+  "workflow_participant_provider_binding_invalid",
+  "workflow_participant_provider_override_forbidden",
+  "existing_proposal_participant_lineage_invalid",
+  "runtime_interrupted_no_checkpoint",
+  "approval_resume_unsupported",
+  "approval_resume_effect_unknown",
+  "approval_resume_lineage_invalid",
+  "approval_resume_mismatch",
+  "approval_resume_checkpoint_missing",
+  "approval_resume_owner_mismatch",
+  "approval_resume_tool_mismatch",
+  "approval_resume_requirement_mismatch",
+  "approval_resume_lineage_missing",
+  "approval_resume_state_mismatch",
+  "approval_resume_checkpoint_stale",
+  "approval_resume_state_stale",
+  "agent_context_missing",
+  "agent_context_stale",
+  "agent_context_private_leak",
+] as const;
+
+export type DelegatedBlockCodeV1 = (typeof delegatedBlockCodeValuesV1)[number];
+
+export const delegatedTerminalCodeValuesV1 = [
+  "delegated_run_failed",
+  "delegated_run_cancelled",
+  "required_operation_failed",
+  "post_step_approval_denied",
+  "runner_failed",
+  "runner_cancelled",
+  "runtime_interrupted_no_checkpoint",
+] as const;
+
+export type DelegatedTerminalCodeV1 = (typeof delegatedTerminalCodeValuesV1)[number];
+
+function isDelegatedBlockCodeV1(value: unknown): value is DelegatedBlockCodeV1 {
+  return delegatedBlockCodeValuesV1.includes(value as DelegatedBlockCodeV1);
+}
+
+function isDelegatedTerminalCodeForKindV1(
+  kind: "failed" | "cancelled",
+  value: unknown,
+): value is DelegatedTerminalCodeV1 {
+  if (!delegatedTerminalCodeValuesV1.includes(value as DelegatedTerminalCodeV1)) return false;
+  if (kind === "cancelled") {
+    return value === "delegated_run_cancelled" || value === "runner_cancelled";
+  }
+  return value !== "delegated_run_cancelled" && value !== "runner_cancelled";
+}
+
+export type DelegatedOutcomeV1 =
+  | {
+      readonly kind: "completed";
+      readonly workflowId: string;
+      readonly workflowStepId: string;
+      readonly participantId: string;
+      readonly evidenceRefs: readonly DelegatedEvidenceRefV1[];
+    }
+  | {
+      readonly kind: "workflow_started";
+      readonly workflowId: string;
+      readonly participantManifestFingerprint: string;
+    }
+  | {
+      readonly kind: "blocked";
+      readonly workflowId: string;
+      readonly workflowStepId: string;
+      readonly participantId: string;
+      readonly code: DelegatedBlockCodeV1;
+      readonly reason: string;
+      readonly missingRequirements: readonly string[];
+      readonly evidenceRefs: readonly DelegatedEvidenceRefV1[];
+  }
+  | {
+      readonly kind: "failed" | "cancelled";
+      readonly workflowId: string;
+      readonly workflowStepId: string;
+      readonly participantId: string;
+      readonly code: DelegatedTerminalCodeV1;
+      readonly reason: string;
+      readonly evidenceRefs: readonly DelegatedEvidenceRefV1[];
+    };
+
+export type WorkflowParticipantCompletionStatusV1 =
+  | "satisfied"
+  | "missing"
+  | "blocked"
+  | "failed"
+  | "cancelled";
+
+export interface WorkflowParticipantCompletionResultV1 {
+  readonly participantId: string;
+  readonly workflowStepIds: readonly string[];
+  readonly status: WorkflowParticipantCompletionStatusV1;
+  readonly evidenceRefs: readonly DelegatedEvidenceRefV1[];
+  readonly reasonCode?: string;
+}
+
+export interface WorkflowCompletionGateV1 {
+  readonly schemaVersion: 1;
+  readonly status: "pending" | "verified" | "blocked" | "failed" | "cancelled";
+  readonly sourceIntentDecisionId: string;
+  readonly participantManifestFingerprint: string;
+  readonly graphFingerprint: string;
+  readonly basisFingerprint: string;
+  readonly participantResults: readonly WorkflowParticipantCompletionResultV1[];
+  readonly checkedAt: string;
+}
+
 export interface ChannelWorkflowStepMetadata {
+  readonly participantAuthority?: WorkflowParticipantAuthorityV1;
+  readonly providerBinding?: WorkflowParticipantProviderBindingV1;
   readonly workflowTemplateId?: string;
   readonly templateVersion?: string;
   readonly templateStepId?: string;
@@ -329,6 +779,12 @@ export interface ChannelWorkflowStepMetadata {
   readonly effectiveRunnerId?: string;
   readonly providerPresetId?: string;
   readonly requiredTools?: readonly RunTool[];
+  readonly executionPlan?: ChannelIntentExecutionPlanV1;
+  readonly executionOperationIds?: readonly string[];
+  readonly executionVerification?: WorkflowStepExecutionVerificationV1;
+  readonly delegatedRequirement?: DelegatedStepRequirementV1;
+  readonly delegatedOutcome?: DelegatedOutcomeV1;
+  readonly delegatedOutcomeBasisFingerprint?: string;
   readonly autoStart?: boolean;
   readonly approvalGate?: SkillApprovalProfile;
   readonly preStepApprovalId?: string;
@@ -390,6 +846,7 @@ export interface WorkflowGraphNode {
   readonly councilSlotKey?: string;
   readonly skillId?: string;
   readonly providerPresetId?: string;
+  readonly providerBinding?: WorkflowParticipantProviderBindingV1;
   readonly requestedRunnerId?: string;
   readonly branchGroupId?: string;
   readonly joinGroupId?: string;
@@ -420,7 +877,29 @@ export interface ChannelWorkflowMetadata {
   readonly maxParallelSteps?: number;
   readonly sourceProposalId?: string;
   readonly sourceMessageId?: string;
+  readonly sourceTurnId?: string;
+  readonly sourceIntentDecisionId?: string;
+  readonly workflowGraph?: WorkflowGraph;
+  readonly workflowGraphFingerprint?: string;
+  readonly requiredParticipantManifest?: RequiredParticipantManifestV1;
+  readonly completionGate?: WorkflowCompletionGateV1;
   readonly responseLanguage?: ResponseLanguage;
+}
+
+export type WorkflowStepExecutionVerificationStatusV1 = "pending" | "verified" | "blocked" | "failed";
+export type WorkflowOperationVerificationStatusV1 = "succeeded" | "missing" | "failed" | "out_of_order";
+
+export interface WorkflowOperationVerificationResultV1 {
+  readonly operationId: string;
+  readonly status: WorkflowOperationVerificationStatusV1;
+  readonly evidenceActionIds: readonly string[];
+  readonly reasonCode?: string;
+}
+
+export interface WorkflowStepExecutionVerificationV1 {
+  readonly status: WorkflowStepExecutionVerificationStatusV1;
+  readonly checkedAt: string;
+  readonly operationResults: readonly WorkflowOperationVerificationResultV1[];
 }
 
 export interface ChannelWorkflow {
@@ -451,6 +930,7 @@ export interface ChannelWorkflowStep {
   readonly prompt: string;
   readonly toParticipantId: string;
   readonly toParticipantLabel: string;
+  readonly participantAuthority: WorkflowParticipantAuthorityV1;
   readonly status: ChannelWorkflowStepStatus;
   readonly blocker?: string;
   readonly resultSummary?: string;
@@ -759,8 +1239,6 @@ export interface UpdateChannelWorkflowStepRequest {
   readonly position?: number;
   readonly title?: string;
   readonly prompt?: string;
-  readonly toParticipantId?: string;
-  readonly toParticipantLabel?: string;
   readonly status?: ChannelWorkflowStepStatus;
   readonly blocker?: string | null;
   readonly resultSummary?: string | null;
@@ -926,9 +1404,11 @@ export interface ResourceLease {
   readonly releaseReason?: string;
   readonly workUnitId?: string;
   readonly attemptId?: string;
+  readonly runtimeInstanceId?: string;
+  readonly fencingToken?: string;
 }
 
-export type StateEntityType = "task" | "run" | "approval" | "media_job" | "workflow" | "workflow_step" | "work_unit";
+export type StateEntityType = "task" | "run" | "approval" | "media_job" | "workflow" | "workflow_step" | "work_unit" | "turn";
 
 export interface StateTransitionEvent {
   readonly id: string;

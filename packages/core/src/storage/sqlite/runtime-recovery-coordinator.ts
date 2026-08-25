@@ -1,3 +1,4 @@
+import type { LingApprovalCheckpoint } from "../../approval-checkpoints.js";
 import type { ApprovalRequest, ListApprovalRequestsOptions } from "../../approval-types.js";
 import {
   type LingThread,
@@ -34,6 +35,7 @@ export interface SqliteRuntimeRecoveryCoordinatorPorts {
   readonly listChannelWorkflowSteps: (options: ListChannelWorkflowStepsOptions) => ChannelWorkflowStep[];
   readonly getApprovalRequest: (id: string) => ApprovalRequest | undefined;
   readonly listApprovalRequests: (options: ListApprovalRequestsOptions) => ApprovalRequest[];
+  readonly getApprovalCheckpointForApproval: (approvalId: string) => LingApprovalCheckpoint | undefined;
   readonly transitionChannelWorkflowStepStatus: (input: {
     readonly workflowStepId: string;
     readonly expectedStatus?: ChannelWorkflowStepStatus;
@@ -65,8 +67,27 @@ export class SqliteRuntimeRecoveryCoordinator {
   recoverStaleRuns(now: string): number {
     this.ports.expireResourceLeases(now);
     const staleRuns = this.ports.listRecoverableRunIds();
+    let recovered = 0;
 
     for (const runId of staleRuns) {
+      const runBeforeRecovery = this.ports.getRun(runId);
+      if (runBeforeRecovery?.status === "waiting_for_approval" || runBeforeRecovery?.status === "running") {
+        const resumableApproval = this.ports.listApprovalRequests({ runId, limit: 20 })
+          .find((approval) => approval.status === "pending" || approval.status === "approved");
+        const checkpoint = resumableApproval
+          ? this.ports.getApprovalCheckpointForApproval(resumableApproval.id)
+          : undefined;
+        const checkpointStatusMatches = resumableApproval?.status === "pending"
+          ? checkpoint?.status === "pending"
+          : checkpoint?.status === "approved" || checkpoint?.status === "resume_pending";
+        if (resumableApproval
+          && checkpoint
+          && checkpointStatusMatches
+          && checkpoint.resumeBasis?.runId === runId
+          && checkpoint.resumeBasis.approvalId === resumableApproval.id) {
+          continue;
+        }
+      }
       if (!this.ports.hasTerminalRunEvent(runId)) {
         this.ports.appendRunEvent(runId, "run_error", { message: STALE_RUN_ERROR });
       }
@@ -84,9 +105,10 @@ export class SqliteRuntimeRecoveryCoordinator {
           now,
         );
       }
+      recovered += 1;
     }
 
-    return staleRuns.length;
+    return recovered;
   }
 
   recoverStaleChannelWorkflows(now: string): number {
@@ -96,6 +118,22 @@ export class SqliteRuntimeRecoveryCoordinator {
     for (const workflow of workflows) {
       const steps = this.ports.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 });
       for (const step of steps) {
+        if (workflow.metadata?.requiredParticipantManifest && step.status === "running" && step.runId) {
+          const run = this.ports.getRun(step.runId);
+          if (!run) {
+            recovered += this.recoverWorkflowStepBlocked(step, "Linked run is missing after daemon restart.", now) ? 1 : 0;
+          }
+          // Terminal linked Runs remain running here. The daemon semantic reconciler
+          // reloads immutable requirements, actions, packets, approvals, and graph state.
+          continue;
+        }
+        if (workflow.metadata?.requiredParticipantManifest
+          && step.status === "waiting_for_approval"
+          && step.metadata?.activeGateStage === "post") {
+          // Approval state is durable, but only the daemon semantic reconciler may turn
+          // it into a delegated outcome after revalidating evidence.
+          continue;
+        }
         if (step.status === "running" && step.runId) {
           const run = this.ports.getRun(step.runId);
           if (run?.status === "succeeded") {
@@ -164,6 +202,13 @@ export class SqliteRuntimeRecoveryCoordinator {
     if (!approved.ok) {
       return 0;
     }
+    if (postStepApproval && step.metadata?.executionPlan && step.metadata.executionVerification?.status !== "verified") {
+      return this.recoverWorkflowStepBlocked(
+        { ...step, status: "running" },
+        "Required operation evidence was not verified before post-step approval recovery.",
+        now,
+      ) ? 2 : 1;
+    }
     const succeeded = this.ports.transitionChannelWorkflowStepStatus({
       workflowStepId: step.id,
       expectedStatus: "running",
@@ -180,6 +225,13 @@ export class SqliteRuntimeRecoveryCoordinator {
   }
 
   private recoverWorkflowStepSucceeded(step: ChannelWorkflowStep, run: RunSession, now: string): boolean {
+    if (step.metadata?.executionPlan && step.metadata.executionVerification?.status !== "verified") {
+      return this.recoverWorkflowStepBlocked(
+        step,
+        "Required operation evidence was not verified before workflow recovery.",
+        now,
+      );
+    }
     const result = this.ports.transitionChannelWorkflowStepStatus({
       workflowStepId: step.id,
       expectedStatus: "running",
@@ -283,6 +335,12 @@ export class SqliteRuntimeRecoveryCoordinator {
     }
     const steps = this.ports.listChannelWorkflowSteps({ workflowId, limit: 500 });
     if (steps.length > 0 && steps.every((step) => step.status === "succeeded" || step.status === "skipped")) {
+      if (workflow.metadata?.requiredParticipantManifest) {
+        // Continuity-backed workflows are completed only by the daemon's shared
+        // WorkflowCompletionGate after this storage-level reconciliation returns.
+        // Core cannot verify operation actions, output packets, or immutable graph edges.
+        return 0;
+      }
       const result = this.ports.transitionChannelWorkflowStatus({
         workflowId,
         expectedStatus: workflow.status,

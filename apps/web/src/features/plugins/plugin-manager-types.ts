@@ -95,7 +95,7 @@ export interface PluginRowView {
   readonly menuActions: readonly PluginActionView[];
   readonly busyAction?: PluginBusyAction;
   readonly actionFailure?: PluginActionFailure;
-  readonly icon?: "chrome";
+  readonly icon?: "chrome" | "office";
 }
 
 export interface PluginDetailFieldView {

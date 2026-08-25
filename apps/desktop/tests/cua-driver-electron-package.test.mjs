@@ -34,6 +34,7 @@ test("Electron Builder config keeps external-only provider authority unchanged b
   assert.equal(config.extraResources.some((resource) => resource.to === "providers/cua-driver"), false);
   assert.equal(config.extraResources.some((resource) => resource.to === "browser-extension/ling-for-chrome.zip"), true);
   assert.equal(config.extraResources.some((resource) => resource.to === "browser-host"), true);
+  assert.equal(config.extraResources.some((resource) => resource.to === "office-driver"), true);
   assert.equal(config.macSign, null);
   assert.equal(config.winSign, null);
   assert.equal(config.asar, true);

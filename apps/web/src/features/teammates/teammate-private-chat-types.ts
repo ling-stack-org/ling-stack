@@ -1,5 +1,6 @@
 import type { ReactVirtualizer, VirtualItem } from "@tanstack/react-virtual";
 import type {
+  CSSProperties,
   DragEvent,
   KeyboardEvent,
   ReactNode,
@@ -132,7 +133,8 @@ export interface TeammatePrivateChatSurfaceProps {
   readonly dockPageRequest?: WorkspaceRightDockPageRequest;
   readonly dockActions?: ReactNode;
   readonly terminalOpen: boolean;
-  readonly summaryOpen: boolean;
+  readonly summaryVisible: boolean;
+  readonly summaryLayoutStyle: CSSProperties;
   readonly dockViewModel: import("./teammate-private-dock.js").TeammatePrivateDockViewModel;
   readonly onDockPageRequestConsumed: (nonce: number) => void;
   readonly onDockClose: () => void;

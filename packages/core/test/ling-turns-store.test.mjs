@@ -166,6 +166,71 @@ test("sqlite Ling turn migration is idempotent", async () => {
   }
 });
 
+test("sqlite Ling turn status transitions are CAS, durable, and idempotent", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-turn-transition-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const channel = store.createChannel({ name: "Turn transitions", boundPath: cwd }, "2026-08-12T11:00:00.000Z");
+    const thread = store.createLingThread({
+      kind: "channel",
+      channelId: channel.id,
+      title: "Source turn",
+      objective: "Close from workflow publication",
+    }, "2026-08-12T11:00:00.000Z");
+    const turn = store.createLingTurn({
+      threadId: thread.id,
+      kind: "initial_request",
+      title: "Create and verify",
+      userInstruction: "Create and verify",
+      channelId: channel.id,
+    }, "2026-08-12T11:00:01.000Z");
+
+    const started = store.transitionLingTurnStatus({
+      turnId: turn.id,
+      expectedStatus: "open",
+      event: "start",
+      actor: "system",
+      idempotencyKey: "workflow:test:start",
+      now: "2026-08-12T11:00:02.000Z",
+    });
+    assert.deepEqual(started, { ok: true, from: "open", to: "running" });
+    const duplicate = store.transitionLingTurnStatus({
+      turnId: turn.id,
+      expectedStatus: "open",
+      event: "start",
+      actor: "system",
+      idempotencyKey: "workflow:test:start",
+      now: "2026-08-12T11:00:03.000Z",
+    });
+    assert.equal(duplicate.ok, true);
+    assert.equal(duplicate.duplicate, true);
+    const stale = store.transitionLingTurnStatus({
+      turnId: turn.id,
+      expectedStatus: "open",
+      event: "succeed",
+      actor: "system",
+      now: "2026-08-12T11:00:04.000Z",
+    });
+    assert.deepEqual(stale, { ok: false, code: "stale_transition", currentStatus: "running" });
+    assert.deepEqual(store.transitionLingTurnStatus({
+      turnId: turn.id,
+      expectedStatus: "running",
+      event: "succeed",
+      actor: "system",
+      idempotencyKey: "workflow:test:report:test-report:succeeded",
+      now: "2026-08-12T11:00:05.000Z",
+    }), { ok: true, from: "running", to: "succeeded" });
+    assert.equal(store.getLingTurn(turn.id).completedAt, "2026-08-12T11:00:05.000Z");
+    assert.deepEqual(store.listStateTransitionEvents({ entityType: "turn", entityId: turn.id }).map((event) => [event.fromStatus, event.toStatus]), [
+      ["running", "succeeded"],
+      ["open", "running"],
+    ]);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 function createRunInput(overrides) {
   return {
     id: overrides.id,

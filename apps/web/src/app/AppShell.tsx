@@ -2566,6 +2566,11 @@ export function AppShell(): React.JSX.Element {
               refreshChannelGovernanceNotifications(),
               refreshUsedMemoryAudit(form.cwd.trim()),
             ])}
+            onRefreshPendingChannelReply={() => void refreshChannelMessages(
+              selectedChannelId,
+              selectedChannelMessageThreadId,
+              { silent: true },
+            )}
             onRefreshChannelActivity={refreshChannelActivity}
             onRefreshExternalWorkCiTriage={() => void refreshExternalWorkCiTriage()}
             onRefreshWorkItems={() => void refreshWorkItems()}

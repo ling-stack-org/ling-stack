@@ -14,6 +14,7 @@ export interface ConversationTopToolbarProps {
   readonly fileCount?: number;
   readonly filesLabel?: string;
   readonly summaryActive: boolean;
+  readonly summaryExpanded?: boolean;
   readonly summaryDisabled?: boolean;
   readonly summaryLabel: string;
   readonly terminalActive: boolean;
@@ -36,6 +37,7 @@ export function ConversationTopToolbar({
   fileCount = 0,
   filesLabel,
   summaryActive,
+  summaryExpanded = summaryActive,
   summaryDisabled = false,
   summaryLabel,
   terminalActive,
@@ -67,6 +69,7 @@ export function ConversationTopToolbar({
       <WorkspaceToolbarIconButton
         actionId="summary"
         active={summaryActive}
+        aria-expanded={summaryExpanded}
         className="conversation-toolbar-summary task-toolbar-progress"
         disabled={summaryDisabled}
         icon={ListChecks}

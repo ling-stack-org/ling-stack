@@ -2,7 +2,7 @@
 
 Status: current planning index
 Owner: repository maintainers
-Last verified: 2026-08-17
+Last verified: 2026-08-20
 Document type: governance index
 
 ## Purpose
@@ -28,6 +28,7 @@ counts, screenshots, hashes and run diaries belong in CI or Release artifacts.
 
 | Work | Current boundary | Closure condition |
 |---|---|---|
+| [Channel Execution Completion](channel-execution-completion-implementation-plan.md) | Required-participant fan-in, operation evidence, TerminalReport/source-Turn convergence, clean-break Attempt fencing, restart recovery, migration rollback/reopen, and aggregate source verification are green on the isolated delivery branch | Review the isolated diff, open PR/CI, merge, verify the actual remote `main` merge commit, then clean exact QA resources |
 | [Channel Context Processing](channel-context-processing-layer-implementation-plan.md) | Channel and direct-message context views exist | Condensation, quote eligibility, persistence and redaction ownership are closed |
 | [Chrome Browser Built-in Plugin](chrome-browser-built-in-plugin-implementation-plan.md) | Manual V1 pairing and six approved browser tools exist; Native Messaging `0.1.1` implementation is active | Automatic Host connection, dual-platform package gates, real Chrome acceptance and Store resubmission close |
 | [Permission Presets](codex-inspired-settings-permission-presets-implementation-plan.md) | Enforcement modes exist | Preset UI, effective preview and run audit agree with daemon enforcement |

@@ -1,9 +1,10 @@
 # Conversation Model Binding And Creation Validation
 
-Status: active design contract
+Status: active design contract; source implementation present, deterministic and packaged acceptance pending
 Date: 2026-07-30
+Updated: 2026-08-17
 Scope: workspace default chat model, built-in teammates, user-created teammates,
-channel creation, private chat, provider lifecycle
+channel creation, private chat, workflow participant preflight, provider lifecycle
 
 ## Summary
 
@@ -89,6 +90,109 @@ that already owns such an override. Channel messages never use a request model a
 per-message teammate override: daemon resolution remains authoritative for Ling Agent,
 workspace-default and fixed bindings. Missing configuration never falls through to an
 arbitrary enabled provider.
+
+### Workflow Participant Model Preflight
+
+Multi-Agent execution uses the same ownership table. A Channel proposal does not create a
+new provider fallback hierarchy:
+
+```text
+required participant id
+  -> exact canonical teammate
+  -> resolve binding owner for the current surface
+       Ling Agent in Channel -> channel Ling Agent model
+       built-in specialist   -> workspace default
+       fixed teammate        -> teammate provider
+  -> validate provider readiness and required capabilities
+  -> freeze effective provider id + binding source into the workflow step
+  -> revalidate the same provider immediately before first Run creation
+  -> persist the effective binding in the immutable Run request snapshot
+```
+
+In particular, a Channel's `defaultProviderPresetId` remains the Ling Agent model. It is
+not a fallback for Engineer, QA, or another specialist whose binding mode is
+`workspace_default`. Making it one would silently change every specialist when it moves
+between Channels and would contradict both the teammate settings label and the durable
+binding mode. Channel creation also must not mutate workspace settings merely to make a
+later workflow runnable.
+
+The shared resolver returns a typed result instead of only `string | undefined`:
+
+```ts
+type EffectiveConversationModelSourceV1 =
+  | "private_request_override"
+  | "teammate_fixed"
+  | "workspace_default"
+  | "channel_ling_agent_model";
+
+type EffectiveConversationModelResolutionV1 =
+  | {
+      readonly kind: "resolved";
+      readonly providerPresetId: string;
+      readonly source: EffectiveConversationModelSourceV1;
+      readonly bindingMode: "workspace_default" | "fixed";
+    }
+  | {
+      readonly kind: "blocked";
+      readonly code:
+        | "workspace_default_provider_missing"
+        | "channel_ling_agent_provider_missing"
+        | "fixed_provider_missing"
+        | "provider_unavailable"
+        | "provider_capability_missing";
+      readonly owner: "workspace" | "channel" | "teammate";
+      readonly participantId: string;
+      readonly repairTarget: "model_workbench" | "channel_settings" | "teammate_settings";
+    };
+```
+
+The resolver owns source selection only. Provider existence, enabled state, secrets,
+health check, chat capability, and step-required capabilities remain authoritative daemon
+preflight checks. Both proposal confirmation and first Run creation call the same
+resolution/preflight service so validation cannot drift between the preview and the real
+execution boundary.
+
+Failure handling is explicit:
+
+- proposal confirmation validates every required participant before graph, Task, Run,
+  approval, or side-effect creation;
+- one unresolved participant preserves the accepted Item, intent decision, participant
+  manifest, and proposal, then returns a structured
+  `workflow_participant_provider_unavailable` blocker with the participant and repair
+  target;
+- a provider that becomes unavailable after proposal confirmation produces the same
+  typed blocker at step start and no Run; it never triggers a different provider;
+- a blocked required participant remains part of the manifest, so fan-in cannot succeed;
+- retry after repair re-runs canonical resolution and writes a new effective binding
+  snapshot. Same-Run restart or approval resume reuses the original snapshot exactly.
+
+The user-facing proposal and workflow step show the model owner (`Workspace default`,
+`Ling Agent model`, or `Fixed model`) and the concrete effective model. A missing
+workspace default points to Model Workbench; a missing Channel Ling Agent model points to
+Channel Settings; a broken fixed binding points to the teammate's Model settings. Raw
+constructor errors such as `Either providerPresetId or provider is required` are never a
+valid Channel blocker.
+
+### Implementation checkpoint (2026-08-17)
+
+The typed resolution and preflight boundary is now present in source:
+
+- Contracts define `EffectiveConversationModelSourceV1`, immutable participant bindings,
+  and `WorkflowParticipantProviderBlockerV1` with owner/repair-target validation.
+- Core resolves the effective provider without falling back across ownership scopes;
+  Channel Ling Agent, workspace-default specialists, and fixed teammates remain separate.
+- Daemon preflights the complete required participant manifest before graph creation and
+  revalidates the frozen binding before first Run creation. The same Run snapshot is reused
+  by restart/approval resume; repaired retry is the only path that resolves a new binding.
+- Proposal and workflow surfaces project typed blockers and repair actions instead of the
+  low-level provider constructor message.
+
+The remaining work is verification, not a new model architecture: finish the daemon
+fixture/regression cases for missing and late provider availability, frozen-binding
+override rejection, and same-Run restart reuse; then rerun the full deterministic matrix
+and the fresh packaged macOS acceptance. A provider created through a direct QA API call
+does not automatically become the workspace default, so packaged setup must set that
+workspace setting explicitly.
 
 ## Validation Contract
 

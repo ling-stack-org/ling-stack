@@ -92,6 +92,19 @@ export function maybeCreateWorkflowFanInEvidence(input: {
   const existingSummaryArtifactId = input.step.metadata?.fanInSummaryArtifactId;
   const existingSummaryArtifact = existingSummaryArtifactId ? input.store.getArtifact(existingSummaryArtifactId) : undefined;
   const dependencyOutputs = collectDependencyOutputs(input.store, input.workflow.id, input.step);
+  if (fanInPolicy.requireAllBranchesTerminal) {
+    const declaredDependencyIds = input.step.metadata?.dependsOnStepIds ?? [];
+    const terminalDependencyIds = new Set(
+      dependencyOutputs
+        .filter((output) => isTerminalFanInStatus(output.status))
+        .map((output) => output.workflowStepId),
+    );
+    if (declaredDependencyIds.length === 0 || declaredDependencyIds.some((id) => !terminalDependencyIds.has(id))) {
+      return input.store.updateChannelWorkflowStep(input.step.id, {
+        blocker: "fan_in_incomplete",
+      }, input.now) ?? input.step;
+    }
+  }
   const summaryArtifact = existingSummaryArtifact ?? (fanInPolicy.createSummaryArtifact
     ? writeFanInSummaryArtifact({
         store: input.store,
@@ -132,6 +145,11 @@ export function maybeCreateWorkflowFanInEvidence(input: {
     },
     input.now,
   ) ?? latestStep;
+}
+
+function isTerminalFanInStatus(status: ChannelWorkflowStep["status"]): boolean {
+  return status === "succeeded" || status === "failed" || status === "skipped"
+    || status === "cancelled" || status === "blocked";
 }
 
 function collectDependencyOutputs(

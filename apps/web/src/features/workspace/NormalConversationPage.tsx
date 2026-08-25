@@ -5,13 +5,14 @@ import { NormalConversationFeed } from "./NormalConversationFeed.js";
 import { NormalConversationHeader } from "./NormalConversationHeader.js";
 import { NormalConversationWorkspacePanels } from "./NormalConversationWorkspacePanels.js";
 import { ConversationSummaryPopover } from "./right-dock/index.js";
+import { conversationSummaryGap, useConversationSummaryLayout } from "./conversation-summary-layout.js";
 
 export interface NormalConversationPageProps {
   readonly summaryOpen: boolean;
   readonly onCloseSummary: () => void;
   readonly summaryDockMotion?: string;
   readonly summaryRows: ComponentProps<typeof ConversationSummaryPopover>["rows"];
-  readonly headerProps: Omit<ComponentProps<typeof NormalConversationHeader>, "summaryNode">;
+  readonly headerProps: Omit<ComponentProps<typeof NormalConversationHeader>, "summaryNode" | "summaryExpanded">;
   readonly feedProps: ComponentProps<typeof NormalConversationFeed>;
   readonly composerNode: ReactNode;
   readonly panelsProps: ComponentProps<typeof NormalConversationWorkspacePanels>;
@@ -29,19 +30,27 @@ export function NormalConversationPage({
 }: NormalConversationPageProps): React.JSX.Element {
   const { t } = useI18n();
   const { dockController, dockViewModel, terminalPresence, terminalResize } = panelsProps;
+  const summaryLayout = useConversationSummaryLayout({
+    requestedOpen: summaryOpen,
+    containerWidth: dockController.containerWidth,
+    dockVisible: dockController.visible,
+    dockWidth: dockController.width,
+  });
   return (
     <ConversationShell
       rootRef={dockController.containerRef}
       style={{
         ...dockController.containerStyle,
         ...terminalResize.panelStyle,
+        ...summaryLayout.style,
       }}
       className={[
         "normal-conversation-page",
         `right-dock-motion-${dockController.motionState}`,
         dockController.visible ? "with-right-dock" : "",
+        summaryLayout.visible ? "with-conversation-summary" : "",
         dockController.visible
-          ? summaryOpen ? "summary-panel-expanded" : "summary-panel-collapsed"
+          ? summaryLayout.visible ? "summary-panel-expanded" : "summary-panel-collapsed"
           : "",
         dockController.visible && !dockController.expanded ? "workspace-right-dock-collapsed" : "",
         terminalPresence.rendered ? "with-bottom-terminal" : "",
@@ -52,13 +61,15 @@ export function NormalConversationPage({
       headerNode={(
         <NormalConversationHeader
           {...headerProps}
+          summaryExpanded={summaryLayout.visible}
           summaryNode={(
             <ConversationSummaryPopover
-              open={summaryOpen}
+              open={summaryLayout.visible}
               title={t("Environment")}
               subtitle={dockViewModel.context.workspaceLabel}
               rows={summaryRows}
               className="normal-conversation-summary-popover normal-conversation-summary-panel"
+              dockOffset={conversationSummaryGap}
               dockMotion={summaryDockMotion}
               motionState={dockController.motionState}
               onClose={onCloseSummary}

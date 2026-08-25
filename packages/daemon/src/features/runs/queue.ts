@@ -82,6 +82,8 @@ export function createQueuedRunForConflict(input: {
   input.store.appendRuntimeEvent({
     workUnitId: input.workUnit.id,
     attemptId: input.attempt.id,
+    runtimeInstanceId: input.attempt.runtimeInstanceId,
+    fencingToken: input.attempt.fencingToken,
     type: "work_unit_queued",
     actor: "system",
     ts: input.queuedAt,

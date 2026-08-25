@@ -85,6 +85,10 @@ export function useConversationRightDockController({
   const [containerWidth, setContainerWidth] = useState(0);
   const [resizing, setResizing] = useState(false);
   const presence = useConversationPanelPresence(intentOpen, initialOpen);
+  const measuredContainerRef = useRef<HTMLElement | null>(null);
+  const measuredContainerKeyRef = useRef<string | undefined>(undefined);
+  const containerResizeObserverRef = useRef<ResizeObserver | undefined>(undefined);
+  const containerWindowResizeListenerRef = useRef<(() => void) | undefined>(undefined);
   const layoutAnimationRef = useRef<number | undefined>(undefined);
   const layoutWidthRef = useRef(initialOpen ? defaultWidth : 0);
   const layoutHandleWidthRef = useRef(initialOpen ? channelRightDockResizeHandleWidth : 0);
@@ -166,8 +170,17 @@ export function useConversationRightDockController({
     };
   }, [containerRef, presence.expanded, resizing, rootRef, variables, width]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const element = containerRef.current;
+    if (measuredContainerRef.current === element && measuredContainerKeyRef.current === resizeObserverKey) return;
+    containerResizeObserverRef.current?.disconnect();
+    containerResizeObserverRef.current = undefined;
+    if (containerWindowResizeListenerRef.current) {
+      globalThis.removeEventListener("resize", containerWindowResizeListenerRef.current);
+      containerWindowResizeListenerRef.current = undefined;
+    }
+    measuredContainerRef.current = element;
+    measuredContainerKeyRef.current = resizeObserverKey;
     if (!element) return;
     const updateWidth = (): void => {
       const nextWidth = Math.round(element.getBoundingClientRect().width);
@@ -176,12 +189,24 @@ export function useConversationRightDockController({
     updateWidth();
     if (typeof ResizeObserver === "undefined") {
       globalThis.addEventListener("resize", updateWidth);
-      return () => globalThis.removeEventListener("resize", updateWidth);
+      containerWindowResizeListenerRef.current = updateWidth;
+      return;
     }
     const observer = new ResizeObserver(updateWidth);
     observer.observe(element);
-    return () => observer.disconnect();
-  }, [containerRef, resizeObserverKey]);
+    containerResizeObserverRef.current = observer;
+  });
+
+  useEffect(() => () => {
+    containerResizeObserverRef.current?.disconnect();
+    if (containerWindowResizeListenerRef.current) {
+      globalThis.removeEventListener("resize", containerWindowResizeListenerRef.current);
+    }
+    measuredContainerRef.current = null;
+    measuredContainerKeyRef.current = undefined;
+    containerResizeObserverRef.current = undefined;
+    containerWindowResizeListenerRef.current = undefined;
+  }, []);
 
   useEffect(() => {
     if (containerWidth <= 0) return;

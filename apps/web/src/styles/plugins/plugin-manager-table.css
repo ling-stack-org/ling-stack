@@ -102,6 +102,10 @@
   color: var(--ling-status-info);
 }
 
+.plugin-table-name > .plugin-table-office-icon {
+  color: var(--ling-status-success);
+}
+
 .plugin-table-name-copy {
   display: grid;
   min-width: 0;

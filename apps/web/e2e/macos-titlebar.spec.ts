@@ -3,9 +3,11 @@ import { mockDaemon } from "./support/mock-daemon";
 import {
   createBaseState,
   createMockTeammate,
-  cwd,
-  type MockState,
 } from "./support/mock-state";
+import {
+  installNormalConversationFixture,
+  normalConversationFixtureTitle,
+} from "./support/normal-conversation-fixture";
 
 const viewport = { width: 1440, height: 919 } as const;
 
@@ -27,6 +29,7 @@ test("macOS Home chrome overlays content, survives Sidebar collapse, and preserv
   const sidebarRegion = chrome.locator("[data-desktop-window-drag-owner='sidebar']");
   const contentFallback = chrome.locator("[data-desktop-window-drag-owner='content-fallback']");
   const sidebarToggle = page.locator(".channel-sidebar-switch");
+  const newConversation = page.getByLabel("Ling Stack navigation").getByRole("button", { name: "New conversation" });
 
   await expect(shell).toBeVisible();
   await expect(chrome).toHaveCount(1);
@@ -41,6 +44,23 @@ test("macOS Home chrome overlays content, survives Sidebar collapse, and preserv
   await expectDragRegion(sidebarRegion);
   await expectDragRegion(contentFallback);
   await expect.poll(() => readHomeGeometry(page)).toEqual(webGeometry);
+  await expectNoDragControl(sidebarToggle);
+  await expect.poll(async () => {
+    const toggleBox = await sidebarToggle.boundingBox();
+    const newConversationBox = await newConversation.boundingBox();
+    if (!toggleBox || !newConversationBox) return undefined;
+    return {
+      height: Math.round(toggleBox.height),
+      leftOfTrafficLights: Math.round(toggleBox.x) < 76,
+      overlapsNewConversation: rectanglesOverlap(toggleBox, newConversationBox),
+      width: Math.round(toggleBox.width),
+    };
+  }).toEqual({
+    height: 32,
+    leftOfTrafficLights: false,
+    overlapsNewConversation: false,
+    width: 32,
+  });
 
   await sidebarToggle.click();
   await expect(shell).toHaveClass(/channel-sidebar-collapsed/u);
@@ -50,6 +70,24 @@ test("macOS Home chrome overlays content, survives Sidebar collapse, and preserv
     return Boolean(box && box.width > 0 && box.height >= 28);
   }).toBe(true);
   await expect.poll(async () => Math.round((await contentFallback.boundingBox())?.x ?? -1)).toBe(76);
+  await expect.poll(async () => {
+    const toggleBox = await sidebarToggle.boundingBox();
+    const newConversationBox = await newConversation.boundingBox();
+    if (!toggleBox || !newConversationBox) return undefined;
+    return {
+      newConversationBelowToggle: newConversationBox.y > toggleBox.y,
+      newConversationHeight: Math.round(newConversationBox.height),
+      newConversationWidth: Math.round(newConversationBox.width),
+      toggleHeight: Math.round(toggleBox.height),
+      toggleWidth: Math.round(toggleBox.width),
+    };
+  }).toEqual({
+    newConversationBelowToggle: true,
+    newConversationHeight: 36,
+    newConversationWidth: 36,
+    toggleHeight: 36,
+    toggleWidth: 36,
+  });
   await expect(page.getByLabel("Conversation home")).toBeVisible();
 });
 
@@ -61,7 +99,7 @@ test("macOS normal-conversation and channel headers are draggable while their co
   await page.goto("/");
 
   const navigation = page.getByLabel("Ling Stack navigation");
-  await navigation.locator(".sidebar-recent-row").filter({ hasText: "Desktop chrome fixture" }).click();
+  await navigation.locator(".sidebar-recent-row").filter({ hasText: normalConversationFixtureTitle }).click();
 
   const conversation = page.getByLabel("Conversation page");
   const normalHeader = conversation.locator("[data-ui2-normal-conversation-header='true']");
@@ -301,6 +339,16 @@ async function appRegion(locator: Locator): Promise<string> {
   return locator.evaluate((element) => getComputedStyle(element).getPropertyValue("-webkit-app-region").trim());
 }
 
+function rectanglesOverlap(
+  left: { readonly x: number; readonly y: number; readonly width: number; readonly height: number },
+  right: { readonly x: number; readonly y: number; readonly width: number; readonly height: number },
+): boolean {
+  return left.x < right.x + right.width
+    && left.x + left.width > right.x
+    && left.y < right.y + right.height
+    && left.y + left.height > right.y;
+}
+
 async function readTrafficLightExclusion(page: Page): Promise<{
   readonly appRegion: string;
   readonly height: string;
@@ -357,65 +405,4 @@ async function readHomeGeometry(page: Page): Promise<{
       workspaceWidth: Math.round(workspaceBox.width),
     };
   });
-}
-
-function installNormalConversationFixture(state: MockState): void {
-  const threadId = "thread_desktop_chrome";
-  const turnId = "turn_desktop_chrome";
-  const runId = "run_desktop_chrome";
-  const createdAt = "2026-07-29T01:00:00.000Z";
-  const completedAt = "2026-07-29T01:01:00.000Z";
-  state.threads = [{
-    id: threadId,
-    workspaceId: "workspace_default",
-    kind: "conversation",
-    title: "Desktop chrome fixture",
-    objective: "Verify normal-conversation Desktop chrome behavior.",
-    status: "succeeded",
-    lastRunId: runId,
-    createdAt,
-    updatedAt: completedAt,
-  }];
-  state.turns = [{
-    id: turnId,
-    workspaceId: "workspace_default",
-    threadId,
-    kind: "initial_request",
-    status: "succeeded",
-    title: "Desktop chrome fixture",
-    userInstruction: "Verify the Desktop chrome drag contract.",
-    activeRunId: runId,
-    lastRunId: runId,
-    createdByActor: "local-user",
-    createdAt,
-    updatedAt: completedAt,
-    completedAt,
-  }];
-  state.turnRunLinks = [{ turnId, runId, attemptNumber: 1, role: "primary", createdAt }];
-  state.runs = [{
-    id: runId,
-    status: "succeeded",
-    cwd,
-    taskId: "task_desktop_chrome",
-    providerName: "local-relay",
-    providerModel: "gpt-5.5",
-    taskSnapshot: { id: "task_desktop_chrome", title: "Desktop chrome fixture" },
-    providerSnapshot: {},
-    requestSnapshot: {},
-    eventLogPath: `.ling-stack/sessions/${runId}.jsonl`,
-    threadId,
-    turnId,
-    createdAt,
-    startedAt: createdAt,
-    updatedAt: completedAt,
-    endedAt: completedAt,
-  }, ...state.runs];
-  state.eventsByRun[runId] = [{
-    id: "event_desktop_chrome",
-    runId,
-    seq: 1,
-    ts: completedAt,
-    type: "assistant_text_delta",
-    data: { text: "Desktop chrome fixture response." },
-  }];
 }

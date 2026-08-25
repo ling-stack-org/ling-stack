@@ -8,7 +8,6 @@ import {
   buildControlPlaneSnapshot,
   latestControlPlaneEventSeq,
   listControlPlaneEventsForResponse,
-  listControlPlaneSseReplayEvents,
   parseControlPlaneDomains,
   readControlPlaneAfterSeq,
   readControlPlaneLimit,
@@ -58,19 +57,18 @@ export async function handleControlPlaneRoute(
       const domains = parseControlPlaneDomains(url.searchParams.get("domains"));
       const afterSeq = readControlPlaneAfterSeq(url);
       writeControlPlaneSseHead(response);
-      response.write([
-        ...listControlPlaneSseReplayEvents(context, { cwd, domains, afterSeq }).map((event) => formatSse("control_plane_event", event)),
-        formatSse("heartbeat", {
-          ts: new Date().toISOString(),
-          latestEventSeq: latestControlPlaneEventSeq(context, cwd),
-        }),
-      ].join(""));
       const subscription = context.controlPlaneEvents.subscribe({
         workspaceId: DEFAULT_WORKSPACE_ID,
         cwd,
         domains,
         response,
         latestEventSeq: () => latestControlPlaneEventSeq(context, cwd),
+        replayWindow: () => listControlPlaneEventsForResponse(context, {
+          cwd,
+          domains,
+          afterSeq,
+          limit: 1_000,
+        }),
       });
       const closeSubscription = (): void => subscription.close();
       request.on("aborted", closeSubscription);
@@ -115,8 +113,4 @@ function writeControlPlaneSseHead(response: ServerResponse): void {
     "X-Accel-Buffering": "no",
   });
   response.write(": ling-stack control-plane stream\n\n");
-}
-
-function formatSse(event: string, data: unknown): string {
-  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 }

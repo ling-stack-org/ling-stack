@@ -135,6 +135,7 @@ export function mapWorkUnitAttempt(row: Record<string, SQLOutputValue>): WorkUni
     id: readString(row, "id"),
     workUnitId: readString(row, "work_unit_id"),
     attemptNumber: readNumber(row, "attempt_number"),
+    fencingToken: readString(row, "fencing_token"),
     runtimeInstanceId: readString(row, "runtime_instance_id"),
     runnerId,
     requestedRunnerId,
@@ -158,6 +159,8 @@ export function mapRuntimeEvent(row: Record<string, SQLOutputValue>): RuntimeEve
     id: readString(row, "id"),
     workUnitId: readString(row, "work_unit_id"),
     attemptId: readNullableString(row, "attempt_id"),
+    runtimeInstanceId: readNullableString(row, "runtime_instance_id"),
+    fencingToken: readNullableString(row, "fencing_token"),
     seq: readNumber(row, "seq"),
     ts: readString(row, "ts"),
     type: readString(row, "type") as RuntimeEventType,
@@ -176,6 +179,8 @@ export function mapRuntimeSemaphoreSlot(row: Record<string, SQLOutputValue>): Ru
     ownerId: readString(row, "owner_id"),
     workUnitId: readString(row, "work_unit_id"),
     attemptId: readString(row, "attempt_id"),
+    runtimeInstanceId: readString(row, "runtime_instance_id"),
+    fencingToken: readString(row, "fencing_token"),
     status: readString(row, "status") as RuntimeSemaphoreSlotStatus,
     acquiredAt: readString(row, "acquired_at"),
     lastRenewedAt: readString(row, "last_renewed_at"),
@@ -201,6 +206,8 @@ export function mapResourceLease(row: Record<string, SQLOutputValue>): ResourceL
     releaseReason: readNullableString(row, "release_reason"),
     workUnitId: readNullableString(row, "work_unit_id"),
     attemptId: readNullableString(row, "attempt_id"),
+    runtimeInstanceId: readNullableString(row, "runtime_instance_id"),
+    fencingToken: readNullableString(row, "fencing_token"),
   });
 }
 

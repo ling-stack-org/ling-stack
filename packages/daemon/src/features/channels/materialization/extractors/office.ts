@@ -1,15 +1,10 @@
-import { existsSync, readFileSync } from "node:fs";
-import { createRequire } from "node:module";
+import { existsSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { extname, isAbsolute, relative as relativePath, resolve as resolvePath } from "node:path";
+import { OfficeParser } from "officeparser";
 import type { LingInputExtractor, LingMaterializationRequest, LingMaterializationResult } from "../registry.js";
 
-const require = createRequire(import.meta.url);
-const mammoth = require("mammoth") as {
-  readonly extractRawText: (input: { readonly buffer: Buffer }) => Promise<{
-    readonly value?: string;
-    readonly messages?: readonly { readonly type?: string; readonly message?: string }[];
-  }>;
-};
+const SUPPORTED_OFFICE_EXTENSIONS = new Set([".docx", ".xlsx", ".pptx"]);
 
 export const officeExtractorV1: LingInputExtractor = {
   id: "office_text_v1",
@@ -43,7 +38,7 @@ async function materializeOfficeAttachment(input: LingMaterializationRequest): P
     };
   }
   const extension = officeExtension(attachment.fileName);
-  if (extension !== ".docx") {
+  if (!SUPPORTED_OFFICE_EXTENSIONS.has(extension)) {
     return {
       status: "unsupported",
       contentKind: "office_text",
@@ -80,33 +75,39 @@ async function materializeOfficeAttachment(input: LingMaterializationRequest): P
     };
   }
   try {
-    const bytes = readFileSync(absolutePath);
-    if (bytes.byteLength > input.maxBytes) {
+    const fileStat = await stat(absolutePath);
+    if (!fileStat.isFile() || fileStat.size > input.maxBytes) {
       return {
         status: "blocked",
         contentKind: "office_text",
-        byteCount: bytes.byteLength,
+        byteCount: fileStat.size,
         errorCode: "too_large",
-        errorMessage: `Office attachment is too large for text materialization (${bytes.byteLength} bytes).`,
+        errorMessage: `Office attachment is too large for text materialization (${fileStat.size} bytes).`,
       };
     }
-    const result = await mammoth.extractRawText({ buffer: bytes });
-    const extractedText = normalizeExtractedText(result.value ?? "");
-    const warningMessages = (result.messages ?? [])
-      .map((message) => message.message)
-      .filter((message): message is string => Boolean(message))
-      .slice(0, 3);
+    const result = await OfficeParser.parseOffice(absolutePath, {
+      extractAttachments: false,
+      includeRawContent: false,
+      ocr: false,
+      decompressionLimits: {
+        maxUncompressedBytes: Math.min(input.maxBytes * 8, 128 * 1024 * 1024),
+        maxZipEntries: 5_000,
+        maxTableCells: 250_000,
+      },
+    });
+    const extractedText = normalizeExtractedText(result.toText());
+    const warningMessages = (result.warnings ?? []).slice(0, 3).map((warning) => String(warning).slice(0, 512));
     if (!extractedText) {
       return {
         status: "unsupported",
         contentKind: "office_text",
-        byteCount: bytes.byteLength,
+        byteCount: fileStat.size,
         structuredSummary: {
-          format: "docx",
+          format: extension.slice(1),
           warnings: warningMessages,
         },
         errorCode: "no_text_extracted",
-        errorMessage: "No DOCX text was extracted.",
+        errorMessage: `No ${extension.slice(1).toUpperCase()} text was extracted.`,
       };
     }
     const contentText = extractedText.slice(0, input.maxChars);
@@ -116,13 +117,13 @@ async function materializeOfficeAttachment(input: LingMaterializationRequest): P
       contentKind: "office_text",
       contentText,
       structuredSummary: {
-        format: "docx",
+        format: extension.slice(1),
         warnings: warningMessages,
       },
-      byteCount: bytes.byteLength,
+      byteCount: fileStat.size,
       tokenEstimate: estimateTokens(contentText),
       truncated,
-      errorMessage: truncated ? "Extracted DOCX text was truncated." : undefined,
+      errorMessage: truncated ? `Extracted ${extension.slice(1).toUpperCase()} text was truncated.` : undefined,
     };
   } catch (error) {
     return {

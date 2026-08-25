@@ -218,8 +218,6 @@ export interface ChannelWorkflowStepUpdateRequest {
   readonly position?: number;
   readonly title?: string;
   readonly prompt?: string;
-  readonly toParticipantId?: string;
-  readonly toParticipantLabel?: string;
   readonly status?: ChannelWorkflowStepStatus;
   readonly blocker?: string | null;
   readonly resultSummary?: string | null;
@@ -748,8 +746,6 @@ export function parseChannelWorkflowStepUpdateRequest(value: unknown): ChannelWo
     position: readOptionalNumber(value, "position"),
     title: readOptionalString(value, "title"),
     prompt: readOptionalString(value, "prompt"),
-    toParticipantId: readOptionalString(value, "toParticipantId"),
-    toParticipantLabel: readOptionalString(value, "toParticipantLabel"),
     status: readOptionalChannelWorkflowStepStatus(value, "status"),
     blocker: readNullableString(value, "blocker"),
     resultSummary: readNullableString(value, "resultSummary"),

@@ -11,6 +11,7 @@ import type {
   PluginStatusFilter,
 } from "./plugin-manager-types.js";
 import { buildChromePluginView } from "./plugin-manager-chrome-view-model.js";
+import { buildOfficePluginView } from "./plugin-manager-office-view-model.js";
 
 export function buildPluginRowView(
   plugin: ManagedPluginView,
@@ -22,22 +23,25 @@ export function buildPluginRowView(
 ): PluginRowView {
   const bundledCua = buildBundledCuaDriverView(plugin, t);
   const chrome = buildChromePluginView(plugin, t);
+  const office = buildOfficePluginView(plugin, t);
   const settledPrimaryState = actionFailure
     ? { id: "failed", label: t("Needs attention"), tone: "danger" } satisfies PluginPrimaryStateView
-    : chrome?.primaryState ?? bundledCua?.primaryState ?? deriveSettledState(plugin, now, t);
+    : chrome?.primaryState ?? office?.primaryState ?? bundledCua?.primaryState ?? deriveSettledState(plugin, now, t);
   const rowBusyAction = busyPluginId === plugin.id ? busyAction : undefined;
   const primaryState = rowBusyAction
     ? { id: "busy", label: busyStateLabel(rowBusyAction, t), tone: "info" } satisfies PluginPrimaryStateView
     : settledPrimaryState;
   const actions = chrome
     ? { primaryAction: chrome.primaryAction, menuActions: chrome.menuActions }
+    : office
+    ? { primaryAction: office.primaryAction, menuActions: office.menuActions }
     : bundledCua
     ? { primaryAction: bundledCua.primaryAction, menuActions: [] }
     : deriveActions(plugin, settledPrimaryState, t, actionFailure);
   return {
     id: plugin.id,
-    name: plugin.displayName,
-    description: chrome?.description ?? bundledCua?.description ?? (plugin.id === "trusted-local:cua-driver"
+    name: office?.name ?? plugin.displayName,
+    description: chrome?.description ?? office?.description ?? bundledCua?.description ?? (plugin.id === "trusted-local:cua-driver"
       ? t("Controls desktop apps through the local Cua Driver.")
       : plugin.description?.trim() ?? ""),
     sourceKind: plugin.sourceKind,
@@ -47,7 +51,7 @@ export function buildPluginRowView(
     filterGroup: stateFilterGroup(settledPrimaryState.id),
     primaryAction: actions.primaryAction,
     checkActionLabel: bundledCua?.checkActionLabel,
-    showCheckAction: chrome?.showCheckAction ?? bundledCua?.showCheckAction
+    showCheckAction: chrome?.showCheckAction ?? office?.showCheckAction ?? bundledCua?.showCheckAction
       ?? (plugin.actions.canCheck && actions.primaryAction?.id !== "check"),
     showDisableAction: chrome?.showDisableAction ?? bundledCua?.showDisableAction ?? (plugin.actions.canDisable
       && plugin.sourceKind === "trusted-local-preset"
@@ -56,7 +60,7 @@ export function buildPluginRowView(
     menuActions: actions.menuActions,
     busyAction: rowBusyAction,
     actionFailure,
-    ...(chrome ? { icon: "chrome" as const } : {}),
+    ...(chrome ? { icon: "chrome" as const } : office ? { icon: "office" as const } : {}),
   };
 }
 

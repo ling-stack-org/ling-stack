@@ -32,7 +32,7 @@ test("Chrome Web Store URLs allow only the official HTTPS origin", () => {
   );
   assert.equal(normalizeChromeBrowserStoreUrl("javascript:alert(1)"), undefined);
   assert.equal(normalizeChromeBrowserStoreUrl("https://example.com/detail/ling"), undefined);
-  assert.equal(normalizeChromeBrowserStoreUrl("https://user:secret@chromewebstore.google.com/detail/ling"), undefined);
+  assert.equal(normalizeChromeBrowserStoreUrl("https://user:${CHROME_STORE_PASSWORD}@chromewebstore.google.com/detail/ling"), undefined);
 });
 
 async function fixture(options = {}) {

@@ -1,9 +1,13 @@
-import type { ChannelMessage, RunStore, TerminalReport } from "@ling-stack/core";
+import type { ChannelMessage, ControlPlaneEvent, RunStore, TerminalReport } from "@ling-stack/core";
 import { LING_AGENT_EXECUTOR_ID } from "./ling-agent-executor.js";
-import {
-  appendChannelAssistantMessage,
-  getChannelMessageView,
-} from "./conversation-item-messages.js";
+import { getChannelMessageView } from "./conversation-item-messages.js";
+import { evaluateWorkflowCompletion } from "./workflow-completion-gate.js";
+
+export interface TerminalReportPublication {
+  readonly message: ChannelMessage;
+  readonly controlPlaneEvent?: ControlPlaneEvent;
+  readonly duplicate: boolean;
+}
 
 export function publishTerminalReport(input: {
   readonly store: RunStore;
@@ -11,6 +15,15 @@ export function publishTerminalReport(input: {
   readonly linkedRunId?: string;
   readonly now: string;
 }): ChannelMessage | undefined {
+  return publishTerminalReportPublication(input)?.message;
+}
+
+export function publishTerminalReportPublication(input: {
+  readonly store: RunStore;
+  readonly report: TerminalReport;
+  readonly linkedRunId?: string;
+  readonly now: string;
+}): TerminalReportPublication | undefined {
   if (!input.report.channelId || !input.report.sourceMessageId) {
     return undefined;
   }
@@ -18,33 +31,130 @@ export function publishTerminalReport(input: {
   if (!sourceMessage || sourceMessage.channelId !== input.report.channelId) {
     return undefined;
   }
-  const currentRecord = input.store.getTerminalReport(input.report.id);
-  if (currentRecord?.publishedMessageId) {
-    return getChannelMessageView(input.store, currentRecord.publishedMessageId);
+  if (input.report.source.kind !== "workflow") return publishLegacyTerminalReport(input, sourceMessage);
+  const workflow = input.store.getChannelWorkflow(input.report.source.id);
+  const sourceTurnId = workflow?.metadata?.sourceTurnId;
+  const sourceTurn = sourceTurnId ? input.store.getLingTurn(sourceTurnId) : undefined;
+  const sourceItem = input.store.getConversationItem(sourceMessage.id);
+  if (!workflow || !sourceTurn || sourceItem?.turnId !== sourceTurn.id || sourceItem.threadId !== sourceTurn.threadId) {
+    throw new TerminalReportPublicationError("source_turn_conflict", `Workflow publication source lineage is incomplete: ${input.report.id}`);
+  }
+  const steps = input.store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 });
+  const expectedCompletion = workflow.metadata?.requiredParticipantManifest
+    ? evaluateWorkflowCompletion({ store: input.store, workflow, steps, now: input.now })
+    : undefined;
+  if (workflow.metadata?.requiredParticipantManifest
+    && (!expectedCompletion
+      || expectedCompletion.gate.status === "pending"
+      || expectedCompletion.gate.basisFingerprint !== workflow.metadata.completionGate?.basisFingerprint
+      || expectedCompletion.gate.status !== workflow.metadata.completionGate?.status)) {
+    throw new TerminalReportPublicationError("stale_completion_basis", `Workflow completion gate is stale or unverified: ${workflow.id}`);
   }
 
   const messageId = terminalReportMessageId(input.report.id);
-  const existing = getChannelMessageView(input.store, messageId);
-  const message = existing ?? appendChannelAssistantMessage({
-    store: input.store,
-    sourceItemId: sourceMessage.id,
-    itemId: messageId,
+  const result = input.store.commitTerminalReportPublication({
+    reportId: input.report.id,
+    expectedReportStatus: input.report.status,
+    expectedEvidenceFingerprint: input.report.evidenceFingerprint,
+    expectedWorkflowId: workflow.id,
+    ...(expectedCompletion ? { expectedCompletion } : {}),
+    expectedSourceTurn: {
+      id: sourceTurn.id,
+      status: sourceTurn.status,
+      updatedAt: sourceTurn.updatedAt,
+    },
+    publicationItem: {
+      id: messageId,
+      channelId: workflow.channelId,
+      threadId: sourceTurn.threadId,
+      turnId: sourceTurn.id,
+      kind: "assistant_message",
+      status: "committed",
+      actorType: "ling_agent",
+      actorId: LING_AGENT_EXECUTOR_ID,
+      visibility: "channel",
+      payload: {
+        body: renderTerminalReportMarkdown(input.report),
+        format: "markdown",
+        streaming: false,
+        deliveryStatus: "ready",
+      },
+      domainRefs: [
+        { type: "terminal_report", id: input.report.id },
+        { type: "workflow", id: workflow.id },
+        { type: "conversation_item", id: sourceMessage.id },
+        { type: "turn", id: sourceTurn.id },
+        ...(input.linkedRunId ? [{ type: "run" as const, id: input.linkedRunId }] : []),
+      ],
+      idempotencyKey: `terminal-report:${input.report.id}`,
+    },
+    publicationEventIdempotencyKey: `terminal-report:${input.report.id}:published`,
+    now: input.now,
+  });
+  if (!result.ok) {
+    throw new TerminalReportPublicationError(result.code, `Terminal report publication conflict: ${input.report.id}/${result.code}`);
+  }
+  const message = getChannelMessageView(input.store, result.item.id);
+  if (!message) throw new Error(`Published TerminalReport message is not projectable: ${result.item.id}`);
+  return { message, controlPlaneEvent: result.controlPlaneEvent, duplicate: result.duplicate };
+}
+
+function publishLegacyTerminalReport(
+  input: {
+    readonly store: RunStore;
+    readonly report: TerminalReport;
+    readonly linkedRunId?: string;
+    readonly now: string;
+  },
+  sourceMessage: ChannelMessage,
+): TerminalReportPublication {
+  const currentRecord = input.store.getTerminalReport(input.report.id);
+  if (currentRecord?.publishedMessageId) {
+    const published = getChannelMessageView(input.store, currentRecord.publishedMessageId);
+    if (!published) throw new Error(`Published TerminalReport message not found: ${currentRecord.publishedMessageId}`);
+    return { message: published, duplicate: true };
+  }
+  const messageId = terminalReportMessageId(input.report.id);
+  const sourceItem = input.store.getConversationItem(sourceMessage.id);
+  if (!sourceItem?.turnId) throw new Error(`TerminalReport source Item has no Turn: ${sourceMessage.id}`);
+  const existing = input.store.getConversationItem(messageId);
+  const item = existing ?? input.store.appendConversationItem({
+    id: messageId,
+    channelId: input.report.channelId,
+    threadId: sourceItem.threadId,
+    turnId: sourceItem.turnId,
+    kind: "assistant_message",
+    status: "committed",
+    actorType: "ling_agent",
     idempotencyKey: `terminal-report:${input.report.id}`,
     actorId: LING_AGENT_EXECUTOR_ID,
-    body: renderTerminalReportMarkdown(input.report),
-    status: "ready",
-    linkedRunId: input.linkedRunId,
-    now: input.now,
-  });
+    visibility: "channel",
+    payload: { body: renderTerminalReportMarkdown(input.report), format: "markdown", streaming: false, deliveryStatus: "ready" },
+    domainRefs: [
+      { type: "terminal_report", id: input.report.id },
+      { type: "conversation_item", id: sourceMessage.id },
+      { type: "turn", id: sourceItem.turnId },
+      ...(input.linkedRunId ? [{ type: "run" as const, id: input.linkedRunId }] : []),
+    ],
+  }, input.now);
   input.store.markTerminalReportPublished({
     reportId: input.report.id,
-    messageId: message.id,
+    messageId: item.id,
     now: input.now,
   });
-  return message;
+  const message = getChannelMessageView(input.store, item.id);
+  if (!message) throw new Error(`Published TerminalReport message is not projectable: ${item.id}`);
+  return { message, duplicate: false };
 }
 
 export const publishWorkflowTerminalReport = publishTerminalReport;
+
+export class TerminalReportPublicationError extends Error {
+  constructor(readonly code: string, message: string) {
+    super(message);
+    this.name = "TerminalReportPublicationError";
+  }
+}
 
 export function renderTerminalReportMarkdown(report: TerminalReport): string {
   const zh = report.language === "zh-CN";

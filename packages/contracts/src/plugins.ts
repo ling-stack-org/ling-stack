@@ -18,6 +18,11 @@ import type {
   ChromeBrowserSetupState,
   ChromeBrowserTransportKind,
 } from "./chrome-browser.js";
+import type {
+  OfficeDocumentsSetupState,
+  OfficeDriverCapability,
+  OfficeDriverPlatform,
+} from "./office-documents.js";
 
 export type ManagedPluginSourceKind = "built-in" | "bundled" | "trusted-local-preset";
 
@@ -38,7 +43,7 @@ export interface ManagedPluginSetupGuide {
 }
 
 export interface ManagedPluginSetupView {
-  readonly kind: "local_binary" | "browser_extension";
+  readonly kind: "local_binary" | "browser_extension" | "office_documents";
   readonly state: ManagedPluginSetupState;
   readonly checkedAt: string;
   readonly detectedCommand?: string;
@@ -79,6 +84,13 @@ export interface ManagedPluginSetupView {
   readonly browserVersion?: string;
   readonly lastSeenAt?: string;
   readonly storeUrl?: string;
+  readonly officeState?: OfficeDocumentsSetupState;
+  readonly officePlatform?: OfficeDriverPlatform;
+  readonly officeCapabilities?: readonly OfficeDriverCapability[];
+  readonly officeInstalled?: boolean;
+  readonly officeApplicationRunning?: boolean;
+  readonly officePermissionGranted?: boolean;
+  readonly officeHelperVersion?: string;
 }
 
 /**

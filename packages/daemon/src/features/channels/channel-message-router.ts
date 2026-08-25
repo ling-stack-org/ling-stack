@@ -104,6 +104,8 @@ class ChannelAutoRouteModelError extends Error {
 }
 
 export async function routeChannelMessageReply(input: ChannelMessageRouteInput): Promise<ChannelMessageRouteResult> {
+  const checkpoint = recoverPersistedRouteDecision(input);
+  if (checkpoint) return checkpoint;
   const deterministicSuppression = deterministicNoReplyReason(input);
   if (deterministicSuppression) {
     const decision = persistRouteDecision(input, {
@@ -150,6 +152,8 @@ export async function routeChannelMessageReply(input: ChannelMessageRouteInput):
 }
 
 export function routeExplicitChannelMention(input: ChannelMessageRouteInput): ChannelMessageRouteResult {
+  const checkpoint = recoverPersistedRouteDecision(input);
+  if (checkpoint) return checkpoint;
   const requestedTeammateId = input.requestedTeammateId ??
     input.sourceMessage.mentions.find((mention) => mention.kind === "ai-teammate")?.id ??
     LING_AGENT_EXECUTOR_ID;
@@ -174,6 +178,27 @@ export function routeExplicitChannelMention(input: ChannelMessageRouteInput): Ch
     providerPresetId,
     reason: decision.reason,
     createdBy: "explicit_mention",
+  };
+}
+
+function recoverPersistedRouteDecision(input: ChannelMessageRouteInput): ChannelMessageRouteResult | undefined {
+  const decision = input.store.listChannelMessageRouteDecisions({
+    channelId: input.channel.id,
+    sourceMessageId: input.sourceMessage.id,
+    limit: 100,
+  }).find((candidate) => candidate.status === "accepted" || candidate.status === "suppressed");
+  if (!decision) return undefined;
+  if (decision.action === "no_reply") {
+    return { action: "no_reply", decisionId: decision.id, reason: decision.reason };
+  }
+  if (!decision.selectedTeammateId) return undefined;
+  return {
+    action: "reply",
+    decisionId: decision.id,
+    teammateId: decision.selectedTeammateId,
+    providerPresetId: decision.selectedProviderPresetId,
+    reason: decision.reason,
+    createdBy: decision.createdBy,
   };
 }
 

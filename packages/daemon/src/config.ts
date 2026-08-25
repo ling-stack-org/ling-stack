@@ -166,7 +166,14 @@ export function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {
     defaultWorkspaceCwd: resolvePath(config.defaultWorkspaceCwd ?? process.env.LING_STACK_DEFAULT_WORKSPACE_CWD ?? process.cwd()),
     runners: config.runners ?? {},
     sandbox: config.sandbox ?? {},
-    runtimeTools: config.runtimeTools ?? {},
+    runtimeTools: {
+      requestPermissions: config.runtimeTools?.requestPermissions ??
+        readBooleanEnv(process.env.LING_STACK_RUNTIME_REQUEST_PERMISSIONS, false),
+      unifiedExec: config.runtimeTools?.unifiedExec ??
+        readBooleanEnv(process.env.LING_STACK_RUNTIME_UNIFIED_EXEC, false),
+      shellSnapshot: config.runtimeTools?.shellSnapshot ??
+        readBooleanEnv(process.env.LING_STACK_RUNTIME_SHELL_SNAPSHOT, false),
+    },
     transports: {
       providerWebSocketFallback: config.transports?.providerWebSocketFallback ??
         readBooleanEnv(process.env.LING_STACK_PROVIDER_WS_FALLBACK, true),

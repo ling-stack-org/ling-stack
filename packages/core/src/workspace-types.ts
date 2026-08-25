@@ -5,7 +5,7 @@ import type { RunnerFallbackReason, RunnerRequestSource } from "./runtime-superv
 import type { AuthorizationMode, PermissionPreset, SessionPermissionMode, WorkspaceAccessMode } from "./session-permissions.js";
 import type { SkillCandidateSourceRef } from "./skill-candidate-types.js";
 import type { AiTeammateRoleKey, SkillApprovalProfile } from "./skill-types.js";
-import type { WorkflowTerminationPolicy } from "./workflow-graph-types.js";
+import type { WorkflowGraph, WorkflowTerminationPolicy } from "./workflow-graph-types.js";
 import {
   channelIntentDecisionV2Actions,
   channelIntentDecisionV2CreatedByValues,
@@ -15,8 +15,12 @@ import {
   type ChannelIntentDecisionV2Action,
   type ChannelIntentDecisionV2CreatedBy,
   type ChannelIntentDecisionV2Status,
-  type ChannelIntentExecutionV2,
+  type ChannelIntentExecutionPlanV1,
   type ConversationContextProjectionMetadata,
+  type RequiredParticipantManifestV1,
+  type WorkflowParticipantAuthorityV1,
+  type WorkflowParticipantProviderBindingV1,
+  type WorkflowParticipantProviderBlockerV1,
 } from "@ling-stack/contracts";
 
 export const DEFAULT_WORKSPACE_ID = "workspace_default";
@@ -693,6 +697,7 @@ export interface ListAiTeammatesOptions {
   readonly includeDisabled?: boolean;
   readonly providerPresetId?: string;
   readonly limit?: number;
+  readonly offset?: number;
 }
 
 export type AiCouncilStatus = "active" | "paused" | "archived";
@@ -1410,12 +1415,13 @@ export interface CreateChannelIntentDecisionInput {
   readonly contextProjection: ConversationContextProjectionMetadata;
   readonly action: ChannelIntentDecisionAction;
   readonly selectedTeammateIds?: readonly string[];
+  readonly participantManifest?: RequiredParticipantManifestV1;
   readonly proposalId?: string;
   readonly resultItemIds?: readonly string[];
   readonly workflowId?: string;
   readonly reason: string;
   readonly clarification?: ChannelIntentClarificationV2;
-  readonly execution?: ChannelIntentExecutionV2;
+  readonly execution?: ChannelIntentExecutionPlanV1;
   readonly status: ChannelIntentDecisionStatus;
   readonly createdBy: ChannelIntentDecisionCreatedBy;
   readonly errorCode?: string;
@@ -1490,6 +1496,7 @@ export interface ChannelExecutionProposal {
   readonly linkedRunId?: string;
   readonly linkedWorkflowId?: string;
   readonly errorMessage?: string;
+  readonly blocker?: WorkflowParticipantProviderBlockerV1;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -1512,6 +1519,7 @@ export interface CreateChannelExecutionProposalInput {
   readonly linkedRunId?: string;
   readonly linkedWorkflowId?: string;
   readonly errorMessage?: string;
+  readonly blocker?: WorkflowParticipantProviderBlockerV1;
 }
 
 export interface UpdateChannelExecutionProposalInput {
@@ -1529,6 +1537,7 @@ export interface UpdateChannelExecutionProposalInput {
   readonly linkedRunId?: string | null;
   readonly linkedWorkflowId?: string | null;
   readonly errorMessage?: string | null;
+  readonly blocker?: WorkflowParticipantProviderBlockerV1 | null;
 }
 
 export interface ListChannelExecutionProposalsOptions {
@@ -2289,6 +2298,8 @@ export interface ChannelWorkflowStepOutputPacket {
 }
 
 export interface ChannelWorkflowStepMetadata {
+  readonly participantAuthority?: WorkflowParticipantAuthorityV1;
+  readonly providerBinding?: WorkflowParticipantProviderBindingV1;
   readonly workflowTemplateId?: string;
   readonly templateVersion?: string;
   readonly templateStepId?: string;
@@ -2306,6 +2317,12 @@ export interface ChannelWorkflowStepMetadata {
   readonly effectiveRunnerId?: string;
   readonly providerPresetId?: string;
   readonly requiredTools?: readonly RunTool[];
+  readonly executionPlan?: ChannelIntentExecutionPlanV1;
+  readonly executionOperationIds?: readonly string[];
+  readonly executionVerification?: WorkflowStepExecutionVerificationV1;
+  readonly delegatedRequirement?: DelegatedStepRequirementV1;
+  readonly delegatedOutcome?: DelegatedOutcomeV1;
+  readonly delegatedOutcomeBasisFingerprint?: string;
   readonly autoStart?: boolean;
   readonly approvalGate?: SkillApprovalProfile;
   readonly preStepApprovalId?: string;
@@ -2332,11 +2349,37 @@ export interface ChannelWorkflowMetadata {
   readonly workflowGraphId?: string;
   readonly workflowGraphSchemaVersion?: number;
   readonly workflowGraphArtifactId?: string;
+  readonly workflowGraph?: WorkflowGraph;
+  readonly workflowGraphFingerprint?: string;
   readonly termination?: WorkflowTerminationPolicy;
   readonly maxParallelSteps?: number;
   readonly sourceProposalId?: string;
   readonly sourceMessageId?: string;
+  readonly sourceTurnId?: string;
+  readonly sourceIntentDecisionId?: string;
+  readonly requiredParticipantManifest?: RequiredParticipantManifestV1;
+  readonly completionGate?: WorkflowCompletionGateV1;
   readonly responseLanguage?: ResponseLanguage;
+}
+
+export type DelegatedOutcomeV1 = import("@ling-stack/contracts").DelegatedOutcomeV1;
+export type DelegatedStepRequirementV1 = import("@ling-stack/contracts").DelegatedStepRequirementV1;
+export type WorkflowCompletionGateV1 = import("@ling-stack/contracts").WorkflowCompletionGateV1;
+
+export type WorkflowStepExecutionVerificationStatusV1 = "pending" | "verified" | "blocked" | "failed";
+export type WorkflowOperationVerificationStatusV1 = "succeeded" | "missing" | "failed" | "out_of_order";
+
+export interface WorkflowOperationVerificationResultV1 {
+  readonly operationId: string;
+  readonly status: WorkflowOperationVerificationStatusV1;
+  readonly evidenceActionIds: readonly string[];
+  readonly reasonCode?: string;
+}
+
+export interface WorkflowStepExecutionVerificationV1 {
+  readonly status: WorkflowStepExecutionVerificationStatusV1;
+  readonly checkedAt: string;
+  readonly operationResults: readonly WorkflowOperationVerificationResultV1[];
 }
 
 export interface ChannelWorkflow {
@@ -2390,6 +2433,7 @@ export interface ChannelWorkflowStep {
   readonly prompt: string;
   readonly toParticipantId: string;
   readonly toParticipantLabel: string;
+  readonly participantAuthority: WorkflowParticipantAuthorityV1;
   readonly status: ChannelWorkflowStepStatus;
   readonly blocker?: string;
   readonly resultSummary?: string;
@@ -2407,6 +2451,7 @@ export interface CreateChannelWorkflowStepInput {
   readonly prompt: string;
   readonly toParticipantId: string;
   readonly toParticipantLabel: string;
+  readonly participantAuthority?: WorkflowParticipantAuthorityV1;
   readonly status?: ChannelWorkflowStepStatus;
   readonly metadata?: ChannelWorkflowStepMetadata;
 }
@@ -2419,8 +2464,6 @@ export interface UpdateChannelWorkflowStepInput {
   readonly position?: number;
   readonly title?: string;
   readonly prompt?: string;
-  readonly toParticipantId?: string;
-  readonly toParticipantLabel?: string;
   readonly status?: ChannelWorkflowStepStatus;
   readonly blocker?: string | null;
   readonly resultSummary?: string | null;

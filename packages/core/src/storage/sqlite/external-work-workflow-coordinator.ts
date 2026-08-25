@@ -12,6 +12,7 @@ import {
   type CreateChannelWorkflowInput,
   type CreateChannelWorkflowStepInput,
 } from "../../workspace-types.js";
+import { createWorkflowParticipantAuthorityV1 } from "@ling-stack/contracts";
 
 export interface SqliteExternalWorkWorkflowCoordinatorPorts {
   readonly assertChannelExists: (channelId: string) => void;
@@ -73,6 +74,12 @@ export class SqliteExternalWorkWorkflowCoordinator {
         prompt: input.renderedPrompt,
         toParticipantId: participantId,
         toParticipantLabel: participantLabel,
+        participantAuthority: createWorkflowParticipantAuthorityV1({
+          kind: "workflow_definition",
+          origin: "external_work",
+          participantId,
+          sourceId: input.externalWorkItem.id,
+        }),
       },
       now,
     );

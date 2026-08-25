@@ -1,4 +1,12 @@
-import type { SQLOutputValue } from "node:sqlite";
+import type { DatabaseSync, SQLOutputValue } from "node:sqlite";
+
+export function rollbackOwnedSqliteTransaction(database: Pick<DatabaseSync, "exec">): void {
+  try {
+    database.exec("ROLLBACK;");
+  } catch {
+    // Preserve the original failure when SQLite has already closed the owned transaction.
+  }
+}
 
 export function stringifyJson(value: unknown): string {
   return JSON.stringify(value);

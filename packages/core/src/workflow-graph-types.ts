@@ -1,5 +1,6 @@
 import type { RunTool } from "./approval-policy.js";
 import type { ChannelExecutionProposalStepSource, WorkflowStepGate, WorkflowStepPolicy } from "./workspace-types.js";
+import type { WorkflowParticipantProviderBindingV1 } from "@ling-stack/contracts";
 
 export type WorkflowGraphNodeKind = "step" | "join";
 
@@ -40,6 +41,7 @@ export interface WorkflowGraphNode {
   readonly councilSlotKey?: string;
   readonly skillId?: string;
   readonly providerPresetId?: string;
+  readonly providerBinding?: WorkflowParticipantProviderBindingV1;
   readonly requestedRunnerId?: string;
   readonly branchGroupId?: string;
   readonly joinGroupId?: string;

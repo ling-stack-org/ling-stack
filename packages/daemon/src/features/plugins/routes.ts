@@ -66,8 +66,9 @@ import {
 import { buildManagedPluginRuntimePreview } from "./runtime-injection.js";
 import { createTrustedLocalMcpPlugin } from "./create-local-plugin.js";
 import type { LockedComputerControlRegistry } from "../computer-use/locked-control-registry.js";
-import { CHROME_BROWSER_PLUGIN_ID } from "@ling-stack/contracts";
+import { CHROME_BROWSER_PLUGIN_ID, OFFICE_DOCUMENTS_PLUGIN_ID } from "@ling-stack/contracts";
 import type { ChromeBrowserPluginService } from "./chrome-browser.js";
+import type { OfficeDocumentsPluginService } from "./office-documents.js";
 
 export type ManagedPluginRoute =
   | {
@@ -196,6 +197,7 @@ export async function handlePluginItem(
   bundledCuaDriverActivation: BundledCuaDriverActivationService,
   route: ManagedPluginRoute,
   chromeBrowserPlugin?: ChromeBrowserPluginService,
+  officeDocumentsPlugin?: OfficeDocumentsPluginService,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -220,6 +222,37 @@ export async function handlePluginItem(
       }
     }
     const store = storeRegistry.getStore(cwd);
+    if (route.pluginId === OFFICE_DOCUMENTS_PLUGIN_ID) {
+      if (!officeDocumentsPlugin) {
+        throw new HttpError(503, "office_documents_unavailable", "Office Documents plugin service is unavailable.");
+      }
+      if (request.method === "POST" && route.action === "enable") {
+        const health = officeDocumentsPlugin.enable(cwd);
+        writeJson(response, 200, {
+          plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: route.pluginId, includeEvents: true, cuaDriverRuntimeAuthority: mcpBroker.cuaDriverRuntimeAuthority, cuaDriverFeatureFlags: config.cuaDriver }),
+          health,
+        });
+        return;
+      }
+      if (request.method === "POST" && route.action === "disable") {
+        const body = await readJsonBody(request, config.maxBodyBytes);
+        const input = parseManagedPluginDisableRequest(body);
+        const health = officeDocumentsPlugin.disable(cwd, input.reason);
+        writeJson(response, 200, {
+          plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: route.pluginId, includeEvents: true, cuaDriverRuntimeAuthority: mcpBroker.cuaDriverRuntimeAuthority, cuaDriverFeatureFlags: config.cuaDriver }),
+          health,
+        });
+        return;
+      }
+      if (request.method === "POST" && route.action === "check") {
+        const health = officeDocumentsPlugin.sync(cwd);
+        writeJson(response, health.status === "failed" ? 400 : 200, {
+          plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: route.pluginId, includeEvents: true, cuaDriverRuntimeAuthority: mcpBroker.cuaDriverRuntimeAuthority, cuaDriverFeatureFlags: config.cuaDriver }),
+          health,
+        });
+        return;
+      }
+    }
     if (route.pluginId === CHROME_BROWSER_PLUGIN_ID) {
       if (!chromeBrowserPlugin) {
         throw new HttpError(503, "chrome_browser_unavailable", "Chrome browser plugin service is unavailable.");

@@ -375,7 +375,7 @@ export async function executeExternalWorkAction(input: {
     }
     return { action: failed, ...(approval ? { approval } : {}), artifacts: artifactsForAction(input.store, failed) };
   } finally {
-    input.store.releaseResourceLeasesForOwner(subjectLease.ownerType, subjectLease.ownerId, new Date().toISOString());
+    input.store.releaseResourceLeasesForOwner("system", subjectLease.ownerId, new Date().toISOString());
   }
 }
 

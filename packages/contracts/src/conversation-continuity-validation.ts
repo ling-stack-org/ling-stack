@@ -2,6 +2,11 @@ import {
   channelIntentDecisionV2Actions,
   channelIntentDecisionV2CreatedByValues,
   channelIntentDecisionV2Statuses,
+  commandMatchExecutableValuesV1,
+  requiredParticipantExpectedOutcomesV1,
+  requiredParticipantRequestedByValuesV1,
+  requiredParticipantRequirementsV1,
+  requiredParticipantManifestFingerprintV1,
   conversationAssistantDeliveryStatusesV1,
   contextSegmentStates,
   conversationContextSummaryScopes,
@@ -20,6 +25,9 @@ import {
   turnContextDecisionSources,
   type ChannelIntentDecisionV2,
   type ChannelIntentDecisionV2Action,
+  type ChannelIntentExecutionPlanV1,
+  type CommandMatchPolicyV1,
+  type RequiredParticipantManifestV1,
   type ContextSegment,
   type ContextSegmentProposal,
   type ConversationContextProjectionMetadata,
@@ -180,6 +188,7 @@ const INTENT_KEYS = new Set([
   "contextProjectionVersion",
   "action",
   "selectedTeammateIds",
+  "participantManifest",
   "proposalId",
   "resultItemIds",
   "workflowId",
@@ -417,6 +426,7 @@ export function isChannelIntentDecisionV2(value: unknown): value is ChannelInten
     || !isText(value.contextProjectionVersion)
     || !includes(channelIntentDecisionV2Actions, value.action)
     || !isUniqueTextArray(value.selectedTeammateIds)
+    || !isRequiredParticipantManifestV1(value.participantManifest)
     || !isOptionalText(value.proposalId)
     || !isUniqueTextArray(value.resultItemIds)
     || !isOptionalText(value.workflowId)
@@ -429,13 +439,55 @@ export function isChannelIntentDecisionV2(value: unknown): value is ChannelInten
     || Date.parse(value.updatedAt) < Date.parse(value.createdAt)) {
     return false;
   }
+  const selectedParticipantIds = [...value.selectedTeammateIds].sort();
+  const manifestParticipantIds = value.participantManifest.participants
+    .map((participant) => participant.participantId)
+    .sort();
+  if (JSON.stringify(selectedParticipantIds) !== JSON.stringify(manifestParticipantIds)
+    || ((value.action === "execute" || value.action === "workflow_proposal")
+      && manifestParticipantIds.length === 0)) {
+    return false;
+  }
   if (value.action === "clarify") {
     return isClarification(value.clarification) && value.execution === undefined;
   }
   if (value.action === "execute") {
-    return value.clarification === undefined && isExecution(value.execution);
+    return value.clarification === undefined && isChannelIntentExecutionPlanV1(value.execution);
   }
   return value.clarification === undefined && value.execution === undefined;
+}
+
+export function isRequiredParticipantManifestV1(value: unknown): value is RequiredParticipantManifestV1 {
+  if (!isRecordWithOnlyKeys(value, new Set(["schemaVersion", "participants", "fingerprint"]))
+    || value.schemaVersion !== 1
+    || !Array.isArray(value.participants)
+    || !isText(value.fingerprint)) {
+    return false;
+  }
+  const participantIds = new Set<string>();
+  for (const participant of value.participants) {
+    if (!isRecordWithOnlyKeys(participant, new Set([
+      "participantId",
+      "role",
+      "requirement",
+      "expectedOutcome",
+      "requiredOperationIds",
+      "requestedBy",
+    ]))
+      || !isText(participant.participantId)
+      || participantIds.has(participant.participantId)
+      || !isText(participant.role)
+      || !includes(requiredParticipantRequirementsV1, participant.requirement)
+      || !includes(requiredParticipantExpectedOutcomesV1, participant.expectedOutcome)
+      || !isUniqueTextArray(participant.requiredOperationIds)
+      || !includes(requiredParticipantRequestedByValuesV1, participant.requestedBy)) {
+      return false;
+    }
+    participantIds.add(participant.participantId);
+  }
+  return value.fingerprint === requiredParticipantManifestFingerprintV1(
+    value.participants as RequiredParticipantManifestV1["participants"],
+  );
 }
 
 export function isConversationContinuityGoldenFixtureV1(
@@ -598,11 +650,93 @@ function isClarification(value: unknown): boolean {
     && isText(value.question, 8_192);
 }
 
-function isExecution(value: unknown): boolean {
-  return isRecordWithOnlyKeys(value, new Set(["kind", "targetKind", "targetRef"]))
-    && (value.kind === "file_create" || value.kind === "file_edit" || value.kind === "open_local_target" || value.kind === "run_command")
-    && (value.targetKind === "file" || value.targetKind === "directory" || value.targetKind === "command" || value.targetKind === "workspace")
-    && (value.targetRef === undefined || isConversationDomainRef(value.targetRef));
+export function isChannelIntentExecutionPlanV1(value: unknown): value is ChannelIntentExecutionPlanV1 {
+  if (!isRecordWithOnlyKeys(value, new Set(["operations"]))
+    || !Array.isArray(value.operations)
+    || value.operations.length === 0
+    || !value.operations.every(isExecutionOperation)) {
+    return false;
+  }
+  const operationIds = new Set(value.operations.map((operation) => operation.id));
+  if (operationIds.size !== value.operations.length
+    || value.operations.some((operation) => operation.dependsOn.some((dependencyId) => !operationIds.has(dependencyId)))) {
+    return false;
+  }
+  return !executionPlanHasCycle(value.operations);
+}
+
+function isExecutionOperation(value: unknown): value is {
+  readonly id: string;
+  readonly kind: "file_create" | "file_edit" | "open_local_target" | "run_command";
+  readonly targetKind: "file" | "directory" | "command" | "workspace";
+  readonly targetRef: ConversationDomainRef;
+  readonly commandMatchPolicy?: CommandMatchPolicyV1;
+  readonly required: boolean;
+  readonly dependsOn: readonly string[];
+} {
+  if (!isRecordWithOnlyKeys(value, new Set([
+    "id",
+    "kind",
+    "targetKind",
+    "targetRef",
+    "commandMatchPolicy",
+    "required",
+    "dependsOn",
+  ]))) {
+    return false;
+  }
+  if (!isText(value.id)
+    || (value.kind !== "file_create" && value.kind !== "file_edit" && value.kind !== "open_local_target" && value.kind !== "run_command")
+    || (value.targetKind !== "file" && value.targetKind !== "directory" && value.targetKind !== "command" && value.targetKind !== "workspace")
+    || !isConversationDomainRef(value.targetRef)
+    || typeof value.required !== "boolean"
+    || !isUniqueTextArray(value.dependsOn)
+    || value.dependsOn.includes(value.id)) {
+    return false;
+  }
+  if (value.kind === "file_create" || value.kind === "file_edit" || value.kind === "open_local_target") {
+    return value.targetKind === "file" && value.commandMatchPolicy === undefined;
+  }
+  return value.targetKind === "command"
+    ? isCommandMatchPolicyV1(value.commandMatchPolicy)
+    : value.targetKind === "workspace" && value.commandMatchPolicy === undefined;
+}
+
+function isCommandMatchPolicyV1(value: unknown): value is CommandMatchPolicyV1 {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  if (record.kind === "exact_command") {
+    return isRecordWithOnlyKeys(value, new Set(["kind", "command"]))
+      && isText(record.command)
+      && record.command.length <= 512
+      && !/[\r\n]/u.test(record.command);
+  }
+  return record.kind === "executable"
+    && isRecordWithOnlyKeys(value, new Set(["kind", "executable"]))
+    && typeof record.executable === "string"
+    && commandMatchExecutableValuesV1.includes(record.executable as typeof commandMatchExecutableValuesV1[number]);
+}
+
+function executionPlanHasCycle(
+  operations: readonly { readonly id: string; readonly dependsOn: readonly string[] }[],
+): boolean {
+  const dependencies = new Map(operations.map((operation) => [operation.id, operation.dependsOn]));
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const visit = (operationId: string): boolean => {
+    if (visiting.has(operationId)) return true;
+    if (visited.has(operationId)) return false;
+    visiting.add(operationId);
+    for (const dependencyId of dependencies.get(operationId) ?? []) {
+      if (visit(dependencyId)) return true;
+    }
+    visiting.delete(operationId);
+    visited.add(operationId);
+    return false;
+  };
+  return operations.some((operation) => visit(operation.id));
 }
 
 function isGoldenInitialSegments(value: unknown): boolean {

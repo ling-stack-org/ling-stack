@@ -107,7 +107,8 @@ test("tool load requests materialize catalog summary without changing execution 
 
     assert.equal(store.getApprovalPolicy().toolDecisions.write, "deny");
 
-    const events = store.listRuntimeEvents(fixture.workUnitId, { limit: 10 });
+    const events = store.listRuntimeEvents(fixture.workUnitId, { limit: 10 })
+      .filter((event) => event.type === "tool_namespace_materialized");
     assert.equal(events.length, 1);
     assert.equal(events[0].type, "tool_namespace_materialized");
     assert.equal(events[0].attemptId, fixture.attemptId);
@@ -170,7 +171,8 @@ test("runner tool hydration returns runner-only tool schemas and bounded runtime
     assert.equal(writeFile.enabled, false);
     assert.deepEqual(writeFile.disabledReasons.map((reason) => reason.code), ["server_disabled_tools_includes"]);
 
-    const events = store.listRuntimeEvents(fixture.workUnitId, { limit: 10 });
+    const events = store.listRuntimeEvents(fixture.workUnitId, { limit: 10 })
+      .filter((event) => event.type === "tool_namespace_materialized");
     assert.equal(events.length, 1);
     assert.equal(events[0].type, "tool_namespace_materialized");
     assert.equal(events[0].data.schemaReturnedToRunner, false);
@@ -218,7 +220,8 @@ test("runner tool hydration writes bounded rejection evidence without schemas", 
     assert.deepEqual(response.hydration.descriptorSchemaHashes, []);
     assert.equal(response.hydration.budgetDecision, "over_budget");
 
-    const events = store.listRuntimeEvents(fixture.workUnitId, { limit: 10 });
+    const events = store.listRuntimeEvents(fixture.workUnitId, { limit: 10 })
+      .filter((event) => event.type === "tool_hydration_rejected");
     assert.equal(events.length, 1);
     assert.equal(events[0].type, "tool_hydration_rejected");
     assert.equal(events[0].data.rejectionCode, "tool_materialization_over_budget");
@@ -268,7 +271,8 @@ test("tool load requests reject over-budget namespace materialization before run
     assert.equal(response.body.budget.maxMaterializedToolCount, 64);
     assert.equal(response.body.budget.mode, "model_known");
     assert.equal(response.body.budget.overBudgetByTokens, 0);
-    assert.equal(store.listRuntimeEvents(fixture.workUnitId, { limit: 10 }).length, 0);
+    assert.equal(store.listRuntimeEvents(fixture.workUnitId, { limit: 10 }).filter((event) =>
+      event.type === "tool_namespace_materialized" || event.type === "tool_hydration_rejected").length, 0);
     const errorJson = JSON.stringify(response.body);
     assert.doesNotMatch(errorJson, /inputSchema|over-budget-secret|load-too-many-tools|schema-secret-marker/);
   } finally {

@@ -2,8 +2,12 @@
 
 ## Status
 
-Draft design for a durable runtime supervisor shared by Web, desktop, CLI, and future
-clients.
+Active design for a durable runtime supervisor shared by Web, desktop, CLI, and future
+clients. Core runtime supervision, discriminated initial approval-wait suspension, and
+resumed-attempt atomic settlement are implemented and full Core/Daemon regression green;
+the complete repository deterministic matrix is green, and a fresh packaged macOS
+artifact passes integrity/startup/provider preflight. Real restart/reconnect lineage
+acceptance remains active work.
 
 This document extends:
 
@@ -225,6 +229,7 @@ provider, runner, shell hook, or media adapter.
 ```ts
 type WorkUnitKind =
   | "task_run"
+  | "channel_turn_dispatch"
   | "channel_ai_reply"
   | "teammate_direct_reply"
   | "external_work_step"
@@ -348,6 +353,27 @@ Terminal states:
 - `succeeded`
 - `failed`
 - `cancelled`
+
+These are runtime/process states, not delegated-workflow completion states. In
+particular, `runner_succeeded` proves only that the current attempt ended without a
+runtime failure. For a manifest-backed workflow step it wakes the Channel semantic
+reconciler, which must still validate the immutable delegated requirement, tool/action or
+output-packet evidence, approvals, dependencies, participant manifest, and fan-in policy.
+Only that reconciler may move the step or workflow to semantic success. A runner that
+ends successfully with only ordinary assistant text therefore leaves the runtime attempt
+`succeeded` while the delegated step becomes `blocked(delegated_outcome_missing)`.
+
+```text
+Runtime Supervisor                  Channel semantic reconciliation
+------------------                  -------------------------------
+attempt/lease/heartbeat             participant requirement
+runner terminal status     ----->   action or output-packet evidence
+lost/stale/cancel policy            graph, dependencies, fan-in
+                                    workflow Completion Evaluation
+```
+
+This distinction is intentional: process diagnostics remain truthful without allowing a
+healthy process exit to impersonate completed user work.
 
 `stale` is non-terminal but blocked. It means Ling Stack cannot prove the runner still has
 or no longer has execution authority. A stale work unit requires supervisor
@@ -840,6 +866,14 @@ Requirements:
 - Reconnect never creates a second runner.
 - Missing events are replayed from storage.
 - If replay is too old or compacted, the client reloads the work unit snapshot.
+- Initial replay is bounded and gap-aware. The server registers live delivery first,
+  captures a replay upper bound and retention floor, and queries the selected workspace/
+  domains through that bound with one extra row. Numeric sequence gaps from other
+  workspaces or filtered domains are legal. Ahead cursors, retained-history gaps, and
+  overflow close the provisional subscription and return typed
+  `control_plane_snapshot_required`; complete ranges return an explicit replay-ready
+  window. The client performs a buffered snapshot handoff and never stream-truncates an
+  unknown gap or advances its applied cursor before canonical refresh succeeds.
 - UI local state is a cache only.
 
 Suggested event families:
@@ -897,6 +931,53 @@ diagnostic.stuck_detected
 - Can render the shared transcript as plain text or TUI cells, but does not own the
   transcript projector.
 
+## Shutdown Intent And Recoverable Suspension
+
+Daemon shutdown and user cancellation are different control-plane operations. An
+explicit cancel endpoint may terminalize a Run and cancel its pending approvals. A
+daemon lifecycle stop may only stop process-owned attempts. It must not call the same
+`cancelAll()` path and then infer that the user cancelled every active task.
+
+The active registry therefore exposes typed operations:
+
+```text
+cancel(runId, actor, reason)
+  -> durable business cancellation first
+  -> abort the current process attempt
+
+suspendAll(runtimeInstanceId, shutdownCause)
+  -> close new claims
+  -> classify recoverable Run/approval/checkpoint lineage
+  -> abort process attempts with runtime_suspend reason
+  -> completion path atomically preserves logical state, marks Attempt lost,
+     releases leases/slots, and appends invalidations before shutdown completes
+
+fail(runId, timeoutOrCrashCode)
+  -> durable typed failure
+  -> abort the current process attempt
+```
+
+`AbortSignal` remains the runner transport, but its reason is not the state-machine
+decision. The Run orchestrator reloads canonical Run/work-unit state plus the typed stop
+intent before committing a terminal effect. A user-cancelled Run stays cancelled; a hard
+timeout fails; a runtime suspension leaves a recoverable checkpoint pending.
+
+Graceful daemon shutdown is ordered:
+
+1. stop accepting new HTTP/RPC work and close dispatcher claims;
+2. let callbacks that already crossed a durable terminal/handoff boundary finish;
+3. for approval-backed attempts, commit one discriminated suspension transaction; for
+   other attempts, use the runtime-recovery owner rather than coordinator-local writes;
+4. retain pending `ApprovalRequest` and `LingApprovalCheckpoint` rows;
+5. release attempt-owned leases and semaphore slots;
+6. close streams and SQLite only after the durable suspension fence is visible.
+
+A waiting approval is the first supported resumable boundary. The same logical
+`RunSession`, workflow step, required-participant manifest, and evidence remain. Startup
+may attach a new `WorkUnitAttempt` only after validating the checkpoint basis and current
+`activeAttemptId`. Generic mid-tool recovery stays conservative: without a durable
+checkpoint it fails or blocks visibly and never becomes cancellation.
+
 ## Startup Recovery
 
 On daemon startup:
@@ -912,19 +993,225 @@ On daemon startup:
 9. Expire old approvals.
 10. Emit a startup reconcile report.
 
+Startup then crosses three explicit recovery barriers. They are ordered and idempotent;
+no phase may duplicate the next phase's authority:
+
+```text
+Phase A: runtime repair
+  leases + attempts + WorkUnits + lost/stale Runs
+              |
+              v
+Phase B: Channel semantic repair
+  current linked Runs -> delegated outcomes -> steps -> Completion Evaluation
+              |
+              v
+Phase C: publication repair
+  TerminalReport -> final Item + source Turn event + durable invalidation
+              |
+              v
+clients reconnect and reproject canonical state
+```
+
+Phase A may requeue safe preprocessing or repair low-level state-machine rows. It must
+not infer manifest-backed step/workflow success. Phase B always reloads the source intent
+decision, immutable participant manifest/graph, current step-Run links, approvals, and
+evidence; callbacks and cached gate snapshots are hints only. Phase C revalidates the
+same Completion Evaluation read-set inside its atomic publication transaction. Client
+reconnect happens after these durable barriers and never causes any of them to run again.
+
 Default recovery policy:
 
 | Durable state | Recovery action |
 | --- | --- |
 | `queued` work unit | Keep queued. |
+| queued/claimed `channel_turn_dispatch` | Claim or requeue, then resume from committed context/intent/reply/workflow refs. |
 | `claimed` with no active attempt | Return to queued or mark failed after claim timeout. |
-| `running` from previous runtime | Mark `stale` with `runner_lost`. |
-| `waiting_for_approval` | Keep waiting until approval expiry. |
+| `running` from previous runtime without a safe checkpoint | Mark attempt `lost`; fail/block with `runtime_interrupted_no_checkpoint`, never cancel. |
+| `waiting_for_approval` with pending or approved-but-unclaimed checkpoint | Commit `approval_wait` suspension: preserve Run/work unit/checkpoint, mark old Attempt `lost`, release Run leases/Attempt slots, append invalidations, and register resume; create a new Attempt only after the decision is durable. |
+| `running` with `resume_pending` checkpoint | Classify the bound replacement Attempt from canonical tool events; retry only before `tool_start`, finalize existing `tool_end`, otherwise block effect-unknown. |
+| `waiting_for_approval` without a valid checkpoint | Preserve audit rows and block with `approval_resume_checkpoint_missing`; do not cancel or guess. |
 | `cancelling` from previous runtime | Mark `stale` or `cancelled` if runner is known gone. |
 | Active lease from previous runtime | Mark `stale_released` after owner work unit is stale. |
 | Active semaphore from previous runtime | Mark `stale_released`. |
 
 No client connection state participates in recovery.
+
+Approval resume adds a phase between low-level repair and Channel semantic repair:
+
+```text
+Phase A: runtime repair
+  old attempt lost + leases released
+              |
+              v
+Phase A2: approval resume registration
+  validate checkpoint + preserve decision + fence old attempt
+              |
+              v
+new attempt under same Run, or typed resume blocker
+              |
+              v
+Phase B: delegated outcome + workflow Completion Evaluation
+```
+
+The resume coordinator may use a verified runner-native handle. Otherwise it uses Ling
+continuation context and a one-time exact approval grant. Because the current Pi adapter
+uses `SessionManager.inMemory`, Pi is in the second category. A resume mismatch or
+unsupported action becomes a visible blocker; startup cannot downgrade it to
+`cancelled` or recreate the required participant from prose.
+
+### `resume_pending` crash recovery
+
+The resume claim and the local side effect cannot be one SQLite transaction. The protocol
+therefore makes every boundary explicit and recovers from canonical facts:
+
+```text
+approved checkpoint
+  -> CAS resume_pending + bind replacementAttemptId
+  -> create/activate replacement Attempt
+  -> acquire ordinary Run resource leases
+  -> acquire replacement-Attempt semaphore slots
+  -> append durable tool_start(attemptId, toolCallId, sideEffectFingerprint)
+  -> execute exact approved side effect
+  -> append durable tool_end(attemptId, toolCallId, result)
+  -> atomically terminalize Attempt/Run/checkpoint and release capacity
+  -> post-commit Channel semantic reconciliation
+```
+
+The claim/create/activate lines before capacity acquisition are one Core SQLite
+transaction. It revision-CASes the checkpoint, inserts the replacement Attempt,
+transitions/fences the Run and work unit, appends runtime audit, and appends the durable
+control-plane invalidation. A new writer cannot leave a committed `resume_pending` row
+without its bound Attempt or `activeAttemptId`. Startup support for that partial shape is
+repair for older development/abnormal state, not a normal protocol branch.
+
+Capacity acquisition is intentionally after claim and before `tool_start`. It reuses the
+ordinary concurrency path; approval does not grant a lease or bypass a semaphore. If the
+process dies in this interval, startup fences the claimed Attempt and releases its active
+capacity before another Attempt may retry. If capacity acquisition fails normally, the
+coordinator emits a typed pre-dispatch failure/suspension and no side effect starts.
+
+On startup, the resume coordinator scans `approved` and `resume_pending`. It validates the
+immutable resume basis first, then applies the following deterministic classification:
+
+| Evidence for bound replacement Attempt | Safe action |
+| --- | --- |
+| Attempt missing | create the bound Attempt once if Run/work unit still wait on the same checkpoint |
+| Attempt exists but has no `tool_start` | mark it lost, revision-CAS one newer bound Attempt, and continue |
+| matching `tool_end` exists | rebuild the action/result and finish canonical reconciliation without execution |
+| matching `tool_start` exists but no `tool_end` | mark resume failed with `approval_resume_effect_unknown`; do not retry |
+| Run/checkpoint already terminal | reconcile only; do not create an Attempt |
+
+The `tool_start` append is a write-ahead dispatch fence. Absence proves the coordinator
+did not call the executor. Presence without `tool_end` does not prove whether the child
+process completed before the daemon died. The local shell does not provide an idempotency
+lookup, so exactly-once execution is impossible in that interval; fail-closed behavior is
+required.
+
+A second `runtime_suspend` uses the same classification. The resumed executor reads the
+typed stop intent from the active-run registry or abort reason. It never maps a daemon
+stop to `approval_resume_interrupted` failure. Before dispatch it preserves
+`resume_pending`; after terminal evidence it lets startup finalize; in the unknown window
+it records the typed blocker. A real idle/hard timeout remains `runtime_failure` and
+terminalizes the Run as failed.
+
+Runner registry metadata owns resume capability:
+
+```ts
+interface RunnerResumeCapabilitiesV1 {
+  readonly nativeResume: boolean;
+  readonly hostApprovalContinuation: readonly ApprovalActionType[];
+}
+```
+
+The coordinator selects a strategy only from that metadata plus the checkpoint payload.
+Pi declares `nativeResume=false` and currently permits host continuation for `bash` only.
+No code path infers support from `runnerId`, a stored handle shape, or provider prose.
+Advertising `native_resume` is insufficient by itself: the adapter must expose the typed
+resume operation, return a verified handle bound to the same lineage/fingerprints, and
+pass runner-conformance coverage. Until then, any existing decorative external-runner
+capability string is non-authoritative and cannot activate resume.
+
+Each resume claim/start/suspend/finalize/block transition appends one deterministic
+control-plane invalidation inside the same SQLite transaction as its user-visible state
+change. The in-memory hub publishes after commit; event delivery does not participate in
+fencing. Reconnect replay or snapshot reloads Run/work-unit/approval state and may safely
+coalesce duplicate invalidations.
+
+The storage boundary is three focused compare-and-set transactions, not a generic
+"update resume state" helper:
+
+```text
+commitApprovalResumeClaim
+  checkpoint + old/new Attempts + Run + WorkUnit + runtime audit + invalidations
+
+commitApprovalResumeSuspension
+  approval_wait:
+    checkpoint(pending|approved) + Run/WorkUnit(waiting_for_approval)
+    + active Attempt(lost) + lease/slot release + audit + invalidations
+  resume_pre_dispatch:
+    checkpoint(resume_pending) + Run/WorkUnit(running)
+    + active Attempt(lost) + lease/slot release + audit + invalidations
+
+commitApprovalResumeTerminal
+  checkpoint(resumed|resume_failed) + Run + WorkUnit + Attempt + Task
+  + terminal runtime audit + lease/slot release + invalidations
+
+commitApprovalResumeTerminal(checkpoint_quarantine)
+  checkpoint(resume_failed) + diagnostic audit + approval invalidation
+  (only when Run/WorkUnit/Attempt lineage cannot be proven; no guessed terminal writes)
+```
+
+Each method validates checkpoint revision, Run/work-unit state, `activeAttemptId`, and
+Attempt ownership inside `BEGIN IMMEDIATE`. A stale result returns a typed conflict and
+has no post-commit event to publish. The daemon must not follow a failed transaction with
+best-effort writes that recreate part of the intended transition.
+
+Suspension validates the lifecycle as a discriminated shape. It rejects
+`pending + running`, `resume_pending + waiting_for_approval`, and every other arbitrary
+cross-product before writing. Normal graceful shutdown and resume coordination use this
+store boundary. Startup runtime repair may handle older abnormal rows, but the approval
+resume coordinator cannot independently call `updateWorkUnitAttemptStatus()` or release
+slots as a second writer.
+
+The checkpoint-quarantine input is a discriminated terminal variant, not a general
+escape hatch. It requires the expected checkpoint revision and a typed lineage-integrity
+reason, and it is forbidden from accepting Run/work-unit/Attempt target states. Valid
+lineage always uses the full terminal transaction.
+
+Channel semantics remain post-commit. A committed terminal Run wakes the existing
+delegated finalizer and Completion Gate. If that wake-up is lost, startup reconciliation
+performs the same work. This keeps the Core transaction bounded while ensuring that a
+process crash cannot repeat the local side effect or promote a required participant from
+Run status alone.
+
+### Channel turn dispatcher ownership
+
+`channel_turn_dispatch` is a daemon-internal WorkUnit executed by one
+`ChannelTurnDispatchWorkerRegistry`, not by the HTTP router. The registry is woken after a
+store opens and after an acceptance transaction commits. It keeps one coalesced drain
+loop per workspace, scans queued units oldest-first, and relies on the WorkUnit CAS claim
+as the cross-wake/cross-process ownership fence.
+
+The immutable request contains only source Turn/Item, Channel/Thread, explicit surface,
+requested provider/teammate, and typed reply-disposition metadata. Current stage is
+discovered from the canonical context assignment, intent/route decision, reply
+Item/WorkUnit/Run, and workflow records. Runtime events describe attempts; they are not a
+second checkpoint authority.
+
+Startup reconciliation runs before the drain:
+
+1. old active attempts are marked `lost` and their units `stale`;
+2. stale Channel dispatch units are returned to `queued` with their previous attempt
+   retained as audit evidence;
+3. the workspace drain is woken once and claims the oldest eligible unit;
+4. a durable child reply Run/workflow is reused; a terminal result is replayed; only a
+   missing non-side-effectful preprocessing result may be recomputed;
+5. visible reply and blocker identities are source-turn-derived, so recovery cannot
+   append a duplicate result.
+
+Graceful shutdown first closes the dispatcher to new claims and waits for active dispatch
+callbacks to reach a durable handoff/terminal boundary. SQLite is closed only after that
+wait. An abnormal process exit is handled by the lost/stale/queued path above.
 
 ## Failure Matrix
 
@@ -933,15 +1220,22 @@ No client connection state participates in recovery.
 | Browser refresh | Reconnect and replay events. Work continues. |
 | Desktop window close | Work continues if daemon is still running. |
 | Web and desktop both click run | Same idempotency key returns duplicate; different key obeys queue/conflict policy. |
-| Provider stream stalls | Heartbeat remains alive, idle timeout moves work to cancelling. |
+| Provider stream stalls | Heartbeat remains alive; idle timeout produces typed runtime failure rather than user cancellation. |
 | Runner ignores abort | Cancel grace timeout marks work stale and blocks resource reuse until reconcile. |
-| Daemon exits mid-run | Startup marks old attempt lost and work stale or failed. |
+| Daemon exits mid-run without a checkpoint | Startup marks the old attempt lost and work visibly stale/failed/blocked; it never records user cancellation. |
+| Daemon exits while approval checkpoint is pending | Preserve Run/approval/checkpoint, mark old attempt lost, and register same-Run resume before Channel reconciliation. |
+| Daemon exits after `resume_pending` claim but before replacement `tool_start` | Reuse/create one fenced replacement Attempt from the checkpoint CAS; do not duplicate execution. |
+| Daemon exits after replacement `tool_start` but before `tool_end` | Record `approval_resume_effect_unknown`, fail closed, and never rerun the local side effect. |
+| Daemon exits after replacement `tool_end` but before Run finalization | Finalize from durable action evidence; do not execute again. |
+| Old attempt completes after a replacement attempt starts | Fence by runtime/active-attempt identity; persist diagnostic only. |
+| Resumed side effect differs from checkpoint fingerprint | Require a new approval or block; never consume the old approval decision. |
 | Late runner success after cancel | Record stale event, do not move cancelled work to succeeded. |
 | Approval expires | Approval and owning work unit transition through state machine. |
 | Lease expires while owner active | Supervisor renews or marks suspect; new work cannot fail-open over live owner. |
 | External subject changes | Mark stale target before mutation. |
 | SQLite write fails | Stop runner if possible, mark work failed if storage can recover, report diagnostic. |
 | Client SSE disconnects | Stop streaming to that client only. Persist events. |
+| Client disconnects after a Channel turn is accepted | Continue the durable `channel_turn_dispatch`; reconnect reads its committed result. |
 
 ## Diagnostics UI
 
@@ -1053,6 +1347,11 @@ Storage tests:
 - Lease renewal and release reason.
 - Semaphore limit transaction.
 - Startup recovery for lost attempts.
+- Initial `approval_wait` suspension commits checkpoint/Run/work-unit preservation,
+  Attempt loss, Run-lease/Attempt-slot release, runtime audit, and invalidations atomically.
+- Every injected failure in initial-wait and resumed-pre-dispatch suspension rolls back the
+  complete old snapshot.
+- Illegal suspension lifecycle cross-products fail before the first write.
 
 Daemon tests:
 
@@ -1065,20 +1364,30 @@ Daemon tests:
 - Late success after cancel does not overwrite cancelled.
 - SSE reconnect replays stored events.
 - Runtime lock prevents second daemon owner.
+- Graceful shutdown at a pending approval does not cancel the Run or approval and does not
+  leave active leases/semaphore slots.
+- Replacement approval Attempt reacquires normal runtime capacity before `tool_start` and
+  releases it on second suspension, terminal result, and startup repair.
+- Startup registration contains no independent approval-coordinator Attempt/slot writer.
+- `tool_start` without `tool_end` blocks effect-unknown; durable `tool_end` finalizes
+  without executing the side effect again.
 
 Client tests:
 
 - Web and desktop-style clients see the same work unit state.
 - Client reconnect after runtime instance change reloads durable state.
 - UI renders stuck, queued, cancelling, and stale states without inventing local truth.
+- SSE/RPC reconnect after approval claim/suspension/terminal/quarantine reloads canonical
+  Run/work-unit/approval state before advancing the applied cursor and never resubmits work.
 
 ## Open Questions
 
 - Should `run_sessions` become a projection of `work_units`, or should task runs keep a
   separate table permanently?
 - What are the default timeout values for coding runs versus chat replies?
-- Should stale work require manual confirmation before retry when side-effect tools were
-  enabled?
+- Beyond the locked approval-resume rule, should other stale work with side-effect tools
+  support a future idempotent executor? Current behavior is resolved: the same durable
+  approved fingerprint may retry only before `tool_start`; effect-unknown never retries.
 - How much event history should be retained before compaction?
 - Should provider semaphore limits be configured per provider preset, provider type, or
   API key?

@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import type { RuntimeAttemptFenceV1 } from "@ling-stack/contracts";
+
+export type { RuntimeAttemptFenceV1 } from "@ling-stack/contracts";
 
 export type RuntimeInstanceStatus = "healthy" | "starting" | "stopping" | "recovering";
 
@@ -17,6 +20,7 @@ export interface RuntimeInstance {
 export type WorkUnitKind =
   | "task_run"
   | "conversation_run"
+  | "channel_turn_dispatch"
   | "channel_ai_reply"
   | "channel_terminal_report"
   | "teammate_direct_reply"
@@ -200,6 +204,8 @@ export interface WorkUnitAttempt {
   readonly id: string;
   readonly workUnitId: string;
   readonly attemptNumber: number;
+  /** Decimal monotonic fence generation, serialized as text at the JS boundary. */
+  readonly fencingToken: string;
   readonly runtimeInstanceId: string;
   readonly runnerId: string;
   readonly requestedRunnerId?: string;
@@ -217,10 +223,26 @@ export interface WorkUnitAttempt {
   readonly errorMessage?: string;
 }
 
+/**
+ * Projects a persisted WorkUnitAttempt into the complete CAS fence required by
+ * runtime-owned writes. Keeping this conversion in the core contract prevents
+ * callers from accidentally using the storage id as an attempt id or omitting
+ * the runtime instance/token pair during recovery.
+ */
+export function toRuntimeAttemptFence(attempt: WorkUnitAttempt): RuntimeAttemptFenceV1 {
+  return {
+    workUnitId: attempt.workUnitId,
+    attemptId: attempt.id,
+    runtimeInstanceId: attempt.runtimeInstanceId,
+    fencingToken: attempt.fencingToken,
+  };
+}
+
 export interface CreateWorkUnitAttemptInput {
   readonly id?: string;
   readonly workUnitId: string;
   readonly attemptNumber: number;
+  readonly fencingToken?: string;
   readonly runtimeInstanceId: string;
   readonly runnerId: string;
   readonly requestedRunnerId?: string;
@@ -235,6 +257,8 @@ export interface RuntimeEvent {
   readonly id: string;
   readonly workUnitId: string;
   readonly attemptId?: string;
+  readonly runtimeInstanceId?: string;
+  readonly fencingToken?: string;
   readonly seq: number;
   readonly ts: string;
   readonly type: RuntimeEventType;
@@ -242,10 +266,45 @@ export interface RuntimeEvent {
   readonly data: unknown;
 }
 
-export interface AppendRuntimeEventInput {
+interface RuntimeEventFields {
+  readonly type: RuntimeEventType;
+  readonly actor: RuntimeEvent["actor"];
+  readonly data: unknown;
+  readonly ts: string;
+}
+
+export type AppendRuntimeEventInput = RuntimeEventFields & (
+  | RuntimeAttemptFenceV1
+  | {
+      readonly workUnitId: string;
+      readonly attemptId?: never;
+      readonly runtimeInstanceId?: never;
+      readonly fencingToken?: never;
+    }
+);
+
+export type TerminalAttemptStatus = Extract<WorkUnitAttemptStatus, "succeeded" | "failed" | "cancelled" | "lost">;
+export type TerminalRuntimeEventType = Extract<
+  RuntimeEventType,
+  "work_unit_succeeded" | "work_unit_failed" | "work_unit_cancelled" | "work_unit_stale"
+>;
+
+export interface TerminalAuditCapabilityV1 extends RuntimeAttemptFenceV1 {
+  readonly attemptStatus: TerminalAttemptStatus;
+  readonly transitionedAt: string;
+}
+
+export interface AppendTerminalRuntimeAuditInput extends Omit<RuntimeEventFields, "ts"> {
+  readonly capability: TerminalAuditCapabilityV1;
+  readonly type: TerminalRuntimeEventType;
+}
+
+export interface AppendRuntimeDiagnosticEventInput {
   readonly workUnitId: string;
   readonly attemptId?: string;
-  readonly type: RuntimeEventType;
+  readonly runtimeInstanceId?: string;
+  readonly fencingToken?: string;
+  readonly type: Extract<RuntimeEventType, "stale_runner_completion_ignored" | "diagnostic_stuck_detected">;
   readonly actor: RuntimeEvent["actor"];
   readonly data: unknown;
   readonly ts: string;
@@ -261,15 +320,13 @@ export interface RuntimeHeartbeat {
   readonly workUnitId: string;
   readonly attemptId: string;
   readonly runtimeInstanceId: string;
+  readonly fencingToken: string;
   readonly ts: string;
   readonly source: "supervisor" | "runner" | "provider";
   readonly detail?: unknown;
 }
 
-export interface RecordRuntimeHeartbeatInput {
-  readonly workUnitId: string;
-  readonly attemptId: string;
-  readonly runtimeInstanceId: string;
+export interface RecordRuntimeHeartbeatInput extends RuntimeAttemptFenceV1 {
   readonly ts: string;
   readonly source: RuntimeHeartbeat["source"];
   readonly detail?: unknown;
@@ -284,6 +341,8 @@ export interface RuntimeSemaphoreSlot {
   readonly ownerId: string;
   readonly workUnitId: string;
   readonly attemptId: string;
+  readonly runtimeInstanceId: string;
+  readonly fencingToken: string;
   readonly status: RuntimeSemaphoreSlotStatus;
   readonly acquiredAt: string;
   readonly lastRenewedAt: string;
@@ -292,15 +351,13 @@ export interface RuntimeSemaphoreSlot {
   readonly releaseReason?: string;
 }
 
-export interface AcquireRuntimeSemaphoreSlotInput {
+export interface AcquireRuntimeSemaphoreSlotInput extends RuntimeAttemptFenceV1 {
   readonly workspaceId: string;
   readonly resourceType: RuntimeSemaphoreResourceType;
   readonly resourceKey: string;
   readonly limit: number;
   readonly ownerType: RuntimeSemaphoreSlot["ownerType"];
   readonly ownerId: string;
-  readonly workUnitId: string;
-  readonly attemptId: string;
   readonly acquiredAt: string;
   readonly expiresAt: string;
 }

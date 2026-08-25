@@ -29,11 +29,15 @@ import { readBundledCuaDriverSetupMetadata } from "./cua-driver-catalog-projecti
 import { listBundledPackageDescriptors } from "./source-index.js";
 import { buildManagedPluginRuntimePreview, toManagedPluginPackageView } from "./runtime-injection.js";
 import { isBundledEmbeddedCuaDriverRuntime } from "./cua-driver-runtime-mode.js";
-import { CHROME_BROWSER_PLUGIN_ID } from "@ling-stack/contracts";
+import { CHROME_BROWSER_PLUGIN_ID, OFFICE_DOCUMENTS_PLUGIN_ID } from "@ling-stack/contracts";
 import {
   buildChromeBrowserSetupView,
   createChromeBrowserDescriptor,
 } from "./chrome-browser.js";
+import {
+  buildOfficeDocumentsSetupView,
+  createOfficeDocumentsDescriptor,
+} from "./office-documents.js";
 
 const sourceOrder = new Map([
   ["built-in", 0],
@@ -172,7 +176,7 @@ function listProductManagedBuiltInPluginDescriptors(
   extensionRegistry: LingExtensionRegistry,
 ): readonly ManagedPluginDescriptor[] {
   void extensionRegistry;
-  return [createChromeBrowserDescriptor()];
+  return [createChromeBrowserDescriptor(), createOfficeDocumentsDescriptor()];
 }
 
 function shouldIncludePersistedManagedPluginRecord(record: ManagedPluginRecord): boolean {
@@ -263,6 +267,16 @@ function createManagedPluginView(input: {
           paired: false,
           connected: false,
         },
+      }))
+    : input.descriptor.id === OFFICE_DOCUMENTS_PLUGIN_ID
+      ? buildOfficeDocumentsSetupView(input.health ?? createPluginHealthSnapshot({
+        pluginId: OFFICE_DOCUMENTS_PLUGIN_ID,
+        now: input.now,
+        status: input.record?.enabled ? "ready" : "disabled",
+        message: input.record?.enabled
+          ? "Office file tools are ready. Live Excel control requires Ling Desktop."
+          : "Office Documents is disabled.",
+        details: { officeState: input.record?.enabled ? "desktop_required" : input.record ? "disabled" : "not_installed" },
       }))
     : input.descriptor.id === CUA_DRIVER_PLUGIN_ID
       ? buildCuaDriverSetupView({

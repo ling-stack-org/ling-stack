@@ -49,6 +49,7 @@ export interface GenerateConversationSummaryInput {
   readonly chunkCount: number;
   readonly chunkTokenBudget: number;
   readonly outputTokenBudget: number;
+  readonly signal?: AbortSignal;
 }
 
 export type GenerateConversationSummary = (
@@ -178,6 +179,7 @@ export async function executeConversationSummaryPlan(input: {
   readonly plan: ConversationSummaryPlan;
   readonly generate?: GenerateConversationSummary;
   readonly now?: string;
+  readonly signal?: AbortSignal;
 }): Promise<CoordinateConversationSummaryResult> {
   const { plan } = input;
   if (!input.generate) return { status: "generator_unavailable", plan };
@@ -185,6 +187,7 @@ export async function executeConversationSummaryPlan(input: {
   const chunks = chunkSummaryItems(plan.sourceItems, plan.chunkTokenBudget);
   try {
     for (let index = 0; index < chunks.length; index += 1) {
+      throwIfSummaryAborted(input.signal);
       const chunk = chunks[index]!;
       draft = normalizeDraft(await input.generate({
         current: draft,
@@ -199,8 +202,10 @@ export async function executeConversationSummaryPlan(input: {
         chunkCount: chunks.length,
         chunkTokenBudget: plan.chunkTokenBudget,
         outputTokenBudget: plan.summaryTokenBudget,
+        signal: input.signal,
       }), plan.summaryTokenBudget);
     }
+    throwIfSummaryAborted(input.signal);
   } catch (error) {
     return { status: "generation_failed", plan, error };
   }
@@ -223,6 +228,10 @@ export async function executeConversationSummaryPlan(input: {
     sourceFence: plan.sourceFence,
   }, input.now ?? new Date().toISOString());
   return { status: "completed", plan, commit };
+}
+
+function throwIfSummaryAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw signal.reason ?? new Error("Conversation summary generation aborted.");
 }
 
 function stableCompletedPrefix(store: RunStore, items: readonly ConversationItemV1[]): ConversationItemV1[] {

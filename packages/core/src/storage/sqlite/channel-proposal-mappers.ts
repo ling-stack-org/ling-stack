@@ -1,5 +1,8 @@
 import type { SQLOutputValue } from "node:sqlite";
 import {
+  isWorkflowParticipantProviderBlockerV1,
+} from "@ling-stack/contracts";
+import {
   type ChannelExecutionProposal,
   type ChannelExecutionProposalStepSource,
   type ChannelExecutionProposalStatus,
@@ -38,9 +41,19 @@ export function mapChannelExecutionProposal(row: Record<string, SQLOutputValue>)
     linkedRunId: readNullableString(row, "linked_run_id"),
     linkedWorkflowId: readNullableString(row, "linked_workflow_id"),
     errorMessage: readNullableString(row, "error_message"),
+    blocker: parseOptionalProposalBlocker(readNullableString(row, "blocker_json")),
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
   });
+}
+
+function parseOptionalProposalBlocker(value: string | undefined): ChannelExecutionProposal["blocker"] {
+  if (!value) return undefined;
+  const parsed = parseJson(value);
+  if (!isWorkflowParticipantProviderBlockerV1(parsed)) {
+    throw new Error("Invalid channel execution proposal blocker from SQLite");
+  }
+  return parsed;
 }
 
 function parseChannelExecutionProposalSteps(value: string): ChannelExecutionProposal["collaborationSteps"] {

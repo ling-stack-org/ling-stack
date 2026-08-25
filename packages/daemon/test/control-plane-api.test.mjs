@@ -210,8 +210,10 @@ test("control-plane events endpoint validates queries and lists filtered redacte
 
     const listed = await getJson(`${daemon.url}/control-plane/events?cwd=${encodeURIComponent(cwd)}&afterSeq=0&limit=10&domains=runs`);
     assert.equal(listed.cwd, cwd);
-    assert.equal(listed.afterSeq, 0);
-    assert.equal(listed.limit, 10);
+    assert.equal(listed.window.disposition, "complete");
+    assert.equal(listed.window.requestedAfterSeq, 0);
+    assert.equal(listed.window.upperBoundSeq, 2);
+    assert.equal(listed.window.nextAfterSeq, 2);
     assert.deepEqual(listed.events.map((event) => event.action), ["run.created"]);
     assertControlPlanePayloadRedacted(listed, ["Bearer secret-token-value"]);
 
@@ -402,10 +404,35 @@ test("control-plane SSE stream replays events and emits heartbeat without using 
     assert.equal(replay.event, "control_plane_event");
     assert.equal(replay.data.action, "provider.updated");
     assertControlPlanePayloadRedacted(replay.data, ["env:LOCAL_RELAY_API_KEY"]);
+    const ready = await reader.nextEvent();
+    assert.equal(ready.event, "control_plane_replay_ready");
+    assert.equal(ready.data.disposition, "complete");
+    assert.equal(ready.data.nextAfterSeq, 1);
     const heartbeat = await reader.nextEvent();
     assert.equal(heartbeat.event, "heartbeat");
     assert.equal(typeof heartbeat.data.latestEventSeq, "number");
     await reader.close();
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("control-plane REST and SSE return typed snapshot-required for an unavailable cursor", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-control-plane-snapshot-required-"));
+  const daemon = await startDaemonForTest();
+  try {
+    const listed = await getJson(`${daemon.url}/control-plane/events?cwd=${encodeURIComponent(cwd)}&afterSeq=7&limit=10&domains=providers`);
+    assert.equal(listed.window.disposition, "snapshot_required");
+    assert.equal(listed.window.reason, "cursor_unavailable");
+    assert.deepEqual(listed.events, []);
+
+    const response = await fetch(`${daemon.url}/control-plane/stream?cwd=${encodeURIComponent(cwd)}&afterSeq=7&domains=providers`);
+    assert.equal(response.status, 200);
+    const [required] = parseSseText(await response.text());
+    assert.ok(required);
+    assert.equal(required.event, "control_plane_snapshot_required");
+    assert.equal(required.data.reason, "cursor_unavailable");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -632,18 +659,20 @@ test("local WebSocket RPC returns control-plane data and subscriptions", async (
 
     rpc.send(3, "controlPlane.events", { afterSeq: 0, limit: 10, domains: ["providers"] });
     const events = await rpc.next((message) => message.id === 3);
+    assert.equal(events.result.window.disposition, "complete");
     assert.deepEqual(events.result.events.map((event) => event.action), ["provider.updated"]);
     assertControlPlanePayloadRedacted(events.result, ["env:OPENAI_CODEX_API_KEY"]);
 
     rpc.send(4, "controlPlane.subscribe", { afterSeq: 0, domains: ["providers"] });
+    const subscribed = await rpc.next((message) => message.id === 4);
+    assert.equal(subscribed.result.disposition, "complete");
+    assert.match(subscribed.result.subscriptionId, /^cp_/);
     const replay = await rpc.next((message) =>
       message.method === "$/control_plane_event" &&
       message.params?.event?.entityId === "provider_replay"
     );
     assert.equal(replay.params.event.action, "provider.updated");
     assertControlPlanePayloadRedacted(replay, ["env:OPENAI_CODEX_API_KEY"]);
-    const subscribed = await rpc.next((message) => message.id === 4);
-    assert.match(subscribed.result.subscriptionId, /^cp_/);
 
     const created = (await postJson(`${daemon.url}/providers?cwd=${encodeURIComponent(cwd)}`, {
       kind: "openai",
@@ -669,6 +698,29 @@ test("local WebSocket RPC returns control-plane data and subscriptions", async (
     rpc.send(5, "controlPlane.unsubscribe", { subscriptionId: subscribed.result.subscriptionId });
     const unsubscribed = await rpc.next((message) => message.id === 5);
     assert.equal(unsubscribed.result.ok, true);
+  } finally {
+    await rpc.close();
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("local WebSocket RPC returns snapshot-required without retaining a subscription", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-rpc-snapshot-required-"));
+  const daemon = await startDaemonForTest();
+  const rpc = await openRpcClient(daemon.url, cwd);
+  try {
+    rpc.send(1, "initialize", {});
+    await rpc.next((message) => message.id === 1);
+    rpc.send(2, "controlPlane.subscribe", { afterSeq: 9, domains: ["providers"] });
+    const result = await rpc.next((message) => message.id === 2);
+    assert.equal(result.result.disposition, "snapshot_required");
+    assert.equal(result.result.window.reason, "cursor_unavailable");
+    assert.equal(result.result.subscriptionId, undefined);
+    await assert.rejects(
+      rpc.next((message) => message.method === "$/control_plane_event"),
+      /Timed out waiting for RPC message/u,
+    );
   } finally {
     await rpc.close();
     await daemon.close();

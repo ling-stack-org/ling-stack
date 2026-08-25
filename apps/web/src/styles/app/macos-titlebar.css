@@ -1,6 +1,7 @@
 .app-shell.desktop-macos {
   --desktop-window-titlebar-height: 28px;
   --desktop-window-traffic-light-width: 76px;
+  --desktop-window-sidebar-control-clearance: 42px;
   --desktop-window-chrome-layer: 2;
   position: relative;
   height: 100vh;
@@ -42,7 +43,11 @@
 
 .app-shell.desktop-macos .desktop-window-chrome-region[data-desktop-window-drag-owner="sidebar"] {
   left: var(--desktop-window-traffic-light-width);
-  width: calc(var(--sidebar-expanded-width) - var(--desktop-window-traffic-light-width));
+  width: calc(
+    var(--sidebar-expanded-width)
+    - var(--desktop-window-traffic-light-width)
+    - var(--desktop-window-sidebar-control-clearance)
+  );
 }
 
 .app-shell.desktop-macos .desktop-window-chrome-region[data-desktop-window-drag-owner="content-fallback"] {
@@ -69,6 +74,36 @@
 
 .app-shell.desktop-macos .sidebar-fixed-top {
   margin-top: var(--desktop-window-titlebar-height);
+}
+
+.app-shell.desktop-macos:not(.channel-sidebar-collapsed) .sidebar-fixed-top {
+  position: relative;
+}
+
+.app-shell.desktop-macos:not(.channel-sidebar-collapsed) .sidebar-brand-row.has-sidebar-switch {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.app-shell.desktop-macos:not(.channel-sidebar-collapsed) .channel-sidebar-switch {
+  -webkit-app-region: no-drag;
+  position: absolute;
+  z-index: calc(var(--desktop-window-chrome-layer) + 2);
+  top: calc(-1 * var(--desktop-window-titlebar-height) - 6px);
+  right: 0;
+}
+
+.app-shell.desktop-macos.channel-sidebar-collapsed .sidebar-brand-row.has-sidebar-switch {
+  grid-template-rows: repeat(2, 36px);
+}
+
+.app-shell.desktop-macos.channel-sidebar-collapsed .channel-sidebar-switch {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.app-shell.desktop-macos.channel-sidebar-collapsed .sidebar-command-button-top {
+  grid-column: 1;
+  grid-row: 2;
 }
 
 .app-shell.desktop-macos [data-desktop-window-drag-region="true"]:has(

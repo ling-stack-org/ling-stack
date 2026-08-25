@@ -28,6 +28,82 @@ and shared projection version. `reply` completes without TargetResolver. Only a 
 `clarify` carries typed `missingFields`; model output cannot grant tools, approvals,
 workspace scope, secrets, external sends, or memory access.
 
+`execute` carries a non-empty typed `operations[]` graph. Each operation has a unique id,
+validated kind/target pair, `required` flag, and in-plan dependencies. The daemon
+materializes every target, rejects cycles or missing dependencies, validates bounded
+command candidates, and derives `requiredTools`; the selector model cannot declare any
+of those authorities. A create-only request therefore grants `write`, while an explicit
+create-and-run request produces ordered create and command operations and grants
+`write + bash`.
+
+Backticks are not executable syntax. They may contain file content, identifiers, or an
+example command. Command materialization requires a structured candidate plus an
+explicit execution/verification request, followed by daemon command validation and the
+normal runtime policy/approval path.
+
+Mention routing is downstream of intent selection. The accepted user Item owns one
+canonical, daemon-validated mention set; `@Agent` means “this participant was requested,”
+not “use the ordinary reply runner.” Explicit teammate turns therefore follow the same
+decision path as unmentioned turns:
+
+```text
+canonical TurnEnvelope + mentions
+  -> intent/delegation selector
+     -> reply / visible_multi_reply
+     -> clarify
+     -> workflow_proposal / execute
+  -> only then choose ordinary reply or workflow execution
+```
+
+Every accepted decision also persists a `RequiredParticipantManifestV1`. For discussion,
+the manifest describes requested visible responders. For executable work, it describes
+required execution, verification, and synthesis outcomes plus the operation ids each
+participant owns. Proposal/workflow compilation must preserve the required participant
+set exactly. A model-generated proposal or one participant's reply cannot reduce an
+Engineer + QA request to an Engineer-only workflow.
+
+Executable participant resolution has one fixed precedence order:
+
+```text
+canonical explicit teammate ids
+  -> explicit role requests resolved to concrete ids
+  -> role/capability selector policy
+  -> configured Ling Agent fallback
+```
+
+The first non-empty tier wins. Later tiers may not replace, shrink, or role-de-duplicate
+participants from an earlier tier. In particular, a structured mention of a custom
+Engineer must not become the first built-in Engineer returned by role preference order.
+Availability and tool checks validate an explicitly requested identity; failure produces
+a typed blocker and preserves that identity instead of searching for a substitute.
+
+Participant cardinality is decided before the executable proposal shape. Exactly one
+required participant may use the normalized one-step compiler. Two or more explicit
+participants use the multi-participant graph compiler, even when the objective looks like
+one local action. If the operations cannot be assigned safely to every required
+participant, the selector blocks or clarifies before execution rather than dropping a
+participant or guessing concurrent mutations.
+
+Operation ownership is also resolved exactly once. The daemon's shared owner map is used
+to build `requiredOperationIds`, derive participant-scoped required tools, and compile
+proposal/workflow steps. Selector and compiler code must not carry parallel assignment
+algorithms that can disagree after the decision commits.
+
+If an idempotent retry finds an existing proposal, it reuses the original compatible
+decision and participant manifest. Missing or inconsistent lineage fails closed as a
+durable `existing_proposal_participant_lineage_invalid` blocker with no Run or side
+effect; recovery never reselects from the current roster and never leaks the inconsistency
+as an unstructured transport failure.
+
+Delegated work returns `DelegatedOutcomeV1`, never completion inferred from assistant
+wording. `ready` is an assistant-message delivery state only. A delegated participant
+must return verified `completed`, a durable `workflow_started` handoff, or structured
+`blocked | failed | cancelled`; otherwise the source Turn remains non-terminal.
+`completed` uses evidence appropriate to the requested outcome: execution and verification
+need `ExecutionAction` refs, synthesis/review may use a validated workflow output-packet
+artifact, and discussion uses an attributed assistant Item. This allows legitimate
+read-only synthesis without accepting naked final text as workflow completion.
+
 The v1 action taxonomy retained below is non-normative migration history. No runtime or
 new test may emit `single_reply` or `direct_workflow`, and no compatibility alias maps
 those values into v2.
@@ -371,6 +447,53 @@ payload before returning the decision.
 `userVisibleLabel` is short UI copy such as `Auto routed`, `Workflow proposed`, or
 `Clarification needed`. It must not contain confidence values.
 
+### V2 operation compilation
+
+The v2 compiler preserves the complete validated operation plan through proposal and
+workflow creation:
+
+```text
+model/deterministic candidate
+  -> daemon operation validation + target materialization
+  -> daemon required-tool derivation
+  -> proposal with complete acceptance criteria
+  -> workflow step operation subsets
+  -> ExecutionAction evidence validation
+```
+
+- One Agent may own all operations in one step.
+- Explicit multi-role work partitions operations across steps and preserves cross-step
+  operation dependencies.
+- A workflow step cannot claim success from runner status or final prose alone. It must
+  persist matching successful `ExecutionAction` ids for every required operation.
+- Missing required evidence blocks; negative attempted evidence fails or follows the
+  existing retry policy; fan-in accepts only verified required predecessors.
+- The compiler validates required-participant manifest equality before workflow start and
+  maps each required participant to graph steps and owned operation ids.
+- The compiler consumes the already resolved participant ids. It cannot rerun role or
+  capability selection while creating a proposal, graph, step, or Run.
+- Participant selection freezes identity and operation ownership, not the mutable prompt
+  profile. Immediately before the first Run is created, the workflow-step adapter must
+  resolve that exact canonical teammate and copy `systemPrompt`, `appendSystemPrompt`,
+  and `approvalProfile` into the Run request snapshot. It cannot hydrate a same-role
+  substitute or widen the Run to the teammate's full allowed-tool set.
+- Explicit participants are de-duplicated by canonical id, never by role. Multiple
+  same-role participants remain distinct manifest and graph requirements.
+- A one-step executable proposal is valid only when the resolved required participant set
+  has cardinality one; larger sets enter multi-participant compilation or fail visibly
+  before side effects.
+- Completion is evaluated by one gate over manifest coverage, typed delegated outcomes,
+  operation evidence, dependencies, `fanInPolicy`, and termination policy. Existing
+  steps being terminal is not sufficient when a required participant or branch is absent.
+- The gate derives declared fan-in branches from immutable graph edges and commits a
+  basis-bound snapshot plus the workflow terminal transition atomically. Cached gate
+  metadata is recomputed on restart and never acts as a second completion authority.
+
+The exact types, evidence matching, migration, and recovery rules are owned by
+[Channel Conversation Continuity v2](channel-conversation-continuity-v2.md). The active
+delivery sequence is tracked in
+[Channel Execution Completion Implementation Plan](channel-execution-completion-implementation-plan.md).
+
 ## Decision Kinds
 
 | Kind | Meaning | Allowed side effect |
@@ -442,6 +565,8 @@ is pending, Web may show the existing local-only pending row such as `Thinking..
 | `所有队友都回复我一下` | `visible_multi_reply` | Pure visible discussion request; bounded one-round replies, no workflow. |
 | `大家都说下这个设计的风险` | `visible_multi_reply` | Multiple role opinions change the user's decision, but no execution has started. |
 | `@Ling Agent 在工作区创建 login.html` | `direct_workflow` | Mention does not force ordinary reply; the clear file target and create action win. |
+| `@PromiseBot 创建文件并用 Node 验证` where PromiseBot and a built-in teammate are both Engineers | `direct_workflow` for PromiseBot | The canonical explicit id wins; role/capability order cannot substitute the built-in Engineer. |
+| `@EngineerA @EngineerB 修改同一个文件` | `workflow_proposal` or typed blocker/clarify | Preserve both participant ids. Compile a safe partition only when the request defines one; never drop one Engineer or guess concurrent writes. |
 | after Ling says `login.html`, user says `可以直接在工作区帮我做好吗？` | `direct_workflow` or `clarify` | Resolve the one recent file target. If multiple targets are plausible, ask one question. |
 | `在 /Users/example/ling-stack-test 下创建 README.md` | `direct_workflow` or blocked proposal | If target and action are clear, prefill one file-write workflow. A read-only channel may still start it with task-scoped `write`; block only when the assignee, provider, runner, or workspace policy cannot support it. |
 | `把这个 README 写进去，内容是 ...` | `direct_workflow` | Concrete file-write request; do not answer with a shell snippet as ordinary `ai_reply`. |

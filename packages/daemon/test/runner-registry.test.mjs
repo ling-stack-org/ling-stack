@@ -5,6 +5,7 @@ import {
   createRunnerRegistry,
   DEFAULT_RUNNER_ID,
   LEGACY_PI_RUNNER_ID,
+  resolveRunnerResumeCapabilities,
   UnsupportedRunnerError,
 } from "../dist/index.js";
 
@@ -156,6 +157,43 @@ test("default runner registry exposes unified exec capability when configured", 
   });
   const pi = registry.list().find((runner) => runner.id === "pi");
   assert.equal(pi.capabilities.includes("runtime:unified-exec"), true);
+});
+
+test("runner resume capability requires typed metadata, adapter operation, and enabled conformance", () => {
+  const registry = createDefaultRunnerRegistry(new RecordingRunner(), {
+    runners: {
+      codexAppServer: {
+        enabled: true,
+        baseUrl: "http://127.0.0.1:12345",
+        readinessPassed: true,
+        conformancePassed: true,
+      },
+    },
+  });
+  const pi = registry.list().find((runner) => runner.id === "pi");
+  const codex = registry.list().find((runner) => runner.id === "codex-app-server");
+  assert.deepEqual(resolveRunnerResumeCapabilities(pi), {
+    nativeResume: false,
+    hostApprovalContinuation: ["bash"],
+  });
+  assert.equal(codex.capabilities.includes("native_resume"), true);
+  assert.equal(codex.resumeCapabilities.nativeResume, true);
+  assert.deepEqual(resolveRunnerResumeCapabilities(codex), {
+    nativeResume: false,
+    hostApprovalContinuation: [],
+  });
+
+  const native = createRunnerRegistry([{
+    id: "pi",
+    displayName: "Native test runner",
+    status: "enabled",
+    adapter: {
+      async runTask() { return { taskId: "task", events: [], messages: [] }; },
+      async resumeTask() { return { taskId: "task", events: [], messages: [] }; },
+    },
+    resumeCapabilities: { nativeResume: true, hostApprovalContinuation: [] },
+  }]).list()[0];
+  assert.equal(resolveRunnerResumeCapabilities(native).nativeResume, true);
 });
 
 test("pi runner exposes daemon-hydrated tools only after the feature and conformance gates pass", () => {

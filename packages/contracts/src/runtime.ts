@@ -108,6 +108,7 @@ export interface RuntimeInstance {
 export type WorkUnitKind =
   | "task_run"
   | "conversation_run"
+  | "channel_turn_dispatch"
   | "channel_ai_reply"
   | "channel_terminal_report"
   | "teammate_direct_reply"
@@ -135,6 +136,14 @@ export type WorkUnitAttemptStatus =
   | "failed"
   | "cancelled"
   | "lost";
+
+export interface RuntimeAttemptFenceV1 {
+  readonly workUnitId: string;
+  readonly attemptId: string;
+  readonly runtimeInstanceId: string;
+  /** Opaque decimal generation. Consumers must not coerce this value to Number. */
+  readonly fencingToken: string;
+}
 
 export type RuntimeEventType =
   | "work_unit_created"
@@ -296,6 +305,7 @@ export interface WorkUnitAttempt {
   readonly id: string;
   readonly workUnitId: string;
   readonly attemptNumber: number;
+  readonly fencingToken: string;
   readonly runtimeInstanceId: string;
   readonly runnerId: string;
   readonly requestedRunnerId?: string;
@@ -317,6 +327,8 @@ export interface RuntimeEvent {
   readonly id: string;
   readonly workUnitId: string;
   readonly attemptId?: string;
+  readonly runtimeInstanceId?: string;
+  readonly fencingToken?: string;
   readonly seq: number;
   readonly ts: string;
   readonly type: RuntimeEventType;
@@ -337,6 +349,8 @@ export interface RuntimeSemaphoreSlot {
   readonly ownerId: string;
   readonly workUnitId: string;
   readonly attemptId: string;
+  readonly runtimeInstanceId: string;
+  readonly fencingToken: string;
   readonly status: RuntimeSemaphoreSlotStatus;
   readonly acquiredAt: string;
   readonly lastRenewedAt: string;

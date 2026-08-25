@@ -37,10 +37,14 @@ export type DesktopDaemonCuaDriverAuthorityTuple = Readonly<
   }
 >;
 
-interface OwnedDaemonExit {
+export interface DesktopDaemonOwnedExit {
   readonly code: number | null;
   readonly signal: NodeJS.Signals | null;
 }
+
+export type DesktopDaemonUnexpectedExit = DesktopDaemonOwnedExit & {
+  readonly baseUrl: string;
+};
 
 export class DesktopDaemonLifecycleError extends Error {
   constructor(
@@ -78,6 +82,8 @@ export interface DesktopDaemonLifecycleOptions {
   readonly cuaDriverFeatureFlags?: CuaDriverFeatureFlags;
   /** Test seam for evaluating the platform-specific bundled gate. */
   readonly platform?: string;
+  /** Called once when a Desktop-owned child exits outside an intentional stop. */
+  readonly onUnexpectedExit?: (details: DesktopDaemonUnexpectedExit) => void;
   readonly onDiagnostic?: (event: string, details?: Readonly<Record<string, unknown>>) => void;
 }
 
@@ -220,6 +226,11 @@ export class DesktopDaemonLifecycle {
           LING_STACK_PORT: url.port || (url.protocol === "https:" ? "443" : "80"),
           LING_STACK_DEFAULT_WORKSPACE_CWD: this.defaultWorkspaceCwd,
           ...(this.options.browserHostPath ? { LING_BROWSER_HOST_PATH: this.options.browserHostPath } : {}),
+          // Desktop is the trusted local host for command execution. The
+          // daemon still applies its approval policy and persists validated
+          // command evidence; this only makes the bash surface available to
+          // the packaged runner.
+          LING_STACK_RUNTIME_UNIFIED_EXEC: "1",
           ...(this.options.desktopBridgeToken
             ? {
                 LING_DESKTOP_BRIDGE_TOKEN: this.options.desktopBridgeToken,
@@ -238,8 +249,8 @@ export class DesktopDaemonLifecycle {
     }
     this.options.onDiagnostic?.("daemon.spawned", { pid: child.pid ?? null, baseUrl: this.options.baseUrl });
     this.child = child;
-    let resolveChildExit: (exit: OwnedDaemonExit) => void = () => undefined;
-    const childExit = new Promise<OwnedDaemonExit>((resolve) => {
+    let resolveChildExit: (exit: DesktopDaemonOwnedExit) => void = () => undefined;
+    const childExit = new Promise<DesktopDaemonOwnedExit>((resolve) => {
       resolveChildExit = resolve;
     });
     let resolveChildError: (error: Error) => void = () => undefined;
@@ -266,7 +277,7 @@ export class DesktopDaemonLifecycle {
       resolveChildError(error);
     });
     child.once("exit", (code, signal) => {
-      const exit = { code, signal } satisfies OwnedDaemonExit;
+      const exit = { code, signal } satisfies DesktopDaemonOwnedExit;
       if (this.child !== child) {
         resolveChildExit(exit);
         return;
@@ -281,6 +292,18 @@ export class DesktopDaemonLifecycle {
         message: `Daemon exited (${signal ?? code ?? "unknown"})`,
       });
       this.options.onDiagnostic?.("daemon.exited", { code, signal });
+      try {
+        this.options.onUnexpectedExit?.({
+          baseUrl: this.options.baseUrl,
+          code,
+          signal,
+        });
+      } catch (error) {
+        this.options.onDiagnostic?.("daemon.unexpected_exit_handler_failed", {
+          baseUrl: this.options.baseUrl,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
       resolveChildExit(exit);
     });
 

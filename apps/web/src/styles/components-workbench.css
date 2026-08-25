@@ -134,9 +134,11 @@
   --channel-right-dock-layout-width: 0px;
   --channel-conversation-width: 800px;
   --channel-progress-popover-width: min(280px, calc(100vw - 420px));
+  --conversation-summary-gap: 16px;
+  --conversation-summary-layout-width: 0px;
   --channel-side-panel-handle-width: 8px;
   --channel-side-panel-layout-handle-width: 0px;
-  --channel-progress-popover-right: calc(18px + var(--channel-side-panel-layout-handle-width) + var(--channel-right-dock-layout-width));
+  --channel-progress-popover-right: calc(var(--conversation-summary-gap) + var(--channel-side-panel-layout-handle-width) + var(--channel-right-dock-layout-width));
   --channel-bottom-panel-height: 260px;
   --channel-right-dock-motion-duration: var(--ling-motion-slow);
   --channel-right-dock-motion-ease: var(--ling-ease-standard);

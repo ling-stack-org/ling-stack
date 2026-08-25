@@ -8,6 +8,7 @@ import {
   isRiskyRunTool,
   type ChannelExecutionProposalStepSource,
   type ChannelWorkflow,
+  type ChannelWorkflowMetadata,
   type ChannelWorkflowStep,
   type ChannelWorkflowStepMetadata,
   type RunStore,
@@ -21,6 +22,13 @@ import {
   type WorkflowStepGate,
   type WorkflowStepPolicy,
 } from "@ling-stack/core";
+import {
+  createWorkflowParticipantAuthorityV1,
+  isWorkflowParticipantProviderBindingV1,
+  workflowGraphFingerprintV1,
+  type WorkflowParticipantAuthorityKindV1,
+  type WorkflowParticipantAuthorityOriginV1,
+} from "@ling-stack/contracts";
 import { HttpError } from "../../errors.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import { loadWorkspaceRuntimeSettings } from "../../runtime/runner-settings.js";
@@ -39,6 +47,12 @@ export interface CompileWorkflowGraphInput {
   readonly runnerId?: string;
   readonly autoStart?: boolean;
   readonly confirmUnsafeAutoStart?: boolean;
+  readonly participantAuthority?: {
+    readonly kind: WorkflowParticipantAuthorityKindV1;
+    readonly origin: WorkflowParticipantAuthorityOriginV1;
+    readonly sourceId: string;
+  };
+  readonly workflowMetadata?: ChannelWorkflowMetadata;
 }
 
 export function compileWorkflowGraph(
@@ -60,8 +74,11 @@ export function compileWorkflowGraph(
       status: "ready",
       createdBy: input.createdBy ?? "local-user",
       metadata: {
+        ...input.workflowMetadata,
         workflowGraphId: graph.id,
         workflowGraphSchemaVersion: graph.schemaVersion,
+        workflowGraph: graph,
+        workflowGraphFingerprint: workflowGraphFingerprintV1(graph),
         termination: graph.termination,
         maxParallelSteps: graph.maxParallelSteps,
       },
@@ -87,6 +104,7 @@ export function compileWorkflowGraph(
       skillId: node.skillId,
       requestedRunnerId: node.requestedRunnerId ?? input.runnerId,
       providerPresetId: node.providerPresetId ?? input.providerPresetId,
+      providerBinding: node.providerBinding,
       requiredTools: node.requiredTools,
       autoStart: node.autoStart ?? input.autoStart ?? false,
       branchGroupId: node.branchGroupId,
@@ -104,6 +122,12 @@ export function compileWorkflowGraph(
         prompt: renderGraphNodePrompt(node, input.objective),
         toParticipantId: resolved.toParticipantId,
         toParticipantLabel: resolved.toParticipantLabel,
+        participantAuthority: createWorkflowParticipantAuthorityV1({
+          kind: input.participantAuthority?.kind ?? "workflow_definition",
+          origin: input.participantAuthority?.origin ?? "workflow_graph",
+          participantId: resolved.toParticipantId,
+          sourceId: input.participantAuthority?.sourceId ?? graph.id,
+        }),
         metadata,
       },
       now,
@@ -181,6 +205,7 @@ export function validateWorkflowGraph(store: RunStore, input: CompileWorkflowGra
       throw new HttpError(400, "workflow_graph_invalid", `Workflow graph node has no inbound edge: ${node.id}`);
     }
     validateGraphNodeParticipantAndSkill(store, input.channelId, node);
+    validateGraphNodeProviderBinding(node);
     validateGraphNodeRunner(store, node.requestedRunnerId ?? input.runnerId, runnerRegistry);
     graphNodeDependencyMode(graph, node.id);
   }
@@ -253,6 +278,7 @@ function readWorkflowGraphNode(value: unknown, location: string): WorkflowGraphN
     councilSlotKey: readOptionalString(value, "councilSlotKey"),
     skillId: readOptionalString(value, "skillId"),
     providerPresetId: readOptionalString(value, "providerPresetId"),
+    providerBinding: readOptionalWorkflowParticipantProviderBinding(value, "providerBinding"),
     requestedRunnerId: readOptionalString(value, "requestedRunnerId"),
     branchGroupId: readOptionalString(value, "branchGroupId"),
     joinGroupId: readOptionalString(value, "joinGroupId"),
@@ -261,6 +287,37 @@ function readWorkflowGraphNode(value: unknown, location: string): WorkflowGraphN
     requiredTools: readOptionalStringArray(value, "requiredTools", ["read", "grep", "find", "ls", "bash", "edit", "write"] satisfies readonly RunTool[]),
     autoStart: readOptionalBoolean(value, "autoStart"),
   };
+}
+
+function readOptionalWorkflowParticipantProviderBinding(
+  record: Record<string, unknown>,
+  key: string,
+): WorkflowGraphNode["providerBinding"] {
+  const value = record[key];
+  if (value === undefined) return undefined;
+  if (!isWorkflowParticipantProviderBindingV1(value)) {
+    throw new Error(`${key} must be a valid WorkflowParticipantProviderBindingV1`);
+  }
+  return value;
+}
+
+function validateGraphNodeProviderBinding(node: WorkflowGraphNode): void {
+  const binding = node.providerBinding;
+  if (!binding) return;
+  if (!node.teammateId || binding.participantId !== node.teammateId) {
+    throw new HttpError(
+      400,
+      "workflow_participant_provider_binding_invalid",
+      `Workflow graph node ${node.id} provider binding does not match its participant.`,
+    );
+  }
+  if (!node.providerPresetId || binding.providerPresetId !== node.providerPresetId) {
+    throw new HttpError(
+      400,
+      "workflow_participant_provider_binding_invalid",
+      `Workflow graph node ${node.id} provider binding does not match its provider preset.`,
+    );
+  }
 }
 
 function readWorkflowGraphEdge(value: unknown, location: string): WorkflowGraphEdge {

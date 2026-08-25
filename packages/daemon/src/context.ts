@@ -16,9 +16,11 @@ import type { ResolvedDaemonConfig } from "./config.js";
 import type { AutomationSchedulerRegistry } from "./features/automations/scheduler.js";
 import type { LingImageVisionSummarizer } from "./features/channels/materialization/registry.js";
 import type { ChannelReplyDispatchCoordinator } from "./features/channels/channel-reply-dispatch-coordinator.js";
+import type { ChannelTurnDispatchWorkerRegistry } from "./features/channels/channel-turn-dispatch-worker.js";
 import type { ExternalWorkBackgroundSchedulerRegistry } from "./features/external-work/background-scheduler.js";
 import type { ProviderStartupRefreshService } from "./features/providers/startup-refresh.js";
 import type { ProviderImportPreflightService } from "./features/providers/import-preflight.js";
+import type { ApprovalResumeCoordinator } from "./features/runs/approval-resume-coordinator.js";
 import type { ControlPlaneEventHub } from "./features/control-plane/events.js";
 import type { ComputerUsePreviewProjection } from "@ling-stack/contracts";
 import type {
@@ -43,9 +45,19 @@ import type { RemoteAccessController } from "./features/remote-access/controller
 import type { RemoteReplyDispatcher } from "./features/remote-access/dispatch-worker.js";
 import type { ChromeBrowserSessionController } from "./features/browser-extension/session-controller.js";
 import type { ChromeBrowserPluginService } from "./features/plugins/chrome-browser.js";
+import type { OfficeDriverController } from "./features/office-documents/driver-controller.js";
+import type { OfficeDocumentsPluginService } from "./features/plugins/office-documents.js";
 
 export interface RunnerAdapter {
   runTask(options: PiRunnerRunOptions): Promise<PiRunnerResult>;
+  resumeTask?(input: RunnerNativeResumeInputV1): Promise<PiRunnerResult>;
+}
+
+export interface RunnerNativeResumeInputV1 {
+  readonly runId: string;
+  readonly attemptId: string;
+  readonly handleRef: string;
+  readonly signal?: AbortSignal;
 }
 
 export interface McpBroker {
@@ -89,6 +101,8 @@ export interface McpBrokerOptions {
   readonly workspaceCwd?: string;
   readonly now?: () => string;
   readonly signal?: AbortSignal;
+  readonly runId?: string;
+  readonly toolCallId?: string;
   /** Synchronous authorization fence run after transport completion. */
   readonly assertResultCurrent?: () => void;
   readonly lockedControlExecution?: {
@@ -164,8 +178,10 @@ export interface DaemonContext {
   readonly extensionRegistry: LingExtensionRegistry;
   readonly storeRegistry: RunStoreRegistry;
   readonly activeRuns: ActiveRunRegistry;
+  readonly approvalResumeCoordinator: ApprovalResumeCoordinator;
   readonly activeDirectReplies: ActiveDirectReplyRegistry;
   readonly channelReplyDispatchCoordinator: ChannelReplyDispatchCoordinator;
+  readonly channelTurnDispatchWorker: ChannelTurnDispatchWorkerRegistry;
   readonly runtimeSupervisor: RuntimeSupervisor;
   readonly secretResolver: SecretResolver;
   readonly externalSecretStore: ExternalSecretStore;
@@ -193,4 +209,6 @@ export interface DaemonContext {
   readonly remoteAccess: RemoteAccessController;
   readonly chromeBrowserSessions: ChromeBrowserSessionController;
   readonly chromeBrowserPlugin: ChromeBrowserPluginService;
+  readonly officeDriverController: OfficeDriverController;
+  readonly officeDocumentsPlugin: OfficeDocumentsPluginService;
 }
