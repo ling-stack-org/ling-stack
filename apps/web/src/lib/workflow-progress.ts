@@ -1,8 +1,9 @@
 import type { ApprovalRequest, ChannelWorkflow, ChannelWorkflowStep, ExecutionAction, RunArtifact, RunSession, TerminalReportDto, WorkflowEvidenceResponse, WorkflowHandoffIntent } from "../types.js";
-import { terminalReportToViewModel } from "@ling-stack/conversation-ui-core";
+import { projectConversationActivity, summarizeConversationActivity, terminalReportToViewModel } from "@ling-stack/conversation-ui-core";
 import type { Translate } from "../i18n.js";
 import type {
   ConversationAgentActivitySpan,
+  ConversationActivitySummary,
   ConversationArtifactStripItem,
   ConversationWorkCellDetailsModel,
   ConversationWorkCellEvidenceLink,
@@ -35,6 +36,7 @@ export interface WorkflowProgressModel {
   readonly summary: string;
   readonly currentRows: readonly ConversationWorkCellRow[];
   readonly agentSpans: readonly ConversationAgentActivitySpan[];
+  readonly activitySummary: ConversationActivitySummary;
   readonly stats: readonly WorkflowProgressStat[];
   readonly elapsedMs?: number;
   readonly groups: readonly ConversationWorkCellGroup[];
@@ -104,6 +106,13 @@ export function buildWorkflowProgressModel(input: BuildWorkflowProgressInput): W
     buildWorkflowProgressGroups({ t: input.t, steps: orderedSteps, artifacts, approvals: workflowApprovals, actions: workflowActions }),
     input.t,
   );
+  const agentSpans = buildWorkflowAgentActivitySpans({
+    t: input.t,
+    steps: orderedSteps,
+    actions: workflowActions,
+    artifactsByRun: input.artifactsByRun,
+    runsByStepId: workflowRunsByStepId,
+  });
 
   return {
     id: `workflow-progress:${input.workflow.id}`,
@@ -129,13 +138,8 @@ export function buildWorkflowProgressModel(input: BuildWorkflowProgressInput): W
       steps: orderedSteps,
       pendingApprovalCount: pendingApprovals.length,
     }),
-    agentSpans: buildWorkflowAgentActivitySpans({
-      t: input.t,
-      steps: orderedSteps,
-      actions: workflowActions,
-      artifactsByRun: input.artifactsByRun,
-      runsByStepId: workflowRunsByStepId,
-    }),
+    agentSpans,
+    activitySummary: summarizeConversationActivity(agentSpans.flatMap((span) => span.rows)),
     stats: [
       { id: "steps", label: input.t("Steps"), value: `${completedSteps}/${orderedSteps.length}` },
       { id: "evidence", label: input.t("Evidence"), value: String(artifacts.length) },
@@ -212,6 +216,8 @@ export function workflowProgressToConversationWorkCell(model: WorkflowProgressMo
     operationRows: model.agentSpans.length > 0 ? [] : model.currentRows,
     agentSpans: model.agentSpans,
     agentBranches: model.agentSpans,
+    ...(model.agentSpans.length === 0 ? { operationItems: projectConversationActivity(model.currentRows) } : {}),
+    activitySummary: model.activitySummary,
     terminalReportId: terminalReport?.reportId,
     terminalReportRevisionKey: terminalReport?.revisionKey,
     terminalReportRows: terminalReport?.rows ?? [],
@@ -559,13 +565,23 @@ function buildWorkflowAgentActivitySpans(input: {
       const latestStep = workflowAgentFocusStep(orderedSteps);
       const groupStatus = workflowAgentGroupStatus(orderedSteps);
       const canonicalParticipantId = orderedSteps.find((step) => step.toParticipantId.trim())?.toParticipantId.trim();
+      const participantScope = canonicalParticipantId ?? participantId;
       const latestActionRow = latestStep ? workflowLatestActionRowForStep({
         step: latestStep,
         actionsByRun,
         artifactsByRun: input.artifactsByRun,
         runsByStepId: input.runsByStepId,
         t: input.t,
+        participantId: participantScope,
       }) : undefined;
+      const rows = buildWorkflowAgentActivityRows({
+        steps: orderedSteps,
+        actionsByRun,
+        artifactsByRun: input.artifactsByRun,
+        runsByStepId: input.runsByStepId,
+        t: input.t,
+        participantId: participantScope,
+      });
       return {
         sortIndex: index,
         id: `agent:${participantId}`,
@@ -575,13 +591,8 @@ function buildWorkflowAgentActivitySpans(input: {
         tone: workflowStepTone(groupStatus),
         stateLabel: workflowStepStatusMeta(groupStatus, input.t),
         latestRow: latestActionRow ?? (latestStep ? workflowStepToAgentRow(latestStep, input.t, "latest") : undefined),
-        rows: buildWorkflowAgentActivityRows({
-          steps: orderedSteps,
-          actionsByRun,
-          artifactsByRun: input.artifactsByRun,
-          runsByStepId: input.runsByStepId,
-          t: input.t,
-        }),
+        rows,
+        items: projectConversationActivity(rows, { participantScope }),
       } satisfies ConversationAgentActivitySpan & { readonly sortIndex: number };
     })
     .sort((left, right) => left.sortIndex - right.sortIndex)
@@ -594,6 +605,7 @@ function buildWorkflowAgentActivityRows(input: {
   readonly artifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
   readonly runsByStepId: ReadonlyMap<string, readonly RunSession[]>;
   readonly t: Translate;
+  readonly participantId: string;
 }): readonly ConversationWorkCellRow[] {
   return input.steps.flatMap((step) => [
     workflowStepToAgentRow(step, input.t, "history"),
@@ -603,6 +615,7 @@ function buildWorkflowAgentActivityRows(input: {
       artifactsByRun: input.artifactsByRun,
       runsByStepId: input.runsByStepId,
       t: input.t,
+      participantId: input.participantId,
       scope: "history",
     }),
   ]);
@@ -614,6 +627,7 @@ function workflowLatestActionRowForStep(input: {
   readonly artifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
   readonly runsByStepId: ReadonlyMap<string, readonly RunSession[]>;
   readonly t: Translate;
+  readonly participantId: string;
 }): ConversationWorkCellRow | undefined {
   return workflowActionRowsForStep({ ...input, scope: "latest" }).at(-1);
 }
@@ -624,6 +638,7 @@ function workflowActionRowsForStep(input: {
   readonly artifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
   readonly runsByStepId: ReadonlyMap<string, readonly RunSession[]>;
   readonly t: Translate;
+  readonly participantId: string;
   readonly scope: "latest" | "history";
 }): readonly ConversationWorkCellRow[] {
   const runIds = uniqueStrings([
@@ -643,7 +658,9 @@ function workflowActionRowsForStep(input: {
     actions,
     artifacts: runIds.flatMap((runId) => input.artifactsByRun[runId] ?? []),
     t: input.t,
-    limit: 8,
+    participantId: input.participantId,
+    workflowStepId: input.step.id,
+    limit: input.scope === "latest" ? 8 : undefined,
   }).map((row) => ({
     ...row,
     id: `${input.scope}:workflow-step:${input.step.id}:${row.id}`,

@@ -2,12 +2,13 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { BookOpen, CheckCircle2, ChevronDown, CircleAlert, Clock3, FilePenLine, FileText, GitBranch, History, ListChecks, Loader2, RefreshCw, Search, ShieldCheck, SquareTerminal } from "lucide-react";
 import { useI18n, type Translate } from "../../../i18n.js";
 import { parseUnifiedDiff, summarizeFileChanges, type ConversationFileChange } from "../../../lib/diff-summary.js";
-import { projectConversationCommandBatches, type ConversationAgentActivitySpan, type ConversationArtifactStripItem, type ConversationCommandBatchItem, type ConversationOperationCellViewModel, type ConversationWorkCellEvidenceLink, type ConversationWorkCellGroup, type ConversationWorkCellItem, type ConversationWorkCellRow, type ConversationWorkCellRowDetailLine } from "../../../lib/conversation-work-cell.js";
+import { projectConversationActivity, type ConversationAgentActivitySpan, type ConversationArtifactStripItem, type ConversationCommandBatchItem, type ConversationOperationCellViewModel, type ConversationWorkCellEvidenceLink, type ConversationWorkCellGroup, type ConversationWorkCellItem, type ConversationWorkCellRow, type ConversationWorkCellRowDetailLine } from "../../../lib/conversation-work-cell.js";
 import type { PreviewContentResponse } from "../../../types.js";
 import type { ArtifactPreviewLoader } from "../preview/ArtifactPreviewDrawer.js";
 import type { ConversationSurfaceKind, TerminalReportProjectionPolicy } from "../tokens/conversation-surface-policy.js";
 import { ConversationArtifactStrip, type ConversationWorkspaceReviewTarget } from "./ConversationArtifactStrip.js";
 import { ConversationCommandBatch } from "./ConversationCommandBatch.js";
+import { ConversationExplorationBatch } from "./ConversationExplorationBatch.js";
 import { DiffViewer } from "./DiffViewer.js";
 import { TerminalReportBlock, type TerminalReportFileTarget } from "./TerminalReportBlock.js";
 import { useConversationBlockView } from "../view-store/use-conversation-block-view.js";
@@ -75,7 +76,7 @@ export function ConversationWorkCell({
     : singleAgentRows.length > 0
       ? singleAgentRows
       : fallbackRows;
-  const operationItems = model.operationItems ?? projectConversationCommandBatches(operationRows);
+  const operationItems = model.operationItems ?? projectConversationActivity(operationRows);
   const showOperationRows = operationItems.length > 0;
   const terminalReportRendered = showTerminalReport && model.terminalReportRows.length > 0;
   const statusLabel = model.kicker ?? workCellStatusLabel(model.status, active, t);
@@ -368,6 +369,10 @@ function operationShellStatusLabel(
   const elapsed = formatElapsedDuration(model.elapsedMs);
   const suffix = elapsed ? ` ${elapsed}` : "";
   if (model.status === "succeeded") {
+    const activitySummary = completedActivitySummary(model, t);
+    if (activitySummary) {
+      return activitySummary;
+    }
     return t("Processed{duration}", { duration: suffix });
   }
   if (model.status === "failed") {
@@ -383,6 +388,22 @@ function operationShellStatusLabel(
     return t("Stopped{duration}", { duration: suffix });
   }
   return active ? t("Processing") : t("Processed{duration}", { duration: suffix });
+}
+
+function completedActivitySummary(
+  model: ConversationOperationCellViewModel,
+  t: Translate,
+): string | undefined {
+  if (model.mode !== "completed" || !model.activitySummary?.hasStructuredActions) {
+    return undefined;
+  }
+  const summary = model.activitySummary;
+  const pieces = [
+    summary.editedFileCount > 0 ? t("Edited {count} files", { count: summary.editedFileCount }) : undefined,
+    summary.readItemCount > 0 ? t("Read {count} items", { count: summary.readItemCount }) : undefined,
+    summary.commandCount > 0 ? t("Ran {count} commands", { count: summary.commandCount }) : undefined,
+  ].filter((piece): piece is string => Boolean(piece));
+  return pieces.length > 0 ? pieces.join(" · ") : undefined;
 }
 
 function formatElapsedDuration(elapsedMs: number | undefined): string | undefined {
@@ -413,6 +434,8 @@ function operationBubbleRevisionKey(
     model.agentSpans.length,
     model.artifactStripItems.length,
     evidenceSummary ?? "",
+    activitySummaryRevisionKey(model),
+    operationItemsRevisionKey(model.operationItems),
   ].join("|");
 }
 
@@ -431,7 +454,29 @@ function operationShellRevisionKey(
     model.operationRows.length,
     model.agentSpans.length,
     model.artifactStripItems.length,
+    activitySummaryRevisionKey(model),
+    operationItemsRevisionKey(model.operationItems),
   ].join("|");
+}
+
+function activitySummaryRevisionKey(model: ConversationOperationCellViewModel): string {
+  const summary = model.activitySummary;
+  return summary
+    ? [summary.editedFileCount, summary.readItemCount, summary.commandCount, summary.hasStructuredActions ? "structured" : "plain"].join(":")
+    : "";
+}
+
+function operationItemsRevisionKey(items: readonly ConversationWorkCellItem[] | undefined): string {
+  if (!items) {
+    return "";
+  }
+  return items.map((item) => {
+    if (item.kind === "operation") {
+      const execution = item.row.operationExecution;
+      return `operation:${item.row.id}:${execution?.actionId ?? ""}:${execution?.status ?? ""}:${execution?.updatedAt ?? ""}`;
+    }
+    return `${item.kind}:${item.batch.id}:${item.batch.revisionKey}`;
+  }).join("|");
 }
 
 function operationShellExpandable(
@@ -489,7 +534,7 @@ function AgentActivitySpanItem({
   readonly renderAgentAvatar?: (span: ConversationAgentActivitySpan) => ReactNode;
 }): React.JSX.Element {
   const { t } = useI18n();
-  const items = span.items ?? projectConversationCommandBatches(span.rows, { participantScope: span.participantId ?? span.id });
+  const items = span.items ?? projectConversationActivity(span.rows, { participantScope: span.participantId ?? span.id });
   const hasDetail = items.length > 0;
   const avatar = renderAgentAvatar?.(span);
   const headContent = (
@@ -657,33 +702,78 @@ function ActiveTurnItemStream({
     ? "conversation-work-cell-agent-stream"
     : "conversation-work-cell-active-stream";
   const ariaLabel = scope === "agent" ? t("Agent activity detail") : t("Active work stream");
+  const atomicItemCount = items.reduce((count, item) => {
+    if (item.kind === "operation") {
+      return count + 1;
+    }
+    if (item.kind === "exploration_batch") {
+      return count + item.batch.rows.length;
+    }
+    return count + item.batch.commands.reduce(
+      (commandCount, command) => commandCount + 1 + (command.leadingRows?.length ?? 0),
+      0,
+    );
+  }, 0);
+  const density = atomicItemCount > 10 ? "dense" : "default";
   if (items.length === 0) {
     return (
-      <div className={`${className} empty`} data-conversation-work-stream={scope}>
+      <div
+        className={`${className} empty`}
+        data-activity-density={density}
+        data-conversation-work-stream={scope}
+      >
         <Clock3 size={13} />
         <span>{t("Waiting for activity")}</span>
       </div>
     );
   }
   return (
-    <div className={className} aria-label={ariaLabel} data-conversation-work-stream={scope}>
-      {items.map((item) => item.kind === "command_batch" ? (
-        <ConversationCommandBatch
-          key={item.batch.id}
-          batch={item.batch}
-          renderCommand={(command) => (
-            <WorkCellRow
-              key={command.id}
-              row={commandBatchRow(command)}
-              compact
-              cwd={cwd}
-              loadPreview={loadPreview}
+    <div
+      className={className}
+      aria-label={ariaLabel}
+      data-activity-density={density}
+      data-conversation-work-stream={scope}
+    >
+      {items.map((item) => {
+        if (item.kind === "command_batch") {
+          return (
+            <ConversationCommandBatch
+              key={item.batch.id}
+              batch={item.batch}
+              renderCommand={(command) => [
+                ...(command.leadingRows ?? []).map((row) => (
+                  <WorkCellRow
+                    key={`leading:${row.id}`}
+                    row={row}
+                    compact
+                    cwd={cwd}
+                    loadPreview={loadPreview}
+                  />
+                )),
+                <WorkCellRow
+                  key={command.id}
+                  row={commandBatchRow(command)}
+                  compact
+                  cwd={cwd}
+                  loadPreview={loadPreview}
+                />,
+              ]}
             />
-          )}
-        />
-      ) : (
-        <WorkCellRow key={item.row.id} row={item.row} compact cwd={cwd} loadPreview={loadPreview} />
-      ))}
+          );
+        }
+        if (item.kind === "exploration_batch") {
+          return (
+            <ConversationExplorationBatch
+              key={item.batch.id}
+              batch={item.batch}
+              renderRow={(row) => (
+                <WorkCellRow key={row.id} row={row} compact cwd={cwd} loadPreview={loadPreview} />
+              )}
+            />
+          );
+        }
+        return <WorkCellRow key={item.row.id} row={item.row} compact cwd={cwd} loadPreview={loadPreview} />;
+      })}
     </div>
   );
 }

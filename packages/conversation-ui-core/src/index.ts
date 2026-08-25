@@ -10,6 +10,7 @@ export type {
 export type {
   ConversationAgentActivitySpan,
   ConversationAgentActivitySpanKind,
+  ConversationActivitySummary,
   ConversationCommandBatch,
   ConversationCommandBatchItem,
   ConversationCommandExecutionView,
@@ -22,6 +23,10 @@ export type {
   ConversationOperationCellStatus,
   ConversationOperationCellViewModel,
   ConversationOperationKind,
+  ConversationOperationExecutionView,
+  ConversationOperationSourceRef,
+  ConversationExplorationBatch,
+  ConversationTurnRunRole,
   ConversationWorkCellBranch,
   ConversationWorkCellChangePreview,
   ConversationWorkCellDetailsModel,
@@ -41,6 +46,12 @@ export {
   isCommandBatchEligible,
   projectConversationCommandBatches,
 } from "./command-batching.js";
+export {
+  isExplorationBatchEligible,
+  projectConversationActivity,
+  projectConversationExplorationBatches,
+  summarizeConversationActivity,
+} from "./activity-projection.js";
 export type {
   TerminalReportViewInput,
   TerminalReportViewModel,
