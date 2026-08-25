@@ -94,6 +94,12 @@ Light/Dark, with no invalid refresh action or loading flicker.
   relevant Playwright, and `git diff --check`.
 - Run current-mac official Chrome acceptance in an isolated profile across all six tools, MCP
   approval, Desktop restart, workspace switch, extension restart, pause, revoke, and migration.
+  A custom `--user-data-dir` receives a temporary profile-local Native Messaging manifest which is
+  restored after the run. The daemon-side session must connect before the test opens the popup, so
+  popup startup cannot hide a Service Worker recovery failure. CDP `Extensions.loadUnpacked` mode
+  proves first-install connection only because Chrome does not persist that installation across a
+  restart. The Chrome-restart and six-tool gates run only with `LING_CHROME_SMOKE_PREINSTALLED=1`
+  after the isolated profile has received one real persistent unpacked installation.
 - Run platform-neutral Host framing/lifecycle tests. Do not build a new Windows installer for this
   reconnect-only release because Host and daemon wire protocols are unchanged.
 - Keep the repair branch local, create no PR or push, and build `ling-for-chrome.zip` from the exact
@@ -131,5 +137,7 @@ git diff --check
 - No new UI for legacy pairing and no new credential issuance for `0.1.2` users.
 - No direct Host business logic, model access, workspace selection, or browser API access.
 - No Store upload before current-mac real Chrome acceptance and platform-neutral protocol gates pass.
+- A real Chrome acceptance failure caused by an inactive MV3 worker is release-blocking; opening the
+  popup or manually reloading the extension is diagnostic evidence, never an accepted recovery step.
 - No claim that local unsigned artifacts satisfy Developer ID, notarization, Authenticode,
   SmartScreen, or clean-machine release gates.

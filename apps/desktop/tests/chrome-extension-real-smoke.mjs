@@ -6,9 +6,11 @@ import { dirname, resolve } from "node:path";
 import { chromium } from "@playwright/test";
 import {
   browserHostManifestPaths,
+  createBrowserHostManifest,
   installBrowserHost,
 } from "@ling-stack/browser-host";
 import {
+  CHROME_BROWSER_NATIVE_HOST_NAME,
   CHROME_BROWSER_PRODUCTION_EXTENSION_ID,
   CHROME_BROWSER_PLUGIN_ID,
 } from "@ling-stack/contracts";
@@ -85,12 +87,26 @@ const broker = createChromeBrowserNativeBroker({
   descriptorPath,
   hostPath,
 });
-const manifestPaths = browserHostManifestPaths({ platform: "darwin" });
+const profileManifestPath = resolve(
+  profileDir,
+  "NativeMessagingHosts",
+  `${CHROME_BROWSER_NATIVE_HOST_NAME}.json`,
+);
+const manifestPaths = [
+  ...browserHostManifestPaths({ platform: "darwin" }),
+  profileManifestPath,
+];
 const manifestBackups = await Promise.all(manifestPaths.map(readOptionalFile));
 
 let context;
 try {
   await installBrowserHost({ hostPath });
+  await mkdir(dirname(profileManifestPath), { recursive: true, mode: 0o700 });
+  await writeFile(
+    profileManifestPath,
+    `${JSON.stringify(createBrowserHostManifest(hostPath), null, 2)}\n`,
+    { encoding: "utf8", mode: 0o600 },
+  );
   await listen(server);
   await broker.start();
   const address = server.address();
@@ -98,35 +114,48 @@ try {
   const baseUrl = `http://127.0.0.1:${address.port}`;
   console.log("chrome-smoke:launch-native");
 
-  context = await chromium.launchPersistentContext(profileDir, {
-    channel: browserChannel,
-    headless,
-    colorScheme,
-    locale: browserLocale,
-    timeout: 20_000,
-    env: {
-      ...process.env,
-      LING_BROWSER_HOST_RUNTIME_DESCRIPTOR: descriptorPath,
-    },
-    ignoreDefaultArgs: ["--disable-extensions"],
-    args: [
-      ...(!preinstalledExtension ? [
-        `--disable-extensions-except=${extensionRoot}`,
-        `--load-extension=${extensionRoot}`,
-      ] : []),
-      "--no-first-run",
-      "--no-default-browser-check",
-    ],
-  });
-  const popup = await context.newPage();
-  popup.setDefaultTimeout(10_000);
-  await popup.setViewportSize({ width: 360, height: 520 });
-  await popup.goto(`chrome-extension://${CHROME_BROWSER_PRODUCTION_EXTENSION_ID}/popup.html`);
-  await waitForNativeConnection(popup, controller, workspaceCwd, manifestPaths, 10_000);
-  await waitForExtensionState(popup, "connected", 10_000);
-  assert.equal(await popup.locator("#cwd, #pairing-code, #consent").count(), 0);
-  assert.equal(controller.snapshot(workspaceCwd).transport, "native_messaging");
-  console.log("chrome-smoke:native-connected");
+  context = await launchChromeContext();
+  if (!preinstalledExtension) {
+    const browser = context.browser();
+    assert.ok(browser);
+    const cdp = await browser.newBrowserCDPSession();
+    const loaded = await cdp.send("Extensions.loadUnpacked", { path: extensionRoot });
+    await cdp.detach();
+    assert.equal(loaded.id, CHROME_BROWSER_PRODUCTION_EXTENSION_ID);
+  }
+  await waitForNativeConnection(context, controller, workspaceCwd, manifestPaths, 35_000);
+  console.log("chrome-smoke:native-connected-without-popup");
+
+  if (!preinstalledExtension) {
+    console.log(JSON.stringify({
+      ok: true,
+      mode: "cdp_first_install",
+      extensionId: CHROME_BROWSER_PRODUCTION_EXTENSION_ID,
+      transport: "native_messaging",
+      toolChecks: [],
+      lifecycleChecks: ["automatic_connect_without_popup"],
+      colorScheme,
+      browserChannel,
+      browserLocale,
+      headless,
+      preinstalledExtension,
+    }));
+  } else {
+    await context.close();
+    context = undefined;
+    await waitFor(() => !controller.snapshot(workspaceCwd).connected, 10_000);
+    context = await launchChromeContext();
+    await waitForNativeConnection(context, controller, workspaceCwd, manifestPaths, 35_000);
+    console.log("chrome-smoke:chrome-restart-connected-without-popup");
+
+    const popup = await context.newPage();
+    popup.setDefaultTimeout(10_000);
+    await popup.setViewportSize({ width: 360, height: 520 });
+    await popup.goto(`chrome-extension://${CHROME_BROWSER_PRODUCTION_EXTENSION_ID}/popup.html`);
+    await waitForExtensionState(popup, "connected", 10_000);
+    assert.equal(await popup.locator("#cwd, #pairing-code, #consent").count(), 0);
+    assert.equal(controller.snapshot(workspaceCwd).transport, "native_messaging");
+    console.log("chrome-smoke:native-connected");
 
   await popup.locator("#primary-action").click();
   await waitForExtensionState(popup, "paused", 10_000);
@@ -188,20 +217,22 @@ try {
   await popup.screenshot({ path: popupScreenshot });
   await page.screenshot({ path: pageScreenshot });
 
-  console.log(JSON.stringify({
-    ok: true,
-    extensionId: CHROME_BROWSER_PRODUCTION_EXTENSION_ID,
-    transport: "native_messaging",
-    toolChecks: ["chrome_tabs", "chrome_snapshot", "chrome_click", "chrome_type", "chrome_navigate", "chrome_screenshot"],
-    lifecycleChecks: ["automatic_connect", "pause", "resume", "disable", "reenable"],
-    colorScheme,
-    browserChannel,
-    browserLocale,
-    headless,
-    preinstalledExtension,
-    popupScreenshot,
-    pageScreenshot,
-  }));
+    console.log(JSON.stringify({
+      ok: true,
+      mode: "preinstalled_restart_acceptance",
+      extensionId: CHROME_BROWSER_PRODUCTION_EXTENSION_ID,
+      transport: "native_messaging",
+      toolChecks: ["chrome_tabs", "chrome_snapshot", "chrome_click", "chrome_type", "chrome_navigate", "chrome_screenshot"],
+      lifecycleChecks: ["automatic_connect_without_popup", "chrome_restart", "pause", "resume", "disable", "reenable"],
+      colorScheme,
+      browserChannel,
+      browserLocale,
+      headless,
+      preinstalledExtension,
+      popupScreenshot,
+      pageScreenshot,
+    }));
+  }
 } finally {
   await context?.close();
   await broker.close();
@@ -228,6 +259,22 @@ function closeServer(target) {
   return new Promise((resolvePromise) => target.close(() => resolvePromise()));
 }
 
+function launchChromeContext() {
+  return chromium.launchPersistentContext(profileDir, {
+    channel: browserChannel,
+    headless,
+    colorScheme,
+    locale: browserLocale,
+    timeout: 20_000,
+    env: {
+      ...process.env,
+      LING_BROWSER_HOST_RUNTIME_DESCRIPTOR: descriptorPath,
+    },
+    ignoreDefaultArgs: ["--disable-extensions"],
+    args: ["--no-first-run", "--no-default-browser-check"],
+  });
+}
+
 async function waitFor(predicate, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (!await predicate()) {
@@ -243,11 +290,17 @@ async function waitForExtensionState(popup, expected, timeoutMs) {
   }, expected), timeoutMs);
 }
 
-async function waitForNativeConnection(popup, sessionController, cwd, paths, timeoutMs) {
+async function waitForNativeConnection(browserContext, sessionController, cwd, paths, timeoutMs) {
   try {
     await waitFor(() => sessionController.snapshot(cwd).connected, timeoutMs);
   } catch (error) {
-    const extensionStatus = await popup.evaluate(() => chrome.runtime.sendMessage({ type: "status" })).catch((failure) => ({ error: String(failure) }));
+    const serviceWorker = browserContext.serviceWorkers()[0];
+    const extensionStatus = serviceWorker
+      ? await serviceWorker.evaluate(async () => ({
+          storage: await chrome.storage.session.get(null),
+          alarms: await chrome.alarms.getAll(),
+        })).catch((failure) => ({ error: String(failure) }))
+      : { error: "service_worker_not_running" };
     const manifests = await Promise.all(paths.map(async (path) => ({ path, content: String(await readOptionalFile(path)) })));
     console.error("chrome-smoke:native-diagnostic", JSON.stringify({ extensionStatus, manifests }));
     throw error;
