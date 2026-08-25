@@ -85,6 +85,15 @@ test("Sidebar dark compact launchers expose one portal tooltip without object ac
       await expect(identity.locator).toBeFocused();
     }
     await expectPortalTooltip(page, identity.tooltip);
+    const tooltip = page.getByRole("tooltip");
+    await expect(tooltip).toHaveAttribute("data-side", "right");
+    const [launcherBox, tooltipBox] = await Promise.all([
+      identity.locator.boundingBox(),
+      tooltip.boundingBox(),
+    ]);
+    expect(launcherBox).not.toBeNull();
+    expect(tooltipBox).not.toBeNull();
+    expect(tooltipBox!.x).toBeGreaterThan(launcherBox!.x + launcherBox!.width);
     await captureEvidence(page, `1280x800-ling-dark-launcher-${index + 1}-tooltip.png`);
   }
 
