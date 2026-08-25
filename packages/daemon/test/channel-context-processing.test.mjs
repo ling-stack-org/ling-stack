@@ -14,7 +14,7 @@ import {
   summarizeArtifactEvidence,
   workflowPacketKindForArtifact,
 } from "../dist/features/channels/context-processing/evidence.js";
-import { condenseChannelContextSources } from "../dist/features/channels/context-processing/condenser.js";
+import { condenseChannelContextSections, condenseChannelContextSources } from "../dist/features/channels/context-processing/condenser.js";
 import { buildWorkflowContextInspectSummary } from "../dist/features/channels/context-processing/inspect.js";
 import {
   buildWorkflowProposalContextView,
@@ -464,6 +464,85 @@ test("context view opt-in condenser records metadata without changing prompt sec
   assert.equal(view.metadata.condenser.condensedSourceCount, 1);
   assert.equal(view.metadata.condenser.droppedSourceCount, 1);
   assert.equal(view.metadata.sourceCount, 1);
+});
+
+test("context section lifecycle keeps rebuild, summarizes summarize, and discards discard", () => {
+  const result = condenseChannelContextSections({
+    sections: [
+      {
+        id: "base_instructions",
+        role: "instruction",
+        priority: "must_keep",
+        compactionSurvival: "rebuild",
+        title: "Base instructions",
+        text: "base ".repeat(800),
+        sourceRefIds: [],
+        visibility: "prompt",
+        quotePolicy: "public_ok",
+      },
+      {
+        id: "user_history",
+        role: "user",
+        priority: "medium",
+        compactionSurvival: "summarize",
+        title: "User history",
+        text: "history ".repeat(800),
+        sourceRefIds: [],
+        visibility: "prompt",
+        quotePolicy: "public_ok",
+      },
+      {
+        id: "transient_developer",
+        role: "instruction",
+        priority: "low",
+        compactionSurvival: "discard",
+        title: "Transient developer message",
+        text: "discard me",
+        sourceRefIds: [],
+        visibility: "prompt",
+        quotePolicy: "public_ok",
+      },
+    ],
+    maxSectionTextChars: 600,
+  });
+
+  assert.deepEqual(result.sections.map((section) => section.id), ["base_instructions", "user_history"]);
+  assert.equal(result.sections[0].text.startsWith("base "), true);
+  assert.equal(result.sections[1].metadata.condensed, true);
+  assert.deepEqual(result.discardedSectionIds, ["transient_developer"]);
+  assert.deepEqual(result.condensedSectionIds, ["user_history"]);
+  assert.equal(result.compactionIds.length, 2);
+});
+
+test("context views create independent snapshot identities and stamp projection lineage", () => {
+  const projection = {
+    projectionVersion: "projection_1",
+    sourceStateFingerprint: "state_1",
+    threadId: "thread_1",
+    turnId: "turn_1",
+    segmentId: "segment_1",
+    throughItemSequence: 4,
+    summaryIds: [],
+    sourceRefs: [],
+    policyVersion: "policy_1",
+    visibilityFingerprint: "visibility_1",
+  };
+  const input = {
+    kind: "ling_agent_channel_view",
+    workspaceId: "workspace_1",
+    channelId: "channel_1",
+    now,
+    sourceRefs: [],
+    contextProjection: projection,
+    sections: [],
+  };
+  const first = buildChannelContextView(input);
+  const second = buildChannelContextView(input);
+  assert.notEqual(first.id, second.id);
+  assert.equal(first.metadata.createdAt, now);
+  assert.equal(first.contextProjection.contextViewId, first.id);
+  assert.equal(first.contextProjection.contextViewCreatedAt, now);
+  assert.equal(second.contextProjection.contextViewId, second.id);
 });
 
 test("workflow context inspect summary exposes metadata without raw prompt text", () => {

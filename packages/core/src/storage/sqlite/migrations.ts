@@ -3,6 +3,9 @@ import { normalizeChannelRuntimePolicy } from "../../workspace-types.js";
 import { stringifyJson } from "./helpers.js";
 import { removeLegacySkillWorkflowPhaseMetadata } from "./skill-capability-migration.js";
 import { CONTINUITY_V2_STORAGE_MIGRATION_VERSION } from "./continuity-v2-migration.js";
+import {
+  applyRunContextViewLineageMigration,
+} from "./run-context-view-lineage-migration.js";
 
 export interface SqliteRunStoreMigrationContext {
   readonly database: DatabaseSync;
@@ -5641,4 +5644,11 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       context.recordMigration(MEDIA_PROJECT_ASSETS_MIGRATION_VERSION, MEDIA_PROJECT_ASSETS_MIGRATION_NAME);
     }
   }
+
+  applyRunContextViewLineageMigration({
+    database,
+    hasMigration: context.hasMigration.bind(context),
+    hasColumn: context.hasColumn.bind(context),
+    recordMigration: context.recordMigration.bind(context),
+  });
 }

@@ -152,6 +152,8 @@ export function runSessionSelectSql(whereClause: string): string {
       parent_run_id,
       intervention_id,
       continuation_reason,
+      context_view_id,
+      context_view_created_at,
       summary_path,
       error_message,
       created_at,

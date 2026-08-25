@@ -75,13 +75,19 @@ export class SqliteRunSessionStore {
             parent_run_id,
             intervention_id,
             continuation_reason,
+            context_view_id,
+            context_view_created_at,
             summary_path,
             error_message,
             created_at,
             started_at,
             ended_at,
             updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?, ?, ?
+          )
         `)
         .run(
           input.id,
@@ -104,6 +110,8 @@ export class SqliteRunSessionStore {
           input.parentRunId ?? null,
           input.interventionId ?? null,
           input.continuationReason ?? null,
+          input.contextViewId ?? null,
+          input.contextViewCreatedAt ?? null,
           null,
           null,
           input.createdAt,

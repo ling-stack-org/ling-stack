@@ -10,7 +10,8 @@ import {
   type CreateApprovalRequestInput,
   type EffectiveRunPolicySnapshot,
   type RunEventEnvelope,
-  type RunEventType,
+  type RunEventDataByType,
+  type RunEventEmitter,
   type RunSession,
   type RunStore,
   type RunTool,
@@ -40,7 +41,7 @@ export function createRunPermissionRequestHandler(options: {
   readonly run: RunSession;
   readonly approvalPolicy: ApprovalPolicy;
   readonly effectivePolicySnapshot?: EffectiveRunPolicySnapshot;
-  readonly appendAndMaybeStream: (type: RunEventType, data: unknown) => RunEventEnvelope | undefined;
+  readonly appendAndMaybeStream: RunEventEmitter;
   readonly streamEnvelope: (envelope: RunEventEnvelope) => void;
   readonly signal?: AbortSignal;
   readonly extraSecrets?: readonly (string | undefined)[];
@@ -267,7 +268,7 @@ function createAutoDeniedPermissionApproval(options: {
   readonly extraSecrets?: readonly (string | undefined)[];
   readonly controlPlaneEvents?: ControlPlaneEventHub;
   readonly workspaceCwd?: string;
-  readonly appendAndMaybeStream: (type: RunEventType, data: unknown) => RunEventEnvelope | undefined;
+  readonly appendAndMaybeStream: RunEventEmitter;
   readonly streamEnvelope: (envelope: RunEventEnvelope) => void;
 }): ApprovalRequest {
   const createdAt = new Date().toISOString();
@@ -353,7 +354,7 @@ function approvalDescription(payload: RuntimePermissionRequestPayload): string {
   return `The runner requested ${summarizeRuntimePermissionScope(payload.requestedScope)}.`;
 }
 
-function approvalRequestEventPayload(approval: ApprovalRequest): Record<string, unknown> {
+function approvalRequestEventPayload(approval: ApprovalRequest): RunEventDataByType["approval_requested"] {
   return {
     approvalId: approval.id,
     toolCallId: approval.toolCallId,

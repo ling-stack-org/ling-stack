@@ -1,4 +1,5 @@
-import { condenseChannelContextSources } from "./condenser.js";
+import { randomUUID } from "node:crypto";
+import { condenseChannelContextSections, condenseChannelContextSources } from "./condenser.js";
 import { sourceDropReasonForView } from "./policies.js";
 import type {
   ChannelContextBudgetSnapshot,
@@ -34,6 +35,8 @@ export interface BuildChannelContextViewInput {
 }
 
 export function buildChannelContextView(input: BuildChannelContextViewInput): ChannelContextView {
+  const createdAt = input.now ?? new Date().toISOString();
+  const id = createChannelContextViewId();
   const keptSources: ChannelContextSource[] = [];
   const dropped: ChannelContextDroppedSource[] = [...(input.dropped ?? [])];
   for (const source of input.sources ?? []) {
@@ -58,13 +61,28 @@ export function buildChannelContextView(input: BuildChannelContextViewInput): Ch
     dropped.push(...condenserResult.dropped);
   }
 
+  const sectionCondenserResult = input.condenser?.enabled
+    ? condenseChannelContextSections({
+        sections: input.sections,
+        maxSectionTextChars: input.condenser.maxSourceTextChars,
+      })
+    : undefined;
+  const viewSections = sectionCondenserResult?.sections ?? input.sections;
+  const viewContextProjection = input.contextProjection
+    ? {
+        ...input.contextProjection,
+        contextViewId: id,
+        contextViewCreatedAt: createdAt,
+      }
+    : undefined;
+
   return {
-    id: `${input.kind}:${input.channelId ?? input.workspaceId}`,
+    id,
     kind: input.kind,
     workspaceId: input.workspaceId,
     channelId: input.channelId,
     consumerTeammateId: input.consumerTeammateId,
-    sections: input.sections,
+    sections: viewSections,
     sourceRefs: uniqueSourceRefs([
       ...input.sourceRefs,
       ...viewSources.flatMap((source) => source.sourceRefs),
@@ -72,12 +90,13 @@ export function buildChannelContextView(input: BuildChannelContextViewInput): Ch
     sources: viewSources,
     dropped,
     budget: input.budget,
-    contextProjection: input.contextProjection,
+    contextProjection: viewContextProjection,
     metadata: {
-      createdAt: input.now ?? new Date().toISOString(),
+      createdAt,
       compactionIds: uniqueStrings([
         ...(input.compactionIds ?? []),
         ...(condenserResult?.compactionIds ?? []),
+        ...(sectionCondenserResult?.compactionIds ?? []),
       ]),
       sourceCount: viewSources.length,
       condenser: condenserResult ? {
@@ -86,9 +105,15 @@ export function buildChannelContextView(input: BuildChannelContextViewInput): Ch
         maxSources: input.condenser?.maxSources,
         condensedSourceCount: condenserResult.condensedSourceIds.length,
         droppedSourceCount: condenserResult.dropped.length,
+        condensedSectionCount: sectionCondenserResult?.condensedSectionIds.length ?? 0,
+        discardedSectionCount: sectionCondenserResult?.discardedSectionIds.length ?? 0,
       } : undefined,
     },
   };
+}
+
+export function createChannelContextViewId(): string {
+  return `context_view_${randomUUID()}`;
 }
 
 function uniqueSourceRefs(refs: readonly ChannelContextSourceRef[]): readonly ChannelContextSourceRef[] {

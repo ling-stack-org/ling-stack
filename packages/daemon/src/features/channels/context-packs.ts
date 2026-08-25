@@ -44,6 +44,7 @@ import {
 } from "./context-processing/workflow-steps.js";
 import type {
   ChannelContextSection,
+  ChannelContextSectionCompactionSurvival,
   ChannelContextSource,
   ChannelContextSourceRef,
   ChannelContextView,
@@ -105,6 +106,7 @@ export interface ContextSection {
   readonly id: string;
   readonly role: ContextSectionRole;
   readonly priority: ContextSectionPriority;
+  readonly compactionSurvival?: ChannelContextSectionCompactionSurvival;
   readonly text: string;
   readonly sourceRefIds?: readonly string[];
   readonly estimatedTokens?: number;
@@ -233,9 +235,11 @@ export function buildContextPack(input: BuildContextPackInput): ContextPack {
   const budget = resolveProviderContextBudget(input.providerPreset, input.kind);
   const sections = input.sections.map((section) => ({
     ...section,
+    compactionSurvival: section.compactionSurvival ?? defaultCompactionSurvivalForRole(section.role),
     estimatedTokens: section.estimatedTokens ?? estimateTextTokens(section.text),
   }));
   const droppedSectionIds: string[] = [];
+  const compactionIds = [...(input.compactionIds ?? [])];
   const keptSections = [...sections];
   let estimatedInputTokens = sumEstimatedTokens(keptSections);
 
@@ -246,6 +250,7 @@ export function buildContextPack(input: BuildContextPackInput): ContextPack {
     }
     const [dropped] = keptSections.splice(dropIndex, 1);
     droppedSectionIds.push(dropped.id);
+    compactionIds.push(stableSectionCompactionId("drop", dropped));
     estimatedInputTokens = sumEstimatedTokens(keptSections);
   }
 
@@ -257,7 +262,7 @@ export function buildContextPack(input: BuildContextPackInput): ContextPack {
     sections: keptSections,
     sourceRefs: input.sourceRefs ?? [],
     droppedSectionIds,
-    compactionIds: input.compactionIds ?? [],
+    compactionIds: [...new Set(compactionIds)],
     estimatedInputTokens,
     overBudget: estimatedInputTokens > budget.inputBudgetTokens,
     contextProjection: input.contextProjection,
@@ -385,6 +390,7 @@ function contextSectionToChannelContextSection(section: ContextSection): Channel
     id: section.id,
     role: section.role,
     priority: section.priority,
+    compactionSurvival: section.compactionSurvival ?? defaultCompactionSurvivalForRole(section.role),
     title: section.id,
     text: section.text,
     sourceRefIds: section.sourceRefIds ?? [],
@@ -400,6 +406,7 @@ function channelContextSectionToContextSection(section: ChannelContextSection): 
     id: section.id,
     role: section.role,
     priority: section.priority,
+    compactionSurvival: section.compactionSurvival,
     text: section.text,
     sourceRefIds: section.sourceRefIds,
     estimatedTokens: section.estimatedTokens,
@@ -862,12 +869,34 @@ function contextBudgetModeForCapabilities(capabilities: ProviderContextCapabilit
 }
 
 function findDropSectionIndex(sections: readonly ContextSection[]): number {
-  for (const priority of ["low", "medium", "high"] as const) {
-    for (let index = sections.length - 1; index >= 0; index -= 1) {
-      if (sections[index].priority === priority) {
-        return index;
+  for (const survival of ["discard", "summarize"] as const) {
+    for (const priority of ["low", "medium", "high", "must_keep"] as const) {
+      for (let index = sections.length - 1; index >= 0; index -= 1) {
+        if (sections[index].compactionSurvival === survival && sections[index].priority === priority) {
+          return index;
+        }
       }
     }
   }
   return -1;
+}
+
+function defaultCompactionSurvivalForRole(role: ContextSectionRole): ChannelContextSectionCompactionSurvival {
+  switch (role) {
+    case "system":
+    case "instruction":
+      return "rebuild";
+    case "user":
+    case "memory":
+    case "evidence":
+      return "summarize";
+  }
+}
+
+function stableSectionCompactionId(kind: "text" | "drop", section: ContextSection): string {
+  let hash = 0;
+  for (const character of `${kind}:${section.id}:${section.text.length}`) {
+    hash = ((hash << 5) - hash + character.charCodeAt(0)) | 0;
+  }
+  return `context_condenser_section_${kind}_${Math.abs(hash).toString(36)}`;
 }

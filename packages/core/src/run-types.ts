@@ -3,6 +3,9 @@ import type {
   ConversationItemV1,
   LingThreadRelationKindV2,
   LingThreadSurfaceKindV2,
+  RunEventDataByType as ContractRunEventDataByType,
+  RunEventEnvelope as ContractRunEventEnvelope,
+  RunEventType as ContractRunEventType,
 } from "@ling-stack/contracts";
 import type {
   ApprovalActionType,
@@ -602,39 +605,13 @@ export interface TransitionLingTurnStatusInput {
   readonly now: string;
 }
 
-export type RunEventType =
-  | "run_created"
-  | "run_start"
-  | "turn_start"
-  | "turn_end"
-  | "assistant_text_delta"
-  | "assistant_thinking_delta"
-  | "tool_hydration_request"
-  | "tool_hydration_end"
-  | "message_end"
-  | "tool_start"
-  | "tool_update"
-  | "tool_end"
-  | "run_end"
-  | "run_error"
-  | "run_cancelled"
-  | "approval_requested"
-  | "approval_approved"
-  | "approval_denied"
-  | "approval_expired"
-  | "approval_cancelled"
-  | "artifact_created"
-  | "workspace_change_recovery_started"
-  | "workspace_changes_undone"
-  | "workspace_changes_reapplied"
-  | "run_intervention_created"
-  | "run_followup_queued"
-  | "run_interrupt_requested"
-  | "run_continuation_starting"
-  | "run_continuation_started"
-  | "run_intervention_failed"
-  | "stale_runner_completion_ignored"
-  | "result";
+export type RunEventType = ContractRunEventType;
+export type RunEventDataByType = ContractRunEventDataByType;
+export type RunEventData = RunEventDataByType[RunEventType];
+export type RunEventEmitter = <K extends RunEventType>(
+  type: K,
+  data: RunEventDataByType[K],
+) => RunEventEnvelope | undefined;
 
 export const runInterventionModes = ["queue_followup", "interrupt_redirect"] as const;
 export type RunInterventionMode = (typeof runInterventionModes)[number];
@@ -1122,6 +1099,9 @@ export interface RunSession {
   readonly parentRunId?: string;
   readonly interventionId?: string;
   readonly continuationReason?: RunContinuationReason;
+  /** Immutable context projection lineage captured before execution started. */
+  readonly contextViewId?: string;
+  readonly contextViewCreatedAt?: string;
   readonly summaryPath?: string;
   readonly errorMessage?: string;
   readonly createdAt: string;
@@ -1130,14 +1110,7 @@ export interface RunSession {
   readonly updatedAt: string;
 }
 
-export interface RunEventEnvelope {
-  readonly id: string;
-  readonly runId: string;
-  readonly seq: number;
-  readonly ts: string;
-  readonly type: RunEventType;
-  readonly data: unknown;
-}
+export type RunEventEnvelope = ContractRunEventEnvelope;
 
 export interface CreateRunInput {
   readonly id: string;
@@ -1160,6 +1133,8 @@ export interface CreateRunInput {
   readonly parentRunId?: string;
   readonly interventionId?: string;
   readonly continuationReason?: RunContinuationReason;
+  readonly contextViewId?: string;
+  readonly contextViewCreatedAt?: string;
   readonly createdAt: string;
 }
 
@@ -1501,7 +1476,7 @@ export interface RunStore {
   markRunSucceeded(runId: string, endedAt: string, summaryPath?: string): void;
   markRunFailed(runId: string, endedAt: string, errorMessage: string, summaryPath?: string): void;
   markRunCancelled(runId: string, endedAt: string, summaryPath?: string): void;
-  appendEvent(runId: string, type: RunEventType, data: unknown): RunEventEnvelope;
+  appendEvent<K extends RunEventType>(runId: string, type: K, data: RunEventDataByType[K]): Extract<RunEventEnvelope, { readonly type: K }>;
   appendControlPlaneEvent(input: AppendControlPlaneEventInput, now: string): ControlPlaneEvent;
   getControlPlaneEventByIdempotency(workspaceId: string, idempotencyKey: string): ControlPlaneEvent | undefined;
   listControlPlaneEvents(options: ListControlPlaneEventsOptions): ControlPlaneEvent[];

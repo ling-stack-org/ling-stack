@@ -15,6 +15,8 @@ import {
   type LingThread,
   type LingTurn,
   type RunEventEnvelope,
+  type RunEventDataByType,
+  type RunEventEmitter,
   type RunEventType,
   type RunArtifact,
   type RunSession,
@@ -593,6 +595,8 @@ export async function executeRunRequest(
       parentRunId: runRequest.parentRunId,
       interventionId: runRequest.interventionId,
       continuationReason: runRequest.continuationReason,
+      contextViewId: runRequest.contextProjection?.contextViewId,
+      contextViewCreatedAt: runRequest.contextProjection?.contextViewCreatedAt,
       createdAt,
     });
     store.linkRunToWorkUnit(run.id, workUnit.id, createdAt);
@@ -1049,7 +1053,10 @@ export async function executeRunRequest(
     requestRuntimeAbort("hard_timeout");
     return true;
   };
-  const appendAndMaybeStream = (type: RunEventType, data: unknown): RunEventEnvelope | undefined => {
+  const appendAndMaybeStream: RunEventEmitter = <K extends RunEventType>(
+    type: K,
+    data: RunEventDataByType[K],
+  ): RunEventEnvelope | undefined => {
     if (persistenceError) {
       return undefined;
     }
@@ -1061,7 +1068,11 @@ export async function executeRunRequest(
     }
 
     try {
-      const envelope = store.appendEvent(run.id, type, redactSecrets(data, resolvedSecretValues));
+      const envelope = store.appendEvent(
+        run.id,
+        type,
+        redactSecrets(data, resolvedSecretValues) as RunEventDataByType[K],
+      );
       lastRuntimeActivityAt = Date.now();
       if (type === "approval_requested") {
         // The approval handler starts this pause before persistence. Keep the
@@ -1249,7 +1260,10 @@ export async function executeRunRequest(
         if (event.type === "tool_start") {
           toolStartArgsById.set(event.toolCallId, event.args);
         }
-        const eventEnvelope = appendAndMaybeStream(event.type, event);
+        const eventEnvelope = appendAndMaybeStream(
+          event.type,
+          { ...event } as RunEventDataByType[typeof event.type],
+        );
         if (eventEnvelope && event.type === "tool_end") {
           const sourceArgs = toolStartArgsById.get(event.toolCallId);
           try {

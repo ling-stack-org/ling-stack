@@ -1,6 +1,8 @@
 import type { SQLOutputValue } from "node:sqlite";
+import { isRunEventData } from "@ling-stack/contracts";
 import {
   type ListRunEventsOptions,
+  type RunEventDataByType,
   type RunEventEnvelope,
   type RunEventType,
   type RunSession,
@@ -23,20 +25,28 @@ export class SqliteRunEventStore {
     private readonly ports: SqliteRunEventStorePorts,
   ) {}
 
-  appendEvent(runId: string, type: RunEventType, data: unknown): RunEventEnvelope {
+  appendEvent<K extends RunEventType>(
+    runId: string,
+    type: K,
+    data: RunEventDataByType[K],
+  ): Extract<RunEventEnvelope, { readonly type: K }> {
     const run = this.ports.getRun(runId);
     if (!run) {
       throw new Error(`Run session not found: ${runId}`);
     }
 
-    const envelope: RunEventEnvelope = {
+    const redactedData = normalizeLegacyEventPayload(type, redactSecrets(data));
+    if (!isRunEventData(type, redactedData)) {
+      throw new Error(`Invalid run event payload for ${type}`);
+    }
+    const envelope = {
       id: createEventId(),
       runId,
       seq: this.nextEventSeq(runId),
       ts: new Date().toISOString(),
       type,
-      data: redactSecrets(data),
-    };
+      data: redactedData,
+    } as unknown as Extract<RunEventEnvelope, { readonly type: K }>;
 
     this.context.database
       .prepare("INSERT INTO run_events (id, run_id, seq, ts, type, data_json) VALUES (?, ?, ?, ?, ?, ?)")
@@ -99,4 +109,14 @@ export class SqliteRunEventStore {
       .get(runId);
     return readNumber(row as Record<string, SQLOutputValue>, "next_seq");
   }
+}
+
+function normalizeLegacyEventPayload<K extends RunEventType>(type: K, data: unknown): RunEventDataByType[K] {
+  // Older callers emitted tool_end without an explicit success flag. Preserve
+  // those rows while making the persisted typed payload total and deterministic.
+  if (type === "tool_end" && typeof data === "object" && data !== null && !Array.isArray(data)) {
+    const record = data as Record<string, unknown>;
+    return { ...record, isError: record.isError ?? false } as RunEventDataByType[K];
+  }
+  return data as RunEventDataByType[K];
 }

@@ -1236,8 +1236,12 @@ test("sqlite work units link run sessions and enforce CAS transitions", async ()
       taskSnapshot: task,
       providerSnapshot: { provider: "test-provider", model: "test-model" },
       requestSnapshot: { cwd },
+      contextViewId: "context_view_runtime",
+      contextViewCreatedAt: "2026-06-04T00:00:00.000Z",
       createdAt: now,
     });
+    assert.equal(store.getRun("run_linked_runtime")?.contextViewId, "context_view_runtime");
+    assert.equal(store.getRun("run_linked_runtime")?.contextViewCreatedAt, "2026-06-04T00:00:00.000Z");
     const linked = store.linkRunToWorkUnit("run_linked_runtime", workUnit.id, "2026-06-04T00:00:01.000Z");
     assert.equal(linked?.workUnitId, workUnit.id);
     assert.equal(store.getWorkUnit(workUnit.id)?.linkedRunId, "run_linked_runtime");
