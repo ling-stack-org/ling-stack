@@ -105,9 +105,9 @@ Light/Dark, with no invalid refresh action or loading flicker.
   after the isolated profile has received one real persistent unpacked installation.
 - Run platform-neutral Host framing/lifecycle tests on generic CI. The Host test runner builds and
   verifies the native executable only on supported macOS arm64 or Windows x64 hosts; Linux CI still
-  runs Node lifecycle and Rust protocol tests without pretending to produce a Linux Host. Do not
-  build a new Windows installer for this reconnect-only release because Host and daemon wire
-  protocols are unchanged.
+  runs Node lifecycle and Rust protocol tests, with product-build-only cases explicitly skipped,
+  without pretending to produce a Linux Host. Do not build a new Windows installer for this
+  reconnect-only release because Host and daemon wire protocols are unchanged.
 - Keep the repair branch local, create no PR or push, and build `ling-for-chrome.zip` from the exact
   clean local commit that passed acceptance. Record source, manifest, and ZIP SHA-256 values.
 - Upload `0.1.2` only after isolated-profile Chrome acceptance passes, update the `alarms` permission
