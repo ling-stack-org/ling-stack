@@ -33,7 +33,7 @@ export function reconcileWorkflowFromCanonicalState(input: {
   }
   const finalizedStepIds: string[] = [];
   const staleStepIds: string[] = [];
-  for (const step of input.store.listChannelWorkflowSteps({ workflowId: initial.id, limit: 500 })) {
+  for (const step of input.store.listChannelWorkflowSteps({ workflowId: initial.id, complete: true })) {
     if (step.status !== "running" && step.status !== "waiting_for_approval") continue;
     const result = finalizeDelegatedWorkflowStepFromCanonicalState({
       store: input.store,
@@ -89,7 +89,7 @@ export function reconcileAllContinuityWorkflows(
 }
 
 function assertFreshSuccessfulBasis(store: RunStore, workflow: ChannelWorkflow, now: string): void {
-  const steps = store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 });
+  const steps = store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
   const evaluation = evaluateWorkflowCompletion({ store, workflow, steps, now });
   if (evaluation?.gate.status !== "verified"
     || evaluation.gate.basisFingerprint !== workflow.metadata?.completionGate?.basisFingerprint) {

@@ -1967,15 +1967,18 @@ export interface WorkflowStepOutputRef {
 
 export type WorkflowPacketSourceRefType =
   | "channel_message"
+  | "conversation_item"
   | "channel_brief"
   | "channel_decision"
   | "context_summary"
   | "task"
   | "run"
+  | "attempt"
   | "workflow"
   | "workflow_step"
   | "workflow_handoff_intent"
   | "workflow_selector_decision"
+  | "execution_action"
   | "artifact"
   | "approval"
   | "memory";
@@ -2476,6 +2479,8 @@ export interface ListChannelWorkflowStepsOptions {
   readonly workflowId: string;
   readonly status?: ChannelWorkflowStepStatus;
   readonly limit?: number;
+  /** Read the complete durable workflow-step history for canonical evidence paths. */
+  readonly complete?: boolean;
 }
 
 export type CollaborationTaskCardMode =

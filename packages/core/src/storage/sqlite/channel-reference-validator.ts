@@ -1,6 +1,7 @@
 import type { ApprovalRequest } from "../../approval-types.js";
 import type { ConversationItemV1 } from "@ling-stack/contracts";
 import type { RunSession } from "../../run-types.js";
+import type { WorkUnit, WorkUnitAttempt } from "../../runtime-supervisor-types.js";
 import {
   DEFAULT_WORKSPACE_ID,
   type AiTeammate,
@@ -28,6 +29,8 @@ export interface SqliteChannelReferenceValidatorPorts {
   readonly getChannelLinkPreview: (linkPreviewId: string) => ChannelLinkPreview | undefined;
   readonly getTask: (taskId: string) => Task | undefined;
   readonly getRun: (runId: string) => RunSession | undefined;
+  readonly getWorkUnit: (workUnitId: string) => WorkUnit | undefined;
+  readonly getWorkUnitAttempt: (attemptId: string) => WorkUnitAttempt | undefined;
   readonly getChannelWorkflow: (workflowId: string) => ChannelWorkflow | undefined;
   readonly getChannelWorkflowStep: (workflowStepId: string) => ChannelWorkflowStep | undefined;
   readonly getChannelExecutionProposal: (proposalId: string) => ChannelExecutionProposal | undefined;
@@ -256,6 +259,7 @@ export class SqliteChannelReferenceValidator {
     for (const sourceRef of sourceRefs) {
       switch (sourceRef.type) {
         case "channel_message":
+        case "conversation_item":
           this.assertItemInChannel(channelId, sourceRef.id);
           break;
         case "channel_decision":
@@ -270,6 +274,9 @@ export class SqliteChannelReferenceValidator {
         case "run":
           this.assertRunInChannel(channelId, sourceRef.id);
           break;
+        case "attempt":
+          this.assertAttemptInChannel(channelId, sourceRef.id);
+          break;
         case "workflow":
           this.assertWorkflowInChannel(channelId, sourceRef.id);
           break;
@@ -281,6 +288,9 @@ export class SqliteChannelReferenceValidator {
           break;
         case "workflow_selector_decision":
           this.assertWorkflowSelectorDecisionInChannel(channelId, sourceRef.id);
+          break;
+        case "execution_action":
+          this.assertExecutionActionInChannel(channelId, sourceRef.id);
           break;
         case "approval": {
           const approval = this.ports.getApprovalRequest(sourceRef.id);
@@ -298,6 +308,59 @@ export class SqliteChannelReferenceValidator {
           break;
       }
     }
+  }
+
+  private assertAttemptInChannel(channelId: string, attemptId: string): void {
+    const attempt = this.ports.getWorkUnitAttempt(attemptId);
+    if (!attempt) throw new Error("Work unit attempt not found: " + attemptId);
+    const workUnit = this.ports.getWorkUnit(attempt.workUnitId);
+    if (!workUnit) throw new Error("Work unit not found for attempt: " + attemptId);
+    if (workUnit.channelId) {
+      if (workUnit.channelId !== channelId) {
+        throw new Error("Work unit attempt does not belong to channel: " + attemptId);
+      }
+      return;
+    }
+    if (workUnit.linkedRunId) {
+      this.assertRunInChannel(channelId, workUnit.linkedRunId);
+      return;
+    }
+    throw new Error("Work unit attempt has no channel owner: " + attemptId);
+  }
+
+  private assertExecutionActionInChannel(channelId: string, actionId: string): void {
+    if (actionId.startsWith("approval:")) {
+      const approvalId = actionId.slice("approval:".length);
+      if (!approvalId) throw new Error("Execution action id is malformed: " + actionId);
+      const approval = this.ports.getApprovalRequest(approvalId);
+      if (!approval) throw new Error("Approval request not found for execution action: " + actionId);
+      if (approval.channelId) {
+        if (approval.channelId !== channelId) {
+          throw new Error("Execution action approval does not belong to channel: " + actionId);
+        }
+        return;
+      }
+      if (approval.runId) {
+        this.assertRunInChannel(channelId, approval.runId);
+        return;
+      }
+      if (approval.workflowStepId) {
+        this.assertWorkflowStepInChannel(channelId, approval.workflowStepId);
+        return;
+      }
+      {
+        throw new Error("Execution action approval does not belong to channel: " + actionId);
+      }
+    }
+    if (actionId.startsWith("tool:")) {
+      const remainder = actionId.slice("tool:".length);
+      const separator = remainder.indexOf(":");
+      const runId = separator > 0 ? remainder.slice(0, separator) : "";
+      if (!runId) throw new Error("Execution action id is malformed: " + actionId);
+      this.assertRunInChannel(channelId, runId);
+      return;
+    }
+    throw new Error("Unsupported execution action source ref: " + actionId);
   }
 
   assertChannelProtocolSourceRefsInChannel(channelId: string, sourceRefs: readonly ChannelProtocolSourceRef[]): void {

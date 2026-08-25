@@ -238,7 +238,7 @@ export function collectRunPatchSet(store: RunStore, runId: string): RunPatchSet 
     }
   }
 
-  const approvals = store.listApprovalRequests({ runId, status: "approved", limit: 500 })
+  const approvals = store.listApprovalRequests({ runId, status: "approved", complete: true })
     .filter((approval) => approval.toolCallId && successfulToolEnds.has(approval.toolCallId))
     .filter((approval) => patchPlanFromApproval(approval) !== undefined)
     .sort((left, right) => (successfulToolEnds.get(left.toolCallId ?? "") ?? 0) - (successfulToolEnds.get(right.toolCallId ?? "") ?? 0));

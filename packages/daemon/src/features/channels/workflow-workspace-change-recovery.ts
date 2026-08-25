@@ -221,7 +221,7 @@ function resolveWorkflowStore(
 }
 
 function buildWorkflowRecoveryContext(store: RunStore, workflow: ChannelWorkflow): WorkflowRecoveryContext {
-  const steps = store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 });
+  const steps = store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
   const stepById = new Map(steps.map((step) => [step.id, step]));
   const explicitRunIds = new Set(steps.map((step) => step.runId).filter((runId): runId is string => Boolean(runId)));
   const runs = store.listRuns({ limit: 10_000 })

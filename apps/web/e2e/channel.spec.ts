@@ -6858,7 +6858,7 @@ test("workflow context inspect details stay out of main feed expansion", async (
   await expect(workCell).toBeVisible();
   const operationBubble = workCell.locator(".conversation-operation-bubble");
   await expect(operationBubble).toBeVisible();
-  await expect(operationBubble.locator(".conversation-operation-shell-status")).toContainText("Processed");
+  await expect(operationBubble.locator(".conversation-operation-shell-status")).toContainText("Edited 1 file");
   await expect(operationBubble.locator(".conversation-operation-shell-summary")).toHaveCount(0);
   await expect(operationBubble.getByRole("button", { name: "Copy summary" })).toHaveCount(0);
   await expect(operationBubble).toHaveClass(/collapsed/);

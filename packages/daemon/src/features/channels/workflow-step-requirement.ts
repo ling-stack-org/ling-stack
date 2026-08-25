@@ -18,7 +18,7 @@ export function materializeWorkflowDelegatedStepRequirements(input: {
   readonly manifest: RequiredParticipantManifestV1;
   readonly now: string;
 }): readonly ChannelWorkflowStep[] {
-  const steps = input.store.listChannelWorkflowSteps({ workflowId: input.workflow.id, limit: 500 });
+  const steps = input.store.listChannelWorkflowSteps({ workflowId: input.workflow.id, complete: true });
   const participants = new Map(input.manifest.participants.map((participant) => [participant.participantId, participant]));
   const stepsByParticipant = new Map<string, ChannelWorkflowStep[]>();
   for (const step of steps) {

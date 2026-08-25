@@ -38,6 +38,11 @@ export interface ListExecutionActionsOptions {
   readonly status?: ExecutionActionStatus;
   readonly actionType?: ApprovalActionType;
   readonly limit?: number;
+  /**
+   * Read the complete durable action history for a specific Run.
+   * Canonical evidence projections use this; interactive lists stay bounded.
+   */
+  readonly complete?: boolean;
 }
 
 type ExecutionActionStore = ApprovalStoreFacet & RunExecutionStoreFacet;
@@ -90,7 +95,7 @@ export function listExecutionActions(store: ExecutionActionStore, options: ListE
   const approvals = store.listApprovalRequests({
     runId: options.runId,
     status: approvalStatus,
-    limit: options.threadId ? 500 : limit,
+    ...(options.complete ? { complete: true } : { limit: options.threadId ? 500 : limit }),
   });
   const approvalActions = approvals
     .map((approval) => approvalToExecutionAction(store, approval))
@@ -98,21 +103,33 @@ export function listExecutionActions(store: ExecutionActionStore, options: ListE
     .filter((action) => !options.actionType || action.actionType === options.actionType);
   const toolActions = listToolActions(store, options, limit);
   const actions = mergeApprovalToolLifecycles(approvalActions, toolActions);
-  return actions
+  const ordered = actions
     .filter((action) => !options.status || action.status === options.status)
     .filter((action) => !options.actionType || action.actionType === options.actionType)
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
-    .slice(0, limit);
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
+  return options.complete ? ordered : ordered.slice(0, limit);
+}
+
+/** Read all durable actions for one logical Run for canonical evidence paths. */
+export function listAllExecutionActionsForRun(
+  store: ExecutionActionStore,
+  runId: string,
+): ExecutionAction[] {
+  return listExecutionActions(store, { runId, complete: true });
 }
 
 function approvalToExecutionAction(store: ExecutionActionStore, approval: ApprovalRequest): ExecutionAction {
   const run = approval.runId ? store.getRun(approval.runId) : undefined;
+  const attemptId = approval.runId
+    ? readRunAttemptId(listAllRunEvents(store, approval.runId))
+    : undefined;
   const classified = classifyApprovalAction(approval, run);
   return {
     id: `approval:${approval.id}`,
     workspaceId: DEFAULT_WORKSPACE_ID,
     threadId: run?.threadId,
     runId: approval.runId,
+    attemptId,
     workUnitId: run?.workUnitId,
     approvalId: approval.id,
     toolCallId: approval.toolCallId,
@@ -160,6 +177,7 @@ function deriveToolActionsForRun(
   run: RunSession,
 ): ExecutionAction[] {
   const events = listAllRunEvents(store, run.id);
+  const runAttemptId = readRunAttemptId(events);
   const starts = new Map<string, RunEventEnvelope>();
   const ends = new Map<string, RunEventEnvelope>();
   for (const event of events) {
@@ -168,9 +186,9 @@ function deriveToolActionsForRun(
       continue;
     }
     if (event.type === "tool_start") {
-      starts.set(toolCallId, event);
+      setLatestToolEvent(starts, toolCallId, event);
     } else if (event.type === "tool_end") {
-      ends.set(toolCallId, event);
+      setLatestToolEvent(ends, toolCallId, event);
     }
   }
 
@@ -192,6 +210,7 @@ function deriveToolActionsForRun(
       toolName,
       toolCallId,
       args: readToolArgs(start),
+      result: readToolResult(end),
       isError: readToolEndIsError(end),
     });
     const commandEvidence = toolName === "bash"
@@ -199,11 +218,13 @@ function deriveToolActionsForRun(
       : undefined;
     const commandStatus = executionActionStatusFromCommandEvidence(commandEvidence);
     const latestToolEvent = findLatestToolEvent(events, toolCallId);
+    const attemptId = readToolAttemptId(events, toolCallId) ?? runAttemptId;
     actions.push({
       id: `tool:${run.id}:${toolCallId}`,
       workspaceId: DEFAULT_WORKSPACE_ID,
       threadId: run.threadId,
       runId: run.id,
+      attemptId,
       workUnitId: run.workUnitId,
       toolCallId,
       actionType: classified.actionType,
@@ -248,6 +269,9 @@ function mergeApprovalToolLifecycles(
     const executionStarted = approvalAction.status === "approved";
     return {
       ...approvalAction,
+      ...(executionStarted && toolAction.attemptId
+        ? { attemptId: toolAction.attemptId }
+        : {}),
       status: executionStarted ? toolAction.status : approvalAction.status,
       targetRefs: mergeTargetRefs(approvalAction.targetRefs, toolAction.targetRefs),
       ...(toolAction.commandEvidence ? { commandEvidence: toolAction.commandEvidence } : {}),
@@ -264,12 +288,21 @@ function mergeApprovalToolLifecycles(
     } satisfies ExecutionAction;
   });
   return [
-    ...mergedApprovals,
+    ...mergedApprovals.map(failClosedUnverifiedMutation),
     ...toolActions.filter((action) => {
       const correlationKey = executionActionToolCorrelationKey(action);
       return !correlationKey || !approvalToolCorrelationKeys.has(correlationKey);
-    }),
+    }).map(failClosedUnverifiedMutation),
   ];
+}
+
+function failClosedUnverifiedMutation(action: ExecutionAction): ExecutionAction {
+  if ((action.actionType !== "write" && action.actionType !== "edit") || action.status !== "succeeded") {
+    return action;
+  }
+  const hasFileTarget = action.targetRefs.some((ref) =>
+    ref.type === "file" && typeof ref.path === "string" && ref.path.trim().length > 0);
+  return action.executedAt && hasFileTarget ? action : { ...action, status: "failed" };
 }
 
 function executionActionToolCorrelationKey(action: ExecutionAction): string | undefined {
@@ -330,13 +363,23 @@ function findLatestToolEvent(
   events: readonly RunEventEnvelope[],
   toolCallId: string,
 ): RunEventEnvelope | undefined {
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const event = events[index];
-    if (event && readToolCallId(event) === toolCallId) {
-      return event;
+  return events.reduce<RunEventEnvelope | undefined>((latest, event) => {
+    if (readToolCallId(event) !== toolCallId) {
+      return latest;
     }
+    return !latest || event.seq > latest.seq ? event : latest;
+  }, undefined);
+}
+
+function setLatestToolEvent(
+  eventsByToolCallId: Map<string, RunEventEnvelope>,
+  toolCallId: string,
+  event: RunEventEnvelope,
+): void {
+  const current = eventsByToolCallId.get(toolCallId);
+  if (!current || event.seq > current.seq) {
+    eventsByToolCallId.set(toolCallId, event);
   }
-  return undefined;
 }
 
 function buildApprovalTargetRefs(approval: ApprovalRequest, run: RunSession | undefined): ExecutionActionTargetRef[] {
@@ -365,8 +408,15 @@ function buildApprovalTargetRefs(approval: ApprovalRequest, run: RunSession | un
   if (approval.payload.type === "workflow_step") {
     refs.push({ type: "workflow", id: approval.payload.workflowId });
   }
-  if ((approval.payload.type === "file_write" || approval.payload.type === "file_edit") && approval.payload.path) {
-    refs.push({ type: "file", path: approval.payload.path, label: approval.payload.path });
+  if (approval.payload.type === "file_write" || approval.payload.type === "file_edit") {
+    const paths = approval.payload.touchedPaths && approval.payload.touchedPaths.length > 0
+      ? approval.payload.touchedPaths
+      : [approval.payload.path];
+    for (const path of paths) {
+      if (path.trim() && path !== "<unknown>") {
+        refs.push({ type: "file", path, label: path });
+      }
+    }
   }
   if (approval.payload.type === "bash") {
     refs.push({ type: "command", label: truncateLabel(approval.payload.command) });
@@ -388,12 +438,40 @@ function readToolCallId(event: RunEventEnvelope): string | undefined {
   return isRecord(event.data) && typeof event.data.toolCallId === "string" ? event.data.toolCallId : undefined;
 }
 
+function readToolAttemptId(events: readonly RunEventEnvelope[], toolCallId: string): string | undefined {
+  for (const event of [...events].sort((left, right) => right.seq - left.seq)) {
+    if (readToolCallId(event) !== toolCallId || !isRecord(event.data)) {
+      continue;
+    }
+    if (typeof event.data.attemptId === "string" && event.data.attemptId.trim()) {
+      return event.data.attemptId;
+    }
+  }
+  return undefined;
+}
+
+function readRunAttemptId(events: readonly RunEventEnvelope[]): string | undefined {
+  const created = events
+    .filter((event) => event.type === "run_created" && isRecord(event.data))
+    .sort((left, right) => right.seq - left.seq)[0];
+  if (!created || !isRecord(created.data)) {
+    return undefined;
+  }
+  return typeof created.data.attemptId === "string" && created.data.attemptId.trim()
+    ? created.data.attemptId
+    : undefined;
+}
+
 function readToolName(event: RunEventEnvelope): string | undefined {
   return isRecord(event.data) && typeof event.data.toolName === "string" ? event.data.toolName : undefined;
 }
 
 function readToolArgs(event: RunEventEnvelope | undefined): unknown {
   return event && isRecord(event.data) ? event.data.args : undefined;
+}
+
+function readToolResult(event: RunEventEnvelope | undefined): unknown {
+  return event && isRecord(event.data) ? event.data.result : undefined;
 }
 
 function readToolEndIsError(event: RunEventEnvelope | undefined): boolean {

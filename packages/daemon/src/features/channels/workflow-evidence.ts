@@ -8,7 +8,7 @@ import {
   type RunStore,
 } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
-import { listExecutionActions } from "../runs/execution-actions.js";
+import { listAllExecutionActionsForRun, listExecutionActions } from "../runs/execution-actions.js";
 import { buildWorkflowContextInspectSummary, type WorkflowContextInspectSummary } from "./context-processing/inspect.js";
 import {
   readWorkflowStepContextPacketArtifact,
@@ -59,7 +59,7 @@ export function buildWorkflowEvidence(store: RunStore, workflowId: string): Work
   if (!workflow) {
     throw new HttpError(404, "workflow_not_found", `Channel workflow not found: ${workflowId}`);
   }
-  const steps = store.listChannelWorkflowSteps({ workflowId, limit: 500 });
+  const steps = store.listChannelWorkflowSteps({ workflowId, complete: true });
   const evidenceSteps = steps.map((step) => buildWorkflowEvidenceStep(store, step));
   const selectorDecisions = store.listWorkflowSelectorDecisions({ workflowId, limit: 500 });
   const handoffIntents = store.listWorkflowHandoffIntents({ workflowId, limit: 500 });
@@ -71,12 +71,12 @@ export function buildWorkflowEvidence(store: RunStore, workflowId: string): Work
   const handoffs = handoffIds
     .map((handoffId) => store.getChannelHandoff(handoffId))
     .filter((handoff): handoff is ChannelHandoff => Boolean(handoff));
-  const approvals = steps.flatMap((step) => store.listApprovalRequests({ workflowStepId: step.id, limit: 500 }));
+  const approvals = steps.flatMap((step) => store.listApprovalRequests({ workflowStepId: step.id, complete: true }));
   const approvalCheckpoints = approvals
     .map((approval) => store.getApprovalCheckpointForApproval(approval.id))
     .filter((checkpoint): checkpoint is LingApprovalCheckpoint => Boolean(checkpoint));
   const actions = uniqueExecutionActions(evidenceSteps.flatMap((step) =>
-    step.linkedRun ? listExecutionActions(store, { runId: step.linkedRun.id, limit: 500 }) : [],
+    step.linkedRun ? listAllExecutionActionsForRun(store, step.linkedRun.id) : [],
   ));
   const artifacts = uniqueArtifacts(evidenceSteps.flatMap((step) => [...step.packetArtifacts, ...step.linkedArtifacts]));
   return {

@@ -1,6 +1,7 @@
 import {
   type ChannelWorkflow,
   type ChannelWorkflowStep,
+  type RunEventEnvelope,
   type RunSession,
   type RunStore,
   type WorkflowStepFailurePolicy,
@@ -12,12 +13,14 @@ import {
   isDelegatedStepRequirementV1,
   type DelegatedBlockCodeV1,
   type DelegatedEvidenceRefV1,
+  type DelegatedLineageV1,
   type DelegatedOutcomeV1,
   type DelegatedTerminalCodeV1,
+  type WorkflowPacketSourceRef,
   type WorkflowStepExecutionVerificationV1,
 } from "@ling-stack/contracts";
 import { isRecord } from "../../shared/validation.js";
-import { listExecutionActions } from "../runs/execution-actions.js";
+import { listAllExecutionActionsForRun } from "../runs/execution-actions.js";
 import { verifyWorkflowStepExecutionOperations } from "./workflow-operation-evidence.js";
 import {
   prepareDeterministicWorkflowStepOutputArtifact,
@@ -39,6 +42,11 @@ export type DelegatedStepFinalizationResult =
   | { readonly status: "waiting"; readonly step: ChannelWorkflowStep; readonly reason: string }
   | { readonly status: "finalized" | "duplicate"; readonly step: ChannelWorkflowStep }
   | { readonly status: "stale"; readonly step: ChannelWorkflowStep };
+
+type DelegatedOutcomeCandidate =
+  | Omit<Extract<DelegatedOutcomeV1, { readonly kind: "completed" }>, "lineage">
+  | Omit<Extract<DelegatedOutcomeV1, { readonly kind: "blocked" }>, "lineage">
+  | Omit<Extract<DelegatedOutcomeV1, { readonly kind: "failed" | "cancelled" }>, "lineage">;
 
 export interface DelegatedStepContextBlocker {
   readonly code: "agent_context_missing" | "agent_context_stale" | "agent_context_private_leak";
@@ -320,7 +328,7 @@ function commitCandidate(
   run: (RunSession & { readonly status: "succeeded" | "failed" | "cancelled" }) | undefined,
   candidate: {
     readonly finalStatus: "succeeded" | "blocked" | "failed" | "cancelled" | "skipped";
-    readonly outcome: DelegatedOutcomeV1;
+    readonly outcome: DelegatedOutcomeCandidate;
     readonly executionVerification?: WorkflowStepExecutionVerificationV1;
     readonly outputArtifactId?: string;
     readonly resultContextReview?: NonNullable<ChannelWorkflowStep["metadata"]>["resultContextReview"];
@@ -331,8 +339,9 @@ function commitCandidate(
   now: string,
   approval = step.metadata?.postStepApprovalId ? store.getApprovalRequest(step.metadata.postStepApprovalId) : undefined,
 ): DelegatedStepFinalizationResult {
-  const events = run ? store.listEvents(run.id, { limit: 1000 }) : [];
+  const outcome = withDelegatedLineage(store, workflow, step, run, candidate.outcome);
   const runEventCount = run ? store.countEvents(run.id) : 0;
+  const runLatestSeq = run ? readLatestRunEventSeq(store, run.id) : 0;
   const artifactIds = run ? store.listArtifacts(run.id).map((artifact) => artifact.id).sort() : [];
   const basisFingerprint = delegatedStepFinalizationBasisFingerprintV1({
     workflowId: workflow.id,
@@ -342,11 +351,11 @@ function commitCandidate(
     runStatus: run?.status,
     runUpdatedAt: run?.updatedAt,
     runEventCount,
-    runLatestSeq: events.at(-1)?.seq ?? 0,
+    runLatestSeq,
     requirementFingerprint: step.metadata?.delegatedRequirement?.fingerprint,
     approval: approval ? { id: approval.id, status: approval.status, resolvedAt: approval.resolvedAt } : undefined,
     artifactIds,
-    outcome: candidate.outcome,
+    outcome,
     verification: candidate.executionVerification,
   });
   const transition = store.commitChannelWorkflowStepFinalization({
@@ -358,12 +367,12 @@ function commitCandidate(
       id: run.id,
       status: run.status,
       updatedAt: run.updatedAt,
-      eventWatermark: { count: runEventCount, latestSeq: events.at(-1)?.seq ?? 0 },
+      eventWatermark: { count: runEventCount, latestSeq: runLatestSeq },
       artifactIds,
     } : { kind: "no_linked_run" },
     expectedApproval: approval ? { id: approval.id, status: approval.status, resolvedAt: approval.resolvedAt } : undefined,
     finalStatus: candidate.finalStatus,
-    delegatedOutcome: candidate.outcome,
+    delegatedOutcome: outcome,
     delegatedOutcomeBasisFingerprint: basisFingerprint,
     executionVerification: candidate.executionVerification,
     outputArtifactId: candidate.outputArtifactId,
@@ -378,6 +387,91 @@ function commitCandidate(
   const latest = store.getChannelWorkflowStep(step.id) ?? step;
   if (!transition.ok) return { status: "stale", step: latest };
   return { status: transition.duplicate ? "duplicate" : "finalized", step: latest };
+}
+
+function withDelegatedLineage(
+  store: RunStore,
+  workflow: ChannelWorkflow,
+  step: ChannelWorkflowStep,
+  run: RunSession | undefined,
+  outcome: DelegatedOutcomeCandidate,
+): DelegatedOutcomeV1 {
+  const runId = run?.id ?? null;
+  const attemptId = run ? readRunAttemptId(store, run) : null;
+  const sourceRefs = uniqueSourceRefs([
+    { type: "workflow", id: workflow.id },
+    { type: "workflow_step", id: step.id },
+    ...(runId ? [{ type: "run", id: runId } satisfies WorkflowPacketSourceRef] : []),
+    ...(attemptId ? [{ type: "attempt", id: attemptId } satisfies WorkflowPacketSourceRef] : []),
+    ...outcome.evidenceRefs.map(evidenceRefToSourceRef),
+  ]);
+  const lineage: DelegatedLineageV1 = {
+    workflowId: workflow.id,
+    workflowStepId: step.id,
+    participantId: step.toParticipantId,
+    runId,
+    attemptId,
+    sourceRefs,
+  };
+  return { ...outcome, lineage } as DelegatedOutcomeV1;
+}
+
+function evidenceRefToSourceRef(ref: DelegatedEvidenceRefV1): WorkflowPacketSourceRef {
+  return {
+    type: ref.kind === "execution_action" || ref.kind === "conversation_item" ? ref.kind : "artifact",
+    id: ref.id,
+  };
+}
+
+function uniqueSourceRefs(refs: readonly WorkflowPacketSourceRef[]): readonly WorkflowPacketSourceRef[] {
+  const seen = new Set<string>();
+  return refs.filter((ref) => {
+    const key = `${ref.type}:${ref.id}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function readRunAttemptId(store: RunStore, run: RunSession): string | null {
+  if (run.workUnitId) {
+    const workUnit = store.getWorkUnit(run.workUnitId);
+    const activeAttemptId = workUnit?.activeAttemptId;
+    if (activeAttemptId) {
+      const activeAttempt = store.getWorkUnitAttempt(activeAttemptId);
+      if (activeAttempt?.workUnitId === workUnit?.id) {
+        return activeAttempt.id;
+      }
+    }
+  }
+  const created = listAllRunEvents(store, run.id)
+    .filter((event) => event.type === "run_created" && isRecord(event.data))
+    .sort((left, right) => right.seq - left.seq)[0];
+  const createdAttemptId = created && isRecord(created.data) && typeof created.data.attemptId === "string"
+    ? created.data.attemptId.trim()
+    : "";
+  if (!createdAttemptId) return null;
+  if (!run.workUnitId) return createdAttemptId;
+  const createdAttempt = store.getWorkUnitAttempt(createdAttemptId);
+  return createdAttempt?.workUnitId === run.workUnitId ? createdAttempt.id : null;
+}
+
+function readLatestRunEventSeq(store: RunStore, runId: string): number {
+  return listAllRunEvents(store, runId).at(-1)?.seq ?? 0;
+}
+
+function listAllRunEvents(store: RunStore, runId: string): readonly RunEventEnvelope[] {
+  const events: RunEventEnvelope[] = [];
+  let afterSeq = 0;
+  while (true) {
+    const page = store.listEvents(runId, { afterSeq, limit: 1000 });
+    events.push(...page);
+    const latestSeq = page.at(-1)?.seq;
+    if (page.length < 1000 || latestSeq === undefined || latestSeq <= afterSeq) {
+      return events;
+    }
+    afterSeq = latestSeq;
+  }
 }
 
 function evidenceRefsForSuccessfulStep(
@@ -403,7 +497,7 @@ function evidenceRefsForSuccessfulStep(
   }
   const evidenceIds = verification
     ? verification.operationResults.flatMap((result) => result.evidenceActionIds)
-    : listExecutionActions(store, { runId: run.id, limit: 500 })
+    : listAllExecutionActionsForRun(store, run.id)
       .filter((action) => action.status === "succeeded")
       .map((action) => action.id);
   return [...new Set(evidenceIds)].map((id) => ({ kind: "execution_action", id }));
@@ -414,7 +508,7 @@ function blockedOutcome(
   code: DelegatedBlockCodeV1,
   reason: string,
   missingRequirements: readonly string[],
-): DelegatedOutcomeV1 {
+): Omit<Extract<DelegatedOutcomeV1, { readonly kind: "blocked" }>, "lineage"> {
   return {
     kind: "blocked",
     workflowId: step.workflowId,
@@ -432,7 +526,7 @@ function failedOutcome(
   kind: "failed" | "cancelled",
   code: DelegatedTerminalCodeV1,
   reason: string,
-): DelegatedOutcomeV1 {
+): Omit<Extract<DelegatedOutcomeV1, { readonly kind: "failed" | "cancelled" }>, "lineage"> {
   return {
     kind,
     workflowId: step.workflowId,
