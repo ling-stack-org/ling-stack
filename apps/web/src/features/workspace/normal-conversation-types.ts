@@ -19,6 +19,8 @@ import type {
   TerminalReportDto,
   WorkspaceAccessMode,
 } from "../../types.js";
+import type { InlineApprovalView } from "../../lib/inline-approvals.js";
+import type { ApprovalResolution } from "../approvals/types.js";
 
 export interface ConversationHomeProjectSelection {
   readonly projectPath?: string;
@@ -115,9 +117,13 @@ export interface ConversationHomeProps {
   readonly conversationErrorMessage?: string;
   readonly sending?: boolean;
   readonly activeRun?: RunSession;
+  readonly inlineApprovalViews: readonly InlineApprovalView[];
+  readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
   readonly stopping?: boolean;
   readonly fullAccessConfirmed?: boolean;
   readonly onOpenRun?: (runId: string) => void;
+  readonly onOpenApproval: (approvalId: string) => void;
+  readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
   readonly onOpenModelWorkbench?: () => void;
   readonly onConfirmFullAccess?: () => Promise<PermissionConfirmation | undefined>;
   readonly onConfirmFullAccessSelection?: () => PermissionConfirmation;
