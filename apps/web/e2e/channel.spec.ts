@@ -1319,7 +1319,8 @@ test("channel environment surface shows read-only context and opens review", asy
     };
   });
 
-  await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Summary" }).click();
+  const summaryButton = page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Summary" });
+  await summaryButton.click();
   const popover = page.locator(".channel-progress-popover");
   await expect(popover).toBeVisible();
   await expect.poll(async () => Math.round((await popover.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(270);
@@ -1341,7 +1342,7 @@ test("channel environment surface shows read-only context and opens review", asy
   await expect(quickEnvironmentPage).toContainText("ling/channel-environment");
   await page.getByRole("button", { name: "Back to channel" }).click();
   await expect(quickEnvironmentPage).toHaveCount(0);
-  await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Summary" }).click();
+  await summaryButton.click();
   await expect(popover).toBeVisible();
 
   const dock = page.locator(".channel-side-panel");
@@ -1498,11 +1499,14 @@ test("channel environment surface shows read-only context and opens review", asy
   await page.mouse.move(860, expandedResizeHandleBox!.y + 40, { steps: 12 });
   await page.mouse.up();
   await expect.poll(async () => Math.round((await dock.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(840);
-  await expect(popover).toBeVisible();
+  await expect(popover).toBeHidden();
+  await expect(summaryButton).toHaveAttribute("aria-pressed", "true");
+  await expect(summaryButton).toHaveAttribute("aria-expanded", "false");
   await expect.poll(async () => Math.round((await page.locator(".activity-shell .channel-composer").boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(560);
   await page.locator(".task-toolbar-panel").click();
   await expect(dock).toHaveCount(0);
   await expect(popover).toBeVisible();
+  await expect(summaryButton).toHaveAttribute("aria-expanded", "true");
 
   await page.getByRole("button", { name: "More channel views" }).click();
   await page.getByRole("menuitem", { name: "Environment" }).click();
@@ -2009,9 +2013,10 @@ test("wide channel progress popover does not resize the conversation", async ({ 
   expect(spacing.gap).toBeGreaterThanOrEqual(48);
   expect(spacing.overlapX).toBe(0);
 
-  await page.locator(".task-toolbar-progress").click();
-  await expect(page.locator(".channel-progress-popover")).toHaveClass(/is-popover-collapsed/);
+  const summaryButton = page.locator(".task-toolbar-progress");
+  await summaryButton.click();
   await expect(page.locator(".channel-progress-popover")).toHaveCount(0);
+  await expect(summaryButton).not.toHaveAttribute("aria-pressed", "true");
 });
 
 test("channel runtime policy is visible while preferred specialist controls stay hidden", async ({ page }) => {
@@ -7344,7 +7349,8 @@ test("progress popover owns workflow status while the right drawer avoids duplic
   await expect(qaSpan).toContainText("Waiting for approval");
   await expect(qaSpan.locator(".conversation-work-cell-agent-span-detail")).toContainText("Waiting for approval: Validate progress panel");
 
-  await page.locator(".task-toolbar-progress").click();
+  const summaryButton = page.locator(".task-toolbar-progress");
+  await summaryButton.click();
   const progressPopover = page.locator(".channel-progress-popover");
   await expect(progressPopover).toHaveCount(1);
   await expect(progressPopover).toContainText("Ship workflow UI");
@@ -7357,7 +7363,9 @@ test("progress popover owns workflow status while the right drawer avoids duplic
   await expect(progressPopover).not.toContainText("branch_engineer");
 
   await page.locator(".task-toolbar-panel").click();
-  await expect(progressPopover).toBeVisible();
+  await expect(progressPopover).toBeHidden();
+  await expect(summaryButton).toHaveAttribute("aria-pressed", "true");
+  await expect(summaryButton).toHaveAttribute("aria-expanded", "false");
   const panel = page.locator(".channel-side-panel.right-dock");
   await expect(panel).toHaveAttribute("aria-label", "Channel workspace dock");
   await expect(panel).toContainText("Workspace tools");
@@ -11749,7 +11757,10 @@ test("channel activity derives task run approval transition and workflow events"
   await page.locator(".task-toolbar-progress").click();
   await expect(page.locator(".channel-progress-popover")).toHaveCount(1);
   await page.getByRole("button", { name: "Show details" }).click();
-  await expect(page.locator(".channel-progress-popover")).toBeVisible();
+  const summaryButton = page.locator(".task-toolbar-progress");
+  await expect(page.locator(".channel-progress-popover")).toBeHidden();
+  await expect(summaryButton).toHaveAttribute("aria-pressed", "true");
+  await expect(summaryButton).toHaveAttribute("aria-expanded", "false");
   const contextPanel = page.locator(".channel-side-panel.right-dock");
   await expect(contextPanel).toHaveAttribute("aria-label", "Channel workspace dock");
   await expect(contextPanel.getByLabel("Attention counts")).toHaveCount(0);

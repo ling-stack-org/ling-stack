@@ -9,7 +9,11 @@ import {
   createApprovalResumeBasisV1,
   createSqliteRunStore,
 } from "../../core/dist/index.js";
-import { createRequiredParticipantManifestV1, workflowGraphFingerprintV1 } from "../../contracts/dist/index.js";
+import {
+  createRequiredParticipantManifestV1,
+  delegatedStepFinalizationBasisFingerprintV1,
+  workflowGraphFingerprintV1,
+} from "../../contracts/dist/index.js";
 import { confirmChannelExecutionProposalWorkflow } from "../dist/features/channels/proposal-workflows.js";
 import { materializeCommandIntent } from "../dist/features/channels/command-operation-match.js";
 import {
@@ -565,6 +569,125 @@ test("multi-agent completion requires both Engineer write and QA command evidenc
       finalizeOrchestratedWorkflowStepRun(fixture.store, fixture.qaStep.id, fixture.qaTask.id, fixture.store.getRun(fixture.qaRun.id), "2026-08-12T14:01:21.000Z");
       assert.equal(fixture.store.getChannelWorkflowStep(fixture.qaStep.id).status, "blocked");
       assert.equal(fixture.store.getChannelWorkflow(fixture.workflow.id).status, "blocked");
+    } finally {
+      await fixture.close();
+    }
+  });
+});
+
+test("step finalization rejects evidence that is not owned by the current Run", async (t) => {
+  await t.test("same-channel foreign execution action", async () => {
+    const fixture = await createMultiAgentOperationFixture("foreign-action-evidence");
+    try {
+      appendToolAction(fixture.store, fixture.engineerRun.id, "write_app", "write", { path: "app.js", content: "ok" }, false);
+      appendToolAction(fixture.store, fixture.qaRun.id, "foreign_action", "write", { path: "foreign.js", content: "foreign" }, false);
+      fixture.store.markRunSucceeded(fixture.engineerRun.id, "2026-08-12T14:00:10.000Z");
+      const originalCommit = fixture.store.commitChannelWorkflowStepFinalization.bind(fixture.store);
+      let observed;
+      fixture.store.commitChannelWorkflowStepFinalization = (input) => {
+        const outcome = {
+          ...input.delegatedOutcome,
+          lineage: {
+            ...input.delegatedOutcome.lineage,
+            sourceRefs: input.delegatedOutcome.lineage.sourceRefs.map((ref) => ref.type === "execution_action"
+              ? { ...ref, id: `tool:${fixture.qaRun.id}:foreign_action` }
+              : ref),
+          },
+          evidenceRefs: [{ kind: "execution_action", id: `tool:${fixture.qaRun.id}:foreign_action` }],
+        };
+        const basisFingerprint = delegatedStepFinalizationBasisFingerprintV1({
+          workflowId: fixture.workflow.id,
+          workflowStepId: fixture.engineerStep.id,
+          stepUpdatedAt: input.expectedUpdatedAt,
+          runId: input.expectedRun.id,
+          runStatus: input.expectedRun.status,
+          runUpdatedAt: input.expectedRun.updatedAt,
+          runEventCount: input.expectedRun.eventWatermark.count,
+          runLatestSeq: input.expectedRun.eventWatermark.latestSeq,
+          requirementFingerprint: fixture.store.getChannelWorkflowStep(fixture.engineerStep.id).metadata.delegatedRequirement.fingerprint,
+          approval: input.expectedApproval,
+          artifactIds: input.expectedRun.artifactIds,
+          outcome,
+          verification: input.executionVerification,
+        });
+        observed = originalCommit({ ...input, delegatedOutcome: outcome, delegatedOutcomeBasisFingerprint: basisFingerprint });
+        return observed;
+      };
+      const result = finalizeDelegatedWorkflowStepFromCanonicalState({
+        store: fixture.store,
+        workflowStepId: fixture.engineerStep.id,
+        cause: "run_terminal",
+        now: "2026-08-12T14:00:11.000Z",
+      });
+      assert.equal(result.status, "stale");
+      assert.deepEqual(observed, { ok: false, code: "invalid_transition", currentStatus: "running" });
+      assert.equal(fixture.store.getChannelWorkflowStep(fixture.engineerStep.id).status, "running");
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  await t.test("foreign artifact", async () => {
+    const fixture = await createSynthesisFinalizationFixture("foreign-artifact-evidence");
+    try {
+      const foreignRun = createFixtureRun(
+        fixture.store,
+        fixture.cwd,
+        fixture.workflow.channelId,
+        fixture.step.id,
+        fixture.task,
+        "run_synthesis_foreign_artifact",
+        "2026-08-12T14:25:00.000Z",
+      );
+      const foreignArtifact = fixture.store.createArtifact({
+        runId: foreignRun.id,
+        type: "json",
+        path: "foreign-output.json",
+        sealedPayload: { schemaVersion: 1, kind: "foreign" },
+        createdAt: "2026-08-12T14:25:01.000Z",
+      });
+      fixture.store.appendEvent(fixture.run.id, "assistant_text_delta", { text: "Sourced synthesis." });
+      fixture.store.markRunSucceeded(fixture.run.id, "2026-08-12T14:25:10.000Z");
+      const originalCommit = fixture.store.commitChannelWorkflowStepFinalization.bind(fixture.store);
+      let observed;
+      fixture.store.commitChannelWorkflowStepFinalization = (input) => {
+        const outcome = {
+          ...input.delegatedOutcome,
+          lineage: {
+            ...input.delegatedOutcome.lineage,
+            sourceRefs: input.delegatedOutcome.lineage.sourceRefs.map((ref) => ref.type === "artifact"
+              ? { ...ref, id: foreignArtifact.id }
+              : ref),
+          },
+          evidenceRefs: [{ kind: "workflow_output_packet", id: foreignArtifact.id }],
+        };
+        const basisFingerprint = delegatedStepFinalizationBasisFingerprintV1({
+          workflowId: fixture.workflow.id,
+          workflowStepId: fixture.step.id,
+          stepUpdatedAt: input.expectedUpdatedAt,
+          runId: input.expectedRun.id,
+          runStatus: input.expectedRun.status,
+          runUpdatedAt: input.expectedRun.updatedAt,
+          runEventCount: input.expectedRun.eventWatermark.count,
+          runLatestSeq: input.expectedRun.eventWatermark.latestSeq,
+          requirementFingerprint: fixture.store.getChannelWorkflowStep(fixture.step.id).metadata.delegatedRequirement.fingerprint,
+          approval: input.expectedApproval,
+          artifactIds: input.expectedRun.artifactIds,
+          outcome,
+          verification: input.executionVerification,
+        });
+        observed = originalCommit({ ...input, delegatedOutcome: outcome, delegatedOutcomeBasisFingerprint: basisFingerprint });
+        return observed;
+      };
+      const result = finalizeDelegatedWorkflowStepFromCanonicalState({
+        store: fixture.store,
+        workflowStepId: fixture.step.id,
+        cause: "run_terminal",
+        now: "2026-08-12T14:25:11.000Z",
+      });
+      assert.equal(result.status, "stale");
+      assert.deepEqual(observed, { ok: false, code: "invalid_transition", currentStatus: "running" });
+      assert.equal(fixture.store.getChannelWorkflowStep(fixture.step.id).status, "running");
     } finally {
       await fixture.close();
     }
@@ -2217,8 +2340,10 @@ async function createSynthesisFinalizationFixture(suffix) {
   step = store.updateChannelWorkflowStep(step.id, { taskId: task.id, runId: run.id }, now);
   return {
     store,
+    cwd,
     workflow,
     step,
+    task,
     run,
     close: async () => {
       store.close();
