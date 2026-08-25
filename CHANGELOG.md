@@ -6,6 +6,27 @@ open-source baseline onward.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and future
 release versions will follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0.0] - 2026-08-25
+
+### Added
+
+- Structured channel transcripts now keep canonical conversation items and render tool calls,
+  tool results, approvals, handoffs, artifacts, operations, and final results in typed content
+  layers instead of mixing them into ordinary prose.
+- Added focused unit and browser coverage for structured content projection, stream updates,
+  visibility boundaries, status semantics, and legacy-item deduplication.
+
+### Changed
+
+- Channel transcript projection now preserves canonical item revisions, domain references, and
+  stable ordering across initial loads, stream events, and pagination.
+
+### Fixed
+
+- Operator-only and agent-private content is excluded from channel transcripts, while failed and
+  cancelled tool and approval states retain their correct visible status.
+- Stale channel or thread refreshes can no longer overwrite the currently selected conversation.
+
 ## [Unreleased]
 
 ### Added
