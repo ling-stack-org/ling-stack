@@ -29,6 +29,7 @@ import {
   summarizePatchFiles,
   summarizePatchPlans,
   uniquePaths,
+  withWorkspaceRecoveryLock,
   type RecoveryAction,
   type RecoveryIntentFile,
   type RecoveryPlanStep,
@@ -111,45 +112,50 @@ export async function recoverWorkflowWorkspaceChanges(
   const context = buildWorkflowRecoveryContext(store, workflow);
   assertWorkflowRecoveryAvailable(context);
   const cwd = context.cwd as string;
-  const ownerRun = context.ownerRun as RunSession;
-  const plans = context.patchRuns.flatMap((item) => item.patchSet.plans);
-  const observation = observeWorkflowRecoveryState(cwd, workflow.id, plans, workflowRecoveryEvents(store, ownerRun.id, workflow.id));
-  if (observation.conflict) {
-    throw new RunWorkspaceRecoveryError(409, "workspace_change_conflict", observation.conflict);
-  }
-  if ((action === "undo" && observation.state === "undone") || (action === "reapply" && observation.state !== "undone")) {
-    throw new RunWorkspaceRecoveryError(
-      409,
-      "workspace_change_invalid_state",
-      action === "undo" ? "This workflow's patches are already undone." : "This workflow's patches must be undone before they can be reapplied.",
-    );
-  }
+  return withWorkspaceRecoveryLock(cwd, async () => {
+    const lockedContext = buildWorkflowRecoveryContext(store, workflow);
+    assertWorkflowRecoveryAvailable(lockedContext);
+    const lockedCwd = lockedContext.cwd as string;
+    const lockedOwnerRun = lockedContext.ownerRun as RunSession;
+    const lockedPlans = lockedContext.patchRuns.flatMap((item) => item.patchSet.plans);
+    const observation = observeWorkflowRecoveryState(lockedCwd, workflow.id, lockedPlans, workflowRecoveryEvents(store, lockedOwnerRun.id, workflow.id));
+    if (observation.conflict) {
+      throw new RunWorkspaceRecoveryError(409, "workspace_change_conflict", observation.conflict);
+    }
+    if ((action === "undo" && observation.state === "undone") || (action === "reapply" && observation.state !== "undone")) {
+      throw new RunWorkspaceRecoveryError(
+        409,
+        "workspace_change_invalid_state",
+        action === "undo" ? "This workflow's patches are already undone." : "This workflow's patches must be undone before they can be reapplied.",
+      );
+    }
 
-  const recoverySteps = workflowRecoveryPlanSteps(context.patchRuns, action);
-  const preflight = await preflightRecoveryPlanSequence(cwd, recoverySteps);
-  const recoveryId = randomUUID();
-  store.appendEvent(ownerRun.id, "workspace_change_recovery_started", {
-    scope: "workflow",
-    workflowId: workflow.id,
-    runIds: context.patchRuns.map((item) => item.run.id),
-    action,
-    recoveryId,
-    cwd,
-    files: recoveryIntentFiles(preflight),
+    const recoverySteps = workflowRecoveryPlanSteps(lockedContext.patchRuns, action);
+    const preflight = await preflightRecoveryPlanSequence(lockedCwd, recoverySteps);
+    const recoveryId = randomUUID();
+    store.appendEvent(lockedOwnerRun.id, "workspace_change_recovery_started", {
+      scope: "workflow",
+      workflowId: workflow.id,
+      runIds: lockedContext.patchRuns.map((item) => item.run.id),
+      action,
+      recoveryId,
+      cwd: lockedCwd,
+      files: recoveryIntentFiles(preflight),
+    });
+    commitRecovery(lockedCwd, preflight);
+    store.appendEvent(lockedOwnerRun.id, action === "undo" ? "workspace_changes_undone" : "workspace_changes_reapplied", {
+      scope: "workflow",
+      workflowId: workflow.id,
+      runIds: lockedContext.patchRuns.map((item) => item.run.id),
+      recoveryId,
+      cwd: lockedCwd,
+      approvalIds: lockedContext.patchRuns.flatMap((item) => item.patchSet.approvals.map((approval) => approval.id)),
+      rawPatchSha256: lockedPlans.map((plan) => plan.rawPatchSha256),
+      touchedPaths: preflight.paths,
+      summary: summarizePatchPlans(lockedPlans),
+    });
+    return buildWorkflowWorkspaceChangesResponse(store, workflow);
   });
-  commitRecovery(cwd, preflight);
-  store.appendEvent(ownerRun.id, action === "undo" ? "workspace_changes_undone" : "workspace_changes_reapplied", {
-    scope: "workflow",
-    workflowId: workflow.id,
-    runIds: context.patchRuns.map((item) => item.run.id),
-    recoveryId,
-    cwd,
-    approvalIds: context.patchRuns.flatMap((item) => item.patchSet.approvals.map((approval) => approval.id)),
-    rawPatchSha256: plans.map((plan) => plan.rawPatchSha256),
-    touchedPaths: preflight.paths,
-    summary: summarizePatchPlans(plans),
-  });
-  return buildWorkflowWorkspaceChangesResponse(store, workflow);
 }
 
 export async function buildWorkflowWorkspaceChangesResponse(

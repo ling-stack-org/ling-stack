@@ -570,12 +570,47 @@ export interface RunEventDataByType {
     readonly [key: string]: unknown;
   };
   readonly workspace_change_recovery_started: {
+    readonly action?: "undo" | "reapply";
+    readonly recoveryId?: string;
+    readonly idempotencyKey?: string;
+    readonly scope?: "turn" | "workflow";
+    readonly turnId?: string;
+    readonly workflowId?: string;
+    readonly runIds?: readonly string[];
+    readonly cwd?: string;
+    readonly files?: readonly {
+      readonly path: string;
+      readonly beforeSha256: string;
+      readonly afterSha256: string;
+    }[];
     readonly [key: string]: unknown;
   };
   readonly workspace_changes_undone: {
+    readonly action?: "undo";
+    readonly recoveryId?: string;
+    readonly idempotencyKey?: string;
+    readonly scope?: "turn" | "workflow";
+    readonly turnId?: string;
+    readonly workflowId?: string;
+    readonly runIds?: readonly string[];
+    readonly cwd?: string;
+    readonly approvalIds?: readonly string[];
+    readonly rawPatchSha256?: readonly string[];
+    readonly touchedPaths?: readonly string[];
     readonly [key: string]: unknown;
   };
   readonly workspace_changes_reapplied: {
+    readonly action?: "reapply";
+    readonly recoveryId?: string;
+    readonly idempotencyKey?: string;
+    readonly scope?: "turn" | "workflow";
+    readonly turnId?: string;
+    readonly workflowId?: string;
+    readonly runIds?: readonly string[];
+    readonly cwd?: string;
+    readonly approvalIds?: readonly string[];
+    readonly rawPatchSha256?: readonly string[];
+    readonly touchedPaths?: readonly string[];
     readonly [key: string]: unknown;
   };
   readonly run_intervention_created: {

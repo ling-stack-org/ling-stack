@@ -1,7 +1,7 @@
 # Post-Compaction Workspace Undo
 
-Status: design frozen for a follow-up implementation slice. No runtime, schema, or
-API implementation is included in this document's change.
+Status: V1 selective-inverse implementation landed; snapshot restore remains explicitly
+gated and unimplemented.
 Date: 2026-08-25
 Scope: define how Ling can undo workspace changes whose source `LingTurn` or raw
 harness messages are no longer present in the active context after compaction.
@@ -67,9 +67,10 @@ This design extends existing paths and does not introduce a second Item or patch
 - `ConversationItemV1` is a typed read-only projection of execution evidence. It does not
   become a workspace mutation authority.
 
-The missing piece is a durable compaction-to-provenance watermark. Current patch recovery
-can undo a terminal Run, but a future compaction-aware path must prove that the Run and its
-patch records belong to the requested compacted Turn without consulting discarded prompt text.
+The compaction-to-provenance watermark and Turn-level recovery path are now durable. Patch
+applications write immutable mutation records and sealed forward/inverse PatchPlan artifacts;
+compaction install writes an immutable checkpoint; Turn recovery resolves all linked terminal
+Runs without consulting discarded prompt text.
 
 ## Authority boundaries
 
@@ -457,34 +458,36 @@ Both must allow every touched path. The implementation must continue to enforce:
 Changing the current policy after a Run completes cannot expand the original Run's authority;
 it can only keep recovery allowed when both the original and current policies permit it.
 
-## Implementation slices after this design
+## Implementation status
 
-This document intentionally stops before code. The follow-up should be split as follows:
+The following slices are implemented in the current daemon/core code:
 
-### S1: provenance and checkpoint persistence (P1)
+### S1: provenance and checkpoint persistence (P1) — implemented
 
-- Add durable `CompactionCheckpoint` and `WorkspaceMutationRecord` contracts/mappers.
-- Capture patch operation provenance at successful apply, including Turn/Run/Approval/Artifact
-  refs and a monotonic workspace watermark.
-- Install a checkpoint only after the replacement context projection validates.
-- Add migration/reopen/idempotency tests. No UI affordance yet.
+- Durable `CompactionCheckpoint` and `WorkspaceMutationRecord` contracts, SQLite migration,
+  mappers, and reopen coverage are present.
+- Successful patch apply seals forward/inverse PatchPlan artifacts and records each operation
+  with Turn/Run/Approval/Artifact refs plus a monotonic workspace watermark.
+- A validated summary commit installs a checkpoint; stale summary candidates do not.
 
-### S2: compaction-aware recovery engine (P1)
+### S2: compaction-aware recovery engine (P1) — implemented
 
-- Extend the existing run/workflow recovery path to resolve a target `LingTurn` through all
-  `LingTurnRun` attempts and compacted checkpoints.
-- Keep selective inverse patch as the only automatic path.
-- Add workspace lock, full preflight, post-apply verification, and restart reconciliation
-  using the durable state machine above.
-- Keep existing run-level undo/reapply API behavior compatible.
+- Turn recovery resolves all retry/resume `LingTurnRun` attempts and the matching checkpoint,
+  applies inverse plans in reverse provenance order, and reapplies in forward order.
+- Selective inverse patch is the only automatic path. Workspace locks, policy/symlink checks,
+  hash-guarded preflight, post-write verification, and interrupted-recovery reconciliation are
+  enforced. Cross-workspace Run lineages fail closed.
+- Existing run-level recovery remains compatible; legacy Runs without provenance retain the
+  old run-level fallback but are not eligible for Turn-level undo.
 
-### S3: projection and API surface (P2)
+### S3: projection and API surface (P2) — implemented (minimal)
 
-- Expose checkpoint ID, source Turn, provenance completeness, expected/current fingerprints,
-  and blocked reasons in the existing workspace-change response.
-- Project recovery lifecycle into typed `ConversationItem`/activity views without creating a
-  second canonical timeline.
-- Add explicit confirmation for any future snapshot-restore action.
+- `TurnWorkspaceChangesResponse` exposes checkpoint ID, Run lineage, provenance completeness,
+  state, capabilities, affected files, and blocked reasons.
+- HTTP routes and API-client methods are available at `/turns/:turnId/workspace-changes` and
+  `/undo` / `/reapply` variants. Recovery lifecycle remains typed RunEvent evidence; it does
+  not create a second canonical timeline.
+- Snapshot restore has no route or implicit fallback; any future action must be explicit.
 
 ### S4: optional snapshot restore (P2, gated)
 
@@ -520,14 +523,15 @@ one SQLite reopen/replay path where applicable:
 | SQLite foreign-key/integrity/replay checks | All provenance and recovery rows remain referentially valid and idempotent. |
 | Path traversal, symlink escape, internal path, policy drift | Recovery is denied before any write. |
 
-## What this design does not do
+## What this implementation does not do
 
 - It does not make the harness transcript the Ling conversation authority.
 - It does not make compaction summaries reversible state.
 - It does not add a second `ConversationItem` store.
 - It does not change `RunSession.turnId`, `queue_followup`, or `interrupt_redirect` contracts.
 - It does not implement a `workspace_knowledge` provider.
-- It does not implement post-compaction undo code in this slice.
+- It does not implement full-workspace snapshot restore; selective inverse patch is the only
+  automatic recovery path.
 - It does not use `git reset`, directory replacement, force overwrite, or an implicit “force
   undo” path.
 
@@ -535,6 +539,7 @@ one SQLite reopen/replay path where applicable:
 
 The design has no unresolved authority decision: selective inverse patch backed by durable
 Run/Turn mutation provenance is the default; snapshots are validation anchors and an optional,
-explicitly gated optimization. The only remaining work is implementation and verification of
-the slices above. Codex's history rollback and immutable rollout cutover are references for
-lineage and CAS, not a replacement for Ling's product-owned workspace recovery authority.
+explicitly gated optimization. The remaining work is broader verification, UI projection, and
+the separately gated snapshot-restore slice. Codex's history rollback and immutable rollout
+cutover are references for lineage and CAS, not a replacement for Ling's product-owned
+workspace recovery authority.

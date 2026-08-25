@@ -6,6 +6,7 @@ import { CONTINUITY_V2_STORAGE_MIGRATION_VERSION } from "./continuity-v2-migrati
 import {
   applyRunContextViewLineageMigration,
 } from "./run-context-view-lineage-migration.js";
+import { applyWorkspaceProvenanceMigration } from "./workspace-provenance-migration.js";
 
 export interface SqliteRunStoreMigrationContext {
   readonly database: DatabaseSync;
@@ -5649,6 +5650,12 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
     database,
     hasMigration: context.hasMigration.bind(context),
     hasColumn: context.hasColumn.bind(context),
+    recordMigration: context.recordMigration.bind(context),
+  });
+  applyWorkspaceProvenanceMigration({
+    database,
+    hasMigration: context.hasMigration.bind(context),
+    hasTable: context.hasTable.bind(context),
     recordMigration: context.recordMigration.bind(context),
   });
 }

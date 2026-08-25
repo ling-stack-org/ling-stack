@@ -251,7 +251,9 @@ import {
 import { handleGetWorkspaceFilePreview } from "../features/previews/workspace-file-preview.js";
 import {
   handleGetRunWorkspaceChanges,
+  handleGetTurnWorkspaceChanges,
   handleMutateRunWorkspaceChanges,
+  handleMutateTurnWorkspaceChanges,
 } from "../features/runs/workspace-change-recovery.js";
 import { handleEffectiveConfig, handleWorkspaceSettings } from "../features/settings/routes.js";
 import { handleSkillRoute } from "../features/skills/routes.js";
@@ -331,6 +333,7 @@ import {
   parseProviderRoute,
   parseRunInterventionRoute,
   parseRunRoute,
+  parseTurnRoute,
   parseSkillRoute,
   parseTaskRoute,
   parseTeammateDirectInterventionRoute,
@@ -1381,6 +1384,29 @@ export async function routeRequest(
       return;
     }
     await handleMutateRunWorkspaceChanges(response, url, storeRegistry, runRoute.runId, "reapply");
+    return;
+  }
+
+  const turnRoute = parseTurnRoute(url.pathname);
+  if (request.method === "GET" && turnRoute?.kind === "workspace-changes") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) {
+      return;
+    }
+    await handleGetTurnWorkspaceChanges(response, url, storeRegistry, turnRoute.turnId);
+    return;
+  }
+  if (request.method === "POST" && turnRoute?.kind === "workspace-changes-undo") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) {
+      return;
+    }
+    await handleMutateTurnWorkspaceChanges(response, url, storeRegistry, turnRoute.turnId, "undo");
+    return;
+  }
+  if (request.method === "POST" && turnRoute?.kind === "workspace-changes-reapply") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) {
+      return;
+    }
+    await handleMutateTurnWorkspaceChanges(response, url, storeRegistry, turnRoute.turnId, "reapply");
     return;
   }
 

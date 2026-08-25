@@ -1,11 +1,17 @@
 import { randomUUID } from "node:crypto";
 import type {
   ConversationItemV1,
+  CompactionCheckpoint,
+  CreateCompactionCheckpointInput,
+  CreateWorkspaceMutationRecordInput,
   LingThreadRelationKindV2,
   LingThreadSurfaceKindV2,
+  ListCompactionCheckpointsOptions,
+  ListWorkspaceMutationRecordsOptions,
   RunEventDataByType as ContractRunEventDataByType,
   RunEventEnvelope as ContractRunEventEnvelope,
   RunEventType as ContractRunEventType,
+  WorkspaceMutationRecord,
 } from "@ling-stack/contracts";
 import type {
   ApprovalActionType,
@@ -1515,6 +1521,14 @@ export interface RunStore {
   listRuns(options?: ListRunsOptions): RunSession[];
   listEvents(runId: string, options?: ListRunEventsOptions): RunEventEnvelope[];
   countEvents(runId: string): number;
+  createWorkspaceMutationRecord(input: CreateWorkspaceMutationRecordInput): WorkspaceMutationRecord;
+  createWorkspaceMutationRecords(inputs: readonly CreateWorkspaceMutationRecordInput[]): WorkspaceMutationRecord[];
+  getWorkspaceMutationRecord(id: string): WorkspaceMutationRecord | undefined;
+  listWorkspaceMutationRecords(options?: ListWorkspaceMutationRecordsOptions): WorkspaceMutationRecord[];
+  getLatestWorkspaceProvenanceWatermark(workspaceId?: string): string;
+  createCompactionCheckpoint(input: CreateCompactionCheckpointInput): CompactionCheckpoint;
+  getCompactionCheckpoint(id: string): CompactionCheckpoint | undefined;
+  listCompactionCheckpoints(options?: ListCompactionCheckpointsOptions): CompactionCheckpoint[];
   createRunIntervention(input: CreateRunInterventionInput, now: string): RunIntervention;
   getRunIntervention(interventionId: string): RunIntervention | undefined;
   listRunInterventions(options?: ListRunInterventionsOptions): RunIntervention[];

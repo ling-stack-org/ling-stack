@@ -49,6 +49,11 @@ test("summary coordinator compacts stable turns, preserves a raw tail, and advan
   assert.equal(first.status, "completed");
   assert.equal(first.commit.status, "committed");
   assert.equal(first.commit.summary.coveredThroughSequence, firstBatch[9].item.sequence);
+  assert.ok(first.checkpoint);
+  assert.equal(first.checkpoint.sourceTurnId, firstPlan.projection.metadata.turnId);
+  assert.deepEqual(first.checkpoint.summaryIds, [first.commit.summary.id]);
+  assert.equal(first.checkpoint.coveredItemSeqFrom, firstBatch[0].item.sequence);
+  assert.equal(first.checkpoint.coveredItemSeqTo, firstBatch[9].item.sequence);
 
   const secondBatch = [];
   for (let index = 0; index < 10; index += 1) {
@@ -70,6 +75,8 @@ test("summary coordinator compacts stable turns, preserves a raw tail, and advan
   assert.equal(second.commit.summary.sourceRefs.some((ref) =>
     ref.type === "context_summary" && ref.id === first.commit.summary.id), true);
   assert.equal(fixture.store.getConversationContextSummary(first.commit.summary.id)?.status, "superseded");
+  assert.ok(second.checkpoint);
+  assert.deepEqual(second.checkpoint.summaryIds, [second.commit.summary.id, first.commit.summary.id]);
 });
 
 test("summary coordinator selects the hard trigger and discards a late assignment result", async (t) => {
@@ -119,6 +126,8 @@ test("summary coordinator selects the hard trigger and discards a late assignmen
   });
   assert.equal(result.status, "completed");
   assert.deepEqual(result.commit, { status: "discarded_stale", reason: "assignments_changed" });
+  assert.equal(result.checkpoint, undefined);
+  assert.deepEqual(fixture.store.listCompactionCheckpoints({ threadId: fixture.thread.id }), []);
 });
 
 test("summary coordinator counts the active summary in the hard budget and bounds its replacement", async (t) => {

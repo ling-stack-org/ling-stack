@@ -313,6 +313,14 @@ import {
   type UpdateProposedPlanArtifactInput,
   type UpdateRunInterventionStatusInput,
 } from "../run-types.js";
+import type {
+  CompactionCheckpoint,
+  CreateCompactionCheckpointInput,
+  CreateWorkspaceMutationRecordInput,
+  ListCompactionCheckpointsOptions,
+  ListWorkspaceMutationRecordsOptions,
+  WorkspaceMutationRecord,
+} from "@ling-stack/contracts";
 import {
   type AcquireRuntimeSemaphoreSlotInput,
   type AppendRuntimeDiagnosticEventInput,
@@ -611,6 +619,7 @@ import { SqliteExternalWorkCiTriageStore } from "./sqlite/external-work-ci-triag
 import { SqliteExternalWorkSchedulerStore } from "./sqlite/external-work-scheduler-store.js";
 import { SqliteExternalWorkWorkflowCoordinator } from "./sqlite/external-work-workflow-coordinator.js";
 import { SqliteWorkItemStore } from "./sqlite/work-item-store.js";
+import { SqliteWorkspaceProvenanceStore } from "./sqlite/workspace-provenance-store.js";
 
 export interface SqliteRunStoreOptions {
   readonly cwd: string;
@@ -701,6 +710,7 @@ export class SqliteRunStore implements RunStore {
   private readonly externalWorkScheduler: SqliteExternalWorkSchedulerStore;
   private readonly externalWorkWorkflows: SqliteExternalWorkWorkflowCoordinator;
   private readonly workItems: SqliteWorkItemStore;
+  private readonly workspaceProvenance: SqliteWorkspaceProvenanceStore;
 
   constructor(options: SqliteRunStoreOptions) {
     this.paths = options.paths ?? resolveRuntimePaths(options.cwd);
@@ -709,6 +719,7 @@ export class SqliteRunStore implements RunStore {
     const existed = existsSync(this.paths.databasePath);
     this.database = new DatabaseSync(this.paths.databasePath);
     this.conversationItems = new SqliteConversationItemStore({ database: this.database });
+    this.workspaceProvenance = new SqliteWorkspaceProvenanceStore({ database: this.database });
     this.conversationTurnIngest = new SqliteConversationTurnIngestStore(
       { database: this.database },
       this.conversationItems,
@@ -1676,6 +1687,38 @@ export class SqliteRunStore implements RunStore {
 
   countEvents(runId: string): number {
     return this.runEvents.countEvents(runId);
+  }
+
+  createWorkspaceMutationRecord(input: CreateWorkspaceMutationRecordInput): WorkspaceMutationRecord {
+    return this.workspaceProvenance.createWorkspaceMutationRecord(input);
+  }
+
+  createWorkspaceMutationRecords(inputs: readonly CreateWorkspaceMutationRecordInput[]): WorkspaceMutationRecord[] {
+    return this.workspaceProvenance.createWorkspaceMutationRecords(inputs);
+  }
+
+  getWorkspaceMutationRecord(id: string): WorkspaceMutationRecord | undefined {
+    return this.workspaceProvenance.getWorkspaceMutationRecord(id);
+  }
+
+  listWorkspaceMutationRecords(options: ListWorkspaceMutationRecordsOptions = {}): WorkspaceMutationRecord[] {
+    return this.workspaceProvenance.listWorkspaceMutationRecords(options);
+  }
+
+  getLatestWorkspaceProvenanceWatermark(workspaceId?: string): string {
+    return this.workspaceProvenance.getLatestWorkspaceProvenanceWatermark(workspaceId);
+  }
+
+  createCompactionCheckpoint(input: CreateCompactionCheckpointInput): CompactionCheckpoint {
+    return this.workspaceProvenance.createCompactionCheckpoint(input);
+  }
+
+  getCompactionCheckpoint(id: string): CompactionCheckpoint | undefined {
+    return this.workspaceProvenance.getCompactionCheckpoint(id);
+  }
+
+  listCompactionCheckpoints(options: ListCompactionCheckpointsOptions = {}): CompactionCheckpoint[] {
+    return this.workspaceProvenance.listCompactionCheckpoints(options);
   }
 
   createRunIntervention(input: CreateRunInterventionInput, now: string): RunIntervention {

@@ -266,6 +266,11 @@ export function createRunApprovalHandler(options: {
           draft: patchDraft,
           cwd: request.cwd,
           allowedWritePaths: options.approvalPolicy.allowedWritePaths,
+          provenance: {
+            store: options.store,
+            run: options.run,
+            toolCallId: request.toolCallId,
+          },
         });
         return {
           approved: true,
@@ -474,6 +479,12 @@ export function createRunApprovalHandler(options: {
           cwd: request.cwd,
           allowedWritePaths: options.approvalPolicy.allowedWritePaths,
           previewArtifactIds: previewArtifacts.map((artifact) => artifact.id),
+          provenance: {
+            store: options.store,
+            run: options.run,
+            toolCallId: request.toolCallId,
+            approvalId: resolvedApproval.id,
+          },
         });
         handledResult = applied.handledResult;
         const resultArtifact = createExecutionActionResultArtifact({
