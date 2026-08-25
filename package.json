@@ -6,6 +6,10 @@
   "license": "MIT",
   "type": "module",
   "packageManager": "pnpm@10.0.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
     "build": "corepack pnpm --workspace-concurrency=1 -r build",
     "check:docs": "node scripts/check-markdown-links.mjs",
