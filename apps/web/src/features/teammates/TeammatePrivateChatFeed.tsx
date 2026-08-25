@@ -13,6 +13,7 @@ import {
 } from "../../shared/components/index.js";
 import {
   ConversationAttachmentStrip,
+  ConversationGeneratedMediaBlock,
   ConversationReferenceStrip,
   ConversationReplacementRetry,
   ConversationVirtualFeed,
@@ -24,7 +25,7 @@ import {
 } from "../../shared/conversation/index.js";
 import { ConversationWorkCell } from "../../shared/conversation/blocks/ConversationWorkCell.js";
 import { IconButton, InlineFeedback } from "../../shared/ui/index.js";
-import type { TeammateDirectLinkPreview, TeammatePrivateAttachment } from "../../types.js";
+import type { ConversationGeneratedMedia, TeammateDirectLinkPreview, TeammatePrivateAttachment } from "../../types.js";
 import { TeammateAvatarView } from "./TeammateAvatarView.js";
 import type { TeammatePrivateChatSurfaceProps } from "./teammate-private-chat-types.js";
 import {
@@ -42,6 +43,7 @@ export type TeammatePrivateChatFeedProps = Pick<TeammatePrivateChatSurfaceProps,
   | "cwd"
   | "directLinkPreviewById"
   | "executionActions"
+  | "generatedMedia"
   | "latestButtonVisible"
   | "loading"
   | "memoryById"
@@ -77,6 +79,7 @@ export function TeammatePrivateChatFeed({
   cwd,
   directLinkPreviewById,
   executionActions,
+  generatedMedia,
   latestButtonVisible,
   loading,
   memoryById,
@@ -141,6 +144,7 @@ export function TeammatePrivateChatFeed({
           onUserScrollIntent={onCancelPrivateFeedAutoFollow}
           renderItem={(message) => {
             const workCell = workCellByMessageId.get(message.id);
+            const messageGeneratedMedia = generatedMediaForDirectMessage(generatedMedia, message);
             const projection = projectTeammatePrivateMessage({
               hasStructuredTerminalReport: Boolean(workCell?.model.terminalReportRows.length),
               localUserDisplayName,
@@ -275,17 +279,24 @@ export function TeammatePrivateChatFeed({
                     />
                   </>
                 ) : null}
-                workCellNode={workCell ? (
-                  <ConversationWorkCell
-                    model={workCell.model}
-                    surface="teammate_direct"
-                    cwd={workCellRun?.cwd ?? cwd.trim()}
-                    detailsState={{ status: "loaded", groups: workCell.model.groups, evidenceLinks: workCell.model.evidenceLinks }}
-                    onOpenRun={onOpenRun}
-                    onOpenWorkspaceFile={onOpenFiles}
-                    onOpenWorkspaceReview={onOpenReview}
-                    loadPreview={loadPreviewContent}
-                  />
+                workCellNode={workCell || messageGeneratedMedia.length > 0 ? (
+                  <>
+                    {workCell ? (
+                      <ConversationWorkCell
+                        model={workCell.model}
+                        surface="teammate_direct"
+                        cwd={workCellRun?.cwd ?? cwd.trim()}
+                        detailsState={{ status: "loaded", groups: workCell.model.groups, evidenceLinks: workCell.model.evidenceLinks }}
+                        onOpenRun={onOpenRun}
+                        onOpenWorkspaceFile={onOpenFiles}
+                        onOpenWorkspaceReview={onOpenReview}
+                        loadPreview={loadPreviewContent}
+                      />
+                    ) : null}
+                    {message.authorType === "ai-teammate" ? (
+                      <ConversationGeneratedMediaBlock items={messageGeneratedMedia} cwd={cwd.trim()} />
+                    ) : null}
+                  </>
                 ) : null}
                 evidenceNode={messageUsedMemoryEvents.length > 0 || message.webEvidence ? (
                   <MessageEvidencePanel
@@ -366,4 +377,13 @@ export function TeammatePrivateChatFeed({
       </ConversationViewProvider>
     </div>
   );
+}
+
+function generatedMediaForDirectMessage(
+  items: readonly ConversationGeneratedMedia[],
+  message: TeammatePrivateChatSurfaceProps["visibleMessages"][number],
+): readonly ConversationGeneratedMedia[] {
+  return items.filter((item) => item.messageId
+    ? item.messageId === message.id
+    : Boolean(message.linkedRunId && item.runId === message.linkedRunId));
 }

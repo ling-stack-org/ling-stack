@@ -222,9 +222,27 @@ test("media provider normalization centralizes live runtime eligibility", () => 
   assert.equal(openAIState.canRun, true);
   assert.equal(openAIState.uiCopyKey, "generation_runtime_ready");
   assert.deepEqual(openAIState.supportedOperations, ["image_generate"]);
+  assert.deepEqual(openAIState.imageGeneration, {
+    aspectRatios: ["1:1", "3:2", "2:3"],
+    sizeByAspectRatio: {
+      "1:1": "1024x1024",
+      "3:2": "1536x1024",
+      "2:3": "1024x1536",
+    },
+    maxCount: 4,
+  });
 
   const dallE = { ...baseProvider, model: "dall-e-3" };
   assert.deepEqual(normalizeMediaProviderCompat(dallE).mediaVendorTransport, { mode: "live" });
+  assert.deepEqual(resolveMediaProviderRuntimeState(dallE, "image_generate").imageGeneration, {
+    aspectRatios: ["1:1", "7:4", "4:7"],
+    sizeByAspectRatio: {
+      "1:1": "1024x1024",
+      "7:4": "1792x1024",
+      "4:7": "1024x1792",
+    },
+    maxCount: 1,
+  });
 
   const seedream = {
     ...baseProvider,
@@ -236,6 +254,7 @@ test("media provider normalization centralizes live runtime eligibility", () => 
   const seedreamState = resolveMediaProviderRuntimeState(seedream, "image_generate");
   assert.deepEqual(normalizeMediaProviderCompat(seedream).mediaVendorTransport, { mode: "live" });
   assert.equal(seedreamState.canRun, true);
+  assert.equal(seedreamState.imageGeneration, undefined);
   assert.equal(resolveMediaProviderRuntimeState(seedream, "image_edit").canRun, true);
 
   const jimeng = {

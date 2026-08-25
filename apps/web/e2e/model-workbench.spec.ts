@@ -115,13 +115,13 @@ test("the first checked chat model becomes workspace default without replacing i
   const firstRow = page.locator(".provider-row").filter({ hasText: "First Ready Relay" });
   await firstRow.getByRole("button", { name: "Check" }).click();
   await expect.poll(() => state.workspaceSettings.defaultProviderPresetId).toBe("provider_first_ready");
-  await expect(firstRow).toContainText("Current default");
+  await expect(page.locator(".provider-default-purpose-bar").getByLabel("Chat model")).toHaveValue("provider_first_ready");
 
   const laterRow = page.locator(".provider-row").filter({ hasText: "Later Ready Relay" });
   await laterRow.getByRole("button", { name: "Check" }).click();
   await expect.poll(() => state.workspaceSettings.defaultProviderPresetId).toBe("provider_first_ready");
-  await expect(firstRow).toContainText("Current default");
-  await expect(laterRow).not.toContainText("Current default");
+  await expect(page.locator(".provider-default-purpose-bar").getByLabel("Chat model")).toHaveValue("provider_first_ready");
+  await expect(page.locator(".provider-row").getByRole("button", { name: /Set default|Current default/ })).toHaveCount(0);
 });
 
 test("model workbench empty state offers beginner chat and generation setup paths", async ({ page }) => {
@@ -643,7 +643,7 @@ test("model workbench media suppliers stay in the unified supplier picker", asyn
   await supplierSelect.selectOption("seedance-video");
   await expect(page.getByLabel("API Key", { exact: true })).toHaveValue("ark-media-key");
   await expect(page.getByLabel("提供商 ID")).toHaveCount(0);
-  await expect(page.getByLabel("能力")).toHaveValue("video_generate");
+  await expect(page.getByLabel("能力", { exact: true })).toHaveValue("video_generate");
   const refetchedModels = page.getByRole("button", { name: "获取模型" });
   await expect(refetchedModels).toBeEnabled();
   await refetchedModels.click();
@@ -757,7 +757,14 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
         checkedAt: "2026-05-25T00:00:00.000Z",
       },
     }),
-    createMediaProvider(),
+    createMediaProvider({
+      lastCheck: {
+        ok: true,
+        code: "ready",
+        message: "Generation model configuration check passed.",
+        checkedAt: "2026-05-25T00:00:00.000Z",
+      },
+    }),
   ];
   state.channels = state.channels.map((channel) =>
     isRecord(channel) ? { ...channel, defaultProviderPresetId: "provider_ready" } : channel
@@ -819,16 +826,14 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await expect(page.locator(".provider-row").filter({ hasText: "Auth Failed Gateway" })).toContainText("Needs attention");
   await expect(readyLocalRelayRow).toContainText("Ready");
   await expect(readyLocalRelayRow.locator(".provider-state.run-ready")).toHaveCount(1);
-  await expect(readyLocalRelayRow.getByRole("button", { name: "Set default" })).toBeVisible();
-  await readyLocalRelayRow.getByRole("button", { name: "Set default" }).click();
-  await expect(readyLocalRelayRow).toHaveClass(/selected/);
-  await expect(readyLocalRelayRow).toContainText("Current default");
-  await expect(readyLocalRelayRow.getByRole("button", { name: "Clear default" })).toHaveCount(0);
+  const defaultUses = page.locator(".provider-default-purpose-bar");
+  await defaultUses.getByLabel("Chat model").selectOption("provider_ready");
+  await expect(defaultUses.getByLabel("Chat model")).toHaveValue("provider_ready");
+  await expect(page.locator(".provider-row").getByRole("button", { name: /Set default|Current default/ })).toHaveCount(0);
   const readyLocalRelayActionCell = readyLocalRelayRow.locator("td").nth(3);
   await expect(readyLocalRelayActionCell).toHaveCSS("border-left-width", "0px");
   await expect(readyLocalRelayActionCell).toHaveCSS("box-shadow", "none");
-  await clickProviderRowMenuItem(readyLocalRelayRow, "Clear default");
-  await expect(readyLocalRelayRow.getByRole("button", { name: "Set default" })).toBeVisible();
+  await defaultUses.getByLabel("Chat model").selectOption("");
   await expect.poll(() => state.workspaceSettings.defaultProviderPresetId).toBeUndefined();
   await expect.poll(() =>
     state.channels.every((channel) => !isRecord(channel) || channel.defaultProviderPresetId === "provider_ready")
@@ -842,7 +847,7 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await expect(seedreamRow).not.toContainText("not chat-capable");
   await expect(seedreamRow.locator(".provider-action-note")).toHaveCount(0);
   await expect(seedreamRow).toContainText("Ready");
-  await expect(seedreamRow.getByRole("button", { name: "Set default" })).toHaveCount(0);
+  await expect(seedreamRow.getByRole("button", { name: /Set default|Current default/ })).toHaveCount(0);
   const legacyOpenAiRow = page.locator(".provider-row").filter({ hasText: "Legacy OpenAI Without Stored Endpoint" });
   await expect(legacyOpenAiRow).not.toContainText("https://api.openai.com/v1");
   await legacyOpenAiRow.getByRole("button", { name: "Edit" }).click();
@@ -858,10 +863,7 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await expect(page.getByLabel("Provider ID")).toHaveCount(0);
   await expect(page.getByLabel("API protocol")).toBeEnabled();
   await page.getByRole("button", { name: "Close model preset editor" }).click();
-  await expect(openAiProxyRow.getByRole("button", { name: "Set default" })).toBeVisible();
-  await openAiProxyRow.getByRole("button", { name: "Set default" }).click();
-  await expect(openAiProxyRow).toHaveClass(/selected/);
-  await expect(openAiProxyRow.getByRole("button", { name: "Clear default" })).toHaveCount(0);
+  await defaultUses.getByLabel("Chat model").selectOption("provider_openai_proxy");
   await expect.poll(() => state.workspaceSettings.defaultProviderPresetId).toBe("provider_openai_proxy");
   await expect(openAiProxyRow.locator(".provider-state.run-ready")).toHaveCount(1);
   await expect(readyLocalRelayRow.locator(".provider-state.run-ready")).toHaveCount(1);
@@ -869,13 +871,11 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await page.reload();
   await openModelWorkbench(page);
   const reloadedOpenAiProxyRow = page.locator(".provider-row").filter({ hasText: "OpenAI Proxy Custom Endpoint" });
-  await expect(reloadedOpenAiProxyRow).toHaveClass(/selected/);
-  await expect(reloadedOpenAiProxyRow).toContainText("Current default");
-  await expect(reloadedOpenAiProxyRow.getByRole("button", { name: "Clear default" })).toHaveCount(0);
+  await expect(page.locator(".provider-default-purpose-bar").getByLabel("Chat model")).toHaveValue("provider_openai_proxy");
   await expect(reloadedOpenAiProxyRow.locator(".provider-state.run-ready")).toHaveCount(1);
   await clickProviderRowMenuItem(reloadedOpenAiProxyRow, "Disable");
   await expect(reloadedOpenAiProxyRow.locator(".provider-state.disabled")).toHaveCount(0);
-  await expect(reloadedOpenAiProxyRow).toContainText("Current default");
+  await expect(page.locator(".provider-default-purpose-bar").getByLabel("Chat model")).toHaveValue("provider_openai_proxy");
   await expect(page.getByText(/Provider is still used by Workspace default model/)).toBeVisible();
   await expect.poll(() => state.workspaceSettings.defaultProviderPresetId).toBe("provider_openai_proxy");
   await expect(page.getByText(/Ready: .* passed preflight/)).toHaveCount(0);
@@ -955,11 +955,7 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await expect(customProviderRow.locator(".provider-name-copy strong")).toContainText("cliproxy-gpt-4o");
   await expect(customProviderRow.locator(".provider-name-copy small")).toHaveCount(0);
   await expect(customProviderRow.locator(".provider-meta-line")).toHaveCount(0);
-  await expect(customProviderRow).not.toContainText("Current default");
-  await expect(customProviderRow.getByRole("button", { name: "Set default" })).toBeVisible();
-  await customProviderRow.getByRole("button", { name: "Set default" }).click();
-  await clickProviderRowMenuItem(customProviderRow.first(), "Clear default");
-  await expect(customProviderRow.getByRole("button", { name: "Set default" })).toBeVisible();
+  await expect(customProviderRow.getByRole("button", { name: /Set default|Current default/ })).toHaveCount(0);
   await expect(page.getByRole("dialog", { name: "New preset" })).toHaveCount(0);
   await expect.poll(() =>
     state.providers.filter((provider) =>
@@ -1175,7 +1171,7 @@ test("save and check enables a disabled provider before checking", async ({ page
   await page.getByLabel("API key", { exact: true }).fill("disabled-provider-key");
   await page.getByRole("button", { name: "Save changes" }).click();
 
-  await expect(disabledRow).toContainText("Current default");
+  await expect(page.locator(".provider-default-purpose-bar").getByLabel("Chat model")).toHaveValue("provider_disabled");
   await expect(disabledRow.locator(".provider-primary-status")).toHaveCount(1);
   await expect.poll(() => {
     const provider = state.providers.find((item) => isRecord(item) && item.id === "provider_disabled");
@@ -1210,8 +1206,8 @@ test("disabled chat providers expose enable before their row check", async ({ pa
   await disabledRow.getByRole("button", { name: "Check" }).click();
 
   await expect(disabledRow.locator(".provider-state.run-ready")).toHaveCount(1);
-  await expect(disabledRow).toContainText("Current default");
-  await expect(disabledRow.getByRole("button", { name: "Set default" })).toHaveCount(0);
+  await expect(page.locator(".provider-default-purpose-bar").getByLabel("Chat model")).toHaveValue("provider_disabled");
+  await expect(disabledRow.getByRole("button", { name: /Set default|Current default/ })).toHaveCount(0);
   await expect.poll(() => {
     const provider = state.providers.find((item) => isRecord(item) && item.id === "provider_disabled");
     return isRecord(provider) ? { enabled: provider.enabled, checked: isRecord(provider.lastCheck) && provider.lastCheck.ok } : undefined;

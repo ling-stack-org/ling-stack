@@ -302,6 +302,32 @@ test("provider model import returns while bounded background checks continue", a
   }
 });
 
+test("custom compatible model import stores model identity without repeating the route name", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-provider-import-custom-name-"));
+  const stores = new Map();
+  const daemon = await startDaemonForTest(stores);
+  try {
+    const imported = await postJson(`${daemon.url}/providers/import-models?cwd=${encodeURIComponent(cwd)}`, {
+      kind: "openai-compatible",
+      displayName: "gpt-5.6-luna",
+      providerId: "custom-openai-compatible",
+      api: "openai-completions",
+      baseUrl: "https://relay.example.test/v1",
+      apiKey: "custom-name-secret",
+      authHeader: true,
+      capabilities: ["chat"],
+      input: ["text"],
+      models: [{ id: "gpt-5.6-luna" }, { id: "gpt-image-2", api: "media-job", capabilities: ["image_generate"] }],
+    });
+
+    assert.deepEqual(imported.providers.map((provider) => provider.displayName), ["gpt-5.6-luna", "gpt-image-2"]);
+  } finally {
+    await daemon.close();
+    for (const store of stores.values()) store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("provider import background result does not overwrite a newer edit", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-provider-import-stale-check-"));
   const stores = new Map();

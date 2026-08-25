@@ -4,6 +4,7 @@ import type {
   ApprovalPolicyResponse,
   ChromeBrowserPairingStartResponse,
   CreateMediaJobRequest,
+  ConversationMediaGenerationTargetsResponse,
   CreateMediaProjectRequest,
   CreateMediaProjectAssetRequest,
   CreateMediaSceneRequest,
@@ -306,6 +307,13 @@ export const adminEndpoints = {
 
   async listMediaJobs(this: LingDaemonEndpointContext, cwd: string, limit: number = 100): Promise<MediaJobListResponse> {
       return this._get("/media-jobs", { cwd, limit });
+    },
+
+  async getConversationMediaGenerationTargets(
+    this: LingDaemonEndpointContext,
+    cwd: string,
+  ): Promise<ConversationMediaGenerationTargetsResponse> {
+      return this._get("/media-generation-targets", { cwd });
     },
 
   async createMediaJob(this: LingDaemonEndpointContext, cwd: string, input: CreateMediaJobRequest): Promise<MediaJobMutationResponse> {

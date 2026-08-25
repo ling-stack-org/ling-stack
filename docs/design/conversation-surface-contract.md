@@ -18,6 +18,7 @@ Related docs:
 - [Conversation Shared Capabilities](conversation-shared-capabilities.md)
 - [Conversation Shared Capabilities Detailed Design](conversation-shared-capabilities-detailed-design.md)
 - [Conversation Model Binding And Creation Validation](conversation-model-binding-and-creation-validation.md)
+- [Conversation Media Generation Tools](conversation-media-generation-tools.md)
 
 2026-07-30 model ownership update: private chat still has no composer model picker. A
 user-created teammate uses its fixed model; a built-in teammate explicitly follows the
@@ -200,6 +201,11 @@ message/composer/evidence model.
 21. File paste is owned by the shared tokenized input. Clipboard files enter the same
     attachment upload path as the attach button and drag/drop. Clipboard HTML is never
     inserted into the editable transcript input.
+22. Image and video generation use first-party Runner tools and the shared generated-media
+    projection. Normal conversation, channel, and teammate private chat must not add
+    keyword routing, separate MediaJob state machines, or surface-specific media cards.
+    MediaJob remains the artifact owner; the conversation surface consumes a read model
+    linked through the parent Run and child WorkUnit.
 
 ## Surface Capability Matrix
 
@@ -220,6 +226,7 @@ message/composer/evidence model.
 | Edit latest own message | Yes | Yes | Yes | Yes, latest own reply | Yes | No by default |
 | Structured Markdown / Mermaid / math | Yes | Yes | Yes | Yes | Yes | Yes |
 | Tool execution | Yes | Yes | Yes | No by default; promote explicitly | Yes, single-agent | Yes |
+| Image/video generation tools | When a runnable target exists | When a runnable target exists | When a runnable target exists | No by default | When a runnable target exists | Projection only |
 | TerminalReport participants | No | Yes | Yes | No by default | No | Contextual |
 | Raw runtime detail | Detail only | Developer/detail only | Developer/detail only | No by default | Detail only | Yes |
 | Right Dock shell | Yes | Yes | Yes | No by default | Yes | Optional rich detail |
@@ -730,6 +737,25 @@ interface ConversationTurnView {
 }
 ```
 
+Generated media is an additive capability view, not a message-text convention:
+
+```ts
+interface ConversationGeneratedMediaView {
+  readonly mediaJobId: string;
+  readonly runId: string;
+  readonly messageId?: string;
+  readonly operation: "image_generate" | "video_generate";
+  readonly status: "queued" | "running" | "waiting_for_approval" | "succeeded" | "failed" | "cancelled";
+  readonly targetDisplayName: string;
+  readonly artifacts: readonly ConversationArtifactView[];
+  readonly errorMessage?: string;
+}
+```
+
+The daemon derives this view from durable parent Run, child MediaJob WorkUnit, MediaJob,
+and MediaJob artifacts. Web adapters never infer generation ownership from assistant text or
+tool-event wording. Refresh and reconnect rebuild the same projection from storage.
+
 Policy is explicit. Components should not infer policy from route name, message text, or
 whether `threadId` is present.
 
@@ -1039,6 +1065,11 @@ Every future slice touching conversation UI should keep or add focused tests for
   duplicating providers that already emitted text deltas,
 - reasoning-only or structurally empty successful responses never become assistant body
   text and fail provider readiness with `empty_response`.
+- a successful conversation run with a persisted `ConversationGeneratedMedia` projection may
+  have an empty assistant body: the media block is the visible result. Normal conversation,
+  initial channel reply, queued channel continuation and teammate private chat must not turn
+  that tool-only result into an empty-response error or synthetic acknowledgement. A successful
+  run with neither visible text nor generated-media projection still fails at message level.
 
 ## Implementation Slice Status
 

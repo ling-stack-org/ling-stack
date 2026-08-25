@@ -1818,7 +1818,10 @@ function detectImplicitRecentFileAction(text: string): "file_create" | "file_edi
   if (/(修改|编辑|更新|替换|改好|改完|patch|edit|update|replace)/iu.test(text) && (mentionsFileScope || refersToPriorTarget)) {
     return "file_edit";
   }
-  if (/(直接|现在|可以|能不能|可不可以|不可以|帮我|请|麻烦).{0,50}(做好|做完|落盘|保存|写入|写进|写到|放进|存进|创建|新建|生成|create|write|save)/iu.test(text)) {
+  if (
+    (mentionsFileScope || refersToPriorTarget) &&
+    /(直接|现在|可以|能不能|可不可以|不可以|帮我|请|麻烦).{0,50}(做好|做完|落盘|保存|写入|写进|写到|放进|存进|创建|新建|生成|create|write|save)/iu.test(text)
+  ) {
     return "file_create";
   }
   if (/(做好|做完|落盘|保存|写入|写进|写到|放进|存进|创建|新建|生成|create|write|save).{0,50}(工作区|workspace|文件|file|里面|里边|这里|那里|this|that|it)/iu.test(text)) {

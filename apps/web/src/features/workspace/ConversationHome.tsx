@@ -740,6 +740,7 @@ export function ConversationHome({
           visibleMessages,
           runById,
           detailContext,
+          generatedMedia: detailContext?.generatedMedia ?? [],
           projectPath: project.projectPath,
           workspaceCwd,
           searchActive: Boolean(normalizedMessageSearchQuery),

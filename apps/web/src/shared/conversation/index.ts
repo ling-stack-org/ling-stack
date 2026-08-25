@@ -133,6 +133,7 @@ export { ConversationSummaryRow, type ConversationSummaryMetaItem, type Conversa
 export { ConversationReplacementRetry } from "./feedback/ConversationReplacementRetry.js";
 export { ConversationVirtualFeed, type ConversationVirtualFeedProps } from "./blocks/ConversationVirtualFeed.js";
 export { ConversationArtifactStripPanel, ConversationWorkCell, type ConversationWorkCellDetailsState, type ConversationWorkCellProps } from "./blocks/ConversationWorkCell.js";
+export { ConversationGeneratedMediaBlock, type ConversationGeneratedMediaBlockProps } from "./blocks/ConversationGeneratedMediaBlock.js";
 export type { ConversationWorkspaceReviewTarget } from "./blocks/ConversationArtifactStrip.js";
 export { TerminalReportBlock, type TerminalReportFileTarget } from "./blocks/TerminalReportBlock.js";
 export { ConversationViewProvider, useOptionalConversationViewStore, type ConversationViewProviderProps } from "./view-store/conversation-view-provider.js";

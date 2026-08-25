@@ -172,6 +172,7 @@ export function parseWorkspaceSettingsUpdate(value: unknown): UpdateWorkspaceSet
     responseLanguage: readNullableResponseLanguagePreference(record.responseLanguage),
     lingConversationTone: readNullableLingConversationTone(record.lingConversationTone),
     defaultProviderPresetId: readNullableString(record.defaultProviderPresetId, "defaultProviderPresetId"),
+    mediaGenerationDefaults: readNullableMediaGenerationDefaults(record.mediaGenerationDefaults),
     defaultAuthorizationMode: readNullableAuthorizationMode(record.defaultAuthorizationMode),
     defaultWorkspaceAccessMode: readNullableWorkspaceAccessMode(record.defaultWorkspaceAccessMode),
     defaultPermissionMode: readNullableSessionPermissionMode(record.defaultPermissionMode),
@@ -180,6 +181,51 @@ export function parseWorkspaceSettingsUpdate(value: unknown): UpdateWorkspaceSet
     channelActivityViews: readNullableUnknownRecord(record.channelActivityViews, "channelActivityViews"),
     skillGovernancePolicy: readNullableSkillGovernancePolicy(record.skillGovernancePolicy),
   };
+}
+
+function readNullableMediaGenerationDefaults(
+  value: unknown,
+): UpdateWorkspaceSettingsInput["mediaGenerationDefaults"] {
+  if (value === undefined || value === null) {
+    return value;
+  }
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("mediaGenerationDefaults must be an object or null");
+  }
+  const record = value as Record<string, unknown>;
+  const image = readOptionalMediaGenerationTargetRef(record.image, "mediaGenerationDefaults.image");
+  const video = readOptionalMediaGenerationTargetRef(record.video, "mediaGenerationDefaults.video");
+  return {
+    ...(image ? { image } : {}),
+    ...(video ? { video } : {}),
+  };
+}
+
+function readOptionalMediaGenerationTargetRef(
+  value: unknown,
+  path: string,
+): NonNullable<UpdateWorkspaceSettingsInput["mediaGenerationDefaults"]>["image"] {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`${path} must be an object`);
+  }
+  const record = value as Record<string, unknown>;
+  if (record.kind === "provider") {
+    return { kind: "provider", providerPresetId: readRequiredTargetId(record.providerPresetId, `${path}.providerPresetId`) };
+  }
+  if (record.kind === "workflow") {
+    return { kind: "workflow", workflowDefinitionId: readRequiredTargetId(record.workflowDefinitionId, `${path}.workflowDefinitionId`) };
+  }
+  throw new Error(`${path}.kind must be provider or workflow`);
+}
+
+function readRequiredTargetId(value: unknown, path: string): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`${path} must be a non-empty string`);
+  }
+  return value.trim();
 }
 
 function effectiveValue<T>(

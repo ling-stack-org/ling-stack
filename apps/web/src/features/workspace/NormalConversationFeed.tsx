@@ -5,6 +5,7 @@ import { useI18n } from "../../i18n.js";
 import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js";
 import {
   ConversationAttachmentStrip,
+  ConversationGeneratedMediaBlock,
   ConversationFeed,
   ConversationReferenceStrip,
   ConversationReplacementRetry,
@@ -14,7 +15,7 @@ import {
   MessageRow,
 } from "../../shared/conversation/index.js";
 import { IconButton, InlineFeedback } from "../../shared/ui/index.js";
-import type { RunSession } from "../../types.js";
+import type { ConversationGeneratedMedia, RunSession } from "../../types.js";
 import type {
   WorkspaceRightDockFileTarget,
   WorkspaceRightDockReviewTarget,
@@ -35,6 +36,7 @@ export interface NormalConversationFeedProps {
   readonly visibleMessages: readonly ConversationHomeMessage[];
   readonly runById: ReadonlyMap<string, RunSession>;
   readonly detailContext?: ConversationHomeDetailContext;
+  readonly generatedMedia: readonly ConversationGeneratedMedia[];
   readonly projectPath?: string;
   readonly workspaceCwd: string;
   readonly searchActive: boolean;
@@ -59,6 +61,7 @@ export function NormalConversationFeed({
   editingMessageId,
   latestEditableUserMessageId,
   messages,
+  generatedMedia,
   onCancelMessageEdit,
   onEditMessage,
   onOpenFiles,
@@ -90,6 +93,7 @@ export function NormalConversationFeed({
     visibleMessages,
     workspaceCwd,
   }), [detailContext, messages, projectPath, runById, t, visibleMessages, workspaceCwd]);
+  const generatedMediaByRunId = useMemo(() => groupGeneratedMediaByRunId(generatedMedia), [generatedMedia]);
   const itemKey = useMemo(
     () => feedItems.map((item) => `${item.message.id}:${item.message.updatedAt ?? item.message.createdAt}:${item.message.status ?? "ready"}`).join("|"),
     [feedItems],
@@ -148,6 +152,7 @@ export function NormalConversationFeed({
         renderItem={(item) => (
           <NormalConversationMessageRow
             item={item}
+            generatedMedia={item.message.runId ? generatedMediaByRunId.get(item.message.runId) ?? [] : []}
             feedback={feedbackById[item.message.id]}
             editing={editingMessageId === item.message.id}
             editSaving={editSaving}
@@ -186,6 +191,7 @@ function NormalConversationMessageRow({
   editing,
   feedback,
   item,
+  generatedMedia,
   onCancelEdit,
   onEdit,
   onOpenFiles,
@@ -201,6 +207,7 @@ function NormalConversationMessageRow({
   workspaceCwd,
 }: {
   readonly item: NormalConversationFeedItem;
+  readonly generatedMedia: readonly ConversationGeneratedMedia[];
   readonly feedback?: "up" | "down";
   readonly editing: boolean;
   readonly editSaving: boolean;
@@ -283,16 +290,23 @@ function NormalConversationMessageRow({
           />
         </>
       ) : null}
-      workCellNode={item.workCell ? (
-        <ConversationWorkCell
-          model={item.workCell}
-          surface="normal_conversation"
-          cwd={item.workCellCwd}
-          onOpenRun={onOpenRun}
-          onOpenWorkspaceFile={onOpenReportFile}
-          onOpenWorkspaceReview={onOpenReview}
-          loadPreview={loadPreviewContent}
-        />
+      workCellNode={item.workCell || generatedMedia.length > 0 ? (
+        <>
+          {item.workCell ? (
+            <ConversationWorkCell
+              model={item.workCell}
+              surface="normal_conversation"
+              cwd={item.workCellCwd}
+              onOpenRun={onOpenRun}
+              onOpenWorkspaceFile={onOpenReportFile}
+              onOpenWorkspaceReview={onOpenReview}
+              loadPreview={loadPreviewContent}
+            />
+          ) : null}
+          {message.role === "assistant" ? (
+            <ConversationGeneratedMediaBlock items={generatedMedia} cwd={workspaceCwd.trim()} />
+          ) : null}
+        </>
       ) : null}
       errorNode={(
         <>
@@ -361,6 +375,16 @@ function NormalConversationMessageRow({
       ) : null}
     />
   );
+}
+
+function groupGeneratedMediaByRunId(
+  items: readonly ConversationGeneratedMedia[],
+): ReadonlyMap<string, readonly ConversationGeneratedMedia[]> {
+  const grouped = new Map<string, ConversationGeneratedMedia[]>();
+  for (const item of items) {
+    grouped.set(item.runId, [...(grouped.get(item.runId) ?? []), item]);
+  }
+  return grouped;
 }
 
 function distanceFromLatest(element: HTMLElement): number {

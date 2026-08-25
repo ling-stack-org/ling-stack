@@ -682,6 +682,7 @@ function mergeConversationMessages(
     interventions: current?.interventions ?? [],
     terminalReports: current?.terminalReports ?? [],
     messages: [...byId.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
+    generatedMedia: current?.generatedMedia ?? [],
     defaults: current?.defaults ?? {},
   };
 }

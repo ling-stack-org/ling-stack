@@ -9,7 +9,7 @@ import {
 } from "@ling-stack/core";
 import { gstackDefaultSkillPack } from "@ling-stack/core/builtin-skill-packs";
 import type { MemoryObject } from "@ling-stack/core";
-import type { LingApprovalCheckpoint, LingThreadGoal, LingTraceDetailResponse, LingTraceSpan, LingTraceStatus, ProposedPlanArtifact, RunnerListItem, StartupStatusResponse, UserProfile, WorkflowHandoffIntent, WorkspaceGitStatus, WorkspaceRuntimeSettings } from "@ling-stack/contracts";
+import type { ConversationGeneratedMedia, LingApprovalCheckpoint, LingThreadGoal, LingTraceDetailResponse, LingTraceSpan, LingTraceStatus, ProposedPlanArtifact, RunnerListItem, StartupStatusResponse, UserProfile, WorkflowHandoffIntent, WorkspaceGitStatus, WorkspaceRuntimeSettings } from "@ling-stack/contracts";
 
 export const cwd = "/tmp/ling-stack-workspace";
 export const defaultRuntimePolicy = {
@@ -187,6 +187,7 @@ export interface MockState {
   mediaSceneRuns: MockMediaSceneRun[];
   mediaWorkflowConnections: Record<string, unknown>[];
   mediaWorkflows: Record<string, unknown>[];
+  conversationGeneratedMedia: ConversationGeneratedMedia[];
   workItems: MockWorkItem[];
   workUnits: MockWorkUnit[];
   runtimeRunners: RunnerListItem[];
@@ -1329,6 +1330,7 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     mediaSceneRuns: [],
     mediaWorkflowConnections: [],
     mediaWorkflows: [],
+    conversationGeneratedMedia: [],
     workItems: [],
     workUnits: [],
     runtimeRunners: [
@@ -1456,6 +1458,75 @@ function normalizeWorkspaceSettings(settings: Record<string, unknown>): Record<s
     defaultPermissionPreset,
     skillGovernancePolicy: normalizeSkillGovernancePolicy(settings.skillGovernancePolicy),
     updatedAt: typeof settings.updatedAt === "string" ? settings.updatedAt : "2026-05-22T00:00:00.000Z",
+  };
+}
+
+function mockConversationGeneratedMediaForRunIds(
+  state: MockState,
+  runIds: Iterable<string>,
+): ConversationGeneratedMedia[] {
+  const visibleRunIds = new Set(runIds);
+  return state.conversationGeneratedMedia
+    .filter((item) => visibleRunIds.has(item.runId))
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.mediaJobId.localeCompare(right.mediaJobId));
+}
+
+function buildMockConversationMediaGenerationTargets(state: MockState): Record<string, unknown> {
+  const targets: Record<string, unknown>[] = [];
+  for (const candidate of state.providers) {
+    if (!isRecord(candidate) || typeof candidate.id !== "string" || typeof candidate.displayName !== "string") continue;
+    const provider = normalizeMockProviderForGenerationRuntime(candidate);
+    for (const [generationKind, operation] of [["image", "image_generate"], ["video", "video_generate"]] as const) {
+      if (!Array.isArray(provider.capabilities) || !provider.capabilities.includes(operation)) continue;
+      const runtime = resolveGenerationProviderRuntimeState(
+        provider as Parameters<typeof resolveGenerationProviderRuntimeState>[0],
+        operation,
+      );
+      const checkReady = isRecord(provider.lastCheck) && provider.lastCheck.ok === true;
+      targets.push({
+        id: `provider:${provider.id}`,
+        ref: { kind: "provider", providerPresetId: provider.id },
+        generationKind,
+        displayName: provider.displayName,
+        runnable: runtime.canRun && checkReady,
+        ...(runtime.canRun && checkReady
+          ? {}
+          : { unavailableReason: runtime.canRun ? "provider_check_required" : runtime.reason ?? "generation_target_unavailable" }),
+      });
+    }
+  }
+  for (const detail of state.mediaWorkflows) {
+    if (!isRecord(detail) || !isRecord(detail.definition)) continue;
+    const definition = detail.definition;
+    if (typeof definition.id !== "string" || typeof definition.name !== "string") continue;
+    const versions = Array.isArray(detail.versions) ? detail.versions.filter(isRecord) : [];
+    const version = versions.find((item) => item.id === definition.currentVersionId)
+      ?? (isRecord(detail.currentVersion) ? detail.currentVersion : undefined);
+    if (!version || !Array.isArray(version.outputRules)) continue;
+    const connection = state.mediaWorkflowConnections.find((item) => item.id === definition.connectionId);
+    const runnable = definition.status === "ready" && version.id === definition.currentVersionId &&
+      isRecord(version.validation) && version.validation.ok === true &&
+      isRecord(connection) && connection.status === "ready" &&
+      (connection.authMode === "none" || connection.secretConfigured === true);
+    const outputKinds = new Set(version.outputRules.filter(isRecord).map((rule) => rule.artifactType));
+    for (const generationKind of ["image", "video"] as const) {
+      if (!outputKinds.has(generationKind)) continue;
+      targets.push({
+        id: `workflow:${definition.id}`,
+        ref: { kind: "workflow", workflowDefinitionId: definition.id },
+        generationKind,
+        displayName: definition.name,
+        runnable,
+        ...(runnable ? {} : { unavailableReason: "workflow_not_ready" }),
+      });
+    }
+  }
+  return {
+    cwd,
+    defaults: isRecord(state.workspaceSettings.mediaGenerationDefaults)
+      ? state.workspaceSettings.mediaGenerationDefaults
+      : {},
+    targets,
   };
 }
 
@@ -7148,6 +7219,7 @@ function buildMockConversationDetail(state: MockState, cwd: string, thread: Mock
     interventions,
     terminalReports: state.terminalReports.filter((report) => isRecord(report) && report.threadId === thread.id),
     messages,
+    generatedMedia: mockConversationGeneratedMediaForRunIds(state, runIds),
     defaults: {
       projectPath: typeof requestSnapshot.projectPath === "string" ? requestSnapshot.projectPath : latestProjectPath,
       providerPresetId: latestRun?.providerPresetId,
@@ -7483,6 +7555,10 @@ export async function handleDaemonRoute(
     await route.fulfill({ json: { cwd, settings: state.workspaceSettings } });
     return;
   }
+  if (request.method() === "GET" && path === "/media-generation-targets") {
+    await route.fulfill({ json: buildMockConversationMediaGenerationTargets(state) });
+    return;
+  }
   if (request.method() === "GET" && /^\/workspace-files\/open-icons\/[^/]+$/u.test(path)) {
     await route.fulfill({
       status: 200,
@@ -7600,7 +7676,7 @@ export async function handleDaemonRoute(
   if (request.method() === "PATCH" && path === "/workspace-settings") {
     const body = await request.postDataJSON() as Record<string, unknown>;
     const nextSettings = { ...state.workspaceSettings };
-    for (const key of ["workspaceCwd", "theme", "locale", "responseLanguage", "lingConversationTone", "defaultProviderPresetId", "defaultAuthorizationMode", "defaultWorkspaceAccessMode", "defaultPermissionMode", "defaultPermissionPreset", "channelNotifications", "channelActivityViews", "skillGovernancePolicy"] as const) {
+    for (const key of ["workspaceCwd", "theme", "locale", "responseLanguage", "lingConversationTone", "defaultProviderPresetId", "defaultAuthorizationMode", "defaultWorkspaceAccessMode", "defaultPermissionMode", "defaultPermissionPreset", "channelNotifications", "channelActivityViews", "skillGovernancePolicy", "mediaGenerationDefaults"] as const) {
       if (body[key] === null) {
         delete nextSettings[key];
       } else if (body[key] !== undefined) {
@@ -9960,6 +10036,10 @@ export async function handleDaemonRoute(
             teammateId,
             thread,
             messages: pageMessages,
+            generatedMedia: mockConversationGeneratedMediaForRunIds(
+              state,
+              pageMessages.flatMap((message) => typeof message.linkedRunId === "string" ? [message.linkedRunId] : []),
+            ),
             hasMore,
             nextBeforeMessageId: hasMore && pageMessages.length > 0 ? pageMessages[0].id : undefined,
           },
@@ -10476,7 +10556,9 @@ export async function handleDaemonRoute(
         continue;
       }
       const modelDisplayName = typeof model.displayName === "string" && model.displayName.trim() ? model.displayName : modelId;
-      const displayName = `${typeof body.displayName === "string" ? body.displayName : "Provider"} · ${modelDisplayName}`;
+      const displayName = body.providerId === "custom-openai-compatible"
+        ? modelDisplayName
+        : `${typeof body.displayName === "string" ? body.displayName : "Provider"} · ${modelDisplayName}`;
       const modelApi = typeof model.api === "string" ? model.api : body.api;
       const providerIndex = state.providers.findIndex((item) =>
         isRecord(item) &&
@@ -11405,6 +11487,10 @@ export async function handleDaemonRoute(
         turns: [...turnById.values()],
         items: pageEntries.map((entry) => entry.item),
         decorations: mockChannelConversationDecorations(pageEntries),
+        generatedMedia: mockConversationGeneratedMediaForRunIds(
+          state,
+          pageEntries.flatMap((entry) => typeof entry.message.linkedRunId === "string" ? [entry.message.linkedRunId] : []),
+        ),
         hasMore: pageStart > 0,
         nextBeforeSequence: pageStart > 0 ? pageEntries[0]?.item.sequence : undefined,
       },

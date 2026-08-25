@@ -46,6 +46,10 @@ import { projectConversationActiveReplyTarget } from "./active-reply-target.js";
 import { projectTerminalReportDto } from "../channels/terminal-report-routes.js";
 import { listExecutionActions } from "../runs/execution-actions.js";
 import {
+  buildConversationGeneratedMediaProjection,
+  runHasConversationGeneratedMedia,
+} from "../media/conversation-projection.js";
+import {
   buildConversationSupersessionProjection,
   filterSupersededLingTurns,
   filterSupersededTerminalReports,
@@ -276,13 +280,16 @@ export async function handleConversationStream(
         const latestThread = store.getLingThread(thread.id) ?? thread;
         const latestTurn = store.getLingTurn(turn.id) ?? turn;
         const terminalStatus = statusFromRun(latestRun) ?? assistantMessage.status;
-        const finalStatus = terminalStatus === "succeeded" && !assistantMessage.content.trim()
+        const hasGeneratedMedia = runHasConversationGeneratedMedia(store, runId || undefined);
+        const finalStatus = terminalStatus === "succeeded" && !assistantMessage.content.trim() && !hasGeneratedMedia
           ? "failed"
           : terminalStatus;
         const finalAssistant = {
           ...assistantMessage,
           status: finalStatus,
-          content: assistantMessage.content || fallbackAssistantContent(terminalStatus, input.responseLanguage, input.message),
+          content: assistantMessage.content || (terminalStatus === "succeeded" && hasGeneratedMedia
+            ? ""
+            : fallbackAssistantContent(terminalStatus, input.responseLanguage, input.message)),
           updatedAt: latestRun?.updatedAt ?? new Date().toISOString(),
         };
         if (latestRun && (terminalStatus === "succeeded" || terminalStatus === "cancelled")) {
@@ -515,6 +522,10 @@ export function buildConversationDetail(
       .filter((record) => Boolean(record.report) && (record.status === "committed" || record.status === "fallback"))
       .map((record) => projectTerminalReportDto(record.report!)),
     messages: [...messageById.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)),
+    generatedMedia: buildConversationGeneratedMediaProjection({
+      store,
+      runIds: runs.map((run) => run.id),
+    }),
     defaults: {
       projectPath: readOptionalRecordString(latestSnapshot, "projectPath") || latestProjectPath,
       providerPresetId: latestRun?.providerPresetId ?? readOptionalRecordString(latestSnapshot, "providerPresetId"),
@@ -614,6 +625,7 @@ function buildConversationRunRequest(input: {
     threadId: input.thread.id,
     turnId: input.turn.id,
     teammateId: LING_AGENT_ID,
+    createdByActor: input.turn.createdByActor,
     providerPresetId: input.input.providerPresetId,
     tools: input.input.tools ?? defaultConversationTools,
     authorizationMode: input.input.authorizationMode,
@@ -685,14 +697,17 @@ function assistantMessageFromRun(store: RunStore, thread: LingThread, turn: Ling
   const content = streamedContent || (finalContent ? readEventText(finalContent) : "");
   const error = [...events].reverse().map(readEventError).find(Boolean);
   const status = statusFromRun(run) ?? "running";
-  const projectedStatus = status === "succeeded" && !content.trim() ? "failed" : status;
+  const hasGeneratedMedia = runHasConversationGeneratedMedia(store, run.id);
+  const projectedStatus = status === "succeeded" && !content.trim() && !hasGeneratedMedia ? "failed" : status;
   const requestSnapshot = readRecord(run.requestSnapshot);
   const responseLanguage = readResponseLanguagePreference(readOptionalRecordString(requestSnapshot, "responseLanguage"));
   return createAssistantTranscriptMessage(
     thread,
     turn,
     run,
-    content || error || fallbackAssistantContent(status, responseLanguage, turn.userInstruction),
+    content || error || (status === "succeeded" && hasGeneratedMedia
+      ? ""
+      : fallbackAssistantContent(status, responseLanguage, turn.userInstruction)),
     projectedStatus,
     run.updatedAt,
   );

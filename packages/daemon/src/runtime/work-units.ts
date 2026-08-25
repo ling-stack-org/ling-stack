@@ -120,7 +120,15 @@ export function startRuntimeWorkUnit(input: {
   const now = new Date().toISOString();
   const runtime = input.runtimeSupervisor.getRuntime(input.store.paths.cwd, input.store);
   const effectiveRunnerId = input.effectiveRunnerId ?? DEFAULT_RUNNER_ID;
-  const workUnit = input.store.createWorkUnit({
+  const existingQueuedMediaWorkUnit = input.kind === "media_job" && input.linkedMediaJobId
+    ? input.store.listWorkUnits({
+        kind: "media_job",
+        status: "queued",
+        linkedMediaJobId: input.linkedMediaJobId,
+        limit: 1,
+      })[0]
+    : undefined;
+  const workUnit = existingQueuedMediaWorkUnit ?? input.store.createWorkUnit({
     workspaceId: DEFAULT_WORKSPACE_ID,
     kind: input.kind,
     ownerType: input.ownerType,
@@ -140,13 +148,15 @@ export function startRuntimeWorkUnit(input: {
     linkedExternalWorkId: input.linkedExternalWorkId,
     now,
   });
-  input.store.appendRuntimeEvent({
-    workUnitId: workUnit.id,
-    type: "work_unit_created",
-    actor: "system",
-    ts: now,
-    data: { kind: input.kind, ownerType: input.ownerType, ownerId: input.ownerId },
-  });
+  if (!existingQueuedMediaWorkUnit) {
+    input.store.appendRuntimeEvent({
+      workUnitId: workUnit.id,
+      type: "work_unit_created",
+      actor: "system",
+      ts: now,
+      data: { kind: input.kind, ownerType: input.ownerType, ownerId: input.ownerId },
+    });
+  }
   const attempt = input.store.createWorkUnitAttempt({
     workUnitId: workUnit.id,
     attemptNumber: workUnit.attemptCount + 1,

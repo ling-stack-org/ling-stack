@@ -96,6 +96,12 @@ import { createQueuedRunForConflict } from "./queue.js";
 import { resolveProviderForRun, resolveProviderRunThinkingLevel } from "./providers.js";
 import type { RunRequest } from "./schemas.js";
 import { appendFailureEvent, writeTerminalSummary } from "./terminal.js";
+import {
+  createConversationMediaGenerationToolDefinitions,
+  createConversationMediaGenerationToolHandler,
+  isConversationMediaGenerationEligible,
+} from "../media/conversation-tool-handler.js";
+import { listConversationMediaGenerationTargets } from "../media/conversation-targets.js";
 import { auditIgnoredRunnerCompletion } from "./stale-completion.js";
 import {
   ensureLingThreadForRun,
@@ -622,6 +628,30 @@ export async function executeRunRequest(
           })
         : undefined,
     };
+    const mediaGenerationEligible = isConversationMediaGenerationEligible({
+      createdByActor: runRequest.createdByActor,
+      workUnitKind: workUnitOwner.kind,
+    });
+    if (mediaGenerationEligible) {
+      const mediaGenerationTools = createConversationMediaGenerationToolDefinitions(
+        listConversationMediaGenerationTargets(store, secretResolver),
+      );
+      if (mediaGenerationTools.length > 0) {
+        runnerRequest = {
+          ...runnerRequest,
+          mediaGenerationTools,
+          onMediaGenerationToolCall: createConversationMediaGenerationToolHandler({
+            store,
+            storeRegistry,
+            secretResolver,
+            runtimeSupervisor,
+            run,
+            linkedMessageId: runRequest.linkedMessageId,
+            controlPlaneEvents: options.controlPlaneEvents,
+          }),
+        };
+      }
+    }
     const usedMemory = memoryRecall && memoryRecall.memories.length > 0
       ? {
           memoryIds: memoryRecall.memories.map((item) => item.memory.id),

@@ -399,6 +399,10 @@ import {
   type UpdateMediaWorkflowDefinitionInput,
 } from "../media-workflow-types.js";
 import {
+  type CreateOrReuseConversationMediaJobInput,
+  type CreateOrReuseConversationMediaJobResult,
+} from "../media-generation-routing-types.js";
+import {
   type CreateMemoryConsolidationJobInput,
   type ListMemoryConsolidationJobsOptions,
   type MemoryConsolidationJob,
@@ -3669,6 +3673,60 @@ export class SqliteRunStore implements RunStore {
 
   createMediaJob(input: CreateMediaJobInput, now: string): MediaJob {
     return this.mediaJobs.createMediaJob(input, now);
+  }
+
+  createOrReuseConversationMediaJob(
+    input: CreateOrReuseConversationMediaJobInput,
+    now: string,
+  ): CreateOrReuseConversationMediaJobResult {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const existingWorkUnit = this.runtimeWorkUnits.findWorkUnitByIdempotency({
+        kind: "media_job",
+        ownerType: "conversation_run",
+        ownerId: input.runId,
+        idempotencyKey: input.idempotencyKey,
+      });
+      if (existingWorkUnit) {
+        const existingJob = existingWorkUnit.linkedMediaJobId
+          ? this.mediaJobs.getMediaJob(existingWorkUnit.linkedMediaJobId)
+          : undefined;
+        if (!existingJob) {
+          throw new Error(`Conversation media work unit is missing its media job: ${existingWorkUnit.id}`);
+        }
+        this.database.exec("COMMIT");
+        return { mediaJob: existingJob, workUnit: existingWorkUnit, reused: true };
+      }
+
+      const mediaJob = this.mediaJobs.createMediaJob(input.mediaJob, now);
+      const workUnit = this.runtimeWorkUnits.createWorkUnit({
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        kind: "media_job",
+        ownerType: "conversation_run",
+        ownerId: input.runId,
+        channelId: input.channelId,
+        teammateId: input.teammateId,
+        providerPresetId: mediaJob.providerPresetId,
+        idempotencyKey: input.idempotencyKey,
+        createdByActor: "user",
+        request: {
+          source: "conversation_media_tool",
+          toolCallId: input.toolCallId,
+          target: input.target,
+          mediaJobId: mediaJob.id,
+          operation: mediaJob.operation,
+        },
+        linkedRunId: input.runId,
+        linkedMessageId: input.linkedMessageId,
+        linkedMediaJobId: mediaJob.id,
+        now,
+      });
+      this.database.exec("COMMIT");
+      return { mediaJob, workUnit, reused: false };
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   getMediaJob(id: string): MediaJob | undefined {

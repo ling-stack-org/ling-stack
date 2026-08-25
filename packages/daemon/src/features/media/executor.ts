@@ -15,6 +15,10 @@ import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { redactTextWithSecrets } from "../../shared/redaction.js";
 import { writeJson } from "../../shared/response.js";
 import { resolveProviderSecret } from "../providers/secrets.js";
+import {
+  recoverPendingConversationMediaWorkUnits,
+  synchronizeConversationMediaWorkUnitTerminal,
+} from "./conversation-runtime-recovery.js";
 import { resumePendingProviderMediaJobs, runProviderMediaJobExecution } from "./provider-executor.js";
 import { resumePendingWorkflowMediaJobs, runWorkflowMediaJobExecution } from "./workflows/workflow-executor.js";
 
@@ -62,6 +66,17 @@ export interface MediaRuntimeTerminalTransitionRequest {
 export interface RunMediaJobHooks {
   readonly startRuntimeWorkUnit: (input: MediaRuntimeStartRequest) => MediaRuntimeHandle;
   readonly transitionRuntimeWorkUnitTerminal: (input: MediaRuntimeTerminalTransitionRequest) => void;
+  readonly transitionRuntimeWorkUnitCancelled: (input: {
+    readonly store: MediaRuntimeTerminalStore;
+    readonly workUnitId: string;
+    readonly attemptId: string;
+    readonly reason: string;
+  }) => void;
+  readonly onMediaJobProjectionChanged?: (input: {
+    readonly cwd: string;
+    readonly mediaJobId: string;
+    readonly createdArtifactIds?: readonly string[];
+  }) => void;
 }
 
 export interface MediaJobExecutionResult {
@@ -75,6 +90,8 @@ export interface RunMediaJobExecutionInput {
   readonly secretResolver: SecretResolver;
   readonly mediaJobId: string;
   readonly hooks: RunMediaJobHooks;
+  /** Only the explicit POST /run action may revive a terminal job. */
+  readonly retryTerminal?: boolean;
 }
 
 export async function handleRunMediaJob(
@@ -97,6 +114,7 @@ export async function handleRunMediaJob(
     secretResolver,
     mediaJobId,
     hooks,
+    retryTerminal: true,
   });
   writeJson(response, result.statusCode, result.body);
 }
@@ -122,7 +140,14 @@ export function dispatchMediaJobExecution(input: RunMediaJobExecutionInput): voi
     const provider = job.providerPresetId ? store.getProviderPreset(job.providerPresetId) : undefined;
     const mediaSecret = provider?.apiKeyRef ? resolveProviderSecret(store, provider, input.secretResolver) : undefined;
     const message = redactTextWithSecrets(error instanceof Error ? error.message : String(error), [mediaSecret?.value]);
-    store.updateMediaJobStatus(job.id, { status: "failed", errorMessage: message }, new Date().toISOString());
+    const failedAt = new Date().toISOString();
+    store.updateMediaJobStatus(job.id, { status: "failed", errorMessage: message }, failedAt);
+    synchronizeConversationMediaWorkUnitTerminal(store, job.id, "failed", failedAt);
+    try {
+      input.hooks.onMediaJobProjectionChanged?.({ cwd: input.cwd, mediaJobId: job.id });
+    } catch {
+      // Projection invalidation is best-effort; persisted state remains authoritative.
+    }
   });
 }
 
@@ -131,10 +156,37 @@ export function resumePendingMediaJobExecutions(input: {
   readonly storeRegistry: RunStoreRegistry;
   readonly secretResolver: SecretResolver;
   readonly hooks: RunMediaJobHooks;
+  readonly dispatchInitialConversationMediaJob?: (mediaJobId: string) => void;
 }): void {
+  recoverPendingConversationMediaWorkUnits(
+    input.storeRegistry.getStore(input.cwd),
+    new Date().toISOString(),
+  );
   resumePendingWorkflowMediaJobs(input);
   resumePendingProviderMediaJobs(input);
+  const store = input.storeRegistry.getStore(input.cwd);
+  for (const workUnit of store.listWorkUnits({ kind: "media_job", status: "queued", limit: 500 })) {
+    const request = isRecord(workUnit.request) ? workUnit.request : {};
+    const mediaJobId = workUnit.linkedMediaJobId;
+    if (
+      workUnit.ownerType !== "conversation_run" ||
+      request.source !== "conversation_media_tool" ||
+      !mediaJobId ||
+      store.getMediaJobExecutionHandle(mediaJobId)
+    ) {
+      continue;
+    }
+    const mediaJob = store.getMediaJob(mediaJobId);
+    if (!mediaJob || mediaJob.status !== "queued") continue;
+    if (input.dispatchInitialConversationMediaJob) {
+      input.dispatchInitialConversationMediaJob(mediaJobId);
+    } else {
+      dispatchMediaJobExecution({ ...input, mediaJobId });
+    }
+  }
 }
+
+export { recoverPendingConversationMediaWorkUnits } from "./conversation-runtime-recovery.js";
 
 export function syncMediaJobForApprovalDecision(input: {
   readonly cwd: string;
@@ -159,6 +211,7 @@ export function syncMediaJobForApprovalDecision(input: {
     const currentJob = job.status === "waiting_for_approval"
       ? input.store.updateMediaJobStatus(job.id, { status: "queued", errorMessage: null }, input.now) ?? job
       : job;
+    input.hooks.onMediaJobProjectionChanged?.({ cwd: input.cwd, mediaJobId: job.id });
     dispatchMediaJobExecution({
       cwd: input.cwd,
       storeRegistry: input.storeRegistry,
@@ -170,7 +223,9 @@ export function syncMediaJobForApprovalDecision(input: {
   }
 
   if ((approval.status === "denied" || approval.status === "expired") && job.status === "waiting_for_approval") {
-    return failMediaJobForApprovalDecision(input.store, job, approval);
+    const failed = failMediaJobForApprovalDecision(input.store, job, approval);
+    input.hooks.onMediaJobProjectionChanged?.({ cwd: input.cwd, mediaJobId: job.id });
+    return failed;
   }
 
   return job;
@@ -187,4 +242,8 @@ function failMediaJobForApprovalDecision(store: MediaStoreFacet, job: MediaJob, 
     },
     new Date().toISOString(),
   ) ?? job;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

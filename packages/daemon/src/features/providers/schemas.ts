@@ -130,7 +130,7 @@ export function parseProviderModelImportRequest(value: unknown): ProviderModelIm
   for (const model of request.models) {
     validateProviderPresetShape({
       kind: request.kind,
-      displayName: providerModelDisplayName(request.displayName, model),
+      displayName: providerModelDisplayName(request.providerId, request.displayName, model),
       providerId: request.providerId,
       model: model.id,
       api: model.api ?? request.api,
@@ -342,8 +342,13 @@ function parseProviderImportModel(value: unknown, index: number): ProviderModelO
   };
 }
 
-function providerModelDisplayName(providerDisplayName: string, model: Pick<ProviderModelOption, "displayName" | "id">): string {
+function providerModelDisplayName(
+  providerId: string,
+  providerDisplayName: string,
+  model: Pick<ProviderModelOption, "displayName" | "id">,
+): string {
   const modelName = model.displayName?.trim() || model.id;
+  if (providerId === "custom-openai-compatible") return modelName;
   return `${providerDisplayName.trim()} · ${modelName}`;
 }
 

@@ -6,6 +6,7 @@ import type {
   ConversationActiveReplyTarget,
   ConversationAttachment,
   ConversationPendingReplacement,
+  ConversationGeneratedMedia,
   ConversationTranscriptStatus,
   ExecutionAction,
   LingTurn,
@@ -67,6 +68,7 @@ export interface ConversationHomeDetailContext {
   readonly approvals: readonly ApprovalRequest[];
   readonly interventions: readonly RunIntervention[];
   readonly terminalReports: readonly TerminalReportDto[];
+  readonly generatedMedia: readonly ConversationGeneratedMedia[];
 }
 
 export interface ConversationHomeSendInput {

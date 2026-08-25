@@ -9,6 +9,7 @@ Last verified: 2026-08-07
 - [Conversation Surface Contract](conversation-surface-contract.md)
 - [Conversation Surface Taxonomy](conversation-surface-taxonomy.md)
 - [Conversation Shared Capabilities](conversation-shared-capabilities.md)
+- [Conversation Media Generation Tools](conversation-media-generation-tools.md)
 
 The contracts own product behavior. This plan tracks only the remaining shared-package
 and consumption work.
@@ -49,6 +50,10 @@ and consumption work.
   provider emits no text deltas; fully empty chat output becomes a localized message-level
   failure. Provider checks also reject successful HTTP responses with no displayable text
   as `empty_response`.
+- A persisted conversation-media projection counts as a visible terminal result. Tool-only
+  success keeps an empty, successful assistant row and renders the shared media block across
+  normal, initial-channel, channel-continuation and private-chat paths; only runs with neither
+  text nor media use the localized empty-response failure.
 - Ordinary channel replies now execute as standard `RunSession` records. Their
   `channel_ai_reply` WorkUnit is only the supervision projection linked to that run and
   message; guidance reuses the existing `RunIntervention`, cancellation and continuation
@@ -102,6 +107,16 @@ and consumption work.
   channel-only.
 
 ## Remaining Work
+
+### Generated Media Capability
+
+- Execute the four batches in the dedicated
+  [Conversation Media Generation Tools Implementation Plan](conversation-media-generation-tools-implementation-plan.md):
+  Runner Tool, generation routing, background projection, and three-surface consumption.
+- Keep MediaJob as the artifact owner and pass typed generated-media views into the shared
+  conversation package; no shared presentation package may fetch MediaJob state.
+- Register paid generation tools only for user-visible conversation runs with a runnable
+  target. Observer and summary runs remain excluded.
 
 ### WorkCell Boundary
 

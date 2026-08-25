@@ -42,6 +42,8 @@ import {
   buildConversationSupersessionProjection,
   filterSupersededTeammateDirectMessages,
 } from "../conversations/supersession-projection.js";
+import { runHasConversationGeneratedMedia } from "../media/conversation-projection.js";
+import { inferUserLanguage } from "../channels/response-language.js";
 
 export type StartTeammateDirectRun = (runRequest: RunRequest, sink: RunExecutionSink) => Promise<string | undefined>;
 
@@ -250,7 +252,14 @@ export async function createAiTeammateDirectReply(input: {
     if (current?.status === "cancelled") {
       return current;
     }
-    const reply = finishProjectedRun(input.store, pending.id, run, projection.text(), projection.error());
+    const reply = finishProjectedRun(
+      input.store,
+      pending.id,
+      run,
+      projection.text(),
+      projection.error(),
+      input.sourceMessage.body,
+    );
     if (reply.status === "ready") {
       input.stream?.onDone(reply);
     } else {
@@ -333,11 +342,24 @@ function finishProjectedRun(
   run: RunSession | undefined,
   streamedText: string,
   projectionError: string | undefined,
+  sourceText: string,
 ): TeammateDirectMessage {
   const text = streamedText.trim();
   if (run?.status === "succeeded") {
+    const hasGeneratedMedia = runHasConversationGeneratedMedia(store, run.id);
+    if (!text && !hasGeneratedMedia) {
+      const message = inferUserLanguage(sourceText) === "zh-CN"
+        ? "模型没有返回可显示内容，请重试或切换模型。"
+        : "The model returned no displayable content. Retry or choose another model.";
+      return finishDirectMessage(store, messageId, {
+        body: message,
+        status: "failed",
+        errorMessage: message,
+        linkedRunId: run.id,
+      });
+    }
     return finishDirectMessage(store, messageId, {
-      body: text || "AI reply completed without text.",
+      body: text,
       status: "ready",
       errorMessage: null,
       linkedRunId: run.id,

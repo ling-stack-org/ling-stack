@@ -183,6 +183,7 @@ import type {
   ChannelLinkPreview,
   ChannelMention,
   ChannelMessage,
+  ConversationGeneratedMedia,
   ChannelMessageFileRef,
   ChannelReplyPendingEvent,
   ChannelMessageRouteDecision,
@@ -394,6 +395,7 @@ export function WorkspaceClientView({
   tasks,
   taskForm,
   channelMessages,
+  channelGeneratedMedia,
   memoryById,
   usedMemoryEvents,
   channelExecutionProposals,
@@ -558,6 +560,7 @@ export function WorkspaceClientView({
   readonly tasks: readonly Task[];
   readonly taskForm: TaskFormState;
   readonly channelMessages: readonly ChannelMessage[];
+  readonly channelGeneratedMedia: readonly ConversationGeneratedMedia[];
   readonly memoryById: ReadonlyMap<string, MemoryObject>;
   readonly usedMemoryEvents: readonly UsedMemoryEvent[];
   readonly channelExecutionProposals: readonly ChannelExecutionProposal[];
@@ -3326,6 +3329,7 @@ export function WorkspaceClientView({
     attachmentContentUrl,
     auditActivityVisible,
     channelArtifactsByRun: channelArtifactsByRunForDisplay,
+    generatedMedia: channelGeneratedMedia,
     channelAttachmentById,
     channelLinkPreviewById,
     channelMessageFeedbackById,

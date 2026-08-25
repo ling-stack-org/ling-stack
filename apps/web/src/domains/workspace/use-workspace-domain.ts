@@ -55,6 +55,7 @@ import type {
   ChannelHandoff,
   ChannelLinkPreview,
   ChannelMessage,
+  ConversationGeneratedMedia,
   ChannelIntentDecision,
   ChannelMessageRouteDecision,
   ChannelWorkflow,
@@ -105,6 +106,7 @@ export interface WorkspaceState {
   readonly taskEditForm: TaskEditFormState;
   readonly taskRunProviderId: string;
   readonly channelMessages: readonly ChannelMessage[];
+  readonly channelGeneratedMedia: readonly ConversationGeneratedMedia[];
   readonly memoryObjects: readonly MemoryObject[];
   readonly usedMemoryEvents: readonly UsedMemoryEvent[];
   readonly channelMessagesHasOlder: boolean;
@@ -239,6 +241,7 @@ export function useWorkspaceDomain(input: {
   const [taskEditForm, setTaskEditForm] = useState<TaskEditFormState>(defaultTaskEditForm);
   const [taskRunProviderId, setTaskRunProviderId] = useState("");
   const [channelMessages, setChannelMessages] = useState<readonly ChannelMessage[]>([]);
+  const [channelGeneratedMedia, setChannelGeneratedMedia] = useState<readonly ConversationGeneratedMedia[]>([]);
   const [channelItemsBeforeSequence, setChannelItemsBeforeSequence] = useState<number | undefined>();
   const [memoryObjects, setMemoryObjects] = useState<readonly MemoryObject[]>([]);
   const [usedMemoryEvents, setUsedMemoryEvents] = useState<readonly UsedMemoryEvent[]>([]);
@@ -486,6 +489,7 @@ export function useWorkspaceDomain(input: {
       const page = projectChannelConversationItemPage(response);
       const messagesChanged = !channelMessagesEqual(channelMessages, page.messages);
       setChannelMessages((current) => channelMessagesEqual(current, page.messages) ? current : page.messages);
+      setChannelGeneratedMedia(page.generatedMedia);
       setChannelMessagesHasOlder(page.hasMore);
       setChannelItemsBeforeSequence(page.nextBeforeSequence);
       if (messagesChanged) {
@@ -525,6 +529,7 @@ export function useWorkspaceDomain(input: {
       }
       const page = projectChannelConversationItemPage(response);
       setChannelMessages((current) => mergeChannelMessages(page.messages, current));
+      setChannelGeneratedMedia((current) => mergeGeneratedMedia(page.generatedMedia, current));
       setChannelMessagesHasOlder(page.hasMore);
       setChannelItemsBeforeSequence(page.nextBeforeSequence);
     } catch (caught) {
@@ -965,6 +970,7 @@ export function useWorkspaceDomain(input: {
   function resetSelectedChannelActivity(): void {
     setTasks([]);
     setChannelMessages([]);
+    setChannelGeneratedMedia([]);
     setChannelMessagesHasOlder(false);
     setChannelItemsBeforeSequence(undefined);
     setChannelMessagesLoadingOlder(false);
@@ -1013,6 +1019,7 @@ export function useWorkspaceDomain(input: {
     setChannelsLoading(false);
     setTasksLoading(false);
     setChannelMessages([]);
+    setChannelGeneratedMedia([]);
     setMemoryObjects([]);
     setUsedMemoryEvents([]);
     setChannelMessagesHasOlder(false);
@@ -1061,6 +1068,7 @@ export function useWorkspaceDomain(input: {
       taskEditForm,
       taskRunProviderId,
       channelMessages,
+      channelGeneratedMedia,
       memoryObjects,
       usedMemoryEvents,
       channelMessagesHasOlder,
@@ -1169,6 +1177,17 @@ function mergeChannelMessages(
     merged.push(message);
   }
   return merged;
+}
+
+function mergeGeneratedMedia(
+  olderItems: readonly ConversationGeneratedMedia[],
+  currentItems: readonly ConversationGeneratedMedia[],
+): readonly ConversationGeneratedMedia[] {
+  const byId = new Map<string, ConversationGeneratedMedia>();
+  for (const item of [...olderItems, ...currentItems]) byId.set(item.mediaJobId, item);
+  return [...byId.values()].sort(
+    (left, right) => left.createdAt.localeCompare(right.createdAt) || left.mediaJobId.localeCompare(right.mediaJobId),
+  );
 }
 
 interface ChannelTransitionEntity {

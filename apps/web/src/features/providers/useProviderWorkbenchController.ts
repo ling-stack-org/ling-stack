@@ -8,7 +8,6 @@ import {
 
 export function useProviderWorkbenchController(input: {
   readonly providers: readonly ProviderPreset[];
-  readonly selectedProviderId: string;
   readonly errorMessage: string;
   readonly onDelete: (providerId: string) => void;
 }) {
@@ -24,9 +23,8 @@ export function useProviderWorkbenchController(input: {
       query,
       statusFilter,
       capabilityFilter,
-      selectedProviderId: input.selectedProviderId,
     }),
-    [capabilityFilter, input.providers, input.selectedProviderId, query, statusFilter],
+    [capabilityFilter, input.providers, query, statusFilter],
   );
 
   useEffect(() => {

@@ -84,6 +84,10 @@ import type {
   UpdateMediaWorkflowDefinitionInput,
 } from "./media-workflow-types.js";
 import type {
+  CreateOrReuseConversationMediaJobInput,
+  CreateOrReuseConversationMediaJobResult,
+} from "./media-generation-routing-types.js";
+import type {
   ChannelInputMaterialization,
   CreateChannelInputMaterializationInput,
   ListChannelInputMaterializationsOptions,
@@ -1993,6 +1997,10 @@ export interface RunStore {
   hasProviderSecret(providerId: string): boolean;
   deleteProviderSecret(providerId: string): boolean;
   createMediaJob(input: CreateMediaJobInput, now: string): MediaJob;
+  createOrReuseConversationMediaJob(
+    input: CreateOrReuseConversationMediaJobInput,
+    now: string,
+  ): CreateOrReuseConversationMediaJobResult;
   getMediaJob(id: string): MediaJob | undefined;
   listMediaJobs(options?: ListMediaJobsOptions): MediaJob[];
   updateMediaJobStatus(id: string, input: UpdateMediaJobStatusInput, now: string): MediaJob | undefined;

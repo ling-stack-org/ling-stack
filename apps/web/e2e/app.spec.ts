@@ -1396,11 +1396,10 @@ test("conversation home model picker uses the model workbench default without ch
   const navigation = page.getByLabel("Ling Stack navigation");
   await navigation.getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: "Model Workbench" }).click();
-  const geminiRow = page.locator(".provider-row").filter({ hasText: "Gemini Pro" });
-  await geminiRow.getByRole("button", { name: "Set default" }).click();
-  await expect(geminiRow).toHaveClass(/selected/);
-  await expect(geminiRow).toContainText("Current default");
-  await expect(geminiRow.getByRole("button", { name: "Set default" })).toHaveCount(0);
+  const defaultUses = page.locator(".provider-default-purpose-bar");
+  await defaultUses.getByLabel("Chat model").selectOption("provider_gemini");
+  await expect(defaultUses.getByLabel("Chat model")).toHaveValue("provider_gemini");
+  await expect(page.locator(".provider-row").getByRole("button", { name: /Set default|Current default/ })).toHaveCount(0);
   await page.getByRole("button", { name: "Back to app" }).click();
 
   await navigation.getByRole("button", { name: "New conversation" }).click();

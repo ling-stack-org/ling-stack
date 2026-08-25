@@ -117,33 +117,24 @@ test("UI2 model list exposes one state and the exact routine action matrix", asy
   await expect(failed.getByRole("button", { name: "Edit" })).toBeVisible();
 
   const ready = row(page, "ready-model");
-  await expect(ready.getByRole("button", { name: "Set default" })).toBeVisible();
-  await expect(ready.getByRole("button", { name: "Set default" }).locator(".lucide-star")).toBeVisible();
+  await expect(ready.getByRole("button", { name: /Set default|Current default/ })).toHaveCount(0);
   await expect(ready.locator(".lucide-play")).toHaveCount(0);
   await expect(ready.getByRole("button", { name: "Check", exact: true })).toBeVisible();
   await expect(ready.getByRole("button", { name: "Edit" })).toBeVisible();
 
   const current = row(page, "default-model");
-  await expect(current).toContainText("Current default");
-  await expect(current.getByRole("button", { name: "Set default" })).toHaveCount(0);
-  const currentDefault = current.getByRole("button", { name: "Current default" });
-  await expect(currentDefault).toBeDisabled();
-  await expect(currentDefault).toHaveAttribute("aria-pressed", "true");
-  const currentStarPaint = await currentDefault.locator(".lucide-star").evaluate((element) => {
-    const style = getComputedStyle(element);
-    return { color: style.color, fill: style.fill };
-  });
-  expect(currentStarPaint.fill).toBe(currentStarPaint.color);
+  await expect(page.locator(".provider-default-purpose-bar").getByLabel("Chat model")).toHaveValue("model_default_chat");
+  await expect(current.getByRole("button", { name: /Set default|Current default/ })).toHaveCount(0);
 
   const image = row(page, "image-model");
   await expect(image).toContainText("Image");
-  await expect(image.getByRole("button", { name: "Set default" })).toHaveCount(0);
+  await expect(image.getByRole("button", { name: /Set default|Current default/ })).toHaveCount(0);
 
   const disabled = row(page, "disabled-model");
   await expect(disabled.getByRole("button", { name: "Enable" })).toBeVisible();
   await expect(disabled.getByRole("button", { name: "Edit" })).toBeVisible();
 
-  for (const label of ["Current default", "Check", "Edit", "More"]) {
+  for (const label of ["Check", "Edit", "More"]) {
     const box = await current.getByRole("button", { name: label, exact: true }).boundingBox();
     expect(box?.width).toBeGreaterThanOrEqual(32);
     expect(box?.height).toBeGreaterThanOrEqual(32);
@@ -196,7 +187,7 @@ test("UI2 model list exposes one state and the exact routine action matrix", asy
   await more.hover();
   await expect(page.getByRole("menuitem", { name: "Clear default" })).toHaveCount(0);
   await more.click();
-  await expect(page.getByRole("menuitem", { name: "Clear default" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Clear default" })).toHaveCount(0);
   await expect(page.getByRole("menuitem", { name: "Disable" })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "Delete" })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "Edit" })).toHaveCount(0);
@@ -515,6 +506,12 @@ for (const scenario of [
 
     const measurements = await page.locator(".provider-workbench").evaluate((element) => {
       const table = element.querySelector<HTMLElement>(".provider-table-shell");
+      const defaultPurpose = element.querySelector<HTMLElement>(".provider-default-purpose-bar");
+      const defaultPurposeFields = Array.from(
+        element.querySelectorAll<HTMLElement>(".provider-default-purpose-field"),
+      );
+      const defaultPurposeRect = defaultPurpose?.getBoundingClientRect();
+      const tableRect = table?.getBoundingClientRect();
       return {
         documentClient: document.documentElement.clientWidth,
         documentScroll: document.documentElement.scrollWidth,
@@ -522,11 +519,19 @@ for (const scenario of [
         surfaceScroll: element.scrollWidth,
         tableClient: table?.clientWidth ?? 0,
         tableScroll: table?.scrollWidth ?? 0,
+        defaultPurposeBottom: defaultPurposeRect?.bottom ?? 0,
+        defaultPurposeFieldBottom: Math.max(
+          0,
+          ...defaultPurposeFields.map((field) => field.getBoundingClientRect().bottom),
+        ),
+        tableTop: tableRect?.top ?? 0,
       };
     });
     expect(measurements.documentScroll).toBeLessThanOrEqual(measurements.documentClient + 1);
     expect(measurements.surfaceScroll).toBeLessThanOrEqual(measurements.surfaceClient + 1);
     expect(measurements.tableScroll).toBeLessThanOrEqual(measurements.tableClient + 1);
+    expect(measurements.defaultPurposeFieldBottom).toBeLessThanOrEqual(measurements.defaultPurposeBottom + 1);
+    expect(measurements.defaultPurposeBottom).toBeLessThanOrEqual(measurements.tableTop - 1);
     expect(errors).toEqual([]);
     await captureEvidence(
       page,

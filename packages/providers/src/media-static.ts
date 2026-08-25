@@ -254,6 +254,8 @@ const mediaAdapterErrorCodes: readonly MediaAdapterErrorCode[] = [
   "model_not_found",
   "rate_limited",
   "quota_exceeded",
+  "content_policy_blocked",
+  "media_result_unavailable",
   "network_error",
   "timeout",
   "unsupported_capability",

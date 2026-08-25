@@ -287,7 +287,7 @@ const workUnitTransitions: Readonly<Record<WorkUnitStatus, Partial<Record<WorkUn
   },
   failed: { retry: "queued" },
   succeeded: {},
-  cancelled: {},
+  cancelled: { retry: "queued" },
 };
 
 const lingTurnTransitions: Readonly<Record<LingTurnStatus, Partial<Record<LingTurnTransitionEvent, LingTurnStatus>>>> = {

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { appendChannelItemFixture } from "../../core/test/channel-conversation-fixture.mjs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -10,7 +11,11 @@ import {
   resolveRuntimePaths,
 } from "../../core/dist/index.js";
 import { createDaemonServer } from "../dist/index.js";
-import { collectWorkflowTerminalReportEvidence } from "../dist/features/channels/terminal-report-evidence.js";
+import {
+  collectRunTerminalReportEvidence,
+  collectWorkflowTerminalReportEvidence,
+} from "../dist/features/channels/terminal-report-evidence.js";
+import { publishTerminalReport } from "../dist/features/channels/terminal-report-publisher.js";
 import { createTerminalWorkflowFixture } from "./terminal-report-coordinator-fixture.mjs";
 
 test("terminal report API exposes committed reports without developer synthesis metadata", async () => {
@@ -39,6 +44,12 @@ test("terminal report API exposes committed reports without developer synthesis 
     now,
   });
   store.createTerminalReportDraft({ id: "terminal_report_hidden_draft", generation: 2, evidenceSnapshot: snapshot }, now);
+  const historicalInvalidReport = persistHistoricalChannelReplyTerminalReport({
+    store,
+    cwd,
+    channel: fixture.channel,
+  });
+  assert.equal(store.getTerminalReport(historicalInvalidReport.report.id)?.publishedMessageId, historicalInvalidReport.message.id);
   store.close();
 
   const paths = resolveRuntimePaths(cwd);
@@ -72,6 +83,16 @@ test("terminal report API exposes committed reports without developer synthesis 
     assert.equal(list.reports[0].synthesis.providerPresetId, undefined);
     assert.equal(list.reports[0].references.some((ref) => ref.id === "developer_operation"), false);
 
+    const channelItems = await getJson(`${baseUrl}/channels/${encodeURIComponent(fixture.channel.id)}/items?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(channelItems.items.some((item) => item.id === historicalInvalidReport.message.id), false);
+
+    const channelReplyReports = await getJson(`${baseUrl}/channels/${encodeURIComponent(fixture.channel.id)}/terminal-reports?cwd=${encodeURIComponent(cwd)}&sourceKind=run&sourceId=${encodeURIComponent(historicalInvalidReport.run.id)}`);
+    assert.deepEqual(channelReplyReports.reports, []);
+
+    const channelReplyReportDetail = await requestJson(`${baseUrl}/terminal-reports/${encodeURIComponent(historicalInvalidReport.report.id)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(channelReplyReportDetail.status, 404);
+    assert.equal(channelReplyReportDetail.body.error, "terminal_report_not_found");
+
     const detail = await getJson(`${baseUrl}/terminal-reports/${encodeURIComponent(report.id)}?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(detail.report.id, report.id);
     assert.equal(detail.report.synthesis.model, undefined);
@@ -84,6 +105,96 @@ test("terminal report API exposes committed reports without developer synthesis 
     await rm(cwd, { recursive: true, force: true });
   }
 });
+
+function persistHistoricalChannelReplyTerminalReport({ store, cwd, channel }) {
+  const source = appendChannelItemFixture(store, {
+    channelId: channel.id,
+    authorType: "local-user",
+    body: "生成一张测试图片",
+  }, "2026-07-11T08:01:00.000Z");
+  const reply = appendChannelItemFixture(store, {
+    channelId: channel.id,
+    replyToItemId: source.id,
+    kind: "ai_reply",
+    authorType: "ai-teammate",
+    authorId: "ling_agent",
+    body: "已开始生成图片。",
+    status: "ready",
+  }, "2026-07-11T08:01:01.000Z");
+  const workUnit = store.createWorkUnit({
+    workspaceId: channel.workspaceId,
+    kind: "channel_ai_reply",
+    ownerType: "channel_message",
+    ownerId: source.id,
+    channelId: channel.id,
+    idempotencyKey: "terminal-report-api-historical-channel-reply",
+    createdByActor: "local-user",
+    request: { sourceMessageId: source.id },
+    linkedMessageId: reply.id,
+    now: "2026-07-11T08:01:02.000Z",
+  });
+  const task = store.createTask({
+    channelId: channel.id,
+    title: "Generate test image",
+    prompt: source.body,
+  }, "2026-07-11T08:01:02.000Z");
+  const run = store.createRun({
+    id: "run_terminal_report_api_historical_channel_reply",
+    cwd,
+    taskId: task.id,
+    channelId: channel.id,
+    threadId: source.threadId,
+    turnId: source.turnId,
+    providerName: "test-provider",
+    providerModel: "test-model",
+    taskSnapshot: { id: task.id, title: task.title },
+    providerSnapshot: { provider: "test-provider", model: "test-model" },
+    requestSnapshot: { cwd, sourceMessageId: source.id, linkedMessageId: reply.id },
+    workUnitId: workUnit.id,
+    createdAt: "2026-07-11T08:01:03.000Z",
+  });
+  store.linkRunToWorkUnit(run.id, workUnit.id, "2026-07-11T08:01:04.000Z");
+  store.appendEvent(run.id, "tool_start", { toolCallId: "image", toolName: "image_generate", args: {} });
+  store.appendEvent(run.id, "tool_end", { toolCallId: "image", toolName: "image_generate", isError: false });
+  store.markRunSucceeded(run.id, "2026-07-11T08:01:05.000Z");
+
+  const snapshot = collectRunTerminalReportEvidence(store, run.id, {
+    generatedAt: "2026-07-11T08:01:06.000Z",
+  });
+  const draft = store.createTerminalReportDraft({
+    id: "terminal_report_api_historical_channel_reply",
+    evidenceSnapshot: snapshot,
+  }, "2026-07-11T08:01:06.000Z");
+  const validating = store.updateTerminalReportDraft({
+    reportId: draft.id,
+    expectedStatus: "draft",
+    expectedEvidenceFingerprint: draft.evidenceFingerprint,
+    status: "validating",
+    now: "2026-07-11T08:01:06.000Z",
+  });
+  const report = buildDeterministicTerminalReport(snapshot, {
+    id: draft.id,
+    committedAt: "2026-07-11T08:01:06.000Z",
+  });
+  store.commitTerminalReport({
+    reportId: draft.id,
+    expectedStatus: "validating",
+    expectedEvidenceFingerprint: validating.evidenceFingerprint,
+    report,
+    synthesisMode: "deterministic_fallback",
+    promptVersion: report.synthesis.promptVersion,
+    attemptCount: 0,
+    now: "2026-07-11T08:01:06.000Z",
+  });
+  const message = publishTerminalReport({
+    store,
+    report,
+    linkedRunId: run.id,
+    now: "2026-07-11T08:01:07.000Z",
+  });
+  assert.ok(message);
+  return { message, report, run };
+}
 
 async function getJson(url) {
   const response = await fetch(url);

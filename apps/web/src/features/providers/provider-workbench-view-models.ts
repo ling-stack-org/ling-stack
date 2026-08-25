@@ -3,7 +3,9 @@ import {
   canUseGenerationProviderForOperation,
   isWorkbenchNeedsConfigProvider,
   isWorkbenchReadyProvider,
+  providerCheckGuidance,
   providerCheckIsPending,
+  providerGenerationRuntimeSummary,
   providerNeedsSecret,
   providerPreflightReady,
   providerRunPreflightBlocker,
@@ -33,9 +35,8 @@ export type ProviderPrimaryState =
   | "checking"
   | "check_failed"
   | "needs_check"
-  | "current_default"
   | "ready";
-export type ProviderPrimaryAction = "enable" | "add_api_key" | "check" | "set_default" | undefined;
+export type ProviderPrimaryAction = "enable" | "add_api_key" | "check" | undefined;
 export type ProviderStatusTone = "neutral" | "success" | "attention" | "danger";
 
 export type ProviderWorkbenchTranslate = (
@@ -56,8 +57,6 @@ export interface ProviderWorkbenchSummary {
 
 export interface ProviderRouteRowView {
   readonly missingApiKey: boolean;
-  readonly selectedForRun: boolean;
-  readonly canBeDefault: boolean;
   readonly chatCapable: boolean;
   readonly generationCapable: boolean;
   readonly canGenerate: boolean;
@@ -136,7 +135,7 @@ export function readProviderWorkbenchSummary(providers: readonly ProviderPreset[
       providerPreflightReady(provider)
     ).length,
     generationReadyCount: providers.filter((provider) =>
-      generationOperations.some((operation) => canUseGenerationProviderForOperation(provider, operation))
+      hasGenerationCapability(provider.capabilities) && isWorkbenchReadyProvider(provider)
     ).length,
     readyCount: providers.filter(isWorkbenchReadyProvider).length,
     needsAttentionCount: providers.filter(isWorkbenchNeedsConfigProvider).length,
@@ -157,13 +156,11 @@ export function filterProviderWorkbenchRoutes({
   query,
   statusFilter,
   capabilityFilter,
-  selectedProviderId,
 }: {
   readonly providers: readonly ProviderPreset[];
   readonly query: string;
   readonly statusFilter: ProviderStatusFilter;
   readonly capabilityFilter: ProviderCapabilityFilter;
-  readonly selectedProviderId: string;
 }): readonly ProviderPreset[] {
   const normalizedQuery = query.trim().toLowerCase();
   return sortProvidersForWorkbench(providers.filter((provider) => {
@@ -183,23 +180,19 @@ export function filterProviderWorkbenchRoutes({
       (capabilityFilter === "image" && provider.capabilities.some((capability) => capability === "image_generate" || capability === "image_edit")) ||
       (capabilityFilter === "chat" && provider.api !== "media-job" && provider.capabilities.includes("chat"));
     return matchesQuery && matchesStatus && matchesCapability;
-  }), selectedProviderId);
+  }), "");
 }
 
 export function readProviderRouteRowView({
   provider,
-  selectedProviderId,
   rowCheckGuidance,
   t,
 }: {
   readonly provider: ProviderPreset;
-  readonly selectedProviderId: string;
   readonly rowCheckGuidance: string;
   readonly t: ProviderWorkbenchTranslate;
 }): ProviderRouteRowView {
   const missingApiKey = providerNeedsSecret(provider) && !provider.apiKeyConfigured;
-  const selectedForRun = provider.id === selectedProviderId;
-  const canBeDefault = providerPreflightReady(provider);
   const chatCapable = provider.capabilities.includes("chat") && provider.api !== "media-job";
   const generationCapable = provider.capabilities.some((capability) =>
     capability === "image_generate" || capability === "image_edit" || capability === "video_generate"
@@ -207,7 +200,7 @@ export function readProviderRouteRowView({
   const canGenerate = (["image_generate", "image_edit", "video_generate"] as const).some((operation) =>
     canUseGenerationProviderForOperation(provider, operation)
   );
-  const ready = providerPreflightReady(provider) || canGenerate;
+  const ready = isWorkbenchReadyProvider(provider);
   const checking = providerCheckIsPending(provider.lastCheck);
   const primaryState: ProviderPrimaryState = !provider.enabled
     ? "disabled"
@@ -219,9 +212,7 @@ export function readProviderRouteRowView({
           ? "check_failed"
           : !ready
             ? "needs_check"
-            : selectedForRun
-              ? "current_default"
-              : "ready";
+            : "ready";
   const primaryStatusLabel = primaryState === "disabled"
     ? t("Disabled")
     : primaryState === "missing_api_key"
@@ -232,9 +223,7 @@ export function readProviderRouteRowView({
           ? t("Needs attention")
           : primaryState === "needs_check"
             ? t("Needs check")
-            : primaryState === "current_default"
-              ? t("Current default")
-              : t("Ready");
+            : t("Ready");
   const primaryStatusTone: ProviderStatusTone = primaryState === "check_failed"
     ? "danger"
     : primaryState === "missing_api_key" || primaryState === "needs_check"
@@ -264,17 +253,17 @@ export function readProviderRouteRowView({
       ? "add_api_key"
       : primaryState === "check_failed" || primaryState === "needs_check"
         ? "check"
-        : primaryState === "ready" && chatCapable && canBeDefault
-          ? "set_default"
-          : undefined;
+        : undefined;
   const usageLabels = [
     chatCapable ? t("Chat") : "",
     provider.capabilities.some((capability) => capability === "image_generate" || capability === "image_edit") ? t("Image") : "",
     provider.capabilities.includes("video_generate") ? t("Video") : "",
   ].filter(Boolean);
-  const statusHint = primaryState === "ready" || primaryState === "current_default" || primaryState === "checking"
+  const statusHint = primaryState === "ready" || primaryState === "checking"
     ? ""
-    : providerRunPreflightBlocker(provider, t) ?? rowCheckGuidance;
+    : generationCapable && provider.enabled
+      ? generationProviderStatusHint({ provider, missingApiKey, canGenerate, rowCheckGuidance, t })
+      : providerRunPreflightBlocker(provider, t) ?? rowCheckGuidance;
   const isCustomRoute = provider.providerId === "custom-openai-compatible";
   const sourceLabel = isCustomRoute
     ? t("Custom access")
@@ -286,8 +275,6 @@ export function readProviderRouteRowView({
 
   return {
     missingApiKey,
-    selectedForRun,
-    canBeDefault,
     chatCapable,
     generationCapable,
     canGenerate,
@@ -307,6 +294,34 @@ export function readProviderRouteRowView({
     showInlineEdit: primaryAction !== "add_api_key",
     showDisableMenuAction: provider.enabled,
   };
+}
+
+function generationProviderStatusHint({
+  provider,
+  missingApiKey,
+  canGenerate,
+  rowCheckGuidance,
+  t,
+}: {
+  readonly provider: ProviderPreset;
+  readonly missingApiKey: boolean;
+  readonly canGenerate: boolean;
+  readonly rowCheckGuidance: string;
+  readonly t: ProviderWorkbenchTranslate;
+}): string {
+  if (missingApiKey) {
+    return providerGenerationRuntimeSummary(provider, t) ?? rowCheckGuidance;
+  }
+  if (!provider.lastCheck) {
+    return t("Run Check before using this generation model.");
+  }
+  if (!provider.lastCheck.ok) {
+    return rowCheckGuidance || providerCheckGuidance(provider.lastCheck, provider, t);
+  }
+  if (!canGenerate) {
+    return providerGenerationRuntimeSummary(provider, t) ?? rowCheckGuidance;
+  }
+  return rowCheckGuidance;
 }
 
 function providerDisplaySourceLabel(displayName: string, model: string): string {

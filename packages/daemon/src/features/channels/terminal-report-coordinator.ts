@@ -17,6 +17,11 @@ import { buildWorkflowEvidence } from "./workflow-evidence.js";
 import { collectRunTerminalReportEvidence, collectTurnTerminalReportEvidence, collectWorkflowTerminalReportEvidence } from "./terminal-report-evidence.js";
 import { publishTerminalReportPublication } from "./terminal-report-publisher.js";
 import { getChannelMessageView } from "./conversation-item-messages.js";
+import {
+  runIsEligibleForTerminalReport,
+  terminalReportIsEligibleForDisplay,
+  turnIsEligibleForTerminalReport,
+} from "./terminal-report-eligibility.js";
 import { TERMINAL_REPORT_PROMPT_VERSION } from "./terminal-report-prompt.js";
 import { synthesizeTerminalReportContent } from "./terminal-report-synthesis.js";
 import { evaluateWorkflowCompletionGate } from "./workflow-completion-gate.js";
@@ -114,10 +119,7 @@ export function maybeScheduleRunTerminalReport(
     return;
   }
   const run = store.getRun(runId);
-  if (!run || run.workflowStepId || !isTerminalRunStatus(run.status)) {
-    return;
-  }
-  if (run.workUnitId && store.getWorkUnit(run.workUnitId)?.kind === "channel_ai_reply") {
+  if (!run || !isTerminalRunStatus(run.status) || !runIsEligibleForTerminalReport(store, run)) {
     return;
   }
   const turn = store.getLingTurnForRun(run.id);
@@ -138,7 +140,7 @@ export function maybeScheduleTurnTerminalReport(
     return;
   }
   const turn = store.getLingTurn(turnId);
-  if (!turn || !isTerminalTurnStatus(turn.status)) {
+  if (!turn || !isTerminalTurnStatus(turn.status) || !turnIsEligibleForTerminalReport(store, turn.id)) {
     return;
   }
   scheduleTerminalReport(store, "turn", turn.id, () => processTurnTerminalReport(store, turn.id, options));
@@ -216,6 +218,8 @@ export async function processRunTerminalReport(
   runId: string,
   options: ProcessWorkflowTerminalReportOptions = {},
 ): Promise<ProcessTerminalReportResult | undefined> {
+  const run = store.getRun(runId);
+  if (!run || !runIsEligibleForTerminalReport(store, run)) return undefined;
   const now = options.now ?? new Date().toISOString();
   const snapshot = collectRunTerminalReportEvidence(store, runId, { generatedAt: now });
   if (!terminalSnapshotHasExecutedWork(snapshot)) {
@@ -229,6 +233,7 @@ export async function processTurnTerminalReport(
   turnId: string,
   options: ProcessWorkflowTerminalReportOptions = {},
 ): Promise<ProcessTerminalReportResult | undefined> {
+  if (!turnIsEligibleForTerminalReport(store, turnId)) return undefined;
   const now = options.now ?? new Date().toISOString();
   const snapshot = collectTurnTerminalReportEvidence(store, turnId, { generatedAt: now });
   if (!terminalSnapshotHasExecutedWork(snapshot)) {
@@ -396,7 +401,11 @@ export async function recoverTerminalReports(store: RunStore): Promise<void> {
     return;
   }
   for (const record of store.listTerminalReports({ limit: 500 })) {
-    if ((record.status === "committed" || record.status === "fallback") && record.report) {
+    if (
+      terminalReportIsEligibleForDisplay(store, record) &&
+      (record.status === "committed" || record.status === "fallback") &&
+      record.report
+    ) {
       publishTerminalReportWithInvalidation(store, record.report, undefined, new Date().toISOString());
     }
   }
@@ -413,7 +422,10 @@ export async function recoverTerminalReports(store: RunStore): Promise<void> {
   const recoveredTurnIds = new Set<string>();
   for (const status of ["succeeded", "failed", "cancelled"] as const) {
     for (const run of store.listRuns({ status, limit: 500 })) {
-      if (run.createdAt < TERMINAL_REPORT_ROLLOUT_WATERMARK || run.workflowStepId) {
+      if (
+        run.createdAt < TERMINAL_REPORT_ROLLOUT_WATERMARK ||
+        !runIsEligibleForTerminalReport(store, run)
+      ) {
         continue;
       }
       const turn = store.getLingTurnForRun(run.id);

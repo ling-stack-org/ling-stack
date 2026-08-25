@@ -12,6 +12,7 @@ import type {
   AiTeammate,
   ApprovalRequest,
   Channel,
+  ConversationGeneratedMedia,
   ExecutionAction,
   MemoryObject,
   PermissionConfirmation,
@@ -49,6 +50,7 @@ export interface TeammatePrivateChatSurfaceProps {
   readonly userProfile?: UserProfile;
   readonly loading: boolean;
   readonly visibleMessages: readonly TeammateDirectMessage[];
+  readonly generatedMedia: readonly ConversationGeneratedMedia[];
   readonly normalizedMessageSearchQuery: string;
   readonly privateFeedRef: RefObject<HTMLDivElement | null>;
   readonly privateMessageFeedVirtualizer: ReactVirtualizer<HTMLDivElement, Element>;
