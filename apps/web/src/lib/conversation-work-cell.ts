@@ -1386,6 +1386,11 @@ function executionActionSourceRefs(action: ExecutionAction, workflowStepId: stri
   if (workflowStepId) {
     refs.push({ kind: "workflow_step", id: workflowStepId });
   }
+  for (const artifactId of [...action.previewArtifactIds, ...action.resultArtifactIds]) {
+    if (artifactId.trim()) {
+      refs.push({ kind: "artifact", id: artifactId });
+    }
+  }
   for (const target of action.targetRefs) {
     const id = target.path ?? target.id ?? target.label;
     if (!id || target.type === "run" || target.type === "work_unit" || target.type === "workflow_step") {
@@ -1395,6 +1400,7 @@ function executionActionSourceRefs(action: ExecutionAction, workflowStepId: stri
       kind: target.type,
       id,
       label: target.label ?? target.path,
+      ...(target.type === "file" && target.path ? { path: target.path } : {}),
     });
   }
   return uniqueOperationSourceRefs(refs);
