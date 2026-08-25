@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 const RECONNECT_ALARM = "ling.chrome.reconnect";
 const RECONNECT_ATTEMPT_KEY = "ling.chrome.reconnectAttempt";
+const RECONNECT_PERIOD_MINUTES = 0.5;
 
 test("Native disconnect leaves a durable Alarm that reconnects without opening the popup", async () => {
   const original = {
@@ -111,9 +112,18 @@ test("Native disconnect leaves a durable Alarm that reconnects without opening t
     assert.equal(ports.length, 1);
 
     ports[0].emitDisconnect("Native host has exited.");
+    assert.equal(
+      alarms.has(RECONNECT_ALARM),
+      true,
+      "the disconnect listener must register its durable wake-up before yielding",
+    );
     await settle();
     assert.equal(typeof runtimeListeners.alarm, "function");
     assert.equal(alarms.has(RECONNECT_ALARM), true);
+    assert.deepEqual(alarms.get(RECONNECT_ALARM), {
+      delayInMinutes: RECONNECT_PERIOD_MINUTES,
+      periodInMinutes: RECONNECT_PERIOD_MINUTES,
+    });
     assert.equal(sessionStored[RECONNECT_ATTEMPT_KEY], 1);
     assert.equal([...timeouts.values()][0]?.delay, 1_000);
 
@@ -124,6 +134,7 @@ test("Native disconnect leaves a durable Alarm that reconnects without opening t
     runtimeListeners.alarm({ name: RECONNECT_ALARM });
     await settle();
     assert.equal(ports.length, 2);
+    assert.equal(alarms.has(RECONNECT_ALARM), true);
 
     heldAlarmClear = deferred();
     ports[1].emitMessage({

@@ -23,7 +23,7 @@ const sessionStorageKeys = {
 };
 const RECONNECT_ALARM = "ling.chrome.reconnect";
 const RECONNECT_MAX_DELAY_MS = 30_000;
-const RECONNECT_DURABLE_WAKE_MS = 30_000;
+const RECONNECT_ALARM_PERIOD_MINUTES = 0.5;
 
 let nativeConnection;
 let legacySocket;
@@ -31,6 +31,8 @@ let heartbeatTimer;
 let reconnectTimer;
 let connectionLoop;
 let connectionRequested = false;
+let reconnectAlarmInstalled = false;
+let reconnectAlarmCreatePromise;
 let connectionState = "checking";
 let activeTransport = "none";
 const intentionalSocketClosures = new WeakSet();
@@ -46,12 +48,14 @@ chrome.runtime.onStartup.addListener(() => {
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name !== RECONNECT_ALARM) return;
+  reconnectAlarmInstalled = true;
+  reconnectAlarmCreatePromise = Promise.resolve();
   if (["connected", "paused", "plugin_disabled", "incompatible"].includes(connectionState)) {
     void clearReconnectState();
     return;
   }
   clearReconnectTimer();
-  void chrome.alarms.clear(RECONNECT_ALARM).then(() => requestConnection());
+  void requestConnection();
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -302,15 +306,28 @@ async function connectLegacyStoredSession() {
   return true;
 }
 
-async function scheduleReconnect() {
+function scheduleReconnect() {
+  const alarmReady = ensureReconnectAlarm();
+  return scheduleReconnectAfterAlarm(alarmReady);
+}
+
+function ensureReconnectAlarm() {
+  if (!reconnectAlarmInstalled) {
+    reconnectAlarmInstalled = true;
+    reconnectAlarmCreatePromise = Promise.resolve(chrome.alarms.create(RECONNECT_ALARM, {
+      delayInMinutes: RECONNECT_ALARM_PERIOD_MINUTES,
+      periodInMinutes: RECONNECT_ALARM_PERIOD_MINUTES,
+    }));
+  }
+  return reconnectAlarmCreatePromise ?? Promise.resolve();
+}
+
+async function scheduleReconnectAfterAlarm(alarmReady) {
+  await alarmReady;
   const paused = (await chrome.storage.local.get([storageKeys.paused]))[storageKeys.paused] === true;
   if (paused) {
     await clearReconnectState();
     return;
-  }
-  const existingAlarm = await chrome.alarms.get(RECONNECT_ALARM);
-  if (!existingAlarm) {
-    chrome.alarms.create(RECONNECT_ALARM, { when: Date.now() + RECONNECT_DURABLE_WAKE_MS });
   }
   if (reconnectTimer) return;
   const stored = await chrome.storage.session.get([sessionStorageKeys.reconnectAttempt]);
@@ -327,6 +344,8 @@ async function scheduleReconnect() {
 
 async function clearReconnectState() {
   clearReconnectTimer();
+  reconnectAlarmInstalled = false;
+  reconnectAlarmCreatePromise = undefined;
   await Promise.all([
     chrome.alarms.clear(RECONNECT_ALARM),
     chrome.storage.session.remove([sessionStorageKeys.reconnectAttempt]),

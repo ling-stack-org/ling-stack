@@ -97,6 +97,12 @@ refresh loop that causes status flicker.
 3. The daemon starts a private random-port broker and publishes a short-lived user-only runtime
    descriptor.
 4. The extension connects with `chrome.runtime.connectNative("com.lingstack.browser")`.
+   Real-Chrome acceptance that launches Chrome with a custom `--user-data-dir` must stage the same
+   manifest under that isolated user-data root's `NativeMessagingHosts/` directory. This is
+   test-fixture setup only; production installation continues to register the standard per-user
+   Chrome and Chromium locations. A directory chooser may appear only when a developer deliberately
+   performs the one-time `Load unpacked` acceptance setup; Store-installed users never select an
+   extension directory, workspace, daemon address, or Native Host path.
 5. The Host validates the Chrome origin, reads the current descriptor, and forwards a bounded native
    handshake containing the startup token and versions. It does not accept `cwd`.
 6. The daemon binds the session to its current workspace, activates the existing business protocol,
@@ -146,12 +152,14 @@ Installation, Chrome startup, popup retry, Native disconnect, legacy disconnect,
 `chrome.alarms.onAlarm` all enter one single-flight connection state machine. A stale attempt may not
 replace a newer connection or clear its heartbeat.
 
-Unexpected disconnect schedules the named `ling.chrome.reconnect` alarm with bounded exponential
-backoff capped at 30 seconds. The current worker may also perform a short immediate retry, but the
-alarm is the durable source of truth and must survive worker suspension. Successful connection,
-pause, plugin disable, or an intentional replacement clears the alarm and session retry counter.
-With Chrome active and the machine awake, a suspended worker must reconnect within 35 seconds
-without opening the popup. Sleep time is excluded; recovery begins again when Chrome resumes.
+Unexpected disconnect schedules the named `ling.chrome.reconnect` alarm as a 30-second periodic
+wake-up, alongside bounded in-worker exponential backoff capped at 30 seconds. Alarm creation must
+be awaited. A wake-up must keep the periodic alarm installed until the connection reaches a terminal
+state; it must not clear the only durable wake-up before starting an asynchronous connection attempt.
+Successful connection, pause, plugin disable, or an intentional replacement clears the alarm and
+session retry counter. With Chrome active and the machine awake, a suspended worker must reconnect
+within 35 seconds without opening the popup. Sleep time is excluded; recovery begins again when
+Chrome resumes.
 
 ## Native Host Contract
 
