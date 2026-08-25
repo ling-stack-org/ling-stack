@@ -277,6 +277,109 @@ test("turn projection fails closed for agent-private canonical items", () => {
   assert.equal(projection.turns[0]?.blocks.some((block) => block.kind === "conversation_item" && block.item.id === privateItem.id), false);
 });
 
+test("turn projection maps item failure, pending, approval, and operation states", () => {
+  const item = (overrides) => ({
+    ...toolCall,
+    ...overrides,
+    turnId: turn.id,
+    domainRefs: [],
+    payload: { ...toolCall.payload, ...(overrides.payload ?? {}) },
+  });
+  const statusItems = [
+    item({ id: "item-failed", sequence: 20, status: "failed", payload: { outputSummary: "failed" } }),
+    item({ id: "item-pending", sequence: 21, status: "pending", payload: { outputSummary: "pending" } }),
+    { ...approvalRequest, id: "item-waiting", sequence: 22, status: "pending" },
+    { ...toolCall, id: "item-succeeded", sequence: 23, status: "committed" },
+    { ...toolCall, id: "item-operation-failed", sequence: 24, kind: "operation_state", payload: { operationId: "op-failed", state: "failed", title: "Failed", summary: "Failed" } },
+    { ...toolCall, id: "item-operation-cancelled", sequence: 25, kind: "operation_state", payload: { operationId: "op-cancelled", state: "cancelled", title: "Cancelled", summary: "Cancelled" } },
+    { ...toolCall, id: "item-operation-succeeded", sequence: 26, kind: "operation_state", payload: { operationId: "op-succeeded", state: "succeeded", title: "Succeeded", summary: "Succeeded" } },
+  ];
+  const projection = buildConversationTurnProjection(projectionInput({
+    conversationItems: [userItem, assistantItem, ...statusItems],
+  }));
+  const blocks = projection.turns[0].blocks.filter((block) => block.kind === "conversation_item");
+  const statusById = new Map(blocks.map((block) => [block.item.id, block.status]));
+  assert.deepEqual(Object.fromEntries(statusById), {
+    "item-failed": "failed",
+    "item-pending": "running",
+    "item-waiting": "waiting_for_approval",
+    "item-succeeded": "succeeded",
+    "item-operation-failed": "failed",
+    "item-operation-cancelled": "cancelled",
+    "item-operation-succeeded": "succeeded",
+  });
+});
+
+test("thread-scoped legacy items do not leak between multiple root messages", () => {
+  const secondRoot = {
+    ...projectMessageItem(userItem, [], thread),
+    id: "item-user-2",
+    body: "Second request",
+    threadId: thread.id,
+    turnId: "turn-2",
+  };
+  const secondTurnItem = {
+    ...toolCall,
+    id: "item-second-tool",
+    turnId: undefined,
+    sequence: 31,
+    domainRefs: [{ type: "conversation_item", id: secondRoot.id }],
+  };
+  const projection = buildConversationTurnProjection(projectionInput({
+    messages: [projectMessageItem(userItem, [], thread), secondRoot],
+    conversationItems: [userItem, assistantItem, secondTurnItem],
+  }));
+  const firstBlocks = projection.turns.find((candidate) => candidate.sourceMessageId === userItem.id)?.blocks ?? [];
+  assert.equal(firstBlocks.some((block) => block.kind === "conversation_item" && block.item.id === secondTurnItem.id), false);
+});
+
+test("operation-covered items are suppressed for workflow, thread, operation, state, and anchor refs", () => {
+  const operationCell = {
+    id: "work-cell:turn:turn-1",
+    sourceKind: "run_thread",
+    threadId: thread.id,
+    turnId: turn.id,
+    anchorRunId: "run-anchor",
+    runIds: ["run-covered"],
+    mode: "completed",
+    status: "succeeded",
+    title: "Inspect workspace",
+    summary: "Finished",
+    stats: [], operationRows: [], agentSpans: [], agentBranches: [], terminalReportRows: [], activeRows: [], groups: [], evidenceLinks: [], artifactStripItems: [],
+    updatedAt: "2026-08-10T00:00:05.000Z",
+  };
+  const workflow = { id: "workflow-covered", channelId: "channel-1", updatedAt: "2026-08-10T00:00:04.000Z", metadata: { sourceMessageId: userItem.id } };
+  const refItems = [
+    { ...toolCall, id: "covered-workflow", domainRefs: [{ type: "workflow", id: workflow.id }] },
+    { ...toolCall, id: "covered-thread", domainRefs: [{ type: "thread", id: thread.id }] },
+    { ...toolCall, id: "covered-operation", domainRefs: [{ type: "operation", id: operationCell.id }] },
+    { ...toolCall, id: "covered-state", kind: "operation_state", payload: { operationId: operationCell.id, state: "running", title: "Running", summary: "Running" } },
+    { ...toolCall, id: "covered-anchor", domainRefs: [{ type: "run", id: operationCell.anchorRunId }] },
+  ].map((item, index) => ({ ...item, sequence: 40 + index }));
+  const proposal = { id: "proposal-covered", channelId: "channel-1", sourceMessageId: userItem.id, status: "accepted", linkedWorkflowId: workflow.id, updatedAt: "2026-08-10T00:00:04.000Z" };
+  const projection = buildConversationTurnProjection(projectionInput({
+    conversationItems: [userItem, assistantItem, ...refItems],
+    proposals: [proposal],
+    workflows: [workflow],
+    operationCellByWorkflowId: new Map([[workflow.id, operationCell]]),
+  }));
+  const remaining = projection.turns[0].blocks.filter((block) => block.kind === "conversation_item");
+  assert.deepEqual(remaining.map((block) => block.item.id), ["covered-anchor"]);
+  assert.equal(projection.turns[0].blocks.some((block) => block.kind === "operation"), true);
+
+  const runOperation = { ...operationCell, id: "work-cell:run:thread-1", runIds: ["run-covered"], anchorRunId: "run-anchor" };
+  const runProposal = { ...proposal, id: "proposal-run-covered", linkedWorkflowId: undefined, linkedRunId: "run-covered" };
+  const runProjection = buildConversationTurnProjection(projectionInput({
+    conversationItems: [userItem, assistantItem, { ...refItems[4], domainRefs: [{ type: "run", id: runOperation.anchorRunId }] }],
+    proposals: [runProposal],
+    workflows: [],
+    operationCellByWorkflowId: new Map(),
+    operationCellByThreadId: new Map([[thread.id, runOperation]]),
+    runs: [{ id: "run-covered", threadId: thread.id }],
+  }));
+  assert.equal(runProjection.turns[0].blocks.some((block) => block.kind === "conversation_item"), false);
+});
+
 test("turn projection falls back to thread-scoped items when a legacy item has no turn id", () => {
   const legacyTool = {
     ...toolCall,
