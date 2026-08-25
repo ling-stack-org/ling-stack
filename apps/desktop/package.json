@@ -45,12 +45,12 @@
     "package:win": "corepack pnpm build && node scripts/cua-driver-electron-package.mjs --platform win32-x64 -- --win nsis --x64"
   },
   "dependencies": {
-    "@napi-rs/canvas": "0.1.80",
+    "@napi-rs/canvas": "1.0.7",
     "@ling-stack/api-client": "workspace:*",
     "@ling-stack/contracts": "workspace:*",
     "@ling-stack/ui-react": "workspace:*",
     "lucide-react": "^1.29.0",
-    "mammoth": "1.12.0",
+    "mammoth": "1.12.1",
     "pdf-parse": "2.4.5",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
