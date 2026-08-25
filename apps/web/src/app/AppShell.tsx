@@ -1138,6 +1138,19 @@ export function AppShell(): React.JSX.Element {
     ),
     [selectedConversationDetail?.runs],
   );
+  const normalConversationInlineApprovalViews = useMemo(
+    () => buildInlineApprovalViews(
+      [
+        ...(selectedConversationDetail?.approvals ?? []),
+        ...approvals,
+      ],
+      {
+        activeRunId: activeConversationRun?.id,
+        visibleRunIds: selectedConversationDetail?.runs.map((candidate) => candidate.id),
+      },
+    ),
+    [activeConversationRun?.id, approvals, selectedConversationDetail?.approvals, selectedConversationDetail?.runs],
+  );
   const selectedConversationProjectPath = selectedConversationDetail?.defaults.projectPath ?? "";
   const selectedConversationProjectLabel = selectedConversationProjectPath
     ? summarizeConversationProjectPath(selectedConversationProjectPath)
@@ -1195,6 +1208,9 @@ export function AppShell(): React.JSX.Element {
     [channelRunsForArtifacts],
   );
   const inlineApprovalIds = useMemo(() => {
+    if (!selectedChannelId) {
+      return new Set<string>();
+    }
     const channelTaskIds = tasks.filter((task) => task.channelId === selectedChannelId).map((task) => task.id);
     const blockedWorkflowStepIds = channelWorkflowSteps
       .filter((step) => step.channelId === selectedChannelId && (step.status === "waiting_for_approval" || step.status === "blocked"))
@@ -2132,6 +2148,9 @@ export function AppShell(): React.JSX.Element {
 
       case "approval.resolved":
         await refreshApprovals(workspaceCwd, event.runId);
+        if (event.runId && selectedConversationDetail?.runs.some((run) => run.id === event.runId)) {
+          await refreshSelectedConversation(workspaceCwd);
+        }
         if (event.externalWorkActionId) {
           await refreshExternalActionDetailsByIds(workspaceCwd, [event.externalWorkActionId]);
         }
@@ -2657,6 +2676,8 @@ export function AppShell(): React.JSX.Element {
                     terminalReports: selectedConversationDetail.terminalReports,
                     generatedMedia: selectedConversationDetail.generatedMedia,
                   } : undefined}
+                  inlineApprovalViews={normalConversationInlineApprovalViews}
+                  resolvingApprovals={resolvingApprovals}
                   conversationIdentity={conversationIdentity}
                   defaultProviderLabel={defaultConversationProviderLabel}
                   defaultProviderPresetId={defaultConversationProviderPresetId}
@@ -2668,6 +2689,16 @@ export function AppShell(): React.JSX.Element {
                   activeRun={activeConversationRun}
                   stopping={Boolean(activeConversationRun && cancellingRunId === activeConversationRun.id)}
                   onOpenRun={(runId) => void openRunFromWorkspace(runId)}
+                  onOpenApproval={(approvalId) => {
+                    const approval = selectedConversationDetail?.approvals.find((candidate) => candidate.id === approvalId)
+                      ?? approvals.find((candidate) => candidate.id === approvalId);
+                    if (approval) {
+                      upsertApprovalRecord(approval);
+                    }
+                    setSelectedApprovalId(approvalId);
+                    void refreshApprovals(form.cwd.trim());
+                    openPlainView("approvals");
+                  }}
                   onOpenModelWorkbench={() => openSettingsWorkspaceTool("providers")}
                   fullAccessConfirmed={fullAccessConfirmation.isConfirmed(normalConversationConfirmationScope)}
                   onConfirmFullAccess={() => fullAccessConfirmation.request(normalConversationConfirmationScope)}
@@ -2691,6 +2722,7 @@ export function AppShell(): React.JSX.Element {
                     }
                     if (target.workUnitId) void runWorkUnitAction(target.workUnitId, "cancel");
                   }}
+                  onResolveApproval={(approvalId, decision, reason) => void resolveApproval(approvalId, decision, reason)}
                   onSendConversation={async (input) => {
                     await sendConversationMessage({
                       message: input.message,

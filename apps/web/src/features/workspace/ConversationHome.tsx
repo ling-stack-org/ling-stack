@@ -87,15 +87,19 @@ export function ConversationHome({
   conversationErrorMessage = "",
   sending = false,
   activeRun,
+  inlineApprovalViews,
   stopping = false,
   fullAccessConfirmed = false,
   onOpenRun,
+  onOpenApproval,
   onOpenModelWorkbench,
   onConfirmFullAccess,
   onConfirmFullAccessSelection,
   onFullAccessConversationBound,
   onRefreshConversation,
   onStopConversation,
+  onResolveApproval,
+  resolvingApprovals,
   onSendConversation,
 }: ConversationHomeProps): React.JSX.Element {
   const { t } = useI18n();
@@ -666,6 +670,8 @@ export function ConversationHome({
       selectedThinkingLevel={selectedThinkingLevel}
       sendBusy={sendBusy}
       activeRun={Boolean(activeReply)}
+      inlineApprovalViews={inlineApprovalViews}
+      resolvingApprovals={resolvingApprovals}
       stopping={stopping}
       canSend={(Boolean(activeReply) || activeModelReady) && Boolean(draft.trim() || readyAttachmentIds.length > 0 || composerFileRefs.length > 0)}
       notice={conversationErrorMessage || actionFeedback.message}
@@ -684,6 +690,7 @@ export function ConversationHome({
       onDragLeave={composerDropController.onDragLeave}
       onDrop={composerDropController.onDrop}
       onOpenModelWorkbench={onOpenModelWorkbench}
+      onOpenApproval={onOpenApproval}
       onRemoveAttachment={attachmentController.removeAttachment}
       onPermissionPresetChange={(preset) => {
         if (preset === "full_access") {
@@ -694,6 +701,7 @@ export function ConversationHome({
       onModelChange={selectModel}
       onThinkingLevelChange={selectThinkingLevel}
       onSubmit={submitDraft}
+      onResolveApproval={onResolveApproval}
       onStop={activeReply && onStopConversation ? () => onStopConversation(activeReply) : undefined}
     />
   );

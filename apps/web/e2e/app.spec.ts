@@ -459,6 +459,120 @@ test("recent conversations only show records created from the conversation home"
   await expect(navigation.locator(".sidebar-recent-row").first()).toContainText("Second local conversation");
 });
 
+test("normal conversation renders inline approvals and resolves them from the composer", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  const threadId = "thread_normal_inline_approvals";
+  const turnId = "turn_normal_inline_approvals";
+  const runId = "run_normal_inline_approvals";
+  const timestamp = "2026-07-20T02:00:00.000Z";
+  state.threads = [{
+    id: threadId,
+    workspaceId: "workspace_default",
+    kind: "conversation",
+    title: "Normal inline approvals",
+    objective: "Verify normal conversation approvals.",
+    status: "running",
+    activeRunId: runId,
+    lastRunId: runId,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  }];
+  state.turns = [{
+    id: turnId,
+    workspaceId: "workspace_default",
+    threadId,
+    kind: "initial_request",
+    status: "running",
+    title: "Normal inline approvals",
+    userInstruction: "Run the gated command.",
+    activeRunId: runId,
+    lastRunId: runId,
+    createdByActor: "local-user",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  }];
+  state.turnRunLinks = [{ turnId, runId, attemptNumber: 1, role: "primary", createdAt: timestamp }];
+  state.runs.unshift({
+    id: runId,
+    status: "waiting_for_approval",
+    cwd,
+    taskId: "task_normal_inline_approvals",
+    providerPresetId: "provider_local",
+    providerName: "local-relay",
+    providerModel: "gpt-5.5",
+    taskSnapshot: { id: "task_normal_inline_approvals", title: "Normal inline approvals" },
+    providerSnapshot: {},
+    requestSnapshot: {},
+    eventLogPath: `.ling-stack/sessions/${runId}.jsonl`,
+    threadId,
+    turnId,
+    createdAt: timestamp,
+    startedAt: timestamp,
+    updatedAt: timestamp,
+  });
+  state.eventsByRun[runId] = [{
+    id: `event_${runId}`,
+    runId,
+    seq: 1,
+    ts: timestamp,
+    type: "assistant_text_delta",
+    data: { text: "Waiting for approval." },
+  }];
+  state.approvals = [
+    {
+      id: "approval_normal_shell",
+      runId,
+      actionType: "bash",
+      risk: "medium",
+      title: "Approve normal shell command",
+      description: "echo normal",
+      payload: { type: "bash", command: "echo normal" },
+      status: "pending",
+      createdAt: timestamp,
+    },
+    {
+      id: "approval_normal_edit",
+      runId,
+      actionType: "edit",
+      risk: "low",
+      title: "Approve normal file edit",
+      description: "README.md",
+      payload: { type: "file_edit", path: "README.md" },
+      status: "pending",
+      createdAt: "2026-07-20T02:00:01.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const navigation = page.getByLabel("Ling Stack navigation");
+  await navigation.locator(".sidebar-recent-row").filter({ hasText: "Normal inline approvals" }).click();
+  const conversation = page.getByLabel("Conversation page");
+  const composer = conversation.getByLabel("New conversation composer");
+  const strip = composer.getByRole("region", { name: "Composer approval overlay" });
+  await expect(strip).toBeVisible();
+  await expect(strip).toContainText("Approve normal shell command");
+  await expect(strip).toContainText("2 pending approvals");
+  await strip.getByRole("button", { name: /Show other approvals/ }).click();
+  await expect(strip).toContainText("Approve normal file edit");
+
+  await strip.getByRole("button", { name: "Details" }).first().click();
+  const inbox = page.locator("[data-approvals-ui2-page]");
+  await expect(inbox).toBeVisible();
+  await expect(inbox.locator("[data-approval-detail-id='approval_normal_shell']")).toContainText("Approve normal shell command");
+
+  await navigation.locator(".sidebar-recent-row").filter({ hasText: "Normal inline approvals" }).click();
+  const returnedStrip = page.getByLabel("New conversation composer").getByRole("region", { name: "Composer approval overlay" });
+  await returnedStrip.getByRole("button", { name: "Approve" }).click();
+  await expect.poll(() => state.approvals.find((approval) => approval.id === "approval_normal_shell")?.status).toBe("approved");
+  await expect(returnedStrip).toContainText("1 pending approvals");
+
+  await returnedStrip.getByRole("button", { name: "Deny" }).click();
+  await expect.poll(() => state.approvals.find((approval) => approval.id === "approval_normal_edit")?.status).toBe("denied");
+  await expect(page.getByLabel("New conversation composer").getByRole("region", { name: "Composer approval overlay" })).toHaveCount(0);
+});
+
 test("normal conversation full access confirms before creating the run", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
