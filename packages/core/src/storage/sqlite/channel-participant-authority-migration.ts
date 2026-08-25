@@ -18,12 +18,14 @@ export interface ChannelParticipantAuthorityMigrationInput {
 
 export function applyChannelParticipantAuthorityMigration(input: ChannelParticipantAuthorityMigrationInput): void {
   const { database } = input;
-  if (!input.hasColumn("channel_workflow_steps", "participant_authority_json")) {
-    database.exec("ALTER TABLE channel_workflow_steps ADD COLUMN participant_authority_json TEXT NOT NULL DEFAULT '';");
-  }
-
   database.exec("BEGIN IMMEDIATE;");
   try {
+    // Keep the schema change and its backfill in one transaction.  A malformed
+    // legacy row must not leave a half-migrated column behind after a failed
+    // startup; the next open should see the exact pre-migration schema.
+    if (!input.hasColumn("channel_workflow_steps", "participant_authority_json")) {
+      database.exec("ALTER TABLE channel_workflow_steps ADD COLUMN participant_authority_json TEXT NOT NULL DEFAULT '';");
+    }
     const rows = database.prepare(`
       SELECT id, to_participant_id, participant_authority_json
       FROM channel_workflow_steps

@@ -612,6 +612,8 @@ export interface SqliteRunStoreOptions {
   readonly paths?: LingStackRuntimePaths;
   /** Migration fixtures only. Production callers must never bypass the authority cutover. */
   readonly deferContinuityV2MigrationForTest?: boolean;
+  /** Migration fixtures only. Creates a pre-119 database for packaged upgrade tests. */
+  readonly deferContinuityV2ReleaseMigrationsForTest?: boolean;
 }
 
 export class SqliteRunStore implements RunStore {
@@ -1233,29 +1235,33 @@ export class SqliteRunStore implements RunStore {
             recordMigration: (version, name) => this.recordMigration(version, name),
           });
         }
-        // This column must be added after the Continuity v2 cutover because that
-        // migration may rebuild channel_workflow_steps from the legacy schema.
-        applyChannelParticipantAuthorityMigration({
-          database: this.database,
-          hasMigration: (version) => this.hasMigration(version),
-          hasColumn: (tableName, columnName) => this.hasColumn(tableName, columnName),
-          recordMigration: (version, name) => this.recordMigration(version, name),
-        });
-        applyChannelProposalBlockerMigration({
-          database: this.database,
-          hasMigration: (version) => this.hasMigration(version),
-          hasColumn: (tableName, columnName) => this.hasColumn(tableName, columnName),
-          recordMigration: (version, name) => this.recordMigration(version, name),
-        });
-        // Runtime fencing is the final migration in the current clean-break line.
-        // It must run after the base runtime tables and after the Continuity/approval
-        // migrations so every existing Attempt projection can be backfilled atomically.
-        applyRuntimeAttemptFenceMigration({
-          database: this.database,
-          hasMigration: (version) => this.hasMigration(version),
-          hasColumn: (tableName, columnName) => this.hasColumn(tableName, columnName),
-          recordMigration: (version, name) => this.recordMigration(version, name),
-        });
+        if (!options.deferContinuityV2ReleaseMigrationsForTest) {
+          // These columns must be added after the Continuity v2 cutover because that
+          // migration may rebuild channel_workflow_steps from the legacy schema.
+          applyChannelParticipantAuthorityMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
+            hasColumn: (tableName, columnName) => this.hasColumn(tableName, columnName),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+          applyChannelProposalBlockerMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
+            hasColumn: (tableName, columnName) => this.hasColumn(tableName, columnName),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+        }
+        if (!options.deferContinuityV2ReleaseMigrationsForTest) {
+          // Runtime fencing is the final migration in the current clean-break line.
+          // It must run after the base runtime tables and after the Continuity/approval
+          // migrations so every existing Attempt projection can be backfilled atomically.
+          applyRuntimeAttemptFenceMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
+            hasColumn: (tableName, columnName) => this.hasColumn(tableName, columnName),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+        }
       });
     } catch (error) {
       this.database.close();
@@ -4304,6 +4310,13 @@ export function createLegacySqliteRunStoreForMigrationTest(
   paths?: LingStackRuntimePaths,
 ): SqliteRunStore {
   return new SqliteRunStore({ cwd, paths, deferContinuityV2MigrationForTest: true });
+}
+
+export function createPreContinuityV2ReleaseSqliteRunStoreForMigrationTest(
+  cwd: string,
+  paths?: LingStackRuntimePaths,
+): SqliteRunStore {
+  return new SqliteRunStore({ cwd, paths, deferContinuityV2ReleaseMigrationsForTest: true });
 }
 
 function normalizeOptionalOwnerId(value: string | undefined): string | undefined {

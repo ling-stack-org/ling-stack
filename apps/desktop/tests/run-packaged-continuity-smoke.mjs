@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
+import { pathToFileURL } from "node:url";
 
 const repositoryRoot = resolve(new URL("../../..", import.meta.url).pathname);
 const defaultApp = join(repositoryRoot, "apps/desktop/release/mac-arm64/Ling Stack.app/Contents/MacOS/Ling Stack");
@@ -320,6 +321,219 @@ async function waitFor(checkFn, failureCode, attempts = 100) {
   throw new Error(failureCode);
 }
 
+function createSseReader(response) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  return {
+    async nextEvent() {
+      for (;;) {
+        const match = /\r?\n\r?\n/.exec(buffer);
+        if (match) {
+          const block = buffer.slice(0, match.index);
+          buffer = buffer.slice(match.index + match[0].length);
+          const event = parseSseBlock(block);
+          if (event) return event;
+          continue;
+        }
+        const { done, value } = await reader.read();
+        if (done) {
+          buffer += decoder.decode();
+          const finalBlock = buffer.trim() ? buffer : undefined;
+          buffer = "";
+          return finalBlock ? parseSseBlock(finalBlock) : undefined;
+        }
+        buffer += decoder.decode(value, { stream: true });
+      }
+    },
+    async waitFor(eventName) {
+      for (;;) {
+        const event = await this.nextEvent();
+        if (!event) throw new Error(`sse_stream_ended_before:${eventName}`);
+        if (event.event === eventName) return event;
+      }
+    },
+    async close() {
+      await reader.cancel().catch(() => undefined);
+    },
+  };
+}
+
+function parseSseBlock(block) {
+  let event = "message";
+  const dataLines = [];
+  for (const rawLine of block.split(/\r?\n/)) {
+    if (rawLine.startsWith("event:")) event = rawLine.slice("event:".length).trim();
+    if (rawLine.startsWith("data:")) dataLines.push(rawLine.slice("data:".length).trimStart());
+  }
+  if (dataLines.length === 0) return undefined;
+  return { event, data: JSON.parse(dataLines.join("\n")) };
+}
+
+function databasePathFor(cwd) {
+  return join(cwd, ".ling-stack", "ling-stack.sqlite");
+}
+
+async function seedPreReleaseMigrationFixture(cwd) {
+  const core = await import(pathToFileURL(join(repositoryRoot, "packages/core/dist/index.js")).href);
+  const now = "2026-08-24T02:00:00.000Z";
+  const fixture = core.createPreContinuityV2ReleaseSqliteRunStoreForMigrationTest(cwd);
+  const channel = fixture.createChannel({ name: "Packaged migration rollback", boundPath: cwd }, now);
+  const workflow = fixture.createChannelWorkflow({
+    channelId: channel.id,
+    title: "Legacy packaged workflow",
+    objective: "Exercise packaged migration rollback",
+    createdBy: "packaged-smoke",
+    status: "ready",
+  }, now);
+  fixture.close();
+
+  const databasePath = core.resolveRuntimePaths(cwd).databasePath;
+  const database = new DatabaseSync(databasePath);
+  try {
+    const workspaceId = database.prepare("SELECT workspace_id FROM channels WHERE id = ?").get(channel.id).workspace_id;
+    database.prepare(`
+      INSERT INTO channel_workflow_steps (
+        id, workspace_id, channel_id, workflow_id, source_handoff_id,
+        context_summary_id, task_id, run_id, position, title, prompt,
+        to_participant_id, to_participant_label, status, blocker,
+        result_summary, metadata_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)
+    `).run(
+      "packaged-legacy-invalid-step",
+      workspaceId,
+      channel.id,
+      workflow.id,
+      1,
+      "Legacy packaged step",
+      "This row is intentionally malformed for migration rollback.",
+      "",
+      "Unknown",
+      "queued",
+      now,
+      now,
+    );
+  } finally {
+    database.close();
+  }
+  return { databasePath, channelId: channel.id, workflowId: workflow.id };
+}
+
+async function waitForPackagedStartupFailure(baseUrl, session) {
+  let lastResponse;
+  for (let attempt = 0; attempt < 75; attempt += 1) {
+    if (session.child.exitCode !== null) return { processExited: true, lastResponse };
+    try {
+      const response = await fetch(`${baseUrl}/health`, { signal: AbortSignal.timeout(250) });
+      const text = await response.text();
+      lastResponse = { status: response.status, text };
+      let body;
+      try {
+        body = JSON.parse(text);
+      } catch {
+        body = undefined;
+      }
+      if (response.status === 200 && body?.ok === true) {
+        throw new Error("packaged_migration_failure_not_observed");
+      }
+    } catch (error) {
+      if (error?.message === "packaged_migration_failure_not_observed") throw error;
+    }
+    await sleep(200);
+  }
+  return { processExited: session.child.exitCode !== null, lastResponse };
+}
+
+function inspectPreReleaseMigrationFixture(databasePath) {
+  const database = new DatabaseSync(databasePath, { readOnly: true });
+  try {
+    const columns = new Set(database.prepare("PRAGMA table_info(channel_workflow_steps)").all().map((row) => row.name));
+    const migration = (version) => Boolean(database.prepare("SELECT 1 FROM schema_migrations WHERE version = ?").get(version));
+    return {
+      authorityColumnPresent: columns.has("participant_authority_json"),
+      blockerColumnPresent: new Set(database.prepare("PRAGMA table_info(channel_execution_proposals)").all().map((row) => row.name)).has("blocker_json"),
+      migrations: { 119: migration(119), 120: migration(120), 121: migration(121) },
+      foreignKeyCheck: database.prepare("PRAGMA foreign_key_check").all(),
+      integrityCheck: database.prepare("PRAGMA integrity_check").get().integrity_check,
+    };
+  } finally {
+    database.close();
+  }
+}
+
+function repairPreReleaseMigrationFixture(databasePath) {
+  const database = new DatabaseSync(databasePath);
+  try {
+    database.prepare("UPDATE channel_workflow_steps SET to_participant_id = ? WHERE id = ?")
+      .run("teammate_builtin_engineer", "packaged-legacy-invalid-step");
+  } finally {
+    database.close();
+  }
+}
+
+function auditReleaseMigrations(databasePath) {
+  const database = new DatabaseSync(databasePath, { readOnly: true });
+  try {
+    const columns = new Set(database.prepare("PRAGMA table_info(channel_workflow_steps)").all().map((row) => row.name));
+    const migrations = [119, 120, 121].map((version) => Boolean(database.prepare("SELECT 1 FROM schema_migrations WHERE version = ?").get(version)));
+    const foreignKeys = database.prepare("PRAGMA foreign_key_check").all();
+    const integrity = database.prepare("PRAGMA integrity_check").get().integrity_check;
+    if (!columns.has("participant_authority_json") || !migrations.every(Boolean)) {
+      throw new Error(`packaged_release_migrations_missing:${JSON.stringify({ columns: [...columns], migrations })}`);
+    }
+    if (foreignKeys.length !== 0 || integrity !== "ok") {
+      throw new Error(`packaged_release_migrations_integrity:${JSON.stringify({ foreignKeys, integrity })}`);
+    }
+    const authority = database.prepare("SELECT participant_authority_json FROM channel_workflow_steps WHERE id = ?")
+      .get("packaged-legacy-invalid-step")?.participant_authority_json;
+    if (JSON.parse(authority).participantId !== "teammate_builtin_engineer") {
+      throw new Error("packaged_release_migration_backfill_missing");
+    }
+    return { migrations: [119, 120, 121], foreignKeyCheck: "ok", integrityCheck: "ok" };
+  } finally {
+    database.close();
+  }
+}
+
+async function startDirectPackagedRun(baseUrl, cwd, providerPresetId, taskId, prompt) {
+  const response = await fetch(`${baseUrl}/runs`, {
+    method: "POST",
+    headers: jsonHeaders(),
+    body: JSON.stringify({
+      cwd,
+      task: { id: taskId, title: taskId, prompt },
+      providerPresetId,
+      tools: ["bash"],
+      thinkingLevel: "off",
+    }),
+  });
+  if (!response.ok || !response.body) throw new Error(`packaged_run_start:${response.status}`);
+  const sse = createSseReader(response);
+  const ready = await sse.waitFor("ready");
+  return { runId: ready.data.runId, sse };
+}
+
+async function waitForRunStatus(baseUrl, cwd, runId, status, failureCode) {
+  return await waitFor(async () => {
+    const response = await request(baseUrl, `/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
+    return response.status === 200 && response.body?.status === status ? response.body : undefined;
+  }, failureCode, 150);
+}
+
+async function waitForResumedToolStart(cwd, runId, approvalId, failureCode) {
+  return await waitFor(() => {
+    const database = new DatabaseSync(databasePathFor(cwd), { readOnly: true });
+    try {
+      const rows = database.prepare("SELECT data_json FROM run_events WHERE run_id = ? AND type = 'tool_start' ORDER BY seq")
+        .all(runId);
+      return rows.map((row) => JSON.parse(row.data_json)).find((data) => data.resumedFromApprovalId === approvalId);
+    } finally {
+      database.close();
+    }
+  }, failureCode, 150);
+}
+
 function readSqliteAudit(databasePath, ids) {
   const database = new DatabaseSync(databasePath, { readOnly: true });
   try {
@@ -389,6 +603,18 @@ try {
   const daemonPort = await freePort();
   const baseUrl = `http://127.0.0.1:${daemonPort}`;
   mockProvider = await startMockOpenAICompatibleServer();
+  const releaseMigrationFixture = await seedPreReleaseMigrationFixture(workspace);
+  session = launch(baseUrl, workspace);
+  const failedStartup = await waitForPackagedStartupFailure(baseUrl, session);
+  const failedMigrationState = inspectPreReleaseMigrationFixture(releaseMigrationFixture.databasePath);
+  if (failedMigrationState.authorityColumnPresent
+    || Object.values(failedMigrationState.migrations).some(Boolean)
+    || failedMigrationState.foreignKeyCheck.length !== 0
+    || failedMigrationState.integrityCheck !== "ok") {
+    throw new Error(`packaged_release_migration_rollback_failed:${JSON.stringify(failedMigrationState)}`);
+  }
+  await stop(session);
+  repairPreReleaseMigrationFixture(releaseMigrationFixture.databasePath);
   session = launch(baseUrl, workspace);
   const health = await waitForHealth(baseUrl);
   check("launch", "passed", {
@@ -396,6 +622,12 @@ try {
     daemonPort,
     readiness: health.readiness,
     features: health.features,
+  });
+  check("packaged_release_migration_recovery", "passed", {
+    startupFailureObserved: true,
+    processExited: failedStartup.processExited,
+    preMigration: failedMigrationState,
+    postMigration: auditReleaseMigrations(releaseMigrationFixture.databasePath),
   });
 
   const cwdQuery = `?cwd=${encodeURIComponent(workspace)}`;
@@ -689,8 +921,142 @@ try {
     sideEffectCount: 0,
   });
 
+  // S4.3 packaged restart matrix. These are direct daemon-owned Runs behind the
+  // packaged Electron process so the assertions cover the real lifecycle boundary,
+  // not only the in-process coordinator tests.
+  const patchApprovalPolicy = async (toolDecisions) => {
+    const response = await request(baseUrl, `/approval-policy${cwdQuery}`, {
+      method: "PATCH",
+      headers: jsonHeaders(),
+      body: JSON.stringify({ toolDecisions, allowedWritePaths: ["."] }),
+    });
+    if (response.status !== 200) throw new Error(`packaged_restart_policy:${response.text}`);
+  };
+
+  await patchApprovalPolicy({ bash: "ask" });
+  const safeRestartCommand = "printf 'packaged-safe-resume\\n' > packaged-safe-resume.txt";
+  const safeRestart = await startDirectPackagedRun(
+    baseUrl,
+    workspace,
+    providerId,
+    "packaged_safe_approval_restart",
+    `Run the exact command: ${safeRestartCommand}`,
+  );
+  const safeApproval = await safeRestart.sse.waitFor("approval_requested");
+  const safeApprovalId = safeApproval.data.data.approvalId;
+  const safeRunId = safeRestart.runId;
+  await safeRestart.sse.close();
   await stop(session);
-  const databasePath = join(workspace, ".ling-stack", "ling-stack.sqlite");
+  session = launch(baseUrl, workspace);
+  await waitForHealth(baseUrl);
+  const safeApprove = await request(baseUrl, `/approvals/${encodeURIComponent(safeApprovalId)}/approve${cwdQuery}`, {
+    method: "POST",
+    headers: jsonHeaders(),
+    body: JSON.stringify({ reason: "packaged safe checkpoint resume" }),
+  });
+  if (safeApprove.status !== 200) throw new Error(`packaged_safe_resume_approve:${safeApprove.text}`);
+  const safeCompleted = await waitForRunStatus(baseUrl, workspace, safeRunId, "succeeded", "packaged_safe_resume_timeout");
+  await waitForFile(join(workspace, "packaged-safe-resume.txt"), "packaged-safe-resume\n");
+  check("packaged_restart_safe_checkpoint", "passed", {
+    runId: safeRunId,
+    approvalId: safeApprovalId,
+    status: safeCompleted.status,
+    error: safeCompleted.errorMessage,
+  });
+
+  await patchApprovalPolicy({ bash: "allow" });
+  const noCheckpointCommand = "sleep 30; printf 'must-not-complete\\n' > packaged-no-checkpoint.txt";
+  const noCheckpoint = await startDirectPackagedRun(
+    baseUrl,
+    workspace,
+    providerId,
+    "packaged_no_checkpoint_restart",
+    `Run the exact command: ${noCheckpointCommand}`,
+  );
+  await noCheckpoint.sse.waitFor("tool_start");
+  const noCheckpointRunId = noCheckpoint.runId;
+  await noCheckpoint.sse.close();
+  await stop(session);
+  session = launch(baseUrl, workspace);
+  await waitForHealth(baseUrl);
+  const noCheckpointFailed = await waitForRunStatus(baseUrl, workspace, noCheckpointRunId, "failed", "packaged_no_checkpoint_timeout");
+  if (!String(noCheckpointFailed.errorMessage ?? "").includes("runtime_interrupted_no_checkpoint")) {
+    throw new Error(`packaged_no_checkpoint_reason:${noCheckpointFailed.errorMessage ?? "missing"}`);
+  }
+  try {
+    await access(join(workspace, "packaged-no-checkpoint.txt"));
+    throw new Error("packaged_no_checkpoint_side_effect");
+  } catch (error) {
+    if (error?.message === "packaged_no_checkpoint_side_effect") throw error;
+  }
+  check("packaged_restart_no_checkpoint", "passed", {
+    runId: noCheckpointRunId,
+    status: noCheckpointFailed.status,
+    error: noCheckpointFailed.errorMessage,
+  });
+
+  await patchApprovalPolicy({ bash: "ask" });
+  const effectUnknownCommand = "sleep 30; printf 'must-not-repeat\\n' > packaged-effect-unknown.txt";
+  const effectUnknown = await startDirectPackagedRun(
+    baseUrl,
+    workspace,
+    providerId,
+    "packaged_effect_unknown_restart",
+    `Run the exact command: ${effectUnknownCommand}`,
+  );
+  const effectApproval = await effectUnknown.sse.waitFor("approval_requested");
+  const effectApprovalId = effectApproval.data.data.approvalId;
+  const effectRunId = effectUnknown.runId;
+  // First restart preserves the pending approval/checkpoint. Approving only
+  // after recovery forces the replacement Attempt path, which is the path whose
+  // tool_start/effect boundary we need to interrupt.
+  await effectUnknown.sse.close();
+  await stop(session);
+  session = launch(baseUrl, workspace);
+  await waitForHealth(baseUrl);
+  const effectApprove = await request(baseUrl, `/approvals/${encodeURIComponent(effectApprovalId)}/approve${cwdQuery}`, {
+    method: "POST",
+    headers: jsonHeaders(),
+    body: JSON.stringify({ reason: "packaged effect unknown probe" }),
+  });
+  if (effectApprove.status !== 200) throw new Error(`packaged_effect_unknown_approve:${effectApprove.text}`);
+  await waitForResumedToolStart(workspace, effectRunId, effectApprovalId, "packaged_effect_unknown_tool_start_timeout");
+  // The resumed process owns the long-running shell now. Stop the packaged app
+  // immediately after the durable resumed tool_start, while the side effect is
+  // still in flight; waiting for terminal output would miss the crash window.
+  await stop(session);
+  session = launch(baseUrl, workspace);
+  await waitForHealth(baseUrl);
+  const effectUnknownFailed = await waitForRunStatus(baseUrl, workspace, effectRunId, "failed", "packaged_effect_unknown_timeout");
+  const effectDatabase = new DatabaseSync(databasePathFor(workspace), { readOnly: true });
+  try {
+    const checkpoint = effectDatabase.prepare("SELECT status, resume_failure_reason FROM approval_checkpoints WHERE approval_id = ?")
+      .get(effectApprovalId);
+    if (checkpoint?.status !== "resume_failed" || checkpoint?.resume_failure_reason !== "approval_resume_effect_unknown") {
+      throw new Error(`packaged_effect_unknown_checkpoint:${JSON.stringify(checkpoint)}`);
+    }
+    if (effectDatabase.prepare("SELECT 1 FROM run_events WHERE run_id = ? AND type = 'run_cancelled'").get(effectRunId)) {
+      throw new Error("packaged_effect_unknown_recorded_cancellation");
+    }
+  } finally {
+    effectDatabase.close();
+  }
+  try {
+    await access(join(workspace, "packaged-effect-unknown.txt"));
+    throw new Error("packaged_effect_unknown_side_effect");
+  } catch (error) {
+    if (error?.message === "packaged_effect_unknown_side_effect") throw error;
+  }
+  check("packaged_restart_effect_unknown", "passed", {
+    runId: effectRunId,
+    approvalId: effectApprovalId,
+    status: effectUnknownFailed.status,
+    error: effectUnknownFailed.errorMessage,
+    checkpoint: "resume_failed:approval_resume_effect_unknown",
+  });
+
+  await stop(session);
+  const databasePath = databasePathFor(workspace);
   const auditIds = { channelId, sourceItemId: userItems[0].id, workflowId: workflow.id, runIds: workflowSteps.map((step) => step.runId) };
   const beforeRestartAudit = readSqliteAudit(databasePath, auditIds);
   check("sqlite_lineage_before_restart", "passed", beforeRestartAudit);

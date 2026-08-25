@@ -28,7 +28,7 @@ counts, screenshots, hashes and run diaries belong in CI or Release artifacts.
 
 | Work | Current boundary | Closure condition |
 |---|---|---|
-| [Channel Execution Completion](channel-execution-completion-implementation-plan.md) | Required-participant fan-in, operation evidence, TerminalReport/source-Turn convergence, clean-break Attempt fencing, restart recovery, and aggregate source verification are green | Run fresh packaged macOS restart/fan-in/SSE reconnect/SQLite acceptance against integrated `main`, then review, PR/CI, and merge |
+| [Channel Execution Completion](channel-execution-completion-implementation-plan.md) | Required-participant fan-in, operation evidence, TerminalReport/source-Turn convergence, clean-break Attempt fencing, restart recovery, migration rollback/reopen, and aggregate source verification are green on the isolated delivery branch | Review the isolated diff, open PR/CI, merge, verify the actual remote `main` merge commit, then clean exact QA resources |
 | [Channel Context Processing](channel-context-processing-layer-implementation-plan.md) | Channel and direct-message context views exist | Condensation, quote eligibility, persistence and redaction ownership are closed |
 | [Chrome Browser Built-in Plugin](chrome-browser-built-in-plugin-implementation-plan.md) | Built-in plugin, daemon authority, Manifest V3 extension, local Chromium smoke and unsigned arm64 macOS package exist | Chrome Web Store publication plus signed macOS/Windows clean-host acceptance close |
 | [Permission Presets](codex-inspired-settings-permission-presets-implementation-plan.md) | Enforcement modes exist | Preset UI, effective preview and run audit agree with daemon enforcement |
