@@ -3,14 +3,18 @@ import type {
   ConversationItemV1,
   CompactionCheckpoint,
   CreateCompactionCheckpointInput,
+  CreatePostCompactionUndoRecordInput,
   CreateWorkspaceMutationRecordInput,
   LingThreadRelationKindV2,
   LingThreadSurfaceKindV2,
   ListCompactionCheckpointsOptions,
+  ListPostCompactionUndoRecordsOptions,
   ListWorkspaceMutationRecordsOptions,
   RunEventDataByType as ContractRunEventDataByType,
   RunEventEnvelope as ContractRunEventEnvelope,
   RunEventType as ContractRunEventType,
+  PostCompactionUndoRecord,
+  UpdatePostCompactionUndoRecordInput,
   WorkspaceMutationRecord,
 } from "@ling-stack/contracts";
 import type {
@@ -1529,6 +1533,10 @@ export interface RunStore {
   createCompactionCheckpoint(input: CreateCompactionCheckpointInput): CompactionCheckpoint;
   getCompactionCheckpoint(id: string): CompactionCheckpoint | undefined;
   listCompactionCheckpoints(options?: ListCompactionCheckpointsOptions): CompactionCheckpoint[];
+  createPostCompactionUndoRecord(input: CreatePostCompactionUndoRecordInput): PostCompactionUndoRecord;
+  getPostCompactionUndoRecord(id: string): PostCompactionUndoRecord | undefined;
+  listPostCompactionUndoRecords(options?: ListPostCompactionUndoRecordsOptions): PostCompactionUndoRecord[];
+  updatePostCompactionUndoRecord(input: UpdatePostCompactionUndoRecordInput): PostCompactionUndoRecord | undefined;
   createRunIntervention(input: CreateRunInterventionInput, now: string): RunIntervention;
   getRunIntervention(interventionId: string): RunIntervention | undefined;
   listRunInterventions(options?: ListRunInterventionsOptions): RunIntervention[];

@@ -320,6 +320,10 @@ import type {
   ListCompactionCheckpointsOptions,
   ListWorkspaceMutationRecordsOptions,
   WorkspaceMutationRecord,
+  PostCompactionUndoRecord,
+  UpdatePostCompactionUndoRecordInput,
+  CreatePostCompactionUndoRecordInput,
+  ListPostCompactionUndoRecordsOptions,
 } from "@ling-stack/contracts";
 import {
   type AcquireRuntimeSemaphoreSlotInput,
@@ -620,6 +624,7 @@ import { SqliteExternalWorkSchedulerStore } from "./sqlite/external-work-schedul
 import { SqliteExternalWorkWorkflowCoordinator } from "./sqlite/external-work-workflow-coordinator.js";
 import { SqliteWorkItemStore } from "./sqlite/work-item-store.js";
 import { SqliteWorkspaceProvenanceStore } from "./sqlite/workspace-provenance-store.js";
+import { SqlitePostCompactionUndoStore } from "./sqlite/post-compaction-undo-store.js";
 
 export interface SqliteRunStoreOptions {
   readonly cwd: string;
@@ -711,6 +716,7 @@ export class SqliteRunStore implements RunStore {
   private readonly externalWorkWorkflows: SqliteExternalWorkWorkflowCoordinator;
   private readonly workItems: SqliteWorkItemStore;
   private readonly workspaceProvenance: SqliteWorkspaceProvenanceStore;
+  private readonly postCompactionUndo: SqlitePostCompactionUndoStore;
 
   constructor(options: SqliteRunStoreOptions) {
     this.paths = options.paths ?? resolveRuntimePaths(options.cwd);
@@ -720,6 +726,7 @@ export class SqliteRunStore implements RunStore {
     this.database = new DatabaseSync(this.paths.databasePath);
     this.conversationItems = new SqliteConversationItemStore({ database: this.database });
     this.workspaceProvenance = new SqliteWorkspaceProvenanceStore({ database: this.database });
+    this.postCompactionUndo = new SqlitePostCompactionUndoStore({ database: this.database });
     this.conversationTurnIngest = new SqliteConversationTurnIngestStore(
       { database: this.database },
       this.conversationItems,
@@ -1719,6 +1726,22 @@ export class SqliteRunStore implements RunStore {
 
   listCompactionCheckpoints(options: ListCompactionCheckpointsOptions = {}): CompactionCheckpoint[] {
     return this.workspaceProvenance.listCompactionCheckpoints(options);
+  }
+
+  createPostCompactionUndoRecord(input: CreatePostCompactionUndoRecordInput): PostCompactionUndoRecord {
+    return this.postCompactionUndo.create(input);
+  }
+
+  getPostCompactionUndoRecord(id: string): PostCompactionUndoRecord | undefined {
+    return this.postCompactionUndo.get(id);
+  }
+
+  listPostCompactionUndoRecords(options: ListPostCompactionUndoRecordsOptions = {}): PostCompactionUndoRecord[] {
+    return this.postCompactionUndo.list(options);
+  }
+
+  updatePostCompactionUndoRecord(input: UpdatePostCompactionUndoRecordInput): PostCompactionUndoRecord | undefined {
+    return this.postCompactionUndo.update(input);
   }
 
   createRunIntervention(input: CreateRunInterventionInput, now: string): RunIntervention {

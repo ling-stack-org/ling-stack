@@ -96,10 +96,12 @@ test("post-compaction Turn undo resolves durable mutation provenance across reop
     await writeFile(path, "old\n", "utf8");
     const recoveredTerminal = await recoverTurnWorkspaceChanges(store, store.getLingTurn(turnResult.turnId), "undo", "undo-post-compaction-crash");
     assert.equal(recoveredTerminal.state, "undone");
+    assert.equal(store.listPostCompactionUndoRecords({ targetTurnId: turnResult.turnId, idempotencyKey: "undo-post-compaction-crash" })[0]?.state, "undone");
     const replay = await recoverTurnWorkspaceChanges(store, store.getLingTurn(turnResult.turnId), "undo", "undo-post-compaction-crash");
     assert.equal(replay.state, "undone");
     const reapplied = await recoverTurnWorkspaceChanges(store, store.getLingTurn(turnResult.turnId), "reapply", "reapply-post-compaction-1");
     assert.equal(reapplied.state, "applied");
+    assert.equal(store.listPostCompactionUndoRecords({ targetTurnId: turnResult.turnId, idempotencyKey: "reapply-post-compaction-1" })[0]?.state, "applied");
     assert.equal(await readFile(path, "utf8"), "new\n");
     await writeFile(path, "user edit\n", "utf8");
     await assert.rejects(

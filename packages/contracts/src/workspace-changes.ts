@@ -189,6 +189,72 @@ export interface TurnWorkspaceChangesResponse {
   readonly updatedAt: string;
 }
 
+export const postCompactionUndoStates = [
+  "available",
+  "validating",
+  "applied",
+  "undone",
+  "conflict",
+  "provenance_missing",
+  "snapshot_unverified",
+  "expired",
+  "failed",
+] as const;
+export type PostCompactionUndoState = (typeof postCompactionUndoStates)[number];
+export type PostCompactionUndoAction = "undo" | "reapply";
+
+/** Durable idempotency/CAS record for one Turn-level post-compaction recovery request. */
+export interface PostCompactionUndoRecord {
+  readonly id: string;
+  readonly idempotencyKey: string;
+  readonly workspaceId: string;
+  readonly threadId: string;
+  readonly targetTurnId: string;
+  readonly targetRunIds: readonly string[];
+  readonly checkpointId?: string;
+  /** Fingerprint of the target paths observed immediately before this action. */
+  readonly expectedWorkspaceFingerprint: string;
+  readonly action: PostCompactionUndoAction;
+  readonly state: PostCompactionUndoState;
+  readonly affectedPaths: readonly string[];
+  readonly lastEventSeq: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CreatePostCompactionUndoRecordInput {
+  readonly id?: string;
+  readonly idempotencyKey: string;
+  readonly workspaceId?: string;
+  readonly threadId: string;
+  readonly targetTurnId: string;
+  readonly targetRunIds: readonly string[];
+  readonly checkpointId?: string;
+  readonly expectedWorkspaceFingerprint: string;
+  readonly action: PostCompactionUndoAction;
+  readonly state?: PostCompactionUndoState;
+  readonly affectedPaths: readonly string[];
+  readonly lastEventSeq?: number;
+  readonly createdAt: string;
+  readonly updatedAt?: string;
+}
+
+export interface UpdatePostCompactionUndoRecordInput {
+  readonly id: string;
+  readonly expectedState: PostCompactionUndoState;
+  readonly state: PostCompactionUndoState;
+  readonly lastEventSeq: number;
+  readonly updatedAt: string;
+}
+
+export interface ListPostCompactionUndoRecordsOptions {
+  readonly workspaceId?: string;
+  readonly threadId?: string;
+  readonly targetTurnId?: string;
+  readonly idempotencyKey?: string;
+  readonly limit?: number;
+}
+
 export interface WorkflowWorkspaceChangesResponse {
   readonly cwd: string;
   readonly workflowId: string;

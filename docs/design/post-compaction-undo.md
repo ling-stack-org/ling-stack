@@ -479,6 +479,9 @@ The following slices are implemented in the current daemon/core code:
   enforced. Cross-workspace Run lineages fail closed.
 - Existing run-level recovery remains compatible; legacy Runs without provenance retain the
   old run-level fallback but are not eligible for Turn-level undo.
+- A dedicated `post_compaction_undo_records` table now stores the idempotency key, target
+  lineage, expected workspace fingerprint, affected paths, and CAS state transitions. Run
+  events remain the detailed recovery evidence; the table is the durable request/state index.
 
 ### S3: projection and API surface (P2) — implemented (minimal)
 

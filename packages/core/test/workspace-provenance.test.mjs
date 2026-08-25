@@ -103,12 +103,59 @@ test("workspace mutation provenance and compaction checkpoints survive SQLite re
       compactionPolicyVersion: "continuity-v2-summary-v1",
       createdAt: now,
     }), /summary does not belong to thread/u);
+    const recovery = store.createPostCompactionUndoRecord({
+      idempotencyKey: "undo-provenance-record",
+      workspaceId: "workspace_default",
+      threadId: thread.id,
+      targetTurnId: turnResult.turnId,
+      targetRunIds: [run.id],
+      checkpointId: checkpoint.id,
+      expectedWorkspaceFingerprint: "fingerprint-before-undo",
+      action: "undo",
+      affectedPaths: ["file.txt"],
+      createdAt: now,
+    });
+    assert.equal(recovery.state, "validating");
+    assert.equal(store.createPostCompactionUndoRecord({
+      idempotencyKey: "undo-provenance-record",
+      threadId: thread.id,
+      targetTurnId: turnResult.turnId,
+      targetRunIds: [run.id],
+      checkpointId: checkpoint.id,
+      expectedWorkspaceFingerprint: "ignored-on-replay",
+      action: "undo",
+      affectedPaths: ["file.txt"],
+      createdAt: now,
+    }).id, recovery.id);
+    assert.equal(store.updatePostCompactionUndoRecord({
+      id: recovery.id,
+      expectedState: "validating",
+      state: "undone",
+      lastEventSeq: 9,
+      updatedAt: "2026-08-25T01:00:01.000Z",
+    })?.state, "undone");
+    assert.equal(store.updatePostCompactionUndoRecord({
+      id: recovery.id,
+      expectedState: "validating",
+      state: "applied",
+      lastEventSeq: 10,
+      updatedAt: "2026-08-25T01:00:02.000Z",
+    }), undefined);
+    assert.throws(() => store.updatePostCompactionUndoRecord({
+      id: recovery.id,
+      expectedState: "undone",
+      state: "validating",
+      lastEventSeq: 11,
+      updatedAt: "2026-08-25T01:00:03.000Z",
+    }), /Illegal post-compaction undo transition/u);
     store.close();
     const reopened = createSqliteRunStore(cwd);
     try {
       assert.equal(reopened.listWorkspaceMutationRecords({ turnId: turnResult.turnId })[0].runId, run.id);
       assert.equal(reopened.listCompactionCheckpoints({ threadId: thread.id })[0].id, checkpoint.id);
       assert.equal(reopened.getLatestWorkspaceProvenanceWatermark(), "workspace_default:1");
+      assert.equal(reopened.getPostCompactionUndoRecord(recovery.id)?.state, "undone");
+      assert.equal(reopened.listPostCompactionUndoRecords({ idempotencyKey: "undo-provenance-record" }).length, 1);
     } finally {
       reopened.close();
     }

@@ -203,35 +203,138 @@ export async function recoverTurnWorkspaceChanges(
     if (!context.provenanceComplete) throw new RunWorkspaceRecoveryError(409, "provenance_missing", "Undo is unavailable: durable workspace provenance is incomplete.");
     if (context.steps.length === 0) throw new RunWorkspaceRecoveryError(409, "workspace_changes_unavailable", "This Turn has no successfully applied reversible workspace mutations.");
     const ownerRun = context.runs.at(-1)!;
+    const durableRecord = store.listPostCompactionUndoRecords({
+      workspaceId: turn.workspaceId,
+      targetTurnId: turn.id,
+      idempotencyKey,
+      limit: 1,
+    })[0];
+    if (durableRecord && durableRecord.action !== action) {
+      throw new RunWorkspaceRecoveryError(409, "workspace_change_conflict", "This idempotency key is already bound to the opposite recovery action.");
+    }
+    if (durableRecord && (durableRecord.state === "conflict" || durableRecord.state === "failed" || durableRecord.state === "expired" || durableRecord.state === "provenance_missing")) {
+      throw new RunWorkspaceRecoveryError(409, "workspace_change_conflict", `The durable recovery record is ${durableRecord.state}; use a new idempotency key after review.`);
+    }
+    if (durableRecord && ((action === "undo" && durableRecord.state === "undone") || (action === "reapply" && durableRecord.state === "applied"))) {
+      return buildTurnWorkspaceChangesResponse(store, turn);
+    }
     const events = turnRecoveryEvents(store, ownerRun.id, turn.id);
     const prior = events.find((event) => isRecord(event.data) && event.data.idempotencyKey === idempotencyKey && event.type === (action === "undo" ? "workspace_changes_undone" : "workspace_changes_reapplied"));
-    if (prior) return buildTurnWorkspaceChangesResponse(store, turn);
+    if (prior) {
+      if (durableRecord?.state === "validating") {
+        store.updatePostCompactionUndoRecord({
+          id: durableRecord.id,
+          expectedState: "validating",
+          state: action === "undo" ? "undone" : "applied",
+          lastEventSeq: prior.seq,
+          updatedAt: prior.ts,
+        });
+      }
+      return buildTurnWorkspaceChangesResponse(store, turn);
+    }
     const patchSet = syntheticPatchSet(context.steps.map((step) => step.plan));
     const observation = observeRecoveryState(cwd, patchSet, events);
-    if (observation.conflict) throw new RunWorkspaceRecoveryError(409, "workspace_change_conflict", observation.conflict);
+    if (observation.conflict) {
+      if (durableRecord?.state === "validating") {
+        store.updatePostCompactionUndoRecord({
+          id: durableRecord.id,
+          expectedState: "validating",
+          state: "conflict",
+          lastEventSeq: events.at(-1)?.seq ?? durableRecord.lastEventSeq,
+          updatedAt: new Date().toISOString(),
+        });
+      }
+      throw new RunWorkspaceRecoveryError(409, "workspace_change_conflict", observation.conflict);
+    }
     if (observation.completedIntent) {
       if (observation.completedIntent.action === action && observation.completedIntent.idempotencyKey === idempotencyKey) {
-        store.appendEvent(ownerRun.id, action === "undo" ? "workspace_changes_undone" : "workspace_changes_reapplied", {
-          scope: "turn",
-          turnId: turn.id,
-          runIds: context.runs.map((run) => run.id),
-          recoveryId: observation.completedIntent.recoveryId,
+        // A crash can occur after the recovery intent is persisted and the
+        // workspace reaches its target state, but before the durable request
+        // record is created (or before the terminal event is written). Rebuild
+        // the record from the intent so the idempotency key remains durable
+        // across daemon restarts instead of treating this as an unindexed
+        // side-effect.
+        const recoveredRecord = durableRecord ?? store.createPostCompactionUndoRecord({
           idempotencyKey,
-          cwd,
-          approvalIds: context.steps.flatMap((step) => step.approvals),
-          rawPatchSha256: context.steps.map((step) => step.plan.rawPatchSha256),
-          touchedPaths: patchSet.files.map((file) => file.path),
-          summary: patchSet.summary,
+          workspaceId: turn.workspaceId,
+          threadId: turn.threadId,
+          targetTurnId: turn.id,
+          targetRunIds: context.runs.map((run) => run.id),
+          checkpointId: findTurnCheckpoint(store, turn)?.id,
+          expectedWorkspaceFingerprint: recoveryIntentFingerprint(observation.completedIntent, "before"),
+          action,
+          state: "validating",
+          affectedPaths: observation.completedIntent.files.map((file) => file.path),
+          createdAt: observation.updatedAt ?? new Date().toISOString(),
         });
+        if (recoveredRecord.state === "validating") {
+          const terminalEvent = store.appendEvent(ownerRun.id, action === "undo" ? "workspace_changes_undone" : "workspace_changes_reapplied", {
+            scope: "turn",
+            turnId: turn.id,
+            runIds: context.runs.map((run) => run.id),
+            recoveryId: observation.completedIntent.recoveryId,
+            idempotencyKey,
+            cwd,
+            approvalIds: context.steps.flatMap((step) => step.approvals),
+            rawPatchSha256: context.steps.map((step) => step.plan.rawPatchSha256),
+            touchedPaths: patchSet.files.map((file) => file.path),
+            summary: patchSet.summary,
+          });
+          store.updatePostCompactionUndoRecord({
+            id: recoveredRecord.id,
+            expectedState: "validating",
+            state: action === "undo" ? "undone" : "applied",
+            lastEventSeq: terminalEvent.seq,
+            updatedAt: terminalEvent.ts,
+          });
+        }
         return buildTurnWorkspaceChangesResponse(store, turn);
       }
     }
     if ((action === "undo" && observation.state === "undone") || (action === "reapply" && observation.state !== "undone")) {
       throw new RunWorkspaceRecoveryError(409, "workspace_change_invalid_state", action === "undo" ? "This Turn's patch is already undone." : "This Turn's patch must be undone before reapply.");
     }
-    const preflight = await preflightRecoveryPlanSequence(cwd, turnRecoveryPlanSteps(context.steps, action));
+    let preflight: RecoveryPreflight;
+    try {
+      preflight = await preflightRecoveryPlanSequence(cwd, turnRecoveryPlanSteps(context.steps, action));
+    } catch (error) {
+      if (durableRecord?.state === "validating") {
+        store.updatePostCompactionUndoRecord({
+          id: durableRecord.id,
+          expectedState: "validating",
+          state: "conflict",
+          lastEventSeq: durableRecord.lastEventSeq,
+          updatedAt: new Date().toISOString(),
+        });
+      }
+      throw error;
+    }
+    const expectedWorkspaceFingerprint = workspaceFingerprint(preflight.before);
+    if (durableRecord && durableRecord.state === "validating" && durableRecord.expectedWorkspaceFingerprint !== expectedWorkspaceFingerprint) {
+      store.updatePostCompactionUndoRecord({
+        id: durableRecord.id,
+        expectedState: "validating",
+        state: "conflict",
+        lastEventSeq: durableRecord.lastEventSeq,
+        updatedAt: new Date().toISOString(),
+      });
+      throw new RunWorkspaceRecoveryError(409, "workspace_change_conflict", "Workspace changed after the recovery request was validated; retry with a new idempotency key.");
+    }
+    const recoveryRecord = durableRecord ?? store.createPostCompactionUndoRecord({
+      idempotencyKey,
+      workspaceId: turn.workspaceId,
+      threadId: turn.threadId,
+      targetTurnId: turn.id,
+      targetRunIds: context.runs.map((run) => run.id),
+      checkpointId: findTurnCheckpoint(store, turn)?.id,
+      expectedWorkspaceFingerprint,
+      action,
+      state: "validating",
+      affectedPaths: preflight.paths,
+      createdAt: new Date().toISOString(),
+    });
     const recoveryId = randomUUID();
-    store.appendEvent(ownerRun.id, "workspace_change_recovery_started", {
+    const startedEvent = store.appendEvent(ownerRun.id, "workspace_change_recovery_started", {
       scope: "turn",
       turnId: turn.id,
       runIds: context.runs.map((run) => run.id),
@@ -241,8 +344,15 @@ export async function recoverTurnWorkspaceChanges(
       cwd,
       files: recoveryIntentFiles(preflight),
     });
+    store.updatePostCompactionUndoRecord({
+      id: recoveryRecord.id,
+      expectedState: "validating",
+      state: "validating",
+      lastEventSeq: startedEvent.seq,
+      updatedAt: startedEvent.ts,
+    });
     commitRecovery(cwd, preflight);
-    store.appendEvent(ownerRun.id, action === "undo" ? "workspace_changes_undone" : "workspace_changes_reapplied", {
+    const terminalEvent = store.appendEvent(ownerRun.id, action === "undo" ? "workspace_changes_undone" : "workspace_changes_reapplied", {
       scope: "turn",
       turnId: turn.id,
       runIds: context.runs.map((run) => run.id),
@@ -253,6 +363,13 @@ export async function recoverTurnWorkspaceChanges(
       rawPatchSha256: context.steps.map((step) => step.plan.rawPatchSha256),
       touchedPaths: preflight.paths,
       summary: summarizePatchPlans(context.steps.map((step) => step.plan)),
+    });
+    store.updatePostCompactionUndoRecord({
+      id: recoveryRecord.id,
+      expectedState: "validating",
+      state: action === "undo" ? "undone" : "applied",
+      lastEventSeq: terminalEvent.seq,
+      updatedAt: terminalEvent.ts,
     });
     return buildTurnWorkspaceChangesResponse(store, turn);
   });
@@ -291,8 +408,11 @@ export async function buildTurnWorkspaceChangesResponse(
   }
   const events = ownerRun ? turnRecoveryEvents(store, ownerRun.id, turn.id) : [];
   const observation = ownerRun && plans.length > 0 ? observeRecoveryState(workspaceCwd, syntheticPatchSet(plans), events) : { state: "applied" as const };
-  const checkpoint = store.listCompactionCheckpoints({ threadId: turn.threadId, limit: 100 })
-    .find((candidate) => candidate.sourceTurnId === turn.id || candidate.coveredTurnIds.includes(turn.id));
+  const durableRecovery = store.listPostCompactionUndoRecords({ workspaceId: turn.workspaceId, targetTurnId: turn.id, limit: 100 })[0];
+  const checkpoint = findTurnCheckpoint(store, turn);
+  const durableState = durableRecovery?.state === "undone" ? "undone"
+    : durableRecovery?.state === "applied" ? "applied"
+      : observation.state;
   const base = {
     cwd: workspaceCwd,
     threadId: turn.threadId,
@@ -302,15 +422,23 @@ export async function buildTurnWorkspaceChangesResponse(
     summary: summarizePatchPlans(plans),
     ...(checkpoint ? { checkpointId: checkpoint.id } : {}),
     provenanceComplete: context.provenanceComplete,
-    updatedAt: observation.updatedAt ?? turn.updatedAt,
+    updatedAt: observation.updatedAt ?? durableRecovery?.updatedAt ?? turn.updatedAt,
   } as const;
   if (runs.length === 0) return { ...base, state: "unavailable", canUndo: false, canReapply: false, provenanceComplete: false, unavailableReason: "No Runs are linked to this Turn." };
   if (!context.provenanceComplete) return { ...base, state: "unavailable", canUndo: false, canReapply: false, unavailableReason: "Undo unavailable: durable workspace provenance is incomplete." };
   if (plans.length === 0) return { ...base, state: "unavailable", canUndo: false, canReapply: false, unavailableReason: "No successfully applied reversible workspace mutations were found." };
-  if (observation.conflict) return { ...base, state: "conflicted", canUndo: false, canReapply: false, unavailableReason: observation.conflict };
+  if (observation.conflict || durableRecovery?.state === "conflict" || durableRecovery?.state === "failed") {
+    return {
+      ...base,
+      state: "conflicted",
+      canUndo: false,
+      canReapply: false,
+      unavailableReason: observation.conflict ?? `Recovery is ${durableRecovery?.state}; review the workspace before retrying.`,
+    };
+  }
   try {
-    await preflightRecoveryPlanSequence(workspaceCwd, turnRecoveryPlanSteps(context.steps, observation.state === "undone" ? "reapply" : "undo"));
-    return { ...base, state: observation.state, canUndo: observation.state === "applied", canReapply: observation.state === "undone" };
+    await preflightRecoveryPlanSequence(workspaceCwd, turnRecoveryPlanSteps(context.steps, durableState === "undone" ? "reapply" : "undo"));
+    return { ...base, state: durableState, canUndo: durableState === "applied", canReapply: durableState === "undone" };
   } catch (error) {
     return { ...base, state: "conflicted", canUndo: false, canReapply: false, unavailableReason: error instanceof Error ? error.message : String(error) };
   }
@@ -416,6 +544,11 @@ function resolveTurnWorkspaceCwd(runs: readonly RunSession[], fallbackCwd: strin
     throw new RunWorkspaceRecoveryError(409, "workspace_change_conflict", "Linked Turn Runs resolve to different workspaces; recovery is blocked until the workspace lineage is repaired.");
   }
   return canonicalCwd;
+}
+
+function findTurnCheckpoint(store: RunStore, turn: import("@ling-stack/core").LingTurn) {
+  return store.listCompactionCheckpoints({ threadId: turn.threadId, sourceTurnId: turn.id, limit: 1 })[0]
+    ?? store.listCompactionCheckpoints({ threadId: turn.threadId, limit: 100 }).find((candidate) => candidate.coveredTurnIds.includes(turn.id));
 }
 
 function turnRecoveryPlanSteps(steps: readonly TurnRecoveryStep[], action: RecoveryAction): RecoveryPlanStep[] {
@@ -808,6 +941,29 @@ export function hashRecoveryContent(content: string | undefined): string {
   } else {
     hash.update("text\0", "utf8");
     hash.update(content, "utf8");
+  }
+  return hash.digest("hex");
+}
+
+/** Stable fingerprint for the exact path set used by a recovery CAS decision. */
+export function workspaceFingerprint(contents: ReadonlyMap<string, string | undefined>): string {
+  const hash = createHash("sha256");
+  for (const path of [...contents.keys()].sort()) {
+    hash.update(path, "utf8");
+    hash.update("\0", "utf8");
+    hash.update(hashRecoveryContent(contents.get(path)), "utf8");
+    hash.update("\0", "utf8");
+  }
+  return hash.digest("hex");
+}
+
+function recoveryIntentFingerprint(intent: RecoveryIntent, side: "before" | "after"): string {
+  const hash = createHash("sha256");
+  for (const file of [...intent.files].sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0)) {
+    hash.update(file.path, "utf8");
+    hash.update("\0", "utf8");
+    hash.update(side === "before" ? file.beforeSha256 : file.afterSha256, "utf8");
+    hash.update("\0", "utf8");
   }
   return hash.digest("hex");
 }
