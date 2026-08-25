@@ -10,6 +10,7 @@ import {
   StatusIndicator,
 } from "../../shared/ui/index.js";
 import { SidebarSectionMenu, type SidebarSectionMenuItem } from "./SidebarSectionMenu.js";
+import { SidebarTooltip } from "./SidebarTooltip.js";
 
 export type SidebarSectionId = "channels" | "teammates" | "recent";
 
@@ -61,14 +62,17 @@ export function SidebarSection({
     return (
       <section className={sectionClassName} data-sidebar-section={sectionId}>
         <span className="sidebar-rail-launcher-shell">
-          <IconButton
-            className="sidebar-rail-launcher"
-            data-sidebar-rail-launcher={sectionId}
-            icon={railIcon}
-            label={title}
-            onClick={() => onRailActivate(sectionId)}
-            pressed={railActive}
-          />
+          <SidebarTooltip label={title}>
+            <IconButton
+              className="sidebar-rail-launcher"
+              data-sidebar-rail-launcher={sectionId}
+              icon={railIcon}
+              label={title}
+              onClick={() => onRailActivate(sectionId)}
+              pressed={railActive}
+              tooltip=""
+            />
+          </SidebarTooltip>
           {stale ? (
             <StatusIndicator
               aria-label={`${title}: ${staleLabel}`}
