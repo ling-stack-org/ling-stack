@@ -8,6 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import {
   createLegacySqliteRunStoreForMigrationTest,
+  createPreContinuityV2ReleaseSqliteRunStoreForMigrationTest,
   createSqliteRunStore,
   resolveRuntimePaths,
 } from "../dist/index.js";
@@ -22,6 +23,88 @@ import { CHANNEL_PARTICIPANT_AUTHORITY_MIGRATION_VERSION } from "../dist/storage
 import { CHANNEL_PROPOSAL_BLOCKER_MIGRATION_VERSION } from "../dist/storage/sqlite/channel-proposal-blocker-migration.js";
 import { RUNTIME_ATTEMPT_FENCE_MIGRATION_VERSION } from "../dist/storage/sqlite/runtime-attempt-fence-migration.js";
 import { createRequiredParticipantManifestV1, createWorkflowParticipantAuthorityV1, workflowGraphFingerprintV1 } from "../../contracts/dist/index.js";
+
+test("release migration rollback preserves the pre-119 schema and retry completes after repair", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "ling-channel-release-migration-rollback-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const now = "2026-08-24T01:00:00.000Z";
+
+  const fixture = createPreContinuityV2ReleaseSqliteRunStoreForMigrationTest(cwd);
+  const channel = fixture.createChannel({ name: "Release migration", boundPath: cwd }, now);
+  const workflow = fixture.createChannelWorkflow({
+    channelId: channel.id,
+    title: "Legacy workflow",
+    objective: "Exercise migration rollback",
+    createdBy: "test",
+    status: "ready",
+  }, now);
+  fixture.close();
+
+  const databasePath = resolveRuntimePaths(cwd).databasePath;
+  let database = new DatabaseSync(databasePath);
+  const workspaceId = database.prepare("SELECT workspace_id FROM channels WHERE id = ?").get(channel.id).workspace_id;
+  database.prepare(`
+    INSERT INTO channel_workflow_steps (
+      id, workspace_id, channel_id, workflow_id, source_handoff_id,
+      context_summary_id, task_id, run_id, position, title, prompt,
+      to_participant_id, to_participant_label, status, blocker,
+      result_summary, metadata_json, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)
+  `).run(
+    "legacy-invalid-step",
+    workspaceId,
+    channel.id,
+    workflow.id,
+    1,
+    "Legacy step",
+    "This row is intentionally malformed for migration rollback.",
+    "",
+    "Unknown",
+    "queued",
+    now,
+    now,
+  );
+  database.close();
+
+  assert.throws(
+    () => createSqliteRunStore(cwd),
+    /Cannot backfill participant authority for a malformed workflow step row/,
+  );
+
+  database = new DatabaseSync(databasePath);
+  try {
+    const columns = new Set(database.prepare("PRAGMA table_info(channel_workflow_steps)").all().map((row) => row.name));
+    assert.equal(columns.has("participant_authority_json"), false);
+    assert.equal(database.prepare("SELECT version FROM schema_migrations WHERE version = ?").get(CHANNEL_PARTICIPANT_AUTHORITY_MIGRATION_VERSION), undefined);
+    assert.equal(database.prepare("SELECT version FROM schema_migrations WHERE version = ?").get(CHANNEL_PROPOSAL_BLOCKER_MIGRATION_VERSION), undefined);
+    assert.equal(database.prepare("SELECT version FROM schema_migrations WHERE version = ?").get(RUNTIME_ATTEMPT_FENCE_MIGRATION_VERSION), undefined);
+    assert.equal(database.prepare("SELECT to_participant_id FROM channel_workflow_steps WHERE id = ?").get("legacy-invalid-step").to_participant_id, "");
+    assert.deepEqual(database.prepare("PRAGMA foreign_key_check").all(), []);
+    assert.equal(database.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
+    database.prepare("UPDATE channel_workflow_steps SET to_participant_id = ? WHERE id = ?")
+      .run("teammate_builtin_engineer", "legacy-invalid-step");
+  } finally {
+    database.close();
+  }
+
+  const reopened = createSqliteRunStore(cwd);
+  try {
+    const migrated = new DatabaseSync(databasePath, { readOnly: true });
+    try {
+      assert.ok(migrated.prepare("SELECT version FROM schema_migrations WHERE version = ?").get(CHANNEL_PARTICIPANT_AUTHORITY_MIGRATION_VERSION));
+      assert.ok(migrated.prepare("SELECT version FROM schema_migrations WHERE version = ?").get(CHANNEL_PROPOSAL_BLOCKER_MIGRATION_VERSION));
+      assert.ok(migrated.prepare("SELECT version FROM schema_migrations WHERE version = ?").get(RUNTIME_ATTEMPT_FENCE_MIGRATION_VERSION));
+      const authority = migrated.prepare("SELECT participant_authority_json FROM channel_workflow_steps WHERE id = ?").get("legacy-invalid-step").participant_authority_json;
+      assert.equal(JSON.parse(authority).participantId, "teammate_builtin_engineer");
+      assert.deepEqual(migrated.prepare("PRAGMA foreign_key_check").all(), []);
+      assert.equal(migrated.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
+    } finally {
+      migrated.close();
+    }
+  } finally {
+    reopened.close();
+  }
+});
 
 test("fresh database applies migrations 113 through 121 with reopen and integrity invariants", async (t) => {
   const cwd = await mkdtemp(join(tmpdir(), "ling-channel-completion-fresh-migrations-"));

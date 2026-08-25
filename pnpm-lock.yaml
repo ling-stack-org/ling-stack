@@ -67,11 +67,11 @@ importers:
         version: 19.2.8(react@19.2.8)
     devDependencies:
       '@electron/asar':
-        specifier: 4.2.1
-        version: 4.2.1
+        specifier: 4.3.0
+        version: 4.3.0
       '@electron/osx-sign':
-        specifier: 2.6.0
-        version: 2.6.0
+        specifier: 2.7.0
+        version: 2.7.0
       '@fontsource-variable/inter':
         specifier: 5.3.0
         version: 5.3.0
@@ -167,8 +167,8 @@ importers:
         version: 4.27.0(react-native@0.87.0(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.8))(react@19.2.8)
     devDependencies:
       expo-doctor:
-        specifier: 1.20.1
-        version: 1.20.1
+        specifier: 1.20.2
+        version: 1.20.2
       react-types-mobile:
         specifier: npm:@types/react@19.2.17
         version: '@types/react@19.2.17'
@@ -985,8 +985,8 @@ packages:
     engines: {node: '>=10.12.0'}
     hasBin: true
 
-  '@electron/asar@4.2.1':
-    resolution: {integrity: sha512-rGyEe7iy52zxiWuihV/h/AqQrFkx7YnUUJKW1bdufVDHCzIMP/XDrDI/NOzv/LLtzt3NduAzNa475WRmRnmswQ==}
+  '@electron/asar@4.3.0':
+    resolution: {integrity: sha512-k/FFC/NQoTykGBi/Ga4L4KorsAKDdkK0LfNVG90eUG6vPVpJaL3iR9V1ZLbzBAF3QpojK5DcaGOdQOheKZv4JQ==}
     engines: {node: '>=22.12.0'}
     hasBin: true
 
@@ -1011,8 +1011,8 @@ packages:
     engines: {node: '>=12.0.0'}
     hasBin: true
 
-  '@electron/osx-sign@2.6.0':
-    resolution: {integrity: sha512-XiJHXekSfeQpk11d9uWZ9PtDm4ADIWvcrSTRJocaDgA46t1okxrQ1keL8rthURJX6AP3DDFnzrouiP6Q5qoHYA==}
+  '@electron/osx-sign@2.7.0':
+    resolution: {integrity: sha512-9DGhNqKMl6ibkhUoXbN7OHX2gZznfY10L3ZwG0u6r667Kfb6kec4JEfFTXftoqzmOfZ+OzwDbr4p/nKBMHnz0g==}
     engines: {node: '>=22.12.0'}
     hasBin: true
 
@@ -3712,8 +3712,8 @@ packages:
       expo: '*'
       react-native: '*'
 
-  expo-doctor@1.20.1:
-    resolution: {integrity: sha512-u0QYTm3hTZbuMuNdnvscA1X6Xm31ilQ6uxrf8FfzO0ddpOEBrgVEYp8jXgFOBwrRf6DqJoD2j3eKUTWTqvKVzg==}
+  expo-doctor@1.20.2:
+    resolution: {integrity: sha512-KA32iZLrbviecZV0FAIsJHTfa1DomzLH6EjMXHsfbiV5ETQ8llo/cxA6Qga5FhG/5JSlkt23/yeWDaLZQJwnug==}
     engines: {node: ^20.19.4 || ^22.13.0 || ^24.3.0 || >= 25.0.0}
     hasBin: true
 
@@ -7071,7 +7071,7 @@ snapshots:
       glob: 7.2.3
       minimatch: 3.1.5
 
-  '@electron/asar@4.2.1':
+  '@electron/asar@4.3.0':
     dependencies:
       glob: 13.0.6
       minimatch: 10.2.6
@@ -7128,7 +7128,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@electron/osx-sign@2.6.0':
+  '@electron/osx-sign@2.7.0':
     dependencies:
       debug: 4.4.3
       isbinaryfile: 4.0.10
@@ -10084,7 +10084,7 @@ snapshots:
       expo-dev-menu-interface: 57.0.0(expo@57.0.15)
       react-native: 0.87.0(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.8)
 
-  expo-doctor@1.20.1: {}
+  expo-doctor@1.20.2: {}
 
   expo-file-system@57.0.5(expo@57.0.15)(react-native@0.87.0(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.8)):
     dependencies:
