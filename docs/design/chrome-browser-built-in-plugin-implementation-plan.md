@@ -1,147 +1,149 @@
-# Chrome Browser Built-in Plugin Implementation Plan
+# Chrome Browser Native Messaging Implementation Plan
 
-## Status
-
-Local implementation and validation complete; external platform closure remains open.
-
-Baseline: `origin/main@f716679579b4d83c30d16d3c8a383442404b8285`.
-
-Source contract: [Chrome Browser Built-in Plugin](chrome-browser-built-in-plugin.md).
+Status: active implementation plan
+Owner: Browser integration, Desktop, daemon, Web, and release maintainers
+Last verified: 2026-08-24
+Baseline: `main@90635c83e6ec6645699a45c114c59905c996ec12`
+Source contract: [Chrome Browser Built-in Plugin](chrome-browser-built-in-plugin.md)
 
 ## Scope
 
-Deliver a Ling-owned Chrome Manifest V3 extension, daemon bridge, built-in Plugin Manager lifecycle
-and MCP tool surface for the user's existing Chrome profile.
+Upgrade Ling for Chrome from manual workspace pairing to automatic Native Messaging discovery, then
+repair MV3 lifecycle recovery in extension `0.1.2`. Deliver persistent reconnect wake-up, macOS
+engineering-package signing, deterministic packaging, and Web Store resubmission without changing
+browser tools, MCP approval, Native wire protocols, or database schema.
 
-## Slice 1: Contracts And Persistence
+## Slice 1: Contracts And Documentation
 
-- Add browser-extension setup DTOs, pairing responses and protocol schemas to `packages/contracts`.
-- Add `chrome_browser_credentials` migration/store facet with hash-only persistence.
-- Define stable plugin/MCP IDs, extension protocol and six initial tool descriptors.
-- Add parser, migration and redaction tests.
+- Add `ling.chrome.native.v1`, Host/runtime descriptor constants, exact parsers, state enums, and
+  compatibility fields to shared contracts.
+- Replace manual pairing UX and privacy language in design, release, Store, and privacy documents.
+- Preserve `ling.chrome.v1` and legacy pairing DTOs only for internal migration.
+- Define `transport`, `hostState`, and `extensionState` while retaining `connected`.
 
-Exit gate: credentials round-trip only as hashes; contracts reject unknown protocol versions,
-oversized payloads and secret-bearing public projections.
+Exit gate: docs links pass; new contracts reject `cwd`, unknown fields, oversized values, wrong
+origins, and incompatible versions.
 
-## Slice 2: Daemon Session Authority
+## Slice 2: Native Host And Lifecycle
 
-- Add `features/browser-extension/` with pairing-code authority, credential validation, WebSocket
-  session ownership, heartbeat, command deadlines and cancellation.
-- Attach one dedicated upgrade route to the daemon HTTP server.
-- Validate loopback Host and exact allowlisted extension Origin before session acceptance.
-- Ensure daemon shutdown closes sessions and rejects pending command promises.
+- Add dependency-minimal Rust Host source under `packages/browser-host` with deterministic build
+  metadata and no external runtime installation.
+- Implement one-megabyte little-endian Native Messaging framing, exact first-message parsing,
+  descriptor loading, origin validation, private loopback connection, bidirectional relay, EOF, and
+  sanitized errors.
+- Add user-level Chrome/Chromium manifest install, status, upgrade rewrite, and uninstall helpers for
+  macOS and Windows HKCU.
+- Add `ling-stack browser-host install|status|uninstall`; source install builds the current platform
+  Host before registration.
 
-Exit gate: replacement, stale result, timeout, revoke, disable and shutdown races have focused tests.
+Exit gate: frame boundary, multi-frame, maximum size, malformed input, bad origin, stale descriptor,
+broker failure, repeat install, upgrade, status, and uninstall tests pass.
 
-## Slice 3: Built-in MCP Runtime
+## Slice 3: Daemon Native Broker And Shared Session
 
-- Add an internal generation broker for the logical Chrome MCP server. The placeholder persisted
-  transport must never reach the generic network client.
-- Register the six Chrome tools with bounded Zod schemas and MCP annotations.
-- Route tool calls through the browser session authority and sanitize results.
-- Add `built-in:chrome` descriptor plus logical MCP server/contribution reconciliation.
-- Exclude package-cache requirements for true built-in descriptors.
+- Publish an atomic protected runtime descriptor after a random-port loopback broker starts; refresh
+  expiry and remove only the owned generation on shutdown.
+- Authenticate startup token, allowlisted extension origin, Host/extension versions, and paused state
+  before activating a session.
+- Extract a common transport interface and adapt both Native framed sockets and legacy WebSocket to
+  the existing heartbeat, command, timeout, cancellation, replacement, revoke, and shutdown path.
+- Bind Native sessions to daemon workspace authority and reject any handshake containing `cwd`.
+- Revoke old credential rows on first Native success without closing the new session.
 
-Exit gate: generic MCP broker can check, list and call the browser tools; calls remain blocked when
-the plugin is disabled or no authenticated extension session exists.
+Exit gate: Native auto-binding, single-session replacement, pause, disable, revoke, timeout,
+cancellation, descriptor expiry, legacy fallback, migration cleanup, and shutdown races pass.
 
-## Slice 4: Manifest V3 Extension
+## Slice 4: Extension `0.1.2`
 
-- Add `apps/chrome-extension` as a dependency-light workspace package.
-- Commit manifest, background service worker, content script, popup, localized copy and Ling-owned
-  icons.
-- Implement pairing, credential storage, reconnect/backoff, heartbeat and command dispatch.
-- Implement bounded snapshots, ref clicks, non-password typing, HTTP(S) navigation, tab listing and
-  visible screenshots.
-- Produce deterministic unpacked output and ZIP artifacts.
+- Add `nativeMessaging` and `alarms`; retain storage only for pause, transient reconnect metadata,
+  and legacy migration, and remove all new workspace/address/credential writes.
+- Connect Native first, report status/versions, execute existing `ling.chrome.v1` commands, and send
+  shared heartbeats/results.
+- If Host is unavailable and old credentials exist, silently use the V1 WebSocket path.
+- On Native ready, remove legacy credential, cwd, and daemon URL keys.
+- Replace popup pairing fields with connected, Ling unavailable, update required, and paused states
+  plus Retry and Pause/Resume actions.
+- Route install, startup, disconnect, Alarm, and popup events through one single-flight connection
+  state machine. Persist only the retry attempt in `storage.session`; clear retry state on success,
+  pause, disable, or intentional replacement.
 
-Exit gate: extension unit tests, manifest permission audit, secret scan and mock-daemon protocol tests
-pass. No debugger/cookie/history/bookmark/network permissions are present.
+Exit gate: popup has no workspace, pairing, address, credential, or consent controls; first install,
+worker-idle restart without opening the popup, pause/resume, Host missing, Ling unavailable,
+incompatible, fallback, and migration tests pass. Awake-Chrome recovery is at most 35 seconds.
 
-## Slice 5: Plugin Manager Product Flow
+## Slice 5: Desktop Packaging And Product UI
 
-- Add Chrome-specific row/detail view models and icon.
-- Add Connect Chrome dialog/drawer with Web Store and development installation states.
-- Add pairing-code generation, copy, waiting, connected and revoke actions.
-- Keep extension IDs, hashes and transport details inside technical diagnostics.
-- Update i18n in English and Chinese.
+- Register the packaged Host idempotently at Desktop startup without blocking the main window on a
+  recoverable registration failure.
+- Include the current-platform Host and manifest templates in Desktop resources; verify executable
+  identity, SHA, and source commit metadata.
+- Add macOS signing coverage and Windows NSIS uninstall cleanup for exact Ling manifest/registry
+  entries.
+- Make `browser-host build:native` explicitly ad-hoc sign the copied macOS Host, reject residual
+  `linker-signed` identity, and record the signing level in deterministic build metadata before
+  Chrome acceptance. Release signing may replace this local identity later.
+- Explicitly ad-hoc sign `unsigned_dev` macOS engineering apps after Electron Fuses are applied and
+  require `codesign --verify --deep --strict`; do not upgrade that evidence to Developer ID status.
+- Replace Plugin Manager pairing-code generation/copy/expiry UI with automatic detection and
+  actionable Host, extension, paused, incompatible, disabled, and Ling-unavailable states.
+- Update Chinese/English copy and remove one-second pairing polling/flicker.
 
-Exit gate: E2E covers disabled, extension-required, waiting, ready, failed and revoked states in Light
-and Dark mode without changing existing Cua Driver presentation.
+Exit gate: focused Desktop package tests and Plugin Manager unit/E2E tests pass in Chinese/English,
+Light/Dark, with no invalid refresh action or loading flicker.
 
-## Slice 6: Packaging And Acceptance
+## Slice 6: Release Verification And Store Submission
 
-- Include extension ZIP, manifest metadata, license and notices in Desktop resources.
-- Add package hash/version checks without claiming Chrome installation authority.
-- Run contracts, core, daemon, runner-pi, Web, Desktop and extension checks.
-- Validate real Chrome: install unpacked development build, pair, list tabs, snapshot a local fixture,
-  click, type, navigate and screenshot; verify MCP approval and cancellation records.
-- Record Web Store publication and Windows packaged acceptance as explicit release gates if external
-  accounts or hardware are unavailable.
+- Run docs links, public safety, licenses, dependency security, typecheck, unit, Web lint/i18n/build,
+  relevant Playwright, and `git diff --check`.
+- Run current-mac official Chrome acceptance in an isolated profile across all six tools, MCP
+  approval, Desktop restart, workspace switch, extension restart, pause, revoke, and migration.
+  A custom `--user-data-dir` receives a temporary profile-local Native Messaging manifest which is
+  restored after the run. The daemon-side session must connect before the test opens the popup, so
+  popup startup cannot hide a Service Worker recovery failure. CDP `Extensions.loadUnpacked` mode
+  proves first-install connection only because Chrome does not persist that installation across a
+  restart. The Chrome-restart and six-tool gates run only with `LING_CHROME_SMOKE_PREINSTALLED=1`
+  after the isolated profile has received one real persistent unpacked installation.
+- Run platform-neutral Host framing/lifecycle tests on generic CI. The Host test runner builds and
+  verifies the native executable only on supported macOS arm64 or Windows x64 hosts; Linux CI still
+  runs Node lifecycle and Rust protocol tests, with product-build-only cases explicitly skipped,
+  without pretending to produce a Linux Host. Do not build a new Windows installer for this
+  reconnect-only release because Host and daemon wire protocols are unchanged.
+- Keep the repair branch local, create no PR or push, and build `ling-for-chrome.zip` from the exact
+  clean local commit that passed acceptance. Record source, manifest, and ZIP SHA-256 values.
+- Upload `0.1.2` only after isolated-profile Chrome acceptance passes, update the `alarms` permission
+  justification and reviewer instructions, submit with automatic publishing, and verify the item is
+  under review at draft version `0.1.2`.
 
 ## Verification Commands
 
-- `corepack pnpm --filter @ling-stack/contracts test`
-- `corepack pnpm --filter @ling-stack/core test`
-- `corepack pnpm --filter @ling-stack/daemon test`
-- `corepack pnpm --filter @ling-stack/runner-pi test`
-- `corepack pnpm --filter @ling-stack/chrome-extension test`
-- `corepack pnpm --filter @ling-stack/chrome-extension build`
-- `corepack pnpm --filter @ling-stack/web typecheck`
-- `corepack pnpm --filter @ling-stack/web lint`
-- `corepack pnpm --filter @ling-stack/web run check:i18n`
-- `corepack pnpm --filter @ling-stack/web test`
-- focused Plugin Manager and browser-extension Playwright suites
-- `corepack pnpm --filter @ling-stack/desktop typecheck`
-- focused Desktop package-resource tests
-- `git diff --check`
+```bash
+corepack pnpm --filter @ling-stack/browser-host test
+corepack pnpm --filter @ling-stack/contracts test
+corepack pnpm --filter @ling-stack/core test
+corepack pnpm --filter @ling-stack/daemon test
+corepack pnpm --filter @ling-stack/chrome-extension test
+corepack pnpm --filter @ling-stack/chrome-extension build
+corepack pnpm --filter @ling-stack/cli test
+corepack pnpm --filter @ling-stack/web typecheck
+corepack pnpm --filter @ling-stack/web lint
+corepack pnpm --filter @ling-stack/web check:i18n
+corepack pnpm --filter @ling-stack/web test
+corepack pnpm --filter @ling-stack/desktop typecheck
+node --test apps/desktop/tests/chrome-extension-*.test.mjs
+corepack pnpm check:docs
+corepack pnpm check:public
+corepack pnpm check:licenses
+corepack pnpm check:dependency-security
+git diff --check
+```
 
-## Hard Stops
+## Non-Goals And Hard Stops
 
-- No native host helper is added without a separate signing/packaging/uninstall design.
-- No direct extension-to-model or extension-to-runner channel.
-- No arbitrary script execution or credential-store access.
-- No silent extension installation or fake Web Store-ready claim.
-- No changes to Cua Driver authority, approvals, teammate binding or message persistence semantics.
-
-## Local Completion Evidence
-
-Validated on macOS on 2026-08-17:
-
-- Contracts, Core, daemon, Runner Pi and Web suites pass for the implementation branch.
-- Extension manifest, store-icon resolution, protocol, screenshot bounds and authoritative revoke
-  behavior pass eight unit tests, including Store bootstrap identity and stale-socket fencing;
-  background, popup and content-script syntax checks pass.
-- The manifest requests only `scripting`, `storage` and the screenshot-required `<all_urls>` host
-  permission. The popup discloses URL, visible-content, label and screenshot handling and requires
-  an unchecked explicit-consent control before pairing; content scripts are injected only for an
-  approved tool request rather than on every HTTP(S) page.
-- The daemon validates and normalizes all six method-specific results before model exposure. Text
-  and image results carry an `untrusted_web_content` boundary so webpage prompt injection is never
-  projected as trusted instruction text.
-- Online revoke and offline credential invalidation both clear the local pairing. Stale WebSocket
-  events cannot clear a replacement session heartbeat or execute commands, and protocol/credential
-  failures project an explicit incompatible repair state.
-- Light and Dark isolated Chromium profiles complete pairing, tab listing, snapshot, click, type,
-  navigation and screenshot. A daemon-side revoke then clears the extension credential/workspace
-  binding and returns the popup to the unpaired state without reconnecting.
-- Plugin Manager Light/Dark Playwright, Desktop typecheck and deterministic extension package
-  boundary tests pass.
-- The extension ZIP is deterministic and contains a store-compliant 128x128 Ling icon. An unsigned arm64 macOS
-  App, ZIP and DMG build successfully; the final DMG contains byte-identical ZIP, build metadata,
-  README, Store submission checklist and MIT LICENSE resources.
-- A separate deterministic Store-bootstrap build produced the unpublished Dashboard item. The
-  Store-issued public key is now committed, the final package derives production Item ID
-  `mbmlnnfhebclljonhedpjghbhibfapei`, and the legacy development ID remains allowlisted only for
-  compatibility.
-- Official Google Chrome 151 rejects command-line extension loading with `ERR_BLOCKED_BY_CLIENT`.
-  The successful local automation therefore remains explicitly Chromium-only and confirms that Ling
-  must not claim or exercise Chrome installation authority.
-
-Open release gates:
-
-- submit the completed Chrome Web Store item for review, then publish and record the listing URL;
-- repeat acceptance in official Chrome from the Web Store-installed package;
-- complete Developer ID-signed macOS and signed Windows clean-host acceptance. The local arm64
-  macOS package is structurally verified but unsigned because this machine has no valid signing
-  identity.
+- No new database table, browser tool, MCP approval path, remote relay, or public broker.
+- No new UI for legacy pairing and no new credential issuance for `0.1.2` users.
+- No direct Host business logic, model access, workspace selection, or browser API access.
+- No Store upload before current-mac real Chrome acceptance and platform-neutral protocol gates pass.
+- A real Chrome acceptance failure caused by an inactive MV3 worker is release-blocking; opening the
+  popup or manually reloading the extension is diagnostic evidence, never an accepted recovery step.
+- No claim that local unsigned artifacts satisfy Developer ID, notarization, Authenticode,
+  SmartScreen, or clean-machine release gates.

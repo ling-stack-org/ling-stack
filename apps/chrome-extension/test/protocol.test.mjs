@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  NATIVE_HOST_NAME,
+  NATIVE_PROTOCOL,
   PROTOCOL,
   dataUrlImage,
   isAllowedPageUrl,
@@ -8,8 +10,37 @@ import {
   safeTab,
   shouldForgetCredentialAfterSocketClose,
   validateCommand,
+  validateNativeControlMessage,
   websocketUrl,
 } from "../src/protocol.js";
+
+test("extension native control protocol is exact and versioned", () => {
+  assert.equal(NATIVE_HOST_NAME, "com.lingstack.browser");
+  assert.equal(NATIVE_PROTOCOL, "ling.chrome.native.v1");
+  assert.deepEqual(validateNativeControlMessage({
+    protocol: NATIVE_PROTOCOL,
+    type: "ready",
+    connected: true,
+    migratedLegacyCredential: true,
+  }), {
+    protocol: NATIVE_PROTOCOL,
+    type: "ready",
+    connected: true,
+    migratedLegacyCredential: true,
+  });
+  assert.throws(() => validateNativeControlMessage({
+    protocol: NATIVE_PROTOCOL,
+    type: "ready",
+    connected: true,
+    migratedLegacyCredential: false,
+    cwd: "/forbidden",
+  }), /Unknown command field/);
+  assert.throws(() => validateNativeControlMessage({
+    protocol: NATIVE_PROTOCOL,
+    type: "error",
+    code: "unknown",
+  }), /Invalid native error/);
+});
 
 test("extension protocol allows only bounded loopback and HTTP page operations", () => {
   assert.equal(isAllowedPageUrl("https://example.com/path"), true);

@@ -5,13 +5,15 @@ test("stale Chrome sockets cannot clear the current heartbeat or execute command
   const original = {
     chrome: globalThis.chrome,
     clearInterval: globalThis.clearInterval,
+    clearTimeout: globalThis.clearTimeout,
     navigator: globalThis.navigator,
     setInterval: globalThis.setInterval,
+    setTimeout: globalThis.setTimeout,
     WebSocket: globalThis.WebSocket,
   };
   const sockets = [];
   const activeIntervals = new Set();
-  const runtimeListeners = { installed: undefined, message: undefined, startup: undefined };
+  const runtimeListeners = { alarm: undefined, installed: undefined, message: undefined, startup: undefined };
   let tabQueries = 0;
 
   class FakeWebSocket {
@@ -61,11 +63,19 @@ test("stale Chrome sockets cannot clear the current heartbeat or execute command
   Object.defineProperty(globalThis, "chrome", {
     configurable: true,
     value: {
+      alarms: {
+        clear: async () => true,
+        create: () => undefined,
+        get: async () => undefined,
+        onAlarm: { addListener: (listener) => { runtimeListeners.alarm = listener; } },
+      },
       runtime: {
-        getManifest: () => ({ version: "0.1.0" }),
+        connectNative: () => { throw new Error("Specified native messaging host not found"); },
+        getManifest: () => ({ version: "0.1.2" }),
         onInstalled: { addListener: (listener) => { runtimeListeners.installed = listener; } },
         onMessage: { addListener: (listener) => { runtimeListeners.message = listener; } },
         onStartup: { addListener: (listener) => { runtimeListeners.startup = listener; } },
+        sendMessage: async () => undefined,
       },
       scripting: { executeScript: async () => undefined },
       storage: {
@@ -73,6 +83,11 @@ test("stale Chrome sockets cannot clear the current heartbeat or execute command
           get: async (keys) => Object.fromEntries(keys.filter((key) => key in stored).map((key) => [key, stored[key]])),
           remove: async (keys) => { for (const key of keys) delete stored[key]; },
           set: async (values) => Object.assign(stored, values),
+        },
+        session: {
+          get: async () => ({}),
+          remove: async () => undefined,
+          set: async () => undefined,
         },
       },
       tabs: {
@@ -91,6 +106,8 @@ test("stale Chrome sockets cannot clear the current heartbeat or execute command
     return handle;
   };
   globalThis.clearInterval = (handle) => { activeIntervals.delete(handle); };
+  globalThis.setTimeout = () => ({ type: "timeout" });
+  globalThis.clearTimeout = () => undefined;
 
   try {
     await import(`../src/background.js?stale-socket-test=${Date.now()}`);
@@ -100,6 +117,7 @@ test("stale Chrome sockets cannot clear the current heartbeat or execute command
     first.open();
     assert.equal(activeIntervals.size, 1);
 
+    runtimeListeners.startup();
     runtimeListeners.startup();
     await settle();
     assert.equal(sockets.length, 2);
@@ -139,8 +157,213 @@ test("stale Chrome sockets cannot clear the current heartbeat or execute command
     Object.defineProperty(globalThis, "WebSocket", { configurable: true, value: original.WebSocket });
     globalThis.setInterval = original.setInterval;
     globalThis.clearInterval = original.clearInterval;
+    globalThis.setTimeout = original.setTimeout;
+    globalThis.clearTimeout = original.clearTimeout;
   }
 });
+
+test("Native connection owns commands and removes legacy workspace credentials after migration", async () => {
+  const original = {
+    chrome: globalThis.chrome,
+    clearInterval: globalThis.clearInterval,
+    clearTimeout: globalThis.clearTimeout,
+    navigator: globalThis.navigator,
+    setInterval: globalThis.setInterval,
+    setTimeout: globalThis.setTimeout,
+    WebSocket: globalThis.WebSocket,
+  };
+  const ports = [];
+  const screenshotCalls = [];
+  const activeIntervals = new Set();
+  const runtimeListeners = { alarm: undefined, installed: undefined, message: undefined, startup: undefined };
+  const stored = {
+    "ling.chrome.credential": "legacy-credential",
+    "ling.chrome.cwd": "/tmp/legacy-workspace",
+    "ling.chrome.daemonBaseUrl": "http://127.0.0.1:17891",
+  };
+
+  class FakeNativePort {
+    constructor() {
+      this.messages = [];
+      this.messageListeners = [];
+      this.disconnectListeners = [];
+    }
+
+    onMessage = { addListener: (listener) => this.messageListeners.push(listener) };
+    onDisconnect = { addListener: (listener) => this.disconnectListeners.push(listener) };
+
+    postMessage(message) {
+      this.messages.push(message);
+    }
+
+    disconnect() {
+      this.disconnected = true;
+      for (const listener of this.disconnectListeners) listener();
+    }
+
+    emitMessage(message) {
+      for (const listener of this.messageListeners) listener(message);
+    }
+  }
+
+  Object.defineProperty(globalThis, "chrome", {
+    configurable: true,
+    value: {
+      alarms: {
+        clear: async () => true,
+        create: () => undefined,
+        get: async () => undefined,
+        onAlarm: { addListener: (listener) => { runtimeListeners.alarm = listener; } },
+      },
+      runtime: {
+        connectNative: (name) => {
+          assert.equal(name, "com.lingstack.browser");
+          const port = new FakeNativePort();
+          ports.push(port);
+          return port;
+        },
+        getManifest: () => ({ version: "0.1.2" }),
+        onInstalled: { addListener: (listener) => { runtimeListeners.installed = listener; } },
+        onMessage: { addListener: (listener) => { runtimeListeners.message = listener; } },
+        onStartup: { addListener: (listener) => { runtimeListeners.startup = listener; } },
+        sendMessage: async () => undefined,
+      },
+      scripting: { executeScript: async () => undefined },
+      storage: {
+        local: {
+          get: async (keys) => Object.fromEntries(keys.filter((key) => key in stored).map((key) => [key, stored[key]])),
+          remove: async (keys) => { for (const key of keys) delete stored[key]; },
+          set: async (values) => Object.assign(stored, values),
+        },
+        session: {
+          get: async () => ({}),
+          remove: async () => undefined,
+          set: async () => undefined,
+        },
+      },
+      tabs: {
+        captureVisibleTab: async (windowId, options) => {
+          screenshotCalls.push(["tabs.captureVisibleTab", windowId, options]);
+          return "data:image/jpeg;base64,ZmFrZQ==";
+        },
+        get: async () => ({ id: 7, windowId: 1, active: true, title: "Ling fixture", url: "https://example.com" }),
+        query: async () => [{ id: 7, windowId: 1, active: true, title: "Ling fixture", url: "https://example.com" }],
+        update: async (tabId, options) => {
+          screenshotCalls.push(["tabs.update", tabId, options]);
+          return { id: tabId, windowId: 1, active: true, title: "Ling fixture", url: "https://example.com" };
+        },
+      },
+      windows: {
+        update: async (windowId, options) => {
+          screenshotCalls.push(["windows.update", windowId, options]);
+          return { id: windowId, focused: true };
+        },
+      },
+    },
+  });
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    value: { userAgent: "Chrome/151 Ling native test" },
+  });
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true,
+    value: class UnexpectedWebSocket {
+      constructor() { throw new Error("legacy transport must not start when Native is available"); }
+    },
+  });
+  globalThis.setInterval = (callback) => {
+    const handle = { callback };
+    activeIntervals.add(handle);
+    return handle;
+  };
+  globalThis.clearInterval = (handle) => { activeIntervals.delete(handle); };
+  globalThis.setTimeout = () => ({ type: "timeout" });
+  globalThis.clearTimeout = () => undefined;
+
+  try {
+    await import(`../src/background.js?native-migration-test=${Date.now()}`);
+    await settle();
+    assert.equal(ports.length, 1);
+    assert.deepEqual(ports[0].messages[0], {
+      protocol: "ling.chrome.native.v1",
+      type: "hello",
+      extensionVersion: "0.1.2",
+      browserVersion: "Chrome/151 Ling native test",
+      paused: false,
+    });
+    assert.equal("cwd" in ports[0].messages[0], false);
+
+    ports[0].emitMessage({
+      protocol: "ling.chrome.native.v1",
+      type: "ready",
+      connected: true,
+      migratedLegacyCredential: true,
+    });
+    await settle();
+    assert.equal(stored["ling.chrome.credential"], undefined);
+    assert.equal(stored["ling.chrome.cwd"], undefined);
+    assert.equal(stored["ling.chrome.daemonBaseUrl"], undefined);
+
+    const connected = await sendPopupMessage(runtimeListeners.message, { type: "status" });
+    assert.equal(connected.connected, true);
+    assert.equal(connected.state, "connected");
+    assert.equal(connected.transport, "native_messaging");
+    assert.equal(activeIntervals.size, 1);
+    [...activeIntervals][0].callback();
+    assert.equal(ports[0].messages.some((message) => message.type === "heartbeat"), true);
+
+    ports[0].emitMessage({
+      protocol: "ling.chrome.v1",
+      type: "command",
+      id: "native-tabs",
+      method: "chrome_tabs",
+      params: {},
+      deadlineAt: new Date(Date.now() + 60_000).toISOString(),
+    });
+    await settle();
+    assert.equal(ports[0].messages.some((message) => message.id === "native-tabs" && message.ok === true), true);
+
+    ports[0].emitMessage({
+      protocol: "ling.chrome.v1",
+      type: "command",
+      id: "native-screenshot",
+      method: "chrome_screenshot",
+      params: { tabId: 7 },
+      deadlineAt: new Date(Date.now() + 60_000).toISOString(),
+    });
+    await settle();
+    assert.deepEqual(screenshotCalls, [
+      ["windows.update", 1, { focused: true }],
+      ["tabs.update", 7, { active: true }],
+      ["tabs.captureVisibleTab", 1, { format: "jpeg", quality: 75 }],
+    ]);
+    assert.equal(ports[0].messages.some((message) => message.id === "native-screenshot" && message.ok === true), true);
+
+    const paused = await sendPopupMessage(runtimeListeners.message, { type: "pause" });
+    assert.equal(paused.state, "paused");
+    assert.equal(stored["ling.chrome.paused"], true);
+    assert.equal(ports.length, 2);
+    assert.equal(ports[1].messages[0].paused, true);
+  } finally {
+    Object.defineProperty(globalThis, "chrome", { configurable: true, value: original.chrome });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: original.navigator });
+    Object.defineProperty(globalThis, "WebSocket", { configurable: true, value: original.WebSocket });
+    globalThis.setInterval = original.setInterval;
+    globalThis.clearInterval = original.clearInterval;
+    globalThis.setTimeout = original.setTimeout;
+    globalThis.clearTimeout = original.clearTimeout;
+  }
+});
+
+function sendPopupMessage(listener, message) {
+  return new Promise((resolve, reject) => {
+    const keepAlive = listener(message, {}, (response) => {
+      if (response?.ok === false) reject(new Error(response.error));
+      else resolve(response);
+    });
+    assert.equal(keepAlive, true);
+  });
+}
 
 async function settle() {
   await new Promise((resolve) => setImmediate(resolve));

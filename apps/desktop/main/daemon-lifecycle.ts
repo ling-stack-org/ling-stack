@@ -78,6 +78,7 @@ export interface DesktopDaemonLifecycleOptions {
   }) => ChildProcess;
   readonly executablePath?: string;
   readonly desktopBridgeToken?: string;
+  readonly browserHostPath?: string;
   readonly cuaDriverFeatureFlags?: CuaDriverFeatureFlags;
   /** Test seam for evaluating the platform-specific bundled gate. */
   readonly platform?: string;
@@ -229,6 +230,7 @@ export class DesktopDaemonLifecycle {
           // command evidence; this only makes the bash surface available to
           // the packaged runner.
           LING_STACK_RUNTIME_UNIFIED_EXEC: "1",
+          ...(this.options.browserHostPath ? { LING_BROWSER_HOST_PATH: this.options.browserHostPath } : {}),
           ...(this.options.desktopBridgeToken
             ? {
                 LING_DESKTOP_BRIDGE_TOKEN: this.options.desktopBridgeToken,

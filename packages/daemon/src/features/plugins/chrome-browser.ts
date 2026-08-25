@@ -13,6 +13,7 @@ import type {
   McpServer,
   McpStoreFacet,
 } from "@ling-stack/core";
+import { defaultDevelopmentBrowserHostPath, installBrowserHost } from "@ling-stack/browser-host";
 import type { ChromeBrowserSessionController, ChromeBrowserSessionSnapshot } from "../browser-extension/session-controller.js";
 import { createMcpAuthStatus, createMcpStatusSnapshot, deriveMcpServerStatus } from "../mcp/status.js";
 import { chromeBrowserTools } from "./chrome-browser-generation-broker.js";
@@ -26,10 +27,10 @@ export function createChromeBrowserDescriptor(): ManagedPluginDescriptor {
   return {
     id: CHROME_BROWSER_PLUGIN_ID,
     displayName: "Chrome",
-    version: "0.1.0",
+    version: "0.1.1",
     sourceKind: "built-in",
     description: "Control Chrome with Ling.",
-    trustSummary: "Uses an explicitly paired Ling extension and existing MCP approvals.",
+    trustSummary: "Uses the allowlisted local Ling Native Messaging Host and existing MCP approvals.",
     contributions: [{
       kind: "mcp-server",
       id: CHROME_BROWSER_MCP_SERVER_ID,
@@ -55,6 +56,8 @@ export class ChromeBrowserPluginService {
     readonly controller: ChromeBrowserSessionController;
     readonly getStore: (cwd: string) => ChromeBrowserPluginStore;
     readonly storeUrl?: string;
+    readonly hostPath?: string;
+    readonly installHost?: typeof installBrowserHost;
   }) {}
 
   supportsWorkspace(cwd: string): boolean {
@@ -101,9 +104,13 @@ export class ChromeBrowserPluginService {
         ? "Chrome plugin is disabled."
         : snapshot.connected
           ? "Chrome extension is connected."
-          : snapshot.paired
-            ? "Open Chrome and enable the Ling extension."
-            : "Install and pair the Ling Chrome extension.",
+          : snapshot.hostState === "missing"
+            ? "Install or repair the Ling Browser Host."
+            : snapshot.extensionState === "paused"
+              ? "Resume Ling for Chrome."
+              : snapshot.paired
+                ? "Open Chrome and enable the Ling extension."
+                : "Install or open Ling for Chrome.",
       ...(!enabled || effective
         ? {}
         : { errorCode: snapshot.paired ? "chrome_browser_disconnected" : "chrome_browser_extension_required" }),
@@ -161,11 +168,19 @@ export class ChromeBrowserPluginService {
   revoke(cwd: string, now = new Date().toISOString()): ManagedPluginHealthSnapshot {
     const store = this.options.getStore(cwd);
     this.options.controller.revoke(cwd);
+    store.upsertManagedPlugin({
+      id: this.descriptor.id,
+      sourceKind: this.descriptor.sourceKind,
+      version: this.descriptor.version,
+      enabled: false,
+      disabledReason: "Chrome access revoked.",
+      descriptor: this.descriptor,
+    }, now);
     store.appendManagedPluginEvent({
       pluginId: CHROME_BROWSER_PLUGIN_ID,
       type: "access_revoked",
       actor: "local-user",
-      message: "Chrome access removed.",
+      message: "Chrome access removed and plugin disabled.",
     }, now);
     return this.sync(cwd, now);
   }
@@ -187,6 +202,14 @@ export class ChromeBrowserPluginService {
 
   handleSessionStateChange(cwd: string): void {
     this.sync(cwd);
+  }
+
+  async repairHost(cwd: string, now = new Date().toISOString()): Promise<ManagedPluginHealthSnapshot> {
+    if (!this.supportsWorkspace(cwd)) throw new Error("chrome_browser_workspace_mismatch");
+    const hostPath = this.options.hostPath ?? defaultDevelopmentBrowserHostPath();
+    const status = await (this.options.installHost ?? installBrowserHost)({ hostPath });
+    this.options.controller.observeNativeState({ cwd, hostState: status.installed ? "ready" : "missing" });
+    return this.sync(cwd, now);
   }
 
   private ensureLogicalRuntime(store: ChromeBrowserPluginStore, enabled: boolean, now: string): McpServer {
@@ -238,6 +261,11 @@ export function buildChromeBrowserSetupView(health: ManagedPluginHealthSnapshot)
     browserState,
     paired: details.paired === true,
     connected: details.connected === true,
+    hostState: readHostState(details.hostState),
+    extensionState: readExtensionState(details.extensionState),
+    ...(details.transport === "legacy_websocket" || details.transport === "native_messaging"
+      ? { transport: details.transport }
+      : {}),
     ...(typeof details.extensionVersion === "string" ? { extensionVersion: details.extensionVersion } : {}),
     ...(typeof details.browserVersion === "string" ? { browserVersion: details.browserVersion } : {}),
     ...(typeof details.lastSeenAt === "string" ? { lastSeenAt: details.lastSeenAt } : {}),
@@ -252,11 +280,19 @@ function chromeHealthSnapshot(
   storeUrl?: string,
 ): ManagedPluginHealthSnapshot {
   const incompatible = snapshot.errorCode === "chrome_browser_protocol_invalid"
-    || snapshot.errorCode === "chrome_browser_credential_invalid";
+    || snapshot.errorCode === "chrome_browser_credential_invalid"
+    || snapshot.hostState === "incompatible"
+    || snapshot.extensionState === "incompatible";
   const browserState: ChromeBrowserSetupState = snapshot.connected
     ? "ready"
     : incompatible
       ? "incompatible"
+      : snapshot.hostState === "missing"
+        ? "host_missing"
+        : snapshot.extensionState === "paused"
+          ? "paused"
+          : snapshot.extensionState === "ling_unavailable"
+            ? "ling_unavailable"
       : snapshot.paired
         ? "waiting_for_chrome"
         : "extension_required";
@@ -270,30 +306,57 @@ function chromeHealthSnapshot(
       : snapshot.connected
         ? "Chrome extension is connected."
         : incompatible
-          ? "Chrome extension needs to be updated or paired again."
-          : snapshot.paired
-            ? "Open Chrome and enable the Ling extension."
-            : "Install and pair the Ling Chrome extension.",
+          ? "Ling or the Chrome extension needs to be updated."
+          : snapshot.hostState === "missing"
+            ? "Ling Browser Host is not installed."
+            : snapshot.extensionState === "paused"
+              ? "Ling for Chrome is paused."
+              : snapshot.extensionState === "ling_unavailable"
+                ? "Ling is not available to the Chrome extension."
+                : snapshot.paired
+                  ? "Open Chrome and enable the Ling extension."
+                  : "Install or open Ling for Chrome.",
     details: {
       browserFamily: "chrome",
       browserState,
       paired: snapshot.paired,
       connected: snapshot.connected,
+      hostState: snapshot.hostState,
+      extensionState: snapshot.extensionState,
+      ...(snapshot.transport ? { transport: snapshot.transport } : {}),
       ...(snapshot.extensionVersion ? { extensionVersion: snapshot.extensionVersion } : {}),
       ...(snapshot.browserVersion ? { browserVersion: snapshot.browserVersion } : {}),
       ...(snapshot.lastSeenAt ? { lastSeenAt: snapshot.lastSeenAt } : {}),
       ...(storeUrl ? { storeUrl } : {}),
       ...(!enabled || snapshot.connected
         ? {}
-        : { errorCode: snapshot.errorCode ?? (snapshot.paired ? "chrome_browser_disconnected" : "chrome_browser_extension_required") }),
+        : { errorCode: snapshot.errorCode ?? browserState }),
     },
   };
 }
 
 function readBrowserState(value: unknown): ChromeBrowserSetupState {
-  return value === "ready" || value === "waiting_for_chrome" || value === "incompatible"
+  return value === "ready"
+    || value === "waiting_for_chrome"
+    || value === "incompatible"
+    || value === "host_missing"
+    || value === "ling_unavailable"
+    || value === "paused"
     ? value
     : "extension_required";
+}
+
+function readHostState(value: unknown): ChromeBrowserSessionSnapshot["hostState"] {
+  return value === "ready" || value === "incompatible" ? value : "missing";
+}
+
+function readExtensionState(value: unknown): ChromeBrowserSessionSnapshot["extensionState"] {
+  return value === "connected"
+    || value === "paused"
+    || value === "ling_unavailable"
+    || value === "incompatible"
+    ? value
+    : "not_detected";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

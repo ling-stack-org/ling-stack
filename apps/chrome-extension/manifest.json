@@ -2,14 +2,16 @@
   "manifest_version": 3,
   "name": "Ling for Chrome",
   "short_name": "Ling",
-  "version": "0.1.0",
-  "version_name": "0.1.0",
+  "version": "0.1.2",
+  "version_name": "0.1.2",
   "description": "Let Ling work with tabs you explicitly connect in Chrome.",
   "minimum_chrome_version": "116",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs80/DkpmElXvs5WaMeSJMLx0gXsic1agpjX2CeDX6duwlQhJaQ6Hmgk2U25SmNCilrZPVRYoofKXPqKBnGHSBPqlAP33dQahFEnVG2CONlpqKYGZSawsY8L7zIOJ/WvWICqhE80wEv2S4SjHRe1YhbRTPGrO06PP1AsJYfGNn5TWOUNP0rxnvvc/Ih3VinwFrbpOUPpG4cWglVdL6na4lt3ga4GE7HGr+QNKNb6c//EjZucBbboMgMebcuRbjS3Bgoy1SOKGZJgtU1ZDzcncB7i0JLiYlmDzUc7XJsrrv1iewQqVZCpBUt35iw0K7575xARj4igpkUW8nMLyAunqSwIDAQAB",
   "permissions": [
+    "alarms",
     "scripting",
-    "storage"
+    "storage",
+    "nativeMessaging"
   ],
   "host_permissions": [
     "<all_urls>"

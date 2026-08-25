@@ -1,309 +1,287 @@
 # Chrome Browser Built-in Plugin
 
-## Status
-
-Active product and architecture contract for the first Ling-managed Chrome extension integration.
-
-This contract supersedes the blanket `browser: deferred` statement in
-[Ling Web Tools](ling-web-tools.md). Public search and URL reading remain daemon evidence tools;
-interactive control of the user's existing Chrome profile is a separate built-in plugin backed by
-an explicitly installed Manifest V3 extension.
+Status: active product, security, and transport contract
+Owner: Browser integration, Desktop, daemon, and release maintainers
+Last verified: 2026-08-24
+Code and test anchors: `apps/chrome-extension`, `packages/browser-host`,
+`packages/daemon/src/features/browser-extension`, `apps/web/src/features/plugins`, and
+`apps/desktop/tests/chrome-extension-*.mjs`
 
 ## Decision
 
-Ling ships a product-managed Plugin Manager entry named `Chrome`. The plugin contributes one
-logical MCP server whose tools operate the user's existing Google Chrome tabs, login state and
-browser profile through a Ling-owned extension.
+Ling exposes Chrome as a product-managed built-in plugin. It contributes one logical MCP server
+whose six tools operate the user's existing Google Chrome profile after the extension is installed,
+the plugin is enabled, and the normal MCP approval is granted.
 
-The integration uses:
+Version `0.1.2` uses Chrome Native Messaging for automatic local discovery and persistent MV3
+reconnection:
 
 ```text
 Ling conversation / teammate / channel
-  -> existing MCP tool selection, binding, approval and audit
-  -> built-in:chrome plugin + mcp_chrome_browser
-  -> daemon browser generation broker
-  -> authenticated loopback WebSocket session
-  -> Ling Chrome Manifest V3 extension
-  -> chrome.tabs / chrome.scripting / content-script DOM adapter
-  -> the user's existing Chrome window and tabs
+  -> existing MCP binding, approval, cancellation, and audit
+  -> built-in:chrome + mcp_chrome_browser
+  -> daemon browser session controller
+  -> private loopback native broker
+  -> com.lingstack.browser Native Messaging Host
+  -> Ling for Chrome Manifest V3 extension
+  -> chrome.tabs / chrome.scripting / on-demand content script
+  -> the user's existing Chrome profile
 ```
 
-Ling does not silently install, sideload or policy-force a Chrome extension. Normal users approve
-the Chrome Web Store installation. Development builds may use `Load unpacked` from the committed
-extension output, but that path is never presented as the production installation flow.
+The extension never selects a workspace and never receives a workspace path. The daemon binds the
+session to its current workspace authority. Legacy HTTP pairing and WebSocket transport remain only
+for already-installed `0.1.0` credentials during the `0.1.1`/`0.1.2` migration window.
 
-## Product Goals
+## Goals
 
-- Show Chrome as a first-class built-in item in Plugin Manager.
-- Reuse the user's open tabs and authenticated browser sessions without launching a second profile.
-- Keep pairing, enablement, health, tool availability and revocation understandable from Ling.
-- Reuse MCP bindings, approval enforcement, run snapshots, cancellation and audit instead of adding
-  a private browser permission engine.
-- Keep browser content and commands local between Chrome and the loopback Ling daemon.
-- Fail closed when the extension ID, credential, protocol version, workspace or active session is
-  missing or stale.
+- Make Chrome usable after normal Web Store installation without asking for a path, daemon URL, or
+  pairing code.
+- Reuse the user's open tabs and signed-in browser profile without launching a second profile.
+- Keep Host, extension, plugin, and protocol failures distinct and actionable.
+- Reuse MCP approvals, teammate bindings, run snapshots, cancellation, and audit.
+- Keep browser traffic local to the current machine and fail closed on identity, token, version,
+  descriptor, or session failures.
+- Ship one standalone, dependency-minimal Host binary for macOS arm64 and Windows x64.
 
 ## Non-Goals
 
-- No hidden or forced Chrome extension installation.
-- No Chrome password, cookie, payment, autofill or credential database access.
-- No browsing-history, bookmark or download management in V1.
-- No arbitrary JavaScript evaluation, network interception or response-body capture in V1.
-- No control of `chrome://`, `chrome-extension://`, `file:`, `data:` or `javascript:` URLs.
-- No Firefox, Safari, Edge, Brave, Opera or Vivaldi support in the first release.
-- No remote browser relay or cloud browser session.
-- No bypass around MCP tool approval, teammate binding or run cancellation.
+- No silent or policy-forced Chrome extension installation.
+- No remote relay, cloud browser, or public Host listener.
+- No Chrome password, cookie, payment, autofill, history, bookmark, or download access.
+- No arbitrary JavaScript evaluation, network interception, or response-body capture.
+- No control of browser-internal, extension, file, data, or JavaScript URLs.
+- No second browser permission engine, business protocol, tool registry, or database.
+- No Firefox, Safari, Edge, Brave, Opera, or Vivaldi support in `0.1.2`.
 
 ## Stable Identities
 
 ```text
-plugin id:          built-in:chrome
-logical MCP id:     mcp_chrome_browser
-protocol:           ling.chrome.v1
-extension package:  @ling-stack/chrome-extension
+plugin id:                  built-in:chrome
+logical MCP id:             mcp_chrome_browser
+business protocol:          ling.chrome.v1
+native transport protocol:  ling.chrome.native.v1
+native host name:           com.lingstack.browser
+extension package:          @ling-stack/chrome-extension
+extension version:          0.1.2
 ```
 
-The production Chrome Web Store extension ID is `mbmlnnfhebclljonhedpjghbhibfapei`, derived from
-the Store-issued public key committed in the manifest. The legacy development ID
-`ggmhibjboaedlnidbemkefonahjgcapc` remains an explicit compatibility allowlist entry. The daemon
-never accepts an arbitrary `chrome-extension://` origin.
+The production extension ID is `mbmlnnfhebclljonhedpjghbhibfapei`. The existing development ID
+`ggmhibjboaedlnidbemkefonahjgcapc` remains explicitly allowlisted for source acceptance. No
+arbitrary `chrome-extension://` origin is accepted by the Host, manifest, or daemon.
 
-## User Experience
+## Product States
 
-### Plugin Manager row
-
-The row uses the Chrome icon and the description `Control Chrome with Ling`.
-
-Product states:
+Plugin Manager projects these states without exposing paths, ports, tokens, extension IDs, or raw
+transport errors:
 
 | State | Meaning | Primary action |
 | --- | --- | --- |
-| Disabled | Ling access is off | Enable |
-| Extension required | Plugin requested, but the Ling extension has not paired | Connect Chrome |
-| Waiting for Chrome | A credential exists, but no current extension session is connected | Check connection |
-| Ready | Extension session and MCP tools are available | Details |
-| Needs attention | Protocol, credential or extension identity failed | View repair steps |
+| Disabled | Browser tools are disabled in Ling | Enable |
+| Connection component missing | Native Host is not registered or its executable is unavailable | Repair connection component |
+| Extension required | Host is ready but no compatible extension has been detected | Open Chrome Web Store |
+| Ling unavailable | Extension and Host ran, but the local daemon broker was unavailable | Open Ling |
+| Paused | The user paused the extension | Resume in the extension |
+| Update required | Host, extension, or transport version is incompatible | Update Ling or extension |
+| Ready | The Native session and MCP tools are available | Details |
 
-The default layer does not expose extension IDs, WebSocket URLs, token hashes or MCP server IDs.
-Those values remain in technical diagnostics.
+`connected` remains a compatibility projection. New consumers use `transport`, `hostState`, and
+`extensionState`. The UI must not collapse every failure into `Not connected` or show a manual
+refresh loop that causes status flicker.
 
-### Connect flow
+## First Connection And Migration
 
-1. User enables Chrome in Plugin Manager.
-2. Ling shows the official Chrome Web Store action and a short-lived pairing code.
-3. User installs/opens the extension and reviews the prominent local-data disclosure in its popup.
-4. User enters the code and explicitly checks consent; Connect remains disabled until both are present.
-5. The extension exchanges the one-time code for a persistent random credential.
-6. The extension stores only the raw credential in `chrome.storage.local`; Ling stores only its
-   SHA-256 hash.
-7. A successful authenticated WebSocket session changes the plugin to Ready and exposes tools.
+1. The user installs Ling for Chrome from the Web Store and enables Chrome in Ling. These two
+   explicit actions form the one-time connection authorization.
+2. Desktop startup idempotently registers `com.lingstack.browser` for Chrome and Chromium. Source
+   users run `ling-stack browser-host install` once.
+3. The daemon starts a private random-port broker and publishes a short-lived user-only runtime
+   descriptor.
+4. The extension connects with `chrome.runtime.connectNative("com.lingstack.browser")`.
+   Real-Chrome acceptance that launches Chrome with a custom `--user-data-dir` must stage the same
+   manifest under that isolated user-data root's `NativeMessagingHosts/` directory. This is
+   test-fixture setup only; production installation continues to register the standard per-user
+   Chrome and Chromium locations. A directory chooser may appear only when a developer deliberately
+   performs the one-time `Load unpacked` acceptance setup; Store-installed users never select an
+   extension directory, workspace, daemon address, or Native Host path.
+5. The Host validates the Chrome origin, reads the current descriptor, and forwards a bounded native
+   handshake containing the startup token and versions. It does not accept `cwd`.
+6. The daemon binds the session to its current workspace, activates the existing business protocol,
+   and exposes tools only when the plugin is enabled.
+7. Each browser command still enters the normal MCP approval path.
 
-Disable closes the active session and removes runtime eligibility while preserving the pairing for
-quick re-enable. `Remove Chrome access` revokes the credential, closes the session and requires a
-new pairing code. When the extension receives the authoritative `4003 / chrome_access_revoked`
-close signal, it removes its local credential and workspace binding and does not reconnect. Other
-disconnect reasons, including ordinary plugin disable, must preserve the local pairing.
-If access was revoked while Chrome was offline, the next authoritative
-`4002 / chrome_browser_credential_invalid` close performs the same local cleanup instead of
-entering an invalid-credential reconnect loop.
+If Native Messaging is unavailable and `0.1.0` credentials already exist, `0.1.2` may silently use
+the legacy WebSocket path. New users are never shown the legacy pairing UI. On the first successful
+Native connection, the daemon revokes the legacy credential and the extension deletes credential,
+workspace, and daemon-address keys from `chrome.storage.local`.
 
 ## Extension Surface
 
-The Manifest V3 extension uses a small popup and one background service worker. A content script
-provides bounded semantic snapshots and ref-based interactions. It is injected on demand only after
-an approved browser tool targets an HTTP(S) tab; the manifest does not install it on every page.
-
-Required permissions:
+The Manifest V3 extension contains one background service worker, a compact popup, and an on-demand
+content script. Required permissions are:
 
 ```text
+nativeMessaging
 scripting
 storage
+alarms
 host_permissions: <all_urls>
 ```
 
-V1 does not request `debugger`, `history`, `bookmarks`, `cookies`, `downloads`, `webRequest` or
-`nativeMessaging`.
-
-Chrome requires `<all_urls>` or temporary `activeTab` for `captureVisibleTab`. Ling needs reliable
-approved screenshots after navigation, so V1 keeps `<all_urls>` and removes the redundant `tabs`
-and `activeTab` permissions. Ling still rejects all non-HTTP(S) tabs in its own command and
-content-script policy, and Chrome keeps file URL access off unless the user separately changes the
-browser-owned extension setting.
+`storage.local` owns only the paused state and the one-release legacy migration.
+`storage.session` may hold a non-sensitive reconnect attempt counter while Chrome is running.
+Neither area may persist a new workspace, daemon URL, startup token, or newly issued credential.
+`alarms` provides a durable wake-up after the MV3 worker is suspended. `<all_urls>` remains
+necessary for approved visible-viewport capture after navigation; runtime policy still rejects
+non-HTTP(S) pages.
 
 The popup shows only:
 
-- Ling connection state;
-- daemon address fixed to loopback;
-- pairing-code input while unpaired;
-- a prominent disclosure of URL, visible-content, interactive-label and screenshot handling;
-- an unchecked explicit-consent control that gates the first connection;
-- Connect / Disconnect;
-- the active tab title and origin when connected.
+- connected;
+- Ling is not running;
+- connection component or extension update is required;
+- paused;
+- Connect/Retry and Pause/Resume actions;
+- a concise local-data disclosure.
 
-## Pairing And Session Protocol
+It never shows workspace, daemon address, pairing code, credential, extension ID, or an authorization
+checkbox. Browser tool approvals remain in Ling at the moment of use.
 
-### HTTP pairing
+## MV3 Connection Recovery
 
-```http
-POST /plugins/built-in%3Achrome/pairing?cwd=...
-POST /browser-extension/v1/pair
-POST /plugins/built-in%3Achrome/revoke?cwd=...
-```
+Installation, Chrome startup, popup retry, Native disconnect, legacy disconnect, and
+`chrome.alarms.onAlarm` all enter one single-flight connection state machine. A stale attempt may not
+replace a newer connection or clear its heartbeat.
 
-`pairing` requires an enabled plugin and creates a single-use, high-entropy code with a five-minute
-TTL. Only one live code exists per workspace. Failed attempts are rate limited.
+Unexpected disconnect schedules the named `ling.chrome.reconnect` alarm as a 30-second periodic
+wake-up, alongside bounded in-worker exponential backoff capped at 30 seconds. Alarm creation must
+be awaited. A wake-up must keep the periodic alarm installed until the connection reaches a terminal
+state; it must not clear the only durable wake-up before starting an asynchronous connection attempt.
+Successful connection, pause, plugin disable, or an intentional replacement clears the alarm and
+session retry counter. With Chrome active and the machine awake, a suspended worker must reconnect
+within 35 seconds without opening the popup. Sleep time is excluded; recovery begins again when
+Chrome resumes.
 
-`/browser-extension/v1/pair` accepts requests only from a configured
-`chrome-extension://<id>` Origin and a loopback Host. It consumes the code and returns one random
-credential exactly once. Raw credentials and pairing codes never enter logs, events, plugin health
-or API responses after issuance.
+## Native Host Contract
 
-### WebSocket session
+`Ling Browser Host` is a standalone binary with no external runtime installation. It owns only
+Chrome Native Messaging framing and forwarding. It must not parse pages, choose a workspace, execute
+browser tools, persist credentials, or make model/run decisions.
+
+The user-level runtime descriptor is:
 
 ```text
-WS /browser-extension/v1/connect?cwd=<encoded workspace>
-Origin: chrome-extension://<allowlisted-id>
-first message: authenticated hello with protocol, extension version and credential
+~/.ling-stack/browser-host/runtime-v1.json
 ```
 
-The server authenticates before accepting commands. One workspace owns at most one active Chrome
-session. A newer valid session replaces the older one. Heartbeats expire silently after a bounded
-deadline. Disable, revoke, daemon shutdown and workspace-authority changes close pending commands
-and reject late results.
+It contains only schema version, loopback port, random startup token, generation, daemon PID,
+expiration, and protocol/Host compatibility fields. On macOS the directory is mode `0700` and the
+descriptor is `0600`. On Windows the directory and descriptor ACL are restricted to the current
+user. Publication is atomic; shutdown removes only a descriptor whose generation still belongs to
+that daemon.
 
-Command envelope:
+Host rules:
 
-```ts
-interface ChromeBrowserCommand {
-  readonly protocol: "ling.chrome.v1";
-  readonly id: string;
-  readonly method: ChromeBrowserMethod;
-  readonly params: unknown;
-  readonly deadlineAt: string;
-}
+- maximum frame size is the shared one-megabyte Chrome limit;
+- truncated frames, EOF, malformed JSON, unknown fields, stale descriptors, wrong origin, wrong
+  token, and incompatible versions fail closed;
+- stdout contains Native Messaging frames only; sanitized diagnostics go to stderr;
+- the Host connects only to the descriptor's loopback port;
+- disconnect terminates both relay directions and does not leave a background process.
 
-interface ChromeBrowserResult {
-  readonly protocol: "ling.chrome.v1";
-  readonly id: string;
-  readonly ok: boolean;
-  readonly result?: unknown;
-  readonly error?: { readonly code: string; readonly message: string };
-}
+Desktop owns idempotent manifest registration, packaged Host identity, upgrade rewriting, signing,
+and uninstall cleanup. macOS writes user-level Chrome and Chromium manifests. Dragging the app to the
+trash may leave only a credential-free manifest pointing at a missing executable. Windows writes the
+same manifest plus the two HKCU registry bindings; NSIS uninstall removes the exact Ling entries.
+
+On macOS, a source or engineering Host build must replace Rust's linker-generated signature with an
+explicit ad-hoc signature and pass `codesign --verify --deep --strict`. A signature whose details
+still contain `linker-signed` is not runnable evidence: Chrome-launched helpers may otherwise be
+terminated by Code Signing Monitor with `SIGKILL (Code Signature Invalid)`. Release packaging may
+replace this local identity with the configured Developer ID identity.
+
+## Session And Protocol Contract
+
+Native transport starts with an exact `ling.chrome.native.v1` handshake containing extension origin,
+Host version, extension version, browser version, paused state, and the descriptor startup token.
+The extension must not send `cwd`. Native and legacy adapters then feed the same session controller:
+
+- one current session per daemon workspace;
+- newer valid sessions replace older sessions;
+- shared heartbeat and last-seen tracking;
+- shared command deadline, cancellation, revoke, disable, and shutdown behavior;
+- late results from replaced sessions are ignored;
+- business commands and results remain `ling.chrome.v1`.
+
+Legacy endpoints remain internal during migration:
+
+```text
+POST /browser-extension/v1/pair
+WS   /browser-extension/v1/connect?cwd=...
 ```
 
-Payloads are size bounded. Unknown fields, duplicate IDs, expired commands and results from a
-replaced session fail closed.
+They serve only previously stored `0.1.0` credentials and are not linked from new product UI.
 
-## Initial MCP Tools
+## Browser Tools And Trust Boundary
 
 | Tool | Purpose | Default approval |
 | --- | --- | --- |
 | `chrome_tabs` | List bounded tab metadata | ask |
-| `chrome_snapshot` | Read visible semantic page content and interactive refs | ask |
+| `chrome_snapshot` | Read visible semantic page content and refs | ask |
 | `chrome_navigate` | Navigate or create an HTTP(S) tab | ask |
 | `chrome_click` | Click a ref from the latest snapshot | ask |
-| `chrome_type` | Enter text into a non-password ref | ask |
+| `chrome_type` | Type into a non-password ref | ask |
 | `chrome_screenshot` | Capture the visible viewport | ask |
 
-All tools use the existing MCP tool pipeline. Tool definitions, calls, approvals, results and
-failures therefore remain visible in run records. Enabling the built-in plugin creates one explicit
-`all_current_tools` binding for the protected `ling_agent`, because normal conversations cannot edit
-that teammate's hidden advanced-tool page; every tool still defaults to `ask`. Custom teammates are
-never auto-bound and continue to use their existing Tools and permissions editor.
+Tool definitions, calls, approvals, results, and failures stay in the existing MCP/run record path.
+Page-derived text and images are bounded and marked `untrusted_web_content`. Password and file inputs
+are rejected, refs are revision-scoped, screenshots are compressed, and cancellation prevents late
+commit. Enabling Chrome may reconcile the protected Ling Agent binding; custom teammates are never
+auto-bound.
 
-Snapshot rules:
+## Persistence And Revocation
 
-- visible text and interactive elements only;
-- maximum text, node count and nesting depth are bounded;
-- password values, hidden inputs and form secrets are never returned;
-- refs are scoped to tab ID, document identity and snapshot revision;
-- stale refs fail instead of searching for a similar element;
-- screenshots are compressed and bounded before entering MCP results.
-- every page-derived text result is wrapped in a top-level `untrusted_web_content` envelope, and
-  every screenshot is preceded by the same trust notice; browser content is evidence, never an
-  instruction source.
+No database migration is added. `chrome_browser_credentials` remains only for legacy migration and
+revocation. Native sessions use the daemon startup token from the protected descriptor and do not
+create a durable browser credential.
 
-## Managed Plugin Integration
+Disabling the plugin closes the active session and removes tool eligibility. Revoking Chrome access
+closes the session, revokes legacy credentials, and requires explicit re-enable/reconnect. Pausing in
+the extension keeps the Host installed but prevents command activation. Desktop or daemon shutdown
+closes pending commands and invalidates the descriptor generation.
 
-`built-in:chrome` is returned by the product-managed built-in descriptor catalog. Enablement creates
-or reconciles `mcp_chrome_browser` and its linked contribution. Built-in plugins do not require a
-package-cache record. The logical MCP server uses an internal generation broker; its placeholder
-transport is never contacted, so no unauthenticated browser-control MCP listener is exposed on
-loopback.
+## Packaging And Release
 
-The plugin is effectively injectable only when:
+The deterministic extension build records extension version, extension ID, manifest SHA-256, ZIP
+SHA-256, and source commit SHA. Desktop carries the matching platform Host and manifest templates.
+The Host is part of macOS signing verification and Windows NSIS/hash verification.
 
-- the managed record is enabled;
-- a valid paired credential exists;
-- the allowlisted extension has a live authenticated session;
-- plugin health is Ready;
-- the logical MCP server and contribution are enabled.
-
-Health and catalog projection consume the browser-session controller. The renderer never infers
-readiness from Chrome process names, extension files or stale health copy.
-
-## Persistence
-
-Add a feature-owned credential table:
-
-```text
-chrome_browser_credentials
-- workspace_id
-- plugin_id
-- extension_id
-- credential_hash
-- created_at
-- updated_at
-- revoked_at
-```
-
-Only a SHA-256 credential hash is stored. Pairing codes, raw credentials, tab content, screenshots
-and command payloads are not persisted by this table. Generic run and MCP audit records continue to
-own executed tool evidence.
-
-## Security Boundaries
-
-- Bind HTTP and WebSocket surfaces to loopback only.
-- Validate Host and exact Chrome extension Origin before parsing pairing/session bodies.
-- Use constant-time credential hash comparison.
-- Enforce pairing TTL, one-time use, attempt limits and one active session per workspace.
-- Redact credentials, pairing codes, typed text and screenshot bytes from daemon logs.
-- Mark page titles, URLs, visible content and screenshots as untrusted before they enter the model
-  context so webpage prompt injection cannot silently become trusted instructions.
-- Reject password/file inputs and browser-internal or non-HTTP(S) navigation.
-- Apply command deadlines and run cancellation; late extension results cannot commit.
-- Keep the extension source auditable and dependency-light.
-- Never claim Web Store availability until the final extension ID and listing are published.
-
-## Distribution
-
-The repository carries extension source and a deterministic ZIP build. Desktop packages may include
-the ZIP and license/notice files for diagnostics, but Chrome installation still goes through the Web
-Store. Release metadata binds:
-
-- extension version;
-- manifest hash;
-- public-key-derived extension ID;
-- minimum Chrome version;
-- supported daemon protocol version;
-- Web Store URL once published.
+Normal releases rebuild the final Web Store ZIP from the exact merged `main` commit after CI passes.
+The user-authorized `0.1.2` recovery release is a narrow exception: it may be built from a clean,
+locally committed repair branch after all local gates pass, without pushing or opening a PR. Build
+metadata must bind that exact commit. Store copy and privacy policy must explain `nativeMessaging`,
+`alarms`, automatic local discovery, legacy credential migration, and the absence of workspace
+storage. Review approval uses automatic publishing.
 
 ## Acceptance
 
-- Chrome appears as Built-in in Plugin Manager without affecting Cua Driver or local plugins.
-- Unpaired, paired-disconnected, connected, disabled, revoked and incompatible states are distinct.
-- Extension install and pairing require explicit user action.
-- All six tools execute through MCP approval and are rejected when disabled, disconnected, stale or
-  cancelled.
-- No cookies, passwords, history, bookmarks or raw credentials appear in API/log/test artifacts.
-- macOS and Windows path-independent daemon/extension tests pass; real Chrome acceptance is required
-  on the current macOS host, while Windows packaged/Web Store acceptance remains separately stated.
+- A fresh Web Store install connects after Ling starts without path, address, pairing code, or
+  credential entry.
+- Desktop restart after the worker has become idle reconnects without opening the extension popup;
+  an awake Chrome instance recovers within 35 seconds.
+- macOS arm64 and Windows x64 Host build, install, status, upgrade, and uninstall tests pass.
+- Host, extension, paused, incompatible, disabled, and Ling-unavailable states are distinct.
+- Native requests contain no `cwd`; workspace switching follows daemon authority.
+- Existing `0.1.0` credentials can fall back once and are removed after Native success.
+- All six tools pass real-Chrome acceptance with MCP approval, cancellation, Desktop restart,
+  extension restart, and workspace switch coverage.
+- Packaging proves the Host and extension metadata originate from the same source commit.
 
 ## Hard Stops
 
-- Do not reuse Cua Driver screenshots or coordinate clicks as the Chrome extension transport.
-- Do not expose a generic JavaScript-eval tool.
-- Do not weaken Chrome installation prompts, MCP approval or extension-origin validation.
-- Do not add a second plugin database or a second runner tool-injection path.
-- If Chrome requires a native helper for production reliability, stop and design its packaging,
-  signing, update and uninstall ownership before adding that binary.
+- Do not add remote relay, cloud authority, public broker binding, or direct extension-to-model path.
+- Do not accept workspace, daemon URL, credential, or arbitrary origin from the new extension UI.
+- Do not duplicate MCP approval, tool registration, cancellation, or session business semantics.
+- Do not upload `0.1.2` until current-mac isolated-profile acceptance, worker-idle recovery, and
+  platform-neutral Host/extension protocol tests pass. This reconnect-only release does not require
+  a new Windows installer build because Host and daemon wire protocols are unchanged.
+- Do not describe an unsigned or structurally inspected Host as release-signed.

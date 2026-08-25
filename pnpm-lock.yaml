@@ -41,6 +41,9 @@ importers:
       '@ling-stack/api-client':
         specifier: workspace:*
         version: link:../../packages/api-client
+      '@ling-stack/browser-host':
+        specifier: workspace:*
+        version: link:../../packages/browser-host
       '@ling-stack/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -249,8 +252,17 @@ importers:
         specifier: workspace:*
         version: link:../contracts
 
+  packages/browser-host:
+    dependencies:
+      '@ling-stack/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+
   packages/cli:
     dependencies:
+      '@ling-stack/browser-host':
+        specifier: workspace:*
+        version: link:../browser-host
       '@ling-stack/core':
         specifier: workspace:*
         version: link:../core
@@ -329,6 +341,9 @@ importers:
 
   packages/daemon:
     dependencies:
+      '@ling-stack/browser-host':
+        specifier: workspace:*
+        version: link:../browser-host
       '@ling-stack/contracts':
         specifier: workspace:*
         version: link:../contracts

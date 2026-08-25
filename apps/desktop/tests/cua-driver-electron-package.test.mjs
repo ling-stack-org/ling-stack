@@ -30,10 +30,12 @@ test("Electron Builder config keeps external-only provider authority unchanged b
   const config = await inspectConfig({
     LING_CUA_DRIVER_PACKAGE_PROVIDER: "0",
   });
-  assert.equal(config.extraResources.length, 8);
+  assert.equal(config.extraResources.length, 9);
   assert.equal(config.extraResources.some((resource) => resource.to === "providers/cua-driver"), false);
   assert.equal(config.extraResources.some((resource) => resource.to === "browser-extension/ling-for-chrome.zip"), true);
   assert.equal(config.extraResources.some((resource) => resource.to === "office-driver"), true);
+  assert.equal(config.extraResources.some((resource) => resource.to === "browser-host"), true);
+  assert.equal(config.macIdentity, "-");
   assert.equal(config.macSign, null);
   assert.equal(config.winSign, null);
   assert.equal(config.asar, true);
@@ -452,6 +454,7 @@ async function inspectConfig(overrides) {
     import config from ${JSON.stringify(configModule)};
     process.stdout.write(JSON.stringify({
       extraResources: config.extraResources,
+      macIdentity: config.mac?.identity ?? null,
       macSign: config.mac?.sign ?? null,
       macHardenedRuntime: config.mac?.hardenedRuntime ?? null,
       winSign: config.win?.signtoolOptions?.sign ?? null,
