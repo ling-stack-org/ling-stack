@@ -1276,6 +1276,7 @@ export const enUS = {
     "1 reference": "1 reference",
     "{count} references": "{count} references",
     "Agent activity": "Agent activity",
+    "Conversation item": "Conversation item",
     "Agent activity detail": "Agent activity detail",
     "Review scope": "Review scope",
     "Clarify scope": "Clarify scope",

@@ -149,6 +149,9 @@ function transcriptBlockLabel(kind: TranscriptBlockBase["kind"], t: Translate): 
   if (kind === "agent_activity") {
     return t("Agent activity");
   }
+  if (kind === "conversation_item") {
+    return t("Conversation item");
+  }
   if (kind === "final_result") {
     return t("Final result");
   }

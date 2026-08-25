@@ -183,6 +183,7 @@ import type {
   ChannelLinkPreview,
   ChannelMention,
   ChannelMessage,
+  ConversationItemV1,
   ConversationGeneratedMedia,
   ChannelMessageFileRef,
   ChannelReplyPendingEvent,
@@ -395,6 +396,7 @@ export function WorkspaceClientView({
   tasks,
   taskForm,
   channelMessages,
+  channelConversationItems,
   channelGeneratedMedia,
   memoryById,
   usedMemoryEvents,
@@ -560,6 +562,7 @@ export function WorkspaceClientView({
   readonly tasks: readonly Task[];
   readonly taskForm: TaskFormState;
   readonly channelMessages: readonly ChannelMessage[];
+  readonly channelConversationItems: readonly ConversationItemV1[];
   readonly channelGeneratedMedia: readonly ConversationGeneratedMedia[];
   readonly memoryById: ReadonlyMap<string, MemoryObject>;
   readonly usedMemoryEvents: readonly UsedMemoryEvent[];
@@ -1592,6 +1595,7 @@ export function WorkspaceClientView({
     () => buildConversationTurnProjection({
       channelId: selectedChannelId,
       messages: channelMessagesForDisplay,
+      conversationItems: channelConversationItems,
       proposals: channelExecutionProposals,
       intentDecisions: channelIntentDecisions,
       workflows: channelWorkflowsForDisplay,
@@ -1607,6 +1611,7 @@ export function WorkspaceClientView({
       channelExecutionProposals,
       channelIntentDecisions,
       channelMessagesForDisplay,
+      channelConversationItems,
       channelRuns,
       channelWorkflowStepsForDisplay,
       channelWorkflowsForDisplay,

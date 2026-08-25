@@ -3679,6 +3679,7 @@ export const zhCN = {
     "1 reference": "1 个引用",
     "{count} references": "{count} 个引用",
     "Agent activity": "队友活动",
+    "Conversation item": "会话项目",
     "Agent activity detail": "队友活动详情",
     "Review scope": "复核范围",
     "Clarify scope": "确认范围",

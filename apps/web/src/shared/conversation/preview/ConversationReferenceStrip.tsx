@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { FileText, Globe2 } from "lucide-react";
 
 export interface ConversationReferenceItem {
@@ -18,6 +19,7 @@ export function ConversationReferenceStrip({
   readonly references: readonly ConversationReferenceItem[];
   readonly ariaLabel: string;
 }): React.JSX.Element | null {
+  const [activePreviewId, setActivePreviewId] = useState<string | undefined>();
   if (references.length === 0) {
     return null;
   }
@@ -33,17 +35,36 @@ export function ConversationReferenceStrip({
           </>
         );
         return (
-          <span key={reference.id} className="conversation-reference-item">
+          <span
+            key={reference.id}
+            className="conversation-reference-item"
+            onMouseEnter={() => setActivePreviewId(reference.id)}
+            onMouseLeave={() => setActivePreviewId((current) => current === reference.id ? undefined : current)}
+          >
             {reference.href ? (
-              <a className="conversation-reference-trigger" href={reference.href} target="_blank" rel="noreferrer">
+              <a
+                className="conversation-reference-trigger"
+                href={reference.href}
+                target="_blank"
+                rel="noreferrer"
+                onFocus={() => setActivePreviewId(reference.id)}
+                onBlur={() => setActivePreviewId((current) => current === reference.id ? undefined : current)}
+              >
                 {content}
               </a>
             ) : (
-              <button className="conversation-reference-trigger" type="button" onClick={reference.onOpen} disabled={!reference.onOpen}>
+              <button
+                className="conversation-reference-trigger"
+                type="button"
+                onClick={reference.onOpen}
+                onFocus={() => setActivePreviewId(reference.id)}
+                onBlur={() => setActivePreviewId((current) => current === reference.id ? undefined : current)}
+                disabled={!reference.onOpen}
+              >
                 {content}
               </button>
             )}
-            {reference.previewTitle || reference.previewText || reference.meta ? (
+            {activePreviewId === reference.id && (reference.previewTitle || reference.previewText || reference.meta) ? (
               <span className="conversation-reference-preview" role="tooltip">
                 <strong>{reference.previewTitle ?? reference.label}</strong>
                 {reference.previewText ? <span>{reference.previewText}</span> : null}
