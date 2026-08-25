@@ -118,6 +118,19 @@ test("command batching requires stable run and tool-call identities", () => {
   assert.deepEqual(items.map((item) => item.kind), ["operation", "operation", "command_batch"]);
 });
 
+test("command batching keeps approval-linked commands standalone", () => {
+  const items = projectConversationCommandBatches([
+    commandRow("one", "run-1", "one", 100),
+    commandRow("approved", "run-1", "approved", 100, { approvalId: "approval-1" }),
+    commandRow("two", "run-1", "two", 100),
+    commandRow("three", "run-1", "three", 100),
+    commandRow("four", "run-1", "four", 100),
+  ]);
+
+  assert.deepEqual(items.map((item) => item.kind), ["operation", "operation", "command_batch"]);
+  assert.deepEqual(items[2].batch.actionIds, ["two", "three", "four"]);
+});
+
 test("activity projection groups three adjacent successful read actions", () => {
   const items = projectConversationActivity([
     readRow("one", "run-1", "src/one.ts"),
@@ -159,6 +172,19 @@ test("activity projection keeps reads atomic when attempt lineage is missing", (
   ]);
 
   assert.deepEqual(items.map((item) => item.kind), ["operation", "operation", "operation"]);
+});
+
+test("activity projection keeps approval-linked reads standalone", () => {
+  const items = projectConversationActivity([
+    readRow("one", "run-1", "src/one.ts"),
+    readRow("approved", "run-1", "src/approved.ts", { approvalId: "approval-1" }),
+    readRow("two", "run-1", "src/two.ts"),
+    readRow("three", "run-1", "src/three.ts"),
+    readRow("four", "run-1", "src/four.ts"),
+  ]);
+
+  assert.deepEqual(items.map((item) => item.kind), ["operation", "operation", "exploration_batch"]);
+  assert.deepEqual(items[2].batch.actionIds, ["two", "three", "four"]);
 });
 
 test("activity projection keeps a logical action note with its evidence row", () => {
@@ -228,6 +254,7 @@ function commandRow(id, runId, commandText, durationMs, overrides = {}) {
       toolCallId: "toolCallId" in overrides ? overrides.toolCallId : `tool-${id}`,
       runId,
       attemptId: overrides.attemptId ?? (runId ? `attempt-${runId}` : undefined),
+      approvalId: overrides.approvalId,
       turnRunRole: overrides.turnRunRole ?? "primary",
       actionType: overrides.actionType ?? "bash",
       risk: overrides.risk ?? "low",
@@ -258,6 +285,7 @@ function operationExecution(actionId, runId, actionType, status, sourceRefs = []
     actionId,
     runId,
     attemptId: overrides.attemptId ?? (runId ? `attempt-${runId}` : undefined),
+    approvalId: overrides.approvalId,
     turnRunRole: overrides.turnRunRole ?? "primary",
     actionType,
     status,

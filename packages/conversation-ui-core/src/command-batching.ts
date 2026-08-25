@@ -72,6 +72,7 @@ export function isCommandBatchEligible(row: ConversationWorkCellRow): boolean {
     row.presentation === "shell" &&
     Boolean(command.runId) &&
     Boolean(command.attemptId ?? operation?.attemptId) &&
+    !Boolean(command.approvalId ?? operation?.approvalId) &&
     Boolean(command.turnRunRole ?? operation?.turnRunRole) &&
     Boolean(command.toolCallId) &&
     command.actionType === "bash" &&

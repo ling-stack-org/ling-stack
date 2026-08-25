@@ -29,6 +29,7 @@ export interface ConversationOperationExecutionView {
   readonly runId?: string;
   readonly attemptId?: string;
   readonly attemptNumber?: number;
+  readonly approvalId?: string;
   readonly turnRunRole?: ConversationTurnRunRole;
   readonly participantId?: string;
   readonly workUnitId?: string;
@@ -54,6 +55,7 @@ export interface ConversationCommandExecutionView {
   readonly runId?: string;
   readonly attemptId?: string;
   readonly attemptNumber?: number;
+  readonly approvalId?: string;
   readonly turnRunRole?: ConversationTurnRunRole;
   readonly participantId?: string;
   readonly workUnitId?: string;

@@ -119,6 +119,7 @@ export function isExplorationBatchEligible(row: ConversationWorkCellRow): boolea
     execution?.actionId &&
     execution.runId &&
     execution.attemptId &&
+    !execution.approvalId &&
     execution.turnRunRole &&
     execution.sourceRefs.length > 0 &&
     READ_ACTION_TYPES.has(execution.actionType) &&
