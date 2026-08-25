@@ -307,6 +307,7 @@ export function AppShell(): React.JSX.Element {
   const workspaceDomain = useWorkspaceDomain({
     cwd: form.cwd.trim(),
     initialWorkspaceCwd,
+    selectedChannelBranchId,
     translate: t,
     reportFeedback: channelFeedback.report,
     clearFeedback: channelFeedback.clear,

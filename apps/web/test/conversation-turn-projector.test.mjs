@@ -277,6 +277,19 @@ test("turn projection fails closed for agent-private canonical items", () => {
   assert.equal(projection.turns[0]?.blocks.some((block) => block.kind === "conversation_item" && block.item.id === privateItem.id), false);
 });
 
+test("turn projection fails closed for operator-only canonical items", () => {
+  const operatorItem = {
+    ...toolCall,
+    id: "item-operator-tool",
+    sequence: 12,
+    visibility: "operator",
+  };
+  const projection = buildConversationTurnProjection(projectionInput({
+    conversationItems: [userItem, assistantItem, operatorItem],
+  }));
+  assert.equal(projection.turns[0]?.blocks.some((block) => block.kind === "conversation_item" && block.item.id === operatorItem.id), false);
+});
+
 test("turn projection maps item failure, pending, approval, and operation states", () => {
   const item = (overrides) => ({
     ...toolCall,
@@ -290,9 +303,13 @@ test("turn projection maps item failure, pending, approval, and operation states
     item({ id: "item-pending", sequence: 21, status: "pending", payload: { outputSummary: "pending" } }),
     { ...approvalRequest, id: "item-waiting", sequence: 22, status: "pending" },
     { ...toolCall, id: "item-succeeded", sequence: 23, status: "committed" },
-    { ...toolCall, id: "item-operation-failed", sequence: 24, kind: "operation_state", payload: { operationId: "op-failed", state: "failed", title: "Failed", summary: "Failed" } },
-    { ...toolCall, id: "item-operation-cancelled", sequence: 25, kind: "operation_state", payload: { operationId: "op-cancelled", state: "cancelled", title: "Cancelled", summary: "Cancelled" } },
-    { ...toolCall, id: "item-operation-succeeded", sequence: 26, kind: "operation_state", payload: { operationId: "op-succeeded", state: "succeeded", title: "Succeeded", summary: "Succeeded" } },
+    { ...toolCall, id: "item-tool-failed", sequence: 24, kind: "tool_result", payload: { toolCallId: "tool-1", status: "failed", outputSummary: "Failed" } },
+    { ...toolCall, id: "item-tool-cancelled", sequence: 25, kind: "tool_result", payload: { toolCallId: "tool-1", status: "cancelled", outputSummary: "Cancelled" } },
+    { ...toolCall, id: "item-approval-denied", sequence: 26, kind: "approval_decision", payload: { approvalRequestId: "approval-1", decision: "denied", reason: "Denied" } },
+    { ...toolCall, id: "item-approval-cancelled", sequence: 27, kind: "approval_decision", payload: { approvalRequestId: "approval-1", decision: "cancelled", reason: "Cancelled" } },
+    { ...toolCall, id: "item-operation-failed", sequence: 28, kind: "operation_state", payload: { operationId: "op-failed", state: "failed", title: "Failed", summary: "Failed" } },
+    { ...toolCall, id: "item-operation-cancelled", sequence: 29, kind: "operation_state", payload: { operationId: "op-cancelled", state: "cancelled", title: "Cancelled", summary: "Cancelled" } },
+    { ...toolCall, id: "item-operation-succeeded", sequence: 30, kind: "operation_state", payload: { operationId: "op-succeeded", state: "succeeded", title: "Succeeded", summary: "Succeeded" } },
   ];
   const projection = buildConversationTurnProjection(projectionInput({
     conversationItems: [userItem, assistantItem, ...statusItems],
@@ -304,6 +321,10 @@ test("turn projection maps item failure, pending, approval, and operation states
     "item-pending": "running",
     "item-waiting": "waiting_for_approval",
     "item-succeeded": "succeeded",
+    "item-tool-failed": "failed",
+    "item-tool-cancelled": "cancelled",
+    "item-approval-denied": "failed",
+    "item-approval-cancelled": "cancelled",
     "item-operation-failed": "failed",
     "item-operation-cancelled": "cancelled",
     "item-operation-succeeded": "succeeded",

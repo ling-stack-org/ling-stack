@@ -92,7 +92,7 @@ export function buildConversationTurnProjection(input: BuildConversationTurnProj
   const hiddenActivityIds = new Set<string>();
   const channelMessages = input.messages.filter((message) => message.channelId === input.channelId);
   const conversationItems = (input.conversationItems ?? []).filter((item) =>
-    item.channelId === input.channelId && item.visibility !== "agent_private");
+    item.channelId === input.channelId && (item.visibility === "channel" || item.visibility === "thread_participants"));
   const itemsByTurnId = groupBy(conversationItems.filter((item) => Boolean(item.turnId)), (item) => item.turnId ?? "");
   const itemsByThreadId = groupBy(conversationItems, (item) => item.threadId);
   const messagesByTurnId = groupBy(channelMessages.filter((message) => Boolean(message.turnId)), (message) => message.turnId ?? "");
@@ -493,6 +493,16 @@ function conversationItemTranscriptStatus(item: ConversationItemV1): TranscriptB
   if (item.status === "failed") return "failed";
   if (item.kind === "approval_request") return "waiting_for_approval";
   if (item.status === "pending") return "running";
+  if (item.kind === "tool_result") {
+    if (item.payload.status === "failed") return "failed";
+    if (item.payload.status === "cancelled") return "cancelled";
+    return "succeeded";
+  }
+  if (item.kind === "approval_decision") {
+    if (item.payload.decision === "denied") return "failed";
+    if (item.payload.decision === "cancelled") return "cancelled";
+    return "succeeded";
+  }
   if (item.kind === "operation_state") {
     if (item.payload.state === "failed") return "failed";
     if (item.payload.state === "cancelled") return "cancelled";

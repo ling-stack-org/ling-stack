@@ -218,6 +218,7 @@ interface WorkspaceFeedbackEntry {
 export function useWorkspaceDomain(input: {
   readonly cwd: string;
   readonly initialWorkspaceCwd: string;
+  readonly selectedChannelBranchId: string;
   readonly translate: (value: string) => string;
   readonly reportFeedback: (entry: WorkspaceFeedbackEntry) => void;
   readonly clearFeedback: (surface: WorkspaceFeedbackSurface, identity: string) => void;
@@ -287,6 +288,23 @@ export function useWorkspaceDomain(input: {
   const [channelCouncilSaving, setChannelCouncilSaving] = useState(false);
   const [error, setError] = useState<DomainError | undefined>();
   const loadGuard = useLatestKeyedRequestGuard();
+
+  const selectedChannelBranch = channelBranches.find((branch) =>
+    branch.id === input.selectedChannelBranchId &&
+    branch.channelId === selectedChannelId &&
+    branch.status !== "archived"
+  );
+  const selectedChannelMessageThreadId = input.selectedChannelBranchId
+    ? selectedChannelBranch?.rootThreadId ?? `missing-channel-branch-thread:${input.selectedChannelBranchId}`
+    : undefined;
+  const selectedChannelIdRef = useRef(selectedChannelId);
+  const selectedChannelMessageThreadIdRef = useRef(selectedChannelMessageThreadId);
+  selectedChannelIdRef.current = selectedChannelId;
+  selectedChannelMessageThreadIdRef.current = selectedChannelMessageThreadId;
+
+  function isSelectedChannelConversation(channelId: string, threadId?: string): boolean {
+    return channelId === selectedChannelIdRef.current && threadId === selectedChannelMessageThreadIdRef.current;
+  }
 
   function clearScopedFeedback(surface: WorkspaceFeedbackSurface, identity: string): void {
     input.clearFeedback(surface, identity);
@@ -474,7 +492,7 @@ export function useWorkspaceDomain(input: {
       return;
     }
 
-    const guardKey = `messages:${cwd}:${channelId}:${threadId ?? ""}`;
+    const guardKey = `messages:${cwd}:${channelId}`;
     const token = loadGuard.next(guardKey);
     if (!options?.silent) {
       setChannelMessagesLoading(true);
@@ -491,6 +509,9 @@ export function useWorkspaceDomain(input: {
       if (!loadGuard.isCurrent(guardKey, token)) {
         return;
       }
+      if (!isSelectedChannelConversation(channelId, threadId)) {
+        return;
+      }
       const page = projectChannelConversationItemPage(response);
       const messagesChanged = !channelMessagesEqual(channelMessages, page.messages);
       setChannelMessages((current) => channelMessagesEqual(current, page.messages) ? current : page.messages);
@@ -502,12 +523,12 @@ export function useWorkspaceDomain(input: {
         input.onChannelMessagesLoaded?.(channelId, page.messages);
       }
     } catch (caught) {
-      if (!loadGuard.isCurrent(guardKey, token)) return;
+      if (!loadGuard.isCurrent(guardKey, token) || !isSelectedChannelConversation(channelId, threadId)) return;
       if (!options?.silent) {
         reportScopedFeedback("composer", channelId, "load", caught);
       }
     } finally {
-      if (loadGuard.isCurrent(guardKey, token)) {
+      if (loadGuard.isCurrent(guardKey, token) && isSelectedChannelConversation(channelId, threadId)) {
         setChannelMessagesLoading(false);
       }
     }
@@ -519,7 +540,7 @@ export function useWorkspaceDomain(input: {
       return;
     }
 
-    const guardKey = `olderMessages:${cwd}:${channelId}:${threadId ?? ""}`;
+    const guardKey = `olderMessages:${cwd}:${channelId}`;
     const token = loadGuard.next(guardKey);
     setChannelMessagesLoadingOlder(true);
     try {
@@ -533,6 +554,9 @@ export function useWorkspaceDomain(input: {
       if (!loadGuard.isCurrent(guardKey, token)) {
         return;
       }
+      if (!isSelectedChannelConversation(channelId, threadId)) {
+        return;
+      }
       const page = projectChannelConversationItemPage(response);
       setChannelMessages((current) => mergeChannelMessages(page.messages, current));
       setChannelConversationItems((current) => mergeConversationItems(page.conversationItems, current));
@@ -540,10 +564,10 @@ export function useWorkspaceDomain(input: {
       setChannelMessagesHasOlder(page.hasMore);
       setChannelItemsBeforeSequence(page.nextBeforeSequence);
     } catch (caught) {
-      if (!loadGuard.isCurrent(guardKey, token)) return;
+      if (!loadGuard.isCurrent(guardKey, token) || !isSelectedChannelConversation(channelId, threadId)) return;
       reportScopedFeedback("composer", channelId, "load", caught);
     } finally {
-      if (loadGuard.isCurrent(guardKey, token)) {
+      if (loadGuard.isCurrent(guardKey, token) && isSelectedChannelConversation(channelId, threadId)) {
         setChannelMessagesLoadingOlder(false);
       }
     }
