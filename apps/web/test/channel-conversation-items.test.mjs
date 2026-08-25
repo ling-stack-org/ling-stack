@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  mergeConversationItems,
   projectChannelConversationItemPage,
   projectChannelConversationTurn,
 } from "../src/lib/channel-conversation-items.ts";
@@ -116,6 +117,7 @@ test("channel Web domain projects canonical items and discardable decorations", 
     ["item-user", "message"],
     ["item-assistant", "ai_reply"],
   ]);
+  assert.deepEqual(page.conversationItems.map((item) => item.id), ["item-user", "item-assistant"]);
   assert.equal(page.messages[0].threadId, thread.id);
   assert.equal(page.messages[0].turnId, turn.id);
   assert.equal(page.messages[0].threadSurfaceKind, "channel_root");
@@ -137,4 +139,22 @@ test("channel stream projection derives presentation messages from turn items", 
   assert.equal(projected.message.id, userItem.id);
   assert.equal(projected.aiReply.id, assistantItem.id);
   assert.deepEqual(projected.aiReplies.map((message) => message.id), [assistantItem.id]);
+  assert.deepEqual(projected.conversationItems.map((item) => item.id), [userItem.id, assistantItem.id]);
+});
+
+test("canonical item merge orders by sequence, rejects stale revisions, and keeps transient refs", () => {
+  const current = {
+    ...assistantItem,
+    revision: 2,
+    domainRefs: [{ type: "run", id: "run-1" }],
+  };
+  const stale = {
+    ...assistantItem,
+    revision: 1,
+    payload: { ...assistantItem.payload, body: "stale" },
+  };
+  const merged = mergeConversationItems([current], [stale, userItem]);
+  assert.deepEqual(merged.map((item) => item.id), [userItem.id, assistantItem.id]);
+  assert.equal(merged[1].payload.body, assistantItem.payload.body);
+  assert.deepEqual(merged[1].domainRefs, [{ type: "run", id: "run-1" }]);
 });

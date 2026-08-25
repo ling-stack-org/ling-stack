@@ -327,6 +327,7 @@ export function AppShell(): React.JSX.Element {
     taskEditForm,
     taskRunProviderId,
     channelMessages,
+    channelConversationItems,
     channelGeneratedMedia,
     memoryObjects,
     usedMemoryEvents,
@@ -379,6 +380,7 @@ export function AppShell(): React.JSX.Element {
     setTaskEditForm,
     setTaskRunProviderId,
     setChannelMessages,
+    setChannelConversationItems,
     setChannelExecutionProposals,
     setChannelAttachments,
     setChannelLinkPreviews,
@@ -1663,6 +1665,7 @@ export function AppShell(): React.JSX.Element {
     setTaskForm,
     setTasks,
     setChannelMessages,
+    setChannelConversationItems,
     setChannelExecutionProposals,
     setChannelAttachments,
     setChannelLinkPreviews,
@@ -1681,6 +1684,7 @@ export function AppShell(): React.JSX.Element {
     setDefaultChannelTeammate,
     refreshChannels,
     refreshTasks,
+    refreshChannelMessages,
     refreshChannelExecutionProposals,
     refreshChannelFiles,
     refreshChannelProtocol,
@@ -2465,6 +2469,7 @@ export function AppShell(): React.JSX.Element {
             tasks={tasks}
             taskForm={taskForm}
             channelMessages={channelMessages}
+            channelConversationItems={channelConversationItems}
             channelGeneratedMedia={channelGeneratedMedia}
             memoryById={memoryById}
             usedMemoryEvents={usedMemoryEvents}

@@ -31,7 +31,7 @@ import {
 } from "../../api.js";
 import type { DomainController, DomainError } from "../../app/domain-controller.js";
 import { deriveChannelTasks } from "../../lib/channel-artifacts.js";
-import { projectChannelConversationItemPage } from "../../lib/channel-conversation-items.js";
+import { mergeConversationItems, projectChannelConversationItemPage } from "../../lib/channel-conversation-items.js";
 import { channelMessagesEqual } from "../../lib/channel-message-equality.js";
 import {
   defaultChannelCreateForm,
@@ -55,6 +55,7 @@ import type {
   ChannelHandoff,
   ChannelLinkPreview,
   ChannelMessage,
+  ConversationItemV1,
   ConversationGeneratedMedia,
   ChannelIntentDecision,
   ChannelMessageRouteDecision,
@@ -106,6 +107,7 @@ export interface WorkspaceState {
   readonly taskEditForm: TaskEditFormState;
   readonly taskRunProviderId: string;
   readonly channelMessages: readonly ChannelMessage[];
+  readonly channelConversationItems: readonly ConversationItemV1[];
   readonly channelGeneratedMedia: readonly ConversationGeneratedMedia[];
   readonly memoryObjects: readonly MemoryObject[];
   readonly usedMemoryEvents: readonly UsedMemoryEvent[];
@@ -159,6 +161,7 @@ export interface WorkspaceActions {
   readonly setTaskEditForm: Dispatch<SetStateAction<TaskEditFormState>>;
   readonly setTaskRunProviderId: Dispatch<SetStateAction<string>>;
   readonly setChannelMessages: Dispatch<SetStateAction<readonly ChannelMessage[]>>;
+  readonly setChannelConversationItems: Dispatch<SetStateAction<readonly ConversationItemV1[]>>;
   readonly setChannelExecutionProposals: Dispatch<SetStateAction<readonly ChannelExecutionProposal[]>>;
   readonly setChannelAttachments: Dispatch<SetStateAction<readonly ChannelAttachment[]>>;
   readonly setChannelLinkPreviews: Dispatch<SetStateAction<readonly ChannelLinkPreview[]>>;
@@ -241,6 +244,7 @@ export function useWorkspaceDomain(input: {
   const [taskEditForm, setTaskEditForm] = useState<TaskEditFormState>(defaultTaskEditForm);
   const [taskRunProviderId, setTaskRunProviderId] = useState("");
   const [channelMessages, setChannelMessages] = useState<readonly ChannelMessage[]>([]);
+  const [channelConversationItems, setChannelConversationItems] = useState<readonly ConversationItemV1[]>([]);
   const [channelGeneratedMedia, setChannelGeneratedMedia] = useState<readonly ConversationGeneratedMedia[]>([]);
   const [channelItemsBeforeSequence, setChannelItemsBeforeSequence] = useState<number | undefined>();
   const [memoryObjects, setMemoryObjects] = useState<readonly MemoryObject[]>([]);
@@ -464,6 +468,7 @@ export function useWorkspaceDomain(input: {
     const cwd = input.cwd.trim();
     if (!cwd || !channelId) {
       setChannelMessages([]);
+      setChannelConversationItems([]);
       setChannelMessagesHasOlder(false);
       setChannelItemsBeforeSequence(undefined);
       return;
@@ -489,6 +494,7 @@ export function useWorkspaceDomain(input: {
       const page = projectChannelConversationItemPage(response);
       const messagesChanged = !channelMessagesEqual(channelMessages, page.messages);
       setChannelMessages((current) => channelMessagesEqual(current, page.messages) ? current : page.messages);
+      setChannelConversationItems(page.conversationItems);
       setChannelGeneratedMedia(page.generatedMedia);
       setChannelMessagesHasOlder(page.hasMore);
       setChannelItemsBeforeSequence(page.nextBeforeSequence);
@@ -529,6 +535,7 @@ export function useWorkspaceDomain(input: {
       }
       const page = projectChannelConversationItemPage(response);
       setChannelMessages((current) => mergeChannelMessages(page.messages, current));
+      setChannelConversationItems((current) => mergeConversationItems(page.conversationItems, current));
       setChannelGeneratedMedia((current) => mergeGeneratedMedia(page.generatedMedia, current));
       setChannelMessagesHasOlder(page.hasMore);
       setChannelItemsBeforeSequence(page.nextBeforeSequence);
@@ -970,6 +977,7 @@ export function useWorkspaceDomain(input: {
   function resetSelectedChannelActivity(): void {
     setTasks([]);
     setChannelMessages([]);
+    setChannelConversationItems([]);
     setChannelGeneratedMedia([]);
     setChannelMessagesHasOlder(false);
     setChannelItemsBeforeSequence(undefined);
@@ -1019,6 +1027,7 @@ export function useWorkspaceDomain(input: {
     setChannelsLoading(false);
     setTasksLoading(false);
     setChannelMessages([]);
+    setChannelConversationItems([]);
     setChannelGeneratedMedia([]);
     setMemoryObjects([]);
     setUsedMemoryEvents([]);
@@ -1068,6 +1077,7 @@ export function useWorkspaceDomain(input: {
       taskEditForm,
       taskRunProviderId,
       channelMessages,
+      channelConversationItems,
       channelGeneratedMedia,
       memoryObjects,
       usedMemoryEvents,
@@ -1120,6 +1130,7 @@ export function useWorkspaceDomain(input: {
       setTaskEditForm,
       setTaskRunProviderId,
       setChannelMessages,
+      setChannelConversationItems,
       setChannelExecutionProposals,
       setChannelAttachments,
       setChannelLinkPreviews,

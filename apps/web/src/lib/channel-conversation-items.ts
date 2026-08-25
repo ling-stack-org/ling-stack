@@ -3,6 +3,7 @@ import type {
   ChannelConversationItemPageResponse,
   ChannelConversationThread,
   ChannelConversationTurnResponse,
+  ConversationDomainRef,
   ConversationItemV1,
   ChannelMessage,
   ConversationGeneratedMedia,
@@ -11,6 +12,8 @@ import { projectConversationItemToChannelMessage } from "@ling-stack/contracts";
 
 export interface ChannelConversationMessagePage {
   readonly messages: readonly ChannelMessage[];
+  /** Canonical items retained for typed transcript presentation. */
+  readonly conversationItems: readonly ConversationItemV1[];
   readonly generatedMedia: readonly ConversationGeneratedMedia[];
   readonly hasMore: boolean;
   readonly nextBeforeSequence?: number;
@@ -21,6 +24,7 @@ export function projectChannelConversationItemPage(
 ): ChannelConversationMessagePage {
   return {
     messages: projectMessageItems(response.items, response.decorations, response.thread),
+    conversationItems: response.items,
     generatedMedia: response.generatedMedia,
     hasMore: response.hasMore,
     ...(response.nextBeforeSequence !== undefined
@@ -31,6 +35,7 @@ export function projectChannelConversationItemPage(
 
 export function projectChannelConversationTurn(response: ChannelConversationTurnResponse): {
   readonly message: ChannelMessage;
+  readonly conversationItems: readonly ConversationItemV1[];
   readonly aiReply?: ChannelMessage;
   readonly aiReplies?: readonly ChannelMessage[];
   readonly replyDispatch?: ChannelConversationTurnResponse["replyDispatch"];
@@ -40,11 +45,41 @@ export function projectChannelConversationTurn(response: ChannelConversationTurn
   const aiReplies = projectMessageItems(response.assistantItems ?? [], response.decorations, response.thread);
   return {
     message,
+    conversationItems: [response.userItem, ...(response.assistantItems ?? [])],
     ...(aiReplies[0] ? { aiReply: aiReplies[0] } : {}),
     ...(aiReplies.length > 0 ? { aiReplies } : {}),
     ...(response.replyDispatch ? { replyDispatch: response.replyDispatch } : {}),
     ...(response.autoStartedWorkflow ? { autoStartedWorkflow: response.autoStartedWorkflow } : {}),
   };
+}
+
+export function mergeConversationItems(
+  existingItems: readonly ConversationItemV1[],
+  incomingItems: readonly ConversationItemV1[],
+): readonly ConversationItemV1[] {
+  if (incomingItems.length === 0) return existingItems;
+  const byId = new Map(existingItems.map((item) => [item.id, item]));
+  for (const item of incomingItems) {
+    const existing = byId.get(item.id);
+    if (existing && item.revision < existing.revision) {
+      continue;
+    }
+    byId.set(item.id, existing
+      ? { ...item, domainRefs: mergeConversationDomainRefs(existing.domainRefs, item.domainRefs) }
+      : item);
+  }
+  return [...byId.values()].sort((left, right) => left.sequence - right.sequence || left.id.localeCompare(right.id));
+}
+
+export function mergeConversationDomainRefs(
+  existing: readonly ConversationDomainRef[],
+  incoming: readonly ConversationDomainRef[],
+): readonly ConversationDomainRef[] {
+  const refs = new Map<string, ConversationDomainRef>();
+  for (const ref of [...existing, ...incoming]) {
+    refs.set(`${ref.type}:${ref.id}`, ref);
+  }
+  return [...refs.values()];
 }
 
 export function projectMessageItems(

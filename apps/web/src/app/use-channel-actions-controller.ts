@@ -80,7 +80,11 @@ import {
 } from "./channel-sidebar-archive-actions.js";
 import {
   projectChannelStreamReady,
+  projectChannelItemsReady,
   projectChannelStreamTerminal,
+  projectChannelItemsTerminal,
+  projectChannelItemDelta,
+  projectChannelItemRunLinked,
   type ChannelPresentationStreamErrorEvent,
 } from "./channel-message-stream-projection.js";
 import {
@@ -88,6 +92,7 @@ import {
   projectMessageItem,
   projectMessageItems,
 } from "../lib/channel-conversation-items.js";
+import type { ChannelMessageRefreshOptions } from "../domains/workspace/use-workspace-domain.js";
 
 export interface ChannelActionsController {
   readonly saveChannel: () => Promise<void>;
@@ -180,6 +185,7 @@ export function useChannelActionsController(input: {
   readonly setTaskForm: Dispatch<SetStateAction<TaskFormState>>;
   readonly setTasks: Dispatch<SetStateAction<readonly Task[]>>;
   readonly setChannelMessages: Dispatch<SetStateAction<readonly ChannelMessage[]>>;
+  readonly setChannelConversationItems: Dispatch<SetStateAction<readonly import("@ling-stack/contracts").ConversationItemV1[]>>;
   readonly setChannelExecutionProposals: Dispatch<SetStateAction<readonly ChannelExecutionProposal[]>>;
   readonly setChannelAttachments: Dispatch<SetStateAction<readonly ChannelAttachment[]>>;
   readonly setChannelLinkPreviews: Dispatch<SetStateAction<readonly ChannelLinkPreview[]>>;
@@ -198,6 +204,7 @@ export function useChannelActionsController(input: {
   readonly setDefaultChannelTeammate: (channelId: string, teammateId: string) => Promise<void>;
   readonly refreshChannels: (cwd?: string) => Promise<void>;
   readonly refreshTasks: (channelId?: string) => Promise<void>;
+  readonly refreshChannelMessages: (channelId?: string, threadId?: string, options?: ChannelMessageRefreshOptions) => Promise<void>;
   readonly refreshChannelExecutionProposals: (channelId?: string) => Promise<void>;
   readonly refreshChannelFiles: (channelId?: string) => Promise<void>;
   readonly refreshChannelProtocol: (channelId?: string) => Promise<void>;
@@ -515,6 +522,7 @@ export function useChannelActionsController(input: {
           const aiReplies = data.aiReplies?.length ? data.aiReplies : data.aiReply ? [data.aiReply] : [];
           receivedAiReply = receivedAiReply || aiReplies.length > 0;
           input.setChannelMessages((current) => projectChannelStreamReady(current, data));
+          input.setChannelConversationItems((current) => projectChannelItemsReady(current, data));
           if (!messageAccepted) {
             messageAccepted = true;
             messageInput.onMessageAccepted?.(data.message);
@@ -533,6 +541,7 @@ export function useChannelActionsController(input: {
         if (event.event === "delta") {
           const data = JSON.parse(event.data) as ChannelConversationStreamDeltaEvent;
           input.setChannelMessages((current) => current.map((message) => message.id === data.itemId ? { ...message, body: data.body, status: "pending" } : message));
+          input.setChannelConversationItems((current) => projectChannelItemDelta(current, data.itemId, data.body));
           return;
         }
         if (event.event === "run_linked") {
@@ -540,6 +549,7 @@ export function useChannelActionsController(input: {
           input.setChannelMessages((current) => current.map((message) =>
             message.id === data.itemId ? { ...message, linkedRunId: data.linkedRunId } : message
           ));
+          input.setChannelConversationItems((current) => projectChannelItemRunLinked(current, data.itemId, data.linkedRunId));
           if (data.activeReply) {
             messageInput.onReplyLinked?.(data.activeReply);
           }
@@ -557,6 +567,7 @@ export function useChannelActionsController(input: {
           receivedAiReply = receivedAiReply || aiReplies.length > 0;
           autoStartedWorkflow = Boolean(data.autoStartedWorkflow);
           input.setChannelMessages((current) => projectChannelStreamTerminal(current, data));
+          input.setChannelConversationItems((current) => projectChannelItemsTerminal(current, data));
           if (data.replyDispatch) messageInput.onReplyDispatch?.(data.replyDispatch);
           return;
         }
@@ -566,6 +577,7 @@ export function useChannelActionsController(input: {
           const aiReplies = data.aiReplies?.length ? data.aiReplies : data.aiReply ? [data.aiReply] : [];
           receivedAiReply = receivedAiReply || aiReplies.length > 0;
           input.setChannelMessages((current) => projectChannelStreamTerminal(current, data));
+          input.setChannelConversationItems((current) => projectChannelItemsTerminal(current, data));
           if (data.error) {
             streamErrorMessage = data.error;
           }
@@ -600,12 +612,14 @@ export function useChannelActionsController(input: {
             .filter((message): message is ChannelMessage => Boolean(message));
           receivedAiReply = receivedAiReply || messages.some((message) => message.kind === "ai_reply");
           input.setChannelMessages((current) => projectChannelStreamTerminal(current, data));
+          input.setChannelConversationItems((current) => projectChannelItemsTerminal(current, data));
           if (data.error) {
             streamErrorMessage = data.error;
           }
           if (data.replyDispatch) messageInput.onReplyDispatch?.(data.replyDispatch);
         }
       });
+      await input.refreshChannelMessages(channelId, messageInput.threadId, { silent: true });
       await input.refreshChannelExecutionProposals(channelId);
       await input.refreshChannelIntentDecisions(channelId);
       if (receivedAiReply) {
