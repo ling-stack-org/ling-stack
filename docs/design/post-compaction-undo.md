@@ -211,6 +211,7 @@ type PostCompactionUndoState =
   | "available"
   | "validating"
   | "applied"
+  | "undone"
   | "conflict"
   | "provenance_missing"
   | "snapshot_unverified"
@@ -357,14 +358,14 @@ timeline.
 ```text
 available
    |
-   +--> validating --+--> applied       (undo committed)
+   +--> validating --+--> undone        (undo committed)
    |                 +--> conflict      (CAS/policy/lock mismatch)
    |                 +--> provenance_missing
    |                 +--> snapshot_unverified
    |                 +--> expired
    |                 +--> failed        (apply or verification failure)
    |
-   +--> validating --+--> undone        (reapply committed)
+   +--> validating --+--> applied       (reapply committed)
 ```
 
 Each transition carries:

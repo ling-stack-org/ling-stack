@@ -1,5 +1,6 @@
 import type {
   RunWorkspaceChangesResponse,
+  TurnWorkspaceChangesResponse,
   WorkflowWorkspaceChangesResponse,
   WorkspaceChangesResponse,
   WorkspaceFileOpenOptionsResponse,
@@ -24,6 +25,18 @@ export function undoRunWorkspaceChanges(cwd: string, runId: string): Promise<Run
 
 export function reapplyRunWorkspaceChanges(cwd: string, runId: string): Promise<RunWorkspaceChangesResponse> {
   return daemonClient.reapplyRunWorkspaceChanges(runId, cwd);
+}
+
+export function getTurnWorkspaceChanges(cwd: string, turnId: string): Promise<TurnWorkspaceChangesResponse> {
+  return daemonClient.getTurnWorkspaceChanges(turnId, cwd);
+}
+
+export function undoTurnWorkspaceChanges(cwd: string, turnId: string, idempotencyKey: string): Promise<TurnWorkspaceChangesResponse> {
+  return daemonClient.undoTurnWorkspaceChanges(turnId, idempotencyKey, cwd);
+}
+
+export function reapplyTurnWorkspaceChanges(cwd: string, turnId: string, idempotencyKey: string): Promise<TurnWorkspaceChangesResponse> {
+  return daemonClient.reapplyTurnWorkspaceChanges(turnId, idempotencyKey, cwd);
 }
 
 export function getWorkflowWorkspaceChanges(cwd: string, workflowId: string): Promise<WorkflowWorkspaceChangesResponse> {

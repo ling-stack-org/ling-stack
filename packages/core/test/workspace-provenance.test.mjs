@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -115,7 +116,7 @@ test("workspace mutation provenance and compaction checkpoints survive SQLite re
       affectedPaths: ["file.txt"],
       createdAt: now,
     });
-    assert.equal(recovery.state, "validating");
+    assert.equal(recovery.state, "available");
     assert.equal(store.createPostCompactionUndoRecord({
       idempotencyKey: "undo-provenance-record",
       threadId: thread.id,
@@ -127,6 +128,13 @@ test("workspace mutation provenance and compaction checkpoints survive SQLite re
       affectedPaths: ["file.txt"],
       createdAt: now,
     }).id, recovery.id);
+    assert.equal(store.updatePostCompactionUndoRecord({
+      id: recovery.id,
+      expectedState: "available",
+      state: "validating",
+      lastEventSeq: 8,
+      updatedAt: "2026-08-25T01:00:00.500Z",
+    })?.state, "validating");
     assert.equal(store.updatePostCompactionUndoRecord({
       id: recovery.id,
       expectedState: "validating",
@@ -156,6 +164,12 @@ test("workspace mutation provenance and compaction checkpoints survive SQLite re
       assert.equal(reopened.getLatestWorkspaceProvenanceWatermark(), "workspace_default:1");
       assert.equal(reopened.getPostCompactionUndoRecord(recovery.id)?.state, "undone");
       assert.equal(reopened.listPostCompactionUndoRecords({ idempotencyKey: "undo-provenance-record" }).length, 1);
+      const integrity = new DatabaseSync(reopened.paths.databasePath);
+      try {
+        assert.deepEqual(integrity.prepare("PRAGMA foreign_key_check").all(), []);
+      } finally {
+        integrity.close();
+      }
     } finally {
       reopened.close();
     }

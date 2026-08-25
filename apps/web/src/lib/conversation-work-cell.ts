@@ -497,7 +497,9 @@ export function buildConversationWorkCellViewModel(input: BuildConversationWorkC
   const artifactStripItems = mergeConversationArtifactStripItems(
     baseArtifactStripItems,
     (terminalReport?.artifactStripItems ?? []).filter((item) => item.kind !== "changed" || !hasBaseChangedItem),
-  );
+  ).map((item) => turnContext && item.kind === "changed"
+    ? { ...item, recoveryTarget: { kind: "turn" as const, id: turnContext.turn.id } }
+    : item);
   const representedArtifactIds = new Set(artifactStripItems.flatMap((item) => [
     item.artifactId,
     ...(item.changeArtifacts ?? []).map((artifact) => artifact.artifactId),

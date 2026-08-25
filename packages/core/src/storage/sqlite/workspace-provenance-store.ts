@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { resolve as resolvePath } from "node:path";
 import type { SQLOutputValue } from "node:sqlite";
 import {
   isConversationDomainRef,
@@ -36,12 +37,12 @@ export class SqliteWorkspaceProvenanceStore {
   createWorkspaceMutationRecords(inputs: readonly CreateWorkspaceMutationRecordInput[]): WorkspaceMutationRecord[] {
     if (inputs.length === 0) return [];
     inputs.forEach(validateMutationInput);
-    const workspaceIds = new Set(inputs.map((input) => normalizeRequired(input.workspaceId ?? DEFAULT_WORKSPACE_ID, "workspace mutation workspace id")));
+    const workspaceIds = new Set(inputs.map((input) => inferWorkspaceId(this.context, input)));
     if (workspaceIds.size !== 1) throw new Error("Workspace mutation batch must use one workspace.");
     const workspaceId = [...workspaceIds][0]!;
     this.context.database.exec("BEGIN IMMEDIATE");
     try {
-      inputs.forEach((input) => assertMutationReferences(this.context, input));
+      inputs.forEach((input) => assertMutationReferences(this.context, input, workspaceId));
       const records: WorkspaceMutationRecord[] = [];
       const nextSequence = this.context.database.prepare(`
         INSERT INTO workspace_provenance_sequences (workspace_id, last_seq)
@@ -336,19 +337,55 @@ function validateCheckpointInput(input: CreateCompactionCheckpointInput): void {
   }
   if (input.coveredTurnIds.length === 0) throw new Error("Compaction checkpoint must cover at least one Turn.");
   if (input.sourceRefs.some((ref) => !isConversationDomainRef(ref))) throw new Error("Compaction checkpoint contains an invalid source ref.");
+  if (input.summaryContentSha256 && !/^[0-9a-f]{64}$/u.test(input.summaryContentSha256)) {
+    throw new Error("Compaction checkpoint summary content hash must be a lowercase SHA-256 digest.");
+  }
   if (input.contextViewCreatedAt) assertCanonicalTimestamp(input.contextViewCreatedAt);
   assertCanonicalTimestamp(input.createdAt);
 }
 
-function assertMutationReferences(context: SqliteStoreContext, input: CreateWorkspaceMutationRecordInput): void {
-  const run = context.database.prepare("SELECT thread_id FROM run_sessions WHERE id = ?").get(input.runId) as Record<string, SQLOutputValue> | undefined;
+function inferWorkspaceId(context: SqliteStoreContext, input: CreateWorkspaceMutationRecordInput): string {
+  if (input.workspaceId !== undefined) return normalizeRequired(input.workspaceId, "workspace mutation workspace id");
+  if (input.turnId) {
+    const turn = context.database.prepare("SELECT workspace_id FROM ling_turns WHERE id = ?").get(input.turnId) as Record<string, SQLOutputValue> | undefined;
+    if (turn && typeof turn.workspace_id === "string") return readString(turn, "workspace_id");
+  }
+  if (input.threadId) {
+    const thread = context.database.prepare("SELECT workspace_id FROM ling_threads WHERE id = ?").get(input.threadId) as Record<string, SQLOutputValue> | undefined;
+    if (thread && typeof thread.workspace_id === "string") return readString(thread, "workspace_id");
+  }
+  return DEFAULT_WORKSPACE_ID;
+}
+
+function assertMutationReferences(context: SqliteStoreContext, input: CreateWorkspaceMutationRecordInput, workspaceId: string): void {
+  const run = context.database.prepare("SELECT thread_id, cwd FROM run_sessions WHERE id = ?").get(input.runId) as Record<string, SQLOutputValue> | undefined;
   if (!run) throw new Error(`Workspace mutation run not found: ${input.runId}`);
   const runThreadId = readNullableString(run, "thread_id");
   if (input.threadId && runThreadId && input.threadId !== runThreadId) throw new Error(`Workspace mutation thread does not match run: ${input.threadId}`);
+  if (typeof run.cwd === "string" && resolvePath(run.cwd) !== resolvePath(input.cwd)) {
+    throw new Error(`Workspace mutation cwd does not match run: ${input.cwd}`);
+  }
   if (input.turnId) {
-    const turn = context.database.prepare("SELECT thread_id FROM ling_turns WHERE id = ?").get(input.turnId) as Record<string, SQLOutputValue> | undefined;
+    const turn = context.database.prepare("SELECT thread_id, workspace_id FROM ling_turns WHERE id = ?").get(input.turnId) as Record<string, SQLOutputValue> | undefined;
     if (!turn) throw new Error(`Workspace mutation turn not found: ${input.turnId}`);
     if (input.threadId && readString(turn, "thread_id") !== input.threadId) throw new Error(`Workspace mutation turn belongs to another thread: ${input.turnId}`);
+    if (readString(turn, "workspace_id") !== workspaceId) {
+      throw new Error(`Workspace mutation turn belongs to another workspace: ${input.turnId}`);
+    }
+    const link = context.database.prepare("SELECT 1 AS linked FROM ling_turn_runs WHERE turn_id = ? AND run_id = ?").get(input.turnId, input.runId);
+    if (!link) throw new Error(`Workspace mutation Turn is not linked to Run: ${input.turnId}/${input.runId}`);
+  }
+  for (const [artifactId, label] of [
+    [input.forwardPatchArtifactId, "forward patch"],
+    [input.inversePatchArtifactId, "inverse patch"],
+    [input.artifactId, "workspace mutation"],
+  ] as const) {
+    if (!artifactId) continue;
+    const artifact = context.database.prepare("SELECT run_id FROM artifacts WHERE id = ?").get(artifactId) as Record<string, SQLOutputValue> | undefined;
+    if (!artifact) throw new Error(`Workspace mutation ${label} artifact not found: ${artifactId}`);
+    if (readString(artifact, "run_id") !== input.runId) {
+      throw new Error(`Workspace mutation ${label} artifact belongs to another Run: ${artifactId}`);
+    }
   }
 }
 

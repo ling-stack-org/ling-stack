@@ -2,13 +2,14 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type R
 import { createPortal } from "react-dom";
 import { ChevronDown, Code2, FilePenLine, FileText, Image as ImageIcon, Loader2, Redo2, Undo2 } from "lucide-react";
 import {
+  getTurnWorkspaceChanges,
   getRunWorkspaceChanges,
   getWorkflowWorkspaceChanges,
 } from "../../../api.js";
 import { useI18n, type Translate } from "../../../i18n.js";
 import { parseUnifiedDiff, summarizeFileChanges, type ConversationFileChange } from "../../../lib/diff-summary.js";
 import type { ConversationArtifactStripChangeArtifact, ConversationArtifactStripItem, ConversationWorkspaceRecoveryTarget } from "../../../lib/conversation-work-cell.js";
-import type { PreviewContentResponse, RunWorkspaceChangesResponse, WorkflowWorkspaceChangesResponse } from "../../../types.js";
+import type { PreviewContentResponse, RunWorkspaceChangesResponse, TurnWorkspaceChangesResponse, WorkflowWorkspaceChangesResponse } from "../../../types.js";
 import type { ArtifactPreviewLoader } from "../preview/ArtifactPreviewDrawer.js";
 import {
   ConversationArtifactRecoveryDialog,
@@ -20,7 +21,7 @@ import { WorkspaceFileOpenMenu } from "./WorkspaceFileOpenMenu.js";
 const artifactHoverDelayMs = 2_000;
 const artifactHoverHideDelayMs = 300;
 const collapsedChangeFileCount = 3;
-type WorkspaceRecoveryResponse = RunWorkspaceChangesResponse | WorkflowWorkspaceChangesResponse;
+type WorkspaceRecoveryResponse = RunWorkspaceChangesResponse | TurnWorkspaceChangesResponse | WorkflowWorkspaceChangesResponse;
 
 export interface ConversationWorkspaceReviewTarget {
   readonly cwd: string;
@@ -336,6 +337,8 @@ function getWorkspaceRecovery(
 ): Promise<WorkspaceRecoveryResponse> {
   return target.kind === "workflow"
     ? getWorkflowWorkspaceChanges(cwd, target.id)
+    : target.kind === "turn"
+      ? getTurnWorkspaceChanges(cwd, target.id)
     : getRunWorkspaceChanges(cwd, target.id);
 }
 

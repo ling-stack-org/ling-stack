@@ -212,7 +212,7 @@ export async function recoverTurnWorkspaceChanges(
     if (durableRecord && durableRecord.action !== action) {
       throw new RunWorkspaceRecoveryError(409, "workspace_change_conflict", "This idempotency key is already bound to the opposite recovery action.");
     }
-    if (durableRecord && (durableRecord.state === "conflict" || durableRecord.state === "failed" || durableRecord.state === "expired" || durableRecord.state === "provenance_missing")) {
+    if (durableRecord && (durableRecord.state === "conflict" || durableRecord.state === "failed" || durableRecord.state === "expired" || durableRecord.state === "provenance_missing" || durableRecord.state === "snapshot_unverified")) {
       throw new RunWorkspaceRecoveryError(409, "workspace_change_conflict", `The durable recovery record is ${durableRecord.state}; use a new idempotency key after review.`);
     }
     if (durableRecord && ((action === "undo" && durableRecord.state === "undone") || (action === "reapply" && durableRecord.state === "applied"))) {
@@ -221,24 +221,41 @@ export async function recoverTurnWorkspaceChanges(
     const events = turnRecoveryEvents(store, ownerRun.id, turn.id);
     const prior = events.find((event) => isRecord(event.data) && event.data.idempotencyKey === idempotencyKey && event.type === (action === "undo" ? "workspace_changes_undone" : "workspace_changes_reapplied"));
     if (prior) {
-      if (durableRecord?.state === "validating") {
-        store.updatePostCompactionUndoRecord({
-          id: durableRecord.id,
-          expectedState: "validating",
-          state: action === "undo" ? "undone" : "applied",
-          lastEventSeq: prior.seq,
-          updatedAt: prior.ts,
-        });
+      if (durableRecord) {
+        if (durableRecord.state === "available") {
+          const claimed = store.updatePostCompactionUndoRecord({
+            id: durableRecord.id,
+            expectedState: "available",
+            state: "validating",
+            lastEventSeq: prior.seq,
+            updatedAt: prior.ts,
+          });
+          if (!claimed) {
+            throw new RunWorkspaceRecoveryError(409, "workspace_change_conflict", "Another recovery request owns this durable recovery record.");
+          }
+        }
+        if (durableRecord.state === "available" || durableRecord.state === "validating") {
+          const settled = store.updatePostCompactionUndoRecord({
+            id: durableRecord.id,
+            expectedState: "validating",
+            state: action === "undo" ? "undone" : "applied",
+            lastEventSeq: prior.seq,
+            updatedAt: prior.ts,
+          });
+          if (!settled) {
+            throw new RunWorkspaceRecoveryError(409, "workspace_change_conflict", "Another recovery request owns this durable recovery record.");
+          }
+        }
       }
       return buildTurnWorkspaceChangesResponse(store, turn);
     }
     const patchSet = syntheticPatchSet(context.steps.map((step) => step.plan));
     const observation = observeRecoveryState(cwd, patchSet, events);
     if (observation.conflict) {
-      if (durableRecord?.state === "validating") {
+      if (durableRecord?.state === "available" || durableRecord?.state === "validating") {
         store.updatePostCompactionUndoRecord({
           id: durableRecord.id,
-          expectedState: "validating",
+          expectedState: durableRecord.state,
           state: "conflict",
           lastEventSeq: events.at(-1)?.seq ?? durableRecord.lastEventSeq,
           updatedAt: new Date().toISOString(),
@@ -263,11 +280,22 @@ export async function recoverTurnWorkspaceChanges(
           checkpointId: findTurnCheckpoint(store, turn)?.id,
           expectedWorkspaceFingerprint: recoveryIntentFingerprint(observation.completedIntent, "before"),
           action,
-          state: "validating",
           affectedPaths: observation.completedIntent.files.map((file) => file.path),
           createdAt: observation.updatedAt ?? new Date().toISOString(),
         });
-        if (recoveredRecord.state === "validating") {
+        if (recoveredRecord.state === "available") {
+          const claimed = store.updatePostCompactionUndoRecord({
+            id: recoveredRecord.id,
+            expectedState: "available",
+            state: "validating",
+            lastEventSeq: events.at(-1)?.seq ?? recoveredRecord.lastEventSeq,
+            updatedAt: observation.updatedAt ?? new Date().toISOString(),
+          });
+          if (!claimed) {
+            throw new RunWorkspaceRecoveryError(409, "workspace_change_conflict", "Another recovery request owns this durable recovery record.");
+          }
+        }
+        if (recoveredRecord.state === "available" || recoveredRecord.state === "validating") {
           const terminalEvent = store.appendEvent(ownerRun.id, action === "undo" ? "workspace_changes_undone" : "workspace_changes_reapplied", {
             scope: "turn",
             turnId: turn.id,
@@ -298,10 +326,10 @@ export async function recoverTurnWorkspaceChanges(
     try {
       preflight = await preflightRecoveryPlanSequence(cwd, turnRecoveryPlanSteps(context.steps, action));
     } catch (error) {
-      if (durableRecord?.state === "validating") {
+      if (durableRecord?.state === "available" || durableRecord?.state === "validating") {
         store.updatePostCompactionUndoRecord({
           id: durableRecord.id,
-          expectedState: "validating",
+          expectedState: durableRecord.state,
           state: "conflict",
           lastEventSeq: durableRecord.lastEventSeq,
           updatedAt: new Date().toISOString(),
@@ -310,10 +338,10 @@ export async function recoverTurnWorkspaceChanges(
       throw error;
     }
     const expectedWorkspaceFingerprint = workspaceFingerprint(preflight.before);
-    if (durableRecord && durableRecord.state === "validating" && durableRecord.expectedWorkspaceFingerprint !== expectedWorkspaceFingerprint) {
+    if (durableRecord && (durableRecord.state === "available" || durableRecord.state === "validating") && durableRecord.expectedWorkspaceFingerprint !== expectedWorkspaceFingerprint) {
       store.updatePostCompactionUndoRecord({
         id: durableRecord.id,
-        expectedState: "validating",
+        expectedState: durableRecord.state,
         state: "conflict",
         lastEventSeq: durableRecord.lastEventSeq,
         updatedAt: new Date().toISOString(),
@@ -329,7 +357,6 @@ export async function recoverTurnWorkspaceChanges(
       checkpointId: findTurnCheckpoint(store, turn)?.id,
       expectedWorkspaceFingerprint,
       action,
-      state: "validating",
       affectedPaths: preflight.paths,
       createdAt: new Date().toISOString(),
     });
@@ -344,14 +371,28 @@ export async function recoverTurnWorkspaceChanges(
       cwd,
       files: recoveryIntentFiles(preflight),
     });
-    store.updatePostCompactionUndoRecord({
+    const validating = store.updatePostCompactionUndoRecord({
       id: recoveryRecord.id,
-      expectedState: "validating",
+      expectedState: recoveryRecord.state === "available" ? "available" : "validating",
       state: "validating",
       lastEventSeq: startedEvent.seq,
       updatedAt: startedEvent.ts,
     });
-    commitRecovery(cwd, preflight);
+    if (!validating) {
+      throw new RunWorkspaceRecoveryError(409, "workspace_change_conflict", "Another recovery request owns this durable recovery record.");
+    }
+    try {
+      commitRecovery(cwd, preflight);
+    } catch (error) {
+      store.updatePostCompactionUndoRecord({
+        id: recoveryRecord.id,
+        expectedState: "validating",
+        state: "failed",
+        lastEventSeq: startedEvent.seq,
+        updatedAt: new Date().toISOString(),
+      });
+      throw error;
+    }
     const terminalEvent = store.appendEvent(ownerRun.id, action === "undo" ? "workspace_changes_undone" : "workspace_changes_reapplied", {
       scope: "turn",
       turnId: turn.id,
@@ -502,6 +543,25 @@ function buildTurnRecoveryContext(store: RunStore, turn: import("@ling-stack/cor
       continue;
     }
     if (!patchSet.provenanceComplete) {
+      provenanceComplete = false;
+      continue;
+    }
+    // A Run can only contribute mutations when every durable record points
+    // back to this exact Turn lineage and workspace. Do not allow a malformed
+    // or legacy record to broaden a Turn-level undo target to another Turn.
+    let recordsMatchTurn = true;
+    try {
+      recordsMatchTurn = patchSet.mutationRecords.every((record) =>
+        record.runId === run.id
+        && record.turnId === turn.id
+        && record.threadId === turn.threadId
+        && record.workspaceId === turn.workspaceId
+        && resolvePath(record.cwd) === resolvePath(run.cwd),
+      );
+    } catch {
+      recordsMatchTurn = false;
+    }
+    if (!recordsMatchTurn) {
       provenanceComplete = false;
       continue;
     }
@@ -713,10 +773,23 @@ function durablePatchPlans(
   const plans: PatchPlan[] = [];
   for (const group of ordered) {
     const artifactIds = new Set(group.map((record) => record.forwardPatchArtifactId).filter((id): id is string => Boolean(id)));
-    if (artifactIds.size !== 1 || group.some((record) => record.effectState !== "applied")) return { plans: [], complete: false };
-    const artifact = store.getArtifact([...artifactIds][0]!);
-    if (!artifact || !isPatchPlan(artifact.sealedPayload)) return { plans: [], complete: false };
+    const inverseArtifactIds = new Set(group.map((record) => record.inversePatchArtifactId));
+    if (artifactIds.size !== 1 || inverseArtifactIds.size !== 1 || group.some((record) => record.effectState !== "applied")) {
+      return { plans: [], complete: false };
+    }
+    const forwardArtifactId = [...artifactIds][0]!;
+    const inverseArtifactId = [...inverseArtifactIds][0]!;
+    const artifact = store.getArtifact(forwardArtifactId);
+    const inverseArtifact = store.getArtifact(inverseArtifactId);
+    if (!artifact || artifact.runId !== group[0]?.runId || !isPatchPlan(artifact.sealedPayload)) {
+      return { plans: [], complete: false };
+    }
     const plan = artifact.sealedPayload;
+    if (!inverseArtifact || inverseArtifact.runId !== group[0]?.runId || !isPatchPlan(inverseArtifact.sealedPayload)
+      || JSON.stringify(inverseArtifact.sealedPayload) !== JSON.stringify(invertPatchPlan(plan))
+      || group.some((record) => record.forwardPatchArtifactId !== forwardArtifactId || record.inversePatchArtifactId !== inverseArtifactId)) {
+      return { plans: [], complete: false };
+    }
     const orderedRecords = [...group].sort((left, right) => left.operationIndex - right.operationIndex);
     if (orderedRecords.length !== plan.operations.length
       || orderedRecords.some((record, index) => {

@@ -43,7 +43,7 @@ export class SqlitePostCompactionUndoStore {
       ...(input.checkpointId ? { checkpointId: input.checkpointId } : {}),
       expectedWorkspaceFingerprint: input.expectedWorkspaceFingerprint,
       action: input.action,
-      state: input.state ?? "validating",
+      state: input.state ?? "available",
       affectedPaths,
       lastEventSeq: input.lastEventSeq ?? 0,
       createdAt: input.createdAt,
