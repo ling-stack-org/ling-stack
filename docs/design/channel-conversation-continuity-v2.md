@@ -35,6 +35,71 @@ become the other's authority:
    only implements the approval adapter and reports request/decision evidence; it does
    not own approval persistence or lifecycle authority.
 
+### Typed RunEvent boundary
+
+`RunEventEnvelope` is execution evidence, not a second conversation record. Its
+`type` is now a discriminant for `data`: producers append a payload from the matching
+`RunEventDataByType[K]`, and consumers narrow on `event.type` before reading fields.
+Provider-specific details may remain in bounded opaque fields (`args`, `result`, or
+metadata), but the envelope itself may not fall back to `unknown`.
+
+The SQLite event log is a replay boundary. Rows are validated as JSON objects when
+read, malformed payloads fail closed, and replay consumers must be idempotent. A
+replayed event may update a deterministic projection, but it must not create a second
+Ling turn, approval authority, artifact authority, or canonical history entry.
+
+### Conversation Item projection boundary
+
+The existing `ConversationItemV1` model is the Item layer; no second Item table or
+mutable execution store is introduced:
+
+```text
+Ling timeline authority
+  ├── LingThread
+  ├── LingTurn
+  └── ConversationItem
+
+execution evidence
+  └── RunEventEnvelope
+
+typed, read-only projection
+  └── rich timeline / activity UI
+```
+
+The core projection maps assistant deltas, tool start/end, approval request/decision,
+artifact creation, and terminal/intervention state into typed Items. Item identity is
+deterministic (`run + event domain key`), tool and approval pairs are matched by their
+IDs, and incomplete pairs remain renderable rather than crashing replay. The projection
+owns neither Run, Approval, Artifact, nor workspace state; it stores only domain refs.
+Its sequence is projection-local and must not be written directly into the canonical
+SQLite Item sequence allocator. UI code must render the typed kind/payload instead of
+inferring tools or approvals from prose.
+
+### `workspace_knowledge` provider boundary (reserved)
+
+`ChannelContextSourceKind` reserves `workspace_knowledge` for a future provider that
+can inject bounded, structured workspace facts such as `AGENTS.md`, design documents,
+quality levels, and workspace policy. This slice intentionally provides no source
+provider or automatic injection path. A future provider must return source refs,
+freshness, quality metadata, and bounded text; pass through the same sensitivity,
+permission, and `ChannelContextView` filtering as every other source; and define a
+refresh/revalidation policy for long-running autonomous Runs.
+
+### Post-compaction undo boundary (reserved)
+
+Compaction may reduce prompt context, but it must never delete workspace-change
+provenance. Undo semantics are deferred until the Continuity v2 compaction implementation
+freezes these facts:
+
+- the exact workspace snapshot or patch basis to which undo returns;
+- a durable chain from compacted Turns to `RunArtifact`, patch plan, Run lineage, and
+  source refs;
+- a fail-closed rule when the target snapshot cannot be verified.
+
+A condenser summary is context evidence only; it is never the authority for undo. A
+future implementation must answer how changes from compacted Turns are traced before
+exposing an undo action.
+
 ## Current release checkpoint (2026-08-25)
 
 The clean delivery worktree is based on `origin/main` at `90635c83e6ec6645699a45c114c59905c996ec12`.

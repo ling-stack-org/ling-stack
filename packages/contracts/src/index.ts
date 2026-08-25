@@ -3,6 +3,7 @@ export type * from "./retention.js";
 export type * from "./approvals.js";
 export type * from "./artifacts.js";
 export type * from "./runtime.js";
+export * from "./run-event-validation.js";
 export type * from "./runner-readiness.js";
 export * from "./threads.js";
 export type * from "./conversations.js";

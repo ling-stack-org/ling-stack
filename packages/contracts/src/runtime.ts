@@ -440,16 +440,198 @@ export type RunEventType =
   | "run_continuation_started"
   | "run_intervention_failed"
   | "stale_runner_completion_ignored"
-  | "result";
+  | "result"
+  /** Legacy generic progress rows retained for old event logs. */
+  | "progress";
 
-export interface RunEventEnvelope {
-  readonly id: string;
-  readonly runId: string;
-  readonly seq: number;
-  readonly ts: string;
-  readonly type: RunEventType;
-  readonly data: unknown;
+/**
+ * Typed payloads for durable run events.
+ *
+ * The index signature on each payload is intentional for forward-compatible
+ * provider metadata. The envelope itself remains a discriminated union on
+ * `type`, so consumers can narrow the payload before reading event-specific
+ * fields instead of treating the entire event as arbitrary JSON.
+ */
+export interface RunEventDataByType {
+  readonly run_created: {
+    readonly taskId?: string;
+    readonly workUnitId?: string;
+    readonly threadId?: string;
+    readonly cwd?: string;
+    readonly providerName?: string;
+    readonly providerModel?: string;
+    readonly queued?: boolean;
+    readonly [key: string]: unknown;
+  };
+  readonly run_start: {
+    readonly taskId?: string;
+    readonly cwd?: string;
+    readonly provider?: string;
+    readonly model?: string;
+    readonly [key: string]: unknown;
+  };
+  readonly turn_start: { readonly [key: string]: unknown };
+  readonly turn_end: { readonly [key: string]: unknown };
+  readonly assistant_text_delta: {
+    readonly text: string;
+    readonly [key: string]: unknown;
+  };
+  readonly assistant_thinking_delta: {
+    readonly text: string;
+    readonly [key: string]: unknown;
+  };
+  readonly tool_hydration_request: {
+    readonly runId?: string;
+    readonly runnerAttemptId?: string;
+    readonly scope?: unknown;
+    readonly [key: string]: unknown;
+  };
+  readonly tool_hydration_end: {
+    readonly runId?: string;
+    readonly runnerAttemptId?: string;
+    readonly rejected?: boolean;
+    readonly code?: string;
+    readonly [key: string]: unknown;
+  };
+  readonly message_end: {
+    readonly role?: string;
+    readonly text?: string;
+    readonly stopReason?: string;
+    readonly errorMessage?: string;
+    readonly contentKinds?: readonly string[];
+    readonly [key: string]: unknown;
+  };
+  readonly tool_start: {
+    readonly toolCallId?: string;
+    readonly toolName: string;
+    readonly args?: unknown;
+    readonly [key: string]: unknown;
+  };
+  readonly tool_update: {
+    readonly toolCallId?: string;
+    readonly toolName: string;
+    readonly partialResult?: unknown;
+    readonly [key: string]: unknown;
+  };
+  readonly tool_end: {
+    readonly toolCallId?: string;
+    readonly toolName: string;
+    readonly result?: unknown;
+    readonly isError: boolean;
+    readonly [key: string]: unknown;
+  };
+  readonly run_end: {
+    readonly taskId?: string;
+    readonly messageCount?: number;
+    readonly [key: string]: unknown;
+  };
+  readonly run_error: {
+    readonly message: string;
+    readonly [key: string]: unknown;
+  };
+  readonly run_cancelled: {
+    readonly reason?: string;
+    readonly active?: boolean;
+    readonly [key: string]: unknown;
+  };
+  readonly approval_requested: {
+    readonly approvalId: string;
+    readonly toolCallId?: string;
+    readonly title?: string;
+    readonly description?: string;
+    readonly expiresAt?: string;
+    readonly [key: string]: unknown;
+  };
+  readonly approval_approved: {
+    readonly approvalId: string;
+    readonly decisionReason?: string;
+    readonly [key: string]: unknown;
+  };
+  readonly approval_denied: {
+    readonly approvalId: string;
+    readonly decisionReason?: string;
+    readonly [key: string]: unknown;
+  };
+  readonly approval_expired: {
+    readonly approvalId: string;
+    readonly decisionReason?: string;
+    readonly [key: string]: unknown;
+  };
+  readonly approval_cancelled: {
+    readonly approvalId: string;
+    readonly decisionReason?: string;
+    readonly [key: string]: unknown;
+  };
+  readonly artifact_created: {
+    readonly artifactId?: string;
+    readonly toolCallId?: string;
+    readonly toolName?: string;
+    readonly artifact?: unknown;
+    readonly [key: string]: unknown;
+  };
+  readonly workspace_change_recovery_started: {
+    readonly [key: string]: unknown;
+  };
+  readonly workspace_changes_undone: {
+    readonly [key: string]: unknown;
+  };
+  readonly workspace_changes_reapplied: {
+    readonly [key: string]: unknown;
+  };
+  readonly run_intervention_created: {
+    readonly interventionId?: string;
+    readonly mode?: string;
+    readonly [key: string]: unknown;
+  };
+  readonly run_followup_queued: {
+    readonly interventionId?: string;
+    readonly [key: string]: unknown;
+  };
+  readonly run_interrupt_requested: {
+    readonly interventionId?: string;
+    readonly [key: string]: unknown;
+  };
+  readonly run_continuation_starting: {
+    readonly interventionId?: string;
+    readonly [key: string]: unknown;
+  };
+  readonly run_continuation_started: {
+    readonly interventionId?: string;
+    readonly continuationRunId?: string;
+    readonly [key: string]: unknown;
+  };
+  readonly run_intervention_failed: {
+    readonly interventionId?: string;
+    readonly reason?: string;
+    readonly [key: string]: unknown;
+  };
+  readonly stale_runner_completion_ignored: {
+    readonly reason?: string;
+    readonly reportedStatus?: string;
+    readonly [key: string]: unknown;
+  };
+  readonly result: {
+    readonly text?: string;
+    readonly [key: string]: unknown;
+  };
+  readonly progress: {
+    readonly message?: string;
+    readonly [key: string]: unknown;
+  };
 }
+
+export type RunEventData = RunEventDataByType[RunEventType];
+
+export type RunEventEnvelope = {
+  readonly [K in RunEventType]: {
+    readonly id: string;
+    readonly runId: string;
+    readonly seq: number;
+    readonly ts: string;
+    readonly type: K;
+    readonly data: RunEventDataByType[K];
+  };
+}[RunEventType];
 
 export type ConversationActiveReplyStatus = "queued" | "running" | "waiting_for_approval";
 

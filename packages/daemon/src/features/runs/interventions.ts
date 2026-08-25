@@ -6,6 +6,7 @@ import {
   type GoalContinuationStopReason,
   type LingThreadGoal,
   type RunEventType,
+  type RunEventDataByType,
   type RunIntervention,
   type RunInterventionAttachmentPayload,
   type RunInterventionLinkPreviewPayload,
@@ -898,7 +899,7 @@ function streamRunEventIfPossible(
   activeRuns: ActiveRunRegistry,
   runId: string,
   type: RunEventType,
-  data: unknown,
+  data: RunEventDataByType[typeof type],
 ): void {
   try {
     const envelope = store.appendEvent(runId, type, data);

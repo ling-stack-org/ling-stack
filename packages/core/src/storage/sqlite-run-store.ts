@@ -1625,7 +1625,11 @@ export class SqliteRunStore implements RunStore {
     this.recordRunSkillUsage(this.getRun(runId), "cancelled", endedAt);
   }
 
-  appendEvent(runId: string, type: RunEventType, data: unknown): RunEventEnvelope {
+  appendEvent<K extends RunEventType>(
+    runId: string,
+    type: K,
+    data: import("../run-types.js").RunEventDataByType[K],
+  ): Extract<RunEventEnvelope, { readonly type: K }> {
     return this.runEvents.appendEvent(runId, type, data);
   }
 

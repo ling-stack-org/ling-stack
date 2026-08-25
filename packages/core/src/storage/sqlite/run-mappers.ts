@@ -1,6 +1,6 @@
 import type { SQLOutputValue } from "node:sqlite";
-import type { LingThreadRelationKindV2, LingThreadSurfaceKindV2 } from "@ling-stack/contracts";
-import { conversationModeKinds, runContinuationReasons, type ConversationModeKind, type ConversationModeState, type GoalContinuationEvidenceDelta, type GoalContinuationStopReason, type GoalEvidenceRef, type GoalUsageSource, type LingThread, type LingThreadGoal, type LingThreadGoalCompletionActor, type LingThreadGoalStatus, type LingThreadKind, type LingThreadMetadata, type LingThreadStatus, type LingTurn, type LingTurnKind, type LingTurnRun, type LingTurnRunRole, type LingTurnStatus, type ProposedPlanArtifact, type ProposedPlanArtifactStatus, type RunContinuationReason, type RunEventEnvelope, type RunEventType, type RunSession, type RunStatus } from "../../run-types.js";
+import { isRunEventData, isRunEventType, type LingThreadRelationKindV2, type LingThreadSurfaceKindV2 } from "@ling-stack/contracts";
+import { conversationModeKinds, runContinuationReasons, type ConversationModeKind, type ConversationModeState, type GoalContinuationEvidenceDelta, type GoalContinuationStopReason, type GoalEvidenceRef, type GoalUsageSource, type LingThread, type LingThreadGoal, type LingThreadGoalCompletionActor, type LingThreadGoalStatus, type LingThreadKind, type LingThreadMetadata, type LingThreadStatus, type LingTurn, type LingTurnKind, type LingTurnRun, type LingTurnRunRole, type LingTurnStatus, type ProposedPlanArtifact, type ProposedPlanArtifactStatus, type RunContinuationReason, type RunEventEnvelope, type RunSession, type RunStatus } from "../../run-types.js";
 import { omitUndefined, parseJson, readNullableNumber, readNullableString, readNumber, readString } from "./helpers.js";
 
 export function mapLingThread(row: Record<string, SQLOutputValue>): LingThread {
@@ -236,14 +236,25 @@ export function mapRunSession(row: Record<string, SQLOutputValue>): RunSession {
 }
 
 export function mapRunEvent(row: Record<string, SQLOutputValue>): RunEventEnvelope {
+  const type = readString(row, "type");
+  if (!isRunEventType(type)) {
+    throw new Error(`Unknown run event type from SQLite: ${type}`);
+  }
+  const data = parseJson(readString(row, "data_json"));
+  if (!isRunEventData(type, data)) {
+    throw new Error(`Invalid run event payload from SQLite: ${type}`);
+  }
   return {
     id: readString(row, "id"),
     runId: readString(row, "run_id"),
     seq: readNumber(row, "seq"),
     ts: readString(row, "ts"),
-    type: readString(row, "type") as RunEventType,
-    data: parseJson(readString(row, "data_json")),
-  };
+    type,
+    // SQLite stores the envelope payload as JSON. The boundary check above
+    // rejects malformed rows; the discriminated union is preserved for all
+    // typed consumers after the dynamic type column has been read.
+    data,
+  } as RunEventEnvelope;
 }
 
 function parseOptionalLingThreadMetadata(value: string | undefined): LingThreadMetadata | undefined {
