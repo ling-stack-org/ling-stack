@@ -1,5 +1,6 @@
 import {
   createApprovalCheckpointId,
+  isApprovalResumeBasisV1,
   type CreateApprovalCheckpointInput,
   type LingApprovalCheckpoint,
   type ListApprovalCheckpointsOptions,
@@ -42,6 +43,8 @@ export class SqliteApprovalCheckpointStore {
       sideEffect: input.approval.payload,
       previewArtifactIds: input.previewArtifactIds ?? [],
       resultArtifactIds: input.resultArtifactIds ?? [],
+      revision: 0,
+      resumeBasis: input.resumeBasis,
       runnerResumeHandle: input.runnerResumeHandle,
       createdAt: input.approval.createdAt,
       updatedAt: now,
@@ -68,13 +71,15 @@ export class SqliteApprovalCheckpointStore {
           side_effect_json,
           preview_artifact_ids_json,
           result_artifact_ids_json,
+          revision,
+          resume_basis_json,
           runner_resume_handle_json,
           created_at,
           updated_at,
           resolved_at,
           resumed_at,
           resume_failure_reason
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         checkpoint.id,
@@ -94,6 +99,8 @@ export class SqliteApprovalCheckpointStore {
         stringifyJson(checkpoint.sideEffect),
         stringifyJson(checkpoint.previewArtifactIds),
         stringifyJson(checkpoint.resultArtifactIds),
+        checkpoint.revision,
+        checkpoint.resumeBasis ? stringifyJson(checkpoint.resumeBasis) : null,
         checkpoint.runnerResumeHandle ? stringifyJson(checkpoint.runnerResumeHandle) : null,
         checkpoint.createdAt,
         checkpoint.updatedAt,
@@ -160,6 +167,15 @@ export class SqliteApprovalCheckpointStore {
     if (!existing) {
       return undefined;
     }
+    if (input.expectedStatus !== undefined && existing.status !== input.expectedStatus) return undefined;
+    if (input.expectedRevision !== undefined && existing.revision !== input.expectedRevision) return undefined;
+    if (input.resumeBasis && !isApprovalResumeBasisV1(input.resumeBasis)) {
+      throw new Error(`Approval resume basis is invalid: ${id}`);
+    }
+    if (existing.resumeBasis && input.resumeBasis && existing.resumeBasis.fingerprint !== input.resumeBasis.fingerprint) {
+      throw new Error(`Approval resume basis is immutable: ${id}`);
+    }
+    const resumeBasis = input.resumeBasis ?? existing.resumeBasis;
 
     this.context.database
       .prepare(`
@@ -168,17 +184,20 @@ export class SqliteApprovalCheckpointStore {
           status = ?,
           preview_artifact_ids_json = ?,
           result_artifact_ids_json = ?,
+          revision = revision + 1,
+          resume_basis_json = ?,
           runner_resume_handle_json = ?,
           updated_at = ?,
           resolved_at = ?,
           resumed_at = ?,
           resume_failure_reason = ?
-        WHERE id = ?
+        WHERE id = ? AND status = ? AND revision = ?
       `)
       .run(
         input.status,
         stringifyJson(input.previewArtifactIds ?? existing.previewArtifactIds),
         stringifyJson(input.resultArtifactIds ?? existing.resultArtifactIds),
+        resumeBasis ? stringifyJson(resumeBasis) : null,
         input.runnerResumeHandle === undefined
           ? (existing.runnerResumeHandle ? stringifyJson(existing.runnerResumeHandle) : null)
           : (input.runnerResumeHandle ? stringifyJson(input.runnerResumeHandle) : null),
@@ -189,9 +208,11 @@ export class SqliteApprovalCheckpointStore {
           ? (existing.resumeFailureReason ?? null)
           : (input.resumeFailureReason ?? null),
         id,
+        existing.status,
+        existing.revision,
       );
-
-    return this.getApprovalCheckpoint(id);
+    const updated = this.getApprovalCheckpoint(id);
+    return updated?.revision === existing.revision + 1 ? updated : undefined;
   }
 
   syncApprovalCheckpointForApproval(approval: ApprovalRequest, now: string): LingApprovalCheckpoint {

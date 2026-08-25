@@ -433,7 +433,7 @@ export function AppShell(): React.JSX.Element {
   });
   const {
     conversationThreads,
-    conversationsLoading,
+    conversationThreadsLoading,
     selectedConversationThreadId,
     selectedConversationDetail,
     conversationIdentity,
@@ -704,6 +704,8 @@ export function AppShell(): React.JSX.Element {
     previewPluginRuntime,
     enablePlugin,
     disablePlugin,
+    startChromePairing,
+    revokeChromeAccess,
     clearPluginActionErrors,
     resetForCwd: resetPluginsForCwd,
   } = pluginsDomain.actions;
@@ -2288,6 +2290,9 @@ export function AppShell(): React.JSX.Element {
     taskRunProviderId || selectedChannelForRun?.defaultProviderPresetId || workspaceDefaultProviderPresetId || "";
   const navigationActiveSidebarTarget =
     activeView === "workspace" && selectedChannelId ? channelSidebarTarget(selectedChannelId) : activeSidebarTarget;
+  const navigationSelectedRecentConversationId = recentConversations.some((conversation) => conversation.id === conversationIdentity)
+    ? conversationIdentity
+    : selectedConversationThreadId;
   const shellClassName = [
     "app-shell",
     "channel-drawer-shell",
@@ -2336,15 +2341,15 @@ export function AppShell(): React.JSX.Element {
         selectedChannelBranchId={selectedChannelBranchId}
         teammates={aiTeammates}
         cwd={form.cwd}
-        channelsLoading={channelsLoading}
-        teammatesLoading={aiTeammatesLoading}
+        channelsInitialLoading={channelsLoading && channels.length === 0}
+        teammatesInitialLoading={aiTeammatesLoading && aiTeammates.length === 0}
         stale={daemonHealthy === false}
         channelNotifications={sidebarChannelNotifications}
         teammateNotifications={sidebarTeammateNotifications}
         recentConversations={recentConversations}
-        recentConversationsLoading={conversationsLoading}
+        recentConversationsInitialLoading={conversationThreadsLoading && recentConversations.length === 0}
         recentConversationActionError={conversationSidebarError}
-        selectedRecentConversationId={activeView === "workspace" && !selectedChannelId ? selectedConversationThreadId : ""}
+        selectedRecentConversationId={activeView === "workspace" && !selectedChannelId ? navigationSelectedRecentConversationId : ""}
         onOpenView={(view) => {
           if (view === "workspace") {
             openConversationHome();
@@ -2569,6 +2574,11 @@ export function AppShell(): React.JSX.Element {
               refreshChannelGovernanceNotifications(),
               refreshUsedMemoryAudit(form.cwd.trim()),
             ])}
+            onRefreshPendingChannelReply={() => void refreshChannelMessages(
+              selectedChannelId,
+              selectedChannelMessageThreadId,
+              { silent: true },
+            )}
             onRefreshChannelActivity={refreshChannelActivity}
             onRefreshExternalWorkCiTriage={() => void refreshExternalWorkCiTriage()}
             onRefreshWorkItems={() => void refreshWorkItems()}
@@ -2972,6 +2982,8 @@ export function AppShell(): React.JSX.Element {
                     onRuntimePreview={previewPluginRuntime}
                     onEnable={enablePlugin}
                     onDisable={disablePlugin}
+                    onStartChromePairing={startChromePairing}
+                    onRevokeChrome={revokeChromeAccess}
                     onClearActionErrors={clearPluginActionErrors}
                     onOpenMcpSettings={() => {
                       void refreshMcp();

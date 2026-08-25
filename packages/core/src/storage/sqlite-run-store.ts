@@ -6,6 +6,10 @@ import {
   resolveRuntimePaths,
   type LingStackRuntimePaths,
 } from "../runtime-paths.js";
+import type {
+  ChromeBrowserCredentialRecord,
+  UpsertChromeBrowserCredentialInput,
+} from "../chrome-browser-types.js";
 import {
   type ApprovalRequest,
   type CreateApprovalRequestInput,
@@ -13,6 +17,12 @@ import {
   type ResolveApprovalRequestInput,
 } from "../approval-types.js";
 import {
+  type CommitApprovalResumeClaimInput,
+  type CommitApprovalResumeClaimResult,
+  type CommitApprovalResumeSuspensionInput,
+  type CommitApprovalResumeSuspensionResult,
+  type CommitApprovalResumeTerminalInput,
+  type CommitApprovalResumeTerminalResult,
   type CreateApprovalCheckpointInput,
   type LingApprovalCheckpoint,
   type ListApprovalCheckpointsOptions,
@@ -276,6 +286,8 @@ import {
   type LingThreadStatus,
   type LingTurn,
   type LingTurnRun,
+  type LingTurnStatus,
+  type TransitionLingTurnStatusInput,
   type ListProposedPlanArtifactsOptions,
   type ListControlPlaneEventsOptions,
   type ListLingThreadsOptions,
@@ -302,7 +314,9 @@ import {
 } from "../run-types.js";
 import {
   type AcquireRuntimeSemaphoreSlotInput,
+  type AppendRuntimeDiagnosticEventInput,
   type AppendRuntimeEventInput,
+  type AppendTerminalRuntimeAuditInput,
   type CreateWorkUnitAttemptInput,
   type CreateWorkUnitInput,
   type ListRuntimeEventsOptions,
@@ -311,6 +325,7 @@ import {
   type RecordRuntimeHeartbeatInput,
   type RuntimeEvent,
   type RuntimeHeartbeat,
+  type RuntimeAttemptFenceV1,
   type RuntimeSemaphoreSlot,
   type WorkUnit,
   type WorkUnitAttempt,
@@ -341,7 +356,7 @@ import {
   type ListResourceLeasesOptions,
   type ListStateTransitionEventsOptions,
   type ResourceLease,
-  type ResourceLeaseOwnerType,
+  type ResourceLeaseOwnerLevelType,
   type StateTransitionEvent,
 } from "../channel-runtime-types.js";
 import {
@@ -356,6 +371,7 @@ import {
 } from "../state-machines.js";
 import {
   type CreateMediaProjectInput,
+  type CreateMediaProjectAssetInput,
   type CreateMediaJobInput,
   type CreateMediaSceneInput,
   type CreateMediaSceneRunInput,
@@ -363,6 +379,7 @@ import {
   type MediaJobExecutionHandle,
   type MediaJob,
   type MediaProject,
+  type MediaProjectAsset,
   type MediaScene,
   type MediaSceneRun,
   type UpdateMediaProjectInput,
@@ -496,6 +513,15 @@ import {
   CONTINUITY_V2_STORAGE_MIGRATION_VERSION,
 } from "./sqlite/continuity-v2-migration.js";
 import { applyChannelIntentV2Migration } from "./sqlite/channel-intent-v2-migration.js";
+import { applyChannelIntentExecutionPlanMigration } from "./sqlite/channel-intent-execution-plan-migration.js";
+import { applyChannelParticipantManifestMigration } from "./sqlite/channel-participant-manifest-migration.js";
+import { applyChannelDelegatedStepRequirementMigration } from "./sqlite/channel-delegated-step-requirement-migration.js";
+import { applyChannelEvidencePublicationMigration } from "./sqlite/channel-evidence-publication-migration.js";
+import { applyControlPlaneReplayStateMigration } from "./sqlite/control-plane-replay-state-migration.js";
+import { applyApprovalResumeBasisMigration } from "./sqlite/approval-resume-basis-migration.js";
+import { applyChannelParticipantAuthorityMigration } from "./sqlite/channel-participant-authority-migration.js";
+import { applyChannelProposalBlockerMigration } from "./sqlite/channel-proposal-blocker-migration.js";
+import { applyRuntimeAttemptFenceMigration } from "./sqlite/runtime-attempt-fence-migration.js";
 import {
   isJsonRecord,
   isRecord,
@@ -513,6 +539,7 @@ import { SqliteProviderStore } from "./sqlite/provider-store.js";
 import { SqliteMcpStore } from "./sqlite/mcp-store.js";
 import { SqliteManagedPluginStore } from "./sqlite/managed-plugin-store.js";
 import { SqliteCuaDriverActivationStore } from "./sqlite/cua-driver-activation-store.js";
+import { SqliteChromeBrowserCredentialStore } from "./sqlite/chrome-browser-credential-store.js";
 import { SqliteConversationItemStore } from "./sqlite/conversation-item-store.js";
 import { SqliteConversationTurnIngestStore } from "./sqlite/conversation-turn-ingest-store.js";
 import { SqliteConversationThreadTopologyStore } from "./sqlite/conversation-thread-topology-store.js";
@@ -521,6 +548,7 @@ import { SqliteMediaWorkflowStore } from "./sqlite/media-workflow-store.js";
 import { SqliteApprovalPolicyStore } from "./sqlite/approval-policy-store.js";
 import { SqliteApprovalRequestStore } from "./sqlite/approval-request-store.js";
 import { SqliteApprovalCheckpointStore } from "./sqlite/approval-checkpoint-store.js";
+import { SqliteApprovalResumeStore } from "./sqlite/approval-resume-store.js";
 import { SqliteArtifactStore } from "./sqlite/artifact-store.js";
 import { SqliteControlPlaneStore } from "./sqlite/control-plane-store.js";
 import { SqliteRunEventStore } from "./sqlite/run-event-store.js";
@@ -532,6 +560,7 @@ import { SqliteLingThreadStore } from "./sqlite/ling-thread-store.js";
 import { SqliteLingThreadCleanupStore } from "./sqlite/ling-thread-cleanup-store.js";
 import { SqliteLingTurnStore } from "./sqlite/ling-turn-store.js";
 import { SqliteTerminalReportStore } from "./sqlite/terminal-report-store.js";
+import { SqliteTerminalReportPublicationStore } from "./sqlite/terminal-report-publication-store.js";
 import { SqliteStateTransitionStore } from "./sqlite/state-transition-store.js";
 import { SqliteResourceLeaseStore } from "./sqlite/resource-lease-store.js";
 import { SqliteRuntimeSemaphoreStore } from "./sqlite/runtime-semaphore-store.js";
@@ -587,6 +616,8 @@ export interface SqliteRunStoreOptions {
   readonly paths?: LingStackRuntimePaths;
   /** Migration fixtures only. Production callers must never bypass the authority cutover. */
   readonly deferContinuityV2MigrationForTest?: boolean;
+  /** Migration fixtures only. Creates a pre-119 database for packaged upgrade tests. */
+  readonly deferContinuityV2ReleaseMigrationsForTest?: boolean;
 }
 
 export class SqliteRunStore implements RunStore {
@@ -598,10 +629,12 @@ export class SqliteRunStore implements RunStore {
   private readonly mcps: SqliteMcpStore;
   private readonly managedPlugins: SqliteManagedPluginStore;
   private readonly cuaDriverActivation: SqliteCuaDriverActivationStore;
+  private readonly chromeBrowserCredentials: SqliteChromeBrowserCredentialStore;
   private readonly mediaJobs: SqliteMediaStore;
   private readonly mediaWorkflows: SqliteMediaWorkflowStore;
   private readonly approvalPolicies: SqliteApprovalPolicyStore;
   private readonly approvalCheckpoints: SqliteApprovalCheckpointStore;
+  private readonly approvalResumes: SqliteApprovalResumeStore;
   private readonly approvalRequests: SqliteApprovalRequestStore;
   private readonly artifacts: SqliteArtifactStore;
   private readonly controlPlane: SqliteControlPlaneStore;
@@ -614,6 +647,7 @@ export class SqliteRunStore implements RunStore {
   private readonly lingThreadCleanup: SqliteLingThreadCleanupStore;
   private readonly lingTurns: SqliteLingTurnStore;
   private readonly terminalReports: SqliteTerminalReportStore;
+  private readonly terminalReportPublication: SqliteTerminalReportPublicationStore;
   private readonly conversationRevisions: SqliteConversationRevisionStore;
   private readonly remoteAccess: SqliteRemoteAccessStore;
   private readonly stateTransitions: SqliteStateTransitionStore;
@@ -691,6 +725,7 @@ export class SqliteRunStore implements RunStore {
       managedPlugins: this.managedPlugins,
       mcps: this.mcps,
     });
+    this.chromeBrowserCredentials = new SqliteChromeBrowserCredentialStore(this.database);
     this.mediaJobs = new SqliteMediaStore({ database: this.database });
     this.mediaWorkflows = new SqliteMediaWorkflowStore({ database: this.database });
     this.approvalPolicies = new SqliteApprovalPolicyStore({ database: this.database });
@@ -730,10 +765,14 @@ export class SqliteRunStore implements RunStore {
         findStateTransitionByIdempotency: (entityType, entityId, idempotencyKey) =>
           this.findStateTransitionByIdempotency(entityType, entityId, idempotencyKey),
         recordStateTransitionEvent: (input) => this.recordStateTransitionEvent(input),
-        renewResourceLeasesForAttempt: (attemptId, renewedAt) =>
-          this.resourceLeases.renewActiveResourceLeasesForAttempt(attemptId, renewedAt),
-        renewRuntimeSemaphoreSlotsForAttempt: (attemptId, renewedAt) =>
-          this.runtimeSemaphores.renewRuntimeSemaphoreSlotsForAttempt(attemptId, renewedAt),
+        renewResourceLeasesForAttempt: (fence, renewedAt) =>
+          this.resourceLeases.renewResourceLeasesForAttempt(fence, renewedAt),
+        renewRuntimeSemaphoreSlotsForAttempt: (fence, renewedAt) =>
+          this.runtimeSemaphores.renewRuntimeSemaphoreSlotsForAttempt(fence, renewedAt),
+        releaseResourceLeasesForAttempt: (fence, releasedAt, releaseReason) =>
+          this.resourceLeases.releaseResourceLeasesForAttempt(fence, releasedAt, releaseReason),
+        releaseRuntimeSemaphoreSlotsForAttempt: (fence, releasedAt, releaseReason) =>
+          this.runtimeSemaphores.releaseRuntimeSemaphoreSlotsForAttempt(fence, releasedAt, releaseReason),
       },
     );
     this.lingThreads = new SqliteLingThreadStore(
@@ -760,6 +799,9 @@ export class SqliteRunStore implements RunStore {
         getRun: (runId) => this.getRun(runId),
         rebuildLingThreadMetadata: (threadId, now) => this.tryRebuildLingThreadMetadata(threadId, now),
         rebuildLingThreadMetadataForTurn: (turnId, now) => this.tryRebuildLingThreadMetadataForTurn(turnId, now),
+        findStateTransitionByIdempotency: (entityType, entityId, idempotencyKey) =>
+          this.findStateTransitionByIdempotency(entityType, entityId, idempotencyKey),
+        recordStateTransitionEvent: (input) => this.recordStateTransitionEvent(input),
       },
     );
     this.terminalReports = new SqliteTerminalReportStore({ database: this.database });
@@ -834,6 +876,7 @@ export class SqliteRunStore implements RunStore {
       listChannelWorkflowSteps: (options) => this.listChannelWorkflowSteps(options),
       getApprovalRequest: (id) => this.getApprovalRequest(id),
       listApprovalRequests: (options) => this.listApprovalRequests(options),
+      getApprovalCheckpointForApproval: (approvalId) => this.getApprovalCheckpointForApproval(approvalId),
       transitionChannelWorkflowStepStatus: (input) => this.transitionChannelWorkflowStepStatus(input),
       getChannelWorkflow: (workflowId) => this.getChannelWorkflow(workflowId),
       transitionChannelWorkflowStatus: (input) => this.transitionChannelWorkflowStatus(input),
@@ -1026,6 +1069,36 @@ export class SqliteRunStore implements RunStore {
         recordStateTransitionEvent: (input) => this.recordStateTransitionEvent(input),
         releaseResourceLeasesForWorkflowStep: (workflowStepId, releasedAt) =>
           this.releaseResourceLeasesForOwner("workflow_step", workflowStepId, releasedAt),
+        getChannelIntentDecision: (id) => this.getChannelIntentDecision(id),
+        getRun: (id) => this.getRun(id),
+        listEvents: (runId, options) => this.listEvents(runId, options),
+        countEvents: (runId) => this.countEvents(runId),
+        listApprovalRequests: (options) => this.listApprovalRequests(options),
+        getArtifact: (id) => this.getArtifact(id),
+        listArtifacts: (runId) => this.listArtifacts(runId),
+      },
+    );
+    this.terminalReportPublication = new SqliteTerminalReportPublicationStore(
+      { database: this.database },
+      {
+        cwd: this.paths.cwd,
+        getTerminalReport: (id) => this.getTerminalReport(id),
+        getChannelWorkflow: (id) => this.getChannelWorkflow(id),
+        listChannelWorkflowSteps: (workflowId) => this.listChannelWorkflowSteps({ workflowId, limit: 500 }),
+        completionReadStore: this,
+        getLingTurn: (id) => this.getLingTurn(id),
+        getConversationItem: (id) => this.getConversationItem(id),
+        getConversationItemByIdempotencyKey: (threadId, idempotencyKey) =>
+          this.getConversationItemByIdempotencyKey(threadId, idempotencyKey),
+        appendConversationItemWithinTransaction: (input, now) =>
+          this.conversationItems.appendConversationItemWithinTransaction(input, now),
+        findStateTransitionByIdempotency: (entityType, entityId, idempotencyKey) =>
+          this.findStateTransitionByIdempotency(entityType, entityId, idempotencyKey),
+        recordStateTransitionEvent: (input) => this.recordStateTransitionEvent(input),
+        getControlPlaneEventByIdempotency: (workspaceId, idempotencyKey) =>
+          this.getControlPlaneEventByIdempotency(workspaceId, idempotencyKey),
+        appendControlPlaneEventWithinTransaction: (input, now) =>
+          this.controlPlane.appendControlPlaneEventWithinTransaction(input, now),
       },
     );
     this.channelCore = new SqliteChannelCoreStore(
@@ -1088,6 +1161,32 @@ export class SqliteRunStore implements RunStore {
         hasAiTeammate: (id) => Boolean(this.getAiTeammate(id)),
       },
     );
+    this.approvalResumes = new SqliteApprovalResumeStore(
+      { database: this.database },
+      {
+        getApprovalCheckpoint: (id) => this.getApprovalCheckpoint(id),
+        updateApprovalCheckpointStatus: (id, input, now) => this.updateApprovalCheckpointStatus(id, input, now),
+        getRun: (id) => this.getRun(id),
+        transitionRunStatus: (input) => this.transitionRunStatus(input),
+        getWorkUnit: (id) => this.getWorkUnit(id),
+        transitionWorkUnitStatus: (input) => this.transitionWorkUnitStatus(input),
+        getWorkUnitAttempt: (id) => this.getWorkUnitAttempt(id),
+        createWorkUnitAttempt: (input) => this.createWorkUnitAttempt(input),
+        createWorkUnitAttemptWithinTransaction: (input) => this.createWorkUnitAttemptWithinTransaction(input),
+        updateWorkUnitAttemptStatus: (input) => this.updateWorkUnitAttemptStatus(input),
+        releaseRuntimeSemaphoreSlotsForAttempt: (fence, releasedAt, releaseReason) =>
+          this.releaseRuntimeSemaphoreSlotsForAttempt(fence, releasedAt, releaseReason),
+        appendRuntimeEvent: (input) => this.appendRuntimeEvent(input),
+        appendTerminalRuntimeAudit: (input) => this.appendTerminalRuntimeAudit(input),
+        appendControlPlaneEventWithinTransaction: (input, now) =>
+          this.controlPlane.appendControlPlaneEventWithinTransaction(input, now),
+        getTask: (id) => this.getTask(id),
+        transitionTaskStatus: (input) => this.transitionTaskStatus(input),
+        releaseResourceLeasesForAttempt: (fence, releasedAt, releaseReason) =>
+          this.releaseResourceLeasesForAttempt(fence, releasedAt, releaseReason),
+        getDefaultControlPlaneScope: () => ({ workspaceId: DEFAULT_WORKSPACE_ID, cwd: this.paths.cwd }),
+      },
+    );
     try {
       withSqliteRunStoreMigrationLock(this.paths.rootDir, () => {
         configureSqliteRunStoreDatabase(this.database);
@@ -1098,12 +1197,72 @@ export class SqliteRunStore implements RunStore {
           hasTable: (tableName) => this.hasTable(tableName),
           recordMigration: (version, name) => this.recordMigration(version, name),
         });
+        applyApprovalResumeBasisMigration({
+          database: this.database,
+          hasMigration: (version) => this.hasMigration(version),
+          hasColumn: (tableName, columnName) => this.hasColumn(tableName, columnName),
+          recordMigration: (version, name) => this.recordMigration(version, name),
+        });
         if (!options.deferContinuityV2MigrationForTest) {
           this.applyContinuityV2AuthorityCutover();
           applyChannelIntentV2Migration({
             database: this.database,
             appliedAt: new Date().toISOString(),
             hasMigration: (version) => this.hasMigration(version),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+          applyChannelIntentExecutionPlanMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+          applyChannelParticipantManifestMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+          applyChannelDelegatedStepRequirementMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+          applyChannelEvidencePublicationMigration({
+            database: this.database,
+            artifactsDir: this.paths.artifactsDir,
+            hasMigration: (version) => this.hasMigration(version),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+          applyControlPlaneReplayStateMigration({
+            database: this.database,
+            now: new Date().toISOString(),
+            hasMigration: (version) => this.hasMigration(version),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+        }
+        if (!options.deferContinuityV2ReleaseMigrationsForTest) {
+          // These columns must be added after the Continuity v2 cutover because that
+          // migration may rebuild channel_workflow_steps from the legacy schema.
+          applyChannelParticipantAuthorityMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
+            hasColumn: (tableName, columnName) => this.hasColumn(tableName, columnName),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+          applyChannelProposalBlockerMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
+            hasColumn: (tableName, columnName) => this.hasColumn(tableName, columnName),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+        }
+        if (!options.deferContinuityV2ReleaseMigrationsForTest) {
+          // Runtime fencing is the final migration in the current clean-break line.
+          // It must run after the base runtime tables and after the Continuity/approval
+          // migrations so every existing Attempt projection can be backfilled atomically.
+          applyRuntimeAttemptFenceMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
+            hasColumn: (tableName, columnName) => this.hasColumn(tableName, columnName),
             recordMigration: (version, name) => this.recordMigration(version, name),
           });
         }
@@ -1377,6 +1536,10 @@ export class SqliteRunStore implements RunStore {
     return this.lingTurns.reconcileLingTurnStatus(turnId, now);
   }
 
+  transitionLingTurnStatus(input: TransitionLingTurnStatusInput): TransitionResult<LingTurnStatus> {
+    return this.lingTurns.transitionLingTurnStatus(input);
+  }
+
   createTerminalReportDraft(input: CreateLingTerminalReportInput, now: string): LingTerminalReportRecord {
     return this.terminalReports.createTerminalReportDraft(input, now);
   }
@@ -1408,6 +1571,22 @@ export class SqliteRunStore implements RunStore {
 
   markTerminalReportPublished(input: MarkLingTerminalReportPublishedInput): LingTerminalReportRecord {
     return this.terminalReports.markTerminalReportPublished(input);
+  }
+
+  commitTerminalReportPublication(
+    input: Parameters<RunStore["commitTerminalReportPublication"]>[0],
+  ): ReturnType<RunStore["commitTerminalReportPublication"]> {
+    const result = this.terminalReportPublication.commitTerminalReportPublication(input);
+    if (result.ok) this.tryRebuildLingThreadMetadataForTurn(result.sourceTurnId, input.now);
+    return result;
+  }
+
+  commitLegacyWorkflowPublication(
+    input: Parameters<RunStore["commitLegacyWorkflowPublication"]>[0],
+  ): ReturnType<RunStore["commitLegacyWorkflowPublication"]> {
+    const result = this.terminalReportPublication.commitLegacyWorkflowPublication(input);
+    if (result.ok) this.tryRebuildLingThreadMetadataForTurn(result.sourceTurnId, input.now);
+    return result;
   }
 
   failTerminalReport(input: FailLingTerminalReportInput): LingTerminalReportRecord {
@@ -1456,12 +1635,26 @@ export class SqliteRunStore implements RunStore {
     return this.controlPlane.appendControlPlaneEvent(input, now);
   }
 
+  getControlPlaneEventByIdempotency(workspaceId: string, idempotencyKey: string): ControlPlaneEvent | undefined {
+    return this.controlPlane.getControlPlaneEventByIdempotency(workspaceId, idempotencyKey);
+  }
+
   listControlPlaneEvents(options: ListControlPlaneEventsOptions): ControlPlaneEvent[] {
     return this.controlPlane.listControlPlaneEvents(options);
   }
 
   getLatestControlPlaneEventSeq(workspaceId: string): number {
     return this.controlPlane.getLatestControlPlaneEventSeq(workspaceId);
+  }
+
+  getControlPlaneReplayState(workspaceId: string): ReturnType<RunStore["getControlPlaneReplayState"]> {
+    return this.controlPlane.getControlPlaneReplayState(workspaceId);
+  }
+
+  readControlPlaneReplayWindow(
+    input: Parameters<RunStore["readControlPlaneReplayWindow"]>[0],
+  ): ReturnType<RunStore["readControlPlaneReplayWindow"]> {
+    return this.controlPlane.readControlPlaneReplayWindow(input);
   }
 
   getRun(runId: string): RunSession | undefined {
@@ -1533,27 +1726,18 @@ export class SqliteRunStore implements RunStore {
     return this.runSessions.linkRunToWorkUnit(runId, workUnitId, now);
   }
 
-  transitionWorkUnitStatus(input: {
-    readonly workUnitId: string;
-    readonly expectedStatus?: WorkUnitStatus;
-    readonly event: WorkUnitTransitionEvent;
-    readonly actor: StateTransitionActor;
-    readonly reason?: string;
-    readonly idempotencyKey?: string;
-    readonly now: string;
-    readonly activeAttemptId?: string | null;
-    readonly startedAt?: string;
-    readonly endedAt?: string | null;
-    readonly lastEventAt?: string;
-    readonly lastHeartbeatAt?: string;
-    readonly errorCode?: string | null;
-    readonly errorMessage?: string | null;
-  }): TransitionResult<WorkUnitStatus> {
+  transitionWorkUnitStatus(
+    input: Parameters<RunStore["transitionWorkUnitStatus"]>[0],
+  ): TransitionResult<WorkUnitStatus> {
     return this.runtimeWorkUnits.transitionWorkUnitStatus(input);
   }
 
   createWorkUnitAttempt(input: CreateWorkUnitAttemptInput): WorkUnitAttempt {
     return this.runtimeWorkUnits.createWorkUnitAttempt(input);
+  }
+
+  private createWorkUnitAttemptWithinTransaction(input: CreateWorkUnitAttemptInput): WorkUnitAttempt {
+    return this.runtimeWorkUnits.createWorkUnitAttemptWithinTransaction(input);
   }
 
   getWorkUnitAttempt(attemptId: string): WorkUnitAttempt | undefined {
@@ -1564,23 +1748,28 @@ export class SqliteRunStore implements RunStore {
     return this.runtimeWorkUnits.listWorkUnitAttempts(workUnitId);
   }
 
-  updateWorkUnitAttemptStatus(input: {
-    readonly attemptId: string;
-    readonly status: WorkUnitAttempt["status"];
-    readonly now: string;
-    readonly startedAt?: string;
-    readonly endedAt?: string;
-    readonly lastEventAt?: string;
-    readonly lastHeartbeatAt?: string;
-    readonly abortRequestedAt?: string;
-    readonly errorCode?: string | null;
-    readonly errorMessage?: string | null;
-  }): WorkUnitAttempt | undefined {
+  updateWorkUnitAttemptStatus(
+    input: Parameters<RunStore["updateWorkUnitAttemptStatus"]>[0],
+  ): WorkUnitAttempt | undefined {
     return this.runtimeWorkUnits.updateWorkUnitAttemptStatus(input);
+  }
+
+  transitionWorkUnitAttemptTerminal(
+    input: Parameters<RunStore["transitionWorkUnitAttemptTerminal"]>[0],
+  ): boolean {
+    return this.runtimeWorkUnits.transitionWorkUnitAttemptTerminal(input);
   }
 
   appendRuntimeEvent(input: AppendRuntimeEventInput): RuntimeEvent {
     return this.runtimeWorkUnits.appendRuntimeEvent(input);
+  }
+
+  appendTerminalRuntimeAudit(input: AppendTerminalRuntimeAuditInput): RuntimeEvent {
+    return this.runtimeWorkUnits.appendTerminalRuntimeAudit(input);
+  }
+
+  appendRuntimeDiagnosticEvent(input: AppendRuntimeDiagnosticEventInput): RuntimeEvent {
+    return this.runtimeWorkUnits.appendRuntimeDiagnosticEvent(input);
   }
 
   listRuntimeEvents(workUnitId: string, options: ListRuntimeEventsOptions = {}): RuntimeEvent[] {
@@ -1595,8 +1784,20 @@ export class SqliteRunStore implements RunStore {
     return this.runtimeSemaphores.acquireRuntimeSemaphoreSlot(input);
   }
 
-  releaseRuntimeSemaphoreSlotsForOwner(ownerId: string, releasedAt: string, releaseReason: string): number {
-    return this.runtimeSemaphores.releaseRuntimeSemaphoreSlotsForOwner(ownerId, releasedAt, releaseReason);
+  renewRuntimeSemaphoreSlotsForAttempt(fence: RuntimeAttemptFenceV1, renewedAt: string): number {
+    return this.runtimeSemaphores.renewRuntimeSemaphoreSlotsForAttempt(fence, renewedAt);
+  }
+
+  releaseRuntimeSemaphoreSlotsForAttempt(
+    fence: RuntimeAttemptFenceV1,
+    releasedAt: string,
+    releaseReason: string,
+  ): number {
+    return this.runtimeSemaphores.releaseRuntimeSemaphoreSlotsForAttempt(fence, releasedAt, releaseReason);
+  }
+
+  expireRuntimeSemaphoreSlots(now: string): number {
+    return this.runtimeSemaphores.expireRuntimeSemaphoreSlots(now);
   }
 
   listRuntimeSemaphoreSlots(options: ListRuntimeSemaphoreSlotsOptions = {}): RuntimeSemaphoreSlot[] {
@@ -1749,7 +1950,19 @@ export class SqliteRunStore implements RunStore {
     return this.resourceLeases.acquireResourceLease(input);
   }
 
-  releaseResourceLeasesForOwner(ownerType: ResourceLeaseOwnerType, ownerId: string, releasedAt: string): number {
+  renewResourceLeasesForAttempt(fence: RuntimeAttemptFenceV1, renewedAt: string): number {
+    return this.resourceLeases.renewResourceLeasesForAttempt(fence, renewedAt);
+  }
+
+  releaseResourceLeasesForAttempt(
+    fence: RuntimeAttemptFenceV1,
+    releasedAt: string,
+    releaseReason: string,
+  ): number {
+    return this.resourceLeases.releaseResourceLeasesForAttempt(fence, releasedAt, releaseReason);
+  }
+
+  releaseResourceLeasesForOwner(ownerType: ResourceLeaseOwnerLevelType, ownerId: string, releasedAt: string): number {
     return this.resourceLeases.releaseResourceLeasesForOwner(ownerType, ownerId, releasedAt);
   }
 
@@ -2955,6 +3168,16 @@ export class SqliteRunStore implements RunStore {
     return this.channelWorkflows.transitionChannelWorkflowStatus(input);
   }
 
+  commitChannelWorkflowCompletionEvaluation(
+    input: Parameters<RunStore["commitChannelWorkflowCompletionEvaluation"]>[0],
+  ): TransitionResult<ChannelWorkflowStatus> {
+    return this.channelWorkflows.commitChannelWorkflowCompletionEvaluation(input);
+  }
+
+  commitChannelWorkflowStepFinalization(input: Parameters<RunStore["commitChannelWorkflowStepFinalization"]>[0]) {
+    return this.channelWorkflows.commitChannelWorkflowStepFinalization(input);
+  }
+
   createChannelWorkflowStep(input: CreateChannelWorkflowStepInput, now: string): ChannelWorkflowStep {
     return this.channelWorkflows.createChannelWorkflowStep(input, now);
   }
@@ -3214,6 +3437,32 @@ export class SqliteRunStore implements RunStore {
     return this.cuaDriverActivation.commitCuaDriverActivation(input);
   }
 
+  upsertChromeBrowserCredential(
+    input: UpsertChromeBrowserCredentialInput,
+    now: string,
+  ): ChromeBrowserCredentialRecord {
+    return this.chromeBrowserCredentials.upsertChromeBrowserCredential(input, now);
+  }
+
+  getChromeBrowserCredential(
+    workspaceId: string,
+    pluginId: string,
+    extensionId: string,
+  ): ChromeBrowserCredentialRecord | undefined {
+    return this.chromeBrowserCredentials.getChromeBrowserCredential(workspaceId, pluginId, extensionId);
+  }
+
+  listChromeBrowserCredentials(
+    workspaceId: string,
+    pluginId: string,
+  ): ChromeBrowserCredentialRecord[] {
+    return this.chromeBrowserCredentials.listChromeBrowserCredentials(workspaceId, pluginId);
+  }
+
+  revokeChromeBrowserCredentials(workspaceId: string, pluginId: string, now: string): number {
+    return this.chromeBrowserCredentials.revokeChromeBrowserCredentials(workspaceId, pluginId, now);
+  }
+
   upsertMcpStatusSnapshot(snapshot: McpRuntimeStatusSnapshot, now: string): McpRuntimeStatusSnapshot {
     return this.mcps.upsertMcpStatusSnapshot(snapshot, now);
   }
@@ -3268,6 +3517,14 @@ export class SqliteRunStore implements RunStore {
     now: string,
   ): TeammateMcpBinding[] {
     return this.mcps.replaceTeammateMcpBindings(teammateId, bindings, now);
+  }
+
+  upsertLingAgentChromeBrowserBinding(enabled: boolean, now: string): TeammateMcpBinding {
+    return this.mcps.upsertLingAgentChromeBrowserBinding(enabled, now);
+  }
+
+  upsertLingAgentBuiltInMcpBinding(serverId: string, enabled: boolean, now: string): TeammateMcpBinding {
+    return this.mcps.upsertLingAgentBuiltInMcpBinding(serverId, enabled, now);
   }
 
   listTeammateMcpBindings(teammateId: string): TeammateMcpBinding[] {
@@ -3504,6 +3761,26 @@ export class SqliteRunStore implements RunStore {
     return this.mediaJobs.deleteMediaProject(id);
   }
 
+  createMediaProjectAsset(input: CreateMediaProjectAssetInput, now: string): MediaProjectAsset {
+    return this.mediaJobs.createMediaProjectAsset(input, now);
+  }
+
+  getMediaProjectAsset(id: string): MediaProjectAsset | undefined {
+    return this.mediaJobs.getMediaProjectAsset(id);
+  }
+
+  listMediaProjectAssets(projectId: string): MediaProjectAsset[] {
+    return this.mediaJobs.listMediaProjectAssets(projectId);
+  }
+
+  findMediaProjectAssetByChecksum(projectId: string, checksum: string): MediaProjectAsset | undefined {
+    return this.mediaJobs.findMediaProjectAssetByChecksum(projectId, checksum);
+  }
+
+  deleteMediaProjectAsset(id: string): boolean {
+    return this.mediaJobs.deleteMediaProjectAsset(id);
+  }
+
   createMediaScene(input: CreateMediaSceneInput, now: string): MediaScene {
     return this.mediaJobs.createMediaScene(input, now);
   }
@@ -3666,6 +3943,20 @@ export class SqliteRunStore implements RunStore {
     now: string,
   ): LingApprovalCheckpoint | undefined {
     return this.approvalCheckpoints.updateApprovalCheckpointStatus(id, input, now);
+  }
+
+  commitApprovalResumeClaim(input: CommitApprovalResumeClaimInput): CommitApprovalResumeClaimResult {
+    return this.approvalResumes.commitApprovalResumeClaim(input);
+  }
+
+  commitApprovalResumeSuspension(
+    input: CommitApprovalResumeSuspensionInput,
+  ): CommitApprovalResumeSuspensionResult {
+    return this.approvalResumes.commitApprovalResumeSuspension(input);
+  }
+
+  commitApprovalResumeTerminal(input: CommitApprovalResumeTerminalInput): CommitApprovalResumeTerminalResult {
+    return this.approvalResumes.commitApprovalResumeTerminal(input);
   }
 
   getApprovalPolicy(): ApprovalPolicy {
@@ -4077,6 +4368,13 @@ export function createLegacySqliteRunStoreForMigrationTest(
   paths?: LingStackRuntimePaths,
 ): SqliteRunStore {
   return new SqliteRunStore({ cwd, paths, deferContinuityV2MigrationForTest: true });
+}
+
+export function createPreContinuityV2ReleaseSqliteRunStoreForMigrationTest(
+  cwd: string,
+  paths?: LingStackRuntimePaths,
+): SqliteRunStore {
+  return new SqliteRunStore({ cwd, paths, deferContinuityV2ReleaseMigrationsForTest: true });
 }
 
 function normalizeOptionalOwnerId(value: string | undefined): string | undefined {

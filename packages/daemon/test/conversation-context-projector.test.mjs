@@ -105,13 +105,13 @@ test("segmentation policy uses structural inheritance, validates model ids, and 
   assert.equal(explicit.segment.id, firstResolution.segment.id);
 });
 
-test("segmentation policy rejects model-invented segment and evidence ids", async (t) => {
+test("segmentation policy rejects untrusted model ids and falls back to the bootstrap segment", async (t) => {
   const fixture = await createFixture(t);
   const first = appendUserTurn(fixture, "first", firstAt);
   await assignContextSegmentForTurn({ store: fixture.store, sourceItemId: first.item.id, now: firstAt });
   const second = appendUserTurn(fixture, "second", secondAt);
 
-  await assert.rejects(() => assignContextSegmentForTurn({
+  const inventedSegment = await assignContextSegmentForTurn({
     store: fixture.store,
     sourceItemId: second.item.id,
     propose: async () => ({
@@ -121,19 +121,52 @@ test("segmentation policy rejects model-invented segment and evidence ids", asyn
       evidenceItemIds: [],
     }),
     now: secondAt,
-  }), /invented or cannot access segment/);
+  });
+  assert.equal(inventedSegment.resolution, "conservative_fallback");
+  assert.equal(inventedSegment.fallbackReason, "proposal_rejected");
+  assert.equal(inventedSegment.segment.id, first.contextSegmentId);
 
-  await assert.rejects(() => assignContextSegmentForTurn({
+  const third = appendUserTurn(fixture, "third", thirdAt);
+  const inventedEvidence = await assignContextSegmentForTurn({
     store: fixture.store,
-    sourceItemId: second.item.id,
+    sourceItemId: third.item.id,
     propose: async (view) => ({
       action: "continue",
       segmentId: view.candidates[0].segmentId,
       confidence: 0.9,
       evidenceItemIds: ["item_invented"],
     }),
+    now: thirdAt,
+  });
+  assert.equal(inventedEvidence.resolution, "conservative_fallback");
+  assert.equal(inventedEvidence.fallbackReason, "proposal_rejected");
+  assert.equal(inventedEvidence.segment.id, first.contextSegmentId);
+});
+
+test("segmentation policy aborts a stalled proposal and continues with conservative context", async (t) => {
+  const fixture = await createFixture(t);
+  const first = appendUserTurn(fixture, "first", firstAt);
+  await assignContextSegmentForTurn({ store: fixture.store, sourceItemId: first.item.id, now: firstAt });
+  const second = appendUserTurn(fixture, "second", secondAt);
+  let aborted = false;
+
+  const fallback = await assignContextSegmentForTurn({
+    store: fixture.store,
+    sourceItemId: second.item.id,
+    proposalTimeoutMs: 10,
+    propose: async (_view, signal) => await new Promise((_resolve, reject) => {
+      signal?.addEventListener("abort", () => {
+        aborted = true;
+        reject(signal.reason ?? new Error("aborted"));
+      }, { once: true });
+    }),
     now: secondAt,
-  }), /invented or cannot access evidence item/);
+  });
+
+  assert.equal(aborted, true);
+  assert.equal(fallback.resolution, "conservative_fallback");
+  assert.equal(fallback.fallbackReason, "proposal_timed_out");
+  assert.equal(fallback.segment.id, first.contextSegmentId);
 });
 
 test("topic projections inherit the complete source turn through the anchor item", async (t) => {

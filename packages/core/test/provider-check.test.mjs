@@ -281,6 +281,19 @@ test("media provider normalization centralizes live runtime eligibility", () => 
   assert.deepEqual(normalizeMediaProviderCompat(seedance).mediaVendorTransport, { mode: "live" });
   assert.equal(seedanceState.canRun, true);
   assert.deepEqual(seedanceState.supportedOperations, ["video_generate"]);
+  assert.deepEqual(seedanceState.videoGeneration?.inputModes, ["text", "first_frame"]);
+
+  const seedanceCapabilities = [
+    ["doubao-seedance-1-5-pro-251215", ["text", "first_frame"], undefined],
+    ["doubao-seedance-2-0-260128", ["text", "first_frame", "reference_image"], 9],
+    ["doubao-seedance-2-5-260628", ["text", "first_frame", "reference_image"], 30],
+    ["doubao-seedance-next", ["text"], undefined],
+  ];
+  for (const [model, inputModes, maxReferenceImages] of seedanceCapabilities) {
+    const state = resolveGenerationProviderRuntimeState({ ...seedance, model }, "video_generate");
+    assert.deepEqual(state.videoGeneration?.inputModes, inputModes, model);
+    assert.equal(state.videoGeneration?.maxReferenceImages, maxReferenceImages, model);
+  }
 
   const flux = { ...baseProvider, model: "black-forest-labs/flux-2-pro", providerId: "relay" };
   const fluxState = resolveMediaProviderRuntimeState(flux, "image_generate");

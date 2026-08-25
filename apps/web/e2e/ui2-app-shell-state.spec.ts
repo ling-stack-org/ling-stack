@@ -87,6 +87,88 @@ test("AppShell keeps one fixed theme while route presentation surfaces change", 
   expect(runtimeErrors).toEqual([]);
 });
 
+test("persistent Sidebar does not project conversation detail loading while navigation changes", async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page);
+  await prepareSurface(page, "light", 1440, 960);
+  await mockDaemon(page, createShellState());
+  const detailStarted = deferred<void>();
+  const releaseDetail = deferred<void>();
+  await page.route(/\/conversations\/thread_shell_conversation(?:\?.*)?$/u, async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.fallback();
+      return;
+    }
+    detailStarted.resolve();
+    await releaseDetail.promise;
+    await route.fallback();
+  });
+  await page.goto("/");
+
+  const navigation = page.getByLabel("Ling Stack navigation");
+  const recentSection = navigation.locator('[data-sidebar-section="recent"]');
+  const recentStatus = recentSection.locator(".sidebar-section-status");
+  const recentConversation = navigation.getByRole("button", { name: "Open recent conversation 1" });
+  await expect(recentConversation).toBeVisible();
+  const initialStatusText = await recentStatus.innerText();
+  const initialGeometry = await readSidebarGeometry(navigation);
+  await startSidebarStabilityRecorder(page);
+
+  await recentConversation.click();
+  await detailStarted.promise;
+
+  const pendingStatusText = await recentStatus.innerText();
+  const pendingGeometry = await readSidebarGeometry(navigation);
+  const pendingStability = await readSidebarStabilityRecorder(page);
+  releaseDetail.resolve();
+  await expect(recentConversation).toHaveAttribute("aria-current", "page");
+
+  expect(pendingStatusText).toBe(initialStatusText);
+  expect(pendingGeometry).toEqual(initialGeometry);
+  expect(pendingStability).toEqual({
+    loadingSightings: [],
+    rootReplaced: false,
+    sectionReplacements: [],
+  });
+  expect(runtimeErrors).toEqual([]);
+});
+
+test("persistent Sidebar stays stable across every visible main navigation target", async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page);
+  await prepareSurface(page, "dark", 1280, 800);
+  await mockDaemon(page, createShellState());
+  await page.goto("/");
+
+  const root = page.locator("html");
+  const navigation = page.getByLabel("Ling Stack navigation");
+  const initialGeometry = await readSidebarGeometry(navigation);
+  await startSidebarStabilityRecorder(page);
+
+  for (let cycle = 0; cycle < 3; cycle += 1) {
+    await navigation.getByRole("button", { name: "Media Production" }).click();
+    await expect(root).toHaveAttribute("data-ui-surface", "media-canvas");
+    await navigation.getByRole("button", { name: "Plugin Manager" }).click();
+    await expect(root).toHaveAttribute("data-ui-surface", "management");
+    await navigation.getByRole("button", { name: "Automations" }).click();
+    await expect(root).toHaveAttribute("data-ui-surface", "management");
+    await navigation.getByRole("button", { name: "Engineering" }).click();
+    await expect(root).toHaveAttribute("data-ui-surface", "channel");
+    await navigation.getByRole("button", { name: "Designer", exact: true }).click();
+    await expect(root).toHaveAttribute("data-ui-surface", "conversation");
+    await navigation.getByRole("button", { name: "Open recent conversation 1" }).click();
+    await expect(navigation.getByRole("button", { name: "Open recent conversation 1" })).toHaveAttribute("aria-current", "page");
+    await navigation.getByRole("button", { name: "New conversation" }).click();
+    await expect(root).toHaveAttribute("data-ui-surface", "home");
+  }
+
+  expect(await readSidebarGeometry(navigation)).toEqual(initialGeometry);
+  expect(await readSidebarStabilityRecorder(page)).toEqual({
+    loadingSightings: [],
+    rootReplaced: false,
+    sectionReplacements: [],
+  });
+  expect(runtimeErrors).toEqual([]);
+});
+
 test("Presentation surface resolver covers every ViewId and workspace identity state", () => {
   const surface = (activeView: ViewId, overrides: Partial<{
     hasSelectedChannel: boolean;
@@ -149,6 +231,100 @@ async function expectNoPageOverflow(page: Page): Promise<void> {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 }
 
+async function startSidebarStabilityRecorder(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const root = document.querySelector<HTMLElement>('[aria-label="Ling Stack navigation"]');
+    if (!root) throw new Error("Sidebar navigation is unavailable");
+    const sections = new Map(
+      [...root.querySelectorAll<HTMLElement>("[data-sidebar-section]")]
+        .map((section) => [section.dataset.sidebarSection ?? "", section]),
+    );
+    const state = window as typeof window & {
+      __sidebarStability?: {
+        loadingSightings: string[];
+        observer: MutationObserver;
+        root: HTMLElement;
+        rootReplaced: boolean;
+        sectionReplacements: string[];
+        sections: Map<string, HTMLElement>;
+      };
+    };
+    const snapshot = {
+      loadingSightings: [] as string[],
+      observer: undefined as unknown as MutationObserver,
+      root,
+      rootReplaced: false,
+      sectionReplacements: [] as string[],
+      sections,
+    };
+    const record = (): void => {
+      const currentRoot = document.querySelector<HTMLElement>('[aria-label="Ling Stack navigation"]');
+      if (currentRoot !== snapshot.root) snapshot.rootReplaced = true;
+      for (const [id, section] of snapshot.sections) {
+        const currentSection = currentRoot?.querySelector<HTMLElement>(`[data-sidebar-section="${id}"]`);
+        if (currentSection !== section && !snapshot.sectionReplacements.includes(id)) {
+          snapshot.sectionReplacements.push(id);
+        }
+      }
+      for (const element of currentRoot?.querySelectorAll<HTMLElement>(
+        '.sidebar-section-skeleton-row, [role="status"][aria-label^="Loading"]',
+      ) ?? []) {
+        const label = element.getAttribute("aria-label") ?? element.textContent?.trim() ?? element.className;
+        if (!snapshot.loadingSightings.includes(label)) snapshot.loadingSightings.push(label);
+      }
+    };
+    snapshot.observer = new MutationObserver(record);
+    snapshot.observer.observe(document.body, { attributes: true, childList: true, subtree: true });
+    state.__sidebarStability?.observer.disconnect();
+    state.__sidebarStability = snapshot;
+    record();
+  });
+}
+
+async function readSidebarStabilityRecorder(page: Page): Promise<{
+  loadingSightings: string[];
+  rootReplaced: boolean;
+  sectionReplacements: string[];
+}> {
+  return page.evaluate(() => {
+    const state = (window as typeof window & {
+      __sidebarStability?: {
+        loadingSightings: string[];
+        rootReplaced: boolean;
+        sectionReplacements: string[];
+      };
+    }).__sidebarStability;
+    return {
+      loadingSightings: state?.loadingSightings ?? [],
+      rootReplaced: state?.rootReplaced ?? false,
+      sectionReplacements: state?.sectionReplacements ?? [],
+    };
+  });
+}
+
+async function readSidebarGeometry(navigation: ReturnType<Page["locator"]>): Promise<{
+  scrollTop: number;
+  sections: readonly { height: number; id: string; top: number }[];
+  width: number;
+}> {
+  return navigation.evaluate((element) => {
+    const rootRect = element.getBoundingClientRect();
+    const scrollRegion = element.querySelector<HTMLElement>(".sidebar-scroll-region");
+    return {
+      scrollTop: scrollRegion?.scrollTop ?? 0,
+      sections: [...element.querySelectorAll<HTMLElement>("[data-sidebar-section]")].map((section) => {
+        const rect = section.getBoundingClientRect();
+        return {
+          height: rect.height,
+          id: section.dataset.sidebarSection ?? "",
+          top: rect.top,
+        };
+      }),
+      width: rootRect.width,
+    };
+  });
+}
+
 async function captureEvidence(page: Page, filename: string): Promise<void> {
   if (process.env.LING_CAPTURE_UI2_EVIDENCE !== "1") return;
   await mkdir(evidenceDirectory, { recursive: true });
@@ -162,4 +338,10 @@ function collectRuntimeErrors(page: Page): string[] {
   });
   page.on("pageerror", (error) => errors.push(error.message));
   return errors;
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => { resolve = next; });
+  return { promise, resolve };
 }

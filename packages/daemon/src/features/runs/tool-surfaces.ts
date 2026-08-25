@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   buildLingToolNamespaceCatalog,
+  toRuntimeAttemptFence,
   type LingToolDescriptor,
   type LingToolNamespace,
   type LingToolNamespaceCatalog,
@@ -511,11 +512,9 @@ function appendToolMaterializationRuntimeEvent(
     return;
   }
   const attemptId = workUnit.activeAttemptId ?? store.listWorkUnitAttempts(workUnit.id).at(-1)?.id;
-  store.appendRuntimeEvent({
-    workUnitId,
-    attemptId,
+  const event = {
     type: "tool_namespace_materialized",
-    actor: "system",
+    actor: "system" as const,
     ts: now,
     data: {
       materializationId: materialization.id,
@@ -535,7 +534,13 @@ function appendToolMaterializationRuntimeEvent(
       idempotencyKeyProvided: Boolean(input.idempotencyKey),
       ...(idempotencyDigest ? { idempotencyDigest } : {}),
     },
-  });
+  } as const;
+  const attempt = attemptId ? store.getWorkUnitAttempt(attemptId) : undefined;
+  if (attempt) {
+    store.appendRuntimeEvent({ ...toRuntimeAttemptFence(attempt), ...event });
+  } else if (!attemptId) {
+    store.appendRuntimeEvent({ workUnitId, ...event });
+  }
 }
 
 function appendToolHydrationRejectedRuntimeEvent(
@@ -553,11 +558,9 @@ function appendToolHydrationRejectedRuntimeEvent(
     return;
   }
   const attemptId = workUnit.activeAttemptId ?? store.listWorkUnitAttempts(workUnit.id).at(-1)?.id;
-  store.appendRuntimeEvent({
-    workUnitId: run.workUnitId,
-    attemptId,
+  const event = {
     type: "tool_hydration_rejected",
-    actor: "system",
+    actor: "system" as const,
     ts: now,
     data: {
       runId: request.runId,
@@ -579,7 +582,13 @@ function appendToolHydrationRejectedRuntimeEvent(
       idempotencyKeyProvided: Boolean(request.idempotencyKey),
       idempotencyDigest: hashIdempotencyKey(request.idempotencyKey),
     },
-  });
+  } as const;
+  const attempt = attemptId ? store.getWorkUnitAttempt(attemptId) : undefined;
+  if (attempt) {
+    store.appendRuntimeEvent({ ...toRuntimeAttemptFence(attempt), ...event });
+  } else if (!attemptId) {
+    store.appendRuntimeEvent({ workUnitId: run.workUnitId, ...event });
+  }
 }
 
 function findExistingMaterialization(

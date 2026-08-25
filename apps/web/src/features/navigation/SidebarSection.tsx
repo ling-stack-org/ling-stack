@@ -7,7 +7,6 @@ import {
   CollapsibleTrigger,
   IconButton,
   Skeleton,
-  Spinner,
   StatusIndicator,
 } from "../../shared/ui/index.js";
 import { SidebarSectionMenu, type SidebarSectionMenuItem } from "./SidebarSectionMenu.js";
@@ -18,8 +17,6 @@ export function SidebarSection({
   children,
   collapsed,
   count,
-  loading = false,
-  loadingLabel,
   menuItems,
   menuLabel,
   menuOpen,
@@ -38,8 +35,6 @@ export function SidebarSection({
   readonly children: ReactNode;
   readonly collapsed: boolean;
   readonly count: number;
-  readonly loading?: boolean;
-  readonly loadingLabel: string;
   readonly menuItems?: readonly SidebarSectionMenuItem[];
   readonly menuLabel?: string;
   readonly menuOpen?: boolean;
@@ -74,9 +69,7 @@ export function SidebarSection({
             onClick={() => onRailActivate(sectionId)}
             pressed={railActive}
           />
-          {loading ? (
-            <Spinner className="sidebar-rail-launcher-status" label={loadingLabel} size="sm" />
-          ) : stale ? (
+          {stale ? (
             <StatusIndicator
               aria-label={`${title}: ${staleLabel}`}
               className="sidebar-rail-launcher-status"
@@ -113,7 +106,7 @@ export function SidebarSection({
           </CollapsibleTrigger>
           {!railCollapsed ? (
             <span className="sidebar-section-status">
-              {loading ? <Spinner label={loadingLabel} size="sm" /> : stale ? (
+              {stale ? (
                 <StatusIndicator
                   aria-label={`${title}: ${staleLabel}`}
                   compact

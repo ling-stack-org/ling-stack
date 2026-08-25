@@ -36,6 +36,8 @@ export interface GenerationModelFamilyContext {
   readonly api?: ProviderApi;
 }
 
+export type SeedanceModelVersion = "1.0" | "1.5" | "2.0" | "2.5";
+
 interface GenerationModelFamilyRule {
   readonly familyId: GenerationModelFamilyId;
   readonly modelPattern: RegExp;
@@ -153,6 +155,15 @@ export function isOpenAIImagesGenerationModel(modelId: string | undefined): bool
 
 export function isKnownGenerationModel(modelId: string | undefined): boolean {
   return inferGenerationModelFamily(modelId) !== undefined;
+}
+
+export function resolveSeedanceModelVersion(modelId: string | undefined): SeedanceModelVersion | undefined {
+  const normalized = normalizeGenerationModelId(modelId).replace(/[._/]+/g, "-");
+  const match = normalized.match(/(?:^|-)seedance-(1-0|1-5|2-0|2-5)(?:-|$)/);
+  if (!match) {
+    return undefined;
+  }
+  return match[1].replace("-", ".") as SeedanceModelVersion;
 }
 
 export function shouldAutoEnableLiveMediaTransport(input: {

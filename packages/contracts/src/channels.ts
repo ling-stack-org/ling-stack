@@ -10,6 +10,7 @@ import type {
   LingThreadSurfaceKindV2,
 } from "./conversation-continuity.js";
 import type { ResponseLanguage, ResponseLanguagePreference } from "./settings.js";
+import type { WorkflowParticipantProviderBlockerV1 } from "./conversation-model-binding.js";
 import type {
   ProcedureObservationCluster,
   ProcedureObservationStep,
@@ -682,6 +683,7 @@ export interface ChannelExecutionProposal {
   readonly linkedRunId?: string;
   readonly linkedWorkflowId?: string;
   readonly errorMessage?: string;
+  readonly blocker?: WorkflowParticipantProviderBlockerV1;
   readonly createdAt: string;
   readonly updatedAt: string;
 }

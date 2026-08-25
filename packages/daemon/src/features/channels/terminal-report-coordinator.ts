@@ -15,7 +15,7 @@ import {
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import { buildWorkflowEvidence } from "./workflow-evidence.js";
 import { collectRunTerminalReportEvidence, collectTurnTerminalReportEvidence, collectWorkflowTerminalReportEvidence } from "./terminal-report-evidence.js";
-import { publishTerminalReport } from "./terminal-report-publisher.js";
+import { publishTerminalReportPublication } from "./terminal-report-publisher.js";
 import { getChannelMessageView } from "./conversation-item-messages.js";
 import {
   runIsEligibleForTerminalReport,
@@ -24,6 +24,8 @@ import {
 } from "./terminal-report-eligibility.js";
 import { TERMINAL_REPORT_PROMPT_VERSION } from "./terminal-report-prompt.js";
 import { synthesizeTerminalReportContent } from "./terminal-report-synthesis.js";
+import { evaluateWorkflowCompletionGate } from "./workflow-completion-gate.js";
+import { reconcileWorkflowFromCanonicalState } from "./workflow-reconciliation.js";
 
 export interface TerminalReportCoordinatorSettings {
   readonly enabled: boolean;
@@ -32,6 +34,9 @@ export interface TerminalReportCoordinatorSettings {
   readonly synthesisTimeoutMs?: number;
   readonly runnerRegistry?: RunnerRegistry;
   readonly secretResolver?: SecretResolver;
+  readonly onPublished?: (input: {
+    readonly event: import("@ling-stack/core").ControlPlaneEvent;
+  }) => void;
 }
 
 export interface ProcessWorkflowTerminalReportOptions {
@@ -56,6 +61,7 @@ interface ResolvedTerminalReportCoordinatorSettings {
   readonly synthesisTimeoutMs: number;
   readonly runnerRegistry?: RunnerRegistry;
   readonly secretResolver?: SecretResolver;
+  readonly onPublished?: TerminalReportCoordinatorSettings["onPublished"];
 }
 
 const settingsByStore = new WeakMap<RunStore, ResolvedTerminalReportCoordinatorSettings>();
@@ -73,6 +79,7 @@ export function configureTerminalReportStore(
     synthesisTimeoutMs: settings.synthesisTimeoutMs ?? 45_000,
     runnerRegistry: settings.runnerRegistry,
     secretResolver: settings.secretResolver,
+    onPublished: settings.onPublished,
   });
 }
 
@@ -164,6 +171,27 @@ export async function processWorkflowTerminalReport(
   workflowId: string,
   options: ProcessWorkflowTerminalReportOptions = {},
 ): Promise<ProcessWorkflowTerminalReportResult> {
+  reconcileWorkflowFromCanonicalState({
+    store,
+    workflowId,
+    cause: "pre_publication",
+    now: options.now ?? new Date().toISOString(),
+  });
+  const workflow = store.getChannelWorkflow(workflowId);
+  if (!workflow) throw new Error(`Workflow not found: ${workflowId}`);
+  if (workflow.status === "succeeded" && workflow.metadata?.requiredParticipantManifest) {
+    const steps = store.listChannelWorkflowSteps({ workflowId, limit: 500 });
+    const gate = evaluateWorkflowCompletionGate({
+      store,
+      workflow,
+      steps,
+      now: options.now ?? new Date().toISOString(),
+    });
+    if (gate?.status !== "verified"
+      || gate.basisFingerprint !== workflow.metadata.completionGate?.basisFingerprint) {
+      throw new Error(`Workflow completion gate is stale or unverified: ${workflowId}`);
+    }
+  }
   const settings = settingsByStore.get(store);
   const deadlineMs = options.barrierDeadlineMs ?? settings?.barrierDeadlineMs ?? 5_000;
   const pollIntervalMs = options.barrierPollIntervalMs ?? settings?.barrierPollIntervalMs ?? 250;
@@ -222,7 +250,7 @@ async function processTerminalReportSnapshot(
   const now = options.now ?? new Date().toISOString();
   const existing = latestCommittedReport(store, snapshot.source.kind, snapshot.source.id);
   if (existing?.report) {
-    const message = publishTerminalReport({ store, report: existing.report, linkedRunId: options.linkedRunId, now });
+    const message = publishTerminalReportWithInvalidation(store, existing.report, options.linkedRunId, now);
     return { record: store.getTerminalReport(existing.id) ?? existing, message };
   }
 
@@ -233,7 +261,7 @@ async function processTerminalReportSnapshot(
     ? current
     : store.createTerminalReportDraft({ generation, evidenceSnapshot: snapshot }, now);
   if (draft.status === "committed" || draft.status === "fallback") {
-    const message = draft.report ? publishTerminalReport({ store, report: draft.report, linkedRunId: options.linkedRunId, now }) : undefined;
+    const message = draft.report ? publishTerminalReportWithInvalidation(store, draft.report, options.linkedRunId, now) : undefined;
     return { record: store.getTerminalReport(draft.id) ?? draft, message };
   }
   if (draft.status === "failed") {
@@ -312,7 +340,7 @@ async function processTerminalReportSnapshot(
         latencyMs: synthesis.latencyMs,
       },
     });
-    const message = publishTerminalReport({ store, report, linkedRunId: options.linkedRunId, now });
+    const message = publishTerminalReportWithInvalidation(store, report, options.linkedRunId, now);
     succeedReportWorkUnit(store, workUnit, committed, message, now);
     return { record: store.getTerminalReport(committed.id) ?? committed, message, workUnit: store.getWorkUnit(workUnit.id) ?? workUnit };
   } catch (error) {
@@ -376,10 +404,9 @@ export async function recoverTerminalReports(store: RunStore): Promise<void> {
     if (
       terminalReportIsEligibleForDisplay(store, record) &&
       (record.status === "committed" || record.status === "fallback") &&
-      record.report &&
-      !record.publishedMessageId
+      record.report
     ) {
-      publishTerminalReport({ store, report: record.report, now: new Date().toISOString() });
+      publishTerminalReportWithInvalidation(store, record.report, undefined, new Date().toISOString());
     }
   }
   for (const channel of store.listChannels({ limit: 500 })) {
@@ -418,6 +445,24 @@ export async function recoverTerminalReports(store: RunStore): Promise<void> {
 }
 
 export const recoverWorkflowTerminalReports = recoverTerminalReports;
+
+function publishTerminalReportWithInvalidation(
+  store: RunStore,
+  report: TerminalReport,
+  linkedRunId: string | undefined,
+  now: string,
+): ChannelMessage | undefined {
+  const publication = publishTerminalReportPublication({ store, report, linkedRunId, now });
+  if (publication?.controlPlaneEvent) {
+    try {
+      settingsByStore.get(store)?.onPublished?.({ event: publication.controlPlaneEvent });
+    } catch {
+      // Publication is already canonical. A missed live invalidation must not turn a
+      // completed user task into a failure; reconnect/reload still reads durable state.
+    }
+  }
+  return publication?.message;
+}
 
 async function waitForWorkflowReportingBarrier(
   store: RunStore,

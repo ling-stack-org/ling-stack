@@ -70,7 +70,7 @@ test("Sidebar channel and teammate rows expose one truthful primary state", asyn
   expect(runtimeErrors).toEqual([]);
 });
 
-test("Recent conversations show loading and persisted running state without shifting the row", async ({ page }) => {
+test("Recent conversations keep a stable header while the initial list uses a Skeleton", async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page);
   await prepareSurface(page, "dark", 1280, 800);
   const state = createBaseState({ approvalStatus: "expired" });
@@ -84,6 +84,9 @@ test("Recent conversations show loading and persisted running state without shif
   await page.goto("/");
 
   const navigation = page.getByLabel("Ling Stack navigation");
+  const recentHeaderStatus = navigation.locator('[data-sidebar-section="recent"] .sidebar-section-status');
+  await expect(recentHeaderStatus.getByRole("status", { name: "Loading conversations..." })).toHaveCount(0);
+  await expect(recentHeaderStatus.locator(".sidebar-section-count")).toHaveText("0");
   await expect(navigation.getByRole("status", { name: "Loading conversations..." }).first()).toBeVisible();
   await expect(navigation.locator('[data-sidebar-section="recent"] .sidebar-section-skeleton-row')).toHaveCount(2);
   expect((await (await threadListResponse).json()).threads[0].status).toBe("running");

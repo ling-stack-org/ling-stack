@@ -11,8 +11,16 @@ const suppliedUserDataDirectory = process.env.LING_DESKTOP_SMOKE_USER_DATA_DIR?.
 const ownsUserDataDirectory = !suppliedUserDataDirectory;
 const userDataDirectory = suppliedUserDataDirectory ||
   await mkdtemp(join(tmpdir(), "ling-desktop-computer-use-smoke-"));
+const suppliedWorkspaceDirectory = process.env.LING_STACK_DEFAULT_WORKSPACE_CWD?.trim();
+const ownsWorkspaceDirectory = !suppliedWorkspaceDirectory;
+const workspaceDirectory = suppliedWorkspaceDirectory
+  ? resolve(suppliedWorkspaceDirectory)
+  : await mkdtemp(join(tmpdir(), "ling-desktop-computer-use-workspace-"));
+const suppliedLingStackHome = process.env.LING_STACK_HOME?.trim();
+const lingStackHome = suppliedLingStackHome || join(userDataDirectory, "ling-stack-home");
 const suppliedDaemonUrl = process.env.LING_STACK_DAEMON_URL?.trim();
 const daemonUrl = suppliedDaemonUrl || `http://127.0.0.1:${await availablePort()}`;
+const mobileGatewayPort = await availablePort();
 const packagedExecutableValue = process.env.LING_DESKTOP_SMOKE_EXECUTABLE?.trim();
 const packagedExecutable = packagedExecutableValue ? resolve(packagedExecutableValue) : undefined;
 const smokeTimeoutMs = positiveInteger(process.env.LING_DESKTOP_SMOKE_TIMEOUT_MS, 20_000);
@@ -34,13 +42,11 @@ try {
     ],
     env: {
       ...process.env,
-      ...(realCapture || realDisplayCapture ? {} : {
-        LING_DESKTOP_FAKE_COMPUTER_USE: "1",
-        LING_STACK_HOME: join(userDataDirectory, "ling-stack-home"),
-      }),
+      ...(realCapture || realDisplayCapture ? {} : { LING_DESKTOP_FAKE_COMPUTER_USE: "1" }),
+      LING_STACK_HOME: lingStackHome,
       LING_STACK_DAEMON_URL: daemonUrl,
-      LING_STACK_DEFAULT_WORKSPACE_CWD:
-        process.env.LING_STACK_DEFAULT_WORKSPACE_CWD ?? dirname(dirname(desktopRoot)),
+      LING_MOBILE_GATEWAY_PORT: String(mobileGatewayPort),
+      LING_STACK_DEFAULT_WORKSPACE_CWD: workspaceDirectory,
     },
   });
   const output = `${result.stdout}\n${result.stderr}`;
@@ -72,6 +78,9 @@ try {
 } finally {
   if (ownsUserDataDirectory) {
     await rm(userDataDirectory, { recursive: true, force: true });
+  }
+  if (ownsWorkspaceDirectory) {
+    await rm(workspaceDirectory, { recursive: true, force: true });
   }
 }
 

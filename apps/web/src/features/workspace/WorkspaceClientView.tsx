@@ -250,6 +250,7 @@ import { ChannelComposer } from "./ChannelComposer.js";
 import { ChannelActivityWorkspace } from "./ChannelActivityWorkspace.js";
 import { ChannelFeedLatestControl, ChannelFeedStatus } from "./ChannelFeedChrome.js";
 import { useChannelRightDockController } from "./useChannelRightDockController.js";
+import { useConversationSummaryLayout } from "./conversation-summary-layout.js";
 import { useChannelBottomPanelResizeController } from "./useChannelBottomPanelResizeController.js";
 import { useChannelMessageFeed } from "./ChannelMessageFeed.js";
 import {
@@ -510,6 +511,7 @@ export function WorkspaceClientView({
   onRunActivityTriageAction,
   onLoadOlderChannelMessages,
   onRefreshChannelMessages,
+  onRefreshPendingChannelReply,
   onRefreshChannelActivity,
   onRefreshExternalWorkCiTriage,
   onRefreshWorkItems,
@@ -696,6 +698,7 @@ export function WorkspaceClientView({
   readonly onRunActivityTriageAction: (draft: ChannelActivityTriageDraft) => Promise<ChannelActivityTriageResult>;
   readonly onLoadOlderChannelMessages: () => void;
   readonly onRefreshChannelMessages: () => void;
+  readonly onRefreshPendingChannelReply: () => void;
   readonly onRefreshChannelActivity: () => Promise<void>;
   readonly onRefreshExternalWorkCiTriage: () => void;
   readonly onRefreshWorkItems: () => void;
@@ -1095,6 +1098,13 @@ export function WorkspaceClientView({
       .join("|");
     return [workflowsSignature, stepsSignature, runsSignature, approvalsSignature].join("\n");
   }, [approvals, channelRuns, channelWorkflowSteps, channelWorkflows, selectedChannelId]);
+  const committedAssistantItemRevisionSignature = useMemo(
+    () => channelMessagesForDisplay
+      .filter((message) => message.channelId === selectedChannelId && message.kind === "ai_reply" && message.status !== "pending")
+      .map((message) => [message.id, message.revision ?? 1, message.status, message.updatedAt].join(":"))
+      .join("|"),
+    [channelMessagesForDisplay, selectedChannelId],
+  );
   useEffect(() => {
     const workspaceCwd = cwd.trim();
     if (!workspaceCwd || !selectedChannelId) {
@@ -1116,7 +1126,7 @@ export function WorkspaceClientView({
     return () => {
       cancelled = true;
     };
-  }, [channelCollaborationCardRefreshSignature, cwd, selectedChannelId]);
+  }, [channelCollaborationCardRefreshSignature, committedAssistantItemRevisionSignature, cwd, selectedChannelId]);
   useEffect(() => {
     const workspaceCwd = cwd.trim();
     if (!workspaceCwd || !selectedChannelId) {
@@ -2012,18 +2022,17 @@ export function WorkspaceClientView({
     });
   }, [channelBrief]);
 
+  const hasPendingReply = channelMessages.some((message) => message.kind === "ai_reply" && message.status === "pending");
+
   useEffect(() => {
-    const hasPendingReply = channelMessages.some((message) => message.kind === "ai_reply" && message.status === "pending");
     if (!selectedChannelId || !hasPendingReply) {
       return undefined;
     }
     const intervalId = globalThis.setInterval(() => {
-      onRefreshChannelMessages();
-      onRefreshChannelActivity();
-      onRefreshWorkItems();
+      onRefreshPendingChannelReply();
     }, 1_000);
     return () => globalThis.clearInterval(intervalId);
-  }, [channelMessages, onRefreshChannelActivity, onRefreshChannelMessages, onRefreshWorkItems, selectedChannelId]);
+  }, [hasPendingReply, onRefreshPendingChannelReply, selectedChannelId]);
 
   useEffect(() => {
     if (!selectedTaskId || !selectedTask) {
@@ -3288,6 +3297,30 @@ export function WorkspaceClientView({
       setChannelReplacementRetryingMessageId(undefined);
     }
   }
+
+  function repairProposalModelBinding(
+    blocker: NonNullable<ChannelExecutionProposal["blocker"]>,
+  ): void {
+    if (blocker.repairTarget === "model_workbench") {
+      onOpenProviders();
+      return;
+    }
+    if (blocker.repairTarget === "channel_settings") {
+      openChannelSettingsPage();
+      return;
+    }
+    channelHeader.closeSearch();
+    setTeammateManagerOpen(true);
+    setChannelSettingsPageOpen(false);
+    setChannelEnvironmentPageOpen(false);
+    setEnvironmentCommitDialogOpen(false);
+    setProgressPopoverOpen(false);
+    setWorkspaceSettingsOpen(false);
+    setActivityToolsOpen(false);
+    setSidePanelOpen(false);
+    onChannelCreateOpenChange(false);
+  }
+
   const messageRenderers = createChannelMessageRenderers({
     activeRunId,
     allLocalTeammateById,
@@ -3343,6 +3376,7 @@ export function WorkspaceClientView({
     onOpenApprovalDetail: openApprovalDetail,
     onOpenContextSummaryInConversationDetail: openContextSummaryInConversationDetail,
     onOpenRun: openRunInPanel,
+    onRepairProposalModelBinding: repairProposalModelBinding,
     onOpenFileReference: () => openRightDockPage("files"),
     onOpenTerminalReportFile: (target) => openRightDockPage("files", target),
     onOpenWorkspaceReview: (target) => openRightDockPage("review", undefined, {
@@ -3955,9 +3989,17 @@ export function WorkspaceClientView({
     !teammateManagerOpen &&
     !channelUtilityPageOpen &&
     channelHasProgressPopoverContent;
-  const progressPopoverCanRender = progressPopoverVisible;
+  const progressSummaryLayout = useConversationSummaryLayout({
+    requestedOpen: progressPopoverVisible,
+    containerWidth: channelRightDock.containerWidth,
+    dockVisible: channelRightDockVisible,
+    dockWidth: channelRightDock.width,
+  });
+  const progressPopoverCanRender = progressSummaryLayout.visible;
   const progressPopoverPresence = useConversationPanelPresence(progressPopoverCanRender, false);
-  const progressPopoverShouldRender = progressPopoverPresence.rendered && progressPopoverPlacementAvailable;
+  const progressPopoverShouldRender = progressPopoverPresence.rendered
+    && progressPopoverPlacementAvailable
+    && progressSummaryLayout.visible;
   const progressPopoverMotionClass = progressPopoverPresence.expanded ? "is-popover-expanded" : "is-popover-collapsed";
   const progressPopoverNode = (
     <ProgressPopover
@@ -3972,8 +4014,12 @@ export function WorkspaceClientView({
   const taskWorkbenchWindowStyle = {
     ...channelRightDock.windowStyle,
     ...channelBottomPanelResize.panelStyle,
+    ...progressSummaryLayout.style,
   } as CSSProperties;
-  const taskWorkbenchMainStyle = channelRightDock.mainStyle;
+  const taskWorkbenchMainStyle = {
+    ...channelRightDock.mainStyle,
+    ...progressSummaryLayout.style,
+  } as CSSProperties;
 
   function toggleChannelTeammateManager(): void {
     const nextOpen = !teammateManagerOpen;
@@ -3999,7 +4045,7 @@ export function WorkspaceClientView({
         `right-dock-motion-${channelRightDock.motionState}`,
         channelRightDockVisible ? "with-channel-side-panel" : "",
         channelRightDockVisible ? (channelRightDockExpanded ? "channel-right-dock-expanded" : "channel-right-dock-collapsed") : "",
-        progressPopoverCanRender ? "with-channel-progress-popover" : "",
+        progressSummaryLayout.visible ? "with-channel-progress-popover" : "",
         channelBottomPanelVisible ? "with-channel-bottom-panel" : "",
         channelBottomPanelResize.resizing ? "is-resizing-channel-bottom-panel" : "",
       ].filter(Boolean).join(" ")}
@@ -4211,7 +4257,8 @@ export function WorkspaceClientView({
           emptyTeammateActionDisabled={!selectedChannelId}
           emptyTeammateActionLabel={t("AI teammate management")}
           onToggleEmptyTeammateAction={toggleChannelTeammateManager}
-          progressActive={progressPopoverPresence.rendered}
+          progressActive={progressPopoverVisible}
+          progressExpanded={progressSummaryLayout.visible && progressPopoverPresence.expanded}
           progressLabel={t("Summary")}
           onToggleProgress={() => {
             if (!channelHasProgressPopoverContent) {

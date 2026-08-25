@@ -21,6 +21,7 @@ export interface WorkflowEvidenceDiagnostic {
     | "missing_output_packet"
     | "missing_run"
     | "bad_packet"
+    | "operation_unverified"
     | "blocked"
     | "failed";
   readonly severity: "info" | "warning" | "critical";
@@ -121,6 +122,20 @@ function buildWorkflowEvidenceStep(store: RunStore, step: ChannelWorkflowStep): 
   }
   if (step.status === "failed") {
     diagnostics.push({ kind: "failed", severity: "critical", message: step.blocker ?? step.resultSummary ?? "Workflow step failed." });
+  }
+  const executionVerification = step.metadata?.executionVerification;
+  if (step.metadata?.executionPlan && executionVerification?.status !== "verified") {
+    const missingRequired = step.metadata.executionPlan.operations
+      .filter((operation) => operation.required)
+      .filter((operation) => !executionVerification?.operationResults.some((result) =>
+        result.operationId === operation.id && result.status === "succeeded"));
+    if (missingRequired.length > 0) {
+      diagnostics.push({
+        kind: "operation_unverified",
+        severity: step.status === "succeeded" ? "critical" : "warning",
+        message: `Required operations are not verified: ${missingRequired.map((operation) => operation.id).join(", ")}.`,
+      });
+    }
   }
   return {
     step,

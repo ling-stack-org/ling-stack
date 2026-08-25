@@ -26,8 +26,21 @@ Composer 草稿、运行状态或主题。
   Sidebar，再打开目标 section。
 - 对象行点击只导航；三点菜单不触发行点击。运行、待审批、失败、未读只显示一个最高优先级状态，
   idle 不显示绿色健康标签。
-- 对象列表占剩余高度并内部滚动；loading 使用稳定 Skeleton，断线保留已有数据并标记 stale。
+- Sidebar 是跨主 View 持久存在的稳定投影。新会话、已有会话、频道、队友私聊、媒体生产、Plugin
+  Manager 与自动化之间切换时，只允许改变选中态；不得 remount Sidebar、替换分区、重置滚动或焦点，
+  也不得把目标页面的详情请求、模块加载或操作 busy 投影成 Sidebar Loading。
+- 分区标题中的数量和状态槽位保持稳定。导航、详情读取和后台刷新不得把数量临时替换成 Spinner，
+  compact rail 也不得因这些请求出现加载标记。
+- 对象列表占剩余高度并内部滚动。Skeleton 只允许用于当前 workspace 首次、无任何缓存对象的权威列表
+  加载；已有数据后的刷新保留原列表和数量，响应完成后原子更新。断线保留已有数据并标记 stale。
 - 归档是低频菜单动作，永久删除只在拥有该能力的管理页面出现。
+- Settings 继续使用全屏 Settings shell 并隐藏主 Sidebar；进入和返回必须直接完成壳层切换，不得经过
+  空白、默认壳或 Loading 中间帧。
+- macOS Desktop 展开 Sidebar 时，收起导航按钮使用红黄绿窗口按钮右侧的 titlebar 空行，
+  不与“新建对话”共用一行；必须避开 `76px` traffic-light exclusion，保持 `32x32`
+  尺寸和 `no-drag` 交互所有权。Web 和 Windows 不采用该平台布局。
+- macOS Desktop 的 compact rail 顶部顺序固定为“展开导航”在上、“新建对话”在下；
+  两个按钮均保持 `36x36`，不通过缩小点击区换取空间。
 
 ## Global State And Overlay
 
@@ -45,3 +58,5 @@ Composer 草稿、运行状态或主题。
 - grid/flex 子项使用 `min-width: 0`；Canvas、表格、列表和 Dock 各自拥有明确滚动边界。
 - resize 不重置 View、选中对象、Drawer、焦点或 ThemeSelection。
 - 页面不可用状态必须保留一个明确恢复行动；正常状态不在 Header 堆积标签。
+- macOS Desktop 展开/收起 Sidebar 时，titlebar 按钮不得与 traffic lights 或“新建对话”
+  重叠；按钮尺寸、键盘顺序和可拖拽区必须由几何回归验证。

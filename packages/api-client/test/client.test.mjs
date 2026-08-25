@@ -572,7 +572,18 @@ test("parses daemon health transport feature flags", async () => {
 test("builds control-plane snapshot, events, and stream endpoints", async () => {
   const responses = [
     { cwd: "/repo", workspaceId: "workspace_default", generatedAt: "2026-06-06T00:00:00.000Z", latestEventSeq: 2, domains: {} },
-    { cwd: "/repo", workspaceId: "workspace_default", afterSeq: 1, limit: 25, events: [] },
+    {
+      cwd: "/repo",
+      workspaceId: "workspace_default",
+      window: {
+        disposition: "complete",
+        requestedAfterSeq: 1,
+        replayFloorSeq: 0,
+        upperBoundSeq: 2,
+        nextAfterSeq: 2,
+      },
+      events: [],
+    },
     new Response("", { status: 200, headers: { "Content-Type": "text/event-stream" } }),
   ];
   const calls = [];
@@ -602,8 +613,13 @@ test("builds control-plane snapshot, events, and stream endpoints", async () => 
   }), {
     cwd: "/repo",
     workspaceId: "workspace_default",
-    afterSeq: 1,
-    limit: 25,
+    window: {
+      disposition: "complete",
+      requestedAfterSeq: 1,
+      replayFloorSeq: 0,
+      upperBoundSeq: 2,
+      nextAfterSeq: 2,
+    },
     events: [],
   });
   const stream = await client.streamControlPlaneEvents("/repo path", {

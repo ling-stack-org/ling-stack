@@ -50,10 +50,7 @@ import {
 } from "./schemas.js";
 import { assertChannelWorkspaceReady } from "./workspace.js";
 import { LING_AGENT_EXECUTOR_ID } from "./ling-agent-executor.js";
-import {
-  appendChannelAssistantMessage,
-  getChannelMessageView,
-} from "./conversation-item-messages.js";
+import { getChannelMessageView } from "./conversation-item-messages.js";
 import {
   maybeScheduleWorkflowTerminalReport,
   terminalReportsEnabledForStore,
@@ -62,7 +59,24 @@ import { buildWorkflowEvidence } from "./workflow-evidence.js";
 import { renderUsedMemoryPromptForView } from "../memory/prompt.js";
 import { reviewWorkflowFanInContext } from "./workflow-fanin.js";
 import type { PreselectedMemoryUse } from "../runs/schemas.js";
+import type {
+  ChannelIntentExecutionOperationV1,
+  DelegatedBlockCodeV1,
+  DelegatedStepRequirementV1,
+  WorkflowParticipantProviderBindingV1,
+} from "@ling-stack/contracts";
+import { createWorkflowParticipantAuthorityV1 } from "@ling-stack/contracts";
 import { resolveWorkflowHandoffExecutionContext } from "./workflow-handoffs.js";
+import { evaluateWorkflowCompletion, evaluateWorkflowCompletionGate } from "./workflow-completion-gate.js";
+import { completeWorkflowIfStepsFinished } from "./workflow-completion.js";
+import { blockDelegatedWorkflowStepBeforeRun } from "./workflow-step-finalizer.js";
+import { workflowStepExecutionOperationBindings } from "./workflow-operation-evidence.js";
+import {
+  resolveWorkflowParticipantRunProfile,
+} from "./workflow-participant-run-profile.js";
+import { mergeWorkflowApprovalProfiles } from "./workflow-step-run-policy.js";
+import { preflightWorkflowParticipantProvider } from "./workflow-participant-provider.js";
+export { completeWorkflowIfStepsFinished } from "./workflow-completion.js";
 
 const WORKFLOW_STEP_RESOURCE_LEASE_TTL_MS = 6 * 60 * 60 * 1000;
 
@@ -70,15 +84,21 @@ export interface WorkflowStepRunRequest {
   readonly workspaceCwd: string;
   readonly cwd: string;
   readonly providerPresetId?: string;
+  readonly providerBinding?: WorkflowParticipantProviderBindingV1;
   readonly runnerId?: string;
   readonly teammateId?: string;
   readonly workflowStepId?: string;
+  readonly delegatedRequirement?: DelegatedStepRequirementV1;
+  /** Internal-only Host execution bindings for workflow-owned operations. */
+  readonly executionOperationBindings?: readonly ChannelIntentExecutionOperationV1[];
   readonly requestedSkillId?: string;
   readonly skipProviderPreflight?: boolean;
   readonly skipMemoryRecall?: boolean;
   readonly preselectedMemoryUse?: PreselectedMemoryUse;
   readonly idempotencyKey?: string;
   readonly approvalProfile?: SkillApprovalProfile;
+  readonly systemPrompt?: string;
+  readonly appendSystemPrompt?: readonly string[];
   readonly task: {
     readonly id: string;
     readonly title: string;
@@ -268,6 +288,12 @@ export async function handleChannelWorkflowFromHandoff(
         prompt: formatHandoffStepPrompt(handoff),
         toParticipantId: handoff.toParticipantId,
         toParticipantLabel: handoff.toParticipantLabel,
+        participantAuthority: createWorkflowParticipantAuthorityV1({
+          kind: "workflow_definition",
+          origin: "channel_handoff",
+          participantId: handoff.toParticipantId,
+          sourceId: handoff.id,
+        }),
         metadata: sourceItemId ? { sourceMessageId: sourceItemId } : undefined,
       },
       createdAt,
@@ -598,7 +624,7 @@ async function handleChannelWorkflowStepStart(
 
   if (input.mode === "create_task") {
     const finishedAt = new Date().toISOString();
-    store.transitionChannelWorkflowStepStatus({
+    const succeeded = store.transitionChannelWorkflowStepStatus({
       workflowStepId,
       expectedStatus: "running",
       event: "succeed",
@@ -608,6 +634,13 @@ async function handleChannelWorkflowStepStart(
       taskId: started.task.id,
       resultSummary: "Task created from workflow step.",
     });
+    if (!succeeded.ok) {
+      writeJson(response, 409, {
+        error: succeeded.code,
+        message: "An execution-backed workflow step cannot complete by creating a task without verified operation evidence.",
+      });
+      return;
+    }
     completeWorkflowIfStepsFinished(store, started.workflowId, finishedAt);
     writeJson(response, 200, {
       workflow: store.getChannelWorkflow(started.workflowId),
@@ -695,8 +728,37 @@ export function prepareWorkflowStepStart(
     store.releaseResourceLeasesForOwner("workflow_step", step.id, new Date().toISOString());
     return { kind: "error", statusCode, code, message };
   };
-  const block = (message: string): PreparedWorkflowStepStart => {
+  const block = (
+    message: string,
+    participantProfileBlocker?: {
+      readonly code: DelegatedBlockCodeV1;
+      readonly reason: string;
+      readonly missingRequirements: readonly string[];
+    },
+  ): PreparedWorkflowStepStart => {
     const blockedAt = new Date().toISOString();
+    if (participantProfileBlocker && workflow.metadata?.requiredParticipantManifest) {
+      const finalized = blockDelegatedWorkflowStepBeforeRun({
+        store,
+        workflowStepId: step.id,
+        code: participantProfileBlocker.code,
+        reason: participantProfileBlocker.reason,
+        missingRequirements: participantProfileBlocker.missingRequirements,
+        now: blockedAt,
+      });
+      if (finalized.status !== "finalized" && finalized.status !== "duplicate") {
+        store.releaseResourceLeasesForOwner("workflow_step", step.id, blockedAt);
+        return {
+          kind: "error",
+          statusCode: 409,
+          code: "workflow_step_preflight_stale",
+          message: `Workflow participant preflight could not settle step ${step.id}: ${finalized.status}.`,
+        };
+      }
+      completeWorkflowIfStepsFinished(store, workflow.id, blockedAt);
+      store.releaseResourceLeasesForOwner("workflow_step", step.id, blockedAt);
+      return { kind: "blocked", workflowId: workflow.id, blocker: message };
+    }
     store.transitionChannelWorkflowStepStatus({
       workflowStepId: step.id,
       expectedStatus: "running",
@@ -741,14 +803,68 @@ export function prepareWorkflowStepStart(
     return block(fanInContext.blocker);
   }
 
-  const providerPresetId = input.providerPresetId ?? channel.defaultProviderPresetId;
+  let providerPresetId = input.providerPresetId ?? step.metadata?.providerPresetId ?? channel.defaultProviderPresetId;
+  let providerBinding = step.metadata?.providerBinding;
   const workspace = assertChannelWorkspaceReady(channel, cwd);
   if (!workspace.ok) {
     return block(workspace.message);
   }
   const runnerId = input.runnerId;
   const taskTitle = input.taskTitle ?? step.title;
-  const assigneeTeammateId = input.assigneeTeammateId ?? step.toParticipantId;
+  const requestedAssigneeTeammateId = input.assigneeTeammateId ?? step.toParticipantId;
+  const runTools = workflowStepRunTools(step.metadata?.requiredTools);
+  const participantProfile = input.mode === "create_and_run_task"
+    ? resolveWorkflowParticipantRunProfile({
+        store,
+        channel,
+        step,
+        requestedAssigneeTeammateId,
+        requiredTools: step.metadata?.requiredTools ?? [],
+      })
+    : undefined;
+  if (participantProfile?.kind === "blocked") {
+    return block(participantProfile.reason, participantProfile);
+  }
+  const assigneeTeammateId = participantProfile?.teammateId ?? requestedAssigneeTeammateId;
+  if (participantProfile?.kind === "ready" && step.metadata?.delegatedRequirement && !providerBinding) {
+    const reason = `Manifest-backed workflow step ${step.id} has no valid frozen provider binding.`;
+    return block(reason, {
+      code: "workflow_participant_provider_binding_missing",
+      reason,
+      missingRequirements: ["provider_binding"],
+    });
+  }
+  if (participantProfile?.kind === "ready" && providerBinding) {
+    if (input.providerPresetId && input.providerPresetId !== providerBinding.providerPresetId) {
+      const reason = `Workflow participant provider binding is ${providerBinding.providerPresetId}; override ${input.providerPresetId} is forbidden.`;
+      return block(reason, {
+        code: "workflow_participant_provider_override_forbidden",
+        reason,
+        missingRequirements: ["provider_binding"],
+      });
+    }
+    const providerPreflight = preflightWorkflowParticipantProvider({
+      store,
+      channel,
+      teammate: participantProfile.teammate,
+      cwd,
+      validateRunRequest,
+      requiredTools: runTools,
+      frozenBinding: providerBinding,
+    });
+    if (providerPreflight.kind === "blocked") {
+      return block(providerPreflight.blocker.message, {
+        code: providerPreflight.blocker.code,
+        reason: providerPreflight.blocker.message,
+        missingRequirements: [
+          `provider:${providerPreflight.blocker.reasonCode}`,
+          `repair:${providerPreflight.blocker.repairTarget}`,
+        ],
+      });
+    }
+    providerBinding = providerPreflight.binding;
+    providerPresetId = providerBinding.providerPresetId;
+  }
   const workflowSteps = store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 });
   const memoryRecallQuery = `${workflow.objective}\n${step.title}\n${input.taskPrompt ?? step.prompt}`;
   const memoryRecall = store.recallMemory({
@@ -818,9 +934,12 @@ export function prepareWorkflowStepStart(
     workspaceCwd: cwd,
     cwd: workspace.executionCwd,
     providerPresetId,
+    providerBinding,
     runnerId,
     teammateId: assigneeTeammateId,
     workflowStepId: step.id,
+    delegatedRequirement: step.metadata?.delegatedRequirement,
+    executionOperationBindings: workflowStepExecutionOperationBindings(step),
     skipProviderPreflight: input.skipProviderPreflight ?? false,
     skipMemoryRecall: true,
     preselectedMemoryUse: renderedMemory.memoryIds.length > 0
@@ -831,13 +950,19 @@ export function prepareWorkflowStepStart(
         }
       : undefined,
     idempotencyKey: input.idempotencyKey ?? `workflow-step:${step.id}`,
+    systemPrompt: participantProfile?.systemPrompt,
+    appendSystemPrompt: participantProfile?.appendSystemPrompt,
+    approvalProfile: mergeWorkflowApprovalProfiles(
+      participantProfile?.approvalProfile,
+      step.metadata?.approvalGate,
+    ),
     task: {
       id: "pending",
       title: taskTitle,
       prompt: taskPrompt,
       channelId: channel.id,
     },
-    tools: workflowStepRunTools(channel.allowedTools, step.metadata?.requiredTools),
+    tools: runTools,
     thinkingLevel: "medium",
     contextPack: snapshotWorkflowStepContextPack(contextPack),
     contextProjection: contextPack.contextProjection,
@@ -890,18 +1015,14 @@ function workflowStepUnavailableRequiredTools(
   if (!stepRequiredTools || stepRequiredTools.length === 0) {
     return [];
   }
-  if (stepMetadata?.sourceProposalId) {
-    return [];
-  }
   return stepRequiredTools.filter((tool) => !channelAllowedTools.includes(tool));
 }
 
 function workflowStepRunTools(
-  channelAllowedTools: readonly RunTool[],
   stepRequiredTools: readonly RunTool[] | undefined,
 ): readonly RunTool[] {
-  if (!stepRequiredTools || stepRequiredTools.length === 0) {
-    return channelAllowedTools;
+  if (stepRequiredTools === undefined) {
+    return [];
   }
   return [...new Set(stepRequiredTools)];
 }
@@ -1009,23 +1130,30 @@ function ensureWorkflowStepRunning(
   return { ok: false, code: "invalid_transition", currentStatus: status };
 }
 
-export function completeWorkflowIfStepsFinished(store: RunStore, workflowId: string, now: string): void {
-  const workflow = store.getChannelWorkflow(workflowId);
-  if (!workflow || workflow.status !== "running") {
-    return;
+export function reconcileContinuityWorkflowCompletion(store: RunStore, now = new Date().toISOString()): number {
+  let reconciled = 0;
+  const channelIds = new Set(store.listChannels({ limit: 500 }).map((channel) => channel.id));
+  for (const channelId of channelIds) {
+    const workflows = store.listChannelWorkflows({ channelId, limit: 500 });
+    for (const workflow of workflows) {
+      if (!workflow.metadata?.requiredParticipantManifest) continue;
+      if (workflow.status === "running") {
+        const before = workflow.status;
+        completeWorkflowIfStepsFinished(store, workflow.id, now);
+        if (store.getChannelWorkflow(workflow.id)?.status !== before) reconciled += 1;
+        continue;
+      }
+      if (workflow.status === "succeeded") {
+        const steps = store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 });
+        const gate = evaluateWorkflowCompletionGate({ store, workflow, steps, now });
+        if (gate?.status === "verified" && gate.basisFingerprint !== workflow.metadata.completionGate?.basisFingerprint) {
+          store.updateChannelWorkflow(workflow.id, { metadata: { ...workflow.metadata, completionGate: gate } }, now);
+          reconciled += 1;
+        }
+      }
+    }
   }
-  const steps = store.listChannelWorkflowSteps({ workflowId, limit: 500 });
-  if (steps.length === 0 || steps.some((step) => step.status !== "succeeded" && step.status !== "skipped")) {
-    return;
-  }
-  store.transitionChannelWorkflowStatus({
-    workflowId,
-    expectedStatus: "running",
-    event: "all_steps_succeeded",
-    actor: "system",
-    now,
-  });
-  maybeCreateWorkflowTerminalCoordinatorReply(store, workflowId, { now });
+  return reconciled;
 }
 
 export function maybeCreateWorkflowTerminalCoordinatorReply(
@@ -1052,22 +1180,43 @@ export function maybeCreateWorkflowTerminalCoordinatorReply(
     return undefined;
   }
   const messageId = legacyWorkflowTerminalMessageId(workflow.id);
-  const existing = getChannelMessageView(store, messageId);
-  if (existing) {
-    return existing;
-  }
+  const sourceItem = store.getConversationItem(sourceMessage.id);
+  const sourceTurnId = workflow.metadata?.sourceTurnId;
+  const sourceTurn = sourceTurnId ? store.getLingTurn(sourceTurnId) : undefined;
+  if (!sourceItem || !sourceTurn || sourceItem.turnId !== sourceTurn.id) return undefined;
   const steps = store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 });
-  return appendChannelAssistantMessage({
-    store,
-    sourceItemId: sourceMessage.id,
-    itemId: messageId,
-    idempotencyKey: `workflow-terminal:${workflow.id}`,
-    actorId: LING_AGENT_EXECUTOR_ID,
-    body: workflowTerminalCoordinatorReplyBody(workflow, steps),
-    status: "ready",
-    linkedRunId: input.linkedRunId,
-    now: input.now ?? new Date().toISOString(),
+  const now = input.now ?? new Date().toISOString();
+  const expectedCompletion = workflow.metadata?.requiredParticipantManifest
+    ? evaluateWorkflowCompletion({ store, workflow, steps, now })
+    : undefined;
+  const result = store.commitLegacyWorkflowPublication({
+    expectedWorkflowId: workflow.id,
+    expectedSourceTurn: { id: sourceTurn.id, status: sourceTurn.status, updatedAt: sourceTurn.updatedAt },
+    ...(expectedCompletion ? { expectedCompletion } : {}),
+    publicationItem: {
+      id: messageId,
+      channelId: workflow.channelId,
+      threadId: sourceTurn.threadId,
+      turnId: sourceTurn.id,
+      kind: "assistant_message",
+      status: "committed",
+      actorType: "ling_agent",
+      actorId: LING_AGENT_EXECUTOR_ID,
+      visibility: "channel",
+      payload: { body: workflowTerminalCoordinatorReplyBody(workflow, steps), format: "markdown", streaming: false, deliveryStatus: "ready" },
+      domainRefs: [
+        { type: "workflow", id: workflow.id },
+        { type: "conversation_item", id: sourceMessage.id },
+        { type: "turn", id: sourceTurn.id },
+        ...(input.linkedRunId ? [{ type: "run" as const, id: input.linkedRunId }] : []),
+      ],
+      idempotencyKey: `workflow-terminal:${workflow.id}`,
+    },
+    publicationEventIdempotencyKey: `workflow-terminal:${workflow.id}:published`,
+    now,
   });
+  if (!result.ok) return undefined;
+  return getChannelMessageView(store, result.item.id);
 }
 
 function workflowCoordinatorReplyStatusIsTerminal(status: ChannelWorkflowStatus): boolean {

@@ -1,5 +1,6 @@
 import {
   ChevronRight,
+  Globe2,
   Download,
   MoreHorizontal,
   Power,
@@ -7,6 +8,7 @@ import {
   RefreshCw,
   ShieldCheck,
   Trash2,
+  Unplug,
   Wrench,
   type LucideIcon,
 } from "lucide-react";
@@ -134,6 +136,8 @@ function PluginIconAction({
 }
 
 export function runPluginAction(action: PluginActionId, pluginId: string, handlers: PluginActionHandlers): void {
+  if (action === "connect-chrome") return handlers.onOpenChromeConnect(pluginId);
+  if (action === "revoke-chrome") return handlers.onRevokeChrome(pluginId);
   if (action === "guide") return handlers.onOpenInstallGuide(pluginId);
   if (action === "details") return handlers.onOpenDetails(pluginId);
   if (action === "apply") return handlers.onApplyPreset(pluginId);
@@ -153,6 +157,8 @@ export function pluginActionIcon(action: PluginActionId): React.JSX.Element {
 }
 
 function pluginActionIconComponent(action: PluginActionId): LucideIcon {
+  if (action === "connect-chrome") return Globe2;
+  if (action === "revoke-chrome") return Unplug;
   if (action === "apply") return Wrench;
   if (action === "guide" || action === "install") return Download;
   if (action === "check" || action === "refresh-package") return RefreshCw;
@@ -166,5 +172,7 @@ function pluginActionIconComponent(action: PluginActionId): LucideIcon {
 function actionIsBusy(action: PluginActionId, busyAction: PluginBusyAction | undefined): boolean {
   if (!busyAction) return false;
   if (action === "guide") return busyAction === "connect";
+  if (action === "connect-chrome") return busyAction === "pairing";
+  if (action === "revoke-chrome") return busyAction === "revoke";
   return action === busyAction;
 }

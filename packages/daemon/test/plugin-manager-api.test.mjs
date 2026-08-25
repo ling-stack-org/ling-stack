@@ -12,6 +12,8 @@ import { getBundledPluginPackage } from "../dist/features/plugins/source-index.j
 
 const cuaPluginId = "trusted-local:cua-driver";
 const bundledCuaPluginId = "bundled:cua-driver";
+const officePluginId = "built-in:office-documents";
+const officeServerId = "mcp_office_documents";
 const supportedDesktop = process.platform === "darwin" || process.platform === "win32";
 const coreToolIds = [
   "tool:read",
@@ -66,6 +68,94 @@ test("daemon exposes managed plugin catalog and runtime extension diagnostics", 
     assert.equal(writeTool.sideEffectLevel, "write");
   } finally {
     await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("Office Documents enables local file tools without an Office-side add-in", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-office-plugin-"));
+  const daemon = await startDaemonForTest();
+  try {
+    const initial = await getJson(`${daemon.url}/plugins/${encodeURIComponent(officePluginId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(initial.plugin.setup.kind, "office_documents");
+    assert.equal(initial.plugin.status, "available");
+    assert.equal(initial.plugin.setup.officeState, "not_installed");
+    assert.equal(initial.plugin.description.includes("add-in"), false);
+
+    const enabled = await postJson(`${daemon.url}/plugins/${encodeURIComponent(officePluginId)}/enable?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(enabled.plugin.status, "enabled");
+    assert.equal(enabled.plugin.setup.officeState, "desktop_required");
+
+    const servers = await getJson(`${daemon.url}/mcp/servers?cwd=${encodeURIComponent(cwd)}`);
+    const officeServer = servers.servers.find((server) => server.id === officeServerId);
+    assert.ok(officeServer);
+    assert.equal(officeServer.enabled, true);
+
+    const tools = await getJson(`${daemon.url}/mcp/tools?cwd=${encodeURIComponent(cwd)}&serverId=${encodeURIComponent(officeServerId)}`);
+    const enabledNames = tools.tools.filter((tool) => tool.enabled).map((tool) => tool.rawName).sort();
+    assert.deepEqual(enabledNames, [
+      "office_create_document",
+      "office_create_presentation",
+      "office_create_workbook",
+      "office_edit_document",
+      "office_edit_presentation",
+      "office_edit_workbook",
+      "office_inspect_document",
+      "office_render_document",
+      "office_validate_document",
+    ]);
+    assert.equal(tools.tools.some((tool) => tool.rawName === "office_create_chart" && tool.enabled), false);
+
+    const bindings = await getJson(`${daemon.url}/teammates/${encodeURIComponent("ling_agent")}/mcp?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(bindings.bindings.some((binding) => binding.serverId === officeServerId && binding.enabled), true);
+
+    const disabled = await postJson(`${daemon.url}/plugins/${encodeURIComponent(officePluginId)}/disable?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(disabled.plugin.status, "disabled");
+    assert.equal(disabled.plugin.setup.officeState, "disabled");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("Office Desktop availability routes are authenticated and enable live tools only while ready", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-office-driver-route-"));
+  const token = "office-desktop-bridge-token";
+  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd }, {
+    desktopBridgeToken: token,
+    secretResolver: createCompositeSecretResolver({ env: {} }),
+  });
+  await daemon.start();
+  const address = daemon.server.address();
+  assert.ok(address && typeof address === "object");
+  const url = `http://127.0.0.1:${address.port}`;
+  try {
+    await postJson(`${url}/plugins/${encodeURIComponent(officePluginId)}/enable?cwd=${encodeURIComponent(cwd)}`, {});
+    const forbidden = await requestJson(`${url}/desktop/capabilities/office/availability`, {
+      method: "POST",
+      body: officeAvailability("application_not_running", 1),
+    });
+    assert.equal(forbidden.status, 403);
+
+    await postOfficeAvailability(url, token, officeAvailability("application_not_running", 1));
+    const waiting = await getJson(`${url}/plugins/${encodeURIComponent(officePluginId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(waiting.plugin.setup.officeState, "application_not_running");
+    let tools = await getJson(`${url}/mcp/tools?cwd=${encodeURIComponent(cwd)}&serverId=${encodeURIComponent(officeServerId)}`);
+    assert.equal(tools.tools.some((tool) => tool.rawName === "office_list_sessions" && tool.enabled), false);
+    assert.equal(tools.tools.some((tool) => tool.rawName === "office_create_workbook" && tool.enabled), true);
+
+    await postOfficeAvailability(url, token, officeAvailability("ready", 2));
+    const ready = await getJson(`${url}/plugins/${encodeURIComponent(officePluginId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(ready.plugin.setup.officeState, "ready");
+    tools = await getJson(`${url}/mcp/tools?cwd=${encodeURIComponent(cwd)}&serverId=${encodeURIComponent(officeServerId)}`);
+    assert.equal(tools.tools.some((tool) => tool.rawName === "office_list_sessions" && tool.enabled), true);
+    assert.equal(tools.tools.some((tool) => tool.rawName === "office_read_ranges" && tool.enabled), true);
+
+    const stale = await requestOfficeAvailability(url, token, officeAvailability("ready", 1));
+    assert.equal(stale.status, 400);
+    assert.equal(stale.json.error, "office_driver_stale_generation");
+  } finally {
+    await daemon.stop();
     await rm(cwd, { recursive: true, force: true });
   }
 });
@@ -807,4 +897,35 @@ async function requestJson(url, options) {
     status: response.status,
     json: await response.json(),
   };
+}
+
+function officeAvailability(state, generation) {
+  return {
+    protocol: "ling.office.driver.v1",
+    generation,
+    desktopInstanceId: "desktop-office-route-test",
+    platform: process.platform === "win32" ? "win32" : "darwin",
+    helperVersion: "0.1.0-test",
+    state,
+    capabilities: state === "ready" ? ["excel:sessions", "excel:read"] : ["excel:sessions", "excel:read"],
+    officeInstalled: true,
+    applicationRunning: state === "ready",
+    permissionGranted: true,
+    checkedAt: new Date().toISOString(),
+  };
+}
+
+async function postOfficeAvailability(url, token, body) {
+  const response = await requestOfficeAvailability(url, token, body);
+  if (response.status !== 200) assert.fail(`${response.status}: ${JSON.stringify(response.json)}`);
+  return response.json;
+}
+
+async function requestOfficeAvailability(url, token, body) {
+  const response = await fetch(`${url}/desktop/capabilities/office/availability`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-ling-desktop-bridge-token": token },
+    body: JSON.stringify(body),
+  });
+  return { status: response.status, json: await response.json() };
 }

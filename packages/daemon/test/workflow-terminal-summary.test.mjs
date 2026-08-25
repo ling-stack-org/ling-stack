@@ -29,6 +29,8 @@ test("workflow terminal reply preserves full step result text", async () => {
       authorType: "local-user",
       body: "创建 index.html",
     }, now);
+    const sourceItem = store.getConversationItem(sourceMessage.id);
+    assert.ok(sourceItem?.turnId);
     const workflow = store.createChannelWorkflow({
       channelId: channel.id,
       title: "Create index.html",
@@ -37,6 +39,7 @@ test("workflow terminal reply preserves full step result text", async () => {
       createdBy: "ling_agent",
       metadata: {
         sourceMessageId: sourceMessage.id,
+        sourceTurnId: sourceItem.turnId,
         responseLanguage: "zh-CN",
       },
     }, "2026-06-25T00:01:00.000Z");

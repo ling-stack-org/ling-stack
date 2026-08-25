@@ -4,6 +4,7 @@ import type {
   LingApprovalCheckpointStatus,
   RunnerResumeHandle,
 } from "../../approval-checkpoints.js";
+import { isApprovalResumeBasisV1 } from "../../approval-checkpoints.js";
 import type { ApprovalPayload } from "../../approval-types.js";
 import {
   omitUndefined,
@@ -15,6 +16,8 @@ import {
 
 export function mapApprovalCheckpoint(row: Record<string, SQLOutputValue>): LingApprovalCheckpoint {
   const runnerResumeHandleJson = readNullableString(row, "runner_resume_handle_json");
+  const resumeBasisJson = readNullableString(row, "resume_basis_json");
+  const resumeBasis = resumeBasisJson ? parseJsonObject(resumeBasisJson) : undefined;
   return omitUndefined({
     id: readString(row, "id"),
     approvalId: readString(row, "approval_id"),
@@ -33,6 +36,8 @@ export function mapApprovalCheckpoint(row: Record<string, SQLOutputValue>): Ling
     sideEffect: parseJsonObject(readString(row, "side_effect_json")) as ApprovalPayload,
     previewArtifactIds: parseJsonStringArray(readString(row, "preview_artifact_ids_json")),
     resultArtifactIds: parseJsonStringArray(readString(row, "result_artifact_ids_json")),
+    revision: Number(row.revision ?? 0),
+    resumeBasis: isApprovalResumeBasisV1(resumeBasis) ? resumeBasis : undefined,
     runnerResumeHandle: runnerResumeHandleJson
       ? (parseJsonObject(runnerResumeHandleJson) as unknown as RunnerResumeHandle)
       : undefined,

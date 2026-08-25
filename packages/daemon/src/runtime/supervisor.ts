@@ -11,6 +11,7 @@ import {
   type RunStorePathsFacet,
   type RuntimeSupervisorStoreFacet,
   type WorkUnit,
+  toRuntimeAttemptFence,
 } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../config.js";
 import { HttpError } from "../errors.js";
@@ -27,7 +28,7 @@ import {
   type LockedTaskContinuationSnapshot,
 } from "./locked-task-continuation.js";
 
-const RUNTIME_SCHEMA_VERSION = 22;
+const RUNTIME_SCHEMA_VERSION = 23;
 
 export type RuntimeSupervisorRuntimeStore = RunStorePathsFacet & RuntimeSupervisorStoreFacet & RunExecutionStoreFacet;
 
@@ -258,6 +259,7 @@ export class RuntimeSupervisor {
     }
     this.reconciledCwds.add(cwd);
     const now = new Date().toISOString();
+    store.expireRuntimeSemaphoreSlots(now);
     const candidates = [
       ...store.listWorkUnits({ status: "claimed", limit: 500 }),
       ...store.listWorkUnits({ status: "running", limit: 500 }),
@@ -266,9 +268,34 @@ export class RuntimeSupervisor {
     ];
     for (const workUnit of candidates) {
       const reason = "runtime-startup-reconcile";
-      const reconciled = reconcileActiveWorkUnitFromLinkedTerminalRun(store, workUnit, now) ??
+      const reconciled = preserveRecoverableApprovalWorkUnit(store, workUnit, now) ??
+        reconcileActiveWorkUnitFromLinkedTerminalRun(store, workUnit, now) ??
         markWorkUnitStale(store, workUnit, now, reason);
       this.notifyWorkUnitTransition(store, cwd, workUnit, reconciled, reason, now);
+    }
+    for (const workUnit of store.listWorkUnits({ kind: "channel_turn_dispatch", status: "stale", limit: 500 })) {
+      const retried = store.transitionWorkUnitStatus({
+        workUnitId: workUnit.id,
+        expectedStatus: "stale",
+        event: "retry",
+        actor: "system",
+        reason: "runtime-startup-requeue-channel-turn-dispatch",
+        idempotencyKey: `runtime-startup-requeue:${workUnit.id}:${now}`,
+        now,
+        activeAttemptId: null,
+        endedAt: null,
+        errorCode: null,
+        errorMessage: null,
+      });
+      if (retried.ok) {
+        store.appendRuntimeEvent({
+          workUnitId: workUnit.id,
+          type: "work_unit_queued",
+          actor: "system",
+          ts: now,
+          data: { reason: "runtime-startup-requeue-channel-turn-dispatch" },
+        });
+      }
     }
   }
 
@@ -293,6 +320,68 @@ export class RuntimeSupervisor {
       now,
     });
   }
+}
+
+function preserveRecoverableApprovalWorkUnit(
+  store: RuntimeSupervisorRuntimeStore,
+  workUnit: WorkUnit,
+  now: string,
+): WorkUnit | undefined {
+  if (!workUnit.linkedRunId || (workUnit.status !== "waiting_for_approval" && workUnit.status !== "running")) {
+    return undefined;
+  }
+  if (!("listApprovalRequests" in store) || !("getApprovalCheckpointForApproval" in store)) {
+    return undefined;
+  }
+  const approvalStore = store as RuntimeSupervisorRuntimeStore & Pick<
+    import("@ling-stack/core").RunStore,
+    "listApprovalRequests" | "getApprovalCheckpointForApproval"
+  >;
+  const run = store.getRun(workUnit.linkedRunId);
+  if (!run || (run.status !== "waiting_for_approval" && run.status !== "running")) {
+    return undefined;
+  }
+  const approval = approvalStore.listApprovalRequests({ runId: run.id, limit: 100 }).find((candidate) => {
+    const checkpoint = approvalStore.getApprovalCheckpointForApproval(candidate.id);
+    return checkpoint?.resumeBasis?.runId === run.id
+      && checkpoint.resumeBasis.workUnitId === workUnit.id
+      && (checkpoint.status === "pending" || checkpoint.status === "approved" || checkpoint.status === "resume_pending");
+  });
+  if (!approval) return undefined;
+  const attempt = workUnit.activeAttemptId ? store.getWorkUnitAttempt(workUnit.activeAttemptId) : undefined;
+  if (attempt && !isTerminalAttemptStatus(attempt.status)) {
+    store.updateWorkUnitAttemptStatus({
+      attemptId: attempt.id,
+      workUnitId: attempt.workUnitId,
+      runtimeInstanceId: attempt.runtimeInstanceId,
+      fencingToken: attempt.fencingToken,
+      status: "lost",
+      now,
+      endedAt: now,
+      errorCode: "runtime_suspend",
+      errorMessage: "runtime-startup-recoverable-approval",
+    });
+    store.releaseRuntimeSemaphoreSlotsForAttempt(toRuntimeAttemptFence(attempt), now, "runtime-startup-recoverable-approval");
+    const lostAttempt = store.getWorkUnitAttempt(attempt.id) ?? attempt;
+    store.appendTerminalRuntimeAudit({
+      capability: {
+        workUnitId: lostAttempt.workUnitId,
+        attemptId: lostAttempt.id,
+        runtimeInstanceId: lostAttempt.runtimeInstanceId,
+        fencingToken: lostAttempt.fencingToken,
+        attemptStatus: "lost",
+        transitionedAt: now,
+      },
+      type: "work_unit_stale",
+      actor: "system",
+      data: { reason: "runtime_suspend", recoverableApprovalId: approval.id },
+    });
+  }
+  return store.getWorkUnit(workUnit.id) ?? workUnit;
+}
+
+function isTerminalAttemptStatus(status: import("@ling-stack/core").WorkUnitAttempt["status"]): boolean {
+  return status === "succeeded" || status === "failed" || status === "cancelled" || status === "lost";
 }
 
 function reconcileActiveWorkUnitFromLinkedTerminalRun(store: RuntimeSupervisorRuntimeStore, workUnit: WorkUnit, now: string): WorkUnit | undefined {

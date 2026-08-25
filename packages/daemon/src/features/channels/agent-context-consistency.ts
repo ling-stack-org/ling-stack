@@ -103,6 +103,10 @@ export function reviewWorkflowAgentContextStamp(input: {
       store: input.store,
       sourceItemId: input.consumed.sourceItemId,
       view: "workflow_step",
+      // A result/terminal Item from the same source Turn is a product of the
+      // consumed projection, not a correction to its input facts. Exclude it
+      // from freshness comparison while retaining source-linked prior Items.
+      includeSourceTurnItems: false,
     });
     const current = createWorkflowAgentContextStamp({
       store: input.store,

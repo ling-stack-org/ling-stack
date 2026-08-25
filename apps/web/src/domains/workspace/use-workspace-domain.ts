@@ -32,6 +32,7 @@ import {
 import type { DomainController, DomainError } from "../../app/domain-controller.js";
 import { deriveChannelTasks } from "../../lib/channel-artifacts.js";
 import { projectChannelConversationItemPage } from "../../lib/channel-conversation-items.js";
+import { channelMessagesEqual } from "../../lib/channel-message-equality.js";
 import {
   defaultChannelCreateForm,
   defaultChannelEditForm,
@@ -173,7 +174,7 @@ export interface WorkspaceActions {
   readonly setChannelWorkflowSteps: Dispatch<SetStateAction<readonly ChannelWorkflowStep[]>>;
   readonly refreshChannels: (cwd?: string) => Promise<void>;
   readonly refreshTasks: (channelId?: string) => Promise<void>;
-  readonly refreshChannelMessages: (channelId?: string, threadId?: string) => Promise<void>;
+  readonly refreshChannelMessages: (channelId?: string, threadId?: string, options?: ChannelMessageRefreshOptions) => Promise<void>;
   readonly loadOlderChannelMessages: (channelId?: string, threadId?: string) => Promise<void>;
   readonly refreshChannelExecutionProposals: (channelId?: string) => Promise<void>;
   readonly upsertChannelExecutionProposal: (proposal: ChannelExecutionProposal) => void;
@@ -193,6 +194,10 @@ export interface WorkspaceActions {
   readonly refreshUsedMemoryAudit: (cwd?: string) => Promise<void>;
   readonly resetSelectedChannelActivity: () => void;
   readonly resetForCwd: (cwd: string) => void;
+}
+
+export interface ChannelMessageRefreshOptions {
+  readonly silent?: boolean;
 }
 
 export type WorkspaceController = DomainController<WorkspaceState, WorkspaceActions>;
@@ -451,7 +456,11 @@ export function useWorkspaceDomain(input: {
     }
   }
 
-  async function refreshChannelMessages(channelId = selectedChannelId, threadId?: string): Promise<void> {
+  async function refreshChannelMessages(
+    channelId = selectedChannelId,
+    threadId?: string,
+    options?: ChannelMessageRefreshOptions,
+  ): Promise<void> {
     const cwd = input.cwd.trim();
     if (!cwd || !channelId) {
       setChannelMessages([]);
@@ -462,10 +471,14 @@ export function useWorkspaceDomain(input: {
 
     const guardKey = `messages:${cwd}:${channelId}:${threadId ?? ""}`;
     const token = loadGuard.next(guardKey);
-    setChannelMessagesLoading(true);
+    if (!options?.silent) {
+      setChannelMessagesLoading(true);
+    }
     try {
-      clearScopedFeedback("composer", channelId);
-      setError(undefined);
+      if (!options?.silent) {
+        clearScopedFeedback("composer", channelId);
+        setError(undefined);
+      }
       const response = await listChannelConversationItems(cwd, channelId, {
         limit: channelMessageInitialLimit,
         surface: threadId ? { kind: "thread", threadId } : { kind: "channel_root" },
@@ -474,14 +487,19 @@ export function useWorkspaceDomain(input: {
         return;
       }
       const page = projectChannelConversationItemPage(response);
-      setChannelMessages(page.messages);
+      const messagesChanged = !channelMessagesEqual(channelMessages, page.messages);
+      setChannelMessages((current) => channelMessagesEqual(current, page.messages) ? current : page.messages);
       setChannelGeneratedMedia(page.generatedMedia);
       setChannelMessagesHasOlder(page.hasMore);
       setChannelItemsBeforeSequence(page.nextBeforeSequence);
-      input.onChannelMessagesLoaded?.(channelId, page.messages);
+      if (messagesChanged) {
+        input.onChannelMessagesLoaded?.(channelId, page.messages);
+      }
     } catch (caught) {
       if (!loadGuard.isCurrent(guardKey, token)) return;
-      reportScopedFeedback("composer", channelId, "load", caught);
+      if (!options?.silent) {
+        reportScopedFeedback("composer", channelId, "load", caught);
+      }
     } finally {
       if (loadGuard.isCurrent(guardKey, token)) {
         setChannelMessagesLoading(false);

@@ -1,5 +1,6 @@
 import type { SQLOutputValue } from "node:sqlite";
 import {
+  createRequiredParticipantManifestV1,
   isChannelIntentDecisionV2,
   isConversationContextProjectionMetadata,
   type ConversationItemV1,
@@ -54,6 +55,9 @@ export class SqliteChannelIntentDecisionStore {
       throw new Error("Channel Intent v2 projection does not match the source turn assignment.");
     }
     this.assertChannelIntentDecisionRefsInChannel(input.channelId, input);
+    if ((input.selectedTeammateIds?.length ?? 0) > 0 && !input.participantManifest) {
+      throw new Error("Channel Intent v2 selected participants require an explicit participant manifest.");
+    }
     const decision: ChannelIntentDecision = {
       schemaVersion: 2,
       id: createChannelIntentDecisionId(),
@@ -65,6 +69,7 @@ export class SqliteChannelIntentDecisionStore {
       contextProjectionVersion: input.contextProjection.projectionVersion,
       action: input.action,
       selectedTeammateIds: input.selectedTeammateIds ?? [],
+      participantManifest: input.participantManifest ?? createRequiredParticipantManifestV1([]),
       proposalId: input.proposalId,
       resultItemIds: input.resultItemIds ?? [],
       workflowId: input.workflowId,
@@ -91,6 +96,7 @@ export class SqliteChannelIntentDecisionStore {
           context_projection_version,
           action,
           selected_teammate_ids_json,
+          participant_manifest_json,
           proposal_id,
           result_item_ids_json,
           workflow_id,
@@ -102,7 +108,7 @@ export class SqliteChannelIntentDecisionStore {
           error_code,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         decision.id,
@@ -115,6 +121,7 @@ export class SqliteChannelIntentDecisionStore {
         decision.contextProjectionVersion,
         decision.action,
         stringifyJson(decision.selectedTeammateIds),
+        stringifyJson(decision.participantManifest),
         decision.proposalId ?? null,
         stringifyJson(decision.resultItemIds),
         decision.workflowId ?? null,
@@ -168,11 +175,16 @@ export class SqliteChannelIntentDecisionStore {
 
   private assertChannelIntentDecisionRefsInChannel(
     channelId: string,
-    input: Pick<CreateChannelIntentDecisionInput, "selectedTeammateIds" | "proposalId" | "resultItemIds" | "workflowId" | "execution">,
+    input: Pick<CreateChannelIntentDecisionInput, "selectedTeammateIds" | "participantManifest" | "proposalId" | "resultItemIds" | "workflowId" | "execution">,
   ): void {
     for (const teammateId of input.selectedTeammateIds ?? []) {
       if (!this.ports.hasAiTeammate(teammateId)) {
         throw new Error(`AI teammate not found: ${teammateId}`);
+      }
+    }
+    for (const participant of input.participantManifest?.participants ?? []) {
+      if (!this.ports.hasAiTeammate(participant.participantId)) {
+        throw new Error(`AI teammate not found: ${participant.participantId}`);
       }
     }
     if (input.proposalId) {
@@ -184,9 +196,11 @@ export class SqliteChannelIntentDecisionStore {
     if (input.workflowId) {
       this.ports.assertWorkflowInChannel(channelId, input.workflowId);
     }
-    const targetRef = input.execution?.targetRef;
-    if (targetRef && (targetRef.type === "conversation_item" || targetRef.type === "message")) {
-      this.ports.assertItemInChannel(channelId, targetRef.id);
+    for (const operation of input.execution?.operations ?? []) {
+      const targetRef = operation.targetRef;
+      if (targetRef && (targetRef.type === "conversation_item" || targetRef.type === "message")) {
+        this.ports.assertItemInChannel(channelId, targetRef.id);
+      }
     }
   }
 }
@@ -194,5 +208,9 @@ export class SqliteChannelIntentDecisionStore {
 function validateChannelIntentDecisionInput(decision: ChannelIntentDecision): void {
   if (!isChannelIntentDecisionV2(decision)) {
     throw new Error("Channel Intent v2 decision failed schema validation.");
+  }
+  if ((decision.action === "execute" || decision.action === "workflow_proposal")
+    && decision.participantManifest.participants.length === 0) {
+    throw new Error("Executable Channel Intent requires a non-empty participant manifest.");
   }
 }

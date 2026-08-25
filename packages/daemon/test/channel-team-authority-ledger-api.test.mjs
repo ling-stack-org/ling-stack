@@ -65,12 +65,39 @@ test("channel team authority ledger API exposes read-only authority facts", asyn
     "2026-06-27T00:03:00.000Z",
   );
   store.denyApprovalRequest(approval.id, { reason: "risk review denied", resolvedBy: "local-user" }, "2026-06-27T00:04:00.000Z");
+  const workUnit = store.createWorkUnit({
+    workspaceId: DEFAULT_WORKSPACE_ID,
+    kind: "task_run",
+    ownerType: "run",
+    ownerId: run.id,
+    channelId: channel.id,
+    taskId: run.taskId,
+    runnerId: "pi",
+    effectiveRunnerId: "pi",
+    idempotencyKey: "authority-ledger-run-work-unit",
+    createdByActor: "system",
+    request: { runId: run.id },
+    linkedRunId: run.id,
+    now: "2026-06-27T00:04:30.000Z",
+  });
+  const attempt = store.createWorkUnitAttempt({
+    workUnitId: workUnit.id,
+    attemptNumber: 1,
+    runtimeInstanceId: "runtime_authority_ledger",
+    runnerId: "pi",
+    effectiveRunnerId: "pi",
+    now: "2026-06-27T00:04:30.000Z",
+  });
   const lease = store.acquireResourceLease({
     workspaceId: DEFAULT_WORKSPACE_ID,
     resourceType: "bound_path",
     resourceKey: cwd,
     ownerType: "run",
     ownerId: run.id,
+    workUnitId: workUnit.id,
+    attemptId: attempt.id,
+    runtimeInstanceId: attempt.runtimeInstanceId,
+    fencingToken: attempt.fencingToken,
     acquiredAt: "2026-06-27T00:05:00.000Z",
     expiresAt: "2027-06-27T00:35:00.000Z",
   });

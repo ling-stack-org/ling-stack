@@ -18,6 +18,7 @@ import {
 } from "./helpers.js";
 
 export function mapArtifact(row: Record<string, SQLOutputValue>): RunArtifact {
+  const sealedPayloadJson = readNullableString(row, "sealed_payload_json");
   return omitUndefined({
     id: readString(row, "id"),
     runId: readNullableString(row, "run_id"),
@@ -28,6 +29,8 @@ export function mapArtifact(row: Record<string, SQLOutputValue>): RunArtifact {
     title: readNullableString(row, "title"),
     contentType: readNullableString(row, "content_type"),
     sizeBytes: readNullableNumber(row, "size_bytes"),
+    sealedPayload: sealedPayloadJson ? JSON.parse(sealedPayloadJson) as unknown : undefined,
+    contentSha256: readNullableString(row, "content_sha256"),
     createdAt: readString(row, "created_at"),
   });
 }

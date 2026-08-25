@@ -34,7 +34,7 @@ Passing an earlier boundary does not authorize the next one.
 | Documentation links | Ready locally | `corepack pnpm check:docs` |
 | Dependency licenses | Ready locally | `corepack pnpm check:licenses`; binary notices remain a separate gate |
 | Current-tree safety scan | Ready locally | `corepack pnpm check:public` after personal-path cleanup |
-| Git-history secret scan | Ready locally | Gitleaks v8.30.1 scanned 765 commits and 67.2 MB; 20 reviewed false positives are fingerprint-scoped in `.gitleaksignore` |
+| Git-history secret scan | Ready locally | Gitleaks v8.30.1 scanned 765 commits and 67.2 MB; 21 reviewed false positives are fingerprint-scoped in `.gitleaksignore` |
 | Public UI screenshots | Pending | Capture the current product; do not restore outdated UI2 concept screenshots |
 | Changelog and release policy | Ready locally | `CHANGELOG.md` and `docs/release/README.md` |
 

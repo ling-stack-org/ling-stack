@@ -26,7 +26,12 @@ import {
   type WorkspaceAccessMode,
 } from "@ling-stack/core";
 import type { PiRunnerProviderConfig, PiRunnerRunOptions } from "@ling-stack/runner-pi";
-import type { ConversationContextProjectionMetadata } from "@ling-stack/contracts";
+import type {
+  ChannelIntentExecutionOperationV1,
+  ConversationContextProjectionMetadata,
+  DelegatedStepRequirementV1,
+  WorkflowParticipantProviderBindingV1,
+} from "@ling-stack/contracts";
 import { HttpError } from "../../errors.js";
 import { parseApprovalProfileObject } from "../../shared/approval-profile.js";
 import {
@@ -58,9 +63,15 @@ export interface RunRequest extends Omit<
 > {
   readonly workspaceCwd?: string;
   readonly providerPresetId?: string;
+  /** Internal-only immutable provider ownership snapshot for workflow participant Runs. */
+  readonly providerBinding?: WorkflowParticipantProviderBindingV1;
   readonly provider?: PiRunnerProviderConfig;
   readonly teammateId?: string;
   readonly workflowStepId?: string;
+  /** Internal-only immutable delegated completion requirement. External request parsing does not accept it. */
+  readonly delegatedRequirement?: DelegatedStepRequirementV1;
+  /** Internal-only Host execution bindings for workflow-owned operations. */
+  readonly executionOperationBindings?: readonly ChannelIntentExecutionOperationV1[];
   readonly threadId?: string;
   readonly turnId?: string;
   readonly runnerId?: string;

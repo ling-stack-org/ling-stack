@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=440, initial-scale=1" />
+    <title>Ling for Chrome promotional image</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 440px;
+        height: 280px;
+        margin: 0;
+        overflow: hidden;
+      }
+
+      body {
+        background: #f4f6f9;
+      }
+
+      .tile {
+        position: relative;
+        display: grid;
+        width: 440px;
+        height: 280px;
+        place-items: center;
+        overflow: hidden;
+        background: #f4f6f9;
+      }
+
+      .tile::before,
+      .tile::after {
+        position: absolute;
+        width: 560px;
+        height: 48px;
+        content: "";
+        transform: rotate(-13deg);
+      }
+
+      .tile::before {
+        top: 28px;
+        left: -68px;
+        background: #d8c8ff;
+      }
+
+      .tile::after {
+        right: -72px;
+        bottom: 28px;
+        background: #bfecef;
+      }
+
+      .backplate {
+        position: absolute;
+        inset: 34px 70px;
+        border: 1px solid #dce2ea;
+        background: #ffffff;
+        box-shadow: 0 18px 42px rgb(34 43 62 / 16%);
+        transform: rotate(4deg);
+      }
+
+      img {
+        position: relative;
+        z-index: 1;
+        width: 148px;
+        height: 148px;
+        filter: drop-shadow(0 14px 16px rgb(28 35 51 / 22%));
+      }
+    </style>
+  </head>
+  <body>
+    <main class="tile" aria-label="Ling for Chrome">
+      <div class="backplate" aria-hidden="true"></div>
+      <img src="ling-icon-512.png" alt="" />
+    </main>
+  </body>
+</html>

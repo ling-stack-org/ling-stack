@@ -66,11 +66,14 @@ import {
 import { buildManagedPluginRuntimePreview } from "./runtime-injection.js";
 import { createTrustedLocalMcpPlugin } from "./create-local-plugin.js";
 import type { LockedComputerControlRegistry } from "../computer-use/locked-control-registry.js";
+import { CHROME_BROWSER_PLUGIN_ID, OFFICE_DOCUMENTS_PLUGIN_ID } from "@ling-stack/contracts";
+import type { ChromeBrowserPluginService } from "./chrome-browser.js";
+import type { OfficeDocumentsPluginService } from "./office-documents.js";
 
 export type ManagedPluginRoute =
   | {
       readonly pluginId: string;
-      readonly action?: "enable" | "disable" | "check" | "connect" | "apply-preset" | "validate-package" | "install" | "uninstall" | "refresh-package" | "runtime-preview";
+      readonly action?: "enable" | "disable" | "check" | "connect" | "pairing" | "revoke" | "apply-preset" | "validate-package" | "install" | "uninstall" | "refresh-package" | "runtime-preview";
     };
 
 const bundledCanonicalCuaDriverActions = new Set<NonNullable<ManagedPluginRoute["action"]>>([
@@ -87,6 +90,7 @@ export async function handlePluginsCollection(
   extensionRegistry: LingExtensionRegistry,
   mcpBroker: McpBroker,
   lockedComputerControl?: LockedComputerControlRegistry,
+  chromeBrowserPlugin?: ChromeBrowserPluginService,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -192,6 +196,8 @@ export async function handlePluginItem(
   secretResolver: SecretResolver,
   bundledCuaDriverActivation: BundledCuaDriverActivationService,
   route: ManagedPluginRoute,
+  chromeBrowserPlugin?: ChromeBrowserPluginService,
+  officeDocumentsPlugin?: OfficeDocumentsPluginService,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -216,6 +222,87 @@ export async function handlePluginItem(
       }
     }
     const store = storeRegistry.getStore(cwd);
+    if (route.pluginId === OFFICE_DOCUMENTS_PLUGIN_ID) {
+      if (!officeDocumentsPlugin) {
+        throw new HttpError(503, "office_documents_unavailable", "Office Documents plugin service is unavailable.");
+      }
+      if (request.method === "POST" && route.action === "enable") {
+        const health = officeDocumentsPlugin.enable(cwd);
+        writeJson(response, 200, {
+          plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: route.pluginId, includeEvents: true, cuaDriverRuntimeAuthority: mcpBroker.cuaDriverRuntimeAuthority, cuaDriverFeatureFlags: config.cuaDriver }),
+          health,
+        });
+        return;
+      }
+      if (request.method === "POST" && route.action === "disable") {
+        const body = await readJsonBody(request, config.maxBodyBytes);
+        const input = parseManagedPluginDisableRequest(body);
+        const health = officeDocumentsPlugin.disable(cwd, input.reason);
+        writeJson(response, 200, {
+          plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: route.pluginId, includeEvents: true, cuaDriverRuntimeAuthority: mcpBroker.cuaDriverRuntimeAuthority, cuaDriverFeatureFlags: config.cuaDriver }),
+          health,
+        });
+        return;
+      }
+      if (request.method === "POST" && route.action === "check") {
+        const health = officeDocumentsPlugin.sync(cwd);
+        writeJson(response, health.status === "failed" ? 400 : 200, {
+          plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: route.pluginId, includeEvents: true, cuaDriverRuntimeAuthority: mcpBroker.cuaDriverRuntimeAuthority, cuaDriverFeatureFlags: config.cuaDriver }),
+          health,
+        });
+        return;
+      }
+    }
+    if (route.pluginId === CHROME_BROWSER_PLUGIN_ID) {
+      if (!chromeBrowserPlugin) {
+        throw new HttpError(503, "chrome_browser_unavailable", "Chrome browser plugin service is unavailable.");
+      }
+      if (!chromeBrowserPlugin.supportsWorkspace(cwd)) {
+        throw new HttpError(409, "chrome_browser_workspace_mismatch", "Chrome is available only in the daemon authority workspace.");
+      }
+      if (request.method === "POST" && route.action === "enable") {
+        chromeBrowserPlugin.enable(cwd);
+        writeJson(response, 200, {
+          plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: route.pluginId, includeEvents: true, cuaDriverRuntimeAuthority: mcpBroker.cuaDriverRuntimeAuthority, cuaDriverFeatureFlags: config.cuaDriver }),
+        });
+        return;
+      }
+      if (request.method === "POST" && route.action === "disable") {
+        const body = await readJsonBody(request, config.maxBodyBytes);
+        const input = parseManagedPluginDisableRequest(body);
+        chromeBrowserPlugin.disable(cwd, input.reason);
+        writeJson(response, 200, {
+          plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: route.pluginId, includeEvents: true, cuaDriverRuntimeAuthority: mcpBroker.cuaDriverRuntimeAuthority, cuaDriverFeatureFlags: config.cuaDriver }),
+        });
+        return;
+      }
+      if (request.method === "POST" && route.action === "check") {
+        const health = chromeBrowserPlugin.sync(cwd);
+        const plugin = getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: route.pluginId, includeEvents: true, cuaDriverRuntimeAuthority: mcpBroker.cuaDriverRuntimeAuthority, cuaDriverFeatureFlags: config.cuaDriver });
+        writeJson(response, health.status === "ready" ? 200 : 400, health.status === "ready"
+          ? { plugin, health }
+          : { error: readChromeHealthError(health), message: health.message ?? "Chrome is not connected.", plugin, health });
+        return;
+      }
+      if (request.method === "POST" && route.action === "pairing") {
+        const pairing = chromeBrowserPlugin.createPairing(cwd);
+        writeJson(response, 200, {
+          pluginId: CHROME_BROWSER_PLUGIN_ID,
+          pairingCode: pairing.pairingCode,
+          expiresAt: pairing.expiresAt,
+          ...(pairing.storeUrl ? { storeUrl: pairing.storeUrl } : {}),
+        });
+        return;
+      }
+      if (request.method === "POST" && route.action === "revoke") {
+        const health = chromeBrowserPlugin.revoke(cwd);
+        writeJson(response, 200, {
+          plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: route.pluginId, includeEvents: true, cuaDriverRuntimeAuthority: mcpBroker.cuaDriverRuntimeAuthority, cuaDriverFeatureFlags: config.cuaDriver }),
+          health,
+        });
+        return;
+      }
+    }
     if (request.method === "POST" && route.action === "validate-package") {
       const body = await readJsonBody(request, config.maxBodyBytes);
       parseManagedPluginValidatePackageRequest(body);
@@ -932,4 +1019,10 @@ function writeRouteError(response: ServerResponse, error: unknown): void {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readChromeHealthError(health: ManagedPluginHealthSnapshot): string {
+  return isRecord(health.details) && typeof health.details.errorCode === "string"
+    ? health.details.errorCode
+    : "chrome_browser_disconnected";
 }

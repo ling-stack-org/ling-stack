@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { MediaJob, RunStore, SecretResolver, WorkUnit, WorkUnitAttempt } from "@ling-stack/core";
+import { toRuntimeAttemptFence, type MediaJob, type RunStore, type SecretResolver, type WorkUnit, type WorkUnitAttempt } from "@ling-stack/core";
 import type { MediaExecutionHandle } from "@ling-stack/providers";
 import type { RunStoreRegistry } from "../../../runtime/store-registry.js";
 import { redactTextWithSecrets } from "../../../shared/redaction.js";
@@ -231,6 +231,8 @@ async function runWorkflowMediaJobExecutionOwner(input: {
       store.appendRuntimeEvent({
         workUnitId: supervised.workUnit.id,
         attemptId: supervised.attempt.id,
+        runtimeInstanceId: supervised.attempt.runtimeInstanceId,
+        fencingToken: supervised.attempt.fencingToken,
         type: "artifact_created",
         actor: "system",
         ts: completedAt,
@@ -337,6 +339,8 @@ function ensureSemaphore(
     ownerId: supervised.attempt.id,
     workUnitId: supervised.workUnit.id,
     attemptId: supervised.attempt.id,
+    runtimeInstanceId: supervised.attempt.runtimeInstanceId,
+    fencingToken: supervised.attempt.fencingToken,
     acquiredAt,
     expiresAt: new Date(Date.now() + MEDIA_RUNTIME_SEMAPHORE_TTL_MS).toISOString(),
   });
@@ -344,6 +348,8 @@ function ensureSemaphore(
   store.appendRuntimeEvent({
     workUnitId: supervised.workUnit.id,
     attemptId: supervised.attempt.id,
+    runtimeInstanceId: supervised.attempt.runtimeInstanceId,
+    fencingToken: supervised.attempt.fencingToken,
     type: "semaphore_acquired",
     actor: "system",
     ts: acquiredAt,
@@ -357,6 +363,7 @@ function recordHeartbeat(store: RunStore, supervised: MediaRuntimeHandle): void 
     workUnitId: supervised.workUnit.id,
     attemptId: supervised.attempt.id,
     runtimeInstanceId: supervised.attempt.runtimeInstanceId,
+    fencingToken: supervised.attempt.fencingToken,
     ts: new Date().toISOString(),
     source: "provider",
     detail: { phase: "workflow_tick" },
@@ -370,8 +377,10 @@ function finishExecution(
   status: "succeeded" | "failed" | "cancelled",
   reason: string,
 ): void {
-  settleExecutionHandle(store, mediaJobId, status, reason);
-  store.releaseRuntimeSemaphoreSlotsForOwner(supervised.attempt.id, new Date().toISOString(), reason);
+  const handle = settleExecutionHandle(store, mediaJobId, status, reason);
+  if (!handle || handle.attemptId !== supervised.attempt.id) {
+    store.releaseRuntimeSemaphoreSlotsForAttempt(toRuntimeAttemptFence(supervised.attempt), new Date().toISOString(), reason);
+  }
   clearScheduled(mediaJobId);
 }
 
@@ -380,15 +389,18 @@ function settleExecutionHandle(
   mediaJobId: string,
   status: "succeeded" | "failed" | "cancelled",
   reason: string,
-): void {
+): ReturnType<RunStore["getMediaJobExecutionHandle"]> {
   const handle = store.getMediaJobExecutionHandle(mediaJobId);
-  if (!handle) return;
+  if (!handle) return undefined;
   if (handle.attemptId) {
-    store.releaseRuntimeSemaphoreSlotsForOwner(handle.attemptId, new Date().toISOString(), reason);
+    const attempt = store.getWorkUnitAttempt(handle.attemptId);
+    if (attempt) {
+      store.releaseRuntimeSemaphoreSlotsForAttempt(toRuntimeAttemptFence(attempt), new Date().toISOString(), reason);
+    }
   }
   if (status === "succeeded" || isPendingHandle(handle)) {
     store.deleteMediaJobExecutionHandle(mediaJobId);
-    return;
+    return handle;
   }
   store.upsertMediaJobExecutionHandle({
     mediaJobId: handle.mediaJobId,
@@ -400,6 +412,7 @@ function settleExecutionHandle(
     workUnitId: null,
     attemptId: null,
   }, new Date().toISOString());
+  return handle;
 }
 
 function isPendingHandle(handle: NonNullable<ReturnType<RunStore["getMediaJobExecutionHandle"]>>): boolean {

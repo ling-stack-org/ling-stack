@@ -5,7 +5,11 @@
   --channel-right-dock-resize-z: 4;
   display: grid;
   flex: 1 1 auto;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns:
+    minmax(0, 1fr)
+    var(--conversation-summary-layout-width, 0px)
+    var(--channel-side-panel-layout-handle-width, 0px)
+    var(--channel-right-dock-layout-width, 0px);
   gap: 0;
   min-width: 0;
   min-height: 0;
@@ -14,7 +18,11 @@
 }
 
 .task-workbench-main.with-channel-side-panel {
-  grid-template-columns: minmax(0, 1fr) var(--channel-side-panel-layout-handle-width) var(--channel-right-dock-layout-width);
+  grid-template-columns:
+    minmax(0, 1fr)
+    var(--conversation-summary-layout-width, 0px)
+    var(--channel-side-panel-layout-handle-width)
+    var(--channel-right-dock-layout-width);
 }
 
 .task-workbench-main.with-channel-side-panel.is-resizing-channel-side-panel {
@@ -35,6 +43,7 @@
 }
 
 .channel-side-panel-frame {
+  grid-column: 4;
   z-index: var(--channel-right-dock-frame-z);
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -78,6 +87,7 @@
 
 .channel-side-panel-resize-handle {
   position: relative;
+  grid-column: 3;
   z-index: var(--channel-right-dock-resize-z);
   align-self: stretch;
   width: var(--channel-side-panel-layout-handle-width, var(--channel-side-panel-handle-width));
@@ -144,7 +154,11 @@
   }
 
   .task-workbench-main.with-channel-side-panel {
-    grid-template-columns: minmax(0, 1fr) var(--channel-side-panel-layout-handle-width) var(--channel-right-dock-layout-width);
+    grid-template-columns:
+      minmax(0, 1fr)
+      var(--conversation-summary-layout-width, 0px)
+      var(--channel-side-panel-layout-handle-width)
+      var(--channel-right-dock-layout-width);
     padding-right: 0;
   }
 

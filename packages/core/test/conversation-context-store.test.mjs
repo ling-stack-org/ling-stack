@@ -57,6 +57,8 @@ test("context assignments are append-only, invalidate moved-segment summaries, a
   assert.equal(store.getConversationContextSummary("summary-before-correction")?.status, "invalidated");
   assert.equal(store.getConversationItem(first.item.id)?.payload.body, "first");
   assert.equal(store.getConversationItem(second.item.id)?.payload.body, "second");
+  assert.equal(store.getContextSegment(bootstrap.segmentId)?.lastActiveTurnId, first.turnId);
+  assert.notEqual(store.getContextSegment(bootstrap.segmentId)?.state, "archived");
 
   const replay = store.applyTurnContextAssignment({
     turnId: second.turnId,
@@ -134,6 +136,76 @@ test("context assignments reject invented cross-thread segments and invalid conf
     confidence: 1.1,
     policyVersion,
   }, secondAt), /between 0 and 1/);
+});
+
+test("channel acceptance atomically creates and reuses the Item Turn dispatch tuple", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "ling-channel-dispatch-ingest-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const store = createSqliteRunStore(cwd);
+  t.after(() => store.close());
+  const now = "2026-08-13T01:00:00.000Z";
+  const channel = store.createChannel({ name: "Dispatch", boundPath: cwd }, now);
+  const thread = store.resolveOrCreateConversationThread({
+    surfaceKind: "channel_root",
+    channelId: channel.id,
+    title: "Dispatch",
+    objective: "Verify atomic acceptance",
+  }, now).thread;
+  const input = {
+    channelId: channel.id,
+    threadId: thread.id,
+    title: "accepted",
+    userInstruction: "accepted",
+    payload: {
+      body: "accepted",
+      format: "plain_text",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+    },
+    idempotencyKey: "dispatch-atomic-key",
+    dispatch: {
+      schemaVersion: 1,
+      requestAiReply: true,
+      requestedTeammateId: "ling_agent",
+      unavailableRequestedParticipantIds: ["teammate_paused"],
+    },
+  };
+  const first = store.appendConversationUserTurn(input, now);
+  const replay = store.appendConversationUserTurn(input, "2026-08-13T01:00:01.000Z");
+
+  assert.equal(first.idempotentReplay, false);
+  assert.equal(replay.idempotentReplay, true);
+  assert.equal(replay.item.id, first.item.id);
+  assert.equal(replay.turnId, first.turnId);
+  assert.equal(replay.dispatchWorkUnitId, first.dispatchWorkUnitId);
+  const replayAfterDerivedAvailabilityChange = store.appendConversationUserTurn({
+    ...input,
+    dispatch: { ...input.dispatch, unavailableRequestedParticipantIds: [] },
+  }, "2026-08-13T01:00:01.500Z");
+  assert.equal(replayAfterDerivedAvailabilityChange.dispatchWorkUnitId, first.dispatchWorkUnitId);
+  assert.throws(() => store.appendConversationUserTurn({
+    ...input,
+    dispatch: { ...input.dispatch, requestedTeammateId: "teammate_builtin_engineer" },
+  }, "2026-08-13T01:00:02.000Z"), /idempotency key belongs to another dispatch input/);
+  const dispatch = store.getWorkUnit(first.dispatchWorkUnitId);
+  assert.ok(dispatch);
+  assert.equal(dispatch.kind, "channel_turn_dispatch");
+  assert.equal(dispatch.ownerId, first.turnId);
+  assert.equal(dispatch.linkedMessageId, first.item.id);
+  assert.deepEqual(dispatch.request, {
+    schemaVersion: 1,
+    requestAiReply: true,
+    requestedTeammateId: "ling_agent",
+    unavailableRequestedParticipantIds: ["teammate_paused"],
+    sourceTurnId: first.turnId,
+    sourceItemId: first.item.id,
+    channelId: channel.id,
+    threadId: thread.id,
+  });
+  assert.equal(Object.hasOwn(dispatch.request, "stage"), false);
+  assert.equal(store.listRuntimeEvents(dispatch.id).at(0)?.type, "work_unit_created");
 });
 
 test("explicit context corrections use an atomic assignment revision fence", async (t) => {

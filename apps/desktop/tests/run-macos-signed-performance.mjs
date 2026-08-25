@@ -210,6 +210,7 @@ async function runLifecycle({
 }) {
   const userDataDirectory = await mkdtemp(join(tmpdir(), `ling-signed-perf-${label}-`));
   const daemonPort = await availablePort();
+  const mobileGatewayPort = await availablePort();
   try {
     const args = [
       "--ling-desktop-smoke-headless",
@@ -223,7 +224,9 @@ async function runLifecycle({
         ...process.env,
         ...(realCapture ? {} : { LING_DESKTOP_FAKE_COMPUTER_USE: "1" }),
         LING_DESKTOP_SIGNED_PERFORMANCE_HOLD_MS: String(holdMs),
+        LING_STACK_HOME: join(userDataDirectory, "ling-stack-home"),
         LING_STACK_DAEMON_URL: `http://127.0.0.1:${daemonPort}`,
+        LING_MOBILE_GATEWAY_PORT: String(mobileGatewayPort),
         LING_STACK_DEFAULT_WORKSPACE_CWD: dirname(dirname(desktopRoot)),
       },
       stdio: ["ignore", "pipe", "pipe"],

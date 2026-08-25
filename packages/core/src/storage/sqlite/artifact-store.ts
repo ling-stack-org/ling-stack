@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   createArtifactId,
   type CreateRunArtifactInput,
@@ -52,8 +53,15 @@ export class SqliteArtifactStore {
       title: input.title,
       contentType: input.contentType,
       sizeBytes: input.sizeBytes,
+      sealedPayload: input.sealedPayload,
+      contentSha256: input.sealedPayload === undefined
+        ? undefined
+        : sha256Json(input.sealedPayload),
       createdAt: input.createdAt,
     });
+    if (input.contentSha256 !== undefined && input.contentSha256 !== artifact.contentSha256) {
+      throw new Error(`Artifact sealed payload digest mismatch: ${artifact.id}`);
+    }
 
     this.context.database
       .prepare(`
@@ -67,8 +75,10 @@ export class SqliteArtifactStore {
           title,
           content_type,
           size_bytes,
+          sealed_payload_json,
+          content_sha256,
           created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         artifact.id,
@@ -80,6 +90,8 @@ export class SqliteArtifactStore {
         artifact.title ?? null,
         artifact.contentType ?? null,
         artifact.sizeBytes ?? null,
+        artifact.sealedPayload === undefined ? null : JSON.stringify(artifact.sealedPayload),
+        artifact.contentSha256 ?? null,
         artifact.createdAt,
       );
 
@@ -116,6 +128,10 @@ export class SqliteArtifactStore {
       .all(externalWorkId)
       .map(mapArtifact);
   }
+}
+
+function sha256Json(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value), "utf8").digest("hex");
 }
 
 function normalizeOptionalOwnerId(value: string | undefined): string | undefined {

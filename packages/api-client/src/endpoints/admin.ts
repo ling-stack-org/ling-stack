@@ -2,9 +2,11 @@ import type {
   ApprovalListResponse,
   ApprovalMutationResponse,
   ApprovalPolicyResponse,
+  ChromeBrowserPairingStartResponse,
   CreateMediaJobRequest,
   ConversationMediaGenerationTargetsResponse,
   CreateMediaProjectRequest,
+  CreateMediaProjectAssetRequest,
   CreateMediaSceneRequest,
   ListApprovalsRequest,
   MediaJobArtifactListResponse,
@@ -16,6 +18,8 @@ import type {
   MediaProductionProjectRunResponse,
   MediaProductionSceneRunResponse,
   MediaProjectMutationResponse,
+  MediaProjectAssetListResponse,
+  MediaProjectAssetMutationResponse,
   MediaSceneDetailResponse,
   MediaSceneMutationResponse,
   MediaSceneReorderResponse,
@@ -203,6 +207,22 @@ export const adminEndpoints = {
       return this._post(`/plugins/${encodeURIComponent(pluginId)}/connect`, { cwd }, input);
     },
 
+  async startChromeBrowserPairing(
+      this: LingDaemonEndpointContext,
+      cwd: string,
+      pluginId: string,
+    ): Promise<ChromeBrowserPairingStartResponse> {
+      return this._post(`/plugins/${encodeURIComponent(pluginId)}/pairing`, { cwd }, {});
+    },
+
+  async revokeChromeBrowserAccess(
+      this: LingDaemonEndpointContext,
+      cwd: string,
+      pluginId: string,
+    ): Promise<ManagedPluginMutationResponse> {
+      return this._post(`/plugins/${encodeURIComponent(pluginId)}/revoke`, { cwd }, {});
+    },
+
   async applyManagedPluginPreset(this: LingDaemonEndpointContext,
       cwd: string,
       pluginId: string,
@@ -318,6 +338,27 @@ export const adminEndpoints = {
 
   async deleteMediaProject(this: LingDaemonEndpointContext, cwd: string, mediaProjectId: string): Promise<MediaProductionDeleteResponse> {
       return this._delete(`/media-projects/${encodeURIComponent(mediaProjectId)}`, { cwd });
+    },
+
+  async listMediaProjectAssets(this: LingDaemonEndpointContext, cwd: string, mediaProjectId: string): Promise<MediaProjectAssetListResponse> {
+      return this._get(`/media-projects/${encodeURIComponent(mediaProjectId)}/assets`, { cwd });
+    },
+
+  async createMediaProjectAsset(
+    this: LingDaemonEndpointContext,
+    cwd: string,
+    mediaProjectId: string,
+    input: CreateMediaProjectAssetRequest,
+  ): Promise<MediaProjectAssetMutationResponse> {
+      return this._post(`/media-projects/${encodeURIComponent(mediaProjectId)}/assets`, { cwd }, input);
+    },
+
+  mediaProjectAssetContentUrl(this: LingDaemonEndpointContext, cwd: string, mediaProjectAssetId: string): string {
+      return this._url(`/media-project-assets/${encodeURIComponent(mediaProjectAssetId)}/content`, { cwd });
+    },
+
+  async deleteMediaProjectAsset(this: LingDaemonEndpointContext, cwd: string, mediaProjectAssetId: string): Promise<MediaProductionDeleteResponse> {
+      return this._delete(`/media-project-assets/${encodeURIComponent(mediaProjectAssetId)}`, { cwd });
     },
 
   async createMediaScene(this: LingDaemonEndpointContext, cwd: string, mediaProjectId: string, input: CreateMediaSceneRequest): Promise<MediaSceneMutationResponse> {

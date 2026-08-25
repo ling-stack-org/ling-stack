@@ -226,6 +226,10 @@ const REMOTE_UNREAD_ENTITY_MIGRATION_NAME = "deduplicate_remote_run_unread_entit
 const AI_EVOLUTION_SKILL_LIFECYCLE_MIGRATION_NAME = "repair_ai_evolution_skill_lifecycle";
 const WORKFLOW_AGENT_CONTEXT_MIGRATION_VERSION = 112;
 const WORKFLOW_AGENT_CONTEXT_MIGRATION_NAME = "add_workflow_agent_context_stamp";
+const CHROME_BROWSER_CREDENTIALS_MIGRATION_VERSION = 113;
+const CHROME_BROWSER_CREDENTIALS_MIGRATION_NAME = "create_chrome_browser_credentials";
+const MEDIA_PROJECT_ASSETS_MIGRATION_VERSION = 114;
+const MEDIA_PROJECT_ASSETS_MIGRATION_NAME = "create_media_project_assets";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -1479,6 +1483,7 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
           linked_run_id TEXT,
           linked_workflow_id TEXT,
           error_message TEXT,
+          blocker_json TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
           FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -1883,6 +1888,7 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
           id TEXT PRIMARY KEY,
           work_unit_id TEXT NOT NULL,
           attempt_number INTEGER NOT NULL,
+          fencing_token TEXT NOT NULL,
           runtime_instance_id TEXT NOT NULL,
           runner_id TEXT NOT NULL,
           requested_runner_id TEXT,
@@ -1912,6 +1918,8 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
           id TEXT PRIMARY KEY,
           work_unit_id TEXT NOT NULL,
           attempt_id TEXT,
+          runtime_instance_id TEXT,
+          fencing_token TEXT,
           seq INTEGER NOT NULL,
           ts TEXT NOT NULL,
           type TEXT NOT NULL,
@@ -1933,6 +1941,7 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
           work_unit_id TEXT NOT NULL,
           attempt_id TEXT NOT NULL,
           runtime_instance_id TEXT NOT NULL,
+          fencing_token TEXT NOT NULL,
           ts TEXT NOT NULL,
           source TEXT NOT NULL,
           detail_json TEXT,
@@ -1955,6 +1964,8 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
           owner_id TEXT NOT NULL,
           work_unit_id TEXT NOT NULL,
           attempt_id TEXT NOT NULL,
+          runtime_instance_id TEXT NOT NULL,
+          fencing_token TEXT NOT NULL,
           status TEXT NOT NULL,
           acquired_at TEXT NOT NULL,
           last_renewed_at TEXT NOT NULL,
@@ -5571,5 +5582,63 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       );
     `);
     context.recordMigration(REMOTE_UNREAD_ENTITY_MIGRATION_VERSION, REMOTE_UNREAD_ENTITY_MIGRATION_NAME);
+  }
+
+  if (!context.hasMigration(CHROME_BROWSER_CREDENTIALS_MIGRATION_VERSION)) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS chrome_browser_credentials (
+        workspace_id TEXT NOT NULL,
+        plugin_id TEXT NOT NULL,
+        extension_id TEXT NOT NULL,
+        credential_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        revoked_at TEXT,
+        PRIMARY KEY(workspace_id, plugin_id, extension_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_chrome_browser_credentials_active
+      ON chrome_browser_credentials(workspace_id, plugin_id, revoked_at, updated_at);
+    `);
+    context.recordMigration(
+      CHROME_BROWSER_CREDENTIALS_MIGRATION_VERSION,
+      CHROME_BROWSER_CREDENTIALS_MIGRATION_NAME,
+    );
+  }
+
+  const hasMediaProjectAssetsMigration = context.hasMigration(MEDIA_PROJECT_ASSETS_MIGRATION_VERSION);
+  if (
+    !hasMediaProjectAssetsMigration ||
+    !context.hasTable("media_project_assets") ||
+    !context.hasColumn("media_scenes", "video_image_inputs_json")
+  ) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS media_project_assets (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        file_name TEXT NOT NULL,
+        content_type TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        width INTEGER NOT NULL,
+        height INTEGER NOT NULL,
+        checksum TEXT NOT NULL,
+        source_artifact_id TEXT,
+        path TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+        FOREIGN KEY(project_id) REFERENCES media_projects(id) ON DELETE CASCADE,
+        UNIQUE(workspace_id, project_id, checksum)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_media_project_assets_project_created
+      ON media_project_assets(workspace_id, project_id, created_at DESC);
+    `);
+    if (!context.hasColumn("media_scenes", "video_image_inputs_json")) {
+      database.exec("ALTER TABLE media_scenes ADD COLUMN video_image_inputs_json TEXT NOT NULL DEFAULT '[]';");
+    }
+    if (!hasMediaProjectAssetsMigration) {
+      context.recordMigration(MEDIA_PROJECT_ASSETS_MIGRATION_VERSION, MEDIA_PROJECT_ASSETS_MIGRATION_NAME);
+    }
   }
 }

@@ -1,11 +1,12 @@
-import type {
-  ChannelMessage,
-  MessageWebEvidence,
-  MessageWebEvidenceProvider,
-  MessageWebEvidenceReadUrl,
-  MessageWebEvidenceSource,
-  RunStore,
-  TeammateDirectMessage,
+import {
+  toRuntimeAttemptFence,
+  type ChannelMessage,
+  type MessageWebEvidence,
+  type MessageWebEvidenceProvider,
+  type MessageWebEvidenceReadUrl,
+  type MessageWebEvidenceSource,
+  type RunStore,
+  type TeammateDirectMessage,
 } from "@ling-stack/core";
 import type { WebEvidenceContext, WebEvidenceProgressEvent } from "./web-evidence-service.js";
 
@@ -27,7 +28,7 @@ type MessageWebEvidenceProgressEventData = WebEvidenceProgressEvent & {
 };
 
 export function recordMessageWebEvidenceEvent(input: {
-  readonly store: Pick<RunStore, "appendRuntimeEvent">;
+  readonly store: Pick<RunStore, "appendRuntimeEvent" | "getWorkUnitAttempt">;
   readonly workUnitId: string;
   readonly attemptId?: string;
   readonly sourceMessageId: string;
@@ -47,19 +48,23 @@ export function recordMessageWebEvidenceEvent(input: {
     readUrlCount: evidence.readUrls.length,
     ...evidence,
   };
-  input.store.appendRuntimeEvent({
-    workUnitId: input.workUnitId,
-    attemptId: input.attemptId,
-    type: WEB_EVIDENCE_RECORDED_EVENT,
-    actor: "system",
+  const event = {
+    type: "web_evidence_recorded" as const,
+    actor: "system" as const,
     ts: input.ts,
     data,
-  });
+  };
+  const attempt = input.attemptId ? input.store.getWorkUnitAttempt(input.attemptId) : undefined;
+  if (attempt) {
+    input.store.appendRuntimeEvent({ ...toRuntimeAttemptFence(attempt), ...event });
+  } else if (!input.attemptId) {
+    input.store.appendRuntimeEvent({ workUnitId: input.workUnitId, ...event });
+  }
   return evidence;
 }
 
 export function recordMessageWebEvidenceProgressEvent(input: {
-  readonly store: Pick<RunStore, "appendRuntimeEvent">;
+  readonly store: Pick<RunStore, "appendRuntimeEvent" | "getWorkUnitAttempt">;
   readonly workUnitId: string;
   readonly attemptId?: string;
   readonly sourceMessageId: string;
@@ -73,14 +78,18 @@ export function recordMessageWebEvidenceProgressEvent(input: {
     linkedMessageId: input.linkedMessageId,
     ...input.progress,
   };
-  input.store.appendRuntimeEvent({
-    workUnitId: input.workUnitId,
-    attemptId: input.attemptId,
-    type: WEB_EVIDENCE_PROGRESS_RUN_EVENT,
-    actor: "system",
+  const event = {
+    type: "work_unit_progress" as const,
+    actor: "system" as const,
     ts: input.ts,
     data,
-  });
+  };
+  const attempt = input.attemptId ? input.store.getWorkUnitAttempt(input.attemptId) : undefined;
+  if (attempt) {
+    input.store.appendRuntimeEvent({ ...toRuntimeAttemptFence(attempt), ...event });
+  } else if (!input.attemptId) {
+    input.store.appendRuntimeEvent({ workUnitId: input.workUnitId, ...event });
+  }
 }
 
 export function renderWebEvidenceProgressPendingBody(progress: WebEvidenceProgressEvent, sourceText: string): string {

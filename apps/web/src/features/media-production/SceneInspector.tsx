@@ -2,13 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { Copy, History, Play, Settings2, Trash2, X } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import { Button, Field, IconButton, InlineFeedback, Input, InspectorSection, StatusIndicator, Tabs, TabsContent, TabsList, TabsTrigger, Textarea } from "../../shared/ui/index.js";
-import type { MediaJob, MediaProject, MediaScene, MediaSceneRun, MediaWorkflowDefinitionDetail, ProviderPreset, RunArtifact } from "../../types.js";
+import type { MediaJob, MediaProject, MediaProjectAsset, MediaScene, MediaSceneRun, MediaWorkflowDefinitionDetail, ProviderPreset, RunArtifact } from "../../types.js";
 import type { MediaProductionActions, MediaProductionFailure } from "./media-production-types.js";
 import type { SceneReadiness } from "./media-production-view-models.js";
 import { SceneExecutionSettings } from "./SceneExecutionSettings.js";
 import { SceneResultPanel } from "./SceneResultPanel.js";
 import { SceneRunHistory } from "./SceneRunHistory.js";
 import { useSceneTextDraft, type SceneTextDraftController } from "./use-scene-text-draft.js";
+import type { MediaProjectImageUploadState } from "./use-media-project-image-uploads.js";
 
 type InspectorView = "settings" | "result" | "history";
 type TextField = "title" | "prompt";
@@ -17,6 +18,8 @@ interface SceneInspectorProps {
   readonly cwd: string;
   readonly scene?: MediaScene;
   readonly project: MediaProject;
+  readonly projectAssets: readonly MediaProjectAsset[];
+  readonly projectScenes: readonly MediaScene[];
   readonly sceneRuns: readonly MediaSceneRun[];
   readonly providers: readonly ProviderPreset[];
   readonly workflows: readonly MediaWorkflowDefinitionDetail[];
@@ -27,6 +30,7 @@ interface SceneInspectorProps {
   readonly busyAction: string;
   readonly sceneUpdateBusy: boolean;
   readonly actions: MediaProductionActions;
+  readonly imageUploadState: MediaProjectImageUploadState;
   readonly onClose?: () => void;
   readonly onRequestDelete: (scene: MediaScene) => void;
   readonly onConfigureVideoModel: () => void;
@@ -91,7 +95,7 @@ function SceneSettingsPanel(props: SceneInspectorProps & { readonly scene: Media
       <Textarea ref={editor.promptRef} value={editor.draft.prompt} rows={6} disabled={props.sceneUpdateBusy || editor.busyField !== undefined} loading={editor.busyField === "prompt"} invalid={Boolean(editor.failures.prompt) || editor.promptRequired} onChange={(event) => editor.change("prompt", event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") revert("prompt", event.currentTarget); }} onBlur={() => void editor.commit("prompt")} />
     </Field>
     {editor.failures.prompt ? <MutationFeedback failure={editor.failures.prompt} busy={editor.busyField === "prompt"} onRetry={() => void editor.retry("prompt", editor.failures.prompt!)} onClear={() => editor.clear("prompt")} /> : null}
-    <SceneExecutionSettings cwd={props.cwd} scene={props.scene} project={props.project} providers={props.providers} workflows={props.workflows} imageArtifacts={props.imageArtifacts} sceneUpdateBusy={props.sceneUpdateBusy || editor.busyField !== undefined} actions={props.actions} onConfigureVideoModel={props.onConfigureVideoModel} onOpenWorkflowLibrary={props.onOpenWorkflowLibrary} />
+    <SceneExecutionSettings cwd={props.cwd} scene={props.scene} project={props.project} projectAssets={props.projectAssets} projectScenes={props.projectScenes} providers={props.providers} workflows={props.workflows} imageArtifacts={props.imageArtifacts} sceneUpdateBusy={props.sceneUpdateBusy || editor.busyField !== undefined} actions={props.actions} imageUploadState={props.imageUploadState} onConfigureVideoModel={props.onConfigureVideoModel} onOpenWorkflowLibrary={props.onOpenWorkflowLibrary} />
   </>;
 }
 

@@ -57,13 +57,13 @@ export function SidebarNavigation({
   selectedChannelBranchId = "",
   teammates,
   cwd,
-  channelsLoading = false,
-  teammatesLoading = false,
+  channelsInitialLoading = false,
+  teammatesInitialLoading = false,
   stale = false,
   channelNotifications = {},
   teammateNotifications = {},
   recentConversations = [],
-  recentConversationsLoading = false,
+  recentConversationsInitialLoading = false,
   recentConversationActionError = "",
   selectedRecentConversationId = "",
   onOpenView,
@@ -92,13 +92,13 @@ export function SidebarNavigation({
   readonly selectedChannelBranchId?: string;
   readonly teammates: readonly AiTeammate[];
   readonly cwd: string;
-  readonly channelsLoading?: boolean;
-  readonly teammatesLoading?: boolean;
+  readonly channelsInitialLoading?: boolean;
+  readonly teammatesInitialLoading?: boolean;
   readonly stale?: boolean;
   readonly channelNotifications?: Readonly<Record<string, SidebarNotification>>;
   readonly teammateNotifications?: Readonly<Record<string, SidebarNotification>>;
   readonly recentConversations?: readonly SidebarRecentConversation[];
-  readonly recentConversationsLoading?: boolean;
+  readonly recentConversationsInitialLoading?: boolean;
   readonly recentConversationActionError?: string;
   readonly selectedRecentConversationId?: string;
   readonly onOpenView: (view: ViewId) => void;
@@ -215,8 +215,6 @@ export function SidebarNavigation({
         sectionId="channels"
         title={t("Channels")}
         count={channels.length}
-        loading={channelsLoading}
-        loadingLabel={t("Loading channels...")}
         stale={stale}
         staleLabel={t("Stale")}
         collapsed={collapsedSections.channels}
@@ -237,7 +235,7 @@ export function SidebarNavigation({
           },
         ]}
       >
-        {channelsLoading && channels.length === 0 ? (
+        {channelsInitialLoading ? (
           <SidebarSectionSkeleton label={t("Loading channels...")} rows={3} />
         ) : channels.length === 0 ? (
           <SidebarTooltip label={t("No channel yet")}>
@@ -360,8 +358,6 @@ export function SidebarNavigation({
         sectionId="teammates"
         title={t("AI Teammates")}
         count={visibleTeammates.length}
-        loading={teammatesLoading}
-        loadingLabel={t("Loading teammates...")}
         stale={stale}
         staleLabel={t("Stale")}
         collapsed={collapsedSections.teammates}
@@ -391,7 +387,7 @@ export function SidebarNavigation({
           },
         ]}
       >
-        {teammatesLoading && visibleTeammates.length === 0 ? (
+        {teammatesInitialLoading ? (
           <SidebarSectionSkeleton label={t("Loading teammates...")} rows={2} />
         ) : visibleTeammates.length === 0 ? (
           <SidebarTooltip label={t("No teammate yet")}>
@@ -437,8 +433,6 @@ export function SidebarNavigation({
         sectionId="recent"
         title={t("Recent conversations")}
         count={recentConversations.length}
-        loading={recentConversationsLoading}
-        loadingLabel={t("Loading conversations...")}
         stale={stale}
         staleLabel={t("Stale")}
         collapsed={collapsedSections.recent}
@@ -463,7 +457,7 @@ export function SidebarNavigation({
           },
         ]}
       >
-        {recentConversationsLoading && recentConversations.length === 0 ? (
+        {recentConversationsInitialLoading ? (
           <SidebarSectionSkeleton label={t("Loading conversations...")} rows={2} />
         ) : recentConversations.length === 0 ? (
           <SidebarTooltip label={t("No recent conversations")}>

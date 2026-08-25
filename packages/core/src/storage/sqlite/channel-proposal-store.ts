@@ -54,6 +54,7 @@ export class SqliteChannelProposalStore {
       linkedRunId: input.linkedRunId,
       linkedWorkflowId: input.linkedWorkflowId,
       errorMessage: input.errorMessage,
+      blocker: input.blocker,
       createdAt: now,
       updatedAt: now,
     };
@@ -80,9 +81,10 @@ export class SqliteChannelProposalStore {
           linked_run_id,
           linked_workflow_id,
           error_message,
+          blocker_json,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         proposal.id,
@@ -104,6 +106,7 @@ export class SqliteChannelProposalStore {
         proposal.linkedRunId ?? null,
         proposal.linkedWorkflowId ?? null,
         proposal.errorMessage ?? null,
+        proposal.blocker ? stringifyJson(proposal.blocker) : null,
         proposal.createdAt,
         proposal.updatedAt,
       );
@@ -166,6 +169,7 @@ export class SqliteChannelProposalStore {
       linkedRunId: nullableUpdate(input.linkedRunId, existing.linkedRunId),
       linkedWorkflowId: nullableUpdate(input.linkedWorkflowId, existing.linkedWorkflowId),
       errorMessage: nullableUpdate(input.errorMessage, existing.errorMessage),
+      blocker: nullableUpdate(input.blocker, existing.blocker),
       updatedAt: now,
     };
 
@@ -187,6 +191,7 @@ export class SqliteChannelProposalStore {
           linked_run_id = ?,
           linked_workflow_id = ?,
           error_message = ?,
+          blocker_json = ?,
           updated_at = ?
         WHERE id = ?
       `)
@@ -205,6 +210,7 @@ export class SqliteChannelProposalStore {
         next.linkedRunId ?? null,
         next.linkedWorkflowId ?? null,
         next.errorMessage ?? null,
+        next.blocker ? stringifyJson(next.blocker) : null,
         next.updatedAt,
         next.id,
       );

@@ -1,4 +1,5 @@
-import { Plug } from "lucide-react";
+import { FileSpreadsheet, Plug } from "lucide-react";
+import { SiGooglechrome } from "react-icons/si";
 import { StatusIndicator, TableCell, TableRow } from "../../shared/ui/index.js";
 import type { PluginActionHandlers, PluginRowView } from "./plugin-manager-types.js";
 import { PluginRowActions } from "./PluginRowActions.js";
@@ -16,7 +17,11 @@ export function PluginManagerRow({
   return (
     <TableRow className="plugin-table-row" data-plugin-id={row.id} data-primary-state={row.primaryState.id}>
       <TableCell className="plugin-table-name">
-        <Plug aria-hidden="true" />
+        {row.icon === "chrome"
+          ? <SiGooglechrome aria-hidden="true" className="plugin-table-chrome-icon" />
+          : row.icon === "office"
+            ? <FileSpreadsheet aria-hidden="true" className="plugin-table-office-icon" />
+          : <Plug aria-hidden="true" />}
         <span className="plugin-table-name-copy">
           <strong title={row.name}>{row.name}</strong>
           {row.actionFailure ? (

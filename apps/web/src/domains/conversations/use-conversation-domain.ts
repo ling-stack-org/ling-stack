@@ -62,7 +62,7 @@ export function useConversationDomain(input: {
 }): {
   readonly state: {
     readonly conversationThreads: readonly LingThread[];
-    readonly conversationsLoading: boolean;
+    readonly conversationThreadsLoading: boolean;
     readonly selectedConversationThreadId: string;
     readonly selectedConversationDetail?: ConversationDetailResponse;
     readonly conversationIdentity: string;
@@ -86,7 +86,7 @@ export function useConversationDomain(input: {
   };
 } {
   const [conversationThreads, setConversationThreads] = useState<readonly LingThread[]>([]);
-  const [conversationsLoading, setConversationsLoading] = useState(false);
+  const [conversationThreadsLoading, setConversationThreadsLoading] = useState(false);
   const [selectedConversationThreadId, setSelectedConversationThreadId] = useState("");
   const [selectedConversationDetail, setSelectedConversationDetail] = useState<ConversationDetailResponse | undefined>();
   const [conversationSurfaceIdentity, setConversationSurfaceIdentity] = useState(createConversationDraftIdentity(0));
@@ -96,19 +96,19 @@ export function useConversationDomain(input: {
   const currentCwdRef = useRef(input.cwd.trim());
   const conversationOwnerCwdRef = useRef(input.cwd.trim());
   const selectionSequenceRef = useRef(0);
-  const loadingOperationsRef = useRef(0);
+  const threadListLoadingOperationsRef = useRef(0);
   currentCwdRef.current = input.cwd.trim();
   const conversationErrors = useConversationErrorOwner();
   const conversationStreamBusyOwner = useConversationStreamBusyOwner();
 
-  const beginLoading = useCallback((): void => {
-    loadingOperationsRef.current += 1;
-    setConversationsLoading(true);
+  const beginThreadListLoading = useCallback((): void => {
+    threadListLoadingOperationsRef.current += 1;
+    setConversationThreadsLoading(true);
   }, []);
 
-  const finishLoading = useCallback((): void => {
-    loadingOperationsRef.current = Math.max(0, loadingOperationsRef.current - 1);
-    if (loadingOperationsRef.current === 0) setConversationsLoading(false);
+  const finishThreadListLoading = useCallback((): void => {
+    threadListLoadingOperationsRef.current = Math.max(0, threadListLoadingOperationsRef.current - 1);
+    if (threadListLoadingOperationsRef.current === 0) setConversationThreadsLoading(false);
   }, []);
 
   const commitSelectedConversationThreadId = useCallback((threadId: string): void => {
@@ -147,7 +147,7 @@ export function useConversationDomain(input: {
       scope: "load",
     });
     conversationErrors.clear(operation);
-    beginLoading();
+    beginThreadListLoading();
     try {
       const response = await listLingThreads(workspaceCwd, { kind: "conversation", archived: "exclude", limit: 20 });
       if (conversationErrors.isCurrent(operation) && currentCwdRef.current === workspaceCwd) {
@@ -156,9 +156,9 @@ export function useConversationDomain(input: {
     } catch (error) {
       conversationErrors.report(operation, error instanceof Error ? error.message : String(error));
     } finally {
-      finishLoading();
+      finishThreadListLoading();
     }
-  }, [beginLoading, conversationErrors, finishLoading, input.cwd]);
+  }, [beginThreadListLoading, conversationErrors, finishThreadListLoading, input.cwd]);
 
   const openNewConversation = useCallback((): void => {
     selectionSequenceRef.current += 1;
@@ -193,7 +193,6 @@ export function useConversationDomain(input: {
       scope: "select",
     });
     conversationErrors.clear(operation);
-    beginLoading();
     try {
       const detail = await getConversation(workspaceCwd, threadId);
       conversationErrors.clear(operation);
@@ -218,10 +217,8 @@ export function useConversationDomain(input: {
         return false;
       }
       return false;
-    } finally {
-      finishLoading();
     }
-  }, [beginLoading, commitConversationSurfaceIdentity, commitSelectedConversationThreadId, conversationErrors, finishLoading, input.cwd, openNewConversation]);
+  }, [commitConversationSurfaceIdentity, commitSelectedConversationThreadId, conversationErrors, input.cwd, openNewConversation]);
 
   const refreshSelectedConversation = useCallback(async (cwd = input.cwd): Promise<void> => {
     const workspaceCwd = cwd.trim();
@@ -236,7 +233,6 @@ export function useConversationDomain(input: {
       scope: "refresh",
     });
     conversationErrors.clear(operation);
-    beginLoading();
     try {
       const detail = await getConversation(workspaceCwd, requestedThreadId);
       conversationErrors.clear(operation);
@@ -249,10 +245,8 @@ export function useConversationDomain(input: {
       }
     } catch (error) {
       conversationErrors.report(operation, error instanceof Error ? error.message : String(error));
-    } finally {
-      finishLoading();
     }
-  }, [beginLoading, conversationErrors, finishLoading, input.cwd]);
+  }, [conversationErrors, input.cwd]);
 
   const archiveConversationThread = useCallback(async (threadId: string, cwd = input.cwd): Promise<void> => {
     const workspaceCwd = cwd.trim();
@@ -266,7 +260,6 @@ export function useConversationDomain(input: {
       scope: "archive",
     });
     conversationErrors.clear(operation);
-    beginLoading();
     try {
       await archiveLingThread(workspaceCwd, threadId, {
         reason: "sidebar_conversation_archived",
@@ -283,10 +276,8 @@ export function useConversationDomain(input: {
     } catch (error) {
       const message = formatConversationArchiveError(error, input.translate);
       conversationErrors.report(operation, message);
-    } finally {
-      finishLoading();
     }
-  }, [beginLoading, conversationErrors, finishLoading, input.cwd, input.translate, openNewConversation, refreshConversationThreads]);
+  }, [conversationErrors, input.cwd, input.translate, openNewConversation, refreshConversationThreads]);
 
   const archiveAllConversationThreads = useCallback(async (cwd = input.cwd): Promise<void> => {
     const workspaceCwd = cwd.trim();
@@ -310,7 +301,6 @@ export function useConversationDomain(input: {
       scope: "archive",
     });
     conversationErrors.clear(operation);
-    beginLoading();
     try {
       const results = await Promise.allSettled(
         visibleThreads.map((thread) => archiveLingThread(workspaceCwd, thread.id, {
@@ -351,10 +341,8 @@ export function useConversationDomain(input: {
     } catch (error) {
       const message = formatConversationArchiveError(error, input.translate);
       conversationErrors.report(operation, message);
-    } finally {
-      finishLoading();
     }
-  }, [beginLoading, conversationErrors, conversationThreads, finishLoading, input.cwd, input.translate, openNewConversation, refreshConversationThreads, selectedConversationThreadId]);
+  }, [conversationErrors, conversationThreads, input.cwd, input.translate, openNewConversation, refreshConversationThreads, selectedConversationThreadId]);
 
   const sendConversationMessage = useCallback(async (
     message: ConversationSendInput,
@@ -601,7 +589,7 @@ export function useConversationDomain(input: {
   return {
     state: {
       conversationThreads,
-      conversationsLoading,
+      conversationThreadsLoading,
       selectedConversationThreadId,
       selectedConversationDetail,
       conversationIdentity: conversationSurfaceIdentity,

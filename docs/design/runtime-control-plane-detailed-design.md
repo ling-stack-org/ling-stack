@@ -13,6 +13,11 @@ join point between:
 The design is intentionally narrower than a new agent engine. Ling owns the runtime
 control plane. Pi remains the default coding-agent kernel behind `runner-pi`.
 
+The canonical Attempt-fence contract below is implemented in the active Continuity v2
+WIP and its focused regressions are green. It is not release-cleared until the corrected
+full Daemon aggregate, repository-wide source gates, and packaged restart/reconnect
+matrix pass on the same post-hardening source.
+
 Implementation sequencing is owned by the roadmap: first verify operator lifecycle and registry refresh, then
 establish daemon-owned snapshots/events and client subscriptions, and only after concrete multi-client pressure
 consider processor/transport decomposition. This document remains the object, API, event and ownership contract.
@@ -98,6 +103,137 @@ try is currently responsible?"
 
 Retry creates another attempt without changing the work unit identity. This lets a user
 see one piece of work while Ling keeps separate execution records.
+
+#### Canonical attempt fencing
+
+Attempt fencing is part of the Runtime Control Plane contract and is enforced by Core,
+not inferred by the Channel orchestrator. The logical Work Unit/Run stores one nullable
+`activeAttemptId`; a partial uniqueness constraint and compare-and-set claim guarantee
+that at most one Attempt is active for that logical execution. Every Attempt stores:
+
+```ts
+interface RuntimeAttemptFenceV1 {
+  readonly attemptId: string;
+  readonly workUnitId: string;
+  readonly runId?: string;
+  readonly runtimeInstanceId: string;
+  readonly fencingToken: string;
+}
+```
+
+`runtimeInstanceId` identifies one daemon process lifetime. `fencingToken` is an opaque
+decimal string at the contract boundary and a monotonically increasing generation per
+Work Unit in SQLite, so JavaScript never loses 64-bit integer precision. It is minted by
+the claim transaction and never reused. A claim atomically verifies the Work Unit/Run
+revision, loses any prior active Attempt, inserts the replacement Attempt, and advances
+`activeAttemptId` to the new id/token. The same tuple is persisted in runtime audit rows
+so startup recovery can prove which process owned each transition. The shared Runtime
+snapshot schema increments from 22 to 23; this pre-release clean break does not decode or
+silently default a snapshot that lacks the token.
+
+Every mutating runtime operation must include the fence tuple in its CAS predicate:
+heartbeats, status transitions, lease/semaphore release, approval consumption,
+`tool_start`/`tool_end`, evidence/action writes, and terminal callbacks. A callback that
+does not match the current `activeAttemptId` and `fencingToken` is stale. It may append a
+bounded diagnostic event, but it cannot append canonical evidence, consume approval,
+change a Work Unit/Run/step, release the current Attempt's resources, or publish a
+control-plane invalidation. This rule applies equally to online callbacks and startup
+repair.
+
+Terminal audit is the one post-transition exception, and it is not a relaxation of the
+fence. The owner that successfully performs a terminal Work Unit/Attempt transition may
+append the closed terminal-audit event with the same complete fence tuple. The store must
+verify that ownership explicitly, or compose the transition and audit in one transaction;
+`allowTerminalAttemptAudit` is not a general-purpose escape hatch. A stale callback,
+an attempt-id-only callback, or a caller that merely observes a terminal row remains
+diagnostic-only. If the owner cannot append the required audit, the owner-controlled
+transaction must roll back the terminal transition. Terminal audit never writes action
+evidence, consumes approval, changes Completion Gate/TerminalReport state, or publishes a
+client invalidation.
+
+#### Fence API split and resource ownership
+
+The fence is a type boundary, not a convention documented only at call sites. Runtime
+store ports expose three different classes of operation:
+
+```text
+canonical mutation
+  RuntimeAttemptFenceV1 (all fields required)
+  -> one CAS predicate over WorkUnit + Attempt + resource row
+
+diagnostic observation
+  StaleAttemptDiagnosticInput
+  -> bounded runtime diagnostic only; never canonical evidence or invalidation
+
+read / projection
+  attemptId or workUnitId may be sufficient
+  -> no state mutation and no lease renewal
+```
+
+The following inputs must not keep optional `runtimeInstanceId` or `fencingToken`
+fields: heartbeat, runtime event/evidence append, tool start/end, approval consume,
+Work Unit/Run/step transition, Attempt transition, lease renew/release, semaphore
+renew/release, startup repair, and terminal audit ownership. A missing fence is an
+invalid caller contract, not a legacy callback that may be allowed through. If a late
+runner callback has only an attempt id, it must call the diagnostic API explicitly.
+
+Resource rows carry the owning Attempt fence at acquisition. Renew and release compare
+`attemptId + runtimeInstanceId + fencingToken` in the same SQL update that changes the
+resource row. They are idempotent for the same owner tuple and return `stale_attempt`
+without touching a replacement Attempt's lease or semaphore slot. The owner-level release
+API is a separate, narrow capability for `workflow_step` and `system` resources only. It
+is not legal for Run or `work_unit_attempt` resources, and the SQLite boundary rejects
+both a new unfenced runtime lease and an owner-level release attempted with `run`.
+
+`allowTerminalAttemptAudit` is not a public capability. The terminal transition returns a
+short-lived `TerminalAuditCapabilityV1` bound to the exact fence, transition id, and
+closed event kind. The owner must present that capability to append the audit, or use the
+same transaction helper that appends transition and audit together. A boolean supplied
+by an arbitrary callback is rejected by the Core port. This makes the audit exception
+provable and prevents an old callback from turning an observed terminal row into an
+apparently owned transition.
+
+Migration 121 is a pre-release clean break. It never derives a fencing token from an old
+Attempt number and never keeps an unfenced Run alive. Unfenced development Attempts and
+their events, heartbeats, semaphore slots, and runtime leases are deleted; a Work Unit
+that pointed at one becomes `stale`, while Thread/Turn/Item user content is untouched.
+The migration postcondition rejects any remaining active runtime lease without a complete
+current fence. No v1 alias, optional-field dual read, owner-level Run release, or
+fabricated token is permitted after the migration boundary.
+
+#### Restart and reconnect state ownership
+
+Restart recovery is a durable state machine, not a process-local retry loop:
+
+```text
+old Attempt active
+  -> classify SQLite checkpoint/tool evidence
+       safe checkpoint, no tool_start   -> old Attempt lost -> one new Attempt, same Run
+       no checkpoint                    -> old Attempt lost -> typed blocker, no retry
+       tool_start without tool_end      -> old Attempt lost -> effect-unknown blocker
+       tool_end present                 -> old Attempt lost -> reconstruct evidence/finalize
+       terminal source already present  -> reconcile publication only
+```
+
+The classifier runs before any new Attempt is created and is idempotent on
+`(runId, checkpointId, recoveryGeneration)`. It never calls the generic user-cancel path,
+reselects a participant, recompiles a graph, or creates a second Run. `resume_pending` is
+scanned on startup alongside `pending` and `approved`; a crash after the checkpoint CAS
+cannot strand the logical Run.
+
+SSE/RPC reconnect is an observer protocol. The client sends its last applied control-plane
+sequence and view generation. The daemon either replays from that cursor or returns a
+fresh canonical snapshot when the replay floor has moved. The client advances its cursor
+only after the snapshot/replay is applied successfully. Reconnect never posts a Turn and
+never creates a Run, Attempt, approval, evidence, outcome, or terminal publication. The
+UI treats a ready acknowledgement as `accepted/pending`; only a committed
+`finalResultItemId` plus source-Turn terminal transition may render the final result.
+
+Daemon restart is therefore a same-Run Attempt replacement, not a workflow retry. The
+restart path uses `runtime_suspend` and the checkpoint policy below; it never enters the
+generic `stale -> queued` retry path, recompiles a graph, or creates a new Run. Generic
+stale recovery remains available for an actual runner timeout/crash and may create a new
+Attempt only after its own typed retry policy permits it.
 
 ### Heartbeat
 
@@ -190,6 +326,8 @@ Rules:
 - All status updates are compare-and-set transitions.
 - Terminal states are `succeeded`, `failed`, and `cancelled`.
 - `stale` is blocked but non-terminal.
+- `runtime_suspend/daemon_restart` is recorded as a typed suspension cause and does not
+  use `stale -> queued`; checkpoint recovery owns the same-Run replacement decision.
 - Late runner success after cancellation must be audited, not applied as truth.
 - Retry creates or starts a new attempt under the same work unit.
 
@@ -212,6 +350,7 @@ supervisor logic.
 | --- | --- | --- |
 | Work unit identity and status | Core store via daemon | `work_units` |
 | Attempt identity and runner execution state | Core store via daemon | `work_unit_attempts` |
+| Active-attempt pointer and fence revision | Core store via daemon | `work_units.active_attempt_id` plus the immutable Attempt fence tuple |
 | Work-unit event log | Core store via daemon | `runtime_events` |
 | Heartbeats | Core store via daemon | `runtime_heartbeats` |
 | Runtime semaphores | Core store via daemon | `runtime_semaphore_slots` |
@@ -243,6 +382,65 @@ Rules:
 
 Future RPC and WebSocket adapters must call the same processors. They must not create a
 second approval path, secret resolver, or runtime state model.
+
+### Replay and subscription recovery
+
+Control-plane transports share one bounded replay-window evaluator over the per-workspace
+`control_plane_replay_state` row:
+
+```text
+requestedAfterSeq + domains + safe limit
+  -> replayFloorSeq + captured upperBoundSeq
+  -> events in (requestedAfterSeq, upperBoundSeq], limit + 1
+       complete           -> events + nextAfterSeq=upperBoundSeq
+       cursor unavailable -> snapshot_required
+       retention gap      -> snapshot_required
+       window exceeded    -> snapshot_required
+```
+
+Filtered domains and other workspaces may create numeric sequence gaps; they do not make
+the window incomplete. The durable floor/latest watermark survives an empty event table.
+Every append advances latest in the event transaction. Future deletion or compaction must
+advance the floor in the same transaction as deletion.
+
+SSE/RPC subscription setup is live-first but provisional:
+
+```text
+register provisional subscriber, no flush
+  -> read bounded replay window
+     -> snapshot_required: send/return disposition, close and unregister
+     -> complete: replay <= bound, signal ready, drain buffered > bound, activate
+     -> error: close and unregister before propagating
+```
+
+For RPC, activation occurs only after the subscribe response has been sent, so replay or
+live notifications cannot race ahead of the returned `subscriptionId`. A snapshot-required
+response is normal control flow and retains no subscription. Clients advance their
+reconnect cursor only after the canonical refresh triggered by an event succeeds; receipt
+alone is not acknowledgement.
+
+Approval-resume lifecycle uses the same observer rule. Resume claim, replacement-Attempt
+start, runtime suspension, terminal evidence, and structured resume blocker append
+content-free invalidations in the same SQLite transaction as their visible state change,
+in the existing `runs`, `work_units`, and `approvals` domains.
+Their idempotency keys bind checkpoint id, revision, Attempt id, and transition kind.
+Neither the event payload nor its delivery may consume an approval, start an Attempt, or
+advance fan-in. Live delivery, replay, and snapshot-required all reload the canonical
+projection before the client advances its applied cursor.
+
+Event persistence exposes two non-interchangeable capabilities:
+
+- standalone append always owns `BEGIN IMMEDIATE`, commit, and best-effort rollback;
+- `appendControlPlaneEventWithinTransaction()` joins a caller-owned aggregate and never
+  begins, commits, or rolls back.
+
+The composition root binds aggregate stores only to the joined capability. Transaction
+ownership is never inferred from `DatabaseSync.isTransaction`; the owner knows it issued
+`BEGIN IMMEDIATE` and attempts rollback on every exceptional exit while preserving the
+original error. In-memory SSE/RPC publication remains post-commit only. This keeps event
+and replay-watermark rows atomic with approval resume, workflow completion, and
+TerminalReport publication without allowing a nested writer to close the caller's
+transaction.
 
 ## Snapshot Domains
 
@@ -282,6 +480,11 @@ slice.
 - Type every control-plane domain snapshot in `packages/contracts`.
 - Keep artifact snapshots summary-only with content URLs, not local paths.
 - Keep processors transport-neutral.
+- Make `activeAttemptId`, `runtimeInstanceId`, and the immutable `fencingToken` part of
+  the shared Runtime contract. Every state/evidence/approval callback must use the same
+  CAS fence; old callbacks are diagnostic-only and cannot mutate canonical state.
+- Give `runtime_suspend/daemon_restart` an explicit recovery reason and route it through
+  checkpoint policy, never through generic `stale -> queued` retry.
 
 ### P1: Work-Unit Detail Consistency
 
@@ -307,6 +510,12 @@ slice.
 ## Verification
 
 Minimum checks for this layer:
+
+- Claim two Attempts for one Work Unit concurrently and prove only one fence wins;
+  replay an old callback after replacement and prove it cannot append evidence, consume
+  approval, release the new lease, or advance terminal state. Exercise restart before
+  checkpoint, at a safe checkpoint, before `tool_start`, between `tool_start` and
+  `tool_end`, and after `tool_end`.
 
 ```bash
 corepack pnpm --filter @ling-stack/contracts build

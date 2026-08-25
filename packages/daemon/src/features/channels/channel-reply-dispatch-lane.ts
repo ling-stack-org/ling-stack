@@ -28,7 +28,11 @@ export type CreateChannelAiReply = (input: {
   };
   readonly onRunLinked?: (runId: string) => void;
   readonly onDispatchSettled?: () => void;
+  readonly replyMessageId?: string;
+  readonly replyRecoveryAttempt?: number;
 }) => Promise<ChannelMessage>;
+
+export const CHANNEL_REPLY_LANE_LINK_TIMEOUT_MS = 5_000;
 
 export async function acquireChannelReplyLane(input: {
   readonly coordinator?: ChannelReplyDispatchCoordinator;
@@ -67,7 +71,7 @@ export async function acquireChannelReplyLane(input: {
     if (!follower) {
       return {};
     }
-    const runId = await follower.waitForRun();
+    const runId = await waitForReplyLaneRun(follower, CHANNEL_REPLY_LANE_LINK_TIMEOUT_MS);
     const linkedRun = runId
       ? findActiveChannelReplyRun({
           store: input.store,
@@ -85,6 +89,24 @@ export async function acquireChannelReplyLane(input: {
       return { owner: claim };
     }
     return {};
+  }
+}
+
+async function waitForReplyLaneRun(
+  follower: { waitForRun(): Promise<string | undefined> },
+  timeoutMs: number,
+): Promise<string | undefined> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      follower.waitForRun(),
+      new Promise<undefined>((resolve) => {
+        timer = setTimeout(() => resolve(undefined), timeoutMs);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 

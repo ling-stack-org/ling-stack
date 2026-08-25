@@ -32,6 +32,14 @@ export interface BuildConversationContextProjectionInput {
   readonly consumerTeammateId?: string;
   readonly maxTailTextChars?: number;
   readonly explicitItemIds?: readonly string[];
+  /**
+   * Include the other committed Items from the source Turn as explicit context.
+   * Normal user-facing projections keep this enabled so a topic can inherit a
+   * complete source Turn. Agent-result freshness checks disable it because
+   * result Items are produced after the agent consumed its input projection and
+   * must not make that input appear stale.
+   */
+  readonly includeSourceTurnItems?: boolean;
 }
 
 export interface ConversationContextProjection {
@@ -121,8 +129,10 @@ export function buildConversationContextProjection(
     }
     return item;
   });
-  const explicitTurnItems = uniqueItems(explicitItems.flatMap((item) =>
-    item.turnId ? input.store.listConversationItemsForTurn({ turnId: item.turnId }) : [item]))
+  const explicitTurnItems = input.includeSourceTurnItems === false
+    ? []
+    : uniqueItems(explicitItems.flatMap((item) =>
+      item.turnId ? input.store.listConversationItemsForTurn({ turnId: item.turnId }) : [item]))
     .filter((item) => canProjectItem(item, input.view, input.consumerTeammateId));
   const explicitTurnItemIds = new Set(explicitTurnItems.map((item) => item.id));
   const inheritedItems = forkSnapshot

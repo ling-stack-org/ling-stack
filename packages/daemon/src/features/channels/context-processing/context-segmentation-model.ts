@@ -22,7 +22,7 @@ export function createModelContextSegmentProposer(input: {
   if (!input.runnerRegistry) return undefined;
   const providerPresetId = resolveSegmentationProviderPresetId(input);
   if (!providerPresetId) return undefined;
-  return async (view) => {
+  return async (view, signal) => {
     const runner = input.runnerRegistry!.resolve({ tools: [], allowFallback: true }).runner;
     const provider = resolveProviderForRun(input.store, {
       cwd: input.store.paths.cwd,
@@ -50,6 +50,7 @@ export function createModelContextSegmentProposer(input: {
         prompt: renderContextSegmentationPrompt(input.channel, view),
         channelId: input.channel.id,
       },
+      signal,
       onEvent: (event) => {
         if (event.type === "assistant_text_delta") deltas.push(event.text);
       },

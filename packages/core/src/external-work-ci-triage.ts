@@ -236,7 +236,7 @@ export async function triageGitHubExternalWorkCi(input: GitHubCiTriageInput): Pr
     }
     return responseForRecords(input.store, input.cwd, { triaged, taskCreated, duplicates, records });
   } finally {
-    input.store.releaseResourceLeasesForOwner(subjectLease.ownerType, subjectLease.ownerId, new Date().toISOString());
+    input.store.releaseResourceLeasesForOwner("system", subjectLease.ownerId, new Date().toISOString());
   }
 }
 

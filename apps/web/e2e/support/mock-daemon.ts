@@ -132,6 +132,8 @@ export interface MockState {
   teammatePrivateAttachments: unknown[];
   conversationAttachments: unknown[];
   terminalReports: unknown[];
+  terminalReportQueryCount?: number;
+  terminalReportResponseDelaysMs?: number[];
   retentionTombstones: unknown[];
   automationDefinitions: unknown[];
   failThreadHardDeleteForThreadIds?: string[];
@@ -160,6 +162,8 @@ export interface MockState {
   approvals: MockApproval[];
   approvalCheckpoints: LingApprovalCheckpoint[];
   approvalPolicy: MockApprovalPolicy;
+  approvalQueryCount?: number;
+  approvalPolicyQueryCount?: number;
   lastApprovalPolicyPatch?: Record<string, unknown>;
   externalWorkActions: MockExternalWorkAction[];
   artifactsByExternalAction: Record<string, MockArtifact[]>;
@@ -178,6 +182,7 @@ export interface MockState {
   lastExternalWorkWorkflowConfigure?: Record<string, unknown>;
   mediaJobs: MockMediaJob[];
   mediaProjects: MockMediaProject[];
+  mediaProjectAssets: MockMediaProjectAsset[];
   mediaScenes: MockMediaScene[];
   mediaSceneRuns: MockMediaSceneRun[];
   mediaWorkflowConnections: Record<string, unknown>[];
@@ -591,6 +596,19 @@ export interface MockMediaProject {
   updatedAt: string;
 }
 
+export interface MockMediaProjectAsset {
+  id: string;
+  projectId: string;
+  fileName: string;
+  contentType: "image/jpeg" | "image/png" | "image/webp";
+  sizeBytes: number;
+  width: number;
+  height: number;
+  checksum: string;
+  sourceArtifactId?: string;
+  createdAt: string;
+}
+
 export interface MockMediaScene {
   id: string;
   projectId: string;
@@ -604,6 +622,7 @@ export interface MockMediaScene {
   ratio: string;
   durationSeconds: number;
   referenceArtifactIds: string[];
+  videoImageInputs?: Array<{ assetId: string; role: "first_frame" | "reference_image" }>;
   canvasPosition: { x: number; y: number };
   selectedMediaSceneRunId?: string;
   createdAt: string;
@@ -1306,6 +1325,7 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     externalWorkWorkflowConfigureCalls: 0,
     mediaJobs: [],
     mediaProjects: [],
+    mediaProjectAssets: [],
     mediaScenes: [],
     mediaSceneRuns: [],
     mediaWorkflowConnections: [],
@@ -4043,6 +4063,65 @@ export function createMockManagedPlugins(): MockManagedPlugin[] {
     createMockCuaPlugin(),
     createMockBundledCuaPlugin(),
   ];
+}
+
+export function createMockChromePlugin(overrides: Partial<MockManagedPlugin> = {}): MockManagedPlugin {
+  const setup = overrides.setup ?? {
+    kind: "browser_extension" as const,
+    state: "missing" as const,
+    checkedAt: "2026-08-17T00:00:00.000Z",
+    browserFamily: "chrome" as const,
+    browserState: "extension_required" as const,
+    paired: false,
+    connected: false,
+  };
+  const status = overrides.status ?? "disabled";
+  return {
+    id: "built-in:chrome",
+    displayName: "Chrome",
+    version: "0.1.0",
+    sourceKind: "built-in",
+    status,
+    description: "Control Chrome with Ling.",
+    trustSummary: "Uses an explicitly paired Ling extension and existing MCP approvals.",
+    contributions: [{
+      kind: "mcp-server",
+      id: "mcp_chrome_browser",
+      label: "Chrome browser tools",
+      capabilities: ["browser:tabs", "browser:read", "browser:interact", "browser:screenshot"],
+      sideEffectLevel: "external",
+      defaultApproval: "ask",
+      linkedResourceId: "mcp_chrome_browser",
+      linkedResourcePresent: true,
+      enabled: setup.connected === true,
+    }],
+    health: overrides.health ?? createMockPluginHealth(
+      "built-in:chrome",
+      status === "enabled" && setup.connected ? "ready" : status === "enabled" ? "failed" : "disabled",
+      setup.connected ? "Chrome extension is connected." : "Install and pair the Ling Chrome extension.",
+    ),
+    setup,
+    linkedResources: [{
+      kind: "mcp-server",
+      id: "mcp_chrome_browser",
+      present: true,
+      enabled: setup.connected === true,
+      displayName: "Chrome browser",
+    }],
+    events: overrides.events ?? [],
+    actions: {
+      canEnable: status !== "enabled",
+      canDisable: status === "enabled",
+      canCheck: true,
+      canApplyPreset: false,
+      canInstall: false,
+      canUninstall: false,
+      canRefreshPackage: false,
+      canRuntimePreview: false,
+      ...overrides.actions,
+    },
+    ...overrides,
+  };
 }
 
 export function createMockCuaPlugin(overrides: Partial<MockManagedPlugin> = {}): MockManagedPlugin {
@@ -7422,6 +7501,25 @@ export async function handleDaemonRoute(
     });
     return;
   }
+  if (request.method() === "GET" && path === "/control-plane/events") {
+    const afterSeq = Number.parseInt(url.searchParams.get("afterSeq") ?? "0", 10);
+    const limit = Number.parseInt(url.searchParams.get("limit") ?? "200", 10);
+    await route.fulfill({
+      json: {
+        cwd,
+        workspaceId: "workspace_default",
+        window: {
+          disposition: "complete",
+          requestedAfterSeq: afterSeq,
+          replayFloorSeq: 0,
+          upperBoundSeq: afterSeq,
+          nextAfterSeq: afterSeq,
+        },
+        events: [],
+      },
+    });
+    return;
+  }
   if (request.method() === "GET" && path === "/control-plane/stream") {
     await route.fulfill({ status: 204 });
     return;
@@ -8490,6 +8588,31 @@ export async function handleDaemonRoute(
         events: appendMockPluginEvent(plugin, "connected", `Connected MCP server ${server.id}.`, { linkedResourceId: server.id }),
       });
       await route.fulfill({ json: { plugin: updated, linkedMcpServer: toPublicMockMcpServer(server, state) } });
+      return;
+    }
+    if (action === "pairing" && request.method() === "POST" && plugin.id === "built-in:chrome") {
+      await route.fulfill({ json: {
+        pluginId: plugin.id,
+        pairingCode: "LING-CHROME-PAIR",
+        expiresAt: "2099-08-17T00:05:00.000Z",
+      } });
+      return;
+    }
+    if (action === "revoke" && request.method() === "POST" && plugin.id === "built-in:chrome") {
+      const updated = updateMockPlugin(state, plugin.id, createMockChromePlugin({
+        ...plugin,
+        status: "enabled",
+        setup: {
+          kind: "browser_extension",
+          state: "missing",
+          checkedAt: "2026-08-17T00:02:00.000Z",
+          browserFamily: "chrome",
+          browserState: "extension_required",
+          paired: false,
+          connected: false,
+        },
+      }));
+      await route.fulfill({ json: { plugin: updated, health: updated.health } });
       return;
     }
     if (action === "validate-package" && request.method() === "POST") {
@@ -12745,6 +12868,7 @@ export async function handleDaemonRoute(
   }
   const channelTerminalReportsMatch = /^\/channels\/([^/]+)\/terminal-reports$/.exec(path);
   if (request.method() === "GET" && (path === "/terminal-reports" || channelTerminalReportsMatch)) {
+    state.terminalReportQueryCount = (state.terminalReportQueryCount ?? 0) + 1;
     const channelId = channelTerminalReportsMatch
       ? decodeURIComponent(channelTerminalReportsMatch[1])
       : undefined;
@@ -12760,6 +12884,10 @@ export async function handleDaemonRoute(
       if (sourceId && source.id !== sourceId) return false;
       return true;
     });
+    const responseDelayMs = state.terminalReportResponseDelaysMs?.shift() ?? 0;
+    if (responseDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, responseDelayMs));
+    }
     await route.fulfill({ json: { reports } });
     return;
   }
@@ -13638,6 +13766,7 @@ export async function handleDaemonRoute(
     return;
   }
   if (request.method() === "GET" && path === "/approvals") {
+    state.approvalQueryCount = (state.approvalQueryCount ?? 0) + 1;
     const runId = url.searchParams.get("runId");
     const mediaJobId = url.searchParams.get("mediaJobId");
     const approvals = state.approvals.filter((approval) =>
@@ -14093,6 +14222,7 @@ export async function handleDaemonRoute(
   }
 
   if (request.method() === "GET" && path === "/approval-policy") {
+    state.approvalPolicyQueryCount = (state.approvalPolicyQueryCount ?? 0) + 1;
     await route.fulfill({ json: { cwd, policy: state.approvalPolicy } });
     return;
   }
@@ -14306,7 +14436,7 @@ export async function handleDaemonRoute(
       updatedAt: timestamp,
     };
     state.mediaProjects.unshift(project);
-    await route.fulfill({ status: 201, json: { mediaProject: project, scenes: [], sceneRuns: [] } });
+    await route.fulfill({ status: 201, json: { mediaProject: project, assets: [], scenes: [], sceneRuns: [] } });
     return;
   }
 
@@ -14336,8 +14466,72 @@ export async function handleDaemonRoute(
     }
     if (request.method() === "DELETE") {
       state.mediaProjects = state.mediaProjects.filter((item) => item.id !== projectId);
+      state.mediaProjectAssets = state.mediaProjectAssets.filter((item) => item.projectId !== projectId);
       state.mediaScenes = state.mediaScenes.filter((item) => item.projectId !== projectId);
       await route.fulfill({ json: { deleted: true, mediaProjectId: projectId } });
+      return;
+    }
+  }
+
+  const mediaProjectAssetsMatch = /^\/media-projects\/([^/]+)\/assets$/.exec(path);
+  if (mediaProjectAssetsMatch) {
+    const projectId = decodeURIComponent(mediaProjectAssetsMatch[1]);
+    if (request.method() === "GET") {
+      await route.fulfill({ json: { mediaProjectId: projectId, assets: state.mediaProjectAssets.filter((asset) => asset.projectId === projectId) } });
+      return;
+    }
+    if (request.method() === "POST") {
+      const body = await request.postDataJSON() as Record<string, unknown>;
+      const sourceArtifactId = body.kind === "artifact" && typeof body.artifactId === "string" ? body.artifactId : undefined;
+      const existing = sourceArtifactId ? state.mediaProjectAssets.find((asset) => asset.projectId === projectId && asset.sourceArtifactId === sourceArtifactId) : undefined;
+      if (existing) {
+        await route.fulfill({ status: 201, json: { asset: existing } });
+        return;
+      }
+      const id = `media_project_asset_${state.mediaProjectAssets.length + 1}`;
+      const asset: MockMediaProjectAsset = {
+        id,
+        projectId,
+        fileName: typeof body.fileName === "string" ? body.fileName : sourceArtifactId ? `${sourceArtifactId}.png` : `${id}.png`,
+        contentType: body.contentType === "image/jpeg" || body.contentType === "image/webp" ? body.contentType : "image/png",
+        sizeBytes: 4096,
+        width: 1024,
+        height: 1024,
+        checksum: `sha256:${id}`,
+        sourceArtifactId,
+        createdAt: "2026-07-23T00:00:00.000Z",
+      };
+      state.mediaProjectAssets.unshift(asset);
+      await route.fulfill({ status: 201, json: { asset } });
+      return;
+    }
+  }
+
+  const mediaProjectAssetMatch = /^\/media-project-assets\/([^/]+)(?:\/(content))?$/.exec(path);
+  if (mediaProjectAssetMatch) {
+    const assetId = decodeURIComponent(mediaProjectAssetMatch[1]);
+    const asset = state.mediaProjectAssets.find((item) => item.id === assetId);
+    if (!asset) {
+      await route.fulfill({ status: 404, json: { error: "media_project_asset_not_found" } });
+      return;
+    }
+    if (request.method() === "GET" && mediaProjectAssetMatch[2] === "content") {
+      const color = assetId.endsWith("_1") ? "#5f7891" : "#c8876b";
+      await route.fulfill({
+        status: 200,
+        contentType: "image/svg+xml",
+        body: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 10"><rect width="16" height="10" fill="${color}"/><circle cx="8" cy="5" r="2.4" fill="#f4f6f8" fill-opacity=".74"/></svg>`,
+      });
+      return;
+    }
+    if (request.method() === "DELETE" && !mediaProjectAssetMatch[2]) {
+      const inUse = state.mediaScenes.some((scene) => scene.videoImageInputs?.some((input) => input.assetId === assetId));
+      if (inUse) {
+        await route.fulfill({ status: 409, json: { error: "media_project_asset_in_use", message: "This project image is in use." } });
+        return;
+      }
+      state.mediaProjectAssets = state.mediaProjectAssets.filter((item) => item.id !== assetId);
+      await route.fulfill({ json: { deleted: true, mediaProjectAssetId: assetId } });
       return;
     }
   }
@@ -14359,6 +14553,7 @@ export async function handleDaemonRoute(
       ratio: typeof body.ratio === "string" ? body.ratio : "16:9",
       durationSeconds: typeof body.durationSeconds === "number" ? body.durationSeconds : 5,
       referenceArtifactIds: Array.isArray(body.referenceArtifactIds) ? body.referenceArtifactIds.filter((value): value is string => typeof value === "string") : [],
+      videoImageInputs: readMockVideoImageInputs(body.videoImageInputs),
       canvasPosition: isRecord(body.canvasPosition) ? {
         x: typeof body.canvasPosition.x === "number" ? body.canvasPosition.x : 0,
         y: typeof body.canvasPosition.y === "number" ? body.canvasPosition.y : 0,
@@ -14367,7 +14562,7 @@ export async function handleDaemonRoute(
       updatedAt: "2026-07-13T00:00:00.000Z",
     };
     state.mediaScenes.push(scene);
-    await route.fulfill({ status: 201, json: { mediaScene: scene } });
+    await route.fulfill({ status: 201, json: { mediaScene: mockMediaScene(scene) } });
     return;
   }
 
@@ -14393,7 +14588,7 @@ export async function handleDaemonRoute(
       return;
     }
     if (request.method() === "GET") {
-      await route.fulfill({ json: { mediaScene: scene, mediaSceneRuns: state.mediaSceneRuns.filter((item) => item.sceneId === sceneId) } });
+      await route.fulfill({ json: { mediaScene: mockMediaScene(scene), mediaSceneRuns: state.mediaSceneRuns.filter((item) => item.sceneId === sceneId) } });
       return;
     }
     if (request.method() === "PATCH") {
@@ -14409,8 +14604,9 @@ export async function handleDaemonRoute(
       if (typeof body.ratio === "string") scene.ratio = body.ratio;
       if (typeof body.durationSeconds === "number") scene.durationSeconds = body.durationSeconds;
       if (Array.isArray(body.referenceArtifactIds)) scene.referenceArtifactIds = body.referenceArtifactIds.filter((value): value is string => typeof value === "string");
+      if (Array.isArray(body.videoImageInputs)) scene.videoImageInputs = readMockVideoImageInputs(body.videoImageInputs);
       if (isRecord(body.canvasPosition)) scene.canvasPosition = { x: typeof body.canvasPosition.x === "number" ? body.canvasPosition.x : scene.canvasPosition.x, y: typeof body.canvasPosition.y === "number" ? body.canvasPosition.y : scene.canvasPosition.y };
-      await route.fulfill({ json: { mediaScene: scene } });
+      await route.fulfill({ json: { mediaScene: mockMediaScene(scene) } });
       return;
     }
     if (request.method() === "DELETE") {
@@ -14427,9 +14623,9 @@ export async function handleDaemonRoute(
       await route.fulfill({ status: 404, json: { error: "media_scene_not_found" } });
       return;
     }
-    const copy = { ...original, id: `media_scene_${state.mediaScenes.length + 1}`, sortOrder: state.mediaScenes.filter((item) => item.projectId === original.projectId).length, title: `${original.title} 副本`, canvasPosition: { x: original.canvasPosition.x + 56, y: original.canvasPosition.y + 48 } };
+    const copy = { ...original, id: `media_scene_${state.mediaScenes.length + 1}`, sortOrder: state.mediaScenes.filter((item) => item.projectId === original.projectId).length, title: `${original.title} 副本`, videoImageInputs: [...(original.videoImageInputs ?? [])], canvasPosition: { x: original.canvasPosition.x + 56, y: original.canvasPosition.y + 48 } };
     state.mediaScenes.push(copy);
-    await route.fulfill({ status: 201, json: { mediaScene: copy } });
+    await route.fulfill({ status: 201, json: { mediaScene: mockMediaScene(copy) } });
     return;
   }
 
@@ -14475,7 +14671,7 @@ export async function handleDaemonRoute(
       prompt: scene.prompt,
       input: executionMode === "workflow"
         ? { workflowInputValues: scene.workflowInputValues }
-        : { ratio: scene.ratio, duration: scene.durationSeconds },
+        : { ratio: scene.ratio, duration: scene.durationSeconds, videoImageInputs: scene.videoImageInputs ?? [] },
       artifactIds: [],
       status: "queued",
       createdAt: "2026-07-13T00:03:00.000Z",
@@ -14555,7 +14751,7 @@ export async function handleDaemonRoute(
         prompt: scene.prompt,
         input: executionMode === "workflow"
           ? { workflowInputValues: scene.workflowInputValues }
-          : { ratio: scene.ratio, duration: scene.durationSeconds },
+          : { ratio: scene.ratio, duration: scene.durationSeconds, videoImageInputs: scene.videoImageInputs ?? [] },
         artifactIds: [],
         status: "queued",
         createdAt,
@@ -16034,18 +16230,33 @@ function readMockPostData(request: Request): Record<string, unknown> {
 
 function mockMediaProjectDetail(state: MockDaemonState, mediaProject: MockMediaProject): {
   readonly mediaProject: MockMediaProject;
-  readonly scenes: readonly MockMediaScene[];
+  readonly assets: readonly MockMediaProjectAsset[];
+  readonly scenes: ReadonlyArray<MockMediaScene & { readonly videoImageInputs: NonNullable<MockMediaScene["videoImageInputs"]> }>;
   readonly sceneRuns: readonly MockMediaSceneRun[];
 } {
   return {
     mediaProject,
+    assets: state.mediaProjectAssets.filter((asset) => asset.projectId === mediaProject.id),
     scenes: state.mediaScenes
       .filter((scene) => scene.projectId === mediaProject.id)
+      .map((scene) => ({ ...scene, videoImageInputs: scene.videoImageInputs ?? [] }))
       .sort((left, right) => left.sortOrder - right.sortOrder),
     sceneRuns: state.mediaSceneRuns
       .filter((run) => run.projectId === mediaProject.id)
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt)),
   };
+}
+
+function mockMediaScene(scene: MockMediaScene): MockMediaScene & { readonly videoImageInputs: NonNullable<MockMediaScene["videoImageInputs"]> } {
+  return { ...scene, videoImageInputs: scene.videoImageInputs ?? [] };
+}
+
+function readMockVideoImageInputs(value: unknown): Array<{ assetId: string; role: "first_frame" | "reference_image" }> {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!isRecord(item) || typeof item.assetId !== "string" || (item.role !== "first_frame" && item.role !== "reference_image")) return [];
+    return [{ assetId: item.assetId, role: item.role }];
+  });
 }
 
 function mockMediaWorkflowAnalysis(graph: Record<string, unknown>) {

@@ -67,12 +67,35 @@ export interface CreateMediaJobRequest {
   readonly input?: Record<string, unknown>;
 }
 
-export type VideoGenerationInputMode = "text" | "image_reference";
+export type VideoGenerationInputMode = "text" | "first_frame" | "reference_image";
 
 export interface VideoGenerationCapabilities {
   readonly inputModes: readonly VideoGenerationInputMode[];
+  readonly maxReferenceImages?: number;
   readonly aspectRatios?: readonly string[];
   readonly durationsSeconds?: readonly number[];
+}
+
+export type MediaProjectAssetContentType = "image/jpeg" | "image/png" | "image/webp";
+
+export interface MediaProjectAsset {
+  readonly id: string;
+  readonly projectId: string;
+  readonly fileName: string;
+  readonly contentType: MediaProjectAssetContentType;
+  readonly sizeBytes: number;
+  readonly width: number;
+  readonly height: number;
+  readonly checksum: string;
+  readonly sourceArtifactId?: string;
+  readonly createdAt: string;
+}
+
+export type MediaSceneVideoImageRole = "first_frame" | "reference_image";
+
+export interface MediaSceneVideoImageInput {
+  readonly assetId: string;
+  readonly role: MediaSceneVideoImageRole;
 }
 
 export interface MediaCanvasViewport {
@@ -111,6 +134,7 @@ export interface MediaScene {
   readonly ratio: string;
   readonly durationSeconds: number;
   readonly referenceArtifactIds: readonly string[];
+  readonly videoImageInputs: readonly MediaSceneVideoImageInput[];
   readonly canvasPosition: MediaCanvasPosition;
   readonly selectedMediaSceneRunId?: string;
   readonly createdAt: string;
@@ -168,6 +192,7 @@ export interface CreateMediaSceneRequest {
   readonly ratio?: string;
   readonly durationSeconds?: number;
   readonly referenceArtifactIds?: readonly string[];
+  readonly videoImageInputs?: readonly MediaSceneVideoImageInput[];
   readonly canvasPosition?: MediaCanvasPosition;
 }
 
@@ -182,12 +207,14 @@ export interface UpdateMediaSceneRequest {
   readonly ratio?: string;
   readonly durationSeconds?: number;
   readonly referenceArtifactIds?: readonly string[];
+  readonly videoImageInputs?: readonly MediaSceneVideoImageInput[];
   readonly canvasPosition?: MediaCanvasPosition;
   readonly selectedMediaSceneRunId?: string | null;
 }
 
 export interface MediaProductionProjectResponse {
   readonly mediaProject: MediaProject;
+  readonly assets: readonly MediaProjectAsset[];
   readonly scenes: readonly MediaScene[];
   readonly sceneRuns: readonly MediaSceneRun[];
 }
@@ -221,6 +248,27 @@ export interface RunMediaProjectRequest {
 
 export interface MediaProjectMutationResponse extends MediaProductionProjectResponse {}
 
+export type CreateMediaProjectAssetRequest =
+  | {
+      readonly kind: "upload";
+      readonly fileName: string;
+      readonly contentType: string;
+      readonly contentBase64: string;
+    }
+  | {
+      readonly kind: "artifact";
+      readonly artifactId: string;
+    };
+
+export interface MediaProjectAssetListResponse {
+  readonly mediaProjectId: string;
+  readonly assets: readonly MediaProjectAsset[];
+}
+
+export interface MediaProjectAssetMutationResponse {
+  readonly asset: MediaProjectAsset;
+}
+
 export interface MediaSceneMutationResponse {
   readonly mediaScene: MediaScene;
   readonly mediaSceneRun?: MediaSceneRun;
@@ -239,5 +287,6 @@ export interface MediaSceneReorderResponse {
 export interface MediaProductionDeleteResponse {
   readonly deleted: boolean;
   readonly mediaProjectId?: string;
+  readonly mediaProjectAssetId?: string;
   readonly mediaSceneId?: string;
 }

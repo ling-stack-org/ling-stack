@@ -88,12 +88,18 @@ export interface MediaAdapterProviderConfig {
   readonly capabilities: readonly ProviderCapability[];
 }
 
+export interface MediaExecutionVideoImageInput {
+  readonly role: "first_frame" | "reference_image";
+  readonly imageUrl: string;
+}
+
 export interface MediaExecutionRequest {
   readonly jobId: string;
   readonly provider: MediaAdapterProviderConfig;
   readonly operation: MediaOperation;
   readonly prompt: string;
   readonly input: Record<string, unknown>;
+  readonly videoImageInputs?: readonly MediaExecutionVideoImageInput[];
   readonly requestedAt: string;
 }
 
@@ -176,6 +182,7 @@ export interface MediaVendorRequestPlan {
   readonly payload: {
     readonly prompt: string;
     readonly input: unknown;
+    readonly videoImageInputs?: readonly MediaExecutionVideoImageInput[];
   };
   readonly notes: readonly string[];
 }

@@ -5,6 +5,14 @@ import {
   channelIntentDecisionV2Actions,
   conversationItemKindsV1,
   isChannelIntentDecisionV2,
+  createRequiredParticipantManifestV1,
+  isRequiredParticipantManifestV1,
+  isDelegatedOutcomeV1,
+  isDelegatedStepRequirementV1,
+  delegatedStepRequirementFingerprintV1,
+  isWorkflowCompletionGateV1,
+  isWorkflowParticipantProviderBindingV1,
+  isWorkflowParticipantProviderBlockerV1,
   isContextSegment,
   isConversationContextProjectionMetadata,
   isConversationContextSnapshot,
@@ -28,6 +36,35 @@ const exportedGoldenFixture = (
 
 test("Continuity v2 golden fixture is consumable through the public package export", () => {
   assert.deepEqual(exportedGoldenFixture, goldenFixture);
+});
+
+test("delegated step requirements are deterministic, immutable, and fail closed", () => {
+  const source = {
+    schemaVersion: 1,
+    workflowId: "workflow-1",
+    workflowStepId: "step-1",
+    participantId: "teammate_builtin_qa",
+    participantManifestFingerprint: "rpmv1_manifest",
+    expectedOutcome: "verification",
+    requiredOperationIds: ["run-command", "inspect-output"],
+    requiredDependencyStepIds: ["step-engineer"],
+    acceptedEvidenceKinds: ["execution_action"],
+  };
+  const requirement = {
+    ...source,
+    fingerprint: delegatedStepRequirementFingerprintV1(source),
+  };
+  assert.equal(isDelegatedStepRequirementV1(requirement), true);
+  assert.equal(
+    delegatedStepRequirementFingerprintV1({
+      ...source,
+      requiredOperationIds: [...source.requiredOperationIds].reverse(),
+    }),
+    requirement.fingerprint,
+  );
+  assert.equal(isDelegatedStepRequirementV1({ ...requirement, participantId: "teammate_builtin_engineer" }), false);
+  assert.equal(isDelegatedStepRequirementV1({ ...requirement, acceptedEvidenceKinds: [] }), false);
+  assert.equal(isDelegatedStepRequirementV1({ ...requirement, requiredOperationIds: ["run-command", "run-command"] }), false);
 });
 
 test("Continuity v2 golden fixture freezes the ten approved scenarios", () => {
@@ -348,9 +385,42 @@ test("ChannelIntentDecision v2 accepts only the clean-break action contract", ()
     {
       action: "execute",
       execution: {
-        kind: "file_edit",
-        targetKind: "file",
-        targetRef: { type: "artifact", id: "README.md" },
+        operations: [{
+          id: "edit_readme",
+          kind: "file_edit",
+          targetKind: "file",
+          targetRef: { type: "artifact", id: "README.md" },
+          required: true,
+          dependsOn: [],
+        }],
+      },
+    },
+    {
+      action: "execute",
+      execution: {
+        operations: [{
+          id: "run_node_exact",
+          kind: "run_command",
+          targetKind: "command",
+          targetRef: { type: "operation", id: "command:node-app", label: "Run Node" },
+          commandMatchPolicy: { kind: "exact_command", command: "node app.js" },
+          required: true,
+          dependsOn: [],
+        }],
+      },
+    },
+    {
+      action: "execute",
+      execution: {
+        operations: [{
+          id: "run_node_executable",
+          kind: "run_command",
+          targetKind: "command",
+          targetRef: { type: "operation", id: "executable:node", label: "Node" },
+          commandMatchPolicy: { kind: "executable", executable: "node" },
+          required: true,
+          dependsOn: [],
+        }],
       },
     },
   ];
@@ -364,6 +434,11 @@ test("ChannelIntentDecision v2 accepts only the clean-break action contract", ()
   assert.equal(isChannelIntentDecisionV2({ ...buildDecision({ action: "reply" }), createdBy: "model" }), false);
   assert.equal(isChannelIntentDecisionV2({
     ...buildDecision({ action: "reply" }),
+    selectedTeammateIds: ["teammate-1"],
+    participantManifest: createRequiredParticipantManifestV1([]),
+  }), false);
+  assert.equal(isChannelIntentDecisionV2({
+    ...buildDecision({ action: "reply" }),
     sourceMessageId: "legacy-message-1",
   }), false);
   assert.equal(isChannelIntentDecisionV2(buildDecision({
@@ -372,9 +447,209 @@ test("ChannelIntentDecision v2 accepts only the clean-break action contract", ()
   })), false);
   assert.equal(isChannelIntentDecisionV2(buildDecision({ action: "execute" })), false);
   assert.equal(isChannelIntentDecisionV2(buildDecision({
-    action: "reply",
+    action: "execute",
+    execution: { operations: [] },
+  })), false);
+  assert.equal(isChannelIntentDecisionV2(buildDecision({
+    action: "execute",
+    execution: {
+      operations: [{
+        id: "missing_target_ref",
+        kind: "file_create",
+        targetKind: "file",
+        required: true,
+        dependsOn: [],
+      }],
+    },
+  })), false);
+  assert.equal(isChannelIntentDecisionV2(buildDecision({
+    action: "execute",
+    execution: {
+      operations: [{
+        id: "missing_command_policy",
+        kind: "run_command",
+        targetKind: "command",
+        targetRef: { type: "operation", id: "command:node-app", label: "Run Node" },
+        required: true,
+        dependsOn: [],
+      }],
+    },
+  })), false);
+  assert.equal(isChannelIntentDecisionV2(buildDecision({
+    action: "execute",
+    execution: {
+      operations: [{
+        id: "policy_on_file",
+        kind: "file_create",
+        targetKind: "file",
+        targetRef: { type: "operation", id: "file:app", label: "app.js" },
+        commandMatchPolicy: { kind: "executable", executable: "node" },
+        required: true,
+        dependsOn: [],
+      }],
+    },
+  })), false);
+  assert.equal(isChannelIntentDecisionV2(buildDecision({
+    action: "execute",
+    execution: {
+      operations: [{
+        id: "invalid_executable",
+        kind: "run_command",
+        targetKind: "command",
+        targetRef: { type: "operation", id: "executable:node", label: "Node" },
+        commandMatchPolicy: { kind: "executable", executable: "../node" },
+        required: true,
+        dependsOn: [],
+      }],
+    },
+  })), false);
+  assert.equal(isChannelIntentDecisionV2(buildDecision({
+    action: "execute",
+    execution: {
+      operations: [
+        { id: "duplicate", kind: "file_create", targetKind: "file", required: true, dependsOn: [] },
+        { id: "duplicate", kind: "run_command", targetKind: "command", required: true, dependsOn: [] },
+      ],
+    },
+  })), false);
+  assert.equal(isChannelIntentDecisionV2(buildDecision({
+    action: "execute",
+    execution: {
+      operations: [
+        { id: "write", kind: "file_create", targetKind: "file", required: true, dependsOn: ["missing"] },
+      ],
+    },
+  })), false);
+  assert.equal(isChannelIntentDecisionV2(buildDecision({
+    action: "execute",
+    execution: {
+      operations: [
+        { id: "write", kind: "file_create", targetKind: "file", required: true, dependsOn: ["run"] },
+        { id: "run", kind: "run_command", targetKind: "command", required: true, dependsOn: ["write"] },
+      ],
+    },
+  })), false);
+  assert.equal(isChannelIntentDecisionV2(buildDecision({
+    action: "execute",
     execution: { kind: "file_create", targetKind: "file" },
   })), false);
+  assert.equal(isChannelIntentDecisionV2(buildDecision({
+    action: "reply",
+    execution: {
+      operations: [{ id: "write", kind: "file_create", targetKind: "file", required: true, dependsOn: [] }],
+    },
+  })), false);
+});
+
+test("required participant manifest has deterministic identity and rejects mutation", () => {
+  const participants = [{
+    participantId: "teammate_builtin_engineer",
+    role: "engineer",
+    requirement: "required",
+    expectedOutcome: "execution",
+    requiredOperationIds: ["create_file"],
+    requestedBy: "structured_mention",
+  }, {
+    participantId: "teammate_builtin_qa",
+    role: "qa",
+    requirement: "required",
+    expectedOutcome: "verification",
+    requiredOperationIds: ["run_command"],
+    requestedBy: "structured_mention",
+  }];
+  const manifest = createRequiredParticipantManifestV1(participants);
+  assert.equal(isRequiredParticipantManifestV1(manifest), true);
+  assert.equal(
+    createRequiredParticipantManifestV1([...participants].reverse()).fingerprint,
+    manifest.fingerprint,
+  );
+  assert.equal(isRequiredParticipantManifestV1({ ...manifest, fingerprint: "tampered" }), false);
+});
+
+test("delegated outcomes require typed durable evidence", () => {
+  assert.equal(isDelegatedOutcomeV1({
+    kind: "completed",
+    workflowId: "workflow-1",
+    workflowStepId: "step-engineer",
+    participantId: "teammate_builtin_engineer",
+    evidenceRefs: [{ kind: "execution_action", id: "action-1" }],
+  }), true);
+  assert.equal(isDelegatedOutcomeV1({
+    kind: "completed",
+    workflowId: "workflow-1",
+    workflowStepId: "step-architect",
+    participantId: "teammate_builtin_architect",
+    evidenceRefs: [{ kind: "workflow_output_packet", id: "artifact-1" }],
+  }), true);
+  assert.equal(isDelegatedOutcomeV1({
+    kind: "completed",
+    workflowId: "workflow-1",
+    workflowStepId: "step-engineer",
+    participantId: "teammate_builtin_engineer",
+    evidenceRefs: [],
+  }), false);
+  assert.equal(isDelegatedOutcomeV1({
+    kind: "completed",
+    workflowId: "workflow-1",
+    workflowStepId: "step-engineer",
+    participantId: "teammate_builtin_engineer",
+    evidenceActionIds: ["action-1"],
+    outputItemIds: [],
+  }), false);
+});
+
+test("workflow completion gate requires source graph and basis identities", () => {
+  const gate = {
+    schemaVersion: 1,
+    status: "verified",
+    sourceIntentDecisionId: "intent-1",
+    participantManifestFingerprint: "rpmv1_test",
+    graphFingerprint: "wgfv1_test",
+    basisFingerprint: "wcbv1_test",
+    participantResults: [{
+      participantId: "teammate_builtin_qa",
+      workflowStepIds: ["step-1"],
+      status: "satisfied",
+      evidenceRefs: [{ kind: "execution_action", id: "action-1" }],
+    }],
+    checkedAt: now,
+  };
+  assert.equal(isWorkflowCompletionGateV1(gate), true);
+  const { basisFingerprint: _basisFingerprint, ...withoutBasis } = gate;
+  assert.equal(isWorkflowCompletionGateV1(withoutBasis), false);
+});
+
+test("workflow participant provider binding and blocker contracts fail closed", () => {
+  const binding = {
+    schemaVersion: 1,
+    participantId: "teammate_builtin_qa",
+    bindingMode: "workspace_default",
+    source: "workspace_default",
+    providerPresetId: "provider_workspace",
+  };
+  assert.equal(isWorkflowParticipantProviderBindingV1(binding), true);
+  assert.equal(isWorkflowParticipantProviderBindingV1({ ...binding, source: "channel_fallback" }), false);
+  assert.equal(isWorkflowParticipantProviderBindingV1({ ...binding, source: "teammate_fixed" }), false);
+  assert.equal(isWorkflowParticipantProviderBindingV1({ ...binding, source: "private_request_override" }), false);
+  assert.equal(isWorkflowParticipantProviderBindingV1({ ...binding, bindingMode: "fixed" }), false);
+  assert.equal(isWorkflowParticipantProviderBindingV1({ ...binding, bindingMode: "fixed", source: "teammate_fixed" }), true);
+  assert.equal(isWorkflowParticipantProviderBindingV1({ ...binding, source: "channel_ling_agent_model" }), true);
+  assert.equal(isWorkflowParticipantProviderBindingV1({ ...binding, extra: true }), false);
+
+  const blocker = {
+    schemaVersion: 1,
+    code: "workflow_participant_provider_unavailable",
+    reasonCode: "workspace_default_provider_missing",
+    participantId: "teammate_builtin_qa",
+    bindingMode: "workspace_default",
+    source: "workspace_default",
+    owner: "workspace",
+    repairTarget: "model_workbench",
+    message: "QA needs a workspace default model.",
+  };
+  assert.equal(isWorkflowParticipantProviderBlockerV1(blocker), true);
+  assert.equal(isWorkflowParticipantProviderBlockerV1({ ...blocker, repairTarget: "channel_fallback" }), false);
+  assert.equal(isWorkflowParticipantProviderBlockerV1({ ...blocker, message: "" }), false);
 });
 
 function buildItem(kind, payload, sequence = 1) {
@@ -401,6 +676,22 @@ function buildItem(kind, payload, sequence = 1) {
 }
 
 function buildDecision(overrides) {
+  const action = overrides.action ?? "reply";
+  const selectedTeammateIds = overrides.selectedTeammateIds
+    ?? (action === "execute" || action === "workflow_proposal" ? ["teammate-1"] : []);
+  const operationIds = overrides.execution?.operations?.filter((operation) => operation.required).map((operation) => operation.id) ?? [];
+  const participantManifest = overrides.participantManifest ?? createRequiredParticipantManifestV1(
+    selectedTeammateIds.map((participantId, index) => ({
+      participantId,
+      role: "custom",
+      requirement: "required",
+      expectedOutcome: action === "reply" || action === "visible_multi_reply" || action === "clarify"
+        ? "discussion_reply"
+        : "execution",
+      requiredOperationIds: index === 0 ? operationIds : [],
+      requestedBy: "selector_policy",
+    })),
+  );
   return {
     schemaVersion: 2,
     id: "decision-1",
@@ -411,7 +702,8 @@ function buildDecision(overrides) {
     contextSegmentId: "segment-1",
     contextProjectionVersion: "projection-1",
     action: "reply",
-    selectedTeammateIds: [],
+    selectedTeammateIds,
+    participantManifest,
     resultItemIds: [],
     reason: "Golden contract fixture.",
     status: "accepted",
@@ -419,5 +711,7 @@ function buildDecision(overrides) {
     createdAt: now,
     updatedAt: now,
     ...overrides,
+    selectedTeammateIds,
+    participantManifest,
   };
 }

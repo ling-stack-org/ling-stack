@@ -151,6 +151,8 @@ export function createMcpToolCallHandler(
       secretResolver,
       workspaceCwd: store.paths.cwd,
       signal: request.signal,
+      runId: options.runId,
+      toolCallId: request.toolCallId,
       assertResultCurrent: () => {
         assertMcpResultAuthorityCurrent(store, authority);
       },

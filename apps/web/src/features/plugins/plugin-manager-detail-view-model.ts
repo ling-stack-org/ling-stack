@@ -10,6 +10,7 @@ import type {
   PluginRuntimeView,
   PluginRowView,
 } from "./plugin-manager-types.js";
+import { buildOfficePluginView } from "./plugin-manager-office-view-model.js";
 
 export function buildPluginDetailView(
   plugin: ManagedPluginView,
@@ -19,24 +20,25 @@ export function buildPluginDetailView(
 ): PluginDetailView {
   const cuaHealth = buildCuaHealthView(plugin, t);
   const bundledCua = buildBundledCuaDriverView(plugin, t);
+  const office = buildOfficePluginView(plugin, t);
   return {
     sourceVersion: bundledCua?.sourceVersion ?? `${row.sourceLabel} · ${plugin.version}`,
     description: row.description,
-    overviewFields: bundledCua?.overviewFields ?? buildOverviewFields(plugin, row, t),
-    failureReason: bundledCua?.failureReason ?? cuaHealth?.failureReason ?? genericFailureReason(plugin, t),
-    repairHint: bundledCua?.repairHint ?? cuaHealth?.repairHint ?? genericRepairHint(plugin, t),
+    overviewFields: office?.overviewFields ?? bundledCua?.overviewFields ?? buildOverviewFields(plugin, row, t),
+    failureReason: office?.failureReason ?? bundledCua?.failureReason ?? cuaHealth?.failureReason ?? genericFailureReason(plugin, t),
+    repairHint: office?.repairHint ?? bundledCua?.repairHint ?? cuaHealth?.repairHint ?? genericRepairHint(plugin, t),
     capabilities: plugin.contributions.map((contribution) => ({
       id: contribution.id,
-      label: contribution.label,
+      label: office?.capabilityLabels[contribution.id] ?? contribution.label,
       kind: contribution.kind,
       enabled: contribution.enabled,
       capabilities: contribution.capabilities,
     })),
     capabilitySummary: String(plugin.contributions.length),
-    trustSummary: plugin.trustSummary,
+    trustSummary: office?.trustSummary ?? plugin.trustSummary,
     trustFields: buildTrustFields(plugin, t),
     runtime: plugin.runtimePreview ? buildRuntimeView(plugin, copy, t) : undefined,
-    technicalFields: bundledCua?.technicalFields
+    technicalFields: office?.technicalFields ?? bundledCua?.technicalFields
       ?? buildTechnicalFields(plugin, cuaHealth?.technicalFields ?? [], Boolean(cuaHealth), t),
     hasLinkedMcp: plugin.linkedResources.some((resource) => resource.kind === "mcp-server" && resource.present),
   };

@@ -3,12 +3,15 @@ import type {
   ControlPlaneEvent,
 } from "@ling-stack/core";
 import { DEFAULT_WORKSPACE_ID, redactSecrets } from "@ling-stack/core";
+import type {
+  ControlPlaneEventsResponse,
+  ControlPlaneSnapshotResponse,
+} from "@ling-stack/contracts";
 import type { DaemonContext } from "../../context.js";
 import { readControlPlaneDomainSnapshot } from "./snapshots.js";
 import {
   CONTROL_PLANE_POLL_DEFAULT_LIMIT,
   CONTROL_PLANE_POLL_MAX_LIMIT,
-  CONTROL_PLANE_SSE_INITIAL_REPLAY_LIMIT,
   trimOversizedEvent,
 } from "./events.js";
 
@@ -24,30 +27,6 @@ export const CONTROL_PLANE_DOMAINS = [
   "runners",
   "artifacts",
 ] as const satisfies readonly ControlPlaneDomain[];
-
-export interface ControlPlaneSnapshotResponse {
-  readonly cwd: string;
-  readonly workspaceId: string;
-  readonly generatedAt: string;
-  readonly latestEventSeq: number;
-  readonly domains: Readonly<Record<string, {
-    readonly ok: boolean;
-    readonly revision: number;
-    readonly data?: unknown;
-    readonly error?: {
-      readonly code: string;
-      readonly message: string;
-    };
-  }>>;
-}
-
-export interface ControlPlaneEventsResponse {
-  readonly cwd: string;
-  readonly workspaceId: string;
-  readonly afterSeq: number;
-  readonly limit: number;
-  readonly events: readonly ControlPlaneEvent[];
-}
 
 export class ControlPlaneBadDomainError extends Error {
   readonly code = "bad_domain";
@@ -148,36 +127,18 @@ export function listControlPlaneEventsForResponse(
   },
 ): ControlPlaneEventsResponse {
   const store = context.storeRegistry.getStore(input.cwd);
-  const events = store.listControlPlaneEvents({
+  const replay = store.readControlPlaneReplayWindow({
     workspaceId: DEFAULT_WORKSPACE_ID,
     afterSeq: input.afterSeq,
     limit: input.limit,
     domains: input.domains,
-  }).map(trimOversizedEvent);
+  });
   return {
     cwd: input.cwd,
     workspaceId: DEFAULT_WORKSPACE_ID,
-    afterSeq: input.afterSeq,
-    limit: input.limit,
-    events,
+    window: replay.window,
+    events: replay.events.map(trimOversizedEvent),
   };
-}
-
-export function listControlPlaneSseReplayEvents(
-  context: DaemonContext,
-  input: {
-    readonly cwd: string;
-    readonly afterSeq: number;
-    readonly domains: readonly ControlPlaneDomain[];
-  },
-): readonly ControlPlaneEvent[] {
-  const store = context.storeRegistry.getStore(input.cwd);
-  return store.listControlPlaneEvents({
-    workspaceId: DEFAULT_WORKSPACE_ID,
-    afterSeq: input.afterSeq,
-    limit: CONTROL_PLANE_SSE_INITIAL_REPLAY_LIMIT,
-    domains: input.domains,
-  }).map(trimOversizedEvent);
 }
 
 export function latestControlPlaneEventSeq(context: DaemonContext, cwd: string): number {

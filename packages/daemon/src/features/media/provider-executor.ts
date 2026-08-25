@@ -12,6 +12,7 @@ import {
   type RunStorePathsFacet,
   type RuntimeSupervisorStoreFacet,
   type SecretResolver,
+  toRuntimeAttemptFence,
 } from "@ling-stack/core";
 import {
   executeMediaJob as executeMediaAdapterJob,
@@ -21,6 +22,7 @@ import {
   type MediaExecutionResult,
 } from "@ling-stack/providers";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
+import { HttpError } from "../../errors.js";
 import { redactTextWithSecrets } from "../../shared/redaction.js";
 import { resolveProviderSecret } from "../providers/secrets.js";
 import { createMediaJobArtifacts, mediaExecutionHasRequiredArtifact } from "./artifact-collector.js";
@@ -34,6 +36,7 @@ import type { MediaJobExecutionResult, MediaRuntimeHandle, RunMediaJobHooks } fr
 import { requiresMediaProductionApproval } from "./media-cost-approval.js";
 import { assertMediaJobProvider, createMediaAdapterForProvider } from "./provider.js";
 import { selectInitialMediaSceneResult } from "./scene-result-selection.js";
+import { materializeMediaJobVideoImageInputs } from "./video-image-materializer.js";
 
 const POLL_INTERVAL_MS = 2_000;
 const MAX_POLL_ATTEMPTS = 10_800;
@@ -191,10 +194,10 @@ async function runProviderMediaJobExecutionOwner(input: {
       ? job
       : store.updateMediaJobStatus(job.id, { status: "running", errorMessage: null }, now()) ?? job;
     notifyProjection(input, job.id);
-    const request = mediaExecutionRequest(job, provider);
+    const requestJob = job;
     const tick = hasRecoverableLifecycle(adapter)
-      ? await runRecoverableTick(store, job, adapter, request, handle)
-      : await runNonRecoverableExecution(store, job, adapter, request, handle);
+      ? await runRecoverableTick(store, job, adapter, () => mediaExecutionRequest(store, requestJob, provider), handle)
+      : await runNonRecoverableExecution(store, job, adapter, () => mediaExecutionRequest(store, requestJob, provider), handle);
     if (tick.pending) {
       scheduleProviderPoll(input, tick.delayMs);
       return { statusCode: 202, body: { mediaJob: job, pending: true } };
@@ -225,6 +228,8 @@ async function runProviderMediaJobExecutionOwner(input: {
       store.appendRuntimeEvent({
         workUnitId: supervised.workUnit.id,
         attemptId: supervised.attempt.id,
+        runtimeInstanceId: supervised.attempt.runtimeInstanceId,
+        fencingToken: supervised.attempt.fencingToken,
         type: "artifact_created",
         actor: "provider",
         ts: completedAt,
@@ -256,7 +261,7 @@ async function runProviderMediaJobExecutionOwner(input: {
       settleExecutionHandle(store, job.id, "failed", "media-job-failed-before-runtime-start");
       clearScheduled(job.id);
     }
-    return { statusCode: 200, body: { error: "media_job_execution_failed", message, mediaJob: failed } };
+    return { statusCode: error instanceof HttpError ? error.statusCode : 200, body: { error: errorCode, message, mediaJob: failed } };
   }
 }
 
@@ -310,12 +315,12 @@ async function runRecoverableTick(
   store: ProviderExecutionStore,
   job: MediaJob,
   adapter: MediaAdapter & Required<Pick<MediaAdapter, "submit" | "poll" | "collectArtifacts">>,
-  request: MediaExecutionRequest,
+  createRequest: () => MediaExecutionRequest,
   handle: NonNullable<ReturnType<ProviderExecutionStore["getMediaJobExecutionHandle"]>>,
 ): Promise<{ readonly pending: true; readonly delayMs: number } | { readonly pending: false; readonly execution: MediaExecutionResult }> {
   let current = handle;
   if (isPendingHandle(current)) {
-    const submission = await adapter.submit(request);
+    const submission = await adapter.submit(createRequest());
     if (submission.status === "failed") {
       return { pending: false, execution: { status: "failed", artifacts: [], errorCode: submission.errorCode, errorMessage: submission.errorMessage } };
     }
@@ -364,7 +369,7 @@ async function runNonRecoverableExecution(
   store: ProviderExecutionStore,
   job: MediaJob,
   adapter: MediaAdapter,
-  request: MediaExecutionRequest,
+  createRequest: () => MediaExecutionRequest,
   handle: NonNullable<ReturnType<ProviderExecutionStore["getMediaJobExecutionHandle"]>>,
 ): Promise<{ readonly pending: false; readonly execution: MediaExecutionResult }> {
   if (!isPendingHandle(handle) && handle.recovery.phase === "nonrecoverable_execution") {
@@ -380,7 +385,7 @@ async function runNonRecoverableExecution(
     recovery: { phase: "nonrecoverable_execution" },
     nextPollAt: null,
   }, now());
-  return { pending: false, execution: await executeMediaAdapterJob(adapter, request) };
+  return { pending: false, execution: await executeMediaAdapterJob(adapter, createRequest()) };
 }
 
 function persistPendingHandle(
@@ -414,6 +419,8 @@ function ensureSemaphore(store: ProviderExecutionStore, provider: ProviderPreset
     ownerId: supervised.attempt.id,
     workUnitId: supervised.workUnit.id,
     attemptId: supervised.attempt.id,
+    runtimeInstanceId: supervised.attempt.runtimeInstanceId,
+    fencingToken: supervised.attempt.fencingToken,
     acquiredAt,
     expiresAt: new Date(Date.now() + MEDIA_RUNTIME_SEMAPHORE_TTL_MS).toISOString(),
   });
@@ -421,6 +428,8 @@ function ensureSemaphore(store: ProviderExecutionStore, provider: ProviderPreset
   store.appendRuntimeEvent({
     workUnitId: supervised.workUnit.id,
     attemptId: supervised.attempt.id,
+    runtimeInstanceId: supervised.attempt.runtimeInstanceId,
+    fencingToken: supervised.attempt.fencingToken,
     type: "semaphore_acquired",
     actor: "system",
     ts: acquiredAt,
@@ -434,6 +443,7 @@ function recordHeartbeat(store: ProviderExecutionStore, supervised: MediaRuntime
     workUnitId: supervised.workUnit.id,
     attemptId: supervised.attempt.id,
     runtimeInstanceId: supervised.attempt.runtimeInstanceId,
+    fencingToken: supervised.attempt.fencingToken,
     ts: now(),
     source: "provider",
     detail: { phase },
@@ -447,8 +457,10 @@ function finishExecution(
   status: "succeeded" | "failed" | "cancelled",
   reason: string,
 ): void {
-  settleExecutionHandle(store, mediaJobId, status, reason);
-  store.releaseRuntimeSemaphoreSlotsForOwner(supervised.attempt.id, now(), reason);
+  const handle = settleExecutionHandle(store, mediaJobId, status, reason);
+  if (!handle || handle.attemptId !== supervised.attempt.id) {
+    store.releaseRuntimeSemaphoreSlotsForAttempt(toRuntimeAttemptFence(supervised.attempt), now(), reason);
+  }
   clearScheduled(mediaJobId);
 }
 
@@ -457,15 +469,18 @@ function settleExecutionHandle(
   mediaJobId: string,
   status: "succeeded" | "failed" | "cancelled",
   reason: string,
-): void {
+): ReturnType<ProviderExecutionStore["getMediaJobExecutionHandle"]> {
   const handle = store.getMediaJobExecutionHandle(mediaJobId);
-  if (!handle) return;
+  if (!handle) return undefined;
   if (handle.attemptId) {
-    store.releaseRuntimeSemaphoreSlotsForOwner(handle.attemptId, now(), reason);
+    const attempt = store.getWorkUnitAttempt(handle.attemptId);
+    if (attempt) {
+      store.releaseRuntimeSemaphoreSlotsForAttempt(toRuntimeAttemptFence(attempt), now(), reason);
+    }
   }
   if (status === "succeeded" || isPendingHandle(handle)) {
     store.deleteMediaJobExecutionHandle(mediaJobId);
-    return;
+    return handle;
   }
   store.upsertMediaJobExecutionHandle({
     mediaJobId: handle.mediaJobId,
@@ -477,9 +492,17 @@ function settleExecutionHandle(
     workUnitId: null,
     attemptId: null,
   }, now());
+  return handle;
 }
 
-function mediaExecutionRequest(job: MediaJob, provider: ProviderPreset): MediaExecutionRequest {
+function mediaExecutionRequest(
+  store: ProviderExecutionStore,
+  job: MediaJob,
+  provider: ProviderPreset,
+): MediaExecutionRequest {
+  const videoImageInputs = job.operation === "video_generate"
+    ? materializeMediaJobVideoImageInputs(store, job)
+    : [];
   return {
     jobId: job.id,
     provider: {
@@ -496,6 +519,7 @@ function mediaExecutionRequest(job: MediaJob, provider: ProviderPreset): MediaEx
     operation: job.operation,
     prompt: job.prompt,
     input: job.input,
+    ...(videoImageInputs.length ? { videoImageInputs } : {}),
     requestedAt: now(),
   };
 }

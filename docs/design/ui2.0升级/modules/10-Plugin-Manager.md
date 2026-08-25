@@ -6,6 +6,10 @@ Plugin Manager 是独立产品页面，不属于 Settings。它管理现有 plug
 disable、runtime preview、uninstall 和 bundled Computer Use Driver 状态，不改变 daemon plugin authority、
 签名、完整性、安全检查或 provider 状态机。
 
+Chrome 是常显的内置插件。默认层只展示是否启用、是否需要安装扩展、是否等待 Chrome 和是否可用；
+扩展 ID、配对传输、凭据摘要和逻辑 MCP 信息进入技术详情。Chrome 安装始终是浏览器拥有的显式用户操作，
+Plugin Manager 不静默安装或启用扩展。
+
 ## Page And List
 
 - 页面使用紧凑 Header、搜索/筛选和内部滚动表格，不显示统计卡或长用途说明。

@@ -404,13 +404,19 @@ interface ChannelWorkflowStepOutputPacket {
 }
 ```
 
-This output packet is the dependency input for later steps.
+This output packet is the dependency input for later steps, but it is not a generic
+completion receipt. Execution and verification steps require verified `ExecutionAction`
+refs for their immutable operation subset. Synthesis/review steps may use a sealed,
+source-bound output packet. The shared delegated finalizer chooses the evidence class
+from the immutable step requirement; a terminal Run or a model-authored `status` field
+cannot choose it.
 
 ### 2.3 Failure And Block Policy
 
-Current state:
+Legacy baseline:
 
-- Terminal linked runs complete/fail steps.
+- Terminal linked runs once completed/failed steps directly. The Continuity v2 completion
+  path removes this shortcut: terminal Run state now only wakes delegated reconciliation.
 - Orphaned claimed/running steps become blocked.
 - Retry can restart blocked steps.
 
@@ -449,6 +455,12 @@ Recommended defaults for `autoplan-lite`:
 
 Policy must be durable in workflow step metadata so recovery after daemon restart makes
 the same decision.
+
+Policy applies only after the shared finalizer produces a typed delegated outcome. It
+cannot turn `Run.succeeded`, assistant `ready` text, or an approval decision into step
+success. Workflow success is a separate Completion Evaluation over the immutable required
+participant manifest, graph branches, operation evidence, dependencies, fan-in policy,
+and termination policy.
 
 ### 2.4 Post-Step Gates
 
@@ -716,7 +728,9 @@ Backend:
 2. Generate context packet after the workflow-owned run is durable, because current
    artifacts are run-owned.
 3. Store context packet as JSON artifact and link id in workflow step metadata.
-4. Generate output packet when linked run reaches terminal status.
+4. When a linked Run reaches terminal status, invoke the shared delegated finalizer. It
+   generates an output packet only for the evidence class declared by the immutable step
+   requirement and commits the packet/outcome/step transition atomically.
 5. Feed dependency output packets into downstream context packet.
 
 Contracts:
@@ -891,6 +905,11 @@ Orchestrator hardening is successful when:
 - failed steps block or fail according to durable policy,
 - post-step gates can pause the workflow before the next step starts,
 - restart recovery makes the same policy decisions.
+- execution-backed steps never succeed from `ready` prose or Run terminal status alone,
+- workflow fan-in succeeds only after all immutable required participants and their
+  outcome-specific evidence verify,
+- daemon restart and client reconnect rebuild the same result without rerunning an
+  effect-unknown side effect or creating a second completion authority.
 
 RunnerRegistry hardening is successful when:
 

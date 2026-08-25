@@ -3,7 +3,7 @@ import { DEFAULT_TOOLS, SUPPORTED_PROVIDER_APIS } from "./constants.js";
 
 export const PI_RUNNER_EXTENSION_ID = "runner:pi";
 
-export function getPiRunnerExtension(): RunnerExtensionMetadata {
+export function getPiRunnerExtension(): RunnerExtensionMetadata<"bash"> {
   return {
     manifest: {
       id: PI_RUNNER_EXTENSION_ID,
@@ -41,5 +41,9 @@ export function getPiRunnerExtension(): RunnerExtensionMetadata {
       "run_end",
       "run_error",
     ],
+    resumeCapabilities: {
+      nativeResume: false,
+      hostApprovalContinuation: ["bash"],
+    },
   };
 }

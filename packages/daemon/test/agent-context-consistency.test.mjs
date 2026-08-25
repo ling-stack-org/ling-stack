@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
 import { createSqliteRunStore } from "../../core/dist/index.js";
+import { createRequiredParticipantManifestV1, workflowGraphFingerprintV1 } from "../../contracts/dist/index.js";
 import { reviewWorkflowAgentContextStamp } from "../dist/features/channels/agent-context-consistency.js";
 import { reviewWorkflowFanInContext } from "../dist/features/channels/workflow-fanin.js";
 import {
@@ -22,6 +23,7 @@ import {
 } from "../dist/features/channels/workflow-step-packets.js";
 import { prepareWorkflowStepStart } from "../dist/features/channels/workflows.js";
 import { finalizeOrchestratedWorkflowStepRun } from "../dist/features/channels/orchestrator.js";
+import { materializeWorkflowDelegatedStepRequirements } from "../dist/features/channels/workflow-step-requirement.js";
 
 const now = "2026-08-10T01:00:00.000Z";
 
@@ -134,19 +136,19 @@ test("workflow agents share one projection while private role memory stays owner
     const corruptPacket = JSON.parse(await readFile(outputPath, "utf8"));
     corruptPacket.agentContext = { schemaVersion: 1 };
     await writeFile(outputPath, `${JSON.stringify(corruptPacket)}\n`, "utf8");
-    assert.equal(readWorkflowStepOutputPacketArtifact({
+    assert.deepEqual(readWorkflowStepOutputPacketArtifact({
       store: fixture.store,
       artifactId: snapshotOnlyOutput.outputArtifact.id,
-    }), undefined);
+    }), snapshotOnlyOutput.packet);
     corruptPacket.agentContext = {
       ...designer.runRequest.contextPack.agentContext,
       roleEvidenceRefs: [{ type: "unknown_ref_type", id: fixture.designerMemory.id }],
     };
     await writeFile(outputPath, `${JSON.stringify(corruptPacket)}\n`, "utf8");
-    assert.equal(readWorkflowStepOutputPacketArtifact({
+    assert.deepEqual(readWorkflowStepOutputPacketArtifact({
       store: fixture.store,
       artifactId: snapshotOnlyOutput.outputArtifact.id,
-    }), undefined);
+    }), snapshotOnlyOutput.packet);
 
     const oversizedRoleEvidence = buildWorkflowStepContextPack({
       store: fixture.store,
@@ -438,6 +440,80 @@ test("fan-in rebases metadata-only stamps and rejects private leaks or relevant 
   }
 });
 
+test("agent result Items from the consumed source Turn do not invalidate its input context", async () => {
+  const fixture = await createFixture();
+  try {
+    const prepared = prepareStep(fixture, fixture.engineerStep.id);
+    const consumed = prepared.runRequest.contextPack.agentContext;
+    assert.ok(consumed);
+
+    fixture.store.appendConversationItem({
+      channelId: fixture.channel.id,
+      threadId: fixture.sourceItem.threadId,
+      turnId: fixture.sourceItem.turnId,
+      kind: "assistant_message",
+      status: "committed",
+      actorType: "ling_agent",
+      actorId: "ling_agent",
+      visibility: "channel",
+      payload: {
+        body: "The source Turn produced a progress result.",
+        format: "markdown",
+        streaming: false,
+        deliveryStatus: "ready",
+      },
+    }, "2026-08-10T01:00:30.000Z");
+
+    const review = reviewWorkflowAgentContextStamp({
+      store: fixture.store,
+      dependencyWorkflowStepId: fixture.engineerStep.id,
+      consumed,
+    }).review;
+    assert.equal(review.status, "accepted_current");
+  } finally {
+    fixture.store.close();
+    await rm(fixture.cwd, { recursive: true, force: true });
+  }
+});
+
+test("workflow step input excludes pre-existing coordinator Items from its freshness stamp", async () => {
+  const fixture = await createFixture();
+  try {
+    const coordinatorItem = fixture.store.appendConversationItem({
+      channelId: fixture.channel.id,
+      threadId: fixture.sourceItem.threadId,
+      turnId: fixture.sourceItem.turnId,
+      kind: "assistant_message",
+      status: "committed",
+      actorType: "ling_agent",
+      actorId: "ling_agent",
+      visibility: "channel",
+      payload: {
+        body: "Confirmed. Starting the workflow now.",
+        format: "markdown",
+        streaming: false,
+        deliveryStatus: "ready",
+      },
+    }, "2026-08-10T01:00:20.000Z");
+
+    const prepared = prepareStep(fixture, fixture.engineerStep.id);
+    const consumed = prepared.runRequest.contextPack.agentContext;
+    assert.ok(consumed);
+    assert.equal(
+      consumed.contextProjection.sourceRefs.some((ref) => ref.type === "conversation_item" && ref.id === coordinatorItem.id),
+      false,
+    );
+    assert.equal(reviewWorkflowAgentContextStamp({
+      store: fixture.store,
+      dependencyWorkflowStepId: fixture.engineerStep.id,
+      consumed,
+    }).review.status, "accepted_current");
+  } finally {
+    fixture.store.close();
+    await rm(fixture.cwd, { recursive: true, force: true });
+  }
+});
+
 test("sequential dependencies reject stale agent context before entering a downstream prompt", async () => {
   const fixture = await createFixture();
   try {
@@ -575,6 +651,116 @@ test("leaf workflow results fail closed when relevant context changes before com
     assert.equal(fixture.store.getChannelWorkflow(fixture.workflow.id).status, "blocked");
     assert.equal(finalized.resultSummary, undefined);
     assert.equal(finalized.metadata.resultContextReview.status, "rejected_stale");
+    assert.equal(finalized.metadata.delegatedOutcome, undefined);
+  } finally {
+    fixture.store.close();
+    await rm(fixture.cwd, { recursive: true, force: true });
+  }
+});
+
+test("manifest-backed stale context commits a typed delegated blocker", async () => {
+  const fixture = await createFixture();
+  try {
+    const participantManifest = createRequiredParticipantManifestV1([{
+      participantId: "teammate_builtin_engineer",
+      role: "engineer",
+      requirement: "required",
+      expectedOutcome: "execution",
+      requiredOperationIds: [],
+      requestedBy: "explicit_role",
+    }, {
+      participantId: "teammate_builtin_designer",
+      role: "designer",
+      requirement: "optional",
+      expectedOutcome: "execution",
+      requiredOperationIds: [],
+      requestedBy: "selector_policy",
+    }]);
+    const graph = {
+      schemaVersion: 1,
+      id: "graph_manifest_context_blocker",
+      entryNodeId: "engineer",
+      nodes: [
+        { id: "engineer", kind: "step", name: "Engineer", prompt: "Work", teammateId: "teammate_builtin_engineer" },
+        { id: "designer", kind: "step", name: "Designer", prompt: "Review", teammateId: "teammate_builtin_designer" },
+      ],
+      edges: [],
+    };
+    const decision = fixture.store.createChannelIntentDecision({
+      channelId: fixture.channel.id,
+      sourceItemId: fixture.sourceItem.id,
+      contextProjection: projectionFor(fixture.sourceItem, fixture.store.getEffectiveTurnContextAssignment(fixture.sourceItem.turnId)),
+      action: "workflow_proposal",
+      selectedTeammateIds: ["teammate_builtin_engineer", "teammate_builtin_designer"],
+      participantManifest,
+      reason: "Manifest context blocker",
+      status: "accepted",
+      createdBy: "deterministic",
+    }, now);
+    fixture.store.updateChannelWorkflow(fixture.workflow.id, {
+      metadata: {
+        ...fixture.workflow.metadata,
+        sourceIntentDecisionId: decision.id,
+        requiredParticipantManifest: participantManifest,
+        workflowGraph: graph,
+        workflowGraphFingerprint: workflowGraphFingerprintV1(graph),
+      },
+    }, now);
+    fixture.store.updateChannelWorkflowStep(fixture.designerStep.id, {
+      metadata: { ...fixture.designerStep.metadata, graphId: graph.id, graphNodeId: "designer" },
+    }, now);
+    let step = fixture.store.updateChannelWorkflowStep(fixture.engineerStep.id, {
+      metadata: { ...fixture.engineerStep.metadata, graphId: graph.id, graphNodeId: "engineer" },
+    }, now);
+    [step] = materializeWorkflowDelegatedStepRequirements({
+      store: fixture.store,
+      workflow: fixture.store.getChannelWorkflow(fixture.workflow.id),
+      manifest: participantManifest,
+      now,
+    });
+    const prepared = prepareStep(fixture, step.id);
+    const run = fixture.store.createRun({
+      id: "run_manifest_stale_context",
+      cwd: fixture.cwd,
+      taskId: prepared.task.id,
+      channelId: fixture.channel.id,
+      teammateId: prepared.runRequest.teammateId,
+      workflowStepId: step.id,
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: prepared.runRequest.task,
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: prepared.runRequest,
+      createdAt: "2026-08-10T03:00:00.000Z",
+    });
+    fixture.store.updateChannelWorkflowStep(step.id, { taskId: prepared.task.id, runId: run.id }, "2026-08-10T03:00:01.000Z");
+    fixture.store.markRunStarted(run.id, "2026-08-10T03:00:02.000Z");
+    fixture.store.markRunSucceeded(run.id, "2026-08-10T03:00:03.000Z");
+    fixture.store.appendConversationItem({
+      channelId: fixture.channel.id,
+      threadId: fixture.sourceItem.threadId,
+      turnId: fixture.sourceItem.turnId,
+      kind: "user_message",
+      status: "committed",
+      actorType: "local_user",
+      visibility: "channel",
+      payload: { ...fixture.sourceItem.payload, body: "Corrected after manifest-backed work." },
+      supersedesItemId: fixture.sourceItem.id,
+      idempotencyKey: "manifest-context-correction",
+    }, "2026-08-10T03:00:04.000Z");
+
+    const finalized = finalizeOrchestratedWorkflowStepRun(
+      fixture.store,
+      step.id,
+      prepared.task.id,
+      fixture.store.getRun(run.id),
+      "2026-08-10T03:00:05.000Z",
+    );
+    assert.equal(finalized.status, "blocked");
+    assert.equal(finalized.metadata.delegatedOutcome.kind, "blocked");
+    assert.equal(finalized.metadata.delegatedOutcome.code, "agent_context_stale");
+    assert.equal(finalized.metadata.resultContextReview.status, "rejected_stale");
+    assert.ok(finalized.metadata.delegatedOutcomeBasisFingerprint);
   } finally {
     fixture.store.close();
     await rm(fixture.cwd, { recursive: true, force: true });
@@ -658,6 +844,25 @@ function createPrivateMemory(store, ownerId, label) {
     verifyBeforeUse: false,
     createdBy: "test",
   }, now);
+}
+
+function projectionFor(item, assignment) {
+  return {
+    projectionVersion: `projection:${item.id}:${assignment.revision}`,
+    sourceStateFingerprint: `source-state:${item.id}:${assignment.revision}`,
+    threadId: item.threadId,
+    turnId: item.turnId,
+    segmentId: assignment.segmentId,
+    throughItemSequence: item.sequence,
+    summaryIds: [],
+    sourceRefs: [
+      { type: "thread", id: item.threadId },
+      { type: "turn", id: item.turnId },
+      { type: "conversation_item", id: item.id },
+    ],
+    policyVersion: "test-projector-v1",
+    visibilityFingerprint: "channel_shared",
+  };
 }
 
 function prepareStep(fixture, workflowStepId) {

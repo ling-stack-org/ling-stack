@@ -2,7 +2,7 @@
 
 Status: canonical documentation index
 Owner: repository maintainers
-Last verified: 2026-08-03
+Last verified: 2026-08-22
 Document type: governance index
 Code and test anchors: each linked contract owns its anchors
 
@@ -35,6 +35,8 @@ CI/Release artifacts instead of the default documentation tree.
 - [Conversation Shared Capabilities](conversation-shared-capabilities.md)
 - [Run Interruption And Continuation](run-interruption-continuation.md)
 - [Channel Context Processing Layer](channel-context-processing-layer.md)
+- [Channel Conversation Continuity v2](channel-conversation-continuity-v2.md)
+- [Channel Execution Completion Implementation Plan](channel-execution-completion-implementation-plan.md)
 - [Channel Team Operating System](channel-team-operating-system.md)
 - [Ling Agent Session](ling-agent-session.md)
 - [Ling Agent Terminal Report Protocol](ling-agent-terminal-report-protocol.md)
@@ -80,6 +82,7 @@ part of the current product acceptance scope.
 - [Media Production Experience](media-production-experience-refinement.md)
 - [Media External Workflows](media-production-external-workflows.md)
 - [Plugin Manager](plugin-manager.md)
+- [Office Documents Native Plugin](office-documents-native-plugin.md)
 - [Automations](automations.md)
 - [External Work Orchestration](external-work-orchestration.md)
 

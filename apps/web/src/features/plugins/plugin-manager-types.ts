@@ -47,6 +47,8 @@ export interface PluginPrimaryStateView {
 
 export type PluginActionId =
   | "apply"
+  | "connect-chrome"
+  | "revoke-chrome"
   | "guide"
   | "install"
   | "check"
@@ -92,6 +94,7 @@ export interface PluginRowView {
   readonly menuActions: readonly PluginActionView[];
   readonly busyAction?: PluginBusyAction;
   readonly actionFailure?: PluginActionFailure;
+  readonly icon?: "chrome" | "office";
 }
 
 export interface PluginDetailFieldView {
@@ -148,6 +151,8 @@ export interface PluginActionHandlers {
   readonly onRuntimePreview: (pluginId: string) => void;
   readonly onEnable: (pluginId: string) => void;
   readonly onDisable: (pluginId: string) => void;
+  readonly onOpenChromeConnect: (pluginId: string) => void;
+  readonly onRevokeChrome: (pluginId: string) => void;
 }
 
 export interface PluginManagerPageProps {
@@ -168,6 +173,8 @@ export interface PluginManagerPageProps {
   readonly onRuntimePreview: (pluginId: string, request: PluginActionRequest) => Promise<void>;
   readonly onEnable: (pluginId: string, request: PluginActionRequest) => Promise<void>;
   readonly onDisable: (pluginId: string, request: PluginActionRequest) => Promise<void>;
+  readonly onStartChromePairing: (pluginId: string, request: PluginActionRequest) => Promise<import("../../types.js").ChromeBrowserPairingStartResponse | undefined>;
+  readonly onRevokeChrome: (pluginId: string, request: PluginActionRequest) => Promise<void>;
   readonly onClearActionErrors: (filter: PluginActionErrorFilter) => void;
   readonly onOpenMcpSettings: () => void;
 }

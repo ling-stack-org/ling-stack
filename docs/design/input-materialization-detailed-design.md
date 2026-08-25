@@ -9,10 +9,10 @@ Current implementation after M5a:
 
 - `LingAgentTurnEnvelope` carries attachment/link/file-ref materialization status.
 - Text attachments under the inline budget can provide bounded preview text.
-- Public link body, PDF embedded text, and DOCX raw text extraction exist.
-- Text, PDF, DOCX, and image attachments are now enqueued for materialization for every
+- Public link body, PDF embedded text, and bounded DOCX/XLSX/PPTX text extraction exist.
+- Text, PDF, supported OOXML, and image attachments are now enqueued for materialization for every
   current-turn attachment before Ling answers.
-- PDF/DOCX extraction is live in the daemon path. Image extraction is wired through an
+- PDF/OOXML extraction is live in the daemon path. Image extraction is wired through an
   injectable `imageVisionSummarizer`; without a configured provider/worker it falls back
   naturally without writing a durable "no summarizer" cache entry.
 - File create/edit requests that depend on unavailable attachment content still create a
@@ -183,7 +183,7 @@ Implemented delta:
 
 M5a completed delta:
 
-- `messages.ts` enqueues eligible text/PDF/DOCX/image attachment materialization for
+- `messages.ts` enqueues eligible text/PDF/OOXML/image attachment materialization for
   every current-turn attachment, not only turns whose text explicitly asks to read the
   file.
 - `channel-intent-selector.ts` no longer uses "I can inspect this first" copy for
@@ -202,7 +202,7 @@ M5b-A direct-message attachment slice:
 
 - materialize the current direct-message attachments before the private reply prompt is
   built;
-- support text, PDF embedded text, and DOCX raw text with the same bounded extractor
+- support text, PDF embedded text, and DOCX/XLSX/PPTX text with the same bounded extractor
   budgets used by channel attachments;
 - render only bounded extracted content into the private prompt;
 - keep image vision and durable private materialization cache out of this slice;
@@ -254,7 +254,7 @@ Copy mapping:
 | supported attachment `not_loaded` | no default reply; run bounded materialization and answer from the result | queued extractor id, budget, elapsed time |
 | `image unsupported` | `I can't read this image format yet. Upload a supported image or paste the key detail.` | image extractor status, file size, failure code |
 | `pdf unsupported/blocked` | `I couldn't read report.pdf. Upload a readable PDF or paste the section to use.` | PDF extractor availability, parser error, truncation |
-| `office unsupported/blocked` | `I couldn't read the document. Upload a supported DOCX/PDF or paste the part that matters.` | Office extractor status, format, parser error |
+| `office unsupported/blocked` | `I couldn't read the document. Upload a supported DOCX/XLSX/PPTX/PDF or paste the part that matters.` | Office extractor status, format, parser error |
 | `private/local link blocked` | `I will not open local/private links automatically. Paste the content or ask me to inspect it as a controlled task.` | URL classification, network policy decision, redirect chain |
 | `workspace file outside root` | `That path is outside this workspace. Use a workspace file, or ask me to inspect it as a controlled task.` | normalized path, root relation, policy reason |
 | `content truncated` | no default warning unless it affects the answer | original size, extracted size, prompt preview length |
@@ -309,10 +309,9 @@ Do not store:
 ## Modular V1 Implementation Plan
 
 Status: M1 cache and registry skeleton landed. M2 text attachment migration landed for
-small text attachments. M3 public link body extraction landed. M4 PDF/DOCX extraction
-landed but still uses explicit request triggers. The next design-correct slice is
-automatic attachment materialization for every current-turn attachment, including image
-vision/OCR.
+small text attachments. M3 public link body extraction landed. M4 PDF/OOXML extraction
+and M5 automatic current-turn materialization are live. Image vision uses the configured
+provider path; local OCR remains a future worker boundary.
 
 The complete v1 must be modular. Do not grow `channel-intent-selector.ts`,
 `ling-agent-turn-envelope.ts`, or `messages.ts` into extractor hubs.
@@ -554,9 +553,9 @@ decision/evidence surfaces.
 4. **M4 PDF and Office extractors**
    - status: landed for daemon/core materialization;
    - `pdf_text_v1` uses pinned `pdf-parse@1.1.1` for embedded PDF text only;
-   - `office_text_v1` uses pinned `mammoth@1.12.0` for `.docx` raw text only;
-   - `.pptx` and `.xlsx` produce `unsupported` rows in this first slice;
-   - M5a now enqueues PDF/DOCX extraction for every current-turn attachment and lets Ling
+   - `office_text_v1` uses pinned `officeparser@7.8.0` for bounded `.docx`, `.xlsx`, and
+     `.pptx` text extraction;
+   - M5a now enqueues PDF/OOXML extraction for every current-turn attachment and lets Ling
      answer from the cache when ready;
    - cache/prompt text stays bounded by read-byte and prompt-char budgets;
    - no layout reconstruction, OCR, embedded image extraction, or table semantics in M4.
@@ -564,10 +563,10 @@ decision/evidence surfaces.
 5. **M5 automatic attachment understanding**
    - status: M5a landed for automatic current-turn attachment enqueue; M5b landed for
      provider-backed image vision summaries through the same provider preset pipeline;
-     M5b-A adds in-request direct-message text/PDF/DOCX attachment materialization;
-   - text/PDF/DOCX/image attachment materialization is automatic for current-turn
+     M5b-A adds in-request direct-message text/PDF/OOXML attachment materialization;
+   - text/PDF/OOXML/image attachment materialization is automatic for current-turn
      attachments;
-   - teammate direct replies materialize current-turn text/PDF/DOCX private attachments
+   - teammate direct replies materialize current-turn text/PDF/OOXML private attachments
      before prompt construction, without adding visible read/unread UI;
    - `image_vision_summary_v1` calls the injected `imageVisionSummarizer` when tests or
      future workers provide one; otherwise the daemon creates a provider-backed summarizer
@@ -603,7 +602,7 @@ Candidate approach:
 | --- | --- | --- |
 | Link HTML | built-in `fetch` + lightweight internal HTML text stripping first | add Readability/JSDOM only if internal stripper is not enough |
 | PDF | `pdf-parse@1.1.1` embedded text extraction | chosen over newer native-canvas dependency path for default install stability |
-| DOCX | `mammoth@1.12.0` raw text extraction | `.pptx`/`.xlsx` are explicit `unsupported` until separate extractors exist |
+| Office OOXML | `officeparser@7.8.0` bounded text extraction | `.docx`, `.xlsx`, and `.pptx`; private WPS and macro-enabled formats stay unsupported |
 | Image | provider vision summary first | local OCR later if product really needs offline OCR |
 
 ### Acceptance Gates
@@ -761,8 +760,9 @@ Target behavior:
 
 ### Office Attachments
 
-Office v1 currently covers `.docx` raw text through `office_text_v1`. `.pptx` and `.xlsx`
-remain unsupported until dedicated extractors exist.
+Office v1 covers bounded `.docx`, `.xlsx`, and `.pptx` text through `office_text_v1`.
+Extraction is intentionally textual: it does not reconstruct page/slide layout or dump an
+unbounded workbook into prompt context.
 
 Rules:
 
@@ -890,7 +890,7 @@ Examples:
 
 - `The screenshot shows the primary button overlapping the right drawer. I would adjust the drawer width and button wrapping first.`
 - `report.pdf says the onboarding drop-off is concentrated in the provider setup step. The relevant section is truncated, so I am using the extracted summary.`
-- `I couldn't read deck.pptx yet. Upload a PDF/DOCX export or paste the slide text you want me to use.`
+- `I couldn't read protected-deck.pptx. Upload an unencrypted PPTX/PDF export or paste the slide text you want me to use.`
 - `That link points to a local/private address. I will not open it automatically; paste the content or ask me to inspect it as a controlled task.`
 - `I can inspect README.md first, then apply the edit.`
 
@@ -930,15 +930,15 @@ Do not show:
 5. **Automatic attachment understanding**
    - status: M5a/M5b landed for automatic current-turn enqueue and provider-backed image
      vision summaries;
-   - trigger materialization for every current-turn text/PDF/DOCX/image attachment;
+   - trigger materialization for every current-turn text/PDF/OOXML/image attachment;
    - wire `image_vision_summary_v1` through an injectable `imageVisionSummarizer`, with a
      default provider-backed summarizer when no test/worker summarizer is injected;
-   - remove explicit-request-only triggers for supported PDF/DOCX/image attachment
+   - remove explicit-request-only triggers for supported PDF/OOXML/image attachment
      understanding;
    - future worker-backed OCR can replace or augment provider vision behind the same
      summarizer contract;
-   - keep `.pptx`/`.xlsx` unsupported until dedicated modules can preserve acceptable
-     semantics.
+   - keep OOXML extraction bounded and textual; richer workbook or presentation semantics
+     belong to the Office Documents plugin tools rather than prompt materialization.
 
 6. **Evidence and Web polish**
    - Keep default transcript focused on user input and Ling outcome.

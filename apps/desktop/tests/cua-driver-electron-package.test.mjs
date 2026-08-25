@@ -26,11 +26,14 @@ const HOST_AUTHORITY = Object.freeze({
   runtimeTrustPolicySha256: "b".repeat(64),
 });
 
-test("Electron Builder config keeps external-only packages unchanged by default", async () => {
+test("Electron Builder config keeps external-only provider authority unchanged by default", async () => {
   const config = await inspectConfig({
     LING_CUA_DRIVER_PACKAGE_PROVIDER: "0",
   });
-  assert.equal(config.extraResources.length, 2);
+  assert.equal(config.extraResources.length, 8);
+  assert.equal(config.extraResources.some((resource) => resource.to === "providers/cua-driver"), false);
+  assert.equal(config.extraResources.some((resource) => resource.to === "browser-extension/ling-for-chrome.zip"), true);
+  assert.equal(config.extraResources.some((resource) => resource.to === "office-driver"), true);
   assert.equal(config.macSign, null);
   assert.equal(config.winSign, null);
   assert.equal(config.asar, true);

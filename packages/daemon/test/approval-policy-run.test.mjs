@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
+import { deflateSync } from "node:zlib";
 import { DEFAULT_WORKSPACE_ID, createSqliteRunStore } from "../../core/dist/index.js";
 import { createDaemonServer } from "../dist/index.js";
+import { auditIgnoredRunnerCompletion } from "../dist/features/runs/stale-completion.js";
 import { ensureGitRepoForChannelPost } from "./git-test-helpers.mjs";
 
 test("health includes the configured default workspace cwd", async () => {
@@ -399,6 +402,117 @@ test("unified exec bash=ask waits for approval before running", async () => {
     assert.deepEqual(snapshots.snapshots.map((snapshot) => snapshot.status), ["starting", "exited"]);
     const detail = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}/shell-snapshots/${encodeURIComponent(snapshots.snapshots[1].id)}?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(detail.snapshot.approvalId, approvalId);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("approval wait does not consume runtime idle or hard timeout budgets", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-approval-timeout-wait-"));
+  const runner = new ApprovalProbeRunner({
+    toolCallId: "tool_approval_timeout_wait",
+    toolName: "bash",
+    input: { command: "printf 'approval-wait-ok\\n'" },
+  });
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory(workspaceCwd) {
+      const store = createSqliteRunStore(workspaceCwd);
+      const createWorkUnit = store.createWorkUnit.bind(store);
+      store.createWorkUnit = (input) => createWorkUnit({
+        ...input,
+        timeoutPolicy: {
+          heartbeatIntervalMs: 10,
+          heartbeatTimeoutMs: 500,
+          idleTimeoutMs: 40,
+          hardTimeoutMs: 80,
+          cancelGraceMs: 20,
+        },
+      });
+      stores.set(workspaceCwd, store);
+      return store;
+    },
+  });
+  try {
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "ask" } });
+    const response = await postRunStream(daemon.url, runBody(cwd, "task_approval_timeout_wait"));
+    const sse = createSseReader(response);
+    const ready = await sse.nextEvent();
+    assert.equal(ready.event, "ready");
+    const runId = ready.data.runId;
+    const requested = await waitForSseEvent(sse, "approval_requested");
+    const approvalId = requested.data.data.approvalId;
+
+    await new Promise((resolveWait) => setTimeout(resolveWait, 150));
+    const waiting = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(waiting.status, "waiting_for_approval");
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const waitingWorkUnit = store.getWorkUnit(waiting.workUnitId);
+    assert.equal(waitingWorkUnit?.status, "waiting_for_approval");
+    const supervisor = await getJson(`${daemon.url}/runtime/supervisor?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(supervisor.stuck.some((workUnit) => workUnit.id === waiting.workUnitId), false);
+
+    await postJson(`${daemon.url}/approvals/${encodeURIComponent(approvalId)}/approve?cwd=${encodeURIComponent(cwd)}`, {
+      reason: "approval wait timeout regression",
+    });
+    await sse.collectRemaining();
+    const completed = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(completed.status, "succeeded");
+    assert.equal(runner.decisions.length, 1);
+    assert.equal(runner.decisions[0].approved, true);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("approval resume restores the hard timeout budget after an externally persisted decision", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-approval-timeout-resume-"));
+  const runner = new ApprovalProbeRunner({
+    toolCallId: "tool_approval_timeout_resume",
+    toolName: "bash",
+    input: { command: "printf 'approval-resume-timeout\\n'" },
+  }, false, 140);
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory(workspaceCwd) {
+      const store = createSqliteRunStore(workspaceCwd);
+      const createWorkUnit = store.createWorkUnit.bind(store);
+      store.createWorkUnit = (input) => createWorkUnit({
+        ...input,
+        timeoutPolicy: {
+          heartbeatIntervalMs: 10,
+          heartbeatTimeoutMs: 500,
+          idleTimeoutMs: 500,
+          hardTimeoutMs: 60,
+          cancelGraceMs: 20,
+        },
+      });
+      stores.set(workspaceCwd, store);
+      return store;
+    },
+  });
+  try {
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "ask" } });
+    const response = await postRunStream(daemon.url, runBody(cwd, "task_approval_timeout_resume"));
+    const sse = createSseReader(response);
+    const ready = await sse.nextEvent();
+    assert.equal(ready.event, "ready");
+    const runId = ready.data.runId;
+    const requested = await waitForSseEvent(sse, "approval_requested");
+    const approvalId = requested.data.data.approvalId;
+
+    await postJson(`${daemon.url}/approvals/${encodeURIComponent(approvalId)}/approve?cwd=${encodeURIComponent(cwd)}`, {
+      reason: "resume hard-timeout regression",
+    });
+    await sse.collectRemaining();
+    const completed = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(completed.status, "failed");
+    assert.match(completed.errorMessage ?? "", /hard_timeout/u);
+    assert.equal(runner.decisions.length, 1);
+    assert.equal(runner.decisions[0].approved, true);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -798,8 +912,287 @@ test("bash=ask pauses the run until the approval is resolved", async () => {
     assert.equal(secondRun.threadId, waitingRun.threadId);
     const runsForThread = await getJson(`${daemon.url}/runs?cwd=${encodeURIComponent(cwd)}&threadId=${encodeURIComponent(waitingRun.threadId)}`);
     assert.deepEqual(runsForThread.runs.map((run) => run.id), [second.runId, runId]);
+    const actionsForThread = await getJson(`${daemon.url}/execution-actions?cwd=${encodeURIComponent(cwd)}&threadId=${encodeURIComponent(waitingRun.threadId)}`);
+    assert.equal(actionsForThread.actions.length, 2);
+    assert.deepEqual(new Set(actionsForThread.actions.map((action) => action.runId)), new Set([runId, second.runId]));
+    assert.equal(actionsForThread.actions.every((action) => action.toolCallId === "tool_bash_ask"), true);
   } finally {
     await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("daemon shutdown preserves a pending approval instead of recording user cancellation", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-approval-shutdown-"));
+  const runner = new ApprovalProbeRunner({
+    toolCallId: "tool_bash_shutdown",
+    toolName: "bash",
+    input: { command: "echo resume-after-restart" },
+  });
+  const daemon = await startDaemonForTest(runner);
+  let stopped = false;
+  try {
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "ask" } });
+    const response = await postRunStream(daemon.url, runBody(cwd, "task_bash_shutdown"));
+    const sse = createSseReader(response);
+    const ready = await sse.nextEvent();
+    assert.equal(ready.event, "ready");
+    const runId = ready.data.runId;
+
+    const requested = await waitForSseEvent(sse, "approval_requested");
+    const approvalId = requested.data.data.approvalId;
+
+    await daemon.close();
+    stopped = true;
+    await sse.collectRemaining().catch(() => {});
+
+    const store = createSqliteRunStore(cwd);
+    try {
+      const run = store.getRun(runId);
+      const approval = store.getApprovalRequest(approvalId);
+      const checkpoint = store.getApprovalCheckpointForApproval(approvalId);
+      const events = store.listEvents(runId, { limit: 1_000 });
+
+      assert.equal(run?.status, "waiting_for_approval");
+      assert.equal(approval?.status, "pending");
+      assert.equal(approval?.resolvedBy, undefined);
+      assert.equal(checkpoint?.status, "pending");
+      assert.equal(checkpoint?.revision, 2);
+      assert.equal(checkpoint?.resumeBasis?.approvalId, approvalId);
+      assert.equal(checkpoint?.resumeBasis?.runId, runId);
+      assert.equal(checkpoint?.resumeBasis?.toolCallId, "tool_bash_shutdown");
+      assert.equal(checkpoint?.resumeBasis?.sideEffectFingerprint.length, 64);
+      assert.equal(checkpoint?.resumeBasis?.fingerprint.length, 64);
+      const workUnit = run?.workUnitId ? store.getWorkUnit(run.workUnitId) : undefined;
+      const attempt = workUnit?.activeAttemptId ? store.getWorkUnitAttempt(workUnit.activeAttemptId) : undefined;
+      assert.equal(workUnit?.status, "waiting_for_approval");
+      assert.ok(attempt);
+      assert.equal(attempt?.status, "lost");
+      assert.equal(attempt?.errorCode, "runtime_suspend");
+      assert.equal(store.listResourceLeases({ ownerType: "run", ownerId: runId, status: "active" }).length, 0);
+      assert.equal(store.listRuntimeSemaphoreSlots({ ownerId: attempt.id, status: "active" }).length, 0);
+      assert.deepEqual(
+        store.listControlPlaneEvents({ workspaceId: "workspace_default", limit: 1_000 })
+          .filter((event) => event.entityId === runId || event.entityId === workUnit?.id || event.entityId === approvalId)
+          .filter((event) => event.action.includes("approval_resume_suspended"))
+          .map((event) => event.domain),
+        ["runs", "work_units"],
+      );
+      assert.equal(
+        store.listControlPlaneEvents({ workspaceId: "workspace_default", limit: 1_000 })
+          .some((event) => event.domain === "approvals"
+            && event.entityId === approvalId
+            && event.action === "approval.resume_suspended"),
+        true,
+      );
+      assert.equal(events.some((event) => event.type === "run_cancelled"), false);
+      assert.equal(events.some((event) => event.type === "approval_cancelled"), false);
+    } finally {
+      store.close();
+    }
+  } finally {
+    if (!stopped) {
+      await daemon.close();
+    }
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("a real orchestrator hard timeout fails the Run instead of recording cancellation", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-hard-timeout-"));
+  const runner = new AbortAwareBlockingRunner();
+  const stores = new Map();
+  const storeFactory = (workspaceCwd) => {
+    const store = createSqliteRunStore(workspaceCwd);
+    const createWorkUnit = store.createWorkUnit.bind(store);
+    store.createWorkUnit = (input) => createWorkUnit({
+      ...input,
+      timeoutPolicy: {
+        heartbeatIntervalMs: 10,
+        heartbeatTimeoutMs: 50,
+        idleTimeoutMs: 5_000,
+        hardTimeoutMs: 40,
+        cancelGraceMs: 20,
+      },
+    });
+    stores.set(workspaceCwd, store);
+    return store;
+  };
+  const daemon = await startDaemonForTest(runner, { storeFactory }, { defaultWorkspaceCwd: cwd });
+  try {
+    const { runId } = await postRunAndCollectEvents(daemon.url, runBody(cwd, "task_hard_timeout"));
+    const run = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(run.status, "failed");
+    assert.equal(run.errorMessage, "hard_timeout");
+
+    const store = stores.get(cwd);
+    const workUnit = store.getWorkUnit(run.workUnitId);
+    const attempt = store.getWorkUnitAttempt(workUnit.activeAttemptId);
+    assert.equal(workUnit.status, "failed");
+    assert.equal(workUnit.errorCode, "hard_timeout");
+    assert.equal(attempt.status, "failed");
+    assert.equal(attempt.errorCode, "hard_timeout");
+    assert.equal(store.listEvents(runId, { limit: 1_000 }).some((event) => event.type === "run_cancelled"), false);
+    assert.equal(store.listEvents(runId, { limit: 1_000 }).some((event) => event.type === "approval_cancelled"), false);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("approved checkpoint resumes the same Run with one fenced replacement attempt after daemon restart", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-approval-restart-resume-"));
+  const command = "printf 'resumed-ok\\n' > resumed-after-restart.txt";
+  const firstRunner = new ApprovalProbeRunner({
+    toolCallId: "tool_bash_restart_resume",
+    toolName: "bash",
+    input: { command },
+  });
+  let daemon = await startDaemonForTest(firstRunner);
+  let daemonOpen = true;
+  try {
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "ask" } });
+    const response = await postRunStream(daemon.url, runBody(cwd, "task_bash_restart_resume"));
+    const sse = createSseReader(response);
+    const ready = await sse.nextEvent();
+    const runId = ready.data.runId;
+    const requested = await waitForSseEvent(sse, "approval_requested");
+    const approvalId = requested.data.data.approvalId;
+
+    await daemon.close();
+    daemonOpen = false;
+    await sse.collectRemaining().catch(() => {});
+
+    const secondRunner = new ApprovalProbeRunner({
+      toolCallId: "tool_unused_after_restart",
+      toolName: "bash",
+      input: { command: "echo must-not-run" },
+    });
+    daemon = await startDaemonForTest(secondRunner, {}, { defaultWorkspaceCwd: cwd });
+    daemonOpen = true;
+    const approved = await postJson(`${daemon.url}/approvals/${encodeURIComponent(approvalId)}/approve?cwd=${encodeURIComponent(cwd)}`, {
+      reason: "resume exact approved command",
+    });
+    assert.equal(approved.approval.status, "approved");
+
+    await waitForCondition(async () => {
+      const current = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
+      return current.status === "succeeded";
+    }, "Timed out waiting for resumed Run to succeed.");
+
+    assert.equal(await readFile(resolve(cwd, "resumed-after-restart.txt"), "utf8"), "resumed-ok\n");
+    assert.equal(secondRunner.runs.length, 0);
+    const actions = await getJson(`${daemon.url}/execution-actions?cwd=${encodeURIComponent(cwd)}&runId=${encodeURIComponent(runId)}`);
+    const resumedAction = actions.actions.find((action) => action.toolCallId === "tool_bash_restart_resume");
+    assert.equal(resumedAction?.status, "succeeded");
+    assert.equal(resumedAction?.commandEvidence?.exitCode, 0);
+
+    const store = createSqliteRunStore(cwd);
+    try {
+      const run = store.getRun(runId);
+      assert.equal(run?.status, "succeeded");
+      const workUnit = run?.workUnitId ? store.getWorkUnit(run.workUnitId) : undefined;
+      const attempts = workUnit ? store.listWorkUnitAttempts(workUnit.id) : [];
+      assert.equal(attempts.length, 2);
+      assert.equal(attempts[0]?.status, "lost");
+      assert.equal(attempts[1]?.status, "succeeded");
+      assert.equal(workUnit?.activeAttemptId, attempts[1]?.id);
+      const checkpoint = store.getApprovalCheckpointForApproval(approvalId);
+      assert.equal(checkpoint?.status, "resumed");
+      assert.equal(checkpoint?.runnerResumeHandle?.attemptId, attempts[1]?.id);
+      assert.equal(checkpoint?.resumeBasis?.priorAttemptId, attempts[0]?.id);
+      assert.equal(store.listEvents(runId, { limit: 1_000 }).filter((event) => event.type === "run_cancelled").length, 0);
+      const stale = auditIgnoredRunnerCompletion({
+        store,
+        run,
+        workUnit,
+        attempt: attempts[0],
+        reportedStatus: "succeeded",
+        now: "2026-08-15T02:30:00.000Z",
+      });
+      assert.equal(stale?.type, "stale_runner_completion_ignored");
+      assert.equal(stale?.data.reason, "attempt_not_current");
+      assert.equal(store.getRun(runId)?.status, "succeeded");
+      assert.equal(store.listWorkUnitAttempts(workUnit.id).filter((entry) => entry.status === "succeeded").length, 1);
+    } finally {
+      store.close();
+    }
+  } finally {
+    if (daemonOpen) await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("restart resume fails closed when the exact approved side effect has no safe continuation", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-approval-resume-unsupported-"));
+  const runner = new ApprovalProbeRunner({
+    toolCallId: "tool_write_resume_unsupported",
+    toolName: "write",
+    input: { path: "unsupported-after-restart.txt", content: "must not be written" },
+  });
+  let daemon = await startDaemonForTest(runner);
+  let daemonOpen = true;
+  try {
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { write: "ask" } });
+    const response = await postRunStream(daemon.url, runBody(cwd, "task_write_resume_unsupported"));
+    const sse = createSseReader(response);
+    const ready = await sse.nextEvent();
+    const runId = ready.data.runId;
+    const requested = await waitForSseEvent(sse, "approval_requested");
+    const approvalId = requested.data.data.approvalId;
+    await daemon.close();
+    daemonOpen = false;
+    await sse.collectRemaining().catch(() => {});
+
+    daemon = await startDaemonForTest(new ApprovalProbeRunner({
+      toolCallId: "tool_unused_resume_unsupported",
+      toolName: "bash",
+      input: { command: "echo unused" },
+    }), {}, { defaultWorkspaceCwd: cwd });
+    daemonOpen = true;
+    await postJson(`${daemon.url}/approvals/${encodeURIComponent(approvalId)}/approve?cwd=${encodeURIComponent(cwd)}`, {
+      reason: "approve exact write",
+    });
+    try {
+      await waitForCondition(async () => {
+        const current = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
+        return current.status === "failed";
+      }, "Timed out waiting for unsupported resume to fail closed.");
+    } catch (error) {
+      const diagnosticStore = createSqliteRunStore(cwd);
+      try {
+        const diagnosticRun = diagnosticStore.getRun(runId);
+        const diagnosticCheckpoint = diagnosticStore.getApprovalCheckpointForApproval(approvalId);
+        const diagnosticWorkUnit = diagnosticRun?.workUnitId ? diagnosticStore.getWorkUnit(diagnosticRun.workUnitId) : undefined;
+        const diagnosticAttempt = diagnosticWorkUnit?.activeAttemptId
+          ? diagnosticStore.getWorkUnitAttempt(diagnosticWorkUnit.activeAttemptId)
+          : undefined;
+        throw new Error(
+          `${error instanceof Error ? error.message : String(error)} `
+          + `run=${diagnosticRun?.status ?? "missing"} `
+          + `workUnit=${diagnosticWorkUnit?.status ?? "missing"} `
+          + `attempt=${diagnosticAttempt?.status ?? "missing"} `
+          + `checkpoint=${diagnosticCheckpoint?.status ?? "missing"}`,
+        );
+      } finally {
+        diagnosticStore.close();
+      }
+    }
+
+    const store = createSqliteRunStore(cwd);
+    try {
+      const run = store.getRun(runId);
+      const checkpoint = store.getApprovalCheckpointForApproval(approvalId);
+      assert.equal(run?.status, "failed");
+      assert.match(run?.errorMessage ?? "", /^approval_resume_unsupported:file_write/u);
+      assert.equal(checkpoint?.status, "resume_failed");
+      assert.match(checkpoint?.resumeFailureReason ?? "", /^approval_resume_unsupported:file_write/u);
+      await assert.rejects(() => readFile(resolve(cwd, "unsupported-after-restart.txt"), "utf8"), /ENOENT/u);
+    } finally {
+      store.close();
+    }
+  } finally {
+    if (daemonOpen) await daemon.close();
     await rm(cwd, { recursive: true, force: true });
   }
 });
@@ -825,6 +1218,8 @@ test("approval execution actions expose preview and result artifacts", async () 
     assert.equal(waitingActions.actions.length, 1);
     assert.deepEqual(waitingActions.actions[0].previewArtifactIds, requested.data.data.previewArtifactIds);
     assert.deepEqual(waitingActions.actions[0].resultArtifactIds, []);
+    assert.equal(waitingActions.actions[0].status, "waiting_for_approval");
+    assert.equal(waitingActions.actions[0].executedAt, undefined);
 
     const previewContent = await fetch(`${daemon.url}/artifacts/${encodeURIComponent(waitingActions.actions[0].previewArtifactIds[0])}/content?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(previewContent.status, 200);
@@ -839,7 +1234,11 @@ test("approval execution actions expose preview and result artifacts", async () 
 
     const completedActions = await getJson(`${daemon.url}/execution-actions?cwd=${encodeURIComponent(cwd)}&runId=${encodeURIComponent(runId)}`);
     assert.equal(completedActions.actions.length, 1);
-    assert.equal(completedActions.actions[0].status, "approved");
+    assert.equal(completedActions.actions[0].status, "succeeded");
+    assert.equal(completedActions.actions[0].approvalId, approvalId);
+    assert.equal(completedActions.actions[0].toolCallId, "tool_action_artifacts");
+    assert.ok(completedActions.actions[0].executedAt);
+    assert.ok(completedActions.actions[0].completedAt);
     assert.equal(completedActions.actions[0].resultArtifactIds.length, 1);
     const resultContent = await fetch(`${daemon.url}/artifacts/${encodeURIComponent(completedActions.actions[0].resultArtifactIds[0])}/content?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(resultContent.status, 200);
@@ -1366,7 +1765,7 @@ test("approved patch fails closed when target changes after preview", async () =
     toolCallId: "tool_patch_conflict",
     toolName: "write",
     input: { patchText },
-  });
+  }, true);
   const daemon = await startDaemonForTest(runner);
   try {
     const response = await postRunStream(daemon.url, runBody(cwd, "task_patch_conflict"));
@@ -1389,6 +1788,10 @@ test("approved patch fails closed when target changes after preview", async () =
     assert.equal(runner.decisions[0].handledResult.details.status, "conflict");
 
     const actions = await getJson(`${daemon.url}/execution-actions?cwd=${encodeURIComponent(cwd)}&runId=${encodeURIComponent(runId)}`);
+    assert.equal(actions.actions.length, 1);
+    assert.equal(actions.actions[0].approvalId, approvalId);
+    assert.equal(actions.actions[0].toolCallId, "tool_patch_conflict");
+    assert.equal(actions.actions[0].status, "failed");
     assert.equal(actions.actions[0].resultArtifactIds.length, 1);
     const resultContent = await fetch(`${daemon.url}/artifacts/${encodeURIComponent(actions.actions[0].resultArtifactIds[0])}/content?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(resultContent.status, 200);
@@ -2479,6 +2882,348 @@ test("media production API persists storyboard order independently from canvas p
   }
 });
 
+test("media production project assets validate, persist, serve and protect scene references", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-project-assets-"));
+  const daemon = await startDaemonForTest(new ApprovalProbeRunner({
+    toolCallId: "tool_unused_media_project_assets",
+    toolName: "bash",
+  }));
+  try {
+    const project = await postJson(`${daemon.url}/media-projects?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Image input project",
+    });
+    assert.deepEqual(project.assets, []);
+    const imageBytes = createPngDimensionFixture(1280, 720);
+    const uploadUrl = `${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}/assets?cwd=${encodeURIComponent(cwd)}`;
+    const uploaded = await postJson(uploadUrl, {
+      kind: "upload",
+      fileName: "opening.png",
+      contentType: "image/png",
+      contentBase64: imageBytes.toString("base64"),
+    });
+    assert.equal(uploaded.asset.contentType, "image/png");
+    assert.equal(uploaded.asset.width, 1280);
+    assert.equal(uploaded.asset.height, 720);
+    assert.match(uploaded.asset.checksum, /^sha256:[a-f0-9]{64}$/);
+    assert.equal("path" in uploaded.asset, false);
+    const assetStore = createSqliteRunStore(cwd);
+    const uploadedAssetPath = (() => {
+      try {
+        const persisted = assetStore.getMediaProjectAsset(uploaded.asset.id);
+        assert.ok(persisted);
+        return resolve(assetStore.paths.attachmentsDir, persisted.path);
+      } finally {
+        assetStore.close();
+      }
+    })();
+    await access(uploadedAssetPath);
+
+    const duplicate = await postJson(uploadUrl, {
+      kind: "upload",
+      fileName: "same-content.png",
+      contentType: "image/png",
+      contentBase64: imageBytes.toString("base64"),
+    });
+    assert.equal(duplicate.asset.id, uploaded.asset.id);
+    const assets = await getJson(uploadUrl);
+    assert.deepEqual(assets.assets.map((asset) => asset.id), [uploaded.asset.id]);
+    assert.equal(assets.assets.some((asset) => "path" in asset), false);
+    const projectDetail = await getJson(`${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(projectDetail.assets.some((asset) => "path" in asset), false);
+
+    const contentResponse = await fetch(`${daemon.url}/media-project-assets/${encodeURIComponent(uploaded.asset.id)}/content?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(contentResponse.status, 200);
+    assert.equal(contentResponse.headers.get("content-type"), "image/png");
+    assert.deepEqual(Buffer.from(await contentResponse.arrayBuffer()), imageBytes);
+
+    const mismatch = await postJsonExpectError(uploadUrl, {
+      kind: "upload",
+      fileName: "mismatch.jpg",
+      contentType: "image/jpeg",
+      contentBase64: imageBytes.toString("base64"),
+    });
+    assert.equal(mismatch.status, 400);
+    assert.equal(mismatch.body.error, "invalid_media_asset");
+
+    const truncated = await postJsonExpectError(uploadUrl, {
+      kind: "upload",
+      fileName: "truncated.png",
+      contentType: "image/png",
+      contentBase64: imageBytes.subarray(0, 24).toString("base64"),
+    });
+    assert.equal(truncated.status, 400);
+    assert.equal(truncated.body.error, "invalid_media_asset");
+
+    const oversized = await postJsonExpectError(uploadUrl, {
+      kind: "upload",
+      fileName: "oversized.png",
+      contentType: "image/png",
+      contentBase64: Buffer.alloc(25 * 1024 * 1024 + 1).toString("base64"),
+    });
+    assert.equal(oversized.status, 400);
+    assert.equal(oversized.body.error, "invalid_media_asset");
+    assert.match(oversized.body.message, /1 字节到 25 MiB/);
+
+    const scene = await postJson(`${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}/scenes?cwd=${encodeURIComponent(cwd)}`, {
+      title: "Opening",
+      prompt: "Camera moves forward.",
+      videoImageInputs: [{ assetId: uploaded.asset.id, role: "reference_image" }],
+    });
+    assert.deepEqual(scene.mediaScene.videoImageInputs, [{ assetId: uploaded.asset.id, role: "reference_image" }]);
+    const blockedDelete = await fetch(`${daemon.url}/media-project-assets/${encodeURIComponent(uploaded.asset.id)}?cwd=${encodeURIComponent(cwd)}`, {
+      method: "DELETE",
+    });
+    assert.equal(blockedDelete.status, 409);
+    assert.equal((await blockedDelete.json()).error, "media_project_asset_in_use");
+
+    await patchJson(`${daemon.url}/media-scenes/${encodeURIComponent(scene.mediaScene.id)}?cwd=${encodeURIComponent(cwd)}`, {
+      videoImageInputs: [],
+    });
+    const deleted = await fetch(`${daemon.url}/media-project-assets/${encodeURIComponent(uploaded.asset.id)}?cwd=${encodeURIComponent(cwd)}`, {
+      method: "DELETE",
+    });
+    assert.equal(deleted.status, 200);
+    assert.equal((await deleted.json()).deleted, true);
+    await assert.rejects(access(uploadedAssetPath), (error) => error?.code === "ENOENT");
+
+    const projectAsset = await postJson(uploadUrl, {
+      kind: "upload",
+      fileName: "project-cleanup.png",
+      contentType: "image/png",
+      contentBase64: createPngDimensionFixture(1024, 1024).toString("base64"),
+    });
+    const projectAssetStore = createSqliteRunStore(cwd);
+    const projectAssetPath = (() => {
+      try {
+        const persisted = projectAssetStore.getMediaProjectAsset(projectAsset.asset.id);
+        assert.ok(persisted);
+        return resolve(projectAssetStore.paths.attachmentsDir, persisted.path);
+      } finally {
+        projectAssetStore.close();
+      }
+    })();
+    await access(projectAssetPath);
+    const deletedProject = await fetch(`${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}?cwd=${encodeURIComponent(cwd)}`, {
+      method: "DELETE",
+    });
+    assert.equal(deletedProject.status, 200);
+    await assert.rejects(access(projectAssetPath), (error) => error?.code === "ENOENT");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("media production project asset upload rejects a symlinked project directory", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-project-asset-symlink-"));
+  const outside = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-project-asset-outside-"));
+  const daemon = await startDaemonForTest(new ApprovalProbeRunner({
+    toolCallId: "tool_unused_media_project_asset_symlink",
+    toolName: "bash",
+  }));
+  try {
+    const project = await postJson(`${daemon.url}/media-projects?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Symlink boundary project",
+    });
+    const store = createSqliteRunStore(cwd);
+    const mediaProjectsRoot = resolve(store.paths.attachmentsDir, "media-projects");
+    store.close();
+    await mkdir(mediaProjectsRoot, { recursive: true });
+    await symlink(outside, resolve(mediaProjectsRoot, project.mediaProject.id), process.platform === "win32" ? "junction" : "dir");
+
+    const rejected = await postJsonExpectError(
+      `${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}/assets?cwd=${encodeURIComponent(cwd)}`,
+      {
+        kind: "upload",
+        fileName: "outside.png",
+        contentType: "image/png",
+        contentBase64: createPngDimensionFixture(1280, 720).toString("base64"),
+      },
+    );
+    assert.equal(rejected.status, 403);
+    assert.equal(rejected.body.error, "media_project_asset_outside_root");
+    assert.deepEqual(await readdir(outside), []);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test("media production materializes project images only for the Seedance submission call", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-project-i2v-"));
+  const daemon = await startDaemonForTest(new ApprovalProbeRunner({
+    toolCallId: "tool_unused_media_project_i2v",
+    toolName: "bash",
+  }));
+  const seedance = await startMockSeedreamServer();
+  process.env.LING_STACK_TEST_MEDIA_KEY = "test-media-i2v-key";
+  try {
+    const provider = await createMediaProvider(daemon.url, cwd, {
+      kind: "seedance",
+      displayName: "Seedance 2.0",
+      providerId: "seedance",
+      model: "doubao-seedance-2-0-260128",
+      capabilities: ["video_generate"],
+      input: ["text", "image"],
+      baseUrl: seedance.url,
+      apiKeyRef: "env:LING_STACK_TEST_MEDIA_KEY",
+      compat: { mediaVendorTransport: { mode: "live" } },
+    });
+    const project = await postJson(`${daemon.url}/media-projects?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Image-to-video project",
+      defaultProviderPresetId: provider.provider.id,
+    });
+    const imageBytes = createPngDimensionFixture(1280, 720);
+    const uploaded = await postJson(`${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}/assets?cwd=${encodeURIComponent(cwd)}`, {
+      kind: "upload",
+      fileName: "reference.png",
+      contentType: "image/png",
+      contentBase64: imageBytes.toString("base64"),
+    });
+    const scene = await postJson(`${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}/scenes?cwd=${encodeURIComponent(cwd)}`, {
+      title: "Reference scene",
+      prompt: "Move the camera around the subject.",
+      videoImageInputs: [{ assetId: uploaded.asset.id, role: "reference_image" }],
+    });
+
+    const run = await postJson(`${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}/run?cwd=${encodeURIComponent(cwd)}`, {
+      sceneIds: [scene.mediaScene.id],
+    });
+    const stableInputs = [{
+      assetId: uploaded.asset.id,
+      role: "reference_image",
+      checksum: uploaded.asset.checksum,
+    }];
+    assert.deepEqual(run.mediaJobs[0].input.videoImageInputs, stableInputs);
+    assert.deepEqual(run.mediaSceneRuns[0].inputSnapshot.videoImageInputs, stableInputs);
+    assert.doesNotMatch(JSON.stringify(run), /data:image|;base64,/);
+
+    await waitForMediaJobStatus(daemon.url, cwd, run.mediaJobs[0].id, "succeeded");
+    const request = seedance.requests.find((item) => item.method === "POST" && item.path.endsWith("/contents/generations/tasks"));
+    assert.ok(request);
+    assert.deepEqual(request.body.content, [
+      { type: "text", text: "Move the camera around the subject." },
+      {
+        type: "image_url",
+        image_url: { url: `data:image/png;base64,${imageBytes.toString("base64")}` },
+        role: "reference_image",
+      },
+    ]);
+
+    const store = createSqliteRunStore(cwd);
+    let assetPath = "";
+    try {
+      const persistedJob = store.getMediaJob(run.mediaJobs[0].id);
+      const persistedSceneRun = store.getMediaSceneRun(run.mediaSceneRuns[0].id);
+      const persistedAsset = store.getMediaProjectAsset(uploaded.asset.id);
+      assert.ok(persistedJob);
+      assert.ok(persistedSceneRun);
+      assert.ok(persistedAsset);
+      assert.equal(store.getMediaJobExecutionHandle(run.mediaJobs[0].id), undefined);
+      assert.doesNotMatch(JSON.stringify({ persistedJob, persistedSceneRun }), /data:image|;base64,/);
+      assetPath = resolve(store.paths.attachmentsDir, persistedAsset.path);
+    } finally {
+      store.close();
+    }
+    const artifacts = await getJson(`${daemon.url}/media-jobs/${encodeURIComponent(run.mediaJobs[0].id)}/artifacts?cwd=${encodeURIComponent(cwd)}`);
+    assert.doesNotMatch(JSON.stringify(artifacts), /data:image|;base64,/);
+
+    const providerPostCount = seedance.requests.filter((item) => item.method === "POST" && item.path.endsWith("/contents/generations/tasks")).length;
+    await writeFile(assetPath, Buffer.from("tampered-image"));
+    const tamperedRun = await postJson(`${daemon.url}/media-scenes/${encodeURIComponent(scene.mediaScene.id)}/run?cwd=${encodeURIComponent(cwd)}`, {});
+    const failed = await waitForMediaJobStatus(daemon.url, cwd, tamperedRun.mediaJob.id, "failed");
+    assert.match(failed.mediaJob.errorMessage, /大小已发生变化|校验失败/);
+    assert.equal(
+      seedance.requests.filter((item) => item.method === "POST" && item.path.endsWith("/contents/generations/tasks")).length,
+      providerPostCount,
+    );
+  } finally {
+    delete process.env.LING_STACK_TEST_MEDIA_KEY;
+    await seedance.close();
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("media production rejects corrupt persisted image inputs before creating a paid job", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-corrupt-media-inputs-"));
+  const daemon = await startDaemonForTest(new ApprovalProbeRunner({
+    toolCallId: "tool_unused_corrupt_media_inputs",
+    toolName: "bash",
+  }));
+  const seedance = await startMockSeedreamServer();
+  process.env.LING_STACK_TEST_MEDIA_KEY = "test-corrupt-media-inputs-key";
+  try {
+    const provider = await createMediaProvider(daemon.url, cwd, {
+      kind: "seedance",
+      displayName: "Seedance 2.0",
+      providerId: "seedance",
+      model: "doubao-seedance-2-0-260128",
+      capabilities: ["video_generate"],
+      input: ["text", "image"],
+      baseUrl: seedance.url,
+      apiKeyRef: "env:LING_STACK_TEST_MEDIA_KEY",
+      compat: { mediaVendorTransport: { mode: "live" } },
+    });
+    const project = await postJson(`${daemon.url}/media-projects?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Corrupt persistence boundary",
+      defaultProviderPresetId: provider.provider.id,
+    });
+    const uploaded = await postJson(
+      `${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}/assets?cwd=${encodeURIComponent(cwd)}`,
+      {
+        kind: "upload",
+        fileName: "reference.png",
+        contentType: "image/png",
+        contentBase64: createPngDimensionFixture(1280, 720).toString("base64"),
+      },
+    );
+    const scene = await postJson(
+      `${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}/scenes?cwd=${encodeURIComponent(cwd)}`,
+      {
+        title: "Must not fall back",
+        prompt: "Animate this reference image.",
+        videoImageInputs: [{ assetId: uploaded.asset.id, role: "reference_image" }],
+      },
+    );
+
+    const store = createSqliteRunStore(cwd);
+    const databasePath = store.paths.databasePath;
+    store.close();
+    const database = new DatabaseSync(databasePath);
+    try {
+      database.prepare("UPDATE media_scenes SET video_image_inputs_json = ? WHERE id = ?")
+        .run("{", scene.mediaScene.id);
+    } finally {
+      database.close();
+    }
+
+    const providerPostsBefore = seedance.requests.filter(
+      (request) => request.method === "POST" && request.path.endsWith("/contents/generations/tasks"),
+    ).length;
+    const rejected = await postJsonExpectError(
+      `${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}/run?cwd=${encodeURIComponent(cwd)}`,
+      { sceneIds: [scene.mediaScene.id] },
+    );
+    assert.equal(rejected.status, 400);
+    assert.equal(rejected.body.error, "bad_request");
+    assert.match(rejected.body.message, /Invalid SQLite media scene video_image_inputs_json/);
+    assert.equal(await mediaJobCount(daemon.url, cwd), 0);
+    assert.equal(
+      seedance.requests.filter(
+        (request) => request.method === "POST" && request.path.endsWith("/contents/generations/tasks"),
+      ).length,
+      providerPostsBefore,
+    );
+  } finally {
+    delete process.env.LING_STACK_TEST_MEDIA_KEY;
+    await seedance.close();
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("media production project run validates every legacy target before creating any scene run", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-project-run-"));
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
@@ -2511,6 +3256,18 @@ test("media production project run validates every legacy target before creating
       title: "Missing prompt",
       prompt: "",
     });
+    const referenceImage = createPngDimensionFixture(1280, 720);
+    const uploaded = await postJson(`${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}/assets?cwd=${encodeURIComponent(cwd)}`, {
+      kind: "upload",
+      fileName: "unsupported-reference.png",
+      contentType: "image/png",
+      contentBase64: referenceImage.toString("base64"),
+    });
+    const unsupportedReferenceScene = await postJson(`${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}/scenes?cwd=${encodeURIComponent(cwd)}`, {
+      title: "Unsupported reference",
+      prompt: "Animate the reference image.",
+      videoImageInputs: [{ assetId: uploaded.asset.id, role: "reference_image" }],
+    });
 
     const legacyFailure = await postJsonExpectError(`${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}/run?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(legacyFailure.status, 400);
@@ -2538,6 +3295,16 @@ test("media production project run validates every legacy target before creating
       firstCompletedDetail.scenes.find((scene) => scene.id === readyScene.mediaScene.id)?.selectedMediaSceneRunId,
       selectedRun.mediaSceneRuns[0].id,
     );
+
+    const incompatibleBatch = await postJsonExpectError(`${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}/run?cwd=${encodeURIComponent(cwd)}`, {
+      sceneIds: [readyScene.mediaScene.id, unsupportedReferenceScene.mediaScene.id],
+    });
+    assert.equal(incompatibleBatch.status, 400);
+    assert.equal(incompatibleBatch.body.error, "unsupported_capability");
+    assert.match(incompatibleBatch.body.message, /不支持参考图片/);
+    assert.equal(await mediaJobCount(daemon.url, cwd), 1);
+    const afterIncompatibleBatch = await getJson(`${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(afterIncompatibleBatch.sceneRuns.length, 1);
 
     const regeneration = await postJson(`${daemon.url}/media-scenes/${encodeURIComponent(readyScene.mediaScene.id)}/run?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(regeneration.approval, undefined);
@@ -3784,6 +4551,8 @@ test("work unit retry and reconcile APIs operate on durable supervisor state", a
         ownerId: attempt.id,
         workUnitId: running.id,
         attemptId: attempt.id,
+        runtimeInstanceId: attempt.runtimeInstanceId,
+        fencingToken: attempt.fencingToken,
         acquiredAt: "2026-06-04T01:01:02.000Z",
         expiresAt: "2026-06-04T01:11:02.000Z",
       });
@@ -3796,6 +4565,8 @@ test("work unit retry and reconcile APIs operate on durable supervisor state", a
         ownerId: attempt.id,
         workUnitId: running.id,
         attemptId: attempt.id,
+        runtimeInstanceId: attempt.runtimeInstanceId,
+        fencingToken: attempt.fencingToken,
         acquiredAt: "2026-06-04T01:01:03.000Z",
         expiresAt: "2026-06-04T01:11:03.000Z",
       });
@@ -4032,6 +4803,12 @@ class ApprovalArtifactRunner {
       provider: options.provider.provider,
       model: options.provider.model,
     });
+    options.onEvent?.({
+      type: "tool_start",
+      toolCallId: "tool_action_artifacts",
+      toolName: "bash",
+      args: { command: "echo sk-test_action_preview_secret" },
+    });
     const decision = await options.onApprovalRequired?.({
       toolCallId: "tool_action_artifacts",
       toolName: "bash",
@@ -4141,8 +4918,10 @@ class NonApprovalToolLifecycleRunner {
 }
 
 class ApprovalProbeRunner {
-  constructor(request) {
+  constructor(request, emitHandledToolLifecycle = false, delayAfterDecisionMs = 0) {
     this.request = request;
+    this.emitHandledToolLifecycle = emitHandledToolLifecycle;
+    this.delayAfterDecisionMs = delayAfterDecisionMs;
     this.decisions = [];
     this.runs = [];
   }
@@ -4163,7 +4942,14 @@ class ApprovalProbeRunner {
       provider: options.provider.provider,
       model: options.provider.model,
     });
-
+    if (this.emitHandledToolLifecycle) {
+      options.onEvent?.({
+        type: "tool_start",
+        toolCallId: this.request.toolCallId,
+        toolName: this.request.toolName,
+        args: this.request.input,
+      });
+    }
     const decision = await options.onApprovalRequired?.({
       ...this.request,
       task: options.task,
@@ -4175,8 +4961,27 @@ class ApprovalProbeRunner {
         type: "tool_end",
         toolCallId: this.request.toolCallId,
         toolName: this.request.toolName,
-        result: { approved: decision.approved, reason: decision.reason },
-        isError: !decision.approved,
+        result: this.emitHandledToolLifecycle
+          ? { error: decision.handledResult?.content?.[0]?.text }
+          : { approved: decision.approved, reason: decision.reason },
+        isError: decision.handledResult?.isError ?? !decision.approved,
+      });
+    }
+    if (this.delayAfterDecisionMs > 0) {
+      await new Promise((resolveDelay, rejectDelay) => {
+        const timer = setTimeout(() => {
+          options.signal?.removeEventListener("abort", onAbort);
+          resolveDelay();
+        }, this.delayAfterDecisionMs);
+        const onAbort = () => {
+          clearTimeout(timer);
+          rejectDelay(options.signal?.reason ?? new Error("runner_aborted"));
+        };
+        if (options.signal?.aborted) {
+          onAbort();
+        } else {
+          options.signal?.addEventListener("abort", onAbort, { once: true });
+        }
       });
     }
 
@@ -4414,6 +5219,29 @@ class BlockingRunner {
 
   release() {
     this._release?.();
+  }
+}
+
+class AbortAwareBlockingRunner {
+  async runTask(options) {
+    options.onEvent?.({
+      type: "run_start",
+      taskId: options.task.id,
+      cwd: options.cwd,
+      provider: options.provider.provider,
+      model: options.provider.model,
+    });
+    await new Promise((resolveWait, rejectWait) => {
+      if (options.signal?.aborted) {
+        rejectWait(options.signal.reason ?? new Error("aborted"));
+        return;
+      }
+      options.signal?.addEventListener("abort", () => {
+        rejectWait(options.signal.reason ?? new Error("aborted"));
+      }, { once: true });
+      if (!options.signal) resolveWait();
+    });
+    return { taskId: options.task.id, events: [], messages: [] };
   }
 }
 
@@ -4982,6 +5810,42 @@ function parseSseBlock(block) {
     event,
     data: JSON.parse(dataLines.join("\n")),
   };
+}
+
+function createPngDimensionFixture(width, height) {
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header[8] = 8;
+  header[9] = 0;
+  const scanlines = Buffer.alloc((width + 1) * height);
+  return Buffer.concat([
+    Buffer.from("89504e470d0a1a0a", "hex"),
+    createPngChunk("IHDR", header),
+    createPngChunk("IDAT", deflateSync(scanlines)),
+    createPngChunk("IEND", Buffer.alloc(0)),
+  ]);
+}
+
+function createPngChunk(type, data) {
+  const typeBytes = Buffer.from(type, "ascii");
+  const chunk = Buffer.alloc(12 + data.length);
+  chunk.writeUInt32BE(data.length, 0);
+  typeBytes.copy(chunk, 4);
+  data.copy(chunk, 8);
+  chunk.writeUInt32BE(crc32(Buffer.concat([typeBytes, data])), 8 + data.length);
+  return chunk;
+}
+
+function crc32(bytes) {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
 }
 
 function withTimeout(promise, timeoutMs, message) {

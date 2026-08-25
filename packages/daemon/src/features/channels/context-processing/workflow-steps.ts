@@ -5,6 +5,7 @@ import type {
   RunStore,
   SkillApprovalProfile,
 } from "@ling-stack/core";
+import { resolveChannelExecutionCwd } from "@ling-stack/core";
 import { collectChannelStateSource, collectWorkflowEvidenceSources, collectWorkflowStepSource } from "./sources.js";
 import { buildProjectedConversationContextSlice } from "./conversation-context-adapter.js";
 import type { ChannelContextBudgetSnapshot, ChannelContextSection, ChannelContextSourceRef, ChannelContextView } from "./types.js";
@@ -46,6 +47,7 @@ export interface BuildWorkflowStepContextViewInput extends WorkflowStepContextPa
 }
 
 export function buildWorkflowStepContextView(input: BuildWorkflowStepContextViewInput): ChannelContextView {
+  const executionCwd = resolveChannelExecutionCwd(input.channel, input.store.paths.cwd);
   const sourceRefs = buildWorkflowStepContextSourceRefs(input);
   const sourceItemId = input.step.metadata?.sourceMessageId ?? input.workflow.metadata?.sourceMessageId;
   const projectedContext = sourceItemId ? buildProjectedConversationContextSlice({
@@ -53,6 +55,11 @@ export function buildWorkflowStepContextView(input: BuildWorkflowStepContextView
     channel: input.channel,
     sourceItemId,
     view: "workflow_step",
+    // Coordinator/progress/result Items from the same source Turn are products
+    // of the workflow, not input facts. Keep the runtime stamp aligned with the
+    // terminal freshness review while dependency evidence remains available via
+    // the dedicated workflow dependency sections below.
+    includeSourceTurnItems: false,
   }) : undefined;
   const dependencySections = input.compactedDependencySummary
     ? [buildCompactedWorkflowDependencySection(input.compactedDependencySummary)]
@@ -93,6 +100,11 @@ export function buildWorkflowStepContextView(input: BuildWorkflowStepContextView
         `Workflow: ${input.workflow.title}`,
         `Channel: ${input.channel.name}`,
         input.channel.boundPath ? `Bound path: ${input.channel.boundPath}` : undefined,
+        `Execution cwd (authoritative): ${executionCwd}`,
+        "All relative file paths resolve from the execution cwd.",
+        input.channel.workspaceBinding?.mode === "managed_worktree"
+          ? "This channel uses a managed worktree. Do not write to the bound parent workspace or any other absolute path outside the execution cwd."
+          : undefined,
       ].filter((line): line is string => line !== undefined).join("\n"),
       sourceRefIds: [input.workflow.id, input.channel.id],
       visibility: "prompt",

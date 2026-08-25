@@ -1,12 +1,12 @@
 import type { ApprovalStatus } from "./approval-types.js";
 import type { MediaJobStatus } from "./media-types.js";
-import type { RunStatus } from "./run-types.js";
+import type { LingTurnStatus, RunStatus } from "./run-types.js";
 import type { WorkUnitStatus } from "./runtime-supervisor-types.js";
 import type { TaskStatus } from "./workspace-types.js";
 
 export type StateTransitionActor = "system" | "local-user" | "ai-teammate" | "runner" | "provider";
 
-export type StateEntityType = "task" | "run" | "approval" | "media_job" | "workflow" | "workflow_step" | "work_unit";
+export type StateEntityType = "task" | "run" | "approval" | "media_job" | "workflow" | "workflow_step" | "work_unit" | "turn";
 
 export interface TransitionInput<TStatus extends string, TEvent extends string> {
   readonly entityId: string;
@@ -127,6 +127,15 @@ export type WorkUnitTransitionEvent =
   | "retry"
   | "cancel";
 
+export type LingTurnTransitionEvent =
+  | "start"
+  | "approval_requested"
+  | "approval_approved"
+  | "block"
+  | "succeed"
+  | "fail"
+  | "cancel";
+
 const taskTerminalStatuses = new Set<TaskStatus>(["done", "cancelled"]);
 const runTerminalStatuses = new Set<RunStatus>(["succeeded", "failed", "cancelled"]);
 const approvalTerminalStatuses = new Set<ApprovalStatus>(["approved", "denied", "expired", "cancelled"]);
@@ -134,6 +143,7 @@ const mediaJobTerminalStatuses = new Set<MediaJobStatus>(["succeeded", "failed",
 const workflowTerminalStatuses = new Set<WorkflowStatus>(["succeeded", "failed", "cancelled"]);
 const workflowStepTerminalStatuses = new Set<WorkflowStepStatus>(["succeeded", "failed", "skipped", "cancelled"]);
 const workUnitTerminalStatuses = new Set<WorkUnitStatus>(["succeeded", "failed", "cancelled"]);
+const lingTurnTerminalStatuses = new Set<LingTurnStatus>(["succeeded", "failed", "cancelled", "superseded"]);
 
 const taskTransitions: Readonly<Record<TaskStatus, Partial<Record<TaskTransitionEvent, TaskStatus>>>> = {
   todo: { claim: "claimed", cancel: "cancelled" },
@@ -164,6 +174,7 @@ const runTransitions: Readonly<Record<RunStatus, Partial<Record<RunTransitionEve
     approval_approved: "running",
     approval_denied: "failed",
     approval_expired: "failed",
+    runner_failed: "failed",
     cancel: "cancelled",
   },
   succeeded: {},
@@ -265,6 +276,7 @@ const workUnitTransitions: Readonly<Record<WorkUnitStatus, Partial<Record<WorkUn
   },
   cancelling: {
     runner_cancelled: "cancelled",
+    runner_failed: "failed",
     cancel_timeout: "stale",
     runner_lost: "stale",
   },
@@ -276,6 +288,17 @@ const workUnitTransitions: Readonly<Record<WorkUnitStatus, Partial<Record<WorkUn
   failed: { retry: "queued" },
   succeeded: {},
   cancelled: { retry: "queued" },
+};
+
+const lingTurnTransitions: Readonly<Record<LingTurnStatus, Partial<Record<LingTurnTransitionEvent, LingTurnStatus>>>> = {
+  open: { start: "running", approval_requested: "waiting_for_approval", block: "blocked", succeed: "succeeded", fail: "failed", cancel: "cancelled" },
+  running: { approval_requested: "waiting_for_approval", block: "blocked", succeed: "succeeded", fail: "failed", cancel: "cancelled" },
+  waiting_for_approval: { approval_approved: "running", block: "blocked", succeed: "succeeded", fail: "failed", cancel: "cancelled" },
+  blocked: { start: "running", fail: "failed", cancel: "cancelled" },
+  succeeded: {},
+  failed: {},
+  cancelled: {},
+  superseded: {},
 };
 
 export function transitionTask(input: TransitionInput<TaskStatus, TaskTransitionEvent>): TransitionResult<TaskStatus> {
@@ -306,6 +329,12 @@ export function transitionWorkflowStep(
 
 export function transitionWorkUnit(input: TransitionInput<WorkUnitStatus, WorkUnitTransitionEvent>): TransitionResult<WorkUnitStatus> {
   return transitionState(input, workUnitTransitions, workUnitTerminalStatuses);
+}
+
+export function transitionLingTurn(
+  input: TransitionInput<LingTurnStatus, LingTurnTransitionEvent>,
+): TransitionResult<LingTurnStatus> {
+  return transitionState(input, lingTurnTransitions, lingTurnTerminalStatuses);
 }
 
 function transitionState<TStatus extends string, TEvent extends string>(

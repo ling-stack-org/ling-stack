@@ -1,4 +1,5 @@
 import type { ChannelMessage, ChannelWorkflow, ChannelWorkflowStep, ExecutionAction, MemoryObject, PreviewContentKind, PreviewContentResponse, RunArtifact, RunSession, TerminalReportDto, UsedMemoryEvent, WorkflowWorkspaceChangesResponse } from "../types.js";
+import { createWorkflowParticipantAuthorityV1 } from "@ling-stack/contracts";
 import type { PreviewRequest } from "./previews.js";
 
 export const channelWorkCellDemoStorageKey = "ling-stack.workCellDemo";
@@ -17,6 +18,15 @@ export interface ChannelWorkCellDemoFixture {
 
 const channelWorkCellDemoArtifactPrefix = "demo_work_cell_";
 const channelWorkCellDemoRecoveryStateByWorkflowId = new Map<string, "applied" | "undone">();
+
+function demoParticipantAuthority(workflowId: string, participantId: string) {
+  return createWorkflowParticipantAuthorityV1({
+    kind: "workflow_definition",
+    origin: "workflow_graph",
+    participantId,
+    sourceId: workflowId,
+  });
+}
 
 export function channelWorkCellDemoFixtureEnabled(): boolean {
   if (!import.meta.env.DEV || typeof window === "undefined") {
@@ -254,6 +264,7 @@ export function createChannelWorkCellDemoFixture(input: {
       prompt: "确认 workflow、step、run、action、artifact 如何进入频道会话投影。",
       toParticipantId: "architect",
       toParticipantLabel: "Architect",
+      participantAuthority: demoParticipantAuthority(workflowId, "architect"),
       status: "succeeded",
       resultSummary: "确认频道工作记录应从现有 workflow progress 投影渲染。",
       createdAt: "2026-07-10T09:12:03.000Z",
@@ -270,6 +281,7 @@ export function createChannelWorkCellDemoFixture(input: {
       prompt: "确认操作记录不使用气泡，悬停时提升对比度，展开只影响自己的行。",
       toParticipantId: "designer",
       toParticipantLabel: "Designer",
+      participantAuthority: demoParticipantAuthority(workflowId, "designer"),
       status: "succeeded",
       resultSummary: "确认 read/search 行保持简约，代码和命令只在展开细节里展示。",
       createdAt: "2026-07-10T09:12:16.000Z",
@@ -286,6 +298,7 @@ export function createChannelWorkCellDemoFixture(input: {
       prompt: "接入工作记录行、编辑记录、命令记录和完成后的折叠摘要。",
       toParticipantId: "engineer",
       toParticipantLabel: "Engineer",
+      participantAuthority: demoParticipantAuthority(workflowId, "engineer"),
       status: "succeeded",
       resultSummary: "完成频道 work-cell 操作记录投影。",
       createdAt: "2026-07-10T09:12:46.000Z",
@@ -302,6 +315,7 @@ export function createChannelWorkCellDemoFixture(input: {
       prompt: "验证频道中多 agent 操作记录可以折叠、展开，并且命令细节不会默认打断阅读。",
       toParticipantId: "qa",
       toParticipantLabel: "QA",
+      participantAuthority: demoParticipantAuthority(workflowId, "qa"),
       status: "succeeded",
       resultSummary: "通过频道工作记录样例回归。",
       createdAt: "2026-07-10T09:13:33.000Z",
@@ -318,6 +332,7 @@ export function createChannelWorkCellDemoFixture(input: {
       prompt: "补齐本地样例记录和设计文档，保持第二轮动作在新位置单独展示。",
       toParticipantId: "engineer",
       toParticipantLabel: "Engineer",
+      participantAuthority: demoParticipantAuthority(workflowId, "engineer"),
       status: "succeeded",
       resultSummary: "主要任务已完成：频道已接入本地多 agent 操作记录样例，并保持完成后折叠展示。",
       createdAt: "2026-07-10T09:14:03.000Z",

@@ -10,6 +10,7 @@ export interface NormalConversationHeaderProps {
   readonly searchQuery: string;
   readonly searchTriggerRef: Ref<HTMLButtonElement>;
   readonly summaryActive: boolean;
+  readonly summaryExpanded: boolean;
   readonly terminalActive: boolean;
   readonly terminalDisabled: boolean;
   readonly detailsActive: boolean;
@@ -30,6 +31,7 @@ export function NormalConversationHeader({
   searchQuery,
   searchTriggerRef,
   summaryActive,
+  summaryExpanded,
   terminalActive,
   terminalDisabled,
   detailsActive,
@@ -73,6 +75,7 @@ export function NormalConversationHeader({
         searchButtonRef={searchTriggerRef}
         searchLabel={t("Search")}
         summaryActive={summaryActive}
+        summaryExpanded={summaryExpanded}
         summaryLabel={t("Summary")}
         terminalActive={terminalActive}
         terminalDisabled={terminalDisabled}

@@ -21,6 +21,42 @@ const emptyEditFields = {
   fileRefs: [],
 };
 
+test("active Run registry preserves typed timeout and shutdown stop intents", () => {
+  const activeRuns = new ActiveRunRegistry();
+  const timeoutAbort = new AbortController();
+  const shutdownAbort = new AbortController();
+  activeRuns.add("run_timeout", {
+    abortController: timeoutAbort,
+    streamEnvelope() {},
+    runtimeInstanceId: "runtime_timeout",
+  });
+  activeRuns.add("run_shutdown", {
+    abortController: shutdownAbort,
+    streamEnvelope() {},
+    runtimeInstanceId: "runtime_shutdown",
+  });
+
+  assert.equal(activeRuns.requestStop("run_timeout", {
+    kind: "runtime_failure",
+    code: "hard_timeout",
+    reason: "hard_timeout",
+  }), true);
+  activeRuns.suspendAll("daemon_restart");
+
+  assert.deepEqual(activeRuns.getStopIntent("run_timeout"), {
+    kind: "runtime_failure",
+    code: "hard_timeout",
+    reason: "hard_timeout",
+  });
+  assert.deepEqual(timeoutAbort.signal.reason, activeRuns.getStopIntent("run_timeout"));
+  assert.deepEqual(activeRuns.getStopIntent("run_shutdown"), {
+    kind: "runtime_suspend",
+    cause: "daemon_restart",
+    runtimeInstanceId: "runtime_shutdown",
+  });
+  assert.deepEqual(shutdownAbort.signal.reason, activeRuns.getStopIntent("run_shutdown"));
+});
+
 test("conversation replacement preflight failure does not leave an orphan turn", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-replacement-preflight-"));
   const store = createSqliteRunStore(cwd);

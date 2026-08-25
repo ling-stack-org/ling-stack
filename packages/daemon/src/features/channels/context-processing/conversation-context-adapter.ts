@@ -28,6 +28,7 @@ export function buildProjectedConversationContextSlice(input: {
   readonly view: ConversationContextProjectionView;
   readonly consumerTeammateId?: string;
   readonly explicitItemIds?: readonly string[];
+  readonly includeSourceTurnItems?: boolean;
   readonly minimal?: boolean;
 }): ProjectedConversationContextSlice {
   const projection = buildConversationContextProjection({
@@ -37,6 +38,7 @@ export function buildProjectedConversationContextSlice(input: {
     consumerTeammateId: input.consumerTeammateId,
     maxTailTextChars: input.minimal ? 2_048 : undefined,
     explicitItemIds: input.explicitItemIds,
+    includeSourceTurnItems: input.includeSourceTurnItems,
   });
   const contextItems = projection.items.filter((item) => item.id !== input.sourceItemId);
   const summarySection = buildProjectionSharedCoreSection(projection);

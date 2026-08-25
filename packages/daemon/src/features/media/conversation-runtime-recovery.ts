@@ -1,4 +1,5 @@
 import type {
+  AppendRuntimeDiagnosticEventInput,
   MediaJobExecutionHandle,
   RunStore,
   WorkUnit,
@@ -77,22 +78,45 @@ export function synchronizeConversationMediaWorkUnitTerminal(
   if (attempt && attempt.status !== "lost") {
     store.updateWorkUnitAttemptStatus({
       attemptId: attempt.id,
+      workUnitId: attempt.workUnitId,
+      runtimeInstanceId: attempt.runtimeInstanceId,
+      fencingToken: attempt.fencingToken,
       status,
       now,
       endedAt: now,
       errorCode: status === "failed" ? "media_job_execution_failed" : "cancelled",
       errorMessage: status === "failed" ? "媒体任务已经失败。" : "媒体任务已取消。",
     });
-    store.releaseRuntimeSemaphoreSlotsForOwner(attempt.id, now, `media-job-${status}`);
+    store.releaseRuntimeSemaphoreSlotsForAttempt(
+      {
+        workUnitId: attempt.workUnitId,
+        attemptId: attempt.id,
+        runtimeInstanceId: attempt.runtimeInstanceId,
+        fencingToken: attempt.fencingToken,
+      },
+      now,
+      `media-job-${status}`,
+    );
   }
-  store.appendRuntimeEvent({
-    workUnitId: current.id,
-    ...(attempt ? { attemptId: attempt.id } : {}),
-    type: status === "failed" ? "work_unit_failed" : "work_unit_cancelled",
-    actor: "system",
+  const runtimeEvent: Pick<AppendRuntimeDiagnosticEventInput, "type" | "actor" | "ts" | "data"> = {
+    // The Attempt was already transitioned above. This is reconciliation evidence,
+    // not a second canonical terminal transition under a stale lease fence.
+    type: "stale_runner_completion_ignored",
+    actor: "system" as const,
     ts: now,
     data: { reason: "media_job_terminal_sync", fromStatus: transition.from, toStatus: transition.to },
-  });
+  };
+  if (attempt) {
+    store.appendRuntimeDiagnosticEvent({
+      ...runtimeEvent,
+      workUnitId: current.id,
+      attemptId: attempt.id,
+      runtimeInstanceId: attempt.runtimeInstanceId,
+      fencingToken: attempt.fencingToken,
+    });
+  } else {
+    store.appendRuntimeEvent({ ...runtimeEvent, workUnitId: current.id });
+  }
   return store.getWorkUnit(current.id) ?? current;
 }
 
