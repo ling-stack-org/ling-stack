@@ -79,6 +79,9 @@ incompatible, fallback, and migration tests pass. Awake-Chrome recovery is at mo
   identity, SHA, and source commit metadata.
 - Add macOS signing coverage and Windows NSIS uninstall cleanup for exact Ling manifest/registry
   entries.
+- Make `browser-host build:native` explicitly ad-hoc sign the copied macOS Host, reject residual
+  `linker-signed` identity, and record the signing level in deterministic build metadata before
+  Chrome acceptance. Release signing may replace this local identity later.
 - Explicitly ad-hoc sign `unsigned_dev` macOS engineering apps after Electron Fuses are applied and
   require `codesign --verify --deep --strict`; do not upgrade that evidence to Developer ID status.
 - Replace Plugin Manager pairing-code generation/copy/expiry UI with automatic detection and

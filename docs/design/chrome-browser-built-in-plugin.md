@@ -193,6 +193,12 @@ and uninstall cleanup. macOS writes user-level Chrome and Chromium manifests. Dr
 trash may leave only a credential-free manifest pointing at a missing executable. Windows writes the
 same manifest plus the two HKCU registry bindings; NSIS uninstall removes the exact Ling entries.
 
+On macOS, a source or engineering Host build must replace Rust's linker-generated signature with an
+explicit ad-hoc signature and pass `codesign --verify --deep --strict`. A signature whose details
+still contain `linker-signed` is not runnable evidence: Chrome-launched helpers may otherwise be
+terminated by Code Signing Monitor with `SIGKILL (Code Signature Invalid)`. Release packaging may
+replace this local identity with the configured Developer ID identity.
+
 ## Session And Protocol Contract
 
 Native transport starts with an exact `ling.chrome.native.v1` handshake containing extension origin,
