@@ -2,7 +2,7 @@
 
 Status: current planning index
 Owner: repository maintainers
-Last verified: 2026-08-20
+Last verified: 2026-08-27
 Document type: governance index
 
 ## Purpose
@@ -33,12 +33,15 @@ counts, screenshots, hashes and run diaries belong in CI or Release artifacts.
 | [Chrome Browser Built-in Plugin](chrome-browser-built-in-plugin-implementation-plan.md) | Manual V1 pairing and six approved browser tools exist; Native Messaging `0.1.1` implementation is active | Automatic Host connection, dual-platform package gates, real Chrome acceptance and Store resubmission close |
 | [Permission Presets](codex-inspired-settings-permission-presets-implementation-plan.md) | Enforcement modes exist | Preset UI, effective preview and run audit agree with daemon enforcement |
 | [Conversation Surface](conversation-surface-contract-implementation-plan.md) | Shared primitives and initial package extraction are implemented | WorkCell, evidence, attachment, package CSS and Desktop-consumption boundaries close |
+| [Conversation Media Generation](conversation-media-generation-tools-implementation-plan.md) | Runner tools, target resolution, background MediaJob projection, and three-surface integration are defined | Shared tool registration, idempotent paid-task creation, recovery projection, and browser acceptance close |
 | [Bundled CUA Driver](cua-driver-bundled-embedded-implementation-plan.md) | Packaging, integrity and platform foundations exist | Computer Control Settings surface and remaining signed platform gates close |
 | [Desktop Computer Use PiP](desktop-computer-use-picture-in-picture-implementation-plan.md) | Renderer and fail-closed local harness exist | Signed macOS, Windows, assistive-technology and clean-host release gates pass |
 | [External Work Phase 8.0](external-work-phase-8.0-adapter-registry-implementation.md) | Approved registry refactor; not yet implemented | Generic GitHub/Linear registry lands without behavior drift |
 | [External Work Phase 8.1](external-work-phase-8.1-workspace-git-remote-implementation.md) | Approved checkout-hint plan; not yet implemented | `workspace.gitRemoteUrl` remains separate from provider identity and authority |
 | [Ling Agent Session](ling-agent-session-implementation-plan.md) | Initial P1-P6 control-plane slices exist | Durable identity, instruction, report and execution ownership decisions close |
 | [Memory Review Policy](memory-review-policy-implementation.md) | MRP.1-MRP.5 and first MRP.7 surface exist | Recall audit closes and global review-center decision is recorded |
+| [Office Documents Native Plugin](office-documents-native-plugin-implementation-plan.md) | Source implementation and automated acceptance are complete | Real Excel/WPS acceptance and Windows/macOS packaged driver gates close |
+| [Sidebar, Approval, And Proposal Dialogs](sidebar-approval-proposal-dialogs-implementation-plan.md) | Sidebar context previews, runtime approval queue, and channel proposal dialog boundaries are defined | Focused Web, Playwright, and real-browser acceptance across all three surfaces closes |
 | [Thread-First Work History](thread-first-work-history-implementation-plan.md) | V1/V2 storage, evidence, archive and fork foundations exist | Diagnostics UI placement and remaining V2 work close |
 | [Desktop Theme Persistence](ui2.0升级/modules/settings/10-Desktop-Theme-Pack-Persistence-implementation-plan.md) | Web, repository and Apple Silicon implementation exist | Intel macOS and Windows packaged gates pass |
 
@@ -65,7 +68,9 @@ These are real gaps, but they must not be described as currently scheduled work.
 | [AI Councils](ai-councils.md) | Council runtime and remaining product surfaces |
 | [Governance Notifications](channel-and-agent-governance-notifications.md) | Teammate-private delivery and Ling Agent/workspace digest |
 | [Conversation Memory Citations](conversation-memory-citations-and-sources.md) | Transcript citation footer and active source presentation |
+| [Conversation Activity Summary And Exploration Batching](conversation-activity-summary-and-exploration-batching-detailed-design.md) | Approved reversible presentation projection; implementation pending |
 | [Input Materialization](input-materialization-detailed-design.md) | Remaining rich-input materializers and ownership gates |
+| [Media Production Image To Video](media-production-image-to-video-detailed-design.md) | Source implementation is locally verified; real Provider acceptance still requires explicit paid authorization |
 | [Multi-Agent App](multi-agent-app-detailed-design.md) | Next multi-agent protocol and product slices |
 | [Native Skill Recording](ling-native-skill-recording-p0-detailed-design.md) | Message-overflow and Settings follow-up entry points |
 | [SQLite Modularization](sqlite-storage-modularization-next-slices.md) | Further split only after transaction and coordinator ownership is designed |

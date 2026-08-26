@@ -128,7 +128,6 @@ Related docs:
 - [Channel Context Processing Layer](channel-context-processing-layer.md)
 - [Channel Context Processing Layer Implementation Plan](channel-context-processing-layer-implementation-plan.md)
 - [Channel Context Budget Manager](channel-context-budget-manager.md)
-- [Channel Intent To Workflow Selector](channel-intent-workflow-selector.md)
 - [Thread-First Work History v2 Detailed Design](thread-first-work-history-v2-detailed-design.md)
 - [Conversation Memory Citations And Sources](conversation-memory-citations-and-sources.md)
 - [Multi-Agent Orchestrator](multi-agent-orchestrator.md)
